@@ -96,6 +96,7 @@
 #include "ui/UndoHistory.h"
 #include "ui/ViewportHud.h"
 #include "ui/ViewportLayout.h"
+#include "ui/ViewportRenderers.h"
 #include "ui/ViewportToolbar.h"
 #include "ui/ViewportWidget.h"
 

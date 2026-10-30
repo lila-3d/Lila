@@ -25,6 +25,7 @@
 #include "ui/ViewportContext.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHud.h"
+#include "ui/ViewportRenderers.h"
 #include "ui/ViewportWidget.h"
 #include "ui/FileDialog.h"
 
@@ -504,6 +505,28 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     });
     actionButton("viewport.monotone", "palette");
     separator();
+    menuButton("aperture", "Renderer", [this](QMenu* m) {
+        auto* group = new QActionGroup(m);
+        const std::string current = viewportRenderers::selected(mView->hudPanel());
+        for (const auto& [id, name] : viewportRenderers::choices())
+        {
+            QAction* a = m->addAction(QString::fromStdString(name));
+            a->setCheckable(true);
+            a->setChecked(id == current);
+            group->addAction(a);
+            connect(a, &QAction::triggered, this, [this, id] {
+                activateView();
+                try
+                {
+                    ops::execute("viewportRenderer", {{"args", {id}}, {"panel", mView->hudPanel()}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
+        }
+    });
     actionButton("viewport.toggleShadows", "shadow");
     actionButton("viewport.toggleAO", "blur");
     actionButton("viewport.toggleAA", "wave-saw-tool");

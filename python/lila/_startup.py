@@ -43,6 +43,10 @@ def boot():
     import lila  # noqa: F401  (registers lila in __main__ for the script editor)
     import __main__
 
+    from . import usd
+
+    usd._install_import_hook()
+
     __main__.lila = lila
     __main__.ops = lila.ops
     expose_commands()

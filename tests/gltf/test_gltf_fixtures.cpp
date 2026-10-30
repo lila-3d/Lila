@@ -331,7 +331,7 @@ TEST_CASE("a Draco primitive that doesn't decode and has no fallback is an error
     CHECK(r["lights"].size() == 1);
 }
 
-TEST_CASE("separate metallic-roughness and occlusion images pack into an ORM map; unlit becomes emissive")
+TEST_CASE("separate metallic-roughness and occlusion images pack into an ORM map; unlit stays unlit")
 {
     Builder b;
     const fs::path dir = tempDir("fixtures");
@@ -362,11 +362,43 @@ TEST_CASE("separate metallic-roughness and occlusion images pack into an ORM map
     CHECK(img.rgba[0] == doctest::Approx(0.25).epsilon(0.02));
     CHECK(img.rgba[1] == doctest::Approx(0.5).epsilon(0.02));
     CHECK(img.rgba[2] == doctest::Approx(0.5).epsilon(0.02));
-    const glm::dvec3 e = node("Flat").as<glm::dvec3>(material::kEmissiveColor);
-    CHECK(e.b == doctest::Approx(0.6));
-    CHECK(node("Flat").as<glm::dvec3>(material::kBaseColor).b == doctest::Approx(0.0));
+    CHECK(node("Flat").as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    CHECK(node("Flat").as<glm::dvec3>(material::kBaseColor).b == doctest::Approx(0.6));
+    CHECK(node("Flat").as<glm::dvec3>(material::kEmissiveColor) == glm::dvec3(0.0));
     // Both slots of the one mesh: two primitives of the same points weld into one mesh.
     CHECK(meshOf("M")->materialNames() == std::vector<std::string>{"Packed", "Flat"});
+}
+
+TEST_CASE("texture samplers become each map's wrap and filter")
+{
+    Builder b;
+    const fs::path dir = tempDir("fixtures");
+    writeAll(dir / "px.png", pngBytes(dir / "px_src.png", 2, 2, [](int x, int) { return glm::vec4(float(x), 0.0f, 0.0f, 1.0f); }));
+    b.doc["images"] = json::array({{{"uri", "px.png"}}});
+    // 9728 NEAREST, 33071 CLAMP_TO_EDGE, 33648 MIRRORED_REPEAT, 10497 REPEAT.
+    b.doc["samplers"] = json::array({{{"magFilter", 9728}, {"minFilter", 9984}, {"wrapS", 33071}, {"wrapT", 33648}}, {{"wrapS", 33648}}});
+    b.doc["textures"] = json::array({{{"source", 0}, {"sampler", 0}}, {{"source", 0}, {"sampler", 1}}, {{"source", 0}}});
+    b.doc["materials"] = json::array({{{"name", "Pixel"},
+                                       {"pbrMetallicRoughness", {{"baseColorTexture", {{"index", 0}}}}},
+                                       {"normalTexture", {{"index", 1}}},
+                                       {"emissiveTexture", {{"index", 2}}},
+                                       {"emissiveFactor", {1.0, 1.0, 1.0}}}});
+    const int position = b.floats({0, 0, 0, 1, 0, 0, 0, 1, 0}, "VEC3", 3, true);
+    b.doc["meshes"] = json::array({{{"primitives", json::array({{{"attributes", {{"POSITION", position}}}, {"material", 0}}})}}});
+    b.doc["nodes"] = json::array({{{"name", "P"}, {"mesh", 0}}});
+    b.doc["scenes"] = json::array({{{"nodes", {0}}}});
+    json r = importReport(b.write(dir / "samplers.gltf"));
+    CHECK(r["errors"].empty());
+    const scene::Node& m = node("Pixel");
+    const material::TextureSampling base = materials::sampling(m, material::kBaseColorMap);
+    CHECK(base.wrapU == material::TextureWrap::Clamp);
+    CHECK(base.wrapV == material::TextureWrap::Mirror);
+    CHECK(base.filter == material::TextureFilter::Nearest);
+    const material::TextureSampling normal = materials::sampling(m, material::kNormalMap);
+    CHECK(normal.wrapU == material::TextureWrap::Mirror);
+    CHECK(normal.wrapV == material::TextureWrap::Repeat);
+    CHECK(normal.filter == material::TextureFilter::Linear);
+    CHECK(materials::sampling(m, material::kEmissiveMap).isDefault());
 }
 
 TEST_CASE("a perspective camera keeps its vertical field of view")

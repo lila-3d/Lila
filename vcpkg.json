@@ -19,7 +19,16 @@
     "joltphysics",
     "miniz",
     "zlib",
-    "usd",
+    {
+      "name": "usd",
+      "features": [
+        "imaging",
+        "embree",
+        "materialx",
+        "python",
+        "vulkan"
+      ]
+    },
     "draco",
     {
       "name": "tracy",

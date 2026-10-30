@@ -8,12 +8,14 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
+#include "Engine/Texture2D.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
 #include "Factories/TextureFactory.h"
 #include "IAssetTools.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpressionAdd.h"
 #include "Materials/MaterialExpressionCameraVectorWS.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionLinearInterpolate.h"
@@ -168,6 +170,36 @@ UTexture* ImportTexture(const FString& File, const FString& Folder, ETextureUse 
 	return Texture;
 }
 
+/**
+ * A texture's address modes and filter from Lila's sampling of the map in Field (<Field>WrapU, WrapV, Filter). Unreal
+ * has no black border, so black clamps. One texture asset per file, so the latest send decides them.
+ */
+void ApplySampling(UTexture* Texture, const TSharedPtr<FJsonObject>& In, const TCHAR* Field)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::ApplySampling);
+
+	UTexture2D* Texture2D = Cast<UTexture2D>(Texture);
+	if (!Texture2D)
+	{
+		return;
+	}
+	auto Address = [&](const TCHAR* Suffix) {
+		const FString Wrap = String(In, *(FString(Field) + Suffix));
+		return Wrap == TEXT("clamp") || Wrap == TEXT("black") ? TA_Clamp : Wrap == TEXT("mirror") ? TA_Mirror : TA_Wrap;
+	};
+	const TextureAddress X = Address(TEXT("WrapU")), Y = Address(TEXT("WrapV"));
+	const TextureFilter Filter = String(In, *(FString(Field) + TEXT("Filter"))) == TEXT("nearest") ? TF_Nearest : TF_Default;
+	if (Texture2D->AddressX == X && Texture2D->AddressY == Y && Texture2D->Filter == Filter)
+	{
+		return;
+	}
+	Texture2D->Modify();
+	Texture2D->AddressX = X;
+	Texture2D->AddressY = Y;
+	Texture2D->Filter = Filter;
+	Texture2D->PostEditChange();
+}
+
 /** Builds a material from Lila's inputs: parameters for the constants, texture parameters for the maps. */
 UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const TSharedPtr<FJsonObject>& In, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings)
@@ -210,6 +242,7 @@ UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const 
 		{
 			return nullptr;
 		}
+		ApplySampling(Texture, In, Field);
 		auto* E = Cast<UMaterialExpressionTextureSampleParameter2D>(UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionTextureSampleParameter2D::StaticClass(), -400, NextY()));
 		E->ParameterName = Param;
 		E->Texture = Texture;
@@ -230,6 +263,49 @@ UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const 
 	Material->OpacityMaskClipValue = float(Number(In, TEXT("opacityMaskClipValue"), 0.3333));
 
 	UMaterialExpressionTextureSampleParameter2D* BaseMap = Map(TEXT("baseColorMap"), TEXT("BaseColorMap"), ETextureUse::Color);
+	auto Opacity = [&] {
+		if (Material->BlendMode != BLEND_Opaque)
+		{
+			const EMaterialProperty Target = Material->BlendMode == BLEND_Masked ? MP_OpacityMask : MP_Opacity;
+			UMaterialExpression* Value = Scalar(TEXT("Opacity"), float(Number(In, TEXT("opacity"), 1.0)));
+			UMaterialEditingLibrary::ConnectMaterialProperty(BaseMap ? Multiply(BaseMap, TEXT("A"), Value) : Value, TEXT(""), Target);
+		}
+	};
+
+	// Lila's unlit model shows the base colour, plus emissive, with no lighting: Unreal's Unlit through Emissive Color.
+	if (String(In, TEXT("shadingModel")) == TEXT("unlit"))
+	{
+		Material->SetShadingModel(MSM_Unlit);
+		UMaterialExpression* Base = BaseMap ? static_cast<UMaterialExpression*>(BaseMap) : Vector(TEXT("BaseColor"), Color(In, TEXT("baseColor"), FLinearColor(0.5f, 0.5f, 0.5f)));
+		const TCHAR* BaseOut = BaseMap ? TEXT("RGB") : TEXT("");
+		const float Intensity = float(Number(In, TEXT("emissiveIntensity"), 1.0));
+		UMaterialExpression* Glow = nullptr;
+		const TCHAR* GlowOut = TEXT("");
+		if (UMaterialExpression* EmissiveMap = Map(TEXT("emissiveMap"), TEXT("EmissiveMap"), ETextureUse::Color))
+		{
+			Glow = Multiply(EmissiveMap, TEXT("RGB"), Scalar(TEXT("EmissiveIntensity"), Intensity));
+		}
+		else if (const FLinearColor Emissive = Color(In, TEXT("emissiveColor"), FLinearColor::Black) * Intensity; !Emissive.Equals(FLinearColor::Black))
+		{
+			Glow = Vector(TEXT("EmissiveColor"), Emissive);
+		}
+		if (Glow)
+		{
+			UMaterialExpression* Sum = UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionAdd::StaticClass(), -200, NextY());
+			UMaterialEditingLibrary::ConnectMaterialExpressions(Base, BaseOut, Sum, TEXT("A"));
+			UMaterialEditingLibrary::ConnectMaterialExpressions(Glow, GlowOut, Sum, TEXT("B"));
+			UMaterialEditingLibrary::ConnectMaterialProperty(Sum, TEXT(""), MP_EmissiveColor);
+		}
+		else
+		{
+			UMaterialEditingLibrary::ConnectMaterialProperty(Base, BaseOut, MP_EmissiveColor);
+		}
+		Opacity();
+		Material->PostEditChange();
+		Material->MarkPackageDirty();
+		return Material;
+	}
+
 	if (BaseMap)
 	{
 		UMaterialEditingLibrary::ConnectMaterialProperty(BaseMap, TEXT("RGB"), MP_BaseColor);
@@ -279,12 +355,7 @@ UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const 
 		}
 	}
 
-	if (Material->BlendMode != BLEND_Opaque)
-	{
-		const EMaterialProperty Target = Material->BlendMode == BLEND_Masked ? MP_OpacityMask : MP_Opacity;
-		UMaterialExpression* Opacity = Scalar(TEXT("Opacity"), float(Number(In, TEXT("opacity"), 1.0)));
-		UMaterialEditingLibrary::ConnectMaterialProperty(BaseMap ? Multiply(BaseMap, TEXT("A"), Opacity) : Opacity, TEXT(""), Target);
-	}
+	Opacity();
 
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
@@ -581,6 +652,7 @@ void SetStylisedParameters(UMaterialInstanceConstant* Instance, bool bToon, cons
 	{
 		if (UTexture* Texture = ImportTexture(BaseFile, TextureFolder, ETextureUse::Color, false, OutCreated, OutWarnings))
 		{
+			ApplySampling(Texture, In, TEXT("baseColorMap"));
 			UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(Instance, TEXT("BaseColorMap"), Texture);
 			UMaterialEditingLibrary::SetMaterialInstanceScalarParameterValue(Instance, TEXT("UseBaseColorMap"), 1.0f);
 		}

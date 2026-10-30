@@ -112,6 +112,11 @@ LILA_SCENE_API std::vector<fs::path> plannedFiles(scene::Graph& g, const std::ve
 LILA_SCENE_API SequenceOptions fromJson(const nlohmann::json& j);
 LILA_SCENE_API nlohmann::json toJson(const SequenceOptions& o);
 
-/** exportMeshSequence and exportAlembic. */
+/** Lila space to an Alembic or OBJ file's axes for an axis profile (ue5, ue6, generic): a rotation. */
+LILA_SCENE_API glm::dmat3 fileBasis(const std::string& profile);
+
+/** exportMeshSequence, exportAlembic and importAlembic. */
 LILA_SCENE_API void registerCommands();
+/** importAlembic and the abc file translator (AlembicImport.cpp). */
+void registerAlembicImport();
 } // namespace lila::seq

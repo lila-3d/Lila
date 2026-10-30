@@ -15,6 +15,8 @@
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
+#include "scene/Materials.h"
+#include "scene/MeshCache.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
@@ -671,7 +673,7 @@ void writeLightAttribute(Record& objects, int64_t id, const std::string& name, c
     attr.add("GeometryVersion").i32(124);
 }
 
-void writeMaterial(Record& objects, int64_t id, const std::string& name)
+void writeMaterial(Record& objects, int64_t id, const std::string& name, const ExportMaterial* m)
 {
     Record& mat = objects.add("Material");
     mat.i64(id).str(bin::objectName(name, "Material")).str("");
@@ -679,8 +681,55 @@ void writeMaterial(Record& objects, int64_t id, const std::string& name)
     mat.add("ShadingModel").str("lambert");
     mat.add("MultiLayer").i32(0);
     Record& props = mat.add("Properties70");
-    p3(props, "DiffuseColor", "Color", "", "A", glm::dvec3(0.8));
+    p3(props, "DiffuseColor", "Color", "", "A", m ? m->baseColor : glm::dvec3(0.8));
     pDouble(props, "DiffuseFactor", 1.0);
+    if (m && m->emissive != glm::dvec3(0.0))
+    {
+        p3(props, "EmissiveColor", "Color", "", "A", m->emissive);
+        pDouble(props, "EmissiveFactor", 1.0);
+    }
+}
+
+/** A file texture and the video clip it shows, as Maya writes them. */
+/** A texture's object name: its file's stem. */
+std::string textureName(const std::string& path)
+{
+    const size_t slash = path.find_last_of("/\\");
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    if (const size_t dot = name.rfind('.'); dot != std::string::npos && dot > 0)
+        name.resize(dot);
+    return name;
+}
+
+/** The file is written absolute in both its file names; readers fall back to the relative one. */
+void writeTexture(Record& objects, int64_t textureId, int64_t videoId, const std::string& name, const ExportTexture& t)
+{
+    Record& tex = objects.add("Texture");
+    tex.i64(textureId).str(bin::objectName(name, "Texture")).str("");
+    tex.add("Type").str("TextureVideoClip");
+    tex.add("Version").i32(202);
+    tex.add("TextureName").str(bin::objectName(name, "Texture"));
+    Record& props = tex.add("Properties70");
+    pBool(props, "UseMaterial", true);
+    // FBX wrap modes: 0 repeat, 1 clamp.
+    pEnum(props, "WrapModeU", t.clampU ? 1 : 0);
+    pEnum(props, "WrapModeV", t.clampV ? 1 : 0);
+    tex.add("Media").str(bin::objectName(name, "Video"));
+    tex.add("FileName").str(t.path);
+    tex.add("RelativeFilename").str(t.path);
+    tex.add("ModelUVTranslation").f64(0.0).f64(0.0);
+    tex.add("ModelUVScaling").f64(1.0).f64(1.0);
+    tex.add("Texture_Alpha_Source").str("None");
+    tex.add("Cropping").i32(0).i32(0).i32(0).i32(0);
+
+    Record& video = objects.add("Video");
+    video.i64(videoId).str(bin::objectName(name, "Video")).str("Clip");
+    video.add("Type").str("Clip");
+    Record& vp = video.add("Properties70");
+    vp.addP("Path", "KString", "XRefUrl", "").str(t.path);
+    video.add("UseMipMap").i32(0);
+    video.add("Filename").str(t.path);
+    video.add("RelativeFilename").str(t.path);
 }
 
 void writeHeader(Record& root, const std::string& creator)
@@ -863,7 +912,7 @@ void writeGlobalSettings(Record& root, const AxisDecl& a, double fps, int64_t sp
 
 struct ObjectCounts
 {
-    int models = 0, nulls = 0, limbs = 0, cameras = 0, lights = 0, lodGroups = 0, geometries = 0, materials = 0;
+    int models = 0, nulls = 0, limbs = 0, cameras = 0, lights = 0, lodGroups = 0, geometries = 0, materials = 0, textures = 0;
     int deformers = 0, poses = 0, stacks = 0, layers = 0, curveNodes = 0, curves = 0;
 };
 
@@ -871,8 +920,8 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
 {
     Record& defs = root.add("Definitions");
     defs.add("Version").i32(100);
-    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.lights + n.lodGroups + n.geometries + n.materials + n.deformers + n.poses + n.stacks + n.layers +
-                          n.curveNodes + n.curves);
+    defs.add("Count").i32(1 + n.models + n.nulls + n.limbs + n.cameras + n.lights + n.lodGroups + n.geometries + n.materials + 2 * n.textures +
+                          n.deformers + n.poses + n.stacks + n.layers + n.curveNodes + n.curves);
     auto type = [&](std::string_view name, int count, std::string_view tmpl) -> Record* {
         Record& t = defs.add("ObjectType");
         t.str(name);
@@ -922,6 +971,13 @@ void writeDefinitions(Record& root, const ObjectCounts& n)
         p->addP("ShadingModel", "KString", "", "").str("Lambert");
         p3(*p, "DiffuseColor", "Color", "", "A", glm::dvec3(0.8));
         pDouble(*p, "DiffuseFactor", 1.0);
+    }
+    if (n.textures)
+    {
+        Record* p = type("Texture", n.textures, "FbxFileTexture");
+        pEnum(*p, "WrapModeU", 0);
+        pEnum(*p, "WrapModeV", 0);
+        type("Video", n.textures, "");
     }
     if (n.deformers)
         type("Deformer", n.deformers, "");
@@ -1709,10 +1765,20 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     for (const auto& [i, bs] : morphed)
         take.morphWeights[i].assign(out.nodes[i].morphs->targets.size(), {});
     take.namedCurves.assign(curveSources.size(), {});
+    // Meshes a meshCache drives, unless a skin or morphs already carry their motion.
+    std::vector<size_t> cached;
+    for (size_t i = 0; i < count; ++i)
+        if (const ExportNode& e = out.nodes[i]; e.mesh && !e.skin && !e.morphs && scene::meshCache::find(graph, e.source) != scene::kNoNode)
+            cached.push_back(i);
+    take.meshPoints.assign(count, {});
     for (double t : take.times)
     {
         graph.setTime(t);
         graph.evaluate();
+        for (size_t i : cached)
+            if (const scene::MeshPtr m = scene::modifiers::exportMesh(graph, scene::instancing::root(graph, out.nodes[i].source));
+                m && m->pointCapacity() == out.nodes[i].mesh->pointCapacity())
+                take.meshPoints[i].emplace_back(m->positions().begin(), m->positions().end());
         for (size_t i = 0; i < count; ++i)
         {
             if (sampled[i])
@@ -1748,6 +1814,12 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     }
     graph.setTime(saved);
     graph.evaluate();
+    for (size_t i : cached)
+        if (take.meshPoints[i].size() != take.times.size())
+        {
+            out.warnings.push_back(std::format("{}: its point count changes over the range; its point cache is not exported", out.nodes[i].name));
+            take.meshPoints[i].clear();
+        }
     for (const auto& [i, bs] : morphed)
     {
         auto& perTarget = take.morphWeights[i];
@@ -1769,7 +1841,7 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
         auto& cams = take.cameras[i];
         if (std::all_of(cams.begin(), cams.end(), [&](const ExportCamera& c) { return c == *out.nodes[i].camera; }))
             cams.clear();
-        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty() || !cams.empty();
+        animated = animated || !samples.empty() || take.curves[i] || !take.morphWeights[i].empty() || !cams.empty() || !take.meshPoints[i].empty();
     }
     animated = animated || !curveSources.empty();
     if (animated || keep || opts.kind == ExportKind::Animation)
@@ -1804,6 +1876,41 @@ void warnDuplicateNames(scene::Graph& graph, ExportScene& out)
         else
             out.warnings.push_back(std::format("{} exported meshes are named '{}' ({}); importers may merge or rename them",
                                                ids.size(), key.second, list));
+    }
+}
+} // namespace
+
+namespace
+{
+/** ExportOptions::textures: the material behind every slot the exported meshes use. */
+void gatherMaterials(scene::Graph& graph, ExportScene& out)
+{
+    using namespace scene;
+    auto map = [](const Node& n, int attr) -> std::optional<ExportTexture> {
+        const std::string& stored = n.as<std::string>(attr);
+        if (stored.empty())
+            return std::nullopt;
+        const material::TextureSampling s = materials::sampling(n, attr);
+        // FBX has only repeat and clamp: mirror repeats, black clamps.
+        return ExportTexture{materials::resolvePath(stored), s.wrapU == material::TextureWrap::Clamp || s.wrapU == material::TextureWrap::Black,
+                             s.wrapV == material::TextureWrap::Clamp || s.wrapV == material::TextureWrap::Black};
+    };
+    for (const ExportNode& e : out.nodes)
+    {
+        if (!e.mesh)
+            continue;
+        for (const std::string& slot : e.mesh->materialNames())
+        {
+            const Node* n = materials::find(graph, slot);
+            if (!n || out.materials.count(slot))
+                continue;
+            ExportMaterial& m = out.materials[slot];
+            m.baseColor = n->as<glm::dvec3>(material::kBaseColor);
+            m.emissive = n->as<glm::dvec3>(material::kEmissiveColor) * n->as<double>(material::kEmissiveIntensity);
+            m.baseColorMap = map(*n, material::kBaseColorMap);
+            m.normalMap = map(*n, material::kNormalMap);
+            m.emissiveMap = map(*n, material::kEmissiveMap);
+        }
     }
 }
 } // namespace
@@ -1850,6 +1957,8 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
         g.walk(id, -1, rootInv, true, opts.children && !opts.childless.count(id));
     }
     warnDuplicateNames(graph, out);
+    if (opts.textures)
+        gatherMaterials(graph, out);
 
     if (opts.kind == ExportKind::Static || opts.kind == ExportKind::Sequence)
     {
@@ -2128,7 +2237,23 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
             if (added)
             {
                 it->second = nextId++;
-                writeMaterial(objects, it->second, slot);
+                auto m = scene.materials.find(slot);
+                writeMaterial(objects, it->second, slot, m == scene.materials.end() ? nullptr : &m->second);
+                if (m != scene.materials.end())
+                {
+                    const std::pair<const std::optional<ExportTexture>*, const char*> maps[] = {
+                        {&m->second.baseColorMap, "DiffuseColor"}, {&m->second.normalMap, "NormalMap"}, {&m->second.emissiveMap, "EmissiveColor"}};
+                    for (const auto& [map, prop] : maps)
+                    {
+                        if (!*map)
+                            continue;
+                        const int64_t textureId = nextId++, videoId = nextId++;
+                        writeTexture(objects, textureId, videoId, textureName((*map)->path), **map);
+                        connect(videoId, textureId);
+                        connectProp(textureId, it->second, prop);
+                        ++counts.textures;
+                    }
+                }
             }
             connect(it->second, modelIds[i]);
         }

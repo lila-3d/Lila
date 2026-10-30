@@ -75,14 +75,29 @@ bool isWhite(const float* f, int n)
     return true;
 }
 
-const char* wrapName(cgltf_wrap_mode w)
+material::TextureWrap wrapOf(cgltf_wrap_mode w)
 {
     switch (w)
     {
-    case cgltf_wrap_mode_clamp_to_edge: return "clamp to edge";
-    case cgltf_wrap_mode_mirrored_repeat: return "mirrored repeat";
-    default: return "repeat";
+    case cgltf_wrap_mode_clamp_to_edge: return material::TextureWrap::Clamp;
+    case cgltf_wrap_mode_mirrored_repeat: return material::TextureWrap::Mirror;
+    default: return material::TextureWrap::Repeat;
     }
+}
+
+/** A texture view's sampler; nearest when it magnifies without filtering (or, with no mag filter, minifies so). */
+material::TextureSampling samplingOf(const cgltf_texture_view& v)
+{
+    material::TextureSampling s;
+    const cgltf_sampler* sm = v.texture ? v.texture->sampler : nullptr;
+    if (!sm)
+        return s;
+    s.wrapU = wrapOf(sm->wrap_s);
+    s.wrapV = wrapOf(sm->wrap_t);
+    const int mag = int(sm->mag_filter), min = int(sm->min_filter);
+    if (mag == 9728 || (mag == 0 && (min == 9728 || min == 9984 || min == 9986)))
+        s.filter = material::TextureFilter::Nearest;
+    return s;
 }
 
 std::string lower(std::string s)
@@ -257,10 +272,6 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                 else if (!nearMat3(transformOf(*v), transformOf(*lead)))
                     r.warnings.push_back(std::format("material '{}': textures have different KHR_texture_transform; the {} one is baked into the UVs",
                                                      wanted, lead == views[0] ? "base color" : "first texture's"));
-                if (const cgltf_sampler* s = v->texture->sampler;
-                    s && (s->wrap_s != cgltf_wrap_mode_repeat || s->wrap_t != cgltf_wrap_mode_repeat))
-                    r.skipped.push_back(std::format("material '{}': {} / {} texture wrap (Lila textures repeat)", wanted, wrapName(s->wrap_s),
-                                                    wrapName(s->wrap_t)));
             }
         if (lead)
         {
@@ -308,6 +319,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
         const NodeId id = n->id();
         auto set = [&](int attr, PlugValue v) { graph.setValue({id, attr, -1}, std::move(v)); };
         auto mapPath = [&](const cgltf_texture_view& v) { return images.path(imageOf(v)); };
+        auto sample = [&](int mapAttr, const cgltf_texture_view& v) { materials::setSampling(graph, id, mapAttr, samplingOf(v)); };
         const std::string& name = slot.name;
 
         // Base color and opacity.
@@ -337,6 +349,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                         baseMap = p;
                 }
             set(kBaseColorMap, baseMap);
+            sample(kBaseColorMap, *baseView);
         }
         else
             set(kBaseColor, glm::dvec3(base));
@@ -380,6 +393,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                     for (size_t k = 0; k < px->rgba.size() && asIs; k += 4)
                         asIs = px->rgba[k] >= 0.999f;
                 }
+                sample(kOrmMap, pbr.metallic_roughness_texture);
                 if (asIs)
                     set(kOrmMap, mapPath(pbr.metallic_roughness_texture));
                 else if (px)
@@ -425,6 +439,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                             aoPath = p;
                     }
                 set(kAmbientOcclusionMap, aoPath);
+                sample(kAmbientOcclusionMap, gm.occlusion_texture);
             }
         }
 
@@ -451,12 +466,14 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                 }
             set(kNormalMap, normal);
             set(kNormalFormat, int64_t(NormalFormat::OpenGL));
+            sample(kNormalMap, gm.normal_texture);
         }
 
         // Emissive, with KHR_materials_emissive_strength.
         const glm::vec3 e(gm.emissive_factor[0], gm.emissive_factor[1], gm.emissive_factor[2]);
         const double strength = gm.has_emissive_strength ? double(gm.emissive_strength.emissive_strength) : 1.0;
-        if (const cgltf_image* img = imageOf(gm.emissive_texture))
+        // Unlit materials show only their base color.
+        if (const cgltf_image* img = gm.unlit ? nullptr : imageOf(gm.emissive_texture))
         {
             std::string emissive = mapPath(gm.emissive_texture);
             const float peak = std::max({e.r, e.g, e.b});
@@ -471,8 +488,9 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
                 }
             set(kEmissiveMap, emissive);
             set(kEmissiveIntensity, intensity);
+            sample(kEmissiveMap, gm.emissive_texture);
         }
-        else if (e != glm::vec3(0.0f))
+        else if (e != glm::vec3(0.0f) && !gm.unlit)
         {
             set(kEmissiveColor, glm::dvec3(e));
             set(kEmissiveIntensity, strength);
@@ -490,24 +508,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
         }
 
         if (gm.unlit)
-        {
-            // Lila has no unlit model: the surface emits its base color and reflects nothing.
-            if (!baseMap.empty())
-            {
-                set(kEmissiveMap, baseMap);
-                set(kEmissiveIntensity, double(1.0));
-                if (gm.alpha_mode == cgltf_alpha_mode_opaque)
-                    set(kBaseColorMap, std::string());
-            }
-            else
-                set(kEmissiveColor, glm::dvec3(base));
-            set(kBaseColor, glm::dvec3(0.0));
-            set(kSpecular, 0.0);
-            set(kRoughness, 1.0);
-            set(kMetallic, 0.0);
-            r.warnings.push_back(std::format("material '{}': KHR_materials_unlit approximated as emissive{}", name,
-                                             !baseMap.empty() && gm.alpha_mode != cgltf_alpha_mode_opaque ? " (its base color map stays lit for its alpha)" : ""));
-        }
+            set(kShadingModel, int64_t(ShadingModel::Unlit));
         for (const cgltf_texture_view* v : views)
             if (const cgltf_image* img = imageOf(*v); img && img->mime_type)
                 if (std::string mime = lower(img->mime_type); mime != "image/png" && mime != "image/jpeg")
@@ -550,6 +551,9 @@ MaterialSnapshot snapshotMaterial(scene::Graph& graph, const std::string& slot)
     m.twoSided = n->as<bool>(kTwoSided);
     m.uvSet = int(n->as<int64_t>(kUvSet));
     m.shadingModel = int(n->as<int64_t>(kShadingModel));
+    for (int map : materials::sampledMaps())
+        if (material::TextureSampling s = materials::sampling(*n, map); !s.isDefault())
+            m.sampling[map] = s;
     return m;
 }
 
@@ -560,6 +564,9 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     json mat = {{"name", m.name}};
     json pbr = json::object();
     const bool tex = opts.textures;
+    // Unlit materials write only their base color and opacity; the rest of the inputs mean nothing to KHR_materials_unlit.
+    const bool unlit = m.shadingModel == int(ShadingModel::Unlit);
+    const bool litTex = tex && !unlit;
     auto info = [&](int index) {
         json j = {{"index", index}};
         if (m.uvSet != 0)
@@ -575,7 +582,7 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     };
 
     const double alpha = m.blendMode == int(BlendMode::Opaque) ? 1.0 : std::clamp(m.opacity, 0.0, 1.0);
-    int baseTex = tex && !m.baseColorMap.empty() ? textures.file(m.baseColorMap) : -1;
+    int baseTex = tex && !m.baseColorMap.empty() ? textures.file(m.baseColorMap, m.samplingOf(kBaseColorMap)) : -1;
     if (baseTex >= 0)
     {
         pbr["baseColorTexture"] = info(baseTex);
@@ -588,22 +595,25 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     // ORM is glTF's layout already: roughness G, metallic B, and occlusion R read from the same texture.
     int mrTex = -1, occTex = -1;
     double metallic = m.metallic, roughness = m.roughness;
-    if (tex && !m.ormMap.empty())
+    if (litTex && !m.ormMap.empty())
     {
         if (!m.packedMro)
-            mrTex = occTex = textures.file(m.ormMap);
+            mrTex = occTex = textures.file(m.ormMap, m.samplingOf(kOrmMap));
         else
-            mrTex = occTex = textures.made("mro|" + m.ormMap, m.name + "_ORM", [&](Pixels& p) {
-                if (!load(m.ormMap, p))
-                    return false;
-                for (size_t k = 0; k < p.rgba.size(); k += 4)
-                    std::swap(p.rgba[k], p.rgba[k + 2]);
-                return true;
-            });
+            mrTex = occTex = textures.made(
+                "mro|" + m.ormMap, m.name + "_ORM",
+                [&](Pixels& p) {
+                    if (!load(m.ormMap, p))
+                        return false;
+                    for (size_t k = 0; k < p.rgba.size(); k += 4)
+                        std::swap(p.rgba[k], p.rgba[k + 2]);
+                    return true;
+                },
+                m.samplingOf(kOrmMap));
         if (mrTex >= 0)
             metallic = roughness = 1.0;
     }
-    else if (tex && (!m.metallicMap.empty() || !m.roughnessMap.empty()))
+    else if (litTex && (!m.metallicMap.empty() || !m.roughnessMap.empty()))
     {
         mrTex = textures.made("mr|" + m.metallicMap + "|" + m.roughnessMap + "|" + m.occlusionMap, m.name + "_ORM", [&](Pixels& p) {
             Pixels metal, rough, ao;
@@ -628,7 +638,7 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
                         t[2] = metal.sample(u, v).r;
                 }
             return true;
-        });
+        }, m.samplingOf(!m.metallicMap.empty() ? kMetallicMap : kRoughnessMap));
         if (mrTex >= 0)
         {
             if (!m.metallicMap.empty())
@@ -639,8 +649,8 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
                 occTex = mrTex;
         }
     }
-    else if (tex && !m.occlusionMap.empty())
-        occTex = textures.file(m.occlusionMap);
+    else if (litTex && !m.occlusionMap.empty())
+        occTex = textures.file(m.occlusionMap, m.samplingOf(kAmbientOcclusionMap));
     pbr["metallicFactor"] = std::clamp(metallic, 0.0, 1.0);
     pbr["roughnessFactor"] = std::clamp(roughness, 0.0, 1.0);
     if (mrTex >= 0)
@@ -649,28 +659,34 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
     if (occTex >= 0)
         mat["occlusionTexture"] = info(occTex);
 
-    if (tex && !m.normalMap.empty())
+    if (litTex && !m.normalMap.empty())
     {
-        const int n = m.normalOpenGl ? textures.file(m.normalMap)
-                                     : textures.made("dx|" + m.normalMap, m.name + "_Normal", [&](Pixels& p) {
-                                           if (!load(m.normalMap, p))
-                                               return false;
-                                           for (size_t k = 0; k < p.rgba.size(); k += 4)
-                                               p.rgba[k + 1] = 1.0f - p.rgba[k + 1];
-                                           return true;
-                                       });
+        const material::TextureSampling s = m.samplingOf(kNormalMap);
+        const int n = m.normalOpenGl ? textures.file(m.normalMap, s)
+                                     : textures.made(
+                                           "dx|" + m.normalMap, m.name + "_Normal",
+                                           [&](Pixels& p) {
+                                               if (!load(m.normalMap, p))
+                                                   return false;
+                                               for (size_t k = 0; k < p.rgba.size(); k += 4)
+                                                   p.rgba[k + 1] = 1.0f - p.rgba[k + 1];
+                                               return true;
+                                           },
+                                           s);
         if (n >= 0)
             mat["normalTexture"] = info(n);
     }
 
     glm::dvec3 emissive = m.emissiveColor * m.emissiveIntensity;
-    if (int e = tex && !m.emissiveMap.empty() ? textures.file(m.emissiveMap) : -1; e >= 0)
+    if (int e = litTex && !m.emissiveMap.empty() ? textures.file(m.emissiveMap, m.samplingOf(kEmissiveMap)) : -1; e >= 0)
     {
         mat["emissiveTexture"] = info(e);
         emissive = glm::dvec3(m.emissiveIntensity);
     }
     const double peak = std::max({emissive.r, emissive.g, emissive.b});
-    if (peak > 0.0)
+    if (unlit && (peak > 0.0 || !m.emissiveMap.empty()))
+        warnings.push_back(std::format("material '{}': KHR_materials_unlit has no emissive; it is left out", m.name));
+    else if (peak > 0.0)
     {
         const double strength = std::max(1.0, peak);
         const glm::dvec3 factor = emissive / strength;
@@ -693,7 +709,7 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
         mat["doubleSided"] = true;
 
     // Unreal's specular 0.5 is F0 0.04, glTF's default; the rest scales F0 through KHR_materials_specular.
-    if (std::abs(m.specular - 0.5) > 1e-6)
+    if (!unlit && std::abs(m.specular - 0.5) > 1e-6)
     {
         const double k = std::max(0.0, m.specular) / 0.5;
         json spec = {{"specularFactor", std::min(k, 1.0)}};
@@ -702,7 +718,15 @@ json materialJson(const MaterialSnapshot& m, TextureSink& textures, const Export
         mat["extensions"]["KHR_materials_specular"] = spec;
         extensionsUsed.insert("KHR_materials_specular");
     }
-    if (m.shadingModel != int(ShadingModel::DefaultLit))
+    if (unlit)
+    {
+        // Readers without the extension fall back to a dull non-metal, as the extension's spec suggests.
+        mat["extensions"]["KHR_materials_unlit"] = json::object();
+        extensionsUsed.insert("KHR_materials_unlit");
+        mat["pbrMetallicRoughness"]["metallicFactor"] = 0.0;
+        mat["pbrMetallicRoughness"]["roughnessFactor"] = 0.9;
+    }
+    else if (m.shadingModel != int(ShadingModel::DefaultLit))
         warnings.push_back(std::format("material '{}': its stylised shading model is written as default lit", m.name));
     return mat;
 }

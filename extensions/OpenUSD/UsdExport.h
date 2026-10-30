@@ -79,6 +79,8 @@ struct ExportResult
     pxr::UsdStageRefPtr stage;
     std::vector<std::pair<scene::NodeId, pxr::SdfPath>> prims;
     std::map<std::string, pxr::SdfPath> materials;
+    /** inMemory: each Skeleton prim written, with its joints' nodes in the order of its joints attr (none when synthetic). */
+    std::vector<std::pair<pxr::SdfPath, std::vector<scene::NodeId>>> skeletons;
 };
 
 /** Main thread: snapshots the scene (fbx::gatherExport) and writes it as a USD stage. */

@@ -502,6 +502,10 @@ SlotNames importMaterials(scene::Graph& graph, const ufbx_scene& fbx)
             {
                 std::replace(path.begin(), path.end(), '\\', '/');
                 set(attr, path);
+                material::TextureSampling s;
+                s.wrapU = map->texture->wrap_u == UFBX_WRAP_CLAMP ? material::TextureWrap::Clamp : material::TextureWrap::Repeat;
+                s.wrapV = map->texture->wrap_v == UFBX_WRAP_CLAMP ? material::TextureWrap::Clamp : material::TextureWrap::Repeat;
+                materials::setSampling(graph, n->id(), attr, s);
             }
         // A texture in the opacity slot is the base color's alpha in Unreal terms.
         if (pbr.opacity.texture)

@@ -659,6 +659,17 @@ def bakeMapInfo(project: str | None = None, map: str | None = None, udim: int | 
 def bakeMaps() -> Any:
     """The maps the baker implements: id, label, default suffix, how texels resolve (average, exact, coverage) and options."""
 
+def bakeMeshCache(*objects: Any, start: int | None = None, end: int | None = None, step: int | None = None, name: str | None = None) -> Any:
+    """Record each mesh's points over a frame range into a meshCache deformer on top of its stack, which then plays them back as they were (turn it off to see the live stack again). Returns the deformers.
+
+    Args:
+        objects: meshes.
+        start: First frame; the playback start by default.
+        end: Last frame; the playback end by default.
+        step: Frames between samples. Default 1.
+        name: Name for the deformers.
+    """
+
 def bakeModifierStack(*objects: Any) -> Any:
     """Bake meshes to their current result, deleting the generator and modifiers feeding them. Curves likewise keep what their history makes and lose the history; other objects are skipped.
 
@@ -1440,7 +1451,7 @@ def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | Non
         empty: Make it with no members, whatever is selected. Short form e. Default False.
     """
 
-def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, bc: Sequence[float] | None = None) -> Any:
+def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, bc: Sequence[float] | None = None) -> Any:
     """Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.
 
     Args:
@@ -1466,7 +1477,7 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         ormMap: Packed occlusion/roughness/metallic texture path.
         packedLayout: orm or mro: the packed map's channel order.
         emissiveMap: Texture path.
-        shadingModel: Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon (stepped ramp with tinted light and shadow) or foliage (soft gradient shading, lit through).
+        shadingModel: Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon (stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through) or unlit (the base colour as it is, plus emissive, with no lighting).
         painterlyStrength: Painterly: scales the whole effect; 0 shades exactly like defaultLit.
         strokeNormal: Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.
         strokeScale: Painterly: size of one stroke sheet tile, cm (UV mode: tiles per UV unit is 100 / this).
@@ -1498,6 +1509,27 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         foliageTopHighlight: Foliage: brightens surfaces facing up.
         foliageTranslucency: Foliage: light passing through toward the camera from behind.
         foliageWrap: Foliage: wraps the light around the form, 0 to 1, for soft clumps.
+        baseColorMapWrapU: What baseColorMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        baseColorMapWrapV: What baseColorMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        baseColorMapFilter: How baseColorMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        metallicMapWrapU: What metallicMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        metallicMapWrapV: What metallicMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        metallicMapFilter: How metallicMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        roughnessMapWrapU: What roughnessMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        roughnessMapWrapV: What roughnessMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        roughnessMapFilter: How roughnessMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        normalMapWrapU: What normalMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        normalMapWrapV: What normalMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        normalMapFilter: How normalMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        ambientOcclusionMapWrapU: What ambientOcclusionMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        ambientOcclusionMapWrapV: What ambientOcclusionMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        ambientOcclusionMapFilter: How ambientOcclusionMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        ormMapWrapU: What ormMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        ormMapWrapV: What ormMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        ormMapFilter: How ormMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
+        emissiveMapWrapU: What emissiveMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        emissiveMapWrapV: What emissiveMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
+        emissiveMapFilter: How emissiveMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
     """
 
 def createMesh(points: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, uvs: Sequence[Any] | None = None, name: str | None = None, *, n: str | None = None) -> Any:
@@ -2253,7 +2285,7 @@ def exportDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         tolerance: cm, for curves written as polylines. Short form tol. Default 0.01.
     """
 
-def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
+def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, textures: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
     """Export the evaluated meshes and transforms to a binary FBX 7.4 file. Objects default to the selection (or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and SOCKET_ empties work in Unreal. kind=skeletal writes joints, skins (bind pose mesh, clusters, BindPose), morph targets (in-betweens as their own targets) with their weight curves, driven channel curveNames as named curves on the root joint, and the animation baked over the range; kind=animation writes only the skeleton and its curves. kind=sequence writes cameras and transforms with their animation and no meshes, for Unreal Sequencer's Import FBX: cameras go out as FBX cameras (focal length aperture mode, film back, clipping, focal length and clipping curves) and arrive as CineCameras. Cameras are written as FBX cameras in every kind. start/end are frames. Returns the path.
 
     Args:
@@ -2275,6 +2307,7 @@ def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None
         children: Include the descendants of the given objects. Default True.
         smoothingGroups: Write edge smoothing (hard and soft edges). Short form sg. Default True.
         compress: Deflate the larger arrays as the FBX SDK does; False writes them raw. Default True.
+        textures: Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes (repeat or clamp). Off writes plain named materials. Default False.
         units: File units: cm, m, mm, in or ft. Lengths are scaled to them. Short form u. One of 'cm', 'm', 'mm', 'in', 'ft'. Default 'cm'.
         selectionOnly: Without objects: the selection, or every root when False. Short form sl. Default True.
     """
@@ -2293,7 +2326,7 @@ def exportGltf(*objects: Any, binary: bool | None = None, embedImages: bool | No
 
     Meshes go out triangulated as the viewport splits them, one primitive per material slot, with normals, MikkTSpace tangents, every UV set (flipped to glTF's V-down) and every color set. Skinned meshes go out in their bind pose with JOINTS_n/WEIGHTS_n sets (four influences each, up to maxInfluences) and inverse bind matrices; morph targets with position and normal deltas (sparse where few points move), names in extras.targetNames and their weights. Each take becomes one animation (takes=, or the current animation over start/end): sampled every frame and thinned where interpolation reproduces the samples, translate and scale curves written as their own keys with bakeAnimation=False. Cameras keep their field of view, aspect and clipping.
 
-    Materials go out metallic-roughness: base color and opacity, ORM maps shared as glTF's metallic-roughness and occlusion textures (other layouts and separate maps repacked), DirectX normal maps green-flipped to OpenGL, emissive with KHR_materials_emissive_strength above 1, specular through KHR_materials_specular, alpha mode, cutoff and double sided. Textures that aren't PNG or JPEG are converted to PNG.
+    Materials go out metallic-roughness: base color and opacity, ORM maps shared as glTF's metallic-roughness and occlusion textures (other layouts and separate maps repacked), DirectX normal maps green-flipped to OpenGL, emissive with KHR_materials_emissive_strength above 1, specular through KHR_materials_specular, alpha mode, cutoff and double sided; unlit materials as KHR_materials_unlit with their base color. Each map's wrap and filter go in its texture's sampler (black borders clamp). Textures that aren't PNG or JPEG are converted to PNG.
 
     draco=True compresses every primitive with KHR_draco_mesh_compression (then required to read the file), quantized per the dracoBits flags: positions, normals, UVs, colors and generic attributes (tangents, skin weights; joint indices stay exact). Morph targets stay uncompressed accessors, as the extension requires, with the points encoded in order so they still line up. Returns the path.
 
@@ -3292,6 +3325,19 @@ def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = 
         locked: Not pickable in the viewport (reference mode). Short form lk.
     """
 
+def importAlembic(*objects: Any, profile: str | None = None, scale: float | None = None, parent: str | None = None, setPlayback: bool | None = None, report: bool | None = None, select: bool | None = None, ax: str | None = None, sc: float | None = None, p: str | None = None) -> Any:
+    """Import an Alembic (.abc) file's PolyMeshes as meshes, each placed through its transforms at its first sample. A mesh whose points move over time gets a meshCache deformer playing every sample (interpolated between them); one whose topology changes keeps its first sample. Returns the new mesh names, or with report=True a dict of nodes, meshCaches, start, end and warnings.
+
+    Args:
+        objects: path.
+        profile: Axis profile the file was written in, as exportAlembic's: ue5, ue6 or generic (the scene's axes). Short form ax. One of 'ue5', 'ue6', 'generic'. Default 'ue5'.
+        scale: Multiplies every length (10 undoes an export at 0.1). Short form sc. Default 1.0.
+        parent: Parent the new meshes under this node. Short form p.
+        setPlayback: Set the playback range to the caches' samples. Default True.
+        report: Return the import report instead of just the names. Default False.
+        select: Select the new meshes. Default True.
+    """
+
 def importDeformerWeights(*objects: Any, file: str | None = None, byId: bool | None = None, layer: int | None = None, mesh: str | None = None, f: str | None = None) -> Any:
     """Read a weight map written by exportDeformerWeights onto a deformer (or a field's painted layer): by point id when the point counts match, else by closest surface point to the exported mesh.
 
@@ -3345,7 +3391,7 @@ def importGltf(*objects: Any, parent: str | None = None, skins: bool | None = No
 
     Each mesh becomes one Lila mesh, its primitives becoming material slots, with normals (hard edges where they split), tangents, every UV set (flipped to Lila's V-up) and every vertex color set; vertices split for seams weld back into points. Skins become skinClusters on joints with every JOINTS_n/WEIGHTS_n influence and the inverse bind matrices; a joint's rest rotation goes into its jointOrient. Morph targets become a morph with their names and default weights. Animation channels become curves: LINEAR and STEP keys exactly, CUBICSPLINE with its tangents (rotations sampled every frame); with several animations each becomes a take, the first active. Cameras keep their field of view and clipping.
 
-    Materials become material nodes: base color and alpha mode, metallic and roughness (packed into an ORM map, written as a new image when the file's layout differs), occlusion, emissive with KHR_materials_emissive_strength, normal map (kept OpenGL style), double sided, KHR_materials_ior/specular as specular, KHR_texture_transform baked into the UVs, and KHR_materials_unlit approximated as emissive. Embedded and converted images are written to textureDir. KHR_mesh_quantization, sparse accessors, EXT_meshopt_compression and KHR_draco_mesh_compression are decoded (a Draco primitive that fails to decode falls back to its uncompressed data when the file has it). KHR_lights_punctual lights come in as lights, intensity in candela or lux.
+    Materials become material nodes: base color and alpha mode, metallic and roughness (packed into an ORM map, written as a new image when the file's layout differs), occlusion, emissive with KHR_materials_emissive_strength, normal map (kept OpenGL style), double sided, KHR_materials_ior/specular as specular, KHR_texture_transform baked into the UVs, KHR_materials_unlit as the unlit shading model, and each texture's sampler as its map's wrap and filter. Embedded and converted images are written to textureDir. KHR_mesh_quantization, sparse accessors, EXT_meshopt_compression and KHR_draco_mesh_compression are decoded (a Draco primitive that fails to decode falls back to its uncompressed data when the file has it). KHR_lights_punctual lights come in as lights, intensity in candela or lux.
 
     Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, lights, morphs, materials, images, takes, take, fps, start, end, curves, skipped, warnings and errors.
 
@@ -3982,6 +4028,13 @@ def mergeAnimLayers(*objects: Any) -> Any:
 
     Args:
         objects: layers.
+    """
+
+def meshCacheInfo(*objects: Any) -> Any:
+    """A meshCache's samples: {points, samples, start, end} (seconds). Give the deformer or a mesh with one.
+
+    Args:
+        objects: meshCache or mesh.
     """
 
 def meshCheck(*objects: Any, expectShells: int | None = None, maxTriangles: int | None = None) -> Any:
@@ -6450,13 +6503,17 @@ def setLoopKey(*objects: Any, attribute: Any | None = None, time: float | None =
         snapRange: Move the playback range end to the loop key. Short form sr. Default True.
     """
 
-def setMaterialTexture(*objects: Any, channel: str | None = None, path: str | None = None, c: str | None = None, p: str | None = None) -> Any:
-    """Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm, mro (the packed map with the MRO layout) or emissive. Stored relative to the workspace root (or the scene folder without one).
+def setMaterialTexture(*objects: Any, channel: str | None = None, path: str | None = None, wrap: str | None = None, wrapU: str | None = None, wrapV: str | None = None, filter: str | None = None, c: str | None = None, p: str | None = None) -> Any:
+    """Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm, mro (the packed map with the MRO layout) or emissive. Stored relative to the workspace root (or the scene folder without one). wrap, wrapU, wrapV and filter set how it is sampled; given without path they change only that.
 
     Args:
         objects: material.
         channel: Texture channel. Short form c.
         path: Image file; empty clears. Short form p.
+        wrap: Both wrap modes. One of 'repeat', 'clamp', 'mirror', 'black'.
+        wrapU: Wrap along U. One of 'repeat', 'clamp', 'mirror', 'black'.
+        wrapV: Wrap along V. One of 'repeat', 'clamp', 'mirror', 'black'.
+        filter: linear or nearest. One of 'linear', 'nearest'.
     """
 
 def setMembers(*objects: Any, nodes: bool | None = None) -> Any:

@@ -143,7 +143,7 @@ QWidget* stagePanel(NodeId id)
     for (const json& s : info["warnings"])
         warnings += (warnings.empty() ? "" : "\n") + s.get<std::string>();
     if (!warnings.empty())
-        v->addWidget(wrapped(qs("Not written at the last save:\n" + warnings), w));
+        v->addWidget(wrapped(qs("At the last save:\n" + warnings), w));
     return w;
 }
 
@@ -164,7 +164,10 @@ QWidget* primPanel(NodeId id)
     std::string schemas;
     for (const json& s : info["schemas"])
         schemas += (schemas.empty() ? "" : ", ") + s.get<std::string>();
-    v->addWidget(wrapped(qs(info["prim"].get<std::string>() + "  (" + info["type"].get<std::string>() + (schemas.empty() ? "" : "; " + schemas) + ")"), w));
+    const std::string level = info.value("level", std::string());
+    v->addWidget(wrapped(qs(info["prim"].get<std::string>() + (level.empty() ? "" : " in " + level) + "  (" + info["type"].get<std::string>() +
+                            (schemas.empty() ? "" : "; " + schemas) + ")"),
+                         w));
     const bool locked = info.value("instanceProxy", false);
     if (locked)
         v->addWidget(wrapped("Inside an instance: its properties can't be edited here.", w));
@@ -173,6 +176,9 @@ QWidget* primPanel(NodeId id)
     for (const json& p : info["properties"])
     {
         const std::string name = p["name"].get<std::string>(), type = p.value("type", std::string());
+        // Schema properties nobody authored and that hold nothing would only be empty rows.
+        if (type == "rel" ? p["targets"].empty() : p["value"].is_null() && !p.value("authored", false))
+            continue;
         auto* edit = new QLineEdit(w);
         std::string value;
         if (type == "rel")
@@ -183,6 +189,7 @@ QWidget* primPanel(NodeId id)
         else if (p["value"].is_string())
             value = p["value"].get<std::string>();
         edit->setText(qs(value));
+        edit->setCursorPosition(0);
         edit->setToolTip(qs(type + (p.value("custom", false) ? " (custom)" : "") +
                             (p.value("timeSamples", 0) > 0 ? ", time sampled: edits set a sample at the current time" : "")));
         edit->setReadOnly(locked || p.value("truncated", false));

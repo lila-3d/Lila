@@ -6,12 +6,15 @@
 #include "geo/Mesh.h"
 #include "geo/ObjIO.h"
 #include "geo/Primitives.h"
+#include "io/FileTranslators.h"
 #include "math/Unreal.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Node.h"
+#include "scene/Anim.h"
 #include "scene/SceneCommands.h"
+#include "scene/Transform.h"
 #include "seq/Alembic.h"
 #include "seq/MeshSequence.h"
 #include "seq/Vat.h"
@@ -35,6 +38,7 @@ void setup()
         ops::registerBuiltins();
         scene::types::registerBuiltins();
         scene::registerCommands();
+        io::translators::registerCommands();
         seq::registerCommands();
         return true;
     }();
@@ -198,6 +202,91 @@ TEST_CASE("Alembic round trip: a sample per frame with points, faces, normals, U
     CHECK_FALSE(again[0].colors);
 
     CHECK(seq::abc::read(dir / "missing.abc").empty());
+    fs::remove_all(dir);
+}
+
+TEST_CASE("importAlembic brings a mesh cache back as a mesh with a meshCache deformer, undoably")
+{
+    setup();
+    const std::string box = animatedBox();
+    std::vector<glm::dvec3> world[3];
+    scene::Graph& g = scene::Graph::current();
+    for (int f = 1; f <= 3; ++f)
+    {
+        g.setTime(f / 30.0);
+        g.evaluate();
+        const scene::Node* n = g.find(box);
+        const glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        for (const glm::dvec3& p : n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh)->positions())
+            world[f - 1].push_back(glm::dvec3(w * glm::dvec4(p, 1.0)));
+    }
+    fs::path dir = tempDir("abcimport");
+    const fs::path file = dir / "box.abc";
+    ops::execute("exportAlembic", {{"args", {box}}, {"path", file.generic_string()}, {"scale", 0.1}, {"profile", "ue5"}});
+
+    ops::execute("newScene", json::object());
+    json r = ops::execute("importAlembic", {{"args", {file.generic_string()}}, {"scale", 10.0}, {"report", true}});
+    INFO(r.dump());
+    REQUIRE(r["nodes"].size() == 1);
+    REQUIRE(r["meshCaches"].size() == 1);
+    CHECK(r["start"].get<double>() == doctest::Approx(1.0 / 30.0));
+    CHECK(r["end"].get<double>() == doctest::Approx(3.0 / 30.0));
+    CHECK(scene::anim::playback().maxTime == doctest::Approx(3.0 / 30.0));
+    const std::string name = r["nodes"][0];
+    // The exporter triangulates; the points stay as they were.
+    for (int f = 1; f <= 3; ++f)
+    {
+        CAPTURE(f);
+        g.setTime(f / 30.0);
+        g.evaluate();
+        const scene::MeshPtr m = g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        REQUIRE(m);
+        REQUIRE(m->pointCapacity() == world[f - 1].size());
+        for (size_t p = 0; p < world[f - 1].size(); ++p)
+            CHECK(glm::length(m->position(geo::Index(p)) - world[f - 1][p]) < 1e-3);
+    }
+    g.setTime(2.0 / 30.0);
+    g.evaluate();
+    CHECK(g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh)->bounds().center().y == doctest::Approx(100.0).epsilon(1e-4));
+
+    ops::execute("undo", json::object());
+    CHECK(!g.find(name));
+
+    // Through File > Import, by extension.
+    json viaTranslator = ops::execute("importFile", {{"args", {file.generic_string()}}});
+    CHECK(g.find(name));
+    (void)viaTranslator;
+    g.setTime(0.0);
+    fs::remove_all(dir);
+}
+
+TEST_CASE("importAlembic keeps a mesh whose topology changes at its first sample")
+{
+    setup();
+    ops::execute("newScene", json::object());
+    fs::path dir = tempDir("abcgrow");
+    seq::abc::Writer w;
+    seq::abc::WriteOptions wo;
+    wo.fps = 24.0;
+    w.open(dir / "grow.abc", wo);
+    geo::Mesh small = geo::makeCube();
+    geo::CubeOptions co;
+    co.subdivX = 2;
+    geo::Mesh big = geo::makeCube(co);
+    w.addFrame({"Grow"}, {&small});
+    w.addFrame({"Grow"}, {&big});
+    w.close();
+    json r = ops::execute("importAlembic", {{"args", {(dir / "grow.abc").generic_string()}}, {"report", true}, {"profile", "generic"}});
+    INFO(r.dump());
+    REQUIRE(r["nodes"].size() == 1);
+    CHECK(r["meshCaches"].empty());
+    REQUIRE(r["warnings"].size() == 1);
+    CHECK(r["warnings"][0].get<std::string>().find("topology changes") != std::string::npos);
+    scene::Graph::current().evaluate();
+    const scene::MeshPtr grown = scene::Graph::current().find(r["nodes"][0].get<std::string>())->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    REQUIRE(grown);
+    CHECK(grown->pointCapacity() == 8);
+    CHECK_THROWS_AS(ops::execute("importAlembic", {{"args", {(dir / "missing.abc").generic_string()}}}), CommandError);
     fs::remove_all(dir);
 }
 

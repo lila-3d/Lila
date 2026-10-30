@@ -5,6 +5,7 @@
 #include "io/FileTranslators.h"
 #include "io/SceneFile.h"
 #include "scene/Anim.h"
+#include "scene/MeshCache.h"
 #include "scene/Modifiers.h"
 #include "scene/Skin.h"
 #include "ops/Undo.h"
@@ -127,6 +128,35 @@ TEST_CASE("usd stage: opens live under a usdStage node, and saving without edits
     for (NodeId id : graph().nodes())
         found = found || graph().node(id)->type().name == "usdStage";
     CHECK(found);
+}
+
+TEST_CASE("usd stage: time-sampled points play through a mesh cache, and saving without edits writes nothing")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("pointcache");
+    const fs::path src = copyFixture(dir, "pointcache.usda");
+    const std::string before = readAll(src);
+    json r = openStage(src);
+    INFO(r.dump());
+    const std::string stage = r["stage"];
+    const NodeId cache = meshCache::find(graph(), node("Flag").id());
+    REQUIRE(cache != kNoNode);
+    graph().setTime(0.5);
+    MeshPtr m = outMesh("Flag");
+    REQUIRE(m);
+    double top = 0.0;
+    for (const glm::dvec3& p : m->positions())
+        top = std::max(top, p.z);
+    CHECK(top == doctest::Approx(4.0));
+    graph().setTime(0.0);
+
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "over"));
+    CHECK(readAll(src) == before);
+    reopen(dir / "scene.lila");
+    CHECK(meshCache::find(graph(), node("Flag").id()) != kNoNode);
+    CHECK(meshCache::samples(graph(), meshCache::find(graph(), node("Flag").id()))->sampleCount() == 3);
 }
 
 TEST_CASE("usd stage: transforms and their animation are written as overs, survive a reopen and go out in a shot")
@@ -275,7 +305,7 @@ TEST_CASE("usd stage: material edits go over their material prims, new materials
     CHECK(near(materials::find(graph(), "Red")->as<glm::dvec3>(material::kBaseColor), {0, 0, 1}, 1e-6));
 }
 
-TEST_CASE("usd stage: new objects under the stage become prims, renames keep the link, reparenting warns")
+TEST_CASE("usd stage: new objects under the stage become prims, renames keep the link")
 {
     UpAxisScope axis(math::UpAxis::Z);
     fresh();
@@ -287,7 +317,6 @@ TEST_CASE("usd stage: new objects under the stage become prims, renames keep the
     graph().setValue({added->id(), Transform::kTranslate, -1}, glm::dvec3(1, 2, 3));
     graph().rename(node("Lamp").id(), "Light");
     setTranslate("Light", {0, 25, 0});
-    graph().setParent(node("Chair").id(), node("Box").id());
     saveAs(dir / "scene.lila");
     const json i = info(stage);
     const std::string text = i["edits"];
@@ -296,7 +325,7 @@ TEST_CASE("usd stage: new objects under the stage become prims, renames keep the
     CHECK(prop("Pebble", "xformOp:translate") == "(1, 2, 3)");
     CHECK(has(text, "over \"Lamp\""));
     CHECK(prop("Light", "xformOp:translate") == "(0, 25, 0)");
-    CHECK(warned(i["warnings"], "another parent"));
+    CHECK(i["warnings"].empty());
 
     // A new object deleted leaves nothing behind; undone, it is written again.
     run("delete", {{"args", {"Pebble"}}});
@@ -468,27 +497,408 @@ TEST_CASE("usd stage: extract turns an object into a plain Lila object and deact
     CHECK_FALSE(graph().find(stage + "|World|Box"));
 }
 
-TEST_CASE("usd stage: joint edits aren't written, and saving lists them")
+namespace
+{
+fs::path writeRig(const fs::path& dir);
+
+double rotateZ(const std::string& joint) { return node(joint).as<glm::dvec3>(Transform::kRotate).z; }
+
+/** The stage as another tool sees it: its edits written as a shot over the source and opened anew, in a new scene. */
+void openShot(const std::string& stage, const fs::path& dir)
+{
+    const fs::path shot = dir / "shot.usda";
+    run("usdStageWriteShot", {{"args", {shot.generic_string(), stage}}});
+    fresh();
+    openStage(shot);
+}
+} // namespace
+
+TEST_CASE("usd stage: an object moved to another parent moves its prim, and moving it back puts it where it was")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("reparent");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string stage = openStage(src)["stage"];
+    const glm::dmat4 box = world("Box");
+    run("parent", {{"args", {"Box", "Lamp"}}});
+    setTranslate("Chair", {0, -30, 0});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "prepend references = </World/Box>"));
+    CHECK(has(text, "over \"Box\" (\n        active = false"));
+    CHECK(run("usdStagePrim", {{"args", {"Box"}}})["prim"] == "/World/Lamp/Box");
+    CHECK(run("usdStagePrim", {{"args", {"Geo"}}})["prim"] == "/World/Lamp/Box/Geo");
+    CHECK(!warned(i["warnings"], "move isn't written"));
+
+    // Seen afresh, it sits under its new parent where it was, still bound to the stage's materials.
+    openShot(stage, dir);
+    REQUIRE(graph().find("Lamp|Box|Geo"));
+    CHECK_FALSE(graph().find("World|Box"));
+    CHECK(near(world("Box"), box, 1e-9));
+    bool red = false;
+    for (const auto& [slot, faces] : materials::slotUsage(*outMesh("Geo")))
+        red = red || slot == "Red";
+    CHECK(red);
+
+    // Edits after the move land on the moved prim, and survive a reopen.
+    reopen(dir / "scene.lila");
+    setTranslate("Box", {1, 2, 3});
+    saveAs(dir / "scene.lila");
+    reopen(dir / "scene.lila");
+    CHECK(near(translateOf("Box"), {1, 2, 3}, 1e-9));
+    CHECK(prop("Box", "xformOp:translate") == "(1, 2, 3)");
+
+    // Moved back, its edits go onto the original prim, which comes back.
+    run("parent", {{"args", {"Box", "World"}}});
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(!has(text, "references"));
+    CHECK(!has(text, "active = false"));
+    CHECK(run("usdStagePrim", {{"args", {"Box"}}})["prim"] == "/World/Box");
+    openShot(stage, dir);
+    REQUIRE(graph().find("World|Box|Geo"));
+    CHECK_FALSE(graph().find("Lamp|Box"));
+    CHECK(near(glm::dvec3(world("Box")[3]), {1, 22, 3}, 1e-9));
+    reopen(dir / "scene.lila");
+
+    // An object only the edit layer has moves as it is; undone, it moves back.
+    addMesh("Pebble", geo::makeCube({}), node("World").id());
+    saveAs(dir / "scene.lila");
+    run("parent", {{"args", {"Pebble", "Chair"}}});
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "</World/Pebble>"));
+    CHECK(run("usdStagePrim", {{"args", {"Pebble"}}})["prim"] == "/World/Chair/Pebble");
+    run("undo");
+    saveAs(dir / "scene.lila");
+    CHECK(run("usdStagePrim", {{"args", {"Pebble"}}})["prim"] == "/World/Pebble");
+
+    // Out of the stage, its prim is deactivated; back in, it returns.
+    run("parent", {{"args", {"Chair"}}, {"world", true}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "over \"Chair\" (\n        active = false"));
+    run("undo");
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "\"Chair\" (\n        active = false"));
+    CHECK(prop("Chair", "xformOp:translate") == "(0, -30, 0)");
+}
+
+TEST_CASE("usd stage: joint edits are written over the skeleton and its animation, keyed or still, and new joints join it")
 {
     UpAxisScope axis(math::UpAxis::Z);
     fresh();
     const fs::path dir = workDir("joints");
-    run("polyCylinder", {{"name", "Tube"}, {"radius", 10}, {"height", 100}, {"subdivisionsHeight", 4}, {"caps", false}});
-    run("select", {{"args", json::array()}});
-    run("joint", {{"position", json::array({0, -50, 0})}, {"name", "bone_a"}});
-    run("joint", {{"position", json::array({0, 50, 0})}, {"name", "bone_b"}});
-    run("skinCluster", {{"args", {"bone_a", "Tube"}}});
-    const fs::path src = dir / "rig.usda";
-    run("exportUsd", {{"args", {src.generic_string()}}, {"selectionOnly", false}});
+    const fs::path src = writeRig(dir);
+    const std::string before = readAll(src);
     fresh();
     const std::string stage = openStage(src)["stage"];
     REQUIRE(graph().find("bone_b"));
-    graph().setValue({node("bone_b").id(), Transform::kRotate, -1}, glm::dvec3(0, 0, 30));
+    run("setAttr", {{"args", {"bone_b.rotate", 0, 0, 30}}});
     saveAs(dir / "scene.lila");
-    const json i = info(stage);
-    INFO(i.dump());
-    CHECK(warned(i["warnings"], "joint edits"));
-    CHECK(!has(i["edits"].get<std::string>(), "Skeleton"));
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def SkelAnimation"));
+    CHECK(!has(text, "rotations.timeSamples"));
+    CHECK(!warned(i["warnings"], "joint"));
+    openShot(stage, dir);
+    REQUIRE(graph().find("bone_b"));
+    CHECK(rotateZ("bone_b") == doctest::Approx(30.0));
+
+    // Undone after a reopen, the pose before it comes back.
+    reopen(dir / "scene.lila");
+    run("setAttr", {{"args", {"bone_b.rotate", 0, 0, 60}}});
+    saveAs(dir / "scene.lila");
+    run("undo");
+    saveAs(dir / "scene.lila");
+    openShot(stage, dir);
+    CHECK(rotateZ("bone_b") == doctest::Approx(30.0));
+    reopen(dir / "scene.lila");
+
+    // Keys go on the animation, sampled over the playback range.
+    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 1.0}, {"animationStartTime", 0.0}, {"animationEndTime", 1.0}});
+    anim::setKey(graph(), {node("bone_a").id(), Transform::kRotate, 2}, 0.0, 0.0);
+    anim::setKey(graph(), {node("bone_a").id(), Transform::kRotate, 2}, 1.0, 45.0);
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "rotations.timeSamples"));
+    openShot(stage, dir);
+    graph().setTime(0.0);
+    graph().evaluate();
+    CHECK(rotateZ("bone_a") == doctest::Approx(0.0).epsilon(1e-3));
+    graph().setTime(1.0);
+    graph().evaluate();
+    CHECK(rotateZ("bone_a") == doctest::Approx(45.0).epsilon(1e-3));
+    CHECK(rotateZ("bone_b") == doctest::Approx(30.0).epsilon(1e-3));
+    graph().setTime(0.0);
+    reopen(dir / "scene.lila");
+
+    // A new joint joins the skeleton after its others, so the skin's indices still hold.
+    run("select", {{"args", {"bone_b"}}});
+    run("joint", {{"position", json::array({0, 90, 0})}, {"name", "bone_c"}});
+    REQUIRE(graph().find("bone_b|bone_c"));
+    saveAs(dir / "scene.lila");
+    i = info(stage);
+    text = i["edits"];
+    CHECK(has(text, "\"bone_a/bone_b/bone_c\""));
+    CHECK(!warned(i["warnings"], "new joints"));
+    openShot(stage, dir);
+    CHECK(graph().find("bone_b|bone_c"));
+    CHECK(skin::find(graph(), node("Tube").id()));
+    CHECK(readAll(src) == before);
+}
+
+TEST_CASE("usd stage: skin weight edits are written in the stage's joint order, and undo puts them back")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("weights");
+    const fs::path src = writeRig(dir);
+    fresh();
+    const std::string stage = openStage(src)["stage"];
+    auto weightOf = [](uint32_t point, const std::string& joint) {
+        const json r = run("skinPercent", {{"args", {"Tube"}}, {"vertices", json::array({point})}});
+        for (const auto& [name, w] : r[0]["weights"].items())
+            if (name.ends_with(joint))
+                return w.get<double>();
+        return 0.0;
+    };
+    const double was = weightOf(0, "bone_b"), other = weightOf(2, "bone_b");
+    REQUIRE(was < 0.99);
+    run("skinPercent", {{"args", {"Tube"}}, {"vertices", json::array({0, 1})}, {"transformValue", {{"bone_b", 1.0}}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "primvars:skel:jointWeights"));
+    CHECK(!warned(i["warnings"], "skin"));
+    openShot(stage, dir);
+    CHECK(weightOf(0, "bone_b") == doctest::Approx(1.0));
+    CHECK(weightOf(1, "bone_b") == doctest::Approx(1.0));
+    CHECK(weightOf(2, "bone_b") == doctest::Approx(other).epsilon(1e-4));
+
+    // Undone, the stage's weights come back.
+    reopen(dir / "scene.lila");
+    run("skinPercent", {{"args", {"Tube"}}, {"vertices", json::array({0})}, {"transformValue", {{"bone_a", 1.0}}}});
+    saveAs(dir / "scene.lila");
+    run("undo");
+    saveAs(dir / "scene.lila");
+    openShot(stage, dir);
+    CHECK(weightOf(0, "bone_b") == doctest::Approx(1.0));
+}
+
+TEST_CASE("usd stage: blend shape edits and their weights are written, new targets join, and removed ones leave")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("shapes");
+    auto shape = [](const std::string& name, double dz) {
+        geo::Mesh m = geo::makeCube({});
+        for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p))
+                m.setPosition(p, m.position(p) + glm::dvec3(0, 0, dz));
+        addMesh(name, std::move(m));
+    };
+    shape("Face", 0.0);
+    shape("Smile", 2.0);
+    run("morph", {{"args", {"Smile", "Face"}}});
+    run("delete", {{"args", {"Smile"}}});
+    const fs::path src = dir / "face.usda";
+    run("exportUsd", {{"args", {src.generic_string()}}, {"selectionOnly", false}});
+    fresh();
+    const std::string stage = openStage(src)["stage"];
+    auto targets = [] { return run("morphTargets", {{"args", {"Face"}}}); };
+    REQUIRE(targets().size() == 1);
+    run("setAttr", {{"args", {targets()[0]["node"].get<std::string>() + ".weight", 0.75}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "blendShapeWeights"));
+    CHECK(has(text, "0.75"));
+    CHECK(!warned(i["warnings"], "blend shape"));
+    openShot(stage, dir);
+    REQUIRE(targets().size() == 1);
+    CHECK(targets()[0]["weight"].get<double>() == doctest::Approx(0.75));
+
+    // Another target: a BlendShape of its own, named on the mesh.
+    reopen(dir / "scene.lila");
+    shape("Frown", -3.0);
+    run("addMorphTarget", {{"args", {"Face", "Frown"}}});
+    run("delete", {{"args", {"Frown"}}});
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(has(text, "def BlendShape \"Frown\""));
+    CHECK(has(text, "skel:blendShapes = [\"Smile\", \"Frown\"]"));
+    openShot(stage, dir);
+    REQUIRE(targets().size() == 2);
+    CHECK(targets()[1]["name"] == "Frown");
+
+    // Taken out again, the mesh names only the first.
+    reopen(dir / "scene.lila");
+    REQUIRE(targets().size() == 2);
+    run("removeMorphTarget", {{"args", {targets()[1]["node"].get<std::string>()}}});
+    saveAs(dir / "scene.lila");
+    openShot(stage, dir);
+    CHECK(targets().size() == 1);
+}
+
+TEST_CASE("usd stage: a skeleton made in Lila is written with its SkelRoot, and meshes skinned to it bind to it")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("newSkeleton");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string stage = openStage(src)["stage"];
+    run("select", {{"args", json::array()}});
+    run("joint", {{"position", json::array({10, 0, -1})}, {"name", "hip"}});
+    run("joint", {{"position", json::array({10, 0, 1})}, {"name", "knee"}});
+    run("parent", {{"args", {"hip", "World"}}});
+    run("skinCluster", {{"args", {"hip", "Geo"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def Skeleton \"Skeleton\""));
+    CHECK(has(text, "SkelRoot"));
+    CHECK(has(text, "primvars:skel:jointWeights"));
+    CHECK(!warned(i["warnings"], "aren't written"));
+    CHECK(!warned(i["warnings"], "isn't written"));
+
+    // A joint added to it later joins it, as for any skeleton in the stage.
+    run("select", {{"args", {"knee"}}});
+    run("joint", {{"position", json::array({10, 0, 3})}, {"name", "ankle"}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "\"hip/knee/ankle\""));
+
+    openShot(stage, dir);
+    REQUIRE(graph().find("World|hip|knee|ankle"));
+    const NodeId sk = skin::find(graph(), node("Geo").id());
+    REQUIRE(sk);
+    CHECK(skin::influences(graph(), sk).size() == 2);
+}
+
+TEST_CASE("usd stage: an object moved under a new object gets that object written first")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("newParent");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string stage = openStage(src)["stage"];
+    const glm::dmat4 chair = world("Chair");
+    Node* rack = graph().createNode(*types::find("transform"), "Rack", node("World").id(), false);
+    graph().setValue({rack->id(), Transform::kTranslate, -1}, glm::dvec3(0, 5, 0));
+    run("parent", {{"args", {"Chair", "Rack"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "def Xform \"Rack\""));
+    CHECK(run("usdStagePrim", {{"args", {"Chair"}}})["prim"] == "/World/Rack/Chair");
+    CHECK(run("usdStagePrim", {{"args", {"Rack"}}})["prim"] == "/World/Rack");
+    CHECK(!warned(i["warnings"], "isn't written"));
+    openShot(stage, dir);
+    REQUIRE(graph().find("World|Rack|Chair"));
+    CHECK(near(world("Chair"), chair, 1e-9));
+}
+
+TEST_CASE("usd stage: a deleted joint leaves its skeleton, and undone it goes back where it stood")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("jointDelete");
+    const fs::path src = writeRig(dir);
+    fresh();
+    const std::string stage = openStage(src)["stage"];
+    auto weightOf = [](uint32_t point, const std::string& joint) {
+        const json r = run("skinPercent", {{"args", {"Tube"}}, {"vertices", json::array({point})}});
+        for (const auto& [name, w] : r[0]["weights"].items())
+            if (name.ends_with(joint))
+                return w.get<double>();
+        return 0.0;
+    };
+    const double was = weightOf(0, "bone_b");
+    run("delete", {{"args", {"bone_b"}}});
+    saveAs(dir / "scene.lila");
+    json i = info(stage);
+    std::string text = i["edits"];
+    INFO(text);
+    CHECK(has(text, "uniform token[] joints = [\"bone_a\"]"));
+    CHECK(!warned(i["warnings"], "isn't written"));
+
+    run("undo");
+    REQUIRE(graph().find("bone_a|bone_b"));
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(has(text, "uniform token[] joints = [\"bone_a\", \"bone_a/bone_b\"]"));
+    openShot(stage, dir);
+    REQUIRE(graph().find("bone_a|bone_b"));
+    CHECK(skin::influences(graph(), skin::find(graph(), node("Tube").id())).size() == 2);
+    CHECK(weightOf(0, "bone_b") == doctest::Approx(was).epsilon(1e-4));
+}
+
+TEST_CASE("usd stage: a point instance taken out of its instancer goes back once it holds only its prototype again")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("mergeBack");
+    const fs::path src = copyFixture(dir, "instancing.usda");
+    const std::string stage = openStage(src)["stage"];
+    const NodeId scatter = node("Scatter").id();
+    const glm::dmat4 before = world("Rock_1");
+    addMesh("Moss", geo::makeCube({}), node("Rock_1").id());
+    saveAs(dir / "scene.lila");
+    REQUIRE(has(edits(stage), "def Xform \"Rock_1\""));
+    CHECK(graph().parent(node("Rock_1").id()) != scatter);
+
+    // The added object deleted: back on the instancer, shown there, nothing left in the edit layer.
+    run("delete", {{"args", {"Moss"}}});
+    saveAs(dir / "scene.lila");
+    std::string text = edits(stage);
+    INFO(text);
+    CHECK(!has(text, "Rock_1"));
+    CHECK(!has(text, "invisibleIds"));
+    CHECK(graph().parent(node("Rock_1").id()) == scatter);
+    CHECK(near(world("Rock_1"), before, 1e-9));
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "positions"));
+    run("usdStageUpdate");
+    run("usdStageReload", {{"args", {stage}}});
+    REQUIRE(graph().find("Scatter|Rock_1|Rock|Body"));
+    CHECK(near(world("Rock_1"), before, 1e-6));
+
+    // Through undo: the delete undone takes it out again, and undone once more puts it back.
+    run("undo");
+    REQUIRE(graph().find("Rock_1|Moss"));
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "def Xform \"Rock_1\""));
+    run("delete", {{"args", {"Moss"}}});
+    saveAs(dir / "scene.lila");
+    CHECK(!has(edits(stage), "Rock_1"));
+    run("undo");
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "def Mesh \"Moss\""));
+
+    // Across a reopen.
+    reopen(dir / "scene.lila");
+    REQUIRE(graph().find("Rock_1|Moss"));
+    run("delete", {{"args", {"Moss"}}});
+    saveAs(dir / "scene.lila");
+    text = edits(stage);
+    CHECK(!has(text, "Rock_1"));
+    CHECK(graph().parent(node("Rock_1").id()) == node("Scatter").id());
+    run("usdStageReload", {{"args", {stage}}});
+    CHECK(graph().find("Scatter|Rock_1|Rock|Body"));
+    CHECK(near(world("Rock_1"), before, 1e-6));
+
+    // A copy edited since stays out.
+    addMesh("Moss", geo::makeCube({}), node("Rock_1").id());
+    saveAs(dir / "scene.lila");
+    setTranslate("Rock_1|Rock|Body", {0, 0, 1});
+    run("delete", {{"args", {"Moss"}}});
+    saveAs(dir / "scene.lila");
+    CHECK(has(edits(stage), "def Xform \"Rock_1\""));
 }
 
 namespace
@@ -673,9 +1083,10 @@ TEST_CASE("usd stage: a rebuild keeps a skinned mesh's skin and leaves no skin n
 
     // The skeleton built again from a change in the file: new joints, the same skin, bound to them.
     std::string text = readAll(src);
-    const size_t at = text.find('{', text.find("def Skeleton"));
+    // Into the Skeleton's body, past the braces of its metadata.
+    const size_t at = text.find("\n    {\n", text.find("def Skeleton"));
     REQUIRE(at != std::string::npos);
-    text.insert(at + 1, "\n        custom int studio:revision = 2\n");
+    text.insert(at + 6, "\n        custom int studio:revision = 2\n");
     writeFile(src, text);
     run("usdStageUpdate");
     REQUIRE(graph().find("bone_b"));

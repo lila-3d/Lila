@@ -1,0 +1,386 @@
+#include "ui/ViewportRenderers.h"
+
+#include "core/Log.h"
+#include "core/MainQueue.h"
+#include "ops/Command.h"
+
+#include <map>
+#include <mutex>
+#include <optional>
+#include <span>
+
+namespace lila::ui::viewportRenderers
+{
+namespace
+{
+/** Where a session's frames land, shared with its Deliver functions so they outlive nothing. */
+struct Delivered
+{
+    std::mutex mutex;
+    bool closed = false;
+    uint64_t newest = 0;
+    render::TexturePtr color, depth;
+    /** CPU frames upload into these, reused while the size and format hold. */
+    render::GpuImageRef colorImage, depthImage;
+};
+
+struct View
+{
+    std::string renderer = kLila;
+    std::shared_ptr<Session> session;
+    std::shared_ptr<Delivered> delivered;
+    uint64_t serial = 0;
+    std::optional<Request> last;
+    std::function<void()> redraw;
+};
+
+std::map<int, View>& views()
+{
+    static std::map<int, View> v;
+    return v;
+}
+
+std::function<int()>& activeFn()
+{
+    static std::function<int()> fn;
+    return fn;
+}
+
+uint64_t gRevision = 1;
+int gGraphListener = 0;
+
+void redrawPanel(int panel)
+{
+    auto it = views().find(panel);
+    if (it != views().end() && it->second.redraw)
+        it->second.redraw();
+}
+
+/** Ends v's session; frames still on their way are dropped. */
+void close(View& v)
+{
+    if (v.delivered)
+    {
+        std::scoped_lock lock(v.delivered->mutex);
+        v.delivered->closed = true;
+    }
+    v.delivered.reset();
+    v.session.reset();
+    v.renderer = kLila;
+    v.last.reset();
+}
+
+/** Forwards scene changes to the sessions and counts the ones that change what a renderer draws. */
+void ensureGraphListener()
+{
+    if (gGraphListener)
+        return;
+    gGraphListener = scene::Graph::current().addListener([](scene::Change change, scene::NodeId node) {
+        if (change != scene::Change::Selection)
+            ++gRevision;
+        std::vector<std::shared_ptr<Session>> sessions;
+        for (auto& [panel, v] : views())
+            if (v.session)
+                sessions.push_back(v.session);
+        for (const std::shared_ptr<Session>& s : sessions)
+        {
+            try
+            {
+                s->sceneChanged(change, node);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("viewport renderer: sceneChanged: {}", e.what());
+            }
+        }
+    });
+}
+
+render::GpuImageRef imageFor(render::GpuImageRef& keep, int w, int h, render::TextureFormat format, bool srgb)
+{
+    if (!keep || keep->width() != w || keep->height() != h || keep->format() != format || keep->desc().srgb != srgb)
+        keep = render::GpuImage::create({.width = w, .height = h, .format = format, .srgb = srgb, .name = "viewport renderer"});
+    return keep;
+}
+
+/** Checks a frame's buffers against its size; the reason it is unusable, or empty. */
+std::string invalid(const Frame& f)
+{
+    const size_t pixels = size_t(std::max(f.width, 0)) * size_t(std::max(f.height, 0));
+    if (!f.image && (f.width <= 0 || f.height <= 0))
+        return "no size";
+    if (!f.image && f.rgba8.size() != pixels * 4 && f.rgba32f.size() != pixels * 4)
+        return "colour does not match its size";
+    if (!f.depthImage && !f.depth.empty() && f.depth.size() != pixels)
+        return "depth does not match its size";
+    if (f.image && f.image->format() != render::TextureFormat::RGBA8 && f.image->format() != render::TextureFormat::RGBA16F)
+        return "image is not RGBA8 or RGBA16F";
+    if (f.depthImage && f.depthImage->format() != render::TextureFormat::R32F)
+        return "depth image is not R32F";
+    return {};
+}
+
+void accept(const std::shared_ptr<Delivered>& d, int panel, Frame f)
+{
+    if (std::string why = invalid(f); !why.empty())
+    {
+        log::warn("viewport renderer: dropped a frame for panel {}: {}", panel, why);
+        return;
+    }
+    {
+        std::scoped_lock lock(d->mutex);
+        if (d->closed || f.serial < d->newest)
+            return;
+        d->newest = f.serial;
+        if (f.image)
+            d->color = f.image->asTexture();
+        else if (f.rgba8.size() == size_t(f.width) * f.height * 4)
+        {
+            render::GpuImageRef img = imageFor(d->colorImage, f.width, f.height, render::TextureFormat::RGBA8, true);
+            img->update(0, 0, f.width, f.height, f.rgba8);
+            d->color = img->asTexture();
+        }
+        else
+        {
+            render::GpuImageRef img = imageFor(d->colorImage, f.width, f.height, render::TextureFormat::RGBA16F, false);
+            img->updateRgba(0, 0, f.width, f.height, f.rgba32f);
+            d->color = img->asTexture();
+        }
+        if (f.depthImage)
+            d->depth = f.depthImage->asTexture();
+        else if (!f.depth.empty())
+        {
+            render::GpuImageRef img = imageFor(d->depthImage, f.width, f.height, render::TextureFormat::R32F, false);
+            const auto* bytes = reinterpret_cast<const uint8_t*>(f.depth.data());
+            img->update(0, 0, f.width, f.height, std::span(bytes, f.depth.size() * sizeof(float)));
+            d->depth = img->asTexture();
+        }
+        else
+            d->depth = nullptr;
+    }
+    mainq::post([panel] { redrawPanel(panel); });
+}
+
+bool sameRequest(const Request& a, const Request& b)
+{
+    return a.width == b.width && a.height == b.height && a.view.view == b.view.view && a.view.proj == b.view.proj && a.view.ortho == b.view.ortho &&
+           a.view.camera == b.view.camera && a.nearClip == b.nearClip && a.farClip == b.farClip && a.time == b.time &&
+           a.sceneRevision == b.sceneRevision && a.exposure == b.exposure && a.gamma == b.gamma;
+}
+
+void dropRenderer(const std::string& id)
+{
+    for (auto& [panel, v] : views())
+        if (v.renderer == id)
+        {
+            close(v);
+            if (v.redraw)
+                v.redraw();
+        }
+}
+} // namespace
+
+void Request::ray(double x, double y, glm::dvec3& origin, glm::dvec3& dir) const
+{
+    const double sx = width > 0 ? view.width / width : 1.0, sy = height > 0 ? view.height / height : 1.0;
+    view.ray(QPointF(x * sx, y * sy), origin, dir);
+}
+
+double Request::depthOf(const glm::dvec3& world) const { return -(view.view * glm::dvec4(world, 1.0)).z; }
+
+Registry<Renderer>& registry()
+{
+    static Registry<Renderer> r;
+    static const int listener = r.addListener([](RegistryChange change, const std::string& id, const std::string&) {
+        if (change == RegistryChange::Removed)
+            dropRenderer(id);
+    });
+    (void)listener;
+    return r;
+}
+
+const Renderer& add(Renderer renderer)
+{
+    if (renderer.id == kLila || renderer.id.empty())
+        throw std::invalid_argument("'" + renderer.id + "' is not a usable viewport renderer id");
+    std::string id = renderer.id;
+    return registry().add(std::move(id), std::move(renderer));
+}
+
+const Renderer* add(ext::Context& ctx, Renderer renderer)
+{
+    std::string id = renderer.id;
+    try
+    {
+        if (id == kLila || id.empty())
+            throw std::invalid_argument("'" + id + "' is not a usable viewport renderer id");
+        ctx.add(registry(), "viewportRenderer", id, std::move(renderer));
+        return registry().find(id);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("extension {}: viewport renderer: {}", ctx.owner(), e.what());
+        return nullptr;
+    }
+}
+
+bool remove(std::string_view id) { return registry().remove(id); }
+
+std::vector<std::pair<std::string, std::string>> choices()
+{
+    std::vector<std::pair<std::string, std::string>> out{{kLila, "Lila"}};
+    for (const Renderer* r : registry().allInOrder())
+        out.emplace_back(r->id, r->name.empty() ? r->id : r->name);
+    return out;
+}
+
+bool select(int panel, std::string_view id)
+{
+    if (id.empty())
+        id = kLila;
+    View& v = views()[panel];
+    if (v.renderer == id)
+        return true;
+    if (id == kLila)
+    {
+        close(v);
+        if (v.redraw)
+            v.redraw();
+        return true;
+    }
+    const Renderer* r = registry().find(id);
+    if (!r || !r->open)
+        return false;
+    std::unique_ptr<Session> session;
+    try
+    {
+        session = r->open(panel);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("viewport renderer {}: {}", r->id, e.what());
+    }
+    if (!session)
+        return false;
+    close(v);
+    v.renderer = std::string(id);
+    v.session = std::move(session);
+    v.delivered = std::make_shared<Delivered>();
+    ensureGraphListener();
+    if (v.redraw)
+        v.redraw();
+    return true;
+}
+
+std::string selected(int panel)
+{
+    auto it = views().find(panel);
+    return it == views().end() ? kLila : it->second.renderer;
+}
+
+void setActivePanel(std::function<int()> fn) { activeFn() = std::move(fn); }
+
+int activePanel() { return activeFn() ? activeFn()() : 0; }
+
+bool apply(int panel, Request r, render::FrameState& s)
+{
+    auto it = views().find(panel);
+    if (it == views().end() || !it->second.session)
+        return false;
+    View& v = it->second;
+    r.panel = panel;
+    r.graph = &scene::Graph::current();
+    r.sceneRevision = gRevision;
+    if (!v.last || !sameRequest(*v.last, r))
+    {
+        r.serial = ++v.serial;
+        std::weak_ptr<Delivered> weak = v.delivered;
+        r.deliver = [weak, panel](Frame f) {
+            if (std::shared_ptr<Delivered> d = weak.lock())
+                accept(d, panel, std::move(f));
+        };
+        v.last = r;
+        // The session may deliver at once, or even switch the view to another renderer, so it is held across the call.
+        std::shared_ptr<Session> session = v.session;
+        try
+        {
+            session->render(r);
+        }
+        catch (const std::exception& e)
+        {
+            log::error("viewport renderer {}: {}", v.renderer, e.what());
+        }
+    }
+    auto again = views().find(panel);
+    if (again == views().end() || !again->second.delivered)
+        return false;
+    s.externalScene = true;
+    std::scoped_lock lock(again->second.delivered->mutex);
+    s.externalColor = again->second.delivered->color;
+    s.externalDepth = again->second.delivered->depth;
+    return true;
+}
+
+void setRedraw(int panel, std::function<void()> fn) { views()[panel].redraw = std::move(fn); }
+
+void release(int panel)
+{
+    auto it = views().find(panel);
+    if (it == views().end())
+        return;
+    close(it->second);
+    views().erase(it);
+}
+
+void registerCommands()
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    ops::registerCommand({
+        .name = "viewportRenderer",
+        .doc = "Pick the renderer a viewport draws with: \"lila\" for Lila's own, or one an extension registered (viewportRenderers lists "
+               "them). Lila still draws selection, gizmos and the HUD over another renderer's image. With no renderer, only returns the "
+               "viewport's current one.",
+        .positionalDoc = "renderer id",
+        .flags = {{.name = "panel", .shortName = "p", .type = ArgType::Int, .doc = "The viewport, numbered in the order they were made; "
+                                                                                  "default the active one.",
+                   .example = "viewportRenderer(\"lila\", panel=1)"}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const int panel = a.has("panel") ? a.get<int>("panel") : activePanel();
+            if (a.positional.empty())
+                return selected(panel);
+            if (!a.positional[0].is_string())
+                throw CommandError("viewportRenderer: a renderer id is expected");
+            const std::string id = a.positional[0].get<std::string>();
+            if (id != kLila && !registry().contains(id))
+            {
+                std::string known;
+                for (const auto& [cid, name] : choices())
+                    known += (known.empty() ? "" : ", ") + cid;
+                throw CommandError("viewportRenderer: no renderer '" + id + "' (known: " + known + ")");
+            }
+            if (!select(panel, id))
+                throw CommandError("viewportRenderer: '" + id + "' could not start for viewport " + std::to_string(panel));
+            return selected(panel);
+        },
+        .examples = {"viewportRenderer(\"cpuShaded\")  # the active view draws with the example renderer\nviewportRenderer(\"lila\")"},
+    });
+    ops::registerCommand({
+        .name = "viewportRenderers",
+        .doc = "The renderers a viewport can draw with, Lila's own first: [{id, name, doc}].",
+        .undoable = false,
+        .run = [](const Args&) -> json {
+            json out = json::array();
+            for (const auto& [id, name] : choices())
+            {
+                const Renderer* r = registry().find(id);
+                out.push_back({{"id", id}, {"name", name}, {"doc", r ? r->doc : std::string("Lila's own viewport renderer.")}});
+            }
+            return out;
+        },
+    });
+}
+} // namespace lila::ui::viewportRenderers

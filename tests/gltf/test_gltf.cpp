@@ -13,6 +13,7 @@
 
 #include <glm/gtc/constants.hpp>
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <tuple>
@@ -276,6 +277,61 @@ TEST_CASE("static scene round-trips through .gltf and .glb")
         REQUIRE(b.width == 4);
         CHECK(b.rgba[(1 * 4 + 3) * 4] == doctest::Approx(1.0).epsilon(0.01));
     }
+}
+
+TEST_CASE("unlit materials and texture wrap and filter round-trip")
+{
+    const Textures tex = writeTextures();
+    run("newScene");
+    Graph& g = graph();
+    addMesh(g, "Sign", decoratedCube(50.0));
+    using namespace material;
+    Node* m = materials::create(g, "M_Sign");
+    g.setValue({m->id(), kShadingModel, -1}, int64_t(ShadingModel::Unlit));
+    g.setValue({m->id(), kBaseColorMap, -1}, tex.base);
+    g.setValue({m->id(), kNormalMap, -1}, tex.normal);
+    materials::setSampling(g, m->id(), kBaseColorMap, {TextureWrap::Clamp, TextureWrap::Mirror, TextureFilter::Nearest});
+    run("assignMaterial", {{"args", {"M_Sign", "Sign"}}});
+    Node* lit = materials::create(g, "M_Tiles");
+    g.setValue({lit->id(), kBaseColorMap, -1}, tex.base);
+    g.setValue({lit->id(), kNormalMap, -1}, tex.normal);
+    materials::setSampling(g, lit->id(), kNormalMap, {TextureWrap::Mirror, TextureWrap::Repeat, TextureFilter::Linear});
+    Node* tiles = addMesh(g, "Tiles", decoratedCube(20.0));
+    setTrs(g, tiles, {100, 0, 0});
+    run("assignMaterial", {{"args", {"M_Tiles", "Tiles"}}});
+
+    const fs::path file = tempDir("unlit") / "unlit.gltf";
+    run("exportGltf", {{"args", {file.string(), "Sign", "Tiles"}}});
+    const json doc = json::parse(readAll(file));
+    CHECK(std::ranges::find(doc["extensionsUsed"], "KHR_materials_unlit") != doc["extensionsUsed"].end());
+    json sign;
+    for (const json& mat : doc["materials"])
+        if (mat["name"] == "M_Sign")
+            sign = mat;
+    REQUIRE(sign.is_object());
+    CHECK(sign["extensions"].contains("KHR_materials_unlit"));
+    // Only the base color goes with an unlit material.
+    CHECK(!sign.contains("normalTexture"));
+    const json& sampler = doc["samplers"][doc["textures"][sign["pbrMetallicRoughness"]["baseColorTexture"]["index"].get<int>()]["sampler"].get<int>()];
+    CHECK(sampler["wrapS"] == 33071);
+    CHECK(sampler["wrapT"] == 33648);
+    CHECK(sampler["magFilter"] == 9728);
+    // The same image with another sampler is another texture.
+    CHECK(doc["textures"].size() == 3);
+
+    run("newScene");
+    json r = run("importGltf", {{"args", {file.string()}}, {"report", true}});
+    CHECK(r["errors"].empty());
+    Node& back = node("M_Sign");
+    CHECK(back.as<int64_t>(kShadingModel) == int64_t(ShadingModel::Unlit));
+    const TextureSampling s = materials::sampling(back, kBaseColorMap);
+    CHECK(s.wrapU == TextureWrap::Clamp);
+    CHECK(s.wrapV == TextureWrap::Mirror);
+    CHECK(s.filter == TextureFilter::Nearest);
+    Node& backLit = node("M_Tiles");
+    CHECK(backLit.as<int64_t>(kShadingModel) == int64_t(ShadingModel::DefaultLit));
+    CHECK(materials::sampling(backLit, kNormalMap).wrapU == TextureWrap::Mirror);
+    CHECK(materials::sampling(backLit, kBaseColorMap).isDefault());
 }
 
 TEST_CASE("embedded .gltf is one self-contained file")

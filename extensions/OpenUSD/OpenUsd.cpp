@@ -16,6 +16,7 @@
 #include <lila/Transform.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -41,6 +42,8 @@ using json = nlohmann::json;
 
 fs::path gPackageRoot;
 std::atomic<bool> gLoaded{false};
+/** True on the thread loading OpenUSDCore, whose start-up imports pxr and so reaches lilaUsdLoad again through lila.usd. */
+thread_local bool tLoading = false;
 
 std::string utf8(const fs::path& p)
 {
@@ -51,6 +54,7 @@ std::string utf8(const fs::path& p)
 struct Backend
 {
     usd::BackendRun run = nullptr;
+    void* lib = nullptr;
     std::string error;
 };
 
@@ -60,10 +64,18 @@ const Backend& backend()
     static Backend b;
     static std::once_flag once;
     std::call_once(once, [] {
+        tLoading = true;
+        struct Done
+        {
+            ~Done() { tLoading = false; }
+        } done;
         const fs::path file = gPackageRoot / usd::kBackendFile;
         void* init = nullptr;
         void* run = nullptr;
 #if defined(_WIN32)
+        // Hydra's default graphics device is Vulkan, not OpenGL, which would need a window; read once, before Pixar's libraries load.
+        if (!std::getenv("HGI_ENABLE_VULKAN"))
+            _putenv_s("HGI_ENABLE_VULKAN", "1");
         // Search the package folder first, so Pixar's DLLs and TBB resolve from beside it.
         HMODULE lib = LoadLibraryExW(file.wstring().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (!lib)
@@ -95,6 +107,7 @@ const Backend& backend()
             return;
         }
         b.run = reinterpret_cast<usd::BackendRun>(run);
+        b.lib = reinterpret_cast<void*>(lib);
         gLoaded = true;
     });
     return b;
@@ -185,6 +198,18 @@ json runBackend(const char* command, const Args& a)
 
 bool backendLoaded() { return gLoaded; }
 
+void* backendSymbol(const char* name)
+{
+    const Backend& b = backend();
+    if (!b.run)
+        throw CommandError("OpenUSD failed to load: " + b.error);
+#if defined(_WIN32)
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(b.lib), name));
+#else
+    return dlsym(b.lib, name);
+#endif
+}
+
 bool isStageNode(NodeId node)
 {
     const scene::Node* n = Graph::current().node(node);
@@ -200,6 +225,14 @@ NodeId stageAbove(NodeId node)
     return scene::kNoNode;
 }
 } // namespace lila::usd
+
+USD_BACKEND_EXPORT const char* lilaUsdLoad()
+{
+    if (tLoading)
+        return nullptr;
+    const Backend& b = backend();
+    return b.run ? nullptr : b.error.c_str();
+}
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
@@ -221,8 +254,11 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "skipped unless purposes asks for them.\n\n"
                    "UsdPreviewSurface materials become Lila materials (Unreal's default lit) with their textures: packed "
                    "occlusion/roughness/metallic textures as an ORM or MRO map, normal maps' green convention read from the texture's "
-                   "scale, emissive intensity from its scale, and opacity from the base color texture's alpha as masked or translucent. "
-                   "Direct and collection bindings both resolve. Textures inside a .usdz are unpacked beside it.\n\n"
+                   "scale, emissive intensity from its scale, opacity from the base color texture's alpha as masked or translucent, and "
+                   "each texture's wrapS, wrapT and magFilter as its map's wrap and filter. Unlit materials Lila wrote and MaterialX "
+                   "ND_surface_unlit surfaces become unlit materials. Direct and collection bindings both resolve. Textures inside a "
+                   ".usdz are unpacked beside it. Meshes with time-sampled points get a meshCache deformer playing every sample "
+                   "(interpolated between them); a mesh whose topology changes over time keeps its rest frame.\n\n"
                    "UsdSkel skeletons become joints, SkelBindingAPI skins skinClusters with their weights and bind pose, BlendShapes "
                    "morph targets with their in-betweens, and SkelAnimation keys on the joints and target weights. Time samples become "
                    "keys (linear, or stepped on a held stage), and the stage's timeCodesPerSecond, framesPerSecond and time range set the "
@@ -271,7 +307,9 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "to UsdPreviewSurface: a UsdUVTexture per map read through one UsdPrimvarReader_float2, packed ORM/MRO maps as "
                    "one texture feeding occlusion, roughness and metallic, DirectX normal maps flipped to USD's OpenGL convention by "
                    "the texture's scale and bias, emissive intensity as the texture's scale, masked and translucent opacity from the "
-                   "base color's alpha, and twoSided as doubleSided on the meshes using it.\n\n"
+                   "base color's alpha, each map's wrap as wrapS and wrapT (nearest filtering as magFilter and minFilter), unlit "
+                   "materials as their base color emitted over a black surface, and twoSided as doubleSided on the meshes using it. "
+                   "Meshes a meshCache drives write their points as time samples.\n\n"
                    "Joints become a Skeleton (bind and rest transforms) under a SkelRoot shared with the meshes skinned to it; skins "
                    "write jointIndices and jointWeights (pruned to maxInfluences) and the mesh's geomBindTransform, in the bind pose. "
                    "Morph targets become BlendShapes with their in-betweens; a mesh with morphs and no skin gets a one-joint skeleton "
@@ -330,9 +368,10 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "payload switch); the source files are never changed. File > Open and Import of a USD file run this; "
                    "importUsd flattens instead.\n\n"
                    "Written: moving objects (with animation), hiding them, deleting them (the prim is deactivated), mesh edits, "
-                   "material assignments and edits, new objects under the stage, variant selections and payload loading. Joint, "
-                   "skin weight and blend shape edits and reparenting are not written; saving lists them as warnings. Returns "
-                   "the stage node, or with report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
+                   "material assignments and edits, new objects under the stage, objects moved to another parent, joint poses "
+                   "and keys, new joints, skin weights, blend shapes and their weights, variant selections and payload "
+                   "loading. What can't be written is listed as a warning when saving. Returns the stage node, or with "
+                   "report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
             .positionalDoc = "path",
             .flags = {{"parent", "p", T::String, nullptr, "Parent the stage node under this node."},
                       {"name", "n", T::String, nullptr, "The stage node's name; the file's name by default."},
@@ -413,7 +452,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
             .name = "usdStagePrim",
             .doc = "Every composed property of a stage object's prim, custom schemas included: {prim, type, schemas, "
                    "instanceProxy, properties: [{name, type, value, custom, timeSamples, authored}]}. Values are usda text "
-                   "at the current time; long arrays are summarized unless full=True; relationships list their targets.",
+                   "at the current time; long arrays are summarized unless full=True; relationships list their targets. An "
+                   "object inside an LOD level adds level, the level's variant.",
             .positionalDoc = "object",
             .flags = {{"full", "", T::Bool, false, "Every value in full, however long."}},
             .undoable = false,
@@ -463,5 +503,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                                     .exportSelection = {.command = "exportUsd"}}))
         return 4;
     usd::registerUi(ctx);
+    usd::registerHydra(ctx);
     return 0;
 }

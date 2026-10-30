@@ -37,6 +37,7 @@ lila_add_shaders(lila_render FILES
     shaders/bake_sw.slang
     shaders/contact.slang
     shaders/deform.slang
+    shaders/external.slang
     shaders/grid.slang
     shaders/imageplane.slang
     shaders/lines.slang

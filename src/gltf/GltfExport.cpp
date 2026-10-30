@@ -185,8 +185,20 @@ public:
 
     json images = json::array();
     json textures = json::array();
+    /** Index 0 is the default (trilinear, repeat), which most textures share. */
+    json samplers = json::array({samplerJson({})});
 
-    int file(const std::string& path) override
+    int file(const std::string& path, const scene::material::TextureSampling& s) override { return texture(fileImage(path), s); }
+
+    int made(const std::string& key, const std::string& name, const std::function<bool(Pixels&)>& make,
+             const scene::material::TextureSampling& s) override
+    {
+        return texture(madeImage(key, name, make), s);
+    }
+
+private:
+    /** The image index of a source file, added on first use; -1 when it can't be written. */
+    int fileImage(const std::string& path)
     {
         const std::string key = "file|" + path;
         if (auto it = mByKey.find(key); it != mByKey.end())
@@ -244,10 +256,10 @@ public:
             uri = uriEncode(name);
         }
         images.push_back({{"name", utf8(src.stem())}, {"uri", uri}});
-        return mByKey[key] = texture(int(images.size()) - 1);
+        return mByKey[key] = int(images.size()) - 1;
     }
 
-    int made(const std::string& key, const std::string& name, const std::function<bool(Pixels&)>& make) override
+    int madeImage(const std::string& key, const std::string& name, const std::function<bool(Pixels&)>& make)
     {
         if (auto it = mByKey.find(key); it != mByKey.end())
             return it->second;
@@ -260,11 +272,38 @@ public:
         return mByKey[key] = addBytes(name, "image/png", std::move(png));
     }
 
-private:
-    int texture(int image)
+    static json samplerJson(const scene::material::TextureSampling& s)
     {
-        textures.push_back({{"source", image}, {"sampler", 0}});
-        return int(textures.size()) - 1;
+        using scene::material::TextureWrap;
+        auto wrap = [](TextureWrap w) { return w == TextureWrap::Mirror ? 33648 : w == TextureWrap::Repeat ? 10497 : 33071; };
+        const bool nearest = s.filter == scene::material::TextureFilter::Nearest;
+        return {{"magFilter", nearest ? 9728 : 9729}, {"minFilter", nearest ? 9986 : 9987}, {"wrapS", wrap(s.wrapU)}, {"wrapT", wrap(s.wrapV)}};
+    }
+
+    /** The texture of an image with a sampler, shared by every map asking for the same pair; -1 for no image. */
+    int texture(int image, const scene::material::TextureSampling& s)
+    {
+        if (image < 0)
+            return -1;
+        if ((s.wrapU == scene::material::TextureWrap::Black || s.wrapV == scene::material::TextureWrap::Black) && !mWarnedBlack)
+        {
+            mWarnedBlack = true;
+            mWarnings.push_back("glTF has no black texture border; those textures clamp to their edge");
+        }
+        const json sj = samplerJson(s);
+        int sampler = -1;
+        for (size_t k = 0; k < samplers.size() && sampler < 0; ++k)
+            if (samplers[k] == sj)
+                sampler = int(k);
+        if (sampler < 0)
+        {
+            samplers.push_back(sj);
+            sampler = int(samplers.size()) - 1;
+        }
+        auto [it, added] = mTextures.try_emplace({image, sampler}, int(textures.size()));
+        if (added)
+            textures.push_back({{"source", image}, {"sampler", sampler}});
+        return it->second;
     }
 
     std::string uniqueName(const std::string& wanted, const std::string& key)
@@ -299,15 +338,17 @@ private:
             img["uri"] = uriEncode(name);
         }
         images.push_back(std::move(img));
-        return texture(int(images.size()) - 1);
+        return int(images.size()) - 1;
     }
 
     Bin& mBin;
     const ExportOptions& mOpts;
     fs::path mDir;
     std::vector<std::string>& mWarnings;
-    std::map<std::string, int> mByKey;
+    std::map<std::string, int> mByKey; // image index per source
+    std::map<std::pair<int, int>, int> mTextures; // (image, sampler) -> texture
     std::map<std::string, std::string> mNames; // lowercase file name -> key that took it
+    bool mWarnedBlack = false;
 };
 
 struct FileTrs
@@ -1211,7 +1252,7 @@ bool writeGltf(const ExportSnapshot& snap, const fs::path& path, const ExportOpt
     {
         doc["textures"] = textures.textures;
         doc["images"] = textures.images;
-        doc["samplers"] = json::array({{{"magFilter", 9729}, {"minFilter", 9987}, {"wrapS", 10497}, {"wrapT", 10497}}});
+        doc["samplers"] = textures.samplers;
     }
     if (!cameras.empty())
         doc["cameras"] = cameras;

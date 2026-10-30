@@ -155,6 +155,7 @@ lila_module(lila_ui UI
     DominantInfluenceUi.cpp DominantInfluenceUi.h
     AnimProxyUi.cpp AnimProxyUi.h
     ViewportHooks.cpp ViewportHooks.h
+    ViewportRenderers.cpp ViewportRenderers.h
     ViewportDisplay.cpp ViewportDisplay.h
     ViewportHud.cpp ViewportHud.h
     LodDisplay.cpp LodDisplay.h

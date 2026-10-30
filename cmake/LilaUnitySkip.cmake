@@ -183,6 +183,7 @@ set(LILA_UNITY_SKIP
     tests/curve/test_vehicle_scene.cpp
     tests/deform/test_deformers.cpp
     tests/deform/test_fields.cpp
+    tests/deform/test_mesh_cache.cpp
     tests/deform/test_morphs.cpp
     tests/deform/test_shape.cpp
     tests/deform/test_shape_deformers.cpp
@@ -283,6 +284,11 @@ set(LILA_UNITY_SKIP
     tests/tex/test_tex_routing.cpp
     tests/tex/test_tex_ties.cpp
     tests/tex/test_tex_vt.cpp
+    tests/usd/test_usd_fixtures.cpp
+    tests/usd/test_usd_hydra.cpp
+    tests/usd/test_usd_panels.cpp
+    tests/usd/test_usd_roundtrip.cpp
+    tests/usd/test_usd_stage.cpp
     tests/uv/test_live_commands.cpp
     tests/uv/test_pack.cpp
     tests/uv/test_uv_opt.cpp

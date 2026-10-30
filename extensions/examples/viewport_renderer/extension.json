@@ -1,0 +1,14 @@
+{
+    "id": "viewportRenderer",
+    "name": "Viewport Renderer Example",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Sample viewport renderer: the scene's meshes rasterised on the CPU on a worker thread, shaded by their normals, with Lila's overlays composited on top.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "viewportRenderer.dll",
+        "linux": "viewportRenderer.so",
+        "macos": "viewportRenderer.dylib"
+    },
+    "enabledByDefault": false
+}

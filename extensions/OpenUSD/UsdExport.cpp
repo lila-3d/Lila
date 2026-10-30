@@ -53,6 +53,7 @@
 #include <format>
 #include <map>
 #include <set>
+#include <span>
 #include <unordered_map>
 
 PXR_NAMESPACE_USING_DIRECTIVE
@@ -234,7 +235,7 @@ private:
         return m;
     }
 
-    std::vector<char> cameraAnimated, skelAnimated, weightsAnimated;
+    std::vector<char> cameraAnimated, skelAnimated, weightsAnimated, pointsAnimated;
     std::vector<glm::dvec3> prevRot; // per node, the last sample's Euler angles
 
     std::string skeletonName(const Skel& s) const
@@ -250,6 +251,10 @@ private:
     void writeXform(size_t i, const UsdPrim& prim);
     void setXform(size_t i, const ExportTake* take, size_t f, UsdTimeCode t);
     void writeMesh(size_t i, const UsdPrim& prim);
+    /** Points laid out like node i's mesh, in the file's order and axes, as writeMesh writes them. */
+    VtVec3fArray filePoints(size_t i, std::span<const glm::dvec3> points) const;
+    /** Whether node i is written as a mesh prim of its own. */
+    bool meshPrim(size_t i) const { return !prims[i].IsEmpty() && !lodLevel[i] && snap.nodes[i].mesh && snap.nodes[i].mesh->numFaces() > 0; }
     void writeCamera(size_t i, const UsdPrim& prim);
     UsdPrim defineLight(size_t i, const SdfPath& at);
     void writeCurves(size_t i, const SdfPath& at);
@@ -506,6 +511,18 @@ void Writer::setXform(size_t i, const ExportTake* take, size_t f, UsdTimeCode t)
     o.t.Set(GfVec3d(tr.x, tr.y, tr.z), t);
     o.r.Set(vec3f(rot), t);
     o.s.Set(vec3f(sc), t);
+}
+
+VtVec3fArray Writer::filePoints(size_t i, std::span<const glm::dvec3> points) const
+{
+    const ExportNode& e = snap.nodes[i];
+    const glm::dmat4 toFile = axes.toFile * e.bake;
+    VtVec3fArray out;
+    out.reserve(points.size());
+    for (Index p = 0; p < e.mesh->pointCapacity() && p < points.size(); ++p)
+        if (e.mesh->pointValid(p))
+            out.push_back(vec3f(glm::dvec3(toFile * glm::dvec4(points[p], 1.0))));
+    return out;
 }
 
 void Writer::writeMesh(size_t i, const UsdPrim& prim)
@@ -1220,6 +1237,27 @@ void Writer::writeTake(const ExportTake* take, bool restForStill)
         else
             set(*snap.nodes[i].camera, UsdTimeCode::Default());
     }
+    // Point caches: the mesh's points (and extent) per frame.
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (!meshPrim(i))
+            continue;
+        const bool moves = take && i < take->meshPoints.size() && !take->meshPoints[i].empty();
+        if (!moves && !(restForStill && pointsAnimated[i]))
+            continue;
+        UsdGeomMesh mesh(stage->GetPrimAtPath(prims[i]));
+        auto set = [&](std::span<const glm::dvec3> pts, UsdTimeCode t) {
+            const VtVec3fArray points = filePoints(i, pts);
+            mesh.GetPointsAttr().Set(points, t);
+            if (VtVec3fArray extent; UsdGeomPointBased::ComputeExtent(points, &extent))
+                mesh.CreateExtentAttr().Set(extent, t);
+        };
+        if (moves)
+            for (size_t f = 0; f < frames && f < take->meshPoints[i].size(); ++f)
+                set(take->meshPoints[i][f], code(take->times[f]));
+        else
+            set(snap.nodes[i].mesh->positions(), UsdTimeCode::Default());
+    }
     // Skeletons: joint transforms per frame, and the blend shape weights their meshes read.
     for (size_t k = 0; k < skels.size(); ++k)
     {
@@ -1528,13 +1566,18 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
 
     // What moves in which take decides where values go once there are take variants.
     cameraAnimated.assign(snap.nodes.size(), 0);
+    pointsAnimated.assign(snap.nodes.size(), 0);
     skelAnimated.assign(skels.size(), 0);
     weightsAnimated.assign(skels.size(), 0);
     for (const ExportTake* t : takes)
     {
         for (size_t i = 0; i < snap.nodes.size(); ++i)
+        {
             if (i < t->cameras.size() && !t->cameras[i].empty())
                 cameraAnimated[i] = 1;
+            if (i < t->meshPoints.size() && !t->meshPoints[i].empty())
+                pointsAnimated[i] = 1;
+        }
         for (size_t k = 0; k < skels.size(); ++k)
         {
             for (int j : skels[k].joints)
@@ -1571,7 +1614,7 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
                 setLilaData(UsdGeomScope::Define(stage, scopePath).GetPrim(), "wrapper", VtValue(true));
         });
 
-    // Cameras animated in some take keep no rest value outside the takes, or it would hide their variants' samples.
+    // Cameras and point caches animated in some take keep no rest value outside the takes, or it would hide their variants' samples.
     const bool variants = takes.size() > 1;
     if (variants)
         inLayer(geoLayer, [&] {
@@ -1582,6 +1625,12 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
                     for (const UsdAttribute& a : {cam.GetFocalLengthAttr(), cam.GetHorizontalApertureAttr(), cam.GetVerticalApertureAttr(),
                                                   cam.GetClippingRangeAttr()})
                         a.ClearDefault();
+                }
+                else if (pointsAnimated[i] && meshPrim(i))
+                {
+                    UsdGeomMesh mesh(stage->GetPrimAtPath(prims[i]));
+                    mesh.GetPointsAttr().ClearDefault();
+                    mesh.GetExtentAttr().ClearDefault();
                 }
         });
     if (!variants)
@@ -1640,6 +1689,13 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
         if (mats)
             for (const auto& [slot, m] : mats->written())
                 res.materials[slot] = m.GetPath();
+        for (const Skel& sk : skels)
+        {
+            std::vector<scene::NodeId> joints;
+            for (int j : sk.joints)
+                joints.push_back(snap.nodes[size_t(j)].source);
+            res.skeletons.push_back({sk.path, std::move(joints)});
+        }
         return true;
     }
     const bool ok = save();

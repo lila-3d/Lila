@@ -11,6 +11,7 @@
 #include "scene/Camera.h"
 #include "scene/Light.h"
 #include "scene/LodGroup.h"
+#include "scene/MeshCache.h"
 #include "scene/Morphs.h"
 #include "scene/Skin.h"
 #include "scene/Take.h"
@@ -252,6 +253,114 @@ TEST_CASE("usd round trip: hierarchy, transforms, n-gons, normals, UV and color 
         compareMaterial(brick, materialValues("Brick"));
         compareMaterial(glass, materialValues("Glass"));
     }
+}
+
+TEST_CASE("usd round trip: unlit materials and texture wrap and filter")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    Graph& g = graph();
+    addMesh("Sign", geo::makeCube({.width = 10, .height = 10, .depth = 10}));
+    const fs::path tex = tempDir() / "src_tex";
+    fs::create_directories(tex);
+    std::ofstream(tex / "sign.png") << "png";
+    std::ofstream(tex / "sign_n.png") << "png";
+    const std::string signPng = (tex / "sign.png").generic_string();
+    Node* m = materials::create(g, "SignMat");
+    g.setValue({m->id(), material::kShadingModel, -1}, int64_t(material::ShadingModel::Unlit));
+    g.setValue({m->id(), material::kBaseColorMap, -1}, signPng);
+    g.setValue({m->id(), material::kBlendMode, -1}, int64_t(material::BlendMode::Masked));
+    materials::setSampling(g, m->id(), material::kBaseColorMap,
+                           {material::TextureWrap::Clamp, material::TextureWrap::Black, material::TextureFilter::Nearest});
+    Node* lit = materials::create(g, "Plain");
+    g.setValue({lit->id(), material::kNormalMap, -1}, (tex / "sign_n.png").generic_string());
+    materials::setSampling(g, lit->id(), material::kNormalMap, {material::TextureWrap::Mirror, material::TextureWrap::Clamp, {}});
+    Node* flat = materials::create(g, "Flat");
+    g.setValue({flat->id(), material::kShadingModel, -1}, int64_t(material::ShadingModel::Unlit));
+    g.setValue({flat->id(), material::kBaseColor, -1}, glm::dvec3(0.2, 0.4, 0.8));
+    addMesh("Box", geo::makeCube({.width = 10, .height = 10, .depth = 10}));
+    addMesh("Card", geo::makeCube({.width = 5, .height = 5, .depth = 5}));
+    run("assignMaterial", {{"args", {"SignMat", "Sign"}}});
+    run("assignMaterial", {{"args", {"Plain", "Box"}}});
+    run("assignMaterial", {{"args", {"Flat", "Card"}}});
+
+    const fs::path file = tempDir() / "unlit.usda";
+    run("exportUsd", {{"args", {file.generic_string(), "Sign", "Box", "Card"}}});
+    const std::string text = readAll(file);
+    CHECK(text.find("token inputs:wrapS = \"clamp\"") != std::string::npos);
+    CHECK(text.find("token inputs:wrapT = \"black\"") != std::string::npos);
+    CHECK(text.find("token inputs:wrapS = \"mirror\"") != std::string::npos);
+    CHECK(text.find("token inputs:magFilter = \"nearest\"") != std::string::npos);
+    // Other tools see the unlit color as emission over black.
+    CHECK(text.find("color3f inputs:emissiveColor.connect") != std::string::npos);
+    CHECK(text.find("color3f inputs:emissiveColor = (0.2, 0.4, 0.8)") != std::string::npos);
+
+    fresh();
+    json r = run("importUsd", {{"args", {file.generic_string()}}, {"report", true}});
+    INFO(r.dump());
+    Node& sign = node("SignMat");
+    CHECK(sign.as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    CHECK(sign.as<std::string>(material::kBaseColorMap).ends_with("sign.png"));
+    CHECK(sign.as<std::string>(material::kEmissiveMap).empty());
+    CHECK(sign.as<int64_t>(material::kBlendMode) == int64_t(material::BlendMode::Masked));
+    const material::TextureSampling s = materials::sampling(sign, material::kBaseColorMap);
+    CHECK(s.wrapU == material::TextureWrap::Clamp);
+    CHECK(s.wrapV == material::TextureWrap::Black);
+    CHECK(s.filter == material::TextureFilter::Nearest);
+    const material::TextureSampling n = materials::sampling(node("Plain"), material::kNormalMap);
+    CHECK(n.wrapU == material::TextureWrap::Mirror);
+    CHECK(n.wrapV == material::TextureWrap::Clamp);
+    Node& flatBack = node("Flat");
+    CHECK(flatBack.as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    CHECK(near(flatBack.as<glm::dvec3>(material::kBaseColor), {0.2, 0.4, 0.8}, 1e-6));
+    CHECK(flatBack.as<glm::dvec3>(material::kEmissiveColor) == glm::dvec3(0.0));
+}
+
+TEST_CASE("usd round trip: a mesh cache goes out as time-sampled points and comes back as one")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    Graph& g = graph();
+    Node* box = addMesh("Wobble", geo::makeCube({.width = 10, .height = 10, .depth = 10}));
+    g.setValue({box->id(), Transform::kTranslate, -1}, glm::dvec3(5, 0, 0));
+    g.evaluate();
+    const MeshPtr rest = outMesh("Wobble");
+    auto samples = std::make_shared<MeshCacheSamples>();
+    for (int k = 0; k <= 2; ++k)
+    {
+        std::vector<glm::dvec3> pts(rest->positions().begin(), rest->positions().end());
+        for (glm::dvec3& p : pts)
+            p.z += 3.0 * k * p.x;
+        samples->add(k * 0.5, pts);
+    }
+    meshCache::create(g, box->id(), samples);
+    auto pointsAt = [&](double t) {
+        graph().setTime(t);
+        MeshPtr m = outMesh("Wobble");
+        REQUIRE(m);
+        return std::vector<glm::dvec3>(m->positions().begin(), m->positions().end());
+    };
+    const std::vector<glm::dvec3> quarter = pointsAt(0.25), end = pointsAt(1.0);
+    graph().setTime(0.0);
+
+    const fs::path file = tempDir() / "pointcache.usda";
+    run("exportUsd", {{"args", {file.generic_string(), "Wobble"}}, {"start", 0.0}, {"end", anim::playback().fps}});
+    const std::string text = readAll(file);
+    CHECK(text.find("point3f[] points.timeSamples") != std::string::npos);
+
+    fresh();
+    json r = run("importUsd", {{"args", {file.generic_string()}}, {"report", true}});
+    INFO(r.dump());
+    CHECK(r["meshCaches"].size() == 1);
+    REQUIRE(meshCache::find(graph(), node("Wobble").id()) != kNoNode);
+    const std::vector<glm::dvec3> quarterBack = pointsAt(0.25), endBack = pointsAt(1.0);
+    REQUIRE(quarterBack.size() == quarter.size());
+    for (size_t p = 0; p < quarter.size(); ++p)
+    {
+        CHECK(near(quarterBack[p], quarter[p], 1e-3));
+        CHECK(near(endBack[p], end[p], 1e-3));
+    }
+    graph().setTime(0.0);
 }
 
 TEST_CASE("usd encodings: usda, usdc, usd and usdz")

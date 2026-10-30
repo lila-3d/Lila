@@ -34,6 +34,26 @@ def Xform "World" (
         rel material:binding = </World/Looks/Foliage>
     }
 
+    def Mesh "Dome" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Sky>
+    }
+
+    def Mesh "Glow" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        rel material:binding = </World/Looks/Neon>
+    }
+
     def Scope "Looks"
     {
         def Material "Gold"
@@ -90,6 +110,8 @@ def Xform "World" (
                 asset inputs:file = @./tex/leaf_albedo.png@
                 float2 inputs:st.connect = </World/Looks/Foliage/Tiling.outputs:result>
                 token inputs:sourceColorSpace = "sRGB"
+                token inputs:wrapS = "clamp"
+                token inputs:wrapT = "mirror"
                 float3 outputs:rgb
                 float outputs:a
             }
@@ -113,7 +135,46 @@ def Xform "World" (
                 token inputs:sourceColorSpace = "raw"
                 float4 inputs:scale = (2, 2, 2, 1)
                 float4 inputs:bias = (-1, -1, -1, 0)
+                token inputs:wrapS = "black"
+                token inputs:wrapT = "useMetadata"
+                token inputs:magFilter = "nearest"
                 float3 outputs:rgb
+            }
+        }
+
+        def Material "Sky"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Sky/Unlit.outputs:out>
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_surface_unlit"
+                color3f inputs:emission_color.connect = </World/Looks/Sky/Image.outputs:out>
+                float inputs:opacity = 0.5
+                token outputs:out
+            }
+
+            def Shader "Image"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./tex/leaf_albedo.png@
+                string inputs:uaddressmode = "clamp"
+                string inputs:vaddressmode = "periodic"
+                string inputs:filtertype = "closest"
+                color3f outputs:out
+            }
+        }
+
+        def Material "Neon"
+        {
+            token outputs:mtlx:surface.connect = </World/Looks/Neon/Unlit.outputs:out>
+
+            def Shader "Unlit"
+            {
+                uniform token info:id = "ND_surface_unlit"
+                float inputs:emission = 2
+                color3f inputs:emission_color = (0.25, 0.5, 0)
+                token outputs:out
             }
         }
     }

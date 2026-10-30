@@ -542,6 +542,58 @@ TEST_CASE("exportFbx and importFbx commands")
     CHECK(names[0].get<std::string>() != "Body"); // made unique
 }
 
+TEST_CASE("fbx textures carry their wrap modes out and back")
+{
+    math::setUpAxis(math::UpAxis::Y);
+    Graph& g = Graph::current();
+    g.clear();
+    Node* box = g.createNode(*types::find("mesh"), "Crate", kNoNode, false);
+    g.setValue({box->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube({.width = 10, .height = 10, .depth = 10}))));
+    const fs::path base = tempFile("crate_bc.png"), normal = tempFile("crate_n.png");
+    std::ofstream(base, std::ios::binary) << "png";
+    std::ofstream(normal, std::ios::binary) << "png";
+    Node* m = materials::create(g, "Wood");
+    g.setValue({m->id(), material::kBaseColor, -1}, glm::dvec3(0.25, 0.5, 0.75));
+    g.setValue({m->id(), material::kBaseColorMap, -1}, base.generic_string());
+    g.setValue({m->id(), material::kNormalMap, -1}, normal.generic_string());
+    materials::setSampling(g, m->id(), material::kBaseColorMap, {material::TextureWrap::Clamp, material::TextureWrap::Repeat, {}});
+    materials::setSampling(g, m->id(), material::kNormalMap, {material::TextureWrap::Repeat, material::TextureWrap::Black, {}});
+    ops::execute("assignMaterial", {{"args", {"Wood", "Crate"}}});
+
+    const fs::path path = tempFile("textures.fbx");
+    ops::execute("exportFbx", {{"args", {path.string(), "Crate"}}, {"textures", true}});
+    {
+        UfbxScene s(path);
+        REQUIRE(s.scene);
+        REQUIRE(s.scene->materials.count == 1);
+        const ufbx_material& fm = *s.scene->materials.data[0];
+        REQUIRE(fm.fbx.diffuse_color.texture);
+        CHECK(fm.fbx.diffuse_color.texture->wrap_u == UFBX_WRAP_CLAMP);
+        CHECK(fm.fbx.diffuse_color.texture->wrap_v == UFBX_WRAP_REPEAT);
+        CHECK(fm.fbx.diffuse_color.value_vec3.y == doctest::Approx(0.5));
+        REQUIRE(fm.fbx.normal_map.texture);
+        CHECK(fm.fbx.normal_map.texture->wrap_v == UFBX_WRAP_CLAMP);
+    }
+
+    g.clear();
+    ops::execute("importFbx", {{"args", {path.string()}}});
+    Node* back = materials::find(g, "Wood");
+    REQUIRE(back);
+    CHECK(back->as<std::string>(material::kBaseColorMap).ends_with("crate_bc.png"));
+    const material::TextureSampling bs = materials::sampling(*back, material::kBaseColorMap);
+    CHECK(bs.wrapU == material::TextureWrap::Clamp);
+    CHECK(bs.wrapV == material::TextureWrap::Repeat);
+    const material::TextureSampling ns = materials::sampling(*back, material::kNormalMap);
+    CHECK(ns.wrapU == material::TextureWrap::Repeat);
+    CHECK(ns.wrapV == material::TextureWrap::Clamp);
+
+    // Without textures the materials are plain names, as before.
+    ops::execute("exportFbx", {{"args", {path.string(), "Crate"}}});
+    UfbxScene plain(path);
+    REQUIRE(plain.scene);
+    CHECK(plain.scene->textures.count == 0);
+}
+
 TEST_CASE("exportForUnreal writes the roots at the origin")
 {
     math::setUpAxis(math::UpAxis::Y);

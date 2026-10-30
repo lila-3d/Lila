@@ -12,6 +12,7 @@
 #include "scene/Fields.h"
 #include "scene/Graph.h"
 #include "scene/Jiggle.h"
+#include "scene/MeshCache.h"
 #include "scene/MeshNodes.h"
 #include "scene/Morphs.h"
 #include "scene/RigUtil.h"
@@ -562,6 +563,7 @@ NodeType deformerType(deformers::DeformerSpec s)
     t.icon = s.icon;
     t.doc = s.doc;
     t.retiredAttrs = std::move(s.retired);
+    t.timeDependent = s.timeDependent;
     t.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
         keyable("enabled", PlugType::Bool, true, "Turn the deformer off without removing it."),
@@ -1125,6 +1127,7 @@ void registerTypes()
     registerSurfaceTypes();
     morphs::registerTypes();
     jiggle::registerTypes();
+    meshCache::registerTypes();
     registerShapeTypes();
     registerTextureTypes();
     fields::registerTypes();
@@ -1441,6 +1444,7 @@ void registerCommands()
     registerSurfaceCommands();
     morphs::registerCommands();
     jiggle::registerCommands();
+    meshCache::registerCommands();
     skinbake::registerCommands();
     registerShapeCommands();
     registerTextureCommands();

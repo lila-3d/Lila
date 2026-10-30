@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <format>
+#include <iterator>
 #include <map>
 #include <set>
 
@@ -55,9 +57,10 @@ AttrDef boolAttr(std::string name, bool def, std::string doc)
 /** Painterly, Toon and Foliage inputs; each model reads only its own and DefaultLit none of them. */
 void stylisedAttrs(std::vector<AttrDef>& a)
 {
-    a[kShadingModel] = enumAttr("shadingModel", {"defaultLit", "painterly", "toon", "foliage"},
+    a[kShadingModel] = enumAttr("shadingModel", {"defaultLit", "painterly", "toon", "foliage", "unlit"},
                                 "Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon "
-                                "(stepped ramp with tinted light and shadow) or foliage (soft gradient shading, lit through).");
+                                "(stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through) or unlit (the "
+                                "base colour as it is, plus emissive, with no lighting).");
 
     a[kPainterlyStrength] = floatAttr("painterlyStrength", 1.0, "Painterly: scales the whole effect; 0 shades exactly like defaultLit.", 0.0);
     a[kStrokeNormal] = floatAttr("strokeNormal", 0.6, "Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.", 0.0, 1.0);
@@ -97,6 +100,31 @@ void stylisedAttrs(std::vector<AttrDef>& a)
     a[kFoliageWrap] = floatAttr("foliageWrap", 0.5, "Foliage: wraps the light around the form, 0 to 1, for soft clumps.", 0.0, 1.0);
 }
 
+constexpr int kSampledMaps[] = {kBaseColorMap, kMetallicMap, kRoughnessMap, kNormalMap, kAmbientOcclusionMap, kOrmMap, kEmissiveMap};
+static_assert(kCount == kTextureSampling + int(std::size(kSampledMaps)) * 3);
+
+/** wrapU, wrapV and filter of every sampled map, named after it (baseColorMapWrapU). */
+void samplingAttrs(std::vector<AttrDef>& a)
+{
+    for (size_t k = 0; k < std::size(kSampledMaps); ++k)
+    {
+        const std::string map = a[size_t(kSampledMaps[k])].name;
+        const int first = kTextureSampling + int(k) * 3;
+        for (int axis = 0; axis < 2; ++axis)
+        {
+            const char* uv = axis == 0 ? "U" : "V";
+            a[size_t(first + axis)] = enumAttr(map + "Wrap" + uv, {"repeat", "clamp", "mirror", "black"},
+                                               std::format("What {} shows past its edges along {}: repeat, clamp (the edge texels), "
+                                                           "mirror (repeat flipped) or black.",
+                                                           map, uv));
+            a[size_t(first + axis)].category = "Texture Sampling";
+        }
+        a[size_t(first + 2)] = enumAttr(map + "Filter", {"linear", "nearest"},
+                                        std::format("How {} is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).", map));
+        a[size_t(first + 2)].category = "Texture Sampling";
+    }
+}
+
 std::vector<AttrDef> materialAttrs()
 {
     std::vector<AttrDef> a(kCount);
@@ -127,6 +155,7 @@ std::vector<AttrDef> materialAttrs()
     a[kUvSet] = {.name = "uvSet", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
                  .doc = "UV set the textures use (0 or 1).", .minValue = 0.0, .maxValue = 1.0};
     stylisedAttrs(a);
+    samplingAttrs(a);
     return a;
 }
 
@@ -382,6 +411,52 @@ const std::vector<std::pair<std::string, int>>& textureChannels()
         {"emissive", kEmissiveMap},   {"stroke", kStrokeMap},
     };
     return c;
+}
+
+std::span<const int> sampledMaps() { return kSampledMaps; }
+
+int samplingAttr(int mapAttr)
+{
+    for (size_t k = 0; k < std::size(kSampledMaps); ++k)
+        if (kSampledMaps[k] == mapAttr)
+            return kTextureSampling + int(k) * 3;
+    return -1;
+}
+
+TextureSampling sampling(const Node& material, int mapAttr)
+{
+    TextureSampling s;
+    const int first = samplingAttr(mapAttr);
+    if (first < 0 || !material.type().isA("material"))
+        return s;
+    auto pick = [&](int attr, int64_t count) { return std::clamp<int64_t>(material.as<int64_t>(attr), 0, count - 1); };
+    s.wrapU = TextureWrap(pick(first, 4));
+    s.wrapV = TextureWrap(pick(first + 1, 4));
+    s.filter = TextureFilter(pick(first + 2, 2));
+    return s;
+}
+
+void setSampling(Graph& g, NodeId material, int mapAttr, const TextureSampling& s)
+{
+    const int first = samplingAttr(mapAttr);
+    const Node* n = g.node(material);
+    if (first < 0 || !n)
+        return;
+    const int64_t values[3] = {int64_t(s.wrapU), int64_t(s.wrapV), int64_t(s.filter)};
+    for (int k = 0; k < 3; ++k)
+        if (n->as<int64_t>(first + k) != values[k])
+            g.setValue({material, first + k, -1}, values[k]);
+}
+
+const char* wrapName(TextureWrap w)
+{
+    switch (w)
+    {
+    case TextureWrap::Clamp: return "clamp";
+    case TextureWrap::Mirror: return "mirror";
+    case TextureWrap::Black: return "black";
+    default: return "repeat";
+    }
 }
 
 std::string resolvePath(const std::string& path)
@@ -685,9 +760,15 @@ void registerCommands()
         .name = "setMaterialTexture",
         .doc = "Set or clear (path='') a texture: channel baseColor, metallic, roughness, normal, ambientOcclusion, orm, mro "
                "(the packed map with the MRO layout) or emissive. Stored relative to the workspace root (or the scene "
-               "folder without one).",
+               "folder without one). wrap, wrapU, wrapV and filter set how it is sampled; given without path they change "
+               "only that.",
         .positionalDoc = "material",
-        .flags = {{"channel", "c", T::String, nullptr, "Texture channel."}, {"path", "p", T::String, "", "Image file; empty clears."}},
+        .flags = {{"channel", "c", T::String, nullptr, "Texture channel."},
+                  {"path", "p", T::String, nullptr, "Image file; empty clears."},
+                  {"wrap", "", T::String, nullptr, "Both wrap modes.", {"repeat", "clamp", "mirror", "black"}},
+                  {"wrapU", "", T::String, nullptr, "Wrap along U.", {"repeat", "clamp", "mirror", "black"}},
+                  {"wrapV", "", T::String, nullptr, "Wrap along V.", {"repeat", "clamp", "mirror", "black"}},
+                  {"filter", "", T::String, nullptr, "linear or nearest.", {"linear", "nearest"}}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -697,11 +778,40 @@ void registerCommands()
             int attr = channelAttr(channel);
             if (attr < 0)
                 throw CommandError("setMaterialTexture: unknown channel '" + channel + "'");
-            std::string path = a.get<std::string>("path");
-            std::replace(path.begin(), path.end(), '\\', '/');
-            g.setValue({n.id(), attr, -1}, paths::storedPath(paths::fromUtf8(path)));
-            if (channel == "mro" && !path.empty())
-                g.setValue({n.id(), kPackedLayout, -1}, int64_t(PackedLayout::MRO));
+            const bool sampled = a.has("wrap") || a.has("wrapU") || a.has("wrapV") || a.has("filter");
+            if (a.has("path") || !sampled)
+            {
+                std::string path = a.has("path") ? a.get<std::string>("path") : std::string();
+                std::replace(path.begin(), path.end(), '\\', '/');
+                g.setValue({n.id(), attr, -1}, paths::storedPath(paths::fromUtf8(path)));
+                if (channel == "mro" && !path.empty())
+                    g.setValue({n.id(), kPackedLayout, -1}, int64_t(PackedLayout::MRO));
+            }
+            if (sampled)
+            {
+                if (materials::samplingAttr(attr) < 0)
+                    throw CommandError("setMaterialTexture: the " + channel + " channel has no sampling settings");
+                auto wrap = [&](const char* flag, TextureWrap current) {
+                    const std::string v = a.has(flag) ? a.get<std::string>(flag) : a.has("wrap") ? a.get<std::string>("wrap") : "";
+                    for (TextureWrap w : {TextureWrap::Repeat, TextureWrap::Clamp, TextureWrap::Mirror, TextureWrap::Black})
+                        if (v == materials::wrapName(w))
+                            return w;
+                    if (!v.empty())
+                        throw CommandError("setMaterialTexture: unknown wrap '" + v + "'");
+                    return current;
+                };
+                TextureSampling s = materials::sampling(n, attr);
+                s.wrapU = wrap("wrapU", s.wrapU);
+                s.wrapV = wrap("wrapV", s.wrapV);
+                if (a.has("filter"))
+                {
+                    const std::string f = a.get<std::string>("filter");
+                    if (f != "linear" && f != "nearest")
+                        throw CommandError("setMaterialTexture: filter must be linear or nearest");
+                    s.filter = f == "nearest" ? TextureFilter::Nearest : TextureFilter::Linear;
+                }
+                materials::setSampling(g, n.id(), attr, s);
+            }
             return nullptr;
         },
     });

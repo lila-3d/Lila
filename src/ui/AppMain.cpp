@@ -34,6 +34,7 @@
 #include "ui/AgentSetup.h"
 #include "ui/BakePaintTool.h"
 #include "ui/SurfaceSnap.h"
+#include "ui/ViewportRenderers.h"
 #include "ui/TargetWeldTool.h"
 #include "ui/Telemetry.h"
 #include "ui/Updater.h"
@@ -122,6 +123,7 @@ void registerUi()
     actions::registerBuiltins();
     tools::registerActions();
     surfaceSnap::registerCommands();
+    viewportRenderers::registerCommands();
     registerShelfActions();
     levelToolkit::registerShelf();
     registerEditorActions();

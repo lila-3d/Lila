@@ -113,6 +113,7 @@ void MainWindow::registerActions()
                   "lila.ops.lookThru(\"camera1\")"});
     actions::add({"create.cameraFromView", "Camera from View", "Create", [this] { createCameraFromView(); }, nullptr,
                   "Creates a camera where the active view's camera is, with its lens, and selects it."});
+    viewportRenderers::setActivePanel([this] { return mViewports->active()->hudPanel(); });
     ops::registerCommand({
         .name = "lookThru",
         .doc = "Make the active view look through a camera node, or switch it to a view (persp, top, front, side, ...). "

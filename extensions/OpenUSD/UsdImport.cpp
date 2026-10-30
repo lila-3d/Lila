@@ -1249,12 +1249,69 @@ struct Builder
                             scheme != UsdGeomTokens->none)
             im.g.setValue({id, scene::MeshNode::kSmoothPreview, -1}, int64_t(2));
         if (std::vector<double> s; usdMesh.GetPointsAttr().GetTimeSamples(&s) && s.size() > 1)
-            im.r.warnings.push_back(std::format("{}: animated points (a point cache) kept at the rest frame", prim.GetPath().GetString()));
+            pointCache(prim, id, *ptr, s);
         if (prim.HasAPI<UsdSkelBindingAPI>())
             im.bound.push_back({prim.GetPath(), id});
         else if (im.stacked.count(id))
             dropDeadSkin(id);
         return id;
+    }
+
+    /**
+     * Time-sampled points: a meshCache on the mesh holding every sample, through the rest build's point map, so the
+     * cache matches the mesh's points. Normals follow the points (the deformer rebuilds them, keeping the hard edges
+     * the rest frame's normals gave). Topology that changes over time keeps the rest frame.
+     */
+    void pointCache(const UsdPrim& prim, NodeId id, const geo::Mesh& rest, const std::vector<double>& times)
+    {
+        const std::string where = prim.GetPath().GetString();
+        if (!im.opts.animation)
+        {
+            im.r.skipped.push_back(std::format("{}: animated points (animation off)", where));
+            return;
+        }
+        const UsdGeomMesh usdMesh(prim);
+        for (const UsdAttribute& a : {usdMesh.GetFaceVertexCountsAttr(), usdMesh.GetFaceVertexIndicesAttr()})
+            if (a.GetNumTimeSamples() > 1)
+            {
+                im.r.warnings.push_back(std::format("{}: the topology changes over time; the animated points are kept at the rest frame", where));
+                return;
+            }
+        // Instances of one prototype share its mesh, and so its samples.
+        if (auto it = im.pointCaches.find(&rest); it != im.pointCaches.end())
+            return addCache(id, it->second);
+        const std::vector<uint32_t>& pointOf = im.pointMaps[prim.GetPath()];
+        auto samples = std::make_shared<scene::MeshCacheSamples>();
+        std::vector<glm::dvec3> pts(rest.positions().begin(), rest.positions().end());
+        VtVec3fArray p;
+        for (double t : times)
+        {
+            usdMesh.GetPointsAttr().Get(&p, UsdTimeCode(t));
+            if (p.size() != pointOf.size())
+            {
+                im.r.warnings.push_back(std::format("{}: the point count changes over time ({} at time {}, {} at rest); the animated points are "
+                                                    "kept at the rest frame",
+                                                    where, p.size(), t, pointOf.size()));
+                return;
+            }
+            for (size_t k = 0; k < p.size(); ++k)
+                if (pointOf[k] != kInvalid && pointOf[k] < pts.size())
+                    pts[pointOf[k]] = im.axes.pointToLila(glm::dvec3(p[k][0], p[k][1], p[k][2]));
+            samples->add(im.seconds(t), pts);
+        }
+        im.firstKey = std::min(im.firstKey, samples->times.front());
+        im.lastKey = std::max(im.lastKey, samples->times.back());
+        im.pointCaches[&rest] = samples;
+        addCache(id, std::move(samples));
+    }
+
+    /** The mesh's meshCache gets the samples; a mesh rebuilt in place keeps the one it has. */
+    void addCache(NodeId id, std::shared_ptr<const scene::MeshCacheSamples> samples)
+    {
+        if (const NodeId cache = scene::meshCache::find(im.g, id))
+            scene::meshCache::setSamples(im.g, cache, std::move(samples));
+        else
+            im.r.meshCaches.push_back(scene::meshCache::create(im.g, id, std::move(samples)));
     }
 
     /** A kept stack's skin whose joints are all gone, on a prim no longer skinned: taken out of the stack. */

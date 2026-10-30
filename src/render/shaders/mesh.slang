@@ -31,7 +31,7 @@ struct MeshPush
     float gamma;     // display gamma
     uint style;      // word offset of the draw's style block in the frame's table; kNoStyle for default lit
     uint backTint;   // back-face tint: rgba8, display-encoded rgb and its mix in alpha; 0 is off
-    float displayPad;
+    uint sampling;   // render::Material::sampling: per map 8 bits, wrap U (bits 0-1), wrap V (2-3), nearest (4)
     uint* textureTable; // the frame's table: bindless texture handles, then style blocks
     uint2 maps;         // bindless: 16-bit table handles, x: base color | normal << 16, y: ORM | emissive << 16
 };
@@ -51,6 +51,48 @@ static const uint kBaseColorSlot = 0;
 static const uint kNormalSlot = 1;
 static const uint kOrmSlot = 2; // R occlusion, G roughness, B metallic
 static const uint kEmissiveSlot = 3;
+
+static const uint kWrapClamp = 1;
+static const uint kWrapMirror = 2;
+static const uint kWrapBlack = 3;
+static const uint kSampleNearest = 16;
+
+/** One uv axis wrapped by mode; a black border flags outside instead. */
+float wrapAxis(float x, uint mode, float halfTexel, inout bool outside)
+{
+    if (mode == kWrapClamp)
+        return clamp(x, halfTexel, 1.0 - halfTexel);
+    if (mode == kWrapMirror)
+    {
+        float m = x - 2.0 * floor(0.5 * x);
+        return m > 1.0 ? 2.0 - m : m;
+    }
+    if (mode == kWrapBlack && (x < 0.0 || x > 1.0))
+        outside = true;
+    return x;
+}
+
+/**
+ * A plain map sampled with its slot's wrap and filter (pc.sampling); the bound sampler repeats and filters linearly.
+ * Gradients come from the unwrapped uv, so folds and clamps don't change the mip level.
+ */
+float4 sampleWrapped(Sampler2D tex, uint slot, float2 uv)
+{
+    uint mode = (pc.sampling >> (slot * 8)) & 0xff;
+    if (mode == 0)
+        return tex.Sample(uv);
+    float2 dx = ddx(uv), dy = ddy(uv);
+    uint w, h;
+    tex.GetDimensions(w, h);
+    float2 size = float2(max(w, 1u), max(h, 1u));
+    bool outside = false;
+    float2 st = float2(wrapAxis(uv.x, mode & 3, 0.5 / size.x, outside), wrapAxis(uv.y, (mode >> 2) & 3, 0.5 / size.y, outside));
+    if (outside)
+        return float4(0.0);
+    if ((mode & kSampleNearest) != 0)
+        st = (floor(st * size) + 0.5) / size;
+    return tex.SampleGrad(st, dx, dy);
+}
 
 #ifdef LILA_BINDLESS
 [[vk::binding(0, 1)]] Sampler2D materialTextures[];
@@ -212,7 +254,8 @@ float4 vtSample(uint h, float2 uv)
     return c;
 }
 
-// A UDIM tile samples at uv itself: the repeating sampler wraps it into the tile.
+// A UDIM tile samples at uv itself: the repeating sampler wraps it into the tile. Wrap and filter settings apply to
+// plain maps only.
 float4 sampleMap(uint slot, float2 uv)
 {
     uint packed = slot < 2 ? pc.maps.x : pc.maps.y;
@@ -220,7 +263,9 @@ float4 sampleMap(uint slot, float2 uv)
     uint head = pc.textureTable[h];
     if ((head & kUdimEntry) == 0 && (head & kVtEntry) != 0)
         return vtSample(h, uv);
-    return materialTextures[NonUniformResourceIndex(mapIndex(slot, uv))].Sample(uv);
+    if ((head & kUdimEntry) != 0)
+        return materialTextures[NonUniformResourceIndex(mapIndex(slot, uv))].Sample(uv);
+    return sampleWrapped(materialTextures[NonUniformResourceIndex(head)], slot, uv);
 }
 #else
 // Per material. Missing maps are bound to 1x1 placeholders and ignored through the flags; a UDIM set binds its first tile.
@@ -236,10 +281,10 @@ float4 sampleMap(uint slot, float2 uv)
 {
     switch (slot)
     {
-    case kBaseColorSlot: return baseColorTex.Sample(uv);
-    case kNormalSlot: return normalTex.Sample(uv);
-    case kOrmSlot: return ormTex.Sample(uv);
-    default: return emissiveTex.Sample(uv);
+    case kBaseColorSlot: return sampleWrapped(baseColorTex, slot, uv);
+    case kNormalSlot: return sampleWrapped(normalTex, slot, uv);
+    case kOrmSlot: return sampleWrapped(ormTex, slot, uv);
+    default: return sampleWrapped(emissiveTex, slot, uv);
     }
 }
 #endif
@@ -599,7 +644,7 @@ float4 shadeMesh(VSOut i, bool front)
 
     float3 v = normalize(pc.eye.xyz - i.worldPos);
     float3 c;
-    if (pc.params.w > 1.5)
+    if (pc.params.w > 1.5 || model == kUnlit)
         c = baseColor;
     else if (model == kToon)
         c = toonShade(n, v, baseColor, s);

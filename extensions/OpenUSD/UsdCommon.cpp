@@ -10,8 +10,20 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <cmath>
+#include <cstdlib>
+#include <sstream>
 #include <mutex>
 #include <set>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -163,13 +175,44 @@ std::vector<std::string> Diagnostics::warnings()
 
 bool registerPlugins(const fs::path& packageRoot, std::string* error)
 {
+#if defined(_WIN32)
+    // Plug loads plugin libraries with a plain LoadLibrary, whose dependency search skips the library's own folder:
+    // a plugin needing a package library nothing has loaded yet (MaterialX, Hydra) finds it through PATH.
+    const std::wstring dir = packageRoot.wstring();
+    std::wstring path(GetEnvironmentVariableW(L"PATH", nullptr, 0), L'\0');
+    path.resize(GetEnvironmentVariableW(L"PATH", path.data(), DWORD(path.size())));
+    if ((L";" + path + L";").find(L";" + dir + L";") == std::wstring::npos)
+        SetEnvironmentVariableW(L"PATH", (path.empty() ? dir : path + L";" + dir).c_str());
+#endif
     PlugRegistry& reg = PlugRegistry::GetInstance();
     std::vector<std::string> paths;
-    for (const fs::path& dir : {packageRoot / "usd", packageRoot / "plugin" / "usd"})
+    for (const fs::path& folder : {packageRoot / "usd", packageRoot / "plugin" / "usd"})
     {
         std::error_code ec;
-        if (fs::exists(dir / "plugInfo.json", ec))
-            paths.push_back(utf8(dir / "plugInfo.json"));
+        if (fs::exists(folder / "plugInfo.json", ec))
+            paths.push_back(utf8(folder / "plugInfo.json"));
+    }
+    // Plug reads only <entry>/plugInfo.json from PXR_PLUGINPATH_NAME; the viewport's Renderer menu also lists each
+    // subfolder's own and resources/ plugInfo.json there, so register those too.
+    if (const char* env = std::getenv("PXR_PLUGINPATH_NAME"))
+    {
+#if defined(_WIN32)
+        const char sep = ';';
+#else
+        const char sep = ':';
+#endif
+        std::stringstream list(env);
+        for (std::string entry; std::getline(list, entry, sep);)
+        {
+            std::error_code ec;
+            const fs::path root = fs::path(entry);
+            if (entry.empty() || !fs::is_directory(root, ec))
+                continue;
+            for (const fs::directory_entry& e : fs::directory_iterator(root, ec))
+                for (const fs::path& f : {e.path() / "plugInfo.json", e.path() / "resources" / "plugInfo.json"})
+                    if (fs::exists(f, ec))
+                        paths.push_back(utf8(f));
+        }
     }
     if (!paths.empty())
         reg.RegisterPlugins(paths);

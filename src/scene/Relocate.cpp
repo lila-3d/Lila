@@ -1797,7 +1797,7 @@ void registerBuiltins()
              "meshSource", "polyCapsule", "polyCone", "polyCube", "polyCylinder", "polyDisc", "polyIcoSphere", "polyPipe", "polyPlane",
              "polyQuadSphere", "polySphere", "polyTorus", "bevelModifier", "decimateModifier", "mirrorModifier", "solidifyModifier",
              "subdivisionModifier", "triangulateModifier", "weightedNormalsModifier", "extrudeModifier", "splitRingsModifier", "autoBevelModifier", "morph",
-             "morphTarget", "correction", "deltaMush", "smoothDeformer", "tension", "textureDeformer", "noiseDeformer"})
+             "morphTarget", "correction", "deltaMush", "smoothDeformer", "tension", "textureDeformer", "noiseDeformer", "meshCache"})
         registerNeutral(t);
 
     // Linked only: nothing stored in world space, but what they link must move together.

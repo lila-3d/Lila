@@ -19,6 +19,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     setAcceptDrops(true);
     static int panels = 0;
     mHudPanel = panels++;
+    viewportRenderers::setRedraw(mHudPanel, [this] { requestFrame(); });
 
     mCamera.zUp = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
 
@@ -83,6 +84,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
 ViewportWidget::~ViewportWidget()
 {
     cursorBadges::publish(this, {});
+    viewportRenderers::release(mHudPanel);
     scene::Graph::current().removeListener(mGraphListener);
     PrefStore::get().removeOnChanged(mPrefListener);
     tools::removeListener(mToolListener);
@@ -342,6 +344,19 @@ void ViewportWidget::submit()
         viewportDisplay::apply(s);
         viewportDisplay::applyCurveWidths(s, devicePixelRatioF());
         displayAids::apply(s, mHudPanel);
+    }
+    {
+        viewportRenderers::Request req;
+        const QSize px = pixelSize();
+        req.width = px.width();
+        req.height = px.height();
+        req.view = viewInfo();
+        req.nearClip = mCamera.nearClip;
+        req.farClip = mCamera.farClip.value_or(mCamera.ortho ? mCamera.distance * 2.0 + 1e5 : 0.0);
+        req.time = g.time();
+        req.exposure = s.exposure;
+        req.gamma = s.gamma;
+        viewportRenderers::apply(mHudPanel, std::move(req), s);
     }
 
     // Like Maya, everything under a selected transform highlights too, a step dimmer.

@@ -395,6 +395,19 @@ TEST_CASE("maya import: handmade materials, textures and per-face assignment")
     CHECK(slotOfFace(*crate, 5) == "Glass");
     CHECK(slotOfFace(*outMesh(g, "floor"), 0) == "Shiny");
     CHECK_FALSE(contains(r.skipped, "place2dTexture"));
+
+    // The base color file's wrap and mirror come from its place2dTexture, filter type Off is nearest.
+    const material::TextureSampling s = materials::sampling(*paint, material::kBaseColorMap);
+    CHECK(s.wrapU == material::TextureWrap::Black);
+    CHECK(s.wrapV == material::TextureWrap::Mirror);
+    CHECK(s.filter == material::TextureFilter::Nearest);
+    CHECK(materials::sampling(*paint, material::kNormalMap).isDefault());
+    // A surface shader is unlit.
+    scene::Node* flat = materials::find(g, "Flat");
+    REQUIRE(flat);
+    CHECK(flat->as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+    checkVec(flat->as<glm::dvec3>(material::kBaseColor), glm::dvec3(0.9, 0.5, 0.1), 1e-6);
+    CHECK(slotOfFace(*outMesh(g, "card"), 0) == "Flat");
     CHECK_FALSE(contains(r.skipped, "groupId"));
 }
 

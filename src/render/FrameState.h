@@ -159,6 +159,16 @@ struct FrameState
     float outlineWidth = 1.0f;  // device pixels
     glm::vec3 outlineColor{0.01f}; // linear
     std::vector<ImagePlaneDraw> imagePlanes;
+    /**
+     * An external viewport renderer draws the scene instead of Lila: its image replaces the backdrop, grid fill, AO,
+     * post and shaded meshes, and meshes keep only their wires and selection highlights, depth tested against its depth.
+     * On with no colour yet (the first frame has not arrived), the view shows the plain background.
+     */
+    bool externalScene = false;
+    /** Straight alpha over the background, row 0 at the top: RGBA8 sRGB or RGBA16F linear. Stretched to the view. */
+    TexturePtr externalColor;
+    /** R32F distance along the view axis in cm, 0 or less where nothing was hit; null when the renderer gave none. */
+    TexturePtr externalDepth;
     std::vector<LineVertex> lines;
     std::vector<LineVertex> linesOnTop; // like lines, biased toward the camera and writing no depth (edges over faces)
     /** Selected component edges: drawn like linesOnTop, at their own width in device pixels. */
