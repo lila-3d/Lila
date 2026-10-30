@@ -11,6 +11,8 @@
     {"separator": true},
     {"label": "Look Through Selected", "action": "viewport.lookThroughSelected"},
     {"separator": true},
+    {"insert": "cameraBookmarks"},
+    {"separator": true},
     {"label": "Four Views", "action": "viewport.toggleQuad"}
   ]
 }

@@ -48,6 +48,9 @@ std::vector<AttrDef> cameraAttrs()
     at(Camera::kDisplayGateMaskOpacity) = {.name = "displayGateMaskOpacity", .shortName = "dgo", .type = PlugType::Float,
                                            .defaultValue = 0.7, .flags = kStored, .doc = "Gate mask opacity, 0 to 1.", .minValue = 0.0,
                                            .maxValue = 1.0};
+    at(Camera::kBookmarks) = {.name = "bookmarks", .shortName = "bkm", .type = PlugType::String, .defaultValue = std::string(),
+                              .flags = kStored | AttrHidden,
+                              .doc = "Camera bookmarks saved while looking through this camera, as JSON by slot."};
     return a;
 }
 } // namespace

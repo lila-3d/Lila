@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/CameraBookmarks.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 
@@ -226,6 +227,7 @@ void MainWindow::registerActions()
     animatedSend::registerActions(this);
     hud::registerActions([this] { return mViewports->active(); });
     displayAids::registerActions([this] { return mViewports->active(); });
+    cameraBookmarks::install([this] { return mViewports->active(); });
     lodDisplay::registerActions([this] { return mViewports->active(); });
     toolBox::registerItems([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();

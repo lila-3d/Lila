@@ -6,10 +6,12 @@
 #include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/CameraBookmarks.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
 #include "ui/Shelf.h"
 #include "ui/Theme.h"
+#include "ui/ViewportWidget.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -345,6 +347,22 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
                     if (const scene::Node* n = g.node(id); n->type().isA("camera"))
                         level.overflow.push_back(toItem({{"label", n->name()},
                                                          {"action", {{"command", "lookThru"}, {"args", {{"args", {n->path()}}}}}}}));
+                continue;
+            }
+            // A placeholder for the active view's camera bookmarks: a jump per saved slot, then Set and Clear.
+            if (j.value("insert", std::string()) == "cameraBookmarks")
+            {
+                const ViewportWidget* view = cameraBookmarks::activeView();
+                std::vector<int> saved = view ? view->bookmarks() : std::vector<int>{};
+                for (int slot : saved)
+                    level.overflow.push_back(toItem({{"label", "Bookmark " + std::to_string(slot)},
+                                                     {"action", "viewport.bookmarkGo" + std::to_string(slot)}}));
+                json set = json::array();
+                for (int slot = 1; slot <= cameraBookmarks::kSlots; ++slot)
+                    set.push_back({{"label", std::to_string(slot) + (std::ranges::find(saved, slot) != saved.end() ?"  (replace)" : "")},
+                                   {"action", "viewport.bookmarkSet" + std::to_string(slot)}});
+                level.overflow.push_back(toItem({{"label", "Set Bookmark"}, {"children", {{"overflow", set}}}}));
+                level.overflow.push_back(toItem({{"label", "Clear Bookmarks"}, {"action", "viewport.bookmarkClear"}}));
                 continue;
             }
             // A placeholder for the scene's materials: each assigns, its option box opens it in the Material Editor.

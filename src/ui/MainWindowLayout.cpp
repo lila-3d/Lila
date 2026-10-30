@@ -96,7 +96,7 @@ void MainWindow::createCameraFromView()
         if (through)
         {
             for (int attr = scene::Camera::kFocalLength; attr < scene::Camera::kCount; ++attr)
-                if (attr != scene::Camera::kLocked)
+                if (attr != scene::Camera::kLocked && attr != scene::Camera::kBookmarks)
                     set(through->type().attrs[size_t(attr)].name.c_str(), scene::toJson(through->value(attr)));
         }
         else

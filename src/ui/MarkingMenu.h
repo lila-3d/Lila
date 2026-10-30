@@ -74,6 +74,7 @@ LILA_UI_API std::string viewportMenuName(const std::string& base, bool overObjec
  *   { "N": {"label": "...", "action": <target>}, "NE": {..., "children": {<same shape>}}, "overflow": [ {...} ] }
  * An overflow item {"insert": "cameraNodes"} becomes one Look Through item per camera node in the scene, and
  * {"insert": "materials"} one Assign item per material (its option box shows the material in the Material Editor).
+ * {"insert": "cameraBookmarks"} lists the active view's camera bookmarks, then Set Bookmark and Clear Bookmarks.
  * An overflow item {"separator": true} is a divider line between groups of rows, and {"column": true} starts a new
  * column beside the previous one, so a long list spreads sideways instead of down.
  * "outer": {"N": [ {...}, ... ]} stacks items outward beyond a compass slot (any but S, which has the overflow). They

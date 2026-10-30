@@ -28,6 +28,7 @@
 #include "python/Python.h"
 #include "curve/CurveNodes.h"
 #include "retopo/RetopoCommands.h"
+#include "scene/Graph.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "sculpt/SculptSession.h"
@@ -297,6 +298,9 @@ void shutdown()
 {
     events::send({.type = events::Event::Shutdown});
     batch::shutdown();
+    // Evaluated values can hold data an extension allocated (a terrain's heightfield in a geometry nodes cache), whose
+    // deleter lives in its library; they have to go before the libraries do.
+    scene::Graph::current().clear();
     extensions::ExtensionManager::get().unloadAll();
     vcs::SourceControl::get().shutdown();
     link::Link::get().shutdown();

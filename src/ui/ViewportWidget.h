@@ -92,6 +92,16 @@ public:
     /** Steps this view's camera back or forward through its own history ([ and ]); the scene's undo is untouched. */
     void cameraUndo();
     void cameraRedo();
+    /**
+     * Camera bookmarks (CameraBookmarks.h) on the camera this view shows: each built-in view and each camera node has its
+     * own slots. Going to one is a camera undo step; false when the slot is empty or the camera is locked.
+     */
+    void setBookmark(int slot);
+    bool goToBookmark(int slot);
+    /** Clears one slot, or every slot when it is 0. */
+    void clearBookmarks(int slot = 0);
+    /** The slots holding a bookmark on the camera this view shows, ascending. */
+    std::vector<int> bookmarks() const;
     const std::string& viewName() const { return mViewName; }
     /** Which viewport panel this is, in creation order; keys its heads-up display prefs. */
     int hudPanel() const { return mHudPanel; }

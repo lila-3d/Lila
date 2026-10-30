@@ -33,6 +33,7 @@ public:
         kDisplayFilmGate,
         kDisplayGateMask,
         kDisplayGateMaskOpacity,
+        kBookmarks,
         kCount
     };
 };
