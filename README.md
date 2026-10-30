@@ -4,16 +4,21 @@
 
 ## Get it running (Windows)
 
-Needs Visual Studio 2022, Qt 6.11.1 (`msvc2022_64`) and Python 3.14. Defaults live in `scripts/env.cmd`; set `LILA_QT_DIR`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override.
+Needs Visual Studio 2022 (C++ workload, CMake 3.28+, vcpkg), Qt 6.11.1 (`msvc2022_64`, plus the Ninja tool from the Qt installer) and Python 3.14. Defaults live in `scripts/env.cmd`; set `LILA_VS`, `LILA_QT_DIR`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override. sccache and lld-link are used when found, and are optional.
 
 ```
-scripts\build.cmd                      # first run fetches vcpkg deps (a few minutes)
+scripts\build.cmd                      # first run builds the vcpkg deps (USD makes this long)
 build\bin\RelWithDebInfo\lila.exe      # or: lila.exe <folder>  /  lila.exe scene.lila
 ```
 
-Then: Shift+right-click in the viewport for primitives, W/E/R to move/rotate/scale (hold the key and click for its options), F8/F9/F11 for object/vertex/face mode (Shift+2 for edge; F10 resets the layout), Shift+right-click on a mesh for modeling ops, tap Space for four views, hold Space for the hotbox (Space + click outside its menus for a zone marking menu), hold F1 for the hotkey cheat sheet.
+To build an installer instead, also install Inno Setup 6 (`winget install JRSoftware.InnoSetup`), then:
 
-Tests: `ctest --test-dir build -C RelWithDebInfo -LE slow` (from a shell set up by `scripts\env.cmd`). `-L slow` runs the slow suites (every shipped material evaluated and linted, about 20 minutes).
+```
+scripts\build.cmd release
+scripts\installer\build.cmd            # writes build-installer\Lila-<version>-Setup.exe
+```
+
+Tests: `scripts\t.cmd build RelWithDebInfo -LE slow`. `-L slow` runs the slow suites (every shipped material evaluated and linted, about 20 minutes).
 
 ### Unreal
 
