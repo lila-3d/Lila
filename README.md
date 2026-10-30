@@ -1,6 +1,6 @@
 # Lila
 
-Game-asset DCC: Maya-style workflow, modern multithreaded core, Unreal-first pipeline.
+3D app for game assets: Maya-style workflow, modern multithreaded core, Unreal-first pipeline.
 
 ## Get it running (Windows)
 
