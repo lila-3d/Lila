@@ -498,6 +498,10 @@ MeshPtr meshFromJson(const json& j)
     {
         edgeOrder.resize(edges.size() / 2);
         tbb::parallel_for(size_t(0), edgeOrder.size(), [&](size_t i) { edgeOrder[i] = mesh->findEdge(edges[i * 2], edges[i * 2 + 1]); });
+        // Loose edges belong to no face, so fromPolygons doesn't rebuild them.
+        for (size_t i = 0; i < edgeOrder.size(); ++i)
+            if (const Index a = edges[i * 2], b = edges[i * 2 + 1]; edgeOrder[i] == geo::kInvalid && a != b && a < mesh->pointCapacity() && b < mesh->pointCapacity())
+                edgeOrder[i] = mesh->addEdge(a, b);
     }
 
     for (const json& layer : member("layers"))

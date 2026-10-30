@@ -6,6 +6,7 @@
 #include <lila/Actions.h>
 #include <lila/Command.h>
 #include <lila/Extension.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Mesh.h>
@@ -256,12 +257,13 @@ void registerKitUi(ext::Context& ctx)
         {"stagehand.snapAll", "Snap All Pieces", "snapAll", "Join kit pieces whose snap points are near each other."},
         {"stagehand.addSnapPoint", "Add Snap Point", "addSnapPoint", "Add a modular snap point to the selected piece."},
     };
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Section, .label = "Level Kit"});
-    menus::addItem(ctx, {.menu = "Dress", .action = "stagehand.tool.kitPlace"});
+    menus::addItem(ctx, {.id = "stagehand.menu.kit", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Level Kit",
+                         .before = levelToolkit::kAssetsSection});
+    menus::addItem(ctx, {.menu = "Level/Level Kit", .action = "stagehand.tool.kitPlace"});
     for (const auto& h : helpers)
     {
         actions::add(ctx, {.id = h.id, .label = h.label, .category = "Dress", .doc = h.doc, .command = h.command, .call = nlohmann::json::object()});
-        menus::addItem(ctx, {.menu = "Dress", .action = h.id});
+        menus::addItem(ctx, {.menu = "Level/Level Kit", .action = h.id});
     }
 }
 } // namespace stagehand

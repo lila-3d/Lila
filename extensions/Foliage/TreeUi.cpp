@@ -7,6 +7,7 @@
 
 #include <lila/Command.h>
 #include <lila/Graph.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Prefs.h>
 #include <lila/UI.h>
@@ -631,17 +632,23 @@ void registerUi(ext::Context& ctx)
         actions::add(ctx, {.id = d.id, .label = d.label, .category = cat, .run = d.fn, .doc = d.doc});
 
     panels::add(ctx, {.id = "treeGenerator", .title = "Tree Generator", .create = makePanel, .icon = "tree", .open = false});
+    levelToolkit::add(ctx, {.id = "foliage.trees",
+                            .title = "Trees",
+                            .items = {{"window.treeGenerator", "tree", "Generator"}, {"treeGenerator.growTrunk", "git-branch", "Trunk"},
+                                      {"treeGenerator.scatterLeaves", "leaf", "Leaves"}, {"treeGenerator.rebuild", "refresh", "Rebuild"},
+                                      {"treeGenerator.export", "file-export", "Export"}},
+                            .order = 60});
 
-    menus::addItem(ctx, {.id = "treeGenerator.menu", .menu = "Create", .kind = menus::Kind::Submenu, .label = "Tree Generator"});
+    menus::addItem(ctx, {.id = "treeGenerator.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Tree Generator"});
     int separators = 0;
     for (const char* a : {"window.treeGenerator", "", "treeGenerator.build", "treeGenerator.growTrunk", "treeGenerator.canopyBlobs", "treeGenerator.scatterLeaves",
                           "treeGenerator.leafPlane", "treeGenerator.rebuild", "", "treeGenerator.export", "treeGenerator.exportLeaf", "treeGenerator.measureBake",
                           "treeGenerator.opacityMap", "treeGenerator.splitMasks"})
     {
         if (*a)
-            menus::addItem(ctx, {.id = std::string("treeGenerator.menu.") + a, .menu = "Create/Tree Generator", .action = a});
+            menus::addItem(ctx, {.id = std::string("treeGenerator.menu.") + a, .menu = "Level/Tree Generator", .action = a});
         else
-            menus::addItem(ctx, {.id = "treeGenerator.menu.sep" + std::to_string(separators++), .menu = "Create/Tree Generator", .kind = menus::Kind::Separator});
+            menus::addItem(ctx, {.id = "treeGenerator.menu.sep" + std::to_string(separators++), .menu = "Level/Tree Generator", .kind = menus::Kind::Separator});
     }
 }
 } // namespace treegen

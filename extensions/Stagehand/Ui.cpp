@@ -1,4 +1,4 @@
-// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, pin) and the Dress menu.
+// The Push tool (live physics in the viewport: grab, push, wiggle, drop, shake, pin), its Level menu entries and the Level Toolkit's Stagehand sections.
 
 #include "Session.h"
 #include "Stagehand.h"
@@ -6,6 +6,7 @@
 #include <lila/Actions.h>
 #include <lila/Command.h>
 #include <lila/Extension.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Undo.h>
@@ -429,7 +430,8 @@ void registerUi(ext::Context& ctx)
 {
     viewportTools::add(ctx, {.id = kTool, .label = "Push Tool", .icon = "hand-finger", .create = [] { return std::make_unique<PushTool>(); }});
 
-    menus::addMenu(ctx, {.id = "Dress", .title = "Dress", .before = "Effects", .docs = "stagehand"});
+    menus::addItem(ctx, {.id = "stagehand.menu.tools", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Physics Tools",
+                         .before = levelToolkit::kAssetsSection});
     struct ToolAction
     {
         const char* id;
@@ -449,9 +451,9 @@ void registerUi(ext::Context& ctx)
     {
         const Mode m = t.mode;
         actions::add(ctx, {.id = t.id, .label = t.label, .category = "Dress", .run = [m] { startTool(m); }, .doc = t.doc});
-        menus::addItem(ctx, {.id = t.menuId, .menu = "Dress", .action = t.id});
+        menus::addItem(ctx, {.id = t.menuId, .menu = "Level/Physics Tools", .action = t.id});
     }
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Separator});
+    menus::addItem(ctx, {.menu = "Level/Physics Tools", .kind = menus::Kind::Separator});
 
     actions::add(ctx, {.id = "stagehand.settle", .label = "Settle", .category = "Dress", .run = [] { onSelection("settle"); },
                        .doc = "Let the selection fall and come to rest against what is around it.", .python = "settle(['mug', 'book_01'])"});
@@ -464,8 +466,7 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "stagehand.check", .label = "Check Dressing", .category = "Dress", .run = [] { onSelection("dressCheck"); },
                        .doc = "Report anything selected that would move, floats or sits inside something.", .python = "dressCheck(['mug'])"});
     for (const char* id : {"stagehand.settle", "stagehand.drop", "stagehand.wiggle", "stagehand.shake", "stagehand.check"})
-        menus::addItem(ctx, {.menu = "Dress", .action = id});
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Separator});
+        menus::addItem(ctx, {.menu = "Level/Physics Tools", .action = id});
 
     // Arrangements: one command each, so their menu items get option boxes for items, seed and the rest.
     const struct
@@ -484,15 +485,16 @@ void registerUi(ext::Context& ctx)
          "pileProps(items=['Debris/Brick'], at=[0, 0, 0], count=40)"},
         {"stagehand.stackProps", "Stack Props", "stackProps", "Stack items one on another.", "stackProps(items=['Kitchen/Plate'], at=[0, 90, 0])"},
     };
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Section, .label = "Arrange"});
+    menus::addItem(ctx, {.id = "stagehand.menu.arrange", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Arrange",
+                         .before = levelToolkit::kAssetsSection});
     for (const auto& e : arrangements)
     {
         actions::add(ctx, {.id = e.id, .label = e.label, .category = "Dress", .doc = e.doc, .python = e.python, .command = e.command, .call = nlohmann::json::object()});
-        menus::addItem(ctx, {.menu = "Dress", .action = e.id});
+        menus::addItem(ctx, {.menu = "Level/Arrange", .action = e.id});
     }
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Separator});
 
-    menus::addItem(ctx, {.menu = "Dress", .kind = menus::Kind::Submenu, .label = "Physics Body"});
+    menus::addItem(ctx, {.id = "stagehand.menu.body", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Physics Body",
+                         .before = levelToolkit::kAssetsSection});
     actions::add(ctx, {.id = "stagehand.body.dynamic", .label = "Make Dynamic", .category = "Dress",
                        .run = [] { onSelection("physicsBody", {{"role", "dynamic"}}); }, .doc = "The selection moves whenever things settle or get pushed."});
     actions::add(ctx, {.id = "stagehand.body.static", .label = "Make Static", .category = "Dress",
@@ -502,6 +504,30 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "stagehand.body.remove", .label = "Remove Physics Body", .category = "Dress",
                        .run = [] { onSelection("physicsBody", {{"remove", true}}); }, .doc = "Back to the defaults: static unless a command moves it."});
     for (const char* id : {"stagehand.body.dynamic", "stagehand.body.static", "stagehand.body.off", "stagehand.body.remove"})
-        menus::addItem(ctx, {.menu = "Dress/Physics Body", .action = id});
+        menus::addItem(ctx, {.menu = "Level/Physics Body", .action = id});
+
+    levelToolkit::add(ctx, {.id = "stagehand.dress",
+                            .title = "Dress",
+                            .items = {{"window.propLibrary", "books", "Library", "Library"}, {},
+                                      {"stagehand.tool.grab", "hand-grab", "Grab", "Grab"}, {"stagehand.tool.push", "hand-finger", "Push"},
+                                      {"stagehand.tool.wiggle", "wave-sine", "Wiggle"}, {"stagehand.tool.drop", "arrow-bar-to-down", "Drop"},
+                                      {"stagehand.tool.shake", "activity", "Shake"}, {},
+                                      {"stagehand.settle", "anchor", "Settle", "Settle"}, {"stagehand.drop", "arrow-down", "Drop"}, {"stagehand.wiggle", "dice", "Wiggle"},
+                                      {"stagehand.shake", "activity", "Shake"}, {"stagehand.check", "checklist", "Check"}, {},
+                                      {"stagehand.body.dynamic", "", "Dynamic"}, {"stagehand.body.static", "", "Static"}, {"stagehand.body.off", "", "Ignore"},
+                                      {"stagehand.body.remove", "", "Default"}},
+                            .order = 40});
+    levelToolkit::add(ctx, {.id = "stagehand.arrange",
+                            .title = "Arrange",
+                            .items = {{"stagehand.fillShelf", "books", "Fill Shelf"}, {"stagehand.scatterProps", "grain", "Scatter", "Scatter"},
+                                      {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}},
+                            .order = 41});
+    levelToolkit::add(ctx, {.id = "stagehand.kit",
+                            .title = "Level Kit",
+                            .items = {{"stagehand.tool.kitPlace", "puzzle", "Kit Place", "Kit"}, {"stagehand.snapAll", "magnet", "Snap All"},
+                                      {"stagehand.addSnapPoint", "point", "Snap Point"}, {},
+                                      {"stagehand.dropToSurface", "arrow-bar-to-down", "To Surface", "To Ground"}, {"stagehand.alignObjects", "layout-align-left", "Align"},
+                                      {"stagehand.distribute", "layout-distribute-horizontal", "Distribute"}, {"stagehand.randomize", "arrows-shuffle", "Randomize"}},
+                            .order = 42});
 }
 } // namespace stagehand

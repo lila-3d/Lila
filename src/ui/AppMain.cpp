@@ -59,6 +59,7 @@
 #include "ui/MaterialEditor.h"
 #include "ui/MeasureTool.h"
 #include "ui/PlacePrimitive.h"
+#include "ui/LevelToolkit.h"
 #include "ui/ModelingToolkit.h"
 #include "ui/Modes.h"
 #include "ui/ModifierStack.h"
@@ -121,6 +122,7 @@ void registerUi()
     tools::registerActions();
     surfaceSnap::registerCommands();
     registerShelfActions();
+    levelToolkit::registerShelf();
     registerEditorActions();
     registerPanelActions();
     docs::registerDocsUi();

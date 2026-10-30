@@ -54,12 +54,16 @@ fs::path pathFor(const std::string& name, Origin origin)
     return dir.empty() ? fs::path() : dir / (file + u8".json");
 }
 
-json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object(), std::vector<std::string> bottom = {})
+json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object(), std::vector<std::string> bottom = {},
+            std::string shelf = {})
 {
     json p{{"open", open}, {"raise", raise}, {"size", std::move(size)}};
     if (!bottom.empty())
         p["bottom"] = bottom;
-    return {{"version", 1}, {"preset", std::move(p)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
+    json layout{{"version", 1}, {"preset", std::move(p)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
+    if (!shelf.empty())
+        layout["shelf"] = {{"current", std::move(shelf)}};
+    return layout;
 }
 
 const std::vector<std::pair<std::string, json>>& presets()
@@ -69,6 +73,9 @@ const std::vector<std::pair<std::string, json>>& presets()
                              "modifierStack", "displayLayers", "timeSlider"},
                             {"modelingToolkit"}, {{"modelingToolkit", {{"width", 0.44}}}, {"modifierStack", {{"height", 0.35}}}},
                             {"modifierStack"})},
+        {"Level", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "levelToolkit", "stagehand.library",
+                          "displayLayers", "timeSlider"},
+                         {"levelToolkit"}, {{"levelToolkit", {{"width", 0.44}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
         {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
         {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},

@@ -1,4 +1,4 @@
-// Create > Masonry Wall: builds a wall along the selected mesh's loose edges.
+// Level > Masonry, whose Masonry Wall builds a wall along the selected mesh's loose edges, and the Level Toolkit's Masonry section.
 
 #include "Masonry.h"
 
@@ -6,6 +6,7 @@
 #include <lila/Command.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
 
@@ -38,6 +39,14 @@ void registerUi(ext::Context& ctx)
                            },
                        .doc = "Lay a brick wall along each selected mesh's loose edges: courses, bonded corners and a mortar core.",
                        .python = "masonryWall('Footprint', bond='running', height=200)"});
-    menus::addItem(ctx, {.id = "masonry.menu.wall", .menu = "Create", .action = "masonry.wall"});
+    actions::add(ctx, {.id = "masonry.ship", .label = "Send Masonry to Unreal", .category = "Masonry",
+                       .doc = "Send the selected wall to Unreal's open level as instanced stones per ground chunk.", .python = "masonryShip('Wall')",
+                       .command = "masonryShip", .call = nlohmann::json::object()});
+
+    levelToolkit::add(ctx, {.id = "masonry", .title = "Masonry", .items = {{"masonry.wall", "wall", "Wall", "Wall"}, {"masonry.ship", "send", "Unreal"}}, .order = 30});
+    menus::addItem(ctx, {.id = "masonry.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Masonry",
+                         .before = levelToolkit::kDressSection});
+    for (const char* a : {"masonry.wall", "masonry.ship"})
+        menus::addItem(ctx, {.id = std::string("masonry.menu.") + a, .menu = "Level/Masonry", .action = a});
 }
 } // namespace masonry

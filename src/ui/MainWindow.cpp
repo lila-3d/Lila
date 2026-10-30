@@ -239,6 +239,11 @@ void MainWindow::registerPanels()
                      tabWithAttributes(toolkit);
                      toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
                  }, .docs = "topology"});
+    panels::add({.id = kLevelToolkitDock, .title = "Level Toolkit", .create = make([](QWidget* p) { return new LevelToolkit(p); }),
+                 .area = Qt::RightDockWidgetArea, .icon = "map", .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
+                     tabWithAttributes(toolkit);
+                     toolkit->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth * 2);
+                 }, .toggleAction = "window.levelToolkit"});
     panels::add({.id = kModifierStackDock, .title = "Modifier Stack", .create = make([](QWidget* p) { return new ModifierStackWidget(p); }),
                  .area = Qt::RightDockWidgetArea, .place = tabWithAttributes});
     panels::add({.id = kMaterialEditorDock, .title = "Material Editor", .create = make([](QWidget* p) { return new MaterialEditor(p); }),

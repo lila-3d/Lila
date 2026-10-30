@@ -7,6 +7,7 @@
 #include <lila/Actions.h>
 #include <lila/Command.h>
 #include <lila/Extension.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Mesh.h>
@@ -340,6 +341,6 @@ void registerLibraryUi(ext::Context& ctx)
     viewportHooks::setDropHandler("stagehand.library", onDrop);
     ctx.track("drop:stagehand.library", [] { viewportHooks::removeDropHandler("stagehand.library"); });
     viewportHooks::addDrawer(ctx, "stagehand.libraryGhost", drawGhost);
-    menus::addItem(ctx, {.menu = "Dress", .action = "window.propLibrary", .before = "stagehand.menu.grab"});
+    menus::addItem(ctx, {.menu = levelToolkit::kMenu, .action = "window.propLibrary", .before = "stagehand.menu.tools"});
 }
 } // namespace stagehand

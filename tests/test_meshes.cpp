@@ -46,6 +46,21 @@ TEST_CASE("mesh json round trip keeps attributes")
     CHECK(scene::meshToJson(*back) == j);
 }
 
+TEST_CASE("mesh json round trip keeps loose edges")
+{
+    geo::Mesh m = geo::makeCube();
+    const geo::Index a = m.addPoint({0, 300, 0}), b = m.addPoint({200, 300, 0}), c = m.addPoint({200, 300, 200});
+    m.addEdge(a, b);
+    m.addEdge(b, c);
+    for (const json& j : {scene::meshToJson(m), scene::meshToJsonPacked(m)})
+    {
+        scene::MeshPtr back = scene::meshFromJson(j);
+        CHECK(back->numEdges() == m.numEdges());
+        CHECK(back->findEdge(a, b) != geo::kInvalid);
+        CHECK(back->findEdge(b, c) != geo::kInvalid);
+    }
+}
+
 TEST_CASE("meshes save and load in both formats")
 {
     run("newScene");

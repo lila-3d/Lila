@@ -306,10 +306,11 @@ void MenuBuilder::fill(QMenu* menu, const std::string& path, std::vector<std::st
     {
         const std::string* owner = itemRegistry().ownerOf(item->id);
         bool lila = owner && *owner == kLilaOwner;
-        // Extension rows would otherwise read as part of whichever of Lila's sections ends the menu.
+        // Extension rows would otherwise read as part of whichever of Lila's sections ends the menu. Rows right under a
+        // section heading were placed there on purpose, as in the Level menu.
         if (sectioned && lilaBefore && !lila && item->kind != Kind::Section && item->kind != Kind::Separator)
             menu->addSection("Extensions");
-        lilaBefore = lila;
+        lilaBefore = lila && item->kind != Kind::Section;
         switch (item->kind)
         {
         case Kind::Action: addActionRow(menu, item->action); break;

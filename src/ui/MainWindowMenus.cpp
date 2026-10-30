@@ -258,6 +258,12 @@ void MainWindow::buildMenus()
     menus::addActions("Deform/Bake for Unreal", {"deform.bakeSkinWeights", "deform.bakeHelperJoints", "deform.bakeCorrectiveMorphs", "",
                                                  "deform.rangeOfMotion", "deform.exportMLDeformer", "", "deform.bakeTension", "deform.bakeSurfacePin"});
 
+    menu(levelToolkit::kMenu, "Level");
+    menus::addActions(levelToolkit::kMenu, {"window.levelToolkit"});
+    addItem({.id = levelToolkit::kBuildSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Build"});
+    addItem({.id = levelToolkit::kDressSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Dress"});
+    addItem({.id = levelToolkit::kAssetsSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Assets"});
+
     menu("Display", "Display", Area::MenuBar, syncChecks);
     menus::addActions("Display", {"#Shading", "viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
                            "viewport.toggleXray", "viewport.toggleBackfaceCulling", "#Lighting and Effects"});
@@ -360,7 +366,7 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
         {"UVs and Texturing", {"UV Editor", "Material Editor", "Material Browser", "Texture Set", "Texture Graph", "Texture", "2D View", "Baker"}},
         {"Animation and Rigging", {"Graph Editor", "Time Slider", "Anim Layers", "Pose Library", "Control Picker", "Offsets", "Rig Templates",
                                    "Puppeteer", "Anim Bank", "Stacker", "Mixer", "Cycle Maker", "Overlap", "Physics Animation"}},
-        {"Set Dressing", {"Dress", "Prop Library"}},
+        {"Level", {"Level Toolkit", "Dress", "Prop Library"}},
         {"Scripting", {"Script Editor", "Script Output", "API Reference", "Terminal", "Batch Script Execution"}},
     };
     menu->clear();

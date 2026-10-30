@@ -8,6 +8,7 @@
 #include <lila/Events.h>
 #include <lila/Graph.h>
 #include <lila/Icons.h>
+#include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Node.h>
 #include <lila/UI.h>
@@ -1132,7 +1133,7 @@ void registerUi(ext::Context& ctx)
     for (const Entry& e : entries)
         actions::add(ctx, {.id = e.id, .label = e.label, .category = "Ground Tiles", .run = [fn = e.fn] { onPanel(fn); }, .doc = e.doc});
 
-    menus::addItem(ctx, {.id = "groundTiles.menu", .menu = "Create", .kind = menus::Kind::Submenu, .label = "Ground Tiles"});
+    menus::addItem(ctx, {.id = "groundTiles.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Ground Tiles"});
     const char* const items[] = {"window.groundTiles", "", "groundTiles.addSources", "groundTiles.generate", "groundTiles.regenerate",
                                  "groundTiles.delete", "", "groundTiles.bakePlane", "groundTiles.bakeIdMap", "groundTiles.measureHeight",
                                  "groundTiles.export", "groundTiles.splitMasks"};
@@ -1140,9 +1141,17 @@ void registerUi(ext::Context& ctx)
     for (const char* a : items)
     {
         if (*a)
-            menus::addItem(ctx, {.id = std::string("groundTiles.menu.") + a, .menu = "Create/Ground Tiles", .action = a});
+            menus::addItem(ctx, {.id = std::string("groundTiles.menu.") + a, .menu = "Level/Ground Tiles", .action = a});
         else
-            menus::addItem(ctx, {.id = "groundTiles.menu.sep" + std::to_string(separators++), .menu = "Create/Ground Tiles", .kind = menus::Kind::Separator});
+            menus::addItem(ctx, {.id = "groundTiles.menu.sep" + std::to_string(separators++), .menu = "Level/Ground Tiles", .kind = menus::Kind::Separator});
     }
+
+    levelToolkit::add(ctx, {.id = "groundTiles",
+                            .title = "Ground Tiles",
+                            .items = {{"window.groundTiles", "mountain", "Panel"}, {"groundTiles.addSources", "plus", "Sources"},
+                                      {"groundTiles.generate", "grid-pattern", "Generate"}, {"groundTiles.regenerate", "refresh", "Regenerate"}, {},
+                                      {"groundTiles.bakePlane", "square", "Bake Plane"}, {"groundTiles.bakeIdMap", "palette", "ID Map"},
+                                      {"groundTiles.export", "file-export", "Export"}},
+                            .order = 50});
 }
 } // namespace groundtiles

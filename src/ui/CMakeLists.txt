@@ -82,7 +82,7 @@ lila_module(lila_ui UI
     SurfaceSnap.cpp SurfaceSnap.h
     GeometrySnap.cpp GeometrySnap.h
     Isolate.cpp Isolate.h
-    ModelingToolkit.cpp ModelingToolkit.h
+    ModelingToolkit.cpp ModelingToolkit.h LevelToolkit.cpp LevelToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
     NodeEditor.cpp NodeEditor.h NodeCanvas.cpp NodeCanvas.h NodeCanvasLayout.cpp NodeCanvasInput.cpp NodeCanvasWires.cpp NodeCanvasTies.cpp NodeCanvasFrames.cpp GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
