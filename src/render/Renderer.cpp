@@ -532,11 +532,20 @@ std::vector<uint32_t> loadSpirv(const char* name)
 glm::vec3 sceneFromDisplay(glm::vec3 c, float gamma)
 {
     for (int i = 0; i < 3; ++i)
-        c[i] = std::clamp(std::pow(std::max(c[i], 0.0f), std::max(gamma, 0.01f)), 0.0f, 0.999f);
-    constexpr float start = 0.8f - 0.04f, d = 1.0f - start;
-    const float newPeak = std::max(c.r, std::max(c.g, c.b));
+        c[i] = std::clamp(std::pow(std::max(c[i], 0.0f), std::max(gamma, 0.01f)), 0.0f, 1.0f);
+    constexpr float start = 0.8f - 0.04f, d = 1.0f - start, desaturation = 0.15f, maxPeak = 0.9f;
+    float newPeak = std::max(c.r, std::max(c.g, c.b));
+    if (newPeak > maxPeak)
+    {
+        c *= maxPeak / newPeak;
+        newPeak = maxPeak;
+    }
     if (newPeak >= start)
-        c *= (d * d / (1.0f - newPeak) - d + start) / newPeak;
+    {
+        const float peak = d * d / (1.0f - newPeak) - d + start;
+        const float g = 1.0f - 1.0f / (desaturation * (peak - newPeak) + 1.0f);
+        c = glm::max((c - g * newPeak) / (1.0f - g), glm::vec3(0.0f)) * (peak / newPeak);
+    }
     const float y = std::min(c.r, std::min(c.g, c.b));
     float offset = 0.04f;
     if (y < 0.04f)

@@ -32,16 +32,28 @@ float3 neutralTonemap(float3 c)
     return lerp(c, newPeak.xxx, g);
 }
 
-/** neutralTonemap undone, ignoring its highlight desaturation (exact below the shoulder). */
+/**
+ * neutralTonemap undone, highlight desaturation included. Peaks cap at 0.9: brighter ones need radiance so high that
+ * the tonemap washes them to white and their antialiased edges bleed out wide.
+ */
 float3 neutralInverse(float3 t)
 {
-    t = clamp(t, 0.0, 0.999);
+    t = clamp(t, 0.0, 1.0);
     const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    const float maxPeak = 0.9;
     const float d = 1.0 - startCompression;
     float newPeak = max(t.r, max(t.g, t.b));
+    if (newPeak > maxPeak)
+    {
+        t *= maxPeak / newPeak;
+        newPeak = maxPeak;
+    }
     if (newPeak >= startCompression)
     {
         float peak = d * d / (1.0 - newPeak) - d + startCompression;
+        float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+        t = max((t - g * newPeak) / (1.0 - g), 0.0);
         t *= peak / newPeak;
     }
     // The toe took x - 6.25 x^2 off every channel, x being the smallest, which left that one at 6.25 x^2.

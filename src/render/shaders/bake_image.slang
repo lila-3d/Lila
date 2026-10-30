@@ -77,10 +77,10 @@ void accumulateCS(uint3 id: SV_DispatchThreadID)
     uint base = i * S;
     // Exact votes: texture, colour and count per distinct pair, in order of first appearance; voteTarget is a material
     // slot that writes the texture.
-    uint voteTarget[64];
-    uint voteId[64];
-    uint voteColour[64];
-    uint voteCount[64];
+    uint voteTarget[64] = {};
+    uint voteId[64] = {};
+    uint voteColour[64] = {};
+    uint voteCount[64] = {};
     uint votes = 0;
     for (uint sub = 0; sub < S; ++sub)
     {

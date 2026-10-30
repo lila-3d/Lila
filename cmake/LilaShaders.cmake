@@ -15,7 +15,8 @@ function(lila_add_shaders target)
         add_custom_command(
             OUTPUT ${out}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
-            COMMAND ${SLANGC} ${CMAKE_CURRENT_SOURCE_DIR}/${src} -target spirv -profile spirv_1_6
+            # 41012: entry points add the capabilities they use (ray query, barycentrics...) to the base profile on purpose.
+            COMMAND ${SLANGC} ${CMAKE_CURRENT_SOURCE_DIR}/${src} -target spirv -profile spirv_1_6 -warnings-disable 41012
                     -fvk-use-entrypoint-name -matrix-layout-column-major -o ${out}
             DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src} ${ARG_INCLUDES}
             COMMENT "slangc ${src}")
