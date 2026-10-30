@@ -829,7 +829,7 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
             QPoint at = me->globalPosition().toPoint();
             mMidClick.press(at.x(), at.y(), mClock.elapsed());
             bool channel = idx.isValid() && idx.row() < int(mRows.size()) && !mRows[idx.row()].header;
-            mMidRow = channel && idx.column() == 0 ? idx.row() : -1;
+            mMidRow = channel ? idx.row() : -1;
             if (idx.isValid() || !highlighted.empty())
             {
                 // Pressing a channel outside the highlight makes it the one dragged; on a highlighted one, all of them drag.

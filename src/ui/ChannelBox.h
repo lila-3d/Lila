@@ -116,7 +116,7 @@ private:
     };
     std::optional<Scrub> mScrub;
     valueReset::ClickTracker mMidClick;
-    int mMidRow = -1; // the name cell a middle press landed on
+    int mMidRow = -1; // the channel a middle press landed on
     QElapsedTimer mClock;
     QTimer* mScrubTimer = nullptr;
     QElapsedTimer mLastScrubApply;
