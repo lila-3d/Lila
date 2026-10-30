@@ -1955,7 +1955,7 @@ QString remove(const QStringList& paths)
 bool customFolderHandler()
 {
 #ifdef Q_OS_WIN
-    const QSettings cmd("HKEY_CLASSES_ROOT\Directory\shell\open\command", QSettings::NativeFormat);
+    const QSettings cmd(R"(HKEY_CLASSES_ROOT\Directory\shell\open\command)", QSettings::NativeFormat);
     const QString exe = cmd.value("Default").toString();
     return !exe.isEmpty() && !exe.contains("explorer.exe", Qt::CaseInsensitive);
 #else
