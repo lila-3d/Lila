@@ -100,6 +100,11 @@ struct Settings
 
 LILA_SCENE_API const char* kindName(Kind kind);
 LILA_SCENE_API Settings settings(const Node& light);
+/**
+ * The light as it shines: its lengths times its world scale. Width and height take the X and Y scale; range and source
+ * radius the mean scale (a directional light's source radius is an angle and stays). Cone angles never scale.
+ */
+LILA_SCENE_API Settings worldSettings(const Node& light);
 LILA_SCENE_API void setSettings(Graph& g, NodeId light, const Settings& s);
 /** Creates a light node under parent with s applied; the new node. */
 LILA_SCENE_API Node& create(Graph& g, const std::string& name, NodeId parent, const Settings& s);

@@ -7,6 +7,7 @@
 #include "core/Profile.h"
 #include "core/Workspace.h"
 #include "scene/Graph.h"
+#include "scene/Light.h"
 #include "ui/Deletion.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
@@ -138,6 +139,37 @@ std::vector<attributeEditor::Section*> extraSections()
 }
 } // namespace
 
+Registry<attributeEditor::AttrFilter>& attributeEditor::filters()
+{
+    static Registry<AttrFilter>& r = []() -> Registry<AttrFilter>& {
+        static Registry<AttrFilter> made;
+        using scene::lights::Kind;
+        made.put("lila.light",
+                 {.typeName = "light",
+                  .triggers = {"lightType"},
+                  .shows = [](const scene::Node& n, const std::string& attr) {
+                      const Kind k = scene::lights::settings(n).kind;
+                      const bool spot = k == Kind::Spot, sized = k == Kind::Area || k == Kind::Disc;
+                      if (attr == "innerConeAngle" || attr == "outerConeAngle")
+                          return spot;
+                      if (attr == "width")
+                          return sized;
+                      if (attr == "height")
+                          return k == Kind::Area;
+                      if (attr == "sourceRadius")
+                          return k == Kind::Point || spot || k == Kind::Directional;
+                      if (attr == "range")
+                          return k != Kind::Directional && k != Kind::Dome;
+                      if (attr == "texture")
+                          return k == Kind::Dome || k == Kind::Point || spot;
+                      return true;
+                  }},
+                 kLilaOwner);
+        return made;
+    }();
+    return r;
+}
+
 Registry<attributeEditor::Section>& attributeEditor::registry()
 {
     static Registry<Section> r;
@@ -230,7 +262,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     mListener = Graph::current().addListener([this](scene::Change c, scene::NodeId) {
         // An array element's change may add or drop a row, so element edits rebuild too.
         const scene::PlugRef* plug = Graph::current().changedPlug();
-        if (c != scene::Change::Value || (plug && plug->element >= 0))
+        if (c != scene::Change::Value || (plug && plug->element >= 0) || (plug && plug->node == mNode && mTriggers.contains(plug->attr)))
             mRebuild = true;
         scheduleRefresh();
     });
@@ -373,10 +405,23 @@ void AttributeEditor::rebuild()
         chain.insert(chain.begin(), t);
 
     scene::NodeId id = mNode;
+    std::vector<const attributeEditor::AttrFilter*> filters;
+    mTriggers.clear();
+    for (const attributeEditor::AttrFilter* f : attributeEditor::filters().all())
+        if (n->type().isA(f->typeName))
+        {
+            filters.push_back(f);
+            for (const std::string& t : f->triggers)
+                if (int index = n->type().attrIndex(t); index >= 0)
+                    mTriggers.insert(index);
+        }
     /** Adds one attr's row to form; false when the attr shows no editor. */
     auto addRow = [&](QFormLayout* form, const scene::AttrDef& def, int element, QString labelText) -> bool {
         if (def.flags & scene::AttrHidden)
             return false;
+        for (const attributeEditor::AttrFilter* f : filters)
+            if (f->shows && !f->shows(*n, def.name))
+                return false;
         int index = n->type().attrIndex(def.name);
         const scene::PlugRef ref{id, index, -1, element};
         bool readOnly = !(def.flags & scene::AttrInput) || (element >= 0 && g.source(ref));

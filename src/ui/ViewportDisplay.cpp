@@ -119,7 +119,7 @@ void applyLights(render::FrameState& s)
         const lights::Provider* owner = lights::providerFor(*n);
         if (!owner || owner->id != lights::kLilaProvider)
             continue;
-        const lights::Settings l = lights::settings(*n);
+        const lights::Settings l = lights::worldSettings(*n);
         if (l.kind == lights::Kind::Dome || l.intensity <= 0.0)
             continue;
         const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
@@ -136,8 +136,8 @@ void applyLights(render::FrameState& s)
         d.range = float(std::max(l.range, 0.0));
         d.cosOuter = float(std::cos(glm::radians(std::clamp(l.outerConeAngle, 0.1, 90.0))));
         d.cosInner = float(std::cos(glm::radians(std::clamp(std::min(l.innerConeAngle, l.outerConeAngle - 0.1), 0.0, 90.0))));
-        d.width = float(std::max(l.width, 0.0) * glm::length(glm::dvec3(world[0])));
-        d.height = float(std::max(l.kind == lights::Kind::Disc ? l.width : l.height, 0.0) * glm::length(glm::dvec3(world[1])));
+        d.width = float(std::max(l.width, 0.0));
+        d.height = float(std::max(l.kind == lights::Kind::Disc ? l.width : l.height, 0.0));
         d.radius = float(std::max(l.sourceRadius, 0.0));
         if (d.kind == render::LightDraw::Area || d.kind == render::LightDraw::Disc)
             d.radius = std::max(d.radius, 0.5f * std::sqrt(std::max(d.width * d.height, 0.0f)));
@@ -155,15 +155,18 @@ void applyLights(render::FrameState& s)
                 const glm::dmat4 view = glm::lookAt(centre - dir * radius * 2.0, centre, up);
                 d.shadowViewProj = glm::mat4(reverseDepth(glm::orthoRH_ZO(-radius, radius, -radius, radius, radius * 0.5, radius * 3.5)) * view);
                 d.shadowTexel = float(2.0 * radius / 2048.0);
+                const double angle = glm::radians(l.sourceRadius > 0.0 ? std::min(l.sourceRadius, 10.0) : 0.27);
+                d.shadowDepth = glm::vec4(float(radius * 0.5), float(radius * 3.5), float(std::tan(angle)), float(0.5 / radius));
             }
             else
             {
                 const glm::dvec3 eye = glm::dvec3(d.position);
-                const double far = glm::length(centre - eye) + radius;
+                const double farPlane = glm::length(centre - eye) + radius;
                 const double fov = 2.0 * glm::radians(std::clamp(l.outerConeAngle, 1.0, 89.0));
                 const glm::dmat4 view = glm::lookAt(eye, eye + dir, up);
-                d.shadowViewProj = glm::mat4(reverseDepth(glm::perspectiveRH_ZO(fov, 1.0, std::max(far * 0.001, 0.5), far)) * view);
+                d.shadowViewProj = glm::mat4(reverseDepth(glm::perspectiveRH_ZO(fov, 1.0, std::max(farPlane * 0.001, 0.5), farPlane)) * view);
                 d.shadowTexel = float(2.0 * std::tan(fov * 0.5) * glm::length(centre - eye) / 2048.0);
+                d.shadowDepth = glm::vec4(float(std::max(farPlane * 0.001, 0.5)), float(farPlane), d.radius, float(0.5 / std::tan(fov * 0.5)));
             }
             d.shadows = true;
         }

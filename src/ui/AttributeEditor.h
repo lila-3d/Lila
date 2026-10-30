@@ -4,12 +4,14 @@
 #include "core/Registry.h"
 #include "ui/Owner.h"
 
+#include "scene/Node.h"
 #include "scene/Plug.h"
 
 #include <QWidget>
 
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +44,19 @@ LILA_UI_API uint64_t addSection(ext::Context& ctx, std::string typeName, std::st
 LILA_UI_API bool removeSection(const std::string& typeName, const std::string& title);
 /** Builds the added sections that apply to a node, as (title, widget), for other panels that show its tools too. */
 LILA_UI_API std::vector<std::pair<std::string, QWidget*>> buildSections(scene::NodeId id);
+
+/**
+ * Which of a type's attributes the editor shows for one node, so settings that do not apply to it (a point light's cone)
+ * stay out of the way. The editor rebuilds when an attribute named in triggers changes.
+ */
+struct AttrFilter
+{
+    std::string typeName;
+    std::vector<std::string> triggers;
+    std::function<bool(const scene::Node& node, const std::string& attr)> shows;
+};
+/** Holds "lila.light" from first use. */
+LILA_UI_API Registry<AttrFilter>& filters();
 } // namespace attributeEditor
 
 /** Every attribute of the lead selected node, grouped by the type that declares it. Edits go through setAttr. */
@@ -78,5 +93,7 @@ private:
     int mSectionListener = 0;
     bool mQueued = false;
     bool mRebuild = false;
+    /** Attributes of mNode whose change rebuilds the editor (an AttrFilter's triggers). */
+    std::set<int> mTriggers;
 };
 } // namespace lila::ui

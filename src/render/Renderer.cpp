@@ -180,8 +180,9 @@ struct GpuLight
     glm::vec4 right;     // xyz area width axis, w shadow texel (cm)
     glm::mat4 shadow;    // world to the light's shadow clip space
     glm::vec4 shadowRect; // atlas uv offset xy, scale zw; zw 0 without a shadow
+    glm::vec4 shadowDepth; // LightDraw::shadowDepth
 };
-static_assert(sizeof(GpuLight) == 160, "matches GpuLight in mesh.slang");
+static_assert(sizeof(GpuLight) == 176, "matches GpuLight in mesh.slang");
 
 /** The light buffer's first entry, ahead of the lights: the frame's fog. GpuLight sized, so the lights stay aligned. */
 struct GpuFrame
@@ -190,7 +191,7 @@ struct GpuFrame
     glm::vec4 fogParams; // height, falloff per cm, start, sun scatter
     glm::vec4 fogExtra;  // anisotropy, up axis (1 Y, 2 Z)
     glm::vec4 shadowing; // one past the light each traced shadow channel is for, 0 for none
-    glm::vec4 pad[6];
+    glm::vec4 pad[7];
 };
 static_assert(sizeof(GpuFrame) == sizeof(GpuLight), "the light buffer's header is one light long");
 
@@ -2142,6 +2143,7 @@ struct Renderer::Impl
                 std::ranges::find(frameRtLights, uint32_t(i) + 1) == frameRtLights.end())
             {
                 g.shadow = l.shadowViewProj;
+                g.shadowDepth = l.shadowDepth;
                 const float scale = float(kShadowTile) / float(kShadowAtlas);
                 g.shadowRect = glm::vec4(float(tile % tilesPerRow) * scale, float(tile / tilesPerRow) * scale, scale, scale);
                 frameShadows.emplace_back(tile, l.shadowViewProj);

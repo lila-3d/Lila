@@ -63,7 +63,7 @@ std::vector<AttrDef> lightAttrs()
     at(Light::kOuterConeAngle) = floatAttr("outerConeAngle", "oca", 45.0, "Spot: half angle where the light ends, degrees.", 0.0, 90.0);
     at(Light::kWidth) = floatAttr("width", "w", 100.0, "Area: width, cm. Disc: diameter.", 0.0);
     at(Light::kHeight) = floatAttr("height", "h", 100.0, "Area: height, cm.", 0.0);
-    at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm.", 0.0);
+    at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm. Directional: the sun's angular radius, degrees.", 0.0);
     at(Light::kCastShadows) = {.name = "castShadows", .shortName = "cs", .type = PlugType::Bool, .defaultValue = true, .flags = kStored,
                                .doc = "Casts shadows."};
     at(Light::kTexture) = stringAttr("texture", "tex", "Dome: environment image. Point and spot: IES profile.");
@@ -133,6 +133,20 @@ Node& create(Graph& g, const std::string& name, NodeId parent, const Settings& s
     Node* n = g.createNode(*types::find("light"), name.empty() ? std::string(kindName(s.kind)) + "Light" : name, parent);
     setSettings(g, n->id(), s);
     return *n;
+}
+
+Settings worldSettings(const Node& light)
+{
+    Settings s = settings(light);
+    const glm::dmat4 world = light.as<glm::dmat4>(Transform::kWorldMatrix);
+    const glm::dvec3 scale{glm::length(glm::dvec3(world[0])), glm::length(glm::dvec3(world[1])), glm::length(glm::dvec3(world[2]))};
+    const double mean = (scale.x + scale.y + scale.z) / 3.0;
+    s.width *= s.kind == Kind::Disc ? (scale.x + scale.y) * 0.5 : scale.x;
+    s.height *= scale.y;
+    s.range *= mean;
+    if (s.kind != Kind::Directional)
+        s.sourceRadius *= mean;
+    return s;
 }
 
 glm::dvec3 effectiveColor(const Settings& s)

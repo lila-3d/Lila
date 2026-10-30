@@ -164,6 +164,11 @@ struct LightDraw
     bool shadows = false;
     glm::mat4 shadowViewProj{1.0f};
     float shadowTexel = 1.0f; // world size of a shadow texel at the light's focus, cm, for the normal offset
+    /**
+     * For contact-hardening shadow maps: the map's near and far distances (cm), the light's size (the sun's angular radius
+     * as a tangent, a spot's source radius in cm), and shadow uv per cm across (per cm at 1 cm away for a spot).
+     */
+    glm::vec4 shadowDepth{0.0f};
 };
 
 struct FrameState

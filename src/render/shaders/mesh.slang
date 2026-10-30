@@ -21,6 +21,7 @@ struct GpuLight
     float4 right;      // xyz area width axis, w shadow texel (cm)
     float4x4 shadow;   // world to the light's shadow clip space
     float4 shadowRect; // atlas uv offset xy, scale zw; zw 0 without a shadow
+    float4 shadowDepth; // near, far (cm), light size (sun: tan of angular radius, spot: cm), shadow uv per cm (spot: at 1 cm)
 };
 
 /** The light buffer's first entry: the frame's fog; matches render::GpuFrame. The lights follow it. */
@@ -30,7 +31,7 @@ struct GpuFrame
     float4 fogParams; // height, falloff per cm, start, sun scatter
     float4 fogExtra;  // anisotropy, up axis (1 Y, 2 Z)
     float4 shadowing; // one past the light each rtShadowTex channel traces, 0 for none
-    float4 pad[6];
+    float4 pad[7];
 };
 
 struct MeshPush
@@ -665,6 +666,43 @@ static const float2 kShadowTaps[8] = { float2(-0.613, 0.617), float2(0.170, -0.0
                                        float2(-0.651, -0.088), float2(0.421, -0.616), float2(0.035, 0.911), float2(0.939, -0.105) };
 
 /** How much of light l reaches P: 1 without a shadow map, else a filtered compare against its atlas tile. */
+/** Distance from the light to a depth in its shadow map (reversed-Z): linear for the sun, perspective for a spot. */
+float shadowDistance(GpuLight l, float d, bool sun)
+{
+    const float n = l.shadowDepth.x, f = l.shadowDepth.y;
+    return sun ? n + (1.0 - d) * (f - n) : n * f / (d * (f - n) + n);
+}
+
+/**
+ * The PCF radius in atlas texels, from the average blocker's distance: the penumbra widens with the gap between occluder
+ * and receiver and the light's size. Negative when nothing in reach occludes.
+ */
+float shadowFilterRadius(GpuLight l, float2 at, float2 lo, float2 hi, float2 texel, float receiver, float cs, float sn)
+{
+    const bool sun = uint(l.position.w + 0.5) == 2;
+    const float zR = shadowDistance(l, receiver, sun);
+    // A penumbra in cm at the receiver to atlas texels.
+    const float toTexels = l.shadowDepth.w * (sun ? 1.0 : 1.0 / zR) * l.shadowRect.z / texel.x;
+    const float searchCm = sun ? l.shadowDepth.z * (zR - l.shadowDepth.x) : l.shadowDepth.z * (zR - l.shadowDepth.x) / l.shadowDepth.x;
+    const float search = clamp(searchCm * toTexels, 2.0, 24.0);
+    float blockers = 0.0, sum = 0.0;
+    for (int k = 0; k < 8; ++k)
+    {
+        float2 o = float2(cs * kShadowTaps[k].x - sn * kShadowTaps[k].y, sn * kShadowTaps[k].x + cs * kShadowTaps[k].y) * search * texel;
+        float d = shadowAtlas.SampleLevel(clamp(at + o, lo, hi), 0).r;
+        if (d > receiver + 1e-5)
+        {
+            sum += d;
+            blockers += 1.0;
+        }
+    }
+    if (blockers == 0.0)
+        return -1.0;
+    const float zB = shadowDistance(l, sum / blockers, sun);
+    const float penumbraCm = sun ? l.shadowDepth.z * (zR - zB) : l.shadowDepth.z * (zR - zB) / max(zB, 1e-3);
+    return clamp(penumbraCm * toTexels, 1.0, 24.0);
+}
+
 float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
 {
     const float4 traced = ((GpuFrame*)pc.lights)->shadowing;
@@ -686,8 +724,9 @@ float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
     const float2 at = l.shadowRect.xy + uv * l.shadowRect.zw;
     float angle = frac(52.9829189 * frac(dot(float2(gVtPixel), float2(0.06711056, 0.00583715)))) * 6.2831853;
     float cs = cos(angle), sn = sin(angle);
-    // Wider for lights with a size: their penumbra grows.
-    float radius = 1.5 + min(l.radiance.w / max(l.right.w, 1e-3) * 0.25, 12.0);
+    float radius = shadowFilterRadius(l, at, lo, hi, texel, ndc.z, cs, sn);
+    if (radius < 0.0)
+        return 1.0;
     float lit = 0.0;
     for (int k = 0; k < 8; ++k)
     {
