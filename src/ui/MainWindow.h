@@ -54,6 +54,9 @@ protected:
     void closeEvent(QCloseEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
     void moveEvent(QMoveEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     void registerActions();
@@ -93,7 +96,7 @@ private:
     bool saveScene(bool saveAs, const std::filesystem::path& target = {});
     void incrementAndSave();
     void showVersions();
-    void openScene(const std::filesystem::path& path);
+    bool openScene(const std::filesystem::path& path);
     void reloadScene();
     void openRecoveredScene(const std::filesystem::path& file);
     void openExample(const io::examples::Example& example);

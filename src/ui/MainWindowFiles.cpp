@@ -1,7 +1,11 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/AchievementRules.h"
 #include "ui/FileDialog.h"
+#include "ui/FileDrop.h"
 #include "scene/Skin.h"
+
+#include <QDragEnterEvent>
+#include <QMimeData>
 
 namespace lila::ui
 {
@@ -77,12 +81,12 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
     }
 }
 
-void MainWindow::openScene(const std::filesystem::path& given)
+bool MainWindow::openScene(const std::filesystem::path& given)
 {
     if (mStartupDialog)
         mStartupDialog->close();
     if (!confirmDiscard())
-        return;
+        return false;
     std::filesystem::path path = given;
     if (path.empty())
     {
@@ -91,7 +95,7 @@ void MainWindow::openScene(const std::filesystem::path& given)
         QString chosen = ui::fileDialog::getOpenFileName(this, "Open Scene", start,
                                                       QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "All supported")));
         if (chosen.isEmpty())
-            return;
+            return false;
         path = chosen.toStdWString();
     }
     try
@@ -100,10 +104,12 @@ void MainWindow::openScene(const std::filesystem::path& given)
         addRecentFile(path);
         refreshSourceStatus();
         mViewports->frameUnlessRestored();
+        return true;
     }
     catch (const CommandError& e)
     {
         QMessageBox::warning(this, "Open failed", e.what());
+        return false;
     }
 }
 
@@ -257,6 +263,39 @@ void MainWindow::importFile()
     if (file.isEmpty())
         return;
     runTranslator(io::translators::Op::Import, file, {});
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (fileDrop::plan(fileDrop::localFiles(e->mimeData()), false).empty())
+        return e->ignore();
+    e->acceptProposedAction();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent* e)
+{
+    if (fileDrop::plan(fileDrop::localFiles(e->mimeData()), false).empty())
+        return e->ignore();
+    e->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent* e)
+{
+    // Ctrl imports scenes too, rather than opening the first.
+    fileDrop::Plan plan = fileDrop::plan(fileDrop::localFiles(e->mimeData()), e->modifiers().testFlag(Qt::ControlModifier));
+    if (plan.empty())
+        return e->ignore();
+    e->acceptProposedAction();
+    for (const std::filesystem::path& f : plan.skipped)
+        log::warn("Nothing imports {}, skipped", f.generic_string());
+    // After the drop returns: a save prompt inside it would hold Explorer's drag loop.
+    QTimer::singleShot(0, this, [this, plan = std::move(plan)] {
+        activateWindow();
+        if (!plan.open.empty() && !openScene(plan.open))
+            return;
+        for (const std::filesystem::path& f : plan.imports)
+            runTranslator(io::translators::Op::Import, QString::fromStdWString(f.wstring()), {});
+    });
 }
 
 void MainWindow::convertMayaFolder()

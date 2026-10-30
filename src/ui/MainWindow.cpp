@@ -13,6 +13,7 @@ MainWindow::MainWindow()
     DwmSetWindowAttribute(HWND(winId()), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 #endif
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks | GroupedDragging);
+    setAcceptDrops(true);
     dockDragCancel::install();
 
     mViewports = new ViewportLayout(this);
