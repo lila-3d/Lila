@@ -4,6 +4,7 @@
 #include "ui/Theme.h"
 
 #include <QApplication>
+#include <QConicalGradient>
 #include <QMainWindow>
 #include <QPainter>
 #include <QPainterPath>
@@ -14,6 +15,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <functional>
 
@@ -26,6 +28,8 @@ constexpr int kHeight = 92;
 constexpr int kMargin = 18;
 constexpr int kShownMs = 5000;
 constexpr int kFadeMs = 250;
+constexpr int kGlow = 12;         // room around the box for an unlock's glow
+constexpr double kSwirlDegPerSec = 140;
 
 QWidget* mainWindow()
 {
@@ -52,9 +56,15 @@ public:
         setFocusPolicy(Qt::NoFocus);
         QString icon = QString::fromStdWString((paths::resourcesDir() / "achievements" / (s.api + ".png")).wstring());
         mIcon.load(icon);
-        resize(kWidth, kHeight);
+        resize(kWidth + 2 * kGlow, kHeight + 2 * kGlow);
         QPoint corner = host->mapToGlobal(QPoint(host->width(), host->height()));
-        move(corner - QPoint(kWidth + kMargin, kHeight + kMargin));
+        move(corner - QPoint(kWidth + kMargin + kGlow, kHeight + kMargin + kGlow));
+        mSwirl.setInterval(16);
+        connect(&mSwirl, &QTimer::timeout, this, [this] {
+            mAngle = std::fmod(mAngle + kSwirlDegPerSec * 0.016, 360.0);
+            update();
+        });
+        swirlIfUnlocked();
     }
 
 protected:
@@ -62,12 +72,23 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        bool unlocked = mShown.goal == 0;
+        QRectF box = QRectF(rect()).adjusted(kGlow + 0.5, kGlow + 0.5, -kGlow - 0.5, -kGlow - 0.5);
         QPainterPath path;
         path.addRoundedRect(box, 8, 8);
+        if (unlocked)
+        {
+            // Gold with two bright highlights chasing round the edge, and a soft glow outside it.
+            for (auto [width, alpha] : {std::pair{16.0, 28}, {10.0, 50}, {5.0, 110}})
+            {
+                p.setPen(QPen(QBrush(gold(box.center(), alpha)), width));
+                p.drawPath(path);
+            }
+        }
         p.fillPath(path, themeColor("base"));
-        p.setPen(QPen(themeColor("highlight"), 1.5));
+        p.setPen(unlocked ? QPen(QBrush(gold(box.center(), 255)), 2.0) : QPen(themeColor("highlight"), 1.5));
         p.drawPath(path);
+        p.translate(kGlow, kGlow);
 
         const int pad = 12;
         const int iconSize = kHeight - 2 * pad;
@@ -76,8 +97,7 @@ protected:
             p.drawPixmap(iconRect, mIcon);
 
         const int x = iconRect.right() + pad;
-        const int w = width() - x - pad;
-        bool unlocked = mShown.goal == 0;
+        const int w = kWidth - x - pad;
         QFont small = font();
         small.setPointSizeF(small.pointSizeF() * 0.85);
         p.setFont(small);
@@ -109,9 +129,48 @@ protected:
         }
     }
 
+public:
+    const std::string& api() const { return mShown.api; }
+    bool leaving() const { return mLeaving; }
+    void setLeaving() { mLeaving = true; }
+
+    /** Shows a newer step (or the unlock) of the achievement on screen, and holds it there again. */
+    void refresh(const achievements::Shown& s)
+    {
+        mShown = s;
+        swirlIfUnlocked();
+        update();
+        mHide.start(kShownMs);
+    }
+
+    QTimer mHide;
+
 private:
+    void swirlIfUnlocked()
+    {
+        if (mShown.goal == 0 && !mSwirl.isActive())
+            mSwirl.start();
+    }
+
+    QConicalGradient gold(QPointF centre, int alpha) const
+    {
+        QConicalGradient g(centre, mAngle);
+        QColor dark(138, 106, 31, alpha), mid(232, 184, 74, alpha), bright(255, 242, 196, alpha);
+        g.setColorAt(0.0, dark);
+        g.setColorAt(0.10, bright);
+        g.setColorAt(0.22, mid);
+        g.setColorAt(0.5, dark);
+        g.setColorAt(0.60, bright);
+        g.setColorAt(0.72, mid);
+        g.setColorAt(1.0, dark);
+        return g;
+    }
+
     achievements::Shown mShown;
     QPixmap mIcon;
+    QTimer mSwirl;
+    double mAngle = 0;
+    bool mLeaving = false;
 };
 
 std::deque<achievements::Shown> gQueue;
@@ -141,20 +200,24 @@ void next()
     gCurrent = new Banner(host, gQueue.front());
     gQueue.pop_front();
     Banner* b = gCurrent;
+    // Closed, or gone with its window: either way the next one may show.
+    QObject::connect(b, &QObject::destroyed, [] { QTimer::singleShot(0, [] { next(); }); });
     b->setWindowOpacity(0.0);
     b->show();
     fade(b, 0.0, 1.0);
-    QTimer::singleShot(kShownMs, b, [b] {
-        fade(b, 1.0, 0.0, [b] {
-            b->close();
-            QTimer::singleShot(0, [] { next(); });
-        });
+    b->mHide.setSingleShot(true);
+    QObject::connect(&b->mHide, &QTimer::timeout, b, [b] {
+        b->setLeaving();
+        fade(b, 1.0, 0.0, [b] { b->close(); });
     });
+    b->mHide.start(kShownMs);
 }
 } // namespace
 
 void show(const achievements::Shown& shown)
 {
+    if (gCurrent && !gCurrent->leaving() && gCurrent->api() == shown.api)
+        return gCurrent->refresh(shown);
     // A newer step of progress replaces one still waiting for the same achievement.
     std::erase_if(gQueue, [&](const achievements::Shown& q) { return q.api == shown.api; });
     gQueue.push_back(shown);
