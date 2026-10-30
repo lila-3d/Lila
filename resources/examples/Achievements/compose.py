@@ -1,9 +1,10 @@
 """Turn the rendered passes into Steam's 256x256 achieved and unachieved PNGs, and write the definitions and
 localization CSVs beside them. Needs numpy and Pillow:
 
-    python compose.py [passes dir] [upload dir]
+    python compose.py [passes dir] [upload dir] [app icons dir]
 
-The folders default to lila-achievements/passes and lila-achievements/upload in the temp folder.
+The folders default to lila-achievements/passes and lila-achievements/upload in the temp folder. Given an app icons
+dir (Lila's resources/achievements), the achieved icons are also written there at 128 px for Lila's own banner.
 """
 
 import csv
@@ -65,7 +66,7 @@ def compose(premul, alpha, glow):
     return Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)).resize((N, N), Image.LANCZOS)
 
 
-def main(passes, upload):
+def main(passes, upload, app=None):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from table import ACHIEVEMENTS, PROGRESS
 
@@ -73,7 +74,11 @@ def main(passes, upload):
     for api, *_ in ACHIEVEMENTS:
         premul, alpha = fit(*cutout(load(os.path.join(passes, f"{api}_beauty.png")),
                                     load(os.path.join(passes, f"{api}_matte.png"))))
-        compose(premul, alpha, 0.3).save(os.path.join(upload, f"{api}_ACHIEVED.png"))
+        achieved = compose(premul, alpha, 0.3)
+        achieved.save(os.path.join(upload, f"{api}_ACHIEVED.png"))
+        if app:
+            os.makedirs(app, exist_ok=True)
+            achieved.resize((128, 128), Image.LANCZOS).save(os.path.join(app, f"{api}.png"), optimize=True)
         locked = ImageOps.grayscale(compose(premul, alpha, 0.0)).point(lambda v: int(v * 0.75))
         locked.convert("RGB").save(os.path.join(upload, f"{api}_UNACHIEVED.png"))
 
@@ -101,4 +106,5 @@ def main(passes, upload):
 if __name__ == "__main__":
     root = os.path.join(tempfile.gettempdir(), "lila-achievements")
     main(sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, "passes"),
-         sys.argv[2] if len(sys.argv) > 2 else os.path.join(root, "upload"))
+         sys.argv[2] if len(sys.argv) > 2 else os.path.join(root, "upload"),
+         sys.argv[3] if len(sys.argv) > 3 else None)

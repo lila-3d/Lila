@@ -1,6 +1,6 @@
-#include "ui/AchievementRules.h"
 #include "ui/HotkeyCheatSheet.h"
 
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/HotkeyBindings.h"
 #include "ui/HotkeyChord.h"

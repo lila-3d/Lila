@@ -1,4 +1,3 @@
-#include "ui/AchievementRules.h"
 #include "ui/Outliner.h"
 
 #include "ops/Command.h"
@@ -11,6 +10,7 @@
 #include "scene/Instancing.h"
 #include "scene/Light.h"
 #include "scene/ObjectSets.h"
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/Hotkeys.h"

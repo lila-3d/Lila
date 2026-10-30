@@ -1,5 +1,5 @@
-#include "ui/AchievementRules.h"
 #include "ui/MainWindowDetail.h"
+#include "ui/AchievementRules.h"
 #include "ui/FileDialog.h"
 #include "scene/Skin.h"
 

@@ -1,0 +1,12 @@
+Resetting Lila's Steam achievements (your account only)
+
+Close Lila first, or it can write the old values back.
+
+1. Win+R, run: steam://open/console
+2. In Steam's Console tab:
+
+   Clear one achievement:
+   achievement_clear 5520720 EDGE_LORD
+
+   Reset every stat and achievement:
+   reset_all_stats 5520720

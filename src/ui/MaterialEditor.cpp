@@ -1,4 +1,3 @@
-#include "ui/AchievementRules.h"
 #include "ui/MaterialEditor.h"
 
 #include "ops/Command.h"
@@ -12,6 +11,7 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/Deletion.h"

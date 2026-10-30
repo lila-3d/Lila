@@ -1,4 +1,3 @@
-#include "ui/AchievementRules.h"
 #include "ui/SceneDialogs.h"
 
 #include "core/CrashHandler.h"
@@ -10,6 +9,7 @@
 #include "io/Examples.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
+#include "ui/AchievementRules.h"
 #include "ui/DocsUi.h"
 #include "ui/Theme.h"
 #include "ui/WelcomeNews.h"

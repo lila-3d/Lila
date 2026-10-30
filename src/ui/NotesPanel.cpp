@@ -1,9 +1,9 @@
-#include "ui/AchievementRules.h"
 #include "ui/NotesPanel.h"
 
 #include "core/Events.h"
 #include "ops/Undo.h"
 #include "scene/SceneData.h"
+#include "ui/AchievementRules.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"

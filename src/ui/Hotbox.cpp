@@ -1,7 +1,7 @@
-#include "ui/AchievementRules.h"
 #include "ui/Hotbox.h"
 
 #include "core/PrefStore.h"
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/MarkingMenu.h"
 #include "ui/OptionBox.h"

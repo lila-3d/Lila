@@ -11,6 +11,7 @@
 #include "scene/Graph.h"
 #include "scene/HudStats.h"
 #include "scene/Instancing.h"
+#include "ui/AchievementBanner.h"
 
 #include <QTimer>
 
@@ -367,6 +368,7 @@ void creditSentCrashes()
 
 void start()
 {
+    A::setOnShown(achievementBanner::show);
     A::start();
     State& s = state();
     s.listener = ops::addExecuteListener(onCommand);
@@ -386,6 +388,7 @@ void stop()
     delete s.sceneCheck;
     s.sceneCheck = nullptr;
     A::stop();
+    A::setOnShown({});
 }
 
 void scriptEditorRan()

@@ -3,6 +3,7 @@ lila_module(lila_layouts Scene Layouts.cpp Layouts.h ThemeModel.cpp ThemeModel.h
 target_link_libraries(lila_layouts PUBLIC lila_ops)
 
 lila_module(lila_ui UI
+    AchievementBanner.cpp AchievementBanner.h
     AchievementRules.cpp AchievementRules.h
     Actions.cpp
     AdjustLastOp.cpp AdjustLastOp.h

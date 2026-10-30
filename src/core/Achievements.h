@@ -3,6 +3,8 @@
 #include "core/Export.h"
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <string_view>
 
 /**
@@ -23,4 +25,19 @@ LILA_FOUNDATION_API void unlock(std::string_view api);
 LILA_FOUNDATION_API void add(std::string_view stat, int delta, std::string_view api, int goal);
 /** ORs bits into an int stat kept as a set, and unlocks api once it holds every bit of all. */
 LILA_FOUNDATION_API void addBits(std::string_view stat, uint32_t bits, std::string_view api, uint32_t all);
+
+/** An unlock (goal 0) or a step of progress toward one, with Steam's localized name and description. */
+struct Shown
+{
+    std::string api;
+    std::string name;
+    std::string description;
+    int progress = 0;
+    int goal = 0;
+};
+/**
+ * Called on the main thread for each unlock and progress step, so Lila can show it: the Steam overlay doesn't draw
+ * over Lila's window.
+ */
+LILA_FOUNDATION_API void setOnShown(std::function<void(const Shown&)> fn);
 } // namespace lila::achievements

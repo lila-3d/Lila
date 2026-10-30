@@ -1,6 +1,7 @@
 #include "core/Achievements.h"
 
 #include "core/Log.h"
+#include "core/MainQueue.h"
 #include "core/Paths.h"
 
 #include <atomic>
@@ -37,6 +38,7 @@ struct SteamApi
     bool (*setStat)(void*, const char*, int32_t) = nullptr;
     bool (*storeStats)(void*) = nullptr;
     bool (*indicateProgress)(void*, const char*, uint32_t, uint32_t) = nullptr;
+    const char* (*displayAttribute)(void*, const char*, const char*) = nullptr;
     void* stats = nullptr;
 
     template <class F>
@@ -62,7 +64,8 @@ struct SteamApi
                   resolve(getStat, "SteamAPI_ISteamUserStats_GetStatInt32") &&
                   resolve(setStat, "SteamAPI_ISteamUserStats_SetStatInt32") &&
                   resolve(storeStats, "SteamAPI_ISteamUserStats_StoreStats") &&
-                  resolve(indicateProgress, "SteamAPI_ISteamUserStats_IndicateAchievementProgress");
+                  resolve(indicateProgress, "SteamAPI_ISteamUserStats_IndicateAchievementProgress") &&
+                  resolve(displayAttribute, "SteamAPI_ISteamUserStats_GetAchievementDisplayAttribute");
         if (!ok)
         {
             log::warn("steam: steam_api64.dll is missing an entry point; achievements are off");
@@ -112,6 +115,26 @@ Worker& worker()
     static Worker w;
     return w;
 }
+
+std::mutex gShownMutex;
+std::function<void(const Shown&)> gOnShown;
+
+#ifdef _WIN32
+void announce(SteamApi& s, const std::string& api, int progress = 0, int goal = 0)
+{
+    Shown shown{api, s.displayAttribute(s.stats, api.c_str(), "name"), s.displayAttribute(s.stats, api.c_str(), "desc"),
+                progress, goal};
+    mainq::post([shown = std::move(shown)] {
+        std::function<void(const Shown&)> fn;
+        {
+            std::lock_guard lock(gShownMutex);
+            fn = gOnShown;
+        }
+        if (fn)
+            fn(shown);
+    });
+}
+#endif
 
 void push(Op op)
 {
@@ -176,6 +199,12 @@ void run()
 }
 } // namespace
 
+void setOnShown(std::function<void(const Shown&)> fn)
+{
+    std::lock_guard lock(gShownMutex);
+    gOnShown = std::move(fn);
+}
+
 void start()
 {
     Worker& w = worker();
@@ -214,6 +243,7 @@ void unlock(std::string_view api)
         if (done)
             return Result::Changed;
         s.setAchievement(s.stats, name.c_str());
+        announce(s, name);
         return Result::Unlocked;
     });
 #endif
@@ -231,11 +261,15 @@ void add(std::string_view stat, int delta, std::string_view api, int goal)
         if (value < goal && next >= goal)
         {
             s.setAchievement(s.stats, api.c_str());
+            announce(s, api);
             return Result::Unlocked;
         }
-        // Steam's progress popup at each tenth of the way, not on every step.
+        // Progress at each tenth of the way, not on every step.
         if (goal >= 10 && next < goal && next / (goal / 10) != value / (goal / 10))
+        {
             s.indicateProgress(s.stats, api.c_str(), uint32_t(next), uint32_t(goal));
+            announce(s, api, next, goal);
+        }
         return Result::Changed;
     });
 #else
@@ -254,9 +288,10 @@ void addBits(std::string_view stat, uint32_t bits, std::string_view api, uint32_
         if (next == uint32_t(value))
             return Result::Changed;
         s.setStat(s.stats, stat.c_str(), int32_t(next));
-        if ((next & all) == all)
+        if ((next & all) == all && (uint32_t(value) & all) != all)
         {
             s.setAchievement(s.stats, api.c_str());
+            announce(s, api);
             return Result::Unlocked;
         }
         return Result::Changed;

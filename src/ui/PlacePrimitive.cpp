@@ -1,4 +1,3 @@
-#include "ui/AchievementRules.h"
 #include "ui/PlacePrimitive.h"
 
 #include "core/Log.h"
@@ -9,6 +8,7 @@
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
