@@ -218,3 +218,41 @@ TEST_CASE("file dialog: dot-files stay out of the list until hidden files are sh
     }
     PrefStore::get().remove("general", ui::fileDialog::kShowHiddenPref);
 }
+
+TEST_CASE("file dialog: recent files per context and extension sections on the right")
+{
+    namespace fd = ui::fileDialog;
+    Fixture fx;
+    {
+        const fd::ContextScope scope("testImport", "Imports");
+        FileDialog dlg(nullptr, FileDialog::Mode::OpenFile, "Import", fx.root, "Lila (*.lila)");
+        CHECK(dlg.context().key == "testImport");
+        dlg.setFileName("a.lila");
+        REQUIRE(dlg.tryAccept());
+    }
+
+    fd::addSection("test/suggested", {"Suggested", [&](const fd::Context& ctx) {
+                                          return ctx.key == "testImport" ? QList<fd::Item>{fd::Item{fx.root + "/sub/c.lila"}} : QList<fd::Item>{};
+                                      }},
+                   "testOwner");
+    {
+        const fd::ContextScope scope("testImport", "Imports");
+        FileDialog dlg(nullptr, FileDialog::Mode::OpenFile, "Import", fx.root, "Lila (*.lila)");
+        CHECK(dlg.sectionTitles().contains("Recent Imports"));
+        CHECK(dlg.sectionPaths("Recent Imports").value(0) == fx.root + "/a.lila");
+        CHECK(dlg.sectionPaths("Suggested") == QStringList{fx.root + "/sub/c.lila"});
+
+        dlg.pickItem(fx.root + "/sub/c.lila", false);
+        CHECK(dlg.currentDir() == fx.root + "/sub");
+        CHECK(dlg.fileName() == "c.lila");
+        dlg.pickItem(fx.root + "/a.lila", true);
+        CHECK(dlg.selectedFiles() == QStringList{fx.root + "/a.lila"});
+    }
+    {
+        FileDialog dlg(nullptr, FileDialog::Mode::SaveFile, "Unrelated Export", fx.root, "Lila (*.lila)");
+        CHECK(dlg.context().key == "Unrelated Export");
+        CHECK_FALSE(dlg.sectionTitles().contains("Recent Imports"));
+        CHECK_FALSE(dlg.sectionTitles().contains("Suggested"));
+    }
+    fd::sections().remove("test/suggested");
+}

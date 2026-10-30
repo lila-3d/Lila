@@ -36,6 +36,7 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
         if (!path.empty())
             start = QString::fromStdWString(path.wstring());
+        const ui::fileDialog::ContextScope scope("scene", "Scenes");
         QString chosen = ui::fileDialog::getSaveFileName(this, "Save Scene", start, "Lila binary (*.lila);;Lila text (*.lilaa)");
         if (chosen.isEmpty())
             return false;
@@ -86,6 +87,7 @@ void MainWindow::openScene(const std::filesystem::path& given)
     if (path.empty())
     {
         QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
+        const ui::fileDialog::ContextScope scope("scene", "Scenes");
         QString chosen = ui::fileDialog::getOpenFileName(this, "Open Scene", start,
                                                       QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Open, "All supported")));
         if (chosen.isEmpty())
@@ -249,6 +251,7 @@ void MainWindow::openExample(const io::examples::Example& example)
 void MainWindow::importFile()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
+    const ui::fileDialog::ContextScope scope("import", "Imports");
     QString file = ui::fileDialog::getOpenFileName(this, "Import", start,
                                                 QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Import, "Scenes and meshes")));
     if (file.isEmpty())
@@ -291,6 +294,7 @@ void MainWindow::exportSelection()
             for (const QString& entry : filter.split(";;"))
                 if (entry.startsWith(QString::fromStdString(t->label + " (")))
                     selected = entry;
+    const ui::fileDialog::ContextScope scope("export", "Exports");
     QString file = ui::fileDialog::getSaveFileName(this, "Export Selection", start, filter, &selected);
     if (file.isEmpty())
         return;

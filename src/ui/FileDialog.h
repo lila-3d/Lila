@@ -1,14 +1,23 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/Registry.h"
+#include "ui/Owner.h"
 
 #include <QDialog>
 #include <QStringList>
 
+#include <functional>
 #include <memory>
+#include <string>
 
 namespace lila::ui
 {
+namespace fileDialog
+{
+struct Context;
+}
+
 /**
  * Lila's own file browser, the same on every platform: the current project, bookmarks, recent folders, drives with usage, a
  * breadcrumb path bar and type-to-filter. The fileDialog:: functions show it, or the system dialog when the
@@ -45,6 +54,12 @@ public:
     QStringList selectedFiles() const;
     /** Validates the name field and accepts, as the Open/Save button does; false when the dialog stays open. */
     bool tryAccept();
+    const fileDialog::Context& context() const;
+    /** The side panel's section titles and the paths one lists, in order. */
+    QStringList sectionTitles() const;
+    QStringList sectionPaths(const QString& title) const;
+    /** As clicking a side panel item, or double-clicking it when `accept`. */
+    void pickItem(const QString& path, bool accept);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -68,6 +83,61 @@ LILA_UI_API QStringList getOpenFileNames(QWidget* parent, const QString& caption
 LILA_UI_API QString getSaveFileName(QWidget* parent, const QString& caption = {}, const QString& dir = {},
                                     const QString& filter = {}, QString* selectedFilter = nullptr);
 LILA_UI_API QString getExistingDirectory(QWidget* parent, const QString& caption = {}, const QString& dir = {});
+
+/** What a dialog was opened for. Recent files are kept per key, and side sections read it to decide what to list. */
+struct Context
+{
+    /** "import", "export", "scene"; the caption when no ContextScope is active. */
+    QString key;
+    /** Plural noun for the recent files section, "Imports" makes "Recent Imports". */
+    QString noun;
+    QString caption;
+    FileDialog::Mode mode = FileDialog::Mode::OpenFile;
+    /** The filter string the dialog was given. */
+    QString filter;
+};
+
+/** Gives the dialogs shown while it lives a context key, so several call sites share one recent list. */
+class LILA_UI_API ContextScope
+{
+public:
+    ContextScope(QString key, QString noun);
+    ~ContextScope();
+    ContextScope(const ContextScope&) = delete;
+    ContextScope& operator=(const ContextScope&) = delete;
+
+private:
+    QString mKey, mNoun;
+};
+
+/** One row in a side section. Clicking a file shows it in its folder and picks it; double-clicking accepts it. */
+struct Item
+{
+    QString path;
+    /** Empty shows the file name. */
+    QString label;
+    QString tooltip;
+    /** Icon name; empty picks one from the path. */
+    QString icon;
+};
+
+/**
+ * A collapsible section in the panel on the dialog's right, built each time a dialog opens. `items` returns nothing
+ * to leave the section out for that context. `%1` in the title becomes the context's noun. Sections an extension adds
+ * while loading are removed when it unloads.
+ */
+struct Section
+{
+    QString title;
+    std::function<QList<Item>(const Context&)> items;
+};
+LILA_UI_API Registry<Section>& sections();
+LILA_UI_API void addSection(std::string id, Section section, std::string owner = kLilaOwner);
+
+/** Files accepted in dialogs with this context key, newest first, missing ones included. */
+LILA_UI_API QStringList recentFiles(const QString& key);
+/** Records a file as if a dialog with this key had picked it, for files chosen another way (drag and drop). */
+LILA_UI_API void addRecentFile(const QString& key, const QString& path);
 } // namespace fileDialog
 
 /**

@@ -13,6 +13,7 @@
 #include <QCollator>
 #include <QComboBox>
 #include <QCompleter>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -64,6 +65,12 @@ constexpr const char* kFdRecentPref ="/fileDialog/recent";
 constexpr const char* kFdLastDirPref = "/fileDialog/lastDir";
 constexpr const char* kFdStatePref = "/fileDialog/state";
 constexpr int kFdRecentMax = 12;
+constexpr const char* kFdRecentFilesPref = "/fileDialog/recentFiles";
+constexpr const char* kFdCollapsedPref = "/fileDialog/collapsedSections";
+constexpr int kFdRecentFilesMax = 15;
+
+/** The innermost fileDialog::ContextScope. */
+QString gFdScopeKey, gFdScopeNoun;
 
 enum FdRole
 {
@@ -71,6 +78,7 @@ enum FdRole
     FdKindRole,
     FdTotalRole,
     FdFreeRole,
+    FdSectionRole,
 };
 
 enum class FdKind
@@ -81,6 +89,7 @@ enum class FdKind
     Recent,
     Drive,
     Place,
+    Item,
 };
 
 QStringList fdPrefList(const char* key)
@@ -124,6 +133,18 @@ void fdSetBookmarkName(const QString& dir, const QString& name)
 }
 
 QString fdClean(const QString& dir) { return dir.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(dir)); }
+
+void fdSetRecentFiles(const QString& key, const QStringList& list)
+{
+    json arr = json::array();
+    for (const QString& s : list.mid(0, kFdRecentFilesMax))
+        arr.push_back(s.toStdString());
+    json all = PrefStore::get().value(kFdPrefs, kFdRecentFilesPref);
+    if (!all.is_object())
+        all = json::object();
+    all[key.toStdString()] = arr;
+    PrefStore::get().set(kFdPrefs, kFdRecentFilesPref, all);
+}
 
 /** "Projects (X:)" for a drive root, the folder name otherwise. */
 QString fdDisplayName(const QString& dir)
@@ -307,11 +328,14 @@ struct FileDialog::Impl
     Mode mode = Mode::OpenFile;
     QStringList filters;
 
+    fileDialog::Context ctx;
     FdFsModel* fs = nullptr;
     FdProxy* proxy = nullptr;
     QTreeView* view = nullptr;
     QTreeWidget* sidebar = nullptr;
     QLineEdit* sidebarFilter = nullptr;
+    /** The context sections on the right. */
+    QTreeWidget* sidePanel = nullptr;
     QSplitter* splitter = nullptr;
 
     QToolButton* back = nullptr;
@@ -320,6 +344,7 @@ struct FileDialog::Impl
     QToolButton* recentButton = nullptr;
     QToolButton* bookmarkButton = nullptr;
     QToolButton* hiddenButton = nullptr;
+    QToolButton* sideButton = nullptr;
     QStackedWidget* pathStack = nullptr;
     QWidget* crumbs = nullptr;
     QLineEdit* pathEdit = nullptr;
@@ -342,6 +367,9 @@ struct FileDialog::Impl
 
     void build(const QString& caption);
     void buildSidebar();
+    void buildSide();
+    void pickItem(const QString& path, bool acceptIt);
+    void showSideMenu(const QPoint& pos);
     void rebuildCrumbs();
     void show(const QString& d, bool record);
     void applyTypeFilter();
@@ -429,7 +457,7 @@ void FileDialog::Impl::build(const QString& caption)
     crumbs->layout()->setContentsMargins(4, 0, 4, 0);
     crumbs->layout()->setSpacing(0);
     crumbs->setCursor(Qt::IBeamCursor);
-    crumbs->setToolTip("Click empty space or press Ctrl+L to type a path");
+    crumbs->setToolTip("Click empty space or press Ctrl+L or Alt+D to type a path");
     crumbs->installEventFilter(q);
     pathEdit = new QLineEdit;
     pathEdit->installEventFilter(q);
@@ -459,6 +487,9 @@ void FileDialog::Impl::build(const QString& caption)
         PrefStore::get().set(kFdPrefs, fileDialog::kShowHiddenPref, on);
         setShowHidden(on);
     });
+    sideButton = tool("layout-sidebar-right", "Recent and suggested files");
+    sideButton->setCheckable(true);
+    sideButton->setChecked(true);
     root->addLayout(nav);
 
     QObject::connect(back, &QToolButton::clicked, q, [this] {
@@ -529,8 +560,18 @@ void FileDialog::Impl::build(const QString& caption)
     header->resizeSection(2, 140);
     header->resizeSection(3, 140);
     splitter->addWidget(view);
+    sidePanel = new QTreeWidget;
+    sidePanel->setHeaderHidden(true);
+    sidePanel->setRootIsDecorated(false);
+    sidePanel->setIndentation(10);
+    sidePanel->setIconSize(QSize(16, 16));
+    sidePanel->setExpandsOnDoubleClick(false);
+    sidePanel->setItemDelegate(new FdSidebarDelegate(sidePanel));
+    sidePanel->setContextMenuPolicy(Qt::CustomContextMenu);
+    sidePanel->setFrameShape(QFrame::NoFrame);
+    splitter->addWidget(sidePanel);
     splitter->setStretchFactor(1, 1);
-    splitter->setSizes({200, 800});
+    splitter->setSizes({200, 600, 220});
     root->addWidget(splitter, 1);
 
     // Filter and counts.
@@ -619,6 +660,7 @@ void FileDialog::Impl::build(const QString& caption)
     shortcut(QKeySequence(Qt::ALT | Qt::Key_Right), [this] { forward->click(); });
     shortcut(QKeySequence(Qt::ALT | Qt::Key_Up), [this] { up->click(); });
     shortcut(QKeySequence(Qt::CTRL | Qt::Key_L), [this] { editPath(); });
+    shortcut(QKeySequence(Qt::ALT | Qt::Key_D), [this] { editPath(); });
     shortcut(QKeySequence(Qt::CTRL | Qt::Key_F), [this] {
         filter->setFocus();
         filter->selectAll();
@@ -697,6 +739,115 @@ void FileDialog::Impl::build(const QString& caption)
         menu.addAction("Copy Path", [path] { QApplication::clipboard()->setText(QDir::toNativeSeparators(path)); });
         menu.exec(sidebar->viewport()->mapToGlobal(pos));
     });
+
+    buildSide();
+    QObject::connect(sideButton, &QToolButton::toggled, q, [this](bool on) { sidePanel->setVisible(on && sidePanel->topLevelItemCount() > 0); });
+    QObject::connect(sidePanel, &QTreeWidget::itemClicked, q, [this](QTreeWidgetItem* item) {
+        if (FdKind(item->data(0, FdKindRole).toInt()) == FdKind::Header)
+            item->setExpanded(!item->isExpanded());
+        else
+            pickItem(item->data(0, FdPathRole).toString(), false);
+    });
+    QObject::connect(sidePanel, &QTreeWidget::itemDoubleClicked, q, [this](QTreeWidgetItem* item) {
+        if (FdKind(item->data(0, FdKindRole).toInt()) == FdKind::Item)
+            pickItem(item->data(0, FdPathRole).toString(), true);
+    });
+    auto rememberCollapsed = [](QTreeWidgetItem* item) {
+        const QString id = item->data(0, FdSectionRole).toString();
+        QStringList collapsed = fdPrefList(kFdCollapsedPref);
+        collapsed.removeAll(id);
+        if (!item->isExpanded())
+            collapsed << id;
+        fdSetPrefList(kFdCollapsedPref, collapsed);
+    };
+    QObject::connect(sidePanel, &QTreeWidget::itemExpanded, q, rememberCollapsed);
+    QObject::connect(sidePanel, &QTreeWidget::itemCollapsed, q, rememberCollapsed);
+    QObject::connect(sidePanel, &QTreeWidget::customContextMenuRequested, q, [this](const QPoint& pos) { showSideMenu(pos); });
+}
+
+void FileDialog::Impl::buildSide()
+{
+    const QSignalBlocker block(sidePanel);
+    sidePanel->clear();
+    const QStringList collapsed = fdPrefList(kFdCollapsedPref);
+    QFont headerFont = sidePanel->font();
+    headerFont.setBold(true);
+    for (const std::string& id : fileDialog::sections().idsInOrder())
+    {
+        const fileDialog::Section* s = fileDialog::sections().find(id);
+        const QList<fileDialog::Item> items = s && s->items ? s->items(ctx) : QList<fileDialog::Item>();
+        if (items.isEmpty())
+            continue;
+        auto* header = new QTreeWidgetItem(sidePanel, {QString(s->title).replace("%1", ctx.noun)});
+        header->setData(0, FdKindRole, int(FdKind::Header));
+        header->setData(0, FdSectionRole, QString::fromStdString(id));
+        header->setFont(0, headerFont);
+        header->setForeground(0, themeColor("dimText"));
+        header->setFlags(Qt::ItemIsEnabled);
+        for (const fileDialog::Item& it : items)
+        {
+            const QString path = fdClean(it.path);
+            const QFileInfo fi(path);
+            auto* row = new QTreeWidgetItem(header, {it.label.isEmpty() ? fi.fileName() : it.label});
+            row->setData(0, FdPathRole, path);
+            row->setData(0, FdKindRole, int(FdKind::Item));
+            row->setIcon(0, icon(!it.icon.isEmpty() ? it.icon : fi.isDir() ? "folder" : "file"));
+            row->setToolTip(0, it.tooltip.isEmpty() ? QDir::toNativeSeparators(path) : it.tooltip);
+        }
+        header->setExpanded(!collapsed.contains(QString::fromStdString(id)));
+    }
+    const bool any = sidePanel->topLevelItemCount() > 0;
+    sideButton->setVisible(any);
+    sidePanel->setVisible(any && sideButton->isChecked());
+}
+
+void FileDialog::Impl::pickItem(const QString& path, bool acceptIt)
+{
+    const QFileInfo fi(path);
+    if (fi.isDir())
+    {
+        show(path, true);
+        if (acceptIt && mode == Mode::Directory)
+        {
+            name->clear();
+            q->tryAccept();
+        }
+        return;
+    }
+    if (!QFileInfo(fi.absolutePath()).isDir())
+        return fail("No folder " + QDir::toNativeSeparators(fi.absolutePath()));
+    show(fi.absolutePath(), true);
+    if (mode == Mode::Directory)
+        return;
+    const QModelIndex index = proxy->mapFromSource(fs->index(path));
+    if (index.isValid())
+    {
+        view->setCurrentIndex(index);
+        view->scrollTo(index);
+    }
+    name->setText(fi.fileName());
+    if (acceptIt)
+        q->tryAccept();
+}
+
+void FileDialog::Impl::showSideMenu(const QPoint& pos)
+{
+    QTreeWidgetItem* item = sidePanel->itemAt(pos);
+    if (!item || FdKind(item->data(0, FdKindRole).toInt()) != FdKind::Item)
+        return;
+    const QString path = item->data(0, FdPathRole).toString();
+    QMenu menu;
+    if (item->parent()->data(0, FdSectionRole).toString() == "recent")
+        menu.addAction("Remove from Recent", [this, path] {
+            QStringList list = fileDialog::recentFiles(ctx.key);
+            list.removeAll(path);
+            fdSetRecentFiles(ctx.key, list);
+            buildSide();
+        });
+    menu.addAction(icon("folder-search"), "Open Containing Folder", [path] { fileOps::reveal(path); });
+    menu.addSeparator();
+    menu.addAction("Copy Path", [path] { QApplication::clipboard()->setText(QDir::toNativeSeparators(path)); });
+    menu.exec(sidePanel->viewport()->mapToGlobal(pos));
 }
 
 void FileDialog::Impl::buildSidebar()
@@ -747,7 +898,7 @@ void FileDialog::Impl::buildSidebar()
         hint->setData(0, FdKindRole, int(FdKind::Header));
     }
 
-    QTreeWidgetItem* recent = section("Recent");
+    QTreeWidgetItem* recent = section("Recent Folders");
     for (const QString& d : fdPrefList(kFdRecentPref))
         if (!bookmarks.contains(d))
             entry(recent, FdKind::Recent, d, fdDisplayName(d), "history");
@@ -1267,6 +1418,7 @@ void FileDialog::Impl::saveState()
     state["geometry"] = q->saveGeometry().toBase64().toStdString();
     state["splitter"] = splitter->saveState().toBase64().toStdString();
     state["header"] = view->header()->saveState().toBase64().toStdString();
+    state["side"] = sideButton->isChecked();
     PrefStore::get().set(kFdPrefs, kFdStatePref, state);
 }
 
@@ -1281,6 +1433,7 @@ void FileDialog::Impl::restoreState()
     q->restoreGeometry(bytes("geometry"));
     splitter->restoreState(bytes("splitter"));
     view->header()->restoreState(bytes("header"));
+    sideButton->setChecked(state.value("side", true));
 }
 
 FileDialog::FileDialog(QWidget* parent, Mode mode, const QString& caption, const QString& start, const QString& filter)
@@ -1291,6 +1444,16 @@ FileDialog::FileDialog(QWidget* parent, Mode mode, const QString& caption, const
     m->filters = filter.split(";;", Qt::SkipEmptyParts);
     if (m->filters.isEmpty())
         m->filters << "All files (*)";
+    const bool scoped = !gFdScopeKey.isEmpty();
+    m->ctx.key = scoped                    ? gFdScopeKey
+                 : !caption.isEmpty()      ? caption
+                 : mode == Mode::SaveFile  ? QString("save")
+                 : mode == Mode::Directory ? QString("folder")
+                                           : QString("open");
+    m->ctx.noun = scoped ? gFdScopeNoun : mode == Mode::Directory ? QString("Folders") : QString("Files");
+    m->ctx.caption = caption;
+    m->ctx.mode = mode;
+    m->ctx.filter = filter;
     m->build(caption);
     m->restoreState();
     m->applyTypeFilter();
@@ -1368,6 +1531,28 @@ int FileDialog::fileCount() const
 
 QStringList FileDialog::selectedFiles() const { return m->result; }
 
+const fileDialog::Context& FileDialog::context() const { return m->ctx; }
+
+QStringList FileDialog::sectionTitles() const
+{
+    QStringList out;
+    for (int s = 0; s < m->sidePanel->topLevelItemCount(); ++s)
+        out << m->sidePanel->topLevelItem(s)->text(0);
+    return out;
+}
+
+QStringList FileDialog::sectionPaths(const QString& title) const
+{
+    QStringList out;
+    for (int s = 0; s < m->sidePanel->topLevelItemCount(); ++s)
+        if (QTreeWidgetItem* section = m->sidePanel->topLevelItem(s); section->text(0) == title)
+            for (int i = 0; i < section->childCount(); ++i)
+                out << section->child(i)->data(0, FdPathRole).toString();
+    return out;
+}
+
+void FileDialog::pickItem(const QString& path, bool accept) { m->pickItem(fdClean(path), accept); }
+
 bool FileDialog::tryAccept()
 {
     auto fail = [this](const QString& message) {
@@ -1383,6 +1568,8 @@ bool FileDialog::tryAccept()
     auto finish = [this](QStringList paths) {
         m->result = std::move(paths);
         m->pushRecent(m->mode == Mode::Directory ? m->result.value(0) : QFileInfo(m->result.value(0)).absolutePath());
+        for (auto it = m->result.crbegin(); it != m->result.crend(); ++it)
+            fileDialog::addRecentFile(m->ctx.key, *it);
         m->saveState();
         accept();
         return true;
@@ -1839,6 +2026,98 @@ QString getExistingDirectory(QWidget* parent, const QString& caption, const QStr
     if (useNative() || !runLila(FileDialog::Mode::Directory, parent, caption, dir, {}, nullptr, out))
         return QFileDialog::getExistingDirectory(parent, caption, dir);
     return out.value(0);
+}
+
+ContextScope::ContextScope(QString key, QString noun) : mKey(gFdScopeKey), mNoun(gFdScopeNoun)
+{
+    gFdScopeKey = std::move(key);
+    gFdScopeNoun = std::move(noun);
+}
+
+ContextScope::~ContextScope()
+{
+    gFdScopeKey = mKey;
+    gFdScopeNoun = mNoun;
+}
+
+Registry<Section>& sections()
+{
+    static Registry<Section>& r = []() -> Registry<Section>& {
+        static Registry<Section> made;
+        made.put("recent",
+                 {"Recent %1",
+                  [](const Context& ctx) {
+                      QList<Item> out;
+                      for (const QString& path : recentFiles(ctx.key))
+                          if (QFileInfo::exists(path))
+                              out.push_back({path});
+                      return out;
+                  }},
+                 kLilaOwner);
+        made.put("currentScene",
+                 {"Current Scene",
+                  [](const Context&) {
+                      const QString scene = fdClean(QString::fromStdWString(io::currentPath().wstring()));
+                      if (scene.isEmpty())
+                          return QList<Item>{};
+                      const QString folder = QFileInfo(scene).absolutePath();
+                      return QList<Item>{Item{folder, QDir(folder).dirName(), QDir::toNativeSeparators(scene), "folder"}};
+                  }},
+                 kLilaOwner);
+        made.put("downloads",
+                 {"New in Downloads",
+                  [](const Context& ctx) {
+                      QList<Item> out;
+                      if (ctx.mode != FileDialog::Mode::OpenFile && ctx.mode != FileDialog::Mode::OpenFiles)
+                          return out;
+                      if (ctx.key != "import" && ctx.key != "reference" && ctx.key != "imagePlane")
+                          return out;
+                      // Only the first filter entry: later ones are usually "All files (*)".
+                      const QStringList patterns = fdPatterns(ctx.filter.section(";;", 0, 0));
+                      if (patterns.contains("*"))
+                          return out;
+                      const QDir downloads(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+                      const QDateTime since = QDateTime::currentDateTime().addDays(-7);
+                      for (const QFileInfo& fi : downloads.entryInfoList(patterns, QDir::Files, QDir::Time))
+                      {
+                          if (fi.lastModified() < since || out.size() >= 5)
+                              break;
+                          out.push_back({fi.absoluteFilePath()});
+                      }
+                      return out;
+                  }},
+                 kLilaOwner);
+        return made;
+    }();
+    return r;
+}
+
+void addSection(std::string id, Section section, std::string owner)
+{
+    sections().put(std::move(id), std::move(section), std::move(owner));
+}
+
+QStringList recentFiles(const QString& key)
+{
+    QStringList out;
+    const json all = PrefStore::get().value(kFdPrefs, kFdRecentFilesPref);
+    const std::string k = key.toStdString();
+    if (all.is_object() && all.contains(k) && all[k].is_array())
+        for (const json& s : all[k])
+            if (s.is_string())
+                out << QString::fromStdString(s.get<std::string>());
+    return out;
+}
+
+void addRecentFile(const QString& key, const QString& path)
+{
+    if (key.isEmpty() || path.isEmpty())
+        return;
+    const QString clean = fdClean(path);
+    QStringList list = recentFiles(key);
+    list.removeAll(clean);
+    list.prepend(clean);
+    fdSetRecentFiles(key, list);
 }
 } // namespace fileDialog
 } // namespace lila::ui

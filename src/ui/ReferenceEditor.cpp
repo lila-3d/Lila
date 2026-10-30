@@ -159,6 +159,7 @@ void ReferenceEditor::runOnSelected(const char* command)
 void ReferenceEditor::createReferenceDialog(QWidget* parent)
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
+    const ui::fileDialog::ContextScope scope("reference", "References");
     QString file = ui::fileDialog::getOpenFileName(parent, "Create Reference", start,
                                                 "Scenes (*.lila *.lilaa *.ma *.mb);;Lila scenes (*.lila *.lilaa);;Maya scenes (*.ma *.mb)");
     if (file.isEmpty())
