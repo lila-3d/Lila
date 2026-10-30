@@ -194,6 +194,8 @@ LILA_SCENE_API std::vector<std::string> referencedGroups(const Group& g);
 LILA_SCENE_API bool dependsOn(const Group& g, std::string_view group);
 
 inline constexpr const char* kGroupNodeDeclType = "Group";
+/** Group, Repeat and For Each Element: node types whose "group" property names a subgroup they run. */
+LILA_SCENE_API bool runsGroup(std::string_view type);
 
 /** Identifier rules for group names, node names and exposed inputs: letters, digits and underscores, not a digit first. */
 LILA_SCENE_API bool validIdentifier(std::string_view s);

@@ -32,7 +32,9 @@ def write(docs_dir):
     for name in os.listdir(out_dir):
         if name.endswith(".md") and name not in pages:
             os.remove(os.path.join(out_dir, name))
-    return written
+    from . import _nodepages
+
+    return written + _nodepages.write(docs_dir)
 
 
 def render():

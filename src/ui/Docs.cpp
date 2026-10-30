@@ -668,7 +668,18 @@ std::vector<SidebarEntry> readSidebar(const fs::path& docsDir)
             continue;
         size_t open = line.find('[', indent), close = line.find("](", indent);
         if (open == std::string::npos || close == std::string::npos || close < open)
+        {
+            std::string text;
+            bool inTag = false;
+            for (char c : line.substr(indent + 1))
+                if (c == '<' || c == '>')
+                    inTag = c == '<';
+                else if (!inTag)
+                    text += c;
+            if (text = trim(text); !text.empty())
+                out.push_back({.title = text, .depth = int(indent / 2), .label = true});
             continue;
+        }
         size_t end = line.find(')', close);
         std::string inner = line.substr(close + 2, end == std::string::npos ? std::string::npos : end - close - 2);
         std::string target = trim(inner.substr(0, inner.find(' ')));

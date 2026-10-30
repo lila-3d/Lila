@@ -54,6 +54,7 @@ public:
     bool isGroupNode(const scene::Node& n) const override { return n.type().name == gn::kGroupNodeType; }
     std::string newGroupAction() const override { return "gn.newGroup"; }
     std::string subgroupNodeType() const override { return gn::kGroupNodeDeclType; }
+    bool runsSubgroup(const std::string& type) const override { return gn::runsGroup(type); }
     std::vector<std::string> fileSuffixes() const override { return {"lilanodes", "json"}; }
 
     Owner followSelection(scene::Graph& g) const override

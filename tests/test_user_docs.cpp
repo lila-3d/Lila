@@ -458,6 +458,16 @@ TEST_CASE("docs: page titles come from the sidebar, else the page id; each page 
     CHECK(docs::pageTitle({}, "python/lila.ops") == "Python Lila Ops");
     CHECK(docs::pageTitle({}, "") == "Lila");
 
+    writeFile(d / "_sidebar.md", "---\n\n- <span class=\"nav-label\">Nodes</span>\n  - [Node editor](node-editor.md)\n    - [Geometry nodes](geometry-nodes.md)\n");
+    std::vector<docs::SidebarEntry> side = docs::readSidebar(d);
+    REQUIRE(side.size() == 3);
+    CHECK(side[0].label);
+    CHECK(side[0].title == "Nodes");
+    CHECK(side[0].target.empty());
+    CHECK(side[1].depth == 1);
+    CHECK(side[2].target == "geometry-nodes");
+    CHECK(docs::pageTitle(d, "geometry-nodes") == "Geometry nodes");
+
     CHECK(docs::pageActionId("curves") == "help.docs.curves");
     CHECK(docs::pageActionId("curves.md") == "help.docs.curves");
     CHECK(docs::pageActionId("essentials?id=filter-the-outliner") == "help.docs.essentials.filter-the-outliner");

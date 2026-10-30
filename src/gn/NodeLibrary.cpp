@@ -20,5 +20,18 @@ void registerNodeLibrary()
     nodes::registerGroupNodes();
     nodes::registerRoutingNodes();
     nodes::registerDestructionNodes();
+    nodes::registerMeshOpsNodes();
+    nodes::registerTopologyNodes();
+    nodes::registerAnalysisNodes();
+    nodes::registerFieldNodes();
+    nodes::registerPatternNodes();
+    nodes::registerCurveOpsNodes();
+    nodes::registerInstanceNodes();
+    nodes::registerGameNodes();
+    nodes::registerDataNodes();
+    nodes::registerProceduralNodes();
+    nodes::registerVolumeNodes();
+    nodes::registerWrangleNode();
+    nodes::registerZoneNodes();
 }
 } // namespace lila::gn

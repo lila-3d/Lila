@@ -623,6 +623,8 @@ public:
         connect(mSidebar, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
             QString target = item->data(0, Qt::UserRole).toString();
             const std::string anchor = item->data(0, kHeadingRole).toString().toStdString();
+            if (target.isEmpty() && anchor.empty())
+                return;
             if (item->data(0, Qt::UserRole + 1).toBool())
                 QDesktopServices::openUrl(QUrl(target));
             else if (!anchor.empty() && mHasCurrent && item->parent() == mSidebarPage)
@@ -957,6 +959,15 @@ private:
             item->setText(0, qs(e.title));
             item->setData(0, Qt::UserRole, qs(e.target));
             item->setData(0, Qt::UserRole + 1, e.external);
+            if (e.label)
+            {
+                item->setFlags(Qt::ItemIsEnabled);
+                QFont f = item->font(0);
+                f.setCapitalization(QFont::AllUppercase);
+                f.setPointSizeF(f.pointSizeF() * 0.85);
+                item->setFont(0, f);
+                item->setForeground(0, mSidebar->palette().color(QPalette::PlaceholderText));
+            }
             parents.push_back(item);
         }
         mSidebarPage = nullptr;
@@ -1414,12 +1425,26 @@ void attachTopicsMenu(QMenu* menu)
         menu->clear();
         std::optional<Root> root = currentRoot();
         if (root)
+        {
+            // Top-level pages and the pages of a group heading, each group after a separator named by its heading.
+            int groupDepth = -1;
             for (const SidebarEntry& e : readSidebar(root->dir / "docs"))
-                if (!e.external && e.depth == 0 && !e.target.empty())
+            {
+                if (e.label && e.depth == 0)
+                {
+                    groupDepth = 1;
+                    menu->addSection(qs(e.title));
+                    continue;
+                }
+                if (e.depth == 0)
+                    groupDepth = -1;
+                if (!e.external && !e.label && !e.target.empty() && (e.depth == 0 || e.depth == groupDepth))
                 {
                     std::string page = e.target;
                     menu->addAction(qs(e.title), [page] { open(page); })->setToolTip("Shift+click opens it in the web browser");
                 }
+            }
+        }
         if (menu->isEmpty())
             menu->addAction("(no docs yet: Help > Update Docs)")->setEnabled(false);
     });

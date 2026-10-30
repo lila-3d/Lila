@@ -726,11 +726,11 @@ Group buildFromSpec(const json& spec, SpecError& err, std::map<std::string, json
                 }
                 n.values[k] = x;
             }
-        if (n.type == kGroupNodeDeclType)
+        if (runsGroup(n.type))
         {
             std::string ref = n.values.value("group", std::string());
             if (ref.empty())
-                err.add(n.name + ": a Group node needs \"group\": the name of the group to run");
+                err.add(n.name + ": a " + n.type + " node needs \"group\": the name of the group to run");
             else if (auto it = available.find(ref); it != available.end())
                 g.subgroups[ref] = it->second;
             else

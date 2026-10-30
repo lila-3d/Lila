@@ -736,6 +736,8 @@ void registerCommands()
             for (const NodeDecl* d : allDecls())
             {
                 json e = {{"type", d->type}, {"label", d->label}, {"category", d->category}, {"doc", d->doc}};
+                if (const std::string* owner = declRegistry().ownerOf(d->type); owner && !owner->empty())
+                    e["owner"] = *owner;
                 if (a.get<bool>("detail", false))
                 {
                     GNode probe{d->type, d->type, {0.0, 0.0}, json::object()};

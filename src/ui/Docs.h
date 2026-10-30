@@ -144,6 +144,8 @@ struct SidebarEntry
     std::string target; // page id, or a URL when external
     int depth = 0;
     bool external = false;
+    /** A group heading (`<span class="nav-label">`): no target, the entries below it at depth + 1 are its pages. */
+    bool label = false;
 };
 LILA_UI_API std::vector<SidebarEntry> readSidebar(const fs::path& docsDir);
 

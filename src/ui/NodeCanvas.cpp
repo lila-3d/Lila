@@ -17,7 +17,7 @@ NodeItem::NodeItem(NodeCanvas* canvas, const json& info) : mCanvas(canvas)
         props.push_back({p.value("id", ""), p.value("value", "")});
     viewer = !canvas->backend->viewerType().empty() && type == canvas->backend->viewerType();
     thumbSize = canvas->backend->thumbnailSize(type);
-    if (std::string sub = canvas->backend->subgroupNodeType(); !sub.empty() && type == sub)
+    if (canvas->backend->runsSubgroup(type))
         for (auto& [id, v] : props)
             if (id == "group")
                 groupRef = v;

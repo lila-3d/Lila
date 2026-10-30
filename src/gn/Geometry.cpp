@@ -2,12 +2,14 @@
 
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "gn/Volume.h"
 
 #include <tbb/parallel_for.h>
 
 #include <array>
 #include <cmath>
 #include <mutex>
+#include <optional>
 
 namespace lila::gn
 {
@@ -79,11 +81,11 @@ std::shared_ptr<const JoinedTopology> joinedTopology(const Instances& inst)
 /** Instances of compact meshes only, none mirrored: what joinedTopology can place by moving points alone. */
 bool joinable(const Geometry& g)
 {
-    if (g.mesh || g.points || g.curves || g.heightfield || !g.instances || g.instances->size() < 2)
+    if (g.mesh || g.points || g.curves || g.heightfield || g.volume || !g.instances || g.instances->size() < 2)
         return false;
     const Instances& inst = *g.instances;
     for (const GeometryPtr& r : inst.references)
-        if (!r || !r->mesh || r->points || r->curves || r->instances || r->heightfield || r->mesh->hasDeleted())
+        if (!r || !r->mesh || r->points || r->curves || r->instances || r->heightfield || r->volume || r->mesh->hasDeleted())
             return false;
     for (size_t k = 0; k < inst.size(); ++k)
         if (inst.reference[k] < 0 || size_t(inst.reference[k]) >= inst.references.size() || glm::determinant(glm::dmat3(inst.transforms[k])) <= 0.0)
@@ -337,7 +339,7 @@ void Instances::add(const glm::dmat4& xf, int ref)
 bool Geometry::empty() const
 {
     return (!mesh || mesh->numPoints() == 0) && (!points || points->numPoints() == 0) && (!curves || curves->numPoints() == 0) &&
-           (!instances || instances->size() == 0) && (!heightfield || heightfield->empty());
+           (!instances || instances->size() == 0) && (!heightfield || heightfield->empty()) && (!volume || volume->empty());
 }
 
 GeometryPtr makeGeometry(Geometry g) { return std::make_shared<const Geometry>(std::move(g)); }
@@ -469,8 +471,26 @@ Geometry transformed(const Geometry& g, const glm::dmat4& xf)
             out.mesh = std::make_shared<const geo::Mesh>(std::move(m));
         }
     }
+    if (g.volume)
+    {
+        Volume v = *g.volume;
+        v.indexToWorld = xf * v.indexToWorld;
+        if (v.isSdf())
+        {
+            const float s = float(std::cbrt(std::abs(glm::determinant(glm::dmat3(xf)))));
+            for (float& x : v.values)
+                x *= s;
+            v.background *= s;
+        }
+        out.volume = std::make_shared<const Volume>(std::move(v));
+    }
     return out;
 }
+
+namespace
+{
+bool sameVolumeGrid(const Volume& a, const Volume& b) { return a.kind == b.kind && a.dims == b.dims && a.indexToWorld == b.indexToWorld; }
+} // namespace
 
 Geometry join(std::span<const GeometryPtr> parts)
 {
@@ -481,10 +501,24 @@ Geometry join(std::span<const GeometryPtr> parts)
     CurveSet curves;
     Instances inst;
     bool hasMesh = false, hasPoints = false, hasCurves = false, hasInst = false;
+    std::optional<Volume> merged;
     for (const GeometryPtr& g : parts)
     {
         if (!g)
             continue;
+        if (g->volume)
+        {
+            if (!out.volume)
+                out.volume = g->volume;
+            else if (sameVolumeGrid(*out.volume, *g->volume))
+            {
+                if (!merged)
+                    merged = *out.volume;
+                const std::vector<float>& add = g->volume->values;
+                for (size_t k = 0; k < merged->values.size(); ++k)
+                    merged->values[k] = merged->isSdf() ? std::min(merged->values[k], add[k]) : merged->values[k] + add[k];
+            }
+        }
         if (g->mesh)
         {
             // A single mesh is shared, not copied.
@@ -550,6 +584,8 @@ Geometry join(std::span<const GeometryPtr> parts)
         out.curves = std::make_shared<const CurveSet>(std::move(curves));
     if (hasInst)
         out.instances = std::make_shared<const Instances>(std::move(inst));
+    if (merged)
+        out.volume = std::make_shared<const Volume>(std::move(*merged));
     return out;
 }
 

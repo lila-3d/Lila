@@ -227,6 +227,19 @@ LILA_SCENE_API void registerGroupNodes();
 LILA_SCENE_API void registerRoutingNodes();
 LILA_SCENE_API void registerDestructionNodes();
 void registerFractureNode();
+void registerMeshOpsNodes();
+void registerTopologyNodes();
+void registerAnalysisNodes();
+void registerFieldNodes();
+void registerPatternNodes();
+void registerCurveOpsNodes();
+void registerInstanceNodes();
+void registerGameNodes();
+void registerDataNodes();
+void registerProceduralNodes();
+void registerVolumeNodes();
+void registerWrangleNode();
+void registerZoneNodes();
 
 /** A link between two pieces (b = -1: the world) at an anchor, as the Rigid Body Solver reads them. */
 struct PieceLink

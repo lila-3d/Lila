@@ -841,11 +841,8 @@ void NodeEditor::ungroupSelected()
 
 void NodeEditor::openSelectedGroup()
 {
-    std::string sub = mBackend->subgroupNodeType();
-    if (sub.empty())
-        return;
     for (const std::string& n : mCanvas->selectedNames())
-        if (mCanvas->typeOf(n) == sub)
+        if (mBackend->runsSubgroup(mCanvas->typeOf(n)))
         {
             json info = run("GroupInfo", args({mGroup.toStdString()}));
             for (const json& d : info.is_object() ? info["definition"].value("nodes", json::array()) : json::array())
@@ -1454,7 +1451,7 @@ void NodeEditor::rebuildSidePanel()
             json opts = p.value("options", json::array());
             if (routing && id == "name")
                 continue;
-            if (std::string sub = mBackend->subgroupNodeType(); !sub.empty() && node->value("type", "") == sub && id == "group")
+            if (mBackend->runsSubgroup(node->value("type", "")) && id == "group")
             {
                 auto* combo = new QComboBox(panel);
                 for (const std::string& g : mBackend->groupNames(scene::Graph::current()))

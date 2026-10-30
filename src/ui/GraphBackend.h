@@ -78,6 +78,8 @@ public:
     virtual std::string newGroupAction() const { return {}; }
     /** The node type that runs another group (its "group" prop names it); empty when groups don't nest. */
     virtual std::string subgroupNodeType() const { return {}; }
+    /** Any node type that runs the group its "group" prop names (the subgroup node, plus loops over one). */
+    virtual bool runsSubgroup(const std::string& type) const { return !type.empty() && type == subgroupNodeType(); }
     /** File suffixes the editor imports and exports, the first used for export: {"lilanodes", "json"}. */
     virtual std::vector<std::string> fileSuffixes() const { return {}; }
 
