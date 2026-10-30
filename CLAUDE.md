@@ -23,12 +23,13 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 
 ## Build and test
 
-- Configure and build from `scripts\env.cmd`: `cmake --build build --config RelWithDebInfo`. Build all targets before handing back; partial builds leave extension DLLs stale.
+- Build with `scripts\b.cmd [dir] [config] [target...]` and test with `scripts\t.cmd [dir] [config] [ctest args]`: they print only errors, failures and a summary (full logs in `<dir>\last_build.log`, `last_test.log`). Iterate on one target, then build all targets before handing back; partial builds leave extension DLLs stale.
 - If Jared's lila.exe is running (LNK1168), never kill it: build in `build-night` instead. Never launch his lila.exe either.
 - Run executables only from `build/` or `build-night` (new paths trigger firewall prompts). No popups, ever.
+- Compiles go through sccache (shared cache in `X:\sccache`) and link with lld-link, so a fresh build dir or worktree is mostly cache hits.
 - Test instances: set `LILA_CONFIG_DIR=<scratch dir>` and `LILA_MCP_PORT=<free port>`, drive over MCP, kill only that instance's PID afterwards.
 - Known failing, not ours unless touched: `lila_seq_tests` (exportVertexAnimation png), `lila_sdk_build_examples` (blend_scene needs zstd), `lila_material_pack_tests` timeout.
-- PCH + unity builds are on: use `Q_EMIT`/`Q_SIGNALS`/`Q_SLOTS`; a unity clash means rename the file-local helper or add the source to `cmake/LilaUnitySkip.cmake`.
+- Unity builds are on (PCH too when the compiler cache is off): use `Q_EMIT`/`Q_SIGNALS`/`Q_SLOTS`; a unity clash means rename the file-local helper or add the source to `cmake/LilaUnitySkip.cmake`.
 - Line endings are mixed per file. `sed -i` in git-bash strips CRLF; restore with `sed -i 's/$/\r/'` or edit with the Edit tool.
 - Other Claude sessions often work in this repo at the same time. Check `git status` and peer sessions before large moves or renames of shared files.
 
@@ -39,6 +40,6 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 
 ## Token hygiene
 
-- Several sources are large (`src/ui/ViewportWidget*.cpp`, `src/ui/MainWindow*.cpp`). Grep for the symbol, then Read with offset/limit; don't read whole files.
-- Grep build and test logs for `error|FAILED|LNK` instead of printing them.
+- Find symbols with the LSP tool (clangd: workspaceSymbol, goToDefinition, findReferences) before grepping; then Read with offset/limit. Large sources: `src/maya/MayaImport.cpp`, `src/render/Renderer.cpp`, `extensions/OpenUSD/UsdStage.cpp`.
+- Never print raw build or test output; use `b.cmd`/`t.cmd`, or grep the log for `error|FAILED|LNK`.
 - Commit only when asked: subject line only.

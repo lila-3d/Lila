@@ -108,6 +108,8 @@ set(LILA_UNITY_SKIP
     src/ui/ArrayTool.cpp
     src/ui/BakePaintTool.cpp
     src/ui/BakerPanel.cpp
+    src/ui/BakerPanelRefresh.cpp
+    src/ui/BakerPanelWidgets.cpp
     src/ui/BatchRunPanel.cpp
     src/ui/CableTool.cpp
     src/ui/ControlPicker.cpp
@@ -141,6 +143,10 @@ set(LILA_UNITY_SKIP
     src/ui/TopologyToolkit.cpp
     src/ui/TrimCurveTool.cpp
     src/ui/UvEditor.cpp
+    src/ui/UvEditorDraw.cpp
+    src/ui/UvEditorEdit.cpp
+    src/ui/UvEditorPick.cpp
+    src/ui/UvEditorView.cpp
     src/uv/Layout.cpp
     src/uv/LiveCommands.cpp
     src/uv/OptCuts.cpp

@@ -1,6 +1,9 @@
 lila_module(lila_render UI
     Backdrop.cpp
     Baker.cpp
+    BakerTrace.cpp
+    BakerResident.cpp
+    BakerKernels.cpp
     Compute.cpp
     DeformGpu.cpp
     DrawBatches.cpp
@@ -14,6 +17,9 @@ lila_module(lila_render UI
     ShadingModels.cpp
     Surface.cpp
     TexEval.cpp
+    TexEvalState.cpp
+    TexEvalRecord.cpp
+    TexEvalPages.cpp
     TextureFormat.cpp
     VirtualTexture.cpp
     VulkanContext.cpp)

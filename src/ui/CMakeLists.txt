@@ -33,7 +33,7 @@ lila_module(lila_ui UI
     OffsetsPanel.cpp OffsetsPanel.h
     RenamePanel.cpp RenamePanel.h
     BatchRunPanel.cpp BatchRunPanel.h
-    BakerPanel.cpp BakerPanelMcp.cpp BakerPanel.h
+    BakerPanel.cpp BakerPanelWidgets.cpp BakerPanelRefresh.cpp BakerPanelMcp.cpp BakerPanel.h BakerPanelInternal.h
     BakeCageView.cpp BakeCageView.h
     BakePaintTool.cpp BakePaintTool.h
     TexturePaintTool.cpp TexturePaintTool.h
@@ -85,7 +85,7 @@ lila_module(lila_ui UI
     ModelingToolkit.cpp ModelingToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
-    NodeEditor.cpp NodeEditor.h NodeCanvas.cpp NodeCanvas.h NodeCanvasLayout.cpp GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
+    NodeEditor.cpp NodeEditor.h NodeCanvas.cpp NodeCanvas.h NodeCanvasLayout.cpp NodeCanvasInput.cpp NodeCanvasWires.cpp NodeCanvasTies.cpp NodeCanvasFrames.cpp GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
     TexGraphBackend.cpp TexParams.cpp TexParams.h TexPreview.cpp TexPreview.h Texture2DView.cpp TextureGraphUi.h TextureSetPanel.cpp TextureSetPanel.h
     Overlay.cpp Overlay.h
     CursorBadges.cpp CursorBadges.h
@@ -137,7 +137,7 @@ lila_module(lila_ui UI
     TimeSlider.cpp TimeSlider.h
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
-    UvEditor.cpp UvEditor.h
+    UvEditor.cpp UvEditorView.cpp UvEditorDraw.cpp UvEditorPick.cpp UvEditorEdit.cpp UvEditor.h UvEditorInternal.h
     UvTexturePaint.cpp UvTexturePaint.h
     UvTools.cpp UvTools.h
     UvLive.cpp UvLive.h

@@ -12,7 +12,10 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(LILA_BUILD_TESTS "Build unit tests" ON)
 
 if(MSVC)
-    add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus /MP)
+    add_compile_options(/W4 /permissive- /utf-8 /Zc:__cplusplus)
+    if(NOT CMAKE_GENERATOR MATCHES "Ninja")
+        add_compile_options(/MP)
+    endif()
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
     # Lila's DLLs export classes holding STL members and deriving from Qt and std types. That is the SDK's ABI (same
     # compiler and runtime on both sides), so the warnings about it say nothing.
