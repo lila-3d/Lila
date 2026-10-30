@@ -10,4 +10,6 @@ if not exist "%~dp0%DIR%\build.ninja" (
     cmake --preset windows -S "%~dp0." -B "%~dp0%DIR%" || exit /b 1
 )
 cmake --build "%~dp0%DIR%" --config %CONFIG%
-exit /b %ERRORLEVEL%
+set "RC=%ERRORLEVEL%"
+if "%RC%"=="0" (echo [done] Build succeeded) else (echo [failed] Build FAILED ^(exit %RC%^))
+exit /b %RC%
