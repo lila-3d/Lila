@@ -567,6 +567,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Flash reach from the edges", kLocateFlashReachPref, 0.05, 0.0, 1.0, 0.05, 2);
         color(ui, "Flash color", kLocateFlashColorPref, kLocateFlashDefaultColor);
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
+        choice(ui, "Toggle Channel Box (Ctrl+A) switches to", "/ui/channelBoxToggle",
+               {{"The tab shown before it", "lastTab"}, {"The attribute editor (Maya)", "attributeEditor"}}, "lastTab");
         section(ui, "File Dialog");
         toggle(ui, "Use the system file dialog instead of Lila's", fileDialog::kNativePref, false);
         toggle(ui, "Show hidden files", fileDialog::kShowHiddenPref, false);

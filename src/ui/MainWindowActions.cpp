@@ -161,7 +161,8 @@ void MainWindow::registerActions()
                   }, nullptr, "Puts every panel back where the current layout has it, keeping that layout picked. With none picked, "
                               "back to the default arrangement."});
     actions::add({"window.toggleChannelBox", "Toggle Channel Box", "Windows", [this] { toggleChannelBox(); }, nullptr,
-                  "Brings the channel box to the front of its tabs; again to go back to the tab shown before it."});
+                  "Brings the channel box to the front of its tabs; again to go back to the tab shown before it, or to the attribute "
+                  "editor when Preferences > Interface says so."});
     actions::add({"window.toggleUvEditor", "Toggle UV Editor", "Windows", [this] { toggleUvEditor(); }, nullptr,
                   "Shows the UV editor, or tucks it back into its sidebar when it is showing."});
     actions::add({"window.expandPanels", "Expand Collapsed Panels", "Windows", [this] { mSidebars->expandAll(); }, nullptr,

@@ -316,6 +316,12 @@ void MainWindow::toggleChannelBox()
     QDockWidget* channels = findChild<QDockWidget*>(kChannelBoxDock);
     if (!channels)
         return;
+    if (PrefStore::get().value<std::string>("general", "/ui/channelBoxToggle", "lastTab") == "attributeEditor")
+    {
+        QDockWidget* attrs = findChild<QDockWidget*>("attributeEditor");
+        revealDock(showingTab(channels) && attrs ? attrs : channels);
+        return;
+    }
     QList<QDockWidget*> group = tabifiedDockWidgets(channels);
     if (!showingTab(channels))
     {

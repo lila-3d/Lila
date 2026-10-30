@@ -775,6 +775,7 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     outer->addWidget(mScroll, 1);
 
     mFooter = new QLabel(this);
+    mFooter->setWordWrap(true);
     QPalette fp = mFooter->palette();
     fp.setColor(QPalette::WindowText, gray(150));
     mFooter->setPalette(fp);

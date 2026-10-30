@@ -16,6 +16,7 @@
 
 class QLabel;
 class QLineEdit;
+class QScrollArea;
 class QVBoxLayout;
 
 namespace lila::ui
@@ -62,9 +63,13 @@ private:
     /** Removes the element attr names (attr[3], or group[3].child for the whole group[3]). */
     void removeElement(const std::string& attr);
     QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
+    /** Narrows each form's label column, down to its labels' elided minimum, before its fields drop below their minimum. */
+    void fitLabels();
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     QLineEdit* mName = nullptr;
     QLabel* mType = nullptr;
+    QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;
     QVBoxLayout* mBodyLayout = nullptr;
     scene::NodeId mNode = scene::kNoNode;

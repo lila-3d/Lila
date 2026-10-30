@@ -27,7 +27,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPainter>
 #include <QScrollArea>
+#include <QStyle>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -43,6 +45,23 @@ namespace
 {
 using scene::Graph;
 using scene::PlugType;
+
+/** A row label that elides instead of holding its full width, so a narrow editor squeezes names before fields. */
+class AttrRowLabel final : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    QSize minimumSizeHint() const override { return {fontMetrics().horizontalAdvance("Wwwww"), QLabel::minimumSizeHint().height()}; }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        const QRect r = contentsRect();
+        style()->drawItemText(&p, r, int(alignment()), palette(), isEnabled(), fontMetrics().elidedText(text(), Qt::ElideRight, r.width()),
+                              foregroundRole());
+    }
+};
 
 QString niceName(const std::string& name)
 {
@@ -193,9 +212,10 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
         }
     });
 
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = mScroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
+    scroll->viewport()->installEventFilter(this);
     mBody = new QWidget;
     mBodyLayout = new QVBoxLayout(mBody);
     mBodyLayout->setContentsMargins(0, 0, 0, 0);
@@ -372,7 +392,8 @@ void AttributeEditor::rebuild()
             auto* e = new QLineEdit;
             e->setAlignment(Qt::AlignRight);
             e->setReadOnly(readOnly);
-            e->setMinimumWidth(36);
+            e->setMinimumWidth(e->fontMetrics().horizontalAdvance("-0.000") + 8);
+            e->setMaximumWidth(e->fontMetrics().horizontalAdvance("-00000.0000") + 10);
             e->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             std::string target = component >= 0 ? def.childNames[component] : attr;
             connect(e, &QLineEdit::editingFinished, this, [this, e, target, def, ref, component] {
@@ -431,10 +452,21 @@ void AttributeEditor::rebuild()
             auto* h = new QHBoxLayout(field);
             h->setContentsMargins(0, 0, 0, 0);
             h->setSpacing(3);
+            int widest = 0;
             for (int c = 0; c < 3; ++c)
-                h->addWidget(numberEdit(c));
+            {
+                QLineEdit* e = numberEdit(c);
+                widest += e->maximumWidth() + h->spacing();
+                h->addWidget(e);
+            }
             if ((def.flags & scene::AttrColor) && element < 0)
-                h->addWidget(colorSwatch(def, id, index, readOnly));
+            {
+                QWidget* swatch = colorSwatch(def, id, index, readOnly);
+                swatch->setMaximumWidth(48);
+                widest += 48 + h->spacing();
+                h->addWidget(swatch);
+            }
+            field->setMaximumWidth(widest);
             break;
         }
         case PlugType::Bool:
@@ -523,12 +555,17 @@ void AttributeEditor::rebuild()
             label->setTextInteractionFlags(Qt::TextSelectableByMouse);
             mUpdaters.push_back([label, ref] {
                 const auto& m = std::get<glm::dmat4>(Graph::current().value(ref));
-                QString text;
+                QString cells[4][4];
+                qsizetype width = 1;
                 // Rows of the matrix as written on paper (column-major storage).
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 4; ++c)
+                        width = std::max(width, (cells[r][c] = fmt(m[c][r])).size());
+                QString text;
                 for (int r = 0; r < 4; ++r)
                 {
                     for (int c = 0; c < 4; ++c)
-                        text += QString("%1").arg(fmt(m[c][r]), 9);
+                        text += QString("%1").arg(cells[r][c], int(width) + (c ? 2 : 0));
                     if (r < 3)
                         text += "\n";
                 }
@@ -558,7 +595,7 @@ void AttributeEditor::rebuild()
             field->setToolTip(QString::fromStdString(def.doc));
             field = row;
         }
-        auto* label = new QLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
+        auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
         if (def.flags & scene::AttrKeyable)
         {
             label->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -738,6 +775,44 @@ void AttributeEditor::rebuild()
                 mBodyLayout->addWidget(section(QString::fromStdString(extra->title), w));
     mBodyLayout->addStretch(1);
     updateValues();
+    fitLabels();
+}
+
+void AttributeEditor::fitLabels()
+{
+    for (QFormLayout* form : mBody->findChildren<QFormLayout*>())
+    {
+        std::vector<AttrRowLabel*> labels;
+        int longest = 0, shortest = 0, fieldMin = 0;
+        for (int r = 0; r < form->rowCount(); ++r)
+        {
+            QLayoutItem* l = form->itemAt(r, QFormLayout::LabelRole);
+            QLayoutItem* f = form->itemAt(r, QFormLayout::FieldRole);
+            auto* label = l ? dynamic_cast<AttrRowLabel*>(l->widget()) : nullptr;
+            if (!label || !f)
+                continue;
+            labels.push_back(label);
+            longest = std::max(longest, label->QLabel::sizeHint().width());
+            shortest = std::max(shortest, label->minimumSizeHint().width());
+            fieldMin = std::max(fieldMin, f->minimumSize().width());
+        }
+        if (labels.empty() || !form->parentWidget())
+            continue;
+        const QMargins m = form->contentsMargins();
+        const int avail = mScroll->viewport()->width() - form->parentWidget()->mapTo(mBody, QPoint()).x() - m.left() - m.right() -
+                          form->horizontalSpacing();
+        const int width = std::clamp(avail - fieldMin, shortest, std::max(shortest, longest));
+        for (AttrRowLabel* label : labels)
+            if (label->maximumWidth() != width)
+                label->setMaximumWidth(width);
+    }
+}
+
+bool AttributeEditor::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == mScroll->viewport() && event->type() == QEvent::Resize)
+        fitLabels();
+    return QWidget::eventFilter(watched, event);
 }
 
 void AttributeEditor::updateValues()
