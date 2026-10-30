@@ -27,6 +27,9 @@
 #include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
 
+#include "LilaLinkTrim.h"
+#include "Materials/Material.h"
+
 #define LOCTEXT_NAMESPACE "LilaLinkActions"
 
 namespace
@@ -484,6 +487,20 @@ void LilaLinkActions::SetUpSelectedTexturesForUniqueUVs()
 void LilaLinkActions::SetUpSelectedTexturesForTiling()
 {
 	SetUpSelectedTexturesForAddress(TA_Wrap, LOCTEXT("TextureTiling", "tiling (Wrap)"));
+}
+
+void LilaLinkActions::GenerateTrimMaster()
+{
+	TArray<FString> Created, Warnings;
+	bool bBuilt = false;
+	int32 Version = 0;
+	UMaterial* Master = LilaLink::TrimMaster(true, bBuilt, Version, Created, Warnings);
+	if (!Master)
+	{
+		Report(FText::Format(LOCTEXT("TrimMasterFailed", "Trim master not made: {0}"), FText::FromString(FString::Join(Warnings, TEXT("; ")))), false);
+		return;
+	}
+	Report(FText::Format(LOCTEXT("TrimMasterMade", "Generated {0}"), FText::FromString(Master->GetPathName())), true);
 }
 
 #undef LOCTEXT_NAMESPACE

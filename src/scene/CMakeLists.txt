@@ -59,6 +59,7 @@ lila_module(lila_scene Scene
     MeshEditComponentOps.cpp
     MeshEditKnife.cpp
     MeshEditMeshOps.cpp
+    MeshEditNormals.cpp
     MeshEditSymmetry.cpp
     MeshEditTransform.cpp
     MeshBoolean.cpp

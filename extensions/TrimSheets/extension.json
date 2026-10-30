@@ -1,0 +1,14 @@
+{
+    "id": "TrimSheets",
+    "name": "Trim Sheets",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Trim sheets in a few clicks: a layout and bevel profile per trim, generated and baked into tiling textures, then meshes hotspotted onto them by hand, automatically or live in geometry nodes, and sent to Unreal with a generated trim master material.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "TrimSheets.dll",
+        "linux": "TrimSheets.so",
+        "macos": "TrimSheets.dylib"
+    },
+    "enabledByDefault": true
+}

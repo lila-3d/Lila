@@ -122,6 +122,15 @@ TSharedRef<SWidget> BuildMenu()
 		AppIcon(TEXT("ClassIcon.Texture2D")), Action(&LilaLinkActions::SetUpSelectedTexturesForTiling, &LilaLinkActions::HasSelectedTextures));
 	Menu.EndSection();
 
+	Menu.BeginSection(TEXT("LilaMaterials"), LOCTEXT("MaterialsSection", "Materials"));
+	Menu.AddMenuEntry(LOCTEXT("TrimMaster", "Generate Trim Master Material"),
+		LOCTEXT("TrimMasterTip",
+			"Builds M_LilaTrim, the master Lila's trim sheets use: baked sheet maps turned into worn edges, cavity dirt, a tiling detail layer and "
+			"a vertex colour blend, with Detail, VertexBlend and Parallax as static switches. Rebuilds the graph in place when it exists, "
+			"discarding edits to it; instances keep their values."),
+		AppIcon(TEXT("ClassIcon.Material")), Action(&LilaLinkActions::GenerateTrimMaster));
+	Menu.EndSection();
+
 	Menu.BeginSection(TEXT("LilaSettings"), LOCTEXT("SettingsSection", "Settings"));
 	Menu.AddMenuEntry(LOCTEXT("LinkSettings", "Settings: Lila Link"),
 		LOCTEXT("LinkSettingsTip", "The link server's port and import options, under Editor Preferences, Plugins, Lila Link."),

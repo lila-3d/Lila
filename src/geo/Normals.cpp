@@ -9,7 +9,9 @@
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 namespace lila::geo
@@ -173,6 +175,126 @@ void updateCornerNormals(Mesh& mesh, const CornerNormalOptions& opts)
     const std::vector<glm::vec3> n = cornerNormals(mesh, opts);
     std::span<glm::vec3> dst = mesh.cornerAttrs().getOrAdd<glm::vec3>(attr::kNormal);
     std::copy(n.begin(), n.end(), dst.begin());
+}
+
+std::vector<glm::vec3> weightedNormals(const Mesh& mesh, const WeightedNormalOptions& opts)
+{
+    LILA_ZONE();
+
+    const std::vector<glm::dvec3> area = faceAreaVectors(mesh);
+    std::span<const bool> hard = opts.keepSharp ? mesh.edgeAttrs().get<bool>(attr::kHard) : std::span<const bool>{};
+    std::span<const int32_t> strength = opts.useFaceStrength ? mesh.faceAttrs().get<int32_t>("faceStrength") : std::span<const int32_t>{};
+    const double dominance = std::clamp(opts.dominance, 0.0, 1.0);
+    std::vector<glm::vec3> out(mesh.cornerCapacity(), glm::vec3(0.0f));
+
+    auto weightOf = [&](Index c) {
+        const double a = glm::length(area[mesh.cornerFace(c)]);
+        switch (opts.mode)
+        {
+        case WeightedNormalMode::FaceArea: return a;
+        case WeightedNormalMode::CornerAngle: return cornerAngle(mesh, c);
+        case WeightedNormalMode::AreaAngle: return a * cornerAngle(mesh, c);
+        }
+        return a;
+    };
+
+    struct Scratch
+    {
+        std::vector<Index> corners;
+        std::vector<Index> parent;
+        std::vector<double> weight;
+        std::vector<double> maxWeight;
+        std::vector<int32_t> maxStrength;
+        std::vector<glm::dvec3> sum;
+    };
+    tbb::enumerable_thread_specific<Scratch> scratch;
+    tbb::parallel_for(tbb::blocked_range<Index>(0, mesh.pointCapacity(), kGrain), [&](const tbb::blocked_range<Index>& r) {
+        Scratch& s = scratch.local();
+        for (Index p = r.begin(); p < r.end(); ++p)
+        {
+            if (!mesh.pointValid(p))
+                continue;
+            s.corners.clear();
+            mesh.forEachPointCorner(p, [&](Index c) { s.corners.push_back(c); });
+            const size_t k = s.corners.size();
+            if (k == 0)
+                continue;
+            s.parent.resize(k);
+            std::iota(s.parent.begin(), s.parent.end(), Index(0));
+            auto find = [&](Index i) {
+                while (s.parent[i] != i)
+                    i = s.parent[i] = s.parent[s.parent[i]];
+                return i;
+            };
+            auto local = [&](Index c) {
+                for (size_t i = 0; i < k; ++i)
+                    if (s.corners[i] == c)
+                        return Index(i);
+                return kInvalid;
+            };
+            mesh.forEachPointEdge(p, [&](Index e) {
+                if ((!hard.empty() && hard[e]) || !mesh.isManifoldEdge(e))
+                    return;
+                const Index r1 = mesh.edgeCorner(e);
+                const Index r2 = mesh.cornerRadial(r1);
+                const Index a = local(mesh.cornerPoint(r1) == p ? r1 : mesh.cornerNext(r1));
+                const Index b = local(mesh.cornerPoint(r2) == p ? r2 : mesh.cornerNext(r2));
+                if (a != kInvalid && b != kInvalid)
+                    s.parent[find(a)] = find(b);
+            });
+
+            s.weight.resize(k);
+            s.maxWeight.assign(k, 0.0);
+            s.maxStrength.assign(k, std::numeric_limits<int32_t>::min());
+            auto strengthOf = [&](Index c) { return strength.empty() ? 0 : strength[mesh.cornerFace(c)]; };
+            for (size_t i = 0; i < k; ++i)
+                s.maxStrength[find(Index(i))] = std::max(s.maxStrength[find(Index(i))], strengthOf(s.corners[i]));
+            for (size_t i = 0; i < k; ++i)
+            {
+                s.weight[i] = weightOf(s.corners[i]);
+                const Index root = find(Index(i));
+                if (strengthOf(s.corners[i]) == s.maxStrength[root])
+                    s.maxWeight[root] = std::max(s.maxWeight[root], s.weight[i]);
+            }
+            s.sum.assign(k, glm::dvec3(0.0));
+            for (size_t i = 0; i < k; ++i)
+            {
+                const Index c = s.corners[i];
+                const Index root = find(Index(i));
+                if (strengthOf(c) != s.maxStrength[root] || s.weight[i] < dominance * s.maxWeight[root])
+                    continue;
+                s.sum[root] += safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0)) * s.weight[i];
+            }
+            for (size_t i = 0; i < k; ++i)
+            {
+                const Index c = s.corners[i];
+                const glm::dvec3 fallback = safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
+                out[c] = glm::vec3(safeNormalize(s.sum[find(Index(i))], fallback));
+            }
+        }
+    });
+    return out;
+}
+
+void applyWeightedNormals(Mesh& mesh, const WeightedNormalOptions& opts, std::span<const Index> faces)
+{
+    LILA_ZONE();
+
+    const bool had = mesh.cornerAttrs().has(attr::kNormal);
+    const std::vector<glm::vec3> before = had || faces.empty() ? std::vector<glm::vec3>() : cornerNormals(mesh);
+    const std::vector<glm::vec3> n = weightedNormals(mesh, opts);
+    std::span<glm::vec3> dst = mesh.cornerAttrs().getOrAdd<glm::vec3>(attr::kNormal);
+    if (faces.empty())
+    {
+        std::copy(n.begin(), n.end(), dst.begin());
+        return;
+    }
+    // Corners outside the faces keep what they shaded with: their stored normal, or the computed one when none was stored.
+    if (!had)
+        std::copy(before.begin(), before.end(), dst.begin());
+    for (Index f : faces)
+        if (mesh.faceValid(f))
+            mesh.forEachFaceCorner(f, [&](Index c) { dst[c] = n[c]; });
 }
 
 void setHardEdgesByAngle(Mesh& mesh, double degrees, std::span<const Index> edges)

@@ -8,6 +8,7 @@
 #include "LilaLinkLandscape.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTextures.h"
+#include "LilaLinkTrim.h"
 #include "LilaLinkVat.h"
 
 #include "Animation/Skeleton.h"
@@ -106,7 +107,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")),
-		Str(TEXT("masonryMaterials"))});
+		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials"))});
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }
@@ -373,5 +374,6 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddLandscapeMethods(Methods);
 	LilaLink::AddPlacementMethods(Methods);
 	LilaLink::AddMasonryMethods(Methods);
+	LilaLink::AddTrimMethods(Methods);
 	return Methods;
 }

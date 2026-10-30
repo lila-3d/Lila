@@ -55,4 +55,5 @@ void registerMeshEditMeshOpsCommands();
 void registerMeshEditTransformCommands();
 void registerMeshEditSymmetryCommands();
 void registerMeshEditKnifeCommands();
+void registerMeshEditNormalsCommands();
 } // namespace lila::scene::detail

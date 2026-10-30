@@ -248,6 +248,7 @@ void registerMeshEditCommands()
     detail::registerMeshEditTransformCommands();
     detail::registerMeshEditSymmetryCommands();
     detail::registerMeshEditKnifeCommands();
+    detail::registerMeshEditNormalsCommands();
 
     for (const char* name : {"polyExtrude", "polyInset", "polyBevel", "polyInsertLoop", "polySplitRings", "polyOffsetLoop", "polyMerge", "polyBridge", "polyGridFill", "polyQuadrangulate",
                              "polySubdivide", "polyMirror", "polyTriangulate", "polyReduce", "polySoftEdge"})

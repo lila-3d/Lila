@@ -5,6 +5,7 @@ lila_module(lila_uv Scene
     Bff.cpp
     Chart.cpp
     Guided.cpp
+    Hotspot.cpp
     Layout.cpp
     LiveSolver.cpp
     Metrics.cpp

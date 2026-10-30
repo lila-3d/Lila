@@ -73,6 +73,7 @@ add_subdirectory(extensions/Meadowlight)
 add_subdirectory(extensions/Brushwork)
 add_subdirectory(extensions/OpenUSD)
 add_subdirectory(extensions/Lights)
+add_subdirectory(extensions/TrimSheets)
 include(LilaSdkInstall)
 include(LilaDocs)
 

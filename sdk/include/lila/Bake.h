@@ -5,3 +5,4 @@
 #include "bake/Bake.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeTypes.h"
+#include "bake/Maps.h"

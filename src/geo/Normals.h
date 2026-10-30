@@ -41,6 +41,36 @@ LILA_SCENE_API std::vector<glm::vec3> cornerNormals(const Mesh& mesh, const Corn
 /** Writes cornerNormals() into the corner "normal" attribute. */
 LILA_SCENE_API void updateCornerNormals(Mesh& mesh, const CornerNormalOptions& opts = {});
 
+enum class WeightedNormalMode : uint8_t
+{
+    FaceArea,
+    CornerAngle,
+    AreaAngle,
+};
+
+struct WeightedNormalOptions
+{
+    WeightedNormalMode mode = WeightedNormalMode::FaceArea;
+    /**
+     * Within each smooth fan, faces weighing less than this fraction of the fan's heaviest face are left out, so
+     * large flat faces keep their own normal across a chamfer or bevel beside them. 0 keeps every face.
+     */
+    double dominance = 0.5;
+    /** Split along "hard" edges; off smooths across them too. */
+    bool keepSharp = true;
+    /** Only the faces with the highest face int "faceStrength" (0 weak, 1 medium, 2 strong) in a fan count, when present. */
+    bool useFaceStrength = true;
+};
+
+/**
+ * Face-weighted split normals per corner capacity (3ds Max/Blender Weighted Normal): each soft fan takes the normal of
+ * its dominant faces, so a low poly with chamfered edges shades its big faces flat. Parallel.
+ */
+LILA_SCENE_API std::vector<glm::vec3> weightedNormals(const Mesh& mesh, const WeightedNormalOptions& opts = {});
+
+/** Writes weightedNormals() into the corner "normal" attribute, for the given faces' corners only when faces is given. */
+LILA_SCENE_API void applyWeightedNormals(Mesh& mesh, const WeightedNormalOptions& opts = {}, std::span<const Index> faces = {});
+
 /** Marks edges hard where neighbouring faces meet at more than the angle (Maya's Set Normal Angle). */
 LILA_SCENE_API void setHardEdgesByAngle(Mesh& mesh, double degrees, std::span<const Index> edges = {});
 

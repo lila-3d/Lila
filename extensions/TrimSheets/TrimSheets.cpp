@@ -1,0 +1,155 @@
+// Trim Sheets: author a trim sheet (layout plus a profile per trim), generate and bake it in one go, and map meshes onto
+// it by hand, automatically, or live as geometry nodes. The Hotspot UV node re-maps a mesh whenever its input changes,
+// so procedural blockouts stay trimmed as they are edited.
+
+#include "TrimSheets.h"
+#include "Generator.h"
+
+#include <lila/Extension.h>
+#include <lila/GeometryNodes.h>
+#include <lila/Profile.h>
+#include <lila/Workspace.h>
+
+using namespace lila;
+
+namespace trims
+{
+namespace
+{
+using gn::ExecContext;
+using gn::Geometry;
+using T = gn::SocketType;
+
+gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
+{
+    gn::SocketDecl s{.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
+    s.min = lo;
+    s.max = hi;
+    return s;
+}
+
+gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
+
+/** The sheet a node names, or the current one; relative paths are under the workspace. */
+Sheet sheetFor(const ExecContext& c)
+{
+    std::string p = c.s("sheet");
+    if (p.empty())
+        p = currentSheet();
+    if (p.empty())
+        throw gn::ExecError("no trim sheet: set the sheet input or make one with trimSheetCreate");
+    std::filesystem::path f(p);
+    if (f.is_relative() && Workspace::get().isOpen())
+        f = Workspace::get().root() / f;
+    try
+    {
+        return load(f);
+    }
+    catch (const std::exception& e)
+    {
+        throw gn::ExecError(e.what());
+    }
+}
+
+void hotspotExec(ExecContext& c)
+{
+    LILA_ZONE();
+
+    const gn::GeometryPtr src = c.geometry("geometry");
+    if (!src || !src->mesh)
+    {
+        c.out("geometry", src);
+        return;
+    }
+    const Sheet sheet = sheetFor(c);
+    uv::HotspotOptions o;
+    o.splitAngle = c.f("splitAngle");
+    const std::string orient = c.s("orient");
+    o.orient = orient == "asIs" ? uv::HotspotOrient::AsIs : orient == "longestU" ? uv::HotspotOrient::LongestU : uv::HotspotOrient::WorldUp;
+    o.tag = c.s("tag");
+    o.seed = uint32_t(c.i("seed"));
+    o.randomFlip = c.b("randomFlip");
+    o.randomOffset = c.b("randomOffset");
+
+    geo::Mesh m = *src->mesh;
+    const std::vector<uv::HotspotTrim> trims = hotspotTrims(sheet);
+    const std::string set = c.s("uvSet").empty() ? std::string("uv0") : c.s("uvSet");
+    const uv::HotspotResult r = uv::hotspot(m, {}, trims, set, o);
+    std::span<int32_t> trimAttr = m.faceAttrs().getOrAdd<int32_t>(kFaceTrim);
+    std::vector<uint32_t> faces;
+    for (const uv::HotspotIsland& is : r.islands)
+        for (geo::Index f : is.faces)
+        {
+            trimAttr[f] = is.trim + 1;
+            faces.push_back(f);
+        }
+    scene::materials::assign(m, materialName(sheet), faces);
+
+    Geometry out = *src;
+    out.mesh = std::make_shared<const geo::Mesh>(std::move(m));
+    c.out("geometry", gn::makeGeometry(std::move(out)));
+}
+
+gn::NodeDecl hotspotDecl()
+{
+    return {
+        .type = "TrimHotspotUv",
+        .label = "Hotspot UV",
+        .category = "Trim Sheets",
+        .doc = "Maps the mesh's uvs onto a trim sheet: islands split by angle, rectified, measured in world size and matched to the "
+               "trim that fits (strips for long islands, rectangles for panels, round trims for discs), with seeded variation. "
+               "Faces get the sheet's material slot and a face int 'trim' (index + 1). Re-runs whenever the input changes, so a "
+               "blockout stays trimmed while it is edited.",
+        .sockets = {.inputs = {geoSocket("geometry", "The mesh to map."),
+                               in("sheet", T::String, "", "The .lilatrim; the current sheet when empty."),
+                               in("splitAngle", T::Float, 30.0, "Faces meeting sharper than this, degrees, become separate islands.", 0.0, 180.0),
+                               in("orient", T::String, "worldUp", "worldUp, longestU or asIs."),
+                               in("tag", T::String, "", "Only trims with this tag."),
+                               in("seed", T::Int, 0, "Variation seed."),
+                               in("randomOffset", T::Bool, true, "Slide islands along tiling strips."),
+                               in("randomFlip", T::Bool, false, "Turn islands 180 degrees at random."),
+                               in("uvSet", T::String, "uv0", "UV set to write.")},
+                    .outputs = {geoSocket("geometry", "The mesh with its uvs on the sheet.")}},
+        .exec = hotspotExec,
+    };
+}
+
+void generatorExec(ExecContext& c)
+{
+    LILA_ZONE();
+
+    const Sheet sheet = sheetFor(c);
+    GenerateOptions go;
+    go.tile = c.b("tile");
+    Generated g = generate(sheet, go);
+    c.out("high", gn::meshGeometry(std::move(g.high)));
+    c.out("low", gn::meshGeometry(std::move(g.low)));
+}
+
+gn::NodeDecl generatorDecl()
+{
+    return {
+        .type = "TrimSheetGenerator",
+        .label = "Trim Sheet Generator",
+        .category = "Trim Sheets",
+        .doc = "The high and low poly a trim sheet bakes from: each trim's profile swept across its rectangle (strips along U, "
+               "rectangles as framed panels, round trims as domes) with its details, on the XZ plane facing +Y.",
+        .sockets = {.inputs = {in("sheet", T::String, "", "The .lilatrim; the current sheet when empty."),
+                               in("tile", T::Bool, false, "Repeat tiling strips one sheet width to each side, as the bake does.")},
+                    .outputs = {geoSocket("high", "Bevelled trims with corner colour per trim."), geoSocket("low", "The flat plane, uv0 over the sheet.")}},
+        .exec = generatorExec,
+    };
+}
+} // namespace
+
+bool registerNodes(ext::Context& ctx) { return gn::registerDecl(ctx, hotspotDecl()) != nullptr && gn::registerDecl(ctx, generatorDecl()) != nullptr; }
+} // namespace trims
+
+LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
+{
+    if (!trims::registerNodes(ctx))
+        return 1;
+    trims::registerCommands(ctx);
+    trims::registerUi(ctx);
+    return 0;
+}
