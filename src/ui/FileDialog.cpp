@@ -571,7 +571,7 @@ void FileDialog::Impl::build(const QString& caption)
     sidePanel->setFrameShape(QFrame::NoFrame);
     splitter->addWidget(sidePanel);
     splitter->setStretchFactor(1, 1);
-    splitter->setSizes({200, 600, 220});
+    splitter->setSizes({200, 540, 260});
     root->addWidget(splitter, 1);
 
     // Filter and counts.
@@ -1419,6 +1419,8 @@ void FileDialog::Impl::saveState()
     state["splitter"] = splitter->saveState().toBase64().toStdString();
     state["header"] = view->header()->saveState().toBase64().toStdString();
     state["side"] = sideButton->isChecked();
+    if (sidePanel->isVisible())
+        state["sideWidth"] = splitter->sizes().value(2);
     PrefStore::get().set(kFdPrefs, kFdStatePref, state);
 }
 
@@ -1434,6 +1436,15 @@ void FileDialog::Impl::restoreState()
     splitter->restoreState(bytes("splitter"));
     view->header()->restoreState(bytes("header"));
     sideButton->setChecked(state.value("side", true));
+    // A splitter state saved without a visible side panel leaves it at its minimum width.
+    QList<int> sizes = splitter->sizes();
+    const int sideWidth = state.value("sideWidth", 260);
+    if (sizes.size() == 3 && sizes[2] < sideWidth && sizes[1] > sideWidth)
+    {
+        sizes[1] -= sideWidth - sizes[2];
+        sizes[2] = sideWidth;
+        splitter->setSizes(sizes);
+    }
 }
 
 FileDialog::FileDialog(QWidget* parent, Mode mode, const QString& caption, const QString& start, const QString& filter)
