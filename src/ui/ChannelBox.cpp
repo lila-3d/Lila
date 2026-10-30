@@ -295,6 +295,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 
     mName = new QLineEdit(this);
     mName->setPlaceholderText("Nothing selected");
+    mName->setFocusPolicy(Qt::ClickFocus);
     QFont f = mName->font();
     f.setWeight(QFont::DemiBold);
     mName->setFont(f);
