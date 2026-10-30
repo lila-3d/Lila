@@ -114,7 +114,7 @@ TEST_CASE("maya binary: blendShape point arrays and attribute aliases decode as 
     std::string aal = std::string("aal") + '\0' + char(0x20) + be32(4);
     for (const char* s : {"smile", "weight[0]", "frown", "weight[1]"})
         aal += std::string(s) + '\0';
-    std::string node = leaf("CREA", std::string(1, char(0x80)) + "faceBlend" + '\0') + leaf("PNT#", ipt) + leaf("ATAL", aal);
+    std::string node = leaf("CREA", std::string(1, '\x80') + "faceBlend" + '\0') + leaf("PNT#", ipt) + leaf("ATAL", aal);
     std::string file = group("FOR8", "Maya", group("FOR8", "FBLS", node));
 
     maya::File f = maya::readBinary(std::span(reinterpret_cast<const uint8_t*>(file.data()), file.size()));

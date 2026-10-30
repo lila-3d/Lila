@@ -87,7 +87,7 @@ public:
     bool ok() const { return mOk; }
     bool add(const std::string& name, const std::string& data)
     {
-        return mOk && mz_zip_writer_add_mem(&mZip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+        return mOk && mz_zip_writer_add_mem(&mZip, name.c_str(), data.data(), data.size(), MZ_DEFAULT_LEVEL);
     }
     bool finish()
     {

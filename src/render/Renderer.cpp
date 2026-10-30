@@ -2702,9 +2702,9 @@ struct Renderer::Impl
         vci.format = format;
         vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips, 0, 1};
         vkCreateImageView(vk.device, &vci, nullptr, &img.view);
-        for (uint32_t m = 0; m < mips; ++m)
+        for (uint32_t mip = 0; mip < mips; ++mip)
         {
-            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, m, 1, 0, 1};
+            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 1};
             VkImageView view = VK_NULL_HANDLE;
             vkCreateImageView(vk.device, &vci, nullptr, &view);
             levels.push_back(view);
@@ -2751,19 +2751,19 @@ struct Renderer::Impl
             writeImage(v.composeSets[i], 1, sampler, v.bloomUpViews[0], general, linearSampler);
             writeImage(v.composeSets[i], 3, sampler, v.exposureState.view, general);
         }
-        for (uint32_t m = 1; m < levels; ++m)
+        for (uint32_t mip = 1; mip < levels; ++mip)
         {
-            VkDescriptorSet down = v.bloomSets[3 + m - 1];
-            writeImage(down, 0, sampler, v.bloomDownViews[m - 1], general, linearSampler);
-            writeImage(down, 2, storageType, v.bloomDownViews[m], general);
+            VkDescriptorSet down = v.bloomSets[3 + mip - 1];
+            writeImage(down, 0, sampler, v.bloomDownViews[mip - 1], general, linearSampler);
+            writeImage(down, 2, storageType, v.bloomDownViews[mip], general);
         }
-        // Up level m blends the level below it (the down chain's last level at the bottom) into the down chain's own level.
-        for (uint32_t m = 0; m + 1 < levels; ++m)
+        // Up level mip blends the level below it (the down chain's last level at the bottom) into the down chain's own level.
+        for (uint32_t mip = 0; mip + 1 < levels; ++mip)
         {
-            VkDescriptorSet up = v.bloomSets[3 + kMaxBloomLevels - 1 + m];
-            writeImage(up, 0, sampler, m + 2 == levels ? v.bloomDownViews[m + 1] : v.bloomUpViews[m + 1], general, linearSampler);
-            writeImage(up, 1, sampler, v.bloomDownViews[m], general, linearSampler);
-            writeImage(up, 2, storageType, v.bloomUpViews[m], general);
+            VkDescriptorSet up = v.bloomSets[3 + kMaxBloomLevels - 1 + mip];
+            writeImage(up, 0, sampler, mip + 2 == levels ? v.bloomDownViews[mip + 1] : v.bloomUpViews[mip + 1], general, linearSampler);
+            writeImage(up, 1, sampler, v.bloomDownViews[mip], general, linearSampler);
+            writeImage(up, 2, storageType, v.bloomUpViews[mip], general);
         }
     }
 
@@ -2873,7 +2873,6 @@ struct Renderer::Impl
     void recordGtao(VkCommandBuffer cmd, Viewport& v, const FrameState& s, bool depthNormals)
     {
         constexpr auto compute = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-        constexpr auto fragment = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
         constexpr auto read = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
         constexpr auto storageWrite = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         constexpr auto general = VK_IMAGE_LAYOUT_GENERAL;
@@ -4581,16 +4580,16 @@ struct Renderer::Impl
             };
             barrier(cmd, v.bloomDown.image, general, general, fragment | compute, read, compute, write, color, v.bloomLevels);
             barrier(cmd, v.bloomUp.image, general, general, fragment | compute, read, compute, write, color, v.bloomLevels);
-            for (uint32_t m = 0; m < v.bloomLevels; ++m)
+            for (uint32_t mip = 0; mip < v.bloomLevels; ++mip)
             {
-                const glm::uvec2 src = m == 0 ? glm::uvec2(v.extent.width, v.extent.height) : levelSize(m - 1);
-                dispatch(bloomDownPipeline, m == 0 ? v.bloomSets[input] : v.bloomSets[3 + m - 1], levelSize(m), 1.0f / glm::vec2(src),
-                         m == 0 ? 1.0f : 0.0f, 1.0f);
+                const glm::uvec2 src = mip == 0 ? glm::uvec2(v.extent.width, v.extent.height) : levelSize(mip - 1);
+                dispatch(bloomDownPipeline, mip == 0 ? v.bloomSets[input] : v.bloomSets[3 + mip - 1], levelSize(mip), 1.0f / glm::vec2(src),
+                         mip == 0 ? 1.0f : 0.0f, 1.0f);
                 barrier(cmd, v.bloomDown.image, general, general, compute, write, compute, read, color, v.bloomLevels);
             }
-            for (int m = int(v.bloomLevels) - 2; m >= 0; --m)
+            for (int mip = int(v.bloomLevels) - 2; mip >= 0; --mip)
             {
-                dispatch(bloomUpPipeline, v.bloomSets[3 + kMaxBloomLevels - 1 + m], levelSize(m), 1.0f / glm::vec2(levelSize(m + 1)), 0.0f,
+                dispatch(bloomUpPipeline, v.bloomSets[3 + kMaxBloomLevels - 1 + mip], levelSize(mip), 1.0f / glm::vec2(levelSize(mip + 1)), 0.0f,
                          std::max(s.post.bloomRadius, 0.1f));
                 barrier(cmd, v.bloomUp.image, general, general, compute, write, compute | fragment, read, color, v.bloomLevels);
             }

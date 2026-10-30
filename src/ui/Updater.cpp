@@ -305,7 +305,7 @@ bool deferToRunningInstall()
     // The installer starts the new Lila when it finishes if this flag exists.
     QDir().mkpath(updateDir());
     QFile flag(QDir(updateDir()).filePath("relaunch"));
-    flag.open(QIODevice::WriteOnly);
+    (void)flag.open(QIODevice::WriteOnly);
     return true;
 #else
     return false;

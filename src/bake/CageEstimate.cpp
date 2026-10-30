@@ -342,7 +342,7 @@ CageCoverage cageCoverage(const LowInput& low, const CageParams& cage, size_t gr
     return out;
 }
 
-CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& settings, const BakeInputs& in, size_t group, const Backend& backend,
+CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& settings, const BakeInputs&, size_t group, const Backend& backend,
                           const CageEstimateOptions& options)
 {
     LILA_ZONE();
