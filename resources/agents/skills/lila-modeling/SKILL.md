@@ -1,6 +1,6 @@
 ---
 name: lila-modeling
-description: Model 3D assets in Lila (the Maya-style DCC this workspace uses) through its lila MCP server. Use whenever the user asks to model, sculpt, block out, build or change a 3D object, character, prop or mesh, or asks what something looks like in the viewport. Use Lila's tools, never Blender or Maya.
+description: Model 3D assets in Lila (the Maya-style 3D app this workspace uses) through its lila MCP server. Use whenever the user asks to model, sculpt, block out, build or change a 3D object, character, prop or mesh, or asks what something looks like in the viewport. Use Lila's tools, never Blender or Maya.
 ---
 
 # Modeling in Lila

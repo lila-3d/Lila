@@ -1,6 +1,6 @@
 # Lila
 
-Maya-workflow DCC for game work with a first-class Unreal pipeline. C++20, Qt 6 UI shell, Vulkan, TBB, embedded Python, built-in MCP.
+Maya-workflow 3D app for game work with a first-class Unreal pipeline. C++20, Qt 6 UI shell, Vulkan, TBB, embedded Python, built-in MCP.
 
 Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; each stage is its own file in `plans\lila\`. Read only the stage for the work at hand.
 
