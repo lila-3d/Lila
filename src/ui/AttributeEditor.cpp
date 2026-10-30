@@ -1,6 +1,7 @@
 #include "ui/AttributeEditor.h"
 
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/Paths.h"
@@ -28,6 +29,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QScrollArea>
 #include <QStyle>
@@ -62,6 +64,158 @@ protected:
         style()->drawItemText(&p, r, int(alignment()), palette(), isEnabled(), fontMetrics().elidedText(text(), Qt::ElideRight, r.width()),
                               foregroundRole());
     }
+};
+
+/** A number a scrub drives: its plug, its component of a vector (-1 for a scalar) and the attr name setAttr takes. */
+struct ScrubTarget
+{
+    scene::PlugRef ref;
+    int component = -1;
+    std::string attr;
+    std::optional<double> minValue, maxValue;
+    bool isInt = false;
+};
+
+double numberOf(const scene::PlugValue& v, int component)
+{
+    if (auto* v3 = std::get_if<glm::dvec3>(&v); v3 && component >= 0)
+        return (*v3)[component];
+    if (auto* f = std::get_if<double>(&v))
+        return *f;
+    if (auto* i = std::get_if<int64_t>(&v))
+        return double(*i);
+    return 0.0;
+}
+
+/**
+ * Channel box style virtual slider: a drag steps its targets 0.1 per pixel (Shift 1, Ctrl 0.01) live, and the release
+ * commits them through setAttr as one undo step. The middle button drags.
+ */
+class NumberScrub final : public QObject
+{
+public:
+    using Commit = std::function<void(const std::string& attr, const json& value)>;
+
+    NumberScrub(QWidget* on, std::vector<ScrubTarget> targets, Commit commit)
+        : QObject(on), mTargets(std::move(targets)), mCommit(std::move(commit))
+    {
+        on->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        switch (e->type())
+        {
+        case QEvent::MouseButtonPress:
+        {
+            auto* me = static_cast<QMouseEvent*>(e);
+            if (me->button() == Qt::MiddleButton)
+                begin(me->globalPosition().toPoint());
+            // Not consumed: a middle click without a drag still resets.
+            return false;
+        }
+        case QEvent::MouseMove:
+            return mActive && move(static_cast<QMouseEvent*>(e));
+        case QEvent::MouseButtonRelease: return mActive && end();
+        default: return false;
+        }
+    }
+
+private:
+    void begin(QPoint at)
+    {
+        Graph& g = Graph::current();
+        mSaved.clear();
+        for (const ScrubTarget& t : mTargets)
+            if (g.node(t.ref.node) && !g.isLocked(t.ref))
+                mSaved.push_back({t, g.value(t.ref)});
+        mActive = !mSaved.empty();
+        mMoved = false;
+        mStart = mLast = at;
+        mAccum = 0.0;
+    }
+
+    bool move(QMouseEvent* me)
+    {
+        // The release can go missing (focus stolen mid-drag); a move with no button held ends the drag.
+        if (me->buttons() == Qt::NoButton)
+            return end();
+        const QPoint at = me->globalPosition().toPoint();
+        const int dx = at.x() - mLast.x();
+        mLast = at;
+        if (!mMoved && std::abs(at.x() - mStart.x()) < valueReset::kMaxTravel)
+            return false;
+        if (!mMoved)
+        {
+            UndoStack::get().openChunk("Drag Attribute");
+            mMoved = true;
+        }
+        const Qt::KeyboardModifiers mods = me->modifiers();
+        mAccum += dx * ((mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1);
+        Graph& g = Graph::current();
+        UndoStack& u = UndoStack::get();
+        const bool was = u.enabled();
+        u.setEnabled(false);
+        for (const auto& [t, start] : mSaved)
+            if (g.node(t.ref.node))
+                g.setValue(t.ref, withComponent(g.value(t.ref), t, valueFor(t, start)));
+        u.setEnabled(was);
+        return true;
+    }
+
+    bool end()
+    {
+        mActive = false;
+        if (!mMoved)
+            return false;
+        Graph& g = Graph::current();
+        UndoStack& u = UndoStack::get();
+        const bool was = u.enabled();
+        u.setEnabled(false);
+        for (const auto& [t, start] : mSaved)
+            if (g.node(t.ref.node))
+                g.setValue(t.ref, start);
+        u.setEnabled(was);
+        // Inside the chunk opened when the drag started, so the drag undoes as one step.
+        for (const auto& [t, start] : mSaved)
+        {
+            const double v = valueFor(t, start);
+            mCommit(t.attr, t.isInt ? json(int64_t(std::llround(v))) : json(std::round(v * 1e4) / 1e4));
+        }
+        UndoStack::get().closeChunk();
+        mMoved = false;
+        return true;
+    }
+
+    double valueFor(const ScrubTarget& t, const scene::PlugValue& start) const
+    {
+        double v = numberOf(start, t.component) + mAccum;
+        if (t.minValue)
+            v = std::max(v, *t.minValue);
+        if (t.maxValue)
+            v = std::min(v, *t.maxValue);
+        return t.isInt ? std::round(v) : v;
+    }
+
+    static scene::PlugValue withComponent(scene::PlugValue current, const ScrubTarget& t, double v)
+    {
+        if (auto* v3 = std::get_if<glm::dvec3>(&current); v3 && t.component >= 0)
+            (*v3)[t.component] = v;
+        else if (std::holds_alternative<int64_t>(current))
+            current = int64_t(std::llround(v));
+        else
+            current = v;
+        return current;
+    }
+
+    std::vector<ScrubTarget> mTargets;
+    std::vector<std::pair<ScrubTarget, scene::PlugValue>> mSaved;
+    Commit mCommit;
+    bool mActive = false;
+    bool mMoved = false;
+    QPoint mStart, mLast;
+    double mAccum = 0.0;
 };
 
 QString niceName(const std::string& name)
@@ -432,6 +586,8 @@ void AttributeEditor::rebuild()
             attr = plug.substr(plug.find('.') + 1);
         }
         QWidget* field = nullptr;
+        std::vector<ScrubTarget> scrubbed;
+        const NumberScrub::Commit commit = [this](const std::string& a, const json& v) { set(a, v); };
 
         auto numberEdit = [&](int component) {
             auto* e = new QLineEdit;
@@ -441,6 +597,13 @@ void AttributeEditor::rebuild()
             e->setMaximumWidth(e->fontMetrics().horizontalAdvance("-00000.0000") + 10);
             e->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             std::string target = component >= 0 ? def.childNames[component] : attr;
+            if (!readOnly)
+            {
+                scrubbed.push_back({ref, component, target, def.minValue, def.maxValue, def.type == PlugType::Int});
+                new NumberScrub(e, {scrubbed.back()}, commit);
+                if (std::optional<json> d = valueReset::plugDefault(def, component))
+                    onMiddleClickReset(e, [this, target, v = *d] { set(target, v); }, QString::fromStdString(valueReset::describe(*d)));
+            }
             connect(e, &QLineEdit::editingFinished, this, [this, e, target, def, ref, component] {
                 if (!e->isModified())
                     return;
@@ -469,7 +632,8 @@ void AttributeEditor::rebuild()
                 set(target, def.type == PlugType::Int ? json(int64_t(std::llround(*v))) : json(*v));
             });
             mUpdaters.push_back([e, ref, component] {
-                if (e->hasFocus())
+                // Only typing holds a value back; a field focused by a middle-drag still follows it.
+                if (e->hasFocus() && e->isModified())
                     return;
                 scene::Node* node = Graph::current().node(ref.node);
                 if (!node)
@@ -669,6 +833,8 @@ void AttributeEditor::rebuild()
         else if (std::optional<json> d = valueReset::plugDefault(def))
             onMiddleClickReset(label, [this, attr, v = *d] { set(attr, v); },
                                QString::fromStdString(valueReset::describe(*d, def.enumNames)), field);
+        if (!scrubbed.empty())
+            new NumberScrub(label, std::move(scrubbed), commit);
         form->addRow(label, field);
         return true;
     };
