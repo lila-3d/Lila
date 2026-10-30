@@ -1,13 +1,16 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include "bake/Bake.h"
 #include "ops/Command.h"
 #include "core/MainQueue.h"
+#include "curve/CurveNodes.h"
 #include "extensions/ExtensionManager.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
+#include "tex/TextureSet.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -28,10 +31,15 @@ int main(int argc, char** argv)
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::gn::registerTypes();
+    lila::tex::registerTypes();
+    lila::curve::registerTypes();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::extensions::registerCommands();
     lila::gn::registerCommands();
+    lila::bake::registerCommands();
+    lila::tex::registerCommands();
+    lila::curve::registerCommands();
 
     doctest::Context ctx(argc, argv);
     int result = ctx.run();

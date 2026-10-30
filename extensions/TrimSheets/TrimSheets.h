@@ -25,4 +25,6 @@ std::filesystem::path defaultSheetFolder();
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** The Trim Sheet Editor panel. */
+void registerEditor(lila::ext::Context& ctx);
 } // namespace trims

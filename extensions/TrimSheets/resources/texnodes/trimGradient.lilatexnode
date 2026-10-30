@@ -1,0 +1,54 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "trimGradient",
+  "label": "Trim Gradient",
+  "category": "Mesh",
+  "doc": "Where a texel sits inside its trim: out runs 0 to 1 along the chosen axis (v from the trim's bottom to its top, u from left to right), uv gives both, and random is a value per trim. Mirror makes out 0 at both edges and 1 in the middle, for wear that follows a strip's edges.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    },
+    {
+      "id": "uv",
+      "type": "vector"
+    },
+    {
+      "id": "random",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "axis",
+      "type": "enum",
+      "default": "v",
+      "options": [
+        "u",
+        "v"
+      ]
+    },
+    {
+      "id": "mirror",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0
+    }
+  ],
+  "cost": 2,
+  "externals": [
+    "trimRect",
+    "trimIndex"
+  ],
+  "body": {
+    "out": "float4 r = trimRect.sample(uv);\nfloat2 size = max(r.zw - r.xy, float2(1e-6, 1e-6));\nfloat2 local = saturate((uv - r.xy) / size);\nfloat t = p.axis == 0 ? local.x : local.y;\nreturn p.mirror ? 1.0 - abs(t * 2.0 - 1.0) : t;",
+    "uv": "float4 r = trimRect.sample(uv);\nfloat2 size = max(r.zw - r.xy, float2(1e-6, 1e-6));\nfloat inside = r.z > r.x ? 1.0 : 0.0;\nreturn float3(saturate((uv - r.xy) / size), inside);",
+    "random": "uint i = uint(max(round(trimIndex.sample(uv).x), 0.0));\nreturn texRand(uint2(i, 7u), uint(p.seed));"
+  }
+}

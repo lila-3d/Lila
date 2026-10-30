@@ -1,0 +1,125 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Trim Hull Paint",
+  "description": "Pale hull paint worn to bare metal on every bevel, grime gathering along the trims' edges and in the seams.",
+  "kind": "material",
+  "layer": {
+    "id": "L99",
+    "name": "Trim Hull Paint",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Bare Metal",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.55,
+            0.56,
+            0.57,
+            1
+          ],
+          "roughness": 0.3,
+          "metallic": 1.0,
+          "height": 0.5
+        },
+        "masks": []
+      },
+      {
+        "id": "L2",
+        "name": "Hull Paint",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.34,
+            0.37,
+            0.4,
+            1
+          ],
+          "roughness": 0.45,
+          "metallic": 0.0,
+          "height": 0.51
+        },
+        "masks": [
+          {
+            "id": "M1",
+            "kind": "fill",
+            "value": 1.0,
+            "mode": "normal"
+          },
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "subtract",
+            "opacity": 1.0,
+            "values": {}
+          },
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genPaintChips",
+            "mode": "subtract",
+            "opacity": 0.6,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L3",
+        "name": "Trim Edge Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.07,
+            0.07,
+            0.08,
+            1
+          ],
+          "roughness": 0.8,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "trimGradient",
+            "mode": "normal",
+            "opacity": 0.3,
+            "values": {
+              "axis": "v",
+              "mirror": true
+            },
+            "invert": true
+          }
+        ]
+      },
+      {
+        "id": "L4",
+        "name": "Seam Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.09,
+            0.08,
+            0.07,
+            1
+          ],
+          "roughness": 0.85,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M5",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}

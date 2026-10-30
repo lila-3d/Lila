@@ -29,6 +29,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <filesystem>
+#include <map>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -675,15 +677,102 @@ void notify(const std::vector<MeshMapChange>& changes)
         texgpu::meshMapsChanged(p);
 }
 
-/** Texture graphs asking for a project's maps: a project without a live set gets one at preview resolution (in the app). */
+/** A baked map file uploaded for texture graphs, kept while the file is unchanged. */
+struct BakedFile
+{
+    std::filesystem::path file;
+    std::filesystem::file_time_type time;
+    GpuImageRef image;
+};
+
+struct BakedFiles
+{
+    std::mutex mutex;
+    std::map<std::tuple<std::string, std::string, int>, BakedFile> files;
+    std::set<std::tuple<std::string, std::string, int>> pending;
+    /** Looked for and not found: asked again only after bakedMapsChanged. */
+    std::set<std::tuple<std::string, std::string, int>> misses;
+};
+
+BakedFiles& bakedFiles()
+{
+    static BakedFiles b;
+    return b;
+}
+
+/** The cached upload of a project's baked file, or null when there is none or the file changed since. */
+GpuImageRef cachedBakedFile(const std::string& project, const std::string& map, int udim)
+{
+    BakedFiles& b = bakedFiles();
+    std::scoped_lock lock(b.mutex);
+    auto it = b.files.find({project, map, udim});
+    if (it == b.files.end())
+        return nullptr;
+    std::error_code ec;
+    if (std::filesystem::last_write_time(it->second.file, ec) != it->second.time || ec)
+    {
+        b.files.erase(it);
+        return nullptr;
+    }
+    return it->second.image;
+}
+
+/** Main thread: reads the project's last baked file for the map and uploads it; false when it has none. */
+bool loadBakedFile(scene::Graph& g, const std::string& project, const std::string& map, int udim)
+{
+    const std::filesystem::path file = tex::bakedMapFile(g, project, map, udim);
+    if (file.empty())
+        return false;
+    std::error_code ec;
+    const std::filesystem::file_time_type time = std::filesystem::last_write_time(file, ec);
+    image::Image img = ec ? image::Image{} : image::read(file);
+    if (img.width <= 0)
+        return false;
+    // Float files hold data (trim indices, rectangles), the rest are 8 bit.
+    const bool exact = file.extension() == ".exr";
+    GpuImageRef gpu = GpuImage::create({img.width, img.height, exact ? TextureFormat::RGBA16F : TextureFormat::RGBA8, false, false, "bake." + map});
+    gpu->updateRgba(0, 0, img.width, img.height, img.rgba);
+    BakedFiles& b = bakedFiles();
+    std::scoped_lock lock(b.mutex);
+    b.files[{project, map, udim}] = {file, time, std::move(gpu)};
+    return true;
+}
+
+/**
+ * Texture graphs asking for a project's maps: a project without a live set gets one at preview resolution (in the app),
+ * and a project with no groups to bake live (a trim sheet's) serves its last bake's files.
+ */
 GpuImageRef meshMapSource(const std::string& projectName, const std::string& external, int udim)
 {
     const std::string map = tex::bakeMapName(external);
     if (auto m = findMeshMap(projectName, map, udim))
         return m->image;
+    if (GpuImageRef baked = cachedBakedFile(projectName, map, udim))
+        return baked;
     Engine& e = engine();
     if (!e.async)
         return nullptr;
+    {
+        BakedFiles& b = bakedFiles();
+        std::scoped_lock lock(b.mutex);
+        if (!b.misses.contains({projectName, map, udim}) && b.pending.insert({projectName, map, udim}).second)
+            mainq::post([projectName, map, udim] {
+                scene::Graph& g = scene::Graph::current();
+                bool loaded = false;
+                for (NodeId id : bake::projects(g))
+                    if (g.node(id)->name() == projectName && bake::groupsOf(g, id).empty())
+                        loaded = loadBakedFile(g, projectName, map, udim);
+                {
+                    BakedFiles& files = bakedFiles();
+                    std::scoped_lock done(files.mutex);
+                    files.pending.erase({projectName, map, udim});
+                    if (!loaded)
+                        files.misses.insert({projectName, map, udim});
+                }
+                if (loaded)
+                    texgpu::meshMapsChanged(projectName);
+            });
+    }
     static std::mutex triedMutex;
     static std::set<std::string> tried;
     {
@@ -694,7 +783,7 @@ GpuImageRef meshMapSource(const std::string& projectName, const std::string& ext
     mainq::post([projectName] {
         scene::Graph& g = scene::Graph::current();
         for (NodeId id : bake::projects(g))
-            if (g.node(id)->name() == projectName && !liveMapsEnabled(id))
+            if (g.node(id)->name() == projectName && !liveMapsEnabled(id) && !bake::groupsOf(g, id).empty())
             {
                 try
                 {
@@ -1227,6 +1316,15 @@ void registerLiveMapCommands()
 {
     texgpu::setMeshMapSource(meshMapSource);
     tex::setLiveMeshMapReader(readLiveMap);
+    tex::setBakedMapsListener([](const std::string& project) {
+        {
+            BakedFiles& b = bakedFiles();
+            std::scoped_lock lock(b.mutex);
+            std::erase_if(b.files, [&](const auto& f) { return std::get<0>(f.first) == project; });
+            std::erase_if(b.misses, [&](const auto& k) { return std::get<0>(k) == project; });
+        }
+        texgpu::meshMapsChanged(project);
+    });
     using T = ArgType;
     static const FlagDef kProject{"project", "pj", T::String, nullptr, "The bake project; defaults to the scene's only one."};
     static const FlagDef kSet{"set", "st", T::String, "", "The set: empty for the project's own, cagePreview for the cage view's."};

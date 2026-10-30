@@ -31,7 +31,7 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 1;
+constexpr int32 MasterVersion = 2;
 const TCHAR* MasterName = TEXT("M_LilaTrim");
 const TCHAR* VersionTag = TEXT("Lila Trim v");
 
@@ -198,6 +198,8 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 	Texture(TEXT("DetailBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Detail"));
 	Texture(TEXT("DetailNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Detail"));
 	Texture(TEXT("DetailORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Detail"));
+	Texture(TEXT("SheetBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Painted"));
+	Texture(TEXT("SheetORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Painted"));
 
 	Scalar(TEXT("SheetWidthCm"), 400.0f, TEXT("Sheet"));
 	Scalar(TEXT("SheetHeightCm"), 400.0f, TEXT("Sheet"));
@@ -292,10 +294,29 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 	auto* Normal = CustomOf(Version + TEXT(" normal"), FString(MasksCode) + NormalCode, CMOT_Float3,
 		With({TEXT("SheetNormalMap"), TEXT("UseDetail"), TEXT("DetailNormalMap"), TEXT("DetailNormalStrength")}));
 
-	UMaterialEditingLibrary::ConnectMaterialProperty(Color, TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Roughness, TEXT(""), MP_Roughness);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Metallic, TEXT(""), MP_Metallic);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Occlusion, TEXT(""), MP_AmbientOcclusion);
+	// UsePaintedMaps: the sheet's texture set from Lila (base colour and ORM) stands in for the procedural paint.
+	auto Painted = [&](UMaterialExpression* Procedural, const TCHAR* Map, const TCHAR* Code, ECustomMaterialOutputType Type) -> UMaterialExpression* {
+		auto* Sample = CustomOf(Version + TEXT(" painted"), Code, Type, {TEXT("SheetUV"), Map});
+		auto* Pick = Cast<UMaterialExpressionStaticSwitchParameter>(Make(UMaterialExpressionStaticSwitchParameter::StaticClass(), -200));
+		Pick->ParameterName = TEXT("UsePaintedMaps");
+		Pick->DefaultValue = false;
+		Pick->Group = TEXT("Painted");
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Sample, TEXT(""), Pick, TEXT("True"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Procedural, TEXT(""), Pick, TEXT("False"));
+		return Pick;
+	};
+	UMaterialEditingLibrary::ConnectMaterialProperty(
+		Painted(Color, TEXT("SheetBaseColorMap"), TEXT("return Texture2DSample(SheetBaseColorMap, SheetBaseColorMapSampler, SheetUV).rgb;"), CMOT_Float3),
+		TEXT(""), MP_BaseColor);
+	UMaterialEditingLibrary::ConnectMaterialProperty(
+		Painted(Roughness, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).g;"), CMOT_Float1), TEXT(""),
+		MP_Roughness);
+	UMaterialEditingLibrary::ConnectMaterialProperty(
+		Painted(Metallic, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).b;"), CMOT_Float1), TEXT(""),
+		MP_Metallic);
+	UMaterialEditingLibrary::ConnectMaterialProperty(
+		Painted(Occlusion, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).r;"), CMOT_Float1), TEXT(""),
+		MP_AmbientOcclusion);
 	UMaterialEditingLibrary::ConnectMaterialProperty(Normal, TEXT(""), MP_Normal);
 
 	Material->bUsedWithInstancedStaticMeshes = true;

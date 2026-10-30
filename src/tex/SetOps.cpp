@@ -104,39 +104,6 @@ struct External
     uint64_t hash = 0;
 };
 
-/** A map's file from the bake project's last bake (else its manifest) for a tile. */
-fs::path bakeMapFile(scene::Graph& g, const std::string& project, const std::string& map, int udim)
-{
-    if (project.empty())
-        return {};
-    for (scene::NodeId id : bake::projects(g))
-    {
-        scene::Node* n = g.node(id);
-        if (!n || n->name() != project)
-            continue;
-        json r = bake::lastResult(id);
-        if (!r.is_object() || !r.contains("outputs"))
-            r = bake::readManifest(*n);
-        if (!r.is_object())
-            return {};
-        fs::path any;
-        int count = 0;
-        for (const json& o : r.value("outputs", json::array()))
-        {
-            if (o.value("map", std::string()) != map || !o.value("layer", std::string()).empty())
-                continue;
-            const fs::path file = paths::fromUtf8(o.value("file", std::string()));
-            if (o.value("udim", 1001) == udim)
-                return file;
-            any = file;
-            ++count;
-        }
-        // A single-tile bake feeds every tile of a set that has more.
-        return count == 1 ? any : fs::path();
-    }
-    return {};
-}
-
 /** The images a plan reads from outside: paint buffers through the external source, mesh maps from the set's bake project (live, else its files). */
 std::map<std::string, External> gatherExternals(scene::Node& set, const SetSettings& s, const Plan& plan, int udim)
 {
@@ -159,7 +126,7 @@ std::map<std::string, External> gatherExternals(scene::Node& set, const SetSetti
                 e.image = std::move(img);
             }
         if (e.image.width <= 0)
-            if (const fs::path file = bakeMapFile(scene::Graph::current(), s.bakeProject, bakeMapName(b.name), udim); !file.empty())
+            if (const fs::path file = bakedMapFile(scene::Graph::current(), s.bakeProject, bakeMapName(b.name), udim); !file.empty())
                 if (image::Image img = image::read(file); img.width > 0)
                 {
                     e.hash = mix(mix(2, paths::toUtf8(file)), fileStamp(file));
@@ -276,6 +243,38 @@ struct MapJob
     bool linear = true;
 };
 } // namespace
+
+fs::path bakedMapFile(scene::Graph& g, const std::string& project, const std::string& map, int udim)
+{
+    if (project.empty())
+        return {};
+    for (scene::NodeId id : bake::projects(g))
+    {
+        scene::Node* n = g.node(id);
+        if (!n || n->name() != project)
+            continue;
+        json r = bake::lastResult(id);
+        if (!r.is_object() || !r.contains("outputs"))
+            r = bake::readManifest(*n);
+        if (!r.is_object())
+            return {};
+        fs::path any;
+        int count = 0;
+        for (const json& o : r.value("outputs", json::array()))
+        {
+            if (o.value("map", std::string()) != map || !o.value("layer", std::string()).empty())
+                continue;
+            const fs::path file = paths::fromUtf8(o.value("file", std::string()));
+            if (o.value("udim", 1001) == udim)
+                return file;
+            any = file;
+            ++count;
+        }
+        // A single-tile bake feeds every tile of a set that has more.
+        return count == 1 ? any : fs::path();
+    }
+    return {};
+}
 
 void setExternalSource(ExternalSource fn) { externalSource() = std::move(fn); }
 

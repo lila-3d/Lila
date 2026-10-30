@@ -8,6 +8,7 @@
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Profile.h>
+#include <lila/TextureGraph.h>
 #include <lila/Workspace.h>
 
 using namespace lila;
@@ -149,6 +150,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
     if (!trims::registerNodes(ctx))
         return 1;
+    // Trim Sheet Normal, Trim Mask and Trim Gradient: texture nodes reading the sheet's bake.
+    lila::tex::registerExtensionDir(ctx, ctx.resources() / "texnodes");
     trims::registerCommands(ctx);
     trims::registerUi(ctx);
     return 0;

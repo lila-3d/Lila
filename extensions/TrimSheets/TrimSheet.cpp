@@ -7,6 +7,8 @@
 #include <cmath>
 #include <format>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
 #include <regex>
 #include <stdexcept>
@@ -426,7 +428,7 @@ Sheet preset(std::string_view id, int width)
     if (id == "industrialMetal")
     {
         sheet.name = "T_IndustrialMetal";
-        sheet.material = "Painted Metal";
+        sheet.material = "Worn Painted Metal";
         l.addStrip("Edge16", 16, S::Raised);
         l.addStrip("Edge16b", 16, S::HalfPipe);
         l.addStrip("Lip32", 32, S::Raised);
@@ -443,13 +445,16 @@ Sheet preset(std::string_view id, int width)
         sheet.trims.back().kind = K::Flat;
         sheet.trims.back().fit = uv::TrimFit::Fill;
         sheet.trims.back().tags = {"flat"};
+        for (Trim& t : sheet.trims)
+            if (t.name.starts_with("Cap") && t.profile.style == S::HalfPipe)
+                t.tags.push_back("cap");
         l.addStrip("Vents256", 256, S::Vents, 32);
         l.addStrip("Tread32", 32, S::Tread, 32);
     }
     else if (id == "sciFiHull")
     {
         sheet.name = "T_SciFiHull";
-        sheet.material = "Hull Paint";
+        sheet.material = "Trim Hull Paint";
         l.addStrip("Edge32", 32, S::Raised);
         l.addStrip("Edge32b", 32, S::Step);
         l.addStrip("Groove64", 64, S::Groove);
@@ -469,7 +474,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "woodTrims")
     {
         sheet.name = "T_WoodTrims";
-        sheet.material = "Wood";
+        sheet.material = "Dusty Wood";
         sheet.pxPerM = 1024.0;
         l.addStrip("Dowel64", 64, S::HalfPipe);
         l.addStrip("Bead64", 64, S::DoubleBevel);
@@ -485,7 +490,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "concrete")
     {
         sheet.name = "T_Concrete";
-        sheet.material = "Concrete";
+        sheet.material = "Trim Concrete";
         sheet.pxPerM = 256.0;
         l.addStrip("Arris32", 32, S::Raised);
         l.addStrip("Reveal64", 64, S::Recessed);
@@ -502,7 +507,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "stoneMouldings")
     {
         sheet.name = "T_StoneMouldings";
-        sheet.material = "Sandstone";
+        sheet.material = "Mossy Stone";
         sheet.pxPerM = 256.0;
         l.addStrip("Torus64", 64, S::HalfPipe);
         l.addStrip("Fillet64", 64, S::Step);
@@ -517,7 +522,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "hotspotGrid")
     {
         sheet.name = "T_HotspotGrid";
-        sheet.material = "Painted Concrete";
+        sheet.material = "Trim Painted Concrete";
         sheet.pxPerM = 256.0;
         l.addRow("Sq512_", 512, {{512, S::Raised}, {512, S::Raised}, {1024, S::Raised}}, K::Rect, 0);
         l.addRow("R256_", 256, {{256, S::Raised}, {256, S::Raised}, {512, S::Raised}, {1024, S::Raised}}, K::Rect, 1);
@@ -747,7 +752,10 @@ glm::vec3 trimColor(size_t i)
     return glm::vec3(glm::round((rgb + m) * 255.0) / 255.0);
 }
 
-lila::image::Image idMap(const Sheet& s)
+namespace
+{
+/** An image of the sheet's size with each trim's texels set to texel(i). */
+lila::image::Image fillTrims(const Sheet& s, const std::function<glm::vec4(size_t)>& texel)
 {
     lila::image::Image img;
     img.width = s.width;
@@ -756,17 +764,149 @@ lila::image::Image idMap(const Sheet& s)
     for (size_t i = 0; i < s.trims.size(); ++i)
     {
         const Trim& t = s.trims[i];
-        const glm::vec3 c = trimColor(i);
+        const glm::vec4 c = texel(i);
         for (int y = std::max(0, t.min.y); y < std::min(s.height, t.max.y); ++y)
             for (int x = std::max(0, t.min.x); x < std::min(s.width, t.max.x); ++x)
-            {
-                float* p = &img.rgba[(size_t(y) * s.width + x) * 4];
-                p[0] = c.r;
-                p[1] = c.g;
-                p[2] = c.b;
-                p[3] = 1.0f;
-            }
+                std::copy_n(&c.x, 4, &img.rgba[(size_t(y) * s.width + x) * 4]);
     }
     return img;
+}
+} // namespace
+
+std::vector<size_t> moveBorder(Sheet& s, int axis, int at, int along, int to)
+{
+    const int a = axis == 0 ? 0 : 1, b = 1 - a;
+    struct Side
+    {
+        size_t trim;
+        bool low; // the border is the trim's min on this axis
+    };
+    std::vector<Side> sides;
+    for (size_t i = 0; i < s.trims.size(); ++i)
+    {
+        const Trim& t = s.trims[i];
+        if (t.max[a] == at)
+            sides.push_back({i, false});
+        else if (t.min[a] == at)
+            sides.push_back({i, true});
+    }
+    // Grow the run from the trims under `along` through every trim on the line its span touches.
+    std::vector<char> in(sides.size(), 0);
+    int lo = along, hi = along;
+    for (bool grew = true; grew;)
+    {
+        grew = false;
+        for (size_t k = 0; k < sides.size(); ++k)
+        {
+            const Trim& t = s.trims[sides[k].trim];
+            if (in[k] || t.max[b] < lo || t.min[b] > hi)
+                continue;
+            in[k] = 1;
+            lo = std::min(lo, t.min[b]);
+            hi = std::max(hi, t.max[b]);
+            grew = true;
+        }
+    }
+    int least = std::numeric_limits<int>::min(), most = std::numeric_limits<int>::max();
+    for (size_t k = 0; k < sides.size(); ++k)
+        if (in[k])
+        {
+            const Trim& t = s.trims[sides[k].trim];
+            if (sides[k].low)
+                most = std::min(most, t.max[a] - 1);
+            else
+                least = std::max(least, t.min[a] + 1);
+        }
+    std::vector<size_t> out;
+    if (least > most)
+        return out;
+    to = std::clamp(to, least, most);
+    for (size_t k = 0; k < sides.size(); ++k)
+        if (in[k])
+        {
+            Trim& t = s.trims[sides[k].trim];
+            (sides[k].low ? t.min : t.max)[a] = to;
+            out.push_back(sides[k].trim);
+        }
+    std::ranges::sort(out);
+    return out;
+}
+
+bool splitTrim(Sheet& s, size_t i, int axis, int at)
+{
+    if (i >= s.trims.size())
+        return false;
+    const int a = axis == 0 ? 0 : 1;
+    Trim first = s.trims[i];
+    if (at <= first.min[a] || at >= first.max[a])
+        return false;
+    Trim second = first;
+    first.max[a] = at;
+    second.min[a] = at;
+    second.name = first.name + "_b";
+    s.trims[i] = first;
+    s.trims.insert(s.trims.begin() + std::ptrdiff_t(i + 1), second);
+    return true;
+}
+
+int snapToGrid(const Sheet& s, double at)
+{
+    const int step = 1 << std::clamp(s.mipLevel, 0, 12);
+    return int(std::lround(at / step)) * step;
+}
+
+lila::image::Image idMap(const Sheet& s)
+{
+    return fillTrims(s, [](size_t i) { return glm::vec4(trimColor(i), 1.0f); });
+}
+
+lila::image::Image trimIndexMap(const Sheet& s)
+{
+    return fillTrims(s, [](size_t i) {
+        const float v = float(i + 1);
+        return glm::vec4(v, v, v, 1.0f);
+    });
+}
+
+lila::image::Image trimRectMap(const Sheet& s)
+{
+    return fillTrims(s, [&](size_t i) {
+        const glm::dvec2 lo = s.uvMin(s.trims[i]), hi = s.uvMax(s.trims[i]);
+        return glm::vec4(float(lo.x), float(lo.y), float(hi.x), float(hi.y));
+    });
+}
+
+std::vector<size_t> trimsMatching(const Sheet& s, const json& which)
+{
+    std::vector<size_t> out;
+    auto add = [&](size_t i) {
+        if (std::ranges::find(out, i) == out.end())
+            out.push_back(i);
+    };
+    for (const json& w : which.is_array() ? which : json::array({which}))
+    {
+        if (w.is_number_integer())
+        {
+            const int64_t i = w.get<int64_t>();
+            if (i < 0 || size_t(i) >= s.trims.size())
+                throw std::invalid_argument("no trim " + std::to_string(i));
+            add(size_t(i));
+            continue;
+        }
+        if (!w.is_string())
+            throw std::invalid_argument("trims are indices, names or tags");
+        const std::string key = w.get<std::string>();
+        bool found = false;
+        for (size_t i = 0; i < s.trims.size(); ++i)
+            if (s.trims[i].name == key || std::ranges::find(s.trims[i].tags, key) != s.trims[i].tags.end())
+            {
+                add(i);
+                found = true;
+            }
+        if (!found)
+            throw std::invalid_argument("no trim named or tagged " + key);
+    }
+    std::ranges::sort(out);
+    return out;
 }
 } // namespace trims

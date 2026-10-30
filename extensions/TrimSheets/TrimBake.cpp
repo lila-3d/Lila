@@ -7,6 +7,7 @@
 #include <lila/Bake.h>
 #include <lila/Log.h>
 #include <lila/Profile.h>
+#include <lila/TextureGraph.h>
 
 #include <algorithm>
 #include <chrono>
@@ -207,12 +208,28 @@ nlohmann::json bakeSheet(const Sheet& sheet, const std::filesystem::path& sheetF
     const std::filesystem::path id = folder / (sheet.name + "_trimId.png");
     image::write(id, idMap(sheet), 8);
     out["idMap"] = id.generic_string();
+    // Float maps the Trim Mask and Trim Gradient texture nodes read, listed as outputs so a texture set finds them by map name.
+    for (const auto& [map, img] : {std::pair{"trimIndex", trimIndexMap(sheet)}, std::pair{"trimRect", trimRectMap(sheet)}})
+    {
+        const std::filesystem::path file = folder / (sheet.name + "_" + map + ".exr");
+        image::write(file, img, image::WriteOptions{.bits = 32});
+        if (!partial)
+            out["outputs"].push_back({{"map", map},
+                                      {"file", file.generic_string()},
+                                      {"udim", 1001},
+                                      {"width", img.width},
+                                      {"height", img.height},
+                                      {"format", "exr"},
+                                      {"bits", 32},
+                                      {"colorSpace", "linear"}});
+    }
     out["folder"] = folder.generic_string();
     out["trims"] = int64_t(partial ? opts.only.size() : sheet.trims.size());
     const std::filesystem::path normal = mapFile(sheet, sheetFile, "normal");
     if (std::filesystem::exists(normal))
         out["seamError"] = seamError(image::read(normal), sheet);
     out["totalSeconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    lila::tex::bakedMapsChanged(sheet.name);
     return out;
 }
 } // namespace trims

@@ -12,7 +12,8 @@ namespace LilaLink
  *
  * The master reads the sheet's baked maps (normal, AO, curvature, cavity, height) through uv0 and turns them into paint:
  * worn edges from curvature, dirt in cavities, a tiling detail layer whose scale follows the sheet's world size, a second
- * material blended in by vertex colour red, and optional parallax from the height map. Detail, VertexBlend and Parallax are
+ * material blended in by vertex colour red, and optional parallax from the height map. UsePaintedMaps swaps the procedural
+ * paint for the sheet's textured maps from Lila (base colour, ORM). Detail, VertexBlend, Parallax and UsePaintedMaps are
  * static switches, so an instance that leaves one off compiles none of it.
  *
  * trimMaterials {folder, regenerate?, slot, meshes: [static mesh paths], instances: [{name, textures: {param: texture asset

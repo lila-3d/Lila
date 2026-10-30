@@ -18,6 +18,12 @@ LiveMeshMapReader& liveReader()
     return fn;
 }
 
+BakedMapsListener& bakedListener()
+{
+    static BakedMapsListener fn;
+    return fn;
+}
+
 scene::Node* findProject(scene::Graph& g, const std::string& name)
 {
     for (scene::NodeId id : bake::projects(g))
@@ -30,6 +36,14 @@ scene::Node* findProject(scene::Graph& g, const std::string& name)
 std::string bakeMapName(std::string_view external) { return external == "worldNormal" ? std::string("objectNormal") : std::string(external); }
 
 void setLiveMeshMapReader(LiveMeshMapReader fn) { liveReader() = std::move(fn); }
+
+void setBakedMapsListener(BakedMapsListener fn) { bakedListener() = std::move(fn); }
+
+void bakedMapsChanged(const std::string& bakeProject)
+{
+    if (bakedListener())
+        bakedListener()(bakeProject);
+}
 
 image::Image readLiveMeshMap(const std::string& bakeProject, const std::string& map, int udim)
 {

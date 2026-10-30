@@ -3,9 +3,12 @@
 
 #include "TrimSheets.h"
 #include "Generator.h"
+#include "Strips.h"
 #include "TrimBake.h"
 
+#include <lila/Bake.h>
 #include <lila/Command.h>
+#include <lila/Curves.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
 #include <lila/Log.h>
@@ -15,6 +18,8 @@
 #include <lila/Prefs.h>
 #include <lila/Profile.h>
 #include <lila/Tasks.h>
+#include <lila/TextureGraph.h>
+#include <lila/Transform.h>
 #include <lila/UnrealLink.h>
 #include <lila/Uv.h>
 #include <lila/Workspace.h>
@@ -57,12 +62,13 @@ std::vector<std::string> presetIds()
 FlagDef sheetFlag() { return {"sheet", "sh", AT::String, nullptr, "The .lilatrim file; the current sheet (trimSheetCurrent) when not given."}; }
 FlagDef uvSetFlag() { return {"uvSet", "", AT::String, "uv0", "UV set to write."}; }
 
-std::filesystem::path loadedPath(const Args& a, const char* cmd, std::string_view flag = "sheet")
+/** The sheet= flag, else the first positional (when the command takes the sheet there), else the current sheet. */
+std::filesystem::path loadedPath(const Args& a, const char* cmd, std::string_view flag = "sheet", bool positional = true)
 {
     std::string p;
     if (a.has(std::string(flag)))
         p = a.get<std::string>(std::string(flag));
-    else if (flag == "sheet" && !a.positional.empty() && a.positional[0].is_string())
+    else if (positional && flag == "sheet" && !a.positional.empty() && a.positional[0].is_string())
         p = a.positional[0].get<std::string>();
     else
         p = currentSheet();
@@ -308,6 +314,118 @@ json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOpti
     ensureMaterial(s, f);
     return r;
 }
+
+/** Layer at the bottom of a sheet's texture set carrying its baked normal and AO under the smart materials. */
+constexpr const char* kBakeLayer = "Sheet Bake";
+/** Used when neither the call nor the sheet names a smart material. */
+constexpr const char* kDefaultSmartMaterial = "Worn Painted Metal";
+
+/** The texture set painting a sheet's material: TS_<name without T_>. */
+std::string textureSetName(const Sheet& s) { return "TS_" + materialName(s).substr(2); }
+
+bool hasTextureSet(const std::string& set)
+{
+    const json sets = ops::execute("texSets", json::object());
+    return std::ranges::find(sets, json(set)) != sets.end();
+}
+
+/** A bake project named after the sheet and pointed at its texture folder: texture sets read the sheet's bake through it. */
+std::string ensureBakeProject(const Sheet& s, const std::filesystem::path& f, const char* cmd)
+{
+    const std::string folder = textureFolder(s, f).generic_string();
+    if (Node* n = Graph::current().find(s.name))
+    {
+        if (n->type().name != "bakeProject")
+            throw CommandError(std::string(cmd) + ": " + s.name + " is taken by a node that isn't a bake project");
+        ops::execute("setBakeOutput", {{"project", s.name}, {"folder", folder}});
+    }
+    else
+        ops::execute("createBakeProject", {{"name", s.name}, {"folder", folder}});
+    return s.name;
+}
+
+json bakeLayerGraph()
+{
+    return {{"name", "sheetBake"},
+            {"typeVersion", 1},
+            {"inputs", json::array()},
+            {"outputs", {{{"name", "normal"}, {"type", "color"}}, {{"name", "ao"}, {"type", "gray"}}}},
+            {"nodes",
+             {{{"name", "GroupInput"}, {"type", "GroupInput"}, {"position", {-400, 0}}},
+              {{"name", "Normal"}, {"type", "trimSheetNormal"}, {"position", {-200, 0}}},
+              {{"name", "AO"}, {"type", "meshAo"}, {"position", {-200, 150}}},
+              {{"name", "GroupOutput"}, {"type", "GroupOutput"}, {"position", {200, 0}}}}},
+            {"links", {{"Normal", "out", "GroupOutput", "normal"}, {"AO", "out", "GroupOutput", "ao"}}}};
+}
+
+/**
+ * The sheet's texture set, bound to its material M_<name> and reading its bake, made with a Sheet Bake layer when missing.
+ * Bakes the sheet first when it has no textures.
+ */
+std::string ensureTextureSet(const Sheet& s, const std::filesystem::path& f, const char* cmd)
+{
+    if (!std::filesystem::exists(bakeRecord(s, f)))
+        runBake(s, f, {}, cmd);
+    else
+        ensureMaterial(s, f);
+    const std::string project = ensureBakeProject(s, f, cmd);
+    const std::string set = textureSetName(s);
+    if (hasTextureSet(set))
+        return set;
+    ops::execute("texCreateSet",
+                 {{"args", {set}}, {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s)}}}});
+    ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
+    return set;
+}
+
+/** A new mesh node holding m (replacing one of that name), its faces on the sheet's material. Returns its path. */
+std::string addTrimMesh(const Sheet& s, const std::filesystem::path& f, const std::string& name, geo::Mesh m)
+{
+    std::vector<uint32_t> faces;
+    for (geo::Index fi = 0; fi < m.faceCapacity(); ++fi)
+        if (m.faceValid(fi))
+            faces.push_back(fi);
+    scene::materials::assign(m, materialName(s), faces);
+    Graph& g = Graph::current();
+    if (Node* old = g.find(name))
+        ops::execute("delete", {{"args", {old->path()}}});
+    const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", name}});
+    Node* n = g.find(made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>());
+    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+    tagNode(n->path(), f);
+    return n->path();
+}
+
+/** The trim= flag as one index, else the best strip for the width among trims tagged `tag` (or all strips). */
+int stripTrimArg(const Sheet& s, const Args& a, double width, std::string_view tag, const char* cmd)
+{
+    if (a.has("trim"))
+    {
+        const json t = a.flags["trim"];
+        if (t.is_string())
+            if (const int tagged = bestStripTrim(s, width, t.get<std::string>()); tagged >= 0)
+                return tagged;
+        return trimIndex(s, t, cmd);
+    }
+    int i = tag.empty() ? -1 : bestStripTrim(s, width, tag);
+    if (i < 0)
+        i = bestStripTrim(s, width, "");
+    if (i < 0)
+        throw CommandError(std::string(cmd) + ": the sheet has no tiling strips");
+    return i;
+}
+
+/** Runs of consecutive indices, as Trim Mask's first and last. */
+std::vector<std::pair<size_t, size_t>> trimRuns(std::span<const size_t> sorted)
+{
+    std::vector<std::pair<size_t, size_t>> out;
+    for (size_t i : sorted)
+        if (!out.empty() && out.back().second + 1 == i)
+            out.back().second = i;
+        else
+            out.push_back({i, i});
+    return out;
+}
 } // namespace
 
 std::string materialName(const Sheet& s)
@@ -430,7 +548,11 @@ void registerCommands(ext::Context& ctx)
                   {"trim", "t", AT::Any, nullptr, "Trim index or name to change."},
                   {"values", "v", AT::Any, nullptr, "Fields to merge."},
                   {"add", "", AT::Any, nullptr, "A trim to append."},
-                  {"remove", "", AT::Any, nullptr, "Trim index or name to delete."}},
+                  {"remove", "", AT::Any, nullptr, "Trim index or name to delete."},
+                  {"moveBorder", "", AT::Any, nullptr,
+                   "Drag a border: {axis: 'x' or 'y', at: px of the line, along: px on it, to: px}. Moves it for the whole strip or row of "
+                   "trims on the line, never thinner than a pixel."},
+                  {"split", "", AT::Any, nullptr, "Split a trim in two: {trim, axis: 'x' (a vertical cut) or 'y', at: px}."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             const std::filesystem::path f = loadedPath(a, "trimSheetEdit");
@@ -458,8 +580,33 @@ void registerCommands(ext::Context& ctx)
                 s.trims.push_back(Trim::fromJson(a.flags["add"]));
             if (a.has("remove"))
                 s.trims.erase(s.trims.begin() + trimIndex(s, a.flags["remove"], "trimSheetEdit"));
+            json changed = json::array();
+            if (a.has("moveBorder"))
+            {
+                const json m = a.flags["moveBorder"];
+                if (!m.is_object() || !m.contains("at") || !m.contains("to"))
+                    throw CommandError("trimSheetEdit: moveBorder needs at and to");
+                const std::vector<size_t> moved = moveBorder(s, m.value("axis", std::string("y")) == "x" ? 0 : 1, m["at"].get<int>(),
+                                                             m.value("along", 0), m["to"].get<int>());
+                if (moved.empty())
+                    throw CommandError("trimSheetEdit: no border at " + m["at"].dump());
+                changed = moved;
+            }
+            if (a.has("split"))
+            {
+                const json sp = a.flags["split"];
+                if (!sp.is_object() || !sp.contains("trim") || !sp.contains("at"))
+                    throw CommandError("trimSheetEdit: split needs trim and at");
+                const int i = trimIndex(s, sp["trim"], "trimSheetEdit");
+                if (!splitTrim(s, size_t(i), sp.value("axis", std::string("y")) == "x" ? 0 : 1, sp["at"].get<int>()))
+                    throw CommandError("trimSheetEdit: " + sp["at"].dump() + " isn't inside trim " + std::to_string(i));
+                changed = {i, i + 1};
+            }
             save(s, f);
-            return sheetSummary(s, f);
+            json out = sheetSummary(s, f);
+            if (!changed.empty())
+                out["changed"] = changed;
+            return out;
         },
         .examples = {"trimSheetEdit(trim='Plate128', values={'profile': {'style': 'rivets', 'spacingPx': 48}})",
                      "trimSheetEdit(add={'name': 'Cap', 'min': [0, 1792], 'max': [256, 2048], 'kind': 'radial', 'profile': {'style': 'halfPipe'}})"},
@@ -828,6 +975,271 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "trimAlongCurve",
+        .doc = "Lay a trim along curves: a strip of quads following each curve, width= cm across, on a tiling trim that repeats along U "
+               "at the sheet's density (so it never stretches; loops repeat it a whole number of times), with head and tail caps from "
+               "the sheet's cap-tagged trim. Flat strips lie on the ground (kerbs, floor edging, road lines), wall strips stand up "
+               "(skirting, cornices, trim bands). Makes <curve>_Trim meshes with the sheet's material. Returns [{curve, mesh, trim, "
+               "cap, length}].",
+        .positionalDoc = "curves (default the selected ones)",
+        .flags = {sheetFlag(),
+                  {"trim", "t", AT::Any, nullptr, "Trim index, name or tag; the strip whose world height is closest to width= when not given."},
+                  {"width", "w", AT::Float, nullptr, "Strip width, cm; the trim's world height when not given.", {}, {}, 0.01},
+                  {"orient", "o", AT::String, "flat", "flat (lies on the ground) or wall (stands up).", {"flat", "wall"}},
+                  {"offset", "of", AT::Float, 0.0, "Lift along the strip's normal, cm."},
+                  {"caps", "cp", AT::Bool, true, "Cap the ends with the sheet's cap-tagged trim when it has one."},
+                  {"seed", "s", AT::Int, int64_t(0), "Slides the pattern along tiling trims."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const std::filesystem::path f = loadedPath(a, "trimAlongCurve", "sheet", false);
+            const Sheet s = loadOr(f, "trimAlongCurve");
+            Graph& g = Graph::current();
+            std::vector<std::string> curves;
+            for (const json& p : a.positional)
+                if (p.is_string())
+                    curves.push_back(p.get<std::string>());
+            if (curves.empty())
+                for (scene::NodeId id : g.selection())
+                    if (Node* n = g.node(id))
+                        curves.push_back(n->path());
+            const StripOrient orient = a.get<std::string>("orient", "flat") == "wall" ? StripOrient::Wall : StripOrient::Flat;
+            json out = json::array();
+            for (const std::string& c : curves)
+            {
+                json data;
+                try
+                {
+                    data = ops::execute("curveData", {{"args", {c}}, {"worldSpace", true}});
+                }
+                catch (const std::exception&)
+                {
+                    if (!a.positional.empty())
+                        throw CommandError("trimAlongCurve: " + c + " is not a curve");
+                    continue;
+                }
+                double width = a.get<double>("width", 0.0);
+                const int trim = stripTrimArg(s, a, width > 0.0 ? width : 20.0, "", "trimAlongCurve");
+                if (width <= 0.0)
+                    width = s.worldSize(s.trims[size_t(trim)]).y;
+                geo::Mesh all;
+                double length = 0.0;
+                for (const json& sp : data)
+                {
+                    curve::Polyline pl;
+                    try
+                    {
+                        pl = curve::tessellate(curve::splineFromJson(sp));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        throw CommandError("trimAlongCurve: " + c + ": " + e.what());
+                    }
+                    StripOptions o;
+                    o.trim = size_t(trim);
+                    o.closed = pl.closed;
+                    o.cap = a.get<bool>("caps", true) ? capTrim(s) : -1;
+                    o.uOffset = double(uint32_t(a.get<int64_t>("seed", 0)) * 2654435761u % 1000u) / 1000.0;
+                    const geo::Mesh m = stripMesh(s, stationsAlong(pl.points, pl.closed, width, orient, a.get<double>("offset", 0.0)), o);
+                    all.append(m);
+                    length += pl.length;
+                }
+                if (all.numFaces() == 0)
+                    continue;
+                const std::string leaf = c.substr(c.find_last_of('|') + 1);
+                out.push_back({{"curve", c},
+                               {"mesh", addTrimMesh(s, f, leaf + "_Trim", std::move(all))},
+                               {"trim", trim},
+                               {"cap", a.get<bool>("caps", true) ? capTrim(s) : -1},
+                               {"length", length}});
+            }
+            if (out.empty())
+                throw CommandError("trimAlongCurve: select or name curves");
+            return out;
+        },
+        .examples = {"trimAlongCurve('curve1', width=15)", "trimAlongCurve(orient='wall', trim='Plate128')"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimDecal",
+        .doc = "Trim decals over the selected edges: a strip wrapping each run of edges, half its width on each face beside them, "
+               "floating offset= cm off the surface and mapped onto an edge trim with its crest on the edge, as <mesh>_Decal with "
+               "the sheet's material. cut=True carves it into the mesh instead (Trim Cut): a groove depth= cm deep whose floor and "
+               "walls carry the trim. Returns [{mesh, decal or cut, chains, trim}].",
+        .flags = {sheetFlag(),
+                  {"trim", "t", AT::Any, nullptr, "Trim index, name or tag; the edge-tagged strip closest to width= when not given."},
+                  {"width", "w", AT::Float, 2.0, "Strip width across the edge, cm.", {}, {}, 0.01},
+                  {"offset", "of", AT::Float, 0.05, "Float off the surface, cm, so the decal doesn't fight it.", {}, {}, 0.0},
+                  {"cut", "c", AT::Bool, false, "Carve the strip into the mesh as a groove instead of floating it."},
+                  {"depth", "d", AT::Float, 0.5, "Groove depth for cut, cm.", {}, {}, 0.001}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const std::filesystem::path f = loadedPath(a, "trimDecal");
+            const Sheet s = loadOr(f, "trimDecal");
+            const double width = a.get<double>("width", 2.0);
+            const int trim = stripTrimArg(s, a, width, "edge", "trimDecal");
+            const bool cut = a.get<bool>("cut", false);
+            Graph& g = Graph::current();
+            json out = json::array();
+            for (const auto& [id, edges] : scene::components::selected(scene::ComponentMode::Edge))
+            {
+                Node* n = g.node(id);
+                if (!n || edges.empty())
+                    continue;
+                const scene::MeshPtr mesh = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
+                if (!mesh)
+                    continue;
+                const glm::dmat4 world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
+                const glm::dmat3 normals = glm::transpose(glm::inverse(glm::dmat3(world)));
+                const std::vector<geo::Index> ids(edges.begin(), edges.end());
+                const std::vector<EdgeChain> chains = edgeChains(*mesh, ids);
+                geo::Mesh all;
+                for (const EdgeChain& chain : chains)
+                {
+                    std::vector<Station> st = stationsOverEdges(*mesh, chain, width, cut ? 0.0 : a.get<double>("offset", 0.05));
+                    for (Station& x : st)
+                    {
+                        for (glm::dvec3& p : x.across)
+                            p = glm::dvec3(world * glm::dvec4(p, 1.0));
+                        x.normal = glm::normalize(normals * x.normal);
+                    }
+                    StripOptions o;
+                    o.trim = size_t(trim);
+                    o.closed = chain.closed;
+                    o.cutDepth = cut ? a.get<double>("depth", 0.5) : 0.0;
+                    all.append(stripMesh(s, st, o));
+                }
+                if (all.numFaces() == 0)
+                    continue;
+                const std::string leaf = n->name();
+                const std::string made = addTrimMesh(s, f, leaf + (cut ? "_TrimCut" : "_Decal"), std::move(all));
+                json r = {{"mesh", n->path()}, {"chains", chains.size()}, {"trim", trim}};
+                if (cut)
+                {
+                    ops::execute("polyBoolean", {{"args", {n->path(), made}}, {"operation", "difference"}});
+                    r["cut"] = true;
+                }
+                else
+                    r["decal"] = made;
+                out.push_back(r);
+            }
+            if (out.empty())
+                throw CommandError("trimDecal: select edges");
+            return out;
+        },
+        .examples = {"trimDecal(width=3)", "trimDecal(cut=True, depth=0.4)"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimSheetTexture",
+        .doc = "Texture a trim sheet with a smart material. The sheet's bake becomes the mesh maps of its texture set TS_<name>, so "
+               "edge wear, cavity dirt and chips land on the bevels, and the set paints M_<name> live on every mesh using the sheet. "
+               "The first call makes the set with a Sheet Bake layer (the baked normal and AO) and bakes the sheet if it has no "
+               "textures; each call adds the smart material on top, kept to trims= (indices, names or tags) by Trim Mask masks when "
+               "given. Returns {set, project, layer, material, trims, maps}.",
+        .positionalDoc = "sheet (default the current one)",
+        .flags = {sheetFlag(),
+                  {"material", "m", AT::String, nullptr, "Smart material name or .lilasmart; the sheet's own when not given."},
+                  {"trims", "t", AT::Any, nullptr, "Only on these trims: an index, name or tag, or a list of them."},
+                  {"name", "n", AT::String, nullptr, "Layer name; the smart material's when not given."},
+                  {"replace", "r", AT::Bool, false, "First remove every layer but Sheet Bake, so the sheet starts over."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const std::filesystem::path f = loadedPath(a, "trimSheetTexture");
+            Sheet s = loadOr(f, "trimSheetTexture");
+            std::vector<size_t> only;
+            if (a.has("trims"))
+                try
+                {
+                    only = trimsMatching(s, a.flags["trims"]);
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    throw CommandError(std::string("trimSheetTexture: ") + e.what());
+                }
+            const std::string set = ensureTextureSet(s, f, "trimSheetTexture");
+            if (a.get<bool>("replace", false))
+                for (const json& l : ops::execute("texLayerStack", {{"args", {set}}}).value("layers", json::array()))
+                    if (l.value("name", std::string()) != kBakeLayer)
+                        ops::execute("texRemoveLayer", {{"args", {set, l.value("id", std::string())}}});
+
+            const std::string material = a.get<std::string>("material", s.material.empty() ? std::string(kDefaultSmartMaterial) : s.material);
+            json apply = {{"args", {set, material}}, {"addMaps", false}};
+            if (a.has("name"))
+                apply["name"] = a.get<std::string>("name");
+            const json applied = ops::execute("texApplySmartMaterial", apply);
+            const std::string layer = applied.value("layer", std::string());
+            // Smart materials can read maps the sheet doesn't bake yet (dust reads the object normal): bake them too.
+            bake::registerBuiltinMaps();
+            bool more = false;
+            for (const json& m : applied.value("maps", json::array()))
+                if (const std::string id = tex::bakeMapName(m.get<std::string>()); bake::findMap(id) && std::ranges::find(s.maps, id) == s.maps.end())
+                {
+                    s.maps.push_back(id);
+                    more = true;
+                }
+            if (more)
+            {
+                save(s, f);
+                runBake(s, f, {}, "trimSheetTexture");
+            }
+            const auto runs = trimRuns(only);
+            for (size_t k = 0; k < runs.size(); ++k)
+                ops::execute("texAddMask", {{"args", {set, layer, "generator"}},
+                                            {"type", "trimMask"},
+                                            {"name", std::format("Trims {}-{}", runs[k].first, runs[k].second)},
+                                            {"values", {{"first", runs[k].first}, {"last", runs[k].second}}},
+                                            {"mode", k == 0 ? "normal" : "lighten"}});
+            if (s.material != material && only.empty())
+            {
+                s.material = material;
+                save(s, f);
+            }
+            return {{"set", set},
+                    {"project", s.name},
+                    {"layer", layer},
+                    {"material", material},
+                    {"trims", only},
+                    {"maps", applied.value("maps", json::array())}};
+        },
+        .examples = {"trimSheetTexture()", "trimSheetTexture(material='Rusty Iron', trims=['edge'])"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimSheetPaint",
+        .doc = "Get a trim sheet ready to paint by hand: its texture set (as trimSheetTexture makes it) and a flat <name>_Sheet plane "
+               "with the sheet's material, selected, for the texture paint tool or the UV editor. Strokes land on the sheet's shared "
+               "texels, so every mesh using the sheet shows them. Returns {set, plane}.",
+        .positionalDoc = "sheet (default the current one)",
+        .flags = {sheetFlag()},
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimSheetPaint");
+            const Sheet s = loadOr(f, "trimSheetPaint");
+            const std::string set = ensureTextureSet(s, f, "trimSheetPaint");
+            Graph& g = Graph::current();
+            const std::string name = s.name + "_Sheet";
+            Node* n = g.find(name);
+            if (!n)
+            {
+                geo::Mesh plane = lowPlane(s);
+                std::vector<geo::Index> faces;
+                for (geo::Index fi = 0; fi < plane.faceCapacity(); ++fi)
+                    if (plane.faceValid(fi))
+                        faces.push_back(fi);
+                tagFaces(plane, faces, -1, materialName(s));
+                const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", name}});
+                n = g.find(made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>());
+                g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(plane))));
+                tagNode(n->path(), f);
+            }
+            ops::execute("select", {{"args", {n->path()}}});
+            return {{"set", set}, {"plane", n->path()}};
+        },
+    });
+
+    ctx.registerCommand({
         .name = "trimSheetSend",
         .doc = "Send a trim sheet to Unreal: its baked textures go to <folder>/Textures, the trim master material M_LilaTrim is "
                "generated (or rebuilt with regenerateMaster) and an instance MI_<name> is made with the sheet's maps, and every "
@@ -865,13 +1277,36 @@ void registerCommands(ext::Context& ctx)
             const std::map<std::string, std::string> params = {
                 {"normal", "SheetNormalMap"}, {"ao", "SheetAOMap"}, {"curvature", "SheetCurvatureMap"}, {"cavity", "SheetCavityMap"}, {"height", "SheetHeightMap"}};
             json textures = json::object();
-            for (const json& o : baked.value("outputs", json::array()))
-            {
-                const auto param = params.find(o.value("map", std::string()));
-                if (param == params.end())
-                    continue;
+            json sent = json::array();
+            auto add = [&](const json& o, const std::string& param) {
                 const std::string asset = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
-                textures[param->second] = folder + "/Textures/" + asset + "." + asset;
+                textures[param] = folder + "/Textures/" + asset + "." + asset;
+                sent.push_back(o);
+            };
+            for (const json& o : baked.value("outputs", json::array()))
+                if (const auto param = params.find(o.value("map", std::string())); param != params.end())
+                    add(o, param->second);
+            // A textured sheet sends its painted maps too; its normal carries the layers' height over the bake.
+            bool painted = false;
+            if (const std::string set = textureSetName(s); hasTextureSet(set))
+            {
+                const json exported = ops::execute("texExport", {{"args", {set}},
+                                                                 {"preset", "unreal"},
+                                                                 {"folder", (textureFolder(s, f) / "Painted").generic_string()},
+                                                                 {"incremental", true}});
+                const std::map<std::string, std::string> paintParams = {
+                    {"baseColor", "SheetBaseColorMap"}, {"orm", "SheetORMMap"}, {"normal", "SheetNormalMap"}};
+                int found = 0;
+                for (const json& o : exported.value("outputs", json::array()))
+                    if (const auto param = paintParams.find(o.value("map", std::string())); param != paintParams.end())
+                    {
+                        if (param->first != "normal")
+                            ++found;
+                        sent.erase(std::remove_if(sent.begin(), sent.end(), [&](const json& b) { return b.value("map", std::string()) == param->first; }),
+                                   sent.end());
+                        add(o, param->second);
+                    }
+                painted = found == 2;
             }
             json meshes = json::array();
             Graph& g = Graph::current();
@@ -898,8 +1333,9 @@ void registerCommands(ext::Context& ctx)
                             {"meshes", meshes},
                             {"instances", json::array({{{"name", "MI_" + materialName(s).substr(2)},
                                                         {"textures", textures},
-                                                        {"scalars", {{"SheetWidthCm", ext.x}, {"SheetHeightCm", ext.y}}}}})}};
-            const json importParams = link::textureImportParams(baked, {{"folder", folder + "/Textures"}, {"materialMode", "none"}});
+                                                        {"scalars", {{"SheetWidthCm", ext.x}, {"SheetHeightCm", ext.y}}},
+                                                        {"switches", {{"UsePaintedMaps", painted}}}}})}};
+            const json importParams = link::textureImportParams({{"outputs", sent}}, {{"folder", folder + "/Textures"}, {"materialMode", "none"}});
 
             auto send = [importParams, request]() -> json {
                 std::shared_ptr<link::RpcClient> client = link::Link::get().client();

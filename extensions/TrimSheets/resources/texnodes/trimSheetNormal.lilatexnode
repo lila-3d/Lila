@@ -1,0 +1,30 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "trimSheetNormal",
+  "label": "Trim Sheet Normal",
+  "category": "Mesh",
+  "doc": "The trim sheet's baked normal map (its bevels and details), in the graph's OpenGL convention. Put it under the layers so their height adds to it. Needs the set's bake project to be the sheet's (trimSheetTexture sets that up).",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "color"
+    }
+  ],
+  "params": [
+    {
+      "id": "greenDown",
+      "type": "bool",
+      "default": true,
+      "doc": "The sheet was baked DirectX (green down), as trim sheets are by default."
+    }
+  ],
+  "cost": 1,
+  "externals": [
+    "normal"
+  ],
+  "body": {
+    "out": "float4 c = normal.sample(uv);\nif (p.greenDown)\n    c.g = 1.0 - c.g;\nreturn float4(c.rgb, 1.0);"
+  }
+}

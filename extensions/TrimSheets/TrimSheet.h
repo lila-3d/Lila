@@ -139,6 +139,20 @@ std::vector<std::string> validate(const Sheet& sheet);
 /** The sheet's trims as the matcher sees them. */
 std::vector<uv::HotspotTrim> hotspotTrims(const Sheet& sheet);
 
+// Layout edits, as the sheet editor makes them.
+
+/**
+ * Moves the border on the line axis = at (0 a vertical line at x = at, 1 a horizontal one at y = at) to `to`, for the run
+ * of trims along it that holds `along` (the other coordinate), so a strip boundary moves for the whole strip and a row of
+ * rects moves together. `to` is clamped so no trim gets thinner than a pixel. Returns the trims changed (none when no
+ * border is there).
+ */
+std::vector<size_t> moveBorder(Sheet& sheet, int axis, int at, int along, int to);
+/** Splits trim i on axis (0 vertically at x = at, 1 horizontally at y = at) into two; the new half comes right after it. False when at isn't inside. */
+bool splitTrim(Sheet& sheet, size_t i, int axis, int at);
+/** at rounded to the sheet's mip grid (multiples of 2^mipLevel px). */
+int snapToGrid(const Sheet& sheet, double at);
+
 /** Preset ids with labels and one line on what each is for. */
 struct PresetInfo
 {
@@ -168,6 +182,12 @@ Sheet fromUvs(const geo::Mesh& mesh, std::string_view uvSet, int width, int heig
 
 /** Exact flat colour per trim, the same colours fromIdMap reads back. */
 lila::image::Image idMap(const Sheet& sheet);
+/** Trim index + 1 per texel in red (0 off every trim): what the Trim Mask texture node reads. */
+lila::image::Image trimIndexMap(const Sheet& sheet);
+/** Each texel's trim rectangle in uv (V up) as min u, min v, max u, max v (zero off every trim): what Trim Gradient reads. */
+lila::image::Image trimRectMap(const Sheet& sheet);
+/** Indices of the trims named by index, name or tag. */
+std::vector<size_t> trimsMatching(const Sheet& sheet, const json& which);
 /** The ID colour of trim i: well spread hues, stable per index. */
 glm::vec3 trimColor(size_t i);
 } // namespace trims

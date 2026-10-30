@@ -10,6 +10,7 @@
 #include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
+#include <lila/Panels.h>
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -260,8 +261,17 @@ void registerUi(ext::Context& ctx)
         {"trims.shiftDown", "Shift Trim Down", "trimShift", json{{"steps", 1}}, "Move the selected faces to the trim below.", "trimShift(steps=1)"},
         {"trims.edges", "Trim Edges", "trimEdges", json::object(),
          "Chamfer the selected edges, map the chamfers onto the sheet's edge trims and set weighted normals.", "trimEdges(width=1.0)"},
+        {"trims.curve", "Trim Along Curve", "trimAlongCurve", json::object(),
+         "Lay a tiling trim along the selected curves, with caps at the ends: kerbs, edging, skirting, cornices.", "trimAlongCurve(width=15)"},
+        {"trims.decal", "Trim Decal", "trimDecal", json::object(), "Float a trim strip over the selected edges, its crest on the edge.",
+         "trimDecal(width=2)"},
+        {"trims.cut", "Trim Cut", "trimDecal", json{{"cut", true}}, "Carve a trim groove along the selected edges, its floor and walls on the trim.",
+         "trimDecal(cut=True, depth=0.5)"},
         {"trims.weightedNormals", "Weighted Normals", "polyWeightedNormals", json::object(),
          "Face-weighted normals: big faces stay flat beside chamfers and bevels.", "polyWeightedNormals()"},
+        {"trims.texture", "Texture Trim Sheet", "trimSheetTexture", json::object(),
+         "Put the sheet's smart material on its texture set: wear, dirt and chips follow the baked bevels on every mesh using it.",
+         "trimSheetTexture(material='Rusty Iron')"},
         {"trims.export", "Export Trim Layout", "trimSheetExport", json::object(), "Write the current sheet's layout as a Valve .rect, SVG, ID map or JSON.",
          "trimSheetExport(format='rect')"},
         {"trims.send", "Send Trim Sheet to Unreal", "trimSheetSend", json::object(),
@@ -278,12 +288,39 @@ void registerUi(ext::Context& ctx)
             };
         actions::add(ctx, std::move(act));
     }
+    actions::add(ctx, {.id = "trims.paint",
+                       .label = "Paint Trim Sheet",
+                       .category = "Trim Sheets",
+                       .run =
+                           [] {
+                               try
+                               {
+                                   ops::execute("trimSheetPaint", json::object(), CallSource::UI);
+                               }
+                               catch (const std::exception& e)
+                               {
+                                   log::write(LogLevel::Warning, e.what());
+                                   return;
+                               }
+                               log::write(LogLevel::Info, "Painting the trim sheet itself: every mesh using it shows the strokes.");
+                               actions::run(json("tex.paint"));
+                           },
+                       .doc = "Paint the current trim sheet by hand on a flat preview plane; strokes show on every mesh using the sheet.",
+                       .python = "trimSheetPaint()"});
+    actions::add(ctx, {.id = "trims.editor",
+                       .label = "Trim Sheet Editor",
+                       .category = "Trim Sheets",
+                       .run = [] { panels::show("trimSheetEditor"); },
+                       .doc = "Lay out the current sheet: drag borders to resize strips, split and retype trims, set bevels and tags.",
+                       .python = "lila.ui.run_action('trims.editor')"});
     actions::add(ctx, {.id = "trims.cycle",
                        .label = "Cycle Trim",
                        .category = "Trim Sheets",
                        .run = [] { run("trimAuto", {{"cycle", ++gCycle}}); },
                        .doc = "Map the selection onto its next-best trims: press again to keep going.",
                        .python = "trimAuto(cycle=1)"});
+
+    registerEditor(ctx);
 
     levelToolkit::add(ctx, {.id = "trims",
                             .title = "Trim Sheets",
@@ -293,14 +330,19 @@ void registerUi(ext::Context& ctx)
                                       {"trims.shiftDown", "arrow-down", "Down"},
                                       {""},
                                       {"trims.edges", "border-sides", "Edges"},
+                                      {"trims.decal", "sticker", "Decal"},
+                                      {"trims.curve", "route", "Curve"},
+                                      {"trims.editor", "layout-rows", "Edit"},
                                       {"trims.bake", "flame", "Bake"},
+                                      {"trims.texture", "brush", "Texture"},
+                                      {"trims.paint", "paint", "Paint"},
                                       {"trims.send", "send", "Unreal"}},
                             .create = sectionWidget,
                             .order = 60});
 
     menus::addItem(ctx, {.id = "trims.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Trim Sheets"});
-    const char* order[] = {"trims.create", "trims.bake", "trims.generate", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
-                           "trims.edges", "trims.weightedNormals", "", "trims.export", "trims.send"};
+    const char* order[] = {"trims.create", "trims.editor", "trims.bake", "trims.generate", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
+                           "trims.edges", "trims.decal", "trims.cut", "trims.curve", "trims.weightedNormals", "", "trims.export", "trims.send"};
     int sep = 0;
     for (const char* a : order)
     {

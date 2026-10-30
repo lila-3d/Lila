@@ -1,11 +1,15 @@
 #include "Generator.h"
 #include "TrimBake.h"
+#include "Strips.h"
 #include "TrimSheet.h"
 
 #include "extensions/ExtensionManager.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "ops/Command.h"
+#include "scene/Components.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
 #include "uv/Hotspot.h"
 
 #include <doctest/doctest.h>
@@ -150,7 +154,8 @@ TEST_CASE("trim: the sheet bakes on the cpu, tiles across U and rebakes one trim
     SheetBakeOptions o;
     o.backend = "cpu";
     const json r = bakeSheet(s, file, o);
-    REQUIRE(r["outputs"].size() == 2);
+    REQUIRE(r["outputs"].size() == 4);
+    CHECK(r["outputs"][3]["map"] == "trimRect");
     CHECK(std::filesystem::exists(r["idMap"].get<std::string>()));
     CHECK(r["seamError"].get<double>() < 0.02);
 
@@ -244,4 +249,173 @@ TEST_CASE("trim commands: create, inspect, edit and export through the package")
     CHECK(std::filesystem::exists(rect));
     const json imported = ops::execute("trimSheetImport", {{"args", {rect}}, {"width", 256}, {"height", 256}, {"file", (scratch("imported") / "T_In.lilatrim").generic_string()}});
     CHECK(imported["trims"].size() == 7);
+}
+
+TEST_CASE("trim: index and rectangle maps carry each trim's number and uv rectangle")
+{
+    const Sheet s = stripLadder("T_Maps", 64, 64, std::vector<int>{32, 16, 16});
+    const lila::image::Image index = trimIndexMap(s), rect = trimRectMap(s);
+    const auto texel = [&](const lila::image::Image& img, int x, int y) { return &img.rgba[(size_t(y) * size_t(img.width) + size_t(x)) * 4]; };
+    CHECK(texel(index, 10, 5)[0] == 1.0f);
+    CHECK(texel(index, 10, 40)[0] == 2.0f);
+    CHECK(texel(index, 63, 63)[0] == 3.0f);
+    const float* r = texel(rect, 3, 40);
+    CHECK(r[0] == doctest::Approx(s.uvMin(s.trims[1]).x));
+    CHECK(r[1] == doctest::Approx(s.uvMin(s.trims[1]).y));
+    CHECK(r[3] == doctest::Approx(s.uvMax(s.trims[1]).y));
+    CHECK(trimsMatching(s, json::array({2, s.trims[0].name})) == std::vector<size_t>{0, 2});
+    CHECK_THROWS(trimsMatching(s, "nothing"));
+}
+
+TEST_CASE("trim layout: borders move for the whole strip, clamp, and trims split")
+{
+    Sheet s = stripLadder("T_Edit", 256, 256, std::vector<int>{128, 64, 64});
+    s.mipLevel = 3;
+    const std::vector<size_t> moved = moveBorder(s, 1, 128, 40, 144);
+    CHECK(moved == std::vector<size_t>{0, 1});
+    CHECK(s.trims[0].max.y == 144);
+    CHECK(s.trims[1].min.y == 144);
+    // Never thinner than a pixel: trim 1 now spans 144 to 192.
+    moveBorder(s, 1, 144, 0, 400);
+    CHECK(s.trims[1].min.y == 191);
+    CHECK(moveBorder(s, 1, 77, 0, 80).empty());
+    CHECK(snapToGrid(s, 101.0) == 104);
+
+    REQUIRE(splitTrim(s, 0, 0, 96));
+    REQUIRE(s.trims.size() == 4);
+    CHECK(s.trims[0].max.x == 96);
+    CHECK(s.trims[1].min.x == 96);
+    CHECK(s.trims[1].name == s.trims[0].name + "_b");
+    CHECK_FALSE(splitTrim(s, 0, 0, 200));
+    // The two halves now share a vertical border that moves on its own.
+    CHECK(moveBorder(s, 0, 96, 10, 128) == std::vector<size_t>{0, 1});
+}
+
+TEST_CASE("trim strips: along a line, tiling in U, capped, and over a mesh edge")
+{
+    Sheet s = stripLadder("T_Strip", 512, 512, std::vector<int>{256, 128, 64, 64});
+    s.pxPerM = 512.0;
+    s.trims[3].kind = uv::TrimKind::Unique;
+    s.trims[3].min = {0, 448};
+    s.trims[3].max = {64, 512};
+    s.trims[3].tags = {"cap"};
+    const double sheetCm = s.worldExtent().x;
+    const std::vector<glm::dvec3> line = {{0, 0, 0}, {sheetCm, 0, 0}, {2.0 * sheetCm, 0, 0}};
+    const std::vector<Station> st = stationsAlong(line, false, 25.0, StripOrient::Flat, 0.0);
+    REQUIRE(st.size() == 3);
+    CHECK(glm::length(st[0].normal - glm::dvec3(0, 1, 0)) < 1e-9);
+
+    StripOptions o;
+    o.trim = 1;
+    geo::Mesh m = stripMesh(s, st, o);
+    CHECK(m.numFaces() == 2);
+    // U runs a sheet width per sheet width of length; V stays inside the trim.
+    const glm::dvec2 end = uvAt(m, st[2].across[1]), start = uvAt(m, st[0].across[0]);
+    CHECK(end.x - start.x == doctest::Approx(2.0));
+    CHECK(start.y >= s.uvMin(s.trims[1]).y);
+    CHECK(end.y <= s.uvMax(s.trims[1]).y);
+    CHECK(m.faceAttrs().get<int32_t>(kFaceTrim)[0] == 2);
+
+    REQUIRE(bestStripTrim(s, 25.0, "") == 1);
+    o.cap = capTrim(s);
+    REQUIRE(o.cap == 3);
+    geo::Mesh capped = stripMesh(s, st, o);
+    CHECK(capped.numFaces() == 4);
+    const glm::dvec2 head = uvAt(capped, st[0].across[0]);
+    CHECK(head.x == doctest::Approx(s.uvMin(s.trims[3]).x));
+
+    // A box's top front edge: the decal wraps over it, its middle on the edge.
+    const glm::dvec3 pts[] = {{0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}, {0, 10, -10}, {10, 10, -10}};
+    const geo::Index sizes[] = {4, 4};
+    const geo::Index idx[] = {0, 1, 2, 3, 3, 2, 5, 4};
+    const geo::Mesh box = geo::Mesh::fromPolygons(pts, sizes, idx);
+    const geo::Index edge = box.findEdge(2, 3);
+    REQUIRE(edge != geo::kInvalid);
+    const std::vector<EdgeChain> chains = edgeChains(box, std::vector<geo::Index>{edge});
+    REQUIRE(chains.size() == 1);
+    const std::vector<Station> over = stationsOverEdges(box, chains[0], 2.0, 0.0);
+    REQUIRE(over.size() == 2);
+    for (const Station& x : over)
+    {
+        CHECK(x.across[1].y == doctest::Approx(10.0));
+        CHECK(x.across[1].z == doctest::Approx(0.0));
+        // One side down the front, the other back along the top.
+        const bool frontFirst = x.across[0].y < 10.0 - 1e-6;
+        CHECK((frontFirst ? x.across[2].z : x.across[0].z) == doctest::Approx(-1.0));
+        CHECK((frontFirst ? x.across[0].y : x.across[2].y) == doctest::Approx(9.0));
+    }
+
+    // Trim Cut's slab is closed.
+    StripOptions cut;
+    cut.trim = 2;
+    cut.cutDepth = 0.5;
+    const geo::Mesh slab = stripMesh(s, over, cut);
+    for (geo::Index e = 0; e < slab.edgeCapacity(); ++e)
+        if (slab.edgeValid(e))
+            CHECK(slab.edgeFaceCount(e) == 2);
+}
+
+TEST_CASE("trim commands: a sheet textured with a smart material on some trims")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("texture") / "T_Tex.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "ladder"}, {"width", 64}, {"file", file.generic_string()}, {"bake", false}});
+    ops::execute("trimSheetEdit", {{"values", {{"supersampling", 1}}}});
+    const json r = ops::execute("trimSheetTexture", {{"material", "Trim Hull Paint"}, {"trims", json::array({0})}});
+    CHECK(r["set"] == "TS_TrimLadder");
+    CHECK(r["project"] == "T_TrimLadder");
+    const json stack = ops::execute("texLayerStack", {{"args", {"TS_TrimLadder"}}});
+    REQUIRE(stack["layers"].size() == 2);
+    CHECK(stack["layers"][0]["name"] == "Sheet Bake");
+    REQUIRE(stack["layers"][1]["masks"].size() == 1);
+    CHECK(stack["layers"][1]["masks"][0]["type"] == "trimMask");
+
+    const json made = ops::execute("texEvaluate", {{"args", {"TS_TrimLadder"}},
+                                                   {"channels", json::array({"baseColor"})},
+                                                   {"folder", (scratch("texture") / "eval").generic_string()},
+                                                   {"backend", "cpu"}});
+    REQUIRE(made["files"].size() == 1);
+    const lila::image::Image img = lila::image::read(made["files"][0].get<std::string>());
+    REQUIRE(img.width == 64);
+    // Strip 0 is the top half (32 px of 64): hull paint there, the set's plain grey below.
+    const auto at = [&](int x, int y) { return glm::vec3(img.rgba[(size_t(y) * 64 + size_t(x)) * 4], img.rgba[(size_t(y) * 64 + size_t(x)) * 4 + 1], 0.0f); };
+    CHECK(glm::length(at(32, 10) - at(32, 50)) > 0.02f);
+}
+
+TEST_CASE("trim commands: along a curve, a decal over edges and a trim cut")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("strips") / "T_Strips.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "industrialMetal"}, {"width", 256}, {"file", file.generic_string()}, {"bake", false}});
+    scene::Graph& g = scene::Graph::current();
+    auto meshOf = [&](const std::string& name) {
+        scene::Node* n = g.find(name);
+        REQUIRE(n);
+        return std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+    };
+
+    const std::string c = ops::execute("curve", {{"points", {{0, 0, 0}, {300, 0, 0}, {300, 0, 300}}}, {"type", "poly"}}).get<std::string>();
+    const json along = ops::execute("trimAlongCurve", {{"args", {c}}, {"width", 12.5}});
+    REQUIRE(along.size() == 1);
+    CHECK(along[0]["length"].get<double>() == doctest::Approx(600.0));
+    CHECK(along[0]["cap"].get<int>() >= 0);
+    CHECK(meshOf(along[0]["mesh"].get<std::string>())->numFaces() >= 4);
+
+    const json box = ops::execute("createMesh", {{"points", {{0, 0, 0}, {100, 0, 0}, {100, 100, 0}, {0, 100, 0}, {0, 0, -100}, {100, 0, -100}, {100, 100, -100}, {0, 100, -100}}},
+                                                 {"faces", {{0, 1, 2, 3}, {5, 4, 7, 6}, {3, 2, 6, 7}, {1, 0, 4, 5}, {1, 5, 6, 2}, {4, 0, 3, 7}}},
+                                                 {"name", "Block"}});
+    const std::string block = box.is_string() ? box.get<std::string>() : box.at(0).get<std::string>();
+    const geo::Index edge = meshOf(block)->findEdge(2, 3);
+    REQUIRE(edge != geo::kInvalid);
+    scene::components::setMode(scene::ComponentMode::Edge);
+    scene::components::select(g.find(block)->id(), scene::ComponentMode::Edge, {edge});
+    const json decal = ops::execute("trimDecal", {{"width", 4.0}});
+    REQUIRE(decal.size() == 1);
+    CHECK(meshOf(decal[0]["decal"].get<std::string>())->numFaces() == 2);
+
+    const size_t before = meshOf(block)->numFaces();
+    const json cut = ops::execute("trimDecal", {{"width", 4.0}, {"cut", true}, {"depth", 1.0}});
+    REQUIRE(cut.size() == 1);
+    CHECK(cut[0]["cut"].get<bool>());
+    CHECK(meshOf(block)->numFaces() > before);
 }

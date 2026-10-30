@@ -1,0 +1,44 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "trimMask",
+  "label": "Trim Mask",
+  "category": "Mesh",
+  "doc": "White on the trim sheet's trims first to last (indices as the sheet's palette numbers them), black elsewhere. As a layer mask it keeps a smart material to some strips; trimSheetTexture with trims= adds these for you, tags included.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "first",
+      "type": "int",
+      "default": 0,
+      "min": 0,
+      "softMax": 32
+    },
+    {
+      "id": "last",
+      "type": "int",
+      "default": -1,
+      "min": -1,
+      "softMax": 32,
+      "doc": "-1 is the same as first."
+    },
+    {
+      "id": "invert",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "cost": 1,
+  "externals": [
+    "trimIndex"
+  ],
+  "body": {
+    "out": "int i = int(round(trimIndex.sample(uv).x)) - 1;\nint last = p.last < 0 ? p.first : p.last;\nbool inside = i >= p.first && i <= last;\nif (p.invert)\n    inside = !inside;\nreturn inside ? 1.0 : 0.0;"
+  }
+}

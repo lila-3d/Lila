@@ -5,8 +5,8 @@
 #include "core/ImageIO.h"
 #include "tex/Types.h"
 
+#include <filesystem>
 #include <functional>
-
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,6 +53,17 @@ LILA_SCENE_API std::string bakeMapName(std::string_view external);
 using LiveMeshMapReader = std::function<image::Image(const std::string& bakeProject, const std::string& map, int udim)>;
 LILA_SCENE_API void setLiveMeshMapReader(LiveMeshMapReader fn);
 LILA_SCENE_API image::Image readLiveMeshMap(const std::string& bakeProject, const std::string& map, int udim);
+
+/** A map's file from the bake project's last bake (else its manifest) for a tile; empty when it has none. */
+LILA_SCENE_API std::filesystem::path bakedMapFile(scene::Graph& g, const std::string& bakeProject, const std::string& map, int udim);
+
+/**
+ * Something rewrote a bake project's map files outside a bake command (a trim sheet's own bake): readers that cache them,
+ * such as the viewport's texture sets, reload. The renderer installs the listener.
+ */
+using BakedMapsListener = std::function<void(const std::string& bakeProject)>;
+LILA_SCENE_API void setBakedMapsListener(BakedMapsListener fn);
+LILA_SCENE_API void bakedMapsChanged(const std::string& bakeProject);
 
 /** Of the maps (externals) given, those that are bake maps the set's bake project doesn't make. Empty without a project. */
 LILA_SCENE_API std::vector<std::string> missingBakeMaps(scene::Graph& g, const std::string& bakeProject, const std::vector<std::string>& maps);
