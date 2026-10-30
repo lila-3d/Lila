@@ -19,7 +19,7 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 - Action, menu item, hotkey: `actions::add` (`src/ui/Actions.h`). Panels: `panels::add` (`src/ui/Panels.h`).
 - Tests: doctest suites under `tests/` (`lila_tests` plus per-area executables such as `tests/curve`, `tests/docks`); add new files to that folder's CMakeLists.
 - Python stubs `python/lila/ops.pyi` regenerate at startup of lila/lilabatch; don't hand-edit.
-- User docs: `X:\Lila-3D\docs` (not this repo). Essentials only for day-one things; document only what the UI doesn't already show.
+- User docs: `X:\Lila-3D\docs` (not this repo). Essentials only for day-one things; document only what the UI doesn't already show. A new page in `_sidebar.md` needs its icon in `docs/theme.css` (the `::before` selector list and an `--icon` line); Lila-3D's pre-commit hook rejects a page without one.
 
 ## Build and test
 
