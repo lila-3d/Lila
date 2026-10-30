@@ -1408,7 +1408,7 @@ std::string pageAction(const std::string& page)
 QToolButton* helpButton(const std::string& page, QWidget* parent)
 {
     auto* b = new QToolButton(parent);
-    b->setIcon(icon("help"));
+    b->setIcon(icon("book"));
     b->setIconSize(QSize(14, 14));
     b->setToolTip(qs("Open " + pageTitle(page) + " docs"));
     b->setAutoRaise(true);

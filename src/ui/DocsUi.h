@@ -62,7 +62,7 @@ LILA_UI_API std::string pageTitle(const std::string& page);
  * menus, shelves and hotkeys. A menu's or panel's `docs` field adds one for you.
  */
 LILA_UI_API std::string pageAction(const std::string& page);
-/** A small themed "?" button that opens the page, tooltipped "Open <Page> docs", for panel headers and dialogs. */
+/** A small themed book button (the icon of every docs entry point) that opens the page, tooltipped "Open <Page> docs", for panel headers and dialogs. */
 LILA_UI_API QToolButton* helpButton(const std::string& page, QWidget* parent);
 /** Fills the menu, each time it opens, with a row per top-level page of the docs' sidebar. */
 LILA_UI_API void attachTopicsMenu(QMenu* menu);

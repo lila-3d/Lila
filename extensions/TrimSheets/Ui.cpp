@@ -338,7 +338,7 @@ void registerUi(ext::Context& ctx)
                                       {"trims.paint", "paint", "Paint"},
                                       {"trims.send", "send", "Unreal"}},
                             .create = sectionWidget,
-                            .order = 60});
+                            .order = 60, .docs = "trim-sheets"});
 
     menus::addItem(ctx, {.id = "trims.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Trim Sheets"});
     const char* order[] = {"trims.create", "trims.editor", "trims.bake", "trims.generate", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",

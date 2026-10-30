@@ -43,7 +43,7 @@ void registerUi(ext::Context& ctx)
                        .doc = "Send the selected wall to Unreal's open level as instanced stones per ground chunk.", .python = "masonryShip('Wall')",
                        .command = "masonryShip", .call = nlohmann::json::object()});
 
-    levelToolkit::add(ctx, {.id = "masonry", .title = "Masonry", .items = {{"masonry.wall", "wall", "Wall", "Wall"}, {"masonry.ship", "send", "Unreal"}}, .order = 30});
+    levelToolkit::add(ctx, {.id = "masonry", .title = "Masonry", .items = {{"masonry.wall", "wall", "Wall", "Wall"}, {"masonry.ship", "send", "Unreal"}}, .order = 30, .docs = "masonry"});
     menus::addItem(ctx, {.id = "masonry.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Masonry",
                          .before = levelToolkit::kDressSection});
     for (const char* a : {"masonry.wall", "masonry.ship"})

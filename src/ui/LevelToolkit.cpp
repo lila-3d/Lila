@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/DocsUi.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/FixedRowLayout.h"
 #include "ui/Icons.h"
@@ -11,6 +12,7 @@
 #include "ui/Shelf.h"
 
 #include <QApplication>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -26,7 +28,7 @@ namespace
 {
 constexpr const char* kLevelCollapsedPref = "/levelToolkit/collapsed";
 
-QWidget* levelSection(const QString& title, QWidget* content, QWidget* parent)
+QWidget* levelSection(const QString& title, QWidget* content, QWidget* parent, const std::string& docsPage = {})
 {
     auto* box = new QWidget(parent);
     auto* v = new QVBoxLayout(box);
@@ -48,6 +50,14 @@ QWidget* levelSection(const QString& title, QWidget* content, QWidget* parent)
         header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
         PrefStore::get().set("general", key, !on);
     });
+    // The docs button sits inside the header bar, on its right; it takes its own clicks, so it doesn't fold the section.
+    if (!docsPage.empty())
+    {
+        auto* row = new QHBoxLayout(header);
+        row->setContentsMargins(0, 0, 3, 0);
+        row->addStretch(1);
+        row->addWidget(docs::helpButton(docsPage, header));
+    }
     v->addWidget(header);
     v->addWidget(content, 1);
     return box;
@@ -186,7 +196,7 @@ void LevelToolkit::rebuild()
             delete box;
             continue;
         }
-        v->addWidget(levelSection(QString::fromStdString(s->title), box, mBody));
+        v->addWidget(levelSection(QString::fromStdString(s->title), box, mBody, s->docs));
         ++shown;
     }
 

@@ -54,7 +54,7 @@ void registerUi(ext::Context& ctx)
                             .title = "Settlement",
                             .items = {{"settlement.create", "building-community", "Create", "Town"}, {"settlement.region", "map-2", "Region", "Region"},
                                       {"settlement.export", "file-export", "Export"}},
-                            .order = 20});
+                            .order = 20, .docs = "settlement"});
     menus::addItem(ctx, {.id = "settlement.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Settlement",
                          .before = levelToolkit::kDressSection});
     for (const char* a : {"settlement.create", "settlement.region", "settlement.export"})

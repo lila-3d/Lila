@@ -54,6 +54,8 @@ struct Section
     std::function<QWidget*(QWidget* parent)> create;
     /** Lower comes first; equal orders keep registration order. */
     int order = 100;
+    /** A docs page ("masonry", "stagehand?id=tune-it") for a docs button on the section's header; empty for none. */
+    std::string docs;
 };
 
 LILA_UI_API Registry<Section>& registry();

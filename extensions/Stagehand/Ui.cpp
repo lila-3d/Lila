@@ -516,18 +516,18 @@ void registerUi(ext::Context& ctx)
                                       {"stagehand.shake", "activity", "Shake"}, {"stagehand.check", "checklist", "Check"}, {},
                                       {"stagehand.body.dynamic", "", "Dynamic"}, {"stagehand.body.static", "", "Static"}, {"stagehand.body.off", "", "Ignore"},
                                       {"stagehand.body.remove", "", "Default"}},
-                            .order = 40});
+                            .order = 40, .docs = "stagehand"});
     levelToolkit::add(ctx, {.id = "stagehand.arrange",
                             .title = "Arrange",
                             .items = {{"stagehand.fillShelf", "books", "Fill Shelf"}, {"stagehand.scatterProps", "grain", "Scatter", "Scatter"},
                                       {"stagehand.pileProps", "stack-2", "Pile"}, {"stagehand.stackProps", "stack", "Stack"}},
-                            .order = 41});
+                            .order = 41, .docs = "stagehand"});
     levelToolkit::add(ctx, {.id = "stagehand.kit",
                             .title = "Level Kit",
                             .items = {{"stagehand.tool.kitPlace", "puzzle", "Kit Place", "Kit"}, {"stagehand.snapAll", "magnet", "Snap All"},
                                       {"stagehand.addSnapPoint", "point", "Snap Point"}, {},
                                       {"stagehand.dropToSurface", "arrow-bar-to-down", "To Surface", "To Ground"}, {"stagehand.alignObjects", "layout-align-left", "Align"},
                                       {"stagehand.distribute", "layout-distribute-horizontal", "Distribute"}, {"stagehand.randomize", "arrows-shuffle", "Randomize"}},
-                            .order = 42});
+                            .order = 42, .docs = "stagehand"});
 }
 } // namespace stagehand
