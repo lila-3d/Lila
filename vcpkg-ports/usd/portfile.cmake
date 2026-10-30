@@ -32,6 +32,7 @@ vcpkg_from_github(
         008-fix_clang8_compiler_error.patch
         009-vcpkg_install_folder_conventions.patch
         010-cmake_export_plugin_as_modules.patch
+        011-hgivulkan-cached-readback.patch
 )
 
 # Changes accompanying 003-fix-dep.patch

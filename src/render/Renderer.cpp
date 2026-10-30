@@ -4208,7 +4208,10 @@ struct Renderer::Impl
         VkRenderingAttachmentInfo frameColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         frameColor.imageView = msaa ? v.color.view : v.views[imageIndex];
         frameColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        frameColor.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        // The composed scene covers every pixel, but an external image leaves those its renderer drew nothing in.
+        frameColor.loadOp = s.externalScene ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        const glm::vec3 frameBg = srgbToLinear(s.background);
+        frameColor.clearValue.color = {{frameBg.r, frameBg.g, frameBg.b, 1.0f}};
         frameColor.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
         if (msaa)
         {

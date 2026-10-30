@@ -508,6 +508,22 @@ TEST_CASE("hydra: the frame composites under Lila's overlays, depth tested again
     CHECK(brighter(54, 74, box.g + 30) == 0);
     CHECK(brighter(0, 30, 100) > 20);
     CHECK(at(5, 20) == glm::ivec3(0));
+
+    // Where Storm drew nothing the background shows, not what the target held from Lila's own frame before it.
+    render::FrameState own = s;
+    own.externalScene = false;
+    own.externalColor = {};
+    own.externalDepth = {};
+    own.background = glm::vec3(1.0f);
+    REQUIRE_MESSAGE(gpu.renderOffscreen(own, kSize, kSize, bgra, &err), err);
+    CHECK(at(5, 20) == glm::ivec3(255));
+    s.background = glm::vec3(0.25f, 0.5f, 0.75f);
+    REQUIRE_MESSAGE(gpu.renderOffscreen(s, kSize, kSize, bgra, &err), err);
+    const glm::ivec3 bg = at(5, 20);
+    INFO("background " << bg.r << " " << bg.g << " " << bg.b);
+    CHECK(std::abs(bg.r - 64) <= 3);
+    CHECK(std::abs(bg.g - 128) <= 3);
+    CHECK(std::abs(bg.b - 191) <= 3);
     REQUIRE(vr::select(kPanel, vr::kLila));
     vr::release(kPanel);
 }

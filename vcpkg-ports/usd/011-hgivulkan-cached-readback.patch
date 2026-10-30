@@ -1,0 +1,13 @@
+--- a/pxr/imaging/hgiVulkan/buffer.cpp
++++ b/pxr/imaging/hgiVulkan/buffer.cpp
+@@ -44,7 +44,9 @@
+     VmaAllocationCreateInfo ai = {};
+     if (isUploadBuffer) {
+         ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+-        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
++        // Texture staging buffers also carry readbacks (CopyTextureGpuToCpu),
++        // which the CPU reads: cached memory, not write-combined.
++        ai.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+         ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+     } else {
+         ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;

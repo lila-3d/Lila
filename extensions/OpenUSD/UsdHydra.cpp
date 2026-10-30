@@ -108,17 +108,29 @@ glm::dmat4 glProjection(const vr::Request& r)
     return g;
 }
 
-float component(const uint8_t* p, HdFormat format, int i)
+/** Calls fn with a reader of format's components (pixel, index), chosen once so pixel loops don't switch per component. */
+template <typename Fn>
+void withReader(HdFormat format, Fn&& fn)
 {
     switch (HdGetComponentFormat(format))
     {
-    case HdFormatUNorm8: return p[i] / 255.0f;
-    case HdFormatSNorm8: return std::max(-1.0f, int8_t(p[i]) / 127.0f);
-    case HdFormatFloat16: return float(reinterpret_cast<const GfHalf*>(p)[i]);
-    case HdFormatFloat32: return reinterpret_cast<const float*>(p)[i];
-    case HdFormatInt32: return float(reinterpret_cast<const int32_t*>(p)[i]);
-    default: return 0.0f;
+    case HdFormatUNorm8: fn([](const uint8_t* p, int i) { return p[i] * (1.0f / 255.0f); }); break;
+    case HdFormatSNorm8: fn([](const uint8_t* p, int i) { return std::max(-1.0f, int8_t(p[i]) / 127.0f); }); break;
+    case HdFormatFloat16: fn([](const uint8_t* p, int i) { return float(reinterpret_cast<const GfHalf*>(p)[i]); }); break;
+    case HdFormatFloat32: fn([](const uint8_t* p, int i) { return reinterpret_cast<const float*>(p)[i]; }); break;
+    case HdFormatInt32: fn([](const uint8_t* p, int i) { return float(reinterpret_cast<const int32_t*>(p)[i]); }); break;
+    default: break;
     }
+}
+
+/** Runs fn(y) for each of h rows across Lila's thread pool. */
+template <typename Fn>
+void forRows(int h, Fn&& fn)
+{
+    tbb::parallel_for(tbb::blocked_range<int>(0, h, 16), [&](const tbb::blocked_range<int>& rows) {
+        for (int y = rows.begin(); y < rows.end(); ++y)
+            fn(y);
+    });
 }
 
 struct StageChain
@@ -399,21 +411,23 @@ private:
         f.rgba32f.resize(size_t(w) * h * 4);
         const size_t stride = HdDataSizeOfFormat(cf);
         const int components = int(HdGetComponentCount(cf));
-        // Hydra's buffers start at the bottom row; Lila's frames at the top.
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-            {
-                const uint8_t* p = data + (size_t(h - 1 - y) * w + x) * stride;
-                float* o = &f.rgba32f[(size_t(y) * w + x) * 4];
-                const float a = components >= 4 ? component(p, cf, 3) : 1.0f;
-                for (int c = 0; c < 3; ++c)
+        const float exposure = r.exposure;
+        withReader(cf, [&](auto read) {
+            // Hydra's buffers start at the bottom row; Lila's frames at the top.
+            forRows(h, [&](int y) {
+                const uint8_t* p = data + size_t(h - 1 - y) * w * stride;
+                float* o = &f.rgba32f[size_t(y) * w * 4];
+                for (int x = 0; x < w; ++x, p += stride, o += 4)
                 {
-                    const float v = component(p, cf, std::min(c, components - 1));
+                    const float a = components >= 4 ? read(p, 3) : 1.0f;
                     // Hydra's colour is premultiplied; frames carry straight alpha.
-                    o[c] = (a > 0.0f && a < 1.0f ? v / a : v) * r.exposure;
+                    const float unpremultiply = (a > 0.0f && a < 1.0f ? 1.0f / a : 1.0f) * exposure;
+                    for (int c = 0; c < 3; ++c)
+                        o[c] = read(p, std::min(c, components - 1)) * unpremultiply;
+                    o[3] = std::clamp(a, 0.0f, 1.0f);
                 }
-                o[3] = std::clamp(a, 0.0f, 1.0f);
-            }
+            });
+        });
         color->Unmap();
 
         if (HdRenderBuffer* depth = mTasks->GetRenderOutput(HdAovTokens->depth))
@@ -423,20 +437,26 @@ private:
             const uint8_t* d = static_cast<const uint8_t*>(depth->Map());
             if (d && int(depth->GetWidth()) == w && int(depth->GetHeight()) == h)
             {
+                // Window depth to clip space, then back through the projection to the view axis: with x and y at 0
+                // only these four entries of the inverse projection matter.
                 const glm::dmat4 unproject = glm::inverse(proj);
+                const double zz = unproject[2][2], zw = unproject[3][2], wz = unproject[2][3], ww = unproject[3][3];
                 const size_t ds = HdDataSizeOfFormat(df);
                 f.depth.resize(size_t(w) * h);
-                for (int y = 0; y < h; ++y)
-                    for (int x = 0; x < w; ++x)
-                    {
-                        const float z = component(d + (size_t(h - 1 - y) * w + x) * ds, df, 0);
-                        const size_t i = size_t(y) * w + x;
-                        if (z >= 1.0f || f.rgba32f[i * 4 + 3] <= 0.0f)
-                            continue;
-                        // Window depth to clip space, then back through the projection to the view axis.
-                        const glm::dvec4 v = unproject * glm::dvec4(0.0, 0.0, 2.0 * z - 1.0, 1.0);
-                        f.depth[i] = float(-v.z / v.w);
-                    }
+                withReader(df, [&](auto read) {
+                    forRows(h, [&](int y) {
+                        const uint8_t* p = d + size_t(h - 1 - y) * w * ds;
+                        const size_t row = size_t(y) * w;
+                        for (int x = 0; x < w; ++x, p += ds)
+                        {
+                            const float z = read(p, 0);
+                            if (z >= 1.0f || f.rgba32f[(row + x) * 4 + 3] <= 0.0f)
+                                continue;
+                            const double ndc = 2.0 * z - 1.0;
+                            f.depth[row + x] = float(-(zz * ndc + zw) / (wz * ndc + ww));
+                        }
+                    });
+                });
             }
             depth->Unmap();
         }
