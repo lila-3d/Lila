@@ -31,10 +31,14 @@ lila_module(lila_core Foundation
     SystemMemory.cpp
     TextMatch.cpp
     Version.cpp
+    VideoWriter.cpp
     Workspace.cpp)
 
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_core PRIVATE miniz::miniz)
+if(WIN32)
+    target_link_libraries(lila_core PRIVATE mfplat mfreadwrite mfuuid ole32)
+endif()
 target_include_directories(lila_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/sdk/include)
 target_link_libraries(lila_core PUBLIC nlohmann_json::nlohmann_json TBB::tbb glm::glm ${LILA_CRASHKIT_LIBS})
 # Out of the unity batch: the stamp changes with every commit and should recompile only this file.

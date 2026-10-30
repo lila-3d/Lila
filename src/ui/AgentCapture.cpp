@@ -188,6 +188,7 @@ void applyDisplayPrefs(render::FrameState& s, bool ortho)
     s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
     s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
     s.aoFast = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "fast";
+    s.aoRayTraced = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "raytraced";
     viewportDisplay::apply(s);
 }
 
@@ -363,7 +364,7 @@ QImage render(const Options& o, Timing* timing, int repeat)
     std::vector<uint8_t> bgra;
     std::string err;
     render::Renderer::FrameStats stats;
-    if (!r.renderOffscreen(std::move(s), w, h, bgra, &err, &stats, repeat))
+    if (!r.renderOffscreen(std::move(s), w, h, bgra, &err, &stats, repeat, std::max(o.samples, 1)))
         throw std::runtime_error("capture failed: " + err);
     if (timing)
         *timing = {stats.gpuMs, stats.aoMs, stats.cpuMs, stats.aoCpuMs};
@@ -454,6 +455,7 @@ std::vector<FlagDef> optionFlags()
         {"frameSelection", "fs", T::Bool, false, "Frame the selected objects or components instead of everything shown."},
         {"grid", "", T::Bool, true, "Ground grid in perspective views."},
         {"showSelection", "", T::Bool, true, "Tint selected components."},
+        {"samples", "", T::Int, 1, "Jittered frames averaged into the image: 16 or more gives a supersampled still.", {}, {}, 1.0, 1024.0},
     };
 }
 
@@ -479,6 +481,7 @@ Options optionsFrom(const json& j)
     };
     num("width", o.width);
     num("height", o.height);
+    num("samples", o.samples);
     if (j.contains("resolution") && j["resolution"].is_number())
         o.width = o.height = j["resolution"].get<int>();
     auto flag = [&](std::initializer_list<const char*> keys, bool& out) {
@@ -508,6 +511,7 @@ json optionSchema()
         {"frame_selection", {{"type", "boolean"}, {"description", "Frame the selected objects/components rather than everything."}}},
         {"grid", {{"type", "boolean"}}},
         {"show_selection", {{"type", "boolean"}, {"description", "Highlight selected components (default true)."}}},
+        {"samples", {{"type", "integer"}, {"description", "Jittered frames averaged into the image (default 1); 16+ for a supersampled still."}}},
     };
 }
 

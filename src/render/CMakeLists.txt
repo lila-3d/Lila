@@ -5,6 +5,7 @@ lila_module(lila_render UI
     BakerResident.cpp
     BakerKernels.cpp
     Compute.cpp
+    CubeLut.cpp
     DeformGpu.cpp
     DrawBatches.cpp
     Environment.cpp
@@ -35,8 +36,11 @@ lila_add_shaders(lila_render FILES
     shaders/bake_raster32.slang
     shaders/bake_raster64.slang
     shaders/bake_sw.slang
+    shaders/bloom.slang
+    shaders/compose.slang
     shaders/contact.slang
     shaders/deform.slang
+    shaders/exposure.slang
     shaders/external.slang
     shaders/grid.slang
     shaders/imageplane.slang
@@ -47,6 +51,9 @@ lila_add_shaders(lila_render FILES
     shaders/paint_gather.slang
     shaders/paint_screen.slang
     shaders/post.slang
+    shaders/rtao.slang
+    shaders/rtbevel.slang
+    shaders/rtshadow.slang
     shaders/points.slang
     shaders/mesh.slang
     shaders/mesh_bindless.slang
@@ -57,10 +64,12 @@ lila_add_shaders(lila_render FILES
     shaders/tex_page.slang
     shaders/tex_store.slang
     shaders/tex_uvfill.slang
+    shaders/taa.slang
     shaders/vt.slang
     shaders/wire.slang
     INCLUDES
     shaders/mesh.slang
+    shaders/scene_color.slang
     shaders/stylised.slang
     shaders/bake_common.slang
     shaders/bake_maps.slang

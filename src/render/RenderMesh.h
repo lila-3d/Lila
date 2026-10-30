@@ -152,6 +152,11 @@ enum class ShadingModel : uint32_t
     Toon,
     Foliage,
     Unlit,
+    Skin,
+    Cloth,
+    Clearcoat,
+    Hair,
+    Eye,
 };
 
 /** The stylised models' inputs (colours linear). Each model reads only its own group; see scene::material for meanings. */
@@ -192,6 +197,15 @@ struct MaterialStyle
     float foliageTranslucency = 0.4f;
     float foliageWrap = 0.5f;
 
+    glm::vec3 subsurfaceColor{0.9f, 0.25f, 0.15f};
+    float subsurfaceAmount = 0.8f;
+    glm::vec3 sheenColor{0.5f};
+    float sheenRoughness = 0.5f;
+    float clearcoat = 1.0f, clearcoatRoughness = 0.05f;
+    float anisotropy = 0.8f, anisotropyRotation = 0.0f; // degrees
+    float hairShift = 0.1f;
+    float irisRadius = 0.15f, irisDepth = 0.3f, limbalRing = 0.5f;
+
     /** Painterly stroke sheet, linear: RG normal tilt, B stroke shade, A per-stroke random. Null draws without strokes. */
     TexturePtr strokeMap;
 };
@@ -228,6 +242,8 @@ struct Material
      */
     uint32_t sampling = 0;
     MaterialStyle style;
+    /** Live bevel radius, cm: edges round as they shade (ray traced); 0 is off. */
+    float bevelRadius = 0.0f;
 };
 
 enum MeshDrawFlags : uint32_t
@@ -277,5 +293,7 @@ struct MeshDraw
     /** Linear wire color when not selected or preselected; alpha 0 keeps the default near black. */
     glm::vec4 wireColor{0.0f};
     float wireWidth = 1.0f; // device pixels
+    /** The scene node it draws (scene::NodeId), 0 for none: renders key object mattes by it. */
+    uint64_t node = 0;
 };
 } // namespace lila::render

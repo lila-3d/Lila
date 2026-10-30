@@ -47,6 +47,7 @@ lila_module(lila_scene Scene
     Isolation.cpp
     LastOp.cpp
     Light.cpp Light.h
+    PostProcess.cpp PostProcess.h
     LodGroup.cpp LodGroup.h
     Materials.cpp
     MeshCache.cpp MeshCache.h

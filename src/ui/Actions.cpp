@@ -768,6 +768,15 @@ void registerBuiltins()
                       .python = "lila.prefs.set(\"general\", \"" + k + "\", not lila.prefs.get(\"general\", \"" + k + "\", " + fb + "))"});
     };
     togglePref("viewport.toggleAA", "Antialiasing", vd::kAaEnabled, true, "Multisample antialiasing in every viewport.");
+    togglePref("viewport.toggleRtShadows", "Ray-Traced Shadows", vd::kRtShadows, true,
+               "Shadows traced against the scene for up to four lights: exact contacts, soft by each light's size (GPUs with ray tracing).");
+    togglePref("viewport.toggleSafeFrames", "Safe Frames", vd::kSafeFrames, false,
+               "Action and title safe frames inside the resolution gate (turn the gate on to see them).");
+    togglePref("viewport.toggleThirds", "Rule of Thirds", vd::kThirds, false, "Thirds lines inside the resolution gate.");
+    togglePref("viewport.togglePostEffects", "Post Effects", vd::kPostEffects, true,
+               "The scene's post process grading, bloom and lens effects in every viewport.");
+    togglePref("viewport.toggleTAA", "Temporal Antialiasing", vd::kTaa, true,
+               "Smooths shading and texture shimmer as the view moves, and supersamples the view while it holds still.");
     togglePref("viewport.toggleGrid", "Grid", vd::kGrid, true, "The ground grid in every viewport.");
     togglePref("viewport.toggleXray", "X-Ray", vd::kXray, false, "Shaded meshes become see-through.");
     togglePref("viewport.toggleBackfaceCulling", "Backface Culling", vd::kBackfaceCulling, false, "Hides the back faces of shaded meshes.");

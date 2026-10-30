@@ -9,7 +9,8 @@ lila_module(lila_gltf Scene
     GltfImport.cpp
     GltfLibs.cpp
     GltfMaterials.cpp
-    GltfUtil.cpp)
+    GltfUtil.cpp
+    GltfWebViewer.cpp)
 target_include_directories(lila_gltf SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/cgltf ${CMAKE_SOURCE_DIR}/third_party/stb)
 target_link_libraries(lila_gltf PUBLIC lila_scene PRIVATE lila_fbx meshoptimizer::meshoptimizer miniz::miniz draco::draco)
 if(MSVC)

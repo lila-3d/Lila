@@ -618,7 +618,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(viewport, "Ground shadow", "/viewport/groundShadow", 0.5, 0.0, 1.0, 0.05);
         toggle(viewport, "Ambient occlusion", "/viewport/ao/enabled", true);
         choice(viewport, "AO method", "/viewport/ao/mode",
-               {{"Accurate: darkens ambient light only", "accurate"}, {"Fast: darkens the whole surface, no extra geometry pass", "fast"}}, "accurate");
+               {{"Accurate: darkens ambient light only", "accurate"}, {"Fast: darkens the whole surface, no extra geometry pass", "fast"},
+                {"Ray traced: against the scene itself, no halos (RTX-class GPUs)", "raytraced"}},
+               "accurate");
         number(viewport, "AO radius (cm)", "/viewport/ao/radius", 30.0, 0.1, 10000.0, 1.0, 1);
         number(viewport, "AO intensity", "/viewport/ao/intensity", 1.0, 0.0, 4.0, 0.1);
         section(viewport, "Color");
@@ -639,6 +641,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             setComboDefault(box, box->findData(vd::kDefaultSamples));
             addRow(viewport, "Samples", box, vd::kAaSamples);
         }
+        toggle(viewport, "Temporal (smooths shading shimmer)", vd::kTaa, true);
+        number(viewport, "Still frames averaged", vd::kAccumulate, 16.0, 1.0, 256.0, 1.0, 0);
         section(viewport, "Grid");
         toggle(viewport, "Show grid", vd::kGrid, true);
         number(viewport, "Spacing (cm)", "/grid/spacing", 10.0, 0.1, 10000.0, 1.0, 1);

@@ -1,5 +1,5 @@
-// Placeholder Lights: the light provider Lila falls back on. Creates and draws lights while no light extension that
-// renders them is enabled, and stands aside as soon as one is.
+// Lights: Create > Light, the light glyphs, and Lila's own light provider. Lights it owns are lit and shadowed by the
+// viewport and by renders; another provider registered for a light takes it over.
 
 #include "Glyphs.h"
 
@@ -18,24 +18,13 @@ using namespace lila;
 
 namespace
 {
-constexpr const char* kProviderId = "placeholder";
-
 struct State
 {
     ext::Context* ctx = nullptr;
-    /** The menu and actions, live with the draw override while no other provider renders lights. */
     std::vector<ext::Context::Handle> ui;
 };
 
 State gState;
-
-bool rendererInstalled()
-{
-    for (const scene::lights::Provider* p : scene::lights::providers().all())
-        if (!p->placeholder)
-            return true;
-    return false;
-}
 
 void addUi(ext::Context& ctx)
 {
@@ -55,7 +44,7 @@ void addUi(ext::Context& ctx)
     }};
 
     std::vector<ext::Context::Handle>& handles = gState.ui;
-    ui::drawOverrides::add(ctx, {.id = "lights.placeholder", .nodeType = "light", .draw = lights_ext::draw, .pick = lights_ext::pick});
+    ui::drawOverrides::add(ctx, {.id = "lights.glyph", .nodeType = "light", .draw = lights_ext::draw, .pick = lights_ext::pick});
     handles.push_back(ui::menus::addItem(ctx, {.id = "lights.menu", .menu = "Create", .kind = ui::menus::Kind::Submenu, .label = "Light"}));
     for (const Entry& e : kEntries)
     {
@@ -83,35 +72,13 @@ void addUi(ext::Context& ctx)
     handles.push_back(ui::menus::addItem(ctx, {.id = "lights.menu.docs", .menu = "Create/Light", .action = ui::docs::pageAction("lights")}));
 }
 
-void removeUi(ext::Context& ctx)
-{
-    for (auto it = gState.ui.rbegin(); it != gState.ui.rend(); ++it)
-        ctx.remove(*it);
-    gState.ui.clear();
-    ui::drawOverrides::remove("lights.placeholder");
-}
-
-/** Shows the placeholder UI exactly while nothing else renders lights. */
-void follow()
-{
-    if (!gState.ctx)
-        return;
-    const bool wanted = !rendererInstalled();
-    const bool shown = ui::drawOverrides::registry().contains("lights.placeholder");
-    if (wanted && !shown)
-        addUi(*gState.ctx);
-    else if (!wanted && shown)
-        removeUi(*gState.ctx);
-}
 } // namespace
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
 {
     gState.ctx = &ctx;
-    scene::lights::registerProvider(ctx, {.id = kProviderId, .name = "Placeholder Lights", .placeholder = true});
-    const int listener = scene::lights::providers().addListener([](RegistryChange, const std::string&, const std::string&) { follow(); });
-    ctx.track("lightProviderListener", [listener] { scene::lights::providers().removeListener(listener); });
-    follow();
+    scene::lights::registerProvider(ctx, {.id = scene::lights::kLilaProvider, .name = "Lila Lights"});
+    addUi(ctx);
     return 0;
 }
 

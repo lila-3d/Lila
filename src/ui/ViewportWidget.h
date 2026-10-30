@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "render/Renderer.h"
+#include "scene/Camera.h"
 #include "scene/ComponentPick.h"
 #include "scene/Isolation.h"
 #include "scene/Plug.h"
@@ -49,6 +50,16 @@ public:
 
     Camera& camera() { return mCamera; }
     const Camera& camera() const { return mCamera; }
+
+    /** A render's view: a camera and image size, and its lens when depth of field is on. */
+    struct RenderView
+    {
+        Camera camera;
+        int width = 1920, height = 1080;
+        std::optional<scene::camera::Lens> lens;
+    };
+    /** What this panel shows of the scene through rv's camera, as a render sees it: no grid, wires, selection, tools or HUD. */
+    render::FrameState renderFrame(const RenderView& rv);
     void requestFrame();
     void frameSelection(bool all);
     /**
@@ -139,6 +150,7 @@ private:
     };
 
     void submit();
+    render::FrameState buildFrame(const RenderView* rv);
     ViewInfo viewInfo() const;
     /**
      * The gizmo that takes input for the current tool: the one dragging, else the active provider's, else the default

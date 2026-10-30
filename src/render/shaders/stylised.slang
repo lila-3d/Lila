@@ -8,6 +8,11 @@ static const uint kPainterly = 1;
 static const uint kToon = 2;
 static const uint kFoliage = 3;
 static const uint kUnlit = 4;
+static const uint kSkin = 5;
+static const uint kCloth = 6;
+static const uint kClearcoat = 7;
+static const uint kHair = 8;
+static const uint kEye = 9;
 
 static const uint kMapObject = 0;
 static const uint kMapWorld = 1;

@@ -311,15 +311,28 @@ void ViewportWidget::submit()
     syncLookThrough();
     if (!mId)
         return;
+    render::Renderer::get().submit(mId, buildFrame(nullptr));
+}
+
+render::FrameState ViewportWidget::renderFrame(const RenderView& view)
+{
+    return buildFrame(&view);
+}
+
+render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
+{
+    LILA_ZONE();
+    const Camera& camera = rv ? rv->camera : mCamera;
+    const double viewAspect = rv ? double(rv->width) / double(std::max(rv->height, 1)) : aspect();
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     const bool inherit = scene::inheritVisibility();
 
     render::FrameState s;
-    s.view = mCamera.view();
-    s.proj = mCamera.proj(aspect());
-    s.eye = mCamera.eye();
-    s.zUp = mCamera.zUp;
+    s.view = camera.view();
+    s.proj = camera.proj(viewAspect);
+    s.eye = camera.eye();
+    s.zUp = camera.zUp;
     const glm::vec4 themeBg = themeSrgb("viewportBackground", glm::vec4(0.30f, 0.30f, 0.30f, 1.0f));
     auto bg = PrefStore::get().value("general", "/viewport/background", json::array({themeBg.r, themeBg.g, themeBg.b}));
     if (bg.is_array() && bg.size() == 3)
@@ -334,17 +347,27 @@ void ViewportWidget::submit()
         s.envSaturation = p.value<float>("general", "/viewport/env/saturation", 0.0f);
         s.envBackgroundExposure = p.value<float>("general", "/viewport/env/backgroundExposure", 0.25f);
         // Orthographic views use the flat backdrop, like Maya's; an environment has no single direction there.
-        if (mCamera.ortho)
+        if (camera.ortho)
             s.envBackground = false;
         s.groundShadow = p.value<float>("general", "/viewport/groundShadow", 0.5f);
         s.ambientOcclusion = p.value<bool>("general", "/viewport/ao/enabled", true);
         s.aoRadius = p.value<float>("general", "/viewport/ao/radius", 30.0f);
         s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
         s.aoFast = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "fast";
+        s.aoRayTraced = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "raytraced";
         viewportDisplay::apply(s);
+        if (rv)
+        {
+            if (rv->lens)
+                viewportDisplay::applyLens(s, *rv->lens);
+        }
+        else if (const scene::Node* cam = mLookThrough != scene::kNoNode ? g.node(mLookThrough) : nullptr; cam && cam->type().isA("camera"))
+            viewportDisplay::applyLens(s, scene::camera::lens(*cam));
         viewportDisplay::applyCurveWidths(s, devicePixelRatioF());
-        displayAids::apply(s, mHudPanel);
+        if (!rv)
+            displayAids::apply(s, mHudPanel);
     }
+    if (!rv)
     {
         viewportRenderers::Request req;
         const QSize px = pixelSize();
@@ -361,14 +384,14 @@ void ViewportWidget::submit()
 
     // Like Maya, everything under a selected transform highlights too, a step dimmer.
     std::unordered_set<scene::NodeId> underSelection;
-    const bool highlight = viewportDisplay::highlightSelection();
+    const bool highlight = !rv && viewportDisplay::highlightSelection();
     if (highlight)
         for (scene::NodeId id : g.selection())
             for (scene::NodeId d : g.descendants(id))
                 underSelection.insert(d);
 
-    std::string mode = PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded");
-    bool wireOnShaded = PrefStore::get().value<bool>("general", "/viewport/wireOnShaded", false);
+    std::string mode = rv ? "shaded" : PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded");
+    bool wireOnShaded = !rv && PrefStore::get().value<bool>("general", "/viewport/wireOnShaded", false);
     bool showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
     const render::VertexColorMode vertexColors = viewportDisplay::vertexColorMode();
     const render::ColorChannel colorChannel = viewportDisplay::colorChannel();
@@ -378,14 +401,14 @@ void ViewportWidget::submit()
     if (highlight && scene::components::mode() != scene::ComponentMode::Object)
         for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
-    const bool aids = displayAids::anyDrawn(mHudPanel);
+    const bool aids = !rv && displayAids::anyDrawn(mHudPanel);
     const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
     std::vector<displayAids::MeshEntry> aidMeshes;
     const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || !mIsolation.shows(id) ||
+        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!rv && !mIsolation.shows(id)) ||
             !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
             continue;
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
@@ -416,6 +439,7 @@ void ViewportWidget::submit()
         else if (textured && !instanced)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(shownWorld(*n));
+        d.node = uint64_t(id);
         if (aids)
             aidMeshes.push_back({shown, shownWorld(*n)});
         if (vertexColors != render::VertexColorMode::Off && shown && !geo::colors::current(*shown).empty())
@@ -438,7 +462,7 @@ void ViewportWidget::submit()
             d.wireColor = glm::vec4(viewportDisplay::layerTint(glm::vec3(*layer.color)), 1.0f);
         else if (templated)
             d.wireColor = kTemplateWireColor;
-        if (surfaceSnap::isSurface(id))
+        if (!rv && surfaceSnap::isSurface(id))
         {
             d.flags |= render::DrawWire;
             d.wireColor = themeLinear("wireSnapSurface", kSnapSurfaceWireColor);
@@ -454,7 +478,7 @@ void ViewportWidget::submit()
         const scene::NodeId arrayed = scene::arrays::arrayAbove(g, id);
         if (highlight && g.isSelected(id) && !componentMode)
             d.flags |= render::DrawSelected;
-        else if (mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
+        else if (!rv && mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
                  (mPreselect.node == id || (arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
             d.flags |= render::DrawPreselect;
         else if (underSelection.contains(id) && !componentMode)
@@ -465,6 +489,12 @@ void ViewportWidget::submit()
             pushInstanceDraws(s, d, *instanced, textured);
         else
             s.meshes.push_back(std::move(d));
+    }
+    // A render is the scene alone: no components, tools, locators, grid or HUD.
+    if (rv)
+    {
+        s.grid = false;
+        return s;
     }
 
     drawComponents(s);
@@ -604,7 +634,7 @@ void ViewportWidget::submit()
             s.overlay.push_back({c[(i + 1) % 4], color});
         }
     }
-    render::Renderer::get().submit(mId, std::move(s));
+    return s;
 }
 
 ViewInfo ViewportWidget::viewInfo() const

@@ -123,6 +123,9 @@ struct Provider
     std::function<bool(const Node& light)> handles;
 };
 
+/** Lila's own provider's id: the viewport and renders light what it owns. */
+inline constexpr const char* kLilaProvider = "lila";
+
 LILA_SCENE_API Registry<Provider>& providers();
 /** Registers through ctx so it goes when the extension unloads. Throws std::invalid_argument when id is taken. */
 LILA_SCENE_API void registerProvider(ext::Context& ctx, Provider provider);

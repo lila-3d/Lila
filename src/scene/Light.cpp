@@ -1,8 +1,11 @@
 #include "scene/Light.h"
 
 #include "core/ExtensionContext.h"
+#include "core/PrefStore.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/NodeBounds.h"
+#include "scene/Transform.h"
 #include "scene/RigUtil.h"
 
 #include <algorithm>
@@ -294,6 +297,89 @@ void registerLightCommands()
             if (!a.get<bool>("skipSelect", false))
                 g.select({n->id()});
             return n->path();
+        },
+    });
+
+    ops::registerCommand({
+        .name = "lightRig",
+        .doc = "Light the selection (or everything shown) with a studio rig of area lights under one group, aimed and scaled to fit it. "
+               "threePoint: key, fill and rim; rim: two back lights for silhouettes; product: soft top and side boxes. Returns the group.",
+        .flags = {
+            {"preset", "p", T::String, "threePoint", "threePoint, rim or product.", {"threePoint", "rim", "product"}},
+            {"intensity", "i", T::Float, 1.0, "Scales every light of the rig.", {}, {}, 0.0},
+            {"name", "n", T::String, "lightRig", "The group's name; made unique."},
+        },
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            geo::Bounds b;
+            auto add = [&](NodeId id) {
+                if (const Node* n = g.node(id); n && n->type().isA("mesh"))
+                    if (geo::Bounds wb = worldBounds(g, id); wb.valid())
+                    {
+                        b.extend(wb.min);
+                        b.extend(wb.max);
+                    }
+            };
+            for (NodeId id : g.selection())
+            {
+                add(id);
+                for (NodeId d : g.descendants(id))
+                    add(d);
+            }
+            if (!b.valid())
+                for (NodeId id : g.nodes())
+                    add(id);
+            const glm::dvec3 centre = b.valid() ? b.center() : glm::dvec3(0.0);
+            const double radius = b.valid() ? std::max(glm::length(b.size()) * 0.5, 5.0) : 50.0;
+            const bool zUp = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
+            const glm::dvec3 up = zUp ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
+            const glm::dvec3 front = zUp ? glm::dvec3(0, -1, 0) : glm::dvec3(0, 0, 1);
+            const glm::dvec3 side = glm::cross(up, front);
+
+            struct Spot
+            {
+                const char* name;
+                double yaw, elevation, distance; // degrees from the front, degrees up, radii out
+                double brightness;               // at the subject, unitless
+                double size;                     // radii across
+            };
+            std::vector<Spot> spots;
+            const std::string preset = a.get<std::string>("preset", "threePoint");
+            if (preset == "rim")
+                spots = {{"rimLeft", 140.0, 25.0, 3.0, 2.5, 0.6}, {"rimRight", -140.0, 25.0, 3.0, 2.5, 0.6}};
+            else if (preset == "product")
+                spots = {{"top", 0.0, 80.0, 3.0, 2.0, 2.0}, {"left", 70.0, 15.0, 3.0, 1.2, 1.5}, {"right", -70.0, 15.0, 3.0, 0.8, 1.5}};
+            else
+                spots = {{"key", 40.0, 35.0, 3.0, 3.0, 0.8}, {"fill", -50.0, 15.0, 3.5, 1.0, 1.5}, {"rim", 160.0, 40.0, 3.0, 2.0, 0.5}};
+            if (preset != "rim" && preset != "product" && preset != "threePoint")
+                throw CommandError("lightRig: unknown preset '" + preset + "'");
+
+            const std::string group = ops::execute("createNode", {{"args", {"transform"}}, {"name", a.get<std::string>("name", "lightRig")}}).get<std::string>();
+            const double scale = a.get<double>("intensity", 1.0);
+            for (const Spot& s : spots)
+            {
+                const double yaw = glm::radians(s.yaw), el = glm::radians(s.elevation);
+                const glm::dvec3 out = (front * std::cos(yaw) + side * std::sin(yaw)) * std::cos(el) + up * std::sin(el);
+                const glm::dvec3 pos = centre + out * radius * s.distance;
+                // Lights shine down their -Z: a frame whose -Z points at the centre, kept level with the up axis.
+                const glm::dvec3 z = glm::normalize(pos - centre);
+                glm::dvec3 x = glm::cross(up, z);
+                x = glm::length(x) > 1e-6 ? glm::normalize(x) : side;
+                const glm::dvec3 euler = matrixToEuler(glm::dmat3(x, glm::cross(z, x), z), RotateOrder::XYZ);
+                // Brightness falls with the square of the distance in metres.
+                const double metres = radius * s.distance * 0.01;
+                const std::string light = ops::execute("light", {{"type", "area"},
+                                                                 {"name", s.name},
+                                                                 {"parent", group},
+                                                                 {"position", {pos.x, pos.y, pos.z}},
+                                                                 {"intensity", 0.5 * s.brightness * scale * metres * metres},
+                                                                 {"width", radius * s.size},
+                                                                 {"height", radius * s.size},
+                                                                 {"skipSelect", true}})
+                                              .get<std::string>();
+                ops::execute("setAttr", {{"args", {light + ".rotate", json::array({euler.x, euler.y, euler.z})}}});
+            }
+            return group;
         },
     });
 }

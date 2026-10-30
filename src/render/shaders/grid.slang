@@ -1,11 +1,13 @@
 // Infinite ground grid: a fullscreen triangle, ray-cast against the ground plane per pixel.
 
+#include "scene_color.slang"
+
 struct GridPush
 {
     float4x4 invViewProj;
     float4x4 viewProj;
     float4 eye;
-    float4 params; // x: minor spacing, y: major every N, z: 1 if Z-up
+    float4 params; // x: minor spacing, y: major every N, z: 1 if Z-up, w: display gamma, or below 0 to write display colours as they are
     float4 color;  // grid lines
     float4 axisX;
     float4 axisZ;  // the other ground axis: Z, or Y when Z-up
@@ -39,7 +41,7 @@ struct PSOut
 // Screen-space derivative length per axis; fwidth over-estimates on diagonals and fattens lines.
 float2 pixelSize(float2 c)
 {
-    return max(float2(length(float2(ddx(c.x), ddy(c.x))), length(float2(ddx(c.y), ddy(c.y)))), 1e-6);
+    return max(float2(length(float2(ddx_fine(c.x), ddy_fine(c.x))), length(float2(ddx_fine(c.y), ddy_fine(c.y)))), 1e-6);
 }
 
 float lineCoverage(float2 coord, float spacing)
@@ -103,7 +105,7 @@ PSOut gridPS(VSOut i)
 
     float4 clip = mul(pc.viewProj, float4(p, 1.0));
     PSOut o;
-    o.color = float4(color, alpha);
+    o.color = float4(pc.params.w < 0.0 ? color : fromDisplay(color, pc.params.w), alpha);
     o.depth = clip.z / clip.w;
     return o;
 }

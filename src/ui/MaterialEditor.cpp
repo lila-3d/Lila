@@ -830,10 +830,12 @@ void MaterialEditor::rebuild()
     };
 
     section("Shading");
-    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage", "Unlit"},
+    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage", "Unlit", "Skin", "Cloth", "Clearcoat", "Hair", "Eye"},
           "Default Lit: Unreal's default lit.\nPainterly: brush strokes bend the normal and a palette recolours light and shadow.\n"
           "Toon: stepped light and shadow with a rim.\nFoliage: soft gradient shading lit through from behind.\n"
-          "Unlit: the base colour as it is, plus emissive, with no lighting.");
+          "Unlit: the base colour as it is, plus emissive, with no lighting.\nSkin: light scattering under the surface.\n"
+          "Cloth: a velvet sheen at grazing angles.\nClearcoat: a glossy layer over the base.\n"
+          "Hair: highlights stretched across the strands, for hair cards.\nEye: an iris under a glossy cornea (UVs centred on the pupil).");
     mShownModel = int(n->as<int64_t>(kShadingModel));
     // Each model shows only its own inputs, so switching the model rebuilds the panel.
     mUpdaters.push_back([this] {
@@ -882,6 +884,30 @@ void MaterialEditor::rebuild()
         slider("Translucency", kFoliageTranslucency, 0.0, 1.0);
         slider("Wrap", kFoliageWrap, 0.0, 1.0);
         break;
+    case ShadingModel::Skin:
+        color("Subsurface Color", kSubsurfaceColor);
+        slider("Subsurface", kSubsurfaceAmount, 0.0, 1.0);
+        break;
+    case ShadingModel::Cloth:
+        color("Sheen Color", kSheenColor);
+        slider("Sheen Roughness", kSheenRoughness, 0.0, 1.0);
+        break;
+    case ShadingModel::Clearcoat:
+        slider("Clearcoat", kClearcoat, 0.0, 1.0);
+        slider("Clearcoat Roughness", kClearcoatRoughness, 0.0, 1.0);
+        break;
+    case ShadingModel::Hair:
+        slider("Anisotropy", kAnisotropy, 0.0, 1.0);
+        slider("Strand Rotation", kAnisotropyRotation, -180.0, 180.0);
+        slider("Highlight Shift", kHairShift, 0.0, 1.0);
+        break;
+    case ShadingModel::Eye:
+        slider("Iris Radius", kIrisRadius, 0.0, 0.5);
+        slider("Iris Depth", kIrisDepth, 0.0, 1.0);
+        slider("Limbal Ring", kLimbalRing, 0.0, 1.0);
+        slider("Cornea", kClearcoat, 0.0, 1.0);
+        slider("Cornea Roughness", kClearcoatRoughness, 0.0, 1.0);
+        break;
     default: break;
     }
 
@@ -893,6 +919,7 @@ void MaterialEditor::rebuild()
     slider("Specular", kSpecular, 0.0, 1.0);
     slider("Roughness", kRoughness, 0.0, 1.0);
     texture("Roughness Map", "roughness", kRoughnessMap);
+    slider("Bevel (cm)", kBevelRadius, 0.0, 5.0);
     texture("Occlusion Map", "ambientOcclusion", kAmbientOcclusionMap);
     texture("Packed Map", "orm", kOrmMap);
     combo("Packed Layout", kPackedLayout, {"ORM", "MRO"},

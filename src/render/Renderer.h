@@ -59,10 +59,24 @@ public:
     /**
      * Draws one frame into an offscreen target of the given pixel size and waits for it, with no window involved. Pixels
      * are 8-bit BGRA, display-encoded (sRGB), top row first. False (with err) if the renderer is not running or the GPU
-     * failed. repeat draws the frame that many times, for timing: the median frame's stats go to timing.
+     * failed. repeat draws the frame that many times, for timing: the median frame's stats go to timing. samples averages that
+     * many jittered frames into the result (with FrameState::taa on), for supersampled stills.
      */
     bool renderOffscreen(FrameState state, int width, int height, std::vector<uint8_t>& bgra, std::string* err = nullptr,
-                         FrameStats* timing = nullptr, int repeat = 1);
+                         FrameStats* timing = nullptr, int repeat = 1, int samples = 1);
+
+    struct OffscreenResult
+    {
+        std::vector<uint8_t> bgra; // display-encoded, top row first; alpha is coverage with a transparent background
+        std::vector<float> hdr;    // with hdr: RGBA floats, the scene's exposed linear light before tonemapping
+        FrameStats timing;
+    };
+    /**
+     * Draws `frames` in order, each `samples` times, and averages every draw into one image: a render's subframes, which
+     * may differ in time for motion blur (FrameState::accumulateOnly blends them without reprojection). Waits for it.
+     */
+    bool renderOffscreenFrames(std::vector<FrameState> frames, int width, int height, int samples, bool hdr, OffscreenResult& out,
+                               std::string* err = nullptr);
 
     std::string deviceName() const;
 

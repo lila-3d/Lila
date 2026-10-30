@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "render/FrameState.h"
+#include "scene/Camera.h"
 
 #include <algorithm>
 
@@ -14,6 +15,16 @@ namespace lila::ui::viewportDisplay
  */
 inline constexpr const char* kAaEnabled = "/viewport/aa/enabled";
 inline constexpr const char* kAaSamples = "/viewport/aa/samples"; // 1, 2, 4 or 8
+/** Temporal antialiasing, and how many jittered frames a still view averages after each change. */
+inline constexpr const char* kTaa = "/viewport/aa/temporal";
+inline constexpr const char* kAccumulate = "/viewport/aa/accumulate";
+/** Inside the resolution gate: broadcast action and title safe frames, and rule-of-thirds lines. */
+inline constexpr const char* kSafeFrames = "/viewport/safeFrames";
+/** Shadows traced against the scene for up to four lights: exact contacts, soft by each light's size, on GPUs with ray tracing. */
+inline constexpr const char* kRtShadows = "/viewport/rtShadows";
+inline constexpr const char* kThirds = "/viewport/thirds";
+/** The scene's post process grading, bloom and lens effects in viewports (its tonemapper and exposure always apply). */
+inline constexpr const char* kPostEffects = "/viewport/post/effects";
 inline constexpr const char* kGrid = "/viewport/grid";
 inline constexpr const char* kBackfaceCulling = "/viewport/backfaceCulling";
 inline constexpr const char* kXray = "/viewport/xray";
@@ -130,11 +141,20 @@ LILA_UI_API glm::vec4 falloffColor(float w, bool grayscale);
 /** Viewport defaults offered on first run; each is only a starting point for the AO, antialiasing and shadow prefs. */
 enum class Quality
 {
-    Best,     // accurate AO, 8x antialiasing, shadows
-    Balanced, // fast AO, 4x antialiasing, shadows
+    Best,     // accurate AO, 8x and temporal antialiasing, shadows
+    Balanced, // fast AO, 4x and temporal antialiasing, shadows
     Fastest,  // no AO, antialiasing or shadows
 };
 LILA_UI_API void applyQuality(Quality q);
+/** The scene's active post process into s (nothing when it has none); effects turns its grading, bloom and lens effects on. */
+LILA_UI_API void applyPostProcess(render::FrameState& s, bool effects);
+/**
+ * The scene's lights Lila's provider owns into s.lights, in the shader's units, with shadow matrices fit to the shown
+ * meshes for directional and spot lights.
+ */
+LILA_UI_API void applyLights(render::FrameState& s);
+/** A camera's depth of field into s, when the camera has it on. */
+LILA_UI_API void applyLens(render::FrameState& s, const scene::camera::Lens& lens);
 /** The preset this machine's GPU suits: Fastest for integrated or under 4 GB, Balanced under 8 GB, otherwise Best. */
 LILA_UI_API Quality recommendedQuality();
 } // namespace lila::ui::viewportDisplay

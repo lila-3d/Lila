@@ -1,4 +1,5 @@
-// Reference images on world-space quads, shown in display space: no lighting, exposure, gamma or tonemapping.
+// Reference images on world-space quads, shown in display space: no lighting, exposure, gamma or tonemapping. They draw
+// over the composed frame, depth tested against the scene.
 
 struct ImagePlanePush
 {
@@ -6,7 +7,7 @@ struct ImagePlanePush
     float4 corners[4]; // xyz: top left, top right, bottom right, bottom left
     float4 uv;         // u0, v0, u1, v1
     float4 params;     // opacity, brightness, contrast, grayscale
-    float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler
+    float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler; w: 1 behind the scene
 };
 
 [[vk::push_constant]] ImagePlanePush pc;
@@ -26,6 +27,9 @@ VSOut imagePlaneVS(uint id : SV_VertexID)
     float2 t = float2(c == 1 || c == 2 ? 1.0 : 0.0, c >= 2 ? 1.0 : 0.0);
     VSOut o;
     o.pos = mul(pc.viewProj, float4(pc.corners[c].xyz, 1.0));
+    // Behind the scene: at the far plane, so only what nothing covers takes it (reversed-Z clears to 0).
+    if (pc.texel.w > 0.5)
+        o.pos.z = 0.0;
     o.uv = lerp(pc.uv.xy, pc.uv.zw, t);
     return o;
 }

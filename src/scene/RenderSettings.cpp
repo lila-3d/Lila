@@ -101,7 +101,10 @@ json RenderSettings::toJson() const
     json cams = json::object();
     for (const auto& [name, c] : cameras)
         cams[name] = c.toJson();
-    return {{"width", width}, {"height", height}, {"pixelAspect", pixelAspect}, {"cameras", std::move(cams)}};
+    json j = {{"width", width}, {"height", height}, {"pixelAspect", pixelAspect}, {"cameras", std::move(cams)}};
+    if (output.is_object() && !output.empty())
+        j["output"] = output;
+    return j;
 }
 
 void RenderSettings::fromJson(const json& j)
@@ -115,6 +118,8 @@ void RenderSettings::fromJson(const json& j)
     if (j.contains("cameras") && j["cameras"].is_object())
         for (auto& [name, c] : j["cameras"].items())
             cameras[name].fromJson(c);
+    if (j.contains("output") && j["output"].is_object())
+        output = j["output"];
 }
 
 RenderSettings& renderSettings()

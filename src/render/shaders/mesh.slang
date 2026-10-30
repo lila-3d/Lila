@@ -11,6 +11,28 @@ struct InstanceData
     float4 color; // wire colour; for shaded draws the wire meshWirePS draws over them, alpha 0 for none
 };
 
+/** One light; matches render::GpuLight. Kinds: 0 point, 1 spot, 2 directional, 3 area, 4 disc. */
+struct GpuLight
+{
+    float4 position;   // xyz, w kind
+    float4 direction;  // xyz where the light travels, w range (cm, 0 none)
+    float4 radiance;   // rgb, w radius (cm)
+    float4 cone;       // cos outer, 1 / (cos inner - cos outer), width, height
+    float4 right;      // xyz area width axis, w shadow texel (cm)
+    float4x4 shadow;   // world to the light's shadow clip space
+    float4 shadowRect; // atlas uv offset xy, scale zw; zw 0 without a shadow
+};
+
+/** The light buffer's first entry: the frame's fog; matches render::GpuFrame. The lights follow it. */
+struct GpuFrame
+{
+    float4 fogColor;  // rgb, w density per cm (0 off)
+    float4 fogParams; // height, falloff per cm, start, sun scatter
+    float4 fogExtra;  // anisotropy, up axis (1 Y, 2 Z)
+    float4 shadowing; // one past the light each rtShadowTex channel traces, 0 for none
+    float4 pad[6];
+};
+
 struct MeshPush
 {
     float4x4 viewProj; // background: the inverse view-projection
@@ -20,7 +42,10 @@ struct MeshPush
     uint* edgeMask;     // meshWirePS: polygon sides per triangle, 4 bits each (RenderMesh::edgeMask)
     uint firstTriangle; // meshWirePS: the section's first triangle, which SV_PrimitiveID counts from
     float wireWidth;    // meshWirePS: pixels
-    float4 reserved[2];
+    GpuLight* lights; // the frame's fog (as a GpuFrame), then its lights
+    uint lightCount;
+    uint lightPad;
+    float4 extra;   // x: live bevel radius (cm), y: 1 when the bevel pass ran this frame
     float4 eye;     // xyz camera position
     float4 base;    // rgb base color (linear), a: roughness. Background: x blur lod, y saturation, z exposure
     float4 params;  // x: exposure, y: 1 if Z-up, z: highlight amount, w: 0 studio rig, 1 environment, 2 flat (unlit)
@@ -46,6 +71,9 @@ struct EnvUniforms
 [[vk::binding(0, 0)]] SamplerCube envMap;
 [[vk::binding(1, 0)]] Sampler2D brdfLut;
 [[vk::binding(2, 0)]] ConstantBuffer<EnvUniforms> envU;
+[[vk::binding(3, 0)]] Sampler2D shadowAtlas; // reversed-Z depth, a tile per shadowed light
+[[vk::binding(3, 2)]] Sampler2D bevelTex;    // rtbevel.slang's rounded normals, w 1 where rounded
+[[vk::binding(4, 2)]] Sampler2D rtShadowTex; // rtshadow.slang's visibility, a channel per light GpuFrame::shadowing names
 
 static const uint kBaseColorSlot = 0;
 static const uint kNormalSlot = 1;
@@ -72,6 +100,9 @@ float wrapAxis(float x, uint mode, float halfTexel, inout bool outside)
     return x;
 }
 
+/** Screen derivatives of the uv at the pixel centre (VSOut::uvCenter), set once per pixel before any map is sampled. */
+static float2 gUvDx = float2(0, 0), gUvDy = float2(0, 0);
+
 /**
  * A plain map sampled with its slot's wrap and filter (pc.sampling); the bound sampler repeats and filters linearly.
  * Gradients come from the unwrapped uv, so folds and clamps don't change the mip level.
@@ -80,8 +111,8 @@ float4 sampleWrapped(Sampler2D tex, uint slot, float2 uv)
 {
     uint mode = (pc.sampling >> (slot * 8)) & 0xff;
     if (mode == 0)
-        return tex.Sample(uv);
-    float2 dx = ddx(uv), dy = ddy(uv);
+        return tex.SampleGrad(uv, gUvDx, gUvDy);
+    float2 dx = gUvDx, dy = gUvDy;
     uint w, h;
     tex.GetDimensions(w, h);
     float2 size = float2(max(w, 1u), max(h, 1u));
@@ -229,7 +260,7 @@ float4 vtSample(uint h, float2 uv)
 {
     uint* pt = vtPageTable(h);
     // Derivatives first, while every pixel of the quad is still here.
-    float2 duvx = ddx(uv), duvy = ddy(uv);
+    float2 duvx = gUvDx, duvy = gUvDy;
     int col = int(floor(uv.x));
     int row = int(floor(1.0 - uv.y));
     if (col < 0 || col >= 10 || row < 0 || row >= 10)
@@ -264,7 +295,7 @@ float4 sampleMap(uint slot, float2 uv)
     if ((head & kUdimEntry) == 0 && (head & kVtEntry) != 0)
         return vtSample(h, uv);
     if ((head & kUdimEntry) != 0)
-        return materialTextures[NonUniformResourceIndex(mapIndex(slot, uv))].Sample(uv);
+        return materialTextures[NonUniformResourceIndex(mapIndex(slot, uv))].SampleGrad(uv, gUvDx, gUvDy);
     return sampleWrapped(materialTextures[NonUniformResourceIndex(head)], slot, uv);
 }
 #else
@@ -335,12 +366,21 @@ float sampleAo(int2 px, float depth, float3 n)
  * Widens roughness by how fast the normal turns across the pixel (Tokuyoshi and Kaplanyan 2019), so highlights on
  * curved or bevelled edges thinner than a pixel stop crawling as the camera moves.
  */
+/** Roughness the normal map's filtering hides in this pixel (Toksvig), added by specularAntialias. */
+static float gNormalVariance = 0.0;
+
+/** The smooth surface normal at the pixel centre (VSOut::normalCenter), which specularAntialias differentiates. */
+static float3 gCenterNormal = float3(0, 0, 1);
+
+/** How far the reflection of the smooth surface (no normal map) turns across a pixel, radians; see reflectionLod. */
+static float gReflectionSweep = 0.0;
+
 float specularAntialias(float3 n, float rough)
 {
-    float3 du = ddx(n), dv = ddy(n);
+    float3 du = ddx(gCenterNormal), dv = ddy(gCenterNormal);
     float variance = 0.25 * (dot(du, du) + dot(dv, dv));
     float alpha = rough * rough;
-    float alpha2 = saturate(alpha * alpha + min(2.0 * variance, 0.18));
+    float alpha2 = saturate(alpha * alpha + min(2.0 * variance, 0.18) + gNormalVariance);
     return sqrt(sqrt(alpha2));
 }
 
@@ -381,6 +421,9 @@ struct VSOut
     centroid float3 objPos : TEXCOORD1;
     centroid float3 objNormal : TEXCOORD2;
     nointerpolation uint instance : TEXCOORD3; // index into pc.instances
+    // The normal at the pixel centre, for screen derivatives only: centroid values jump along every triangle edge.
+    float3 normalCenter : TEXCOORD4;
+    float2 uvCenter : TEXCOORD5;
 };
 
 float4x4 instanceWorld(uint instance)
@@ -401,11 +444,13 @@ VSOut meshVS(VSIn v, uint instanceId: SV_InstanceID)
     float3x3 m = (float3x3)world;
     float3x3 cof = float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
     o.normal = mul(cof, v.normal);
+    o.normalCenter = o.normal;
     // A mirroring world matrix flips the bitangent.
     o.tangent = float4(mul(m, v.tangent.xyz), determinant(m) < 0.0 ? -v.tangent.w : v.tangent.w);
     // Lila UVs are V-up (Maya, FBX) and image rows run top down; Unreal's FBX import flips V the same way.
     float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
     o.uv = float2(uv.x, 1.0 - uv.y);
+    o.uvCenter = o.uv;
     o.color = v.color;
     o.objPos = v.pos;
     o.objNormal = v.normal;
@@ -443,49 +488,89 @@ struct Surface
     float ssao; // screen-space occlusion
 };
 
+/** The shading model being lit (stylised.slang's kSkin and so on), and the frames the layered ones need. */
+static uint gModel = 0;
+static float3 gStrand = float3(0, 1, 0);     // hair: along the strand
+static float3 gCoatNormal = float3(0, 0, 1); // clearcoat and eye: the smooth surface under the normal map
+
+// Charlie sheen (Estevez and Kulla) and Neubelt's visibility, for cloth.
+float D_Charlie(float nh, float a)
+{
+    float inv = 1.0 / a;
+    float sin2 = max(1.0 - nh * nh, 0.0078125);
+    return (2.0 + inv) * pow(sin2, inv * 0.5) / (2.0 * PI);
+}
+
+float V_Neubelt(float nv, float nl)
+{
+    return saturate(1.0 / (4.0 * (nl + nv - nl * nv)));
+}
+
+/** Kajiya-Kay strand highlight around tangent t, normalised for exponent e. */
+float strandHighlight(float3 t, float3 h, float e)
+{
+    float th = dot(t, h);
+    return pow(sqrt(max(1.0 - th * th, 0.0)), e) * (e + 2.0) / (2.0 * PI);
+}
+
 float3 light(float3 n, float3 v, float3 l, float3 radiance, Surface s)
 {
     float3 h = normalize(v + l);
     float nl = saturate(dot(n, l));
     float nv = max(dot(n, v), 1e-4);
+    float nh = saturate(dot(n, h)), vh = saturate(dot(v, h));
     float a = s.rough * s.rough;
-    float3 F = F_Schlick(s.f0, saturate(dot(v, h)));
-    float3 spec = D_GGX(saturate(dot(n, h)), a) * V_SmithGGX(nv, nl, a) * F;
-    float3 diff = (1.0 - F) * s.diffuse / PI;
-    return (diff + spec) * radiance * nl;
+    float3 F = F_Schlick(s.f0, vh);
+    float3 spec = D_GGX(nh, a) * V_SmithGGX(nv, nl, a) * F * nl;
+    float3 diff = (1.0 - F) * s.diffuse / PI * nl;
+    if (gModel == kSkin)
+    {
+        // Light wraps further round the form where it scatters most, and two lobes give skin's sharp highlight over a broad sheen.
+        float4 p = styleVec(2);
+        float3 w = p.rgb * p.w * 0.6;
+        float ndl = dot(normalize(lerp(n, gCoatNormal, 0.5 * p.w)), l);
+        diff = (1.0 - F) * s.diffuse / PI * saturate((ndl + w) / (1.0 + w));
+        float a2 = saturate(a * 1.8);
+        spec = 0.5 * (spec + D_GGX(nh, a2) * V_SmithGGX(nv, nl, a2) * F * nl);
+    }
+    else if (gModel == kCloth)
+    {
+        float4 p = styleVec(2);
+        spec = p.rgb * D_Charlie(nh, max(p.w * p.w, 0.01)) * V_Neubelt(nv, nl) * nl;
+        diff = s.diffuse / PI * nl;
+    }
+    else if (gModel == kHair)
+    {
+        // Two highlights shifted apart along the strand (Scheuermann): a white primary and a base-coloured secondary.
+        float4 p0 = styleVec(0);
+        float shift = styleVec(1).x * 0.5;
+        float e = lerp(8.0, 300.0, (1.0 - s.rough) * (1.0 - s.rough));
+        float3 t1 = normalize(gStrand + n * shift), t2 = normalize(gStrand - n * shift);
+        float3 kk = (float3(0.08) * strandHighlight(t1, h, e) + s.diffuse * 0.5 * strandHighlight(t2, h, e * 0.5)) * nl;
+        spec = lerp(spec, kk, saturate(p0.z));
+        diff = s.diffuse / PI * saturate(0.75 * dot(n, l) + 0.25);
+    }
+    if (gModel == kClearcoat || gModel == kEye)
+    {
+        float2 coat = gModel == kEye ? styleVec(1).yz : styleVec(0).zw;
+        float ac = max(coat.y * coat.y, 0.002);
+        float3 hc = h;
+        float nlc = saturate(dot(gCoatNormal, l));
+        float Fc = F_Schlick(float3(0.04), vh).x * saturate(coat.x);
+        // Kelemen's visibility, cheap and fine for a thin smooth layer.
+        float coatSpec = D_GGX(saturate(dot(gCoatNormal, hc)), ac) * 0.25 / max(vh * vh, 1e-4) * Fc * nlc;
+        diff *= 1.0 - Fc;
+        spec = spec * (1.0 - Fc) + coatSpec;
+    }
+    return (diff + spec) * radiance;
 }
 
-// Khronos PBR Neutral: keeps hue and saturation of base colors intact up to the shoulder.
-float3 neutralTonemap(float3 c)
-{
-    const float startCompression = 0.8 - 0.04;
-    const float desaturation = 0.15;
-    float x = min(c.r, min(c.g, c.b));
-    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-    c -= offset;
-    float peak = max(c.r, max(c.g, c.b));
-    if (peak < startCompression)
-        return c;
-    const float d = 1.0 - startCompression;
-    float newPeak = 1.0 - d * d / (peak + d - startCompression);
-    c *= newPeak / peak;
-    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-    return lerp(c, newPeak.xxx, g);
-}
+#include "scene_color.slang"
 
 // Maya-style viewport gamma on the tonemapped linear color; 1 leaves it alone.
 float3 displayGamma(float3 c)
 {
     return pow(max(c, 0.0), 1.0 / max(pc.gamma, 0.01));
-}
-
-// Half an 8-bit step of noise, applied in sRGB space since that is where the swapchain quantizes.
-float3 dither(float3 linear, float2 pixel)
-{
-    float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)))) - 0.5;
-    float3 srgb = select(linear <= 0.0031308, linear * 12.92, 1.055 * pow(max(linear, 0.0), 1.0 / 2.4) - 0.055);
-    srgb = saturate(srgb + noise / 255.0);
-    return select(srgb <= 0.04045, srgb / 12.92, pow((srgb + 0.055) / 1.055, 2.4));
 }
 
 /** World direction to environment space: the environment's own up is +Y, rotated around it by the pref. */
@@ -522,6 +607,16 @@ float specularOcclusion(float nv, float visibility, float rough)
     return saturate(pow(nv + visibility, exp2(-16.0 * rough - 1.0)) - 1.0 + visibility);
 }
 
+/**
+ * The prefiltered environment's level for a reflection. Each level is a rougher lobe, so where the reflection turns
+ * through more than its lobe within one pixel (small or tightly curved glossy surfaces, which otherwise sparkle as the
+ * view moves), it reads the level whose lobe (GGX alpha, in radians) covers that turn.
+ */
+float reflectionLod(float rough)
+{
+    return clamp(max(rough, sqrt(gReflectionSweep)) * pc.env.w, 0.0, pc.env.w);
+}
+
 float3 imageBased(float3 n, float3 v, Surface s)
 {
     float nv = max(dot(n, v), 1e-4);
@@ -529,11 +624,184 @@ float3 imageBased(float3 n, float3 v, Surface s)
     float3 specular = s.f0 * ab.x + ab.y;
     // Multiple-scattering compensation (Fdez-Aguera): rough surfaces would otherwise lose energy.
     float3 energy = 1.0 + s.f0 * (1.0 / max(ab.x + ab.y, 1e-4) - 1.0);
-    float3 prefiltered = envMap.SampleLevel(toEnv(reflect(-v, n)), s.rough * pc.env.w).rgb;
-    float3 diffuse = irradiance(toEnv(n)) * s.diffuse * (1.0 - specular * energy) * multiBounce(s.ssao, s.diffuse);
+    float3 rn = n;
+    if (gModel == kHair)
+    {
+        // Reflections stretch across the strand: reflect around a normal bent toward the view across it.
+        float3 across = cross(gStrand, v);
+        rn = normalize(lerp(n, normalize(cross(across, gStrand) + 1e-6), saturate(styleVec(0).z) * 0.8));
+    }
+    float3 prefiltered = envMap.SampleLevel(toEnv(reflect(-v, rn)), reflectionLod(s.rough)).rgb;
+    float3 irr = irradiance(toEnv(n));
+    if (gModel == kSkin)
+    {
+        // The scattered colour sees the light around the smooth surface rather than the bumps.
+        float4 p = styleVec(2);
+        irr = lerp(irr, irradiance(toEnv(normalize(lerp(n, gCoatNormal, 0.7)))), p.rgb * p.w);
+    }
+    float3 diffuse = irr * s.diffuse * (1.0 - specular * energy) * multiBounce(s.ssao, s.diffuse);
     float3 reflected = prefiltered * specular * energy * specularOcclusion(nv, s.ssao, s.rough);
+    if (gModel == kCloth)
+    {
+        float4 p = styleVec(2);
+        float3 sheen = envMap.SampleLevel(toEnv(reflect(-v, n)), clamp(p.w * pc.env.w, 0.0, pc.env.w)).rgb;
+        reflected = sheen * p.rgb * (0.25 + 0.75 * pow(1.0 - nv, 3.0)) * s.ssao;
+    }
+    if (gModel == kClearcoat || gModel == kEye)
+    {
+        float2 coat = gModel == kEye ? styleVec(1).yz : styleVec(0).zw;
+        float nvc = max(dot(gCoatNormal, v), 1e-4);
+        float Fc = F_Schlick(float3(0.04), nvc).x * saturate(coat.x);
+        float3 coatRefl = envMap.SampleLevel(toEnv(reflect(-v, gCoatNormal)), clamp(max(coat.y, sqrt(gReflectionSweep)) * pc.env.w, 0.0, pc.env.w)).rgb;
+        diffuse *= 1.0 - Fc;
+        reflected = reflected * (1.0 - Fc) + coatRefl * Fc * specularOcclusion(nvc, s.ssao, coat.y);
+    }
     // Material AO darkens indirect light only, as in Unreal; image-based light is all indirect.
     return (diffuse + reflected) * s.ao * pc.env.z;
+}
+
+/** Rotated per pixel and averaged over frames by the temporal antialiasing into a smooth penumbra. */
+static const float2 kShadowTaps[8] = { float2(-0.613, 0.617), float2(0.170, -0.040), float2(-0.299, -0.792), float2(0.645, 0.493),
+                                       float2(-0.651, -0.088), float2(0.421, -0.616), float2(0.035, 0.911), float2(0.939, -0.105) };
+
+/** How much of light l reaches P: 1 without a shadow map, else a filtered compare against its atlas tile. */
+float shadowFactor(GpuLight l, uint index, float3 P, float3 ng)
+{
+    const float4 traced = ((GpuFrame*)pc.lights)->shadowing;
+    for (uint c = 0; c < 4; ++c)
+        if (uint(traced[c] + 0.5) == index + 1)
+            return rtShadowTex.Load(int3(int2(gVtPixel), 0))[c];
+    if (l.shadowRect.z <= 0.0)
+        return 1.0;
+    // A texel and a half along the surface normal keeps acne off without lifting shadows from contacts.
+    float4 c = mul(l.shadow, float4(P + ng * l.right.w * 1.5, 1.0));
+    float3 ndc = c.xyz / c.w;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(uv < 0.0) || any(uv > 1.0) || ndc.z <= 0.0 || ndc.z > 1.0)
+        return 1.0;
+    uint w, h;
+    shadowAtlas.GetDimensions(w, h);
+    const float2 texel = 1.0 / float2(w, h);
+    const float2 lo = l.shadowRect.xy + texel, hi = l.shadowRect.xy + l.shadowRect.zw - texel;
+    const float2 at = l.shadowRect.xy + uv * l.shadowRect.zw;
+    float angle = frac(52.9829189 * frac(dot(float2(gVtPixel), float2(0.06711056, 0.00583715)))) * 6.2831853;
+    float cs = cos(angle), sn = sin(angle);
+    // Wider for lights with a size: their penumbra grows.
+    float radius = 1.5 + min(l.radiance.w / max(l.right.w, 1e-3) * 0.25, 12.0);
+    float lit = 0.0;
+    for (int k = 0; k < 8; ++k)
+    {
+        float2 o = float2(cs * kShadowTaps[k].x - sn * kShadowTaps[k].y, sn * kShadowTaps[k].x + cs * kShadowTaps[k].y) * radius * texel;
+        float d = shadowAtlas.SampleLevel(clamp(at + o, lo, hi), 0).r;
+        // Reversed-Z: the occluder nearest the light holds the largest depth.
+        lit += ndc.z + 1e-5 >= d ? 1.0 : 0.0;
+    }
+    return lit / 8.0;
+}
+
+/**
+ * Exponential height fog between the camera and P: the light it lets through, plus its own glow and the sun's, scattered
+ * forward with a Henyey-Greenstein lobe.
+ */
+float3 applyFog(float3 c, float3 eye, float3 P)
+{
+    if (pc.lights == nullptr)
+        return c;
+    GpuFrame fr = *(GpuFrame*)pc.lights;
+    const float density = fr.fogColor.w;
+    if (density <= 0.0)
+        return c;
+    const uint upAxis = fr.fogExtra.y > 1.5 ? 2 : 1;
+    float3 ray = P - eye;
+    float dist = length(ray);
+    float3 dir = ray / max(dist, 1e-4);
+    dist = max(dist - fr.fogParams.z, 0.0);
+    const float falloff = max(fr.fogParams.y, 1e-7);
+    const float h0 = (upAxis == 2 ? eye.z : eye.y) - fr.fogParams.x;
+    const float dh = (upAxis == 2 ? dir.z : dir.y) * dist;
+    // The density integrated along the ray: density * exp(-falloff * h) has a closed form over a straight line.
+    float fall = falloff * dh;
+    float line = abs(fall) > 1e-4 ? (1.0 - exp(-fall)) / fall : 1.0 - 0.5 * fall;
+    float depth = density * exp(-falloff * h0) * line * dist;
+    float transmit = exp(-min(depth, 80.0));
+    float3 glow = fr.fogColor.rgb;
+    for (uint k = 0; k < pc.lightCount; ++k)
+    {
+        GpuLight l = pc.lights[k + 1];
+        if (uint(l.position.w + 0.5) != 2)
+            continue;
+        const float g = fr.fogExtra.x;
+        float mu = dot(dir, -l.direction.xyz);
+        float phase = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * mu, 1e-4), 1.5));
+        glow += l.radiance.rgb * phase * fr.fogParams.w * 4.0 * PI;
+        break;
+    }
+    return c * transmit + glow * (1.0 - transmit);
+}
+
+/** The scene's lights on the surface: punctual, spot cones, area lights from their nearest point, with shadows. */
+float3 directLights(float3 n, float3 v, Surface s, float3 P, float3 ng)
+{
+    float3 sum = float3(0, 0, 0);
+    for (uint k = 0; k < pc.lightCount; ++k)
+    {
+        GpuLight l = pc.lights[k + 1];
+        const uint kind = uint(l.position.w + 0.5);
+        float3 L;
+        float atten = 1.0;
+        float dist = 1e6;
+        if (kind == 2)
+            L = -l.direction.xyz;
+        else
+        {
+            float3 source = l.position.xyz;
+            if (kind >= 3)
+            {
+                // Area and disc lights: the point of the shape nearest the surface, and only on their lit side.
+                float3 right = l.right.xyz, up = cross(-l.direction.xyz, right);
+                float3 rel = P - source;
+                float2 q = float2(dot(rel, right), dot(rel, up));
+                if (kind == 4)
+                    q *= min(1.0, 0.5 * l.cone.z / max(length(q), 1e-4));
+                else
+                    q = clamp(q, -0.5 * l.cone.zw, 0.5 * l.cone.zw);
+                source += right * q.x + up * q.y;
+            }
+            float3 toLight = source - P;
+            float d2 = max(dot(toLight, toLight), 1e-4);
+            dist = sqrt(d2);
+            L = toLight / dist;
+            // Inverse square in metres, so an intensity of 1 lights like the environment at a metre.
+            atten = 1.0 / max(d2 * 1e-4, 1e-4);
+            if (l.direction.w > 0.0)
+            {
+                float r = dist / l.direction.w;
+                float window = saturate(1.0 - r * r * r * r);
+                atten *= window * window;
+            }
+            if (kind == 1)
+            {
+                float t = saturate((dot(-L, l.direction.xyz) - l.cone.x) * l.cone.y);
+                atten *= t * t;
+            }
+            else if (kind >= 3)
+                atten *= saturate(dot(-L, l.direction.xyz));
+        }
+        if (atten <= 0.0)
+            continue;
+        float shadow = shadowFactor(l, k, P, ng);
+        if (shadow <= 0.0)
+            continue;
+        Surface sl = s;
+        if (l.radiance.w > 0.0 && kind != 2)
+        {
+            // A light with a size spreads its highlight (Karis): roughness widened by its angular radius.
+            float a = s.rough * s.rough;
+            sl.rough = sqrt(saturate(a + l.radiance.w / (2.0 * dist)));
+        }
+        sum += light(n, v, L, l.radiance.rgb * atten * shadow, sl);
+    }
+    return sum;
 }
 
 float3 studioRig(float3 n, float3 v, Surface s)
@@ -580,27 +848,62 @@ float3 tintBack(float3 c, bool front)
 float4 shadeMesh(VSOut i, bool front)
 {
     gVtPixel = uint2(i.pos.xy);
+    gUvDx = ddx(i.uvCenter);
+    gUvDy = ddy(i.uvCenter);
     uint flags = pc.flags;
     if ((flags & kVertexColorUnlit) != 0)
-        return float4(dither(tintBack(vertexColor(i.color, flags), front), i.pos.xy), 1.0);
+        return float4(fromDisplay(tintBack(vertexColor(i.color, flags), front), pc.gamma), 1.0);
+    const uint model = styleModel();
+    gModel = model;
+    float2 uv = i.uv;
+    float3 ng0 = normalize(i.normal);
+    float3 tangentU = normalize(i.tangent.xyz - ng0 * dot(ng0, i.tangent.xyz) + 1e-7);
+    float3 tangentV = cross(ng0, tangentU) * (i.tangent.w < 0.0 ? -1.0 : 1.0);
+    float eyeRing = 0.0;
+    if (model == kEye)
+    {
+        // The iris sits under the cornea: it shifts against the view by its depth, and darkens at its rim.
+        float4 p0 = styleVec(0);
+        float r = length(uv - 0.5);
+        float inside = 1.0 - smoothstep(p0.z * 0.95, p0.z * 1.05, r);
+        float3 view = normalize(pc.eye.xyz - i.worldPos);
+        uv -= float2(dot(view, tangentU), -dot(view, tangentV)) * p0.w * 0.1 * inside;
+        eyeRing = styleVec(1).x * smoothstep(p0.z * 0.6, p0.z, r) * inside;
+    }
+    else if (model == kHair)
+    {
+        float rot = styleVec(0).w;
+        gStrand = normalize(tangentV * cos(rot) + tangentU * sin(rot));
+    }
     float3 baseColor = pc.base.rgb;
     float opacity = pc.surface.z;
     if ((flags & kBaseColorMap) != 0)
     {
-        float4 t = sampleMap(kBaseColorSlot, i.uv);
+        float4 t = sampleMap(kBaseColorSlot, uv);
         baseColor = t.rgb;
         opacity *= t.a;
     }
+    baseColor *= 1.0 - eyeRing;
     if ((flags & kMasked) != 0 && opacity < pc.surface.w)
         discard;
     if ((flags & kVertexColorShaded) != 0)
         baseColor *= vertexColor(i.color, flags);
 
     float3 ng = normalize(i.normal);
+    {
+        // From the interpolated normal: it changes smoothly, so neighbouring quads pick neighbouring levels.
+        gCenterNormal = normalize(i.normalCenter);
+        float3 r = reflect(normalize(i.worldPos - pc.eye.xyz), gCenterNormal);
+        float3 dx = ddx(r), dy = ddy(r);
+        gReflectionSweep = sqrt(max(dot(dx, dx), dot(dy, dy)));
+    }
     float3 n = ng;
     if ((flags & kNormalMap) != 0)
     {
-        float3 tn = sampleMap(kNormalSlot, i.uv).xyz * 2.0 - 1.0;
+        float3 tn = sampleMap(kNormalSlot, uv).xyz * 2.0 - 1.0;
+        // Toksvig: filtered mips average the normals, and how short the average is says how bumpy the texels under it are.
+        float len = clamp(length(tn), 1e-3, 1.0);
+        gNormalVariance = clamp((1.0 - len) / len - 0.02, 0.0, 0.5);
         // The bitangent points up the texture (V-up); DirectX maps store green pointing down it.
         if ((flags & kNormalGreenUp) == 0)
             tn.y = -tn.y;
@@ -608,7 +911,6 @@ float4 shadeMesh(VSOut i, bool front)
         float3 b = cross(ng, t) * (i.tangent.w < 0.0 ? -1.0 : 1.0);
         n = normalize(t * tn.x + b * tn.y + ng * max(tn.z, 1e-3));
     }
-    const uint model = styleModel();
     Stroke stroke = { float3(0, 0, 1), 0.5, 0.5 };
     if (model == kPainterly && styleVec(0).z * styleVec(0).w > 0.0)
     {
@@ -617,6 +919,14 @@ float4 shadeMesh(VSOut i, bool front)
     }
     if (!front && (flags & kOneSidedLighting) == 0)
         n = -n;
+    gCoatNormal = front || (flags & kOneSidedLighting) != 0 ? ng : -ng;
+    if (pc.extra.x > 0.0 && pc.extra.y > 0.5)
+    {
+        // The live bevel: the rounded normal replaces the surface's own under any normal map detail.
+        float4 bevel = bevelTex.Load(int3(int2(i.pos.xy), 0));
+        if (bevel.w > 0.5)
+            n = normalize(n - gCoatNormal + bevel.xyz);
+    }
 
     Surface s;
     float metallic = pc.surface.x;
@@ -629,7 +939,7 @@ float4 shadeMesh(VSOut i, bool front)
     }
     if ((flags & (kMetallicMap | kRoughnessMap | kOcclusionMap)) != 0)
     {
-        float3 orm = sampleMap(kOrmSlot, i.uv).rgb;
+        float3 orm = sampleMap(kOrmSlot, uv).rgb;
         if ((flags & kOcclusionMap) != 0)
             s.ao = orm.r;
         if ((flags & kRoughnessMap) != 0)
@@ -655,6 +965,7 @@ float4 shadeMesh(VSOut i, bool front)
         else if (model == kFoliage)
             foliageSurface(i, n, baseColor, metallic, s);
         c = pc.params.w > 0.5 ? imageBased(n, v, s) : studioRig(n, v, s);
+        c += directLights(n, v, s, i.worldPos, front ? ng : -ng);
         if (model == kFoliage)
             c = foliageLight(c, n, v, s);
     }
@@ -662,12 +973,18 @@ float4 shadeMesh(VSOut i, bool front)
     if ((flags & kEmissiveMap) != 0)
         emissive *= sampleMap(kEmissiveSlot, i.uv).rgb;
     c += emissive;
+    if (model != kUnlit && pc.params.w < 1.5)
+        c = applyFog(c, pc.eye.xyz, i.worldPos);
     c *= pc.params.x;
-    c = displayGamma(neutralTonemap(c));
-    c = lerp(c, float3(1.0), pc.params.z);
-    c = tintBack(c, front);
     float alpha = (flags & kTranslucent) != 0 ? saturate(opacity) : 1.0;
-    return float4(dither(c, i.pos.xy), alpha);
+    // Highlights and the back-face tint mix in display space.
+    if (pc.params.z > 0.0 || (!front && pc.backTint != 0))
+    {
+        float3 d = displayGamma(neutralTonemap(c));
+        d = tintBack(lerp(d, float3(1.0), pc.params.z), front);
+        return float4(fromDisplay(d, pc.gamma), alpha);
+    }
+    return float4(sceneCompress(c), alpha);
 }
 
 [shader("fragment")]
@@ -700,7 +1017,7 @@ float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycen
     if ((sides & 4) != 0)
         d = min(d, px.y);
     const float cover = saturate(0.5 * pc.wireWidth + 0.5 - d);
-    c.rgb = lerp(c.rgb, wire.rgb, cover * wire.a);
+    c.rgb = lerp(c.rgb, fromDisplay(wire.rgb, pc.gamma), cover * wire.a);
     return c;
 }
 #endif
@@ -710,6 +1027,8 @@ float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycen
 float4 prepassPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
     gVtPixel = uint2(i.pos.xy);
+    gUvDx = ddx(i.uvCenter);
+    gUvDy = ddy(i.uvCenter);
     if ((pc.flags & kMasked) != 0)
     {
         float opacity = pc.surface.z;
@@ -719,7 +1038,8 @@ float4 prepassPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
             discard;
     }
     float3 n = normalize(i.normal);
-    return float4(front ? n : -n, 1.0);
+    // The live bevel's radius rides along for the bevel pass.
+    return float4(front ? n : -n, pc.extra.x);
 }
 
 struct BgOut
@@ -748,6 +1068,6 @@ float4 backgroundPS(BgOut i) : SV_Target
     float3 c = envMap.SampleLevel(toEnv(rd), pc.base.x).rgb * pc.env.z * pc.base.z;
     float luma = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = lerp(luma.xxx, c, pc.base.y);
-    c = displayGamma(neutralTonemap(c * pc.params.x));
-    return float4(dither(c, i.pos.xy), 1.0);
+    c = applyFog(c, pc.eye.xyz, pc.eye.xyz + rd * 1e6);
+    return float4(sceneCompress(c * pc.params.x), 1.0);
 }

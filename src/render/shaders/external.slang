@@ -1,5 +1,6 @@
 // An external viewport renderer's image, drawn in place of Lila's scene: colour blended over the background, and its
-// depth written where it hit something so depth-tested wires, grid and overlays hide behind its surfaces.
+// depth written where it hit something so depth-tested wires, grid and overlays hide behind its surfaces. Drawn in display
+// space over the composed frame, so its colours come through exactly.
 
 struct ExternalPush
 {

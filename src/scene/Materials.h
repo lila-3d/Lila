@@ -96,6 +96,20 @@ enum Attr
     kFoliageTopHighlight,
     kFoliageTranslucency,
     kFoliageWrap,
+    // Skin, Cloth, Clearcoat, Hair, Eye
+    kSubsurfaceColor,
+    kSubsurfaceAmount,
+    kSheenColor,
+    kSheenRoughness,
+    kClearcoat,
+    kClearcoatRoughness,
+    kAnisotropy,
+    kAnisotropyRotation,
+    kHairShift,
+    kIrisRadius,
+    kIrisDepth,
+    kLimbalRing,
+    kBevelRadius,
     // Per-texture sampling: wrapU, wrapV and filter for each of materials::sampledMaps(), in that order.
     kTextureSampling,
     kCount = kTextureSampling + 7 * 3
@@ -109,6 +123,11 @@ enum class ShadingModel
     Toon,
     Foliage,
     Unlit, // base color (plus emissive) as is, no lighting: Unreal's Unlit, glTF's KHR_materials_unlit
+    Skin,      // light scattered under the surface: Unreal's Subsurface Profile
+    Cloth,     // velvet sheen at grazing angles: Unreal's Cloth
+    Clearcoat, // a glossy layer over the base: Unreal's Clear Coat (car paint, lacquer)
+    Hair,      // highlights stretched across the strand: Unreal's Hair, for hair cards
+    Eye,       // iris under a refracting cornea: Unreal's Eye
 };
 
 /** Where Painterly stroke sheets are projected. */

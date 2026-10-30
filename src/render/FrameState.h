@@ -97,6 +97,75 @@ struct ImagePlaneDraw
     Depth depth = Depth::Behind;
 };
 
+/** A 3D colour lookup table (an Adobe .cube): display-encoded rgb in, rgb out, red varying fastest. */
+struct Lut3D
+{
+    int size = 0;
+    std::vector<float> rgb; // size^3 entries of 3 floats
+    uint64_t key = nextResourceKey();
+};
+
+/** How to turn the scene's light into the picture: tonemapper, grading, bloom and lens effects (scene::postProcess). */
+struct PostSettings
+{
+    enum Tonemapper
+    {
+        Neutral, // Khronos PBR Neutral: base colours stay true, the default
+        AgX,
+        Aces,
+        Linear, // clipped
+    };
+    Tonemapper tonemapper = Neutral;
+    int agxLook = 0; // 0 none, 1 punchy, 2 golden
+    /** Grading, bloom and lens effects below apply only when on; the tonemapper and auto exposure always do. */
+    bool effects = false;
+    bool autoExposure = false;
+    float exposureCompensation = 0.0f;       // stops on top of the auto exposure
+    float exposureMin = -6.0f, exposureMax = 6.0f; // stops the auto exposure may reach
+    float exposureSpeed = 3.0f;              // per second; 0 jumps
+    float contrast = 1.0f, saturation = 1.0f;
+    glm::vec3 whiteBalance{1.0f};            // per channel gains (from temperature and tint)
+    glm::vec3 lift{0.0f}, gamma{1.0f}, gain{1.0f};
+    float bloom = 0.0f;                      // blend toward the bloom, 0..1
+    float bloomRadius = 1.0f;                // tent filter radius in texels per level
+    float vignette = 0.0f, grain = 0.0f;
+    float chromaticAberration = 0.0f;        // pixels of colour split at the corners
+    float distortion = 0.0f;                 // negative barrel, positive pincushion
+    float sharpen = 0.0f;
+    std::shared_ptr<const Lut3D> lut;
+    float lutIntensity = 1.0f;
+    /** Off for passes whose values must come out exact, such as object mattes. */
+    bool dither = true;
+};
+
+/** A light the viewport shades with: the scene's lights its own provider handles, in world space. */
+struct LightDraw
+{
+    enum Kind
+    {
+        Point,
+        Spot,
+        Directional,
+        Area, // width by height, facing along direction
+        Disc, // width is the diameter
+    };
+    Kind kind = Point;
+    glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f, -1.0f, 0.0f}; // where the light travels
+    glm::vec3 right{1.0f, 0.0f, 0.0f};      // area lights: the width axis
+    glm::vec3 radiance{1.0f};               // colour times intensity, in the shader's units (1 lights like the default environment)
+    float range = 0.0f;                     // cm; 0 has no cutoff
+    float cosInner = 1.0f, cosOuter = 0.0f; // spot cone
+    float width = 0.0f, height = 0.0f;      // cm
+    float radius = 0.0f;                    // cm, softens highlights and shadows
+    /** The light casts shadows: traced on GPUs with ray queries (any kind), else a shadow map (directional and spot). */
+    bool castsShadows = false;
+    /** World to the shadow map's clip space (reversed-Z), when it has one. */
+    bool shadows = false;
+    glm::mat4 shadowViewProj{1.0f};
+    float shadowTexel = 1.0f; // world size of a shadow texel at the light's focus, cm, for the normal offset
+};
+
 struct FrameState
 {
     glm::dmat4 view{1.0};
@@ -122,6 +191,42 @@ struct FrameState
     float gamma = 1.0f;    // display gamma on top of the tonemap, like Maya's viewport gamma
     /** Requested MSAA count (1, 2, 4, 8); the renderer clamps it to the device and rebuilds its targets on change. */
     int msaaSamples = 8;
+    /** Temporal antialiasing: the scene jitters per frame and blends into a history, which smooths shading and texture shimmer MSAA can't. */
+    bool taa = true;
+    /** Jittered frames a still view keeps drawing and averaging after it changes, for a supersampled result; 1 stops at once. */
+    int accumulate = 16;
+    PostSettings post;
+    /**
+     * Depth of field: the camera's aperture radius (cm; 0 for none) and focus distance along the view. With temporal
+     * antialiasing on, each frame looks through another point of the aperture, so a still view or a render converges on
+     * true lens blur. blades 0 is a round aperture.
+     */
+    float lensRadius = 0.0f;
+    float focusDistance = 500.0f;
+    int apertureBlades = 0;
+    float apertureRotation = 0.0f; // degrees
+    std::vector<LightDraw> lights;
+    /** Up to four shadowed lights trace their shadows against the scene (GPUs with ray queries) instead of shadow maps. */
+    bool rtShadows = false;
+    /** Exponential height fog, lit by the first directional light as well as its own colour. Lengths cm. */
+    struct Fog
+    {
+        bool on = false;
+        glm::vec3 color{0.6f, 0.7f, 0.8f}; // linear, scaled by the environment intensity like ambient light
+        float density = 0.0002f;           // per cm at the fog height
+        float height = 0.0f;               // where the density is as given
+        float falloff = 0.002f;            // per cm upward: density halves every ln2 / falloff
+        float start = 0.0f;                // no fog nearer the camera than this
+        float sunScatter = 0.5f;           // how much the sun lights the fog
+        float anisotropy = 0.6f;           // forward scattering toward the sun, 0 to 0.95
+    } fog;
+    /** No backdrop: what no surface covers stays clear (alpha 0), for renders composited later. */
+    bool transparentBackground = false;
+    /**
+     * Frames drawn after this one average into it as they are, with no reprojection: the subframes of a render, whose
+     * cameras and objects may move between them for motion blur.
+     */
+    bool accumulateOnly = false;
     bool grid = true;
     bool backfaceCulling = false; // culls back faces of every material; off, every material shows them
     /** Back faces of two-sided materials shade with their normal flipped toward the camera; off, they light from behind. */
@@ -150,6 +255,8 @@ struct FrameState
     bool ambientOcclusion = true;       // screen-space, on indirect light only
     /** AO from the main pass's depth, darkening the whole finished mesh (Maya's way): cheaper, as it skips the prepass. */
     bool aoFast = false;
+    /** AO traced against the scene (on GPUs with ray queries) instead of from the screen: no halos, and occluders off screen count. */
+    bool aoRayTraced = false;
     float aoRadius = 30.0f;             // world units (cm)
     float aoIntensity = 1.0f;
     // Preview-only post over the shaded scene (not lines or overlays): a painterly anisotropic Kuwahara filter and outlines.

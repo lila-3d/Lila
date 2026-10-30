@@ -1,10 +1,19 @@
 #include "ui/ViewportDisplay.h"
 
 #include "core/PrefStore.h"
+#include "render/CubeLut.h"
 #include "render/DisplayOptions.h"
 #include "render/Renderer.h"
+#include "scene/Graph.h"
+#include "scene/Light.h"
+#include "scene/NodeBounds.h"
+#include "scene/Transform.h"
+#include "scene/PostProcess.h"
 #include "scene/Relocate.h"
 #include "ui/Theme.h"
+
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +24,8 @@ void apply(render::FrameState& s)
 {
     const PrefStore& p = PrefStore::get();
     s.msaaSamples = render::msaaSamples(p.value<bool>("general", kAaEnabled, true), p.value<int>("general", kAaSamples, kDefaultSamples), 0xFFu);
+    s.taa = p.value<bool>("general", kTaa, true);
+    s.accumulate = std::clamp(p.value<int>("general", kAccumulate, 16), 1, 256);
     s.grid = p.value<bool>("general", kGrid, true);
     s.backfaceCulling = p.value<bool>("general", kBackfaceCulling, false);
     s.xray = p.value<bool>("general", kXray, false);
@@ -35,6 +46,189 @@ void apply(render::FrameState& s)
     s.wirePreselect = themeLinear("wirePreselect", s.wirePreselect);
     s.wireUnderSelected = themeLinear("wireUnderSelected", s.wireUnderSelected);
     s.wireDefault = themeLinear("wireframe", s.wireDefault);
+    applyPostProcess(s, p.value<bool>("general", kPostEffects, true));
+    applyLights(s);
+    s.rtShadows = p.value<bool>("general", kRtShadows, true);
+}
+
+namespace
+{
+/**
+ * Scale from a light's intensity to the shader's radiance. Unitless is used as is (1 at 1 m matches the default
+ * environment's light); physical units come down by the same factor, as nothing in the viewport is calibrated to them.
+ */
+float unitScale(const scene::lights::Settings& l)
+{
+    using U = scene::lights::Units;
+    constexpr double kPhysical = 0.01;
+    const double outer = glm::radians(std::clamp(l.outerConeAngle, 0.1, 90.0));
+    switch (l.units)
+    {
+    case U::Candela:
+    case U::Nits:
+        return float(kPhysical);
+    case U::Lux:
+        return float(kPhysical);
+    case U::Lumens:
+        // Candela from lumens over the solid angle the light spreads into.
+        return float(kPhysical / (l.kind == scene::lights::Kind::Spot ? 2.0 * glm::pi<double>() * (1.0 - std::cos(outer)) : 4.0 * glm::pi<double>()));
+    case U::Watts:
+        return float(kPhysical * 683.0 / (4.0 * glm::pi<double>()));
+    default:
+        return 1.0f;
+    }
+}
+
+/** Reversed-Z: depth 1 at the near plane, 0 at the far, as Lila's own projections. */
+glm::dmat4 reverseDepth(const glm::dmat4& zeroToOne)
+{
+    glm::dmat4 r(1.0);
+    r[2][2] = -1.0;
+    r[3][2] = 1.0;
+    return r * zeroToOne;
+}
+} // namespace
+
+void applyLights(render::FrameState& s)
+{
+    namespace lights = scene::lights;
+    s.lights.clear();
+    const scene::Graph& cg = scene::Graph::current();
+    scene::Graph& g = const_cast<scene::Graph&>(cg);
+    geo::Bounds sceneBounds;
+    bool boundsDone = false;
+    auto bounds = [&]() -> const geo::Bounds& {
+        if (!boundsDone)
+        {
+            boundsDone = true;
+            for (scene::NodeId id : g.nodes())
+                if (const scene::Node* n = g.node(id); n && n->type().isA("mesh") && scene::effectivelyVisible(g, id, true))
+                    if (geo::Bounds b = scene::worldBounds(g, id); b.valid())
+                    {
+                        sceneBounds.extend(b.min);
+                        sceneBounds.extend(b.max);
+                    }
+        }
+        return sceneBounds;
+    };
+    for (scene::NodeId id : g.nodes())
+    {
+        const scene::Node* n = g.node(id);
+        if (!n || !n->type().isA("light") || !scene::effectivelyVisible(g, id, true))
+            continue;
+        const lights::Provider* owner = lights::providerFor(*n);
+        if (!owner || owner->id != lights::kLilaProvider)
+            continue;
+        const lights::Settings l = lights::settings(*n);
+        if (l.kind == lights::Kind::Dome || l.intensity <= 0.0)
+            continue;
+        const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        render::LightDraw d;
+        d.kind = l.kind == lights::Kind::Spot          ? render::LightDraw::Spot
+                 : l.kind == lights::Kind::Directional ? render::LightDraw::Directional
+                 : l.kind == lights::Kind::Area        ? render::LightDraw::Area
+                 : l.kind == lights::Kind::Disc        ? render::LightDraw::Disc
+                                                       : render::LightDraw::Point;
+        d.position = glm::vec3(world[3]);
+        d.direction = glm::vec3(glm::normalize(-glm::dvec3(world[2])));
+        d.right = glm::vec3(glm::normalize(glm::dvec3(world[0])));
+        d.radiance = glm::vec3(lights::effectiveColor(l) * l.intensity) * unitScale(l);
+        d.range = float(std::max(l.range, 0.0));
+        d.cosOuter = float(std::cos(glm::radians(std::clamp(l.outerConeAngle, 0.1, 90.0))));
+        d.cosInner = float(std::cos(glm::radians(std::clamp(std::min(l.innerConeAngle, l.outerConeAngle - 0.1), 0.0, 90.0))));
+        d.width = float(std::max(l.width, 0.0) * glm::length(glm::dvec3(world[0])));
+        d.height = float(std::max(l.kind == lights::Kind::Disc ? l.width : l.height, 0.0) * glm::length(glm::dvec3(world[1])));
+        d.radius = float(std::max(l.sourceRadius, 0.0));
+        if (d.kind == render::LightDraw::Area || d.kind == render::LightDraw::Disc)
+            d.radius = std::max(d.radius, 0.5f * std::sqrt(std::max(d.width * d.height, 0.0f)));
+
+        d.castsShadows = l.castShadows;
+        const geo::Bounds& b = bounds();
+        if (l.castShadows && b.valid() && (d.kind == render::LightDraw::Directional || d.kind == render::LightDraw::Spot))
+        {
+            const glm::dvec3 centre = b.center();
+            const double radius = std::max(glm::length(b.size()) * 0.5, 1.0);
+            const glm::dvec3 dir = glm::dvec3(d.direction);
+            const glm::dvec3 up = std::abs(dir.y) < 0.99 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
+            if (d.kind == render::LightDraw::Directional)
+            {
+                const glm::dmat4 view = glm::lookAt(centre - dir * radius * 2.0, centre, up);
+                d.shadowViewProj = glm::mat4(reverseDepth(glm::orthoRH_ZO(-radius, radius, -radius, radius, radius * 0.5, radius * 3.5)) * view);
+                d.shadowTexel = float(2.0 * radius / 2048.0);
+            }
+            else
+            {
+                const glm::dvec3 eye = glm::dvec3(d.position);
+                const double far = glm::length(centre - eye) + radius;
+                const double fov = 2.0 * glm::radians(std::clamp(l.outerConeAngle, 1.0, 89.0));
+                const glm::dmat4 view = glm::lookAt(eye, eye + dir, up);
+                d.shadowViewProj = glm::mat4(reverseDepth(glm::perspectiveRH_ZO(fov, 1.0, std::max(far * 0.001, 0.5), far)) * view);
+                d.shadowTexel = float(2.0 * std::tan(fov * 0.5) * glm::length(centre - eye) / 2048.0);
+            }
+            d.shadows = true;
+        }
+        s.lights.push_back(d);
+    }
+}
+
+void applyLens(render::FrameState& s, const scene::camera::Lens& lens)
+{
+    if (!lens.depthOfField)
+        return;
+    s.lensRadius = float(lens.apertureRadius());
+    s.focusDistance = float(lens.focusDistance);
+    s.apertureBlades = lens.blades;
+    s.apertureRotation = float(lens.bladeRotation);
+}
+
+void applyPostProcess(render::FrameState& s, bool effects)
+{
+    namespace pp = scene::postProcess;
+    s.post = {};
+    const scene::Graph& g = scene::Graph::current();
+    const scene::NodeId id = pp::active(g);
+    if (id == scene::kNoNode)
+        return;
+    const scene::Node& n = *g.node(id);
+    const int a = pp::firstAttr();
+    auto num = [&](int attr) { return float(n.as<double>(a + attr)); };
+    auto vec = [&](int attr) { return glm::vec3(n.as<glm::dvec3>(a + attr)); };
+    render::PostSettings& p = s.post;
+    s.fog = {};
+    p.tonemapper = render::PostSettings::Tonemapper(std::clamp(int(n.as<int64_t>(a + pp::kTonemapper)), 0, 3));
+    p.agxLook = int(n.as<int64_t>(a + pp::kAgxLook));
+    s.exposure *= std::exp2(num(pp::kExposure));
+    p.autoExposure = n.as<bool>(a + pp::kAutoExposure);
+    p.exposureCompensation = num(pp::kExposureCompensation);
+    p.exposureMin = num(pp::kExposureMin);
+    p.exposureMax = std::max(num(pp::kExposureMax), p.exposureMin);
+    p.exposureSpeed = num(pp::kExposureSpeed);
+    p.effects = effects;
+    p.whiteBalance = glm::vec3(pp::whiteBalance(n.as<double>(a + pp::kTemperature), n.as<double>(a + pp::kTint)));
+    p.contrast = num(pp::kContrast);
+    p.saturation = num(pp::kSaturation);
+    p.lift = vec(pp::kLift);
+    p.gamma = vec(pp::kGamma);
+    p.gain = vec(pp::kGain);
+    p.bloom = num(pp::kBloom);
+    p.bloomRadius = num(pp::kBloomRadius);
+    p.vignette = num(pp::kVignette);
+    p.grain = num(pp::kGrain);
+    p.chromaticAberration = num(pp::kChromaticAberration);
+    p.distortion = num(pp::kDistortion);
+    p.sharpen = num(pp::kSharpen);
+    p.lutIntensity = num(pp::kLutIntensity);
+    if (const std::string lut = n.as<std::string>(a + pp::kLut); !lut.empty())
+        p.lut = render::loadCubeLut(lut);
+    render::FrameState::Fog& fog = s.fog;
+    fog.on = n.as<bool>(a + pp::kFog) && num(pp::kFogDensity) > 0.0f;
+    fog.color = vec(pp::kFogColor);
+    fog.density = num(pp::kFogDensity) * 0.01f;
+    fog.height = num(pp::kFogHeight);
+    fog.falloff = num(pp::kFogFalloff) * 0.01f;
+    fog.start = num(pp::kFogStart);
+    fog.sunScatter = num(pp::kFogSunScatter);
+    fog.anisotropy = std::clamp(num(pp::kFogAnisotropy), 0.0f, 0.95f);
 }
 
 bool defaultMaterial()
@@ -148,6 +342,7 @@ void applyQuality(Quality q)
     p.set("general", "/viewport/ao/mode", q == Quality::Best ? "accurate" : "fast");
     p.set("general", kAaEnabled, q != Quality::Fastest);
     p.set("general", kAaSamples, q == Quality::Best ? 8 : 4);
+    p.set("general", kTaa, q != Quality::Fastest);
     p.set("general", kShadows, q != Quality::Fastest);
 }
 

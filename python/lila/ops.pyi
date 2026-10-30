@@ -1132,7 +1132,7 @@ def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | 
         query: Short form q. Default False.
     """
 
-def captureTurntable(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
+def captureTurntable(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
     """Render several views offscreen and tile them into one PNG contact sheet (row by row): count angles around the subject, or the named views. Returns the path.
 
     Args:
@@ -1146,13 +1146,14 @@ def captureTurntable(view: str | None = None, yaw: float | None = None, pitch: f
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
         showSelection: Tint selected components. Default True.
+        samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         path: PNG file to write. Short form p.
         count: Views around the up axis, starting at the front. Short form c. Default 4.
         columns: Tiles per row; 0 picks. Default 0.
         views: Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp'].
     """
 
-def captureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, path: str | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None) -> Any:
+def captureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, path: str | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None) -> Any:
     """Render the scene offscreen from a named view or angle and save a PNG. Never moves a viewport's camera, works with Lila in the background and in batch mode. Returns the path.
 
     Args:
@@ -1166,6 +1167,7 @@ def captureView(view: str | None = None, yaw: float | None = None, pitch: float 
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
         showSelection: Tint selected components. Default True.
+        samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         path: PNG file to write. Short form p.
     """
 
@@ -1451,7 +1453,7 @@ def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | Non
         empty: Make it with no members, whatever is selected. Short form e. Default False.
     """
 
-def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, bc: Sequence[float] | None = None) -> Any:
+def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, subsurfaceColor: Sequence[float] | None = None, subsurfaceAmount: float | None = None, sheenColor: Sequence[float] | None = None, sheenRoughness: float | None = None, clearcoat: float | None = None, clearcoatRoughness: float | None = None, anisotropy: float | None = None, anisotropyRotation: float | None = None, hairShift: float | None = None, irisRadius: float | None = None, irisDepth: float | None = None, limbalRing: float | None = None, bevelRadius: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, bc: Sequence[float] | None = None) -> Any:
     """Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.
 
     Args:
@@ -1477,7 +1479,7 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         ormMap: Packed occlusion/roughness/metallic texture path.
         packedLayout: orm or mro: the packed map's channel order.
         emissiveMap: Texture path.
-        shadingModel: Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon (stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through) or unlit (the base colour as it is, plus emissive, with no lighting).
+        shadingModel: Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon (stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through), unlit (the base colour as it is, plus emissive, with no lighting), skin (light scattering under the surface), cloth (velvet sheen), clearcoat (a glossy layer on top), hair (stretched strand highlights, for hair cards) or eye (an iris under a glossy cornea; UVs centred on the pupil).
         painterlyStrength: Painterly: scales the whole effect; 0 shades exactly like defaultLit.
         strokeNormal: Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.
         strokeScale: Painterly: size of one stroke sheet tile, cm (UV mode: tiles per UV unit is 100 / this).
@@ -1509,6 +1511,19 @@ def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, meta
         foliageTopHighlight: Foliage: brightens surfaces facing up.
         foliageTranslucency: Foliage: light passing through toward the camera from behind.
         foliageWrap: Foliage: wraps the light around the form, 0 to 1, for soft clumps.
+        subsurfaceColor: Skin: linear colour of the light scattered under the surface.
+        subsurfaceAmount: Skin: how far light spreads under the surface, 0 to 1.
+        sheenColor: Cloth: linear colour of the sheen at grazing angles.
+        sheenRoughness: Cloth: spread of the sheen, 0 to 1.
+        clearcoat: Clearcoat and eye: strength of the glossy top layer, 0 to 1.
+        clearcoatRoughness: Clearcoat and eye: roughness of the top layer.
+        anisotropy: Hair: how far highlights stretch across the strands, 0 to 1.
+        anisotropyRotation: Hair: degrees from the UVs' V direction to the strands.
+        hairShift: Hair: how far the two highlights shift apart along the strand, 0 to 1.
+        irisRadius: Eye: iris radius in UV units, around the UV centre.
+        irisDepth: Eye: how deep the iris sits under the cornea; it shifts with the view.
+        limbalRing: Eye: darkening around the iris's edge, 0 to 1.
+        bevelRadius: Rounds hard edges as they shade, by ray tracing the surfaces within this many cm; 0 is off. Needs a GPU with ray tracing. Bake a roundedNormal map to keep it for game engines.
         baseColorMapWrapU: What baseColorMap shows past its edges along U: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         baseColorMapWrapV: What baseColorMap shows past its edges along V: repeat, clamp (the edge texels), mirror (repeat flipped) or black.
         baseColorMapFilter: How baseColorMap is filtered: linear (smooth, mipmapped) or nearest (hard texels, for pixel art).
@@ -2493,6 +2508,26 @@ def exportVertexAnimation(*objects: Any, start: float | None = None, end: float 
         restFrame: Frame whose shape is the rest mesh (default the first sampled frame). Short form rf.
         maxWidth: Widest texture before a frame wraps to more rows (default the vat maxWidth pref, 4096). Short form mw.
         exrBits: EXR depth: 16 (half float) or 32 (float). Default 32 for rigid, 16 otherwise. Short form eb.
+    """
+
+def exportWebViewer(*objects: Any, selection: bool | None = None, title: str | None = None, author: str | None = None, autoRotate: bool | None = None, background: Sequence[float] | None = None, exposure: float | None = None, tonemapper: str | None = None, environment: bool | None = None, sl: bool | None = None, t: str | None = None, au: str | None = None, ar: bool | None = None, bg: Sequence[float] | None = None, ex: float | None = None, tm: str | None = None, env: bool | None = None) -> Any:
+    """Write a folder to upload to a website for showing a model interactively: model.glb (exported as by exportGltf, materials and textures embedded), index.html (Google's <model-viewer> loaded from a CDN, with orbit controls, turntable and a caption) and environment.hdr (the viewport's HDRI).
+
+    The page must be served over http(s); browsers block model.glb when index.html is opened from disk. Returns the folder.
+
+    Args:
+        objects: folder.
+        selection: Export the selection; False exports the whole scene. Default: the selection when there is one. Short form sl.
+        title: Caption title, also the page title. Short form t.
+        author: Caption line under the title. Short form au.
+        autoRotate: Start with the turntable spinning. Short form ar. Default True.
+        background: Page background, sRGB 0 to 1; the viewport background by default. Short form bg.
+        exposure: Exposure in stops; the viewport exposure by default. Short form ex.
+        tonemapper: Tone mapping: neutral, aces or agx. Short form tm. One of 'neutral', 'aces', 'agx'. Default 'neutral'.
+        environment: Light with the viewport's HDRI (copied as environment.hdr); off uses model-viewer's neutral lighting. Short form env. Default True.
+
+    Examples:
+        lila.ops.exportWebViewer("C:/Portfolio/Ship", title="Ship", author="Jared Taylor")
     """
 
 def extendCurve(*objects: Any, end: str | None = None, point: Sequence[float] | None = None, mode: str | None = None, boundaries: Sequence[Any] | None = None, length: float | None = None, maxLength: float | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, p: Sequence[float] | None = None, m: str | None = None, l: float | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
@@ -3666,6 +3701,15 @@ def light(type: str | None = None, name: str | None = None, parent: str | None =
         skipSelect: Don't select the new light. Short form ss. Default False.
     """
 
+def lightRig(preset: str | None = None, intensity: float | None = None, name: str | None = None, *, p: str | None = None, i: float | None = None, n: str | None = None) -> Any:
+    """Light the selection (or everything shown) with a studio rig of area lights under one group, aimed and scaled to fit it. threePoint: key, fill and rim; rim: two back lights for silhouettes; product: soft top and side boxes. Returns the group.
+
+    Args:
+        preset: threePoint, rim or product. Short form p. One of 'threePoint', 'rim', 'product'. Default 'threePoint'.
+        intensity: Scales every light of the rig. Short form i. Default 1.0.
+        name: The group's name; made unique. Short form n. Default 'lightRig'.
+    """
+
 def listAnimLayers() -> Any:
     """The layer stack from the bottom: BaseAnimation first, then each layer's settings and members."""
 
@@ -4005,7 +4049,7 @@ def mayaReference(*objects: Any, path: str | None = None, namespace: str | None 
 def measureSelection() -> Any:
     """Measure the selection without making nodes: 2 vertices or objects give distance and dx/dy/dz, 3 an angle, edges total and per-edge length, a closed edge loop or 4+ vertices a best-fit circle, faces area and perimeter, one object its bounding box (and diameter when it is cylinder-like), a measure node its value. Returns a dict: lengths in cm; 'value' and 'text' are the headline in the display unit (/units/linear)."""
 
-def measureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ao: bool | None = None) -> Any:
+def measureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ao: bool | None = None) -> Any:
     """Draw the scene offscreen several times like captureView and return the median GPU time per frame in ms, with the ambient occlusion share, and the render thread's time recording it: {gpuMs, aoMs, cpuMs, aoCpuMs, frames}. 0 where the GPU has no timestamps.
 
     Args:
@@ -4019,6 +4063,7 @@ def measureView(view: str | None = None, yaw: float | None = None, pitch: float 
         frameSelection: Frame the selected objects or components instead of everything shown. Short form fs. Default False.
         grid: Ground grid in perspective views. Default True.
         showSelection: Tint selected components. Default True.
+        samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         frames: Frames to draw; the result is their median. Default 20.
         ambientOcclusion: Force ambient occlusion on or off instead of the viewport pref. Short form ao.
     """
@@ -5178,6 +5223,14 @@ def poseDriver(*objects: Any, axis: str | None = None, radius: float | None = No
 def poseDrivers() -> Any:
     """The pose drivers: [{node, transform, twistAxis, radius, twistWeight, falloff, restRotation, targetRotation, multipliedBy, drives, output}]."""
 
+def postProcess(name: str | None = None, existing: bool | None = None, *, n: str | None = None, e: bool | None = None) -> Any:
+    """Create a post process node, or with no new one needed, return the active one. Returns its name.
+
+    Args:
+        name: Name; made unique. Short form n.
+        existing: Return the active post process if there is one instead of creating another. Short form e. Default False.
+    """
+
 def projectCurve(*objects: Any, direction: Sequence[float] | None = None, offset: float | None = None, tolerance: float | None = None, constructionHistory: bool | None = None, replaceOriginal: bool | None = None, name: str | None = None, mesh: str | None = None, ch: bool | None = None, rpo: bool | None = None, n: str | None = None, m: str | None = None) -> Any:
     """Project curves onto a mesh along direction (the view, say) or to the closest point, as new curves that follow the mesh while history is on. Returns them.
 
@@ -5535,6 +5588,22 @@ def renameTheme(*objects: Any, name: str | None = None, to: str | None = None, n
         to: New name.
     """
 
+def render(camera: str | None = None, width: int | None = None, height: int | None = None, scale: float | None = None, samples: int | None = None, motionBlur: bool | None = None, transparent: bool | None = None, renderPass: str | None = None, path: str | None = None, frame: float | None = None, *, c: str | None = None, w: int | None = None, h: int | None = None, s: int | None = None, mb: bool | None = None, tr: bool | None = None, rp: str | None = None, p: str | None = None, f: float | None = None) -> Any:
+    """Render one frame of the scene through a camera, with the post process and lens, and write it. Returns the path.
+
+    Args:
+        camera: Camera to render through; the active view's camera when left out. Short form c.
+        width: Pixels; the scene's render resolution when left out. Short form w.
+        height: Pixels; the scene's render resolution when left out. Short form h.
+        scale: Percent of the resolution (screen percentage); 100 by default.
+        samples: Jittered frames averaged per picture: antialiasing, depth of field and motion blur; 64 by default. Short form s.
+        motionBlur: Blur what moves across the camera's shutter. Short form mb.
+        transparent: No backdrop: alpha is coverage (png, tif, exr, psd). Short form tr.
+        renderPass: beauty; wireframe (beauty with every edge drawn, for breakdowns); or id (each object a flat colour from its path, for compositing mattes). Short form rp. One of 'beauty', 'wireframe', 'id'. Default 'beauty'.
+        path: Image to write: png, jpg, tga, tif, exr (linear light) or psd. The Render Output images, numbered, when left out. Short form p.
+        frame: Frame to render; the current one when left out. Short form f.
+    """
+
 def renderMaterialThumbnail(*objects: Any, size: int | None = None, mesh: str | None = None, path: str | None = None, force: bool | None = None, backend: str | None = None, all: bool | None = None) -> Any:
     """Render a material's thumbnail offscreen on the standard shader ball (or mesh= of the scene, at the material's real-world scale) and cache it by graph hash. material is a library id, .lilamat path or texture set; all=True renders every library material. Returns {file, cached} (a list with all).
 
@@ -5546,6 +5615,50 @@ def renderMaterialThumbnail(*objects: Any, size: int | None = None, mesh: str | 
         force: Render even when cached. Default False.
         backend: gpu or cpu for the graph. One of 'gpu', 'cpu'.
         all: Every library material (the scene's sets excluded). Default False.
+    """
+
+def renderSequence(camera: str | None = None, width: int | None = None, height: int | None = None, scale: float | None = None, samples: int | None = None, motionBlur: bool | None = None, transparent: bool | None = None, renderPass: str | None = None, path: str | None = None, video: str | None = None, codec: str | None = None, quality: float | None = None, start: float | None = None, end: float | None = None, step: float | None = None, *, c: str | None = None, w: int | None = None, h: int | None = None, s: int | None = None, mb: bool | None = None, tr: bool | None = None, rp: str | None = None, p: str | None = None, v: str | None = None, q: float | None = None, st: float | None = None, en: float | None = None, by: float | None = None) -> Any:
+    """Render a frame range through a camera into an image sequence, an .mp4, or both. Returns {frames, path, video}.
+
+    Args:
+        camera: Camera to render through; the active view's camera when left out. Short form c.
+        width: Pixels; the scene's render resolution when left out. Short form w.
+        height: Pixels; the scene's render resolution when left out. Short form h.
+        scale: Percent of the resolution (screen percentage); 100 by default.
+        samples: Jittered frames averaged per picture: antialiasing, depth of field and motion blur; 64 by default. Short form s.
+        motionBlur: Blur what moves across the camera's shutter. Short form mb.
+        transparent: No backdrop: alpha is coverage (png, tif, exr, psd). Short form tr.
+        renderPass: beauty; wireframe (beauty with every edge drawn, for breakdowns); or id (each object a flat colour from its path, for compositing mattes). Short form rp. One of 'beauty', 'wireframe', 'id'. Default 'beauty'.
+        path: Images to write, #### standing for the frame number (added when missing). The Render Output images when left out. Short form p.
+        video: An .mp4 to encode the frames into. Short form v.
+        codec: Video codec: h264 (default) or hevc. One of 'h264', 'hevc'.
+        quality: Video quality, 0 to 1 (0.6 by default). Short form q.
+        start: First frame; the playback range's when left out. Short form st.
+        end: Last frame; the playback range's when left out. Short form en.
+        step: Frames between renders (1 by default). Short form by.
+    """
+
+def renderTurntable(camera: str | None = None, width: int | None = None, height: int | None = None, scale: float | None = None, samples: int | None = None, motionBlur: bool | None = None, transparent: bool | None = None, renderPass: str | None = None, path: str | None = None, video: str | None = None, codec: str | None = None, quality: float | None = None, frames: int | None = None, turns: float | None = None, spin: str | None = None, pitch: float | None = None, yaw: float | None = None, *, c: str | None = None, w: int | None = None, h: int | None = None, s: int | None = None, mb: bool | None = None, tr: bool | None = None, rp: str | None = None, p: str | None = None, v: str | None = None, q: float | None = None, fr: int | None = None) -> Any:
+    """Render a loop turning around the selection (or everything shown), framed to fit, into images, an .mp4, or both. The last frame stops one step short of the first, so the video loops. Returns {frames, path, video}.
+
+    Args:
+        camera: Camera to render through; the active view's camera when left out. Short form c.
+        width: Pixels; the scene's render resolution when left out. Short form w.
+        height: Pixels; the scene's render resolution when left out. Short form h.
+        scale: Percent of the resolution (screen percentage); 100 by default.
+        samples: Jittered frames averaged per picture: antialiasing, depth of field and motion blur; 64 by default. Short form s.
+        motionBlur: Blur what moves across the camera's shutter. Short form mb.
+        transparent: No backdrop: alpha is coverage (png, tif, exr, psd). Short form tr.
+        renderPass: beauty; wireframe (beauty with every edge drawn, for breakdowns); or id (each object a flat colour from its path, for compositing mattes). Short form rp. One of 'beauty', 'wireframe', 'id'. Default 'beauty'.
+        path: Images to write, #### standing for the frame number. Left out with video= given, video only. Short form p.
+        video: An .mp4 to encode the turntable into. Short form v.
+        codec: Video codec: h264 (default) or hevc. One of 'h264', 'hevc'.
+        quality: Video quality, 0 to 1 (0.6 by default). Short form q.
+        frames: Frames for the whole turn. Short form fr. Default 120.
+        turns: Turns over the frames. Default 1.0.
+        spin: object (the model turns in fixed light), camera (the camera circles, the light stays), or lights. One of 'object', 'camera', 'lights'. Default 'object'.
+        pitch: Camera elevation, degrees (negative looks down). Default -15.0.
+        yaw: Starting angle around the up axis, degrees. Default 35.0.
     """
 
 def reorderAnimLayer(*objects: Any, index: int | None = None, by: int | None = None, i: int | None = None, b: int | None = None) -> Any:

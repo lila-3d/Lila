@@ -51,12 +51,32 @@ std::vector<AttrDef> cameraAttrs()
     at(Camera::kBookmarks) = {.name = "bookmarks", .shortName = "bkm", .type = PlugType::String, .defaultValue = std::string(),
                               .flags = kStored | AttrHidden,
                               .doc = "Camera bookmarks saved while looking through this camera, as JSON by slot."};
+    at(Camera::kDepthOfField) = flag("depthOfField", "dof", false, "Blur what is off the focus distance, in renders and in a still view.");
+    at(Camera::kFStop) = floatAttr("fStop", "fs", 5.6, "Aperture f-number: lower blurs more.", 0.5, 64.0);
+    at(Camera::kFocusDistance) = floatAttr("focusDistance", "fd", 500.0, "Distance in focus, cm.", 0.1);
+    at(Camera::kApertureBlades) = {.name = "apertureBlades", .shortName = "ab", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kStored,
+                                   .doc = "Blades shaping the bokeh; 0 is round.", .minValue = 0.0, .maxValue = 16.0};
+    at(Camera::kApertureRotation) = floatAttr("apertureRotation", "ar", 0.0, "Rotation of the bladed aperture, degrees.");
+    at(Camera::kShutterAngle) = floatAttr("shutterAngle", "sa", 180.0, "Motion blur: degrees of each frame the shutter is open (180 is half).", 0.0, 360.0);
     return a;
 }
 } // namespace
 
 namespace camera
 {
+Lens lens(const Node& cam)
+{
+    Lens l;
+    l.depthOfField = cam.as<bool>(Camera::kDepthOfField);
+    l.fStop = cam.as<double>(Camera::kFStop);
+    l.focusDistance = cam.as<double>(Camera::kFocusDistance);
+    l.blades = int(cam.as<int64_t>(Camera::kApertureBlades));
+    l.bladeRotation = cam.as<double>(Camera::kApertureRotation);
+    l.shutterAngle = cam.as<double>(Camera::kShutterAngle);
+    l.focalLength = cam.as<double>(Camera::kFocalLength);
+    return l;
+}
+
 imagePlane::CameraFrame frame(const Node& cam, const glm::dmat4& world)
 {
     imagePlane::CameraFrame f;

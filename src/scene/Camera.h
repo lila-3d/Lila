@@ -6,6 +6,7 @@
 #include "scene/RenderSettings.h"
 #include "scene/Transform.h"
 
+#include <algorithm>
 #include <optional>
 
 namespace lila::scene
@@ -34,12 +35,33 @@ public:
         kDisplayGateMask,
         kDisplayGateMaskOpacity,
         kBookmarks,
+        kDepthOfField,
+        kFStop,
+        kFocusDistance,
+        kApertureBlades,
+        kApertureRotation,
+        kShutterAngle,
         kCount
     };
 };
 
 namespace camera
 {
+/** The lens as renders and still viewports see it. */
+struct Lens
+{
+    bool depthOfField = false;
+    double fStop = 5.6;
+    double focusDistance = 500.0; // cm
+    int blades = 0;               // 0 is a round aperture
+    double bladeRotation = 0.0;   // degrees
+    double shutterAngle = 180.0;  // degrees of the frame the shutter is open, for motion blur
+    double focalLength = 35.0;    // mm
+    /** Radius of the aperture, cm: the focal length over twice the f-number. */
+    double apertureRadius() const { return focalLength / (2.0 * std::max(fStop, 0.1)) * 0.1; }
+};
+LILA_SCENE_API Lens lens(const Node& cam);
+
 /** The camera's frame from its node and world matrix, as image planes lay out against it. */
 LILA_SCENE_API imagePlane::CameraFrame frame(const Node& cam, const glm::dmat4& world);
 

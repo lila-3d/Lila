@@ -161,6 +161,6 @@ LILA_SCENE_API ExportSnapshot gatherExport(scene::Graph& graph, const std::vecto
 LILA_SCENE_API bool writeGltf(const ExportSnapshot& snapshot, const fs::path& path, const ExportOptions& opts, std::string* error,
                               std::vector<std::string>* warnings = nullptr);
 
-/** importGltf and exportGltf. */
+/** importGltf, exportGltf and exportWebViewer. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::gltf

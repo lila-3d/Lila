@@ -1,4 +1,5 @@
 #include "scene/Node.h"
+#include "scene/PostProcess.h"
 
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
@@ -238,6 +239,7 @@ void registerBuiltins()
     arrays::registerTypes();
     registerCameraTypes();
     registerLightTypes();
+    postProcess::registerTypes();
     anim::registerTypes();
     drivers::registerTypes();
     anim::registerLayerTypes();

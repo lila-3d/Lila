@@ -14,6 +14,8 @@ lila_module(lila_ui UI
     CommandPalette.cpp CommandPalette.h CommandHistory.h
     TexturePicker.cpp TexturePicker.h
     AgentCapture.cpp AgentCapture.h
+    RenderOutput.cpp RenderOutput.h
+    RenderOutputDialog.cpp RenderOutputDialog.h
     AgentSetup.cpp AgentSetup.h
     Animation.cpp Animation.h
     ApiReference.cpp ApiReference.h

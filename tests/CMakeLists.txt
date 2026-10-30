@@ -67,6 +67,7 @@ add_executable(lila_tests
     test_primitive_axis.cpp
     test_camera.cpp
     test_light.cpp
+    test_showcase.cpp
     test_locks.cpp
     test_paths.cpp
     test_project_textures.cpp

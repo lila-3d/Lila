@@ -29,6 +29,7 @@
 #include "scene/ObjectSets.h"
 #include "scene/Picker.h"
 #include "scene/Poses.h"
+#include "scene/PostProcess.h"
 #include "scene/Relocate.h"
 #include "scene/RenderSettings.h"
 #include "scene/Rig.h"
@@ -188,6 +189,7 @@ void registerCommands()
     proxy::registerCommands();
     registerCameraCommands();
     registerLightCommands();
+    postProcess::registerCommands();
     spaces::registerCommands();
     anim::registerCommands();
     drivers::registerCommands();

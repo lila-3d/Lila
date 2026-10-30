@@ -52,6 +52,11 @@ struct LILA_SCENE_API RenderSettings
     int height = 1080;
     double pixelAspect = 1.0;
     std::map<std::string, CameraSettings> cameras;
+    /**
+     * What the render commands use when a flag is left out: camera, scale, samples, motionBlur, transparent, start, end,
+     * step, path, video, codec, quality. Written by the Render Output window.
+     */
+    json output = json::object();
 
     /** Width over height of the rendered image as displayed, pixel aspect included. */
     double deviceAspect() const { return double(width) / double(std::max(height, 1)) * pixelAspect; }

@@ -107,6 +107,7 @@ private:
     void importFile();
     void convertMayaFolder();
     void exportSelection();
+    void exportWebViewer();
     void sendToUnreal();
 
     ViewportLayout* mViewports = nullptr;

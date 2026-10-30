@@ -54,6 +54,9 @@ bool loadImage(const fs::path& path, Pixels& out, std::string* error);
 /** 8 or 16 bit PNG bytes. */
 std::string encodePng(const Pixels& p);
 
+/** exportWebViewer: model.glb, index.html and the HDRI in a folder for a website. */
+void registerWebViewerCommand();
+
 /** The base64 data URI of bytes. */
 std::string dataUri(std::string_view mime, std::string_view bytes);
 } // namespace lila::gltf

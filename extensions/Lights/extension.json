@@ -1,9 +1,9 @@
 {
     "id": "Lights",
-    "name": "Placeholder Lights",
+    "name": "Lights",
     "version": "0.1.0",
     "vendor": "Lila",
-    "description": "Stand-in lights: Create > Light and wire glyphs for point, spot, directional, area, disc and dome lights, so lights can be placed, saved and exported before a light extension renders them. Steps aside when a light extension that renders lights is enabled. Lights only this extension handles are flagged in the outliner.",
+    "description": "Point, spot, directional, area, disc and dome lights: Create > Light, their glyphs, and the viewport and renders lighting and shadowing them. A light another light extension claims is left to it.",
     "sdk": "1.0",
     "entry": {
         "windows": "Lights.dll",

@@ -310,6 +310,25 @@ void MainWindow::exportSelection()
     runTranslator(io::translators::Op::Export, file, translator);
 }
 
+void MainWindow::exportWebViewer()
+{
+    QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
+    start = QString::fromStdString(PrefStore::get().value<std::string>("general", "/export/webViewerFolder", start.toStdString()));
+    QString dir = ui::fileDialog::getExistingDirectory(this, "Export Web Viewer", start);
+    if (dir.isEmpty())
+        return;
+    PrefStore::get().set("general", "/export/webViewerFolder", dir.toStdString());
+    try
+    {
+        ops::execute("exportWebViewer", {{"args", {dir.toStdString()}}}, CallSource::UI);
+        statusBar()->showMessage("Web viewer written to " + dir + " (upload the folder; index.html needs a web server)", 8000);
+    }
+    catch (const CommandError& e)
+    {
+        QMessageBox::warning(this, "Export Web Viewer", e.what());
+    }
+}
+
 void MainWindow::sendToUnreal()
 {
     // First send asks where each object goes; after that, saving the scene re-exports and reimports it.

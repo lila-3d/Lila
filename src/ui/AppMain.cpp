@@ -28,6 +28,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
+#include "ui/RenderOutput.h"
 #include "ui/ArrayTool.h"
 #include "ui/DocsUi.h"
 #include "ui/MaterialThumbnails.h"
@@ -198,6 +199,7 @@ void registerBatchCommands()
         return;
     done = true;
     capture::registerCommands();
+    renderOutput::registerCommands();
     materialThumbs::registerCommands();
     // The gpu bake backend starts the renderer headless on first use.
     render::registerGpuBakeBackend();

@@ -1,5 +1,7 @@
 // Wireframe over shaded meshes: same positions as the mesh, flat color per instance.
 
+#include "scene_color.slang"
+
 /** One placement of a draw; matches render::GpuInstance. */
 struct InstanceData
 {
@@ -10,7 +12,7 @@ struct InstanceData
 struct WirePush
 {
     float4x4 viewProj;
-    /** Clip z = z * x + w * y: pulls the wire toward the camera along its view ray (see depthPull in Renderer.cpp). */
+    /** Clip z = z * x + w * y: pulls the wire toward the camera along its view ray (see depthPull in Renderer.cpp). z: display gamma. */
     float4 depthPull;
     InstanceData* instances; // the frame's instance buffer
     uint firstInstance;      // this draw's first entry in it
@@ -44,5 +46,5 @@ WireOut wireVS(WireIn v, uint instanceId: SV_InstanceID)
 [shader("fragment")]
 float4 wirePS(WireOut i) : SV_Target
 {
-    return i.color;
+    return float4(fromDisplay(i.color.rgb, wpc.depthPull.z), i.color.a);
 }

@@ -1,5 +1,6 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/CameraBookmarks.h"
+#include "ui/RenderOutputDialog.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 
@@ -79,6 +80,10 @@ void MainWindow::registerActions()
     actions::add({"file.exportSelection", "Export Selection...", "File", [this] { exportSelection(); }, nullptr,
                   "Writes the selected objects to an FBX or OBJ file, with their modifiers applied.",
                   "exportFbx(path, profile=\"ue5\")  # or exportObj(path)"});
+    actions::add({"file.exportWebViewer", "Export Web Viewer...", "File", [this] { exportWebViewer(); }, nullptr,
+                  "Writes the selection (or the whole scene) to a folder with model.glb and an index.html that shows it "
+                  "interactively, lit by the viewport's HDRI, for uploading to a portfolio site.",
+                  "exportWebViewer(folder, title=\"Ship\", author=\"Name\")"});
     actions::add({"file.createReference", "Create Reference...", "File", [this] { ReferenceEditor::createReferenceDialog(this); }, nullptr,
                   "References a Lila scene or a Maya .ma / .mb file into this one under a namespace; Maya files are converted to a .lila beside them.",
                   "createReference(path)  # or mayaReference(path) for .ma / .mb"});
@@ -254,6 +259,61 @@ void MainWindow::registerActions()
     actions::add({"viewport.cameraSettings", "Camera Settings...", "View",
                   [this] { RenderSettingsDialog::open(this, mViewports->active()->viewName()); }, nullptr,
                   "The active view's camera gates, film fit, overscan and gate mask."});
+    actions::add({"window.renderOutput", "Render Output...", "Render", [this] {
+                      if (!closeShownWindow<RenderOutputDialog>())
+                          RenderOutputDialog::open(this);
+                  }, nullptr,
+                  "Camera, samples, motion blur, frame range, images and video for renders.",
+                  "lila.ops.renderSequence(video=\"shot.mp4\", samples=64)"});
+    actions::add({"render.frame", "Render Frame", "Render", [] { RenderOutputDialog::renderFrame(); }, nullptr,
+                  "Renders the current frame with the Render Output settings: post process, depth of field and motion blur included.",
+                  "lila.ops.render(path=\"frame.png\", samples=64)"});
+    actions::add({"render.sequence", "Render Sequence", "Render", [] { RenderOutputDialog::renderSequence(); }, nullptr,
+                  "Renders the frame range into images and video with the Render Output settings.",
+                  "lila.ops.renderSequence(path=\"shot.####.png\")"});
+    actions::add({"render.turntable", "Render Turntable", "Render", [] {
+                      try
+                      {
+                          nlohmann::json r = ops::execute("renderTurntable", nlohmann::json::object(), CallSource::UI);
+                          if (r.contains("path") && r["path"].is_array() && !r["path"].empty())
+                              log::info("Rendered a turntable to {}", r["path"].back().get<std::string>());
+                      }
+                      catch (const CommandError& e)
+                      {
+                          log::error("{}", e.what());
+                      }
+                  }, nullptr,
+                  "Renders a looping turn around the selection (or everything shown) with the Render Output settings.",
+                  "lila.ops.renderTurntable(video=\"turntable.mp4\", frames=120)"});
+    for (const auto& [preset, label] : {std::pair{"threePoint", "Three-Point Light Rig"}, std::pair{"rim", "Rim Light Rig"}, std::pair{"product", "Product Light Rig"}})
+    {
+        const std::string p = preset;
+        actions::add({std::string("render.lightRig.") + preset, label, "Render", [p] {
+                          try
+                          {
+                              ops::execute("lightRig", {{"preset", p}}, CallSource::UI);
+                          }
+                          catch (const CommandError& e)
+                          {
+                              log::error("{}", e.what());
+                          }
+                      }, nullptr,
+                      "Area lights around the selection (or everything shown), aimed and sized to fit it, under one group.",
+                      "lila.ops.lightRig(preset=\"" + p + "\")"});
+    }
+    actions::add({"render.postProcess", "Post Process", "Render", [] {
+                      try
+                      {
+                          const std::string name = ops::execute("postProcess", {{"existing", true}}, CallSource::UI).get<std::string>();
+                          ops::execute("select", {{"args", {name}}}, CallSource::UI);
+                      }
+                      catch (const CommandError& e)
+                      {
+                          log::error("{}", e.what());
+                      }
+                  }, nullptr,
+                  "Selects the scene's post process (creating one if it has none): tonemapper, exposure, grading, bloom and lens effects.",
+                  "lila.ops.postProcess(existing=True)"});
     actions::add({"window.renderSettings", "Render Settings...", "Windows", [this] {
                       if (!closeShownWindow<RenderSettingsDialog>())
                           RenderSettingsDialog::open(this);

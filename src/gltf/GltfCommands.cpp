@@ -289,5 +289,7 @@ void registerCommands()
             return path;
         },
     });
+
+    registerWebViewerCommand();
 }
 } // namespace lila::gltf

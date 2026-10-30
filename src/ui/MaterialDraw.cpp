@@ -36,7 +36,7 @@ glm::vec2 boilOffset(double seconds, double fps)
 render::MaterialStyle style(const scene::Node& n)
 {
     render::MaterialStyle s;
-    s.model = render::ShadingModel(std::clamp<int64_t>(n.as<int64_t>(kShadingModel), 0, 4));
+    s.model = render::ShadingModel(std::clamp<int64_t>(n.as<int64_t>(kShadingModel), 0, int64_t(render::ShadingModel::Eye)));
     if (s.model == render::ShadingModel::DefaultLit || s.model == render::ShadingModel::Unlit)
         return s;
     s.painterlyStrength = num(n, kPainterlyStrength);
@@ -69,6 +69,18 @@ render::MaterialStyle style(const scene::Node& n)
     s.foliageTopHighlight = num(n, kFoliageTopHighlight);
     s.foliageTranslucency = num(n, kFoliageTranslucency);
     s.foliageWrap = num(n, kFoliageWrap);
+    s.subsurfaceColor = color(n, kSubsurfaceColor);
+    s.subsurfaceAmount = num(n, kSubsurfaceAmount);
+    s.sheenColor = color(n, kSheenColor);
+    s.sheenRoughness = num(n, kSheenRoughness);
+    s.clearcoat = num(n, kClearcoat);
+    s.clearcoatRoughness = num(n, kClearcoatRoughness);
+    s.anisotropy = num(n, kAnisotropy);
+    s.anisotropyRotation = num(n, kAnisotropyRotation);
+    s.hairShift = num(n, kHairShift);
+    s.irisRadius = num(n, kIrisRadius);
+    s.irisDepth = num(n, kIrisDepth);
+    s.limbalRing = num(n, kLimbalRing);
     if (s.model == render::ShadingModel::Painterly)
         s.strokeMap = textures::get(scene::materials::strokeSheetPath(str(n, kStrokeMap)), false);
     return s;
@@ -133,6 +145,7 @@ render::Material convert(const scene::Node& n)
     m.metallic = num(n, kMetallic);
     m.roughness = num(n, kRoughness);
     m.specular = num(n, kSpecular);
+    m.bevelRadius = num(n, kBevelRadius);
     m.opacity = num(n, kOpacity);
     m.opacityClip = num(n, kOpacityMaskClip);
     m.flags = 0;

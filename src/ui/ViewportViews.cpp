@@ -384,6 +384,33 @@ void ViewportWidget::drawGate(OverlayPainter& p)
             p.rect(QRectF(in.right(), in.top(), all.right() - in.right(), in.height()), mask);
         }
         outline(g, false);
+        const PrefStore& prefs = PrefStore::get();
+        auto inset = [&](double fraction) {
+            const double dx = g.width() * (1.0 - fraction) * 0.5, dy = g.height() * (1.0 - fraction) * 0.5;
+            return g.adjusted(dx, dy, -dx, -dy);
+        };
+        if (prefs.value<bool>("general", viewportDisplay::kSafeFrames, false))
+        {
+            // Broadcast action safe (93%) and title safe (90%).
+            const glm::vec4 guide = p.ink(0.55f, 0.6f);
+            for (double fraction : {0.93, 0.9})
+            {
+                QRectF s = inset(fraction);
+                QPointF pts[4] = {s.topLeft(), s.topRight(), s.bottomRight(), s.bottomLeft()};
+                for (int i = 0; i < 4; ++i)
+                    p.dashedLine(pts[i], pts[(i + 1) % 4], 1.0f, 4.0f, guide);
+            }
+        }
+        if (prefs.value<bool>("general", viewportDisplay::kThirds, false))
+        {
+            const glm::vec4 guide = p.ink(0.55f, 0.5f);
+            for (int k = 1; k < 3; ++k)
+            {
+                const double x = g.left() + g.width() * k / 3.0, y = g.top() + g.height() * k / 3.0;
+                p.line(QPointF(x, g.top()), QPointF(x, g.bottom()), 1.0f, guide);
+                p.line(QPointF(g.left(), y), QPointF(g.right(), y), 1.0f, guide);
+            }
+        }
         p.setShadow(true);
         QString res = QString("%1 x %2").arg(r.width).arg(r.height);
         double right = std::max(std::min(g.right(), width() - 4.0), 4.0 + OverlayPainter::textWidth(res));

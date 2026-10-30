@@ -30,6 +30,7 @@ struct Options
     bool showSelection = true;   // tint selected faces, edges and vertices
     bool label = true;           // view name in the corner (GUI only: text needs the font system)
     std::optional<bool> ambientOcclusion; // overrides the viewport's ambient occlusion pref
+    int samples = 1; // jittered frames averaged into the image (temporal antialiasing), for supersampled stills
 };
 
 struct Timing

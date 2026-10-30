@@ -57,10 +57,12 @@ AttrDef boolAttr(std::string name, bool def, std::string doc)
 /** Painterly, Toon and Foliage inputs; each model reads only its own and DefaultLit none of them. */
 void stylisedAttrs(std::vector<AttrDef>& a)
 {
-    a[kShadingModel] = enumAttr("shadingModel", {"defaultLit", "painterly", "toon", "foliage", "unlit"},
+    a[kShadingModel] = enumAttr("shadingModel", {"defaultLit", "painterly", "toon", "foliage", "unlit", "skin", "cloth", "clearcoat", "hair", "eye"},
                                 "Lighting model: defaultLit (Unreal's default lit), painterly (brush strokes and a colour palette), toon "
-                                "(stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through) or unlit (the "
-                                "base colour as it is, plus emissive, with no lighting).");
+                                "(stepped ramp with tinted light and shadow), foliage (soft gradient shading, lit through), unlit (the "
+                                "base colour as it is, plus emissive, with no lighting), skin (light scattering under the surface), cloth "
+                                "(velvet sheen), clearcoat (a glossy layer on top), hair (stretched strand highlights, for hair cards) or "
+                                "eye (an iris under a glossy cornea; UVs centred on the pupil).");
 
     a[kPainterlyStrength] = floatAttr("painterlyStrength", 1.0, "Painterly: scales the whole effect; 0 shades exactly like defaultLit.", 0.0);
     a[kStrokeNormal] = floatAttr("strokeNormal", 0.6, "Painterly: how far the stroke sheet bends the shading normal; 0 is the plain surface.", 0.0, 1.0);
@@ -98,6 +100,21 @@ void stylisedAttrs(std::vector<AttrDef>& a)
     a[kFoliageTopHighlight] = floatAttr("foliageTopHighlight", 0.3, "Foliage: brightens surfaces facing up.", 0.0);
     a[kFoliageTranslucency] = floatAttr("foliageTranslucency", 0.4, "Foliage: light passing through toward the camera from behind.", 0.0);
     a[kFoliageWrap] = floatAttr("foliageWrap", 0.5, "Foliage: wraps the light around the form, 0 to 1, for soft clumps.", 0.0, 1.0);
+
+    a[kSubsurfaceColor] = colorAttr("subsurfaceColor", glm::dvec3(0.9, 0.25, 0.15), "Skin: linear colour of the light scattered under the surface.");
+    a[kSubsurfaceAmount] = floatAttr("subsurfaceAmount", 0.8, "Skin: how far light spreads under the surface, 0 to 1.", 0.0, 1.0);
+    a[kSheenColor] = colorAttr("sheenColor", glm::dvec3(0.5), "Cloth: linear colour of the sheen at grazing angles.");
+    a[kSheenRoughness] = floatAttr("sheenRoughness", 0.5, "Cloth: spread of the sheen, 0 to 1.", 0.0, 1.0);
+    a[kClearcoat] = floatAttr("clearcoat", 1.0, "Clearcoat and eye: strength of the glossy top layer, 0 to 1.", 0.0, 1.0);
+    a[kClearcoatRoughness] = floatAttr("clearcoatRoughness", 0.05, "Clearcoat and eye: roughness of the top layer.", 0.0, 1.0);
+    a[kAnisotropy] = floatAttr("anisotropy", 0.8, "Hair: how far highlights stretch across the strands, 0 to 1.", 0.0, 1.0);
+    a[kAnisotropyRotation] = floatAttr("anisotropyRotation", 0.0, "Hair: degrees from the UVs' V direction to the strands.");
+    a[kHairShift] = floatAttr("hairShift", 0.1, "Hair: how far the two highlights shift apart along the strand, 0 to 1.", 0.0, 1.0);
+    a[kIrisRadius] = floatAttr("irisRadius", 0.15, "Eye: iris radius in UV units, around the UV centre.", 0.0, 0.5);
+    a[kIrisDepth] = floatAttr("irisDepth", 0.3, "Eye: how deep the iris sits under the cornea; it shifts with the view.", 0.0, 1.0);
+    a[kLimbalRing] = floatAttr("limbalRing", 0.5, "Eye: darkening around the iris's edge, 0 to 1.", 0.0, 1.0);
+    a[kBevelRadius] = floatAttr("bevelRadius", 0.0, "Rounds hard edges as they shade, by ray tracing the surfaces within this many cm; 0 is "
+                                                    "off. Needs a GPU with ray tracing. Bake a roundedNormal map to keep it for game engines.", 0.0);
 }
 
 constexpr int kSampledMaps[] = {kBaseColorMap, kMetallicMap, kRoughnessMap, kNormalMap, kAmbientOcclusionMap, kOrmMap, kEmissiveMap};

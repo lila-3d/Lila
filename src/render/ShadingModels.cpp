@@ -51,6 +51,25 @@ std::array<uint32_t, kStyleWords> packStyle(const MaterialStyle& s, uint32_t str
         vec(2, s.foliageBottomColor, 0.0f);
         vec(3, s.foliageTopColor, 0.0f);
         break;
+    case ShadingModel::Skin:
+        vec(2, s.subsurfaceColor, s.subsurfaceAmount);
+        break;
+    case ShadingModel::Cloth:
+        vec(2, s.sheenColor, s.sheenRoughness);
+        break;
+    case ShadingModel::Clearcoat:
+        pair(0, s.clearcoat, s.clearcoatRoughness);
+        break;
+    case ShadingModel::Hair:
+        pair(0, s.anisotropy, glm::radians(s.anisotropyRotation));
+        f[4] = s.hairShift;
+        break;
+    case ShadingModel::Eye:
+        pair(0, s.irisRadius, s.irisDepth);
+        f[4] = s.limbalRing;
+        f[5] = s.clearcoat;
+        f[6] = s.clearcoatRoughness;
+        break;
     default: break;
     }
     vec(6, boundsMin, zUp ? 2.0f : 1.0f);
