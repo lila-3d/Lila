@@ -34,6 +34,13 @@ foreach ($pkg in "numpy", "numpy.libs") {
 Copy-Item "$PythonDir\python.exe", "$PythonDir\pythonw.exe", "$PythonDir\python3.dll", "$PythonDir\python314.dll", "$PythonDir\LICENSE.txt" $py
 Copy-Item "$repo\LICENSE", "$repo\THIRD-PARTY-NOTICES.md" $out
 
+# Steam achievements load this at startup; installs from elsewhere don't have it, so they never talk to Steam.
+if (-not $Destination) {
+    $steamApi = "$repo\third_party\steamworks\sdk\redistributable_bin\win64\steam_api64.dll"
+    if (-not (Test-Path $steamApi)) { throw "No $steamApi. Extract the Steamworks SDK to third_party\steamworks\sdk." }
+    Copy-Item $steamApi $out
+}
+
 if ($AppLocalCrt) {
     $crt = Get-Item "$VsDir\VC\Redist\MSVC\*\x64\Microsoft.VC14*.CRT" | Sort-Object FullName | Select-Object -Last 1
     if (-not $crt) { throw "No VC++ runtime under $VsDir\VC\Redist" }

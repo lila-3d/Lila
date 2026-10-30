@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "ops/Command.h"
 #include "python/Python.h"
+#include "ui/AchievementRules.h"
 #include "ui/Deletion.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/FindBar.h"
@@ -1092,6 +1093,7 @@ void ScriptEditor::run(CodeEditor* editor, QString code, int firstLine)
     while (echo.endsWith('\n'))
         echo.chop(1);
     log::write(LogLevel::Echo, echo.toStdString() + "\n");
+    achievementRules::scriptEditorRan();
     // Leading newlines keep traceback line numbers equal to the tab's own.
     python::run((QString(firstLine, '\n') + code).toStdString(), filename.toStdString());
 }

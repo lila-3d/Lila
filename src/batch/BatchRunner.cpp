@@ -1,5 +1,6 @@
 #include "batch/BatchRunner.h"
 
+#include "core/Achievements.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/Paths.h"
@@ -578,6 +579,8 @@ void Run::loop()
         std::lock_guard lock(mMutex);
         mFinished = true;
     }
+    if (mItems.size() >= 100)
+        achievements::unlock("ASSEMBLY_LINE");
     mCv.notify_all();
     changed(-1);
 }

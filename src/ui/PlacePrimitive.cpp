@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/PlacePrimitive.h"
 
 #include "core/Log.h"
@@ -262,6 +263,7 @@ private:
             setVisible(mMesh, true);
             return end();
         }
+        achievementRules::primitivePlaced();
         UndoStack& u = UndoStack::get();
         if (u.serial() == mSerial && u.undo())
         {
@@ -476,6 +478,7 @@ void createAt(const std::string& command, const QString& label)
     if (hasComponentSelection())
     {
         actions::runWithOptions(command, {{"position", vec(scene::symmetricSelectionCenter())}, {"normal", vec(scene::selectionNormal())}});
+        achievementRules::primitivePlaced();
         if (const scene::lastOp::Op* op = scene::lastOp::current(); op && op->command == command && scene::lastOp::live())
             viewportTools::set(std::make_unique<ResizeCreatedTool>(command, label));
         return;

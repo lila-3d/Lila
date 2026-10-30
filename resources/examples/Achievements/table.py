@@ -8,7 +8,7 @@ ACHIEVEMENTS = [
     ("CTRL_Z_ENTHUSIAST", "Ctrl+Z Enthusiast", "Undo 1,000 times in one session.", True),
     ("FREEZE", "Freeze!", "Freeze an object's transforms.", False),
     ("CLONE_WARS", "Clone Wars", "Have 10,000 instances in one scene.", False),
-    ("DEMOLITION_EXPERT", "Demolition Expert", "Run your first Destruction simulation.", False),
+    ("DEMOLITION_EXPERT", "Demolition Expert", "Break something apart with Destruction.", False),
     ("URBAN_PLANNER", "Urban Planner", "Generate your first settlement.", False),
     ("HELLO_UNREAL", "Hello, Unreal", "Send something to Unreal through LilaLink.", False),
     ("POLYGON_HOARDER", "Polygon Hoarder", "Have 10 million triangles in one scene.", False),
@@ -24,13 +24,13 @@ ACHIEVEMENTS = [
     ("SCULPTOR", "Sculptor", "Make 1 million sculpt strokes.", False),
     ("BONES_OF_CONTENTION", "Bones of Contention", "Convert a deformer to bones with Dem Bones.", False),
     ("BOOKMARKED", "Bookmarked", "Save 9 camera bookmarks.", False),
-    ("HOTBOXER", "Hotboxer", "Pick 1,000 commands from the hotbox.", False),
+    ("HOTBOXER", "Hotboxer", "Pick 1,000 commands from the hotbox or marking menus.", False),
     ("EXTENSIONIST", "Extensionist", "Install a third-party extension.", False),
     ("UNIVERSAL_TRANSLATOR", "Universal Translator", "Round-trip a USD stage.", False),
-    ("POLYGLOT", "Polyglot", "Export to every supported format.", False),
+    ("POLYGLOT", "Polyglot", "Export to every built-in format.", False),
     ("TIME_LORD", "Time Lord", "Undo 100 steps in a row, then redo them all.", False),
-    ("RAINBOW", "Rainbow", "Try every theme.", True),
-    ("SHIP_IT", "Ship It", "Export a whole level with the Level Toolkit.", False),
+    ("RAINBOW", "Rainbow", "Try every built-in theme.", True),
+    ("SHIP_IT", "Ship It", "Export a level or scene for your game.", False),
     ("EZ_MODE", "EZ Mode", "Draw 5 EZ curves.", False),
     ("DEJA_VU", "Déjà Vu", "Reopen your last scene with Enter at startup.", False),
     ("CHEAT_CODE", "Cheat Code", "Hold F1 to see every hotkey.", False),
@@ -55,3 +55,16 @@ ACHIEVEMENTS = [
     ("ZIP_IT", "Zip It", "Add a zip tie in the node editor.", False),
     ("NOT_YOU", "Not You", "Exclude something from the outliner filter with !.", False),
 ]
+
+# Achievements with a progress bar: the Steam stat that counts toward them and the count that unlocks them. The stats
+# must exist in Steamworks (Stats tab, type INT) before the definitions CSV that names them is uploaded.
+PROGRESS = {
+    "FREQUENT_FLYER": ("CRASH_REPORTS", 10),
+    "SCULPTOR": ("SCULPT_STROKES", 1000000),
+    "SEARCH_PARTY": ("SEARCH_RUNS", 50),
+    "STICK_THE_LANDING": ("PRIMITIVES_PLACED", 10),
+    "BOOKMARKED": ("BOOKMARKS_SAVED", 9),
+    "HOTBOXER": ("HOTBOX_PICKS", 1000),
+    "EZ_MODE": ("EZ_CURVES", 5),
+}
+# Stats kept as bit sets, with no progress bar: THEMES_TRIED (Rainbow) and EXPORT_FORMATS (Polyglot).

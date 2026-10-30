@@ -13,6 +13,7 @@ target_link_libraries(lila_crashkit PUBLIC ${LILA_CRASHKIT_LIBS})
 
 lila_module(lila_core Foundation
     ${LILA_CRASHKIT_SOURCES}
+    Achievements.cpp
     CrashHandler.cpp
     Events.cpp
     FileBytes.cpp

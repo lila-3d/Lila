@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/Achievements.h"
 #include "core/Events.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -409,7 +410,10 @@ std::string Graph::conformName(const NodeType& type, std::string_view wanted, bo
         return fixed;
     switch (mNaming.mode)
     {
-    case NamingPolicy::Mode::Fix: return fixed;
+    case NamingPolicy::Mode::Fix:
+        if (!ops::agentCalling())
+            achievements::unlock("NAME_AND_SHAME");
+        return fixed;
     case NamingPolicy::Mode::Warn:
         log::warn("'{}' breaks the naming convention (expected '{}')", wanted, fixed);
         return std::string(wanted);

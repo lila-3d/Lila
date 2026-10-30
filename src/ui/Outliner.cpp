@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/Outliner.h"
 
 #include "ops/Command.h"
@@ -1147,6 +1148,7 @@ QWidget* filteredOutliner(QWidget* parent)
     debounce->setInterval(120);
     auto apply = [edit, regex, tree] {
         outliner::Filter f(edit->text().toStdString(), regex->isChecked());
+        achievementRules::outlinerFilter(edit->text().toStdString());
         edit->setToolTip(f.valid() ? QString(kFilterSyntax) : QString::fromStdString(f.error()) + "\n\n" + kFilterSyntax);
         tree->setFilter(std::move(f));
     };

@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/SceneDialogs.h"
 
 #include "core/CrashHandler.h"
@@ -739,6 +740,8 @@ void StartupDialog::openSelected(QTreeWidget* list)
     if (!item || item->data(0, kPathRole).toString().isEmpty())
         return;
     fs::path p = item->data(0, kPathRole).toString().toStdWString();
+    if (list->indexOfTopLevelItem(item) == 0)
+        achievementRules::lastSceneReopened();
     auto open = mHooks.open;
     accept();
     if (open)

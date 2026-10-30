@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/Hotbox.h"
 
 #include "core/PrefStore.h"
@@ -153,7 +154,10 @@ void Hotbox::keyReleased(bool tap)
         else if (!options.empty())
             QTimer::singleShot(0, [options] { optionBox::open(options); });
         else if (action)
+        {
             action->trigger();
+            achievementRules::hotboxPicked();
+        }
         return;
     }
     }

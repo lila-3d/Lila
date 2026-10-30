@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/MarkingMenu.h"
 
 #include "scene/Graph.h"
@@ -642,6 +643,7 @@ bool MarkingMenu::release()
         QTimer::singleShot(0, [action] {
             actions::ViaScope via(actions::Via::MarkingMenu);
             actions::run(action);
+            achievementRules::hotboxPicked();
         });
     return true;
 }

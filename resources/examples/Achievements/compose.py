@@ -67,7 +67,7 @@ def compose(premul, alpha, glow):
 
 def main(passes, upload):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from table import ACHIEVEMENTS
+    from table import ACHIEVEMENTS, PROGRESS
 
     os.makedirs(upload, exist_ok=True)
     for api, *_ in ACHIEVEMENTS:
@@ -87,7 +87,8 @@ def main(passes, upload):
                     "progress_stat_min (number, no lower than the stat's own min)",
                     "progress_stat_max (number, above min and no higher than the stat's own max)"])
         for api, _name, _desc, hidden in ACHIEVEMENTS:
-            w.writerow([api, "", "Client", "true" if hidden else "false", "false", "", 0, 0])
+            stat, goal = PROGRESS.get(api, ("", 0))
+            w.writerow([api, "", "Client", "true" if hidden else "false", "false", stat, 0, goal])
 
     with open(os.path.join(upload, f"{APP_ID}-achievements-localization.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)

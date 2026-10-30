@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/Presenter.h"
 
 #include "core/PrefStore.h"
@@ -1271,6 +1272,8 @@ void setEnabled(bool on)
 {
     PrefStore::get().set(kPresenterPrefs, presenterKey("enabled"), on);
     applyEnabled();
+    if (on)
+        achievementRules::presenterModeOn();
 }
 
 bool editing()

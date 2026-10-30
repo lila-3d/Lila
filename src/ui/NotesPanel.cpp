@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/NotesPanel.h"
 
 #include "core/Events.h"
@@ -220,6 +221,17 @@ NotesPanel::NotesPanel(QWidget* parent) : QWidget(parent)
         styleTodoItem(it, it->checkState() == Qt::Checked);
         mFilling = false;
         commitItems();
+        if (it->checkState() == Qt::Checked)
+        {
+            int items = 0, ticked = 0;
+            for (int r = 0; r < mList->count(); ++r)
+                if (mList->item(r)->flags() & Qt::ItemIsUserCheckable)
+                {
+                    ++items;
+                    ticked += mList->item(r)->checkState() == Qt::Checked;
+                }
+            achievementRules::todoListTicked(items, ticked);
+        }
     });
     connect(mList->model(), &QAbstractItemModel::rowsMoved, this, [this] {
         if (!mFilling)

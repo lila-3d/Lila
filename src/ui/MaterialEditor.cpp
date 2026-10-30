@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/MaterialEditor.h"
 
 #include "ops/Command.h"
@@ -168,6 +169,7 @@ void assignByName(const scene::Node& material, std::vector<std::string> files)
     }
     if (!skipped.empty())
         log::warn("Textures not assigned (no channel in the name, or the channel was already taken): {}", skipped);
+    achievementRules::texturesDropped(int(filled.size()));
 }
 
 /** Accepts image files dropped on a texture slot or the editor and hands their paths to `drop`. */

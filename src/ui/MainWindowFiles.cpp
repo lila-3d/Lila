@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/MainWindowDetail.h"
 #include "ui/FileDialog.h"
 #include "scene/Skin.h"
@@ -192,6 +193,7 @@ void MainWindow::startup(const std::vector<io::recovery::Session>& stale, bool s
             if (dialog.choice() == RecoveryDialog::Choice::Recover)
             {
                 io::loadVersion(c.file, c.scene, !c.scene.empty(), "untitled (recovered)");
+                achievementRules::recoveredSceneOpened();
                 if (!c.scene.empty())
                     addRecentFile(c.scene);
                 mViewports->frameUnlessRestored();

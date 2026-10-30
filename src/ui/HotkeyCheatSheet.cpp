@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/HotkeyCheatSheet.h"
 
 #include "ui/Actions.h"
@@ -62,6 +63,7 @@ void HotkeyCheatSheet::open()
     gSheet = new HotkeyCheatSheet(host, QApplication::focusWidget());
     gSheet->show();
     qApp->installEventFilter(gSheet);
+    achievementRules::cheatSheetShown();
 }
 
 void HotkeyCheatSheet::dismiss()

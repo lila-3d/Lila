@@ -1,3 +1,4 @@
+#include "ui/AchievementRules.h"
 #include "ui/MenuSearch.h"
 
 #include "core/Log.h"
@@ -680,6 +681,7 @@ private:
         try
         {
             ops::execute("select", call, CallSource::UI);
+            achievementRules::sceneSearchSelected();
         }
         catch (const CommandError& e)
         {
@@ -708,7 +710,10 @@ private:
         QPointer<QAction> a = currentAction();
         close();
         if (a && a->isEnabled())
+        {
             a->trigger();
+            achievementRules::commandSearchRan();
+        }
     }
 
     /** The highlighted item's option box; a row without one just runs. */

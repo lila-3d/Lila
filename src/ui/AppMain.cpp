@@ -24,6 +24,7 @@
 #include "render/TexEval.h"
 #include "scene/Components.h"
 #include "stream/ChangeStream.h"
+#include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/AgentCapture.h"
@@ -249,6 +250,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     crash::setContext("app", "qt", qVersion());
     crash::startWatchdog(host::crashOptions(true));
     telemetry::start();
+    achievementRules::start();
     updateCrashContext();
     QTimer crashContext;
     QObject::connect(&crashContext, &QTimer::timeout, [] { updateCrashContext(); });
@@ -286,6 +288,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     bake::shutdownRebakes();
     bake::cancelAsyncBake(true);
     telemetry::stop();
+    achievementRules::stop();
     updater::installPendingOnExit();
     io::recovery::endSession();
 
