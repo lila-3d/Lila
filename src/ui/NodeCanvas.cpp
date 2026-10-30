@@ -25,8 +25,9 @@ NodeItem::NodeItem(NodeCanvas* canvas, const json& info) : mCanvas(canvas)
         for (auto& [id, v] : props)
             if (id == "group")
                 groupRef = v;
+    // A loop node keeps its kind in the title so a Repeat and a For Each over the same group tell apart.
     if (!groupRef.empty())
-        label = qs(groupRef);
+        label = type == canvas->backend->subgroupNodeType() ? qs(groupRef) : label + ": " + qs(groupRef);
     reroute = type == gn::kRerouteType;
     portal = type == gn::kSendType || type == gn::kReceiveType;
     problem = qs(info.value("problem", ""));
