@@ -1,13 +1,23 @@
 #include <doctest/doctest.h>
 
+#include "ops/Command.h"
+#include "scene/Graph.h"
+#include "scene/Node.h"
+#include "scene/SceneCommands.h"
+#include "scene/Transform.h"
+#include "ui/Actions.h"
 #include "ui/TearOff.h"
 #include "ui/TearOffLogic.h"
+#include "ui/ViewportHooks.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QDropEvent>
+#include <QLabel>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStyleFactory>
@@ -39,6 +49,18 @@ void settle()
     for (int i = 0; i < 3; ++i)
         QApplication::processEvents();
 }
+/** Records the action id of a drop from a menu drag. */
+class DropCatcher : public QWidget
+{
+public:
+    DropCatcher() { setAcceptDrops(true); }
+    QString dropped;
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* e) override { e->setAccepted(e->mimeData()->hasFormat(tearoff::kActionMime)); }
+    void dragMoveEvent(QDragMoveEvent* e) override { e->accept(); }
+    void dropEvent(QDropEvent* e) override { dropped = QString::fromUtf8(e->mimeData()->data(tearoff::kActionMime)); }
+};
 } // namespace
 
 TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
@@ -183,4 +205,79 @@ TEST_CASE("clicking a section title tears off only that section")
     QDockWidget* again = window.findChild<QDockWidget*>("tearoff:Mesh/#Combine");
     REQUIRE(again);
     CHECK(row(again, "Separate"));
+}
+
+TEST_CASE("a dragged Create row creates where it is dropped, as one undo step")
+{
+    lila::ops::registerBuiltins();
+    lila::scene::types::registerBuiltins();
+    lila::scene::registerCommands();
+    actions::registerBuiltins();
+    tearoff::registerDropHandler();
+    lila::ops::execute("newScene", nlohmann::json::object());
+    lila::scene::Graph& g = lila::scene::Graph::current();
+
+    CHECK(tearoff::draggable("create.cube"));
+    CHECK_FALSE(tearoff::draggable("edit.undo"));
+    QMimeData mime;
+    mime.setData(tearoff::kActionMime, "create.cube");
+    CHECK(viewportHooks::handleDrop(mime, {}, false));
+
+    const size_t before = g.nodes().size();
+    std::vector<std::string> made = tearoff::runAt("create.cube", {100.0, 0.0, -50.0});
+    REQUIRE(made.size() == 1);
+    lila::scene::Node* cube = g.find(made[0]);
+    REQUIRE(cube);
+    const glm::dvec3 t = cube->as<glm::dvec3>(lila::scene::Transform::kTranslate);
+    CHECK(t.x == doctest::Approx(100.0));
+    CHECK(t.y == doctest::Approx(0.0));
+    CHECK(t.z == doctest::Approx(-50.0));
+
+    lila::ops::execute("undo", nlohmann::json::object());
+    CHECK(g.nodes().size() == before);
+    CHECK_FALSE(g.find(made[0]));
+}
+
+TEST_CASE("pressing a Create item and dragging out of its menu closes the menus")
+{
+    actions::registerBuiltins();
+    QMainWindow window;
+    window.setCentralWidget(new QWidget);
+    window.resize(800, 600);
+    QMenu* create = tearoff::enable(window.menuBar()->addMenu("Create"));
+    QAction* locator = create->addAction("Locator");
+    locator->setData(QString("create.locator"));
+    create->addAction("Other");
+    window.show();
+    create->popup(window.mapToGlobal(QPoint(10, 30)));
+    settle();
+    REQUIRE(QApplication::activePopupWidget() == create);
+
+    const QPoint on = create->actionGeometry(locator).center();
+    QMouseEvent press(QEvent::MouseButtonPress, on, create->mapToGlobal(on), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(create, &press);
+    const QPoint out(create->width() + 200, on.y());
+    QMouseEvent move(QEvent::MouseMove, out, create->mapToGlobal(out), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(create, &move);
+    settle();
+    CHECK(QApplication::activePopupWidget() == nullptr);
+    CHECK_FALSE(create->isVisible());
+
+    // The ghost carries the drag to the widget under the cursor and drops it there on release.
+    QLabel* ghost = nullptr;
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (w->objectName() == "lilaMenuDrag")
+            ghost = static_cast<QLabel*>(w);
+    REQUIRE(ghost);
+    DropCatcher catcher;
+    catcher.setGeometry(300, 300, 200, 200);
+    catcher.show();
+    settle();
+    const QPoint over = catcher.mapToGlobal(QPoint(100, 100));
+    QMouseEvent hover(QEvent::MouseMove, ghost->mapFromGlobal(over), over, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(ghost, &hover);
+    QMouseEvent release(QEvent::MouseButtonRelease, ghost->mapFromGlobal(over), over, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(ghost, &release);
+    settle();
+    CHECK(catcher.dropped == "create.locator");
 }

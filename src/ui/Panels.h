@@ -72,5 +72,9 @@ LILA_UI_API void show(const std::string& id);
 LILA_UI_API void toggle(const std::string& id);
 /** For a floatFirst panel the user has never docked: floats the dock, sized and centred. Called as a dock is revealed. */
 LILA_UI_API void floatUnplaced(QDockWidget* dock);
+/** Floats the dock at a comfortable size, centred on the main window. */
+LILA_UI_API void placeFloating(QDockWidget* dock);
+/** A floating dock too small to use, or with its title bar off every screen. */
+LILA_UI_API bool floatingMisplaced(const QDockWidget* dock);
 } // namespace panels
 } // namespace lila::ui

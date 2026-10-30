@@ -2,6 +2,8 @@
 
 #include "core/Export.h"
 
+#include <glm/vec3.hpp>
+
 #include <QPoint>
 #include <QMenu>
 #include <QPointer>
@@ -43,6 +45,21 @@ LILA_UI_API QMenu* findMenu(QMainWindow* window, const std::vector<std::string>&
  */
 LILA_UI_API QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt, const QString& section = {});
 
+/** A torn-off row being dragged: the action id. */
+inline constexpr const char* kActionMime = "application/x-lila-action";
+
+/** Whether a menu item or torn-off row of this action can be dragged into a viewport: the Create actions. */
+LILA_UI_API bool draggable(const std::string& actionId);
+
+/**
+ * Runs the action as one undo step and moves what it created to `at`, keeping the new objects' layout. Returns the new
+ * top-level transforms; empty when it created none (it still ran).
+ */
+LILA_UI_API std::vector<std::string> runAt(const std::string& actionId, const glm::dvec3& at);
+
+/** Lets a viewport take a dragged Create row: drops it on the surface under the cursor, else on the ground plane. */
+LILA_UI_API void registerDropHandler();
+
 /** Creates the docks for these dock names that do not exist yet, so a restored window state can place them. */
 LILA_UI_API void recreate(QMainWindow* window, const std::vector<std::string>& dockNames);
 
@@ -74,5 +91,6 @@ private:
     QVBoxLayout* mRows = nullptr;
     std::vector<QAction*> mShown;
     bool mRebuildQueued = false;
+    QPoint mPressPos;
 };
 } // namespace lila::ui::tearoff

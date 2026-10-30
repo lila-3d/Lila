@@ -121,6 +121,25 @@ void panels::floatUnplaced(QDockWidget* dock)
     }
     if (dock->isFloating() || dockedByUser(id))
         return;
+    placeFloating(dock);
+}
+
+bool panels::floatingMisplaced(const QDockWidget* dock)
+{
+    if (!dock || !dock->isFloating())
+        return false;
+    const QRect g = dock->frameGeometry();
+    // A floating dock that was never sized comes up at the screen corner at its minimum size.
+    if (g.width() < 200 || g.height() < 120)
+        return true;
+    for (QScreen* s : QGuiApplication::screens())
+        if (s->availableGeometry().contains(g.topLeft() + QPoint(g.width() / 2, 10)))
+            return false;
+    return true;
+}
+
+void panels::placeFloating(QDockWidget* dock)
+{
     QWidget* window = dock->parentWidget() ? dock->parentWidget()->window() : nullptr;
     QScreen* screen = window && window->screen() ? window->screen() : QGuiApplication::primaryScreen();
     if (!screen)

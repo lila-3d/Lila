@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "ui/DockSidebar.h"
+#include "ui/Panels.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -625,4 +626,26 @@ TEST_CASE("showing collapsed docks directly and then restoring a state never tou
     for (QWidget* c : w.win.findChildren<QWidget*>())
         if (c->inherits("QToolButton") && c->toolTip().startsWith("Expand "))
             CHECK(c->parentWidget()->isVisible());
+}
+
+TEST_CASE("revealing a floating dock that was never sized centres it at a usable size")
+{
+    QMainWindow window;
+    window.setCentralWidget(new QLabel("centre"));
+    window.resize(1200, 800);
+    window.show();
+    auto* dock = new QDockWidget("Docs", &window);
+    dock->setObjectName("misplacedDock");
+    dock->setWidget(new QLabel("page"));
+    window.addDockWidget(Qt::RightDockWidgetArea, dock);
+    dock->setFloating(true);
+    dock->setGeometry(0, 0, 60, 40);
+    QApplication::processEvents();
+    CHECK(panels::floatingMisplaced(dock));
+
+    revealDock(dock);
+    QApplication::processEvents();
+    CHECK(dock->isFloating());
+    CHECK_FALSE(panels::floatingMisplaced(dock));
+    CHECK(dock->width() >= 200);
 }

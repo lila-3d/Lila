@@ -37,6 +37,7 @@
 #include "ui/SurfaceSnap.h"
 #include "ui/ViewportRenderers.h"
 #include "ui/TargetWeldTool.h"
+#include "ui/TearOff.h"
 #include "ui/Telemetry.h"
 #include "ui/Updater.h"
 #include "ui/CurveUi.h"
@@ -248,6 +249,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerMeasureUi();
     registerDebugDrawUi();
     registerPlacePrimitiveUi();
+    tearoff::registerDropHandler();
     mcp::startFromPrefs();
     stream::startFromPrefs();
     crash::addSecret(mcp::Server::get().token());

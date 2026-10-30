@@ -1,16 +1,25 @@
 #include "ui/TearOff.h"
 
 #include "core/Log.h"
+#include "ops/Command.h"
+#include "ops/Undo.h"
+#include "scene/Graph.h"
+#include "scene/Node.h"
+#include "scene/TransformOps.h"
+#include "ui/Actions.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
 #include "ui/Shelf.h"
 #include "ui/TearOffLogic.h"
+#include "ui/ViewportHooks.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCursor>
 #include <QDockWidget>
+#include <QDrag>
+#include <QMimeData>
 #include <QEnterEvent>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -27,6 +36,10 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace lila::ui::tearoff
 {
@@ -91,9 +104,154 @@ QAction* sectionAt(QMenu* menu, QPoint pos)
 
 void closeMenus()
 {
-    while (QWidget* p = QApplication::activePopupWidget())
-        p->close();
+    // Bounded: a popup that refuses to close would otherwise spin here forever.
+    for (int i = 0; i < 32; ++i)
+        if (QWidget* p = QApplication::activePopupWidget())
+            p->close();
+        else
+            break;
 }
+
+/**
+ * A drag out of a closed menu, done without the platform's drag: on Windows a native drag begun right after a popup
+ * closes under a held button never gets the release. The ghost grabs the mouse and sends Qt's drag events to the widget
+ * under the cursor, so viewports take it exactly as they take a drag from a torn-off row.
+ */
+class MenuDrag : public QLabel
+{
+public:
+    MenuDrag(const QString& actionId, const QPixmap& pixmap) : QLabel(nullptr, Qt::ToolTip | Qt::FramelessWindowHint)
+    {
+        setObjectName("lilaMenuDrag");
+        setAttribute(Qt::WA_DeleteOnClose);
+        setPixmap(pixmap);
+        setWindowOpacity(0.8);
+        mMime.setData(kActionMime, actionId.toUtf8());
+        follow(QCursor::pos());
+        show();
+        grabMouse(Qt::DragCopyCursor);
+        grabKeyboard();
+        // Polled as well as grabbed: after a popup closes under a held button, Windows may send the moves and the release elsewhere.
+        auto* poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] {
+            const QPoint at = QCursor::pos();
+            if (!leftButtonDown())
+                release(at, QApplication::keyboardModifiers());
+            else if (at != mLast)
+                follow(at);
+        });
+        poll->start(15);
+    }
+
+protected:
+    void mouseMoveEvent(QMouseEvent* e) override { follow(e->globalPosition().toPoint()); }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        mReleaseSeen = true;
+        // Closing the menu can hand over a release the button never made; only a real one drops.
+        if (!leftButtonDown())
+            release(e->globalPosition().toPoint(), e->modifiers());
+    }
+
+    void keyPressEvent(QKeyEvent* e) override
+    {
+        if (e->key() == Qt::Key_Escape && !mDone)
+        {
+            mDone = true;
+            leave();
+            finish();
+        }
+    }
+
+private:
+    /** The button as the hardware has it; offscreen (tests) only the release events count. */
+    bool leftButtonDown() const
+    {
+        if (QGuiApplication::platformName() == "offscreen")
+            return !mReleaseSeen;
+#ifdef _WIN32
+        return (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+#else
+        return QGuiApplication::mouseButtons() & Qt::LeftButton;
+#endif
+    }
+
+    void release(QPoint global, Qt::KeyboardModifiers mods)
+    {
+        if (mDone)
+            return;
+        mDone = true;
+        follow(global);
+        if (mTarget && mAccepted)
+        {
+            QDropEvent drop(QPointF(mTarget->mapFromGlobal(global)), Qt::CopyAction, &mMime, Qt::NoButton, mods);
+            QApplication::sendEvent(mTarget, &drop);
+        }
+        finish();
+    }
+
+    /** The widget under the cursor that takes drops, skipping this ghost. */
+    QWidget* dropWidgetAt(QPoint global) const
+    {
+        QWidget* under = QApplication::widgetAt(global);
+        // widgetAt misses native children such as the viewports' Vulkan surfaces: look through the window's widget tree.
+        for (QWidget* top : QApplication::topLevelWidgets())
+            if (!under && top != this && top->isVisible() && top->frameGeometry().contains(global))
+                under = top->childAt(top->mapFromGlobal(global));
+        for (QWidget* w = under; w; w = w->parentWidget())
+            if (w->acceptDrops())
+                return w;
+        return nullptr;
+    }
+
+    void follow(QPoint global)
+    {
+        mLast = global;
+        move(global + QPoint(14, 14));
+        QWidget* target = dropWidgetAt(global);
+        if (target != mTarget)
+        {
+            leave();
+            mTarget = target;
+            if (mTarget)
+            {
+                QDragEnterEvent enter(mTarget->mapFromGlobal(global), Qt::CopyAction, &mMime, Qt::LeftButton, QApplication::keyboardModifiers());
+                QApplication::sendEvent(mTarget, &enter);
+                mAccepted = enter.isAccepted();
+            }
+        }
+        if (!mTarget || !mAccepted)
+            return;
+        QDragMoveEvent hover(mTarget->mapFromGlobal(global), Qt::CopyAction, &mMime, Qt::LeftButton, QApplication::keyboardModifiers());
+        QApplication::sendEvent(mTarget, &hover);
+        mAccepted = hover.isAccepted();
+    }
+
+    void leave()
+    {
+        if (mTarget)
+        {
+            QDragLeaveEvent left;
+            QApplication::sendEvent(mTarget, &left);
+        }
+        mTarget = nullptr;
+        mAccepted = false;
+    }
+
+    void finish()
+    {
+        releaseKeyboard();
+        releaseMouse();
+        close();
+    }
+
+    QMimeData mMime;
+    QPointer<QWidget> mTarget;
+    QPoint mLast;
+    bool mAccepted = false;
+    bool mDone = false;
+    bool mReleaseSeen = false;
+};
 
 /** Takes the click on the tear-off row before Qt's own tear-off, which would make a plain floating menu. */
 class RowFilter : public QObject
@@ -116,6 +274,8 @@ protected:
                     menu->update();
                 }
             }
+        if (e->type() == QEvent::MouseMove && dragOut(qobject_cast<QMenu*>(obj), static_cast<QMouseEvent*>(e)))
+            return true;
         if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::MouseButtonRelease && e->type() != QEvent::MouseButtonDblClick)
             return false;
         auto* menu = qobject_cast<QMenu*>(obj);
@@ -123,6 +283,15 @@ protected:
         if (!menu || me->button() != Qt::LeftButton)
             return false;
         QPoint pos = me->position().toPoint();
+        if (e->type() == QEvent::MouseButtonPress)
+        {
+            QAction* a = menu->rect().contains(pos) ? menu->actionAt(pos) : nullptr;
+            const bool canDrag = a && !a->menu() && draggable(a->data().toString().toStdString());
+            mPressMenu = canDrag ? menu : nullptr;
+            mPressed = canDrag ? a : nullptr;
+        }
+        else
+            mPressed = nullptr;
         QString section;
         if (QAction* a = sectionAt(menu, pos))
             section = a->text();
@@ -140,6 +309,35 @@ protected:
         }
         return true;
     }
+
+private:
+    /** A Create item pressed and then dragged out of its menu: closes the menus and drags it, as from a torn-off row. */
+    bool dragOut(QMenu* menu, QMouseEvent* me)
+    {
+        if (!(me->buttons() & Qt::LeftButton))
+        {
+            mPressed = nullptr;
+            return false;
+        }
+        const QPoint global = me->globalPosition().toPoint();
+        // Over the menus or the menu bar the held button still picks items; the drag starts once it is clear of them.
+        QWidget* under = QApplication::widgetAt(global);
+        if (qobject_cast<QMenu*>(under) || qobject_cast<QMenuBar*>(under))
+            return false;
+        if (!menu || !mPressed || !mPressMenu)
+            return false;
+        const QString id = mPressed->data().toString();
+        const QPixmap pixmap = mPressMenu->grab(mPressMenu->actionGeometry(mPressed));
+        mPressed = nullptr;
+        mPressMenu = nullptr;
+        closeMenus();
+        // Once the popup's own mouse handling has unwound, so the ghost's grab is the only one.
+        QTimer::singleShot(0, qApp, [id, pixmap] { new MenuDrag(id, pixmap); });
+        return true;
+    }
+
+    QPointer<QMenu> mPressMenu;
+    QPointer<QAction> mPressed;
 };
 
 RowFilter* rowFilter()
@@ -295,6 +493,72 @@ void recreate(QMainWindow* window, const std::vector<std::string>& dockNames)
     }
 }
 
+// ------------------------------------------------------------------- dragging Create rows
+
+bool draggable(const std::string& actionId)
+{
+    const Action* a = actions::find(actionId);
+    return a && a->category == "Create";
+}
+
+std::vector<std::string> runAt(const std::string& actionId, const glm::dvec3& at)
+{
+    scene::Graph& g = scene::Graph::current();
+    const std::vector<scene::NodeId> before = g.nodes();
+    UndoChunk chunk("Create " + actions::displayLabel(actionId));
+    {
+        actions::ViaScope via(actions::Via::Menu);
+        actions::run(actionId);
+    }
+    const std::vector<scene::NodeId> after = g.nodes();
+    std::vector<scene::NodeId> created;
+    std::ranges::set_difference(after, before, std::back_inserter(created));
+    std::vector<scene::NodeId> roots;
+    for (scene::NodeId id : created)
+        if (scene::Node* n = g.node(id); n && n->type().isA("transform") && !std::ranges::binary_search(created, g.parent(id)))
+            roots.push_back(id);
+    if (roots.empty())
+        return {};
+    const glm::dvec3 by = at - scene::xformops::worldPivot(g, roots.front());
+    std::vector<std::string> names;
+    for (scene::NodeId id : roots)
+        names.push_back(g.node(id)->path());
+    try
+    {
+        ops::execute("move", {{"args", names}, {"by", {by.x, by.y, by.z}}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+    return names;
+}
+
+void registerDropHandler()
+{
+    viewportHooks::setDropHandler("tearOffCreate", [](const QMimeData& mime, const viewportHooks::DropTarget& t, bool commit) {
+        if (t.left || !mime.hasFormat(kActionMime))
+            return false;
+        if (!commit)
+            return true;
+        glm::dvec3 at;
+        if (t.face != UINT32_MAX)
+            at = t.position;
+        else
+        {
+            glm::dvec3 o, d;
+            t.view.ray(t.px, o, d);
+            // With the ground behind the camera or edge on, the point on the cursor's ray nearest the origin.
+            const double ground = std::abs(d.y) < 1e-9 ? -1.0 : -o.y / d.y;
+            at = o + d * (ground > 0.0 ? ground : std::max(glm::dot(-o, d), 0.0));
+        }
+        const std::string id = mime.data(kActionMime).toStdString();
+        // After the drag's event loop unwinds: the action may open a dialog or rebuild the row that started the drag.
+        QTimer::singleShot(0, qApp, [id, at] { runAt(id, at); });
+        return true;
+    });
+}
+
 // ------------------------------------------------------------------- TearOffPanel
 
 TearOffPanel::TearOffPanel(QMenu* menu, const QString& section, QWidget* parent) : QWidget(parent), mMenu(menu), mSection(section)
@@ -351,6 +615,27 @@ bool TearOffPanel::eventFilter(QObject* obj, QEvent* e)
 {
     if (obj == mMenu && (e->type() == QEvent::ActionAdded || e->type() == QEvent::ActionRemoved))
         scheduleRebuild();
+    auto* button = qobject_cast<QPushButton*>(obj);
+    if (!button || !button->property("dragActionId").isValid())
+        return QWidget::eventFilter(obj, e);
+    if (e->type() == QEvent::MouseButtonPress)
+        mPressPos = static_cast<QMouseEvent*>(e)->position().toPoint();
+    else if (e->type() == QEvent::MouseMove)
+    {
+        auto* m = static_cast<QMouseEvent*>(e);
+        if ((m->buttons() & Qt::LeftButton) && (m->position().toPoint() - mPressPos).manhattanLength() >= QApplication::startDragDistance())
+        {
+            auto* mime = new QMimeData;
+            mime->setData(kActionMime, button->property("dragActionId").toString().toUtf8());
+            auto* drag = new QDrag(button);
+            drag->setMimeData(mime);
+            drag->setPixmap(button->grab());
+            drag->setHotSpot(mPressPos);
+            button->setDown(false);
+            drag->exec(Qt::CopyAction);
+            return true;
+        }
+    }
     return QWidget::eventFilter(obj, e);
 }
 
@@ -438,6 +723,11 @@ void TearOffPanel::rebuild()
         button->setIconSize(QSize(14, 14));
         button->setProperty("tearOffAction", QVariant::fromValue(static_cast<QObject*>(a)));
         h->addWidget(button, 1);
+        if (!sub && draggable(id))
+        {
+            button->setProperty("dragActionId", QString::fromStdString(id));
+            button->installEventFilter(this);
+        }
         if (sub)
         {
             auto* arrow = new QLabel(row);

@@ -410,6 +410,8 @@ void revealDock(QDockWidget* dock)
     if (sidebars && sidebars->isCollapsed(dock))
         sidebars->reveal(dock);
     panels::floatUnplaced(dock);
+    if (panels::floatingMisplaced(dock))
+        panels::placeFloating(dock);
     if (sidebars && !dock->isFloating())
     {
         sidebars->reveal(dock);
