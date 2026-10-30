@@ -231,10 +231,8 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		UV0->CoordinateIndex = 0;
 		auto* Offset = Cast<UMaterialExpressionCustom>(Make(UMaterialExpressionCustom::StaticClass(), -1500));
 		Offset->Description = TEXT("Sheet parallax");
-		Offset->Code = TEXT("float h = Texture2DSample(SheetHeightMap, SheetHeightMapSampler, UV).r;
-"
-							"float3 v = mul(Parameters.TangentToWorld, Parameters.CameraVector);
-"
+		Offset->Code = TEXT("float h = Texture2DSample(SheetHeightMap, SheetHeightMapSampler, UV).r;\n"
+							"float3 v = mul(Parameters.TangentToWorld, Parameters.CameraVector);\n"
 							"return UV + v.xy * (h - 0.5) * ParallaxHeight;");
 		Offset->OutputType = CMOT_Float2;
 		Offset->Inputs.Reset();
