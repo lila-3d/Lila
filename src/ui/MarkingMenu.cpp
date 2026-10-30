@@ -8,6 +8,7 @@
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/CameraBookmarks.h"
+#include "ui/CommandPreview.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
 #include "ui/Shelf.h"
@@ -253,6 +254,7 @@ MarkingMenu* MarkingMenu::popupDefinition(const json& def, Trigger trigger, Qt::
 
 MarkingMenu::~MarkingMenu()
 {
+    commandPreview::clear();
     if (!mStatus.isEmpty())
         showStatus({});
     if (gActive == this)
@@ -274,6 +276,13 @@ MarkingMenu::MarkingMenu(const json& def, Trigger trigger, Qt::MouseButton butto
 
     mCursor = mapFromGlobal(cursor);
     mLevels.push_back(buildLevel(def, mCursor));
+    // Before the menu shows, so the widget under the cursor is still the viewport's.
+    for (QWidget* w = QApplication::widgetAt(cursor); w; w = w->parentWidget())
+        if (auto* view = qobject_cast<ViewportWidget*>(w))
+        {
+            mPreviewFocus = commandPreview::Focus{view->viewInfo(), view->mapFromGlobal(cursor).toPointF()};
+            break;
+        }
     gActive = this;
     // Losing focus to another app means the button release never arrives (alt-tab sends a key the menu sees instead).
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
@@ -284,6 +293,7 @@ MarkingMenu::MarkingMenu(const json& def, Trigger trigger, Qt::MouseButton butto
 
 void MarkingMenu::dismiss()
 {
+    commandPreview::clear();
     if (gActive == this)
         gActive = nullptr;
     releaseMouse();
@@ -593,7 +603,25 @@ void MarkingMenu::updateHighlight(QPointF pos)
             status = QString::fromStdString(a->doc);
     if (status != mStatus)
         showStatus(mStatus = status);
+    schedulePreview();
     update();
+}
+
+void MarkingMenu::schedulePreview()
+{
+    json target;
+    if (Item* it = highlighted(); it && !mOnBox && !it->action.is_null())
+        target = it->action;
+    if (target == mPreviewTarget)
+        return;
+    mPreviewTarget = target;
+    commandPreview::clear();
+    const int delay = int(PrefStore::get().value<double>("general", commandPreview::kDelayMsPref, commandPreview::kDelayMsDefault));
+    if (!target.is_null())
+        QTimer::singleShot(delay, this, [this, target] {
+            if (gActive == this && mPreviewTarget == target)
+                commandPreview::show(target, mPreviewFocus);
+        });
 }
 
 bool MarkingMenu::release()
@@ -620,6 +648,7 @@ bool MarkingMenu::release()
         }
     }
     gActive = nullptr;
+    commandPreview::clear();
     if (!mStatus.isEmpty())
         showStatus(mStatus = QString());
     releaseMouse();

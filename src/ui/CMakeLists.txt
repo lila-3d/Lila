@@ -8,6 +8,7 @@ lila_module(lila_ui UI
     Actions.cpp
     ActionIcons.cpp
     AdjustLastOp.cpp AdjustLastOp.h
+    CommandPreview.cpp CommandPreview.h
     AppMain.cpp AppMain.h
     FlagFields.cpp FlagFields.h
     OptionBox.cpp OptionBox.h

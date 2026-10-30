@@ -116,6 +116,8 @@ public:
     const std::string& viewName() const { return mViewName; }
     /** Which viewport panel this is, in creation order; keys its heads-up display prefs. */
     int hudPanel() const { return mHudPanel; }
+    /** The camera and size gizmos, tools and drawers get each frame. */
+    ViewInfo viewInfo() const;
 
 Q_SIGNALS:
     /** The view (camera) or isolate state changed. */
@@ -151,7 +153,6 @@ private:
 
     void submit();
     render::FrameState buildFrame(const RenderView* rv);
-    ViewInfo viewInfo() const;
     /**
      * The gizmo that takes input for the current tool: the one dragging, else the active provider's, else the default
      * provider's when the active one doesn't support the mode. A viewport tool's name is the mode when a gizmo

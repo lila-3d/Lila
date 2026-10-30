@@ -238,7 +238,7 @@ void onExecute(const ExecuteEvent& e)
 void onUndoChanged()
 {
     State& s = st();
-    if (s.rerunning || !s.op)
+    if (s.rerunning || !s.op || ops::previewing())
         return;
     UndoStack& undo = UndoStack::get();
     const uint64_t newest = undo.newestId();
@@ -341,6 +341,8 @@ bool reachable()
 
 void limitFlag(const std::string& name, const json& value)
 {
+    if (ops::previewing())
+        return;
     st().limited[name] = value;
 }
 

@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 #include "core/Registry.h"
+#include "ui/CommandPreview.h"
 #include "ui/Owner.h"
 
 #include <nlohmann/json.hpp>
@@ -149,6 +150,8 @@ private:
     Level buildLevel(const nlohmann::json& def, QPointF center, std::optional<QPointF> cascade = std::nullopt) const;
     void layout(Level& level) const;
     void updateHighlight(QPointF pos);
+    /** Previews the highlighted item's command once the cursor rests on it (commandPreview). */
+    void schedulePreview();
     Item* highlighted();
 
     std::vector<Level> mLevels;
@@ -161,6 +164,8 @@ private:
     QElapsedTimer mRowSince; // how long the cursor has rested on the highlighted overflow row, for cascading its submenu
     bool mSticky = false; // released on a submenu row: the menu stays open and the next click picks
     bool mCopied = false;
+    nlohmann::json mPreviewTarget; // what the preview shows or is waiting to show
+    std::optional<commandPreview::Focus> mPreviewFocus; // the viewport the menu opened over and the pixel it opened at
     Trigger mTrigger;
     Qt::MouseButton mButton;
 };

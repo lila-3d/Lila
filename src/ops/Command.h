@@ -136,6 +136,13 @@ LILA_FOUNDATION_API void removeExecuteListener(int id);
 LILA_FOUNDATION_API bool agentCalling();
 LILA_FOUNDATION_API void setAgentCalling(bool on);
 
+/**
+ * True while commands run only to show what they would do and are reverted straight after (marking menu previews).
+ * Execute listeners are not told about them; graph listeners that record changes for others should ignore them.
+ */
+LILA_FOUNDATION_API bool previewing();
+LILA_FOUNDATION_API void setPreviewing(bool on);
+
 /** Marks an agent's request for its lifetime. */
 struct AgentScope
 {

@@ -11,6 +11,7 @@
 #include "scene/ComponentPick.h"
 #include "scene/Transform.h"
 #include "stream/ChangeStream.h"
+#include "ui/CommandPreview.h"
 #include "ui/Icons.h"
 #include "ui/LocateFlash.h"
 #include "ui/SceneDialogs.h"
@@ -708,6 +709,22 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         color(viewport, "Selected joint color", kJointSelectedColor, kJointDefaultSelectedColor);
         number(viewport, "Chain separation (ancestors' step from the selection)", kJointChainSeparation, 1.0, 0.0, 3.0, 0.1);
         toggle(viewport, "Color ancestors' bones to joints off the chain", kJointChainBranches, false);
+        section(viewport, "Marking Menu Preview");
+        toggle(viewport, "Preview the command under the cursor", commandPreview::kEnabledPref, true);
+        choice(viewport, "Shows", commandPreview::kCoveragePref,
+               {{"Around the cursor", "cursor"}, {"Around the view's center", "center"}, {"Around the cursor and the view's center", "both"},
+                {"The whole result", "all"}},
+               "cursor");
+        number(viewport, "Radius (px)", commandPreview::kRadiusPxPref, commandPreview::kRadiusPxDefault, 10.0, 4000.0, 10.0, 0);
+        toggle(viewport, "Show the result mesh outside the radius too", commandPreview::kResultMeshPref, false);
+        number(viewport, "Edges fade as faces turn away (0 to 1)", commandPreview::kEdgeFadePref, commandPreview::kEdgeFadeDefault, 0.0, 1.0, 0.05, 2);
+        number(viewport, "Edges pulled toward the camera (% of mesh size)", commandPreview::kPullPref, commandPreview::kPullDefault, 0.0, 50.0, 0.1, 2);
+        number(viewport, "Edges fade out behind the surface over (% of mesh size)", commandPreview::kBehindPref, commandPreview::kBehindDefault, 0.0, 100.0, 0.5, 1);
+        number(viewport, "Preview after resting on an item (ms)", commandPreview::kDelayMsPref, commandPreview::kDelayMsDefault, 0.0, 2000.0, 10.0, 0);
+        number(viewport, "No preview above (faces selected, 0 = no limit)", commandPreview::kMaxFacesPref, commandPreview::kMaxFacesDefault, 0.0,
+               1e9, 50000.0, 0);
+        number(viewport, "Previews slower than this are skipped (ms)", commandPreview::kSlowMsPref, commandPreview::kSlowMsDefault, 10.0, 60000.0, 50.0, 0);
+        number(viewport, "Retry a slow preview after (seconds)", commandPreview::kRetrySecondsPref, commandPreview::kRetrySecondsDefault, 0.0, 86400.0, 10.0, 0);
     });
 
     builtIn(r, "manipulators", "Manipulators", "general", [](Page& manip) {

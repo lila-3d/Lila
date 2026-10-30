@@ -1003,6 +1003,8 @@ void forgetNode(NodeId id)
 
 void onChange(scene::Change c, NodeId id)
 {
+    if (ops::previewing())
+        return;
     Recorder& r = rec();
     Graph& g = Graph::current();
     Pending& p = r.p;

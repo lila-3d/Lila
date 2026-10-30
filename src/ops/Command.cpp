@@ -29,6 +29,7 @@ std::map<int, std::function<void(const ExecuteEvent&)>>& executeListeners()
 }
 
 int gExecuteDepth = 0;
+bool sPreviewing = false;
 std::vector<const Args*> gRunning;
 
 void notifyExecute(const ExecuteEvent& e)
@@ -195,7 +196,8 @@ json execute(std::string_view name, const json& call, CallSource source)
 
     Args args = normalize(*def, call.is_null() ? json::object() : call);
 
-    bool top = gExecuteDepth == 0;
+    // A preview run is reverted at once, so nothing watching executes should see it.
+    bool top = gExecuteDepth == 0 && !sPreviewing;
     if (top && !executeListeners().empty())
         notifyExecute({name, call, source});
     json result;
@@ -255,6 +257,16 @@ bool agentCalling()
 void setAgentCalling(bool on)
 {
     sAgentCalling = on;
+}
+
+bool previewing()
+{
+    return sPreviewing;
+}
+
+void setPreviewing(bool on)
+{
+    sPreviewing = on;
 }
 
 int addExecuteListener(std::function<void(const ExecuteEvent&)> fn)

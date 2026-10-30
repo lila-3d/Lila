@@ -27,6 +27,7 @@
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
+#include "ui/CommandPreview.h"
 #include "ui/AgentCapture.h"
 #include "ui/RenderOutput.h"
 #include "ui/ArrayTool.h"
@@ -137,6 +138,7 @@ void registerUi()
     registerModelingToolkitActions();
     registerModifierStackActions();
     adjustLastOp::install();
+    commandPreview::install();
     Manipulator::installOrientPivotSink();
     registerRetopoActions();
     registerTopologyActions();
