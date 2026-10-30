@@ -39,19 +39,8 @@ void registerMeshEditMeshOpsCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::vector<NodeId> nodes;
-            for (const std::string& name : a.objects())
-            {
-                Node* n = g.find(name);
-                if (!n || !n->type().isA("mesh"))
-                    throw CommandError("polyReduce: " + name + " is not a mesh");
-                nodes.push_back(n->id());
-            }
-            if (a.objects().empty())
-                for (NodeId id : g.selection())
-                    if (Node* n = g.node(id); n && n->type().isA("mesh"))
-                        nodes.push_back(id);
-            if (nodes.empty())
-                throw CommandError("polyReduce: select a mesh");
+            for (const std::string& name : meshObjects(a, "polyReduce"))
+                nodes.push_back(g.find(name)->id());
             const std::string sym = a.get<std::string>("symmetry", "auto");
             if (sym != "auto" && sym != "off" && sym != "x" && sym != "y" && sym != "z")
                 throw CommandError("polyReduce: symmetry must be auto, off, x, y or z");
@@ -133,7 +122,7 @@ void registerMeshEditMeshOpsCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             UndoChunk chunk("Subdivide");
-            for (const std::string& name : a.objects())
+            for (const std::string& name : meshObjects(a, "polySubdivide"))
             {
                 Node& n = meshArg(name, "polySubdivide");
                 PlugRef base = basePlug(n);
@@ -174,7 +163,7 @@ void registerMeshEditMeshOpsCommands()
             if (space == "world")
                 g.evaluate();
             UndoChunk chunk("Mirror");
-            for (const std::string& name : a.objects())
+            for (const std::string& name : meshObjects(a, "polyMirror"))
             {
                 Node& n = meshArg(name, "polyMirror");
                 PlugRef base = basePlug(n);
@@ -225,7 +214,7 @@ void registerMeshEditMeshOpsCommands()
             Graph& g = graph();
             json out = json::array();
             std::vector<NodeId> made;
-            for (const std::string& name : a.objects())
+            for (const std::string& name : meshObjects(a, "polySeparate"))
             {
                 Node& n = meshArg(name, "polySeparate");
                 g.evaluate();
@@ -258,9 +247,9 @@ void registerMeshEditMeshOpsCommands()
         .flags = {{"name", "", T::String, nullptr, "Name of the combined mesh."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            auto names = a.objects();
+            const std::vector<std::string> names = meshObjects(a, "polyCombine");
             if (names.size() < 2)
-                throw CommandError("polyCombine: select at least two meshes");
+                throw CommandError("polyCombine: select at least two meshes, or a group holding them");
             g.evaluate();
             std::vector<geo::Mesh> worldMeshes;
             for (const std::string& name : names)
@@ -293,10 +282,10 @@ void registerMeshEditMeshOpsCommands()
             std::vector<NodeId> sources;
             for (const std::string& name : names)
                 if (Node* n = g.find(name))
-                {
                     sources.push_back(n->id());
-                    g.deleteNode(n->id());
-                }
+            for (NodeId id : sources)
+                if (g.node(id))
+                    g.deleteNode(id);
             isolation::inherit({out->id()}, sources);
             g.select({out->id()});
             return out->path();

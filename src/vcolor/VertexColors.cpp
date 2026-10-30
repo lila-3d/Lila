@@ -157,9 +157,7 @@ FlagDef targetFlag()
 json editEach(const Args& a, const char* cmd, const std::string& label,
               const std::function<ColorDelta(Node& n, geo::Mesh& m, const std::string& set, std::span<const geo::Index> points)>& op)
 {
-    auto objs = a.objects();
-    if (objs.empty())
-        throw CommandError(std::string(cmd) + ": give or select a mesh");
+    const std::vector<std::string> objs = scene::meshObjects(a, cmd);
     Graph& g = graph();
     UndoChunk chunk(label);
     json out = json::array();
@@ -302,9 +300,7 @@ void registerCommands()
                   {"moveTo", "", T::Int, -1, "Move colorSet to this position (0 is the primary set exporters write first).", {}, {}, -1.0},
                   {"fill", "", T::List, json::array({1.0, 1.0, 1.0, 1.0}), "create: initial linear RGBA."}},
         .run = [](const Args& a) -> json {
-            auto objs = a.objects();
-            if (objs.empty())
-                throw CommandError("polyColorSet: give or select a mesh");
+            const std::vector<std::string> objs = scene::meshObjects(a, "polyColorSet");
             Graph& g = graph();
             json info;
             UndoChunk chunk("Color Set");

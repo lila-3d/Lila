@@ -1056,7 +1056,7 @@ void registerCommands()
             Graph& g = Graph::current();
             UndoChunk chunk("Remove from Proxy Set");
             int removed = 0;
-            for (const std::string& name : a.objects())
+            for (const std::string& name : meshObjects(a, "removeFromProxySet"))
             {
                 Node& n = meshArg(g, name, "removeFromProxySet");
                 if (const NodeId s = setOfPiece(g, n.id()); s != kNoNode)

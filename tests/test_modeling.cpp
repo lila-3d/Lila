@@ -68,6 +68,31 @@ TEST_CASE("component selection and modeling ops")
     CHECK(parts.size() == 2);
 }
 
+TEST_CASE("whole-mesh commands take groups")
+{
+    run("newScene");
+    std::string a = run("polyCube", {{"position", {-100, 0, 0}}})[0];
+    std::string b = run("polyCube", {{"position", {100, 0, 0}}})[0];
+    std::string c = run("polyCube", {{"position", {0, 100, 0}}})[0];
+    std::string inner = run("group", {{"args", {b, c}}}).get<std::string>();
+    std::string outer = run("group", {{"args", {a, inner}}}).get<std::string>();
+    CHECK(faces(run("polyCombine", {{"args", {outer}}}).get<std::string>()) == 18);
+
+    run("newScene");
+    a = run("polyCube", {{"position", {-100, 0, 0}}})[0];
+    b = run("polyCube", {{"position", {100, 0, 0}}})[0];
+    std::string grp = run("group", {{"args", {a, b}}}).get<std::string>();
+    std::string empty = run("group", {{"empty", true}}).get<std::string>();
+    // A hierarchy selection: the group, its meshes again, and a group with no meshes.
+    json selection = run("listRelatives", {{"args", {grp}}});
+    selection.push_back(grp);
+    selection.push_back(empty);
+    run("select", {{"args", selection}});
+    CHECK(faces(run("polyCombine").get<std::string>()) == 12);
+
+    CHECK_THROWS(run("polySubdivide", {{"args", {empty}}}));
+}
+
 TEST_CASE("duplicate, freeze, center pivot")
 {
     run("newScene");

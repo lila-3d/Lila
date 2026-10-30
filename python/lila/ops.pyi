@@ -4986,6 +4986,9 @@ def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, clos
         select: Select the new edges. Default True.
     """
 
+def polyLockNormals() -> Any:
+    """Store the current shading normals of the selected meshes as split normals, so later edits keep them."""
+
 def polyMerge(distance: float | None = None, average: bool | None = None) -> Any:
     """Weld selected vertices closer than a distance (all of a mesh's points if it has no component selection). Exactly two selected vertices weld whatever the distance.
 
@@ -5205,6 +5208,19 @@ def polyTriangulate(beauty: bool | None = None, quadSplit: str | None = None) ->
     Args:
         beauty: Flip n-gon diagonals toward the largest smallest angle (what display and export use). Default True.
         quadSplit: Quads split along the shorter diagonal (what display, export and MikkTSpace use) or always from the first corner. One of 'shortest', 'first'. Default 'shortest'.
+    """
+
+def polyUnlockNormals() -> Any:
+    """Drop the stored split normals of the selected meshes, so shading comes from the hard and soft edges again."""
+
+def polyWeightedNormals(mode: str | None = None, dominance: float | None = None, keepSharp: bool | None = None, faceStrength: bool | None = None, *, m: str | None = None, d: float | None = None, ks: bool | None = None, fs: bool | None = None) -> Any:
+    """Face-weighted normals on the selected faces (whole meshes in object mode): each smooth fan takes the normal of its biggest faces, so chamfered or bevelled low poly shades its large faces flat and only the chamfers bend. Written as locked split normals, which export to FBX. polyUnlockNormals goes back to computed ones.
+
+    Args:
+        mode: What weighs a face: area, angle (its corner angle) or areaAngle. Short form m. One of 'area', 'angle', 'areaAngle'. Default 'area'.
+        dominance: Faces under this fraction of the heaviest face in a fan are left out; 0 keeps all. Short form d. Default 0.5.
+        keepSharp: Keep hard edges split. Short form ks. Default True.
+        faceStrength: Only the faces with the highest face int faceStrength count, when the mesh has it. Short form fs. Default True.
     """
 
 def poseDriver(*objects: Any, axis: str | None = None, radius: float | None = None, twistWeight: float | None = None, falloff: str | None = None, rest: Sequence[float] | None = None, name: str | None = None, n: str | None = None) -> Any:

@@ -9,6 +9,11 @@
 #include <optional>
 #include <vector>
 
+namespace lila
+{
+struct Args;
+}
+
 namespace lila::scene
 {
 /**
@@ -101,6 +106,13 @@ LILA_SCENE_API glm::dvec3 sceneUp();
  * zero) and its origin on position, or, for a sphere primitive cut short by its fraction, its open base on position.
  */
 LILA_SCENE_API void placePrimitive(Graph& g, NodeId mesh, const glm::dvec3& position, const glm::dvec3& normal);
+
+/**
+ * The meshes a whole-object command acts on: the positional objects (or the selection), each mesh as itself and each
+ * other node (a group) as the meshes under it, without repeats. Selected non-meshes with no meshes under them are
+ * skipped; a named one throws, as does an empty result.
+ */
+LILA_SCENE_API std::vector<std::string> meshObjects(const Args& a, const char* cmd);
 
 /** Hands a point buffer (Python's numpy array) to the setMeshPoints call that passes the returned token. */
 LILA_SCENE_API uint64_t stashPoints(std::vector<glm::dvec3> points);

@@ -4,6 +4,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "geo/Ops.h"
 #include "geo/Symmetry.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -140,7 +141,7 @@ void registerMeshEditSymmetryCommands()
             int64_t v = axis == "off" ? 0 : axis == "x" ? 1 : axis == "y" ? 2 : axis == "z" ? 3 : axis == "radial" ? kSymmetryRadial : -1;
             if (v < 0)
                 throw CommandError("setSymmetry: axis must be off, x, y, z or radial");
-            for (const std::string& name : a.objects())
+            for (const std::string& name : meshObjects(a, "setSymmetry"))
             {
                 Node& n = meshArg(name, "setSymmetry");
                 // A custom plane (or radial centre) belongs to the setting it was set on.
@@ -294,8 +295,8 @@ void registerMeshEditSymmetryCommands()
         return n;
     };
     // Objects named or selected, else the meshes with selected components.
-    auto symmetryTargets = [](const Args& a) {
-        std::vector<std::string> names = a.objects();
+    auto symmetryTargets = [](const Args& a, const char* cmd) {
+        std::vector<std::string> names = a.objects().empty() ? std::vector<std::string>{} : meshObjects(a, cmd);
         if (names.empty() && components::mode() != ComponentMode::Object)
             for (auto& [node, ids] : components::selected(components::mode()))
                 if (Node* n = graph().node(node))
@@ -313,7 +314,7 @@ void registerMeshEditSymmetryCommands()
             Graph& g = graph();
             g.evaluate();
             json out = json::object();
-            for (const std::string& name : symmetryTargets(a))
+            for (const std::string& name : symmetryTargets(a, "symmetryCheck"))
             {
                 Node& n = symmetricMesh(name, "symmetryCheck");
                 MeshPtr cage = modifiers::cage(g, n.id());
@@ -378,7 +379,7 @@ void registerMeshEditSymmetryCommands()
             Graph& g = graph();
             const int drive = a.get<std::string>("side", "positive") == "negative" ? -1 : 1;
             UndoChunk chunk("Symmetrize");
-            for (const std::string& name : symmetryTargets(a))
+            for (const std::string& name : symmetryTargets(a, "symmetrize"))
             {
                 Node& n = symmetricMesh(name, "symmetrize");
                 PlugRef base = basePlug(n);
@@ -458,7 +459,7 @@ void registerMeshEditSymmetryCommands()
             json out = json::object();
             UndoChunk chunk("Rebuild Symmetry");
             bool rebuilt = false;
-            for (const std::string& name : symmetryTargets(a))
+            for (const std::string& name : symmetryTargets(a, "symmetryRebuild"))
             {
                 Node& n = pairsOnly && axisFlag.empty() ? symmetricMesh(name, "symmetryRebuild") : meshArg(name, "symmetryRebuild");
                 const std::optional<geo::SymmetrySpec> spec = symmetrySpec(n);
@@ -531,7 +532,7 @@ void registerMeshEditSymmetryCommands()
         .run = [symmetryTargets, applyRadialFlags, keepWedge](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
-            std::vector<std::string> names = symmetryTargets(a);
+            std::vector<std::string> names = symmetryTargets(a, "symmetrizeRadial");
             if (names.empty())
                 throw CommandError("symmetrizeRadial: select a mesh");
             json out = json::object();

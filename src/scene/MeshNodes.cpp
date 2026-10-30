@@ -20,6 +20,7 @@
 #include <format>
 
 #include <algorithm>
+#include <unordered_set>
 #include <format>
 
 namespace lila::scene
@@ -454,6 +455,41 @@ json meshStats(Node& n); // ComponentQuery.cpp
 glm::dvec3 sceneUp()
 {
     return math::upAxis() == math::UpAxis::Z ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0);
+}
+
+std::vector<std::string> meshObjects(const Args& a, const char* cmd)
+{
+    Graph& g = graph();
+    const bool named = !a.positional.empty();
+    std::vector<std::string> out;
+    std::unordered_set<NodeId> seen;
+    auto add = [&](const Node& n) {
+        if (seen.insert(n.id()).second)
+            out.push_back(n.path());
+    };
+    for (const std::string& name : a.objects())
+    {
+        Node* n = g.find(name);
+        if (!n)
+            throw CommandError(std::string(cmd) + ": no object named " + name);
+        if (n->type().isA("mesh"))
+        {
+            add(*n);
+            continue;
+        }
+        bool any = false;
+        for (NodeId d : g.descendants(n->id()))
+            if (const Node* m = g.node(d); m && m->type().isA("mesh"))
+            {
+                add(*m);
+                any = true;
+            }
+        if (!any && named)
+            throw CommandError(std::string(cmd) + ": " + name + " is not a mesh and has no meshes under it");
+    }
+    if (out.empty())
+        throw CommandError(std::string(cmd) + ": select a mesh or a group of meshes");
+    return out;
 }
 
 void placePrimitive(Graph& g, NodeId meshId, const glm::dvec3& position, const glm::dvec3& normal)

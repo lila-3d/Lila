@@ -501,7 +501,7 @@ void registerCommands()
             UndoChunk chunk(mode == "select" ? "Select Mesh Issues" : "Mesh Repair");
             if (mode == "repair")
             {
-                for (const std::string& name : a.objects())
+                for (const std::string& name : scene::meshObjects(a, "meshRepair"))
                 {
                     Node& n = meshArg(name, "meshRepair");
                     PlugRef base = scene::modifiers::editPlug(g, n.id());
@@ -517,7 +517,7 @@ void registerCommands()
 
             std::map<scene::NodeId, scene::components::Ids> sets[3];
             std::vector<scene::NodeId> meshes;
-            for (const std::string& name : a.objects())
+            for (const std::string& name : scene::meshObjects(a, "meshRepair"))
             {
                 Node& n = meshArg(name, "meshRepair");
                 g.evaluate();
@@ -553,7 +553,7 @@ void registerCommands()
             Graph& g = graph();
             json out = json::object();
             UndoChunk chunk("Voxel Remesh");
-            for (const std::string& name : a.objects())
+            for (const std::string& name : scene::meshObjects(a, "voxelRemesh"))
             {
                 Node& n = meshArg(name, "voxelRemesh");
                 PlugRef base = scene::modifiers::editPlug(g, n.id());
@@ -591,10 +591,11 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             UndoChunk chunk("Relax");
-            for (const std::string& name : a.objects())
+            const Node* targetNode = a.has("target") ? &meshArg(a.get<std::string>("target"), "relaxMesh") : nullptr;
+            for (const std::string& name : scene::meshObjects(a, "relaxMesh"))
             {
                 Node& n = meshArg(name, "relaxMesh");
-                if (a.has("target") && a.get<std::string>("target") == name)
+                if (&n == targetNode)
                     continue;
                 PlugRef base = scene::modifiers::editPlug(g, n.id());
                 geo::Mesh m = baseMesh(base);
@@ -625,7 +626,7 @@ void registerCommands()
                 }
                 std::optional<geo::MeshBvh> target;
                 if (a.has("target"))
-                    target.emplace(meshInSpaceOf(meshArg(a.get<std::string>("target"), "relaxMesh"), n));
+                    target.emplace(meshInSpaceOf(*targetNode, n));
                 relaxMesh(m, target ? &*target : nullptr, ro);
                 if (map)
                     map->symmetrizeWedge(m, activeIds.empty() ? 0 : map->majorityWedge(activeIds));
@@ -655,11 +656,11 @@ void registerCommands()
             std::string targetName = a.get<std::string>("target");
             Node& targetNode = meshArg(targetName, "shrinkwrap");
             UndoChunk chunk("Shrinkwrap");
-            for (const std::string& name : a.objects())
+            for (const std::string& name : scene::meshObjects(a, "shrinkwrap"))
             {
-                if (name == targetName)
-                    continue;
                 Node& n = meshArg(name, "shrinkwrap");
+                if (&n == &targetNode)
+                    continue;
                 PlugRef base = scene::modifiers::editPlug(g, n.id());
                 geo::Mesh m = baseMesh(base);
                 geo::Mesh targetMesh = meshInSpaceOf(targetNode, n);
