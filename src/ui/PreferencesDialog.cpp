@@ -22,6 +22,7 @@
 #include "ui/TexturePicker.h"
 #include "ui/ThemeEditor.h"
 #include "ui/Telemetry.h"
+#include "ui/WelcomeNews.h"
 #include "ui/Updater.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
@@ -483,6 +484,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         section(general, "Startup");
         toggle(general, "Show the welcome dialog (examples and recent scenes)", kShowWelcomePref, true);
         toggle(general, "Show recent scenes when the welcome dialog is off", kShowRecentPref, true);
+        toggle(general, "Show news on the welcome dialog (downloaded from the Lila site)", news::kEnabledPref, true);
         number(general, "Recent scenes to keep", "/recentFilesMax", 20.0, 1.0, 200.0, 1.0, 0);
         section(general, "Scene");
         choice(general, "Up axis", "/scene/upAxis", {{"Y up", "y"}, {"Z up", "z"}}, "y");

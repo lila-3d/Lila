@@ -38,7 +38,7 @@ LILA_UI_API QString themedStyleSheet(const QString& qss);
 /** True on the first GUI start with fresh prefs, until a theme has been picked or the chooser dismissed. */
 LILA_UI_API bool themeChooserPending();
 LILA_UI_API void setThemeChooserDone();
-/** The first-run picker: Monotone, Colour and Light as cards with a preview; picking one switches live. */
+/** The first-run picker: Colour, Monotone and Light as cards with a preview; picking one switches live. */
 LILA_UI_API QWidget* makeThemeChooser(QWidget* parent);
 /** Telemetry opt-ins, both off until chosen. */
 inline constexpr const char* kTelemetryUsagePref = "/telemetry/usage";

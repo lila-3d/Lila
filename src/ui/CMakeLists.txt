@@ -120,6 +120,7 @@ lila_module(lila_ui UI
     Telemetry.cpp Telemetry.h
     SupportBundle.cpp SupportBundle.h
     Updater.cpp Updater.h
+    WelcomeNews.cpp WelcomeNews.h
     ProgressOverlay.cpp ProgressOverlay.h
     ReferenceEditor.cpp ReferenceEditor.h
     RenderSettingsDialog.cpp RenderSettingsDialog.h

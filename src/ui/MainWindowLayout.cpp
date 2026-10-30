@@ -13,6 +13,13 @@ void MainWindow::restoreLayout()
     std::string state = p.value<int>(kLayoutFile, "/version", 1) >= kLayoutVersion ? p.value<std::string>(kLayoutFile, "/state", "") : "";
     if (!geometry.empty())
         restoreGeometry(QByteArray::fromBase64(QByteArray::fromStdString(geometry)));
+    else
+    {
+        // First run: the largest 16:9 that fits in most of the screen, centred.
+        const QRect avail = screen()->availableGeometry();
+        const QSize size = QSize(16, 9).scaled(avail.size() * 0.85, Qt::KeepAspectRatio);
+        setGeometry(QRect(avail.center() - QPoint(size.width() / 2, size.height() / 2), size));
+    }
     if (!state.empty())
     {
         std::vector<std::string> tearOffs;

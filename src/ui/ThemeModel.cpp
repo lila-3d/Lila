@@ -378,8 +378,7 @@ const std::vector<Theme>& builtIns()
     static const std::vector<Theme> themes = [] {
         std::vector<Theme> out;
         out.push_back(make("Monotone", "dark",
-                           "A neutral grey interface. Colour around your work shifts how you judge the colours in it (simultaneous "
-                           "contrast), so grey chrome keeps texturing, vertex colour and material work honest.",
+                           "Neutral grey. Coloured interfaces bleed into your vision, affecting your colour perception, and reducing accuracy.",
                            kMonotone));
         out.push_back(make("Colour", "dark", "Dark, with colour for selection, active tools, axes and node categories. Friendlier and easier to scan.",
                            kColour));

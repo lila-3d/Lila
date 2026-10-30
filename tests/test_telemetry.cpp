@@ -5,6 +5,7 @@
 #include "ui/SupportBundle.h"
 #include "ui/Telemetry.h"
 #include "ui/Updater.h"
+#include "ui/WelcomeNews.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -233,4 +234,26 @@ TEST_CASE("updater compares versions and reads the manifest")
     CHECK(r.installer.empty());
     CHECK(r.sha256.empty());
     CHECK(up::parseManifest(json::array()).version.empty());
+}
+
+TEST_CASE("welcome news keeps what this version should show, newest first")
+{
+    const json feed = json::parse(R"({"items": [
+        {"id": "old", "date": "2026-10-01", "title": "Old", "image": "assets/news/old.jpg"},
+        {"id": "new", "date": "2026-10-30", "title": "New", "type": "spotlight", "author": "Someone", "url": "https://example.com"},
+        {"id": "future", "date": "2026-11-01", "title": "Needs 0.3", "minVersion": "0.3.0"},
+        {"id": "past", "date": "2026-11-02", "title": "Before 0.2", "maxVersion": "0.1.9"},
+        {"id": "untitled", "date": "2026-11-03"}
+    ]})");
+    auto items = ui::news::parse(feed, "https://lila-3d.github.io/news.json", "0.2.0");
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].id == "new");
+    CHECK(items[0].type == "spotlight");
+    CHECK(items[0].author == "Someone");
+    CHECK(items[1].id == "old");
+    CHECK(items[1].type == "news");
+    CHECK(items[1].image == "https://lila-3d.github.io/assets/news/old.jpg");
+    CHECK(ui::news::parse(feed, "https://lila-3d.github.io/news.json", "0.2.0", 1).size() == 1);
+    CHECK(ui::news::parse(json::array(), "", "0.2.0").empty());
+    CHECK(ui::news::parse(json::parse(R"({"items": 5})"), "", "0.2.0").empty());
 }

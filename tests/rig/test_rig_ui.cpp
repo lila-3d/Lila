@@ -1,10 +1,12 @@
 #include "TestUtil.h"
 
+#include "core/PrefStore.h"
 #include "scene/ProxySet.h"
 #include "scene/Skin.h"
 #include "ui/AnimProxyUi.h"
 #include "ui/Camera.h"
 #include "ui/SelectionHandlers.h"
+#include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
@@ -74,8 +76,9 @@ void mouse(lila::ui::ViewportTool* tool, QEvent::Type type, QPointF at, const li
 }
 } // namespace
 
-TEST_CASE("joints draw in grayscale and pick by bone")
+TEST_CASE("joints draw in grayscale under Monotone and pick by bone")
 {
+    lila::PrefStore::get().set("general", lila::ui::viewportDisplay::kMonotone, true);
     skinnedCylinder();
     lila::ui::ViewInfo view = frontView();
     lila::render::FrameState s;
@@ -84,6 +87,7 @@ TEST_CASE("joints draw in grayscale and pick by bone")
         d(s, painter, view);
     CHECK(s.lines.size() > 100);
     CHECK(grayscale(s.lines));
+    lila::PrefStore::get().set("general", lila::ui::viewportDisplay::kMonotone, false);
 
     // A click on the bone between bone_b and bone_c picks bone_b.
     auto at = view.project({0, 25, 0});

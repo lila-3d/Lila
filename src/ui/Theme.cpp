@@ -573,7 +573,7 @@ QWidget* makeThemeChooser(QWidget* parent)
     auto* grid = new QGridLayout();
     grid->setSpacing(10);
     auto cards = std::make_shared<std::vector<ThemeCard*>>();
-    for (const char* name : {"Monotone", "Colour", "Light", "Midnight", "Ember", "Paper"})
+    for (const char* name : {"Colour", "Monotone", "Light", "Midnight", "Ember", "Paper"})
     {
         const themes::Theme* t = themes::builtIn(name);
         auto* card = new ThemeCard(*t, box);

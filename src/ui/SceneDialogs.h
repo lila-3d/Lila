@@ -18,9 +18,15 @@ class QCheckBox;
 class QListWidget;
 class QPushButton;
 class QTreeWidget;
+class QVBoxLayout;
 
 namespace lila::ui
 {
+namespace news
+{
+struct Item;
+}
+
 LILA_UI_API void openCrashReport(const std::filesystem::path& dir);
 LILA_UI_API void openCrashFolder(const std::filesystem::path& dir);
 /** Puts report.txt on the clipboard. */
@@ -62,7 +68,8 @@ inline constexpr const char* kShowWelcomePref = "/startup/showWelcome";
 inline constexpr const char* kShowRecentPref = "/startup/showDialog";
 
 /**
- * The frameless startup picker. welcome: the example scenes above the recent ones; otherwise the recent scenes alone.
+ * The frameless startup picker. welcome: the Essentials button over recent scenes, news and examples in three columns;
+ * otherwise the recent scenes alone.
  * Enter or double-click opens, Esc dismisses; a click outside also dismisses the recent scenes alone, not the welcome.
  */
 class LILA_UI_API StartupDialog : public QDialog
@@ -88,8 +95,14 @@ protected:
 private:
     void openSelected(QTreeWidget* list);
     void openExampleSelected();
+    /** Rebuilds the news column; it hides when there is nothing to show, and the examples widen into its space. */
+    void showNews(const std::vector<news::Item>& items);
+    /** The examples list's width for that many cards across. */
+    int examplesWidth(int across) const;
 
     Hooks mHooks;
+    QWidget* mNews = nullptr;
+    QVBoxLayout* mNewsCards = nullptr;
     QTreeWidget* mList = nullptr;
     QListWidget* mExamples = nullptr;
     std::vector<io::examples::Example> mExampleList;

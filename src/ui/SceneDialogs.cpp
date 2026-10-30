@@ -11,6 +11,7 @@
 #include "io/SceneHistory.h"
 #include "ui/DocsUi.h"
 #include "ui/Theme.h"
+#include "ui/WelcomeNews.h"
 #include "vcs/SourceControl.h"
 
 #include <QApplication>
@@ -18,11 +19,14 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QCheckBox>
+#include <QDate>
 #include <QDateTime>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QListWidget>
 #include <QPainter>
+#include <QPainterPath>
 #include <QStyle>
 #include <QStyledItemDelegate>
 #include <QIcon>
@@ -34,9 +38,13 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScreen>
+#include <QScrollArea>
+#include <QTabWidget>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include <map>
 
 namespace lila::ui
 {
@@ -290,73 +298,196 @@ void RecoveryDialog::finish(Choice c)
     accept();
 }
 
+namespace
+{
+constexpr int kRecentWidth = 340;
+constexpr int kNewsWidth = 400;
+
+/** The Essentials link as the welcome banner: the site's night-blue horizon behind the icon, title and call to action. */
+class EssentialsBanner : public QPushButton
+{
+public:
+    explicit EssentialsBanner(QWidget* parent) : QPushButton(parent)
+    {
+        setObjectName("startupEssentials");
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+        setStyleSheet(QString("QLabel { background: transparent; }"
+                              "QLabel#startupHeroTitle { color: #f4f6fa; font-size: 22pt; font-weight: 600; }"
+                              "QLabel#startupHeroSubtitle { color: %1; font-size: 12pt; }")
+                          .arg(themeColor("highlight").lighter(130).name()));
+        auto* row = new QHBoxLayout(this);
+        row->setContentsMargins(24, 18, 24, 18);
+        row->setSpacing(18);
+        row->addStretch(1);
+        auto* icon = new QLabel(this);
+        icon->setPixmap(qApp->windowIcon().pixmap(QSize(60, 60), devicePixelRatioF()));
+        row->addWidget(icon);
+        auto* text = new QVBoxLayout;
+        text->setSpacing(2);
+        for (auto [label, name] : {std::pair{"Welcome to Lila", "startupHeroTitle"}, std::pair{"New to Lila? Read the Essentials  →", "startupHeroSubtitle"}})
+        {
+            auto* l = new QLabel(QString::fromUtf8(label), this);
+            l->setObjectName(name);
+            text->addWidget(l);
+        }
+        row->addLayout(text);
+        row->addStretch(1);
+        for (QLabel* l : findChildren<QLabel*>())
+            l->setAttribute(Qt::WA_TransparentForMouseEvents);
+        setMinimumHeight(row->sizeHint().height());
+    }
+
+protected:
+    void enterEvent(QEnterEvent* e) override
+    {
+        QPushButton::enterEvent(e);
+        update();
+    }
+
+    void leaveEvent(QEvent* e) override
+    {
+        QPushButton::leaveEvent(e);
+        update();
+    }
+
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
+        const bool hover = underMouse();
+        const QColor accent = themeColor("highlight");
+        QPainterPath shape;
+        shape.addRoundedRect(r, 8, 8);
+
+        QLinearGradient sky(r.topLeft(), r.bottomLeft());
+        sky.setColorAt(0, QColor(0x10, 0x13, 0x1a));
+        sky.setColorAt(1, QColor(0x1a, 0x24, 0x36));
+        p.fillPath(shape, sky);
+
+        p.save();
+        p.setClipPath(shape);
+        // An elliptical glow rising from the horizon: a radial gradient squashed vertically.
+        p.translate(r.center().x(), r.bottom());
+        p.scale(1.0, r.height() / (r.width() * 0.45));
+        QRadialGradient glow(QPointF(0, 0), r.width() * 0.45);
+        QColor c = accent;
+        c.setAlphaF(hover ? 0.55f : 0.35f);
+        glow.setColorAt(0, c);
+        c.setAlphaF(0);
+        glow.setColorAt(1, c);
+        p.fillRect(QRectF(-r.width(), -r.width(), 2 * r.width(), 2 * r.width()), glow);
+        p.restore();
+
+        QLinearGradient horizon(r.topLeft(), r.topRight());
+        QColor line = accent.lighter(140);
+        line.setAlphaF(0);
+        horizon.setColorAt(0, line);
+        horizon.setColorAt(1, line);
+        line.setAlphaF(hover ? 1.0f : 0.8f);
+        horizon.setColorAt(0.5, line);
+        p.setPen(QPen(QBrush(horizon), 1.5));
+        p.drawLine(QPointF(r.left() + 8, r.bottom() - 0.75), QPointF(r.right() - 8, r.bottom() - 0.75));
+
+        QColor border = accent;
+        border.setAlphaF(hover ? 0.9f : 0.45f);
+        p.setPen(QPen(border, 1.0));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(shape);
+    }
+};
+
+/** A news item: its 16:9 banner, then title and text; a click opens its link. */
+class NewsCard : public QFrame
+{
+public:
+    NewsCard(const news::Item& item, QWidget* parent) : QFrame(parent), mUrl(QString::fromStdString(item.url))
+    {
+        setObjectName("newsCard");
+        if (!mUrl.isEmpty())
+        {
+            setCursor(Qt::PointingHandCursor);
+            setToolTip(mUrl);
+        }
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(1, 1, 1, 10);
+        layout->setSpacing(4);
+        const int width = kNewsWidth - 2;
+        auto* banner = new QLabel(this);
+        banner->setFixedSize(width, width * 9 / 16);
+        if (QPixmap pix(news::imageFile(item)); !pix.isNull())
+            banner->setPixmap(pix.scaled(banner->size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+        else
+            banner->setStyleSheet(QString("background: %1;").arg(themeColor("altBase").name()));
+        layout->addWidget(banner);
+
+        static const std::map<std::string, QString> kTags = {{"release", "Release"}, {"spotlight", "Community Spotlight"}, {"tutorial", "Tutorial"}};
+        QStringList meta;
+        if (auto it = kTags.find(item.type); it != kTags.end())
+            meta << it->second;
+        if (!item.date.empty())
+            meta << QLocale().toString(QDate::fromString(QString::fromStdString(item.date), Qt::ISODate), QLocale::LongFormat);
+        if (!item.author.empty())
+            meta << QString::fromStdString(item.author);
+        addText(meta.join("  /  "), "newsMeta");
+        addText(QString::fromStdString(item.title), "newsTitle");
+        addText(QString::fromStdString(item.body), "newsBody");
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::LeftButton && !mUrl.isEmpty())
+            QDesktopServices::openUrl(QUrl(mUrl));
+    }
+
+private:
+    void addText(const QString& text, const char* name)
+    {
+        if (text.isEmpty())
+            return;
+        auto* label = new QLabel(text, this);
+        label->setObjectName(name);
+        label->setWordWrap(true);
+        label->setContentsMargins(10, 0, 10, 0);
+        layout()->addWidget(label);
+    }
+
+    QString mUrl;
+};
+
+QWidget* makeColumn(QWidget* parent, const QString& title, QVBoxLayout*& layout)
+{
+    auto* column = new QWidget(parent);
+    layout = new QVBoxLayout(column);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* heading = new QLabel(title, column);
+    heading->setObjectName("startupHeading");
+    layout->addWidget(heading);
+    return column;
+}
+} // namespace
+
 StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDialog(parent), mHooks(std::move(hooks)), mWelcome(welcome)
 {
     setObjectName("startupDialog");
     // A tool window rather than a popup: popups close whenever the app loses focus.
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_DeleteOnClose);
-    setStyleSheet("QDialog#startupDialog { background: #2e2e2e; border: 1px solid #5a5a5a; }"
-                  "QLabel#startupTitle { color: #e0e0e0; font-size: 13pt; }"
-                  "QLabel#startupHeading { color: #e0e0e0; font-size: 11pt; }");
+    setStyleSheet(QString("QDialog#startupDialog { background: #2e2e2e; border: 1px solid #5a5a5a; }"
+                          "QLabel#startupTitle { color: #e0e0e0; font-size: 13pt; }"
+                          "QLabel#startupHeading { color: #e0e0e0; font-size: 11pt; }"
+                          "QScrollArea#startupPage, QWidget#startupPageBody { background: transparent; }"
+                          "QFrame#newsCard { background: %1; border: 1px solid %2; border-radius: 4px; }"
+                          "QFrame#newsCard:hover { border-color: %3; }"
+                          "QLabel#newsMeta { color: %4; }"
+                          "QLabel#newsTitle { color: #f0f0f0; font-size: 11pt; font-weight: bold; }"
+                          "QLabel#newsBody { color: %4; }")
+                      .arg(themeColor("base").name(), themeColor("border").name(), themeColor("highlight").name(), themeColor("dimText").name()));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(16, 14, 16, 12);
-    auto heading = [&](const QString& text, const char* name) {
-        auto* label = new QLabel(text, this);
-        label->setObjectName(name);
-        layout->addWidget(label);
-    };
-
-    if (welcome)
-    {
-        heading("Welcome to Lila", "startupTitle");
-        auto* titleRow = new QHBoxLayout();
-        titleRow->addWidget(layout->takeAt(layout->count() - 1)->widget(), 1);
-        auto* essentials = new QLabel(QString("<a href=\"essentials\" style=\"color: %1;\">New to Lila? Read the essentials</a>")
-                                          .arg(themeColor("highlight").name()),
-                                      this);
-        essentials->setObjectName("startupEssentials");
-        essentials->setCursor(Qt::PointingHandCursor);
-        connect(essentials, &QLabel::linkActivated, this, [this] {
-            reject();
-            docs::open("essentials");
-        });
-        titleRow->addWidget(essentials, 0, Qt::AlignRight | Qt::AlignVCenter);
-        layout->addLayout(titleRow);
-        layout->addSpacing(6);
-        heading("Examples", "startupHeading");
-        mExamples = new QListWidget(this);
-        mExamples->setViewMode(QListView::IconMode);
-        mExamples->setResizeMode(QListView::Adjust);
-        mExamples->setMovement(QListView::Static);
-        mExamples->setWrapping(true);
-        mExamples->setUniformItemSizes(true);
-        mExamples->setSpacing(6);
-        mExamples->setGridSize(ExampleCard::kSize + QSize(12, 12));
-        mExamples->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
-        mExamples->setItemDelegate(new ExampleCard(mExamples));
-        for (const io::examples::Example& x : io::examples::list())
-        {
-            auto* item = new QListWidgetItem(mExamples);
-            item->setText(QString::fromStdString(x.name));
-            item->setData(kDescriptionRole, QString::fromStdString(x.description));
-            item->setToolTip("<p>" + QString::fromStdString(x.description).toHtmlEscaped() + "</p>");
-            item->setData(kKindRole, int(mExampleList.size()));
-            if (!x.thumbnail.empty())
-                item->setData(Qt::DecorationRole, QPixmap(qpath(x.thumbnail)));
-            mExampleList.push_back(x);
-        }
-        // Three cards across beside the scroll bar and two rows down, so six fit without scrolling.
-        const int pad = 2 * mExamples->frameWidth() + 2 * mExamples->spacing();
-        mExamples->setMinimumWidth(3 * mExamples->gridSize().width() + mExamples->style()->pixelMetric(QStyle::PM_ScrollBarExtent) + pad);
-        mExamples->setFixedHeight(2 * mExamples->gridSize().height() + pad);
-        layout->addWidget(mExamples);
-        layout->addSpacing(6);
-        heading("Recent Scenes", "startupHeading");
-    }
-    else
-        heading("Recent Scenes", "startupTitle");
 
     mList = makeList(this, {"Name", "Folder", "Modified"});
     json recent = PrefStore::get().value("general", "/recentFiles", json::array());
@@ -375,7 +506,8 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         item->setToolTip(0, qpath(p));
         item->setData(0, kPathRole, qpath(p));
     }
-    if (mList->topLevelItemCount() == 0)
+    const bool anyRecent = mList->topLevelItemCount() > 0;
+    if (!anyRecent)
     {
         auto* none = new QTreeWidgetItem(mList, {"No recent scenes"});
         none->setFlags(Qt::NoItemFlags);
@@ -384,7 +516,99 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         mList->setCurrentItem(mList->topLevelItem(0));
     mList->resizeColumnToContents(0);
     mList->setColumnWidth(1, 300);
-    layout->addWidget(mList, 1);
+
+    if (welcome)
+    {
+        auto* essentials = new EssentialsBanner(this);
+        connect(essentials, &QPushButton::clicked, this, [this] {
+            reject();
+            docs::open("essentials");
+        });
+        layout->addWidget(essentials);
+        layout->addSpacing(10);
+
+        auto* page = new QWidget;
+        page->setObjectName("startupPageBody");
+        auto* columns = new QHBoxLayout(page);
+        columns->setContentsMargins(0, 0, 0, 0);
+        columns->setSpacing(20);
+        // Zero-stretch ends: they only take the slack when Recent Scenes is hidden, centring the rest.
+        columns->addStretch(0);
+
+        // Too narrow for the folder; it is in each row's tooltip.
+        mList->hideColumn(1);
+        QVBoxLayout* recentLayout = nullptr;
+        QWidget* recentColumn = makeColumn(page, "Recent Scenes", recentLayout);
+        recentColumn->setMinimumWidth(kRecentWidth);
+        recentLayout->addWidget(mList, 1);
+        recentColumn->setVisible(anyRecent);
+        columns->addWidget(recentColumn, 1);
+
+        QVBoxLayout* newsLayout = nullptr;
+        mNews = makeColumn(page, "News", newsLayout);
+        mNews->setFixedWidth(kNewsWidth);
+        mNewsCards = new QVBoxLayout;
+        mNewsCards->setSpacing(12);
+        newsLayout->addLayout(mNewsCards);
+        newsLayout->addStretch(1);
+        columns->addWidget(mNews);
+
+        QVBoxLayout* examplesLayout = nullptr;
+        QWidget* examplesColumn = makeColumn(page, "Examples", examplesLayout);
+        mExamples = new QListWidget(examplesColumn);
+        mExamples->setViewMode(QListView::IconMode);
+        mExamples->setResizeMode(QListView::Adjust);
+        mExamples->setMovement(QListView::Static);
+        mExamples->setWrapping(true);
+        mExamples->setUniformItemSizes(true);
+        mExamples->setSpacing(6);
+        mExamples->setGridSize(ExampleCard::kSize + QSize(12, 12));
+        mExamples->setFrameShape(QFrame::NoFrame);
+        mExamples->viewport()->setAutoFillBackground(false);
+        mExamples->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        mExamples->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        mExamples->setItemDelegate(new ExampleCard(mExamples));
+        for (const io::examples::Example& x : io::examples::list())
+        {
+            auto* item = new QListWidgetItem(mExamples);
+            item->setText(QString::fromStdString(x.name));
+            item->setData(kDescriptionRole, QString::fromStdString(x.description));
+            item->setToolTip("<p>" + QString::fromStdString(x.description).toHtmlEscaped() + "</p>");
+            item->setData(kKindRole, int(mExampleList.size()));
+            if (!x.thumbnail.empty())
+                item->setData(Qt::DecorationRole, QPixmap(qpath(x.thumbnail)));
+            mExampleList.push_back(x);
+        }
+        examplesLayout->addWidget(mExamples);
+        examplesLayout->addStretch(1);
+        columns->addWidget(examplesColumn);
+        columns->addStretch(0);
+        showNews(news::cached());
+        QPointer<StartupDialog> self = this;
+        news::refresh([self](const std::vector<news::Item>& items) {
+            if (self)
+                self->showNews(items);
+        });
+
+        auto* scroll = new QScrollArea;
+        scroll->setObjectName("startupPage");
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(page);
+        // A single tab shows no tab bar; a second one brings it up.
+        auto* tabs = new QTabWidget(this);
+        tabs->setDocumentMode(true);
+        tabs->setTabBarAutoHide(true);
+        tabs->addTab(scroll, "Home");
+        layout->addWidget(tabs, 1);
+    }
+    else
+    {
+        auto* title = new QLabel("Recent Scenes", this);
+        title->setObjectName("startupTitle");
+        layout->addWidget(title);
+        layout->addWidget(mList, 1);
+    }
 
     auto* row = new QHBoxLayout();
     const char* showPref = welcome ? kShowWelcomePref : kShowRecentPref;
@@ -420,8 +644,29 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         if (open)
             open({});
     });
-    resize(welcome ? std::max(800, minimumSizeHint().width()) : 680, welcome ? 720 : 380);
+    resize(welcome ? QSize(kRecentWidth + kNewsWidth + examplesWidth(2) + 4 * 20 + 2 * 16, 900) : QSize(680, 380));
     qApp->installEventFilter(this);
+}
+
+void StartupDialog::showNews(const std::vector<news::Item>& items)
+{
+    while (QLayoutItem* old = mNewsCards->takeAt(0))
+    {
+        delete old->widget();
+        delete old;
+    }
+    for (const news::Item& item : items)
+        mNewsCards->addWidget(new NewsCard(item, mNews));
+    mNews->setVisible(!items.empty());
+    // Without news, the examples take its space.
+    const int across = items.empty() ? 3 : 2;
+    const int rows = std::max(1, (int(mExampleList.size()) + across - 1) / across);
+    mExamples->setFixedSize(examplesWidth(across), rows * mExamples->gridSize().height() + 2 * mExamples->frameWidth() + 2 * mExamples->spacing());
+}
+
+int StartupDialog::examplesWidth(int across) const
+{
+    return across * mExamples->gridSize().width() + 2 * mExamples->frameWidth() + 2 * mExamples->spacing() + 2;
 }
 
 void StartupDialog::present()
@@ -429,6 +674,8 @@ void StartupDialog::present()
     QWidget* anchor = parentWidget();
     QScreen* screen = anchor ? anchor->screen() : QGuiApplication::primaryScreen();
     QRect area = screen ? screen->availableGeometry() : QRect(0, 0, 1600, 900);
+    // Never bigger than the screen: the page scrolls instead.
+    resize(size().boundedTo(area.size() * 0.92));
     move(area.center() - QPoint(width() / 2, height() / 2));
     show();
     raise();

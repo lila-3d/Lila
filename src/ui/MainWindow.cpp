@@ -7,7 +7,7 @@ using namespace mainWindowDetail;
 MainWindow::MainWindow()
 {
     setWindowTitle(QString("Lila ") + version::number());
-    resize(1600, 960);
+    resize(1600, 900);
 #ifdef _WIN32
     BOOL dark = TRUE;
     DwmSetWindowAttribute(HWND(winId()), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
