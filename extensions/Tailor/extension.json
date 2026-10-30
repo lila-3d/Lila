@@ -1,0 +1,14 @@
+{
+    "id": "Tailor",
+    "name": "Tailor",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Garments from sewing patterns: panels sewn by seams, draped by a cloth solver onto a body, ready for games and Unreal.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Tailor.dll",
+        "linux": "Tailor.so",
+        "macos": "Tailor.dylib"
+    },
+    "enabledByDefault": true
+}
