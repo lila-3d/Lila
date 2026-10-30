@@ -305,6 +305,8 @@ public:
     QString label;
     std::vector<SocketInfo> inputs, outputs;
     std::vector<std::pair<std::string, std::string>> props;
+    /** Props with a text editor (code, multiline, font): drawn as typed, first line only. */
+    std::set<std::string> textProps;
     bool viewer = false;
     bool viewerActive = false;
     std::string groupRef; // the group a Group node runs

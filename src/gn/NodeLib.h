@@ -42,6 +42,9 @@ struct SocketDecl
     std::string doc;
     /** Bounds of an unlinked Int or Float input's value; editors and gnSetValue hold it inside them. */
     std::optional<double> min, max;
+    /** A String's editor in the Node Editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter) or
+     * "font" (font pickers); empty is one line. */
+    std::string editor;
 };
 
 /** A non-linkable choice on a node, such as the Math operation. Free text when options is empty. */
@@ -51,6 +54,8 @@ struct PropDecl
     std::vector<std::string> options;
     std::string defaultValue;
     std::string doc;
+    /** A free-text property's editor, as SocketDecl::editor. */
+    std::string editor;
 };
 
 struct LILA_SCENE_API Sockets

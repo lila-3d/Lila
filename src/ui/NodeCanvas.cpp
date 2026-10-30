@@ -14,7 +14,11 @@ NodeItem::NodeItem(NodeCanvas* canvas, const json& info) : mCanvas(canvas)
     for (const json& s : info.value("outputs", json::array()))
         outputs.push_back({s.value("id", ""), s.value("type", ""), s.value("field", false), false, false, json(), "", s.value("doc", "")});
     for (const json& p : info.value("props", json::array()))
+    {
         props.push_back({p.value("id", ""), p.value("value", "")});
+        if (p.contains("editor"))
+            textProps.insert(props.back().first);
+    }
     viewer = !canvas->backend->viewerType().empty() && type == canvas->backend->viewerType();
     thumbSize = canvas->backend->thumbnailSize(type);
     if (canvas->backend->runsSubgroup(type))
@@ -142,7 +146,13 @@ void NodeItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
         p->drawRoundedRect(r, 3, 3);
         p->setPen(gray(200));
         QString text = props[i].second.empty() ? pretty(props[i].first) : pretty(props[i].second);
-        p->drawText(r.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+        if (textProps.contains(props[i].first) && !props[i].second.empty())
+        {
+            QStringList lines = qs(props[i].second).split('\n');
+            text = lines.size() > 1 ? lines.front() + " ..." : lines.front();
+        }
+        QRectF textRect = r.adjusted(6, 0, -6, 0);
+        p->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, p->fontMetrics().elidedText(text, Qt::ElideRight, int(textRect.width())));
     }
     for (int ii : shownIn)
     {

@@ -44,7 +44,7 @@ struct Field
     double max = std::numeric_limits<double>::quiet_NaN();
     double step = std::numeric_limits<double>::quiet_NaN();
     std::string suffix; // " cm", " deg"
-    /** A Text field's editor: "multiline" (a box of several lines) or "font" (font pickers); empty is one line. */
+    /** A Text field's editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter) or "font" (font pickers); empty is one line. */
     std::string editor;
 };
 

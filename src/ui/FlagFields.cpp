@@ -1,6 +1,7 @@
 #include "ui/FlagFields.h"
 
 #include "ui/FontPicker.h"
+#include "ui/CodeEdit.h"
 #include "ui/MultilineEdit.h"
 #include "ui/SpinScrub.h"
 #include "ui/ValueReset.h"
@@ -218,6 +219,16 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
             out.label = new QLabel(label, parent);
             out.field = picker;
             out.set = [picker, str](const json& v) { picker->setValue(str(v)); };
+            break;
+        }
+        if (!list && f.editor == "code")
+        {
+            auto* box = new CodeEdit(parent);
+            box->showText(str(value));
+            QObject::connect(box, &CodeEdit::applied, box, [changed](const QString& t) { changed(json(t.toStdString())); });
+            out.label = new QLabel(label, parent);
+            out.field = box;
+            out.set = [box, str](const json& v) { box->showText(str(v)); };
             break;
         }
         if (!list && f.editor == "multiline")

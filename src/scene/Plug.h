@@ -78,6 +78,7 @@ enum AttrFlags : uint32_t
     AttrChannelBox = 1 << 11,       // shown in the channel box although not keyable
     AttrMultiline = 1 << 12,        // String of several lines: editors offer a text box
     AttrFont = 1 << 13,             // String naming a font (family and style, or a file): editors offer font pickers
+    AttrCode = 1 << 14,             // String of source code: editors offer a monospace box that applies on Ctrl+Enter
 };
 
 struct AttrDef

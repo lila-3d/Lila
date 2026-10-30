@@ -32,6 +32,13 @@ inline SocketDecl bounded(SocketDecl s, std::optional<double> lo, std::optional<
     return s;
 }
 
+/** A String input with a richer editor (SocketDecl::editor). */
+inline SocketDecl edited(SocketDecl s, std::string editor)
+{
+    s.editor = std::move(editor);
+    return s;
+}
+
 inline SocketDecl geoIn(std::string id = "geometry", std::string doc = {})
 {
     return {.id = std::move(id), .type = SocketType::Geometry, .doc = std::move(doc)};
@@ -63,6 +70,12 @@ inline SocketDecl geoOut(std::string id = "geometry", std::string doc = {})
 inline PropDecl prop(std::string id, std::vector<std::string> options, std::string def, std::string doc = {})
 {
     return {.id = std::move(id), .options = std::move(options), .defaultValue = std::move(def), .doc = std::move(doc)};
+}
+
+/** A free-text property edited in a box of several lines ("multiline") or as code ("code"). */
+inline PropDecl textProp(std::string id, std::string editor, std::string def, std::string doc = {})
+{
+    return {.id = std::move(id), .defaultValue = std::move(def), .doc = std::move(doc), .editor = std::move(editor)};
 }
 
 inline json vec(double x, double y, double z) { return json::array({x, y, z}); }

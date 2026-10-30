@@ -2,6 +2,7 @@
 
 #include "ops/CommandOptions.h"
 #include "tex/Types.h"
+#include "ui/CodeEdit.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
 #include "ui/TexturePicker.h"
@@ -17,10 +18,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPlainTextEdit>
-#include <QPushButton>
 #include <QRandomGenerator>
-#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QToolButton>
@@ -455,29 +453,10 @@ QString labelOf(const json& p)
 /** Slang source for a code parameter. Every edit recompiles, so it is sent on Apply (or Ctrl+Enter), not per keystroke. */
 QWidget* codeEditor(QWidget* parent, const std::string& value, const QString& tip, std::function<void(const json&)> changed)
 {
-    auto* box = new QWidget(parent);
-    auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(0, 0, 0, 0);
-    auto* edit = new QPlainTextEdit(box);
-    edit->setFont(monoFont());
-    edit->setPlainText(qs(value));
-    edit->setLineWrapMode(QPlainTextEdit::NoWrap);
-    edit->setTabStopDistance(4 * edit->fontMetrics().horizontalAdvance(' '));
-    edit->setMinimumHeight(edit->fontMetrics().lineSpacing() * 6);
-    edit->setToolTip(tip);
-    auto* apply = new QPushButton("Apply", box);
-    apply->setToolTip("Recompile with this code (Ctrl+Enter)");
-    apply->setEnabled(false);
-    auto send = [edit, apply, changed] {
-        apply->setEnabled(false);
-        changed(edit->toPlainText().toStdString());
-    };
-    QObject::connect(edit, &QPlainTextEdit::textChanged, apply, [apply] { apply->setEnabled(true); });
-    QObject::connect(apply, &QPushButton::clicked, apply, send);
-    auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return), edit, nullptr, nullptr, Qt::WidgetShortcut);
-    QObject::connect(shortcut, &QShortcut::activated, apply, send);
-    v->addWidget(edit);
-    v->addWidget(apply, 0, Qt::AlignRight);
+    auto* box = new CodeEdit(parent);
+    box->showText(value);
+    box->setToolTip(tip);
+    QObject::connect(box, &CodeEdit::applied, box, [changed](const QString& text) { changed(text.toStdString()); });
     return box;
 }
 

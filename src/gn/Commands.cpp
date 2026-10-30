@@ -141,6 +141,8 @@ json socketJson(const SocketDecl& s, const GNode& n, const Group& grp, bool inpu
     }
     if (!s.doc.empty())
         j["doc"] = s.doc;
+    if (!s.editor.empty())
+        j["editor"] = s.editor;
     return j;
 }
 
@@ -162,7 +164,12 @@ json nodeJson(const GNode& n, const Group& grp)
     for (const SocketDecl& sd : s.outputs)
         outs.push_back(socketJson(sd, n, grp, false));
     for (const PropDecl& p : d->props)
-        props.push_back({{"id", p.id}, {"options", p.options}, {"value", d->propValue(n, p.id)}});
+    {
+        json pj = {{"id", p.id}, {"options", p.options}, {"value", d->propValue(n, p.id)}};
+        if (!p.editor.empty())
+            pj["editor"] = p.editor;
+        props.push_back(std::move(pj));
+    }
     j["inputs"] = ins;
     j["outputs"] = outs;
     j["props"] = props;
@@ -747,6 +754,8 @@ void registerCommands()
                         json pj = {{"id", p.id}, {"default", p.defaultValue}, {"options", p.options}};
                         if (!p.doc.empty())
                             pj["doc"] = p.doc;
+                        if (!p.editor.empty())
+                            pj["editor"] = p.editor;
                         props.push_back(std::move(pj));
                     }
                     Sockets s = d->socketsFor(grp, probe);

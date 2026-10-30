@@ -170,7 +170,7 @@ void wrangleNode()
         .doc = std::string("Runs code on every selected element of a domain, reading and writing attributes. Writing @P moves points "
                            "(and instances). ") +
                kLanguageDoc,
-        .props = {prop("domain", meshDomains(), "point"), prop("code", {}, "@P.y += a;", "The code run per element.")},
+        .props = {prop("domain", meshDomains(), "point"), textProp("code", "code", "@P.y += a;", "The code run per element.")},
         .sockets = {.inputs = std::move(inputs), .outputs = {geoOut()}},
         .exec =
             [](ExecContext& c) {
@@ -239,7 +239,7 @@ void expressionNode()
         .doc = std::string("A field computed by code: the value of its last expression, such as 'a * sin(@P.x) + b'. It can read "
                            "attributes but not write them. ") +
                kLanguageDoc,
-        .props = {prop("dataType", {"float", "int", "vector", "color", "bool"}, "float"), prop("code", {}, "a", "The code; its last expression is the value.")},
+        .props = {prop("dataType", {"float", "int", "vector", "color", "bool"}, "float"), textProp("code", "code", "a", "The code; its last expression is the value.")},
         .dynamicSockets =
             [](const Group&, const GNode& n) {
                 SocketType t = dataTypeOf(findDecl("Expression")->propValue(n, "dataType"));

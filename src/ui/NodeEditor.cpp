@@ -14,12 +14,15 @@
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/AnimatedSend.h"
+#include "ui/CodeEdit.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
 #include "ui/FileDialog.h"
+#include "ui/FontPicker.h"
+#include "ui/MultilineEdit.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -263,8 +266,36 @@ QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json
     return b;
 }
 
+/** A string's editor named by a decl's editor ("multiline", "code", "font"); null for a one-line box. */
+QWidget* textEditor(QWidget* parent, const std::string& editor, const std::string& value, std::function<void(std::string)> set)
+{
+    if (editor == "code")
+    {
+        auto* box = new CodeEdit(parent);
+        box->showText(value);
+        QObject::connect(box, &CodeEdit::applied, box, [set](const QString& t) { set(t.toStdString()); });
+        return box;
+    }
+    if (editor == "multiline")
+    {
+        auto* box = new MultilineEdit(parent);
+        box->showText(value);
+        QObject::connect(box, &MultilineEdit::committed, box, [set](const QString& t) { set(t.toStdString()); });
+        return box;
+    }
+    if (editor == "font")
+    {
+        auto* picker = new FontPicker(parent);
+        picker->setValue(value);
+        QObject::connect(picker, &FontPicker::chosen, picker, [set](const QString& f) { set(f.toStdString()); });
+        return picker;
+    }
+    return nullptr;
+}
+
 /** Editor for one socket value; calls set with the new JSON value. A non-null def is restored by a middle click. */
-QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value, std::function<void(json)> set, const json& def = json())
+QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value, std::function<void(json)> set, const json& def = json(),
+                     const std::string& editor = {})
 {
     if (type == "color")
         return colorEditor(parent, value, std::move(set));
@@ -279,6 +310,8 @@ QWidget* valueEditor(QWidget* parent, const std::string& type, const json& value
     }
     if (type == "string")
     {
+        if (QWidget* w = textEditor(parent, editor, value.is_string() ? value.get<std::string>() : std::string(), [set](std::string s) { set(std::move(s)); }))
+            return w;
         auto* e = new QLineEdit(value.is_string() ? qs(value.get<std::string>()) : QString(), parent);
         QObject::connect(e, &QLineEdit::editingFinished, e, [e, set] { set(e->text().toStdString()); });
         return e;
@@ -1467,6 +1500,28 @@ void NodeEditor::rebuildSidePanel()
                 form->addRow("Group", combo);
                 continue;
             }
+            if (std::string editor = p.value("editor", ""); opts.empty() && !editor.empty())
+            {
+                // Typing pauses commit multiline text, so it must not rebuild the panel under the box.
+                auto set = [backend = mBackend, group, nodeName, id, editor](std::string v) {
+                    json call = args({group, nodeName + "." + id, std::move(v)});
+                    if (editor == "multiline")
+                        setFromField(*backend, call);
+                    else
+                        runVerb(*backend, "SetValue", call);
+                };
+                if (QWidget* w = textEditor(panel, editor, cur, set))
+                {
+                    if (editor == "font")
+                        form->addRow(pretty(id), w);
+                    else
+                    {
+                        form->addRow(new QLabel(pretty(id), panel));
+                        form->addRow(w);
+                    }
+                    continue;
+                }
+            }
             if (opts.empty())
             {
                 auto* e = new QLineEdit(qs(cur), panel);
@@ -1510,7 +1565,7 @@ void NodeEditor::rebuildSidePanel()
             else
             {
                 QWidget* ed = valueEditor(row, type, value, [backend = mBackend, group, nodeName, id](json v) { setFromField(*backend, args({group, nodeName + "." + id, v})); },
-                                          s.value("default", json()));
+                                          s.value("default", json()), s.value("editor", ""));
                 applyLimits(ed, s);
                 h->addWidget(ed, 1);
             }

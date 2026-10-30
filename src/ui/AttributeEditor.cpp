@@ -12,6 +12,7 @@
 #include "ui/Deletion.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
+#include "ui/CodeEdit.h"
 #include "ui/MultilineEdit.h"
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
@@ -712,6 +713,15 @@ void AttributeEditor::rebuild()
                 connect(picker, &FontPicker::chosen, this, [this, attr](const QString& font) { set(attr, font.toStdString()); });
                 mUpdaters.push_back([picker, ref] { picker->setValue(std::get<std::string>(Graph::current().value(ref))); });
                 field = picker;
+                break;
+            }
+            if (def.flags & scene::AttrCode)
+            {
+                auto* box = new CodeEdit;
+                box->setReadOnly(readOnly);
+                connect(box, &CodeEdit::applied, this, [this, attr](const QString& text) { set(attr, text.toStdString()); });
+                mUpdaters.push_back([box, ref] { box->showText(std::get<std::string>(Graph::current().value(ref))); });
+                field = box;
                 break;
             }
             if (def.flags & scene::AttrMultiline)

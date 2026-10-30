@@ -4,6 +4,7 @@
 #include "gn/Expression.h"
 #include "gn/Gn.h"
 #include "geo/Mesh.h"
+#include "ops/Command.h"
 
 using namespace lila;
 using json = nlohmann::json;
@@ -231,5 +232,22 @@ TEST_CASE("expression node")
                             {L{"C", "mesh", "D", "geometry"}, L{"E", "value", "D", "selection"}, L{"D", "geometry", "GroupOutput", "geometry"}});
     CHECK(culled->mesh->numPoints() == 4);
     CHECK(culled->mesh->bounds().max.y == doctest::Approx(-50.0));
+}
+
+TEST_CASE("code props ask for a code editor")
+{
+    json types = ops::execute("gnNodeTypes", {{"detail", true}});
+    auto editorOf = [&](const char* type, const char* prop) {
+        for (const json& t : types)
+            if (t["type"] == type)
+                for (const json& p : t["props"])
+                    if (p["id"] == prop)
+                        return p.value("editor", std::string());
+        return std::string("missing");
+    };
+    CHECK(editorOf("Wrangle", "code") == "code");
+    CHECK(editorOf("Expression", "code") == "code");
+    CHECK(editorOf("StringToCurves", "font") == "font");
+    CHECK(editorOf("Wrangle", "domain").empty());
 }
 } // namespace wrangle_tests

@@ -1282,9 +1282,9 @@ void stringToCurves()
         .category = "Curve",
         .doc = "Text as closed Bezier outlines in the XY plane, the first baseline on y = 0. Fill Curve makes faces of it. Character is "
                "each curve's character index.",
-        .props = {prop("font", {}, "", "A font file, or a family and style such as \"Inter Bold\"; empty for the default."),
+        .props = {textProp("font", "font", "", "A font file, or a family and style such as \"Inter Bold\"; empty for the default."),
                   prop("align", {"left", "center", "right", "justify"}, "left"), prop("anchor", {"baseline", "top", "middle", "bottom"}, "baseline")},
-        .sockets = {.inputs = {in("string", T::String, "Text"), bounded(in("size", T::Float, 10.0, "Em size, cm."), 0.0), in("letterSpacing", T::Float, 0.0, "cm."),
+        .sockets = {.inputs = {edited(in("string", T::String, "Text"), "multiline"), bounded(in("size", T::Float, 10.0, "Em size, cm."), 0.0), in("letterSpacing", T::Float, 0.0, "cm."),
                                in("wordSpacing", T::Float, 0.0, "cm."), bounded(in("lineSpacing", T::Float, 1.0), 0.0),
                                bounded(in("wrapWidth", T::Float, 0.0, "cm; 0 breaks only at new lines."), 0.0)},
                     .outputs = {geoOut("curves"), fout("character", T::Int)}},
