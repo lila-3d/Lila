@@ -52,6 +52,7 @@ struct Chunk
     std::vector<int64_t> refs; // 3 per corner: v, vt, vn
     std::vector<Event> events;
     std::vector<std::string> mtllibs;
+    size_t lines = 0;
 };
 
 struct Cursor
@@ -214,6 +215,8 @@ void parseChunk(const char* begin, const char* end, Chunk& c)
         }
         else if (kw == "mtllib")
             c.mtllibs.emplace_back(cur.rest());
+        else if (kw == "l")
+            ++c.lines;
         cur.nextLine();
     }
 }
@@ -318,8 +321,10 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
     std::vector<size_t> vBase(chunks.size() + 1, 0), tBase(chunks.size() + 1, 0), nBase(chunks.size() + 1, 0);
     bool anyColor = false;
     bool anySmoothStatement = false;
+    size_t lines = 0;
     for (size_t i = 0; i < chunks.size(); ++i)
     {
+        lines += chunks[i].lines;
         vBase[i + 1] = vBase[i] + chunks[i].v.size();
         tBase[i + 1] = tBase[i] + chunks[i].vt.size();
         nBase[i + 1] = nBase[i] + chunks[i].vn.size();
@@ -580,6 +585,8 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
             colors::adopt(m);
         result.objects.push_back(std::move(b.obj));
     }
+    if (result.objects.empty() && lines)
+        result.error = std::to_string(lines) + " line elements (l) and no faces; OBJ lines are not imported";
     return result;
 }
 

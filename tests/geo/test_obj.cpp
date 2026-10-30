@@ -107,6 +107,18 @@ TEST_CASE("obj: hard edges from normals without smoothing groups")
     CHECK(hardCount(r.objects[0].mesh) == 12);
 }
 
+TEST_CASE("obj: lines without faces report an error")
+{
+    ObjReadResult r = readObj("v 0 0 0\r\nv 1e-15 0 0\r\nv 0 1 0\r\nv 0 0 1\r\nl 1 2\r\nl 3 4\r\n");
+    CHECK_FALSE(r.ok());
+    CHECK(r.objects.empty());
+    CHECK(r.error.find("2 line elements") != std::string::npos);
+
+    ObjReadResult mixed = readObj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\nl 1 2\n");
+    CHECK(mixed.ok());
+    CHECK(mixed.objects.size() == 1);
+}
+
 TEST_CASE("perf: obj 1M faces")
 {
     Mesh m = makePlane({1000.0, 1000.0, 1000, 1000});
