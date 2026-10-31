@@ -40,7 +40,7 @@ fs::path viewportHdri()
     const std::string pref = PrefStore::get().value<std::string>("general", "/viewport/env/path", "");
     if (pref == "procedural")
         return {};
-    fs::path wanted = pref.empty() ? fs::path("studio_small_09_2k.hdr") : utf8Path(pref);
+    fs::path wanted = pref.empty() ? fs::path("overcast_soil_puresky_2k.hdr") : utf8Path(pref);
     if (wanted.is_relative())
         wanted = paths::resourcesDir() / "hdri" / wanted;
     std::error_code ec;

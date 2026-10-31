@@ -373,7 +373,7 @@ void fillEnvironmentMenu(QMenu* menu)
     {
         std::u8string name = hdri.filename().u8string();
         std::string value(name.begin(), name.end());
-        item(QString::fromStdWString(hdri.stem().wstring()), value, !resolved.empty() && environments::resolve(value) == resolved);
+        item(QString::fromStdString(environments::displayName(hdri)), value, !resolved.empty() && environments::resolve(value) == resolved);
     }
     item("Procedural Studio", environments::kProcedural, resolved.empty());
     menu->addSeparator();

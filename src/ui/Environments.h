@@ -18,6 +18,9 @@ inline constexpr const char* kIntensityByHdri = "/viewport/env/intensityByHdri";
 /** HDRIs shipped in resources/hdri, sorted by name. */
 LILA_UI_API std::vector<std::filesystem::path> builtIn();
 
+/** Menu label for an HDRI file: "kloofendal_48d_partly_cloudy_puresky_2k.hdr" reads "Kloofendal 48d Partly Cloudy (Pure Sky)". */
+LILA_UI_API std::string displayName(const std::filesystem::path& hdri);
+
 /**
  * The env path pref as the renderer takes it: empty for the procedural studio. An empty pref is the default HDRI,
  * and a bare file name refers to one of the built-in HDRIs.
