@@ -22,7 +22,8 @@ void markDependencies(Plan& plan)
         const bool stateful = step.decl->stateful != nullptr;
         if (stateful && plan.statefulStep < 0)
             plan.statefulStep = int(s);
-        step.dynamic = stateful || step.decl->type == "SceneTime" || (runsGroup(step.decl->type) && plan.usesTime) ||
+        step.dynamic = stateful || step.decl->type == "SceneTime" || step.decl->type == "IsViewport" || step.decl->type == "ActiveCamera" ||
+                       (runsGroup(step.decl->type) && (plan.usesTime || plan.usesView)) ||
                        step.decl->type == "Viewer" || int(s) == plan.outputStep;
         for (const std::vector<Plan::Source>& links : step.inputs)
             for (const Plan::Source& src : links)
@@ -141,6 +142,7 @@ PlanPtr compile(const Group& g)
         return true;
     };
     plan->usesTime = usesSceneTime(grp);
+    plan->usesView = usesViewState(grp);
     size_t outIndex = size_t(outNode - grp.nodes.data());
     if (!visit(outIndex))
     {

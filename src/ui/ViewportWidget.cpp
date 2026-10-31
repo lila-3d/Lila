@@ -1,7 +1,29 @@
 #include "ui/ViewportWidgetDetail.h"
 
+#include "scene/ViewState.h"
+#include "ui/CameraBookmarks.h"
+
 namespace lila::ui
 {
+namespace
+{
+scene::viewState::ActiveCamera activeCameraOf(const Camera& camera, double aspect)
+{
+    scene::viewState::ActiveCamera c;
+    c.world = glm::inverse(camera.view());
+    c.orthographic = camera.ortho;
+    const glm::dvec2 extents = camera.viewExtents(aspect);
+    if (camera.ortho)
+        c.orthoSize = extents * 2.0;
+    else
+    {
+        c.horizontalFov = 2.0 * std::atan(extents.x);
+        c.verticalFov = 2.0 * std::atan(extents.y);
+    }
+    return c;
+}
+} // namespace
+
 using namespace viewportDetail;
 
 ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
@@ -325,6 +347,8 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     const Camera& camera = rv ? rv->camera : mCamera;
     const double viewAspect = rv ? double(rv->width) / double(std::max(rv->height, 1)) : aspect();
     scene::Graph& g = scene::Graph::current();
+    if (!rv && cameraBookmarks::activeView() == this)
+        scene::viewState::setActiveCamera(activeCameraOf(camera, viewAspect));
     g.evaluate();
     const bool inherit = scene::inheritVisibility();
 

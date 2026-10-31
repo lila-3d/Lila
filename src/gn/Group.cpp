@@ -444,16 +444,18 @@ std::vector<std::string> referencedGroups(const Group& g)
     return out;
 }
 
-bool usesSceneTime(const Group& g)
+namespace
+{
+bool usesNodeType(const Group& g, std::initializer_list<std::string_view> types)
 {
     for (const GNode& n : g.nodes)
-        if (n.type == "SceneTime")
+        if (std::find(types.begin(), types.end(), n.type) != types.end())
             return true;
     for (const auto& [name, def] : g.subgroups)
     {
         try
         {
-            if (usesSceneTime(Group::fromJson(def)))
+            if (usesNodeType(Group::fromJson(def), types))
                 return true;
         }
         catch (const std::exception&)
@@ -462,6 +464,11 @@ bool usesSceneTime(const Group& g)
     }
     return false;
 }
+} // namespace
+
+bool usesSceneTime(const Group& g) { return usesNodeType(g, {"SceneTime"}); }
+
+bool usesViewState(const Group& g) { return usesNodeType(g, {"IsViewport", "ActiveCamera"}); }
 
 bool dependsOn(const Group& g, std::string_view group)
 {

@@ -19,6 +19,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
 #include "scene/Take.h"
+#include "scene/ViewState.h"
 #include "seq/MeshSequence.h"
 
 #include <algorithm>
@@ -804,6 +805,9 @@ int syncMappings(bool force, const std::vector<std::string>& only)
 
     if (!force && !PrefStore::get().value<bool>(kPrefFile, "/autoSync", true))
         return 0;
+    // The worker reads the evaluated meshes after this returns, so the scope lasts until it is done, then ends on the main thread.
+    std::shared_ptr<scene::viewState::FinalScope> forOutput(new scene::viewState::FinalScope,
+                                                            [](scene::viewState::FinalScope* f) { mainq::post([f] { delete f; }); });
     json list = mappings();
     if (!only.empty())
     {
@@ -967,7 +971,7 @@ int syncMappings(bool force, const std::vector<std::string>& only)
         return withTextureSets(0);
 
     int count = static_cast<int>(jobs.size());
-    Link::get().post([jobs = std::move(jobs), dir] {
+    Link::get().post([jobs = std::move(jobs), dir, forOutput] {
         LILA_ZONE_N("Unreal sync job");
 
         Link::get().ensureConnected();

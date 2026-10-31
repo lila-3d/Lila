@@ -1,4 +1,5 @@
 #include "gn/NodesCommon.h"
+#include "scene/ViewState.h"
 
 namespace lila::gn::nodes
 {
@@ -167,6 +168,46 @@ void sceneTime()
     });
 }
 
+void isViewport()
+{
+    registerDecl({
+        .type = "IsViewport",
+        .label = "Is Viewport",
+        .category = "Input",
+        .doc = "True while the viewport shows the result; false while it is exported, sent to Unreal or rendered. Switch on it to "
+               "keep the viewport light and the output detailed.",
+        .sockets = {.outputs = {out("isViewport", T::Bool)}},
+        .exec = [](ExecContext& c) { c.out("isViewport", constantBool(scene::viewState::isViewport())); },
+    });
+}
+
+void activeCamera()
+{
+    registerDecl({
+        .type = "ActiveCamera",
+        .label = "Active Camera",
+        .category = "Input",
+        .doc = "The camera of the viewport last clicked or focused, in world space. A group using this re-evaluates as that "
+               "camera moves. Angles are in radians.",
+        .sockets = {.outputs = {out("location", T::Vector), out("rotation", T::Rotation), out("forward", T::Vector),
+                                out("horizontalFov", T::Float), out("verticalFov", T::Float), out("orthographic", T::Bool),
+                                out("orthoSize", T::Vector)}},
+        .exec =
+            [](ExecContext& c) {
+                const scene::viewState::ActiveCamera cam = scene::viewState::activeCamera();
+                const glm::dmat3 r(glm::normalize(glm::dvec3(cam.world[0])), glm::normalize(glm::dvec3(cam.world[1])),
+                                   glm::normalize(glm::dvec3(cam.world[2])));
+                c.out("location", constantVector(glm::dvec3(cam.world[3])));
+                c.out("rotation", constantVector(matrixToEuler(r), T::Rotation));
+                c.out("forward", constantVector(-r[2]));
+                c.out("horizontalFov", constantFloat(cam.horizontalFov));
+                c.out("verticalFov", constantFloat(cam.verticalFov));
+                c.out("orthographic", constantBool(cam.orthographic));
+                c.out("orthoSize", constantVector(glm::dvec3(cam.orthoSize, 0.0)));
+            },
+    });
+}
+
 void objectInfo()
 {
     registerDecl({
@@ -241,6 +282,8 @@ void registerInputNodes()
     constantInput("String", "String", T::String, "");
     randomValue();
     sceneTime();
+    isViewport();
+    activeCamera();
     objectInfo();
 }
 } // namespace lila::gn::nodes

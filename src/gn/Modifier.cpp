@@ -12,6 +12,7 @@
 #include "scene/Modifiers.h"
 #include "scene/Simulation.h"
 #include "scene/Transform.h"
+#include "scene/ViewState.h"
 
 #include <atomic>
 #include <map>
@@ -73,6 +74,40 @@ void setHeightfield(NodeId modifier, std::shared_ptr<const geo::Heightfield> h)
         heightfields().byModifier.erase(modifier);
 }
 
+/** Modifiers whose group reads Is Viewport or the active camera, re-evaluated when either changes. */
+struct ViewModifiers
+{
+    std::mutex mutex;
+    std::set<NodeId> ids;
+};
+
+ViewModifiers& viewModifiers()
+{
+    static ViewModifiers* v = new ViewModifiers;
+    return *v;
+}
+
+void noteViewModifier(NodeId modifier, bool readsView)
+{
+    std::lock_guard lock(viewModifiers().mutex);
+    if (readsView)
+        viewModifiers().ids.insert(modifier);
+    else
+        viewModifiers().ids.erase(modifier);
+}
+
+void touchViewModifiers()
+{
+    std::set<NodeId> ids;
+    {
+        std::lock_guard lock(viewModifiers().mutex);
+        ids = viewModifiers().ids;
+    }
+    Graph& g = Graph::current();
+    for (NodeId id : ids)
+        g.touch(id);
+}
+
 std::string objectMeshAttr(const std::string& node) { return "obj_" + node + "_mesh"; }
 std::string objectMatrixAttr(const std::string& node) { return "obj_" + node + "_matrix"; }
 
@@ -90,6 +125,7 @@ public:
         if (!as<bool>(enabledAttr) || scene::modifiers::bypassed(in))
         {
             noteSimulationModifier(id(), false, false);
+            noteViewModifier(id(), false);
             clearInstanceView(id());
             setHeightfield(id(), nullptr);
             setOutput(outAttr, in);
@@ -112,6 +148,7 @@ public:
             }
         }
         noteSimulationModifier(id(), mPlan && mPlan->statefulStep >= 0, mPlan && mPlan->statefulInputsUseTime);
+        noteViewModifier(id(), mPlan && mPlan->usesView);
         if (!mPlan)
         {
             clearInstanceView(id());
@@ -213,6 +250,7 @@ public:
     {
         clearViewerData(id());
         forgetSimulationModifier(id());
+        noteViewModifier(id(), false);
         clearInstanceView(id());
         setHeightfield(id(), nullptr);
     }
@@ -890,6 +928,12 @@ void registerTypes()
 {
     registerNodeLibrary();
     registerSimulationSupport();
+    static const bool watchingView = [] {
+        scene::viewState::onChange(touchViewModifiers);
+        scene::viewState::installCommandScopes();
+        return true;
+    }();
+    (void)watchingView;
     if (scene::types::find(kGroupNodeType))
         return;
     scene::NodeType t;

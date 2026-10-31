@@ -10,6 +10,7 @@ add_executable(lila_gn_tests
     test_nodes_meshops.cpp
     test_nodes_topology.cpp
     test_nodes_field.cpp
+    test_nodes_view.cpp
     test_nodes_curveops.cpp
     test_nodes_game.cpp
     test_nodes_procedural.cpp

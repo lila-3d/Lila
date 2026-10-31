@@ -103,7 +103,8 @@ lila_module(lila_scene Scene
     TransferAttributes.cpp
     Transform.cpp
     TransformCommands.cpp
-    TransformOps.cpp)
+    TransformOps.cpp
+    ViewState.cpp ViewState.h)
 
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)

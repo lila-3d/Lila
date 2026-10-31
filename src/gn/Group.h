@@ -188,6 +188,8 @@ struct LILA_SCENE_API Group
 
 /** Whether the group or a group nested in it reads the scene time. */
 LILA_SCENE_API bool usesSceneTime(const Group& g);
+/** Whether the group or a group nested in it reads Is Viewport or the active camera. */
+LILA_SCENE_API bool usesViewState(const Group& g);
 /** Names of the groups its Group nodes use directly. */
 LILA_SCENE_API std::vector<std::string> referencedGroups(const Group& g);
 /** Whether the definition is, or uses at any depth, the named group. */

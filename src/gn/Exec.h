@@ -23,7 +23,7 @@ struct Plan
         const NodeDecl* decl = nullptr;
         Sockets sockets;
         std::vector<std::vector<Source>> inputs; // links per input socket
-        /** Depends on time: a Scene Time or simulation node upstream, or is one. Never cached between evaluations. */
+        /** Depends on time or the view: such a node upstream, or is one. Never cached between evaluations. */
         bool dynamic = false;
         /** Upstream of the simulation node (or is it): what runs while its inputs are sampled. */
         bool feedsStateful = false;
@@ -37,6 +37,8 @@ struct Plan
     /** Set when the group can't run (a cycle, unknown nodes); evaluation then passes the input through. */
     std::string error;
     bool usesTime = false;
+    /** Reads Is Viewport or the active camera, here or in a nested group. */
+    bool usesView = false;
     /** The simulation node's step, -1 when the group has none. */
     int statefulStep = -1;
     /** A step feeding the simulation node depends on time, so its inputs differ from frame to frame. */
