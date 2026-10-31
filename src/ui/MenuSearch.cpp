@@ -1,4 +1,5 @@
 #include "ui/MenuSearch.h"
+#include "ui/MenuSets.h"
 
 #include "core/Log.h"
 #include "ops/Command.h"
@@ -8,11 +9,11 @@
 #include "ui/DocsUi.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
-#include "ui/MenuSets.h"
 #include "ui/OptionBox.h"
 #include "ui/Outliner.h"
 #include "ui/OutlinerFilter.h"
 #include "ui/OutlinerLogic.h"
+#include "ui/TearOff.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
 
@@ -211,18 +212,45 @@ void collect(QMenu* menu, const QString& path, std::vector<Item>& out, int depth
     }
 }
 
+/** A menu, or one titled section of it, that tears off. */
+struct TearOffItem
+{
+    QPointer<QMenu> menu;
+    QString section;
+    QString label;
+    QString path;
+};
+
+void collectTearOffs(QMenu* menu, const QString& label, const QString& path, std::vector<TearOffItem>& out, int depth)
+{
+    if (depth > 8 || menu->property(kNoSearchProperty).toBool())
+        return;
+    Q_EMIT menu->aboutToShow();
+    out.push_back({menu, {}, label, path});
+    const QString inside = path.isEmpty() ? label : path + " > " + label;
+    for (QAction* a : menu->actions())
+    {
+        if (!a->isVisible() || qobject_cast<QWidgetAction*>(a))
+            continue;
+        if (a->isSeparator() && !a->text().isEmpty())
+            out.push_back({menu, a->text(), a->text(), inside});
+        else if (QMenu* sub = a->menu(); sub && !plain(a).isEmpty())
+            collectTearOffs(sub, plain(a), inside, out, depth + 1);
+    }
+}
+
 /** Every word must appear in the label or the path; rows whose label starts with the query come first. */
-int score(const Item& it, const QString& query)
+int score(const QString& label, const QString& path, const QString& query)
 {
     if (query.isEmpty())
         return 1;
-    QString hay = it.label + ' ' + it.path;
+    QString hay = label + ' ' + path;
     for (const QString& w : query.split(' ', Qt::SkipEmptyParts))
         if (!hay.contains(w, Qt::CaseInsensitive))
             return 0;
-    if (it.label.startsWith(query, Qt::CaseInsensitive))
+    if (label.startsWith(query, Qt::CaseInsensitive))
         return 3;
-    return it.label.contains(query, Qt::CaseInsensitive) ? 2 : 1;
+    return label.contains(query, Qt::CaseInsensitive) ? 2 : 1;
 }
 
 /** Also the tab index of each mode in the box. */
@@ -230,12 +258,13 @@ enum class Mode
 {
     Menus,
     Scene,
+    TearOffs,
     Api,
 };
 
 QString& lastQuery(Mode m)
 {
-    static QString q[3];
+    static QString q[4];
     return q[int(m)];
 }
 
@@ -264,6 +293,7 @@ constexpr int kActionRole = Qt::UserRole;
 constexpr int kNodeRole = Qt::UserRole + 1;
 constexpr int kParentPathRole = Qt::UserRole + 2; // "|group|sub|" in front of the row's name
 constexpr int kSymbolRole = Qt::UserRole + 3;     // index into the box's API symbols
+constexpr int kTearOffRole = Qt::UserRole + 4;    // index into the box's tear-offs
 
 enum Column
 {
@@ -322,9 +352,9 @@ QPointer<SearchBox>& openBoxInstance()
 }
 
 /**
- * The Ctrl+T / Ctrl+F box. Menus mode lists every menu item and runs it, or opens its option box; Scene mode lists
- * every node the outliner shows and selects it; Api mode, opened from the script editor, lists the scripting API and
- * inserts a call. The other mode's hotkey, a tab or Ctrl+Tab switches in place.
+ * The Ctrl+T / Ctrl+F / Shift+T box. Menus mode lists every menu item and runs it, or opens its option box; Scene mode
+ * lists every node the outliner shows and selects it; TearOffs mode lists every menu and section and tears it off under
+ * the cursor; Api mode, opened from the script editor, lists the scripting API and inserts a call. The other mode's hotkey, a tab or Ctrl+Tab switches in place.
  */
 class SearchBox : public QFrame
 {
@@ -343,6 +373,7 @@ public:
         mTabs->setExpanding(false);
         mTabs->addTab("Menus");
         mTabs->addTab("Scene");
+        mTabs->addTab("Tear-offs");
         connect(mTabs, &QTabBar::currentChanged, this, [this](int i) {
             if (i >= 0 && i != int(mMode))
                 setMode(Mode(i));
@@ -385,6 +416,8 @@ public:
                 pick(mods);
             else if (mMode == Mode::Api)
                 (column == kOptions || (mods & Qt::ShiftModifier)) ? apiDocs(column == kOptions && (mods & Qt::ShiftModifier)) : apiInsert();
+            else if (mMode == Mode::TearOffs)
+                placeTearOff();
             else if (column == kOptions || (mods & Qt::ShiftModifier))
                 openOptions();
             else
@@ -430,8 +463,16 @@ public:
         }
         bool scene = m == Mode::Scene;
         bool api = m == Mode::Api;
+        bool tearOffs = m == Mode::TearOffs;
         if (scene)
             collectScene();
+        else if (tearOffs)
+        {
+            if (mTearOffs.empty() && mBar)
+                for (QAction* a : mBar->actions())
+                    if (QMenu* menu = a->menu(); menu && menuSets::reachable(a))
+                        collectTearOffs(menu, plain(a), {}, mTearOffs, 0);
+        }
         else if (api)
         {
             if (mSymbols.empty())
@@ -442,16 +483,18 @@ public:
                 if (QMenu* menu = a->menu(); menu && menuSets::reachable(a))
                     collect(menu, plain(a), mItems, 0);
         mList->setItemDelegateForColumn(kLabel, scene ? mPathDelegate : nullptr);
-        mList->setColumnHidden(kKey, scene);
-        mList->setColumnHidden(kOptions, scene);
-        mEdit->setPlaceholderText(scene ? "Search the scene: names, wildcards (pCube*), type:mesh, |group|path, !exclude"
-                                  : api ? "Search the scripting API: commands, flags, lila classes and functions"
-                                        : "Search menus");
+        mList->setColumnHidden(kKey, scene || tearOffs);
+        mList->setColumnHidden(kOptions, scene || tearOffs);
+        mEdit->setPlaceholderText(scene      ? "Search the scene: names, wildcards (pCube*), type:mesh, |group|path, !exclude"
+                                  : api      ? "Search the scripting API: commands, flags, lila classes and functions"
+                                  : tearOffs ? "Search menus and menu sections to tear off"
+                                             : "Search menus");
         auto key = [](const char* id, const char* fallback) {
             QString k = Hotkeys::get().keyFor(id);
             return k.isEmpty() ? QString(fallback) : k;
         };
-        mHint->setText(scene ? QString("Enter selects    Shift+Enter adds    Ctrl+Enter toggles    %1 searches menus")
+        mHint->setText(tearOffs ? QString("Enter tears it off under the cursor, click to drop it    Esc or right click puts it back")
+                       : scene  ? QString("Enter selects    Shift+Enter adds    Ctrl+Enter toggles    %1 searches menus")
                                    .arg(key("window.searchMenus", "Ctrl+T"))
                        : api ? QString("Enter inserts the call    Shift+Enter or the book shows the docs    Ctrl+Tab switches")
                              : QString("Enter runs    Shift+Enter or the square opens the options    %1 searches the scene")
@@ -470,11 +513,16 @@ protected:
         auto* k = static_cast<QKeyEvent*>(e);
         bool menusKey = Hotkeys::get().isKeyFor(k, "window.searchMenus");
         bool sceneKey = Hotkeys::get().isKeyFor(k, "window.searchScene");
+        bool tearOffsKey = Hotkeys::get().isKeyFor(k, "window.searchTearOffs");
         bool apiKey = hasApi() && Hotkeys::get().isKeyFor(k, "script.searchApi");
-        if (menusKey || sceneKey || apiKey)
+        if (menusKey || sceneKey || tearOffsKey || apiKey)
         {
             // One key can mean both menus and the API (Ctrl+T); it then means whichever the box opened as.
-            Mode want = sceneKey ? Mode::Scene : menusKey && apiKey ? mHome : apiKey ? Mode::Api : Mode::Menus;
+            Mode want = sceneKey             ? Mode::Scene
+                        : tearOffsKey        ? Mode::TearOffs
+                        : menusKey && apiKey ? mHome
+                        : apiKey             ? Mode::Api
+                                             : Mode::Menus;
             if (want == mMode)
                 close();
             else
@@ -507,6 +555,8 @@ protected:
                 pick(k->modifiers());
             else if (mMode == Mode::Api)
                 (k->modifiers() & Qt::ShiftModifier) ? apiDocs() : apiInsert();
+            else if (mMode == Mode::TearOffs)
+                placeTearOff();
             else if (k->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier))
                 openOptions();
             else
@@ -525,6 +575,8 @@ private:
             fillScene();
         else if (mMode == Mode::Api)
             fillApi();
+        else if (mMode == Mode::TearOffs)
+            fillTearOffs();
         else
             fillMenus();
         if (mList->topLevelItemCount())
@@ -537,7 +589,7 @@ private:
         std::vector<std::pair<int, const Item*>> hits;
         for (const Item& it : mItems)
             if (it.action)
-                if (int s = score(it, q))
+                if (int s = score(it.label, it.path, q))
                     hits.emplace_back(-s, &it);
         std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) { return a.first < b.first; });
         QBrush dim = palette().brush(QPalette::Disabled, QPalette::Text);
@@ -562,6 +614,41 @@ private:
                 row->setToolTip(kOptions, "Options (Shift+Enter, or Shift+click the row)");
             }
         }
+    }
+
+    void fillTearOffs()
+    {
+        QString q = mEdit->text().trimmed();
+        std::vector<std::pair<int, size_t>> hits;
+        for (size_t i = 0; i < mTearOffs.size(); ++i)
+            if (mTearOffs[i].menu)
+                if (int s = score(mTearOffs[i].label, mTearOffs[i].path, q))
+                    hits.emplace_back(-s, i);
+        std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) { return a.first < b.first; });
+        QBrush dim = palette().brush(QPalette::Disabled, QPalette::Text);
+        for (auto& [s, i] : hits)
+        {
+            const TearOffItem& it = mTearOffs[i];
+            auto* row = new QTreeWidgetItem(mList, {it.label, it.path});
+            row->setData(kLabel, kTearOffRole, qulonglong(i));
+            row->setForeground(kWhere, dim);
+        }
+    }
+
+    void placeTearOff()
+    {
+        QTreeWidgetItem* row = mList->currentItem();
+        size_t i = row ? size_t(row->data(kLabel, kTearOffRole).toULongLong()) : mTearOffs.size();
+        if (i >= mTearOffs.size() || !mTearOffs[i].menu)
+            return;
+        QPointer<QMenu> menu = mTearOffs[i].menu;
+        QString section = mTearOffs[i].section;
+        close();
+        // Once the box has gone, so the next click lands on the placing and not on the box.
+        QTimer::singleShot(0, [menu, section] {
+            if (menu)
+                tearoff::tearOffToPlace(menu, section);
+        });
     }
 
     void fillApi()
@@ -743,6 +830,7 @@ private:
     bool mStarted = false;
     std::vector<Item> mItems;
     std::vector<SceneRow> mScene;
+    std::vector<TearOffItem> mTearOffs;
     QLineEdit* mEdit = nullptr;
     QTreeWidget* mList = nullptr;
     QLabel* mHint = nullptr;
@@ -787,6 +875,11 @@ void openBox(QMenuBar* bar, QWidget* over)
 void openSceneFinder(QMenuBar* bar, QWidget* over)
 {
     openIn(Mode::Scene, bar, over);
+}
+
+void openTearOffSearch(QMenuBar* bar, QWidget* over)
+{
+    openIn(Mode::TearOffs, bar, over);
 }
 
 void openApiSearch(QMenuBar* bar, QWidget* over, ApiTarget target)
