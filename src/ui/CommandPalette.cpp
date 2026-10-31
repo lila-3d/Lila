@@ -277,6 +277,11 @@ private:
     bool hostKey(QKeyEvent* k)
     {
         Qt::KeyboardModifiers mods = k->modifiers() & ~Qt::KeypadModifier;
+        if (Hotkeys::get().isKeyFor(k, "window.commandPalette"))
+        {
+            close();
+            return true;
+        }
         switch (k->key())
         {
         case Qt::Key_Up:
@@ -303,11 +308,6 @@ private:
             mEdit->showCompletion();
             return true;
         case Qt::Key_Escape: close(); return true;
-        case Qt::Key_QuoteLeft:
-            if (mods != Qt::ControlModifier)
-                return false;
-            close();
-            return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
         {
