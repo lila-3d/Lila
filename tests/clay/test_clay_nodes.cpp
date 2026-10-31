@@ -3,6 +3,7 @@
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Transform.h"
 
 #include <doctest/doctest.h>
 
@@ -81,7 +82,12 @@ TEST_CASE("clay commands: symmetry, a bad voxel size warns, convert bakes a plai
     g.evaluate();
     CHECK(s->as<std::string>(s->type().attrIndex("warning")).empty());
 
-    const std::string baked = run("convertClayToMesh", {{"args", {object}}, {"voxelSize", 0.5}});
+    // Kept by default, hidden; keepSource off deletes it.
+    const std::string kept = run("convertClayToMesh", {{"args", {object}}, {"voxelSize", 0.5}, {"name", "Kept"}});
+    CHECK(g.find(surface) != nullptr);
+    CHECK_FALSE(g.find(object)->as<bool>(scene::Transform::kVisibility));
+    CHECK(g.find(kept) != nullptr);
+    const std::string baked = run("convertClayToMesh", {{"args", {object}}, {"voxelSize", 0.5}, {"keepSource", false}});
     CHECK(g.find(surface) == nullptr);
     scene::MeshPtr out = outMesh(baked);
     REQUIRE(out);
@@ -121,7 +127,7 @@ TEST_CASE("clay commands: clayJoints chains a stroke and weights the converted m
     const json made = run("createClay", {{"name", "Worm"}});
     const std::string object = made[0];
     run("addClayStroke", {{"args", {object}}, {"points", {{0, 8, 0}, {0, 20, 0}, {0, 32, 0}}}, {"radius", 3.0}, {"endRadius", 2.0}, {"name", "Tail"}});
-    const std::string mesh = run("convertClayToMesh", {{"args", {object}}, {"keepSource", true}, {"voxelSize", 0.5}});
+    const std::string mesh = run("convertClayToMesh", {{"args", {object}}, {"voxelSize", 0.5}});
     const json r = run("clayJoints", {{"args", {object}}, {"mesh", mesh}});
     scene::Graph& g = scene::Graph::current();
     REQUIRE(r[1].is_string());

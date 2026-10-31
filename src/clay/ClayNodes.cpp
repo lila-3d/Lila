@@ -660,7 +660,7 @@ void registerCommands()
                "Given a mesh (the converted clay), binds it and starts its weights from the clay: each point leans on the "
                "joints of the shapes it lies nearest. Returns [root, skinCluster or None].",
         .positionalDoc = "clay object",
-        .flags = {{"mesh", "m", T::String, nullptr, "Mesh to bind, usually the clay converted with convertClayToMesh(keepSource=True)."},
+        .flags = {{"mesh", "m", T::String, nullptr, "Mesh to bind, usually the clay converted with convertClayToMesh."},
                   {"maxInfluences", "mi", T::Int, 4, "Influences per point.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -726,7 +726,7 @@ void registerCommands()
             g.select({rootId});
             return json::array({g.node(rootId)->path(), skinName});
         },
-        .examples = {"mesh = convertClayToMesh(\"Dog\", keepSource=True)\nclayJoints(\"Dog\", mesh=mesh)"},
+        .examples = {"mesh = convertClayToMesh(\"Dog\")\nclayJoints(\"Dog\", mesh=mesh)"},
     });
 
     ops::registerCommand({
@@ -755,10 +755,10 @@ void registerCommands()
     ops::registerCommand({
         .name = "convertClayToMesh",
         .doc = "Bake a clay object into a plain mesh at the surface's finalVoxelSize, optionally quad remeshed. The clay object "
-               "is deleted unless keepSource. Returns the new mesh.",
+               "stays, hidden, unless keepSource is off. Returns the new mesh.",
         .positionalDoc = "clay object",
         .flags = {{"voxelSize", "vs", T::Float, nullptr, "Lattice spacing, cm; defaults to the surface's finalVoxelSize.", {}, {}, 0.01},
-                  {"keepSource", "ks", T::Bool, false, "Keep the clay object, hidden."},
+                  {"keepSource", "ks", T::Bool, true, "Keep the clay object, hidden, to edit and convert again; off deletes it."},
                   {"remesh", "rm", T::Bool, false, "Quad remesh the result."},
                   {"targetFaces", "tf", T::Int, 2000, "Face count for remesh.", {}, {}, 8.0},
                   {"name", "n", T::String, nullptr, "Mesh name; made unique. Defaults to the clay object's name."}},
@@ -789,7 +789,7 @@ void registerCommands()
             Node* out = g.createNode(*types::find("mesh"), name, kNoNode, true);
             g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
             Transform::setLocalMatrix(g, out->id(), world);
-            if (a.get<bool>("keepSource", false))
+            if (a.get<bool>("keepSource", true))
                 g.setValue({object->id(), Transform::kVisibility, -1}, false);
             else
             {

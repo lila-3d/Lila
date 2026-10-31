@@ -9,9 +9,11 @@
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
+#include "ui/Tools.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 
+#include <QGuiApplication>
 #include <QTimer>
 
 #include <glm/gtc/constants.hpp>
@@ -197,14 +199,40 @@ class ClayTool final : public ViewportTool
 public:
     const char* name() const override { return "Clay"; }
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
+    void activate() override
+    {
+        // Tools hear key presses but not releases: watch Ctrl so the ring turns to a cut and back as it goes down and up.
+        mModifierWatch = std::make_unique<QTimer>();
+        QObject::connect(mModifierWatch.get(), &QTimer::timeout, [this] {
+            const bool ctrl = QGuiApplication::queryKeyboardModifiers() & Qt::ControlModifier;
+            if (ctrl != mCtrl)
+            {
+                mCtrl = ctrl;
+                viewportTools::requestRedraw();
+            }
+        });
+        mModifierWatch->start(50);
+    }
+
     void deactivate() override
     {
+        mModifierWatch.reset();
         finishLive(false);
         viewportTools::requestRedraw();
     }
 
+    bool ownsBrushRadius() const override { return true; }
+
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
+        if (tools::brushRadiusDrag(e, false))
+        {
+            mRadiusDrag = true;
+            mPressPx = mNowPx = e->position();
+            mStartRadius = e->button() == Qt::MiddleButton ? 0.05 : mRadius;
+            mRadiusUnit = view.unitsPerPixel(mHover);
+            return true;
+        }
         if (e->button() != Qt::LeftButton)
             return false;
         const bool hit = surfaceHit(e->position(), view, mPress);
@@ -251,8 +279,22 @@ public:
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
+        if (mRadiusDrag)
+        {
+            mRadius = std::clamp(mStartRadius + (e->position().x() - mPressPx.x()) * mRadiusUnit, 0.05, 1e4);
+            viewportTools::requestRedraw();
+            return true;
+        }
         if (!mDragging)
+        {
+            // Where the next shape would go, for the radius ring under the cursor.
+            mHoverPx = e->position();
+            if (!surfaceHit(mHoverPx, view, mHover))
+                mHover = onViewPlane(mHoverPx, view);
+            mHoverView = view.camera;
+            viewportTools::requestRedraw();
             return false;
+        }
         mNowPx = e->position();
         if (mStroke)
         {
@@ -270,6 +312,11 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo& view) override
     {
+        if (mRadiusDrag)
+        {
+            mRadiusDrag = false;
+            return true;
+        }
         if (e->button() != Qt::LeftButton || !mDragging)
             return false;
         mDragging = false;
@@ -351,7 +398,20 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        const glm::vec4 color = mCut ? kCutColor : kAddColor;
+        const glm::vec4 color = (mDragging ? mCut : mCtrl) ? kCutColor : kAddColor;
+        // The brush: the current radius at the surface under the cursor (at the press while B-dragging it).
+        if (!mDragging && view.camera == mHoverView)
+        {
+            const QPointF at = mRadiusDrag ? mPressPx : mHoverPx;
+            const double r = mRadius / std::max(mRadiusDrag ? mRadiusUnit : view.unitsPerPixel(mHover), 1e-9);
+            std::vector<QPointF> ring;
+            for (int i = 0; i < 48; ++i)
+            {
+                const double a = glm::two_pi<double>() * i / 48.0;
+                ring.emplace_back(at.x() + r * std::cos(a), at.y() + r * std::sin(a));
+            }
+            p.polyline(ring, 1.5f, glm::vec4(glm::vec3(color), 0.7f), true);
+        }
         if (mDragging && view.camera == mView)
         {
             if (mStroke)
@@ -377,7 +437,7 @@ public:
         const QString what = mStroke ? QString("Stroke%1").arg(mTaper ? ", tapered" : "") : QString(kToolShapes[size_t(mShape)]);
         drawToolMessage(p, view,
                         QString("Clay: %1, radius %2, blend %3 cm. Click/drag: add, Ctrl: cut, Shift-click: select shape, 1-7: shape, "
-                                "S: strokes (start on a stroke's end to continue it), T: taper, [ ]: radius, , .: blend, Esc: exit")
+                                "S: strokes (start on a stroke's end to continue it), T: taper, B-drag: radius, , .: blend, Esc: exit")
                             .arg(what)
                             .arg(mRadius, 0, 'g', 3)
                             .arg(mBlend, 0, 'g', 3));
@@ -517,6 +577,13 @@ private:
     QPointF mPressPx, mNowPx;
     std::vector<glm::dvec3> mStrokePoints;
     std::string mView;
+    QPointF mHoverPx;
+    glm::dvec3 mHover{0.0};
+    std::string mHoverView;
+    bool mRadiusDrag = false;
+    bool mCtrl = false;
+    std::unique_ptr<QTimer> mModifierWatch;
+    double mStartRadius = 5.0, mRadiusUnit = 0.1;
     scene::NodeId mLive = scene::kNoNode;   // the shape being placed and sized
     scene::NodeId mExtend = scene::kNoNode; // the span a stroke continues from
     double mStrokeRadius = 5.0;
