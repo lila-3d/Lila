@@ -582,6 +582,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     if (hud::shown(mHudPanel, "originAxis"))
         hud::drawOriginAxis(s, painter, view);
     drawViewIndicator(painter);
+    drawViewCube(painter);
     drawHud(painter);
     if (QPointF cursor = mapFromGlobal(QCursor::pos().toPointF()); rect().contains(cursor.toPoint()))
     {

@@ -949,7 +949,8 @@ void FileDialog::Impl::buildSidebar()
     for (const QString& d : bookmarks)
     {
         const QString alias = fdBookmarkName(d);
-        QTreeWidgetItem* item = entry(quick, FdKind::Bookmark, d, alias.isEmpty() ? fdDisplayName(d) : alias, "folder");
+        QTreeWidgetItem* item = entry(quick, FdKind::Bookmark, d, alias.isEmpty() ? fdDisplayName(d) : alias,
+                                     alias.isEmpty() ? "folder" : "folder-star");
         item->setFlags(item->flags() | Qt::ItemIsEditable);
     }
     if (bookmarks.isEmpty())
@@ -1565,9 +1566,14 @@ FileDialog::FileDialog(QWidget* parent, Mode mode, const QString& caption, const
         }
     }
     m->name->setFocus();
+    // Mouse back and forward buttons anywhere in the dialog, whichever child is under the cursor.
+    qApp->installEventFilter(this);
 }
 
-FileDialog::~FileDialog() = default;
+FileDialog::~FileDialog()
+{
+    qApp->removeEventFilter(this);
+}
 
 bool FileDialog::navigate(const QString& dir)
 {
@@ -1721,6 +1727,16 @@ bool FileDialog::tryAccept()
 
 bool FileDialog::eventFilter(QObject* watched, QEvent* event)
 {
+    if (event->type() == QEvent::MouseButtonPress)
+    {
+        const Qt::MouseButton button = static_cast<QMouseEvent*>(event)->button();
+        auto* w = qobject_cast<QWidget*>(watched);
+        if ((button == Qt::BackButton || button == Qt::ForwardButton) && w && w->window() == this)
+        {
+            (button == Qt::BackButton ? m->back : m->forward)->click();
+            return true;
+        }
+    }
     if (watched == m->crumbs && event->type() == QEvent::MouseButtonPress)
     {
         m->editPath();

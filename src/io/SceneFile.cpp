@@ -542,12 +542,15 @@ void save(const fs::path& path)
             history::backup(path, folder, keep);
         });
     json doc;
+    std::vector<DeferredMesh> meshes;
     {
         progress::Scope s("Gathering the scene");
-        doc = serialize(path.parent_path(), true);
+        doc = serializeScene(path.parent_path(), true, &meshes);
     }
     progress::Scope s("Writing " + path.filename().string(), 0.0, progress::None, 2.0);
+    // Mesh conversion runs with the encode on the worker, so the progress card shows and the window repaints meanwhile.
     progress::runOnWorker([&] {
+        fillMeshes(doc, meshes);
         writeAtomic(path, [&](const Sink& sink) { encodeFor(path, std::move(doc), sink); }, [&] {
             if (backup.valid())
                 backup.get();

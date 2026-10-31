@@ -135,6 +135,19 @@ bool listNavigationFocused(QWidget* w)
             return false;
     return w && (qobject_cast<QAbstractItemView*>(w) || qobject_cast<QComboBox*>(w) || qobject_cast<QAbstractSlider*>(w));
 }
+
+/** F2 renames in place in a list whose current item is editable, unless a hotkey context there binds the key itself. */
+bool itemRenameFocused(QWidget* w, int mods, int key)
+{
+    auto* view = qobject_cast<QAbstractItemView*>(w);
+    if (mods != 0 || key != Qt::Key_F2 || !view || !(view->editTriggers() & QAbstractItemView::EditKeyPressed))
+        return false;
+    for (QWidget* p = w; p; p = p->parentWidget())
+        if (!p->property("hotkeyContext").toString().isEmpty())
+            return false;
+    const QModelIndex index = view->currentIndex();
+    return index.isValid() && (index.flags() & Qt::ItemIsEditable);
+}
 } // namespace
 
 Hotkeys& Hotkeys::get()
@@ -478,6 +491,8 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
     if ((qobject_cast<QPlainTextEdit*>(focus) || qobject_cast<QTextEdit*>(focus)) && mods == Qt::ControlModifier && k->key() == Qt::Key_F)
         return false;
     if (listNavigationFocused(focus) && mods == 0 && isArrowKey(k->key()))
+        return false;
+    if (itemRenameFocused(focus, mods, k->key()))
         return false;
     if (mods == 0 && startsNumber(k->text()) && focus && focus->property("numericEntry").toBool())
         return false;

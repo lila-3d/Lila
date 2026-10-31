@@ -2,6 +2,8 @@
 #include "ui/ViewportToast.h"
 #include "scene/SoftSelect.h"
 
+#include <QVariantAnimation>
+
 namespace lila::ui
 {
 using namespace viewportDetail;
@@ -541,6 +543,161 @@ void ViewportWidget::drawViewIndicator(OverlayPainter& p)
         p.text(QPointF(width() / 2.0, height() - 12), name, p.ink(0.75f, 0.9f, under), OverlayPainter::Center);
     }
     p.setShadow(false);
+}
+
+namespace
+{
+using CubeStroke = std::vector<glm::dvec2>;
+
+/** Stroke letters for the view cube's labels, in a box 0.6 wide and 1 tall, so they can lie flat on a face. */
+const std::vector<CubeStroke>& cubeGlyph(char c)
+{
+    static const std::map<char, std::vector<CubeStroke>> glyphs = {
+        {'A', {{{0, 0}, {0.3, 1}, {0.6, 0}}, {{0.1, 0.35}, {0.5, 0.35}}}},
+        {'B', {{{0, 0}, {0, 1}, {0.45, 1}, {0.55, 0.9}, {0.55, 0.6}, {0.45, 0.5}, {0, 0.5}},
+               {{0.45, 0.5}, {0.6, 0.4}, {0.6, 0.1}, {0.5, 0}, {0, 0}}}},
+        {'C', {{{0.6, 0.85}, {0.45, 1}, {0.15, 1}, {0, 0.85}, {0, 0.15}, {0.15, 0}, {0.45, 0}, {0.6, 0.15}}}},
+        {'E', {{{0.6, 1}, {0, 1}, {0, 0}, {0.6, 0}}, {{0, 0.5}, {0.45, 0.5}}}},
+        {'F', {{{0.6, 1}, {0, 1}, {0, 0}}, {{0, 0.5}, {0.45, 0.5}}}},
+        {'G', {{{0.6, 0.85}, {0.45, 1}, {0.15, 1}, {0, 0.85}, {0, 0.15}, {0.15, 0}, {0.45, 0}, {0.6, 0.15}, {0.6, 0.45}, {0.35, 0.45}}}},
+        {'H', {{{0, 0}, {0, 1}}, {{0.6, 0}, {0.6, 1}}, {{0, 0.5}, {0.6, 0.5}}}},
+        {'I', {{{0.3, 0}, {0.3, 1}}, {{0.1, 1}, {0.5, 1}}, {{0.1, 0}, {0.5, 0}}}},
+        {'K', {{{0, 0}, {0, 1}}, {{0.6, 1}, {0, 0.4}}, {{0.2, 0.6}, {0.6, 0}}}},
+        {'L', {{{0, 1}, {0, 0}, {0.6, 0}}}},
+        {'M', {{{0, 0}, {0, 1}, {0.3, 0.5}, {0.6, 1}, {0.6, 0}}}},
+        {'N', {{{0, 0}, {0, 1}, {0.6, 0}, {0.6, 1}}}},
+        {'O', {{{0.15, 0}, {0, 0.15}, {0, 0.85}, {0.15, 1}, {0.45, 1}, {0.6, 0.85}, {0.6, 0.15}, {0.45, 0}, {0.15, 0}}}},
+        {'P', {{{0, 0}, {0, 1}, {0.45, 1}, {0.6, 0.85}, {0.6, 0.65}, {0.45, 0.5}, {0, 0.5}}}},
+        {'R', {{{0, 0}, {0, 1}, {0.45, 1}, {0.6, 0.85}, {0.6, 0.65}, {0.45, 0.5}, {0, 0.5}}, {{0.3, 0.5}, {0.6, 0}}}},
+        {'T', {{{0, 1}, {0.6, 1}}, {{0.3, 1}, {0.3, 0}}}},
+    };
+    static const std::vector<CubeStroke> none;
+    auto it = glyphs.find(c);
+    return it == glyphs.end() ? none : it->second;
+}
+} // namespace
+
+void ViewportWidget::drawViewCube(OverlayPainter& p)
+{
+    mViewCubeFaces.clear();
+    if (!hud::shown(mHudPanel, "viewCube"))
+        return;
+    const QRectF box = hud::viewCubeRect(width());
+    const QPointF centre = box.center();
+    const double half = box.width() * 0.3;
+    const glm::dmat3 v(mCamera.view());
+    auto project = [&](const glm::dvec3& w) {
+        const glm::dvec3 q = v * w;
+        return centre + QPointF(q.x, -q.y) * half;
+    };
+    constexpr glm::vec4 kFace(0.27f, 0.27f, 0.29f, 0.9f), kHover(0.17f, 0.17f, 0.18f, 0.95f), kEdge(0.62f, 0.62f, 0.65f, 1.0f),
+        kLabel(0.9f, 0.9f, 0.9f, 1.0f);
+    constexpr double kLetter = 0.3, kAdvance = 0.85; // in face half-widths, and letter heights
+    // A camera looking through a scene camera moves that node, which the cube doesn't do.
+    const bool clickable = mLookThrough == scene::kNoNode;
+    const QPointF cursor = mapFromGlobal(QCursor::pos().toPointF());
+    ui::Camera sides;
+    sides.zUp = mCamera.zUp;
+    for (const char* side : {"front", "back", "left", "right", "top", "bottom"})
+    {
+        sides.setView(side);
+        const glm::dvec3 n = -glm::normalize(sides.orthoForward), up = glm::normalize(sides.orthoUp);
+        const glm::dvec3 right = glm::cross(-n, up);
+        const double facing = (v * n).z;
+        if (facing <= 0.02)
+            continue;
+        std::vector<QPointF> corners;
+        for (const glm::dvec3& corner : {n - right - up, n + right - up, n + right + up, n - right + up})
+            corners.push_back(project(corner));
+        const QPolygonF poly(QList<QPointF>(corners.begin(), corners.end()));
+        const bool hovered = clickable && poly.containsPoint(cursor, Qt::OddEvenFill);
+        p.fill(corners, hovered ? kHover : kFace);
+        p.polyline(corners, 1.0f, kEdge, true);
+        const QString label = QString(side).toUpper();
+        const double startU = -(label.size() * kAdvance - (kAdvance - 0.6)) * kLetter / 2.0;
+        for (int i = 0; i < label.size(); ++i)
+            for (const CubeStroke& stroke : cubeGlyph(char(label[i].unicode())))
+            {
+                std::vector<QPointF> pts;
+                for (const glm::dvec2& g : stroke)
+                    pts.push_back(project(n + right * (startU + (i * kAdvance + g.x) * kLetter) + up * ((g.y - 0.5) * kLetter)));
+                p.polyline(pts, 1.2f, kLabel);
+            }
+        if (clickable)
+            mViewCubeFaces.emplace_back(side, poly);
+    }
+}
+
+bool ViewportWidget::viewCubeClick(QPointF at)
+{
+    for (const auto& [side, poly] : mViewCubeFaces)
+        if (poly.containsPoint(at, Qt::OddEvenFill))
+        {
+            lookFromSide(side);
+            return true;
+        }
+    return false;
+}
+
+void ViewportWidget::lookFromSide(const std::string& side)
+{
+    if (mLookThrough != scene::kNoNode)
+        return;
+    if (mViewName != "persp")
+    {
+        setView(side);
+        return;
+    }
+    ui::Camera sides;
+    sides.zUp = mCamera.zUp;
+    sides.setView(side);
+    glm::dvec3 f = glm::normalize(sides.orthoForward);
+    if (mCamera.zUp)
+        f = {f.x, f.z, -f.y}; // back to the Y-up frame yaw and pitch are measured in
+    finishViewTurn();
+    const double fromYaw = mCamera.yaw, fromPitch = mCamera.pitch;
+    const double yaw = std::abs(f.y) > 0.999 ? 0.0 : glm::degrees(std::atan2(-f.x, -f.z));
+    // The equivalent angle nearest the current yaw, so the turn takes the short way round.
+    const double toYaw = fromYaw + std::remainder(yaw - fromYaw, 360.0);
+    const double toPitch = std::clamp(glm::degrees(std::asin(f.y)), -89.9, 89.9);
+    mViewTurnBefore = cameraView();
+    const double seconds = PrefStore::get().value<double>("general", "/viewport/viewCube/turnTime", 0.15);
+    if (seconds <= 0.0)
+    {
+        mCamera.yaw = toYaw;
+        mCamera.pitch = toPitch;
+        recordCamera(mViewTurnBefore);
+        requestFrame();
+        Q_EMIT viewStateChanged();
+        return;
+    }
+    mViewTurn = new QVariantAnimation(this);
+    mViewTurn->setDuration(std::max(1, int(seconds * 1000.0)));
+    mViewTurn->setStartValue(0.0);
+    mViewTurn->setEndValue(1.0);
+    mViewTurn->setEasingCurve(QEasingCurve::OutCubic);
+    connect(mViewTurn, &QVariantAnimation::valueChanged, this, [=, this](const QVariant& v) {
+        const double t = v.toDouble();
+        mCamera.yaw = fromYaw + (toYaw - fromYaw) * t;
+        mCamera.pitch = fromPitch + (toPitch - fromPitch) * t;
+        requestFrame();
+    });
+    connect(mViewTurn, &QVariantAnimation::finished, this, [this] { finishViewTurn(); });
+    mViewTurn->start();
+}
+
+void ViewportWidget::finishViewTurn()
+{
+    if (!mViewTurn)
+        return;
+    QVariantAnimation* turn = std::exchange(mViewTurn, nullptr);
+    if (turn->state() == QAbstractAnimation::Running)
+        turn->setCurrentTime(turn->duration());
+    turn->stop();
+    turn->deleteLater();
+    recordCamera(mViewTurnBefore);
+    requestFrame();
+    Q_EMIT viewStateChanged();
 }
 
 std::string ViewportWidget::skinnedMeshAt(QPointF at)

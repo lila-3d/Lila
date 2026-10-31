@@ -772,6 +772,11 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(viewport, "Frame All zoom factor", "/viewport/frameAll/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
         toggle(viewport, "Frame Under Cursor also zooms in", "/viewport/frameUnderCursor/zoom", false);
         number(viewport, "Frame Under Cursor zoom factor", "/viewport/frameUnderCursor/zoomFactor", 4.0, 0.1, 100.0, 0.25, 2);
+        section(viewport, "View Cube");
+        number(viewport, "Turn time (s, 0 snaps)", "/viewport/viewCube/turnTime", 0.15, 0.0, 2.0, 0.05, 2);
+        toggle(viewport, "Left-drag tumbles", "/viewport/viewCube/leftDrag", true);
+        toggle(viewport, "Middle-drag tracks", "/viewport/viewCube/middleDrag", true);
+        toggle(viewport, "Right-drag dollies", "/viewport/viewCube/rightDrag", true);
         section(viewport, "Highlight Under Cursor");
         toggle(viewport, "Components", "/viewport/preselect/components", true);
         toggle(viewport, "Objects", "/viewport/preselect/objects", false);

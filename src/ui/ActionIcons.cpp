@@ -721,6 +721,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"viewport.hud.frameRate", "gauge"},
     {"viewport.hud.currentFrame", "clock"},
     {"viewport.hud.viewAxis", "axis-y"},
+    {"viewport.hud.viewCube", "cube"},
     {"viewport.hud.originAxis", "axis-x"},
     {"lights.create.point", "bulb"},
     {"lights.create.spot", "lamp"},

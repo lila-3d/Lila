@@ -67,6 +67,9 @@ LILA_UI_API void setPartOn(int panel, std::string_view item, std::string_view pa
 /** Check state of a "viewport.hud.*" action for a view, nullopt for any other id. */
 LILA_UI_API std::optional<bool> actionState(const std::string& id, const ViewportWidget* view);
 
+/** Where the view cube draws in a view that wide: the top-right corner, with the right-hand readouts below it. */
+LILA_UI_API QRectF viewCubeRect(double viewWidth);
+
 /** The HUD menu of a viewport: the show-all switch, then one checkable entry per item, then options. */
 LILA_UI_API void fillMenu(QMenu* menu, ViewportWidget* view);
 

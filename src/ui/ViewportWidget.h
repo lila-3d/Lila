@@ -18,11 +18,13 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportState.h"
 
+#include <QPolygonF>
 #include <QWidget>
 
 class QDragLeaveEvent;
 class QMimeData;
 class QTimer;
+class QVariantAnimation;
 
 #include <deque>
 #include <map>
@@ -244,6 +246,22 @@ private:
     scene::isolation::Set mIsolation;
     void drawHud(OverlayPainter& p);
     void drawViewIndicator(OverlayPainter& p);
+    /** The HUD's view cube in the top-right corner, keeping its visible faces for viewCubeClick. */
+    void drawViewCube(OverlayPainter& p);
+    /** A click on a view cube face looks at that side; false when at is not on one. */
+    bool viewCubeClick(QPointF at);
+    /** The perspective view orbits to look at that side ("front", "top", ...); an orthographic view switches to it. */
+    void lookFromSide(const std::string& side);
+    /** Ends a view cube turn where it is heading, recording it as one camera step. */
+    void finishViewTurn();
+    std::vector<std::pair<std::string, QPolygonF>> mViewCubeFaces;
+    QVariantAnimation* mViewTurn = nullptr;
+    /** Starts an Alt+mouse style camera move, through the scene camera when looking through one. */
+    void startNav(Nav nav);
+    /** Where the left button went down on the view cube; a drag from there orbits, a click looks from the face. */
+    std::optional<QPointF> mCubePress;
+    bool mCubeDragged = false;
+    CameraView mViewTurnBefore;
     /** While B-dragging the soft select radius: a disc at the selection centre shaded by the falloff curve. */
     void drawSoftSelectRadius(OverlayPainter& p);
     /** Resolution and film gates with the mask outside them, Maya style. */

@@ -6,6 +6,7 @@ using namespace viewportDetail;
 
 void ViewportWidget::mousePressEvent(QMouseEvent* e)
 {
+    finishViewTurn();
     clearPreselect();
     mLastPos = e->position();
     setFocus();
@@ -19,6 +20,21 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         }
         updateCursor();
         return;
+    }
+    // The view cube moves the camera like Alt with the same button, each button switchable in the prefs.
+    if (!(e->modifiers() & Qt::AltModifier) && hud::shown(mHudPanel, "viewCube") && hud::viewCubeRect(width()).contains(e->position()))
+    {
+        auto& prefs = PrefStore::get();
+        if (e->button() == Qt::LeftButton)
+        {
+            mCubePress = e->position();
+            mCubeDragged = false;
+            return;
+        }
+        if (e->button() == Qt::MiddleButton && prefs.value<bool>("general", "/viewport/viewCube/middleDrag", true))
+            return startNav(Nav::Track);
+        if (e->button() == Qt::RightButton && prefs.value<bool>("general", "/viewport/viewCube/rightDrag", true))
+            return startNav(Nav::Dolly);
     }
     if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewportHooks::handleClick(e->position(), viewInfo()))
         return;
@@ -154,21 +170,24 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
     }
     if (e->modifiers() & Qt::AltModifier)
     {
-        if (e->button() == Qt::LeftButton)
-            mNav = Nav::Tumble;
-        else if (e->button() == Qt::MiddleButton)
-            mNav = Nav::Track;
-        else if (e->button() == Qt::RightButton)
-            mNav = Nav::Dolly;
-        if (mNav != Nav::None && mLookThrough != scene::kNoNode)
-        {
-            syncLookThrough();
-            if (!beginCameraEdit())
-                mNav = Nav::None;
-        }
-        mNavStart = cameraView();
+        startNav(e->button() == Qt::LeftButton     ? Nav::Tumble
+                 : e->button() == Qt::MiddleButton ? Nav::Track
+                 : e->button() == Qt::RightButton  ? Nav::Dolly
+                                                   : Nav::None);
     }
     setFocus();
+}
+
+void ViewportWidget::startNav(Nav nav)
+{
+    mNav = nav;
+    if (mNav != Nav::None && mLookThrough != scene::kNoNode)
+    {
+        syncLookThrough();
+        if (!beginCameraEdit())
+            mNav = Nav::None;
+    }
+    mNavStart = cameraView();
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
@@ -178,6 +197,20 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     // Badges follow the cursor, which otherwise only redraws the view when the hover changes.
     if (e->buttons() == Qt::NoButton && !cursorBadges::active(state(e->position())).empty())
         requestFrame();
+    if (e->buttons() == Qt::NoButton && hud::shown(mHudPanel, "viewCube"))
+        if (const QRectF cube = hud::viewCubeRect(width()); cube.contains(e->position()) || cube.contains(mLastPos - d))
+            requestFrame();
+    if (mCubePress && (e->buttons() & Qt::LeftButton))
+    {
+        if (!mCubeDragged && (e->position() - *mCubePress).manhattanLength() > 3.0 &&
+            PrefStore::get().value<bool>("general", "/viewport/viewCube/leftDrag", true))
+        {
+            mCubeDragged = true;
+            startNav(Nav::Tumble);
+        }
+        if (mNav == Nav::None)
+            return;
+    }
     if (mTabStroke.active())
     {
         mTabStroke.paint(viewInfo(), mLastPos - d, e->position(), paintSelect::tabRadius(scene::components::mode()));
@@ -279,6 +312,20 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
             updateTabHover(e->position());
         }
         submit();
+        return;
+    }
+    if (mCubePress && e->button() == Qt::LeftButton)
+    {
+        const QPointF press = *std::exchange(mCubePress, std::nullopt);
+        if (mNav != Nav::None)
+        {
+            recordCamera(mNavStart);
+            commitCameraEdit();
+            mNav = Nav::None;
+            Q_EMIT viewStateChanged();
+        }
+        else if (!mCubeDragged)
+            viewCubeClick(press);
         return;
     }
     if (mSwallowRelease && e->button() == Qt::LeftButton)
@@ -428,6 +475,7 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
 
 void ViewportWidget::wheelEvent(QWheelEvent* e)
 {
+    finishViewTurn();
     if (ViewportTool* tool = viewportTools::active(); tool && tool->wheel(e, viewInfo()))
     {
         submit();

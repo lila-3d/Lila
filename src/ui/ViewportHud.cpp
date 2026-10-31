@@ -64,7 +64,7 @@ bool itemDefault(std::string_view item)
 {
     if (item == "polyCount")
         return PrefStore::get().value<bool>("general", "/viewport/polyCount", true);
-    return item == "cameraNames" || item == "viewAxis";
+    return item == "cameraNames" || item == "viewAxis" || item == "viewCube";
 }
 
 /** Whether a part of the item being built is on, by part id. */
@@ -466,9 +466,16 @@ const std::vector<Item>& items()
          {{"fps", "Frame Rate"}, {"gpu", "GPU Time"}, {"ao", "AO Time"}}},
         {"currentFrame", "Current Frame", "The current frame of the time slider."},
         {"viewAxis", "View Axis", "The axis triad in the bottom-left corner."},
+        {"viewCube", "View Cube", "A cube in the top-right corner turning with the view; click a face to look at that side."},
         {"originAxis", "Origin Axis", "The world axes drawn at the origin."},
     };
     return list;
+}
+
+QRectF viewCubeRect(double viewWidth)
+{
+    constexpr double size = 84.0;
+    return {viewWidth - kMargin - size, kTop, size, size};
 }
 
 bool itemOn(int panel, std::string_view item)
@@ -675,12 +682,14 @@ bool draw(OverlayPainter& p, const Context& ctx)
         rightBlocks.push_back({{"Display Origin:", {fixed(o.x, 1) + ", " + fixed(o.y, 1) + ", " + fixed(o.z, 1)}}});
     }
     Stack topRight{.right = true, .edge = kTop, .width = ctx.view.width};
+    if (on("viewCube"))
+        topRight.edge = viewCubeRect(ctx.view.width).bottom() + kBlockGap;
     double widest = 0.0;
     for (const Block& b : rightBlocks)
         widest = std::max(widest, sizeOf(b).width());
     QRectF left = topLeft.bounds();
     if (!left.isNull() && ctx.view.width - kMargin - widest < left.right() + kColumnGap)
-        topRight.edge = left.bottom() + kBlockGap;
+        topRight.edge = std::max(topRight.edge, left.bottom() + kBlockGap);
     for (const Block& b : rightBlocks)
         topRight.place(b);
 
@@ -718,6 +727,8 @@ bool draw(OverlayPainter& p, const Context& ctx)
     std::vector<QRectF> taken;
     if (on("viewAxis"))
         taken.emplace_back(0.0, ctx.view.height - 72.0, 72.0, 72.0);
+    if (on("viewCube"))
+        taken.push_back(viewCubeRect(ctx.view.width));
     if (on("cameraNames"))
     {
         double w = OverlayPainter::textWidth(QString::fromStdString(ctx.view.camera));

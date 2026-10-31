@@ -885,8 +885,10 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
     if (t == Tool::Move)
     {
         glm::dvec3 delta(0.0);
+        // Grid snap puts the pivot under the cursor rather than keeping where the handle was grabbed.
+        const glm::dvec3 grab = gridSnap ? d.startPivot : d.startHit;
         if (h >= H::X && h <= H::Z)
-            delta = d.frame[ai] * (lineParam(d.startPivot, d.frame[ai], o, dir) - d.startHit.x);
+            delta = d.frame[ai] * (lineParam(d.startPivot, d.frame[ai], o, dir) - (gridSnap ? 0.0 : d.startHit.x));
         else
         {
             glm::dvec3 hit;
@@ -894,10 +896,10 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
             {
                 // A plane seen edge-on can't be hit reliably: drag in the view plane and drop the isolated axis.
                 if (rayPlane(o, dir, d.startPivot, mView.viewDir(d.startPivot), hit))
-                    delta = gizmo::constrainToPlane(hit - d.startHit, d.frame[ai]);
+                    delta = gizmo::constrainToPlane(hit - grab, d.frame[ai]);
             }
             else if (rayPlane(o, dir, d.startPivot, isPlane(h) ? d.frame[ai] : mView.viewDir(d.startPivot), hit))
-                delta = hit - d.startHit;
+                delta = hit - grab;
         }
         if (gridSnap)
         {
