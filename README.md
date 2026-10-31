@@ -31,6 +31,7 @@ Tests: `scripts\t.cmd build RelWithDebInfo -LE slow`. `-L slow` runs the slow su
 ## Troubleshooting
 
 - **vcpkg fails with `Operation REMOVE_DUPLICATES not recognized`:** the vcpkg that ships with Visual Studio is older than Lila's pinned ports. Update Visual Studio 2022 in the Visual Studio Installer (or point `VCPKG_ROOT` at a fresh clone of github.com/microsoft/vcpkg after running its `bootstrap-vcpkg.bat`), delete the `build` folder and run `build.bat` again.
+- **`could not open 'msvcrtd.lib'` / `oldnames.lib`, or the compiler shows as Clang:** `vcvars64.bat` failed, so CMake ran without MSVC. Run `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"` in a Command Prompt and read its `[ERROR...]` lines; usually the MSVC toolset is incomplete, fixed by Visual Studio Installer > Modify > "MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)", or Repair. Then delete the `build` folder and run `build.bat` again; `vcpkg_installed` is kept, so the deps don't rebuild.
 - **`Could not set up Python` or vcpkg fails with `usd[python] needs a Python install`:** the Python download failed (network or proxy). Install Python 3.14 from python.org (not the Microsoft Store version; it installs alongside other versions) and `set LILA_PYTHON_DIR=<its folder>` before `build.bat`.
 - **Link error LNK1168 while building:** Lila is running. Close it (or `taskkill /IM lila.exe /F`).
 - **Viewport stays black:** check the Script Output for a `vulkan:` line. Lila needs a Vulkan 1.3 GPU and driver.
