@@ -183,7 +183,7 @@
     }
   ],
   "seamError": 8.169934153556824e-05,
-  "seconds": 0.195276,
+  "seconds": 0.1967218,
   "stats": {
     "backfaces": 0,
     "groups": [
@@ -207,28 +207,28 @@
     "samples": 16777216
   },
   "timings": {
-    "finish": 0.0342815,
-    "gpu": 0.1412492,
-    "gpu:accumulate": 0.021929663999999998,
-    "gpu:dilate": 0.0009062400000000003,
-    "gpu:finalize": 0.00016860800000000002,
-    "gpu:map:ao": 0.03864048,
-    "gpu:map:cavity": 0.005725184,
-    "gpu:map:curvature": 0.005588991999999999,
-    "gpu:map:height": 0.00553984,
-    "gpu:map:normal": 0.003399584,
-    "gpu:map:objectNormal": 0.003392032,
-    "gpu:other": 4.5056000000000004e-05,
-    "gpu:raster": 0.012559103999999998,
-    "gpu:readback": 0.010795008,
-    "gpu:resolve": 0.00017075199999999998,
-    "gpu:trace": 0.004000608,
-    "gpuSetup": 0.0054903,
-    "plan": 7.77e-05,
-    "write": 0.12015050000000001,
-    "writeWait": 0.0183266
+    "finish": 0.0381974,
+    "gpu": 0.134148,
+    "gpu:accumulate": 0.025850207999999996,
+    "gpu:dilate": 0.0008847360000000003,
+    "gpu:finalize": 0.00016739199999999996,
+    "gpu:map:ao": 0.041266176,
+    "gpu:map:cavity": 0.0036638719999999994,
+    "gpu:map:curvature": 0.003550208,
+    "gpu:map:height": 0.004277248,
+    "gpu:map:normal": 0.00379104,
+    "gpu:map:objectNormal": 0.0037892159999999998,
+    "gpu:other": 4.7743999999999996e-05,
+    "gpu:raster": 0.012445184,
+    "gpu:readback": 0.013319264,
+    "gpu:resolve": 0.000183008,
+    "gpu:trace": 0.00468192,
+    "gpuSetup": 0.0066208,
+    "plan": 0.0001129,
+    "write": 0.14026239999999998,
+    "writeWait": 0.0222381
   },
-  "totalSeconds": 0.3432176,
+  "totalSeconds": 0.369834,
   "trims": 8,
   "warnings": []
 }

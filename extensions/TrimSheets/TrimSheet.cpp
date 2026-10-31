@@ -432,7 +432,7 @@ Sheet preset(std::string_view id, int width)
     if (id == "industrialMetal")
     {
         sheet.name = "T_IndustrialMetal";
-        sheet.material = "Worn Painted Metal";
+        sheet.material = "Trim Painted Metal";
         l.addStrip("Edge16", 16, S::Raised);
         l.addStrip("Edge16b", 16, S::HalfPipe);
         l.addStrip("Lip32", 32, S::Raised);
@@ -478,7 +478,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "woodTrims")
     {
         sheet.name = "T_WoodTrims";
-        sheet.material = "Dusty Wood";
+        sheet.material = "Trim Wood";
         sheet.pxPerM = 1024.0;
         l.addStrip("Dowel64", 64, S::HalfPipe);
         l.addStrip("Bead64", 64, S::DoubleBevel);

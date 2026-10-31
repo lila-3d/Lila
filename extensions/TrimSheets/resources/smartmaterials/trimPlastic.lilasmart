@@ -1,0 +1,124 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Trim Plastic",
+  "description": "Moulded plastic for trim sheets: a tone per strip, paler and scuffed on the bevels, scratched, and grimy in the seams.",
+  "kind": "material",
+  "layer": {
+    "id": "L99",
+    "name": "Trim Plastic",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Plastic",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.5,
+            0.05,
+            0.03,
+            1
+          ],
+          "roughness": 0.4,
+          "metallic": 0.0
+        },
+        "masks": []
+      },
+      {
+        "id": "L2",
+        "name": "Strip Tone",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.38,
+            0.03,
+            0.02,
+            1
+          ],
+          "roughness": 0.45
+        },
+        "masks": [
+          {
+            "id": "M1",
+            "kind": "generator",
+            "type": "trimRandom",
+            "mode": "normal",
+            "opacity": 0.7,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L3",
+        "name": "Scuffed Edges",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.72,
+            0.22,
+            0.16,
+            1
+          ],
+          "roughness": 0.7
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "normal",
+            "opacity": 0.8,
+            "values": {
+              "strength": 4.0,
+              "level": 0.18,
+              "softness": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "id": "L4",
+        "name": "Scratches",
+        "kind": "fill",
+        "material": {
+          "roughness": 0.6
+        },
+        "masks": [
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genScratches",
+            "mode": "normal",
+            "opacity": 0.5,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L5",
+        "name": "Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.08,
+            0.06,
+            0.05,
+            1
+          ],
+          "roughness": 0.85
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}

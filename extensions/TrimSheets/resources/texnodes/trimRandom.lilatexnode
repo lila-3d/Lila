@@ -1,0 +1,43 @@
+{
+  "format": "lilatexnode",
+  "version": 1,
+  "type": "trimRandom",
+  "label": "Trim Random",
+  "category": "Mesh",
+  "doc": "A random value per trim, the same over the whole trim: give each board, panel or course its own tone. As a layer mask at low opacity it varies a material from strip to strip.",
+  "inputs": [],
+  "outputs": [
+    {
+      "id": "out",
+      "type": "gray"
+    }
+  ],
+  "params": [
+    {
+      "id": "seed",
+      "type": "seed",
+      "default": 0
+    },
+    {
+      "id": "low",
+      "type": "float",
+      "default": 0.0,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "id": "high",
+      "type": "float",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "cost": 1,
+  "externals": [
+    "trimIndex"
+  ],
+  "body": {
+    "out": "uint i = uint(max(round(trimIndex.sample(uv).x), 0.0));\nreturn i == 0u ? 0.0 : lerp(p.low, p.high, texRand(uint2(i, 13u), uint(p.seed)));"
+  }
+}

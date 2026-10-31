@@ -83,6 +83,13 @@ std::vector<std::string> selectedDetail()
 /** How many times Cycle Trim has run since the last Auto Trim: each press takes the next-best match. */
 int gCycle = 0;
 
+/** The painted preview the Trim Sheet Editor keeps when the sheet is textured, else the baked normal map. */
+std::filesystem::path shownFile(const Sheet& s, const std::filesystem::path& f)
+{
+    const std::filesystem::path painted = textureFolder(s, f) / "Preview" / ("TS_" + materialName(s).substr(2) + "_baseColor.png");
+    return std::filesystem::exists(painted) ? painted : mapFile(s, f, "normal");
+}
+
 /** The current sheet as a picture with its trims outlined; clicking a trim maps the selected faces onto it. */
 class SheetView : public QWidget
 {
@@ -113,7 +120,7 @@ public:
         const long long sheetStamp = path.empty() ? 0 : stamp(path);
         long long texStamp = 0;
         if (mSheet)
-            texStamp = stamp(mapFile(*mSheet, path, "normal"));
+            texStamp = stamp(shownFile(*mSheet, path));
         if (path == mPath && sheetStamp == mSheetStamp && texStamp == mTexStamp)
             return;
         mPath = path;
@@ -125,10 +132,10 @@ public:
             try
             {
                 mSheet = load(path);
-                const std::filesystem::path normal = mapFile(*mSheet, path, "normal");
-                mTexStamp = stamp(normal);
+                const std::filesystem::path shown = shownFile(*mSheet, path);
+                mTexStamp = stamp(shown);
                 if (mTexStamp)
-                    mImage.load(QString::fromStdString(normal.generic_string()));
+                    mImage.load(QString::fromStdString(shown.generic_string()));
             }
             catch (const std::exception& e)
             {

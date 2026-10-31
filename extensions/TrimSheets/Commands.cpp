@@ -480,7 +480,7 @@ json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOpti
 /** Layer at the bottom of a sheet's texture set carrying its baked normal and AO under the smart materials. */
 constexpr const char* kBakeLayer = "Sheet Bake";
 /** Used when neither the call nor the sheet names a smart material. */
-constexpr const char* kDefaultSmartMaterial = "Worn Painted Metal";
+constexpr const char* kDefaultSmartMaterial = "Trim Painted Metal";
 
 /** The texture set painting a sheet's material: TS_<name without T_>. */
 std::string textureSetName(const Sheet& s) { return "TS_" + materialName(s).substr(2); }

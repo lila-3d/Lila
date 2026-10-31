@@ -95,4 +95,9 @@ ops.group(*bands, name="Wall")
 ops.select(clear=True)
 cam = ops.createNode("camera", name="Cam_Wall", skipSelect=True)
 ops.viewPlace(cam, eye=(-420, 220, 740), lookAt=(0, 160, 0), up=(0, 1, 0))
+# The view the scene opens on: the whole wall, a little from the left. Batch runs have no view to set.
+try:
+    ops.viewCamera(eye=(-430, 260, 820), lookAt=(0, 150, 0))
+except Exception:
+    pass
 ops.saveScene(os.path.join(out_dir, "trim_frieze.lila"))

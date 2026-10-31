@@ -2,6 +2,7 @@
 
 #include "core/PrefStore.h"
 #include "io/SceneFile.h"
+#include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/Isolation.h"
 #include "ui/NodeLookup.h"
@@ -37,6 +38,42 @@ ViewportLayout::ViewportLayout(QWidget* parent) : QWidget(parent)
     scene::isolation::setActiveProvider([self]() -> const scene::isolation::Set* {
         return self && self->mActive ? &self->mActive->isolation() : nullptr;
     });
+    if (!ops::find("viewCamera"))
+        ops::registerCommand({
+            .name = "viewCamera",
+            .doc = "The active view's camera: with eye and lookAt, put its perspective camera there (scenes save it, so a scene opens on "
+                   "that view). Returns the view's state {view, persp: {target, distance, yaw, pitch, orthoWidth, focalLength}}.",
+            .flags = {{"eye", "", ArgType::Vec3, nullptr, "Where the camera stands, cm."},
+                      {"lookAt", "la", ArgType::Vec3, nullptr, "The point it looks at, cm."}},
+            .undoable = false,
+            .run = [self](const Args& a) -> nlohmann::json {
+                if (!self || !self->mActive)
+                    throw CommandError("viewCamera: no viewport");
+                if (a.has("eye") || a.has("lookAt"))
+                {
+                    if (!a.has("eye") || !a.has("lookAt"))
+                        throw CommandError("viewCamera: give both eye and lookAt");
+                    const auto vec = [&](const char* k) {
+                        const nlohmann::json v = a.flags[k];
+                        return glm::dvec3(v.at(0).get<double>(), v.at(1).get<double>(), v.at(2).get<double>());
+                    };
+                    const glm::dvec3 eye = vec("eye"), at = vec("lookAt");
+                    const double distance = glm::length(at - eye);
+                    if (distance <= 1e-6)
+                        throw CommandError("viewCamera: eye and lookAt are the same point");
+                    const glm::dvec3 d = (at - eye) / distance;
+                    // Camera::forward: yaw turns about +Y from -Z, pitch tilts towards +Y.
+                    nlohmann::json pose = self->mActive->cameraState().value("persp", nlohmann::json::object());
+                    pose["target"] = {at.x, at.y, at.z};
+                    pose["distance"] = distance;
+                    pose["pitch"] = glm::degrees(std::asin(std::clamp(d.y, -1.0, 1.0)));
+                    pose["yaw"] = glm::degrees(std::atan2(-d.x, -d.z));
+                    self->mActive->restoreCameraState({{"view", "persp"}, {"persp", pose}});
+                    self->mActive->update();
+                }
+                return self->mActive->cameraState();
+            },
+        });
     io::registerUiSection(
         "viewports",
         [self]() -> nlohmann::json {

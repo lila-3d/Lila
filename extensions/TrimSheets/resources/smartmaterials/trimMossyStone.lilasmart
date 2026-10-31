@@ -1,0 +1,231 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Trim Mossy Stone",
+  "description": "Weathered grey stone for trim sheets: a tone per course, paler worn arrises, grime in the hollows and moss on the tops of the profiles.",
+  "kind": "material",
+  "layer": {
+    "id": "L99",
+    "name": "Trim Mossy Stone",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Stone",
+        "kind": "procedural",
+        "masks": [],
+        "graph": {
+          "name": "stone",
+          "typeVersion": 1,
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "baseColor",
+              "type": "color"
+            },
+            {
+              "name": "roughness",
+              "type": "gray"
+            }
+          ],
+          "nodes": [
+            {
+              "name": "GroupInput",
+              "type": "GroupInput",
+              "position": [
+                -400,
+                0
+              ]
+            },
+            {
+              "name": "Grain",
+              "type": "clouds",
+              "position": [
+                -200,
+                0
+              ],
+              "values": {
+                "scale": 24,
+                "octaves": 5,
+                "persistence": 0.6,
+                "contrast": 0.8
+              }
+            },
+            {
+              "name": "Tint",
+              "type": "colorize",
+              "position": [
+                -50,
+                0
+              ],
+              "values": {
+                "gradient": [
+                  [
+                    0.0,
+                    [
+                      0.22,
+                      0.22,
+                      0.21,
+                      1
+                    ]
+                  ],
+                  [
+                    1.0,
+                    [
+                      0.4,
+                      0.39,
+                      0.37,
+                      1
+                    ]
+                  ]
+                ]
+              }
+            },
+            {
+              "name": "Rough",
+              "type": "constant",
+              "position": [
+                100,
+                0
+              ],
+              "values": {
+                "value": 0.85
+              }
+            },
+            {
+              "name": "GroupOutput",
+              "type": "GroupOutput",
+              "position": [
+                400,
+                0
+              ]
+            }
+          ],
+          "links": [
+            [
+              "Grain",
+              "out",
+              "Tint",
+              "input"
+            ],
+            [
+              "Tint",
+              "out",
+              "GroupOutput",
+              "baseColor"
+            ],
+            [
+              "Rough",
+              "out",
+              "GroupOutput",
+              "roughness"
+            ]
+          ]
+        }
+      },
+      {
+        "id": "L2",
+        "name": "Course Tone",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.18,
+            0.17,
+            0.16,
+            1
+          ],
+          "roughness": 0.9
+        },
+        "masks": [
+          {
+            "id": "M1",
+            "kind": "generator",
+            "type": "trimRandom",
+            "mode": "normal",
+            "opacity": 0.35,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L3",
+        "name": "Worn Arrises",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.55,
+            0.54,
+            0.51,
+            1
+          ],
+          "roughness": 0.8
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "normal",
+            "opacity": 0.6,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L4",
+        "name": "Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.06,
+            0.05,
+            0.04,
+            1
+          ],
+          "roughness": 0.9
+        },
+        "masks": [
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L5",
+        "name": "Moss",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.09,
+            0.16,
+            0.03,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0,
+          "height": 0.56
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "genMoss",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ],
+        "heightBlend": {
+          "enabled": true,
+          "sharpness": 0.7,
+          "influence": 1.0
+        }
+      }
+    ]
+  }
+}

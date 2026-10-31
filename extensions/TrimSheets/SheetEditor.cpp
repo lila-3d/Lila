@@ -6,6 +6,7 @@
 
 #include <lila/Actions.h>
 #include <lila/Command.h>
+#include <lila/Events.h>
 #include <lila/Extension.h>
 #include <lila/Log.h>
 #include <lila/Panels.h>
@@ -21,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -51,6 +53,43 @@ json edit(const json& call)
         log::write(LogLevel::Warning, e.what());
         return {};
     }
+}
+
+std::string paintedSetName(const Sheet& s) { return "TS_" + materialName(s).substr(2); }
+
+bool hasPaintedSet(const Sheet& s)
+{
+    try
+    {
+        const json sets = ops::execute("texSets", json::object());
+        return std::ranges::find(sets, json(paintedSetName(s))) != sets.end();
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+/** The texture set's base colour as an image beside the sheet's textures, evaluated again when stale or missing. Empty on failure. */
+std::filesystem::path paintedPreview(const Sheet& s, const std::filesystem::path& f, bool redo)
+{
+    const std::filesystem::path folder = textureFolder(s, f) / "Preview";
+    const std::filesystem::path file = folder / (paintedSetName(s) + "_baseColor.png");
+    if (!redo && std::filesystem::exists(file))
+        return file;
+    try
+    {
+        ops::execute("texEvaluate", {{"args", {paintedSetName(s)}},
+                                     {"channels", json::array({"baseColor"})},
+                                     {"resolution", std::min(s.width, 1024)},
+                                     {"folder", folder.generic_string()}});
+    }
+    catch (const std::exception& e)
+    {
+        log::write(LogLevel::Warning, e.what());
+        return {};
+    }
+    return std::filesystem::exists(file) ? file : std::filesystem::path();
 }
 
 /** A trim border under the cursor: the line axis = at, grabbed at `along` on it. */
@@ -101,27 +140,57 @@ public:
         };
         const long long sheetStamp = path.empty() ? 0 : stamp(path);
         const long long texStamp = mSheet ? stamp(mapFile(*mSheet, path, "normal")) : 0;
-        if (!force && path == mPath && sheetStamp == mSheetStamp && texStamp == mTexStamp)
+        if (!force && !mPaintedStale && path == mPath && sheetStamp == mSheetStamp && texStamp == mTexStamp)
             return;
         const bool sameSheet = path == mPath;
+        // A rebake changes what the texture set paints over.
+        if (texStamp != mTexStamp)
+            mPaintedStale = true;
         mPath = path;
         mSheetStamp = sheetStamp;
         mSheet.reset();
         mImage = QImage();
+        mHasSet = false;
         if (!path.empty() && sheetStamp)
             try
             {
                 mSheet = load(path);
+                mHasSet = hasPaintedSet(*mSheet);
+                if (!sameSheet && !mChosen)
+                    mPainted = mHasSet;
                 const std::filesystem::path normal = mapFile(*mSheet, path, "normal");
                 mTexStamp = stamp(normal);
-                if (mTexStamp)
-                    mImage.load(QString::fromStdString(normal.generic_string()));
+                std::filesystem::path shown = normal;
+                if (mPainted && mHasSet)
+                    if (const std::filesystem::path painted = paintedPreview(*mSheet, path, mPaintedStale); !painted.empty())
+                        shown = painted;
+                mPaintedStale = false;
+                if (stamp(shown))
+                    mImage.load(QString::fromStdString(shown.generic_string()));
             }
             catch (const std::exception& e)
             {
                 log::write(LogLevel::Warning, e.what());
             }
         select(sameSheet ? mSelected : -1);
+    }
+
+    /** Show the texture set's base colour (when the sheet has one) instead of the baked normal map. */
+    void setPainted(bool on)
+    {
+        mChosen = true;
+        mPainted = on;
+        refresh(true);
+    }
+    bool painted() const { return mPainted && mHasSet; }
+    bool hasSet() const { return mHasSet; }
+    /** The texture set changed (a stroke, a layer edit): the painted view is redone on the next refresh. */
+    void markPaintedStale()
+    {
+        if (!mPainted || !mHasSet)
+            return;
+        mPaintedStale = true;
+        refresh(true);
     }
 
 protected:
@@ -384,6 +453,10 @@ private:
     }
 
     std::string mPath;
+    bool mPainted = false;
+    bool mChosen = false;
+    bool mHasSet = false;
+    bool mPaintedStale = true;
     long long mSheetStamp = 0;
     long long mTexStamp = 0;
     std::optional<Sheet> mSheet;
@@ -400,9 +473,15 @@ QWidget* makeEditor(QWidget* parent)
     auto* w = new QWidget(parent);
     auto* v = new QVBoxLayout(w);
 
+    auto* titleRow = new QHBoxLayout();
     auto* title = new QLabel(w);
     title->setWordWrap(true);
-    v->addWidget(title);
+    auto* view = new QComboBox(w);
+    view->addItems({"Painted", "Normal"});
+    view->setToolTip("Show the sheet's painted colour (its texture set) or its baked normal map.");
+    titleRow->addWidget(title, 1);
+    titleRow->addWidget(view);
+    v->addLayout(titleRow);
     auto* canvas = new SheetCanvas(w);
     canvas->setObjectName("trimSheetCanvas");
     v->addWidget(canvas, 1);
@@ -516,7 +595,22 @@ QWidget* makeEditor(QWidget* parent)
         }
         state->loading = false;
     };
-    canvas->onSelect = show;
+    canvas->onSelect = [=](int i) {
+        const QSignalBlocker block(view);
+        view->setEnabled(canvas->hasSet());
+        view->setCurrentIndex(canvas->painted() ? 0 : 1);
+        show(i);
+    };
+    QObject::connect(view, &QComboBox::currentIndexChanged, w, [=](int i) { canvas->setPainted(i == 0); });
+    // Strokes and texture edits are undo steps: redo the painted view once they settle.
+    auto* settle = new QTimer(w);
+    settle->setSingleShot(true);
+    settle->setInterval(600);
+    QObject::connect(settle, &QTimer::timeout, w, [=] { canvas->markPaintedStale(); });
+    const events::SubscriptionId sub = events::subscribe(events::Event::UndoStackChanged, [settle](const events::EventData&) {
+        QMetaObject::invokeMethod(settle, [settle] { settle->start(); }, Qt::QueuedConnection);
+    });
+    QObject::connect(w, &QObject::destroyed, [sub] { events::unsubscribe(sub); });
     canvas->onLayout = [=] {
         state->layout = true;
         show(canvas->selected());
@@ -567,7 +661,10 @@ QWidget* makeEditor(QWidget* parent)
         canvas->refresh(true);
     });
     QObject::connect(texture, &QPushButton::clicked, w,
-                     [=] { runUi("trimSheetTexture", {{"material", material->currentText().toStdString()}, {"replace", true}}); });
+                     [=] {
+                         runUi("trimSheetTexture", {{"material", material->currentText().toStdString()}, {"replace", true}});
+                         canvas->setPainted(true);
+                     });
     QObject::connect(paint, &QPushButton::clicked, w, [] { actions::run(json("trims.paint")); });
     show(-1);
     return w;

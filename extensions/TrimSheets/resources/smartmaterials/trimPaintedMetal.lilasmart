@@ -1,0 +1,161 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Trim Painted Metal",
+  "description": "Painted steel for trim sheets: each strip a slightly different shade, worn back to bare metal along every bevel, chipped, dirty in the seams and dusty on the tops.",
+  "kind": "material",
+  "layer": {
+    "id": "L99",
+    "name": "Trim Painted Metal",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Bare Metal",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.56,
+            0.57,
+            0.58,
+            1
+          ],
+          "roughness": 0.35,
+          "metallic": 1.0
+        },
+        "masks": []
+      },
+      {
+        "id": "L2",
+        "name": "Paint",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.09,
+            0.24,
+            0.42,
+            1
+          ],
+          "roughness": 0.55,
+          "metallic": 0.0,
+          "height": 0.51
+        },
+        "masks": [
+          {
+            "id": "M1",
+            "kind": "fill",
+            "value": 1.0,
+            "mode": "normal"
+          },
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "subtract",
+            "opacity": 1.0,
+            "values": {
+              "strength": 4.0,
+              "level": 0.18,
+              "softness": 0.2
+            }
+          },
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genPaintChips",
+            "mode": "subtract",
+            "opacity": 0.7,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L3",
+        "name": "Strip Shade",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.02,
+            0.07,
+            0.16,
+            1
+          ],
+          "roughness": 0.6,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M4",
+            "kind": "generator",
+            "type": "trimRandom",
+            "mode": "normal",
+            "opacity": 0.7,
+            "values": {}
+          },
+          {
+            "id": "M5",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "subtract",
+            "opacity": 1.0,
+            "values": {
+              "strength": 4.0,
+              "level": 0.18,
+              "softness": 0.2
+            }
+          }
+        ]
+      },
+      {
+        "id": "L4",
+        "name": "Seam Dirt",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.1,
+            0.08,
+            0.06,
+            1
+          ],
+          "roughness": 0.85,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M6",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L5",
+        "name": "Dust",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.45,
+            0.42,
+            0.38,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M7",
+            "kind": "generator",
+            "type": "genDust",
+            "mode": "normal",
+            "opacity": 0.5,
+            "values": {}
+          }
+        ]
+      }
+    ]
+  }
+}
