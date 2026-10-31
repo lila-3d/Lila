@@ -13,6 +13,8 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -20,6 +22,9 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QStyle>
+#include <QToolButton>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -56,12 +61,14 @@ json runCommand(const char* name, const json& call)
 }
 
 /** A query the panel makes for itself, not echoed. Null when it fails. */
-json query(const char* name, const std::string& object)
+json query(const char* name, const std::string& object, const std::string& property = {})
 {
     try
     {
         Args a;
         a.positional = json::array({object});
+        if (!property.empty())
+            a.positional.push_back(property);
         return runBackend(name, a);
     }
     catch (const std::exception&)
@@ -167,6 +174,119 @@ QWidget* stagePanel(NodeId id)
     return w;
 }
 
+QString fileName(const std::string& file) { return qs(std::filesystem::path(file).filename().string()); }
+
+QString opinionLayer(const json& o)
+{
+    const std::string role = o.value("role", std::string());
+    QString text = fileName(o["layer"].get<std::string>());
+    if (role == "edits")
+        text += " (Lila edits)";
+    else if (role == "added")
+        text += " (added)";
+    else if (role == "session")
+        text += " (session)";
+    return text;
+}
+
+QString opinionValue(const json& o)
+{
+    if (o.contains("targets"))
+        return qs(o["targets"].get<std::string>());
+    QString v = o.contains("value") ? qs(o["value"].get<std::string>()) : QString();
+    if (const int n = o.value("timeSamples", 0); n > 0)
+        v += (v.isEmpty() ? "" : ", ") + QString("%1 time samples").arg(n);
+    return v;
+}
+
+QString specValue(const json& o)
+{
+    QStringList parts{qs(o["specifier"].get<std::string>())};
+    if (o.contains("type"))
+        parts << qs(o["type"].get<std::string>());
+    if (o.contains("active"))
+        parts << (o["active"].get<bool>() ? "active" : "inactive");
+    if (o.contains("kind"))
+        parts << "kind " + qs(o["kind"].get<std::string>());
+    if (o.contains("instanceable"))
+        parts << (o["instanceable"].get<bool>() ? "instanceable" : "not instanceable");
+    if (o.contains("variantSelections"))
+        for (const auto& [set, choice] : o["variantSelections"].items())
+            parts << qs(set + " = " + choice.get<std::string>());
+    return parts.join(", ");
+}
+
+void opinionItem(QTreeWidgetItem* parent, const json& o, const QString& value)
+{
+    auto* item = new QTreeWidgetItem(parent, {opinionLayer(o), qs(o["arc"].get<std::string>()), value, qs(o["path"].get<std::string>())});
+    item->setToolTip(0, qs(o["layer"].get<std::string>()));
+    item->setToolTip(2, value);
+    if (o.value("wins", false))
+    {
+        QFont bold = item->font(0);
+        bold.setBold(true);
+        for (int c = 0; c < 4; ++c)
+            item->setFont(c, bold);
+    }
+}
+
+/** Every opinion on an object's prim, or on one of its properties, strongest first. */
+void showOpinions(QWidget* from, const std::string& object, const std::string& property)
+{
+    const json info = query("usdStageOpinions", object, property);
+    if (info.is_null())
+        return;
+    auto* dialog = new QDialog(from->window());
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(qs("Opinions: " + info["prim"].get<std::string>() + (property.empty() ? "" : "." + property)));
+    auto* v = new QVBoxLayout(dialog);
+    v->addWidget(wrapped("Strongest first. The value comes from the opinion in bold.", dialog));
+    auto* tree = new QTreeWidget(dialog);
+    tree->setHeaderLabels({"Layer", "Arc", "Opinion", "Path"});
+    tree->setRootIsDecorated(property.empty());
+    tree->setUniformRowHeights(true);
+    QTreeWidgetItem* root = tree->invisibleRootItem();
+    if (property.empty())
+    {
+        auto* prim = new QTreeWidgetItem(root, {"Prim"});
+        for (const json& o : info["specs"])
+            opinionItem(prim, o, specValue(o));
+        prim->setExpanded(true);
+    }
+    for (const json& p : info["properties"])
+    {
+        if (p["opinions"].empty() && property.empty())
+            continue;
+        QTreeWidgetItem* parent = root;
+        if (property.empty())
+        {
+            parent = new QTreeWidgetItem(root, {qs(p["name"].get<std::string>())});
+            parent->setExpanded(p.contains("losesTo"));
+        }
+        for (const json& o : p["opinions"])
+            opinionItem(parent, o, opinionValue(o));
+        QString note;
+        if (p.value("fallback", false))
+            note = "No layer sets a value: the schema's default shows.";
+        else if (p.contains("losesTo"))
+            note = "Lila's edit is hidden by the stronger opinion in " + fileName(p["losesTo"].get<std::string>()) + ".";
+        if (note.isEmpty())
+            continue;
+        if (property.empty())
+            parent->setText(2, note);
+        else
+            v->addWidget(wrapped(note, dialog));
+    }
+    for (int c = 0; c < 3; ++c)
+        tree->resizeColumnToContents(c);
+    v->addWidget(tree, 1);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+    v->addWidget(buttons);
+    dialog->resize(820, 420);
+    dialog->show();
+}
+
 QWidget* primPanel(NodeId id)
 {
     if (isStageNode(id) || !stageAbove(id))
@@ -191,6 +311,13 @@ QWidget* primPanel(NodeId id)
     const bool locked = info.value("instanceProxy", false);
     if (locked)
         v->addWidget(wrapped("Inside an instance: its properties can't be edited here.", w));
+    auto* opinions = new QPushButton("Opinions...", w);
+    opinions->setToolTip("Every layer's opinion on this prim and its properties, strongest first.");
+    QObject::connect(opinions, &QPushButton::clicked, w, [w, object] { showOpinions(w, object, {}); });
+    auto* top = new QHBoxLayout;
+    top->addWidget(opinions);
+    top->addStretch(1);
+    v->addLayout(top);
 
     auto* form = new QFormLayout;
     for (const json& p : info["properties"])
@@ -224,9 +351,24 @@ QWidget* primPanel(NodeId id)
                 edit->setText(qs(r["value"].get<std::string>()));
             }
         });
+        auto* stack = new QToolButton(w);
+        stack->setAutoRaise(true);
+        stack->setText("...");
+        stack->setToolTip("The opinions on " + qs(name) + ", strongest first.");
+        if (p.contains("losesTo"))
+        {
+            const QString why = "Lila's edit doesn't show: " + fileName(p["losesTo"].get<std::string>()) + " has a stronger opinion.";
+            stack->setIcon(w->style()->standardIcon(QStyle::SP_MessageBoxWarning));
+            stack->setToolTip(why);
+            edit->setToolTip(why + "\n" + edit->toolTip());
+        }
+        QObject::connect(stack, &QToolButton::clicked, w, [w, object, name] { showOpinions(w, object, name); });
+        auto* field = new QHBoxLayout;
+        field->addWidget(edit, 1);
+        field->addWidget(stack);
         auto* label = new QLabel(qs(name), w);
         label->setToolTip(edit->toolTip());
-        form->addRow(label, edit);
+        form->addRow(label, field);
     }
     v->addLayout(form);
     return w;

@@ -227,6 +227,24 @@ TEST_CASE("usd stage: an added layer composes under the edits, takes outside cha
     setTranslate("Box", {50, 0, 0});
     saveAs(dir / "scene.lila");
     CHECK(prop("Box", "xformOp:translate") == "(50, 0, 0)");
+    const json opinions = run("usdStageOpinions", {{"args", {"Box"}}});
+    INFO(opinions.dump());
+    CHECK(opinions["specs"][0]["specifier"] == "over");
+    CHECK(opinions["specs"].back()["specifier"] == "def");
+    for (const json& p : opinions["properties"])
+        if (p["name"] == "xformOp:translate")
+        {
+            const json& stack = p["opinions"];
+            REQUIRE(stack.size() == 3);
+            CHECK(stack[0]["role"] == "edits");
+            CHECK(stack[0]["wins"] == true);
+            CHECK(stack[0]["arc"] == "local");
+            CHECK(stack[1]["role"] == "added");
+            CHECK(stack[1]["value"] == "(40, 0, 0)");
+            CHECK(!stack[1].contains("wins"));
+            CHECK(fs::path(stack[2]["layer"].get<std::string>()).filename() == "live.usda");
+            CHECK(!p.contains("losesTo"));
+        }
 
     const fs::path shot = dir / "shot.usda";
     run("usdStageWriteShot", {{"args", {shot.generic_string(), stage}}});
@@ -454,6 +472,17 @@ TEST_CASE("usd stage: the edit layer as a .usda file, and as one of the stage's 
     CHECK(moved["editLayer"]["mode"] == "sublayer");
     CHECK(warned(moved["warnings"], "/Root/Referenced: a stronger layer"));
     CHECK(near(translateOf("Referenced"), {100, 0, 0}, 1e-9));
+    const json referenced = run("usdStageOpinions", {{"args", {"Referenced", "xformOp:translate"}}})["properties"][0];
+    INFO(referenced.dump());
+    CHECK(fs::path(referenced["losesTo"].get<std::string>()).filename() == "composition.usda");
+    const json& stack = referenced["opinions"];
+    REQUIRE(stack.size() >= 2);
+    CHECK(stack[0]["wins"] == true);
+    CHECK(stack[1]["role"] == "edits");
+    CHECK(stack[1]["value"] == "(100, 8, 0)");
+    for (const json& p : run("usdStagePrim", {{"args", {"Referenced"}}})["properties"])
+        if (p["name"] == "xformOp:translate")
+            CHECK(p.contains("losesTo"));
     setTranslate("FromSublayer", {0, 0, 9});
     saveAs(dir / "scene.lila");
     const std::string subText = readAll(sub);

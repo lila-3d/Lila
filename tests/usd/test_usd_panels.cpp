@@ -9,11 +9,14 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPixmap>
 #include <QPushButton>
+#include <QToolButton>
+#include <QTreeWidget>
 #include <QVBoxLayout>
 
 #include <cstdlib>
@@ -91,8 +94,13 @@ template <class W> W* row(QWidget& w, const QString& label)
             QLayoutItem* l = form->itemAt(r, QFormLayout::LabelRole);
             QLayoutItem* f = form->itemAt(r, QFormLayout::FieldRole);
             const auto* text = l ? qobject_cast<QLabel*>(l->widget()) : nullptr;
-            if (text && text->text() == label && f)
+            if (!text || text->text() != label || !f)
+                continue;
+            if (!f->layout())
                 return qobject_cast<W*>(f->widget());
+            for (int i = 0; i < f->layout()->count(); ++i)
+                if (W* found = qobject_cast<W*>(f->layout()->itemAt(i)->widget()))
+                    return found;
         }
     return nullptr;
 }
@@ -225,6 +233,21 @@ TEST_CASE("usd stage panels: the stage and prim sections show the stage and edit
     REQUIRE(translate);
     CHECK(translate->text() == "(0, 20, 0)");
     CHECK_FALSE(translate->isReadOnly());
+    // Each property opens its opinions.
+    QToolButton* stack = row<QToolButton>(*panel, "xformOp:translate");
+    REQUIRE(stack);
+    stack->click();
+    QDialog* opinions = nullptr;
+    for (QWidget* top : QApplication::topLevelWidgets())
+        if (auto* d = qobject_cast<QDialog*>(top); d && d->windowTitle() == "Opinions: /World/Lamp.xformOp:translate")
+            opinions = d;
+    REQUIRE(opinions);
+    QTreeWidget* tree = opinions->findChild<QTreeWidget*>();
+    REQUIRE(tree);
+    CHECK(tree->topLevelItemCount() == 1);
+    CHECK(tree->topLevelItem(0)->text(2) == "(0, 20, 0)");
+    CHECK(tree->topLevelItem(0)->font(0).bold());
+    delete opinions;
 
     // Editing a field runs usdStageSetProperty.
     asset->setText("LA_002");

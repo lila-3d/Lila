@@ -20,6 +20,9 @@
 #include <pxr/base/tf/notice.h>
 #include <pxr/base/tf/stringUtils.h>
 #include <pxr/base/tf/weakBase.h>
+#include <pxr/usd/pcp/layerStack.h>
+#include <pxr/usd/pcp/node.h>
+#include <pxr/usd/pcp/primIndex.h>
 #include <pxr/usd/sdf/attributeSpec.h>
 #include <pxr/usd/sdf/changeBlock.h>
 #include <pxr/usd/sdf/copyUtils.h>
@@ -4574,6 +4577,181 @@ json propertyJson(const UsdProperty& p, UsdTimeCode t, bool full)
     return e;
 }
 
+const char* arcName(PcpArcType t)
+{
+    switch (t)
+    {
+    case PcpArcTypeInherit: return "inherit";
+    case PcpArcTypeVariant: return "variant";
+    case PcpArcTypeRelocate: return "relocate";
+    case PcpArcTypeReference: return "reference";
+    case PcpArcTypePayload: return "payload";
+    case PcpArcTypeSpecialize: return "specialize";
+    default: return "local";
+    }
+}
+
+/** Calls fn(layer, path, node) for every place that can hold opinions on prim, strongest first. */
+template <class Fn>
+void forEachSite(const UsdPrim& prim, Fn&& fn)
+{
+    for (const PcpNodeRef& node : prim.GetPrimIndex().GetNodeRange())
+    {
+        if (node.IsInert() || !node.HasSpecs())
+            continue;
+        for (const SdfLayerRefPtr& layer : node.GetLayerStack()->GetLayers())
+            fn(SdfLayerHandle(layer), node.GetPath(), node);
+    }
+}
+
+json opinionSite(const Stage& s, const SdfLayerHandle& l, const SdfPath& path, const PcpNodeRef& node)
+{
+    json e{{"layer", l->IsAnonymous() ? l->GetDisplayName() : fileOf(l)}, {"path", path.GetString()}, {"arc", arcName(node.GetArcType())}};
+    if (l == s.edit)
+        e["role"] = "edits";
+    else if (l == s.stage->GetSessionLayer())
+        e["role"] = "session";
+    else
+        for (const std::string& sub : std::vector<std::string>(s.edit->GetSubLayerPaths()))
+            if (SdfLayer::FindRelativeToLayer(s.edit, sub) == l)
+                e["role"] = "added";
+    return e;
+}
+
+json primOpinions(const Stage& s, const UsdPrim& prim)
+{
+    json out = json::array();
+    forEachSite(prim, [&](const SdfLayerHandle& l, const SdfPath& path, const PcpNodeRef& node) {
+        const SdfPrimSpecHandle spec = l->GetPrimAtPath(path);
+        if (!spec)
+            return;
+        json e = opinionSite(s, l, path, node);
+        e["specifier"] = spec->GetSpecifier() == SdfSpecifierDef ? "def" : spec->GetSpecifier() == SdfSpecifierClass ? "class" : "over";
+        if (!spec->GetTypeName().IsEmpty())
+            e["type"] = spec->GetTypeName().GetString();
+        if (spec->HasActive())
+            e["active"] = spec->GetActive();
+        if (spec->HasKind())
+            e["kind"] = spec->GetKind().GetString();
+        if (spec->HasInstanceable())
+            e["instanceable"] = spec->GetInstanceable();
+        json variants = json::object();
+        for (const auto& [set, choice] : spec->GetVariantSelections())
+            variants[set] = choice;
+        if (!variants.empty())
+            e["variantSelections"] = variants;
+        out.push_back(e);
+    });
+    return out;
+}
+
+std::string listOpText(const SdfTargetsProxy& op)
+{
+    std::string t;
+    const auto items = [&](const char* how, const SdfPathVector& paths) {
+        if (paths.empty())
+            return;
+        t += (t.empty() ? "" : " ") + std::string(how) + " [";
+        for (size_t i = 0; i < paths.size(); ++i)
+            t += (i ? ", " : "") + paths[i].GetString();
+        t += "]";
+    };
+    if (op.IsExplicit())
+        items("", op.GetExplicitItems());
+    items("prepend", op.GetPrependedItems());
+    items("append", op.GetAppendedItems());
+    items("delete", op.GetDeletedItems());
+    return t.empty() ? std::string("[]") : TfStringTrim(t);
+}
+
+/**
+ * Every opinion on a property, strongest first. For an attribute, wins marks the opinion its value comes from (the
+ * strongest with a default or time samples), and losesTo names the layer that beats an opinion of Lila's edit layer.
+ */
+json propertyOpinions(const Stage& s, const UsdProperty& p, bool full)
+{
+    json opinions = json::array();
+    bool won = false, editLoses = false;
+    std::string winner;
+    forEachSite(p.GetPrim(), [&](const SdfLayerHandle& l, const SdfPath& path, const PcpNodeRef& node) {
+        const SdfPropertySpecHandle spec = l->GetPropertyAtPath(path.AppendProperty(p.GetName()));
+        if (!spec)
+            return;
+        json e = opinionSite(s, l, path, node);
+        if (const SdfAttributeSpecHandle at = TfDynamic_cast<SdfAttributeSpecHandle>(spec))
+        {
+            const size_t samples = l->GetNumTimeSamplesForPath(spec->GetPath());
+            if (at->HasDefaultValue())
+            {
+                const VtValue v = at->GetDefaultValue();
+                if (v.IsHolding<SdfValueBlock>())
+                    e["value"] = "None (blocked)";
+                else if (!full && v.IsArrayValued() && v.GetArraySize() > 64)
+                    e["value"] = std::format("[{} values]", v.GetArraySize());
+                else
+                    e["value"] = valueText(v);
+            }
+            if (samples > 0)
+                e["timeSamples"] = samples;
+            if (at->HasDefaultValue() || samples > 0)
+            {
+                if (!won)
+                {
+                    won = true;
+                    e["wins"] = true;
+                    winner = e["layer"].get<std::string>();
+                }
+                else if (l == s.edit)
+                    editLoses = true;
+            }
+        }
+        else if (const SdfRelationshipSpecHandle rel = TfDynamic_cast<SdfRelationshipSpecHandle>(spec))
+            e["targets"] = listOpText(rel->GetTargetPathList());
+        if (spec->GetVariability() == SdfVariabilityUniform)
+            e["uniform"] = true;
+        opinions.push_back(e);
+    });
+    json out{{"name", p.GetName().GetString()}, {"opinions", opinions}};
+    if (p.Is<UsdAttribute>() && !won)
+        out["fallback"] = true;
+    if (editLoses)
+        out["losesTo"] = winner;
+    return out;
+}
+
+json cmdOpinions(const Args& a)
+{
+    if (a.positional.empty() || !a.positional[0].is_string())
+        throw CommandError("usdStageOpinions: object required");
+    Graph& g = graph();
+    auto [sp, link] = linkedObject(g, a.positional[0].get<std::string>(), "usdStageOpinions");
+    VariantScope scope(*sp, link);
+    const SdfPath path = stagePath(link);
+    const UsdPrim prim = sp->stage->GetPrimAtPath(path);
+    if (!prim)
+        throw CommandError("usdStageOpinions: the stage has no prim at " + path.GetString());
+    const bool full = a.get<bool>("full", false);
+    json props = json::array();
+    if (a.positional.size() > 1 && a.positional[1].is_string())
+    {
+        const UsdProperty p = prim.GetProperty(TfToken(a.positional[1].get<std::string>()));
+        if (!p)
+            throw CommandError("usdStageOpinions: " + path.GetString() + " has no property " + a.positional[1].get<std::string>());
+        props.push_back(propertyOpinions(*sp, p, full));
+    }
+    else
+        for (const UsdProperty& p : prim.GetProperties())
+            props.push_back(propertyOpinions(*sp, p, full));
+    return {{"prim", path.GetString()}, {"specs", primOpinions(*sp, prim)}, {"properties", props}};
+}
+
+/** Adds losesTo to a property usdStagePrim lists, when a stronger layer beats the edit layer's opinion on it. */
+void markLoss(const Stage& s, const UsdProperty& p, json& e)
+{
+    if (const json o = propertyOpinions(s, p, false); o.contains("losesTo"))
+        e["losesTo"] = o["losesTo"];
+}
+
 json cmdPrim(const Args& a)
 {
     if (a.positional.empty() || !a.positional[0].is_string())
@@ -4589,7 +4767,10 @@ json cmdPrim(const Args& a)
     const bool full = a.get<bool>("full", false);
     json props = json::array();
     for (const UsdProperty& p : prim.GetProperties())
+    {
         props.push_back(propertyJson(p, t, full));
+        markLoss(*sp, p, props.back());
+    }
     json schemas = json::array();
     for (const TfToken& api : prim.GetAppliedSchemas())
         schemas.push_back(api.GetString());
@@ -4680,7 +4861,13 @@ json cmdSetProperty(const Args& a)
     step.done();
     if (const UsdPrim now = s.stage->GetPrimAtPath(path))
         if (const UsdProperty p = now.GetProperty(TfToken(name)))
+        {
             result = propertyJson(p, currentCode(s, g), false);
+            markLoss(s, p, result);
+            if (result.contains("losesTo"))
+                log::warn("{}: the edit to {} doesn't show; {} has a stronger opinion", path.GetString(), name,
+                             result["losesTo"].get<std::string>());
+        }
     return result;
 }
 
@@ -4779,6 +4966,8 @@ bool run(std::string_view name, const Args& a, json& result)
         result = cmdInfo(a);
     else if (name == "usdStagePrim")
         result = cmdPrim(a);
+    else if (name == "usdStageOpinions")
+        result = cmdOpinions(a);
     else if (name == "usdStageSetProperty")
         result = cmdSetProperty(a);
     else if (name == "usdStage.sceneOpened")

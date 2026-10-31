@@ -534,12 +534,27 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
         stageCommand({
             .name = "usdStagePrim",
             .doc = "Every composed property of a stage object's prim, custom schemas included: {prim, type, schemas, "
-                   "instanceProxy, properties: [{name, type, value, custom, timeSamples, authored}]}. Values are usda text "
+                   "instanceProxy, properties: [{name, type, value, custom, timeSamples, authored, losesTo}]}. losesTo names the layer "
+                   "whose stronger opinion hides the edit layer's. Values are usda text "
                    "at the current time; long arrays are summarized unless full=True; relationships list their targets. An "
                    "object inside an LOD level adds level, the level's variant.",
             .positionalDoc = "object",
             .flags = {{"full", "", T::Bool, false, "Every value in full, however long."}},
             .undoable = false,
+        }) &&
+        stageCommand({
+            .name = "usdStageOpinions",
+            .doc = "Every opinion on a stage object's prim, strongest first, to see why a value isn't the one you set: {prim, "
+                   "specs: [{layer, path, arc, role, specifier, type, active, kind, instanceable, variantSelections}], "
+                   "properties: [{name, opinions: [{layer, path, arc, role, value, timeSamples, targets, wins}], fallback, "
+                   "losesTo}]}. arc is how the layer reaches the prim (local, reference, payload, variant, inherit, "
+                   "specialize, relocate); role marks Lila's edit layer (edits), added layers (added) and the session layer. "
+                   "wins marks the opinion an attribute's value comes from; fallback, that none has one and the schema's "
+                   "default shows; losesTo, the layer that beats the edit layer's opinion. Give a property for that one only.",
+            .positionalDoc = "object [property]",
+            .flags = {{"full", "", T::Bool, false, "Every value in full, however long."}},
+            .undoable = false,
+            .examples = {"usdStageOpinions(\"Chair\", \"xformOp:translate\")"},
         }) &&
         stageCommand({
             .name = "usdStageSetProperty",
