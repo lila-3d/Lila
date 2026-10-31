@@ -1,5 +1,6 @@
 #include "ui/TextureCache.h"
 
+#include "core/Dds.h"
 #include "core/ImageIO.h"
 #include "core/MainQueue.h"
 #include "core/Profile.h"
@@ -156,9 +157,53 @@ struct Pixels
     QImage rgba8;
     image::Image floats;
     bool linear = false;
+    /** A DDS's compressed blocks, kept as they are for the GPU (srgb still to be set). */
+    std::shared_ptr<render::TextureImage> blocks;
 
-    bool empty() const { return rgba8.isNull() && floats.rgba.empty(); }
+    bool empty() const { return rgba8.isNull() && floats.rgba.empty() && !blocks; }
 };
+
+/**
+ * A DDS file: its blocks as they are when allowBlocks and the GPU can take them with the file's own mips, else its
+ * largest level within kMaxSize decoded.
+ */
+Pixels readDds(const fs::path& path, std::string& error, bool allowBlocks)
+{
+    Pixels px;
+    dds::File f;
+    if (!dds::read(path, f, &error))
+        return px;
+    size_t first = 0;
+    while (first + 1 < f.levels.size() && std::max(f.levels[first].width, f.levels[first].height) > kMaxSize)
+        ++first;
+    const dds::Level& top = f.levels[first];
+    // Without a mip chain, a decoded copy gets mips generated on the GPU, which blocks can't.
+    const bool keepBlocks = allowBlocks && dds::isBlockCompressed(f.format) && f.format != dds::Format::BC6H &&
+                            (f.levels.size() - first > 1 || std::max(top.width, top.height) <= 4);
+    if (keepBlocks)
+    {
+        auto t = std::make_shared<render::TextureImage>();
+        t->width = top.width;
+        t->height = top.height;
+        t->format = f.format == dds::Format::BC4 ? render::TextureFormat::R8
+                    : f.format == dds::Format::BC5 ? render::TextureFormat::RG8
+                                                   : render::TextureFormat::RGBA8;
+        t->blocks = f.format;
+        t->mipLevels = int(f.levels.size() - first);
+        t->rgba.assign(f.data.begin() + std::ptrdiff_t(top.offset), f.data.end());
+        px.blocks = std::move(t);
+        return px;
+    }
+    if (f.format == dds::Format::BC6H)
+    {
+        px.floats = {top.width, top.height, dds::decodeFloat(f, first)};
+        px.linear = true;
+        return px;
+    }
+    std::vector<uint8_t> rgba = dds::decodeRgba8(f.format, top.width, top.height, f.data.data() + top.offset);
+    px.rgba8 = QImage(rgba.data(), top.width, top.height, top.width * 4, QImage::Format_RGBA8888).copy();
+    return px;
+}
 
 float encodeSrgb(float v)
 {
@@ -223,7 +268,7 @@ void shrinkToFit(image::Image& img)
     }
 }
 
-Pixels readPixels(const std::string& file, std::string& error)
+Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks = false)
 {
     LILA_ZONE();
 
@@ -237,6 +282,8 @@ Pixels readPixels(const std::string& file, std::string& error)
     }
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (ext == ".dds")
+        return readDds(path, error, allowBlocks);
     if (ext == ".tga")
         px.rgba8 = readTga(path, error);
     else if (ext == ".hdr")
@@ -332,6 +379,12 @@ render::TexturePtr toTexture(const QImage& rgba, bool srgb)
 /** Float pixels upload as RGBA16F, always linear: sRGB-encoded colour data is decoded here. */
 render::TexturePtr toTexture(const Pixels& px, bool srgb)
 {
+    if (px.blocks)
+    {
+        // BC4 and BC5 hold data, never colour.
+        px.blocks->srgb = srgb && px.blocks->format == render::TextureFormat::RGBA8;
+        return px.blocks;
+    }
     if (px.floats.rgba.empty())
         return px.rgba8.isNull() ? nullptr : toTexture(px.rgba8, srgb);
     std::vector<float> rgba = px.floats.rgba;
@@ -353,7 +406,7 @@ Result loadSingle(const std::string& path, bool srgb)
 {
     Result r;
     r.times = stamps({path});
-    Pixels px = readPixels(path, r.error);
+    Pixels px = readPixels(path, r.error, true);
     if (!px.empty())
         r.image = toTexture(px, srgb);
     return r;
@@ -372,7 +425,7 @@ Result loadTiles(const std::vector<std::pair<int, std::string>>& found, bool srg
     for (const auto& [udim, file] : found)
     {
         std::string err;
-        Pixels px = readPixels(file, err);
+        Pixels px = readPixels(file, err, true);
         render::TexturePtr tile = px.empty() ? nullptr : toTexture(px, srgb);
         if (!tile)
         {
@@ -406,6 +459,16 @@ Result loadPacked(const std::vector<std::string>& files, std::array<int, 3> chan
     r.times = stamps(files);
     if (!files[0].empty())
     {
+        // A compressed packed map in the usual order goes to the GPU as it is.
+        if (channels == std::array<int, 3>{0, 1, 2})
+        {
+            std::string err;
+            if (Pixels px = readPixels(files[0], err, true); px.blocks)
+            {
+                r.image = toTexture(px, false);
+                return r;
+            }
+        }
         QImage img = readImage(files[0], r.error);
         if (img.isNull())
             return r;

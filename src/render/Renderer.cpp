@@ -95,6 +95,7 @@ constexpr uint32_t kVertexColorShaded = 1u << 11;
 constexpr uint32_t kVertexColorUnlit = 1u << 12;
 constexpr uint32_t kColorChannelShift = 13;
 constexpr uint32_t kOneSidedLighting = 1u << 16;
+constexpr uint32_t kNormalXY = 1u << 17; // two-channel normal map: Z rebuilt in the shader
 
 // Placeholder textures bound where a material has no map; never evicted.
 constexpr uint64_t kWhiteSrgbKey = ~uint64_t(0);
@@ -1815,6 +1816,8 @@ struct Renderer::Impl
     {
         LILA_ZONE();
 
+        if (t.blocks)
+            return uploadBlocks(cmd, f, t);
         const size_t bytes = size_t(t.width) * size_t(t.height) * size_t(texelBytes(t.format));
         if (t.width <= 0 || t.height <= 0 || t.rgba.size() < bytes)
             return false;
@@ -1861,6 +1864,100 @@ struct Renderer::Impl
                        VK_ACCESS_2_TRANSFER_READ_BIT, sampled, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         mipBarrier(cmd, g.image.image, mips - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, transfer,
                    VK_ACCESS_2_TRANSFER_WRITE_BIT, sampled, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        assignSlot(g);
+        textures[t.key] = g;
+        return true;
+    }
+
+    /** A BC5 normal map (or UDIM set of them), whose blue the shader rebuilds. */
+    static bool isTwoChannelNormal(const TexturePtr& t)
+    {
+        if (t && t->isUdimSet())
+            return t->tiles.front().image && t->tiles.front().image->blocks == dds::Format::BC5;
+        return t && t->blocks == dds::Format::BC5;
+    }
+
+    static VkFormat blockFormat(dds::Format f, bool srgb)
+    {
+        switch (f)
+        {
+        case dds::Format::BC1: return srgb ? VK_FORMAT_BC1_RGBA_SRGB_BLOCK : VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+        case dds::Format::BC2: return srgb ? VK_FORMAT_BC2_SRGB_BLOCK : VK_FORMAT_BC2_UNORM_BLOCK;
+        case dds::Format::BC3: return srgb ? VK_FORMAT_BC3_SRGB_BLOCK : VK_FORMAT_BC3_UNORM_BLOCK;
+        case dds::Format::BC4: return VK_FORMAT_BC4_UNORM_BLOCK;
+        case dds::Format::BC5: return VK_FORMAT_BC5_UNORM_BLOCK;
+        case dds::Format::BC7: return srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+        default: return VK_FORMAT_UNDEFINED;
+        }
+    }
+
+    bool canSampleBlocks(VkFormat f)
+    {
+        if (!vk.bcTextures || f == VK_FORMAT_UNDEFINED)
+            return false;
+        VkFormatProperties fp;
+        vkGetPhysicalDeviceFormatProperties(vk.physical, f, &fp);
+        const VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                                          VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        return (fp.optimalTilingFeatures & need) == need;
+    }
+
+    /**
+     * A block-compressed texture: its levels copied as they are, no mips generated. Devices without BC sampling get
+     * the largest level decoded to RGBA8 instead, through the plain path.
+     */
+    bool uploadBlocks(VkCommandBuffer cmd, Frame& f, const TextureImage& t)
+    {
+        const dds::Format bf = *t.blocks;
+        const VkFormat format = blockFormat(bf, t.srgb);
+        size_t total = 0;
+        for (int l = 0, w = t.width, h = t.height; l < t.mipLevels; ++l, w = std::max(1, w / 2), h = std::max(1, h / 2))
+            total += dds::levelBytes(bf, w, h);
+        if (t.width <= 0 || t.height <= 0 || t.mipLevels < 1 || t.rgba.size() < total)
+            return false;
+        if (!canSampleBlocks(format))
+        {
+            TextureImage plain;
+            plain.width = t.width;
+            plain.height = t.height;
+            plain.srgb = t.srgb && bf != dds::Format::BC4 && bf != dds::Format::BC5;
+            plain.rgba = dds::decodeRgba8(bf, t.width, t.height, t.rgba.data());
+            plain.key = t.key;
+            return uploadTexture(cmd, f, plain);
+        }
+        ++uploadEpoch;
+        constexpr auto R = VK_COMPONENT_SWIZZLE_R, G = VK_COMPONENT_SWIZZLE_G, zero = VK_COMPONENT_SWIZZLE_ZERO,
+                       one = VK_COMPONENT_SWIZZLE_ONE;
+        // A BC5 normal map leaves blue empty; the shader rebuilds it (MatNormalXY).
+        const VkComponentMapping swizzle = bf == dds::Format::BC4 ? VkComponentMapping{R, R, R, one}
+                                           : bf == dds::Format::BC5 ? VkComponentMapping{R, G, zero, one}
+                                                                    : VkComponentMapping{};
+        const uint32_t mips = uint32_t(t.mipLevels);
+        GpuTexture g;
+        g.image = createTexture(format, VkExtent2D{uint32_t(t.width), uint32_t(t.height)}, mips, false, 0, swizzle);
+        g.view = g.image.view;
+        g.lastUsed = frameCounter;
+        Buffer staging = createBuffer(t.rgba.data(), total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        f.staging.push_back(staging);
+
+        constexpr auto transfer = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        mipBarrier(cmd, g.image.image, 0, mips, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
+                   transfer, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        std::vector<VkBufferImageCopy> regions;
+        size_t offset = 0;
+        for (uint32_t l = 0; l < mips; ++l)
+        {
+            const uint32_t w = std::max(uint32_t(t.width) >> l, 1u), h = std::max(uint32_t(t.height) >> l, 1u);
+            VkBufferImageCopy r{};
+            r.bufferOffset = offset;
+            r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1};
+            r.imageExtent = {w, h, 1};
+            regions.push_back(r);
+            offset += dds::levelBytes(bf, int(w), int(h));
+        }
+        vkCmdCopyBufferToImage(cmd, staging.buffer, g.image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(regions.size()), regions.data());
+        mipBarrier(cmd, g.image.image, 0, mips, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, transfer,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         assignSlot(g);
         textures[t.key] = g;
         return true;
@@ -5005,6 +5102,8 @@ struct Renderer::Impl
             p.surface = glm::vec4(mat->metallic, mat->specular, mat->opacity, mat->opacityClip);
             p.emissive = mat->emissive;
             p.flags = mat->flags;
+            if (isTwoChannelNormal(mat->normalMap))
+                p.flags |= kNormalXY;
             p.sampling = mat->sampling;
             // Maps whose upload failed fall back to the constants.
             const uint32_t base = mapHandle(mat->baseColorMap, kWhiteSrgbKey), normal = mapHandle(mat->normalMap, kFlatNormalKey);

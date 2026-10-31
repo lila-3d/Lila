@@ -38,6 +38,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | ufbx | MIT OR Unlicense | Samuli Raivio | https://github.com/ufbx/ufbx |
 | cgltf | MIT | Johannes Kuhlmann | `third_party/cgltf` (licence in `third_party/cgltf/LICENSE`), from https://github.com/jkuhlmann/cgltf at v1.15 |
 | stb_image | MIT OR Unlicense | Sean Barrett | `third_party/stb/stb_image.h` (licence at the end of the file), from https://github.com/nothings/stb, v2.30 |
+| bcdec | MIT OR Unlicense | Sergii Kudlai | `third_party/bcdec/bcdec.h` (licence at the end of the file), from https://github.com/iOrange/bcdec, v0.985 |
 | nanobind | BSD-3-Clause | Wenzel Jakob | https://github.com/wjakob/nanobind |
 | Zstandard | BSD-3-Clause (dual GPL-2.0, BSD chosen) | Meta Platforms, Inc. and affiliates | https://github.com/facebook/zstd |
 | Tracy Profiler | BSD-3-Clause | Bartosz Taudul | https://github.com/wolfpld/tracy |

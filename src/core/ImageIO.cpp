@@ -1,5 +1,6 @@
 #include "core/ImageIO.h"
 
+#include "core/Dds.h"
 #include "core/Profile.h"
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
@@ -1160,6 +1161,13 @@ Image read(const fs::path& path, std::string* err)
         return readTiff(path, err);
     if (ext == ".psd")
         return readPsd(path, err);
+    if (ext == ".dds")
+    {
+        dds::File f;
+        if (!dds::read(path, f, err))
+            return {};
+        return Image{f.width, f.height, dds::decodeFloat(f)};
+    }
     return readPng(path, err);
 }
 

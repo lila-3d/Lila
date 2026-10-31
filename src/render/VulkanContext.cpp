@@ -196,6 +196,8 @@ bool VulkanContext::init(bool validation)
     vkGetPhysicalDeviceFeatures(physical, &supported);
     anisotropy = supported.samplerAnisotropy == VK_TRUE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
+    bcTextures = supported.textureCompressionBC == VK_TRUE;
+    f2.features.textureCompressionBC = supported.textureCompressionBC;
 
     // Optional features the baker uses: ask what the device has, enable only that.
     VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR baryHave{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};

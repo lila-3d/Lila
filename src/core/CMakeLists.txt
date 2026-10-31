@@ -15,6 +15,7 @@ lila_module(lila_core Foundation
     ${LILA_CRASHKIT_SOURCES}
     Achievements.cpp
     CrashHandler.cpp
+    Dds.cpp
     Events.cpp
     FileBytes.cpp
     ExtensionContext.cpp
@@ -37,6 +38,7 @@ lila_module(lila_core Foundation
 
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_core PRIVATE miniz::miniz)
+target_include_directories(lila_core SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/bcdec)
 if(WIN32)
     target_link_libraries(lila_core PRIVATE mfplat mfreadwrite mfuuid ole32)
 endif()

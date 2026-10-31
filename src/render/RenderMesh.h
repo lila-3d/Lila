@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/Dds.h"
 #include "core/Export.h"
 #include "core/UninitVector.h"
 #include "render/TextureFormat.h"
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace lila::render
@@ -117,8 +119,14 @@ struct TextureImage
     int height = 0;
     TextureFormat format = TextureFormat::RGBA8;
     bool srgb = true; // RGBA8 color data; false for linear data (normals, ORM). Float formats are always linear.
-    /** width * height texels tightly packed in format (half floats for the 16F formats). */
+    /** width * height texels tightly packed in format (half floats for the 16F formats), or the blocks below. */
     std::vector<uint8_t> rgba;
+    /**
+     * Block-compressed texels (a DDS file's BC1 to BC5 or BC7) uploaded as they are: rgba then holds mipLevels levels,
+     * largest first, one after another. format says what the blocks decode to (RGBA8, R8 for BC4, RG8 for BC5).
+     */
+    std::optional<dds::Format> blocks;
+    int mipLevels = 1;
     /** Ascending by udim. */
     std::vector<UdimTile> tiles;
     std::shared_ptr<GpuImage> gpu;

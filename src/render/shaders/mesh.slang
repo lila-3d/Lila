@@ -399,6 +399,7 @@ static const uint kVertexColorShaded = 1 << 11;
 static const uint kVertexColorUnlit = 1 << 12;
 static const uint kColorChannelShift = 13; // 3 bits: 0 rgb, 1 r, 2 g, 3 b, 4 a
 static const uint kOneSidedLighting = 1 << 16;
+static const uint kNormalXY = 1 << 17; // the normal map stores X and Y only (BC5)
 
 struct VSIn
 {
@@ -951,6 +952,8 @@ float4 shadeMesh(VSOut i, bool front)
     if ((flags & kNormalMap) != 0)
     {
         float3 tn = sampleMap(kNormalSlot, uv).xyz * 2.0 - 1.0;
+        if ((flags & kNormalXY) != 0)
+            tn.z = sqrt(saturate(1.0 - dot(tn.xy, tn.xy)));
         // Toksvig: filtered mips average the normals, and how short the average is says how bumpy the texels under it are.
         float len = clamp(length(tn), 1e-3, 1.0);
         gNormalVariance = clamp((1.0 - len) / len - 0.02, 0.0, 0.5);
