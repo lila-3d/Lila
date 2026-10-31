@@ -880,6 +880,11 @@ void install()
         if (settings().islands && scene::components::mode() != scene::ComponentMode::Face)
             setIslandSelect(false);
     });
+    // Asking for faces while already in face mode (island select is face mode too) means plain faces.
+    ops::addExecuteListener([](const ExecuteEvent& e) {
+        if (e.done && e.ok && (e.name == "selectMode" || e.name == "convertSelection") && e.call.contains("args") && e.call["args"].size() == 1 && e.call["args"][0] == "face")
+            setIslandSelect(false);
+    });
     // Per scene; the prefs keep the last values for scenes saved without them.
     io::registerUiSection(
         "uvChecker", [] { return nlohmann::json{{"on", settings().checker}, {"tiling", settings().checkerTiling}}; },

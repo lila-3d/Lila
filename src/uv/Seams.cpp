@@ -35,11 +35,52 @@ struct Context
     std::vector<uint8_t> mandatory; // per edge: islands never merge across it
     std::vector<double> cost;       // per edge: price of cutting it
     std::vector<double> sharp;      // per edge: 0 flat to 1 at a right angle or more
+    std::vector<double> seen;       // per edge: how much the seam views see it, empty without views
     std::vector<glm::dvec3> normal, centroid;
     std::vector<double> area;
 
     explicit Context(const geo::Mesh& m) : mesh(m) {}
 };
+
+/** Raises the cost of every edge a seam view sees: facing it, by how squarely, with nothing in between. */
+void applyViews(Context& ctx)
+{
+    if (ctx.opts.views.empty())
+        return;
+    LILA_ZONE();
+
+    const geo::Mesh& m = ctx.mesh;
+    geo::MeshBvh bvh(m);
+    const double eps = glm::length(m.bounds().size()) * 1e-5;
+    ctx.seen.assign(m.edgeCapacity(), 0.0);
+    tbb::parallel_for(Index(0), m.edgeCapacity(), [&](Index e) {
+        if (!m.edgeValid(e) || m.edgeCorner(e) == kInvalid)
+            return;
+        glm::dvec3 n(0.0);
+        m.forEachEdgeCorner(e, [&](Index c) { n += m.faceNormal(m.cornerFace(c)); });
+        if (glm::length(n) < 1e-12)
+            return;
+        n = glm::normalize(n);
+        const glm::dvec3 mid = 0.5 * (m.position(m.edgePoint(e, 0)) + m.position(m.edgePoint(e, 1)));
+        double seen = 0.0;
+        for (const SeamView& v : ctx.opts.views)
+        {
+            glm::dvec3 d = v.position - mid;
+            const double dist = glm::length(d);
+            if (dist < 1e-12)
+                continue;
+            d /= dist;
+            const double facing = glm::dot(n, d);
+            // Facing away counts a little in the other direction, so seams settle on the far side rather than anywhere unseen.
+            if (facing <= 0.0)
+                seen += 0.05 * v.weight * facing;
+            else if (!bvh.occluded(mid + n * eps, d, dist))
+                seen += v.weight * (0.25 + 0.75 * facing);
+        }
+        ctx.seen[e] = seen;
+        ctx.cost[e] *= std::max(0.05, 1.0 + 8.0 * seen);
+    });
+}
 
 void setup(Context& ctx, std::span<const Index> faces, const std::vector<float>& vis)
 {
@@ -88,6 +129,15 @@ void setup(Context& ctx, std::span<const Index> faces, const std::vector<float>&
         ctx.sharp[e] = sharpness;
         ctx.cost[e] = std::max(len, 1e-9) * (0.15 + 0.85 * v) * (1.0 - 0.8 * sharpness) * concave;
     });
+    applyViews(ctx);
+    const std::vector<Index>& mirror = ctx.opts.mirrorEdge;
+    for (Index e = 0; e < Index(mirror.size()) && e < m.edgeCapacity(); ++e)
+        if (const Index o = mirror[e]; o != kInvalid && o > e && o < m.edgeCapacity())
+        {
+            ctx.cost[e] = ctx.cost[o] = 0.5 * (ctx.cost[e] + ctx.cost[o]);
+            if (!ctx.seen.empty())
+                ctx.seen[e] = ctx.seen[o] = std::max(ctx.seen[e], ctx.seen[o]);
+        }
 }
 
 /** The face across e from f inside the set, or kInvalid. */
@@ -794,11 +844,12 @@ std::vector<float> pointVisibility(const geo::Mesh& mesh, int rays)
     return vis;
 }
 
-std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faceIds, bool visibility)
+std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faceIds, bool visibility, std::span<const SeamView> views)
 {
     LILA_ZONE();
 
     Context ctx(mesh);
+    ctx.opts.views.assign(views.begin(), views.end());
     setup(ctx, liveFaces(mesh, faceIds), visibility ? pointVisibility(mesh) : std::vector<float>{});
     return std::move(ctx.cost);
 }
@@ -823,7 +874,9 @@ AutoSeamResult autoSeams(geo::Mesh& mesh, std::span<const Index> faceIds, const 
     {
         if (!mesh.edgeValid(e))
             continue;
-        bool must = dihedralAngle(mesh, e) > opts.hardAngle || (opts.useHardEdges && !hard.empty() && hard[e]) ||
+        // A sharp edge in plain view of a seam view is a choice, not a must.
+        const bool inView = !ctx.seen.empty() && ctx.seen[e] > 0.5;
+        bool must = (dihedralAngle(mesh, e) > opts.hardAngle && !inView) || (opts.useHardEdges && !hard.empty() && hard[e]) ||
                     (opts.keepSeams && !seam.empty() && seam[e]);
         ctx.cut[e] = ctx.mandatory[e] = must ? 1 : 0;
     }

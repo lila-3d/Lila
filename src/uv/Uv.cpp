@@ -49,6 +49,33 @@ void matchRotation(Chart& ch, const std::vector<glm::dvec2>& old)
     transformChart(ch, cn, std::atan2(s, c));
 }
 
+/** Uv area over surface area of the mesh's faces outside the selection: the square of their texel density. 0 without any. */
+double densityOutside(const geo::Mesh& mesh, std::string_view uvSet, std::span<const uint8_t> selected)
+{
+    std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.empty())
+        return 0.0;
+    double uvArea = 0.0, surface = 0.0;
+    std::vector<Index> corners;
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+    {
+        if (!mesh.faceValid(f) || selected[f])
+            continue;
+        corners.clear();
+        mesh.forEachFaceCorner(f, [&](Index c) { corners.push_back(c); });
+        double a = 0.0;
+        for (size_t k = 1; k + 1 < corners.size(); ++k)
+        {
+            glm::dvec2 e1 = glm::dvec2(uv[corners[k]] - uv[corners[0]]), e2 = glm::dvec2(uv[corners[k + 1]] - uv[corners[0]]);
+            a += e1.x * e2.y - e1.y * e2.x;
+            glm::dvec3 p0 = mesh.position(mesh.cornerPoint(corners[0]));
+            surface += 0.5 * glm::length(glm::cross(mesh.position(mesh.cornerPoint(corners[k])) - p0, mesh.position(mesh.cornerPoint(corners[k + 1])) - p0));
+        }
+        uvArea += 0.5 * std::abs(a);
+    }
+    return surface > 0.0 ? uvArea / surface : 0.0;
+}
+
 std::string& currentSet()
 {
     static std::string name = "uv0";
@@ -59,16 +86,37 @@ std::string& currentSet()
 std::vector<Index> uvCornersOfFaces(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces)
 {
     std::span<const glm::vec2> uv = mesh.cornerAttrs().get<glm::vec2>(uvSet);
-    std::vector<Index> out;
+    std::span<const bool> seam = mesh.edgeAttrs().get<bool>(geo::attr::kSeam);
+    std::vector<Index> out, stack;
+    std::vector<uint8_t> taken(uv.empty() ? 0 : mesh.cornerCapacity(), 0);
     for (Index f : liveFaces(mesh, faces))
         mesh.forEachFaceCorner(f, [&](Index c) {
             out.push_back(c);
-            if (uv.empty())
+            if (uv.empty() || taken[c])
                 return;
-            mesh.forEachPointCorner(mesh.cornerPoint(c), [&](Index k) {
-                if (glm::all(glm::lessThanEqual(glm::abs(uv[k] - uv[c]), glm::vec2(1e-6f))))
-                    out.push_back(k);
-            });
+            taken[c] = 1;
+            // Around the point through edges that are not seams, so uvs that only touch across a cut stay behind.
+            const Index p = mesh.cornerPoint(c);
+            stack.assign(1, c);
+            while (!stack.empty())
+            {
+                const Index k = stack.back();
+                stack.pop_back();
+                for (Index e : {mesh.cornerEdge(k), mesh.cornerEdge(mesh.cornerPrev(k))})
+                {
+                    if (!seam.empty() && seam[e])
+                        continue;
+                    mesh.forEachEdgeCorner(e, [&](Index r) {
+                        const Index at = mesh.cornerPoint(r) == p ? r : mesh.cornerNext(r);
+                        if (!taken[at] && glm::all(glm::lessThanEqual(glm::abs(uv[at] - uv[c]), glm::vec2(1e-6f))))
+                        {
+                            taken[at] = 1;
+                            out.push_back(at);
+                            stack.push_back(at);
+                        }
+                    });
+                }
+            }
         });
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
@@ -104,11 +152,23 @@ UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faceIds, s
     std::vector<Index> faces = liveFaces(mesh, faceIds);
     if (faces.empty())
         return res;
-    res.seamsAdded = cutToDisks(mesh, faces);
+    if (opts.openIslands)
+        res.seamsAdded = cutToDisks(mesh, faces);
     ChartOptions co;
     co.uvSet = uvSet;
     std::vector<Chart> charts = buildCharts(mesh, faces, co);
     res.islands = charts.size();
+    if (!opts.openIslands)
+    {
+        for (const Chart& ch : charts)
+            res.closed += ch.boundaryLoops().size() != 1 || ch.euler() != 1;
+        if (res.closed)
+            return res;
+    }
+    std::vector<uint8_t> selected(mesh.faceCapacity(), 0);
+    for (Index f : faces)
+        selected[f] = 1;
+    double uvArea = densityOutside(mesh, uvSet, selected), surface = uvArea > 0.0 ? 1.0 : 0.0;
 
     std::vector<uint8_t> ok(charts.size(), 0), hadUvs(charts.size(), 0);
     std::vector<std::vector<glm::dvec2>> old(charts.size());
@@ -124,6 +184,13 @@ UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faceIds, s
         if (!ok[i])
             ch.uv = old[i];
     });
+    for (size_t i = 0; i < charts.size(); ++i)
+        if (hadUvs[i])
+        {
+            uvArea += oldArea[i];
+            surface += charts[i].area3d();
+        }
+    const double density = surface > 0.0 ? uvArea / surface : 0.0;
 
     std::vector<Chart*> toPack;
     for (size_t i = 0; i < charts.size(); ++i)
@@ -141,6 +208,17 @@ UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faceIds, s
             matchRotation(ch, old[i]);
             fitChart(ch, oldCentroid[i], oldArea[i]);
         }
+        else if (!opts.pack && opts.keepPlacement && density > 0.0)
+        {
+            // Folded or collapsed before: the island comes out at the density of the uvs around it, in place when it had a place.
+            glm::dvec2 lo(1e300), hi(-1e300);
+            for (const glm::dvec2& p : old[i])
+                lo = glm::min(lo, p), hi = glm::max(hi, p);
+            const bool placed = glm::length(hi - lo) > 1e-9;
+            fitChart(ch, placed ? oldCentroid[i] : ch.uvCentroid(), density * ch.area3d());
+            if (!placed)
+                toPack.push_back(&ch);
+        }
         else
             toPack.push_back(&ch);
     }
@@ -150,7 +228,9 @@ UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faceIds, s
         packed.reserve(toPack.size());
         for (Chart* c : toPack)
             packed.push_back(std::move(*c));
-        packCharts(packed, opts.packing);
+        PackOptions po = opts.packing;
+        po.lockScale = po.lockScale || (!opts.pack && opts.keepPlacement && density > 0.0);
+        packCharts(packed, po);
         for (size_t i = 0; i < toPack.size(); ++i)
             *toPack[i] = std::move(packed[i]);
     }
@@ -165,6 +245,14 @@ AutoUvResult autoUv(geo::Mesh& mesh, std::span<const Index> faces, std::string_v
     AutoUvResult res;
     AutoSeamResult seams = autoSeams(mesh, faces, opts.seams);
     res.seams = seams.seamEdges;
+    if (const Index added = opts.afterSeams ? opts.afterSeams(mesh, faces) : 0)
+    {
+        res.seams += added;
+        seams.charts = buildCharts(mesh, faces);
+        // Unwrapped from scratch below: the old uvs belong to other islands.
+        for (Chart& ch : seams.charts)
+            std::fill(ch.uv.begin(), ch.uv.end(), glm::dvec2(0.0));
+    }
     std::vector<Chart>& charts = seams.charts;
     res.islands = charts.size();
     UnwrapOptions uo = opts.unwrap;

@@ -757,6 +757,8 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"uv.projectCylindrical", "cylinder"},
     {"uv.projectSpherical", "sphere"},
     {"uv.cut", "scissors"},
+    {"uv.delete", "eraser"},
+    {"uv.seamView", "eye"},
     {"uv.sew", "needle-thread"},
     {"uv.straighten", "line"},
     {"uv.orient", "compass"},

@@ -634,6 +634,7 @@ void registerUvActions()
         "Mirror each selected island left to right about its centre.");
     cmd("uv.flipY", "Flip Islands Y", "uvTransform", json{{"scale", {1.0, -1.0}}, {"perIsland", true}},
         "Mirror each selected island top to bottom about its centre.");
+    cmd("uv.delete", "Delete UVs", "uvDelete", json::object(), "Delete the selected faces' uvs, keeping the faces; whole meshes lose the uv set.");
     cmd("uv.lightmap", "Lightmap UVs", "uvLightmap", json::object(), "Generate Unreal lightmap uvs in uv1.");
     cmd("uv.bff", "BFF Unwrap", "uvBff", json::object(), "Boundary First Flattening: conformal, boundary lengths kept, least area stretch.");
     cmd("uv.bffDisk", "BFF Unwrap to Disk", "uvBff", json{{"boundary", "disk"}}, "Flatten islands conformally onto circles.");

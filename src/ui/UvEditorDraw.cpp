@@ -354,15 +354,15 @@ void UvView::updateDrag(Qt::KeyboardModifiers mods)
 {
     glm::dvec2 now = toUv(mMousePos), d = now - mPressUv;
     Tool t = mTool == Tool::Select ? Tool::Move : mTool;
+    // Shift on a free move or scale locks to whichever axis the drag first heads along, until release.
+    QPointF px = mMousePos - mPressPos;
+    if (mDrag != Handle::U && mDrag != Handle::V && (mods & Qt::ShiftModifier) && !mAxisLock && std::hypot(px.x(), px.y()) > 4.0)
+        mAxisLock = std::abs(px.x()) >= std::abs(px.y()) ? 1 : 2;
+    if (!(mods & Qt::ShiftModifier))
+        mAxisLock = 0;
+    const bool lockU = mDrag == Handle::U || mAxisLock == 1, lockV = mDrag == Handle::V || mAxisLock == 2;
     if (t == Tool::Move)
     {
-        // Shift on a free move locks to whichever axis the drag first heads along, until release.
-        QPointF px = mMousePos - mPressPos;
-        if (mDrag != Handle::U && mDrag != Handle::V && (mods & Qt::ShiftModifier) && !mAxisLock && std::hypot(px.x(), px.y()) > 4.0)
-            mAxisLock = std::abs(px.x()) >= std::abs(px.y()) ? 1 : 2;
-        if (!(mods & Qt::ShiftModifier))
-            mAxisLock = 0;
-        const bool lockU = mDrag == Handle::U || mAxisLock == 1, lockV = mDrag == Handle::V || mAxisLock == 2;
         mDragMove = lockU ? glm::dvec2(d.x, 0.0) : lockV ? glm::dvec2(0.0, d.y) : d;
         if (mods & Qt::ControlModifier)
         {
@@ -373,17 +373,20 @@ void UvView::updateDrag(Qt::KeyboardModifiers mods)
     else if (t == Tool::Rotate)
     {
         glm::dvec2 a = mPressUv - mPivot, b = now - mPivot;
-        mDragAngle = std::atan2(a.x * b.y - a.y * b.x, glm::dot(a, b));
+        // The centre handle and middle drags turn by horizontal travel: the press can sit on the pivot.
+        if (mDrag == Handle::Free)
+            mDragAngle = -glm::radians((mMousePos - mPressPos).x() * 0.5);
+        else
+            mDragAngle = std::atan2(a.x * b.y - a.y * b.x, glm::dot(a, b));
         if (mods & Qt::ShiftModifier)
             mDragAngle = std::round(mDragAngle / glm::radians(15.0)) * glm::radians(15.0);
     }
     else
     {
-        QPointF px = mMousePos - mPressPos;
         double su = std::exp(px.x() / 120.0), sv = std::exp(-px.y() / 120.0);
-        if (mDrag == Handle::U)
+        if (lockU)
             mDragScale = {su, 1.0};
-        else if (mDrag == Handle::V)
+        else if (lockV)
             mDragScale = {1.0, sv};
         else
         {

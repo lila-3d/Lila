@@ -132,13 +132,13 @@ size_t stackRadialUvs(geo::Mesh& mesh, const geo::SymmetryMap& map, std::string_
     return count;
 }
 
-Index symmetricSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faceIds)
+Index symmetricSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faceIds, bool open)
 {
     std::vector<Index> faces = liveFaces(mesh, faceIds);
     Index added = 0;
     // Opening closed parts can cut asymmetrically; mirror and re-open until it settles.
     mirrorSeams(mesh, map, faces);
-    for (int round = 0; round < 3; ++round)
+    for (int round = 0; open && round < 3; ++round)
     {
         Index cuts = cutToDisks(mesh, faces);
         added += cuts;

@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
+#include "ui/Actions.h"
 #include "ui/GizmoMath.h"
 #include "ui/Tools.h"
 #include "ui/ViewportDisplay.h"
@@ -39,6 +40,7 @@ const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 constexpr double kPick = 8.0;
 
 std::optional<glm::dvec3> gViewDir;
+std::optional<glm::dvec3> gViewEye;
 
 double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
 
@@ -729,7 +731,28 @@ void installUvProjectTool()
         glm::dvec3 forward = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
         if (glm::length(forward) > 1e-12)
             gViewDir = glm::normalize(forward);
+        if (!view.ortho)
+            gViewEye = glm::dvec3(glm::inverse(glm::dmat4(view.view))[3]);
     });
     uv::projectionViewProvider() = [] { return gViewDir; };
+    actions::add({.id = "uv.seamView",
+                  .label = "Add Seam View",
+                  .category = "UV",
+                  .run =
+                      [] {
+                          json call = json::object();
+                          if (gViewEye)
+                              call["position"] = {gViewEye->x, gViewEye->y, gViewEye->z};
+                          try
+                          {
+                              ops::execute("uvSeamView", call, CallSource::UI);
+                          }
+                          catch (const CommandError& e)
+                          {
+                              log::warn("{}", e.what());
+                          }
+                      },
+                  .doc = "A locator where the camera is now, that Auto UV keeps seams out of sight of. Move it and run Auto UV again.",
+                  .python = "lila.ops.uvSeamView()"});
 }
 } // namespace lila::ui

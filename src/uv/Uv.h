@@ -10,6 +10,7 @@
 #include "uv/Seams.h"
 #include "uv/Unwrap.h"
 
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -24,6 +25,8 @@ struct UnwrapFacesOptions
     /** Pack the unwrapped islands into 0-1 instead (just these islands). */
     bool pack = false;
     PackOptions packing;
+    /** Cut closed or holed islands open into disks. When off, nothing is unwrapped while any island is not a disk. */
+    bool openIslands = true;
 };
 
 struct UnwrapFacesResult
@@ -31,9 +34,14 @@ struct UnwrapFacesResult
     size_t islands = 0;
     size_t failed = 0;
     Index seamsAdded = 0; // cuts needed to open closed or holed islands
+    /** Islands that are not disks, when openIslands is off: the mesh is left as it was. */
+    size_t closed = 0;
 };
 
-/** Unwraps the islands of the faces (all when empty) along their seams, opening any that are not disks. */
+/**
+ * Unwraps the islands of the faces (all when empty) along their seams, opening any that are not disks. Islands whose old
+ * uvs were unusable (folded or empty) take the texel density of the rest of the mesh's uvs, so they come out at its scale.
+ */
 LILA_SCENE_API UnwrapFacesResult unwrapFaces(geo::Mesh& mesh, std::span<const Index> faces, std::string_view uvSet, const UnwrapFacesOptions& opts = {});
 
 struct AutoUvOptions
@@ -41,6 +49,8 @@ struct AutoUvOptions
     AutoSeamOptions seams;
     UnwrapOptions unwrap;
     PackOptions pack;
+    /** Runs on the seams before unwrapping and returns the seams it added, such as the mirror images of the cuts. */
+    std::function<Index(geo::Mesh&, std::span<const Index> faces)> afterSeams;
 };
 
 struct AutoUvResult
@@ -81,7 +91,10 @@ struct LightmapResult
  */
 LILA_SCENE_API LightmapResult generateLightmapUvs(geo::Mesh& mesh, const LightmapOptions& opts = {});
 
-/** Corners of the faces plus every corner that shares their uv at the same point, so moving them keeps islands whole. */
+/**
+ * Corners of the faces plus every corner sharing their uv around the same point without crossing a seam, so moving them
+ * keeps islands whole and leaves islands that only touch across a cut behind.
+ */
 LILA_SCENE_API std::vector<Index> uvCornersOfFaces(const geo::Mesh& mesh, std::string_view uvSet, std::span<const Index> faces);
 
 /** Every corner of the points, each once. */

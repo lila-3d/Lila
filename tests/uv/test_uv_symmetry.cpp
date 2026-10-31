@@ -283,3 +283,49 @@ TEST_CASE("uv edits on a radially symmetric mesh stack the copies")
     run("uvUnwrapSymmetric");
     checkStacked(mesh, {0, 1, 2});
 }
+
+TEST_CASE("uv symmetry: cutting along the symmetry line opens it")
+{
+    std::string plane = symmetricPlane();
+    run("uvProject", {{"type", "planar"}, {"axis", "y"}});
+    scene::MeshPtr m = meshOf(plane);
+    std::vector<uint32_t> centre;
+    for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
+        if (m->edgeValid(e) && std::abs(m->position(m->edgePoint(e, 0)).x) < 1e-6 && std::abs(m->position(m->edgePoint(e, 1)).x) < 1e-6 &&
+            !m->isBoundaryEdge(e))
+            centre.push_back(e);
+    REQUIRE(centre.size() == 2);
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {plane}}, {"edges", centre}});
+    CHECK(run("uvCut")["cut"] == 2);
+    run("selectMode", {{"args", {"object"}}});
+    json info = run("uvLayout");
+    CHECK(info["islands"] == 2);
+    CHECK(info["foldedFaces"] == 0);
+}
+
+TEST_CASE("uv symmetry: auto uv cuts both halves alike")
+{
+    run("newScene");
+    std::string s = run("polySphere", {{"radius", 10}, {"subdivisionsAxis", 16}, {"subdivisionsHeight", 12}})[0];
+    run("setSymmetry", {{"args", {s}}, {"axis", "x"}});
+    run("select", {{"args", {s}}});
+    json r = run("uvAuto");
+    CHECK(r["ok"] == true);
+    scene::Node* n = scene::Graph::current().find(s);
+    scene::MeshPtr m = meshOf(s);
+    std::optional<geo::SymmetryMap> map = uv::uvSymmetryMap(*n, *m);
+    REQUIRE(map);
+    std::span<const bool> seam = std::as_const(*m).edgeAttrs().get<bool>(geo::attr::kSeam);
+    size_t mismatched = 0, seams = 0;
+    for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
+        if (m->edgeValid(e) && seam[e])
+        {
+            ++seams;
+            const geo::Index o = map->mirrorEdge(*m, e);
+            mismatched += o == geo::kInvalid || !seam[o];
+        }
+    CHECK(seams > 0);
+    CHECK(mismatched == 0);
+    CHECK(run("uvLayout")["foldedFaces"] == 0);
+}

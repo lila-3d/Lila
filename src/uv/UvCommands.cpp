@@ -259,6 +259,58 @@ json packJson(const PackResult& r)
             {"seconds", r.seconds}, {"layouts", r.attempts}};
 }
 
+/** The attr marking a transform as a seam view: its weight. */
+constexpr const char* kSeamViewAttr = "seamView";
+
+/** Seam views in world space, for seamViewsIn to bring into each mesh's space. */
+std::vector<SeamView> seamViewArgs(const Args& a)
+{
+    std::vector<SeamView> out;
+    if (!a.get<bool>("useViews", true))
+        return out;
+    Graph& g = graph();
+    g.evaluate();
+    std::vector<Node*> nodes;
+    if (a.has("views"))
+        for (const json& name : a.flags["views"])
+        {
+            Node* n = g.find(name.get<std::string>());
+            if (!n || !n->type().isA("transform"))
+                throw CommandError("views: " + name.get<std::string>() + " is not a transform, camera or locator");
+            nodes.push_back(n);
+        }
+    else
+        for (NodeId id : g.nodes())
+            if (Node* n = g.node(id); n && n->type().isA("transform") && n->type().attrIndex(kSeamViewAttr) >= 0)
+                nodes.push_back(n);
+    for (Node* n : nodes)
+    {
+        SeamView v;
+        v.position = glm::dvec3(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        if (int i = n->type().attrIndex(kSeamViewAttr); i >= 0)
+            if (const double* w = std::get_if<double>(&n->value(i)))
+                v.weight = *w;
+        out.push_back(v);
+    }
+    return out;
+}
+
+/** The options for one mesh: seam views in its space, and with symmetry on, its mirror edges. */
+AutoSeamOptions seamsIn(AutoSeamOptions o, Node& node, const geo::Mesh& m, const std::optional<geo::SymmetryMap>& map)
+{
+    const glm::dmat4 toObject = glm::inverse(node.as<glm::dmat4>(scene::Transform::kWorldMatrix));
+    for (SeamView& v : o.views)
+        v.position = glm::dvec3(toObject * glm::dvec4(v.position, 1.0));
+    if (map)
+    {
+        std::vector<Index> all(m.edgeCapacity());
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            all[e] = m.edgeValid(e) ? e : kInvalid;
+        o.mirrorEdge = map->mirrorEdges(m, all);
+    }
+    return o;
+}
+
 AutoSeamOptions seamArgs(const Args& a)
 {
     AutoSeamOptions o;
@@ -274,6 +326,7 @@ AutoSeamOptions seamArgs(const Args& a)
     o.method = method == "optcuts" ? SeamMethod::OptCuts : SeamMethod::Split;
     o.distortionBound = std::max(0.0, a.get<double>("distortionBound", 0.05));
     o.seamWeight = std::max(0.0, a.get<double>("seamWeight", 0.5));
+    o.views = seamViewArgs(a);
     return o;
 }
 
@@ -290,7 +343,9 @@ std::vector<FlagDef> seamFlags()
              "split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together).",
              {"split", "optcuts"}},
             {"distortionBound", "", T::Float, 0.05, "optcuts: stretch (symmetric Dirichlet excess, all islands) to get under.", {}, {}, 0.0},
-            {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter.", {}, {}, 0.0}};
+            {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter.", {}, {}, 0.0},
+            {"useViews", "", T::Bool, true, "Keep seams out of sight of the seam views (uvSeamView)."},
+            {"views", "", T::List, nullptr, "Cameras or locators seams hide from; every seam view in the scene when not given."}};
 }
 
 FlagDef uvSetFlag()
@@ -428,6 +483,52 @@ double symmetryTolerance(const geo::Mesh& mesh)
 {
     return std::max(1e-4, glm::length(mesh.bounds().size()) * 1e-5);
 }
+
+std::vector<uint8_t> foldedFaces(const geo::Mesh& m, std::string_view uvSet)
+{
+    std::vector<FaceDistortion> d = faceDistortion(m, uvSet);
+    std::vector<uint8_t> out(d.size(), 0);
+    for (size_t f = 0; f < d.size(); ++f)
+        out[f] = d[f].folded ? 1 : 0;
+    return out;
+}
+
+/**
+ * Puts back the uvs from `edited` on every island that symmetrizing folded: mirroring a layout that is not itself symmetric
+ * can turn faces over near the plane, and an unmirrored island is better than a folded one.
+ */
+void restoreFolded(geo::Mesh& m, std::string_view uvSet, std::span<const glm::vec2> edited)
+{
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.size() != edited.size())
+        return;
+    std::vector<uint8_t> now = foldedFaces(m, uvSet);
+    std::vector<glm::vec2> mirrored(uv.begin(), uv.end());
+    std::copy(edited.begin(), edited.end(), uv.begin());
+    std::vector<uint8_t> was = foldedFaces(m, uvSet);
+    std::vector<Index> seeds;
+    for (Index f = 0; f < now.size(); ++f)
+        if (now[f] && !was[f])
+            seeds.push_back(f);
+    if (seeds.empty())
+    {
+        std::copy(mirrored.begin(), mirrored.end(), uv.begin());
+        return;
+    }
+    ChartOptions co;
+    co.source = IslandSource::Uvs;
+    co.uvSet = uvSet;
+    // Whole islands as the edit left them, grown by the islands mirroring made of them, so nothing tears.
+    std::copy(mirrored.begin(), mirrored.end(), uv.begin());
+    std::vector<Index> grown = islandsOfFaces(m, seeds, co);
+    std::copy(edited.begin(), edited.end(), uv.begin());
+    std::vector<uint8_t> restore(m.faceCapacity(), 0);
+    for (Index f : islandsOfFaces(m, grown, co))
+        restore[f] = 1;
+    for (Index c = 0; c < uv.size(); ++c)
+        if (!m.cornerValid(c) || !restore[m.cornerFace(c)])
+            uv[c] = mirrored[c];
+}
 } // namespace
 
 std::optional<geo::SymmetryMap> uvSymmetryMap(const Node& n, const geo::Mesh& mesh)
@@ -483,7 +584,9 @@ json withUvSymmetry(geo::Mesh& m, const Node& n, std::string_view uvSet, UvSymme
         // Islands as the edit left them, placed through the pairing the uvs had before.
         UvMirror after = buildUvMirror(m, map, uvSet);
         fitUvMirror(after, before);
+        std::vector<glm::vec2> edited(uv.begin(), uv.end());
         symmetrizeUvIslands(after, changed, uvMirrorDrive(after, changed), uv);
+        restoreFolded(m, uvSet, edited);
         return r;
     }
     std::vector<Index> all(moved.begin(), moved.end());
@@ -539,6 +642,30 @@ std::vector<Index> withMirrorEdges(const Node& n, const geo::Mesh& m, std::span<
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;
 }
+
+namespace
+{
+/**
+ * When the faces lie on both sides of the symmetry plane: those on the side holding more of them, plus any across the plane.
+ * The projection fits and maps these and the other side mirrors them; a fit through both halves averages their normals away.
+ */
+std::vector<Index> oneSide(const geo::Mesh& m, const geo::SymmetryMap& map, std::span<const Index> faces)
+{
+    std::vector<Index> pos, neg, across;
+    for (Index f : liveFaces(m, faces))
+    {
+        int sum = 0;
+        m.forEachFaceCorner(f, [&](Index c) { sum += map.side(m.cornerPoint(c)); });
+        (sum > 0 ? pos : sum < 0 ? neg : across).push_back(f);
+    }
+    if (pos.empty() || neg.empty())
+        return {};
+    std::vector<Index>& out = pos.size() >= neg.size() ? pos : neg;
+    out.insert(out.end(), across.begin(), across.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+} // namespace
 
 std::function<std::optional<glm::dvec3>()>& projectionViewProvider()
 {
@@ -602,12 +729,14 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvUnwrap",
         .doc = "Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands "
-               "are cut open first. Islands keep their place unless pack=True or they had no uvs.",
+               "are an error unless openIslands=True cuts them open. Islands keep their place unless pack=True or they had no uvs.",
         .flags = join({uvSetFlag(),
-                       {"method", "", T::String, "slim", "slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept)."},
+                       {"method", "", T::String, "slim", "slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept).",
+                        {"slim", "conformal", "bff"}},
                        {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0},
                        {"pins", "", T::Bool, true, "Respect pinned uvs (corner attribute uvPin)."},
-                       {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."}},
+                       {"pack", "", T::Bool, false, "Pack the unwrapped islands into 0-1."},
+                       {"openIslands", "", T::Bool, false, "Cut closed or holed islands open where they cannot unfold, instead of stopping."}},
                       packFlags()),
         .run = [](const Args& a) -> json {
             UnwrapFacesOptions o;
@@ -617,16 +746,20 @@ void registerCommands()
             o.unwrap.usePins = a.get<bool>("pins", true);
             o.pack = a.get<bool>("pack", false);
             o.packing = packArgs(a);
+            o.openIslands = a.get<bool>("openIslands", false);
             std::string set = uvSetArg(a);
             return editUv("UV Unwrap", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 Index mirrored = 0;
                 if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
-                    mirrored = symmetricSeams(m, *map, f);
+                    mirrored = symmetricSeams(m, *map, f, o.openIslands);
                 UnwrapFacesResult r;
                 withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
                     r = unwrapFaces(m, f, set, o);
                     return nullptr;
                 });
+                if (r.closed)
+                    throw CommandError("uvUnwrap: " + std::to_string(r.closed) + (r.closed == 1 ? " island is" : " islands are") +
+                                       " closed or holed and cannot unfold; cut seams on " + n.name() + " or unwrap with openIslands=True");
                 return {{"islands", r.islands}, {"failed", r.failed}, {"seamsAdded", r.seamsAdded + mirrored}};
             });
         },
@@ -655,6 +788,7 @@ void registerCommands()
                   {"offsetV", "", T::Float, 0.0, "V offset, applied after the scale."},
                   {"viewDir", "", T::Vec3, nullptr, "World direction the camera looks along, for the seam; the UI passes the active view's."},
                   {"normalize", "", T::Bool, true, "Fit into 0-1 keeping proportions."},
+                  {"keepSeams", "", T::Bool, true, "Keep the seams already cut inside the faces; off joins the faces into the projection's islands."},
                   {"matrix", "", T::List, nullptr, "Camera projection, column major, for type=camera."},
                   {"pack", "", T::Bool, false, "Pack the resulting islands afterwards."}},
         .run = [](const Args& a) -> json {
@@ -679,6 +813,7 @@ void registerCommands()
                 throw CommandError("uvProject: fit must be auto, world or object");
             o.fit = fit == "world" ? ProjectFit::World : fit == "object" ? ProjectFit::Object : ProjectFit::Auto;
             o.normalize = a.get<bool>("normalize", true);
+            o.keepSeams = a.get<bool>("keepSeams", true);
             auto vec3 = [&](const char* name) -> std::optional<glm::dvec3> {
                 if (!a.has(name))
                     return std::nullopt;
@@ -715,8 +850,20 @@ void registerCommands()
                 mo.worldLinear = glm::dmat3(world);
                 if (view)
                     mo.viewDir = glm::inverse(mo.worldLinear) * *view;
+                std::vector<Index> half;
+                if (mo.type == Projection::Planar)
+                    if (std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m))
+                        half = oneSide(m, *map, f);
                 ProjectFrame fr;
-                if (!project(m, f, set, mo, &fr))
+                bool projected = false;
+                if (half.empty())
+                    projected = project(m, f, set, mo, &fr);
+                else
+                    withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                        projected = project(m, half, set, mo, &fr);
+                        return nullptr;
+                    });
+                if (!projected)
                     throw CommandError("uvProject: nothing to project");
                 if (pack)
                     packIslands(m, f, set, {});
@@ -752,9 +899,15 @@ void registerCommands()
         .flags = seamFlags(),
         .run = [](const Args& a) -> json {
             AutoSeamOptions o = seamArgs(a);
-            return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                AutoSeamResult r = autoSeams(m, f, o);
-                return {{"islands", r.charts.size()}, {"seams", r.seamEdges}};
+            return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
+                AutoSeamResult r = autoSeams(m, f, seamsIn(o, n, m, map));
+                if (!map)
+                    return {{"islands", r.charts.size()}, {"seams", r.seamEdges}};
+                // The halves' choices can still differ where costs tie; the union is symmetric.
+                const Index added = symmetricSeams(m, *map, f);
+                ChartOptions co;
+                return {{"islands", islandFaces(m, f, co).size()}, {"seams", r.seamEdges + added}};
             });
         },
     });
@@ -769,13 +922,44 @@ void registerCommands()
             o.unwrap.iterations = std::clamp(a.get<int>("iterations", 12), 0, 200);
             o.pack = packArgs(a);
             std::string set = uvSetArg(a);
-            return editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node&) -> json {
-                AutoUvResult r = autoUv(m, f, set, o);
+            return editUv("Auto UV", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
+                AutoUvOptions mo = o;
+                mo.seams = seamsIn(o.seams, n, m, map);
+                if (map)
+                    mo.afterSeams = [&](geo::Mesh& mesh, std::span<const Index> faces) { return symmetricSeams(mesh, *map, faces); };
+                AutoUvResult r = autoUv(m, f, set, mo);
                 json j = packJson(r.pack);
                 j["islands"] = r.islands;
                 j["seams"] = r.seams;
                 return j;
             });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "uvSeamView",
+        .doc = "Create a seam view: a locator that uvAuto and uvAutoSeams keep seams out of sight of, such as where a first person "
+               "camera sits or where a character's face is seen from. Move it and run Auto UV again to see the seams move. Its "
+               "seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.",
+        .flags = {{"position", "p", T::Vec3, nullptr, "World position."},
+                  {"weight", "w", T::Float, 1.0, "How hard seams avoid what it sees; negative draws them towards it.", {}, {}, -1.0, 4.0},
+                  {"name", "n", T::String, "seamView", "Name; made unique among its siblings."}},
+        .run = [](const Args& a) -> json {
+            json call = {{"name", a.get<std::string>("name", "seamView")}};
+            if (a.has("position"))
+                call["position"] = a.flags["position"];
+            const std::string path = ops::execute("spaceLocator", call).get<std::string>();
+            ops::execute("addAttr", {{"args", {path}},
+                                     {"longName", kSeamViewAttr},
+                                     {"attributeType", "double"},
+                                     {"defaultValue", 1.0},
+                                     {"minValue", -1.0},
+                                     {"maxValue", 4.0},
+                                     {"keyable", true},
+                                     {"doc", "How hard Auto UV keeps seams out of this view's sight; negative draws them towards it."}});
+            graph().setValue(graph().plug(path + "." + kSeamViewAttr), std::clamp(a.get<double>("weight", 1.0), -1.0, 4.0));
+            return path;
         },
     });
 
@@ -805,6 +989,34 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             std::string set = uvSetArg(a);
             return editUv("UV Sew", K::Edge, [&](geo::Mesh& m, const Ids& e, Node& n) { return sewEdges(m, withMirrorEdges(n, m, e), set); }, false);
+        },
+    });
+
+    ops::registerCommand({
+        .name = "uvDelete",
+        .doc = "Delete the uvs of the selected faces, leaving the faces: their uvs collapse to 0,0, so unwrap and projections treat them as "
+               "having none. With whole meshes selected, removes the uv set.",
+        .flags = {uvSetFlag()},
+        .run = [](const Args& a) -> json {
+            std::string set = uvSetArg(a);
+            return editUv("UV Delete", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+                if (f.empty())
+                    return {{"removed", m.cornerAttrs().remove(set)}};
+                std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
+                if (uv.empty())
+                    return {{"faces", 0}};
+                std::span<bool> pin = m.cornerAttrs().get<bool>("uvPin");
+                std::optional<geo::SymmetryMap> map = uvSymmetryMap(n, m);
+                const std::vector<Index> faces = map ? map->expandFaces(m, f) : std::vector<Index>(f.begin(), f.end());
+                for (Index face : faces)
+                    if (m.faceValid(face))
+                        m.forEachFaceCorner(face, [&](Index c) {
+                            uv[c] = glm::vec2(0.0f);
+                            if (!pin.empty())
+                                pin[c] = false;
+                        });
+                return {{"faces", faces.size()}};
+            });
         },
     });
 
@@ -954,7 +1166,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvOrient",
         .doc = "Rotate the selected islands upright: by bounding box, principal axis or longest edge.",
-        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge."}},
+        .flags = {uvSetFlag(), {"mode", "", T::String, "bbox", "bbox, principal or edge.", {"bbox", "principal", "edge"}}},
         .run = [](const Args& a) -> json {
             std::string mode = a.get<std::string>("mode", "bbox");
             OrientMode om = mode == "principal" ? OrientMode::Principal : mode == "edge" ? OrientMode::LongestEdge : OrientMode::BoundingBox;

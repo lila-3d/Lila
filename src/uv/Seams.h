@@ -15,6 +15,14 @@ enum class SeamMethod : uint8_t
     OptCuts, // joint seam and distortion optimisation (Li et al. 2018): grow seams where they relieve the most stretch, zip back the rest
 };
 
+/** A place seams hide from, such as where a first person camera sits or a character's face is seen from. */
+struct SeamView
+{
+    glm::dvec3 position{0.0}; // object space
+    /** How hard seams avoid what it sees; negative draws them towards it instead. */
+    double weight = 1.0;
+};
+
 struct AutoSeamOptions
 {
     SeamMethod method = SeamMethod::Split;
@@ -36,6 +44,10 @@ struct AutoSeamOptions
     double distortionBound = 0.05;
     /** OptCuts: price of seam length against distortion; higher keeps seams shorter and more hidden. */
     double seamWeight = 0.5;
+    /** Edges these see, facing them and unoccluded, cost more to cut. */
+    std::vector<SeamView> views;
+    /** Per edge, its mirror image (kInvalid for none): each pair costs the same, so both halves of a symmetric mesh cut alike. */
+    std::vector<Index> mirrorEdge;
 };
 
 struct AutoSeamResult
@@ -59,7 +71,8 @@ LILA_SCENE_API AutoSeamResult autoSeams(geo::Mesh& mesh, std::span<const Index> 
 LILA_SCENE_API Index cutToDisks(geo::Mesh& mesh, std::span<const Index> faces = {});
 
 /** Per edge capacity: the price of cutting each edge of the faces (its length, less where hidden, creased or concave). */
-LILA_SCENE_API std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faces, bool visibility = true);
+LILA_SCENE_API std::vector<double> seamCosts(const geo::Mesh& mesh, std::span<const Index> faces, bool visibility = true,
+                                             std::span<const SeamView> views = {});
 
 /** Per point capacity: how open each point is to the sky, 0 (enclosed) to 1. Ray traced, parallel. */
 LILA_SCENE_API std::vector<float> pointVisibility(const geo::Mesh& mesh, int rays = 16);

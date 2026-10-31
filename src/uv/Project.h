@@ -66,6 +66,8 @@ struct ProjectOptions
     bool normalize = true;
     /** Seams where the projection splits, cleared where it joins. */
     bool markSeams = true;
+    /** With markSeams, the seams already cut inside the faces stay: the projection only adds. */
+    bool keepSeams = true;
 
     /** Overrides of the fitted frame. rotation is XYZ euler degrees of the frame's axes; seamAngle is degrees. */
     std::optional<glm::dvec3> center;

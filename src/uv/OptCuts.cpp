@@ -510,7 +510,7 @@ OptCutsResult optCuts(geo::Mesh& mesh, std::span<const Index> faceIds, const Aut
         return res;
     s.sqrtArea = std::sqrt(s.area);
     s.lambda = std::max(0.0, opts.seamWeight);
-    s.cost = seamCosts(mesh, s.faces, opts.visibility);
+    s.cost = seamCosts(mesh, s.faces, opts.visibility, opts.views);
     s.cornerUv.assign(mesh.cornerCapacity(), glm::dvec2(0.0));
     mandatoryCuts(s, opts);
     cutToDisksInto(s);
@@ -563,6 +563,7 @@ OptCutsResult optCuts(geo::Mesh& mesh, std::span<const Index> faceIds, const Aut
         classic.useHardEdges = false;
         classic.maxDistortion = std::max(opts.maxDistortion, bound);
         classic.visibility = opts.visibility;
+        classic.views = opts.views;
         classic.merge = false;
         std::vector<Chart> fixed = autoSeams(mesh, overlapping, classic).charts;
         std::erase_if(s.charts, [](const Chart& ch) { return chartOverlaps(ch); });

@@ -159,7 +159,7 @@ void UvView::mousePressEvent(QMouseEvent* e)
     mPressPos = mMousePos = e->position();
     mLastPos = e->position();
     bool alt = e->modifiers() & Qt::AltModifier;
-    if (e->button() == Qt::MiddleButton && !alt && mTool == Tool::Move && hasSelection())
+    if (e->button() == Qt::MiddleButton && !alt && mTool != Tool::Select && mTool != Tool::Brush && hasSelection())
     {
         beginDrag(Handle::Free);
         return;

@@ -291,3 +291,179 @@ TEST_CASE("uv edits keep the modifier stack and go onto its base")
     run("undo");
     CHECK(scene::modifiers::stack(g, id).size() == 1);
 }
+
+namespace
+{
+scene::MeshPtr cageOf(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    return scene::modifiers::cage(g, g.find(name)->id());
+}
+
+/** Mean x of the seam edges running along the cylinder's height. */
+double seamX(const std::string& name)
+{
+    scene::MeshPtr m = cageOf(name);
+    std::span<const bool> seam = std::as_const(*m).edgeAttrs().get<bool>(geo::attr::kSeam);
+    double sum = 0.0;
+    int n = 0;
+    for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
+        if (m->edgeValid(e) && !seam.empty() && seam[e])
+        {
+            glm::dvec3 a = m->position(m->edgePoint(e, 0)), b = m->position(m->edgePoint(e, 1));
+            if (std::abs(a.y - b.y) > 1.0)
+            {
+                sum += 0.5 * (a.x + b.x);
+                ++n;
+            }
+        }
+    REQUIRE(n > 0);
+    return sum / n;
+}
+} // namespace
+
+TEST_CASE("uvUnwrap stops at closed islands unless asked to open them")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    std::vector<uint32_t> edges;
+    for (geo::Index e = 0; e < cageOf(cube)->edgeCapacity(); ++e)
+        edges.push_back(e);
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {cube}}, {"edges", edges}});
+    run("uvSewEdges");
+    run("selectMode", {{"args", {"object"}}});
+    run("select", {{"args", {cube}}});
+    CHECK_THROWS_AS(run("uvUnwrap"), CommandError);
+    json r = run("uvUnwrap", {{"openIslands", true}});
+    CHECK(r["seamsAdded"].get<int>() > 0);
+    CHECK(run("uvLayout")["foldedFaces"] == 0);
+}
+
+TEST_CASE("uvUnwrap gives islands without usable uvs the density of the rest")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 10}, {"height", 10}, {"depth", 10}})[0];
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "box"}});
+    run("uvPack", {{"resolution", 1024}, {"padding", 4}});
+    run("selectMode", {{"args", {"face"}}});
+    run("selectComponents", {{"args", {cube}}, {"faces", {1, 2}}});
+    double rest = run("uvTexelDensity").get<double>();
+    run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
+    run("uvDelete");
+    CHECK(run("uvTexelDensity").get<double>() == doctest::Approx(0.0));
+    run("uvUnwrap");
+    CHECK(run("uvTexelDensity").get<double>() == doctest::Approx(rest).epsilon(0.02));
+
+    run("selectMode", {{"args", {"object"}}});
+    run("select", {{"args", {cube}}});
+    CHECK(run("uvDelete")["removed"] == true);
+    CHECK(run("uvLayout")["exists"] == false);
+}
+
+TEST_CASE("seam views keep auto seams out of their sight")
+{
+    run("newScene");
+    std::string tube = run("polyCylinder", {{"radius", 5}, {"height", 40}, {"subdivisionsAxis", 24}, {"subdivisionsHeight", 4}, {"caps", false}})[0];
+    run("select", {{"args", {tube}}});
+    std::string view = run("uvSeamView", {{"position", {200.0, 0.0, 0.0}}}).get<std::string>();
+    run("select", {{"args", {tube}}});
+    run("uvAutoSeams");
+    CHECK(seamX(tube) < -4.0);
+    run("move", {{"args", {view}}, {"to", {-200.0, 0.0, 0.0}}});
+    run("select", {{"args", {tube}}});
+    run("uvAutoSeams");
+    CHECK(seamX(tube) > 4.0);
+    run("uvAutoSeams", {{"views", {view}}, {"useViews", false}});
+}
+
+TEST_CASE("planar projection with symmetry fits one side, not both")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 10}, {"height", 10}, {"depth", 10}})[0];
+    run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+    scene::MeshPtr m = cageOf(cube);
+    std::vector<uint32_t> sides;
+    for (geo::Index f = 0; f < m->faceCapacity(); ++f)
+        if (m->faceValid(f) && std::abs(m->faceNormal(f).x) > 0.9)
+            sides.push_back(f);
+    REQUIRE(sides.size() == 2);
+    run("selectMode", {{"args", {"face"}}});
+    run("selectComponents", {{"args", {cube}}, {"faces", sides}});
+    run("uvProject", {{"type", "planar"}});
+    json info = run("uvLayout");
+    CHECK(info["foldedFaces"] == 0);
+    CHECK(info["areaDistortion"]["max"].get<double>() < 0.1);
+}
+
+TEST_CASE("projection under an auto bevel splits the bevelled result too")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100}, {"height", 100}, {"depth", 100}})[0];
+    run("autoBevel", {{"args", {cube}}, {"segments", 2}, {"offset", 5.0}});
+    run("select", {{"args", {cube}}});
+    for (const char* type : {"box", "planar", "cylindrical"})
+    {
+        CAPTURE(type);
+        run("uvProject", {{"type", type}});
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        scene::MeshPtr cage = cageOf(cube);
+        scene::MeshPtr out = g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        REQUIRE(out->numFaces() > cage->numFaces());
+        uv::ChartOptions co;
+        co.source = uv::IslandSource::Seams;
+        CHECK(uv::islandFaces(*out, {}, co).size() == uv::islandFaces(*cage, {}, co).size());
+    }
+}
+
+TEST_CASE("cut seams survive a planar projection under an auto bevel")
+{
+    run("newScene");
+    std::string cube = run("polyCube", {{"width", 100}, {"height", 100}, {"depth", 100}})[0];
+    run("autoBevel", {{"args", {cube}}, {"segments", 2}, {"offset", 5.0}});
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "box"}});
+    scene::Graph& g = scene::Graph::current();
+    uv::ChartOptions co;
+    co.source = uv::IslandSource::Uvs;
+    scene::MeshPtr cage = cageOf(cube);
+    std::vector<uint32_t> all;
+    for (geo::Index e = 0; e < cage->edgeCapacity(); ++e)
+        if (cage->edgeValid(e))
+            all.push_back(e);
+    run("selectMode", {{"args", {"edge"}}});
+    run("selectComponents", {{"args", {cube}}, {"edges", all}});
+    run("uvSewEdges");
+    // Cut the top face off, then project everything planar from the top.
+    cage = cageOf(cube);
+    std::vector<uint32_t> ring;
+    for (geo::Index e = 0; e < cage->edgeCapacity(); ++e)
+        if (cage->edgeValid(e) && cage->position(cage->edgePoint(e, 0)).y > 49 && cage->position(cage->edgePoint(e, 1)).y > 49)
+            ring.push_back(e);
+    REQUIRE(ring.size() == 4);
+    run("selectComponents", {{"args", {cube}}, {"edges", ring}});
+    run("uvCutEdges");
+    run("selectMode", {{"args", {"object"}}});
+    run("select", {{"args", {cube}}});
+    run("uvProject", {{"type", "planar"}, {"axis", "y"}});
+    g.evaluate();
+    cage = cageOf(cube);
+    scene::MeshPtr out = g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+    std::span<const bool> seam = std::as_const(*cage).edgeAttrs().get<bool>(geo::attr::kSeam);
+    size_t seams = 0;
+    for (uint32_t e : ring)
+        seams += seam[e] ? 1 : 0;
+    CHECK(seams == 4);
+    co.source = uv::IslandSource::Seams;
+    CHECK(uv::islandFaces(*out, {}, co).size() == 2);
+    // Moving the top's uvs leaves the sides where they are, though they touch along the cut.
+    std::vector<uint32_t> top;
+    for (geo::Index f = 0; f < cage->faceCapacity(); ++f)
+        if (cage->faceValid(f) && cage->faceNormal(f).y > 0.9)
+            top.push_back(f);
+    REQUIRE(top.size() == 1);
+    CHECK(uv::uvCornersOfFaces(*cage, "uv0", top).size() == 4);
+}

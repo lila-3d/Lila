@@ -63,10 +63,10 @@ LILA_SCENE_API size_t stackRadialUvs(geo::Mesh& mesh, const geo::SymmetryMap& ma
 LILA_SCENE_API int radialFaceWedge(const geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces);
 
 /**
- * Copies the faces' seams (all faces when empty) across the plane and opens closed islands, re-mirroring the cuts, so
- * the islands pair up. Returns the cuts the opening added.
+ * Copies the faces' seams (all faces when empty) across the plane and, with open, opens closed islands, re-mirroring the
+ * cuts, so the islands pair up. Returns the cuts the opening added.
  */
-LILA_SCENE_API Index symmetricSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces);
+LILA_SCENE_API Index symmetricSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces, bool open = true);
 
 /**
  * Makes a chart's uvs mirror symmetric: partner[v] is the vertex mirroring v (itself on the plane). Fits

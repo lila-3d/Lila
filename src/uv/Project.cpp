@@ -767,7 +767,16 @@ bool project(geo::Mesh& mesh, std::span<const Index> faceIds, std::string_view u
         for (Index f : faces)
             mesh.forEachFaceCorner(f, [&](Index c) { uv[c] = uv[c] * scale + offset; });
     if (opts.markSeams)
+    {
+        std::span<const bool> was = std::as_const(mesh).edgeAttrs().get<bool>(geo::attr::kSeam);
+        std::vector<uint8_t> kept;
+        if (opts.keepSeams)
+            kept.assign(was.begin(), was.end());
         markSeamsFromUvs(mesh, faces, uvSet);
+        std::span<bool> seam = mesh.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+        for (size_t e = 0; e < kept.size() && e < seam.size(); ++e)
+            seam[e] = seam[e] || kept[e];
+    }
     return true;
 }
 } // namespace lila::uv
