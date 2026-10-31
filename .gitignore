@@ -18,6 +18,7 @@
 *.user
 *.lnk
 .lila/
+.lila.md
 
 # Python
 __pycache__/
