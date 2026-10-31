@@ -19,6 +19,8 @@ struct Options
      * perspective view: yaw 0 looks at the front (down -Z), 90 from the right, pitch negative looks down.
      */
     std::string view = "active";
+    /** A scene camera to look through instead of view: its framing as it is, without yaw, pitch or refitting. */
+    std::string lookThrough;
     std::optional<double> yaw, pitch;
     int width = 512;
     int height = 512;

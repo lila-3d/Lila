@@ -69,7 +69,7 @@ struct MeshPush
     uint64_t lights = 0;
     uint32_t lightCount = 0;
     uint32_t lightPad = 0;
-    glm::vec4 extra{}; // live bevel radius, 1 when the bevel pass ran
+    glm::vec4 extra{}; // live bevel radius, 1 when the bevel pass ran, environment light saturation
     glm::vec4 eye;
     glm::vec4 base;
     glm::vec4 params;
@@ -5030,6 +5030,7 @@ struct Renderer::Impl
             p.surface = glm::vec4(0.0f, 0.5f, 1.0f, 0.3333f);
             p.flags = MatTwoSided;
         }
+        p.extra.z = std::clamp(s.envLightSaturation, 0.0f, 1.0f);
         if (d.vertexColors != VertexColorMode::Off)
             p.flags |= (d.vertexColors == VertexColorMode::Unlit ? kVertexColorUnlit : kVertexColorShaded) |
                        (uint32_t(d.colorChannel) << kColorChannelShift);

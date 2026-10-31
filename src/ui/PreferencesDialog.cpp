@@ -698,6 +698,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         text(viewport, "HDRI", "/viewport/env/path", "", true);
         number(viewport, "Rotation", "/viewport/env/rotation", 0.0, -360.0, 360.0, 5.0, 0);
         number(viewport, "Intensity", "/viewport/env/intensity", 1.0, 0.0, 10.0, 0.1);
+        number(viewport, "Light color", "/viewport/env/lightSaturation", 1.0, 0.0, 1.0, 0.05);
         toggle(viewport, "Show environment", "/viewport/env/background", true);
         number(viewport, "Background blur", "/viewport/env/blur", 0.6, 0.0, 1.0, 0.05);
         number(viewport, "Background exposure", "/viewport/env/backgroundExposure", 0.25, 0.0, 4.0, 0.1);

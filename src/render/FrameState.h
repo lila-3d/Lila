@@ -255,6 +255,8 @@ struct FrameState
     bool envBackground = true;
     float envBlur = 0.6f;       // 0 sharp, 1 fully diffuse
     float envSaturation = 0.0f; // background only; 0 is gray
+    /** Colour of the environment's light on surfaces: 0 lights with its brightness alone (gray), 1 with the HDRI's own tint. */
+    float envLightSaturation = 1.0f;
     float envBackgroundExposure = 0.6f; // dims the backdrop only, so assets stand out
     float groundShadow = 0.5f;          // soft contact blob under meshes resting on the ground; 0 is off
     bool ambientOcclusion = true;       // screen-space, on indirect light only

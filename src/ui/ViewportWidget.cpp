@@ -369,6 +369,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         s.envBackground = p.value<bool>("general", "/viewport/env/background", true);
         s.envBlur = p.value<float>("general", "/viewport/env/blur", 0.6f);
         s.envSaturation = p.value<float>("general", "/viewport/env/saturation", 0.0f);
+        s.envLightSaturation = p.value<float>("general", environments::kLightSaturation, 1.0f);
         s.envBackgroundExposure = p.value<float>("general", "/viewport/env/backgroundExposure", 0.25f);
         // Orthographic views use the flat backdrop, like Maya's; an environment has no single direction there.
         if (camera.ortho)

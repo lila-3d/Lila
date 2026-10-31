@@ -315,6 +315,50 @@ QWidgetAction* environmentIntensityRow(QMenu* menu)
     action->setDefaultWidget(holder);
     return action;
 }
+
+/** How much of the HDRI's tint its light keeps on surfaces, 0..1; the backdrop keeps its own saturation. */
+QWidgetAction* environmentLightColorRow(QMenu* menu)
+{
+    constexpr int kSliderSteps = 100;
+    auto* holder = new QWidget(menu);
+    auto* row = new QHBoxLayout(holder);
+    row->setContentsMargins(8, 4, 8, 4);
+    row->setSpacing(6);
+    auto* label = new QLabel("Light Color", holder);
+    label->setToolTip("0 lights surfaces with the HDRI's brightness only (neutral gray), 1 with its full colour");
+    row->addWidget(label);
+    auto* slider = new QSlider(Qt::Horizontal, holder);
+    slider->setRange(0, kSliderSteps);
+    slider->setMinimumWidth(120);
+    auto* spin = new QDoubleSpinBox(holder);
+    spin->setRange(0.0, 1.0);
+    spin->setSingleStep(0.05);
+    spin->setDecimals(2);
+    spin->setKeyboardTracking(false);
+    spin->setFixedWidth(52);
+    setSpinDefault(spin, 1.0);
+    row->addWidget(slider, 1);
+    row->addWidget(spin);
+
+    auto show = [slider, spin] {
+        double v = std::clamp(double(PrefStore::get().value<float>("general", environments::kLightSaturation, 1.0f)), 0.0, 1.0);
+        QSignalBlocker a(slider), b(spin);
+        slider->setValue(int(std::lround(v * kSliderSteps)));
+        spin->setValue(v);
+    };
+    show();
+    QObject::connect(slider, &QSlider::valueChanged, holder, [show](int i) {
+        PrefStore::get().set("general", environments::kLightSaturation, double(i) / kSliderSteps);
+        show();
+    });
+    QObject::connect(spin, &QDoubleSpinBox::valueChanged, holder, [show](double v) {
+        PrefStore::get().set("general", environments::kLightSaturation, v);
+        show();
+    });
+    auto* action = new QWidgetAction(menu);
+    action->setDefaultWidget(holder);
+    return action;
+}
 } // namespace
 
 void fillCameraMenu(QMenu* menu, ViewportWidget* view, std::function<void()> activate)
@@ -390,6 +434,7 @@ void fillEnvironmentMenu(QMenu* menu)
     });
     menu->addSeparator();
     menu->addAction(environmentIntensityRow(menu));
+    menu->addAction(environmentLightColorRow(menu));
 }
 
 namespace

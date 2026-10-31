@@ -14,6 +14,8 @@ inline constexpr const char* kProcedural = "procedural";
 /** Environment intensity for HDRIs without their own (general prefs), and the per-HDRI overrides keyed by hdriKey(). */
 inline constexpr const char* kIntensity = "/viewport/env/intensity";
 inline constexpr const char* kIntensityByHdri = "/viewport/env/intensityByHdri";
+/** How much of the HDRI's colour its light keeps on surfaces (general prefs): 0 is neutral gray light, 1 the full tint. */
+inline constexpr const char* kLightSaturation = "/viewport/env/lightSaturation";
 
 /** HDRIs shipped in resources/hdri, sorted by name. */
 LILA_UI_API std::vector<std::filesystem::path> builtIn();

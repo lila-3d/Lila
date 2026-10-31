@@ -1174,11 +1174,12 @@ def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | 
         query: Short form q. Default False.
     """
 
-def captureTurntable(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
+def captureTurntable(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, count: int | None = None, columns: int | None = None, views: Sequence[Any] | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None, c: int | None = None) -> Any:
     """Render several views offscreen and tile them into one PNG contact sheet (row by row): count angles around the subject, or the named views. Returns the path.
 
     Args:
         view: active, persp, three-quarter, front, back, left, right, side, top, bottom. Short form v. One of 'active', 'persp', 'three-quarter', 'front', 'back', 'left', 'right', 'side', 'top', 'bottom'. Default 'active'.
+        lookThrough: A scene camera to look through, framed as it is, instead of view. Short form lt.
         yaw: Perspective angle around the up axis, degrees (0 front, 90 right).
         pitch: Perspective elevation, degrees (negative looks down).
         width: Pixels (512 for one view, 320 per tile). Short form w.
@@ -1196,11 +1197,12 @@ def captureTurntable(view: str | None = None, yaw: float | None = None, pitch: f
         views: Named views to tile instead of a turn, e.g. ['front', 'right', 'top', 'persp'].
     """
 
-def captureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None) -> Any:
+def captureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, path: str | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, p: str | None = None) -> Any:
     """Render the scene offscreen from a named view or angle and save a PNG. Never moves a viewport's camera, works with Lila in the background and in batch mode. Returns the path.
 
     Args:
         view: active, persp, three-quarter, front, back, left, right, side, top, bottom. Short form v. One of 'active', 'persp', 'three-quarter', 'front', 'back', 'left', 'right', 'side', 'top', 'bottom'. Default 'active'.
+        lookThrough: A scene camera to look through, framed as it is, instead of view. Short form lt.
         yaw: Perspective angle around the up axis, degrees (0 front, 90 right).
         pitch: Perspective elevation, degrees (negative looks down).
         width: Pixels (512 for one view, 320 per tile). Short form w.
@@ -4220,11 +4222,12 @@ def mayaReference(*objects: Any, path: str | None = None, namespace: str | None 
 def measureSelection() -> Any:
     """Measure the selection without making nodes: 2 vertices or objects give distance and dx/dy/dz, 3 an angle, edges total and per-edge length, a closed edge loop or 4+ vertices a best-fit circle, faces area and perimeter, one object its bounding box (and diameter when it is cylinder-like), a measure node its value. Returns a dict: lengths in cm; 'value' and 'text' are the headline in the display unit (/units/linear)."""
 
-def measureView(view: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ao: bool | None = None) -> Any:
+def measureView(view: str | None = None, lookThrough: str | None = None, yaw: float | None = None, pitch: float | None = None, width: int | None = None, height: int | None = None, display: str | None = None, isolate: bool | None = None, frameSelection: bool | None = None, grid: bool | None = None, showSelection: bool | None = None, samples: int | None = None, label: bool | None = None, frames: int | None = None, ambientOcclusion: bool | None = None, *, v: str | None = None, lt: str | None = None, w: int | None = None, h: int | None = None, d: str | None = None, fs: bool | None = None, ao: bool | None = None) -> Any:
     """Draw the scene offscreen several times like captureView and return the median GPU time per frame in ms, with the ambient occlusion share, and the render thread's time recording it: {gpuMs, aoMs, cpuMs, aoCpuMs, frames}. 0 where the GPU has no timestamps.
 
     Args:
         view: active, persp, three-quarter, front, back, left, right, side, top, bottom. Short form v. One of 'active', 'persp', 'three-quarter', 'front', 'back', 'left', 'right', 'side', 'top', 'bottom'. Default 'active'.
+        lookThrough: A scene camera to look through, framed as it is, instead of view. Short form lt.
         yaw: Perspective angle around the up axis, degrees (0 front, 90 right).
         pitch: Perspective elevation, degrees (negative looks down).
         width: Pixels (512 for one view, 320 per tile). Short form w.
@@ -8500,7 +8503,7 @@ def uvPack(uvSet: str | None = None, resolution: int | None = None, padding: flo
         effort: Search effort 0-3: island orders tried per scale (1, 3, 6, 12). Higher packs denser, slower. Default 1.
         timeLimit: Stop refining after this many seconds (0 never); results can then vary between runs. Default 0.0.
         workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
-        layout: fill: fill the UDIM tiles in order. groupTiles: one tile per group. groupRegions: one part of tile 1001 per group, sized by its area. keepTile: islands stay in the tile they are in. One of 'fill', 'groupTiles', 'groupRegions', 'keepTile'. Default 'fill'.
+        layout: fill: fill the UDIM tiles in order. groupTiles: one tile per group. groupRegions: one part of tile 1001 per group, sized by its area. keepTile: islands stay in the tile they are in. groupLayouts: each group packs on its own into the full tiles, overlapping the others (a texture set per material). One of 'fill', 'groupTiles', 'groupRegions', 'keepTile', 'groupLayouts'. Default 'fill'.
         groupBy: What makes a group: object, material slot, or the face int attribute groupAttr. One of 'none', 'object', 'material', 'attribute'. Default 'none'.
         groupAttr: Face int attribute holding each face's group, for groupBy=attribute. Default 'uvGroup'.
         keep: selected: the selected islands stay where they are and the rest pack around them. unselected: only the selection packs, around the rest. One of 'none', 'selected', 'unselected'. Default 'none'.
@@ -8808,6 +8811,20 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
 
 def viewportStats() -> Any:
     """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included."""
+
+def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, a: bool | None = None, d: float | None = None) -> Any:
+    """Pop up a short message in the bottom-right corner of the active viewport; it fades out after duration. Showing the same text again restarts it instead of adding another.
+
+    Args:
+        objects: text.
+        all: Show it in every viewport, not only the active one. Short form a.
+        duration: Seconds before it is gone, including the fade. Short form d. Default 2.0.
+
+    Examples:
+        viewportToast("Exported 12 meshes")
+
+        viewportToast("Render done", all=True, duration=4)
+    """
 
 def voxelRemesh(*objects: Any, resolution: int | None = None, project: bool | None = None) -> Any:
     """Rebuild meshes as one closed, manifold quad surface from a voxel grid, whatever state they are in: closes holes, fuses intersecting and inner shells. For dirty scans and kitbashed blockouts; UVs are not kept.

@@ -182,6 +182,7 @@ void applyDisplayPrefs(render::FrameState& s, bool ortho)
     s.envBackground = p.value<bool>("general", "/viewport/env/background", true) && !ortho;
     s.envBlur = p.value<float>("general", "/viewport/env/blur", 0.6f);
     s.envSaturation = p.value<float>("general", "/viewport/env/saturation", 0.0f);
+    s.envLightSaturation = p.value<float>("general", environments::kLightSaturation, 1.0f);
     s.envBackgroundExposure = p.value<float>("general", "/viewport/env/backgroundExposure", 0.25f);
     s.groundShadow = p.value<float>("general", "/viewport/groundShadow", 0.5f);
     s.ambientOcclusion = p.value<bool>("general", "/viewport/ao/enabled", true);
@@ -196,6 +197,15 @@ Camera cameraFor(const Options& o, double aspect, const Box& subject)
 {
     Camera cam;
     cam.zUp = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
+    if (!o.lookThrough.empty())
+    {
+        const scene::Node* n = scene::Graph::current().find(o.lookThrough);
+        if (!n || !n->type().isA("camera"))
+            throw std::runtime_error("no camera '" + o.lookThrough + "'");
+        cam.lookThrough(*n, n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        cam.overscan = 1.0;
+        return cam;
+    }
     std::string view = o.view;
     bool fromActive = false;
     if (view == "active")
@@ -279,6 +289,8 @@ void waitForMaterialMaps(scene::Graph& g, const std::vector<scene::NodeId>& node
 
 std::string viewLabel(const Options& o)
 {
+    if (!o.lookThrough.empty())
+        return o.lookThrough;
     if (o.yaw || o.pitch)
         return std::format("yaw {:.0f} pitch {:.0f}", o.yaw.value_or(35.0), o.pitch.value_or(-20.0));
     return o.view;
@@ -446,6 +458,7 @@ std::vector<FlagDef> optionFlags()
     return {
         {"view", "v", T::String, "active", "active, persp, three-quarter, front, back, left, right, side, top, bottom.",
          {"active", "persp", "three-quarter", "front", "back", "left", "right", "side", "top", "bottom"}},
+        {"lookThrough", "lt", T::String, "", "A scene camera to look through, framed as it is, instead of view."},
         {"yaw", "", T::Float, nullptr, "Perspective angle around the up axis, degrees (0 front, 90 right)."},
         {"pitch", "", T::Float, nullptr, "Perspective elevation, degrees (negative looks down)."},
         {"width", "w", T::Int, nullptr, "Pixels (512 for one view, 320 per tile).", {}, {}, 16.0, 4096.0},
@@ -471,6 +484,7 @@ Options optionsFrom(const json& j)
     };
     str("view", "camera", o.view);
     str("display", nullptr, o.display);
+    str("lookThrough", "look_through", o.lookThrough);
     if (j.value("wireframe", false))
         o.display = "wireframe";
     for (auto [key, out] : {std::pair{"yaw", &o.yaw}, {"pitch", &o.pitch}})
@@ -503,6 +517,7 @@ json optionSchema()
     return {
         {"view", {{"type", "string"},
                   {"description", "active (default: the user's current view), persp/three-quarter, front, back, left, right, side, top, bottom"}}},
+        {"look_through", {{"type", "string"}, {"description", "A scene camera to look through, framed as it is; overrides view, yaw and pitch."}}},
         {"yaw", {{"type", "number"}, {"description", "Perspective orbit angle in degrees: 0 front, 90 right side, 180 back."}}},
         {"pitch", {{"type", "number"}, {"description", "Perspective elevation in degrees, negative looks down (default -20)."}}},
         {"width", {{"type", "integer"}, {"description", "Pixels (default 512, 320 per turntable tile: enough to judge shape)."}}},

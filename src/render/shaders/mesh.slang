@@ -583,6 +583,17 @@ float3 toEnv(float3 d)
     return float3(c * d.x + s * d.z, d.y, -s * d.x + c * d.z);
 }
 
+/** The environment's light at the pref's saturation: luminance alone at 0, the HDRI's own colour at 1. */
+float3 envLight(float3 c)
+{
+    return lerp(dot(c, float3(0.2126, 0.7152, 0.0722)).xxx, c, pc.extra.z);
+}
+
+float3 envSample(float3 d, float lod)
+{
+    return envLight(envMap.SampleLevel(toEnv(d), lod).rgb);
+}
+
 float3 irradiance(float3 n)
 {
     float3 e = envU.sh[0].rgb * 0.282095;
@@ -590,7 +601,7 @@ float3 irradiance(float3 n)
     e += envU.sh[4].rgb * (1.092548 * n.x * n.y) + envU.sh[5].rgb * (1.092548 * n.y * n.z);
     e += envU.sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + envU.sh[7].rgb * (1.092548 * n.x * n.z);
     e += envU.sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
-    return max(e, 0.0);
+    return envLight(max(e, 0.0));
 }
 
 // Jimenez et al. 2016: bright surfaces bounce light back into their own creases, so occlusion darkens them less.
@@ -632,7 +643,7 @@ float3 imageBased(float3 n, float3 v, Surface s)
         float3 across = cross(gStrand, v);
         rn = normalize(lerp(n, normalize(cross(across, gStrand) + 1e-6), saturate(styleVec(0).z) * 0.8));
     }
-    float3 prefiltered = envMap.SampleLevel(toEnv(reflect(-v, rn)), reflectionLod(s.rough)).rgb;
+    float3 prefiltered = envSample(reflect(-v, rn), reflectionLod(s.rough));
     float3 irr = irradiance(toEnv(n));
     if (gModel == kSkin)
     {
@@ -645,7 +656,7 @@ float3 imageBased(float3 n, float3 v, Surface s)
     if (gModel == kCloth)
     {
         float4 p = styleVec(2);
-        float3 sheen = envMap.SampleLevel(toEnv(reflect(-v, n)), clamp(p.w * pc.env.w, 0.0, pc.env.w)).rgb;
+        float3 sheen = envSample(reflect(-v, n), clamp(p.w * pc.env.w, 0.0, pc.env.w));
         reflected = sheen * p.rgb * (0.25 + 0.75 * pow(1.0 - nv, 3.0)) * s.ssao;
     }
     if (gModel == kClearcoat || gModel == kEye)
@@ -653,7 +664,7 @@ float3 imageBased(float3 n, float3 v, Surface s)
         float2 coat = gModel == kEye ? styleVec(1).yz : styleVec(0).zw;
         float nvc = max(dot(gCoatNormal, v), 1e-4);
         float Fc = F_Schlick(float3(0.04), nvc).x * saturate(coat.x);
-        float3 coatRefl = envMap.SampleLevel(toEnv(reflect(-v, gCoatNormal)), clamp(max(coat.y, sqrt(gReflectionSweep)) * pc.env.w, 0.0, pc.env.w)).rgb;
+        float3 coatRefl = envSample(reflect(-v, gCoatNormal), clamp(max(coat.y, sqrt(gReflectionSweep)) * pc.env.w, 0.0, pc.env.w));
         diffuse *= 1.0 - Fc;
         reflected = reflected * (1.0 - Fc) + coatRefl * Fc * specularOcclusion(nvc, s.ssao, coat.y);
     }
