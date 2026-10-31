@@ -399,7 +399,7 @@ MarkingMenu::Level MarkingMenu::buildLevel(const json& def, QPointF center, std:
     if (const json& outer = def.value("outer", json()); outer.is_object() && !cascade)
         for (int i = 0; i < 8; ++i)
         {
-            if (i == 4 || !outer.contains(kSlotNames[i]))
+            if (!outer.contains(kSlotNames[i]))
                 continue;
             const json& items = outer[kSlotNames[i]];
             for (const json& j : items.is_array() ? items : json::array({items}))
