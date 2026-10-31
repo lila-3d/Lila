@@ -265,8 +265,8 @@ void install(std::function<ViewportWidget*()> active)
                               ViewportWidget* v = activeView();
                               if (v && std::ranges::count(v->bookmarks(), slot) == 0)
                                   viewportToast::show(QString::fromStdString("Bookmark " + n + " is empty"), v);
-                              else
-                                  call({{"args", {slot}}});
+                              else if (call({{"args", {slot}}}))
+                                  viewportToast::show(QString::fromStdString("Bookmark " + n), v);
                           },
                       .doc = "Moves the active view's camera to its bookmark " + n + ". [ goes back.",
                       .python = "lila.ops.cameraBookmark(" + n + ")"});
