@@ -13,6 +13,16 @@ function(lila_module name lib)
     set_property(GLOBAL APPEND PROPERTY LILA_${upper}_MODULES ${name})
 endfunction()
 
+# A module of vendored sources, built without warnings. /W4 is swapped out, not overridden, since cl warns (D9025) on both.
+function(lila_quiet_module name lib)
+    lila_module(${name} ${lib} ${ARGN})
+    if(MSVC)
+        get_target_property(options ${name} COMPILE_OPTIONS)
+        list(REMOVE_ITEM options /W4)
+        set_target_properties(${name} PROPERTIES COMPILE_OPTIONS "${options};/W0")
+    endif()
+endfunction()
+
 add_subdirectory(core)
 add_subdirectory(math)
 add_subdirectory(debug)

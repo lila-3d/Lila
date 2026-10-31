@@ -257,7 +257,7 @@ Value valueFromStored(SocketType t, const json& j)
         auto b = std::make_shared<Bundle>();
         for (const json& e : j.value("items", json::array()))
         {
-            SocketType it;
+            SocketType it{};
             if (e.is_object() && parseSocketType(e.value("type", ""), &it))
                 b->items.push_back({e.value("name", ""), it, valueFromStored(it, e.value("value", json()))});
         }

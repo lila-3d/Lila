@@ -13,6 +13,8 @@ build\bin\RelWithDebInfo\lila.exe      # or: lila.exe <folder>  /  lila.exe scen
 
 Don't create the `build` folder by hand; the first `build.bat` makes it. `build.bat <dir> <config>` builds into another folder or configuration.
 
+To skip the heaviest dependencies, configure once before `build.bat` with `cmake --preset windows -DLILA_USD=OFF -DLILA_VOLUMES=OFF` (either or both). `LILA_USD=OFF` drops OpenUSD: USD files, live stages, MaterialX and Hydra viewport renderers; Lila's own viewport doesn't need it. `LILA_VOLUMES=OFF` drops OpenVDB and the VDB volume nodes.
+
 To build an installer instead, also install Inno Setup 6 (`winget install JRSoftware.InnoSetup`), then:
 
 ```

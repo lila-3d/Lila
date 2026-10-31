@@ -29,7 +29,7 @@ namespace
 namespace fs = std::filesystem;
 using scene::Graph;
 using scene::Node;
-using T = ArgType;
+using Arg = ArgType;
 
 constexpr const char* kFileFormat = "lila.nodes";
 constexpr int kFileVersion = 1;
@@ -851,18 +851,18 @@ std::map<std::string, json> availableGroups()
 const std::vector<FlagDef>& infoFlags()
 {
     static const std::vector<FlagDef> f = {
-        {"label", "", T::String, nullptr, "Nice name shown in editors."},
-        {"description", "", T::String, nullptr, "Tooltip and description."},
-        {"tooltip", "", T::String, nullptr, "Same as description."},
-        {"subtype", "", T::String, nullptr, "factor, percentage, angle (float in degrees, radians in the graph), distance, color; empty clears.",
+        {"label", "", Arg::String, nullptr, "Nice name shown in editors."},
+        {"description", "", Arg::String, nullptr, "Tooltip and description."},
+        {"tooltip", "", Arg::String, nullptr, "Same as description."},
+        {"subtype", "", Arg::String, nullptr, "factor, percentage, angle (float in degrees, radians in the graph), distance, color; empty clears.",
          {"", "factor", "percentage", "angle", "distance", "color"}},
-        {"min", "", T::Any, nullptr, "Hard minimum; empty string clears."},
-        {"max", "", T::Any, nullptr, "Hard maximum; empty string clears."},
-        {"softMin", "", T::Any, nullptr, "Slider minimum; empty string clears."},
-        {"softMax", "", T::Any, nullptr, "Slider maximum; empty string clears."},
-        {"step", "", T::Any, nullptr, "Drag and spin step; empty string clears."},
-        {"default", "", T::Any, nullptr, "Default value."},
-        {"panel", "", T::String, nullptr, "Panel (category) the input shows under; empty for none."},
+        {"min", "", Arg::Any, nullptr, "Hard minimum; empty string clears."},
+        {"max", "", Arg::Any, nullptr, "Hard maximum; empty string clears."},
+        {"softMin", "", Arg::Any, nullptr, "Slider minimum; empty string clears."},
+        {"softMax", "", Arg::Any, nullptr, "Slider maximum; empty string clears."},
+        {"step", "", Arg::Any, nullptr, "Drag and spin step; empty string clears."},
+        {"default", "", Arg::Any, nullptr, "Default value."},
+        {"panel", "", Arg::String, nullptr, "Panel (category) the input shows under; empty for none."},
     };
     return f;
 }
@@ -901,7 +901,7 @@ void registerGroupCommands()
         .doc = "Rename an exposed input (or, with output=True, a group output). Links follow, and modifiers keep the value and "
                "animation under the new name. Returns the new name.",
         .positionalDoc = "group old new",
-        .flags = {{"output", "", T::Bool, false, "Rename a group output instead."}},
+        .flags = {{"output", "", Arg::Bool, false, "Rename a group output instead."}},
         .run = [](const Args& a) -> json {
             std::string from = positional(a, 1, "gnRenameInput", "old name"), to = positional(a, 2, "gnRenameInput", "new name");
             bool output = a.get<bool>("output", false);
@@ -970,7 +970,7 @@ void registerGroupCommands()
         .name = "gnMoveInput",
         .doc = "Move an exposed input to a position in the interface order (0 is first), optionally into a panel.",
         .positionalDoc = "group input index",
-        .flags = {{"panel", "", T::String, nullptr, "Panel to put it in; empty for none."}},
+        .flags = {{"panel", "", Arg::String, nullptr, "Panel to put it in; empty for none."}},
         .run = [](const Args& a) -> json {
             std::string name = positional(a, 1, "gnMoveInput", "input");
             if (a.positional.size() < 3 || !a.positional[2].is_number_integer())
@@ -1049,7 +1049,7 @@ void registerGroupCommands()
         .doc = "Collapse nodes into a new group and put a Group node running it in their place. Links crossing the boundary become "
                "the new group's inputs and outputs. Returns {group, node}.",
         .positionalDoc = "group nodes...",
-        .flags = {{"name", "", T::String, "NodeGroup", "Name for the new group; made unique."}},
+        .flags = {{"name", "", Arg::String, "NodeGroup", "Name for the new group; made unique."}},
         .run = [](const Args& a) -> json {
             Node& n = groupNodeOf(positional(a, 0, "gnGroupNodes", "group"), "gnGroupNodes");
             Group outer = readOrFail(n, "gnGroupNodes");
@@ -1153,7 +1153,7 @@ void registerGroupCommands()
                "omitted. Nothing changes unless the whole spec is valid; the error lists every problem with the valid socket "
                "names. Modifiers already using the group keep their values. Returns the group info.",
         .positionalDoc = "spec",
-        .flags = {{"replace", "", T::Bool, true, "Replace an existing group of that name; False fails instead."}},
+        .flags = {{"replace", "", Arg::Bool, true, "Replace an existing group of that name; False fails instead."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 

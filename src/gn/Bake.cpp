@@ -222,16 +222,16 @@ void registerBakeNode() { bakeNode(); }
 
 void registerBakeCommands()
 {
-    using T = ArgType;
+    using Arg = ArgType;
     ops::registerCommand({
         .name = "gnBake",
         .doc = "Bake a Bake node: evaluate a mesh running its group, save what reaches the node (once, or per frame in animation mode) "
                "and switch the node to reading the saved files. Returns the folder written.",
         .positionalDoc = "group node",
-        .flags = {{"start", "", T::Int, nullptr, "First frame (animation mode); defaults to the playback range's."},
-                  {"end", "", T::Int, nullptr, "Last frame (animation mode); defaults to the playback range's."},
-                  {"modifier", "", T::String, nullptr, "The modifier to evaluate when several meshes run the group; defaults to the first."},
-                  {"directory", "", T::String, nullptr, "Folder for the files; defaults to bakes/<group>_<node> next to the scene."}},
+        .flags = {{"start", "", Arg::Int, nullptr, "First frame (animation mode); defaults to the playback range's."},
+                  {"end", "", Arg::Int, nullptr, "Last frame (animation mode); defaults to the playback range's."},
+                  {"modifier", "", Arg::String, nullptr, "The modifier to evaluate when several meshes run the group; defaults to the first."},
+                  {"directory", "", Arg::String, nullptr, "Folder for the files; defaults to bakes/<group>_<node> next to the scene."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 

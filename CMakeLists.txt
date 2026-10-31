@@ -1,4 +1,20 @@
 cmake_minimum_required(VERSION 3.28)
+
+# The heavy optional dependencies, each a default vcpkg manifest feature: turning one off also skips its vcpkg build.
+# Read by the vcpkg toolchain during project(), so they are set before it.
+option(LILA_USD "Build the OpenUSD extension: USD files, live stages, MaterialX and Hydra viewport renderers" ON)
+option(LILA_VOLUMES "Build the NanoVDB extension: OpenVDB and NanoVDB volumes" ON)
+if(NOT LILA_USD OR NOT LILA_VOLUMES)
+    set(VCPKG_MANIFEST_NO_DEFAULT_FEATURES ON)
+    set(VCPKG_MANIFEST_FEATURES "")
+    if(LILA_USD)
+        list(APPEND VCPKG_MANIFEST_FEATURES usd)
+    endif()
+    if(LILA_VOLUMES)
+        list(APPEND VCPKG_MANIFEST_FEATURES volumes)
+    endif()
+endif()
+
 project(Lila VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -72,10 +88,14 @@ add_subdirectory(extensions/GroundTiles)
 add_subdirectory(extensions/Terrain)
 add_subdirectory(extensions/Meadowlight)
 add_subdirectory(extensions/Brushwork)
-add_subdirectory(extensions/OpenUSD)
+if(LILA_USD)
+    add_subdirectory(extensions/OpenUSD)
+endif()
 add_subdirectory(extensions/Lights)
 add_subdirectory(extensions/TrimSheets)
-add_subdirectory(extensions/NanoVDB)
+if(LILA_VOLUMES)
+    add_subdirectory(extensions/NanoVDB)
+endif()
 include(LilaSdkInstall)
 include(LilaDocs)
 

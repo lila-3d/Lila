@@ -129,7 +129,7 @@ bool reaches(const Group& grp, const std::string& from, const std::string& to)
  * Linking a closure into an Evaluate Closure, or a bundle into a Separate Bundle, that has no items yet gives it the
  * items of the zone or Combine Bundle making the value.
  */
-void syncSignature(Group& grp, const GNode& from, GNode& to, SocketType type)
+void syncSignature(const GNode& from, GNode& to, SocketType type)
 {
     if (type == SocketType::Closure && to.type == "EvaluateClosure" && itemsOf(to, "inputs").empty() && itemsOf(to, "outputs").empty() &&
         from.type == "ClosureOutput")
@@ -384,7 +384,7 @@ void registerCommands()
                                        socketTypeName(tsock.inputs[ii].type));
                 if (fn == tn || reaches(grp, fn, tn))
                     throw CommandError("gnConnect: that link would make a cycle");
-                syncSignature(grp, from, to, fsock.outputs[oi].type);
+                syncSignature(from, to, fsock.outputs[oi].type);
                 GLink link{fn, fs, tn, ts};
                 if (!tsock.inputs[ii].multi)
                     std::erase_if(grp.links, [&](const GLink& l) { return l.toNode == tn && l.toSocket == ts; });

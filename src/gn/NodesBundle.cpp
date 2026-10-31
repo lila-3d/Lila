@@ -122,7 +122,7 @@ void closureNodes()
                 if (const json* def = closureDefinition(g, n))
                     for (const json& i : def->value("inputs", json::array()))
                     {
-                        SocketType t;
+                        SocketType t{};
                         std::string name = i.value("name", "");
                         if (isCapture(name) && parseSocketType(i.value("type", ""), &t))
                             s.inputs.push_back(isDataType(t) ? fin(name, t) : in(name, t));

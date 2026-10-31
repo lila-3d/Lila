@@ -200,17 +200,17 @@ json componentCounts(const Geometry& g)
 
 void registerSpreadsheetCommand()
 {
-    using T = ArgType;
+    using Arg = ArgType;
     ops::registerCommand({
         .name = "gnSpreadsheet",
         .doc = "The evaluated geometry of a mesh's top geometry-nodes modifier (or the modifier named) as a table: one row per element of "
                "a component's domain, a column per attribute. Without a geometry-nodes modifier, the mesh as it ends up. Also lists every "
                "component with its element counts.",
         .positionalDoc = "target",
-        .flags = {{"component", "", T::String, "mesh", "mesh, points, curves, instances or volume."},
-                  {"domain", "", T::String, "point", "point, edge, face or corner for meshes; point or curve for curves."},
-                  {"start", "", T::Int, 0, "First row."},
-                  {"count", "", T::Int, 1000, "Most rows to return."}},
+        .flags = {{"component", "", Arg::String, "mesh", "mesh, points, curves, instances or volume."},
+                  {"domain", "", Arg::String, "point", "point, edge, face or corner for meshes; point or curve for curves."},
+                  {"start", "", Arg::Int, 0, "First row."},
+                  {"count", "", Arg::Int, 1000, "Most rows to return."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();

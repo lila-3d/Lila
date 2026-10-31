@@ -19,18 +19,7 @@
     "joltphysics",
     "miniz",
     "zlib",
-    {
-      "name": "usd",
-      "features": [
-        "imaging",
-        "embree",
-        "materialx",
-        "python",
-        "vulkan"
-      ]
-    },
     "draco",
-    "openvdb",
     {
       "name": "tracy",
       "features": [
@@ -38,6 +27,33 @@
       ]
     }
   ],
+  "default-features": [
+    "usd",
+    "volumes"
+  ],
+  "features": {
+    "usd": {
+      "description": "OpenUSD: USD files, live stages, MaterialX and Hydra viewport renderers (the OpenUSD extension)",
+      "dependencies": [
+        {
+          "name": "usd",
+          "features": [
+            "imaging",
+            "embree",
+            "materialx",
+            "python",
+            "vulkan"
+          ]
+        }
+      ]
+    },
+    "volumes": {
+      "description": "OpenVDB: .vdb and .nvdb volumes (the NanoVDB extension)",
+      "dependencies": [
+        "openvdb"
+      ]
+    }
+  },
   "builtin-baseline": "6f6324d69cc4d5229804bee9f72737fe2ef08087",
   "vcpkg-configuration": {
     "overlay-ports": [

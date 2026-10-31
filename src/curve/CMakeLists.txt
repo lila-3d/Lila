@@ -58,18 +58,15 @@ lila_module(lila_curve Scene
     Tessellate.cpp
     Tessellate.h
     Text.cpp
-    Text.h
-    third_party/clipper2/clipper.engine.cpp
-    third_party/clipper2/clipper.offset.cpp
-    third_party/clipper2/clipper.rectclip.cpp)
+    Text.h)
 target_link_libraries(lila_curve PUBLIC lila_geo)
 # Clipper2 built here with Z values (vertex ids traced through clips); the vcpkg build targets a newer toolset's STL.
-target_include_directories(lila_curve BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/clipper2/include)
-target_compile_definitions(lila_curve PRIVATE USINGZ CLIPPER2_MAX_DECIMAL_PRECISION=8)
-if(MSVC)
-    set_source_files_properties(third_party/clipper2/clipper.engine.cpp third_party/clipper2/clipper.offset.cpp
-                                third_party/clipper2/clipper.rectclip.cpp PROPERTIES COMPILE_OPTIONS "/W0")
-endif()
+lila_quiet_module(lila_clipper2 Scene third_party/clipper2/clipper.engine.cpp third_party/clipper2/clipper.offset.cpp
+    third_party/clipper2/clipper.rectclip.cpp)
+foreach(_t lila_curve lila_clipper2)
+    target_include_directories(${_t} BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/clipper2/include)
+    target_compile_definitions(${_t} PRIVATE USINGZ CLIPPER2_MAX_DECIMAL_PRECISION=8)
+endforeach()
 
 lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
     CableNode.cpp ContourNode.cpp EnvAttrs.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp

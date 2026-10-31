@@ -13,3 +13,7 @@ foreach(_host lila lilabatch)
 endforeach()
 # OpenVDB calls log() unqualified, which clashes with lila::log once another file in the batch says using namespace lila.
 set_source_files_properties(Vdb.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+if(MSVC)
+    # NanoVDB.h has a branch the optimizer finds unreachable; C4702 comes from code generation, past /external:W0.
+    target_compile_options(lila_nanovdb_extension PRIVATE /wd4702)
+endif()
