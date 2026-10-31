@@ -2,6 +2,7 @@
 
 #include "core/PrefStore.h"
 #include "ui/FileDialog.h"
+#include "ui/FilePreview.h"
 #include "vcs/SourceControl.h"
 
 #include <QApplication>
@@ -255,4 +256,35 @@ TEST_CASE("file dialog: recent files per context and extension sections on the r
         CHECK_FALSE(dlg.sectionTitles().contains("Suggested"));
     }
     fd::sections().remove("test/suggested");
+}
+
+TEST_CASE("file dialog: model preview loads small OBJs and refuses large ones")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString obj = tmp.path() + "/quad.obj";
+    {
+        QFile f(obj);
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n");
+    }
+    CHECK(ui::FilePreview::canPreview(obj));
+    CHECK(ui::FilePreview::canPreview(tmp.path() + "/a.lila"));
+    CHECK_FALSE(ui::FilePreview::canPreview(tmp.path() + "/notes.txt"));
+
+    ui::FilePreview preview;
+    REQUIRE(preview.setFile(obj));
+    QElapsedTimer t;
+    t.start();
+    while (preview.loading() && t.elapsed() < 5000)
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+    CHECK(preview.triangleCount() == 2);
+
+    PrefStore::get().set("general", ui::FilePreview::kMaxMbPref, 0);
+    ui::FilePreview limited;
+    CHECK(limited.setFile(obj));
+    CHECK_FALSE(limited.loading());
+    CHECK(limited.triangleCount() == 0);
+    PrefStore::get().set("general", ui::FilePreview::kMaxMbPref, 50);
+    CHECK_FALSE(limited.setFile({}));
 }

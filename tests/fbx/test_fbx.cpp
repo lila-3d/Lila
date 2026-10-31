@@ -226,6 +226,9 @@ void roundTrip(fbx::AxisProfile profile, math::UpAxis up, bool triangulate)
                              (triangulate ? "_tri" : "") + ".fbx");
     std::string err;
     REQUIRE(fbx::writeFbx(fbx::gatherExport(g, {g.find("Body")->id()}, opts), path, opts, &err));
+    const std::vector<glm::vec3> preview = fbx::previewTriangles(path);
+    CHECK(!preview.empty());
+    CHECK(preview.size() % 3 == 0);
 
     g.clear();
     fbx::ImportResult r = fbx::importFbx(g, path);

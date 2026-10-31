@@ -1,4 +1,5 @@
 #include "ui/FileDialog.h"
+#include "ui/FilePreview.h"
 
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -46,6 +47,7 @@
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -336,7 +338,13 @@ struct FileDialog::Impl
     QLineEdit* sidebarFilter = nullptr;
     /** The context sections on the right. */
     QTreeWidget* sidePanel = nullptr;
+    FilePreview* preview = nullptr;
+    /** sidePanel over preview, the splitter's third pane. */
+    QSplitter* rightPane = nullptr;
     QSplitter* splitter = nullptr;
+    /** Shows the full name of a truncated cell sooner than the style's tooltip delay. */
+    QTimer* tipTimer = nullptr;
+    QPoint tipPos;
 
     QToolButton* back = nullptr;
     QToolButton* forward = nullptr;
@@ -370,6 +378,10 @@ struct FileDialog::Impl
     void buildSide();
     void pickItem(const QString& path, bool acceptIt);
     void showSideMenu(const QPoint& pos);
+    void updatePreview();
+    void updateRightPane();
+    void showTruncatedTip();
+    void setHeaderModes();
     void rebuildCrumbs();
     void show(const QString& d, bool record);
     void applyTypeFilter();
@@ -487,7 +499,7 @@ void FileDialog::Impl::build(const QString& caption)
         PrefStore::get().set(kFdPrefs, fileDialog::kShowHiddenPref, on);
         setShowHidden(on);
     });
-    sideButton = tool("layout-sidebar-right", "Recent and suggested files");
+    sideButton = tool("layout-sidebar-right", "Recent files and preview");
     sideButton->setCheckable(true);
     sideButton->setChecked(true);
     root->addLayout(nav);
@@ -544,10 +556,13 @@ void FileDialog::Impl::build(const QString& caption)
     view->setEditTriggers(QAbstractItemView::EditKeyPressed);
     view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     if (fileOps::allowed(fileOps::kAllowMovePref))
-    {
         view->setDragDropMode(QAbstractItemView::DragDrop);
-        view->viewport()->installEventFilter(q);
-    }
+    view->viewport()->installEventFilter(q);
+    view->viewport()->setMouseTracking(true);
+    tipTimer = new QTimer(q);
+    tipTimer->setSingleShot(true);
+    tipTimer->setInterval(100);
+    QObject::connect(tipTimer, &QTimer::timeout, q, [this] { showTruncatedTip(); });
     view->setContextMenuPolicy(Qt::CustomContextMenu);
     view->setFrameShape(QFrame::NoFrame);
     view->installEventFilter(q);
@@ -555,7 +570,8 @@ void FileDialog::Impl::build(const QString& caption)
     header->setStretchLastSection(false);
     header->setSectionsMovable(true);
     header->moveSection(header->visualIndex(1), 3); // Name, Type, Date Modified, Size
-    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    setHeaderModes();
+    header->resizeSection(0, 300);
     header->resizeSection(1, 90);
     header->resizeSection(2, 140);
     header->resizeSection(3, 140);
@@ -569,7 +585,13 @@ void FileDialog::Impl::build(const QString& caption)
     sidePanel->setItemDelegate(new FdSidebarDelegate(sidePanel));
     sidePanel->setContextMenuPolicy(Qt::CustomContextMenu);
     sidePanel->setFrameShape(QFrame::NoFrame);
-    splitter->addWidget(sidePanel);
+    preview = new FilePreview;
+    preview->hide();
+    rightPane = new QSplitter(Qt::Vertical);
+    rightPane->setChildrenCollapsible(false);
+    rightPane->addWidget(sidePanel);
+    rightPane->addWidget(preview);
+    splitter->addWidget(rightPane);
     splitter->setStretchFactor(1, 1);
     splitter->setSizes({200, 540, 260});
     root->addWidget(splitter, 1);
@@ -638,7 +660,10 @@ void FileDialog::Impl::build(const QString& caption)
             q->tryAccept();
     });
     QObject::connect(view->selectionModel(), &QItemSelectionModel::selectionChanged, q,
-                     [this] { syncNameFromSelection(); });
+                     [this] {
+                         syncNameFromSelection();
+                         updatePreview();
+                     });
     QObject::connect(view, &QTreeView::customContextMenuRequested, q, [this](const QPoint& pos) { showListMenu(pos); });
     QObject::connect(filter, &QLineEdit::textChanged, q, [this](const QString& text) {
         proxy->setText(text);
@@ -741,7 +766,7 @@ void FileDialog::Impl::build(const QString& caption)
     });
 
     buildSide();
-    QObject::connect(sideButton, &QToolButton::toggled, q, [this](bool on) { sidePanel->setVisible(on && sidePanel->topLevelItemCount() > 0); });
+    QObject::connect(sideButton, &QToolButton::toggled, q, [this] { updateRightPane(); });
     QObject::connect(sidePanel, &QTreeWidget::itemClicked, q, [this](QTreeWidgetItem* item) {
         if (FdKind(item->data(0, FdKindRole).toInt()) == FdKind::Header)
             item->setExpanded(!item->isExpanded());
@@ -796,9 +821,44 @@ void FileDialog::Impl::buildSide()
         }
         header->setExpanded(!collapsed.contains(QString::fromStdString(id)));
     }
-    const bool any = sidePanel->topLevelItemCount() > 0;
-    sideButton->setVisible(any);
-    sidePanel->setVisible(any && sideButton->isChecked());
+    updateRightPane();
+}
+
+void FileDialog::Impl::updatePreview()
+{
+    const QModelIndexList rows = view->selectionModel()->selectedRows();
+    preview->setFile(rows.size() == 1 ? fs->filePath(proxy->mapToSource(rows[0])) : QString());
+    updateRightPane();
+}
+
+void FileDialog::Impl::updateRightPane()
+{
+    const bool sections = sidePanel->topLevelItemCount() > 0;
+    const bool previewing = !preview->file().isEmpty();
+    sidePanel->setVisible(sections);
+    preview->setVisible(previewing);
+    rightPane->setVisible(sideButton->isChecked() && (sections || previewing));
+}
+
+void FileDialog::Impl::showTruncatedTip()
+{
+    const QModelIndex index = view->indexAt(tipPos);
+    const QString text = index.data(Qt::DisplayRole).toString();
+    const QRect cell = view->visualRect(index);
+    int needed = view->fontMetrics().horizontalAdvance(text) + 12;
+    if (!index.data(Qt::DecorationRole).isNull())
+        needed += view->style()->pixelMetric(QStyle::PM_SmallIconSize) + 6;
+    if (index.isValid() && needed > cell.width())
+        QToolTip::showText(view->viewport()->mapToGlobal(tipPos), text, view->viewport(), cell);
+    else
+        QToolTip::hideText();
+}
+
+void FileDialog::Impl::setHeaderModes()
+{
+    QHeaderView* header = view->header();
+    header->setSectionResizeMode(QHeaderView::Interactive);
+    header->setStretchLastSection(true);
 }
 
 void FileDialog::Impl::pickItem(const QString& path, bool acceptIt)
@@ -844,6 +904,7 @@ void FileDialog::Impl::showSideMenu(const QPoint& pos)
             fdSetRecentFiles(ctx.key, list);
             buildSide();
         });
+    menu.addAction(icon("folder"), "Go to Folder", [this, path] { pickItem(path, false); });
     menu.addAction(icon("folder-search"), "Open Containing Folder", [path] { fileOps::reveal(path); });
     menu.addSeparator();
     menu.addAction("Copy Path", [path] { QApplication::clipboard()->setText(QDir::toNativeSeparators(path)); });
@@ -1419,7 +1480,7 @@ void FileDialog::Impl::saveState()
     state["splitter"] = splitter->saveState().toBase64().toStdString();
     state["header"] = view->header()->saveState().toBase64().toStdString();
     state["side"] = sideButton->isChecked();
-    if (sidePanel->isVisible())
+    if (rightPane->isVisible())
         state["sideWidth"] = splitter->sizes().value(2);
     PrefStore::get().set(kFdPrefs, kFdStatePref, state);
 }
@@ -1435,6 +1496,7 @@ void FileDialog::Impl::restoreState()
     q->restoreGeometry(bytes("geometry"));
     splitter->restoreState(bytes("splitter"));
     view->header()->restoreState(bytes("header"));
+    setHeaderModes();
     sideButton->setChecked(state.value("side", true));
     // A splitter state saved without a visible side panel leaves it at its minimum width.
     QList<int> sizes = splitter->sizes();
@@ -1670,6 +1732,28 @@ bool FileDialog::eventFilter(QObject* watched, QEvent* event)
             if (!m->pathEdit->hasFocus())
                 m->pathStack->setCurrentWidget(m->crumbs);
         });
+    }
+    if (m->view && watched == m->view->viewport())
+    {
+        switch (event->type())
+        {
+        case QEvent::ToolTip:
+            return true;
+        case QEvent::MouseMove:
+            m->tipPos = static_cast<QMouseEvent*>(event)->position().toPoint();
+            if (QToolTip::isVisible())
+                m->showTruncatedTip();
+            else
+                m->tipTimer->start();
+            break;
+        case QEvent::Leave:
+        case QEvent::MouseButtonPress:
+        case QEvent::Wheel:
+            m->tipTimer->stop();
+            break;
+        default:
+            break;
+        }
     }
     if (m->view && watched == m->view->viewport() &&
         (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove || event->type() == QEvent::Drop))

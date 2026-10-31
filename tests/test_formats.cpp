@@ -6,6 +6,10 @@
 #include "geo/Primitives.h"
 #include "io/SceneFile.h"
 #include "io/SceneFormats.h"
+#include "io/ScenePreview.h"
+#include "scene/Graph.h"
+#include "scene/Instancing.h"
+#include "scene/MeshNodes.h"
 #include "scene/MeshData.h"
 
 #include <filesystem>
@@ -262,4 +266,35 @@ TEST_CASE("version 2 binary files still load")
     REQUIRE(back["points"].size() == 33);
     CHECK(back["points"][32][2].get<double>() == values[98]);
     CHECK(back["tag"] == "old");
+}
+
+TEST_CASE("scene preview reads stored meshes, transforms and instances without loading")
+{
+    scene::Graph& g = scene::Graph::current();
+    g.clear();
+    auto* box = g.createNode(*scene::types::find("mesh"), "Box", scene::kNoNode, false);
+    g.setValue({box->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube())));
+    auto* group = g.createNode(*scene::types::find("transform"), "Group", scene::kNoNode, false);
+    g.setValue({group->id(), scene::Transform::kTranslate, -1}, glm::dvec3(1000.0, 0.0, 0.0));
+    auto* copy = g.createNode(*scene::types::find("mesh"), "Copy", group->id(), false);
+    scene::instancing::connectInstance(g, box->id(), copy->id());
+    auto* hidden = g.createNode(*scene::types::find("mesh"), "Hidden", scene::kNoNode, false);
+    g.setValue({hidden->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube())));
+    g.setValue({hidden->id(), scene::Transform::kVisibility, -1}, false);
+
+    for (const char* ext : {".lila", ".lilaa"})
+    {
+        CAPTURE(ext);
+        const auto path = std::filesystem::temp_directory_path() / (std::string("lila_scene_preview") + ext);
+        io::save(path);
+        const std::vector<glm::vec3> tris = io::previewTriangles(path);
+        std::filesystem::remove(path);
+        // Two cubes of 6 quads, 2 triangles each.
+        REQUIRE(tris.size() == 2 * 12 * 3);
+        float maxX = -1e9f;
+        for (const glm::vec3& p : tris)
+            maxX = std::max(maxX, p.x);
+        CHECK(maxX == doctest::Approx(1050.0));
+    }
+    g.clear();
 }

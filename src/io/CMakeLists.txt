@@ -5,6 +5,7 @@ lila_module(lila_io Scene
     SceneFile.cpp
     SceneHistory.cpp
     SceneFormats.cpp
+    ScenePreview.cpp
     FileTranslators.cpp)
 
 find_package(zstd CONFIG REQUIRED)

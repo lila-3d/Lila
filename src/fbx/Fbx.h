@@ -350,6 +350,9 @@ struct ImportAxes
 /** The file's axis conversions, read from its settings alone. Nullopt when the file can't be read. */
 LILA_SCENE_API std::optional<ImportAxes> importAxes(const fs::path& path);
 
+/** Every mesh instance triangulated in world space, Y up, three corners per triangle. Any thread, no scene; for previews. */
+LILA_SCENE_API std::vector<glm::vec3> previewTriangles(const fs::path& path);
+
 /** importFbx and exportFbx. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::fbx

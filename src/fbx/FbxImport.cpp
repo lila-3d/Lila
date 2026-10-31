@@ -780,6 +780,40 @@ std::optional<ImportAxes> importAxes(const fs::path& path)
     return out;
 }
 
+std::vector<glm::vec3> previewTriangles(const fs::path& path)
+{
+    LILA_ZONE();
+
+    ufbx_load_opts lo{};
+    lo.load_external_files = false;
+    lo.ignore_animation = true;
+    lo.target_axes = ufbx_axes_right_handed_y_up;
+    ufbx_error err{};
+    std::u8string u8 = path.u8string();
+    std::unique_ptr<ufbx_scene, SceneDeleter> fbx(ufbx_load_file_len(reinterpret_cast<const char*>(u8.data()), u8.size(), &lo, &err));
+    std::vector<glm::vec3> out;
+    if (!fbx)
+        return out;
+    std::vector<uint32_t> tri;
+    for (const ufbx_node* node : fbx->nodes)
+    {
+        const ufbx_mesh* mesh = node->mesh;
+        if (!mesh)
+            continue;
+        tri.resize(mesh->max_face_triangles * 3);
+        for (const ufbx_face& face : mesh->faces)
+        {
+            const uint32_t n = ufbx_triangulate_face(tri.data(), tri.size(), mesh, face);
+            for (uint32_t i = 0; i < n * 3; ++i)
+            {
+                const ufbx_vec3 p = ufbx_transform_position(&node->geometry_to_world, ufbx_get_vertex_vec3(&mesh->vertex_position, tri[i]));
+                out.emplace_back(float(p.x), float(p.y), float(p.z));
+            }
+        }
+    }
+    return out;
+}
+
 ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOptions& opts)
 {
     LILA_ZONE();

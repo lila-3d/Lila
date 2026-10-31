@@ -464,6 +464,9 @@ bool Hotkeys::eventFilter(QObject* obj, QEvent* e)
         return false;
     }
 
+    // A modal dialog (file dialog, message box) owns the keyboard; app hotkeys would act on the window behind it.
+    if (QApplication::activeModalWidget())
+        return false;
     QWidget* focus = QApplication::focusWidget();
     // An open menu takes typing as a search (MenuSearch).
     if (MarkingMenu::active() || qobject_cast<QMenu*>(QApplication::activePopupWidget()))
