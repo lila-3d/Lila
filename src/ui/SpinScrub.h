@@ -5,11 +5,14 @@
 #include <QRect>
 #include <QString>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <functional>
 
 class QAbstractSpinBox;
 class QCheckBox;
 class QComboBox;
+class QMenu;
 class QObject;
 class QWidget;
 
@@ -43,4 +46,10 @@ LILA_UI_API void flashReset(QWidget* w, QRect rect = {});
  * resetHint(defaultText). Middle drags and every other event pass through untouched.
  */
 LILA_UI_API void onMiddleClickReset(QWidget* target, std::function<void()> reset, const QString& defaultText, QWidget* flash = nullptr);
+
+/** Adds Copy Name, Copy Value and Copy Name and Value ("name = value") to menu. value is read when one is picked. */
+LILA_UI_API void addCopyActions(QMenu* menu, const QString& name, std::function<nlohmann::json()> value);
+
+/** A right-click menu on target holding only addCopyActions. */
+LILA_UI_API void onRightClickCopy(QWidget* target, const QString& name, std::function<nlohmann::json()> value);
 } // namespace lila::ui

@@ -21,7 +21,7 @@ namespace lila::ui
 struct LILA_UI_API Camera
 {
     glm::dvec3 target{0.0};
-    double distance = 600.0; // cm; game assets are metres, not centimetres
+    double distance = 120.0; // cm; a default primitive (10 cm) fills a comfortable part of the view
     double yaw = 45.0;    // degrees around world up
     double pitch = -27.0; // degrees, negative looks down
     double focalLength = 35.0;     // mm
@@ -32,7 +32,7 @@ struct LILA_UI_API Camera
 
     /** Orthographic views (top/front/side) look along a fixed axis; `orthoWidth` is the visible width in cm. */
     bool ortho = false;
-    double orthoWidth = 800.0;
+    double orthoWidth = 160.0;
     glm::dvec3 orthoForward{0, 0, -1};
     glm::dvec3 orthoUp{0, 1, 0};
 

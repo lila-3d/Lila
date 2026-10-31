@@ -1,6 +1,7 @@
 #include "ui/SpinScrub.h"
 
 #include "ops/Undo.h"
+#include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/ValueReset.h"
 
@@ -8,11 +9,13 @@
 #include <QAbstractSpinBox>
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QHelpEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
@@ -398,5 +401,27 @@ void flashReset(QWidget* w, QRect rect)
 void onMiddleClickReset(QWidget* target, std::function<void()> reset, const QString& defaultText, QWidget* flash)
 {
     target->installEventFilter(new ResetClick(target, std::move(reset), defaultText, flash));
+}
+
+void addCopyActions(QMenu* menu, const QString& name, std::function<nlohmann::json()> value)
+{
+    // Strings copy bare so a path or enum name pastes as itself.
+    auto text = [value] {
+        nlohmann::json v = value();
+        return QString::fromStdString(v.is_string() ? v.get<std::string>() : v.dump());
+    };
+    menu->addAction(icon("copy"), "Copy Name", menu, [name] { QApplication::clipboard()->setText(name); });
+    menu->addAction("Copy Value", menu, [text] { QApplication::clipboard()->setText(text()); });
+    menu->addAction("Copy Name and Value", menu, [name, text] { QApplication::clipboard()->setText(name + " = " + text()); });
+}
+
+void onRightClickCopy(QWidget* target, const QString& name, std::function<nlohmann::json()> value)
+{
+    target->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(target, &QWidget::customContextMenuRequested, target, [target, name, value](const QPoint& at) {
+        QMenu menu;
+        addCopyActions(&menu, name, value);
+        menu.exec(target->mapToGlobal(at));
+    });
 }
 } // namespace lila::ui

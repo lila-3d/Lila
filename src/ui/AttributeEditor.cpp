@@ -815,11 +815,15 @@ void AttributeEditor::rebuild()
             field = row;
         }
         auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
-        if (def.flags & scene::AttrKeyable)
-        {
-            label->setContextMenuPolicy(Qt::CustomContextMenu);
-            connect(label, &QWidget::customContextMenuRequested, this, [this, label, attr](const QPoint& at) {
-                QMenu menu;
+        label->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(label, &QWidget::customContextMenuRequested, this, [this, label, attr, ref, keyable = bool(def.flags & scene::AttrKeyable)](const QPoint& at) {
+            QMenu menu;
+            addCopyActions(&menu, QString::fromStdString(attr), [this, ref] {
+                return Graph::current().node(mNode) ? scene::toJson(Graph::current().value(ref)) : json();
+            });
+            if (keyable)
+            {
+                menu.addSeparator();
                 menu.addAction("Set Key", [this, attr] {
                     scene::Node* node = Graph::current().node(mNode);
                     if (!node)
@@ -833,9 +837,9 @@ void AttributeEditor::rebuild()
                         log::error("{}", e.what());
                     }
                 });
-                menu.exec(label->mapToGlobal(at));
-            });
-        }
+            }
+            menu.exec(label->mapToGlobal(at));
+        });
         label->setToolTip(QString::fromStdString(def.name + (def.shortName.empty() ? "" : " (" + def.shortName + ")") +
                                                  (def.doc.empty() ? "" : "\n" + def.doc)));
         if (readOnly)

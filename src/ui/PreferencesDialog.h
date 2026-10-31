@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,5 +71,15 @@ class LILA_UI_API PreferencesDialog : public QDialog
 public:
     explicit PreferencesDialog(QWidget* parent = nullptr);
     static void open(QWidget* parent);
+
+private:
+    /** Backs up the user's prefs for every page's file, then clears them so the defaults apply. */
+    void resetAll();
+    void restoreBackup();
+    /** Reopens the window in place so every field shows the prefs as they now are. */
+    void rebuild();
+
+    /** The prefs files the pages edit. */
+    std::set<std::string> mFiles;
 };
 } // namespace lila::ui

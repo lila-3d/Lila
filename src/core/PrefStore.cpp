@@ -709,6 +709,27 @@ void PrefStore::remove(std::string_view file, std::string_view key, PrefScope sc
     m->notify(std::string(file));
 }
 
+json PrefStore::userDoc(std::string_view file) const
+{
+    std::scoped_lock lock(m->mutex);
+    return m->doc(User, file).data;
+}
+
+void PrefStore::setUserDoc(std::string_view file, json data)
+{
+    {
+        std::scoped_lock lock(m->mutex);
+        Doc& d = m->doc(User, file);
+        if (d.data == data)
+            return;
+        d.data = data.is_object() ? std::move(data) : json::object();
+        d.dirty = true;
+        d.dirtyAt = Clock::now();
+    }
+    m->cv.notify_all();
+    m->notify(std::string(file));
+}
+
 void PrefStore::flush()
 {
     std::unique_lock lock(m->mutex);

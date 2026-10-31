@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/TextMatch.h"
 #include "scene/Anim.h"
@@ -40,6 +41,7 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -55,6 +57,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <functional>
 #include <tuple>
@@ -66,6 +70,76 @@ namespace
 using json = nlohmann::json;
 
 constexpr const char* kCollapsedPref = "/preferences/collapsed";
+constexpr int kResetDelaySeconds = 3;
+/** Consent and identity, not preferences: Reset All keeps them so it can't turn telemetry back on or break MCP clients. */
+constexpr std::pair<const char*, const char*> kKeptOnReset[] = {{"general", "/telemetry"}, {"general", "/mcp/token"}};
+
+QPointer<PreferencesDialog> gDialog;
+
+/** Where Reset All keeps the user's prefs it replaced, one object per prefs file. */
+std::filesystem::path backupPath()
+{
+    return PrefStore::get().userDir().parent_path() / "prefsBackup.json";
+}
+
+json readBackup()
+{
+    std::ifstream in(backupPath(), std::ios::binary);
+    json j = in ? json::parse(in, nullptr, false, true) : json();
+    return j.is_object() ? j : json();
+}
+
+/**
+ * Asks before resetting: Reset stays disabled for a few seconds so a stray double click can't confirm it. A popup, so a
+ * click anywhere else dismisses it.
+ */
+class ResetConfirm : public QFrame
+{
+public:
+    ResetConfirm(QWidget* anchor, std::function<void()> reset) : QFrame(anchor, Qt::Popup)
+    {
+        setAttribute(Qt::WA_DeleteOnClose);
+        setFrameShape(QFrame::StyledPanel);
+        auto* v = new QVBoxLayout(this);
+        v->addWidget(new QLabel("Reset every preference in this window to its default?\n"
+                                "Your current ones are backed up first: Restore brings them back.",
+                                this));
+        auto* buttons = new QHBoxLayout;
+        buttons->addStretch(1);
+        auto* cancel = new QPushButton("Cancel", this);
+        connect(cancel, &QPushButton::clicked, this, &QWidget::close);
+        buttons->addWidget(cancel);
+        mReset = new QPushButton(this);
+        connect(mReset, &QPushButton::clicked, this, [this, reset] {
+            close();
+            reset();
+        });
+        buttons->addWidget(mReset);
+        v->addLayout(buttons);
+        cancel->setFocus();
+        tick();
+        auto* timer = new QTimer(this);
+        connect(timer, &QTimer::timeout, this, [this, timer] {
+            tick();
+            if (mLeft < 0)
+                timer->stop();
+        });
+        timer->start(1000);
+        adjustSize();
+        move(anchor->mapToGlobal(QPoint(0, -height() - 4)));
+    }
+
+private:
+    void tick()
+    {
+        mReset->setText(mLeft > 0 ? QString("Reset (%1)").arg(mLeft) : QString("Reset"));
+        mReset->setEnabled(mLeft <= 0);
+        --mLeft;
+    }
+
+    QPushButton* mReset;
+    int mLeft = kResetDelaySeconds;
+};
 
 /** A collapsible run of rows under a header; the rows stay in the page's form so labels line up across sections. */
 struct Section
@@ -233,14 +307,25 @@ void applyStudioLock(const Page& p, QWidget* field, const std::string& key)
     field->setToolTip("Set by your studio" + (field->toolTip().isEmpty() ? QString() : "\n" + field->toolTip()));
 }
 
-/** Adds a row and records it for the search; `key` is what it edits, matched like the label and tooltips. */
+/**
+ * Adds a row and records it for the search; `key` is what it edits, matched like the label and tooltips. `fallback` is
+ * the value the row shows while the key is unset, which its label's Copy Value gives too.
+ */
 template <typename Label>
-void addRow(Page& p, Label label, QWidget* field, const std::string& key)
+void addRow(Page& p, Label label, QWidget* field, const std::string& key, json fallback = nullptr)
 {
     applyStudioLock(p, field, key);
     p.form->addRow(label, field);
     int row = p.form->rowCount() - 1;
     QWidget* labelWidget = p.form->itemAt(row, QFormLayout::LabelRole)->widget();
+    if (!key.empty())
+    {
+        std::string file = p.file;
+        onRightClickCopy(labelWidget, QString::fromStdString(file + (key.front() == '/' ? "" : "/") + key), [file, key, fallback] {
+            json v = PrefStore::get().value(file, key);
+            return v.is_null() ? fallback : v;
+        });
+    }
     QString labelText = labelWidget->property("text").toString();
     QString category = QString::fromStdString(p.title);
     if (p.section)
@@ -317,7 +402,7 @@ void choice(Page& p, const char* label, const char* key, std::vector<std::pair<Q
     QObject::connect(box, &QComboBox::currentIndexChanged, box,
                      [box, file, k](int) { PrefStore::get().set(file, k, box->currentData().toString().toStdString()); });
     setComboDefault(box, box->findData(QString::fromStdString(fallback)));
-    addRow(p, label, box, k);
+    addRow(p, label, box, k, fallback);
 }
 
 void toggle(Page& p, const char* label, const char* key, bool fallback)
@@ -337,7 +422,7 @@ void toggle(Page& p, const char* label, const char* key, bool fallback)
     });
     QObject::connect(c, &QObject::destroyed, [listener] { PrefStore::get().removeOnChanged(listener); });
     setCheckDefault(c, fallback);
-    addRow(p, label, c, k);
+    addRow(p, label, c, k, fallback);
 }
 
 void number(Page& p, const char* label, const char* key, double fallback, double lo, double hi, double step, int decimals = 2)
@@ -350,7 +435,7 @@ void number(Page& p, const char* label, const char* key, double fallback, double
     std::string file = p.file, k = key;
     QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [file, k](double v) { PrefStore::get().set(file, k, v); });
     setSpinDefault(s, fallback);
-    addRow(p, label, s, k);
+    addRow(p, label, s, k, fallback);
 }
 
 /** A swatch that opens a color picker; the pref holds sRGB "#rrggbb". */
@@ -378,7 +463,7 @@ void color(Page& p, const char* label, const std::string& key, const std::string
         PrefStore::get().set(file, key, fallback);
         show(QString::fromStdString(fallback));
     }, QString::fromStdString(fallback), b);
-    addRow(p, name, b, key);
+    addRow(p, name, b, key, fallback);
 }
 
 void text(Page& p, const char* label, const char* key, const std::string& fallback, bool fileButton = false)
@@ -408,7 +493,7 @@ void text(Page& p, const char* label, const char* key, const std::string& fallba
         e->setText(QString::fromStdString(fallback));
         PrefStore::get().set(file, k, fallback);
     }, fallback.empty() ? "empty" : QString::fromStdString(fallback), e);
-    addRow(p, name, row, k);
+    addRow(p, name, row, k, fallback);
 }
 
 /** Shows the page's last row only while shown() holds (and its section is open), checked whenever the page's prefs change. */
@@ -1042,7 +1127,8 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     {
         if (!def->build)
             continue;
-        Page p = page(tabs, &rows, def->title.c_str(), def->file.c_str());
+        mFiles.insert(def->file);
+        Page p =page(tabs, &rows, def->title.c_str(), def->file.c_str());
         prefPages::PageBuilder builder(&p);
         try
         {
@@ -1060,6 +1146,20 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
         QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(PrefStore::get().userDir().wstring())));
     });
     bottom->addWidget(new QLabel("Changes apply immediately.", this));
+    auto* reset = new QToolButton(this);
+    reset->setIcon(icon("refresh-alert"));
+    reset->setAutoRaise(true);
+    reset->setToolTip("Reset all preferences to their defaults, keeping a backup of the current ones");
+    connect(reset, &QToolButton::clicked, this, [this, reset] { (new ResetConfirm(reset, [this] { resetAll(); }))->show(); });
+    bottom->addWidget(reset);
+    auto* restore = new QToolButton(this);
+    restore->setIcon(icon("restore"));
+    restore->setAutoRaise(true);
+    restore->setEnabled(!readBackup().empty());
+    restore->setToolTip(restore->isEnabled() ? "Restore the preferences as they were before the last reset"
+                                             : "No preferences backed up yet: resetting makes a backup");
+    connect(restore, &QToolButton::clicked, this, [this] { restoreBackup(); });
+    bottom->addWidget(restore);
     bottom->addStretch(1);
     bottom->addWidget(folder);
     auto* close = new QPushButton("Close", this);
@@ -1068,17 +1168,67 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     v->addLayout(bottom);
 }
 
+void PreferencesDialog::resetAll()
+{
+    PrefStore& prefs = PrefStore::get();
+    json backup = json::object();
+    for (const std::string& file : mFiles)
+        backup[file] = prefs.userDoc(file);
+    std::error_code ec;
+    std::filesystem::create_directories(backupPath().parent_path(), ec);
+    std::ofstream out(backupPath(), std::ios::binary | std::ios::trunc);
+    out << backup.dump(2) << "\n";
+    out.close();
+    if (!out)
+    {
+        log::error("preferences: couldn't write the backup {}, nothing was reset", paths::toUtf8(backupPath()));
+        return;
+    }
+    for (const std::string& file : mFiles)
+    {
+        json kept = json::object();
+        for (const auto& [keptFile, key] : kKeptOnReset)
+            if (const json::json_pointer ptr(key); file == keptFile && backup[file].contains(ptr))
+                kept[ptr] = backup[file][ptr];
+        prefs.setUserDoc(file, std::move(kept));
+    }
+    log::info("preferences reset, the previous ones are in {}", paths::toUtf8(backupPath()));
+    rebuild();
+}
+
+void PreferencesDialog::restoreBackup()
+{
+    json backup = readBackup();
+    for (auto& [file, data] : backup.items())
+        PrefStore::get().setUserDoc(file, data);
+    log::info("preferences restored from {}", paths::toUtf8(backupPath()));
+    rebuild();
+}
+
+void PreferencesDialog::rebuild()
+{
+    QWidget* parent = parentWidget();
+    QRect geo = geometry();
+    auto* tabs = findChild<QTabWidget*>();
+    int tab = tabs ? tabs->currentIndex() : 0;
+    gDialog = nullptr;
+    close();
+    open(parent);
+    gDialog->setGeometry(geo);
+    if (auto* t = gDialog->findChild<QTabWidget*>())
+        t->setCurrentIndex(tab);
+}
+
 void PreferencesDialog::open(QWidget* parent)
 {
-    static QPointer<PreferencesDialog> dialog;
-    if (!dialog)
+    if (!gDialog)
     {
-        dialog = new PreferencesDialog(parent);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        gDialog = new PreferencesDialog(parent);
+        gDialog->setAttribute(Qt::WA_DeleteOnClose);
     }
-    dialog->show();
-    dialog->raise();
-    dialog->activateWindow();
-    flashLocate(dialog);
+    gDialog->show();
+    gDialog->raise();
+    gDialog->activateWindow();
+    flashLocate(gDialog);
 }
 } // namespace lila::ui

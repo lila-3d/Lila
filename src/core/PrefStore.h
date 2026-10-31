@@ -70,6 +70,11 @@ public:
     void set(std::string_view file, std::string_view key, json value, PrefScope scope = PrefScope::User);
     void remove(std::string_view file, std::string_view key, PrefScope scope = PrefScope::User);
 
+    /** The user dir's own document for a file, without the layers around it. */
+    json userDoc(std::string_view file) const;
+    /** Replaces the user dir's document for a file; an empty object leaves the file to its defaults. */
+    void setUserDoc(std::string_view file, json data);
+
     /**
      * Defaults contributed at runtime, by extensions and modes: they sit above the built-in defaults and below the
      * user's, so a user edit still wins and removing them brings the built-ins back. Each is kept under a layer id
