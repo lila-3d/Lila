@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 /**
@@ -117,6 +118,8 @@ public:
     {
     public:
         Sample eval(const glm::dvec3& p) const;
+        /** Indices into the field's program, -1 for an intersect that empties its group here. */
+        std::span<const int> code() const { return mCode; }
 
     private:
         friend class Field;
@@ -124,6 +127,14 @@ public:
         std::vector<int> mCode; // instruction indices, kEmpty for an intersect that empties its group here
     };
     Local local(const Bounds& region, double pad) const;
+
+    /**
+     * The program as 32-bit words for a GPU. prims: kPrimWords floats each (toLocal's first three rows, row major; scale;
+     * shape; radius; endRadius; length; rounding; extents). code: 4 words each (kind 0 shape, 1 group start, 2 group end;
+     * op; shape index; blend as float bits).
+     */
+    static constexpr size_t kPrimWords = 24;
+    void gpuProgram(std::vector<float>& prims, std::vector<int32_t>& code) const;
 
     /**
      * The regions where b's field can differ from a's, or nothing when it may differ anywhere (structure, symmetry or
@@ -168,6 +179,31 @@ private:
     bool mSymmetric = false;
 };
 
+/** Lattice points along a brick's side: its 8 cells, and one cell of apron on either side. */
+inline constexpr int kBrickCells = 8;
+inline constexpr int kBrickSamples = kBrickCells + 3;
+
+/**
+ * Samples bricks of the lattice on a GPU. The renderer registers one; without it, or when it declines, the mesher
+ * samples on the CPU. Within one update every brick takes the same path, so neighbouring bricks agree on signs.
+ */
+class SampleBackend
+{
+public:
+    virtual ~SampleBackend() = default;
+    /**
+     * The distance at every lattice point of each brick, kBrickSamples^3 floats per brick, x fastest; a brick's first
+     * point is lattice (brick * kBrickCells - 1), at lattice * voxelSize. Each brick runs its own program: localCode
+     * from localStart[n], localCount[n] entries. False when it cannot run now.
+     */
+    virtual bool sample(std::span<const float> prims, std::span<const int32_t> code, bool symmetric, std::span<const glm::ivec3> bricks,
+                        std::span<const int32_t> localCode, std::span<const uint32_t> localStart, std::span<const uint32_t> localCount,
+                        double voxelSize, std::vector<float>& out) = 0;
+};
+
+/** Registers (or with null removes) the GPU sampler. */
+LILA_SCENE_API void setSampleBackend(std::shared_ptr<SampleBackend> backend);
+
 struct MeshOptions
 {
     double voxelSize = 1.0;
@@ -175,6 +211,8 @@ struct MeshOptions
     int projectSteps = 1;
     /** Place vertices by dual contouring, so hard joins and box edges stay sharp; slower. */
     bool sharp = false;
+    /** Sample on the GPU when a backend is registered. */
+    bool gpu = true;
     /** Write the blended primitive colours as the color set "clay". */
     bool colors = true;
     /** Throws past this many bricks rather than run away with a tiny voxel size. */

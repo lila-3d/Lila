@@ -123,7 +123,7 @@ public:
         LILA_ZONE();
 
         const Field field(rootOf(*this), choice(*this, "symmetry") == 1);
-        const MeshOptions o{.voxelSize = num(*this, "voxelSize"), .sharp = as<bool>(idx(*this, "sharpEdges")), .colors = as<bool>(idx(*this, "colors"))};
+        const MeshOptions o{.voxelSize = num(*this, "voxelSize"), .sharp = as<bool>(idx(*this, "sharpEdges")), .gpu = as<bool>(idx(*this, "gpu")), .colors = as<bool>(idx(*this, "colors"))};
         std::string warning;
         try
         {
@@ -428,6 +428,7 @@ void registerTypes()
         param("symmetry", PlugType::Enum, int64_t(0), "Mirror the clay across the object's YZ plane.", {"off", "x"}),
         param("sharpEdges", PlugType::Bool, false, "Keep hard joins and box edges sharp (dual contouring). For hard-surface clay; slower."),
         param("colors", PlugType::Bool, true, "Write the shapes' colours to the clay color set."),
+        param("gpu", PlugType::Bool, true, "Sample the surface on the GPU when one is available; off meshes on the CPU."),
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the last build."},
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The clay surface."},
     };
@@ -617,6 +618,7 @@ void registerCommands()
             const Field field(rootOf(*surface), choice(*surface, "symmetry") == 1);
             MeshOptions o{.voxelSize = a.get<double>("voxelSize", num(*surface, "finalVoxelSize")),
                           .sharp = surface->as<bool>(idx(*surface, "sharpEdges")),
+                          .gpu = surface->as<bool>(idx(*surface, "gpu")),
                           .colors = surface->as<bool>(idx(*surface, "colors"))};
             geo::Mesh m;
             try

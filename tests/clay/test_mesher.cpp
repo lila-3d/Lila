@@ -135,6 +135,18 @@ TEST_CASE("clay mesher: an update re-meshes only what changed and matches a full
     // Nothing changed: nothing re-meshed.
     mesher.update(moved, {.voxelSize = 0.5});
     CHECK(mesher.lastRebuilt() == 0);
+
+    // Adding a shape re-meshes only where it reaches, and matches a full build too.
+    items.insert(items.begin() + 5, ballAt({45, 6, 0}, 3, Op::Subtract, 1.0));
+    const Field added(tree(items));
+    const geo::Mesh grown = *mesher.update(added, {.voxelSize = 0.5});
+    CHECK(mesher.lastRebuilt() < all / 4);
+    const std::vector<glm::dvec3> c = sortedPoints(grown), d = sortedPoints(mesh(added, {.voxelSize = 0.5}));
+    REQUIRE(c.size() == d.size());
+    double off = 0.0;
+    for (size_t i = 0; i < c.size(); ++i)
+        off = std::max(off, glm::length(c[i] - d[i]));
+    CHECK(off < 1e-9);
 }
 
 TEST_CASE("clay mesher: colours, an empty field, and a runaway voxel size")
@@ -173,6 +185,7 @@ TEST_CASE("clay mesher: 200 shapes mesh at an effective 256^3 in reasonable time
     for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
         if (m.edgeValid(e) && m.edgeFaceCount(e) != 2)
             ++open;
+    CHECK(m.validate(geo::kValidateAll).empty());
     MESSAGE("200 shapes at 0.45 cm: " << ms << " ms, " << m.faceCapacity() << " quads, " << open << " edges not shared by two faces");
     CHECK(m.faceCapacity() > 0);
 }

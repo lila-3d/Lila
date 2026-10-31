@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <tuple>
 
 namespace lila::clay
 {
@@ -316,36 +318,125 @@ Field::Local Field::local(const Bounds& region, double pad) const
     return out;
 }
 
+void Field::gpuProgram(std::vector<float>& prims, std::vector<int32_t>& code) const
+{
+    prims.assign(mPrims.size() * kPrimWords, 0.0f);
+    for (size_t n = 0; n < mPrims.size(); ++n)
+    {
+        const Prim& p = mPrims[n];
+        float* w = prims.data() + n * kPrimWords;
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c)
+                w[r * 4 + c] = float(p.toLocal[c][r]);
+        w[12] = float(p.scale);
+        w[13] = float(int(p.shape.shape));
+        w[14] = float(p.shape.radius);
+        w[15] = float(p.shape.endRadius);
+        w[16] = float(p.shape.length);
+        w[17] = float(p.shape.rounding);
+        w[18] = float(p.shape.extents.x);
+        w[19] = float(p.shape.extents.y);
+        w[20] = float(p.shape.extents.z);
+    }
+    code.assign(mCode.size() * 4, 0);
+    for (size_t i = 0; i < mCode.size(); ++i)
+    {
+        const Instr& in = mCode[i];
+        const float blend = float(in.blend);
+        code[i * 4] = int32_t(in.kind);
+        code[i * 4 + 1] = int32_t(in.op);
+        code[i * 4 + 2] = in.prim;
+        std::memcpy(&code[i * 4 + 3], &blend, 4);
+    }
+}
+
 std::optional<std::vector<Bounds>> Field::changes(const Field& a, const Field& b)
 {
-    if (a.mSymmetric != b.mSymmetric || a.mCode.size() != b.mCode.size())
+    if (a.mSymmetric != b.mSymmetric)
         return std::nullopt;
     std::vector<Bounds> out;
-    for (size_t i = 0; i < a.mCode.size(); ++i)
-    {
+    auto touch = [&](const Bounds& r) {
+        if (r.empty())
+            return;
+        out.push_back(r);
+        if (a.mSymmetric)
+            out.push_back(mirrored(r));
+    };
+    // Same structure: the same kind and op, and a group's end as far after its start.
+    auto alike = [](const Instr& x, size_t i, const Instr& y, size_t j) {
+        return x.kind == y.kind && x.op == y.op && (x.kind != Kind::Begin || x.match - int(i) == y.match - int(j));
+    };
+    // What one aligned pair changes; false when the change can reach anywhere.
+    auto compare = [&](size_t i, size_t j) {
         const Instr& x = a.mCode[i];
-        const Instr& y = b.mCode[i];
-        if (x.kind != y.kind || x.op != y.op || x.match != y.match)
-            return std::nullopt;
+        const Instr& y = b.mCode[j];
         bool same = x.blend == y.blend && x.bounds == y.bounds;
         if (x.kind == Kind::Prim)
             same = same && a.mPrims[size_t(x.prim)] == b.mPrims[size_t(y.prim)];
         if (same || x.kind == Kind::End)
-            continue;
+            return true;
         // A changed intersect reaches everything it cut away.
         if (x.op == Op::Intersect)
-            return std::nullopt;
+            return false;
         // A group's own change is its join; its children report their own.
         if (x.kind == Kind::Begin && x.blend == y.blend)
-            continue;
-        for (const Bounds& r : {x.bounds, y.bounds})
-            if (!r.empty())
-            {
-                out.push_back(r);
-                if (a.mSymmetric)
-                    out.push_back(mirrored(r));
-            }
+            return true;
+        touch(x.bounds);
+        touch(y.bounds);
+        return true;
+    };
+    auto identical = [&](size_t i, size_t j) {
+        const Instr& x = a.mCode[i];
+        const Instr& y = b.mCode[j];
+        // A group's bounds follow its children, which report their own changes.
+        return alike(x, i, y, j) && x.blend == y.blend && (x.kind == Kind::Begin || x.bounds == y.bounds) &&
+               (x.kind != Kind::Prim || a.mPrims[size_t(x.prim)] == b.mPrims[size_t(y.prim)]);
+    };
+    // The unchanged start and end; what lies between was edited, added or removed.
+    const size_t na = a.mCode.size(), nb = b.mCode.size();
+    size_t head = 0;
+    while (head < na && head < nb && identical(head, head))
+        ++head;
+    size_t tail = 0;
+    while (tail < na - head && tail < nb - head && identical(na - 1 - tail, nb - 1 - tail))
+        ++tail;
+    // A group cut in half by the middle would join differently; keep groups whole by widening to their ends.
+    auto balanced = [](const std::vector<Instr>& code, size_t from, size_t to) {
+        int depth = 0;
+        for (size_t i = from; i < to; ++i)
+        {
+            depth += code[i].kind == Kind::Begin ? 1 : code[i].kind == Kind::End ? -1 : 0;
+            if (depth < 0)
+                return false;
+        }
+        return depth == 0;
+    };
+    if (!balanced(a.mCode, head, na - tail) || !balanced(b.mCode, head, nb - tail))
+        return std::nullopt;
+    // Edited in place: the same structure, pair by pair, as when shapes move or resize.
+    if (na - tail - head == nb - tail - head)
+    {
+        bool paired = true;
+        for (size_t i = head; i < na - tail && paired; ++i)
+            paired = alike(a.mCode[i], i, b.mCode[i], i);
+        if (paired)
+        {
+            for (size_t i = head; i < na - tail; ++i)
+                if (!compare(i, i))
+                    return std::nullopt;
+            return out;
+        }
     }
+    // Shapes added or removed: each changes only where it reaches.
+    for (const auto& [field, from, to] : {std::tuple{&a, head, na - tail}, std::tuple{&b, head, nb - tail}})
+        for (size_t i = from; i < to; ++i)
+        {
+            const Instr& in = field->mCode[i];
+            if (in.op == Op::Intersect)
+                return std::nullopt;
+            if (in.kind != Kind::End)
+                touch(in.bounds);
+        }
     return out;
 }
 } // namespace lila::clay

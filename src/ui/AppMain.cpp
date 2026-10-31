@@ -17,6 +17,7 @@
 #include "mcp/McpServer.h"
 #include "python/Python.h"
 #include "render/Baker.h"
+#include "render/ClayGpu.h"
 #include "render/DeformGpu.h"
 #include "render/MeshMaps.h"
 #include "render/PaintGpu.h"
@@ -233,6 +234,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     render::Renderer::get().start();
     render::registerGpuBakeBackend();
     render::registerGpuDeformers();
+    render::registerGpuClay();
     render::texgpu::registerTexGpu();
     render::paint::registerCommands();
     texLive::install();

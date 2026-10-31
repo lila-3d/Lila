@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <mutex>
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
@@ -19,10 +20,10 @@ namespace
 using glm::dvec3;
 using glm::ivec3;
 
-constexpr int kBrick = 8;
+constexpr int kBrick = kBrickCells;
 // Lattice samples per brick axis: the brick's cells, one cell of apron below and one above, so every cell around an
 // edge the brick owns is in reach.
-constexpr int kSamples = kBrick + 3;
+constexpr int kSamples = kBrickSamples;
 constexpr int kCells = kSamples - 1;
 constexpr int kBias = 1 << 19;
 
@@ -212,7 +213,8 @@ dvec3 sharpVertex(const Field::Local& f, const double corner[8], const std::arra
     return glm::clamp(x, base + 0.05 * h, base + 0.95 * h);
 }
 
-Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptions& o)
+/** The brick's lattice of distances, x fastest, sampled on the CPU. */
+std::vector<double> cpuSamples(const Field::Local& f, const ivec3& b, double h)
 {
     const ivec3 origin = b * kBrick - 1; // global lattice index of sample 0
     std::vector<double> d(size_t(kSamples) * kSamples * kSamples, std::numeric_limits<double>::quiet_NaN());
@@ -258,6 +260,13 @@ Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptio
                     const int a = std::min(i / 2, kBlocks - 1), b2 = std::min(j / 2, kBlocks - 1), c = std::min(k / 2, kBlocks - 1);
                     v = empty * blockSign[size_t(a) + size_t(kBlocks) * (size_t(b2) + size_t(kBlocks) * size_t(c))];
                 }
+    return d;
+}
+
+Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptions& o, std::vector<double> d)
+{
+    const ivec3 origin = b * kBrick - 1;
+    auto at = [](int i, int j, int k) { return size_t(i) + size_t(kSamples) * (size_t(j) + size_t(kSamples) * size_t(k)); };
     auto solid = [&](int i, int j, int k) { return d[at(i, j, k)] < 0.0; };
 
     struct Cell
@@ -328,6 +337,9 @@ Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptio
             if (step + 1 < o.projectSteps)
                 here = f.eval(p);
         }
+        // Inside the cell, short of its faces: vertices of neighbouring cells could otherwise meet and leave zero-area faces.
+        const dvec3 cellMin = dvec3(origin + ivec3(i, j, k)) * h;
+        p = glm::clamp(p, cellMin + 0.001 * h, cellMin + 0.999 * h);
         v = int(piece.points.size());
         piece.cells.push_back(pack(origin + ivec3(i, j, k)) * 8 + uint64_t(comp));
         piece.points.push_back(p);
@@ -368,12 +380,28 @@ struct IvecHash
 {
     size_t operator()(const ivec3& v) const { return size_t(pack(v) * 0x9E3779B97F4A7C15ull); }
 };
+
+std::mutex gBackendMutex;
+std::shared_ptr<SampleBackend> gBackend;
+
+std::shared_ptr<SampleBackend> sampleBackend()
+{
+    std::scoped_lock lock(gBackendMutex);
+    return gBackend;
+}
 } // namespace
+
+void setSampleBackend(std::shared_ptr<SampleBackend> backend)
+{
+    std::scoped_lock lock(gBackendMutex);
+    gBackend = std::move(backend);
+}
 
 struct Mesher::State
 {
     std::optional<Field> field;
     MeshOptions options;
+    bool gpu = false; // how the cached bricks were sampled
     std::unordered_map<ivec3, Piece, IvecHash> bricks;
     size_t rebuilt = 0;
     std::shared_ptr<const geo::Mesh> last;
@@ -396,7 +424,10 @@ std::shared_ptr<const geo::Mesh> Mesher::update(const Field& field, const MeshOp
     if (!(h > 0.0))
         throw std::invalid_argument("clay: voxel size must be above 0");
 
-    const bool sameMeshing = s.field && s.options.voxelSize == h && s.options.projectSteps == options.projectSteps && s.options.sharp == options.sharp;
+    std::shared_ptr<SampleBackend> backend = options.gpu ? sampleBackend() : nullptr;
+    // Bricks sampled one way never weld to bricks sampled the other: float and double disagree on signs at the surface.
+    const bool sameMeshing = s.field && s.options.voxelSize == h && s.options.projectSteps == options.projectSteps &&
+                             s.options.sharp == options.sharp && s.gpu == bool(backend);
     std::optional<std::vector<Bounds>> regions;
     if (sameMeshing)
         regions = Field::changes(*s.field, field);
@@ -434,12 +465,52 @@ std::shared_ptr<const geo::Mesh> Mesher::update(const Field& field, const MeshOp
     if (todo.size() > options.maxBricks)
         throw std::runtime_error("clay: voxel size too small for the clay's size; raise it");
 
+    std::vector<std::optional<Field::Local>> locals(todo.size());
+    tbb::parallel_for(size_t(0), todo.size(), [&](size_t n) {
+        Field::Local local = field.local(brickBounds(todo[n], h), 4.0 * h);
+        if (live(field, local, todo[n], h))
+            locals[n] = std::move(local);
+    });
+    std::vector<float> gpuSamples;
+    std::vector<size_t> gpuSlot(todo.size(), SIZE_MAX);
+    if (backend)
+    {
+        std::vector<float> prims;
+        std::vector<int32_t> code, localCode;
+        std::vector<ivec3> bricks;
+        std::vector<uint32_t> start, count;
+        field.gpuProgram(prims, code);
+        for (size_t n = 0; n < todo.size(); ++n)
+            if (locals[n])
+            {
+                gpuSlot[n] = bricks.size();
+                bricks.push_back(todo[n]);
+                start.push_back(uint32_t(localCode.size()));
+                count.push_back(uint32_t(locals[n]->code().size()));
+                localCode.insert(localCode.end(), locals[n]->code().begin(), locals[n]->code().end());
+            }
+        if (!bricks.empty() && !backend->sample(prims, code, field.symmetric(), bricks, localCode, start, count, h, gpuSamples))
+        {
+            // The GPU declined: everything again on the CPU, so no brick mixes the two.
+            MeshOptions cpu = options;
+            cpu.gpu = false;
+            s.field.reset();
+            return update(field, cpu);
+        }
+    }
     std::vector<std::optional<Piece>> built(todo.size());
     tbb::parallel_for(size_t(0), todo.size(), [&](size_t n) {
-        const ivec3 b = todo[n];
-        const Field::Local local = field.local(brickBounds(b, h), 4.0 * h);
-        if (live(field, local, b, h))
-            built[n] = meshBrick(local, b, h, options);
+        if (!locals[n])
+            return;
+        std::vector<double> d;
+        if (gpuSlot[n] != SIZE_MAX)
+        {
+            const float* from = gpuSamples.data() + gpuSlot[n] * size_t(kSamples * kSamples * kSamples);
+            d.assign(from, from + size_t(kSamples * kSamples * kSamples));
+        }
+        else
+            d = cpuSamples(*locals[n], todo[n], h);
+        built[n] = meshBrick(*locals[n], todo[n], h, options, std::move(d));
     });
     for (size_t n = 0; n < todo.size(); ++n)
         if (built[n] && !built[n]->quads.empty())
@@ -451,6 +522,7 @@ std::shared_ptr<const geo::Mesh> Mesher::update(const Field& field, const MeshOp
 
     s.field = field;
     s.options = options;
+    s.gpu = bool(backend);
     s.rebuilt = todo.size();
 
     // Weld in brick order, so a rebuild and an update give the same mesh.

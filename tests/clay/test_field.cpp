@@ -159,6 +159,22 @@ TEST_CASE("clay field: changes reports where an edit can reach")
     CHECK((*r)[1].max.x == doctest::Approx(65.0));
 
     CHECK(Field::changes(a, a)->empty());
-    CHECK_FALSE(Field::changes(a, Field(root({sphere({0, 0, 0}, 5)}))));
+    // Removing or adding a shape reaches only that shape; an intersect reaches everything.
+    auto removed = Field::changes(a, Field(root({sphere({0, 0, 0}, 5)})));
+    REQUIRE(removed);
+    REQUIRE(removed->size() == 1);
+    CHECK((*removed)[0].min.x == doctest::Approx(45.0));
+    auto added = Field::changes(a, Field(root({sphere({0, 0, 0}, 5), sphere({20, 0, 0}, 2), sphere({50, 0, 0}, 5)})));
+    REQUIRE(added);
+    REQUIRE(added->size() == 1);
+    CHECK((*added)[0].min.x == doctest::Approx(18.0));
+    CHECK_FALSE(Field::changes(a, Field(root({sphere({0, 0, 0}, 5), sphere({50, 0, 0}, 5), sphere({0, 0, 0}, 5, Op::Intersect)}))));
+
+    // A shape moved inside a group reaches only its old and new place.
+    const Field g1(root({sphere({0, 0, 0}, 5), Item{.children = {sphere({20, 0, 0}, 2), sphere({30, 0, 0}, 2)}}}));
+    const Field g2(root({sphere({0, 0, 0}, 5), Item{.children = {sphere({20, 0, 0}, 2), sphere({34, 0, 0}, 2)}}}));
+    auto inGroup = Field::changes(g1, g2);
+    REQUIRE(inGroup);
+    CHECK(inGroup->size() == 2);
     CHECK_FALSE(Field::changes(a, Field(root({sphere({0, 0, 0}, 5), sphere({50, 0, 0}, 5)}), true)));
 }

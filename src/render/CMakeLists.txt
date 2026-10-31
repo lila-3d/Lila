@@ -6,6 +6,7 @@ lila_module(lila_render UI
     BakerKernels.cpp
     Compute.cpp
     CubeLut.cpp
+    ClayGpu.cpp
     DeformGpu.cpp
     DrawBatches.cpp
     Environment.cpp
@@ -38,6 +39,7 @@ lila_add_shaders(lila_render FILES
     shaders/bake_sw.slang
     shaders/bloom.slang
     shaders/compose.slang
+    shaders/clay.slang
     shaders/contact.slang
     shaders/deform.slang
     shaders/exposure.slang
