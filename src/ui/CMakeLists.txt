@@ -174,7 +174,7 @@ lila_module(lila_ui UI
     ToolBox.cpp ToolBox.h
     VertexPaintTool.cpp VertexPaintTool.h
     PaintSelect.cpp PaintSelect.h
-    ViewportTool.cpp ViewportTool.h StepHistory.h SimPreview.cpp SimPreview.h
+    ViewportTool.cpp ViewportTool.h ViewportToast.cpp ViewportToast.h StepHistory.h SimPreview.cpp SimPreview.h
     ViewportWidget.cpp ViewportWidget.h ViewportWidgetDetail.h ViewportComponents.cpp ViewportViews.cpp ViewportInput.cpp
     CameraBookmarks.cpp CameraBookmarks.h)
 

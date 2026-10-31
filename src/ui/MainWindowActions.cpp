@@ -3,6 +3,7 @@
 #include "ui/RenderOutputDialog.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
+#include "ui/ViewportToast.h"
 
 namespace lila::ui
 {
@@ -235,6 +236,7 @@ void MainWindow::registerActions()
     hud::registerActions([this] { return mViewports->active(); });
     displayAids::registerActions([this] { return mViewports->active(); });
     cameraBookmarks::install([this] { return mViewports->active(); });
+    viewportToast::setActive([this] { return mViewports->active(); });
     lodDisplay::registerActions([this] { return mViewports->active(); });
     toolBox::registerItems([this] { return mViewports->active(); });
     cursorBadges::registerDefaults();

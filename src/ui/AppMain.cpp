@@ -89,6 +89,7 @@
 #include "ui/VertexPaintTool.h"
 #include "ui/PaintSelect.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToast.h"
 
 #include <QAbstractEventDispatcher>
 #include <QApplication>
@@ -212,6 +213,7 @@ void registerBatchCommands()
     render::texgpu::registerTexGpu();
     render::paint::registerCommands();
     registerScreenshotCommand();
+    viewportToast::registerCommands();
     modes::registerBuiltins();
     // captureView starts the renderer on demand in batch mode.
     events::subscribe(events::Event::Shutdown, [](const events::EventData&) { render::Renderer::get().stop(); });

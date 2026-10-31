@@ -1,4 +1,5 @@
 #include "ui/ViewportWidgetDetail.h"
+#include "ui/ViewportToast.h"
 #include "scene/SoftSelect.h"
 
 namespace lila::ui
@@ -499,6 +500,7 @@ void ViewportWidget::drawHud(OverlayPainter& p)
         });
     }
     flushToolMessages(p, ctx.view, drawn);
+    viewportToast::draw(p, ctx.view, this, drawn);
 }
 
 void ViewportWidget::drawViewIndicator(OverlayPainter& p)

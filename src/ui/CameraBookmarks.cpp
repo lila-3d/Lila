@@ -2,6 +2,7 @@
 
 #include "core/Events.h"
 #include "ui/Actions.h"
+#include "ui/ViewportToast.h"
 #include "ui/ViewportWidgetDetail.h"
 
 #include <cmath>
@@ -237,17 +238,24 @@ void install(std::function<ViewportWidget*()> active)
         try
         {
             ops::execute("cameraBookmark", flags, CallSource::UI);
+            return true;
         }
         catch (const CommandError& e)
         {
             log::error("{}", e.what());
+            return false;
         }
     };
     for (int slot = 1; slot <= kSlots; ++slot)
     {
         const std::string n = std::to_string(slot);
         actions::add({.id = "viewport.bookmarkSet" + n, .label = "Set Bookmark " + n, .category = "View",
-                      .run = [call, slot] { call({{"args", {slot}}, {"set", true}}); },
+                      .run =
+                          [call, slot, n] {
+                              if (!call({{"args", {slot}}, {"set", true}}))
+                                  return;
+                              viewportToast::show(QString::fromStdString("Saved Bookmark " + n), activeView());
+                          },
                       .doc = "Saves where the active view's camera is under bookmark " + n + ". Each camera and view has its own.",
                       .python = "lila.ops.cameraBookmark(" + n + ", set=True)"});
         actions::add({.id = "viewport.bookmarkGo" + n, .label = "Bookmark " + n, .category = "View",
