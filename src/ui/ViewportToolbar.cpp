@@ -404,12 +404,12 @@ QString barStyle(const char* name, const char* edge)
         #%1 QToolButton[partial="true"] { background: #444444; border: 1px solid #5c5c5c; }
         #%1 QToolButton::menu-indicator { image: none; width: 0; }
         #%1 QDoubleSpinBox { background: #2a2a2a; border: 1px solid #262626; padding: 0 2px; }
-        #%1 QFrame#toolbarSeparator { color: #4c4c4c; }
+        #%1 QFrame#toolbarSeparator { color: #5a5a5a; }
     )")
         .arg(name, edge);
 }
 
-QFrame* separatorLine(QWidget* parent, int width = 7)
+QFrame* separatorLine(QWidget* parent, int width = 13)
 {
     auto* line = new QFrame(parent);
     line->setFrameShape(QFrame::VLine);

@@ -116,7 +116,9 @@ QSizeF sizeOf(const Block& b)
 void drawBlock(OverlayPainter& p, const Block& b, const QRectF& at)
 {
     Columns cols(b);
-    const glm::vec4 text = p.ink(kText, kAlpha, at), dim = p.ink(kDim, kAlpha, at);
+    // A soft plate keeps the block legible over a mid-gray grid or a bright model, where neither light nor dark ink holds up.
+    p.rect(at.adjusted(-6, -3, 6, 3), {0.07f, 0.07f, 0.07f, 0.45f});
+    const glm::vec4 text{kText, kText, kText, kAlpha}, dim{kDim, kDim, kDim, kAlpha};
     double y = at.top() + kAscent;
     for (const Row& r : b)
     {

@@ -77,6 +77,7 @@
       "Ctrl+Shift+T": "window.modelingToolkit",
       "Ctrl+T": "window.searchMenus",
       "Ctrl+F": "window.searchScene",
+      "Shift+T": "window.searchTearOffs",
       "Shift+G": "adjustLastOp.show",
       "G": "edit.repeatLast",
       "M": "window.materialEditor",

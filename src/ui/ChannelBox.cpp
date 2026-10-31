@@ -128,7 +128,22 @@ public:
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
-        QStyledItemDelegate::paint(painter, option, index);
+        // Editable values sit in a field like the Attribute Editor's, so they read as something to drag or type into.
+        QStyleOptionViewItem opt(option);
+        if (index.flags() & Qt::ItemIsEditable)
+        {
+            QVariant bg = index.data(Qt::BackgroundRole);
+            // The table is drawn on the field colour itself, so the field steps up from it.
+            QColor fill = bg.isValid() ? bg.value<QBrush>().color() : option.palette.color(QPalette::AlternateBase);
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setPen(QPen(option.palette.color(QPalette::Button), 1.0));
+            painter->setBrush(fill);
+            painter->drawRoundedRect(QRectF(option.rect).adjusted(1.5, 1.5, -1.5, -1.5), 2.0, 2.0);
+            painter->restore();
+            opt.rect.adjust(4, 0, -2, 0);
+        }
+        QStyledItemDelegate::paint(painter, opt, index);
         if (mChoices(index.row()).isEmpty())
             return;
         const QRectF r = option.rect;
@@ -141,6 +156,15 @@ public:
         painter->setPen(QPen(c, 1.2));
         painter->drawPolyline(QPolygonF({QPointF(cx - 3.0, cy - 1.5), QPointF(cx, cy + 1.5), QPointF(cx + 3.0, cy - 1.5)}));
         painter->restore();
+    }
+
+protected:
+    void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
+    {
+        QStyledItemDelegate::initStyleOption(option, index);
+        // paint fills the field with the cell's background (keyed, locked), so the style must not fill the cell too.
+        if (index.flags() & Qt::ItemIsEditable)
+            option->backgroundBrush = Qt::NoBrush;
     }
 
 private:

@@ -36,6 +36,12 @@ LILA_UI_API void openBox(QMenuBar* bar, QWidget* over);
  */
 LILA_UI_API void openSceneFinder(QMenuBar* bar, QWidget* over);
 
+/**
+ * The same box listing every menu and titled menu section reachable from the menu bar. Enter tears the pick off under
+ * the cursor, and the next click drops it (tearoff::tearOffToPlace). Switches an open box the same way openBox does.
+ */
+LILA_UI_API void openTearOffSearch(QMenuBar* bar, QWidget* over);
+
 /** Where the scripting API mode sends its picks: the script editor that opened it. */
 struct ApiTarget
 {

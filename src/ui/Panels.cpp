@@ -130,7 +130,7 @@ bool panels::floatingMisplaced(const QDockWidget* dock)
         return false;
     const QRect g = dock->frameGeometry();
     // A floating dock that was never sized comes up at the screen corner at its minimum size.
-    if (g.width() < 200 || g.height() < 120)
+    if (!dock->property(kOwnSizeProperty).toBool() && (g.width() < 200 || g.height() < 120))
         return true;
     for (QScreen* s : QGuiApplication::screens())
         if (s->availableGeometry().contains(g.topLeft() + QPoint(g.width() / 2, 10)))

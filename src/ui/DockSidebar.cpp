@@ -369,7 +369,8 @@ void DockSidebars::reveal(QDockWidget* dock)
             d->activateWindow();
         else
         {
-            if (tabbed)
+            // Checked again here: a dock that was hidden only rejoins its tab group once shown.
+            if (tabbed || !mWindow->tabifiedDockWidgets(d).isEmpty())
                 restoreSize(d);
             ensureUsableSize(d);
         }

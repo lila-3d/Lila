@@ -209,7 +209,7 @@ void registerActions(ext::Context& ctx)
 
 void registerMenus(ext::Context& ctx)
 {
-    menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer"});
+    menus::addMenu(ctx, {.id = "Puppeteer", .title = "Puppeteer", .sets = {"Rigging", "Animation"}});
     for (const char* a : {"mode.puppeteerRig", "mode.puppeteerAnimate", "", "puppeteer.rig.character", "puppeteer.rig.ikChain",
                           "puppeteer.rig.reverseFoot", "puppeteer.rig.looker", "puppeteer.rig.space"})
         menus::addItem(ctx, *a ? menus::Item{.menu = "Puppeteer", .action = a} : menus::Item{.menu = "Puppeteer", .kind = menus::Kind::Separator});

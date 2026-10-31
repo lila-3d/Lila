@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
+
 #include <QTimer>
 #include <QWidget>
 
@@ -62,6 +64,9 @@ LILA_UI_API bool addModifierHeld();
 LILA_UI_API std::string current();
 /** Shows that shelf in the docked shelf. False when there is no such shelf. */
 LILA_UI_API bool setCurrent(const std::string& shelf);
+/** Calls fn with the shelf's name whenever the docked shelf switches tab. Returns an id for removeOnCurrentChanged. */
+LILA_UI_API int onCurrentChanged(std::function<void(const std::string&)> fn);
+LILA_UI_API void removeOnCurrentChanged(int id);
 
 /** Icon size of the floating shelf's buttons, the general pref /floatingShelf/iconSize. Ctrl+wheel over it scales it. */
 constexpr int kFloatingIconDefault = 24;

@@ -78,7 +78,6 @@ private:
 
     FalloffCurveEditor* mEditor = nullptr;
     QWidget* mPresetBox = nullptr;
-    FlowLayout* mPresets = nullptr;
     QWidget* mUserBox = nullptr;
     FlowLayout* mUser = nullptr;
     QComboBox* mMode = nullptr;

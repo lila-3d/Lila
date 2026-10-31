@@ -424,7 +424,7 @@ void registerTextureGraphUi()
                   .doc = "Stop showing the 2D View's output on meshes; they draw their materials again.",
                   .python = "lila.ui.run_action(\"texture.clearPreview\")"});
 
-    menus::addMenu({.id = "Texture", .title = "Texture", .before = "Rig"});
+    menus::addMenu({.id = "Texture", .title = "Texture", .before = "Rig", .sets = {"Modeling"}});
     menus::addActions("Texture", {"texture.newSet", "", "window.textureGraph", "window.texture2d", "", "texture.import", "texture.exportMaterial",
                                   "texture.exportNodes", "texture.exportMaps", "", "texture.clearPreview"});
 }

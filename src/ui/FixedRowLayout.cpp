@@ -80,6 +80,16 @@ void place(QLayoutItem* item, const QRect& r)
         item->setGeometry(r);
 }
 
+/** The width an option box adds beside its button: the box and the gap before it; 0 for a widget without one. */
+int optionSlot(QWidget* w)
+{
+    QLayout* l = w ? w->layout() : nullptr;
+    if (!l || l->count() < 2 || !qobject_cast<QToolButton*>(l->itemAt(0)->widget()))
+        return 0;
+    QWidget* box = l->itemAt(1)->widget();
+    return box ? box->sizeHint().width() + l->spacing() : 0;
+}
+
 /** An option box's button grows into the space its wrapper is given. */
 void fillWrapper(QWidget* w, QToolButton* b)
 {
@@ -156,15 +166,41 @@ int FixedRowLayout::rowHeight(int row) const
     return h;
 }
 
+int FixedRowLayout::gridSlot() const
+{
+    int slot = 0;
+    for (const Entry& e : mItems)
+        slot = std::max(slot, optionSlot(e.item->widget()));
+    return slot;
+}
+
+int FixedRowLayout::gridCell(bool full) const
+{
+    // Every cell keeps room for an option box, so buttons line up whether or not they have one.
+    int slot = gridSlot(), cell = 0;
+    for (const Entry& e : mItems)
+    {
+        Widths w = widths(e.item);
+        cell = std::max(cell, (full ? w.full : w.least) + (optionSlot(e.item->widget()) ? 0 : slot));
+    }
+    return cell;
+}
+
+int FixedRowLayout::gridHeight() const
+{
+    int height = 0;
+    for (int r = 0; r < rowCount(); ++r)
+        height += rowHeight(r) + (r ? spacing() : 0);
+    return height;
+}
+
 QSize FixedRowLayout::minimumSize() const
 {
     int width = 0, height = 0;
     if (mColumns > 0)
     {
-        int cell = 0;
-        for (const Entry& e : mItems)
-            cell = std::max(cell, widths(e.item).least);
-        width = mColumns * cell + (mColumns - 1) * spacing();
+        QMargins m = contentsMargins();
+        return {mColumns * gridCell(false) + (mColumns - 1) * spacing() + m.left() + m.right(), gridHeight() + m.top() + m.bottom()};
     }
     for (int r = 0; r < rowCount(); ++r)
     {
@@ -187,10 +223,8 @@ QSize FixedRowLayout::sizeHint() const
     int width = 0;
     if (mColumns > 0)
     {
-        int cell = 0;
-        for (const Entry& e : mItems)
-            cell = std::max(cell, widths(e.item).full);
-        width = mColumns * cell + (mColumns - 1) * spacing();
+        QMargins m = contentsMargins();
+        return {mColumns * gridCell(true) + (mColumns - 1) * spacing() + m.left() + m.right(), gridHeight() + m.top() + m.bottom()};
     }
     else
         for (int r = 0; r < rowCount(); ++r)
@@ -224,25 +258,25 @@ void FixedRowLayout::setGeometry(const QRect& rect)
 
 void FixedRowLayout::arrangeGrid(const QRect& area)
 {
-    int widest = 0;
-    for (const Entry& e : mItems)
-        widest = std::max(widest, widths(e.item).full);
-    int cell = std::max(0, std::min(widest, (area.width() - (mColumns - 1) * spacing()) / mColumns));
+    const int cell = std::max(0, (area.width() - (mColumns - 1) * spacing()) / mColumns);
     int y = area.y();
     for (int r = 0; r < rowCount(); ++r)
     {
-        int h = rowHeight(r);
+        const int h = rowHeight(r);
         for (const Entry& e : mItems)
         {
             if (e.row != r)
                 continue;
+            QWidget* widget = e.item->widget();
+            int width = cell;
             Widths w = widths(e.item);
             if (w.button)
             {
-                setCompact(w.button, cell < w.full);
-                fillWrapper(e.item->widget(), w.button);
+                setCompact(w.button, width < w.full);
+                fillWrapper(widget, w.button);
             }
-            int width = e.item->widget() ? std::min(cell, e.item->widget()->maximumWidth()) : cell;
+            if (widget)
+                width = std::min(width, widget->maximumWidth());
             place(e.item, QRect(area.x() + e.column * (cell + spacing()), y, width, h));
         }
         y += h + spacing();

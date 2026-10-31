@@ -174,6 +174,8 @@ void MainWindow::registerActions()
     presenter::install(this);
     actions::add({"window.searchScene", "Search Scene...", "Windows", [this] { menuSearch::openSceneFinder(menuBar(), this); }, nullptr,
                   "Finds any object in the scene by name, wildcard, type: or path, selects it and reveals it in the outliner."});
+    actions::add({"window.searchTearOffs", "Search Tear-offs...", "Windows", [this] { menuSearch::openTearOffSearch(menuBar(), this); }, nullptr,
+                  "Finds any menu or menu section by name and tears it off under the cursor as a palette; the next click drops it."});
     auto scriptEditor = [this]() -> ScriptEditor* {
         QDockWidget* d = findChild<QDockWidget*>(kScriptEditorDock);
         return d ? qobject_cast<ScriptEditor*>(d->widget()) : nullptr;

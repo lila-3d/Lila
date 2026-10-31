@@ -12,7 +12,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCursor>
 #include <QDockWidget>
+#include <QElapsedTimer>
+#include <QKeyEvent>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QDropEvent>
@@ -48,6 +51,14 @@ void settle()
 {
     for (int i = 0; i < 3; ++i)
         QApplication::processEvents();
+}
+
+void wait(int ms)
+{
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < ms)
+        QApplication::processEvents(QEventLoop::AllEvents, 5);
 }
 /** Records the action id of a drop from a menu drag. */
 class DropCatcher : public QWidget
@@ -280,4 +291,60 @@ TEST_CASE("pressing a Create item and dragging out of its menu closes the menus"
     QApplication::sendEvent(ghost, &release);
     settle();
     CHECK(catcher.dropped == "create.locator");
+}
+
+TEST_CASE("a tear-off placed from the search follows the cursor until a click drops it")
+{
+    QApplication::setStyle(QStyleFactory::create("Fusion"));
+    QMainWindow window;
+    window.setCentralWidget(new QWidget);
+    QMenu* lights = tearoff::enable(window.menuBar()->addMenu("Lights"));
+    lights->addAction("Point Light");
+    lights->addSection("Sky");
+    lights->addAction("Sun");
+    window.setGeometry(0, 0, 800, 600);
+    window.show();
+    settle();
+
+    QCursor::setPos(200, 200);
+    QDockWidget* dock = tearoff::tearOffToPlace(lights);
+    REQUIRE(dock);
+    settle();
+    CHECK(dock->isFloating());
+    CHECK(dock->property(tearoff::kPlacingProperty).toBool());
+
+    QCursor::setPos(400, 300);
+    for (int i = 0; i < 10 && dock->pos() != QPoint(380, 288); ++i)
+    {
+        wait(20);
+        settle();
+    }
+    CHECK(dock->pos() == QPoint(380, 288));
+
+    // The dropping click is the placer's: the row under it does not run.
+    QPushButton* point = row(dock, "Point Light");
+    REQUIRE(point);
+    bool ran = false;
+    QObject::connect(lights->actions().first(), &QAction::triggered, [&ran] { ran = true; });
+    const QPoint at = point->rect().center();
+    QMouseEvent press(QEvent::MouseButtonPress, at, point->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(point, &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, at, point->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(point, &release);
+    settle();
+    CHECK_FALSE(ran);
+    CHECK_FALSE(dock->property(tearoff::kPlacingProperty).toBool());
+    QCursor::setPos(100, 100);
+    wait(50);
+    settle();
+    CHECK(dock->pos() == QPoint(380, 288));
+
+    // Esc puts back a section made for the placing.
+    QDockWidget* sky = tearoff::tearOffToPlace(lights, "Sky");
+    REQUIRE(sky);
+    settle();
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(sky, &esc);
+    settle();
+    CHECK_FALSE(sky->isVisible());
 }

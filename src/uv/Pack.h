@@ -20,6 +20,7 @@ enum class PackLayout : uint8_t
     GroupTiles,   // each group gets its own UDIM tile, in group order, rows of tilesU
     GroupRegions, // each group gets its own part of the region in tile 1001, sized by its area
     KeepTile,     // each island stays in the UDIM tile its centre is in now
+    GroupLayouts, // each group packs on its own into the full tiles, overlapping the other groups (a texture set per material)
 };
 
 /** What makes a group, for the group layouts. */

@@ -440,10 +440,11 @@ def remove_action(id):
     return _call("action.remove", id=id)
 
 
-def add_menu(id, title=None, area="menuBar", before="", docs="", owner=None):
+def add_menu(id, title=None, area="menuBar", before="", docs="", sets=None, owner=None):
     """A menu bar menu (area "menuBar") or a hotbox panel menu ("hotbox"). Items go in with add_menu_item. docs names a
-    docs page ("curves", "essentials?id=snapping") whose "Open <Page> Docs" row ends the menu."""
-    return _call("menu.add", id=id, title=title or id, area=area, before=before, docs=docs, owner=_owner(owner))
+    docs page ("curves", "essentials?id=snapping") whose "Open <Page> Docs" row ends the menu. sets lists the menu sets
+    ("Modeling", "Rigging", "Animation", "Level") whose menu bar shows it; None shows it in every set."""
+    return _call("menu.add", id=id, title=title or id, area=area, before=before, docs=docs, sets=list(sets or []), owner=_owner(owner))
 
 
 def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", before="", owner=None):

@@ -208,7 +208,8 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     if (op == "menu.add")
     {
         menus::addMenu({.id = str(a, "id"), .title = str(a, "title"), .area = str(a, "area") == "hotbox" ? menus::Area::Hotbox : menus::Area::MenuBar,
-                        .before = str(a, "before"), .docs = str(a, "docs")},
+                        .before = str(a, "before"), .docs = str(a, "docs"),
+                        .sets = a.contains("sets") && a["sets"].is_array() ? a["sets"].get<std::vector<std::string>>() : std::vector<std::string>{}},
                        owner);
         return true;
     }

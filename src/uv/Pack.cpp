@@ -809,12 +809,63 @@ void atomicMax(std::atomic<double>& a, double v)
     {
     }
 }
+
+/** GroupLayouts: packs each group's charts as a Fill layout of its own; the least dense group stands for the result. */
+PackResult packGroupLayouts(std::span<Chart> charts, const PackOptions& opts, std::span<const PackChartInfo> info)
+{
+    const Clock::time_point t0 = Clock::now();
+    std::map<int, std::vector<size_t>> groups;
+    for (size_t i = 0; i < charts.size(); ++i)
+        groups[i < info.size() ? info[i].group : 0].push_back(i);
+    PackOptions one = opts;
+    one.layout = PackLayout::Fill;
+    PackResult res;
+    res.ok = true;
+    res.stackedOn.assign(charts.size(), -1);
+    res.tile.assign(charts.size(), -1);
+    bool first = true;
+    for (const auto& [group, members] : groups)
+    {
+        std::vector<Chart> sub;
+        std::vector<PackChartInfo> subInfo;
+        for (size_t i : members)
+        {
+            sub.push_back(std::move(charts[i]));
+            subInfo.push_back(i < info.size() ? info[i] : PackChartInfo{});
+        }
+        PackResult r = packCharts(sub, one, subInfo);
+        for (size_t k = 0; k < members.size(); ++k)
+        {
+            charts[members[k]] = std::move(sub[k]);
+            res.tile[members[k]] = r.tile[k];
+            if (r.stackedOn[k] >= 0)
+                res.stackedOn[members[k]] = int(members[size_t(r.stackedOn[k])]);
+        }
+        res.cancelled |= r.cancelled;
+        res.ok &= r.ok;
+        res.stacked += r.stacked;
+        res.attempts += r.attempts;
+        res.tilesUsed = std::max(res.tilesUsed, r.tilesUsed);
+        if (first || r.coverage < res.coverage)
+        {
+            res.coverage = r.coverage;
+            res.texelsPerUnit = r.texelsPerUnit;
+        }
+        first = false;
+        if (!r.ok)
+            break;
+    }
+    res.seconds = std::chrono::duration<double>(Clock::now() - t0).count();
+    return res;
+}
 } // namespace
 
 PackResult packCharts(std::span<Chart> charts, const PackOptions& opts, std::span<const PackChartInfo> info)
 {
     LILA_ZONE();
 
+    if (opts.layout == PackLayout::GroupLayouts)
+        return packGroupLayouts(charts, opts, info);
     const Clock::time_point t0 = Clock::now();
     PackResult res;
     res.stackedOn.assign(charts.size(), -1);
@@ -888,6 +939,7 @@ PackResult packCharts(std::span<Chart> charts, const PackOptions& opts, std::spa
     switch (opts.layout)
     {
     case PackLayout::Fill:
+    case PackLayout::GroupLayouts:
     {
         std::vector<int> all;
         for (int t = 0; t < tilesU * tilesV; ++t)

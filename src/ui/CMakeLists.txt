@@ -67,7 +67,7 @@ lila_module(lila_ui UI
     MarkingMenu.cpp MarkingMenu.h
     MarkingMenuEditor.cpp MarkingMenuEditor.h
     MainWindow.cpp MainWindow.h MainWindowDetail.h MainWindowFiles.cpp MainWindowActions.cpp MainWindowMenus.cpp MainWindowLayout.cpp
-    Menus.cpp Menus.h
+    Menus.cpp Menus.h MenuSets.cpp MenuSets.h
     Modes.cpp Modes.h
     ExtensionUi.cpp ExtensionUi.h
     PythonSdk.cpp

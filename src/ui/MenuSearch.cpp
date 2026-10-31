@@ -8,6 +8,7 @@
 #include "ui/DocsUi.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
+#include "ui/MenuSets.h"
 #include "ui/OptionBox.h"
 #include "ui/Outliner.h"
 #include "ui/OutlinerFilter.h"
@@ -438,7 +439,7 @@ public:
         }
         else if (mItems.empty() && mBar)
             for (QAction* a : mBar->actions())
-                if (QMenu* menu = a->menu(); menu && a->isVisible())
+                if (QMenu* menu = a->menu(); menu && menuSets::reachable(a))
                     collect(menu, plain(a), mItems, 0);
         mList->setItemDelegateForColumn(kLabel, scene ? mPathDelegate : nullptr);
         mList->setColumnHidden(kKey, scene);

@@ -447,6 +447,29 @@ TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
         CHECK(gapTexels(m, pg.resolution) >= pg.padding - 1e-3);
     }
 
+    SUBCASE("group layouts give each group the whole tile")
+    {
+        uv::PackOptions pg;
+        pg.layout = uv::PackLayout::GroupLayouts;
+        pg.groupBy = uv::PackGroupBy::Attribute;
+        uv::PackResult rg = uv::packIslands(m, {}, "uv0", pg);
+        REQUIRE(rg.ok);
+        CHECK(rg.tilesUsed == 1);
+        CHECK(inside(m, {0.0, 0.0}, {1.0, 1.0}));
+        CHECK(overlaps(m) > 0);
+        for (int g = 0; g < 3; ++g)
+        {
+            // Other groups move far away so only this group's islands can overlap.
+            geo::Mesh one = m;
+            std::span<glm::vec2> uv = one.cornerAttrs().get<glm::vec2>("uv0");
+            for (Index f = 0; f < one.faceCapacity(); ++f)
+                if (one.faceValid(f) && group[f] != g)
+                    one.forEachFaceCorner(f, [&](Index c) { uv[c] += glm::vec2(float(10 + 2 * group[f]), 0.0f); });
+            CHECK(overlaps(one) == 0);
+            CHECK(gapTexels(one, pg.resolution) >= pg.padding - 1e-3);
+        }
+    }
+
     SUBCASE("locked scale keeps island sizes and spills into more tiles")
     {
         geo::Mesh n = shapeSoup(40, 3);

@@ -131,7 +131,7 @@ void registerUi(ext::Context& ctx)
                        .doc = "Set the selected garment's panels back to active.", .python = "tailorFreeze('Garment', state='active')",
                        .command = "tailorFreeze", .call = {{"state", "active"}}});
 
-    menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig"});
+    menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
     int sep = 0;
     for (const char* a : {"tailor.createBlock", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric", "tailor.sew", "",
                           "tailor.freeze", "tailor.unfreeze"})

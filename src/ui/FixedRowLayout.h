@@ -5,6 +5,7 @@
 #include <QLayout>
 #include <QList>
 
+
 namespace lila::ui
 {
 /**
@@ -13,7 +14,8 @@ namespace lila::ui
  * minimum. Hidden items keep their slot.
  *
  * With columns set, every item sits in a uniform cell and rows wrap at that count, so buttons line up across rows; the
- * cells stretch with the panel up to the widest button's natural width.
+ * cells share the panel's width. Every cell keeps room for an option box. A
+ * narrower panel never moves a button to another cell: labels drop to their icons instead.
  */
 class LILA_UI_API FixedRowLayout : public QLayout
 {
@@ -44,6 +46,9 @@ private:
     int rowHeight(int row) const;
     void arrangeGrid(const QRect& area);
     void arrangeRow(int row, int y, const QRect& area);
+    int gridSlot() const;
+    int gridCell(bool full) const;
+    int gridHeight() const;
 
     QList<Entry> mItems;
     int mColumns;

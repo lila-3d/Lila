@@ -10,6 +10,7 @@
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/OptionBox.h"
+#include "ui/Panels.h"
 #include "ui/Shelf.h"
 #include "ui/TearOffLogic.h"
 #include "ui/ViewportHooks.h"
@@ -348,6 +349,116 @@ RowFilter* rowFilter()
     return f;
 }
 
+QString dockNameFor(QMenu* menu, const QString& section)
+{
+    std::vector<std::string> path = pathOf(menu).value_or(std::vector<std::string>{itemLabel(menu->title().toStdString())});
+    if (!section.isEmpty())
+        path.push_back("#" + section.toStdString());
+    return QString::fromStdString(dockName(path));
+}
+
+/** The top-left that puts a window of this size at `pos`, kept on the screen under it. */
+QPoint onScreen(QPoint pos, QSize size)
+{
+    if (QScreen* screen = QGuiApplication::screenAt(pos))
+    {
+        QRect avail = screen->availableGeometry();
+        pos.setX(std::clamp(pos.x(), avail.left(), std::max(avail.left(), avail.right() - size.width())));
+        pos.setY(std::clamp(pos.y(), avail.top(), std::max(avail.top(), avail.bottom() - size.height())));
+    }
+    return pos;
+}
+
+constexpr QPoint kCursorInDock(20, 12);
+
+/**
+ * Carries a floating dock under the cursor until the next click, which drops it there. Esc or a right click takes it
+ * back: a dock made for the placing closes, one that was already open returns to where it was.
+ */
+class Placer : public QObject
+{
+public:
+    Placer(QDockWidget* dock, bool created) : QObject(dock), mDock(dock), mCreated(created), mStart(dock->pos())
+    {
+        dock->setProperty(kPlacingProperty, true);
+        qApp->installEventFilter(this);
+        QApplication::setOverrideCursor(Qt::SizeAllCursor);
+        auto* poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] { follow(); });
+        poll->start(15);
+        follow();
+    }
+
+    ~Placer() override { finish(); }
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        switch (e->type())
+        {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick:
+            if (!mDone)
+                static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton ? drop() : cancel();
+            return true;
+        case QEvent::MouseButtonRelease:
+            // The release of the dropping click is still this placer's; after it nothing is.
+            if (mDone)
+                deleteLater();
+            return true;
+        case QEvent::KeyPress:
+            if (!mDone && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape)
+            {
+                cancel();
+                return true;
+            }
+            return false;
+        default: return false;
+        }
+    }
+
+private:
+    void follow()
+    {
+        if (mDock && !mDone)
+            mDock->move(onScreen(QCursor::pos() - kCursorInDock, mDock->size()));
+    }
+
+    void drop()
+    {
+        follow();
+        finish();
+        QTimer::singleShot(500, this, [this] { deleteLater(); });
+    }
+
+    void cancel()
+    {
+        finish();
+        if (!mDock)
+            return;
+        if (mCreated)
+            mDock->close();
+        else
+            mDock->move(mStart);
+        QTimer::singleShot(500, this, [this] { deleteLater(); });
+    }
+
+    void finish()
+    {
+        if (mDone)
+            return;
+        mDone = true;
+        QApplication::restoreOverrideCursor();
+        if (mDock)
+            mDock->setProperty(kPlacingProperty, QVariant());
+    }
+
+    QPointer<QDockWidget> mDock;
+    bool mCreated;
+    QPoint mStart;
+    bool mDone = false;
+};
+
 QDockWidget* makeDock(QMainWindow* window, QMenu* menu, const QString& name, const QString& section)
 {
     QString title = section.isEmpty() ? QString::fromStdString(itemLabel(menu->title().toStdString())) : section;
@@ -363,8 +474,22 @@ QDockWidget* makeDock(QMainWindow* window, QMenu* menu, const QString& name, con
         if (window)
             window->addDockWidget(Qt::RightDockWidgetArea, dock);
     }
+    dock->setProperty(panels::kOwnSizeProperty, true);
     return dock;
 }
+
+/** Big enough for every row, up to a cap past which the panel scrolls. */
+QSize fittedSize(TearOffPanel* panel)
+{
+    QSize body = panel->preferredSize();
+    int height = body.height() + 28;
+    // A clamped height brings in the vertical scroll bar, which would otherwise cover the option box column.
+    if (height > 640)
+        body.rwidth() += panel->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, panel);
+    return QSize(std::clamp(body.width(), 160, 360), std::clamp(height, 80, 640));
+}
+
+constexpr QSize kMaxFloating(400, 700);
 } // namespace
 
 QMenu* enable(QMenu* menu)
@@ -432,36 +557,40 @@ QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at, const QString& secti
     if (!menu)
         return nullptr;
     QMainWindow* window = windowOf(menu);
-    std::vector<std::string> path = pathOf(menu).value_or(std::vector<std::string>{itemLabel(menu->title().toStdString())});
-    if (!section.isEmpty())
-        path.push_back("#" + section.toStdString());
-    QString name = QString::fromStdString(dockName(path));
+    QString name = dockNameFor(menu, section);
     if (window)
         if (auto* existing = window->findChild<QDockWidget*>(name))
         {
             revealDock(existing);
+            // A floating size the panel never asked for (another window's placement, a layout saved elsewhere) is refitted.
+            auto* panel = qobject_cast<TearOffPanel*>(existing->widget());
+            if (panel && existing->isFloating() && (existing->width() > kMaxFloating.width() || existing->height() > kMaxFloating.height()))
+            {
+                const QSize size = fittedSize(panel);
+                existing->setGeometry(QRect(onScreen(at.value_or(QCursor::pos()) - kCursorInDock, size), size));
+            }
             return existing;
         }
 
     QDockWidget* dock = makeDock(window, menu, name, section);
     auto* panel = static_cast<TearOffPanel*>(dock->widget());
     dock->setFloating(true);
-    QSize body = panel->preferredSize();
-    int height = body.height() + 28;
-    // A clamped height brings in the vertical scroll bar, which would otherwise cover the option box column.
-    if (height > 640)
-        body.rwidth() += panel->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, panel);
-    QSize size(std::clamp(body.width(), 160, 360), std::clamp(height, 80, 640));
-    QPoint pos = at.value_or(QCursor::pos()) - QPoint(20, 12);
-    if (QScreen* screen = QGuiApplication::screenAt(pos))
-    {
-        QRect avail = screen->availableGeometry();
-        pos.setX(std::clamp(pos.x(), avail.left(), std::max(avail.left(), avail.right() - size.width())));
-        pos.setY(std::clamp(pos.y(), avail.top(), std::max(avail.top(), avail.bottom() - size.height())));
-    }
-    dock->setGeometry(QRect(pos, size));
+    const QSize size = fittedSize(panel);
+    dock->setGeometry(QRect(onScreen(at.value_or(QCursor::pos()) - kCursorInDock, size), size));
     dock->show();
     dock->raise();
+    return dock;
+}
+
+QDockWidget* tearOffToPlace(QMenu* menu, const QString& section)
+{
+    if (!menu)
+        return nullptr;
+    QMainWindow* window = windowOf(menu);
+    QDockWidget* existing = window ? window->findChild<QDockWidget*>(dockNameFor(menu, section)) : nullptr;
+    QDockWidget* dock = tearOff(menu, QCursor::pos(), section);
+    if (dock && dock->isFloating() && !dock->property(kPlacingProperty).toBool())
+        new Placer(dock, !existing);
     return dock;
 }
 

@@ -4,17 +4,18 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
-#include "ui/FlowLayout.h"
 #include "ui/Icons.h"
+#include "ui/OptionBox.h"
+#include "ui/UvEditor.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -103,116 +104,141 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(4);
-    auto* form = new QFormLayout();
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setHorizontalSpacing(8);
-    form->setVerticalSpacing(3);
-    form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-
-    // Rows wrap, so the options never hold the UV editor wider than one control.
     auto row = [&](std::initializer_list<QWidget*> widgets) {
         auto* w = new QWidget(this);
-        auto* h = new FlowLayout(4);
-        w->setLayout(h);
+        auto* h = new QHBoxLayout(w);
+        h->setContentsMargins(0, 0, 0, 0);
+        h->setSpacing(4);
         for (QWidget* x : widgets)
             h->addWidget(x);
+        h->addStretch(1);
         return w;
     };
+    auto section = [&](const QString& title) {
+        auto* box = new QGroupBox(title, this);
+        auto* form = new QFormLayout(box);
+        form->setContentsMargins(6, 4, 6, 4);
+        form->setHorizontalSpacing(8);
+        form->setVerticalSpacing(3);
+        form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+        form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+        root->addWidget(box);
+        return form;
+    };
 
+    QFormLayout* islands = section("Islands");
+    mKeep = choice(this, {{"All", "none"}, {"All but the selected", "selected"}, {"Selected, into the gaps", "unselected"}},
+                   "All but the selected: the selected islands stay put and the rest pack around them. Selected, into the gaps: only "
+                   "the selected islands pack, into the space the others leave");
+    mFixPinned = new QCheckBox("Keep pinned", this);
+    mFixPinned->setToolTip("Islands with pinned uvs stay put");
+    islands->addRow("Pack", mKeep);
+    islands->addRow("", mFixPinned);
+    mSeparate = choice(this, {{"Together", "none"}, {"Per material", "material"}, {"Per object", "object"}, {"Per attribute", "attribute"}},
+                       "Together: every island shares one layout. Per material, object or attribute: each group packs apart from "
+                       "the others");
+    mGroupAttr = new QLineEdit("uvGroup", this);
+    mGroupAttr->setToolTip("Face int attribute holding each face's group");
+    mGroupAttr->setMaximumWidth(90);
+    islands->addRow("Separate", row({mSeparate, mGroupAttr}));
+    mInto = choice(this, {{"Own 0-1", "groupLayouts"}, {"Own UDIM tile", "groupTiles"}, {"Own region", "groupRegions"}},
+                   "Own 0-1: each group fills the whole tile, overlapping the others (a texture set per material). Own UDIM tile: "
+                   "one tile each at one texel density. Own region: tile 1001 split between the groups by area");
+    islands->addRow("Each into", mInto);
+
+    QFormLayout* fit = section("Fit");
     mRotation = choice(this, {{"None", "0"}, {"90 degrees", "90"}, {"45 degrees", "45"}, {"15 degrees", "15"}, {"Free", "free"}},
                        "Angles each island may turn to. Free also tries each island's best-fitting angles");
     mFlip = new QCheckBox("Flip", this);
     mFlip->setToolTip("Also try islands mirrored (the texture reads mirrored on them)");
     mOrient = new QCheckBox("Pre-orient", this);
     mOrient->setToolTip("Turn each island to its smallest bounding rectangle first");
-    form->addRow("Rotation", row({mRotation, mFlip, mOrient}));
-
+    fit->addRow("Rotation", mRotation);
+    fit->addRow("", row({mFlip, mOrient}));
     mScale = choice(this, {{"Normalize", "normalize"}, {"Keep relative", "keep"}, {"Lock size", "lock"}},
                     "Normalize: even texel density across islands and objects. Keep relative: islands keep their size ratios. "
                     "Lock size: islands keep their exact uv size and are only moved");
-    mDensity = number(this, 0.0, 100000.0, 0.0, 3, "Pack at this texel density (px/cm) instead of filling the tiles; 0 fills");
+    fit->addRow("Scale", mScale);
+    mDensity = number(this, 0.0, 100000.0, 0.0, 3, "Pack at this texel density instead of filling the tiles; Fill packs as large as fits");
     mDensity->setSpecialValueText("Fill");
-    form->addRow("Scale", row({mScale, new QLabel("px/cm", this), mDensity}));
-
-    mStack = new QCheckBox("Stack identical", this);
+    mDensity->setSuffix(" px/cm");
+    fit->addRow("Density", mDensity);
+    mStack = new QCheckBox("Identical", this);
     mStack->setToolTip("Islands with the same shape share one spot");
-    mStackMirrored = new QCheckBox("Mirrored too", this);
+    mStackMirrored = new QCheckBox("Mirrored", this);
     mStackMirrored->setToolTip("Mirror-image islands (the halves of a symmetric model) stack as well");
-    mShowStacks = new QCheckBox("Show stacks", this);
+    mShowStacks = new QCheckBox("Show", this);
     mShowStacks->setToolTip("Mark stacked islands in the view with how many share the spot");
-    form->addRow("Stacking", row({mStack, mStackMirrored, mShowStacks}));
+    fit->addRow("Stack", row({mStack, mStackMirrored, mShowStacks}));
 
-    mLayout = choice(this, {{"Fill tiles", "fill"}, {"Tile per group", "groupTiles"}, {"Region per group", "groupRegions"}, {"Keep tile", "keepTile"}},
-                     "Fill: fill the UDIM tiles in order. Tile per group: each group gets its own tile. Region per group: each group "
-                     "gets part of tile 1001 sized by its area. Keep tile: islands stay in the tile they are in");
-    mGroupBy = choice(this, {{"No groups", "none"}, {"By object", "object"}, {"By material", "material"}, {"By attribute", "attribute"}},
-                      "What makes a group for the group layouts");
-    mGroupAttr = new QLineEdit("uvGroup", this);
-    mGroupAttr->setToolTip("Face int attribute holding each face's group");
-    mGroupAttr->setMaximumWidth(90);
-    mPerObject = new QCheckBox("Each object", this);
-    mPerObject->setToolTip("Pack each selected object into a layout of its own instead of one shared layout");
-    form->addRow("Layout", row({mLayout, mGroupBy, mGroupAttr, mPerObject}));
-
+    QFormLayout* space = section("Space");
     mTilesU = integer(this, 1, 10, 1, "UDIM tiles across");
+    mTilesU->setPrefix("U ");
     mTilesV = integer(this, 1, 100, 1, "UDIM tiles up");
-    form->addRow("Tiles", row({new QLabel("U", this), mTilesU, new QLabel("V", this), mTilesV}));
-
+    mTilesV->setPrefix("V ");
+    mKeepTile = new QCheckBox("Keep tile", this);
+    mKeepTile->setToolTip("Islands stay in the UDIM tile they are in now instead of filling the tiles in order");
+    space->addRow("UDIM tiles", row({mTilesU, mTilesV}));
+    space->addRow("", mKeepTile);
+    const char* regionPrefix[] = {"u ", "v ", "u ", "v "};
     const char* regionTips[] = {"Region left, in tile uvs", "Region bottom", "Region right", "Region top"};
     for (int i = 0; i < 4; ++i)
+    {
         mRegion[i] = number(this, 0.0, 1.0, i < 2 ? 0.0 : 1.0, 3, regionTips[i]);
-    form->addRow("Region", row({mRegion[0], mRegion[1], mRegion[2], mRegion[3]}));
-
-    mMargin = number(this, -1.0, 512.0, -1.0, 1, "Texels from the tile border; -1 is half the padding");
+        mRegion[i]->setPrefix(regionPrefix[i]);
+    }
+    space->addRow("Region from", row({mRegion[0], mRegion[1]}));
+    space->addRow("Region to", row({mRegion[2], mRegion[3]}));
+    mMargin = number(this, -1.0, 512.0, -1.0, 1, "Texels from the tile border; Auto is half the padding");
     mMargin->setSpecialValueText("Auto");
-    mMips = integer(this, 0, 8, 0, "Padding and margin hold down to this mip level (doubled per level)");
-    form->addRow("Margin", row({mMargin, new QLabel("Mips", this), mMips}));
+    mMargin->setSuffix(" px");
+    space->addRow("Border", mMargin);
+    mMips = integer(this, 0, 8, 0, "Padding and border hold down to this mip level (doubled per level)");
+    space->addRow("Mip safe", mMips);
 
-    mKeep = choice(this, {{"Pack all", "none"}, {"Keep selected", "selected"}, {"Pack selection only", "unselected"}},
-                   "Keep selected: the selected islands stay put and the rest pack around them. Pack selection only: the selected "
-                   "islands pack into the space the others leave");
-    mFixPinned = new QCheckBox("Keep pinned", this);
-    mFixPinned->setToolTip("Islands with pinned uvs stay put");
-    form->addRow("Fixed", row({mKeep, mFixPinned}));
-
+    QFormLayout* search = section("Search");
     mEffort = choice(this, {{"Fast", "0"}, {"Normal", "1"}, {"High", "2"}, {"Max", "3"}},
                      "Search effort: more island orders and a finer search grid pack denser and take longer");
-    mTimeLimit = number(this, 0.0, 600.0, 0.0, 1, "Stop refining after this many seconds; 0 never (results can then vary)");
-    mTimeLimit->setSpecialValueText("No limit");
-    form->addRow("Effort", row({mEffort, new QLabel("Limit s", this), mTimeLimit}));
-    root->addLayout(form);
+    search->addRow("Effort", mEffort);
+    mTimeLimit = number(this, 0.0, 600.0, 0.0, 1, "Stop refining after this many seconds (results can then vary between runs)");
+    mTimeLimit->setSpecialValueText("None");
+    mTimeLimit->setSuffix(" s");
+    search->addRow("Time limit", mTimeLimit);
 
-    auto* buttons = new QHBoxLayout();
-    auto* pack = new QPushButton(icon("packages"), "Pack", this);
-    pack->setToolTip("Pack the selected islands (or whole meshes) with these options (uvPack)");
     mResult = new QLabel(this);
     mResult->setTextInteractionFlags(Qt::TextSelectableByMouse);
     mResult->setWordWrap(true);
     mResult->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    buttons->addWidget(pack);
-    buttons->addWidget(mResult, 1);
-    root->addLayout(buttons);
+    root->addWidget(mResult);
 
     load(uvPackOptions());
 
-    connect(pack, &QPushButton::clicked, this, [this] {
-        if (onPack)
-            onPack();
-    });
     connect(mShowStacks, &QCheckBox::toggled, this, [this](bool on) {
         if (onShowStacks)
             onShowStacks(on);
     });
     auto changed = [this] { save(); };
-    for (QComboBox* c : {mRotation, mScale, mLayout, mGroupBy, mKeep, mEffort})
+    for (QComboBox* c : {mRotation, mScale, mSeparate, mInto, mKeep, mEffort})
         connect(c, &QComboBox::currentIndexChanged, this, changed);
-    for (QCheckBox* c : {mFlip, mOrient, mStack, mStackMirrored, mFixPinned, mPerObject})
+    for (QCheckBox* c : {mFlip, mOrient, mStack, mStackMirrored, mFixPinned, mKeepTile})
         connect(c, &QCheckBox::toggled, this, changed);
     for (QDoubleSpinBox* s : {mDensity, mMargin, mTimeLimit, mRegion[0], mRegion[1], mRegion[2], mRegion[3]})
         connect(s, &QDoubleSpinBox::valueChanged, this, changed);
     for (QSpinBox* s : {mTilesU, mTilesV, mMips})
         connect(s, &QSpinBox::valueChanged, this, changed);
     connect(mGroupAttr, &QLineEdit::editingFinished, this, changed);
+    connect(mSeparate, &QComboBox::currentIndexChanged, this, [this] { updateEnabled(); });
+    connect(mStack, &QCheckBox::toggled, this, [this] { updateEnabled(); });
+    updateEnabled();
+}
+
+void UvPackPanel::updateEnabled()
+{
+    const std::string separate = valueOf(mSeparate);
+    mInto->setEnabled(separate != "none");
+    mGroupAttr->setVisible(separate == "attribute");
+    mKeepTile->setEnabled(separate == "none");
+    mStackMirrored->setEnabled(mStack->isChecked());
 }
 
 json UvPackPanel::options() const
@@ -227,8 +253,9 @@ json UvPackPanel::options() const
     o["texelsPerUnit"] = mDensity->value();
     o["stack"] = mStack->isChecked();
     o["stackMirrored"] = mStackMirrored->isChecked();
-    o["layout"] = valueOf(mLayout);
-    o["groupBy"] = valueOf(mGroupBy);
+    const std::string separate = valueOf(mSeparate);
+    o["groupBy"] = separate;
+    o["layout"] = separate != "none" ? valueOf(mInto) : mKeepTile->isChecked() ? "keepTile" : "fill";
     o["groupAttr"] = mGroupAttr->text().toStdString();
     o["tilesU"] = mTilesU->value();
     o["tilesV"] = mTilesV->value();
@@ -237,7 +264,7 @@ json UvPackPanel::options() const
     o["paddingMips"] = mMips->value();
     o["keep"] = valueOf(mKeep);
     o["fixPinned"] = mFixPinned->isChecked();
-    o["perObject"] = mPerObject->isChecked();
+    o["perObject"] = false;
     o["effort"] = std::stoi(valueOf(mEffort));
     o["timeLimit"] = mTimeLimit->value();
     return o;
@@ -253,8 +280,19 @@ void UvPackPanel::load(const json& o)
     mDensity->setValue(o.value("texelsPerUnit", 0.0));
     mStack->setChecked(o.value("stack", false));
     mStackMirrored->setChecked(o.value("stackMirrored", true));
-    selectValue(mLayout, o.value("layout", std::string("fill")));
-    selectValue(mGroupBy, o.value("groupBy", std::string("none")));
+    const std::string layout = o.value("layout", std::string("fill")), groupBy = o.value("groupBy", std::string("none"));
+    const bool grouped = groupBy != "none" && layout.starts_with("group");
+    if (o.value("perObject", false))
+    {
+        selectValue(mSeparate, "object");
+        selectValue(mInto, "groupLayouts");
+    }
+    else
+    {
+        selectValue(mSeparate, grouped ? groupBy : "none");
+        selectValue(mInto, grouped ? layout : "groupLayouts");
+    }
+    mKeepTile->setChecked(layout == "keepTile");
     mGroupAttr->setText(QString::fromStdString(o.value("groupAttr", std::string("uvGroup"))));
     mTilesU->setValue(o.value("tilesU", 1));
     mTilesV->setValue(o.value("tilesV", 1));
@@ -266,10 +304,10 @@ void UvPackPanel::load(const json& o)
     mMips->setValue(o.value("paddingMips", 0));
     selectValue(mKeep, o.value("keep", std::string("none")));
     mFixPinned->setChecked(o.value("fixPinned", false));
-    mPerObject->setChecked(o.value("perObject", false));
     selectValue(mEffort, std::to_string(o.value("effort", 1)));
     mTimeLimit->setValue(o.value("timeLimit", 0.0));
     mLoading = false;
+    updateEnabled();
 }
 
 void UvPackPanel::save()
@@ -302,6 +340,7 @@ void registerUvPackActions()
     auto add = [](std::string id, std::string label, json extra, std::string doc) {
         json example = json{{"resolution", 1024}, {"padding", 4}};
         example.update(extra);
+        optionBox::addCustom(id, showUvPackOptions);
         actions::add({.id = std::move(id),
                       .label = std::move(label),
                       .category = "UV",
@@ -323,6 +362,8 @@ void registerUvPackActions()
         "Pack with identical and mirrored islands stacked on one spot.");
     add("uv.packUdimByMaterial", "Pack UDIM Tile per Material", json{{"layout", "groupTiles"}, {"groupBy", "material"}},
         "Each material slot gets its own UDIM tile, all at one texel density.");
+    add("uv.packPerMaterial", "Pack Each Material Separately", json{{"layout", "groupLayouts"}, {"groupBy", "material"}},
+        "Each material slot packs into the full 0-1 on its own, overlapping the others: one texture set per material.");
     add("uv.packPerObject", "Pack Each Object Separately", json{{"perObject", true}},
         "Each selected object packs into a layout of its own.");
     actions::add({.id = "uv.selectStacks",

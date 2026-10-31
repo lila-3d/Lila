@@ -14,6 +14,8 @@
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportWidget.h"
 
+#include <map>
+
 #include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
@@ -136,6 +138,35 @@ std::string current()
                 return s;
     std::vector<std::string> all = names();
     return all.empty() ? std::string() : all.front();
+}
+
+namespace
+{
+std::map<int, std::function<void(const std::string&)>>& currentListeners()
+{
+    static std::map<int, std::function<void(const std::string&)>> listeners;
+    return listeners;
+}
+} // namespace
+
+int onCurrentChanged(std::function<void(const std::string&)> fn)
+{
+    static int next = 0;
+    currentListeners()[++next] = std::move(fn);
+    return next;
+}
+
+void removeOnCurrentChanged(int id)
+{
+    currentListeners().erase(id);
+}
+
+void notifyCurrentChanged(const std::string& shelf)
+{
+    // Copied, so a listener may add or remove listeners.
+    auto listeners = currentListeners();
+    for (auto& [id, fn] : listeners)
+        fn(shelf);
 }
 
 bool setCurrent(const std::string& shelf)
@@ -944,6 +975,10 @@ ShelfPanel::ShelfPanel(QWidget* parent) : QWidget(parent)
     v->addWidget(mTabs);
     v->addWidget(mPages);
     connect(mTabs, &QTabBar::currentChanged, mPages, &QStackedWidget::setCurrentIndex);
+    connect(mTabs, &QTabBar::currentChanged, this, [this](int i) {
+        if (i >= 0)
+            shelves::notifyCurrentChanged(mTabs->tabText(i).toStdString());
+    });
     connect(mTabs, &QTabBar::customContextMenuRequested, this, [this](QPoint p) {
         int tab = mTabs->tabAt(p);
         QMenu menu;

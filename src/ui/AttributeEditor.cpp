@@ -769,11 +769,29 @@ void AttributeEditor::rebuild()
         }
         case PlugType::Matrix:
         {
-            auto* label = new QLabel;
+            // Collapsed to a one-line summary: the full 4x4 is rarely read and would push the editable rows apart.
+            auto* box = new QWidget;
+            auto* v = new QVBoxLayout(box);
+            v->setContentsMargins(0, 0, 0, 0);
+            v->setSpacing(2);
+            auto* toggle = new QToolButton(box);
+            toggle->setCheckable(true);
+            toggle->setAutoRaise(true);
+            toggle->setArrowType(Qt::RightArrow);
+            toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            auto* label = new QLabel(box);
             label->setFont(monoFont());
             label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-            mUpdaters.push_back([label, ref] {
-                const auto& m = std::get<glm::dmat4>(Graph::current().value(ref));
+            label->hide();
+            QObject::connect(toggle, &QToolButton::toggled, label, [toggle, label](bool on) {
+                label->setVisible(on);
+                toggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+            });
+            v->addWidget(toggle, 0, Qt::AlignLeft);
+            v->addWidget(label);
+            mUpdaters.push_back([label, toggle, ref] {
+                const glm::dmat4 m = std::get<glm::dmat4>(Graph::current().value(ref));
+                toggle->setText(m == glm::dmat4(1.0) ? "Identity" : "4 x 4");
                 QString cells[4][4];
                 qsizetype width = 1;
                 // Rows of the matrix as written on paper (column-major storage).
@@ -790,7 +808,7 @@ void AttributeEditor::rebuild()
                 }
                 label->setText(text);
             });
-            field = label;
+            field = box;
             break;
         }
         }

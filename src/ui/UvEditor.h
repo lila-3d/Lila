@@ -13,8 +13,11 @@ class QComboBox;
 class QDoubleSpinBox;
 class QHideEvent;
 class QLabel;
+class QScrollArea;
+class QSplitter;
 class QShowEvent;
 class QSpinBox;
+class QToolButton;
 
 namespace lila::ui
 {
@@ -25,8 +28,8 @@ class UvView;
 class UvPackPanel;
 
 /**
- * UV editor: a 2D view of the hilited meshes' uvs with selection synced to the 3D component selection,
- * a move/rotate/scale manipulator, numeric transforms and buttons for the uv commands.
+ * UV editor: a 2D view of the hilited meshes' uvs with selection synced to the 3D component selection, a toolbar of
+ * tools, modes and display, and the UV Toolkit column beside the view with the uv commands in sections.
  */
 class LILA_UI_API UvEditor : public QWidget
 {
@@ -37,6 +40,10 @@ public:
     ~UvEditor() override;
 
     UvView* view() const { return mView; }
+    /** Shows the UV Toolkit with its Pack options open. */
+    void showPackOptions();
+    /** Shows the UV Toolkit column beside the view. */
+    void showToolkit();
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -52,6 +59,12 @@ private:
 
     UvView* mView = nullptr;
     UvPackPanel* mPackPanel = nullptr;
+    QToolButton* mPackOptions = nullptr;
+    QToolButton* mPackSection = nullptr;
+    QToolButton* mToolkitToggle = nullptr;
+    QScrollArea* mToolkitScroll = nullptr;
+    QSplitter* mSplit = nullptr;
+    bool mToolkitSized = false;
     QComboBox* mSet = nullptr;
     QComboBox* mDisplay = nullptr;
     QSpinBox* mResolution = nullptr;
@@ -73,4 +86,10 @@ LILA_UI_API void registerUvActions();
 
 /** How "window.uvEditor" toggles the panel: the main window raises its dock, or tucks it away when showing. */
 LILA_UI_API void setUvEditorOpener(std::function<void()> open);
+
+/** Shows the UV editor with its Pack options open: the uv.pack* actions' option box. */
+LILA_UI_API void showUvPackOptions();
+
+/** Shows the UV editor with its UV Toolkit column. */
+LILA_UI_API void showUvToolkit();
 } // namespace lila::ui

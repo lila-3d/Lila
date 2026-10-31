@@ -1,4 +1,6 @@
 #include "ui/Hotbox.h"
+#include "ui/MenuSets.h"
+#include "ui/Menus.h"
 
 #include "core/PrefStore.h"
 #include "ui/AchievementRules.h"
@@ -207,11 +209,33 @@ void Hotbox::layoutButtons()
 
     if (rowVisible("main"))
     {
-        std::vector<Button> row;
-        for (QAction* a : mMain->menuBar()->actions())
-            if (QPointer<QMenu> m = a->menu(); m && a->isVisible())
-                row.push_back({a->text().remove('&'), {}, [m] { return m.data(); }});
-        makeRow(std::move(row), mCenter.y() - kCenterHeight / 2 - kRowGap - kRowHeight / 2);
+        // Maya's hotbox rows: the core menus nearest the centre, the modeling set above them, then rigging, animation and level.
+        std::vector<std::pair<int, Button>> rows[3];
+        const std::vector<const menus::Menu*> defs = menus::menusIn(menus::Area::MenuBar);
+        const QList<QAction*> bar = mMain->menuBar()->actions();
+        for (qsizetype i = 0; i < bar.size(); ++i)
+        {
+            QAction* a = bar[i];
+            QPointer<QMenu> m = a->menu();
+            if (!m || !menuSets::reachable(a))
+                continue;
+            const std::vector<std::string> sets = i < qsizetype(defs.size()) ? defs[size_t(i)]->sets : std::vector<std::string>{};
+            const size_t r = sets.empty() ? 0 : std::ranges::find(sets, "Modeling") != sets.end() ? 1 : 2;
+            const int order = sets.empty() ? 0 : sets.front() == "Rigging" ? 0 : sets.front() == "Animation" ? 1 : 2;
+            rows[r].push_back({order, {a->text().remove('&'), {}, [m] { return m.data(); }}});
+        }
+        double y = mCenter.y() - kCenterHeight / 2 - kRowGap - kRowHeight / 2;
+        for (auto& row : rows)
+        {
+            if (row.empty())
+                continue;
+            std::ranges::stable_sort(row, {}, &std::pair<int, Button>::first);
+            std::vector<Button> buttons;
+            for (auto& [order, button] : row)
+                buttons.push_back(std::move(button));
+            makeRow(std::move(buttons), y);
+            y -= kRowHeight + kRowGap;
+        }
     }
     makeRow({{"Recent Commands", {}, [this] { return recentMenu(); }},
              {"Lila", {}, [] { return static_cast<QMenu*>(nullptr); }, true},

@@ -863,7 +863,7 @@ void registerBakerPanel()
                          "lows with no high in range, cage mismatches.",
                   .python = "bakeLint()"});
 
-    menus::addMenu({.id = "Bake", .title = "Bake", .before = "Rig"});
+    menus::addMenu({.id = "Bake", .title = "Bake", .before = "Rig", .sets = {"Modeling"}});
     menus::addActions("Bake", {"window.baker", "", "bake.forTarget", "bake.bake", "bake.bakeSelected", "bake.cancel", "", "bake.newProject",
                                "bake.autoGroup", "bake.groupPerMesh", "", "bake.lint"});
 }

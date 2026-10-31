@@ -45,6 +45,15 @@ LILA_UI_API QMenu* findMenu(QMainWindow* window, const std::vector<std::string>&
  */
 LILA_UI_API QDockWidget* tearOff(QMenu* menu, std::optional<QPoint> at = std::nullopt, const QString& section = {});
 
+/**
+ * Tears the menu (or one section of it) off under the cursor and carries it there until the next click drops it; Esc
+ * or a right click puts it back. A dock already docked is only revealed.
+ */
+LILA_UI_API QDockWidget* tearOffToPlace(QMenu* menu, const QString& section = {});
+
+/** A dock property, true while tearOffToPlace is carrying it. */
+inline constexpr const char* kPlacingProperty = "lilaPlacing";
+
 /** A torn-off row being dragged: the action id. */
 inline constexpr const char* kActionMime = "application/x-lila-action";
 

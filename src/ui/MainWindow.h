@@ -66,6 +66,8 @@ private:
     void createPanelDock(const panels::Panel& p);
     void removePanelDock(const std::string& id);
     void buildMenus();
+    /** Shows the menu bar menus of the active menu set and hides the rest. */
+    void applyMenuSet();
     void buildPanelMenus();
     void buildStatusBar();
     QDockWidget* addDock(const QString& title, const QString& objectName, QWidget* content, Qt::DockWidgetArea area);
@@ -117,6 +119,7 @@ private:
     QPointer<QMenu> mRecentMenu;
     QPointer<QDialog> mStartupDialog;
     menus::MenuBuilder* mMenus = nullptr;
+    std::string mMenuSet;
     int mPanelListener = 0;
     QTimer* mAutosaveTimer = nullptr;
     QLabel* mWorkspaceLabel = nullptr;

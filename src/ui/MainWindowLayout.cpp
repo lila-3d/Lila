@@ -230,6 +230,11 @@ void MainWindow::saveLayout()
 void MainWindow::resizeEvent(QResizeEvent* e)
 {
     QMainWindow::resizeEvent(e);
+    // A dock drag can end with Qt still holding its mid-drag layout, which then ignores every resize; restoring the
+    // state drops it. The status bar is laid out by the same pass, so a stale width shows the resize was skipped.
+    QStatusBar* status = findChild<QStatusBar*>(QString(), Qt::FindDirectChildrenOnly);
+    if (status && status->isVisible() && status->width() != width() && QGuiApplication::mouseButtons() == Qt::NoButton)
+        restoreState(saveState());
     scheduleLayoutSave();
 }
 

@@ -46,8 +46,12 @@ TEST_CASE("the UV editor stays narrow whatever its status line and pack options 
     UvEditor editor;
     editor.resize(900, 700);
     editor.show();
-    const int narrow = editor.minimumSizeHint().width();
-    CHECK(narrow <= 320);
+    QToolButton* toolkit = buttonNamed(editor, "Toolkit");
+    REQUIRE(toolkit);
+    toolkit->setChecked(false);
+    CHECK(editor.minimumSizeHint().width() <= 320);
+    toolkit->setChecked(true);
+    const int withToolkit = editor.minimumSizeHint().width();
 
     QToolButton* options = buttonNamed(editor, "Pack Options");
     REQUIRE(options);
@@ -55,14 +59,14 @@ TEST_CASE("the UV editor stays narrow whatever its status line and pack options 
     for (QLabel* l : editor.findChildren<QLabel*>())
         if (l->sizePolicy().horizontalPolicy() == QSizePolicy::Ignored)
             l->setText(QString("uvLayout: ") + QString(600, 'x'));
-    CHECK(editor.minimumSizeHint().width() <= 320);
+    CHECK(editor.minimumSizeHint().width() <= withToolkit);
 
     QToolButton* project = buttonNamed(editor, "Project");
     REQUIRE(project);
     REQUIRE(rightClickAction(project));
     CHECK(rightClickAction(project)->text() == "Planar (fit)");
 
-    for (const char* name : {"Rotate 90 Left", "Rotate 90 Right", "Flip Horizontal", "Flip Vertical", "Move", "Rotate", "Scale"})
+    for (const char* name : {"Move", "Rotate", "Scale"})
     {
         QToolButton* b = nullptr;
         for (QToolButton* c : editor.findChildren<QToolButton*>())

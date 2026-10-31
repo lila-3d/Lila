@@ -21,7 +21,7 @@ namespace lila::ui
 LILA_UI_API nlohmann::json uvPackOptions();
 LILA_UI_API void setUvPackOptions(const nlohmann::json& options);
 
-/** The UV editor's Pack options: rotation, scale, stacking, tiles and groups, fixed islands and search effort. */
+/** The UV editor's Pack options in sections: which islands and how they separate, fit, space, search. */
 class LILA_UI_API UvPackPanel : public QWidget
 {
     Q_OBJECT
@@ -34,12 +34,13 @@ public:
     /** Shows a uvPack result: density, texel density, stacks, time. */
     void showResult(const nlohmann::json& result);
 
-    std::function<void()> onPack;
     std::function<void(bool)> onShowStacks;
 
 private:
     void save();
     void load(const nlohmann::json& o);
+    /** Greys out what the current choices make irrelevant. */
+    void updateEnabled();
 
     QComboBox* mRotation = nullptr;
     QCheckBox* mFlip = nullptr;
@@ -48,8 +49,8 @@ private:
     QDoubleSpinBox* mDensity = nullptr;
     QCheckBox* mStack = nullptr;
     QCheckBox* mStackMirrored = nullptr;
-    QComboBox* mLayout = nullptr;
-    QComboBox* mGroupBy = nullptr;
+    QComboBox* mSeparate = nullptr;
+    QComboBox* mInto = nullptr;
     QLineEdit* mGroupAttr = nullptr;
     QSpinBox* mTilesU = nullptr;
     QSpinBox* mTilesV = nullptr;
@@ -58,7 +59,7 @@ private:
     QSpinBox* mMips = nullptr;
     QComboBox* mKeep = nullptr;
     QCheckBox* mFixPinned = nullptr;
-    QCheckBox* mPerObject = nullptr;
+    QCheckBox* mKeepTile = nullptr;
     QComboBox* mEffort = nullptr;
     QDoubleSpinBox* mTimeLimit = nullptr;
     QCheckBox* mShowStacks = nullptr;

@@ -13,6 +13,8 @@ MainWindow::MainWindow()
     DwmSetWindowAttribute(HWND(winId()), 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 #endif
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks | GroupedDragging);
+    // Maya's right-edge tabs: the channel box, attribute editor and toolkits keep full-height panels and whole tab labels.
+    setTabPosition(Qt::RightDockWidgetArea, QTabWidget::East);
     setAcceptDrops(true);
     dockDragCancel::install();
 
@@ -162,10 +164,12 @@ void MainWindow::registerPanels()
     panels::add({.id = kUndoHistoryDock, .title = "Undo History", .create = make([](QWidget* p) { return new UndoHistoryPanel(p); }),
                  .area = Qt::LeftDockWidgetArea, .icon = "history",
                  .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
-    // Split after the undo history, so the sets sit between it and the outliner.
+    // A tab behind the undo history, so the outliner keeps most of the column.
     panels::add({.id = kQuickSelectSetsDock, .title = "Quick Select Sets", .create = make([](QWidget* p) { return new QuickSelectSetsPanel(p); }),
-                 .area = Qt::LeftDockWidgetArea, .icon = "list-details",
-                 .place = [this, dock](QDockWidget* d) { splitDockWidget(dock("outliner"), d, Qt::Vertical); }});
+                 .area = Qt::LeftDockWidgetArea, .icon = "list-details", .place = [this, dock](QDockWidget* d) {
+                     tabifyDockWidget(dock(kUndoHistoryDock), d);
+                     dock(kUndoHistoryDock)->raise();
+                 }});
     panels::add({.id = "scriptOutput", .title = "Script Output", .create = make([](QWidget* p) { return new ScriptPanel(p); }),
                  .area = Qt::BottomDockWidgetArea, .icon = "file-text"});
     panels::add({.id = kScriptEditorDock, .title = "Script Editor", .create = make([](QWidget* p) {

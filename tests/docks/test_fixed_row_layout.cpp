@@ -127,6 +127,32 @@ TEST_CASE("grid columns line up across rows and a hidden button keeps its cell")
     CHECK(b[2]->x() == before);
 }
 
+TEST_CASE("a narrow grid keeps every button in its cell and drops labels to icons")
+{
+    QWidget w;
+    auto* grid = new FixedRowLayout(4);
+    w.setLayout(grid);
+    std::vector<QToolButton*> b;
+    for (const char* t : {"Extrude", "Bevel", "Bridge", "Inset", "Merge"})
+    {
+        b.push_back(labelled(t, &w));
+        grid->addWidget(b.back());
+    }
+    w.show();
+    for (int width : {grid->sizeHint().width() * 2, grid->sizeHint().width(), grid->sizeHint().width() * 3 / 4, w.minimumSizeHint().width()})
+    {
+        layoutAt(w, width);
+        CAPTURE(width);
+        CHECK(b[3]->y() == b[0]->y());
+        CHECK(b[4]->y() > b[0]->y());
+        CHECK(b[4]->x() == b[0]->x());
+    }
+    CHECK(b[0]->toolButtonStyle() == Qt::ToolButtonIconOnly);
+    layoutAt(w, grid->sizeHint().width());
+    for (QToolButton* button : b)
+        CHECK(button->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+}
+
 TEST_CASE("the UV editor's buttons keep their rows from wide to its narrowest")
 {
     UvEditor editor;

@@ -196,6 +196,7 @@ PackOptions packArgs(const Args& a)
     std::string layout = a.get<std::string>("layout", "fill");
     p.layout = layout == "groupTiles" ? PackLayout::GroupTiles : layout == "groupRegions" ? PackLayout::GroupRegions
              : layout == "keepTile"   ? PackLayout::KeepTile
+             : layout == "groupLayouts" ? PackLayout::GroupLayouts
                                       : PackLayout::Fill;
     std::string by = a.get<std::string>("groupBy", "none");
     p.groupBy = by == "object" ? PackGroupBy::Object : by == "material" ? PackGroupBy::Material : by == "attribute" ? PackGroupBy::Attribute : PackGroupBy::None;
@@ -239,8 +240,9 @@ std::vector<FlagDef> packLayoutFlags()
     using T = ArgType;
     return {{"layout", "", T::String, "fill",
              "fill: fill the UDIM tiles in order. groupTiles: one tile per group. groupRegions: one part of tile 1001 per group, "
-             "sized by its area. keepTile: islands stay in the tile they are in.",
-             {"fill", "groupTiles", "groupRegions", "keepTile"}},
+             "sized by its area. keepTile: islands stay in the tile they are in. groupLayouts: each group packs on its own into the "
+             "full tiles, overlapping the others (a texture set per material).",
+             {"fill", "groupTiles", "groupRegions", "keepTile", "groupLayouts"}},
             {"groupBy", "", T::String, "none", "What makes a group: object, material slot, or the face int attribute groupAttr.",
              {"none", "object", "material", "attribute"}},
             {"groupAttr", "", T::String, "uvGroup", "Face int attribute holding each face's group, for groupBy=attribute."},

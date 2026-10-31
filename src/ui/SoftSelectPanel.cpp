@@ -357,11 +357,18 @@ SoftSelectPanel::SoftSelectPanel(QWidget* parent) : QWidget(parent)
     v->setSpacing(3);
 
     mPresetBox = new QWidget(this);
-    mPresets = new FlowLayout(2);
-    mPresets->setContentsMargins(0, 0, 0, 0);
-    mPresetBox->setLayout(mPresets);
+    // The built-ins share one row and shrink to fit it, so none wraps onto a row of its own.
+    auto* presets = new QHBoxLayout(mPresetBox);
+    presets->setContentsMargins(0, 0, 0, 0);
+    presets->setSpacing(2);
     for (const ss::Preset& p : ss::builtinPresets())
-        mPresets->addWidget(thumbnail(p, mPresetBox, false));
+    {
+        QToolButton* b = thumbnail(p, mPresetBox, false);
+        b->setIconSize(QSize(30, 20));
+        b->setMinimumWidth(20);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        presets->addWidget(b);
+    }
     v->addWidget(mPresetBox);
 
     mEditor = new FalloffCurveEditor(this);
