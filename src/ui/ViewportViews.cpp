@@ -552,8 +552,18 @@ std::string ViewportWidget::skinnedMeshAt(QPointF at)
     return {};
 }
 
+namespace
+{
+/** How much closer than a plain fit a framing ends, from its Preferences > Viewport factor. */
+double frameZoom(const char* key)
+{
+    return std::max(PrefStore::get().value<double>("general", key, 1.0), 0.01);
+}
+} // namespace
+
 void ViewportWidget::frameSelection(bool all)
 {
+    const double zoom = frameZoom(all ? "/viewport/frameAll/zoomFactor" : "/viewport/frameSelected/zoomFactor");
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
     if (mLookThrough != scene::kNoNode)
@@ -602,7 +612,7 @@ void ViewportWidget::frameSelection(bool all)
         if (count > 0)
         {
             // A lone vertex has no extent; keep some context around it like Maya does.
-            double radius = std::max(glm::length(hi - lo) * 0.5, 5.0);
+            double radius = std::max(glm::length(hi - lo) * 0.5, 5.0) / zoom;
             mCamera.frame((lo + hi) * 0.5, radius, aspect());
             if (mLookThrough != scene::kNoNode)
                 previewCameraEdit();
@@ -672,7 +682,7 @@ void ViewportWidget::frameSelection(bool all)
         hi = glm::dvec3(50.0);
     }
     // Maya frames a group from further out than a single mesh.
-    double radius = glm::length(hi - lo) * 0.5 * (group ? 2.0 : 1.0);
+    double radius = glm::length(hi - lo) * 0.5 * (group ? 2.0 : 1.0) / zoom;
     mCamera.frame((lo + hi) * 0.5, radius, aspect());
     if (mLookThrough != scene::kNoNode)
         previewCameraEdit();
@@ -726,8 +736,13 @@ bool ViewportWidget::frameAt(QPointF px)
     CameraView before = cameraView();
     const glm::dvec3 eye = mCamera.eye();
     mCamera.target = *hit;
-    if (!mCamera.ortho)
-        mCamera.distance = std::max(glm::length(*hit - eye), 0.5);
+    const double zoom = PrefStore::get().value<bool>("general", "/viewport/frameUnderCursor/zoom", false)
+                            ? std::max(PrefStore::get().value<double>("general", "/viewport/frameUnderCursor/zoomFactor", 4.0), 0.01)
+                            : 1.0;
+    if (mCamera.ortho)
+        mCamera.orthoWidth /= zoom;
+    else
+        mCamera.distance = std::max(glm::length(*hit - eye) / zoom, 0.5);
     if (mLookThrough != scene::kNoNode)
         previewCameraEdit();
     recordCamera(before);

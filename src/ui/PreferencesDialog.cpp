@@ -761,6 +761,11 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(viewport, "Most lines and triangles", "/debugDraw/maxPrimitives", 1000000.0, 1000.0, 50000000.0, 100000.0, 0);
         number(viewport, "Most points", "/debugDraw/maxPoints", 100000.0, 10.0, 10000000.0, 10000.0, 0);
         number(viewport, "Most text labels", "/debugDraw/maxTexts", 10000.0, 10.0, 1000000.0, 1000.0, 0);
+        section(viewport, "Framing Zoom (2 = twice as close, below 1 = further out)");
+        number(viewport, "Frame Selected zoom factor", "/viewport/frameSelected/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
+        number(viewport, "Frame All zoom factor", "/viewport/frameAll/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
+        toggle(viewport, "Frame Under Cursor also zooms in", "/viewport/frameUnderCursor/zoom", false);
+        number(viewport, "Frame Under Cursor zoom factor", "/viewport/frameUnderCursor/zoomFactor", 4.0, 0.1, 100.0, 0.25, 2);
         section(viewport, "Highlight Under Cursor");
         toggle(viewport, "Components", "/viewport/preselect/components", true);
         toggle(viewport, "Objects", "/viewport/preselect/objects", false);
