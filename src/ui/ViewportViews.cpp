@@ -169,6 +169,17 @@ void ViewportWidget::previewCameraEdit()
         scene::Transform::setLocalMatrix(g, n->id(), glm::inverse(n->as<glm::dmat4>(scene::Transform::kParentMatrix)) * placed);
         if (mCamera.ortho)
             g.setValue({n->id(), scene::Camera::kOrthographicWidth, -1}, mCamera.orthoWidth);
+        // A constraint or connection driving the camera puts it back, and the view with it.
+        g.evaluate();
+        const glm::dvec3 now(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
+        if (glm::distance(now, glm::dvec3(placed[3])) > 1e-3 * std::max(1.0, mCamera.distance))
+            if (double ms = nowMs(); ms - mLockedWarnMs > 1500.0)
+            {
+                mLockedWarnMs = ms;
+                log::warn("Camera '{}' is driven by a constraint or connection, so the view can't move it; look through a free camera or "
+                          "the perspective view instead.",
+                          n->path());
+            }
     }
     catch (const std::exception& e)
     {

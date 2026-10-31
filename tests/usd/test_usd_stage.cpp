@@ -202,6 +202,47 @@ TEST_CASE("usd stage: transforms and their animation are written as overs, survi
     CHECK(readAll(src) == before);
 }
 
+TEST_CASE("usd stage: an added layer composes under the edits, takes outside changes, goes out in a shot and comes out again")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = workDir("layers");
+    const fs::path src = copyFixture(dir, "live.usda");
+    const std::string before = readAll(src);
+    const std::string stage = openStage(src)["stage"];
+    const fs::path layer = dir / "lighting.usda";
+
+    const json added = run("usdStageAddLayer", {{"args", {layer.generic_string(), stage}}});
+    REQUIRE(added.size() == 1);
+    CHECK(fs::exists(layer));
+    CHECK(has(readAll(layer), "upAxis = \"Z\""));
+    CHECK(info(stage)["addedLayers"] == added);
+
+    // Another tool writes into it: its opinion beats the source.
+    writeFile(layer, "#usda 1.0\n(\n    metersPerUnit = 0.01\n    upAxis = \"Z\"\n)\n\nover \"World\"\n{\n    over \"Box\"\n    {\n"
+                     "        double3 xformOp:translate = (40, 0, 0)\n    }\n}\n");
+    run("usdStageUpdate");
+    CHECK(near(translateOf("Box"), {40, 0, 0}, 1e-9));
+    // Lila's edits still win over it.
+    setTranslate("Box", {50, 0, 0});
+    saveAs(dir / "scene.lila");
+    CHECK(prop("Box", "xformOp:translate") == "(50, 0, 0)");
+
+    const fs::path shot = dir / "shot.usda";
+    run("usdStageWriteShot", {{"args", {shot.generic_string(), stage}}});
+    CHECK(has(readAll(shot), "@./lighting.usda@,\n        @./live.usda@"));
+
+    reopen(dir / "scene.lila");
+    CHECK(info(stage)["addedLayers"].size() == 1);
+    setTranslate("Box", {10, 0, 0});
+    run("usdStageRemoveLayer", {{"args", {layer.generic_string(), stage}}});
+    CHECK(info(stage)["addedLayers"].empty());
+    CHECK(fs::exists(layer));
+    run("undo");
+    CHECK(info(stage)["addedLayers"].size() == 1);
+    CHECK(readAll(src) == before);
+}
+
 TEST_CASE("usd stage: hiding and deleting objects, and an undone delete brings the prim back")
 {
     UpAxisScope axis(math::UpAxis::Z);

@@ -23,6 +23,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <filesystem>
+
 namespace lila::usd
 {
 namespace
@@ -121,6 +123,19 @@ QWidget* stagePanel(NodeId id)
         });
         form->addRow("Payload", check);
     }
+    for (const json& layer : info["addedLayers"])
+    {
+        const std::string file = layer.get<std::string>();
+        auto* remove = new QPushButton("Remove", w);
+        remove->setToolTip("Take the layer out of the stage; the file stays.");
+        QObject::connect(remove, &QPushButton::clicked, w, [stage, file] { runCommand("usdStageRemoveLayer", {{"args", {file, stage}}}); });
+        auto* label = new QLabel(qs(std::filesystem::path(file).filename().string()), w);
+        label->setToolTip(qs(file));
+        auto* line = new QHBoxLayout;
+        line->addWidget(label, 1);
+        line->addWidget(remove);
+        form->addRow("Layer", line);
+    }
     v->addLayout(form);
 
     auto* row = new QHBoxLayout;
@@ -131,6 +146,11 @@ QWidget* stagePanel(NodeId id)
         row->addWidget(b);
     };
     button("Reload", "Read the stage's files again, keeping its edits.", [stage] { runCommand("usdStageReload", {{"args", {stage}}}); });
+    button("Add Layer...", "Add a layer under the edits and over the source: a new .usda, or a layer you have.", [stage, w] {
+        const QString file = ui::fileDialog::getSaveFileName(w, "Add Layer", QString(), "USD (*.usda *.usd *.usdc)");
+        if (!file.isEmpty())
+            runCommand("usdStageAddLayer", {{"args", {file.toStdString(), stage}}});
+    });
     button("Write Shot...", "Write the edits as a .usda that sublayers the source, for Houdini or Maya.", [stage, w] {
         const QString file = ui::fileDialog::getSaveFileName(w, "Write Shot", QString(), "USD (*.usda *.usd)");
         if (!file.isEmpty())

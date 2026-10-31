@@ -497,6 +497,22 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
             .examples = {"usdStageWriteShot(\"C:/shots/sh010_lila.usda\", \"kitchen\")"},
         }) &&
         stageCommand({
+            .name = "usdStageAddLayer",
+            .doc = "Add a layer to a stage, under its edits and over its source: a new .usda (with the stage's up axis and units) "
+                   "when the file doesn't exist, else that file. It is listed as a sublayer of the edit layer, so the source "
+                   "files stay unchanged, and usdStageWriteShot carries it along. Other tools write into it; Lila picks up "
+                   "their changes. Returns the added layers, strongest first.",
+            .positionalDoc = "path stage (default the selected one)",
+            .flags = {{"position", "", T::Int, 0, "Where among the added layers: 0 is the strongest."}},
+            .examples = {"usdStageAddLayer(\"C:/shots/sh010_lighting.usda\", \"kitchen\")"},
+        }) &&
+        stageCommand({
+            .name = "usdStageRemoveLayer",
+            .doc = "Take a layer usdStageAddLayer added out of a stage. The file stays on disk. Returns the added layers left.",
+            .positionalDoc = "path stage (default the selected one)",
+            .examples = {"usdStageRemoveLayer(\"C:/shots/sh010_lighting.usda\", \"kitchen\")"},
+        }) &&
+        stageCommand({
             .name = "usdStageInfo",
             .doc = "A stage's file, edit layer (mode embedded, file or sublayer, and path), the layers it reads, its variant "
                    "sets with their selections, its payloads and whether they are loaded, how many prims have objects, and "

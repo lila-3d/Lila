@@ -4330,6 +4330,41 @@ json cmdExtract(const Args& a)
     return out;
 }
 
+/** The edit layer's sublayers, as the files they resolve to, strongest first. */
+std::vector<std::string> addedLayers(const Stage& s)
+{
+    std::vector<std::string> out;
+    for (const std::string& sub : std::vector<std::string>(s.edit->GetSubLayerPaths()))
+    {
+        SdfLayerRefPtr l = SdfLayer::FindOrOpenRelativeToLayer(s.edit, sub);
+        out.push_back(l ? fileOf(l) : sub);
+    }
+    return out;
+}
+
+/** Where the edit layer lists a sublayer: relative to its folder when it is a file, absolute when it lives in the scene. */
+std::string sublayerPath(const Stage& s, const fs::path& file)
+{
+    if (s.edit->IsAnonymous())
+        return generic(file);
+    std::error_code ec;
+    const fs::path rel = fs::relative(file, utf8Path(fileOf(s.edit)).parent_path(), ec);
+    if (ec || rel.empty())
+        return generic(file);
+    const std::string r = generic(rel);
+    return r.starts_with(".") ? r : "./" + r;
+}
+
+/** The index of a file among the edit layer's sublayers, or -1. */
+int sublayerIndex(const Stage& s, const fs::path& file)
+{
+    const std::vector<std::string> layers = addedLayers(s);
+    for (size_t i = 0; i < layers.size(); ++i)
+        if (samePath(utf8Path(layers[i]), file))
+            return int(i);
+    return -1;
+}
+
 json cmdWriteShot(const Args& a)
 {
     if (a.positional.empty() || !a.positional[0].is_string())
@@ -4354,7 +4389,17 @@ json cmdWriteShot(const Args& a)
     std::string sub = ec || rel.empty() ? generic(source) : generic(rel);
     if (!ec && !rel.empty() && !sub.starts_with("."))
         sub = "./" + sub;
-    shot->SetSubLayerPaths({sub});
+    std::vector<std::string> subs;
+    // Layers added to the stage go between the edits and the source, as the stage composes them.
+    if (s.mode != Stage::Mode::Sublayer)
+        for (const std::string& layer : addedLayers(s))
+        {
+            fs::path r = fs::relative(utf8Path(layer), out.parent_path(), ec);
+            std::string p = ec || r.empty() ? generic(utf8Path(layer)) : generic(r);
+            subs.push_back(!ec && !r.empty() && !p.starts_with(".") ? "./" + p : p);
+        }
+    subs.push_back(sub);
+    shot->SetSubLayerPaths(subs);
     shot->SetDocumentation("Edits made in Lila, over " + utf8(source.filename()));
     if (const UsdStageLoadRules& rules = s.stage->GetLoadRules(); !(rules == UsdStageLoadRules::LoadAll()))
     {
@@ -4384,6 +4429,67 @@ const char* modeName(Stage::Mode m)
     return "embedded";
 }
 
+json cmdAddLayer(const Args& a)
+{
+    if (a.positional.empty() || !a.positional[0].is_string())
+        throw CommandError("usdStageAddLayer: path required");
+    Graph& g = graph();
+    Stage& s = ensure(g, stageArg(g, a, "usdStageAddLayer", 1));
+    const fs::path file = resolveFile(a.positional[0].get<std::string>());
+    std::string ext = utf8(file.extension());
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    if (ext != ".usda" && ext != ".usd" && ext != ".usdc")
+        throw CommandError("usdStageAddLayer: the file must end in .usda, .usd or .usdc");
+    if (samePath(file, resolveFile(s.source)) || (!s.edit->IsAnonymous() && samePath(file, utf8Path(fileOf(s.edit)))))
+        throw CommandError("usdStageAddLayer: " + utf8(file) + " is already the stage's source or edit layer");
+    if (sublayerIndex(s, file) >= 0)
+        throw CommandError("usdStageAddLayer: " + utf8(file) + " is already one of its layers");
+    std::error_code ec;
+    if (!fs::exists(file, ec))
+    {
+        fs::create_directories(file.parent_path(), ec);
+        SdfLayerRefPtr created = SdfLayer::CreateNew(utf8(file));
+        if (!created)
+            throw CommandError("usdStageAddLayer: can't create " + utf8(file));
+        copyStageMetadata(s.sourceLayer, created);
+        created->Save();
+    }
+    else if (!SdfLayer::FindOrOpen(utf8(file)))
+        throw CommandError("usdStageAddLayer: can't read " + utf8(file));
+
+    StageStep step(s);
+    logWarnings(s, g, sync(s, g));
+    std::vector<std::string> subs = s.edit->GetSubLayerPaths();
+    const int position = std::clamp(a.get<int>("position", 0), 0, int(subs.size()));
+    subs.insert(subs.begin() + position, sublayerPath(s, file));
+    s.edit->SetSubLayerPaths(subs);
+    flush(s, g, false);
+    s.stamps = stampsOf(s);
+    writeAttrs(s, g);
+    step.done();
+    return addedLayers(s);
+}
+
+json cmdRemoveLayer(const Args& a)
+{
+    if (a.positional.empty() || !a.positional[0].is_string())
+        throw CommandError("usdStageRemoveLayer: path required");
+    Graph& g = graph();
+    Stage& s = ensure(g, stageArg(g, a, "usdStageRemoveLayer", 1));
+    const fs::path file = resolveFile(a.positional[0].get<std::string>());
+    const int at = sublayerIndex(s, file);
+    if (at < 0)
+        throw CommandError("usdStageRemoveLayer: " + utf8(file) + " is not a layer added to the stage");
+    StageStep step(s);
+    logWarnings(s, g, sync(s, g));
+    s.edit->RemoveSubLayerPath(at);
+    flush(s, g, false);
+    s.stamps = stampsOf(s);
+    writeAttrs(s, g);
+    step.done();
+    return addedLayers(s);
+}
+
 json cmdInfo(const Args& a)
 {
     Graph& g = graph();
@@ -4410,6 +4516,7 @@ json cmdInfo(const Args& a)
     json out = {{"file", s.source},
                 {"editLayer", {{"mode", modeName(s.mode)}, {"path", s.mode == Stage::Mode::Embedded ? std::string() : fileOf(s.edit)}}},
                 {"layers", layers},
+                {"addedLayers", addedLayers(s)},
                 {"variants", variants},
                 {"payloads", payloads},
                 {"prims", s.primOf.size()},
@@ -4664,6 +4771,10 @@ bool run(std::string_view name, const Args& a, json& result)
         result = cmdExtract(a);
     else if (name == "usdStageWriteShot")
         result = cmdWriteShot(a);
+    else if (name == "usdStageAddLayer")
+        result = cmdAddLayer(a);
+    else if (name == "usdStageRemoveLayer")
+        result = cmdRemoveLayer(a);
     else if (name == "usdStageInfo")
         result = cmdInfo(a);
     else if (name == "usdStagePrim")
