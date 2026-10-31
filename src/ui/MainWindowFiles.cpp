@@ -236,6 +236,8 @@ void MainWindow::showStartupDialog(bool welcome)
     StartupDialog::Hooks hooks{
         .open = [this](const std::filesystem::path& p) { openScene(p); },
         .openExample = [this](const io::examples::Example& x) { openExample(x); },
+        .openSample = [this](const io::samples::Sample& s) { openSample(s); },
+        .mayReplaceScene = [this] { return confirmDiscard(); },
         .newScene = [] { actions::run("file.new"); },
     };
     auto* dialog = new StartupDialog(std::move(hooks), welcome, this);
@@ -251,6 +253,23 @@ void MainWindow::openExample(const io::examples::Example& example)
     {
         ops::execute("openExample", {{"args", {example.name}}, {"force", true}}, CallSource::UI);
         mViewports->frameUnlessRestored();
+    }
+    catch (const CommandError& e)
+    {
+        QMessageBox::warning(this, "Open failed", e.what());
+    }
+}
+
+void MainWindow::openSample(const io::samples::Sample& sample)
+{
+    try
+    {
+        ops::execute("openSample", {{"args", {sample.id}}, {"force", true}}, CallSource::UI);
+        const scene::Node* cam = sample.camera.empty() ? nullptr : scene::Graph::current().find(sample.camera);
+        if (cam && cam->type().isA("camera") && mViewports->active())
+            mViewports->active()->lookThrough(cam->id());
+        else
+            mViewports->frameUnlessRestored();
     }
     catch (const CommandError& e)
     {

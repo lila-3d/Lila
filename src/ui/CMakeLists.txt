@@ -137,6 +137,7 @@ lila_module(lila_ui UI
     ScriptPanel.cpp ScriptPanel.h
     Shelf.cpp Shelf.h
     StatusOutput.cpp StatusOutput.h OutputTail.h
+    SampleScenes.cpp SampleScenes.h
     SceneDialogs.cpp SceneDialogs.h
     SourceControlPanel.cpp SourceControlPanel.h
     TearOff.cpp TearOff.h TearOffLogic.h

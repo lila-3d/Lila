@@ -21,6 +21,7 @@ add_executable(lila_tests
     test_user_attrs.cpp
     test_array_group.cpp
     test_docs.cpp
+    test_samples.cpp
     test_user_docs.cpp
     test_transfer.cpp
     test_boolean.cpp

@@ -1,0 +1,7 @@
+{
+    "name": "Grey Card",
+    "description": "A lighting reference: an 18% gray ball, a chrome ball, a 90% white ball and a ColorChecker chart on an 18% gray floor. Swap HDRIs and lights and check the grays stay gray.",
+    "scene": "grey_card.lila",
+    "camera": "Cam_GreyCard",
+    "featured": true
+}

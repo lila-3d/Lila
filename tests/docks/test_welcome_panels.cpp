@@ -56,7 +56,7 @@ void pressOutside(QWidget* dialog)
 TEST_CASE("welcome dialog shows two rows of three examples without scrolling and ignores clicks outside")
 {
     QPointer<ui::StartupDialog> welcome = new ui::StartupDialog({}, true, nullptr);
-    auto* examples = welcome->findChild<QListWidget*>();
+    auto* examples = welcome->findChild<QListWidget*>("welcomeExamples");
     REQUIRE(examples);
     examples->clear();
     for (int i = 0; i < 6; ++i)

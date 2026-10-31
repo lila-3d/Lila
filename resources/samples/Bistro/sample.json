@@ -1,0 +1,14 @@
+{
+    "name": "Lumberyard Bistro",
+    "description": "A Paris street corner at day: 2.8 million triangles, 1,296 meshes and 132 textured PBR materials. A benchmark for drawing, shadows and texture memory.",
+    "url": "https://developer.nvidia.com/downloads/bistro",
+    "size": 894377473,
+    "diskSize": 1810000000,
+    "sha256": "",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "Amazon Lumberyard Bistro by Amazon Lumberyard, from NVIDIA's Open Research Content Archive (ORCA), licensed CC BY 4.0. Lila converts the exterior to a .lila and changes its sun to a white one.",
+    "source": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro",
+    "scene": "bistro.lila",
+    "camera": "Camera"
+}

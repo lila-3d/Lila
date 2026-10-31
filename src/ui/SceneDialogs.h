@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "io/Examples.h"
+#include "io/Samples.h"
 #include "io/Recovery.h"
 
 #include <QDialog>
@@ -18,6 +19,7 @@ class QCheckBox;
 class QListWidget;
 class QPushButton;
 class QTreeWidget;
+class QTreeWidgetItem;
 class QVBoxLayout;
 
 namespace lila::ui
@@ -81,6 +83,8 @@ public:
     {
         std::function<void(const std::filesystem::path&)> open; // empty path = browse
         std::function<void(const io::examples::Example&)> openExample;
+        std::function<void(const io::samples::Sample&)> openSample; // an installed sample
+        std::function<bool()> mayReplaceScene;                       // asks to discard unsaved changes
         std::function<void()> newScene;
     };
 
@@ -95,6 +99,12 @@ protected:
 private:
     void openSelected(QTreeWidget* list);
     void openExampleSelected();
+    void openSampleSelected();
+    /** The strip of downloadable sample scenes under the essentials banner; null when there are none. */
+    QListWidget* makeSampleStrip();
+    void showRecentMenu(const QPoint& at);
+    /** Drops the scene from the recent files pref and the list. */
+    void removeRecent(QTreeWidgetItem* item);
     /** Rebuilds the news column; it hides when there is nothing to show, and the examples widen into its space. */
     void showNews(const std::vector<news::Item>& items);
     /** The examples list's width for that many cards across. */
@@ -106,6 +116,8 @@ private:
     QTreeWidget* mList = nullptr;
     QListWidget* mExamples = nullptr;
     std::vector<io::examples::Example> mExampleList;
+    QListWidget* mSamples = nullptr;
+    std::vector<io::samples::Sample> mSampleList;
     QElapsedTimer mReclaimFocus;
     bool mWelcome = false;
 };

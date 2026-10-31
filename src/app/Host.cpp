@@ -20,6 +20,7 @@
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
 #include "io/Examples.h"
+#include "io/Samples.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
 #include "link/Exporters.h"
@@ -159,6 +160,7 @@ void startCore()
     io::registerCommands();
     io::recovery::registerCommands();
     io::examples::registerCommands();
+    io::samples::registerCommands();
     gn::registerCommands();
     seq::registerCommands();
     bake::registerCommands();

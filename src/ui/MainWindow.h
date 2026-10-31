@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "io/Examples.h"
+#include "io/Samples.h"
 #include "io/Recovery.h"
 
 class QDialog;
@@ -102,6 +103,7 @@ private:
     void reloadScene();
     void openRecoveredScene(const std::filesystem::path& file);
     void openExample(const io::examples::Example& example);
+    void openSample(const io::samples::Sample& sample);
     /** welcome: examples and recent scenes; otherwise recent scenes alone. */
     void showStartupDialog(bool welcome);
     /** Every panel's show toggle, grouped by what it is for. */

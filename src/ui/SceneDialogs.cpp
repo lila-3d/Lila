@@ -9,8 +9,11 @@
 #include "io/Examples.h"
 #include "io/SceneFile.h"
 #include "io/SceneHistory.h"
+#include "ui/SampleScenes.h"
 #include "ui/AchievementRules.h"
 #include "ui/DocsUi.h"
+#include "ui/FileDialog.h"
+#include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/WelcomeNews.h"
 #include "vcs/SourceControl.h"
@@ -26,6 +29,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QListWidget>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStyle>
@@ -40,6 +44,7 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QTreeWidget>
@@ -59,6 +64,7 @@ constexpr int kPathRole = Qt::UserRole;
 constexpr int kKindRole = Qt::UserRole + 1;
 constexpr int kRevisionRole = Qt::UserRole + 2;
 constexpr int kDescriptionRole = Qt::UserRole + 3;
+constexpr int kFeaturedRole = Qt::UserRole + 4;
 
 /** An example as a card: thumbnail, title and the start of its description. */
 class ExampleCard : public QStyledItemDelegate
@@ -121,6 +127,48 @@ public:
             p->drawText(text.left(), text.top() + i * fm.lineSpacing(), text.width(), fm.lineSpacing(), Qt::AlignLeft | Qt::AlignVCenter, line);
             rest = rest.mid(line.size()).trimmed();
         }
+        p->restore();
+    }
+};
+
+/** A sample as a small 16:9 thumbnail with its title under it. */
+class SampleChip : public QStyledItemDelegate
+{
+public:
+    static constexpr int kThumbWidth = 144;
+    static constexpr QSize kSize{kThumbWidth, kThumbWidth * 9 / 16 + 22};
+
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return kSize; }
+
+    void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override
+    {
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing);
+        const QRectF chip = QRectF(opt.rect).adjusted(0.5, 0.5, -0.5, -0.5);
+        const bool selected = opt.state & QStyle::State_Selected, hover = opt.state & QStyle::State_MouseOver;
+        const bool featured = index.data(kFeaturedRole).toBool();
+        // Lila's logo blue, the same in every theme.
+        const QColor edge = featured ? QColor(0x30, 0xa5, 0xfa) : themeColor(selected ? "highlight" : hover ? "hover" : "border");
+        p->setPen(QPen(edge, selected || featured ? 2.0 : 1.0));
+        p->setBrush(themeColor("base"));
+        p->drawRoundedRect(chip, 4, 4);
+
+        const QRect thumb(opt.rect.left() + 1, opt.rect.top() + 1, opt.rect.width() - 2, (opt.rect.width() - 2) * 9 / 16);
+        const QPixmap pix = index.data(Qt::DecorationRole).value<QPixmap>();
+        if (pix.isNull())
+            p->fillRect(thumb, themeColor("altBase"));
+        else
+        {
+            const QPixmap scaled = pix.scaled(thumb.size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            p->drawPixmap(thumb, scaled, QRect((scaled.width() - thumb.width()) / 2, (scaled.height() - thumb.height()) / 2, thumb.width(), thumb.height()));
+        }
+        const QRect text(opt.rect.left() + 6, thumb.bottom() + 1, opt.rect.width() - 12, opt.rect.bottom() - thumb.bottom() - 1);
+        const QFontMetrics fm(opt.font);
+        p->setFont(opt.font);
+        p->setPen(themeColor("text"));
+        p->drawText(text, Qt::AlignLeft | Qt::AlignVCenter, fm.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, text.width()));
         p->restore();
     }
 };
@@ -527,6 +575,11 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         });
         layout->addWidget(essentials);
         layout->addSpacing(10);
+        if (QListWidget* samples = makeSampleStrip())
+        {
+            layout->addWidget(samples);
+            layout->addSpacing(10);
+        }
 
         auto* page = new QWidget;
         page->setObjectName("startupPageBody");
@@ -557,6 +610,7 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
         QVBoxLayout* examplesLayout = nullptr;
         QWidget* examplesColumn = makeColumn(page, "Examples", examplesLayout);
         mExamples = new QListWidget(examplesColumn);
+        mExamples->setObjectName("welcomeExamples");
         mExamples->setViewMode(QListView::IconMode);
         mExamples->setResizeMode(QListView::Adjust);
         mExamples->setMovement(QListView::Static);
@@ -624,8 +678,20 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     row->addWidget(browse);
     layout->addLayout(row);
 
+    mList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mList, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) { showRecentMenu(at); });
+
     // Queued: opening a scene tears this dialog down, and Qt's double-click handler still uses the list after emitting.
     connect(mList, &QTreeWidget::itemActivated, this, [this] { openSelected(mList); }, Qt::QueuedConnection);
+    if (mSamples)
+    {
+        connect(mSamples, &QListWidget::itemClicked, this, [this] { openSampleSelected(); }, Qt::QueuedConnection);
+        // Enter on a highlighted sample; a click has already opened it.
+        connect(mSamples, &QListWidget::itemActivated, this, [this] {
+            if (!QApplication::mouseButtons())
+                openSampleSelected();
+        }, Qt::QueuedConnection);
+    }
     if (mExamples)
     {
         connect(mExamples, &QListWidget::itemActivated, this, [this] { openExampleSelected(); }, Qt::QueuedConnection);
@@ -724,7 +790,7 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
     {
         auto* me = static_cast<QMouseEvent*>(e);
         auto* w = qobject_cast<QWidget*>(obj);
-        if (w && w->window() != this && !geometry().contains(me->globalPosition().toPoint()))
+        if (w && w->window() != this && !qobject_cast<QMenu*>(w->window()) && !geometry().contains(me->globalPosition().toPoint()))
             reject();
     }
     return QDialog::eventFilter(obj, e);
@@ -740,6 +806,86 @@ void StartupDialog::openExampleSelected()
     accept();
     if (open)
         open(x);
+}
+
+QListWidget* StartupDialog::makeSampleStrip()
+{
+    mSampleList = io::samples::list();
+    if (mSampleList.empty())
+        return nullptr;
+    mSamples = new QListWidget(this);
+    mSamples->setObjectName("welcomeSamples");
+    mSamples->setViewMode(QListView::IconMode);
+    mSamples->setFlow(QListView::LeftToRight);
+    mSamples->setWrapping(false);
+    mSamples->setMovement(QListView::Static);
+    mSamples->setUniformItemSizes(true);
+    mSamples->setSpacing(6);
+    mSamples->setGridSize(SampleChip::kSize + QSize(8, 0));
+    mSamples->setFrameShape(QFrame::NoFrame);
+    mSamples->viewport()->setAutoFillBackground(false);
+    mSamples->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mSamples->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    mSamples->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    mSamples->setItemDelegate(new SampleChip(mSamples));
+    for (size_t i = 0; i < mSampleList.size(); ++i)
+    {
+        const io::samples::Sample& s = mSampleList[i];
+        auto* item = new QListWidgetItem(mSamples);
+        item->setText(QString::fromStdString(s.name));
+        item->setToolTip("<p>" + QString::fromStdString(s.description).toHtmlEscaped() + "</p><p>" +
+                         QString::fromStdString(s.credit).toHtmlEscaped() + "</p>");
+        item->setData(kKindRole, int(i));
+        item->setData(kFeaturedRole, s.featured);
+        if (!s.thumbnail.empty())
+            item->setData(Qt::DecorationRole, QPixmap(qpath(s.thumbnail)));
+    }
+    mSamples->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mSamples->setFixedHeight(SampleChip::kSize.height() + 2 * mSamples->spacing());
+    return mSamples;
+}
+
+void StartupDialog::openSampleSelected()
+{
+    QListWidgetItem* item = mSamples->currentItem();
+    if (!item)
+        return;
+    const io::samples::Sample s = mSampleList[size_t(item->data(kKindRole).toInt())];
+    // The details and the download sit over the welcome screen, which stays until the scene is ready to open.
+    QPointer<StartupDialog> self = this;
+    sampleScenes::fetch(this, s, mHooks.mayReplaceScene, [self, s] {
+        auto open = self ? self->mHooks.openSample : nullptr;
+        if (self)
+            self->accept();
+        if (open)
+            open(s);
+    });
+    if (self && mSamples)
+        mSamples->clearSelection();
+}
+
+void StartupDialog::showRecentMenu(const QPoint& at)
+{
+    QTreeWidgetItem* item = mList->itemAt(at);
+    if (!item || item->data(0, kPathRole).toString().isEmpty())
+        return;
+    const QString path = item->data(0, kPathRole).toString();
+    QMenu menu(this);
+    menu.addAction(icon("folder-search"), "Open Containing Folder", [path] { fileOps::reveal(path); });
+    menu.addAction(icon("x"), "Remove from Recents", [this, item] { removeRecent(item); });
+    menu.exec(mList->viewport()->mapToGlobal(at));
+}
+
+void StartupDialog::removeRecent(QTreeWidgetItem* item)
+{
+    const std::string path = fs::path(item->data(0, kPathRole).toString().toStdWString()).generic_string();
+    json recent = PrefStore::get().value("general", "/recentFiles", json::array());
+    if (recent.is_array())
+    {
+        recent.erase(std::remove(recent.begin(), recent.end(), json(path)), recent.end());
+        PrefStore::get().set("general", "/recentFiles", recent);
+    }
+    delete item;
 }
 
 void StartupDialog::openSelected(QTreeWidget* list)
