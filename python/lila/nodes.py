@@ -334,6 +334,11 @@ class Node:
         points[offsets[i]:offsets[i] + counts[i]] with offsets = numpy.cumsum(counts) - counts."""
         return _lila.mesh_face_arrays(self.path, base)
 
+    def material_array(self, base=False):
+        """(slots, names): a uint32 numpy array of each face's material slot, in face_arrays' face order, and the slot
+        names it indexes, so face i uses names[slots[i]]. listMaterials gives the material bound to each slot name."""
+        return _lila.mesh_material_array(self.path, base)
+
     def normals_array(self, base=False):
         """(C, 3) float32 numpy array of normals per face-vertex (faces in order, corners around each face), as drawn."""
         return _lila.mesh_normals_array(self.path, base)

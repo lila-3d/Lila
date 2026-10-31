@@ -19,7 +19,6 @@
 #include <pxr/imaging/hd/cameraSchema.h>
 #include <pxr/imaging/hd/extentSchema.h>
 #include <pxr/imaging/hd/geomSubsetSchema.h>
-#include <pxr/imaging/hd/legacyDisplayStyleSchema.h>
 #include <pxr/imaging/hd/light.h>
 #include <pxr/imaging/hd/lightSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
@@ -204,15 +203,13 @@ struct LilaSceneIndex::MeshData
     std::vector<std::string> slots;
     /** Smooth preview level: Catmull-Clark refined this many times, 0 for the cage as it is. */
     int level = 0;
-    /** Hydra refines it (catmullClark at level); false when it was subdivided here and goes as plain faces. */
-    bool hydraRefines = false;
     /** The cage face of each face Hydra gets, for isolate select's face masks. */
     std::vector<geo::Index> cageFace;
     glm::dvec3 centre{0.0};
 
     bool sameTopology(const MeshData& o) const
     {
-        return level == o.level && hydraRefines == o.hydraRefines && counts == o.counts && indices == o.indices && subsets == o.subsets && slots == o.slots;
+        return level == o.level && counts == o.counts && indices == o.indices && subsets == o.subsets && slots == o.slots;
     }
 
     /** What a node's prim gets: the mesh less the faces isolate select hides (left out, since Storm ignores holes). */
@@ -282,7 +279,7 @@ struct LilaSceneIndex::MeshData
                                         .SetFaceVertexIndices(retained(i))
                                         .SetOrientation(HdMeshTopologySchema::BuildOrientationDataSource(HdMeshTopologySchemaTokens->rightHanded))
                                         .Build())
-                       .SetSubdivisionScheme(retained(hydraRefines ? PxOsdOpenSubdivTokens->catmullClark : PxOsdOpenSubdivTokens->none))
+                       .SetSubdivisionScheme(retained(PxOsdOpenSubdivTokens->none))
                        .SetDoubleSided(retained(true))
                        .Build();
         std::vector<std::pair<TfToken, HdDataSourceBaseHandle>> pv = {
@@ -311,17 +308,16 @@ std::shared_ptr<const LilaSceneIndex::MeshData> LilaSceneIndex::meshData(const s
     LILA_ZONE();
     auto d = std::make_shared<MeshData>();
     d->level = level;
-    d->hydraRefines = level > 0 && !mRefineHere;
-    // Subdivided here as Lila's smooth preview does it, smooth shaded, for delegates that can't refine.
+    // Subdivided here as Lila's smooth preview does it, so every delegate draws the same smooth shaded surface.
     geo::Mesh refined;
     geo::SubdivideMap map;
-    if (level > 0 && mRefineHere)
+    if (level > 0)
     {
         geo::SubdivideOptions so;
         so.levels = level;
         refined = geo::subdivide(*mesh, so, &map);
     }
-    const geo::Mesh& m = level > 0 && mRefineHere ? refined : *mesh;
+    const geo::Mesh& m = level > 0 ? refined : *mesh;
     geo::RenderMeshOptions o;
     o.wireframe = false;
     const geo::RenderMesh rm = geo::buildRenderMesh(m, o);
@@ -351,7 +347,7 @@ std::shared_ptr<const LilaSceneIndex::MeshData> LilaSceneIndex::meshData(const s
         if (!m.faceValid(f))
             continue;
         faceIndex[f] = int(d->counts.size());
-        d->cageFace.push_back(level > 0 && mRefineHere ? (f < map.faces.size() ? map.faces[f] : geo::kInvalid) : f);
+        d->cageFace.push_back(level > 0 ? (f < map.faces.size() ? map.faces[f] : geo::kInvalid) : f);
         d->counts.push_back(int(m.faceSize(f)));
         m.forEachFaceCorner(f, [&](geo::Index c) {
             d->indices.push_back(pointIndex[m.cornerPoint(c)]);
@@ -369,8 +365,7 @@ std::shared_ptr<const LilaSceneIndex::MeshData> LilaSceneIndex::meshData(const s
 
     d->points = std::move(points);
     auto& pv = d->faceVarying;
-    // Meshes Hydra refines take its limit-surface normals, as Lila's smooth preview shades them.
-    if (!d->hydraRefines && rm.normals.size() == rm.positions.size())
+    if (rm.normals.size() == rm.positions.size())
         pv.push_back({HdTokens->normals, HdPrimvarSchemaTokens->normal,
                       VtValue(perCorner([&](geo::Index v) { return GfVec3f(rm.normals[v].x, rm.normals[v].y, rm.normals[v].z); }))});
     for (size_t s = 0; s < rm.uvs.size(); ++s)
@@ -469,8 +464,6 @@ HdContainerDataSourceHandle LilaSceneIndex::nodeSource(const Node& n) const
         e.push_back({HdMeshSchema::GetSchemaToken(), n.shape.mesh});
         e.push_back({HdPrimvarsSchema::GetSchemaToken(), n.shape.primvars});
         e.push_back({HdExtentSchema::GetSchemaToken(), n.mesh->extent});
-        if (n.mesh->hydraRefines)
-            e.push_back({HdLegacyDisplayStyleSchema::GetSchemaToken(), HdLegacyDisplayStyleSchema::Builder().SetRefineLevel(retained(n.mesh->level)).Build()});
         if (n.bindings.size() == 1)
             e.push_back({HdMaterialBindingsSchema::GetSchemaToken(), bindingSource(n.bindings[0])});
     }

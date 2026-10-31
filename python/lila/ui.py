@@ -34,6 +34,38 @@ __all__ = [
     "Check",
     "Choice",
     "Spacer",
+    "add_action",
+    "remove_action",
+    "add_menu",
+    "add_menu_item",
+    "remove_menu",
+    "remove_menu_item",
+    "add_bar_item",
+    "remove_bar_item",
+    "bar_items",
+    "add_panel",
+    "remove_panel",
+    "add_mode",
+    "remove_mode",
+    "set_mode",
+    "mode",
+    "modes",
+    "add_layout",
+    "remove_layout",
+    "add_marking_menu",
+    "remove_marking_menu",
+    "add_marking_menu_set",
+    "remove_marking_menu_set",
+    "add_marking_menu_item",
+    "remove_marking_menu_item",
+    "add_hotkey_layer",
+    "remove_hotkey_layer",
+    "add_shelf",
+    "remove_shelf",
+    "add_preferences_page",
+    "remove_preferences_page",
+    "remove_owned",
+    "reveal",
 ]
 
 
@@ -396,10 +428,12 @@ def _call(op, fns=(), **args):
     return json.loads(_lila_sdk.call(op, json.dumps(args), tuple(_wrap(f) for f in fns)))
 
 
-def add_action(id, fn, label=None, category="Python", doc="", owner=None, icon=""):
-    """Register fn as the UI action `id`, so menus, hotkeys, marking menus and shelves can run it. `icon` is a Tabler icon name for menu rows."""
-    return _call("action.add", [lambda: fn()], id=id, label=label or id, category=category, doc=doc or (fn.__doc__ or "").strip(),
-                 owner=_owner(owner), icon=icon)
+def add_action(id, fn, label=None, category="Python", doc="", owner=None, icon="", checked=None):
+    """Register fn as the UI action `id`, so menus, hotkeys, marking menus and shelves can run it. `icon` is a Tabler icon name for menu rows.
+    checked makes it a toggle: a function returning whether it is on, shown as a check in menus and icon bars. For a choice
+    of several, add an action per option, each checked when its option is the current one."""
+    return _call("action.add", [lambda: fn(), checked], id=id, label=label or id, category=category,
+                 doc=doc or (fn.__doc__ or "").strip(), owner=_owner(owner), icon=icon)
 
 
 def remove_action(id):
@@ -413,7 +447,8 @@ def add_menu(id, title=None, area="menuBar", before="", docs="", owner=None):
 
 
 def add_menu_item(menu, action=None, label=None, kind=None, id="", after="", before="", owner=None):
-    """Add a row to a menu path ("Mesh", "Mesh/Symmetry"). kind: "action" (default with an action), "separator",
+    """Add a row to a menu path: a menu's id as add_menu was given it, then any submenu labels ("Mesh", "Mesh/Symmetry",
+    "my.menu/Sync"). A path naming no menu logs a warning. kind: "action" (default with an action), "separator",
     "section" (a separator titled by label) or "submenu" (label names it; its rows use the path "<menu>/<label>"). Returns the item's id."""
     kind = kind or ("action" if action else "submenu" if label else "separator")
     return _call("menu.addItem", menu=menu, action=action or "", label=label or "", kind=kind, id=id, after=after, before=before,

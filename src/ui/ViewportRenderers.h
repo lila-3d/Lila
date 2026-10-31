@@ -9,6 +9,8 @@
 #include "scene/Graph.h"
 #include "ui/ViewInfo.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -94,6 +96,14 @@ struct Frame
     uint64_t serial = 0;
 };
 
+/** A setting a session offers (Hydra's render setting descriptors). value is its current value: a bool, number or string. */
+struct Setting
+{
+    std::string key;
+    std::string name;
+    nlohmann::json value;
+};
+
 /** One viewport's use of a renderer: opened when the viewport picks it, destroyed when it picks another or closes, or the renderer goes. */
 class LILA_UI_API Session
 {
@@ -107,6 +117,10 @@ public:
      * renderer keeping its own copy of the scene (a Hydra scene index) updates from.
      */
     virtual void sceneChanged(scene::Change /*change*/, scene::NodeId /*node*/) {}
+    /** Main thread: the settings this session offers, with their current values. */
+    virtual std::vector<Setting> settings() const { return {}; }
+    /** Main thread: changes one; false for a key it doesn't know or a value it refuses. A render call follows. */
+    virtual bool setSetting(const std::string& /*key*/, const nlohmann::json& /*value*/) { return false; }
 };
 
 struct Renderer
@@ -134,6 +148,19 @@ LILA_UI_API std::vector<std::pair<std::string, std::string>> choices();
 LILA_UI_API bool select(int panel, std::string_view id);
 /** The renderer panel draws with: kLila unless another was picked. */
 LILA_UI_API std::string selected(int panel);
+/**
+ * The settings saved for a renderer, {key: value}: each one changed through setSetting, applied to every session it opens
+ * after open() returns. Sessions that need them while starting (Hydra's CreateDelegate) read them here.
+ */
+LILA_UI_API nlohmann::json savedSettings(std::string_view renderer);
+/** Changes a setting of panel's session, then saves it and applies it to the renderer's other sessions. False when the session refuses it. */
+LILA_UI_API bool setSetting(int panel, const std::string& key, const nlohmann::json& value);
+/** The settings of panel's session; empty for Lila's own renderer. */
+LILA_UI_API std::vector<Setting> settings(int panel);
+/** Called on the main thread when a viewport picks another renderer. */
+LILA_UI_API int addListener(std::function<void(int panel)> fn);
+LILA_UI_API void removeListener(int id);
+
 /** The viewport the commands act on when given no panel. */
 LILA_UI_API void setActivePanel(std::function<int()> fn);
 LILA_UI_API int activePanel();
@@ -151,6 +178,6 @@ LILA_UI_API void setRedraw(int panel, std::function<void()> fn);
 /** The viewport closed: ends its session and forgets it. */
 LILA_UI_API void release(int panel);
 
-/** The viewportRenderer and viewportRenderers commands. */
+/** The viewportRenderer, viewportRenderers and viewportRendererSetting commands. */
 LILA_UI_API void registerCommands();
 } // namespace lila::ui::viewportRenderers

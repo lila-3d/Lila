@@ -30,18 +30,23 @@
 #include "ui/FileDialog.h"
 
 #include <QActionGroup>
+#include <QCheckBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPointer>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QStyle>
 #include <QTimer>
 #include <QToolButton>
@@ -52,6 +57,7 @@
 #include <cmath>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <unordered_set>
 #include <utility>
 #include <string>
@@ -427,6 +433,69 @@ QToolButton* makeChevron(QWidget* parent, const QString& tip)
     chevron->setMenu(new QMenu(chevron));
     return chevron;
 }
+
+void setRendererSetting(int panel, const std::string& key, json value)
+{
+    try
+    {
+        ops::execute("viewportRendererSetting", {{"args", {key, std::move(value)}}, {"panel", panel}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+/** The settings of the renderer a viewport draws with, applied as they are edited. */
+void showRendererSettings(QWidget* parent, int panel)
+{
+    auto* dialog = new QDialog(parent);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(QString::fromStdString(viewportRenderers::selected(panel)) + " Settings");
+    auto* form = new QFormLayout(dialog);
+    for (const viewportRenderers::Setting& s : viewportRenderers::settings(panel))
+    {
+        const QString label = QString::fromStdString(s.name.empty() ? s.key : s.name);
+        const std::string key = s.key;
+        QWidget* field = nullptr;
+        if (s.value.is_boolean())
+        {
+            auto* box = new QCheckBox(dialog);
+            box->setChecked(s.value.get<bool>());
+            QObject::connect(box, &QCheckBox::toggled, dialog, [panel, key](bool on) { setRendererSetting(panel, key, on); });
+            field = box;
+        }
+        else if (s.value.is_number_integer())
+        {
+            auto* spin = new QSpinBox(dialog);
+            spin->setRange(std::numeric_limits<int>::lowest(), std::numeric_limits<int>::max());
+            spin->setValue(s.value.get<int>());
+            QObject::connect(spin, &QSpinBox::editingFinished, dialog, [panel, key, spin] { setRendererSetting(panel, key, spin->value()); });
+            field = spin;
+        }
+        else if (s.value.is_number())
+        {
+            auto* spin = new QDoubleSpinBox(dialog);
+            spin->setRange(-1e9, 1e9);
+            spin->setDecimals(4);
+            spin->setValue(s.value.get<double>());
+            QObject::connect(spin, &QDoubleSpinBox::editingFinished, dialog, [panel, key, spin] { setRendererSetting(panel, key, spin->value()); });
+            field = spin;
+        }
+        else if (s.value.is_string())
+        {
+            auto* edit = new QLineEdit(QString::fromStdString(s.value.get<std::string>()), dialog);
+            QObject::connect(edit, &QLineEdit::editingFinished, dialog, [panel, key, edit] { setRendererSetting(panel, key, edit->text().toStdString()); });
+            field = edit;
+        }
+        if (field)
+        {
+            field->setToolTip(QString::fromStdString(key));
+            form->addRow(label, field);
+        }
+    }
+    dialog->show();
+}
 } // namespace
 
 ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidget(parent), mView(view)
@@ -526,10 +595,14 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
                 }
             });
         }
+        if (!viewportRenderers::settings(mView->hudPanel()).empty())
+        {
+            m->addSeparator();
+            connect(m->addAction("Renderer Settings..."), &QAction::triggered, this, [this] { showRendererSettings(this, mView->hudPanel()); });
+        }
     });
-    actionButton("viewport.toggleShadows", "shadow");
-    actionButton("viewport.toggleAO", "blur");
-    actionButton("viewport.toggleAA", "wave-saw-tool");
+    mLilaRendererOnly = {actionButton("viewport.toggleShadows", "shadow"), actionButton("viewport.toggleAO", "blur"),
+                         actionButton("viewport.toggleAA", "wave-saw-tool")};
     mSamplesButton = menuButton({}, "Antialiasing Samples", [this](QMenu* m) {
         auto* group = new QActionGroup(m);
         for (const char* n : {"2", "4", "8"})
@@ -543,9 +616,10 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
         }
     });
     mSamplesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    mLilaRendererOnly.push_back(mSamplesButton);
     separator();
     actionButton("viewport.toggleEnvBackground", "background");
-    menuButton("sun", "Lighting", [this](QMenu* m) {
+    mLilaRendererOnly.push_back(menuButton("sun", "Lighting", [this](QMenu* m) {
         auto* group = new QActionGroup(m);
         for (const char* mode : {"environment", "studio", "flat"})
         {
@@ -556,7 +630,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
             group->addAction(a);
             connect(a, &QAction::triggered, this, [id] { actions::run(id); });
         }
-    });
+    }));
     menuButton("world", "Environment", [](QMenu* m) { fillEnvironmentMenu(m); });
     separator();
     actionButton("viewport.isolate", "focus-2");
@@ -589,6 +663,10 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     });
     mRenderSettingsListener = scene::addRenderSettingsListener([this] { refresh(); });
     mToolsListener = tools::addListener([this] { refresh(); });
+    mRendererListener = viewportRenderers::addListener([this](int panel) {
+        if (panel == mView->hudPanel())
+            refresh();
+    });
     mContextListener = viewportContext::addListener([this] {
         if (refreshRelevance())
             layoutItems();
@@ -603,6 +681,7 @@ ViewportToolbar::~ViewportToolbar()
     PrefStore::get().removeOnChanged(mPrefListener);
     scene::removeRenderSettingsListener(mRenderSettingsListener);
     tools::removeListener(mToolsListener);
+    viewportRenderers::removeListener(mRendererListener);
     viewportContext::removeListener(mContextListener);
 }
 
@@ -673,7 +752,14 @@ void ViewportToolbar::refresh()
     mCameraButton->setToolTip("Camera: " + QString::fromStdString(mView->viewName()) + "\nRight-click to select it");
     int samples = PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples);
     mSamplesButton->setText(QString::number(samples) + "x");
-    mSamplesButton->setEnabled(pref(vd::kAaEnabled, true));
+    const bool lilaDraws = viewportRenderers::selected(mView->hudPanel()) == viewportRenderers::kLila;
+    for (QToolButton* b : mLilaRendererOnly)
+    {
+        if (QAction* a = b->defaultAction())
+            a->setEnabled(lilaDraws);
+        b->setEnabled(lilaDraws);
+    }
+    mSamplesButton->setEnabled(lilaDraws && pref(vd::kAaEnabled, true));
     if (refreshRelevance())
         layoutItems();
 }

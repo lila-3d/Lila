@@ -85,6 +85,24 @@ std::string str(const json& a, const char* key, const std::string& fallback = {}
     return it != a.end() && it->is_string() ? it->get<std::string>() : fallback;
 }
 
+/** A menu path whose first part names a menu by its title instead of its id, as its id; warns when it names no menu yet. */
+std::string menuPath(const std::string& path)
+{
+    const size_t slash = path.find('/');
+    const std::string head = path.substr(0, slash);
+    if (menus::menuRegistry().contains(head))
+        return path;
+    for (const menus::Menu* m : menus::menuRegistry().allInOrder())
+    {
+        QString title = QString::fromStdString(m->title);
+        title.remove('&');
+        if (title.toStdString() == head)
+            return slash == std::string::npos ? m->id : m->id + path.substr(slash);
+    }
+    log::warn("ui.add_menu_item: no menu '{}' yet, so its items stay hidden until one is added; paths start with the id add_menu was given", head);
+    return path;
+}
+
 Qt::DockWidgetArea area(const std::string& name)
 {
     if (name == "left")
@@ -151,13 +169,25 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
     if (op == "action.add")
     {
         PyCall run = fn(0);
-        actions::add({.id = str(a, "id"), .label = str(a, "label", str(a, "id")), .category = str(a, "category", "Python"),
+        Action action{.id = str(a, "id"), .label = str(a, "label", str(a, "id")), .category = str(a, "category", "Python"),
                       .run = [run] {
                           if (run)
                               run(json::array());
                       },
-                      .doc = str(a, "doc"), .python = str(a, "python"), .icon = str(a, "icon")},
-                     owner);
+                      .doc = str(a, "doc"), .python = str(a, "python"), .icon = str(a, "icon")};
+        if (PyCall checked = fn(1))
+            action.checked = [checked] {
+                try
+                {
+                    const json on = checked(json::array());
+                    return on.is_boolean() && on.get<bool>();
+                }
+                catch (const std::exception&)
+                {
+                    return false;
+                }
+            };
+        actions::add(std::move(action), owner);
         return true;
     }
     if (op == "action.remove")
@@ -189,7 +219,7 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
                        : kind == "section" ? menus::Kind::Section
                        : kind == "submenu" ? menus::Kind::Submenu
                                            : menus::Kind::Action;
-        return menus::addItem({.id = str(a, "id"), .menu = str(a, "menu"), .kind = k, .action = str(a, "action"), .label = str(a, "label"),
+        return menus::addItem({.id = str(a, "id"), .menu = menuPath(str(a, "menu")), .kind = k, .action = str(a, "action"), .label = str(a, "label"),
                                .after = str(a, "after"), .before = str(a, "before")},
                               owner);
     }

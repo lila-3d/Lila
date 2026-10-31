@@ -4,6 +4,7 @@
 #include "geo/Normals.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 
@@ -221,6 +222,33 @@ nb::ndarray<nb::numpy, const float, nb::shape<-1, 2>> uvArray(const std::string&
     return {data, {corners, size_t(2)}, bufferOwner(out)};
 }
 
+std::pair<IndexArray, std::vector<std::string>> materialArray(const std::string& mesh, bool base)
+{
+    scene::MeshPtr m = meshOf(mesh, base, "material_array");
+    std::unique_ptr<uint32_t[]> slots;
+    size_t faces = 0;
+    int32_t top = std::max(0, int32_t(m->materialNames().size()) - 1);
+    {
+        nb::gil_scoped_release nogil;
+        FaceLayout l = faceLayout(*m);
+        faces = l.count();
+        slots = std::make_unique<uint32_t[]>(faces);
+        std::span<const int32_t> ids = m->faceAttrs().get<int32_t>(geo::attr::kMaterial);
+        if (!ids.empty())
+            for (size_t i = 0; i < faces; ++i)
+            {
+                const int32_t id = std::max(0, ids[l.face(i)]);
+                slots[i] = uint32_t(id);
+                top = std::max(top, id);
+            }
+    }
+    std::vector<std::string> names;
+    for (int32_t id = 0; id <= top; ++id)
+        names.push_back(scene::materials::slotName(*m, id));
+    const uint32_t* data = slots.get();
+    return {IndexArray(data, {faces}, bufferOwner(slots)), std::move(names)};
+}
+
 std::vector<std::string> uvSets(const std::string& mesh, bool base)
 {
     scene::MeshPtr m = meshOf(mesh, base, "uv_sets");
@@ -259,6 +287,8 @@ void bindMeshArrays(nb::module_& m)
           "(C, 3) float32 normals per face-vertex (faces in order, corners around each face).");
     m.def("mesh_uv_array", &uvArray, nb::arg("mesh"), nb::arg("uv_set") = "uv0", nb::arg("base") = false,
           "(C, 2) float32 uvs per face-vertex, in mesh_normals_array's order.");
+    m.def("mesh_material_array", &materialArray, nb::arg("mesh"), nb::arg("base") = false,
+          "(slots, names): each face's material slot (F,) uint32 in mesh_face_arrays' face order, and the slot names it indexes.");
     m.def("mesh_uv_sets", &uvSets, nb::arg("mesh"), nb::arg("base") = false, "The mesh's uv set names (uv0, uv1, ...).");
     m.def("set_mesh_points", &setPoints, nb::arg("mesh"), nb::arg("points"),
           "Moves every base point from an (N, 3) float64 array through setMeshPoints; one undo step.");

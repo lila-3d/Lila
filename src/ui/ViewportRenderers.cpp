@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/MainQueue.h"
+#include "core/PrefStore.h"
 #include "ops/Command.h"
 
 #include <map>
@@ -48,6 +49,20 @@ std::function<int()>& activeFn()
 
 uint64_t gRevision = 1;
 int gGraphListener = 0;
+constexpr const char* kSettingsFile = "viewportRenderers";
+
+std::map<int, std::function<void(int)>>& listeners()
+{
+    static std::map<int, std::function<void(int)>> l;
+    return l;
+}
+
+void notify(int panel)
+{
+    auto copy = listeners();
+    for (auto& [id, fn] : copy)
+        fn(panel);
+}
 
 void redrawPanel(int panel)
 {
@@ -170,12 +185,31 @@ bool sameRequest(const Request& a, const Request& b)
 
 void dropRenderer(const std::string& id)
 {
+    std::vector<int> dropped;
     for (auto& [panel, v] : views())
         if (v.renderer == id)
         {
             close(v);
             if (v.redraw)
                 v.redraw();
+            dropped.push_back(panel);
+        }
+    for (int panel : dropped)
+        notify(panel);
+}
+
+void applySaved(const std::string& renderer, Session& s)
+{
+    const nlohmann::json saved = savedSettings(renderer);
+    for (auto& [key, value] : saved.items())
+        try
+        {
+            if (!s.setSetting(key, value))
+                log::warn("viewport renderer {}: setting {} = {} was refused", renderer, key, value.dump());
+        }
+        catch (const std::exception& e)
+        {
+            log::error("viewport renderer {}: setting {}: {}", renderer, key, e.what());
         }
 }
 } // namespace
@@ -246,6 +280,7 @@ bool select(int panel, std::string_view id)
         close(v);
         if (v.redraw)
             v.redraw();
+        notify(panel);
         return true;
     }
     const Renderer* r = registry().find(id);
@@ -262,6 +297,7 @@ bool select(int panel, std::string_view id)
     }
     if (!session)
         return false;
+    applySaved(r->id, *session);
     close(v);
     v.renderer = std::string(id);
     v.session = std::move(session);
@@ -269,6 +305,7 @@ bool select(int panel, std::string_view id)
     ensureGraphListener();
     if (v.redraw)
         v.redraw();
+    notify(panel);
     return true;
 }
 
@@ -277,6 +314,51 @@ std::string selected(int panel)
     auto it = views().find(panel);
     return it == views().end() ? kLila : it->second.renderer;
 }
+
+nlohmann::json savedSettings(std::string_view renderer)
+{
+    nlohmann::json s = PrefStore::get().value(kSettingsFile, renderer, nlohmann::json::object());
+    return s.is_object() ? s : nlohmann::json::object();
+}
+
+bool setSetting(int panel, const std::string& key, const nlohmann::json& value)
+{
+    auto it = views().find(panel);
+    if (it == views().end() || !it->second.session)
+        return false;
+    const std::string renderer = it->second.renderer;
+    if (!it->second.session->setSetting(key, value))
+        return false;
+    nlohmann::json saved = savedSettings(renderer);
+    saved[key] = value;
+    PrefStore::get().set(kSettingsFile, renderer, saved);
+    for (auto& [other, v] : views())
+    {
+        if (v.renderer != renderer || !v.session)
+            continue;
+        if (other != panel)
+            v.session->setSetting(key, value);
+        v.last.reset();
+        if (v.redraw)
+            v.redraw();
+    }
+    return true;
+}
+
+std::vector<Setting> settings(int panel)
+{
+    auto it = views().find(panel);
+    return it == views().end() || !it->second.session ? std::vector<Setting>{} : it->second.session->settings();
+}
+
+int addListener(std::function<void(int panel)> fn)
+{
+    static int next = 0;
+    listeners()[++next] = std::move(fn);
+    return next;
+}
+
+void removeListener(int id) { listeners().erase(id); }
 
 void setActivePanel(std::function<int()> fn) { activeFn() = std::move(fn); }
 
@@ -367,6 +449,40 @@ void registerCommands()
             return selected(panel);
         },
         .examples = {"viewportRenderer(\"cpuShaded\")  # the active view draws with the example renderer\nviewportRenderer(\"lila\")"},
+    });
+    ops::registerCommand({
+        .name = "viewportRendererSetting",
+        .doc = "Read or change a setting of the renderer a viewport draws with (a Hydra delegate's render settings). With no key, returns "
+               "them all as [{key, name, value}]; with a key, its value; with a key and a value, sets it. A set value is saved and "
+               "given to every viewport using that renderer, now and whenever it starts.",
+        .positionalDoc = "key, value",
+        .flags = {{.name = "panel", .shortName = "p", .type = ArgType::Int, .doc = "The viewport; default the active one."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const int panel = a.has("panel") ? a.get<int>("panel") : activePanel();
+            const std::vector<Setting> all = settings(panel);
+            if (a.positional.empty())
+            {
+                json out = json::array();
+                for (const Setting& s : all)
+                    out.push_back({{"key", s.key}, {"name", s.name}, {"value", s.value}});
+                return out;
+            }
+            if (!a.positional[0].is_string())
+                throw CommandError("viewportRendererSetting: a setting key is expected");
+            const std::string key = a.positional[0].get<std::string>();
+            if (a.positional.size() < 2)
+            {
+                for (const Setting& s : all)
+                    if (s.key == key)
+                        return s.value;
+                throw CommandError("viewportRendererSetting: " + selected(panel) + " has no setting '" + key + "'");
+            }
+            if (!setSetting(panel, key, a.positional[1]))
+                throw CommandError("viewportRendererSetting: " + selected(panel) + " refused " + key + " = " + a.positional[1].dump());
+            return a.positional[1];
+        },
+        .examples = {"viewportRendererSetting()  # [{key, name, value}, ...]\nviewportRendererSetting(\"myEngine:metersPerUnit\", 0.01)"},
     });
     ops::registerCommand({
         .name = "viewportRenderers",

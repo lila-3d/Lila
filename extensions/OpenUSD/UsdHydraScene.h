@@ -25,7 +25,7 @@
  * The scene as Hydra scene indices. Lila's own nodes (meshes, curves, cameras, lights) are prims of a scene index kept
  * up to date by diffing the graph on each render: a moved node dirties its transform, a new mesh snapshot its primvars
  * (or its topology when that changed), so a drag or a deformation never rebuilds the rest. Meshes go in as their own
- * polygons with face-varying normals, UVs and colours, subdivided by Hydra at their smooth preview level. Lila's
+ * polygons with face-varying normals, UVs and colours, subdivided at their smooth preview level as Lila draws them. Lila's
  * materials are written as UsdPreviewSurface networks into a stage in memory and read through UsdImaging. Live USD
  * stages go in through UsdImaging too: each prim Lila draws itself (with its edits) is blanked out of the stage, and
  * every prim Lila has a node for is placed and shown as that node is, so the stage's other prims follow it.
@@ -74,8 +74,6 @@ public:
         size_t added = 0, dirtied = 0, removed = 0;
     };
     Counts lastSync() const { return mCounts; }
-    /** Subdivide smooth preview meshes here instead of asking Hydra to (Storm on Vulkan can't refine them). */
-    void setRefineHere(bool here) { mRefineHere = here; }
     /** The material slots the meshes use. */
     const std::set<std::string>& usedSlots() const { return mSlots; }
 
@@ -123,7 +121,6 @@ private:
     std::map<std::pair<const void*, int>, std::pair<scene::MeshPtr, std::shared_ptr<const MeshData>>> mMeshes;
     std::set<std::string> mSlots;
     Counts mCounts;
-    bool mRefineHere = false;
 };
 
 /**

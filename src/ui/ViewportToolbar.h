@@ -85,10 +85,13 @@ private:
     QToolButton* mCameraButton = nullptr;
     QToolButton* mSamplesButton = nullptr;
     QToolButton* mChevron = nullptr;
+    /** Settings of Lila's own renderer, disabled while the view draws with another. */
+    std::vector<QToolButton*> mLilaRendererOnly;
     int mPrefListener = 0;
     int mRenderSettingsListener = 0;
     int mToolsListener = 0;
     int mContextListener = 0;
+    int mRendererListener = 0;
 };
 
 /**

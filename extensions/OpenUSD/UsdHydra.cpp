@@ -8,6 +8,7 @@
 #include "UsdStage.h"
 
 #include <lila/Log.h>
+#include <lila/Prefs.h>
 #include <lila/Profile.h>
 #include <lila/Tasks.h>
 #include <lila/Transform.h>
@@ -133,6 +134,65 @@ void forRows(int h, Fn&& fn)
     });
 }
 
+/** A render setting's value as Lila's settings carry it: bool, number or string; null for any other type. */
+nlohmann::json toJson(const VtValue& v)
+{
+    if (v.IsHolding<bool>())
+        return v.UncheckedGet<bool>();
+    if (v.IsHolding<int>())
+        return v.UncheckedGet<int>();
+    if (v.IsHolding<unsigned int>())
+        return v.UncheckedGet<unsigned int>();
+    if (v.IsHolding<int64_t>())
+        return v.UncheckedGet<int64_t>();
+    if (v.IsHolding<float>())
+        return v.UncheckedGet<float>();
+    if (v.IsHolding<double>())
+        return v.UncheckedGet<double>();
+    if (v.IsHolding<std::string>())
+        return v.UncheckedGet<std::string>();
+    if (v.IsHolding<TfToken>())
+        return v.UncheckedGet<TfToken>().GetString();
+    return nullptr;
+}
+
+/** A value for a render setting, as the type of like (its current value) when there is one; empty when it doesn't convert. */
+VtValue toVt(const nlohmann::json& j, const VtValue& like = VtValue())
+{
+    if (!like.IsEmpty())
+    {
+        if (like.IsHolding<bool>() && j.is_boolean())
+            return VtValue(j.get<bool>());
+        if (j.is_number())
+        {
+            if (like.IsHolding<int>())
+                return VtValue(j.get<int>());
+            if (like.IsHolding<unsigned int>())
+                return VtValue(j.get<unsigned int>());
+            if (like.IsHolding<int64_t>())
+                return VtValue(j.get<int64_t>());
+            if (like.IsHolding<float>())
+                return VtValue(j.get<float>());
+            if (like.IsHolding<double>())
+                return VtValue(j.get<double>());
+        }
+        if (j.is_string() && like.IsHolding<TfToken>())
+            return VtValue(TfToken(j.get<std::string>()));
+        if (j.is_string() && like.IsHolding<std::string>())
+            return VtValue(j.get<std::string>());
+        return VtValue();
+    }
+    if (j.is_boolean())
+        return VtValue(j.get<bool>());
+    if (j.is_number_integer())
+        return VtValue(j.get<int>());
+    if (j.is_number())
+        return VtValue(j.get<double>());
+    if (j.is_string())
+        return VtValue(j.get<std::string>());
+    return VtValue();
+}
+
 struct StageChain
 {
     UsdStageRefPtr stage;
@@ -144,7 +204,7 @@ struct StageChain
 class HydraSession final : public vr::Session
 {
 public:
-    HydraSession(const std::string& plugin, int panel, std::string& error)
+    HydraSession(const std::string& plugin, int panel, const nlohmann::json& saved, std::string& error)
     {
         HdRendererPluginRegistry& registry = HdRendererPluginRegistry::GetInstance();
         HdRendererPluginHandle handle = registry.GetOrCreateRendererPlugin(TfToken(plugin));
@@ -177,7 +237,14 @@ public:
             error = why.empty() ? "it can't run here" : why;
             return;
         }
-        mDelegate = handle->CreateDelegate();
+        // Lila's scene units and up axis, for delegates placing it in their own world, with the settings saved for it.
+        HdRenderSettingsMap initial;
+        initial[TfToken("lila:metersPerUnit")] = VtValue(0.01);
+        initial[TfToken("lila:upAxis")] = VtValue(std::string(PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "y" ? "Y" : "Z"));
+        for (auto& [key, value] : saved.items())
+            if (VtValue v = toVt(value); !v.IsEmpty())
+                initial[TfToken(key)] = v;
+        mDelegate = handle->CreateDelegate(initial);
         if (!mDelegate)
         {
             error = "it failed to start";
@@ -208,7 +275,6 @@ public:
         mTasks->SetEnableSelection(false);
         mTasks->SetEnablePresentation(false);
         mTasks->SetRenderTags({HdRenderTagTokens->geometry, HdRenderTagTokens->render});
-        // Refined: smooth preview meshes subdivide at their refine level, the rest draw as their faces.
         mTasks->SetCollection(HdRprimCollection(HdTokens->geometry, HdReprSelector(HdReprTokens->refined)));
         HdxColorCorrectionTaskParams cc;
         cc.colorCorrectionMode = HdxColorCorrectionTokens->disabled;
@@ -241,8 +307,6 @@ public:
         }
 
         mLila = LilaSceneIndex::New();
-        // Storm's refined subdivision needs geometry shaders its Vulkan backend fails to compile.
-        mLila->setRefineHere(mStorm);
         mIndex->InsertSceneIndex(mLila, SdfPath::AbsoluteRootPath(), false);
         mMaterialIndex = UsdImagingSceneIndex::New(HdRetainedContainerDataSource::New(), [](const HdSceneIndexBaseRefPtr& in) { return in; });
         mMaterialIndex->SetStage(mMaterials.stage());
@@ -290,6 +354,34 @@ public:
     }
 
     void sceneChanged(scene::Change c, NodeId id) override { mMaterials.changed(Graph::current(), c, id); }
+
+    std::vector<vr::Setting> settings() const override
+    {
+        std::vector<vr::Setting> out;
+        for (const HdRenderSettingDescriptor& d : mDelegate->GetRenderSettingDescriptors())
+        {
+            VtValue v = mDelegate->GetRenderSetting(d.key);
+            nlohmann::json j = toJson(v.IsEmpty() ? d.defaultValue : v);
+            if (!j.is_null())
+                out.push_back({d.key.GetString(), d.name, std::move(j)});
+        }
+        return out;
+    }
+
+    bool setSetting(const std::string& key, const nlohmann::json& value) override
+    {
+        const TfToken k(key);
+        VtValue current = mDelegate->GetRenderSetting(k);
+        if (current.IsEmpty())
+            for (const HdRenderSettingDescriptor& d : mDelegate->GetRenderSettingDescriptors())
+                if (d.key == k)
+                    current = d.defaultValue;
+        VtValue v = toVt(value, current);
+        if (v.IsEmpty())
+            return false;
+        mDelegate->SetRenderSetting(k, v);
+        return true;
+    }
 
     /** For tests: what the last sync changed among Lila's prims. */
     LilaSceneIndex::Counts lastSync() const { return mLila->lastSync(); }
@@ -480,11 +572,12 @@ private:
 };
 } // namespace
 
-USD_BACKEND_EXPORT void* lilaHydraOpen(const char* plugin, int panel, std::string* error)
+USD_BACKEND_EXPORT void* lilaHydraOpen(const char* plugin, int panel, const char* settings, std::string* error)
 {
     try
     {
-        auto s = std::make_unique<HydraSession>(plugin, panel, *error);
+        nlohmann::json saved = nlohmann::json::parse(settings ? settings : "{}", nullptr, false);
+        auto s = std::make_unique<HydraSession>(plugin, panel, saved.is_object() ? saved : nlohmann::json::object(), *error);
         if (!s->ok())
             return nullptr;
         return static_cast<vr::Session*>(s.release());

@@ -466,6 +466,63 @@ TEST_CASE("hydra: a progressive delegate (Embree) delivers frames as it converge
     CHECK(!newer.empty());
 }
 
+TEST_CASE("hydra: delegates other than Storm get smooth preview meshes subdivided, and their render settings")
+{
+    fresh();
+    cube("Round", 100.0);
+    const vr::Renderer* embree = vr::registry().find("hydraEmbree");
+    REQUIRE(embree);
+    std::unique_ptr<vr::Session> session = embree->open(kPanel);
+    REQUIRE(session);
+    Storm requests;
+    // The coverage of the frame Embree settles on, once half a second passes without a new one.
+    auto covered = [&] {
+        std::optional<vr::Frame> frame;
+        uint64_t frames = 0;
+        vr::Request r = requests.request();
+        r.deliver = [&](vr::Frame f) {
+            frame = std::move(f);
+            ++frames;
+        };
+        session->render(r);
+        auto quietSince = std::chrono::steady_clock::now();
+        const auto start = quietSince;
+        for (uint64_t seen = 0; std::chrono::steady_clock::now() - quietSince < std::chrono::milliseconds(500) &&
+                                std::chrono::steady_clock::now() - start < std::chrono::seconds(30);)
+        {
+            mainq::drain();
+            if (frames != seen)
+            {
+                seen = frames;
+                quietSince = std::chrono::steady_clock::now();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        REQUIRE(frame);
+        return coveredIn(*frame, 0, kSize);
+    };
+    const int cage = covered();
+    graph().setValue({node("Round").id(), scene::MeshNode::kSmoothPreview, -1}, int64_t(2));
+    const int smooth = covered();
+    CHECK(smooth < cage * 0.9);
+    CHECK(smooth > cage * 0.4);
+
+    const std::vector<vr::Setting> settings = session->settings();
+    auto value = [&](const std::string& key) {
+        for (const vr::Setting& s : session->settings())
+            if (s.key == key)
+                return s.value;
+        return nlohmann::json();
+    };
+    REQUIRE(!settings.empty());
+    REQUIRE(value("enableSceneColors").is_boolean());
+    const bool colors = value("enableSceneColors").get<bool>();
+    CHECK(session->setSetting("enableSceneColors", !colors));
+    CHECK(value("enableSceneColors") == !colors);
+    // A value of another type than the setting's is refused.
+    CHECK_FALSE(session->setSetting("enableSceneColors", "yes"));
+}
+
 TEST_CASE("hydra: the frame composites under Lila's overlays, depth tested against them")
 {
     fresh();

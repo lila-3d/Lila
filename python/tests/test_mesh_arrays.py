@@ -27,6 +27,14 @@ assert normals.shape == (24, 3) and normals.dtype == np.float32
 assert np.allclose(np.linalg.norm(normals, axis=1), 1.0, atol=1e-5)
 assert "uv0" in cube.uv_sets
 assert cube.uvs_array().shape == (24, 2)
+
+slots, names = cube.material_array()
+assert slots.dtype == np.uint32 and slots.tolist() == [0] * 6 and len(names) == 1, (slots, names)
+red = ops.createMaterial("red")
+ops.assignMaterial(red, cube.path, faces=[1, 4])
+slots, names = cube.material_array()
+assert [names[s] for s in slots] == [names[0], "red", names[0], names[0], "red", names[0]], (slots.tolist(), names)
+ops.undo()
 print("test_mesh_arrays read: ok")
 
 cube.set_points(pts * 3.0)

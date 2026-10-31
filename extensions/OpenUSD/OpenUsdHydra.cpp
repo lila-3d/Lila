@@ -191,12 +191,12 @@ void registerHydra(ext::Context& ctx)
         vr::add(ctx, {.id = idOf(d),
                       .name = "Hydra: " + d.name,
                       .doc = doc,
-                      .open = [d](int panel) -> std::unique_ptr<vr::Session> {
+                      .open = [d, id = idOf(d)](int panel) -> std::unique_ptr<vr::Session> {
                           auto open = reinterpret_cast<BackendHydraOpen>(backendSymbol("lilaHydraOpen"));
                           if (!open)
                               throw CommandError("Hydra: OpenUSDCore has no Hydra support");
                           std::string error;
-                          void* session = open(d.plugin.c_str(), panel, &error);
+                          void* session = open(d.plugin.c_str(), panel, vr::savedSettings(id).dump().c_str(), &error);
                           if (!session)
                           {
                               log::error("Hydra: {}: {}", d.name, error);
