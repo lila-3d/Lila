@@ -4,6 +4,7 @@
 /out/
 /vcpkg_installed/
 /vcpkg_install.log
+/.deps/
 *.pdb
 *.ilk
 

@@ -2,7 +2,8 @@
 rem Dev shell: MSVC, Qt, Python, vcpkg. Override any of these before calling.
 if not defined LILA_VS set "LILA_VS=C:\Program Files\Microsoft Visual Studio\2022\Community"
 if not defined LILA_QT_DIR set "LILA_QT_DIR=C:\Qt\6.11.1\msvc2022_64"
-if not defined LILA_PYTHON_DIR set "LILA_PYTHON_DIR=C:\Python314"
+if not defined LILA_PYTHON_DIR if exist "C:\Python314\python.exe" set "LILA_PYTHON_DIR=C:\Python314"
+if not defined LILA_PYTHON_DIR call "%~dp0fetch-python.cmd" || exit /b 1
 if not defined VCPKG_ROOT set "VCPKG_ROOT=%LILA_VS%\VC\vcpkg"
 if not defined SCCACHE_DIR set "SCCACHE_DIR=X:\sccache"
 if not defined SCCACHE_CACHE_SIZE set "SCCACHE_CACHE_SIZE=120G"
