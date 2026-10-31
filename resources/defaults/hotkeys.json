@@ -33,6 +33,7 @@
       "Ctrl+Shift+S": "file.saveAs",
       "Ctrl+Alt+S": "file.incrementAndSave",
       "Ctrl+Shift+O": "file.openFolder",
+      "Ctrl+Shift+R": "file.welcome",
       "Ctrl+Shift+I": "file.import",
       "Ctrl+Shift+E": "file.exportSelection",
       "Alt+Shift+E": "file.gameExporter",
