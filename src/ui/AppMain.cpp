@@ -42,6 +42,7 @@
 #include "ui/Telemetry.h"
 #include "ui/Updater.h"
 #include "ui/CurveUi.h"
+#include "ui/ClayUi.h"
 #include "ui/ConformTool.h"
 #include "ui/TexturePaintTool.h"
 #include "ui/BakerPanel.h"
@@ -149,6 +150,7 @@ void registerUi()
     registerArrayToolActions();
     registerCurveUi();
     registerConformActions();
+    registerClayUi();
     registerSculptUi();
     registerVertexPaintUi();
     registerBakePaintUi();

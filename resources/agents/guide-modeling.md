@@ -6,6 +6,20 @@ Python for the `execute_python` tool, where `ops` is `lila.ops` (the same code r
 
 A creature or prop is ONE mesh grown out of ONE primitive. The head, legs, ears, snout and tail are faces of the body pulled out with `polyExtrude`; eyes and a nose are faces of the head inset, bulged and given a material. Never make a second primitive for a body part and push it against the first: that is a floating shell with a visible seam, and `meshCheck` fails it. Separate parts only when the user asks for them (say, removable eyeballs), and then seat them into the surface.
 
+## Organic forms: clay
+
+For creatures and rounded organic shapes, block out in clay instead of extruding: shapes blend into one closed surface, so there are no seams to hide. Place shapes in world cm, check with one capture, then bake. Shapes join in order; a `subtract` carves only what came before it, and `groupClay` keeps a cut inside its group.
+
+```python
+obj, mesh, surface, _ = ops.createClay(name="Dog", symmetry="x", empty=True)
+ops.addClayPrimitive(obj, shape="ellipsoid", extents=(7, 7, 12), position=(0, 18, 0))                     # torso
+ops.addClayPrimitive(obj, shape="sphere", radius=6, position=(0, 26, 12), blend=4)                         # head
+for z in (8, -8):                                                                                           # legs, mirrored to -x
+    ops.addClayPrimitive(obj, shape="capsule", radius=2.5, endRadius=2, length=12, position=(4, 8, z), blend=2)
+ops.addClayPrimitive(obj, shape="sphere", radius=1.2, position=(2.5, 28, 17), operation="subtract", blend=0.5)  # eye socket
+ops.convertClayToMesh(obj, remesh=True, targetFaces=3000)
+```
+
 ## Spend few tokens
 
 - Write each stage (blockout, features, finish) as ONE `execute_python` call with many commands. Print one line at the end, not the result of every command.

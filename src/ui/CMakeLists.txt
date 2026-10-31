@@ -102,6 +102,7 @@ lila_module(lila_ui UI
     KnifeTool.cpp KnifeTool.h
     TargetWeldTool.cpp TargetWeldTool.h
     ArrayTool.cpp ArrayTool.h
+    ClayUi.cpp ClayUi.h
     ConformTool.cpp ConformTool.h
     PythonBridge.cpp PythonBridge.h
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h

@@ -1,0 +1,515 @@
+#include "clay/ClayNodes.h"
+
+#include "core/Profile.h"
+#include "ops/Command.h"
+#include "scene/Graph.h"
+#include "scene/MeshNodes.h"
+#include "scene/Transform.h"
+
+#include <algorithm>
+#include <map>
+
+namespace lila::clay
+{
+namespace
+{
+using namespace scene;
+using T = ArgType;
+
+const std::vector<std::string> kShapes = {"sphere", "ellipsoid", "box", "capsule", "cylinder", "cone", "torus"};
+const std::vector<std::string> kOps = {"add", "subtract", "intersect"};
+
+int idx(const Node& n, const char* attr) { return n.type().attrIndex(attr); }
+double num(const Node& n, const char* attr) { return n.as<double>(idx(n, attr)); }
+int64_t choice(const Node& n, const char* attr) { return n.as<int64_t>(idx(n, attr)); }
+glm::dvec3 vec(const Node& n, const char* attr) { return n.as<glm::dvec3>(idx(n, attr)); }
+
+AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::vector<std::string> options = {},
+              std::optional<double> lo = {}, std::optional<double> softHi = {})
+{
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
+            .enumNames = std::move(options), .doc = std::move(doc), .minValue = lo, .softMax = softHi};
+}
+
+AttrDef vec3(std::string name, const char* parts, glm::dvec3 def, std::string doc, uint32_t extra = 0)
+{
+    AttrDef a = param(name, PlugType::Vec3, def, std::move(doc));
+    a.flags |= extra;
+    for (int i = 0; i < 3; ++i)
+        a.childNames[size_t(i)] = name + parts[i];
+    return a;
+}
+
+AttrDef outClay()
+{
+    return {.name = "outClay", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden,
+            .doc = "This item as it joins its parent's clay."};
+}
+
+std::vector<AttrDef> joinAttrs()
+{
+    return {param("operation", PlugType::Enum, int64_t(0), "Add to, subtract from, or intersect with the clay before it.", kOps),
+            param("blend", PlugType::Float, 2.0, "Radius of the smooth join with the clay before it, cm; 0 is a hard edge.", {}, 0.0, 20.0)};
+}
+
+
+class PrimitiveNode final : public Locator
+{
+public:
+    void compute(const EvalContext& ctx) override
+    {
+        Transform::compute(ctx);
+        Primitive p{.shape = Shape(std::clamp<int64_t>(choice(*this, "shape"), 0, int64_t(kShapes.size()) - 1)),
+                    .extents = vec(*this, "extents"),
+                    .radius = num(*this, "radius"),
+                    .endRadius = num(*this, "endRadius"),
+                    .length = num(*this, "length"),
+                    .rounding = num(*this, "rounding"),
+                    .color = glm::vec3(vec(*this, "color"))};
+        Item item{.op = Op(std::clamp<int64_t>(choice(*this, "operation"), 0, 2)),
+                  .blend = num(*this, "blend"),
+                  .matrix = as<glm::dmat4>(kWorldMatrix),
+                  .shape = p};
+        setOutput(idx(*this, "outClay"), DataPtr(std::make_shared<ItemData>(std::move(item))));
+    }
+};
+
+class GroupNode final : public Transform
+{
+public:
+    void compute(const EvalContext& ctx) override
+    {
+        Transform::compute(ctx);
+        Item item{.op = Op(std::clamp<int64_t>(choice(*this, "operation"), 0, 2)), .blend = num(*this, "blend")};
+        setOutput(idx(*this, "outClay"), DataPtr(std::make_shared<ItemData>(std::move(item))));
+    }
+};
+
+/**
+ * The clay tree a surface node has been fed. Every shape and group feeds the surface directly (a group fed by its own
+ * children would be a cycle through their parent matrices), with world matrices and each one's depth below the object.
+ */
+Item rootOf(const Node& surface)
+{
+    std::map<int, int64_t> depths;
+    for (const auto& [k, v] : surface.elements(idx(surface, "depths")))
+        depths[k] = std::get<int64_t>(v);
+    Item root{.matrix = glm::inverse(surface.as<glm::dmat4>(idx(surface, "objectMatrix")))};
+    std::vector<Item*> open{&root};
+    for (const auto& [k, v] : surface.elements(idx(surface, "items")))
+    {
+        const DataPtr* d = std::get_if<DataPtr>(&v);
+        if (!d || !*d || std::string_view((*d)->kind()) != "clayItem")
+            continue;
+        const auto depth = size_t(std::max<int64_t>(depths.contains(k) ? depths[k] : 1, 1));
+        while (open.size() > std::min(depth, open.size()))
+            open.pop_back();
+        open.back()->children.push_back(static_cast<const ItemData&>(**d).item);
+        if (!open.back()->children.back().shape)
+            open.push_back(&open.back()->children.back());
+    }
+    return root;
+}
+
+class SurfaceNode final : public Node
+{
+public:
+    void compute(const EvalContext&) override
+    {
+        LILA_ZONE();
+
+        const Field field(rootOf(*this), choice(*this, "symmetry") == 1);
+        const MeshOptions o{.voxelSize = num(*this, "voxelSize"), .colors = as<bool>(idx(*this, "colors"))};
+        std::string warning;
+        try
+        {
+            setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(mMesher.update(field, o))));
+        }
+        catch (const std::exception& e)
+        {
+            warning = e.what();
+            mMesher = Mesher();
+            setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>()));
+        }
+        setOutput(idx(*this, "warning"), warning);
+    }
+
+private:
+    Mesher mMesher;
+};
+
+// ------------------------------------------------------------------------------------------------ commands
+
+bool isItem(const Node& n) { return n.type().isA("clayPrimitive") || n.type().isA("clayGroup"); }
+
+/** The mesh under a clay object that shows its surface. */
+Node* meshOf(Graph& g, const Node& object)
+{
+    if (!object.type().isA("clay"))
+        return nullptr;
+    for (NodeId c : g.children(object.id()))
+        if (Node* n = g.node(c); n && n->type().isA("mesh"))
+            if (std::optional<PlugRef> src = g.source({c, MeshNode::kInMesh, -1}); src && g.node(src->node)->type().isA("claySurface"))
+                return n;
+    return nullptr;
+}
+
+Node* surfaceOf(Graph& g, const Node& object)
+{
+    Node* mesh = meshOf(g, object);
+    return mesh ? g.node(g.source({mesh->id(), MeshNode::kInMesh, -1})->node) : nullptr;
+}
+
+void collect(Graph& g, NodeId parent, int64_t depth, std::vector<std::pair<NodeId, int64_t>>& out)
+{
+    for (NodeId c : g.children(parent))
+        if (Node* child = g.node(c); child && isItem(*child))
+        {
+            out.emplace_back(c, depth);
+            if (child->type().isA("clayGroup"))
+                collect(g, c, depth + 1, out);
+        }
+}
+
+/** Rewires a clay object's surface to its shapes and groups in outliner order, which is the order they join in. */
+void sync(Graph& g, NodeId object)
+{
+    Node* o = g.node(object);
+    Node* s = o ? surfaceOf(g, *o) : nullptr;
+    if (!s)
+        return;
+    const PlugRef items{s->id(), idx(*s, "items")};
+    for (const PlugRef& e : g.elements(items))
+        g.removeElement(e);
+    std::vector<std::pair<NodeId, int64_t>> tree;
+    collect(g, object, 1, tree);
+    std::vector<PlugValue> depths;
+    for (const auto& [id, depth] : tree)
+    {
+        g.connect({id, idx(*g.node(id), "outClay")}, {items.node, items.attr, -1, int(depths.size())});
+        depths.emplace_back(depth);
+    }
+    g.setElements({s->id(), idx(*s, "depths")}, depths);
+}
+
+/** The clay object id is part of: itself, or its nearest clay ancestor. */
+Node* objectOf(Graph& g, NodeId id)
+{
+    for (NodeId at = id; at != kNoNode; at = g.parent(at))
+        if (Node* n = g.node(at); n && n->type().isA("clay"))
+            return n;
+    return nullptr;
+}
+
+Node& named(Graph& g, const std::string& path, const char* cmd)
+{
+    Node* n = g.find(path);
+    if (!n)
+        throw CommandError(std::string(cmd) + ": no node named " + path);
+    return *n;
+}
+
+/** The positional nodes, or the selection when none were given. */
+std::vector<Node*> targets(Graph& g, const Args& a, const char* cmd)
+{
+    std::vector<Node*> out;
+    for (const json& p : a.positional)
+        out.push_back(&named(g, p.get<std::string>(), cmd));
+    if (out.empty())
+        for (NodeId id : g.selection())
+            if (Node* n = g.node(id))
+                out.push_back(n);
+    return out;
+}
+
+void setAttrs(Graph& g, Node& n, const Args& a, const char* cmd)
+{
+    for (const auto& [flag, value] : a.flags.items())
+    {
+        const int at = n.type().attrIndex(flag);
+        if (at < 0 || value.is_null() || (n.type().attrs[size_t(at)].flags & AttrOutput))
+            continue;
+        try
+        {
+            g.setValue({n.id(), at, -1}, fromJson(n.type().attrs[size_t(at)], value));
+        }
+        catch (const std::exception& e)
+        {
+            throw CommandError(std::string(cmd) + ": " + flag + ": " + e.what());
+        }
+    }
+}
+
+glm::dvec3 vecFlag(const Args& a, const char* flag) { return {a.flags[flag][0], a.flags[flag][1], a.flags[flag][2]}; }
+
+std::vector<FlagDef> shapeFlags()
+{
+    return {
+        {"shape", "sh", T::String, "sphere", "Primitive shape.", kShapes},
+        {"operation", "op", T::String, "add", "Add to, subtract from, or intersect with the clay before it.", kOps},
+        {"blend", "b", T::Float, nullptr, "Smooth join radius, cm; 0 is a hard edge.", {}, {}, 0.0},
+        {"radius", "r", T::Float, nullptr, "Sphere radius; capsule and cone radius at -Y; cylinder radius; torus ring radius. cm."},
+        {"endRadius", "er", T::Float, nullptr, "Capsule and cone radius at +Y; torus tube radius. cm."},
+        {"length", "l", T::Float, nullptr, "Capsule, cylinder and cone length along Y, cm."},
+        {"extents", "ex", T::Vec3, nullptr, "Box half sizes, ellipsoid semi-axes, cm."},
+        {"rounding", "rn", T::Float, nullptr, "Box, cylinder and cone edge rounding, cm."},
+        {"color", "c", T::Vec3, nullptr, "Linear colour, written to the clay color set."},
+        {"position", "p", T::Vec3, nullptr, "World position."},
+        {"rotation", "ro", T::Vec3, nullptr, "Rotation in degrees."},
+        {"name", "n", T::String, nullptr, "Name; made unique."},
+    };
+}
+
+json addPrimitive(Graph& g, Node& parent, const Args& a)
+{
+    Node* p = g.createNode(*types::find("clayPrimitive"), a.get<std::string>("name", "ClayPrimitive"), parent.id(), true);
+    setAttrs(g, *p, a, "addClayPrimitive");
+    if (a.has("rotation"))
+        g.setValue({p->id(), Transform::kRotate, -1}, vecFlag(a, "rotation"));
+    if (a.has("position"))
+    {
+        g.evaluate();
+        const glm::dmat4 parentWorld = std::get<glm::dmat4>(g.value({parent.id(), Transform::kWorldMatrix, -1}));
+        g.setValue({p->id(), Transform::kTranslate, -1}, glm::dvec3(glm::inverse(parentWorld) * glm::dvec4(vecFlag(a, "position"), 1.0)));
+    }
+    sync(g, objectOf(g, parent.id())->id());
+    g.select({p->id()});
+    return p->path();
+}
+
+/** Where new clay goes for a target: a clay object or group itself, a shape's parent, a clay mesh's object. */
+Node& containerOf(Graph& g, Node& n, const char* cmd)
+{
+    if (n.type().isA("clayGroup") || n.type().isA("clay"))
+        return n;
+    if (Node* p = g.node(g.parent(n.id())); p && (n.type().isA("clayPrimitive") || (p->type().isA("clay") && meshOf(g, *p) == &n)))
+        return *p;
+    throw CommandError(std::string(cmd) + ": " + n.path() + " is not clay");
+}
+} // namespace
+
+void registerTypes()
+{
+    if (types::find("claySurface"))
+        return;
+
+    NodeType object;
+    object.name = "clay";
+    object.icon = "droplet";
+    object.base = types::find("transform");
+    object.dag = true;
+    object.doc = "A clay object: its clay shapes and groups, in join order, and the mesh that shows them blended.";
+    object.create = [] { return std::make_unique<Transform>(); };
+    types::registerType(std::move(object));
+
+    NodeType prim;
+    prim.name = "clayPrimitive";
+    prim.icon = "circle-dot";
+    prim.base = types::find("locator");
+    prim.dag = true;
+    prim.doc = "A shape in a clay object: a sphere, ellipsoid, box, capsule, cylinder, cone or torus that adds to, cuts or "
+               "intersects the clay before it with a smooth join. Order among siblings is the order they join in.";
+    prim.ownAttrs = {param("shape", PlugType::Enum, int64_t(0), "The primitive's shape.", kShapes)};
+    for (AttrDef& d : joinAttrs())
+        prim.ownAttrs.push_back(std::move(d));
+    prim.ownAttrs.push_back(param("radius", PlugType::Float, 10.0, "Sphere radius; capsule and cone radius at -Y; cylinder radius; torus ring radius. cm.", {}, 0.0, 100.0));
+    prim.ownAttrs.push_back(param("endRadius", PlugType::Float, 10.0, "Capsule and cone radius at +Y; torus tube radius. cm.", {}, 0.0, 100.0));
+    prim.ownAttrs.push_back(param("length", PlugType::Float, 20.0, "Capsule, cylinder and cone length along Y, cm.", {}, 0.0, 200.0));
+    prim.ownAttrs.push_back(vec3("extents", "XYZ", glm::dvec3(10.0), "Box half sizes and ellipsoid semi-axes, cm."));
+    prim.ownAttrs.push_back(param("rounding", PlugType::Float, 0.0, "Box, cylinder and cone edge rounding, cm.", {}, 0.0, 20.0));
+    prim.ownAttrs.push_back(vec3("color", "RGB", glm::dvec3(1.0), "Linear colour, blended across joins into the clay color set.", AttrColor));
+    prim.ownAttrs.push_back(outClay());
+    prim.create = [] { return std::make_unique<PrimitiveNode>(); };
+    types::registerType(std::move(prim));
+
+    NodeType group;
+    group.name = "clayGroup";
+    group.icon = "box-multiple";
+    group.base = types::find("transform");
+    group.dag = true;
+    group.doc = "Clay shapes that join each other first and then join the clay before the group as one, so a cut inside "
+                "reaches only the group.";
+    group.ownAttrs = joinAttrs();
+    group.ownAttrs.push_back(outClay());
+    group.create = [] { return std::make_unique<GroupNode>(); };
+    types::registerType(std::move(group));
+
+    NodeType surface;
+    surface.name = "claySurface";
+    surface.icon = "grid-dots";
+    surface.doc = "Meshes a clay object's shapes: signed distances joined smoothly, surfaced with quads on a voxel lattice. "
+                  "Only the part of the surface an edit reaches is rebuilt.";
+    surface.ownAttrs = {
+        {.name = "items", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrArray | AttrHidden,
+         .doc = "The clay object's shapes and groups, depth first in join order, kept by the clay commands."},
+        {.name = "depths", .type = PlugType::Int, .defaultValue = int64_t(1), .flags = AttrInput | AttrStorable | AttrArray | AttrHidden,
+         .doc = "How deep each of items sits below the clay object: 1 for its children, 2 inside a group, and so on."},
+        {.name = "objectMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden,
+         .doc = "The clay object's worldMatrix, so the surface is built in its space."},
+        param("voxelSize", PlugType::Float, 0.5, "Lattice spacing while editing, cm. Smaller is finer and slower.", {}, 0.01, 5.0),
+        param("finalVoxelSize", PlugType::Float, 0.25, "Lattice spacing convertClayToMesh uses, cm.", {}, 0.01, 5.0),
+        param("symmetry", PlugType::Enum, int64_t(0), "Mirror the clay across the object's YZ plane.", {"off", "x"}),
+        param("colors", PlugType::Bool, true, "Write the shapes' colours to the clay color set."),
+        {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the last build."},
+        {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The clay surface."},
+    };
+    surface.create = [] { return std::make_unique<SurfaceNode>(); };
+    types::registerType(std::move(surface));
+}
+
+void registerCommands()
+{
+    ops::registerCommand({
+        .name = "createClay",
+        .doc = "Create a clay object: a transform holding clay shapes, and a mesh under it that shows them blended by a "
+               "claySurface. Starts with one sphere unless empty. Returns [object, mesh, surface, firstShape or None].",
+        .flags = {{"name", "n", T::String, "Clay", "Object name; made unique."},
+                  {"position", "p", T::Vec3, nullptr, "World position."},
+                  {"voxelSize", "vs", T::Float, nullptr, "Lattice spacing while editing, cm.", {}, {}, 0.01},
+                  {"symmetry", "sy", T::String, nullptr, "Mirror across the object's YZ plane.", {"off", "x"}},
+                  {"empty", "e", T::Bool, false, "Start with no shapes."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node* surface = g.createNode(*types::find("claySurface"), {}, kNoNode, true);
+            setAttrs(g, *surface, a, "createClay");
+            Node* object = g.createNode(*types::find("clay"), a.get<std::string>("name", "Clay"), kNoNode, true);
+            Node* mesh = g.createNode(*types::find("mesh"), object->name() + "Surface", object->id(), true);
+            g.connect({surface->id(), idx(*surface, "outMesh"), -1}, {mesh->id(), MeshNode::kInMesh, -1});
+            g.connect({object->id(), Transform::kWorldMatrix, -1}, {surface->id(), idx(*surface, "objectMatrix"), -1});
+            if (a.has("position"))
+                g.setValue({object->id(), Transform::kTranslate, -1}, vecFlag(a, "position"));
+            json first = nullptr;
+            if (!a.get<bool>("empty", false))
+                first = addPrimitive(g, *object, Args{});
+            g.select({object->id()});
+            return json::array({object->path(), mesh->path(), surface->path(), first});
+        },
+        .examples = {"createClay(name=\"Dog\", symmetry=\"x\")"},
+    });
+
+    ops::registerCommand({
+        .name = "addClayPrimitive",
+        .doc = "Add a clay shape to a clay object or group, after its other shapes. Given a shape, adds next to it. Returns the new shape.",
+        .positionalDoc = "clay object, group or shape",
+        .flags = shapeFlags(),
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> t = targets(g, a, "addClayPrimitive");
+            if (t.empty())
+                throw CommandError("addClayPrimitive: select a clay object, group or shape");
+            return addPrimitive(g, containerOf(g, *t.front(), "addClayPrimitive"), a);
+        },
+        .adjustable = true,
+        .examples = {"addClayPrimitive(\"Dog\", shape=\"capsule\", radius=4, endRadius=3, length=20, position=[8, 10, 0], rotation=[0, 0, 90])",
+                     "addClayPrimitive(\"Dog\", shape=\"sphere\", operation=\"subtract\", radius=2, blend=0.5)"},
+    });
+
+    ops::registerCommand({
+        .name = "groupClay",
+        .doc = "Group clay shapes that share a parent, so they join each other first and then the clay before them as one. "
+               "The group takes the first shape's place in the join order. Returns the group.",
+        .positionalDoc = "shapes",
+        .flags = {{"operation", "op", T::String, "add", "How the group joins the clay before it.", kOps},
+                  {"blend", "b", T::Float, nullptr, "Smooth join radius of the group, cm.", {}, {}, 0.0},
+                  {"name", "n", T::String, "ClayGroup", "Group name; made unique."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> items = targets(g, a, "groupClay");
+            std::erase_if(items, [](const Node* n) { return !isItem(*n); });
+            if (items.empty())
+                throw CommandError("groupClay: select clay shapes");
+            const NodeId parent = g.parent(items.front()->id());
+            if (std::ranges::any_of(items, [&](const Node* n) { return g.parent(n->id()) != parent; }))
+                throw CommandError("groupClay: the shapes must share a parent");
+            const auto& siblings = g.children(parent);
+            size_t at = siblings.size();
+            for (const Node* n : items)
+                at = std::min(at, size_t(std::ranges::find(siblings, n->id()) - siblings.begin()));
+            Node* group = g.createNode(*types::find("clayGroup"), a.get<std::string>("name", "ClayGroup"), parent, true);
+            setAttrs(g, *group, a, "groupClay");
+            g.setParent(group->id(), parent, false, at);
+            for (Node* n : items)
+                g.setParent(n->id(), group->id(), true);
+            sync(g, objectOf(g, parent)->id());
+            g.select({group->id()});
+            return group->path();
+        },
+        .examples = {"groupClay([\"Ear\", \"EarCut\"], blend=1)"},
+    });
+
+    ops::registerCommand({
+        .name = "refreshClay",
+        .doc = "Rewire clay objects to their shapes after shapes were reordered or reparented outside the clay commands. "
+               "Siblings join in outliner order. Returns the objects refreshed.",
+        .positionalDoc = "clay objects or anything in them",
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            json out = json::array();
+            std::vector<NodeId> done;
+            for (Node* n : targets(g, a, "refreshClay"))
+                if (Node* object = objectOf(g, n->id()); object && std::ranges::find(done, object->id()) == done.end())
+                {
+                    done.push_back(object->id());
+                    sync(g, object->id());
+                    out.push_back(object->path());
+                }
+            if (out.empty())
+                throw CommandError("refreshClay: select a clay object");
+            return out;
+        },
+        .examples = {"refreshClay(\"Dog\")"},
+    });
+
+    ops::registerCommand({
+        .name = "convertClayToMesh",
+        .doc = "Bake a clay object into a plain mesh at the surface's finalVoxelSize, optionally quad remeshed. The clay object "
+               "is deleted unless keepSource. Returns the new mesh.",
+        .positionalDoc = "clay object",
+        .flags = {{"voxelSize", "vs", T::Float, nullptr, "Lattice spacing, cm; defaults to the surface's finalVoxelSize.", {}, {}, 0.01},
+                  {"keepSource", "ks", T::Bool, false, "Keep the clay object, hidden."},
+                  {"remesh", "rm", T::Bool, false, "Quad remesh the result."},
+                  {"targetFaces", "tf", T::Int, 2000, "Face count for remesh.", {}, {}, 8.0},
+                  {"name", "n", T::String, nullptr, "Mesh name; made unique. Defaults to the clay object's name."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> t = targets(g, a, "convertClayToMesh");
+            Node* object = t.empty() ? nullptr : objectOf(g, t.front()->id());
+            if (!object)
+                throw CommandError("convertClayToMesh: select a clay object");
+            Node* surface = surfaceOf(g, *object);
+            g.evaluate();
+            const Field field(rootOf(*surface), choice(*surface, "symmetry") == 1);
+            MeshOptions o{.voxelSize = a.get<double>("voxelSize", num(*surface, "finalVoxelSize")), .colors = surface->as<bool>(idx(*surface, "colors"))};
+            geo::Mesh m;
+            try
+            {
+                m = clay::mesh(field, o);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("convertClayToMesh: ") + e.what());
+            }
+            const glm::dmat4 world = std::get<glm::dmat4>(g.value({object->id(), Transform::kWorldMatrix, -1}));
+            const std::string name = a.get<std::string>("name", object->name());
+            Node* out = g.createNode(*types::find("mesh"), name, kNoNode, true);
+            g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
+            Transform::setLocalMatrix(g, out->id(), world);
+            if (a.get<bool>("keepSource", false))
+                g.setValue({object->id(), Transform::kVisibility, -1}, false);
+            else
+            {
+                const NodeId surfaceId = surface->id();
+                g.deleteNode(object->id());
+                if (g.node(surfaceId))
+                    g.deleteNode(surfaceId);
+            }
+            g.select({out->id()});
+            if (a.get<bool>("remesh", false))
+                return ops::execute("quadRemesh", {{"args", json::array({out->path()})}, {"targetFaces", a.get<int>("targetFaces", 2000)},
+                                                   {"keepSource", false}});
+            return out->path();
+        },
+        .examples = {"convertClayToMesh(\"Dog\")", "convertClayToMesh(\"Dog\", remesh=True, targetFaces=3000)"},
+    });
+}
+} // namespace lila::clay

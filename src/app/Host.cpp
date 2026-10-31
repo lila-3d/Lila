@@ -5,6 +5,7 @@
 #include "bake/BakePipeline.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchRunner.h"
+#include "clay/ClayNodes.h"
 #include "core/CrashUpload.h"
 #include "core/Events.h"
 #include "core/Log.h"
@@ -153,6 +154,7 @@ void startCore()
     gn::registerTypes();
     curve::registerTypes();
     tex::registerTypes();
+    clay::registerTypes();
     scene::registerCommands();
     io::registerCommands();
     io::recovery::registerCommands();
@@ -166,6 +168,7 @@ void startCore()
     uv::registerCommands();
     retopo::registerCommands();
     curve::registerCommands();
+    clay::registerCommands();
     sculpt::registerCommands();
     vcolor::registerCommands();
     vcs::registerCommands();
