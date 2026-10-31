@@ -34,3 +34,7 @@ imgui.ini
 
 # Steamworks SDK (not redistributable)
 /third_party/steamworks/
+
+# Impeccable: per-developer config and critique notes
+.impeccable/config.local.json
+.impeccable/critique/
