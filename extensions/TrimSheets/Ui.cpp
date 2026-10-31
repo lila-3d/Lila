@@ -255,6 +255,9 @@ void registerUi(ext::Context& ctx)
         {"trims.bake", "Bake Trim Sheet", "trimSheetBake", json::object(), "Rebake the current trim sheet's textures.", "trimSheetBake()"},
         {"trims.generate", "Show Trim Sheet High/Low", "trimSheetGenerate", json::object(),
          "Put the current sheet's generated high and low in the scene to look at or sculpt.", "trimSheetGenerate()"},
+        {"trims.test", "Trim Test Blockout", "trimSheetTest", json::object(),
+         "Put a test blockout (wall, beam, steps, pillar, slab) in the scene, auto trimmed onto the current sheet, to see how it reads.",
+         "trimSheetTest()"},
         {"trims.auto", "Auto Trim", "trimAuto", json::object(),
          "Hotspot the selected faces or meshes onto the current trim sheet: each island goes to the trim that fits its shape and size.", "trimAuto()"},
         {"trims.shiftUp", "Shift Trim Up", "trimShift", json{{"steps", -1}}, "Move the selected faces to the trim above.", "trimShift(steps=-1)"},
@@ -333,6 +336,7 @@ void registerUi(ext::Context& ctx)
                                       {"trims.decal", "sticker", "Decal"},
                                       {"trims.curve", "route", "Curve"},
                                       {"trims.editor", "layout-rows", "Edit"},
+                                      {"trims.test", "box", "Test"},
                                       {"trims.bake", "flame", "Bake"},
                                       {"trims.texture", "brush", "Texture"},
                                       {"trims.paint", "paint", "Paint"},
@@ -341,7 +345,7 @@ void registerUi(ext::Context& ctx)
                             .order = 60, .docs = "trim-sheets"});
 
     menus::addItem(ctx, {.id = "trims.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Trim Sheets"});
-    const char* order[] = {"trims.create", "trims.editor", "trims.bake", "trims.generate", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
+    const char* order[] = {"trims.create", "trims.test", "trims.editor", "trims.bake", "trims.generate", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
                            "trims.edges", "trims.decal", "trims.cut", "trims.curve", "trims.weightedNormals", "", "trims.export", "trims.send"};
     int sep = 0;
     for (const char* a : order)

@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Attribute.h"
+#include "geo/Ops.h"
 #include "uv/Uv.h"
 
 #include <tbb/parallel_for.h>
@@ -322,6 +323,98 @@ Index markSeamsByAngle(geo::Mesh& mesh, std::span<const Index> faces, double deg
     return added;
 }
 
+namespace
+{
+/** World height of the tallest tiling strip the matcher may pick, 0 for none. */
+double tallestStrip(std::span<const HotspotTrim> trims, const HotspotOptions& opts)
+{
+    double h = 0.0;
+    for (const HotspotTrim& t : trims)
+        if (t.kind == TrimKind::StripU && !t.reserved && (opts.tag.empty() || std::ranges::find(t.tags, opts.tag) != t.tags.end()))
+            h = std::max(h, t.worldSize.y);
+    return h;
+}
+
+/**
+ * Cuts the islands taller than any strip into courses of about the strip's height along their measured V (or U when the
+ * matcher would turn them), marking the cuts as seams. Returns how many islands it cut; newFaces gets the faces it made.
+ */
+size_t sliceOversizedCharts(geo::Mesh& mesh, const std::vector<Chart>& charts, std::span<const HotspotTrim> trims, const HotspotOptions& opts,
+                            std::vector<Index>& newFaces)
+{
+    const double strip = tallestStrip(trims, opts);
+    if (strip <= 0.0)
+        return 0;
+    const double limit = strip * std::exp2(opts.maxSizeError);
+    struct Cut
+    {
+        std::vector<Index> faces;
+        glm::dvec3 origin, normal;
+        std::vector<double> at;
+    };
+    std::vector<Cut> cuts(charts.size());
+    tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) {
+        Chart ch = charts[i];
+        const IslandMeasure m = measureChart(ch, opts);
+        if (m.radial)
+            return;
+        const bool acrossU = opts.allowRotate && m.width < m.height;
+        const double across = acrossU ? m.width : m.height;
+        if (across <= limit)
+            return;
+        // The measured uvs are in cm, so the gradient of the across coordinate is a unit direction in 3D.
+        glm::dvec3 grad{0.0};
+        for (const auto& t : ch.tris)
+        {
+            const glm::dvec3 e1 = ch.pos[t[1]] - ch.pos[t[0]], e2 = ch.pos[t[2]] - ch.pos[t[0]];
+            const glm::dvec3 n = glm::cross(e1, e2);
+            const double nn = glm::dot(n, n);
+            if (nn <= 1e-12)
+                continue;
+            const int k = acrossU ? 0 : 1;
+            const double s1 = ch.uv[t[1]][k] - ch.uv[t[0]][k], s2 = ch.uv[t[2]][k] - ch.uv[t[0]][k];
+            grad += (s1 * glm::cross(e2, n) + s2 * glm::cross(n, e1)) / nn * std::sqrt(nn);
+        }
+        const double g = glm::length(grad);
+        if (g <= 1e-9)
+            return;
+        grad /= g;
+        const int k = acrossU ? 0 : 1;
+        double lo = ch.uv[0][k], hi = lo;
+        for (const glm::dvec2& u : ch.uv)
+        {
+            lo = std::min(lo, u[k]);
+            hi = std::max(hi, u[k]);
+        }
+        const int courses = std::max(2, int(std::lround(across / strip)));
+        Cut& c = cuts[i];
+        c.faces = ch.faces;
+        c.normal = grad;
+        c.origin = ch.pos[0] - grad * (ch.uv[0][k] - lo);
+        for (int j = 1; j < courses; ++j)
+            c.at.push_back((hi - lo) * double(j) / courses);
+    });
+    size_t sliced = 0;
+    for (Cut& c : cuts)
+    {
+        if (c.at.empty())
+            continue;
+        ++sliced;
+        std::vector<Index> faces = c.faces;
+        for (double at : c.at)
+        {
+            const geo::PlaneCut r = geo::cutAlongPlane(mesh, c.origin + c.normal * at, c.normal, 1e-4, {}, faces);
+            std::span<bool> seam = mesh.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
+            for (Index e : r.edges)
+                seam[e] = true;
+            faces.insert(faces.end(), r.newFaces.begin(), r.newFaces.end());
+            newFaces.insert(newFaces.end(), r.newFaces.begin(), r.newFaces.end());
+        }
+    }
+    return sliced;
+}
+} // namespace
+
 HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faceIds, std::span<const HotspotTrim> trims, std::string_view uvSet,
                       const HotspotOptions& opts)
 {
@@ -344,6 +437,21 @@ HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faceIds, std::span
     co.uvSet = uvSet;
     co.pinAttr = {};
     std::vector<Chart> charts = buildCharts(mesh, faces, co);
+    if (opts.sliceOversized)
+    {
+        std::vector<Index> made;
+        if (const size_t sliced = sliceOversizedCharts(mesh, charts, trims, opts, made))
+        {
+            HotspotOptions again = opts;
+            again.sliceOversized = false;
+            std::vector<Index> all = faces;
+            all.insert(all.end(), made.begin(), made.end());
+            HotspotResult r = hotspot(mesh, all, trims, uvSet, again);
+            r.seamsAdded += res.seamsAdded;
+            r.sliced = sliced;
+            return r;
+        }
+    }
     res.islands.resize(charts.size());
 
     tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) {
@@ -369,7 +477,11 @@ HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faceIds, std::span
             {
                 const TrimCandidate& c = ranked[k];
                 const bool tied = c.score <= best.score + opts.tieTolerance && (c.sizeError > opts.maxSizeError) == (best.sizeError > opts.maxSizeError);
-                const bool sameGroup = group >= 0 && trims[size_t(c.trim)].altGroup == group;
+                // Alt groups swap interchangeable trims: same group and the same world size.
+                const HotspotTrim& a = trims[size_t(c.trim)];
+                const HotspotTrim& b = trims[size_t(best.trim)];
+                const bool sameGroup = group >= 0 && a.altGroup == group && glm::length(a.worldSize - b.worldSize) <= 1e-3 * glm::length(b.worldSize) &&
+                                       c.rotated == best.rotated;
                 if (tied || sameGroup)
                     pool.push_back(k);
             }

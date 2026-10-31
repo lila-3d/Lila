@@ -270,6 +270,7 @@ uv::HotspotOptions hotspotOptions(const Args& a)
     o.sizeWeight = a.get<double>("sizeWeight", o.sizeWeight);
     o.normalWeight = a.get<double>("normalWeight", o.normalWeight);
     o.allowRotate = a.get<bool>("allowRotate", true);
+    o.sliceOversized = a.get<bool>("sliceOversized", true);
     return o;
 }
 
@@ -286,6 +287,8 @@ std::vector<FlagDef> hotspotFlags()
             {"randomFlip", "rf", AT::Bool, false, "Turn islands 180 degrees at random where the trim allows it."},
             {"randomMirror", "rm", AT::Bool, false, "Mirror islands at random."},
             {"allowRotate", "ar", AT::Bool, true, "Let islands turn 90 degrees to fit."},
+            {"sliceOversized", "so", AT::Bool, true,
+             "Cut islands taller than every strip into courses at the tallest strip's height, so walls read as rows of boards or panels at true scale."},
             {"maxSizeError", "mse", AT::Float, 1.0, "Islands off a trim's world size by more than this many doublings count as poor matches.", {}, {}, 0.0, 8.0},
             {"aspectWeight", "aw", AT::Float, 1.0, "How much shape matters.", {}, {}, 0.0, 10.0},
             {"sizeWeight", "sw", AT::Float, 1.0, "How much world size matters.", {}, {}, 0.0, 10.0},
@@ -413,6 +416,91 @@ int stripTrimArg(const Sheet& s, const Args& a, double width, std::string_view t
     if (i < 0)
         throw CommandError(std::string(cmd) + ": the sheet has no tiling strips");
     return i;
+}
+
+/** An axis-aligned box from lo to hi, cm, appended to m. */
+void addBox(geo::Mesh& m, glm::dvec3 lo, glm::dvec3 hi)
+{
+    const glm::dvec3 pts[] = {{lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z},
+                              {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}};
+    const geo::Index sizes[] = {4, 4, 4, 4, 4, 4};
+    const geo::Index idx[] = {0, 1, 2, 3, 5, 4, 7, 6, 3, 2, 6, 7, 1, 0, 4, 5, 1, 5, 6, 2, 4, 0, 3, 7};
+    m.append(geo::Mesh::fromPolygons(pts, sizes, idx));
+}
+
+/** A small blockout that exercises every kind of match: a wall, a beam, steps, a pillar, a plinth and a slab, laid along X. */
+geo::Mesh testBlockout()
+{
+    geo::Mesh m;
+    addBox(m, {0, 0, -20}, {400, 250, 0});
+    addBox(m, {0, 0, 0}, {400, 12, 3});
+    addBox(m, {480, 0, -25}, {780, 25, 0});
+    for (int i = 0; i < 3; ++i)
+        addBox(m, {860, 20.0 * i, -30.0 * (3 - i)}, {1010, 20.0 * (i + 1), 0});
+    addBox(m, {1090, 0, -40}, {1130, 300, 0});
+    addBox(m, {1210, 0, -100}, {1310, 10, 0});
+    return m;
+}
+
+/** The default of a generator's input, from its definition (a graph generator's group inputs, else its ports). */
+json generatorDefault(const std::string& type, const std::string& input)
+{
+    const lila::tex::NodeDef* def = lila::tex::findNode(type);
+    if (!def)
+        return nullptr;
+    if (def->graph.is_object())
+        for (const json& in : def->graph.value("inputs", json::array()))
+            if (in.value("name", std::string()) == input)
+                return in.value("default", json());
+    if (const lila::tex::PortDecl* port = def->input(input))
+        return port->defaultValue;
+    return nullptr;
+}
+
+/** A generator's inputs that set a pattern's frequency over uv: scale, noiseScale, chipScale... */
+std::vector<std::string> scaleInputs(const std::string& type)
+{
+    std::vector<std::string> out;
+    const lila::tex::NodeDef* def = lila::tex::findNode(type);
+    if (!def)
+        return out;
+    auto take = [&](const std::string& name) {
+        if (name == "scale" || name.ends_with("Scale"))
+            out.push_back(name);
+    };
+    if (def->graph.is_object())
+        for (const json& in : def->graph.value("inputs", json::array()))
+            take(in.value("name", std::string()));
+    for (const lila::tex::PortDecl& in : def->inputs)
+        take(in.id);
+    return out;
+}
+
+/**
+ * Smart materials size their generator patterns for one mesh, whose uvs cover about a metre. A sheet's uvs cover its whole
+ * world width, so each generator in the layer (and its children) gets its scales multiplied by that width in metres: chips,
+ * breakup and grime come out the size they would on a single prop.
+ */
+void scaleGenerators(const std::string& set, const json& layer, double factor)
+{
+    for (const json& m : layer.value("masks", json::array()))
+    {
+        if (m.value("kind", std::string()) != "generator")
+            continue;
+        const std::string type = m.value("type", std::string());
+        json values = m.value("values", json::object());
+        json patch = json::object();
+        for (const std::string& name : scaleInputs(type))
+        {
+            const json base = values.contains(name) ? values[name] : generatorDefault(type, name);
+            if (base.is_number())
+                patch[name] = base.get<double>() * factor;
+        }
+        if (!patch.empty())
+            ops::execute("texSetMask", {{"args", {set, layer.value("id", std::string()), m.value("id", std::string()), {{"values", patch}}}}});
+    }
+    for (const json& child : layer.value("children", json::array()))
+        scaleGenerators(set, child, factor);
 }
 
 /** Runs of consecutive indices, as Trim Mask's first and last. */
@@ -975,6 +1063,27 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "trimSheetTest",
+        .doc = "Put a test blockout in the scene, <name>_Test, and auto trim it onto the sheet: a wall with a skirting, a beam, steps, a "
+               "pillar and a slab, sized like a real level, so you see how the sheet reads before mapping your own meshes. Replaces "
+               "an earlier one. Returns trimAuto's result.",
+        .positionalDoc = "sheet (default the current one)",
+        .flags = {sheetFlag(), {"seed", "s", AT::Int, int64_t(0), "Variation seed for the auto trim."}},
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimSheetTest");
+            const Sheet s = loadOr(f, "trimSheetTest");
+            const std::string path = addTrimMesh(s, f, s.name + "_Test", testBlockout());
+            if (scene::components::mode() != scene::ComponentMode::Object)
+                scene::components::setMode(scene::ComponentMode::Object);
+            ops::execute("select", {{"args", {path}}});
+            json out = ops::execute("trimAuto", {{"sheet", f.generic_string()}, {"seed", a.get<int64_t>("seed", 0)}});
+            out["mesh"] = path;
+            return out;
+        },
+        .examples = {"trimSheetTest()"},
+    });
+
+    ctx.registerCommand({
         .name = "trimAlongCurve",
         .doc = "Lay a trim along curves: a strip of quads following each curve, width= cm across, on a tiling trim that repeats along U "
                "at the sheet's density (so it never stretches; loops repeat it a whole number of times), with head and tail caps from "
@@ -1171,6 +1280,11 @@ void registerCommands(ext::Context& ctx)
                 apply["name"] = a.get<std::string>("name");
             const json applied = ops::execute("texApplySmartMaterial", apply);
             const std::string layer = applied.value("layer", std::string());
+            const double metres = s.worldExtent().x / 100.0;
+            if (metres > 1.0)
+                for (const json& l : ops::execute("texLayerStack", {{"args", {set}}}).value("layers", json::array()))
+                    if (l.value("id", std::string()) == layer)
+                        scaleGenerators(set, l, metres);
             // Smart materials can read maps the sheet doesn't bake yet (dust reads the object normal): bake them too.
             bake::registerBuiltinMaps();
             bool more = false;

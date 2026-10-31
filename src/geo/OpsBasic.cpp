@@ -1009,6 +1009,97 @@ std::vector<Mesh> separate(const Mesh& mesh)
     return out;
 }
 
+PlaneCut cutAlongPlane(Mesh& m, const glm::dvec3& origin, const glm::dvec3& normal, double tol, const std::function<bool(const glm::dvec3&)>& within,
+                       std::span<const Index> faces)
+{
+    LILA_ZONE();
+
+    PlaneCut out;
+    const double len = glm::length(normal);
+    if (len <= 0.0)
+        return out;
+    const glm::dvec3 n = normal / len;
+    auto dist = [&](const glm::dvec3& x) { return glm::dot(n, x - origin); };
+    auto inside = [&](const glm::dvec3& x) { return !within || within(x - dist(x) * n); };
+    auto onPlane = [&](Index p) {
+        const glm::dvec3& x = m.position(p);
+        return std::abs(dist(x)) <= tol && inside(x);
+    };
+    auto side = [&](Index p) { return onPlane(p) ? 0 : dist(m.position(p)) >= 0.0 ? 1 : -1; };
+
+    std::vector<Index> todo(faces.begin(), faces.end());
+    if (faces.empty())
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f))
+                todo.push_back(f);
+    std::vector<uint8_t> edgeIn(m.edgeCapacity(), 0);
+    for (Index f : todo)
+        if (m.faceValid(f))
+            m.forEachFaceCorner(f, [&](Index c) {
+                edgeIn[m.cornerEdge(c)] = 1;
+                if (onPlane(m.cornerPoint(c)))
+                    m.setPosition(m.cornerPoint(c), m.position(m.cornerPoint(c)) - dist(m.position(m.cornerPoint(c))) * n);
+            });
+
+    for (Index e = 0; e < Index(edgeIn.size()); ++e)
+    {
+        if (!edgeIn[e] || !m.edgeValid(e))
+            continue;
+        const glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
+        const double da = dist(a), db = dist(b);
+        if (!((da > tol && db < -tol) || (da < -tol && db > tol)))
+            continue;
+        const double t = da / (da - db);
+        const glm::dvec3 x = a + (b - a) * t;
+        if (!inside(x))
+            continue;
+        const Index mid = m.splitEdge(e, t);
+        m.setPosition(mid, x - dist(x) * n);
+    }
+
+    // Each sign change round a face now passes through an on-plane point: split between consecutive ones.
+    for (Index f : todo)
+    {
+        Index face = f;
+        while (m.faceValid(face))
+        {
+            bool pos = false, neg = false;
+            Index start = kInvalid;
+            m.forEachFaceCorner(face, [&](Index c) {
+                const int sd = side(m.cornerPoint(c));
+                pos |= sd > 0;
+                neg |= sd < 0;
+                if (start == kInvalid && sd == 0 && side(m.cornerNextPoint(c)) > 0)
+                    start = c;
+            });
+            if (!pos || !neg || start == kInvalid)
+                break;
+            Index end = m.cornerNext(start);
+            while (side(m.cornerPoint(end)) != 0)
+                end = m.cornerNext(end);
+            if (end == start || m.cornerNext(start) == end || m.cornerPrev(start) == end)
+                break;
+            const Index rest = m.splitFace(face, start, end);
+            if (rest == kInvalid)
+                break;
+            out.newFaces.push_back(rest);
+            face = rest;
+        }
+    }
+
+    for (Index f : todo)
+        out.newFaces.push_back(f);
+    for (Index f : out.newFaces)
+        if (m.faceValid(f))
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index e = m.cornerEdge(c);
+                if (onPlane(m.edgePoint(e, 0)) && onPlane(m.edgePoint(e, 1)) && std::ranges::find(out.edges, e) == out.edges.end())
+                    out.edges.push_back(e);
+            });
+    out.newFaces.resize(out.newFaces.size() - todo.size());
+    return out;
+}
+
 void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepSign, double tolerance, const glm::dmat4& space)
 {
     LILA_ZONE();

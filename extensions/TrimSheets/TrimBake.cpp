@@ -96,6 +96,26 @@ bake::BakeInputs inputsFor(const Sheet& sheet, const Generated& g)
     return in;
 }
 
+/**
+ * Rewrites a baked object normal map as if the sheet stood up like a wall (V up, facing the viewer) instead of lying on the
+ * ground: a sheet is reused at any angle, and lying flat every texel faces up, so dust and moss would cover all of it.
+ */
+void standUp(const std::filesystem::path& file, int bits)
+{
+    image::Image img = image::read(file);
+    if (img.width <= 0)
+        return;
+    for (size_t i = 0; i + 3 < img.rgba.size(); i += 4)
+    {
+        const glm::vec3 n = glm::vec3(img.rgba[i], img.rgba[i + 1], img.rgba[i + 2]) * 2.0f - 1.0f;
+        const glm::vec3 w(n.x, -n.z, n.y);
+        img.rgba[i] = w.x * 0.5f + 0.5f;
+        img.rgba[i + 1] = w.y * 0.5f + 0.5f;
+        img.rgba[i + 2] = w.z * 0.5f + 0.5f;
+    }
+    image::write(file, img, bits);
+}
+
 /** Copies the trims' rectangles, grown by pad, from src into dst (same size). */
 void composite(image::Image& dst, const image::Image& src, const Sheet& sheet, std::span<const size_t> only)
 {
@@ -183,6 +203,9 @@ nlohmann::json bakeSheet(const Sheet& sheet, const std::filesystem::path& sheetF
     bake::BakeResult r = bake::runBake(inputs, ps, bo, *backend);
     r.backend = backend->name();
     nlohmann::json out = r.toJson();
+    for (const nlohmann::json& o : out.value("outputs", nlohmann::json::array()))
+        if (o.value("map", std::string()) == "objectNormal")
+            standUp(o.value("file", std::string()), o.value("bits", 8));
 
     if (partial)
     {

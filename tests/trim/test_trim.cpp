@@ -419,3 +419,70 @@ TEST_CASE("trim commands: along a curve, a decal over edges and a trim cut")
     CHECK(cut[0]["cut"].get<bool>());
     CHECK(meshOf(block)->numFaces() > before);
 }
+
+TEST_CASE("trim commands: the test blockout is auto trimmed onto the sheet")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("test") / "T_Try.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "woodTrims"}, {"width", 256}, {"file", file.generic_string()}, {"bake", false}});
+    const json r = ops::execute("trimSheetTest", json::object());
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.find(r["mesh"].get<std::string>());
+    REQUIRE(n);
+    const scene::MeshPtr m = std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+    CHECK(m->numFaces() > 48);
+    std::span<const int32_t> trim = m->faceAttrs().get<int32_t>(kFaceTrim);
+    REQUIRE(!trim.empty());
+    for (geo::Index f = 0; f < m->faceCapacity(); ++f)
+        if (m->faceValid(f))
+            CHECK(trim[f] > 0);
+}
+
+TEST_CASE("hotspot: a wall taller than every strip is cut into courses at true scale")
+{
+    const Sheet s = preset("woodTrims");
+    const std::vector<uv::HotspotTrim> trims = hotspotTrims(s);
+    double tallest = 0.0;
+    for (const uv::HotspotTrim& t : trims)
+        tallest = std::max(tallest, t.worldSize.y);
+    REQUIRE(tallest == doctest::Approx(50.0));
+
+    geo::Mesh m = wall(400.0, 250.0);
+    const uv::HotspotResult r = uv::hotspot(m, {}, trims, "uv0");
+    CHECK(r.sliced == 1);
+    CHECK(m.numFaces() == 5);
+    REQUIRE(r.islands.size() == 5);
+    for (const uv::HotspotIsland& is : r.islands)
+    {
+        CHECK_FALSE(is.poor);
+        CHECK(is.measure.height == doctest::Approx(50.0).epsilon(0.01));
+        CHECK(is.sizeError < 0.1);
+    }
+
+    uv::HotspotOptions keep;
+    keep.sliceOversized = false;
+    geo::Mesh whole = wall(400.0, 250.0);
+    const uv::HotspotResult w = uv::hotspot(whole, {}, trims, "uv0", keep);
+    CHECK(w.sliced == 0);
+    CHECK(whole.numFaces() == 1);
+    CHECK(w.islands[0].poor);
+}
+
+TEST_CASE("hotspot: alt groups only swap trims of the same size")
+{
+    const Sheet s = preset("hotspotGrid");
+    const std::vector<uv::HotspotTrim> trims = hotspotTrims(s);
+    // A 40 x 300 cm pillar face: an 8:1 panel fits; the 50 cm squares in its row's group must never be picked.
+    for (uint32_t seed = 0; seed < 12; ++seed)
+    {
+        uv::HotspotOptions o;
+        o.seed = seed;
+        geo::Mesh m = wall(40.0, 300.0);
+        const uv::HotspotResult r = uv::hotspot(m, {}, trims, "uv0", o);
+        REQUIRE(r.islands.size() == 1);
+        const Trim& t = s.trims[size_t(r.islands[0].trim)];
+        CAPTURE(seed);
+        CHECK(std::max(t.sizePx().x, t.sizePx().y) >= 4 * std::min(t.sizePx().x, t.sizePx().y));
+        CHECK_FALSE(r.islands[0].poor);
+    }
+}

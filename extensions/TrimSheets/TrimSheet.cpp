@@ -507,7 +507,7 @@ Sheet preset(std::string_view id, int width)
     else if (id == "stoneMouldings")
     {
         sheet.name = "T_StoneMouldings";
-        sheet.material = "Mossy Stone";
+        sheet.material = "Trim Sandstone";
         sheet.pxPerM = 256.0;
         l.addStrip("Torus64", 64, S::HalfPipe);
         l.addStrip("Fillet64", 64, S::Step);
@@ -548,6 +548,8 @@ Sheet preset(std::string_view id, int width)
     }
     else
         throw std::invalid_argument("unknown trim sheet preset '" + std::string(id) + "'");
+    // Density follows the resolution, so a preset's trims keep their world size at any width.
+    sheet.pxPerM *= double(sheet.width) / base;
     return sheet;
 }
 

@@ -1,0 +1,219 @@
+{
+  "format": "lilasmart",
+  "version": 1,
+  "name": "Trim Sandstone",
+  "description": "Fine-grained sandstone for mouldings: lighter worn arrises, grime in the hollows and moss along the tops of the profiles.",
+  "kind": "material",
+  "layer": {
+    "id": "L99",
+    "name": "Trim Sandstone",
+    "kind": "folder",
+    "children": [
+      {
+        "id": "L1",
+        "name": "Sandstone",
+        "kind": "procedural",
+        "graph": {
+          "name": "sandstone",
+          "typeVersion": 1,
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "baseColor",
+              "type": "color"
+            },
+            {
+              "name": "roughness",
+              "type": "gray"
+            },
+            {
+              "name": "height",
+              "type": "gray"
+            }
+          ],
+          "nodes": [
+            {
+              "name": "GroupInput",
+              "type": "GroupInput",
+              "position": [
+                -400,
+                0
+              ]
+            },
+            {
+              "name": "Grain",
+              "type": "clouds",
+              "position": [
+                -250,
+                0
+              ],
+              "values": {
+                "scale": 24,
+                "octaves": 5,
+                "persistence": 0.6,
+                "contrast": 0.8
+              }
+            },
+            {
+              "name": "Tone",
+              "type": "colorize",
+              "position": [
+                -80,
+                0
+              ],
+              "values": {
+                "gradient": [
+                  [
+                    0.0,
+                    [
+                      0.5,
+                      0.43,
+                      0.34,
+                      1
+                    ]
+                  ],
+                  [
+                    1.0,
+                    [
+                      0.68,
+                      0.61,
+                      0.5,
+                      1
+                    ]
+                  ]
+                ]
+              }
+            },
+            {
+              "name": "Rough",
+              "type": "constant",
+              "position": [
+                -80,
+                150
+              ],
+              "values": {
+                "value": 0.85
+              }
+            },
+            {
+              "name": "GroupOutput",
+              "type": "GroupOutput",
+              "position": [
+                200,
+                0
+              ]
+            }
+          ],
+          "links": [
+            [
+              "Grain",
+              "out",
+              "Tone",
+              "input"
+            ],
+            [
+              "Tone",
+              "out",
+              "GroupOutput",
+              "baseColor"
+            ],
+            [
+              "Rough",
+              "out",
+              "GroupOutput",
+              "roughness"
+            ],
+            [
+              "Grain",
+              "out",
+              "GroupOutput",
+              "height"
+            ]
+          ]
+        },
+        "masks": []
+      },
+      {
+        "id": "L2",
+        "name": "Worn Arrises",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.76,
+            0.7,
+            0.6,
+            1
+          ],
+          "roughness": 0.8,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M1",
+            "kind": "generator",
+            "type": "genEdgeWear",
+            "mode": "normal",
+            "opacity": 0.7,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L3",
+        "name": "Grime",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.2,
+            0.17,
+            0.13,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0
+        },
+        "masks": [
+          {
+            "id": "M2",
+            "kind": "generator",
+            "type": "genCavityGrime",
+            "mode": "normal",
+            "opacity": 1.0,
+            "values": {}
+          }
+        ]
+      },
+      {
+        "id": "L4",
+        "name": "Moss",
+        "kind": "fill",
+        "material": {
+          "baseColor": [
+            0.09,
+            0.16,
+            0.03,
+            1
+          ],
+          "roughness": 0.9,
+          "metallic": 0.0,
+          "height": 0.56
+        },
+        "masks": [
+          {
+            "id": "M3",
+            "kind": "generator",
+            "type": "genMoss",
+            "mode": "normal",
+            "opacity": 0.8,
+            "values": {}
+          }
+        ],
+        "heightBlend": {
+          "enabled": true,
+          "sharpness": 0.7,
+          "influence": 1.0
+        }
+      }
+    ]
+  }
+}

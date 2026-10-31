@@ -7,6 +7,7 @@
 #include "geo/Triangulate.h"
 
 #include <array>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -342,6 +343,24 @@ struct MirrorOptions
  * faces lying in the plane. Points within tolerance of the plane snap onto it.
  */
 LILA_SCENE_API void cutAtPlane(Mesh& mesh, const SymmetryPlane& plane, int keepSign, double tolerance = 1e-3, const glm::dmat4& space = glm::dmat4(1.0));
+
+/** What cutAlongPlane changed. */
+struct PlaneCut
+{
+    /** Edges lying on the cut. */
+    std::vector<Index> edges;
+    /** Faces the cut split off (the originals keep one side). */
+    std::vector<Index> newFaces;
+};
+
+/**
+ * Cuts faces along the plane through origin with that normal, keeping both sides: crossing edges get a point on the plane
+ * and crossing faces are split there. Points within tolerance snap onto it. `within` (optional) limits the cut to plane
+ * points it accepts, such as a disc; `faces` (optional) to those faces, whose edges shared with other faces still gain the
+ * point.
+ */
+LILA_SCENE_API PlaneCut cutAlongPlane(Mesh& mesh, const glm::dvec3& origin, const glm::dvec3& normal, double tolerance = 1e-5,
+                                      const std::function<bool(const glm::dvec3&)>& within = {}, std::span<const Index> faces = {});
 
 /** Adds a mirrored copy, after cutting away the discarded side unless the direction is Both. Returns the new faces. */
 LILA_SCENE_API std::vector<Index> mirrorMesh(Mesh& mesh, const MirrorOptions& opts = {});

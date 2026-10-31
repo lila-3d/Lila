@@ -76,75 +76,12 @@ void cutDisc(geo::Mesh& m, const Plane& plane, double radius, double tol)
 
     const glm::dvec3 n = unitOr(plane.normal, {0, 1, 0});
     const glm::dvec3 o = plane.origin;
-    auto dist = [&](const glm::dvec3& x) { return glm::dot(n, x - o); };
-    auto inDisc = [&](const glm::dvec3& x) {
-        glm::dvec3 d = x - o;
-        d -= glm::dot(d, n) * n;
-        return glm::dot(d, d) <= radius * radius;
-    };
-    auto onPlane = [&](Index p) {
-        const glm::dvec3& x = m.position(p);
-        return std::abs(dist(x)) <= tol && inDisc(x);
-    };
-    auto side = [&](Index p) { return onPlane(p) ? 0 : dist(m.position(p)) >= 0.0 ? 1 : -1; };
-
-    for (Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p) && onPlane(p))
-            m.setPosition(p, m.position(p) - dist(m.position(p)) * n);
-
-    const Index edgeCap = m.edgeCapacity();
-    for (Index e = 0; e < edgeCap; ++e)
-    {
-        if (!m.edgeValid(e))
-            continue;
-        const glm::dvec3 a = m.position(m.edgePoint(e, 0)), b = m.position(m.edgePoint(e, 1));
-        const double da = dist(a), db = dist(b);
-        if (!((da > tol && db < -tol) || (da < -tol && db > tol)))
-            continue;
-        const double t = da / (da - db);
-        const glm::dvec3 x = a + (b - a) * t;
-        if (!inDisc(x))
-            continue;
-        const Index mid = m.splitEdge(e, t);
-        m.setPosition(mid, x - dist(x) * n);
-    }
-
-    // As cutAtPlane: each sign change round a face now passes through an on-plane point.
-    for (Index f = 0; f < m.faceCapacity(); ++f)
-    {
-        Index face = f;
-        while (m.faceValid(face))
-        {
-            bool pos = false, neg = false;
-            Index start = kInvalid;
-            m.forEachFaceCorner(face, [&](Index c) {
-                const int s = side(m.cornerPoint(c));
-                pos |= s > 0;
-                neg |= s < 0;
-                if (start == kInvalid && s == 0 && side(m.cornerNextPoint(c)) > 0)
-                    start = c;
-            });
-            if (!pos || !neg || start == kInvalid)
-                break;
-            Index end = m.cornerNext(start);
-            while (side(m.cornerPoint(end)) != 0)
-                end = m.cornerNext(end);
-            if (end == start || m.cornerNext(start) == end || m.cornerPrev(start) == end)
-                break;
-            const Index rest = m.splitFace(face, start, end);
-            if (rest == kInvalid)
-                break;
-            face = rest;
-        }
-    }
-
+    const geo::PlaneCut c = geo::cutAlongPlane(m, o, n, tol, [&](const glm::dvec3& x) { return glm::dot(x - o, x - o) <= radius * radius; });
     std::span<int32_t> cut = m.edgeAttrs().get<int32_t>(kCutAttr);
-    for (Index e = 0; e < m.edgeCapacity(); ++e)
-        if (m.edgeValid(e) && onPlane(m.edgePoint(e, 0)) && onPlane(m.edgePoint(e, 1)))
-            cut[e] = 1;
+    for (Index e : c.edges)
+        cut[e] = 1;
 }
 
-/** Component ids after merging every component no cut touches into the nearest one a cut does. */
 void mergeUntouched(const geo::Mesh& m, std::vector<Index>& comp, Index count, std::span<const uint8_t> blocked)
 {
     std::vector<uint8_t> touched(count, 0);

@@ -88,6 +88,11 @@ struct HotspotOptions
     bool randomMirror = false;
     /** Score difference under which candidates count as tied; variation picks among ties and alt groups. */
     double tieTolerance = 0.05;
+    /**
+     * Islands too tall for every tiling strip (past maxSizeError) are cut into courses about the tallest strip's height,
+     * each its own island, so a wall becomes rows of boards or panels at true scale instead of one strip stretched over it.
+     */
+    bool sliceOversized = true;
 };
 
 /** An island's rectified size in world units and what it looks like. */
@@ -130,6 +135,8 @@ struct HotspotResult
     size_t poor = 0;
     size_t failed = 0;
     Index seamsAdded = 0;
+    /** Islands cut into courses (sliceOversized). */
+    size_t sliced = 0;
 };
 
 /**
