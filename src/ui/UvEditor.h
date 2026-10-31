@@ -8,11 +8,15 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 class QComboBox;
 class QDoubleSpinBox;
+class QBoxLayout;
+class QHBoxLayout;
 class QHideEvent;
 class QLabel;
+class QResizeEvent;
 class QScrollArea;
 class QSplitter;
 class QShowEvent;
@@ -29,7 +33,8 @@ class UvPackPanel;
 
 /**
  * UV editor: a 2D view of the hilited meshes' uvs with selection synced to the 3D component selection, a toolbar of
- * tools, modes and display, and the UV Toolkit column beside the view with the uv commands in sections.
+ * tools, modes and display, and the UV Toolkit with the uv commands in sections. The toolkit sits beside the square
+ * canvas in a wide editor and below it in a tall one, where its sections fall into two fixed columns.
  */
 class LILA_UI_API UvEditor : public QWidget
 {
@@ -48,6 +53,7 @@ public:
 protected:
     void showEvent(QShowEvent* e) override;
     void hideEvent(QHideEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     /** Runs a command from the UI (echoed), logging failures; returns its result or null. */
@@ -56,6 +62,8 @@ private:
     void showLayout();
     /** uvPack with the Pack panel's options and the editor's resolution and padding. */
     void runPack();
+    /** Puts the toolkit beside or below the view, whichever leaves the canvas closer to square. */
+    void placeToolkit();
 
     UvView* mView = nullptr;
     UvPackPanel* mPackPanel = nullptr;
@@ -65,6 +73,11 @@ private:
     QScrollArea* mToolkitScroll = nullptr;
     QSplitter* mSplit = nullptr;
     bool mToolkitSized = false;
+    bool mToolkitBelow = false;
+    int mSectionColumns = 0;
+    QHBoxLayout* mSectionRow = nullptr;
+    QBoxLayout* mSectionColumn[2] = {};
+    std::vector<QWidget*> mSections;
     QComboBox* mSet = nullptr;
     QComboBox* mDisplay = nullptr;
     QSpinBox* mResolution = nullptr;

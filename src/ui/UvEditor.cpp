@@ -1,10 +1,13 @@
 #include "ui/UvEditorInternal.h"
 
+#include "ops/CommandOptions.h"
+#include "ui/OptionBox.h"
 #include "ui/Panels.h"
 
 #include <QApplication>
 #include <QGridLayout>
 #include <QScrollArea>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QTimer>
@@ -53,6 +56,10 @@ namespace
 constexpr const char* kCollapsedPref = "/uvEditor/collapsed";
 constexpr const char* kToolkitPref = "/uvEditor/toolkitShown";
 constexpr const char* kToolkitWidthPref = "/uvEditor/toolkitWidth";
+constexpr const char* kToolkitHeightPref = "/uvEditor/toolkitHeight";
+/** Sections in the left column when the toolkit sits below the view; the rest go right. */
+constexpr size_t kLeftSections = 4;
+constexpr int kColumnGap = 8;
 constexpr int kColumns = 4;
 
 QToolButton* button(const QString& text, const QString& tip, QWidget* parent, const char* iconName = nullptr)
@@ -283,7 +290,12 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
     mToolkitScroll->setVisible(toolkitShown);
-    connect(split, &QSplitter::splitterMoved, this, [this] { PrefStore::get().set("general", kToolkitWidthPref, mToolkitScroll->width()); });
+    connect(split, &QSplitter::splitterMoved, this, [this] {
+        if (mToolkitBelow)
+            PrefStore::get().set("general", kToolkitHeightPref, mToolkitScroll->height());
+        else
+            PrefStore::get().set("general", kToolkitWidthPref, mToolkitScroll->width());
+    });
 
     FixedRowLayout* into = nullptr;
     auto op = [&](const char* ic, const QString& text, const QString& tip, std::function<void()> fn) {
@@ -319,6 +331,18 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                                    "hierarchy", uv::includeChildren());
     into->addWidget(children);
     kit->addWidget(setBox);
+    mSectionRow = new QHBoxLayout;
+    mSectionRow->setContentsMargins(0, 0, 0, 0);
+    mSectionRow->setSpacing(0);
+    for (QBoxLayout*& column : mSectionColumn)
+    {
+        column = new QVBoxLayout;
+        column->setSpacing(4);
+        column->addStretch(1);
+        mSectionRow->addLayout(column);
+    }
+    kit->addLayout(mSectionRow);
+    auto addSection = [this](QWidget* s) { mSections.push_back(s); };
 
     auto packCall = [this] { return json{{"resolution", mResolution->value()}, {"padding", mPadding->value()}}; };
     QWidget* unwrapBox = rowBox(body, &into, kColumns);
@@ -352,7 +376,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     projectBtn->setPopupMode(QToolButton::InstantPopup);
     setRightClickAction(projectBtn, projectMenu->actions().front());
     op("bulb", "Lightmap", "Generate Unreal lightmap uvs in uv1 (uvLightmap)", [this] { runCommand("uvLightmap"); });
-    kit->addWidget(section("Unwrap", unwrapBox, body));
+    addSection(section("Unwrap", unwrapBox, body));
 
     // Cut and sew re-solve the islands they touch straight away in live mode.
     auto cutOrSew = [this](const char* action, const char* command, json call) {
@@ -371,7 +395,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
        [cutOrSew] { cutOrSew("uv.sew", "uvSew", json{{"move", true}}); });
     op("link", "Weld", "Weld the selected seams where they are, both sides meeting halfway (uvSew move=False)",
        [cutOrSew] { cutOrSew("uv.weld", "uvSew", json{{"move", false}}); });
-    kit->addWidget(section("Cut and Sew", seamBox, body));
+    addSection(section("Cut and Sew", seamBox, body));
 
     // Relaxing: live solving, one-shot solves, pins, the stretch/compress balance and the brushes.
     QWidget* relaxGrid = rowBox(body, &into, kColumns);
@@ -415,7 +439,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     brushCombo->setToolTip("Brush for the Brush tool here and the UV brush on the mesh (uv.brush3d)");
     into->addWidget(brushCombo);
     op("cube", "On Mesh", "Paint the brush on the mesh in the viewport (uv.brush3d)", [] { uvLive::startBrushTool3d(); });
-    kit->addWidget(section("Relax", stacked(body, {relaxGrid, balanceBox, brushBox}), body));
+    addSection(section("Relax", stacked(body, {relaxGrid, balanceBox, brushBox}), body));
 
     QWidget* arrangeBox = rowBox(body, &into, kColumns);
     op("layout-grid", "Straighten", "Rectify islands into grids and rectangles (uvStraighten)", [this] { runCommand("uvStraighten"); });
@@ -435,7 +459,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                                        {"flip-vertical", "Flip V", "Mirror each selected island top to bottom",
                                         json{{"scale", {1.0, -1.0}}, {"perIsland", true}}}})
         op(ic, text, tip, [this, call] { runCommand("uvTransform", call); });
-    kit->addWidget(section("Arrange", arrangeBox, body));
+    addSection(section("Arrange", arrangeBox, body));
 
     // Numeric transforms, one row each, the fields lined up in columns.
     auto* xformBox = new QWidget(body);
@@ -470,7 +494,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         ++xformRow;
     }
     xform->setColumnStretch(4, 1);
-    kit->addWidget(section("Transform", xformBox, body));
+    addSection(section("Transform", xformBox, body));
 
     // Packing: the texture size and padding it packs for, with its options folded beneath.
     QWidget* packGrid = rowBox(body, &into, kColumns);
@@ -498,7 +522,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     mPackPanel = new UvPackPanel(body);
     mPackPanel->onShowStacks = [this](bool on) { mView->setShowStacks(on); };
     QWidget* packOptions = section("Pack Options", mPackPanel, body, &mPackOptions, false);
-    kit->addWidget(section("Pack", stacked(body, {packGrid, sizeBox, packOptions}), body, &mPackSection));
+    addSection(section("Pack", stacked(body, {packGrid, sizeBox, packOptions}), body, &mPackSection));
 
     QWidget* densityBox = rowBox(body, &into);
     into->addWidget(new QLabel("Density", densityBox));
@@ -508,7 +532,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     into->addWidget(mDensity);
     QToolButton* getTd = op("color-picker", "Get", "Measure texel density of the selection", [] {});
     QToolButton* setTd = op("ruler-measure", "Set", "Scale each selected island to the density", [] {});
-    kit->addWidget(section("Texel Density", densityBox, body));
+    addSection(section("Texel Density", densityBox, body));
 
     QWidget* viewportBox = rowBox(body, &into);
     QToolButton* checker = toggle("Checker", "Checker texture on the meshes in the viewport", "chess", uvLive::checker3d());
@@ -522,7 +546,11 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     into->addWidget(tiling);
     QToolButton* seams = toggle("Seams", "Draw the uv seams over the meshes in the viewport", "line-dashed", uvLive::seams3d());
     into->addWidget(seams);
-    kit->addWidget(section("In the Viewport", viewportBox, body));
+    addSection(section("In the Viewport", viewportBox, body));
+    for (size_t i = 0; i < mSections.size(); ++i)
+        mSectionColumn[0]->insertWidget(int(i), mSections[i]);
+    mSectionRow->setStretch(0, 1);
+    mSectionColumns = 1;
     kit->addStretch(1);
     // The column stops at its narrowest fixed row, folded Pack options included, instead of clipping it.
     const int widest = std::max(body->minimumSizeHint().width(), mPackPanel->minimumSizeHint().width() + kit->contentsMargins().left());
@@ -614,12 +642,57 @@ void UvEditor::showEvent(QShowEvent* e)
     uvLive::setEditorShown(this, true);
     if (mToolkitSized)
         return;
+    placeToolkit();
     mToolkitSized = true;
-    // The column opens wide enough for every label, or at the width it was last dragged to.
-    const int labelled = mToolkitScroll->widget()->sizeHint().width() + mToolkitScroll->verticalScrollBar()->sizeHint().width();
-    const int width = PrefStore::get().value<int>("general", kToolkitWidthPref, labelled);
-    const int total = mSplit->width();
-    mSplit->setSizes({std::max(0, total - width), width});
+}
+
+void UvEditor::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    if (mToolkitSized)
+        placeToolkit();
+}
+
+void UvEditor::placeToolkit()
+{
+    // A margin either side of square keeps a drag near it from flipping the toolkit back and forth.
+    const QSize area = mSplit->size();
+    const bool below = mToolkitBelow ? area.height() * 10 > area.width() * 9 : area.height() * 9 > area.width() * 10;
+    // Pack's folded options count toward its column even while closed, so opening them never overflows.
+    auto columnWidth = [this](size_t from, size_t to) {
+        int w = 0;
+        for (size_t i = from; i < to; ++i)
+            w = std::max(w, mSections[i]->minimumSizeHint().width());
+        return to > kLeftSections ? std::max(w, mPackPanel->minimumSizeHint().width()) : w;
+    };
+    const int twoWide = columnWidth(0, kLeftSections) + columnWidth(kLeftSections, mSections.size()) + kColumnGap +
+                        mToolkitScroll->widget()->layout()->contentsMargins().left() + mToolkitScroll->verticalScrollBar()->sizeHint().width();
+    const int columns = below && area.width() >= twoWide ? 2 : 1;
+    if (columns != mSectionColumns)
+    {
+        mSectionColumns = columns;
+        const size_t split = columns == 2 ? kLeftSections : mSections.size();
+        for (size_t i = 0; i < mSections.size(); ++i)
+        {
+            QBoxLayout* column = mSectionColumn[i < split ? 0 : 1];
+            mSectionColumn[0]->removeWidget(mSections[i]);
+            mSectionColumn[1]->removeWidget(mSections[i]);
+            column->insertWidget(column->count() - 1, mSections[i]);
+        }
+        mSectionRow->setSpacing(columns == 2 ? kColumnGap : 0);
+        mSectionRow->setStretch(1, columns == 2 ? 1 : 0);
+    }
+    if (mToolkitSized && below == mToolkitBelow)
+        return;
+    mToolkitBelow = below;
+    mSplit->setOrientation(below ? Qt::Vertical : Qt::Horizontal);
+    // The toolkit opens at its last dragged size, or wide enough for every label (tall enough for every section below).
+    const QSize hint = mToolkitScroll->widget()->sizeHint();
+    const int bar = mToolkitScroll->verticalScrollBar()->sizeHint().width();
+    const int total = below ? area.height() : area.width();
+    const int size = below ? std::min(PrefStore::get().value<int>("general", kToolkitHeightPref, hint.height()), total / 2)
+                           : PrefStore::get().value<int>("general", kToolkitWidthPref, hint.width() + bar);
+    mSplit->setSizes({std::max(0, total - size), size});
 }
 
 void UvEditor::hideEvent(QHideEvent* e)
@@ -628,12 +701,23 @@ void UvEditor::hideEvent(QHideEvent* e)
     uvLive::setEditorShown(this, false);
 }
 
+/** The label of the action making this call, else the command's name, for its options dialog. */
+static std::string optionsTitle(const char* command, const json& call)
+{
+    for (const Action* a : actions::all())
+        if (a->command == command && a->call == call)
+            return a->label;
+    return command;
+}
+
 json UvEditor::runCommand(const char* command, const json& call)
 {
+    if ((QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) && optionBox::openCommand(optionsTitle(command, call), command, call))
+        return nullptr;
     json r;
     try
     {
-        r = ops::execute(command, call, CallSource::UI);
+        r = ops::execute(command, ops::options::callWith(command, call), CallSource::UI);
         actions::remember({{"command", command}, {"args", call}});
     }
     catch (const CommandError& e)
