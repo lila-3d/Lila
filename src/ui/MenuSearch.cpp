@@ -547,6 +547,12 @@ private:
             auto* row = new QTreeWidgetItem(mList, {it->label, it->path, key, QString()});
             row->setData(kLabel, kActionRole, QVariant::fromValue(static_cast<QObject*>(it->action.data())));
             row->setDisabled(!it->action->isEnabled());
+            if (it->action->isCheckable())
+            {
+                // Shown, not clickable: clicking the row triggers the action, which flips it.
+                row->setFlags(row->flags() & ~Qt::ItemIsUserCheckable);
+                row->setCheckState(kLabel, it->action->isChecked() ? Qt::Checked : Qt::Unchecked);
+            }
             row->setForeground(kWhere, dim);
             row->setForeground(kKey, dim);
             if (!id.empty() && optionBox::available(id))
