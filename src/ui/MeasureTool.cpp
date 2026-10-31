@@ -13,6 +13,7 @@
 #include "ui/MeshCache.h"
 #include "ui/Tools.h"
 #include "ui/ViewportHooks.h"
+#include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
 
 #include <QApplication>
@@ -717,6 +718,7 @@ void copy(const std::string& text, const json& r)
     QApplication::clipboard()->setText(QString::fromStdString(text));
     QString line = QString::fromStdString(r.value("report", std::string())).replace('\n', "   |   ");
     status(line + "   (copied " + QString::fromStdString(text) + ")");
+    viewportToast::showActive(text == r.value("report", std::string()) ? QString("Copied the measurements") : "Copied " + QString::fromStdString(text));
 }
 
 /** The main number, as the clipboard prefs format it. */

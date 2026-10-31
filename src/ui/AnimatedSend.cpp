@@ -5,6 +5,7 @@
 #include "scene/Graph.h"
 #include "scene/SceneData.h"
 #include "ui/Actions.h"
+#include "ui/ViewportToast.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -230,6 +231,8 @@ void send(const std::vector<std::string>& meshes, Dest dest, Kind kind)
         return;
     }
     bool mapped = false;
+    int sent = 0;
+    std::string lastSent;
     for (const std::string& mesh : meshes)
     {
         json s = settings(mesh);
@@ -237,7 +240,13 @@ void send(const std::vector<std::string>& meshes, Dest dest, Kind kind)
         s["kind"] = kindId(kind);
         try
         {
-            mapped |= sendOne(mesh, dest, kind, s) && dest == Dest::Unreal;
+            const bool ok = sendOne(mesh, dest, kind, s);
+            mapped |= ok && dest == Dest::Unreal;
+            if (ok)
+            {
+                ++sent;
+                lastSent = mesh;
+            }
             store(mesh, s);
         }
         catch (const std::exception& e)
@@ -256,6 +265,11 @@ void send(const std::vector<std::string>& meshes, Dest dest, Kind kind)
             log::error("{}", e.what());
         }
     }
+    if (sent > 0)
+        viewportToast::showActive(QString("%1 %2 %3")
+                                      .arg(dest == Dest::Unreal ? "Sending" : "Exported")
+                                      .arg(sent == 1 ? QString::fromStdString(lastSent).section('|', -1) : QString("%1 meshes").arg(sent))
+                                      .arg(dest == Dest::Unreal ? "to Unreal" : QString("as ") + kindLabel(kind)));
 }
 
 void sendAgain(const std::vector<std::string>& meshes)

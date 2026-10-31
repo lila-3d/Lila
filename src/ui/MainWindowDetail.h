@@ -259,15 +259,17 @@ inline std::filesystem::path pendingCrashReport(const std::vector<io::recovery::
     return {};
 }
 
-inline void runTranslator(io::translators::Op op, const QString& file, const std::string& translator)
+inline bool runTranslator(io::translators::Op op, const QString& file, const std::string& translator)
 {
     try
     {
         io::translators::run(op, std::filesystem::path(file.toStdWString()), json::object(), CallSource::UI, translator);
+        return true;
     }
     catch (const CommandError& e)
     {
         log::error("{}", e.what());
+        return false;
     }
 }
 

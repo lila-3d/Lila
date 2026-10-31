@@ -5,6 +5,7 @@
 #include "ui/ViewportToast.h"
 #include "ui/ViewportWidgetDetail.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -259,7 +260,14 @@ void install(std::function<ViewportWidget*()> active)
                       .doc = "Saves where the active view's camera is under bookmark " + n + ". Each camera and view has its own.",
                       .python = "lila.ops.cameraBookmark(" + n + ", set=True)"});
         actions::add({.id = "viewport.bookmarkGo" + n, .label = "Bookmark " + n, .category = "View",
-                      .run = [call, slot] { call({{"args", {slot}}}); },
+                      .run =
+                          [call, slot, n] {
+                              ViewportWidget* v = activeView();
+                              if (v && std::ranges::count(v->bookmarks(), slot) == 0)
+                                  viewportToast::show(QString::fromStdString("Bookmark " + n + " is empty"), v);
+                              else
+                                  call({{"args", {slot}}});
+                          },
                       .doc = "Moves the active view's camera to its bookmark " + n + ". [ goes back.",
                       .python = "lila.ops.cameraBookmark(" + n + ")"});
     }

@@ -2,9 +2,11 @@
 #include "ui/AchievementRules.h"
 #include "ui/FileDialog.h"
 #include "ui/FileDrop.h"
+#include "ui/ViewportToast.h"
 #include "scene/Skin.h"
 
 #include <QDragEnterEvent>
+#include <QFileInfo>
 #include <QMimeData>
 
 namespace lila::ui
@@ -49,6 +51,7 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
     else if (target.empty() && io::upToDate(path))
     {
         log::info("No changes to save");
+        viewportToast::showActive("No changes to save");
         return true;
     }
     // Read-only files under source control get checked out first (or we ask, per the autoCheckout pref).
@@ -72,6 +75,7 @@ bool MainWindow::saveScene(bool saveAs, const std::filesystem::path& target)
         addRecentFile(path);
         vcs::markForAddIfNew(path);
         refreshSourceStatus();
+        viewportToast::showActive("Saved " + QString::fromStdWString(path.filename().wstring()));
         return true;
     }
     catch (const CommandError& e)
@@ -350,7 +354,8 @@ void MainWindow::exportSelection()
                 if (!t->extensions.empty())
                     file += QString::fromStdString(t->extensions.front());
             }
-    runTranslator(io::translators::Op::Export, file, translator);
+    if (runTranslator(io::translators::Op::Export, file, translator))
+        viewportToast::showActive("Exported " + QFileInfo(file).fileName());
 }
 
 void MainWindow::exportWebViewer()
@@ -441,7 +446,17 @@ void MainWindow::sendToUnreal()
             QMessageBox::information(this, "Send to Unreal", "Nothing to send: select meshes or the group holding them. A skeleton goes with its skinned meshes.");
         return;
     }
-    run("unrealSync", {{"args", send}});
+    try
+    {
+        const json queued = ops::execute("unrealSync", {{"args", send}}, CallSource::UI);
+        const int n = queued.is_number_integer() ? queued.get<int>() : 0;
+        if (n > 0)
+            viewportToast::showActive(n == 1 ? QString("Sending 1 object to Unreal") : QString("Sending %1 objects to Unreal").arg(n));
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
 }
 
 void MainWindow::refreshSourceStatus()
