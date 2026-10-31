@@ -48,6 +48,7 @@ inline constexpr double kBehindDefault = 3.0;
  * view's center when it opened, "both" around either, "all" everywhere.
  */
 inline constexpr const char* kCoveragePref = "/markingMenu/previewCoverage";
+inline constexpr const char* kCoverageDefault = "all";
 /** Pref (general): the radius in pixels the result shows within, fading toward its edge. */
 inline constexpr const char* kRadiusPxPref = "/markingMenu/previewRadiusPx";
 inline constexpr double kRadiusPxDefault = 200.0;

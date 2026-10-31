@@ -799,7 +799,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         choice(viewport, "Shows", commandPreview::kCoveragePref,
                {{"Around the cursor", "cursor"}, {"Around the view's center", "center"}, {"Around the cursor and the view's center", "both"},
                 {"The whole result", "all"}},
-               "cursor");
+               commandPreview::kCoverageDefault);
         number(viewport, "Radius (px)", commandPreview::kRadiusPxPref, commandPreview::kRadiusPxDefault, 10.0, 4000.0, 10.0, 0);
         toggle(viewport, "Show the result mesh outside the radius too", commandPreview::kResultMeshPref, false);
         number(viewport, "Edges fade as faces turn away (0 to 1)", commandPreview::kEdgeFadePref, commandPreview::kEdgeFadeDefault, 0.0, 1.0, 0.05, 2);

@@ -495,7 +495,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
         return;
     LILA_ZONE();
     PrefStore& prefs = PrefStore::get();
-    const std::string coverage = prefs.value<std::string>("general", kCoveragePref, "cursor");
+    const std::string coverage = prefs.value<std::string>("general", kCoveragePref, kCoverageDefault);
     // Within a radius the original stays outside it, so the result mesh only replaces it when asked.
     if (coverage == "all" || prefs.value<bool>("general", kResultMeshPref, false))
         swapResults(s);
