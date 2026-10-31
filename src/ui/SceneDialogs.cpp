@@ -352,39 +352,32 @@ namespace
 constexpr int kRecentWidth = 340;
 constexpr int kNewsWidth = 400;
 
-/** The Essentials link as the welcome banner: the site's night-blue horizon behind the icon, title and call to action. */
-class EssentialsBanner : public QPushButton
+/** The Essentials link: a solid accent button, the one coloured control on the welcome page. */
+class EssentialsButton : public QPushButton
 {
 public:
-    explicit EssentialsBanner(QWidget* parent) : QPushButton(parent)
+    explicit EssentialsButton(QWidget* parent) : QPushButton(parent)
     {
         setObjectName("startupEssentials");
         setCursor(Qt::PointingHandCursor);
         setFocusPolicy(Qt::NoFocus);
-        setStyleSheet(QString("QLabel { background: transparent; }"
-                              "QLabel#startupHeroTitle { color: #f4f6fa; font-size: 22pt; font-weight: 600; }"
-                              "QLabel#startupHeroSubtitle { color: %1; font-size: 12pt; }")
-                          .arg(themeColor("highlight").lighter(130).name()));
-        auto* row = new QHBoxLayout(this);
-        row->setContentsMargins(24, 18, 24, 18);
-        row->setSpacing(18);
-        row->addStretch(1);
-        auto* icon = new QLabel(this);
-        icon->setPixmap(qApp->windowIcon().pixmap(QSize(60, 60), devicePixelRatioF()));
-        row->addWidget(icon);
-        auto* text = new QVBoxLayout;
-        text->setSpacing(2);
-        for (auto [label, name] : {std::pair{"Welcome to Lila", "startupHeroTitle"}, std::pair{"New to Lila? Read the Essentials  →", "startupHeroSubtitle"}})
+        QColor lead = themeColor("highlightText");
+        lead.setAlphaF(0.75f);
+        setStyleSheet(QString("QLabel { background: transparent; color: %1; }"
+                              "QLabel#essentialsLead { font-size: 9pt; color: %2; }"
+                              "QLabel#essentialsAction { font-size: 12pt; font-weight: 600; }")
+                          .arg(themeColor("highlightText").name(), lead.name(QColor::HexArgb)));
+        auto* text = new QVBoxLayout(this);
+        text->setContentsMargins(20, 9, 20, 10);
+        text->setSpacing(0);
+        for (auto [label, name] : {std::pair{"New to Lila?", "essentialsLead"}, std::pair{"Read the Essentials  →", "essentialsAction"}})
         {
             auto* l = new QLabel(QString::fromUtf8(label), this);
             l->setObjectName(name);
+            l->setAttribute(Qt::WA_TransparentForMouseEvents);
             text->addWidget(l);
         }
-        row->addLayout(text);
-        row->addStretch(1);
-        for (QLabel* l : findChildren<QLabel*>())
-            l->setAttribute(Qt::WA_TransparentForMouseEvents);
-        setMinimumHeight(row->sizeHint().height());
+        setMinimumSize(text->sizeHint().expandedTo(QSize(240, 0)));
     }
 
 protected:
@@ -404,48 +397,35 @@ protected:
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
-        const bool hover = underMouse();
-        const QColor accent = themeColor("highlight");
+        QColor fill = themeColor("highlight");
+        if (isDown())
+            fill = fill.darker(115);
+        else if (underMouse())
+            fill = fill.lighter(115);
         QPainterPath shape;
-        shape.addRoundedRect(r, 8, 8);
-
-        QLinearGradient sky(r.topLeft(), r.bottomLeft());
-        sky.setColorAt(0, QColor(0x10, 0x13, 0x1a));
-        sky.setColorAt(1, QColor(0x1a, 0x24, 0x36));
-        p.fillPath(shape, sky);
-
-        p.save();
-        p.setClipPath(shape);
-        // An elliptical glow rising from the horizon: a radial gradient squashed vertically.
-        p.translate(r.center().x(), r.bottom());
-        p.scale(1.0, r.height() / (r.width() * 0.45));
-        QRadialGradient glow(QPointF(0, 0), r.width() * 0.45);
-        QColor c = accent;
-        c.setAlphaF(hover ? 0.55f : 0.35f);
-        glow.setColorAt(0, c);
-        c.setAlphaF(0);
-        glow.setColorAt(1, c);
-        p.fillRect(QRectF(-r.width(), -r.width(), 2 * r.width(), 2 * r.width()), glow);
-        p.restore();
-
-        QLinearGradient horizon(r.topLeft(), r.topRight());
-        QColor line = accent.lighter(140);
-        line.setAlphaF(0);
-        horizon.setColorAt(0, line);
-        horizon.setColorAt(1, line);
-        line.setAlphaF(hover ? 1.0f : 0.8f);
-        horizon.setColorAt(0.5, line);
-        p.setPen(QPen(QBrush(horizon), 1.5));
-        p.drawLine(QPointF(r.left() + 8, r.bottom() - 0.75), QPointF(r.right() - 8, r.bottom() - 0.75));
-
-        QColor border = accent;
-        border.setAlphaF(hover ? 0.9f : 0.45f);
-        p.setPen(QPen(border, 1.0));
-        p.setBrush(Qt::NoBrush);
-        p.drawPath(shape);
+        shape.addRoundedRect(QRectF(rect()), 6, 6);
+        p.fillPath(shape, fill);
     }
 };
+
+/** The welcome page's title row: the app icon and name on the left, the Essentials button on the right. */
+QWidget* makeWelcomeHeader(QWidget* parent, QPushButton*& essentials)
+{
+    auto* header = new QWidget(parent);
+    auto* row = new QHBoxLayout(header);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(12);
+    auto* icon = new QLabel(header);
+    icon->setPixmap(qApp->windowIcon().pixmap(QSize(40, 40), header->devicePixelRatioF()));
+    row->addWidget(icon);
+    auto* title = new QLabel("Welcome to Lila", header);
+    title->setObjectName("startupWelcome");
+    row->addWidget(title);
+    row->addStretch(1);
+    essentials = new EssentialsButton(header);
+    row->addWidget(essentials);
+    return header;
+}
 
 /** A news item: its 16:9 banner, then title and text; a click opens its link. */
 class NewsCard : public QFrame
@@ -526,6 +506,7 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     setAttribute(Qt::WA_DeleteOnClose);
     setStyleSheet(QString("QDialog#startupDialog { background: #2e2e2e; border: 1px solid #5a5a5a; }"
                           "QLabel#startupTitle { color: #e0e0e0; font-size: 13pt; }"
+                          "QLabel#startupWelcome { color: #f0f0f0; font-size: 18pt; font-weight: 600; }"
                           "QLabel#startupHeading { color: #e0e0e0; font-size: 11pt; }"
                           "QScrollArea#startupPage, QWidget#startupPageBody { background: transparent; }"
                           "QFrame#newsCard { background: %1; border: 1px solid %2; border-radius: 4px; }"
@@ -568,13 +549,13 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
 
     if (welcome)
     {
-        auto* essentials = new EssentialsBanner(this);
+        QPushButton* essentials = nullptr;
+        layout->addWidget(makeWelcomeHeader(this, essentials));
         connect(essentials, &QPushButton::clicked, this, [this] {
             reject();
             docs::open("essentials");
         });
-        layout->addWidget(essentials);
-        layout->addSpacing(10);
+        layout->addSpacing(14);
         if (QListWidget* samples = makeSampleStrip())
         {
             layout->addWidget(samples);
