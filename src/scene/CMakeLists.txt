@@ -44,6 +44,7 @@ lila_module(lila_scene Scene
     Instancing.cpp
     IkSolverRegistry.cpp
     ImagePlane.cpp
+    Diagnostics.cpp
     Isolation.cpp
     LastOp.cpp
     Light.cpp Light.h

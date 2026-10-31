@@ -7,11 +7,13 @@
 #include "core/Paths.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
+#include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 #include "scene/Light.h"
 #include "ui/Deletion.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
+#include "ui/Issues.h"
 #include "ui/CodeEdit.h"
 #include "ui/MultilineEdit.h"
 #include "ui/NumberExpr.h"
@@ -32,6 +34,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QScrollArea>
 #include <QStyle>
 #include <QTimer>
@@ -49,23 +52,61 @@ namespace
 {
 using scene::Graph;
 using scene::PlugType;
+namespace dx = scene::diagnostics;
 
-/** A row label that elides instead of holding its full width, so a narrow editor squeezes names before fields. */
+std::vector<AttributeEditor*> gEditors;
+/** An issue to scroll to once an editor shows its object. */
+uint64_t gPendingReveal = 0;
+
+/**
+ * A row label that elides instead of holding its full width, so a narrow editor squeezes names before fields. An issue
+ * on its attribute puts a badge before the name.
+ */
 class AttrRowLabel final : public QLabel
 {
 public:
     using QLabel::QLabel;
     QSize minimumSizeHint() const override { return {fontMetrics().horizontalAdvance("Wwwww"), QLabel::minimumSizeHint().height()}; }
+    void setMark(QPixmap mark)
+    {
+        mMark = std::move(mark);
+        update();
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        const QRect r = contentsRect();
-        style()->drawItemText(&p, r, int(alignment()), palette(), isEnabled(), fontMetrics().elidedText(text(), Qt::ElideRight, r.width()),
-                              foregroundRole());
+        QRect r = contentsRect();
+        const int gap = mMark.isNull() ? 0 : mMark.width() + 4;
+        const QString shown = fontMetrics().elidedText(text(), Qt::ElideRight, r.width() - gap);
+        if (!mMark.isNull())
+        {
+            const int textWidth = fontMetrics().horizontalAdvance(shown);
+            const int x = (alignment() & Qt::AlignRight) ? r.right() - textWidth - gap + 1 : r.left();
+            p.drawPixmap(x, r.center().y() - mMark.height() / 2, mMark);
+            if (!(alignment() & Qt::AlignRight))
+                r.setLeft(r.left() + gap);
+        }
+        style()->drawItemText(&p, r, int(alignment()), palette(), isEnabled(), shown, foregroundRole());
     }
+
+private:
+    QPixmap mMark;
 };
+
+/** Marks a label or section header with the worst of the issues and lists them all in its tooltip. */
+void markIssues(QWidget* w, const std::vector<const dx::Issue*>& list)
+{
+    std::optional<issues::Worst> worst = issues::worst(list);
+    if (!worst)
+        return;
+    w->setToolTip(w->toolTip() + (w->toolTip().isEmpty() ? "" : "\n\n") + issues::lines(list));
+    if (auto* label = dynamic_cast<AttrRowLabel*>(w))
+        label->setMark(issues::badge(worst->severity, worst->blocking, label->fontMetrics().height() - 4));
+    else
+        w->setStyleSheet(w->styleSheet() + QString(" color: %1;").arg(issues::color(worst->severity).name()));
+}
 
 /** A number a scrub drives: its plug, its component of a vector (-1 for a scalar) and the attr name setAttr takes. */
 struct ScrubTarget
@@ -256,8 +297,8 @@ QString browseStart(const std::string& stored)
     return Workspace::get().isOpen() ? QString::fromStdU16String(Workspace::get().root().u16string()) : QString();
 }
 
-/** Collapsible section header, Maya frameLayout style. */
-QWidget* section(const QString& title, QWidget* content)
+/** Collapsible section header, Maya frameLayout style, in the color of the worst issue on its component. */
+QWidget* section(const QString& title, QWidget* content, const std::vector<const dx::Issue*>& marks = {})
 {
     auto* box = new QWidget;
     auto* v = new QVBoxLayout(box);
@@ -270,7 +311,13 @@ QWidget* section(const QString& title, QWidget* content)
     header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     header->setArrowType(Qt::DownArrow);
     header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header->setStyleSheet("QToolButton { text-align: left; font-weight: 600; padding: 3px; }");
+    QString style = "text-align: left; font-weight: 600; padding: 3px;";
+    if (std::optional<issues::Worst> worst = issues::worst(marks))
+    {
+        style += QString(" color: %1;").arg(issues::color(worst->severity).name());
+        header->setToolTip(issues::lines(marks));
+    }
+    header->setStyleSheet("QToolButton { " + style + " }");
     QObject::connect(header, &QToolButton::toggled, content, [header, content](bool on) {
         content->setVisible(on);
         header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
@@ -352,6 +399,14 @@ uint64_t attributeEditor::addSection(ext::Context& ctx, std::string typeName, st
     });
 }
 
+void attributeEditor::revealIssue(uint64_t id)
+{
+    gPendingReveal = id;
+    for (AttributeEditor* e : gEditors)
+        if (e->reveal(id))
+            gPendingReveal = 0;
+}
+
 bool attributeEditor::removeSection(const std::string& typeName, const std::string& title)
 {
     return registry().remove(typeName + "/" + title);
@@ -421,13 +476,108 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
             mRebuild = true;
         scheduleRefresh();
     });
+    mIssueListener = dx::addListener([this] {
+        if (mHadIssues || !dx::issuesOf(mNode).empty())
+        {
+            mRebuild = true;
+            scheduleRefresh();
+        }
+    });
+    gEditors.push_back(this);
     rebuild();
 }
 
 AttributeEditor::~AttributeEditor()
 {
+    std::erase(gEditors, this);
+    dx::removeListener(mIssueListener);
     Graph::current().removeListener(mListener);
     attributeEditor::registry().removeListener(mSectionListener);
+}
+
+bool AttributeEditor::reveal(uint64_t issue)
+{
+    const dx::Issue* i = dx::find(issue);
+    if (!i || i->node != mNode || mNode == scene::kNoNode)
+        return false;
+    QWidget* to = nullptr;
+    if (!i->attr.empty())
+        if (auto it = mAttrWidgets.find(i->attr); it != mAttrWidgets.end())
+            to = it->second;
+    if (!to && !i->component.empty())
+        if (auto it = mComponentWidgets.find(QString::fromStdString(i->component).toLower().toStdString()); it != mComponentWidgets.end())
+            to = it->second;
+    if (!to)
+        to = mBody->findChild<QWidget*>("issueList");
+    if (!to)
+        return false;
+    // After the layout settles: a fresh rebuild's widgets have no geometry yet.
+    QTimer::singleShot(0, this, [this, to = QPointer<QWidget>(to)] {
+        if (to)
+            mScroll->ensureWidgetVisible(to, 0, 40);
+    });
+    return true;
+}
+
+QWidget* AttributeEditor::issueList()
+{
+    const std::vector<const dx::Issue*> list = dx::issuesOf(mNode);
+    if (list.empty())
+        return nullptr;
+    auto* box = new QWidget;
+    box->setObjectName("issueList");
+    auto* v = new QVBoxLayout(box);
+    v->setContentsMargins(4, 2, 4, 4);
+    v->setSpacing(2);
+    for (const dx::Issue* i : list)
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(6);
+        auto* badge = new QLabel;
+        const int h = fontMetrics().height() - 2;
+        badge->setPixmap(issues::badge(i->severity, i->blocking(), h));
+        badge->setFixedSize(h, h);
+        badge->setToolTip(QString(dx::severityName(i->severity)) + (i->blocking() ? " (blocking)" : ""));
+        row->addWidget(badge, 0, Qt::AlignTop);
+        const QString at = issues::where(*i);
+        const QString message = QString::fromStdString(i->message).toHtmlEscaped();
+        auto* text = new QLabel(at.isEmpty() ? message
+                                             : QString("<a href=\"#\" style=\"color: %1;\">%2</a>: %3")
+                                                   .arg(issues::color(i->severity).name(), at.toHtmlEscaped(), message));
+        text->setWordWrap(true);
+        text->setTextFormat(Qt::RichText);
+        std::string tip = "From " + i->source;
+        if (i->blocking())
+        {
+            tip += "\nBlocks";
+            for (const std::string& c : i->blocks)
+                tip += " " + c;
+        }
+        text->setToolTip(QString::fromStdString(tip));
+        const uint64_t id = i->id;
+        connect(text, &QLabel::linkActivated, this, [this, id](const QString&) { reveal(id); });
+        row->addWidget(text, 1);
+        if (!i->fix.empty())
+        {
+            auto* fix = new QToolButton;
+            fix->setText("Fix");
+            fix->setAutoRaise(true);
+            fix->setToolTip(QString::fromStdString(i->fix));
+            connect(fix, &QToolButton::clicked, this, [id] {
+                try
+                {
+                    ops::execute("fixIssue", {{"args", {id}}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
+            row->addWidget(fix, 0, Qt::AlignTop);
+        }
+        v->addLayout(row);
+    }
+    return box;
 }
 
 void AttributeEditor::scheduleRefresh()
@@ -548,11 +698,30 @@ void AttributeEditor::rebuild()
     mName->setEnabled(n != nullptr);
     mType->setText(n ? QString::fromStdString(n->type().name) : QString());
     mType->setToolTip(n ? QString::fromStdString(n->type().doc) : QString());
+    mAttrWidgets.clear();
+    mComponentWidgets.clear();
+    const std::vector<const dx::Issue*> nodeIssues = dx::issuesOf(mNode);
+    mHadIssues = !nodeIssues.empty();
     if (!n)
     {
         mBodyLayout->addStretch(1);
         return;
     }
+    if (QWidget* list = issueList())
+        mBodyLayout->addWidget(section("Issues", list));
+    /** The issues on a component as a whole: a type, a category or a section by its title. */
+    auto componentIssues = [&](std::string_view typeName, std::string_view category, const QString& title) {
+        std::vector<const dx::Issue*> out;
+        for (const dx::Issue* i : nodeIssues)
+            if (i->attr.empty() && (dx::componentMatches(i->component, typeName, category, {}) ||
+                                    (!i->component.empty() && QString::fromStdString(i->component).compare(title, Qt::CaseInsensitive) == 0)))
+                out.push_back(i);
+        return out;
+    };
+    auto noteComponent = [&](const std::string& name, QWidget* w) {
+        if (!name.empty())
+            mComponentWidgets.emplace(QString::fromStdString(name).toLower().toStdString(), w);
+    };
 
     // One section per type in the inheritance chain, base first.
     std::vector<const scene::NodeType*> chain;
@@ -867,6 +1036,13 @@ void AttributeEditor::rebuild()
                                QString::fromStdString(valueReset::describe(*d, def.enumNames)), field);
         if (!scrubbed.empty())
             new NumberScrub(label, std::move(scrubbed), commit);
+        std::vector<const dx::Issue*> rowIssues;
+        for (const dx::Issue* i : nodeIssues)
+            if (dx::attrMatches(*i, attr) || (i->attr.empty() && dx::componentMatches(i->component, {}, {}, def.name)))
+                rowIssues.push_back(i);
+        markIssues(label, rowIssues);
+        mAttrWidgets.emplace(attr, label);
+        mAttrWidgets.emplace(def.name, label);
         form->addRow(label, field);
         return true;
     };
@@ -935,9 +1111,11 @@ void AttributeEditor::rebuild()
         form->setSpacing(3);
         return form;
     };
-    auto subHeading = [](QFormLayout* form, const std::string& title) {
+    auto subHeading = [&](QFormLayout* form, const std::string& title) {
         auto* l = new QLabel(QString::fromStdString(title));
         l->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
+        markIssues(l, componentIssues({}, title, QString::fromStdString(title)));
+        noteComponent(title, l);
         form->addRow(l);
     };
 
@@ -996,7 +1174,12 @@ void AttributeEditor::rebuild()
             form->insertRow(0, about);
         }
         if (added)
-            mBodyLayout->addWidget(section(niceName(t->name) + " Attributes", content));
+        {
+            const QString title = niceName(t->name) + " Attributes";
+            QWidget* box = section(title, content, componentIssues(t->name, {}, title));
+            noteComponent(t->name, box);
+            mBodyLayout->addWidget(box);
+        }
         else
             delete content;
     }
@@ -1015,10 +1198,17 @@ void AttributeEditor::rebuild()
     for (const attributeEditor::Section* extra : extraSections())
         if (n->type().isA(extra->typeName))
             if (QWidget* w = extra->make(id))
-                mBodyLayout->addWidget(section(QString::fromStdString(extra->title), w));
+            {
+                const QString title = QString::fromStdString(extra->title);
+                QWidget* box = section(title, w, componentIssues({}, {}, title));
+                noteComponent(extra->title, box);
+                mBodyLayout->addWidget(box);
+            }
     mBodyLayout->addStretch(1);
     updateValues();
     fitLabels();
+    if (gPendingReveal && reveal(gPendingReveal))
+        gPendingReveal = 0;
 }
 
 void AttributeEditor::fitLabels()

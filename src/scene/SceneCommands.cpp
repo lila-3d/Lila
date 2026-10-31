@@ -12,6 +12,7 @@
 #include "scene/Light.h"
 #include "scene/Components.h"
 #include "scene/Deformers.h"
+#include "scene/Diagnostics.h"
 #include "scene/Drivers.h"
 #include "scene/ArrayGroup.h"
 #include "scene/Duplicate.h"
@@ -175,6 +176,7 @@ void registerCommands()
     registerBatchRenameCommands();
     registerObjectCommands();
     duplicate::registerCommands();
+    diagnostics::registerCommands();
     instancing::registerCommands();
     arrays::registerCommands();
     registerBoundingMeshCommands();

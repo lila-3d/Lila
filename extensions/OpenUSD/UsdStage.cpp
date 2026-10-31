@@ -4838,4 +4838,23 @@ std::vector<HydraView> hydraViews(Graph& g)
     }
     return out;
 }
+scene::NodeId nodeForPrim(std::string_view path)
+{
+    if (path.empty() || path.front() != '/' || !SdfPath::IsValidPathString(std::string(path)))
+        return kNoNode;
+    const SdfPath prim(std::string{path});
+    Graph& g = Graph::current();
+    NodeId found = kNoNode;
+    for (const auto& [id, s] : stages())
+    {
+        auto it = s->nodeOf.find(prim);
+        if (it == s->nodeOf.end() || !g.node(it->second))
+            continue;
+        if (g.isSelected(id))
+            return it->second;
+        if (found == kNoNode)
+            found = it->second;
+    }
+    return found;
+}
 } // namespace lila::usd::stage

@@ -152,6 +152,7 @@ void MainWindow::registerPanels()
     panels::add({.id = kDisplayLayersDock, .title = "Display Layers", .create = make([](QWidget* p) { return new DisplayLayersPanel(p); }),
                  .area = Qt::RightDockWidgetArea, .icon = "stack-2"});
     registerAnimLayersPanel();
+    issues::registerUi();
     registerOffsetsPanel();
     registerNotesPanel();
     registerRenamePanel();

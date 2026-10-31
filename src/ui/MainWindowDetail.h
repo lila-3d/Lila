@@ -27,6 +27,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/ImagePlaneUi.h"
+#include "ui/Issues.h"
 #include "ui/Layouts.h"
 #include "ui/LayoutsUi.h"
 #include "ui/Animation.h"

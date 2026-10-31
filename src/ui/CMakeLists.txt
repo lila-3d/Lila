@@ -89,6 +89,7 @@ lila_module(lila_ui UI
     SurfaceSnap.cpp SurfaceSnap.h
     GeometrySnap.cpp GeometrySnap.h
     Isolate.cpp Isolate.h
+    Issues.cpp Issues.h
     ModelingToolkit.cpp ModelingToolkit.h LevelToolkit.cpp LevelToolkit.h
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h

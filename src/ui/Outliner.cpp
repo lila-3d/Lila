@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "io/References.h"
+#include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/Light.h"
@@ -16,6 +17,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/IconBars.h"
 #include "ui/Icons.h"
+#include "ui/Issues.h"
 #include "ui/OutlinerLogic.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
@@ -68,14 +70,32 @@ Outliner* activeOutliner()
     return nullptr;
 }
 
+/** How a row's issues show on its icon: its own worst, and below it the worst of a collapsed row's descendants. */
+struct RowIssues
+{
+    std::optional<issues::Worst> own;
+    std::optional<scene::diagnostics::Severity> below;
+
+    QString key() const
+    {
+        QString k;
+        if (own)
+            k += QString("/e%1%2").arg(int(own->severity)).arg(own->blocking ? "b" : "");
+        if (below)
+            k += QString("/u%1").arg(int(*below));
+        return k;
+    }
+};
+
 /**
  * A type icon, dimmed for hidden rows, with a chain-link badge in the corner for referenced ones. Slashed rows get a
- * diagonal line through the glyph, as Tabler's "-off" icons have.
+ * diagonal line through the glyph, as Tabler's "-off" icons have. An issue badge sits bottom left; a dot top right
+ * says a collapsed row hides issues.
  */
-QIcon rowIcon(const QString& name, bool referenced, bool dim, bool slashed = false)
+QIcon rowIcon(const QString& name, bool referenced, bool dim, bool slashed = false, const RowIssues& marks = {})
 {
     static QHash<QString, QIcon> cache;
-    QString key = name + (referenced ? "/r" : "") + (dim ? "/d" : "") + (slashed ? "/s" : "");
+    QString key = name + (referenced ? "/r" : "") + (dim ? "/d" : "") + (slashed ? "/s" : "") + marks.key();
     if (auto it = cache.find(key); it != cache.end())
         return *it;
     QIcon base = icon(name);
@@ -110,6 +130,21 @@ QIcon rowIcon(const QString& name, bool referenced, bool dim, bool slashed = fal
             p.setBrush(themeShade(40));
             p.drawEllipse(badge);
             p.drawPixmap(badge.adjusted(1, 1, -1, -1), icon("link").pixmap(QSize(b - 2, b - 2), QIcon::Active));
+        }
+        if (marks.own)
+        {
+            QPainter p(&pm);
+            const int b = size * 10 / 16;
+            p.drawPixmap(0, size - b, issues::badge(marks.own->severity, marks.own->blocking, b));
+        }
+        if (marks.below)
+        {
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing);
+            const int d = size * 6 / 16;
+            p.setPen(QPen(themeShade(40), size / 16.0));
+            p.setBrush(issues::color(*marks.below));
+            p.drawEllipse(QRectF(size - d - 0.5, 0.5, d, d));
         }
         out.addPixmap(pm);
     }
@@ -223,6 +258,7 @@ void registerOutlinerActions()
             QTimer::singleShot(0, qApp, restyleOutliners);
     });
     scene::lights::providers().addListener([](RegistryChange, const std::string&, const std::string&) { restyleOutliners(); });
+    scene::diagnostics::addListener(restyleOutliners);
     actions::add({"outliner.copyName", "Copy Name", "Outliner", [] { copyToClipboard(false); }, nullptr,
                   "Puts the selected objects' names on the clipboard, one per line."});
     actions::add({"outliner.copyPath", "Copy Path", "Outliner", [] { copyToClipboard(true); }, nullptr,
@@ -382,6 +418,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
             mOpenSets.erase(set);
         else
             mExpanded.erase(item->data(0, kIdRole).toULongLong());
+        scheduleRestyle();
     });
     connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         if (mSyncing)
@@ -390,6 +427,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
             mOpenSets.insert(set);
         else
             mExpanded.insert(item->data(0, kIdRole).toULongLong());
+        scheduleRestyle();
     });
     connect(this, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
         if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
@@ -740,11 +778,34 @@ void Outliner::restyle()
     scene::Graph& g = scene::Graph::current();
     const QColor normal = palette().color(QPalette::Text);
     const bool flagLights = flagPlaceholderLights();
+    namespace dx = scene::diagnostics;
+    const bool showInfo = issues::badgeInfo();
+    const std::optional<dx::Severity> tint = issues::tintFrom();
+    std::unordered_map<scene::NodeId, std::vector<const dx::Issue*>> own;
+    std::unordered_map<scene::NodeId, dx::Severity> below;
+    for (const dx::Issue& i : dx::issues())
+    {
+        if (i.node == scene::kNoNode || (!showInfo && i.severity == dx::Severity::Info))
+            continue;
+        own[i.node].push_back(&i);
+        for (scene::NodeId p = g.parent(i.node); p != scene::kNoNode; p = g.parent(p))
+            if (auto [it, added] = below.try_emplace(p, i.severity); !added)
+                it->second = std::max(it->second, i.severity);
+    }
     for (auto& [id, item] : mItems)
     {
         scene::Node* n = g.node(id);
         if (!n)
             continue;
+        RowIssues marks;
+        const std::vector<const dx::Issue*>* rowIssues = nullptr;
+        if (auto it = own.find(id); it != own.end())
+        {
+            rowIssues = &it->second;
+            marks.own = issues::worst(it->second);
+        }
+        if (auto it = below.find(id); it != below.end() && !item->isExpanded() && item->childCount())
+            marks.below = it->second;
         bool referenced = n->referenceId() != 0;
         bool hidden = outliner::hiddenInHierarchy(g, id);
         bool kept = mKept.contains(id);
@@ -753,12 +814,14 @@ void Outliner::restyle()
         const bool instanced = shares == scene::instancing::Kind::Instance || shares == scene::instancing::Kind::Reference;
         QString iconName = instanced ? QString("components") : QString::fromStdString(outliner::iconName(*n));
         const bool flagged = flagLights && scene::lights::isPlaceholder(*n);
+        const bool tinted = tint && marks.own && marks.own->severity >= *tint;
         QString style = iconName + (referenced ? "/r" : "") + (hidden ? "/h" : "") + (kept ? "/k" : "") + (instanced ? "/i" : "") +
-                        (flagged ? "/f" : "");
+                        (flagged ? "/f" : "") + marks.key() + (tinted ? "/t" : "") +
+                        (rowIssues ? QString("/v%1").arg(dx::version()) : QString());
         if (item->data(0, kStyleRole).toString() == style)
             continue;
         item->setData(0, kStyleRole, style);
-        item->setIcon(0, rowIcon(iconName, referenced, hidden, flagged));
+        item->setIcon(0, rowIcon(iconName, referenced, hidden, flagged, marks));
         QFont f = item->font(0);
         f.setItalic(referenced || instanced);
         item->setFont(0, f);
@@ -774,7 +837,11 @@ void Outliner::restyle()
             item->setToolTip(0, QString::fromStdString(g.fullPath(id) + "\n" + n->type().name + (doc.empty() ? "" : "\n" + doc) +
                                                        (flagged ? "\nPlaceholder: no light extension renders this light." : "")));
         }
+        if (rowIssues)
+            item->setToolTip(0, item->toolTip(0) + "\n\n" + issues::lines(*rowIssues));
         QColor c = hidden || kept ? themeShade(100) : referenced ? themeShade(150) : normal;
+        if (tinted)
+            c = issues::color(marks.own->severity);
         item->setForeground(0, c);
     }
 }

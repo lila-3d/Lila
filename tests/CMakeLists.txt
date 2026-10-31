@@ -77,6 +77,7 @@ add_executable(lila_tests
     test_viewport_ext.cpp
     test_select_paths.cpp
     test_isolation.cpp
+    test_diagnostics.cpp
     test_smart_join.cpp
     test_batch_rename.cpp
     test_change_stream.cpp

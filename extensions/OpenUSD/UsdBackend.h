@@ -56,6 +56,8 @@ inline constexpr const char* kMaterialX = "materialX";
 
 /** Registers the package's plugInfo files. 0 on success. */
 using BackendInit = int (*)(const char* packageRoot, std::string* error);
+/** lilaUsdNodeForPrim: the node a live stage built for a prim path, or 0 (see stage::nodeForPrim). */
+using BackendNodeForPrim = uint64_t (*)(const char* primPath);
 /** Runs a USD command by name (importUsd, exportUsd, the usdStage commands and events). 0 on success, with its return value in result. */
 using BackendRun = int (*)(const char* command, const Args* args, nlohmann::json* result, std::string* error);
 /**

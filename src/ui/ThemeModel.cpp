@@ -43,6 +43,9 @@ const std::vector<TokenInfo> kTokens = {
     {"tooltipText", "Tooltip text", "Interface"},
     {"statusWarning", "Status warning", "Interface"},
     {"statusError", "Status error", "Interface"},
+    {"issueInfo", "Issue info", "Interface"},
+    {"issueWarning", "Issue warning", "Interface"},
+    {"issueError", "Issue error", "Interface"},
     {"iconNormal", "Icon", "Icons"},
     {"iconActive", "Icon active", "Icons"},
     {"iconDisabled", "Icon disabled", "Icons"},
@@ -107,6 +110,8 @@ const Pairs kMonotone = {
     {"separator", "#2a2a2a"},     {"hover", "#6a6a6a"},         {"statusBar", "#2c2c2c"},      {"checked", "#5a5a5a"},
     {"highlight", "#696969"},     {"highlightText", "#ffffff"}, {"accent", "#ebebeb"},         {"tooltipText", "#dcdcdc"},
     {"statusWarning", "#f2f2f2"}, {"statusError", "#f2f2f2"},
+    // Hued even here: an outliner badge has to say warning or error at a glance.
+    {"issueInfo", "#5ea4e8"},     {"issueWarning", "#f2c14e"},  {"issueError", "#e5604b"},
     {"iconNormal", "#c8c8c8"},    {"iconActive", "#f2f2f2"},    {"iconDisabled", "#6e6e6e"},   {"viewportBackground", "#4d4d4d"},
     {"grid", "#adadad"},          {"gridAxisX", "#000000"},     {"gridAxisZ", "#000000"},      {"wireframe", "#272727"},
     {"wireSelected", "#f6f6f6"},  {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"}, {"curve", "#a8a8a8"},
@@ -160,6 +165,7 @@ const Pairs kLight = {
     {"nodeTexture", "#ecc8a0"},    {"socketGeometry", "#00a37c"}, {"socketFloat", "#6b6b6b"},      {"socketInt", "#3f7a43"},
     {"socketBool", "#9a6aa8"},     {"socketString", "#2f7fd6"},   {"socketVector", "#4a4ab0"},     {"socketRotation", "#8a4ab0"},
     {"socketColor", "#a39a1f"},    {"statusWarning", "#a36b00"},    {"statusError", "#c8261c"},
+    {"issueInfo", "#2f6fb0"},     {"issueWarning", "#a36b00"},  {"issueError", "#c8261c"},
     {"socketMatrix", "#5a2ab0"},   {"socketBundle", "#1f8076"},     {"socketClosure", "#b0402a"},
     {"zoneRepeat", "#cbb8e6"},     {"zoneForEach", "#b0dccf"},      {"zoneSimulation", "#e6d0a8"},   {"zoneClosure", "#e6b8b0"},
 };

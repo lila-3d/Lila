@@ -59,4 +59,7 @@ struct HydraView
 
 /** The scene's live stages, after g.evaluate(). Stages not composed yet are left out. */
 std::vector<HydraView> hydraViews(scene::Graph& g);
+
+/** The node built for a prim path ("/World/crate") in any live stage, the selected one's first; kNoNode for none. */
+scene::NodeId nodeForPrim(std::string_view path);
 } // namespace lila::usd::stage

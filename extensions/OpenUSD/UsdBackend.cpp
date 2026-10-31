@@ -241,6 +241,18 @@ USD_BACKEND_EXPORT void* lilaUsdStage(const char* node, std::string* error)
     }
 }
 
+USD_BACKEND_EXPORT uint64_t lilaUsdNodeForPrim(const char* primPath)
+{
+    try
+    {
+        return usd::stage::nodeForPrim(primPath ? primPath : "");
+    }
+    catch (const std::exception&)
+    {
+        return 0;
+    }
+}
+
 USD_BACKEND_EXPORT int lilaUsdRun(const char* command, const Args* args, json* result, std::string* error)
 {
     try

@@ -28,6 +28,12 @@ std::map<int, std::function<void(const ExecuteEvent&)>>& executeListeners()
     return l;
 }
 
+std::function<void(std::string_view)>& executeGate()
+{
+    static std::function<void(std::string_view)> gate;
+    return gate;
+}
+
 int gExecuteDepth = 0;
 bool sPreviewing = false;
 std::vector<const Args*> gRunning;
@@ -196,6 +202,9 @@ json execute(std::string_view name, const json& call, CallSource source)
 
     Args args = normalize(*def, call.is_null() ? json::object() : call);
 
+    if (!sPreviewing && executeGate())
+        executeGate()(def->name);
+
     // A preview run is reverted at once, so nothing watching executes should see it.
     bool top = gExecuteDepth == 0 && !sPreviewing;
     if (top && !executeListeners().empty())
@@ -232,6 +241,8 @@ json execute(std::string_view name, const json& call, CallSource source)
         log::write(LogLevel::Echo, toPython(name, call) + "\n");
     return result;
 }
+
+void setExecuteGate(std::function<void(std::string_view name)> gate) { executeGate() = std::move(gate); }
 
 const Args* currentArgs() { return gRunning.empty() ? nullptr : gRunning.back(); }
 

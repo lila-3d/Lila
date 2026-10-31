@@ -14,6 +14,7 @@
 #include "stream/ChangeStream.h"
 #include "ui/CommandPreview.h"
 #include "ui/Icons.h"
+#include "ui/Issues.h"
 #include "ui/LocateFlash.h"
 #include "ui/SceneDialogs.h"
 #include "ui/Theme.h"
@@ -655,6 +656,10 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
         choice(ui, "Toggle Channel Box (Ctrl+A) switches to", "/ui/channelBoxToggle",
                {{"The tab shown before it", "lastTab"}, {"The attribute editor (Maya)", "attributeEditor"}}, "lastTab");
+        section(ui, "Issues");
+        toggle(ui, "Badge info in the outliner (warnings and errors always are)", issues::kBadgeInfoPref, false);
+        choice(ui, "Color outliner names by their issues", issues::kTintRowsPref,
+               {{"Off", "off"}, {"Errors", "error"}, {"Warnings and errors", "warning"}, {"Everything, info too", "info"}}, "off");
         section(ui, "File Dialog");
         toggle(ui, "Use the system file dialog instead of Lila's", fileDialog::kNativePref, false);
         toggle(ui, "Show hidden files", fileDialog::kShowHiddenPref, false);

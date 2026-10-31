@@ -132,6 +132,12 @@ LILA_FOUNDATION_API bool setAdjustable(std::string_view name, bool on = true);
 LILA_FOUNDATION_API int addExecuteListener(std::function<void(const ExecuteEvent&)> fn);
 LILA_FOUNDATION_API void removeExecuteListener(int id);
 
+/**
+ * Asked before every command runs, nested ones too but not previews; throwing CommandError refuses it. One gate at a
+ * time; an empty function removes it.
+ */
+LILA_FOUNDATION_API void setExecuteGate(std::function<void(std::string_view name)> gate);
+
 /** Whether an agent's MCP request is being handled; commands run meanwhile are the agent's. */
 LILA_FOUNDATION_API bool agentCalling();
 LILA_FOUNDATION_API void setAgentCalling(bool on);

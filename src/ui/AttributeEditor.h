@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -57,6 +58,9 @@ struct AttrFilter
 };
 /** Holds "lila.light" from first use. */
 LILA_UI_API Registry<AttrFilter>& filters();
+
+/** Scrolls open editors to the issue's attribute or component once they show its object (select it after). */
+LILA_UI_API void revealIssue(uint64_t id);
 } // namespace attributeEditor
 
 /** Every attribute of the lead selected node, grouped by the type that declares it. Edits go through setAttr. */
@@ -67,6 +71,9 @@ class LILA_UI_API AttributeEditor : public QWidget
 public:
     explicit AttributeEditor(QWidget* parent = nullptr);
     ~AttributeEditor() override;
+
+    /** Scrolls to the widget showing the issue's attribute or component; false when none does. */
+    bool reveal(uint64_t issue);
 
 private:
     void scheduleRefresh();
@@ -81,6 +88,9 @@ private:
     /** Narrows each form's label column, down to its labels' elided minimum, before its fields drop below their minimum. */
     void fitLabels();
     bool eventFilter(QObject* watched, QEvent* event) override;
+    /** The node's issues above its sections, each one a link to where it points. */
+    QWidget* issueList();
+
 
     QLineEdit* mName = nullptr;
     QLabel* mType = nullptr;
@@ -91,6 +101,11 @@ private:
     std::vector<std::function<void()>> mUpdaters;
     int mListener = 0;
     int mSectionListener = 0;
+    int mIssueListener = 0;
+    /** The shown node had issues at the last rebuild, so a change to them rebuilds. */
+    bool mHadIssues = false;
+    /** Rows by attribute name and sections by lowercased component, for reveal. */
+    std::map<std::string, QWidget*> mAttrWidgets, mComponentWidgets;
     bool mQueued = false;
     bool mRebuild = false;
     /** Attributes of mNode whose change rebuilds the editor (an AttrFilter's triggers). */

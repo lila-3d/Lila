@@ -6,6 +6,7 @@
 #include "UsdBackend.h"
 
 #include <lila/Command.h>
+#include <lila/Diagnostics.h>
 #include <lila/Events.h>
 #include <lila/Extension.h>
 #include <lila/FileTranslator.h>
@@ -243,6 +244,15 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     using T = ArgType;
     if (!registerStageType(ctx))
         return 5;
+    // Issues aimed at prim paths land on the nodes live stages built for those prims.
+    ctx.add(scene::diagnostics::resolvers(), "diagnosticsResolver", "usdPrim",
+            scene::diagnostics::Resolver([](std::string_view path) -> scene::NodeId {
+                // No backend loaded means no live stage, so no prim has a node yet.
+                if (!usd::backendLoaded() || path.empty() || path.front() != '/')
+                    return scene::kNoNode;
+                static auto find = reinterpret_cast<usd::BackendNodeForPrim>(usd::backendSymbol("lilaUsdNodeForPrim"));
+                return find ? scene::NodeId(find(std::string(path).c_str())) : scene::kNoNode;
+            }));
     if (!ctx.registerCommand({
             .name = "importUsd",
             .doc = "Import a USD file (.usd, .usda, .usdc or .usdz) into the scene. The stage is opened and composed first, so "
