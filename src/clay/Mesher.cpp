@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
@@ -54,14 +55,6 @@ bool live(const Field& field, const Field::Local& local, const ivec3& b, double 
     const double halfDiagonal = 0.5 * std::sqrt(3.0) * kBrick * h;
     // Slack over the half diagonal: smooth joins and scaled or ellipsoid distances are not exact.
     return std::abs(local.eval(0.5 * (box.min + box.max)).distance) <= 1.5 * halfDiagonal + 2.0 * h;
-}
-
-dvec3 gradient(const Field::Local& f, const dvec3& p, double eps)
-{
-    return dvec3(f.eval(p + dvec3(eps, 0, 0)).distance - f.eval(p - dvec3(eps, 0, 0)).distance,
-                 f.eval(p + dvec3(0, eps, 0)).distance - f.eval(p - dvec3(0, eps, 0)).distance,
-                 f.eval(p + dvec3(0, 0, eps)).distance - f.eval(p - dvec3(0, 0, eps)).distance) /
-           (2.0 * eps);
 }
 
 /**
@@ -170,15 +163,101 @@ std::array<int8_t, 12> patches(const double corner[8])
     return out;
 }
 
+/**
+ * Dual contouring's vertex for one patch of a cell: the point closest to the tangent planes at its edge crossings (the
+ * field's normals there), pulled toward their average so flat patches stay put, and kept inside the cell. Corners and
+ * edges of hard shapes come out sharp.
+ */
+dvec3 sharpVertex(const Field::Local& f, const double corner[8], const std::array<int8_t, 12>& patch, int comp, const ivec3& cell, double h,
+                  const dvec3& average)
+{
+    glm::dmat3 ata(0.0);
+    dvec3 atb(0.0);
+    const dvec3 base = dvec3(cell) * h;
+    const dvec3 mass = base + average * h;
+    const double eps = 0.02 * h;
+    for (int edge = 0; edge < 12; ++edge)
+    {
+        if (patch[size_t(edge)] != comp)
+            continue;
+        const ivec3 s = edgeStart(edge);
+        ivec3 t = s;
+        t[edge / 4] = 1;
+        const double ds = corner[s.x + 2 * s.y + 4 * s.z], dt = corner[t.x + 2 * t.y + 4 * t.z];
+        // The crossing found on the field itself: interpolating the corner values drifts where distance curves round a corner.
+        const dvec3 a = base + dvec3(s) * h, b = base + dvec3(t) * h;
+        double lo = 0.0, hi = 1.0, flo = ds, fhi = dt;
+        for (int it = 0; it < 6; ++it)
+        {
+            const double x = std::clamp(lo + (hi - lo) * flo / (flo - fhi), lo + 0.01 * (hi - lo), hi - 0.01 * (hi - lo));
+            const double fx = f.eval(glm::mix(a, b, x)).distance;
+            ((fx < 0.0) == (flo < 0.0) ? lo : hi) = x;
+            ((fx < 0.0) == (flo < 0.0) ? flo : fhi) = fx;
+        }
+        const dvec3 q = glm::mix(a, b, lo + (hi - lo) * flo / (flo - fhi));
+        dvec3 n(f.eval(q + dvec3(eps, 0, 0)).distance - f.eval(q - dvec3(eps, 0, 0)).distance,
+                f.eval(q + dvec3(0, eps, 0)).distance - f.eval(q - dvec3(0, eps, 0)).distance,
+                f.eval(q + dvec3(0, 0, eps)).distance - f.eval(q - dvec3(0, 0, eps)).distance);
+        const double len = glm::length(n);
+        if (len < 1e-12)
+            continue;
+        n /= len;
+        ata += glm::outerProduct(n, n);
+        atb += n * glm::dot(n, q - mass);
+    }
+    // Solved about the average, with a small pull toward it so a flat or curved patch doesn't run off along its plane.
+    const double pull = 0.05;
+    const dvec3 x = mass + glm::inverse(ata + glm::dmat3(pull)) * atb;
+    // A margin inside the cell: on its boundary, neighbouring cells can land on one point and leave zero-area faces.
+    return glm::clamp(x, base + 0.05 * h, base + 0.95 * h);
+}
+
 Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptions& o)
 {
     const ivec3 origin = b * kBrick - 1; // global lattice index of sample 0
-    std::vector<double> d(size_t(kSamples) * kSamples * kSamples);
+    std::vector<double> d(size_t(kSamples) * kSamples * kSamples, std::numeric_limits<double>::quiet_NaN());
     auto at = [](int i, int j, int k) { return size_t(i) + size_t(kSamples) * (size_t(j) + size_t(kSamples) * size_t(k)); };
+    auto sample = [&](int i, int j, int k) {
+        double& v = d[at(i, j, k)];
+        if (std::isnan(v))
+            v = f.eval(dvec3(origin + ivec3(i, j, k)) * h).distance;
+        return v;
+    };
+    // Sub-blocks of 2^3 cells, sampled at their corners first: one whose corners all sit further from the surface than
+    // its diagonal (with slack, as in live()) holds no surface, so its inside only needs the corners' sign.
+    constexpr int kBlocks = (kSamples - 1) / 2;
+    const double empty = 1.5 * 2.0 * std::sqrt(3.0) * h;
+    std::vector<int8_t> blockSign(size_t(kBlocks) * kBlocks * kBlocks, 0);
+    for (int c = 0; c < kBlocks; ++c)
+        for (int b2 = 0; b2 < kBlocks; ++b2)
+            for (int a = 0; a < kBlocks; ++a)
+            {
+                double nearest = 1e300;
+                int negative = 0;
+                for (int n = 0; n < 8; ++n)
+                {
+                    const double v = sample(2 * a + 2 * (n & 1), 2 * b2 + ((n >> 1) & 1) * 2, 2 * c + ((n >> 2) & 1) * 2);
+                    nearest = std::min(nearest, std::abs(v));
+                    negative += v < 0.0 ? 1 : 0;
+                }
+                if (nearest > empty && (negative == 0 || negative == 8))
+                    blockSign[size_t(a) + size_t(kBlocks) * (size_t(b2) + size_t(kBlocks) * size_t(c))] = negative ? -1 : 1;
+            }
+    for (int c = 0; c < kBlocks; ++c)
+        for (int b2 = 0; b2 < kBlocks; ++b2)
+            for (int a = 0; a < kBlocks; ++a)
+                if (blockSign[size_t(a) + size_t(kBlocks) * (size_t(b2) + size_t(kBlocks) * size_t(c))] == 0)
+                    for (int n = 0; n < 27; ++n)
+                        sample(2 * a + n % 3, 2 * b2 + (n / 3) % 3, 2 * c + n / 9);
+    // Whatever is left lies only in empty sub-blocks, all on one side of the surface.
     for (int k = 0; k < kSamples; ++k)
         for (int j = 0; j < kSamples; ++j)
             for (int i = 0; i < kSamples; ++i)
-                d[at(i, j, k)] = f.eval(dvec3(origin + ivec3(i, j, k)) * h).distance;
+                if (double& v = d[at(i, j, k)]; std::isnan(v))
+                {
+                    const int a = std::min(i / 2, kBlocks - 1), b2 = std::min(j / 2, kBlocks - 1), c = std::min(k / 2, kBlocks - 1);
+                    v = empty * blockSign[size_t(a) + size_t(kBlocks) * (size_t(b2) + size_t(kBlocks) * size_t(c))];
+                }
     auto solid = [&](int i, int j, int k) { return d[at(i, j, k)] < 0.0; };
 
     struct Cell
@@ -219,22 +298,40 @@ Piece meshBrick(const Field::Local& f, const ivec3& b, double h, const MeshOptio
             sum += p;
             ++count;
         }
-        dvec3 p = (dvec3(origin + ivec3(i, j, k)) + sum / double(std::max(count, 1))) * h;
-        for (int step = 0; step < o.projectSteps; ++step)
+        const dvec3 t = sum / double(std::max(count, 1));
+        dvec3 p = (dvec3(origin + ivec3(i, j, k)) + t) * h;
+        // The gradient of the cell's trilinear field: no extra samples, and close enough to step onto the surface.
+        dvec3 g(0.0);
+        for (int n = 0; n < 8; ++n)
         {
-            const dvec3 g = gradient(f, p, 0.05 * h);
+            const dvec3 c(n & 1, (n >> 1) & 1, (n >> 2) & 1);
+            const dvec3 w = c * t + (1.0 - c) * (1.0 - t);
+            const dvec3 sign = 2.0 * c - 1.0;
+            g += corner[n] * dvec3(sign.x * w.y * w.z, w.x * sign.y * w.z, w.x * w.y * sign.z);
+        }
+        g /= h;
+        Sample here = f.eval(p);
+        if (o.sharp)
+        {
+            p = sharpVertex(f, corner, cell.patch, comp, origin + ivec3(i, j, k), h, t);
+            here = f.eval(p);
+        }
+        for (int step = 0; step < (o.sharp ? 0 : o.projectSteps); ++step)
+        {
             const double g2 = glm::dot(g, g);
             if (g2 < 1e-12)
                 break;
-            dvec3 move = -f.eval(p).distance * g / g2;
+            dvec3 move = -here.distance * g / g2;
             if (double len = glm::length(move); len > h)
                 move *= h / len;
             p += move;
+            if (step + 1 < o.projectSteps)
+                here = f.eval(p);
         }
         v = int(piece.points.size());
         piece.cells.push_back(pack(origin + ivec3(i, j, k)) * 8 + uint64_t(comp));
         piece.points.push_back(p);
-        piece.colors.push_back(f.eval(p).color);
+        piece.colors.push_back(here.color);
         return uint32_t(v);
     };
     // Each crossing edge's quad joins the four cells around it; offsets give the edge's place in each cell.
@@ -279,7 +376,7 @@ struct Mesher::State
     MeshOptions options;
     std::unordered_map<ivec3, Piece, IvecHash> bricks;
     size_t rebuilt = 0;
-    geo::Mesh last;
+    std::shared_ptr<const geo::Mesh> last;
 };
 
 Mesher::Mesher() : mState(std::make_unique<State>()) {}
@@ -290,7 +387,7 @@ Mesher& Mesher::operator=(Mesher&&) noexcept = default;
 size_t Mesher::lastRebuilt() const { return mState->rebuilt; }
 size_t Mesher::brickCount() const { return mState->bricks.size(); }
 
-geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
+std::shared_ptr<const geo::Mesh> Mesher::update(const Field& field, const MeshOptions& options)
 {
     LILA_ZONE();
 
@@ -299,7 +396,7 @@ geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
     if (!(h > 0.0))
         throw std::invalid_argument("clay: voxel size must be above 0");
 
-    const bool sameMeshing = s.field && s.options.voxelSize == h && s.options.projectSteps == options.projectSteps;
+    const bool sameMeshing = s.field && s.options.voxelSize == h && s.options.projectSteps == options.projectSteps && s.options.sharp == options.sharp;
     std::optional<std::vector<Bounds>> regions;
     if (sameMeshing)
         regions = Field::changes(*s.field, field);
@@ -331,7 +428,7 @@ geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
     }
     else
         for (const Bounds& r : *regions)
-            bricksOver(r.grown(3.0 * h), todo);
+            bricksOver(r.grown(4.0 * h), todo);
     std::sort(todo.begin(), todo.end(), [](const ivec3& a, const ivec3& b) { return pack(a) < pack(b); });
     todo.erase(std::unique(todo.begin(), todo.end()), todo.end());
     if (todo.size() > options.maxBricks)
@@ -340,7 +437,7 @@ geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
     std::vector<std::optional<Piece>> built(todo.size());
     tbb::parallel_for(size_t(0), todo.size(), [&](size_t n) {
         const ivec3 b = todo[n];
-        const Field::Local local = field.local(brickBounds(b, h), 3.0 * h);
+        const Field::Local local = field.local(brickBounds(b, h), 4.0 * h);
         if (live(field, local, b, h))
             built[n] = meshBrick(local, b, h, options);
     });
@@ -363,27 +460,48 @@ geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
         keys.push_back(k);
     std::sort(keys.begin(), keys.end(), [](const ivec3& a, const ivec3& b) { return pack(a) < pack(b); });
 
-    std::unordered_map<uint64_t, geo::Index> index;
+    std::vector<const Piece*> pieces;
+    size_t candidates = 0, quadCount = 0;
+    for (const ivec3& k : keys)
+    {
+        pieces.push_back(&s.bricks.at(k));
+        candidates += pieces.back()->points.size();
+        quadCount += pieces.back()->quads.size();
+    }
+    // Open addressing on the cell keys: neighbouring bricks repeat their shared cells, and this runs on every edit.
+    size_t slots = 1;
+    while (slots < 2 * candidates + 1)
+        slots <<= 1;
+    std::vector<uint64_t> slotKey(slots, ~uint64_t(0));
+    std::vector<geo::Index> slotIndex(slots);
     std::vector<dvec3> points;
     std::vector<glm::vec4> colors;
     std::vector<geo::Index> quads;
+    points.reserve(candidates);
+    colors.reserve(candidates);
+    quads.reserve(quadCount);
     bool tinted = false;
-    for (const ivec3& k : keys)
+    std::vector<geo::Index> local;
+    for (const Piece* piece : pieces)
     {
-        const Piece& piece = s.bricks.at(k);
-        std::vector<geo::Index> local(piece.points.size());
-        for (size_t v = 0; v < piece.points.size(); ++v)
+        local.resize(piece->points.size());
+        for (size_t v = 0; v < piece->points.size(); ++v)
         {
-            auto [it, fresh] = index.try_emplace(piece.cells[v], geo::Index(points.size()));
-            if (fresh)
+            const uint64_t key = piece->cells[v];
+            size_t slot = size_t((key * 0x9E3779B97F4A7C15ull) >> 17) & (slots - 1);
+            while (slotKey[slot] != key && slotKey[slot] != ~uint64_t(0))
+                slot = (slot + 1) & (slots - 1);
+            if (slotKey[slot] != key)
             {
-                points.push_back(piece.points[v]);
-                colors.emplace_back(piece.colors[v], 1.0f);
-                tinted = tinted || piece.colors[v] != glm::vec3(1.0f);
+                slotKey[slot] = key;
+                slotIndex[slot] = geo::Index(points.size());
+                points.push_back(piece->points[v]);
+                colors.emplace_back(piece->colors[v], 1.0f);
+                tinted = tinted || piece->colors[v] != glm::vec3(1.0f);
             }
-            local[v] = it->second;
+            local[v] = slotIndex[slot];
         }
-        for (uint32_t q : piece.quads)
+        for (uint32_t q : piece->quads)
             quads.push_back(local[q]);
     }
     std::vector<geo::Index> sizes(quads.size() / 4, 4);
@@ -393,13 +511,13 @@ geo::Mesh Mesher::update(const Field& field, const MeshOptions& options)
         geo::colors::add(m, "clay");
         geo::colors::setFromPoints(m, "clay", colors);
     }
-    s.last = m;
-    return m;
+    s.last = std::make_shared<const geo::Mesh>(std::move(m));
+    return s.last;
 }
 
 geo::Mesh mesh(const Field& field, const MeshOptions& options)
 {
     Mesher m;
-    return m.update(field, options);
+    return *m.update(field, options);
 }
 } // namespace lila::clay

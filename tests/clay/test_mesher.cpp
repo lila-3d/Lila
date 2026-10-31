@@ -119,7 +119,7 @@ TEST_CASE("clay mesher: an update re-meshes only what changed and matches a full
 
     items[3].matrix = glm::translate(glm::dmat4(1.0), glm::dvec3(27, 2, 1));
     const Field moved(tree(items));
-    const geo::Mesh live = mesher.update(moved, {.voxelSize = 0.5});
+    const geo::Mesh live = *mesher.update(moved, {.voxelSize = 0.5});
     CHECK(mesher.lastRebuilt() < all / 2);
     const geo::Mesh fresh = mesh(moved, {.voxelSize = 0.5});
     checkClosed(live);
@@ -160,12 +160,38 @@ TEST_CASE("clay mesher: 200 shapes mesh at an effective 256^3 in reasonable time
         items.push_back(ballAt({u(rng), u(rng), u(rng)}, 3.0 + std::abs(u(rng)) * 0.08, i % 6 == 5 ? Op::Subtract : Op::Add, 1.5));
     const Field f(tree(items));
     const auto t0 = std::chrono::steady_clock::now();
-    const geo::Mesh m = mesh(f, {.voxelSize = 0.45});
+    Mesher mesher;
+    const auto built = mesher.update(f, {.voxelSize = 0.45});
+    const geo::Mesh& m = *built;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    items[10].matrix = glm::translate(items[10].matrix, glm::dvec3(1.0, 0.5, 0.0));
+    const auto t1 = std::chrono::steady_clock::now();
+    mesher.update(Field(tree(items)), {.voxelSize = 0.45});
+    MESSAGE("moving one shape: " << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count() << " ms, "
+                                 << mesher.lastRebuilt() << " bricks");
     size_t open = 0;
     for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
         if (m.edgeValid(e) && m.edgeFaceCount(e) != 2)
             ++open;
     MESSAGE("200 shapes at 0.45 cm: " << ms << " ms, " << m.faceCapacity() << " quads, " << open << " edges not shared by two faces");
     CHECK(m.faceCapacity() > 0);
+}
+
+TEST_CASE("clay mesher: sharp edges keep a box's corners, closed")
+{
+    Item box{.matrix = glm::translate(glm::dmat4(1.0), glm::dvec3(0.13, 0.27, -0.31)), .shape = Primitive{.shape = Shape::Box, .extents = {5, 4, 3}}};
+    const Field f(tree({box}));
+    auto corner = [](const geo::Mesh& m) {
+        double best = 0.0;
+        for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+            best = std::max(best, glm::dot(m.position(p) - glm::dvec3(0.13, 0.27, -0.31), glm::dvec3(1, 1, 1)));
+        return best;
+    };
+    const geo::Mesh soft = mesh(f, {.voxelSize = 0.5});
+    const geo::Mesh hard = mesh(f, {.voxelSize = 0.5, .sharp = true});
+    checkClosed(hard);
+    CHECK(hard.validate(geo::kValidateAll).empty());
+    CHECK(corner(hard) == doctest::Approx(12.0).epsilon(0.01));
+    CHECK(corner(soft) < corner(hard) - 0.3);
+    CHECK(volume(hard) == doctest::Approx(480.0).epsilon(0.01));
 }

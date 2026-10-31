@@ -3,6 +3,7 @@
 #include "core/Export.h"
 
 #include "clay/Clay.h"
+#include "scene/Node.h"
 #include "scene/Plug.h"
 
 namespace lila::clay
@@ -17,6 +18,11 @@ struct ItemData final : scene::Data
     const char* kind() const override { return "clayItem"; }
     nlohmann::json toJson() const override { return {{"kind", "clayItem"}}; }
 };
+
+/** The claySurface that meshes a clay object, or null. */
+LILA_SCENE_API scene::Node* surfaceOf(const scene::Node& object);
+/** The clay object a node is part of (itself or its nearest clay ancestor), or null. */
+LILA_SCENE_API scene::Node* objectOf(scene::NodeId id);
 
 /** claySurface (meshes the tree), clayPrimitive and clayGroup (transforms that feed it). */
 LILA_SCENE_API void registerTypes();

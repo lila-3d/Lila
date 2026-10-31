@@ -1,7 +1,20 @@
 #include "ui/ClayUi.h"
 
+#include "clay/ClayNodes.h"
+#include "core/Log.h"
+#include "geo/Mesh.h"
 #include "ops/Command.h"
+#include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/AttributeEditor.h"
+
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
 
 #include <nlohmann/json.hpp>
 
@@ -10,6 +23,8 @@ namespace lila::ui
 namespace
 {
 using json = nlohmann::json;
+using scene::Graph;
+using scene::NodeId;
 
 void clayAction(std::string id, std::string label, std::string command, json call, std::string icon, std::string doc)
 {
@@ -17,22 +32,109 @@ void clayAction(std::string id, std::string label, std::string command, json cal
     actions::add({.id = std::move(id), .label = std::move(label), .category = "Mesh", .doc = std::move(doc), .python = py,
                   .command = std::move(command), .call = std::move(call), .icon = std::move(icon)});
 }
+
+void runClay(const char* name, json flags)
+{
+    try
+    {
+        ops::execute(name, flags, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+/** The clay object's surface settings and commands, so they sit with the object rather than on its hidden surface node. */
+QWidget* clayPanel(NodeId id)
+{
+    Graph& g = Graph::current();
+    const scene::Node* object = g.node(id);
+    const scene::Node* surface = object ? clay::surfaceOf(*object) : nullptr;
+    if (!surface)
+        return nullptr;
+    g.evaluate();
+    auto* w = new QWidget;
+    auto* v = new QVBoxLayout(w);
+    v->setContentsMargins(8, 2, 4, 2);
+
+    const std::string objectPath = object->path(), surfacePath = surface->path();
+    auto at = [&](const char* attr) { return surface->type().attrIndex(attr); };
+    const std::string warning = surface->as<std::string>(at("warning"));
+    size_t quads = 0;
+    if (const scene::MeshPtr& m = surface->as<scene::MeshPtr>(at("outMesh")))
+        quads = m->faceCapacity();
+    auto* status = new QLabel(warning.empty() ? QString("%1 shapes, %2 quads").arg(surface->elements(at("items")).size()).arg(quads)
+                                              : QString::fromStdString(warning));
+    status->setWordWrap(true);
+    if (!warning.empty())
+        status->setStyleSheet("color: #e0a040;");
+    v->addWidget(status);
+
+    auto* form = new QFormLayout;
+    auto setAttr = [surfacePath](const char* attr, json value) { runClay("setAttr", {{"args", {surfacePath + "." + attr, value}}}); };
+    auto spin = [&](const char* attr, const char* label, const char* tip) {
+        auto* s = new QDoubleSpinBox;
+        s->setRange(0.01, 5.0);
+        s->setSingleStep(0.05);
+        s->setDecimals(2);
+        s->setSuffix(" cm");
+        s->setValue(surface->as<double>(at(attr)));
+        s->setToolTip(tip);
+        s->setKeyboardTracking(false);
+        QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [setAttr, attr](double value) { setAttr(attr, value); });
+        form->addRow(label, s);
+    };
+    spin("voxelSize", "Voxel Size", "Surface detail while editing. Smaller is finer and slower.");
+    spin("finalVoxelSize", "Final Voxel Size", "Surface detail Convert Clay to Mesh uses.");
+    auto check = [&](const char* label, bool on, const char* tip, std::function<void(bool)> set) {
+        auto* c = new QCheckBox(label);
+        c->setChecked(on);
+        c->setToolTip(tip);
+        QObject::connect(c, &QCheckBox::toggled, c, std::move(set));
+        form->addRow("", c);
+    };
+    check("Mirror X", surface->as<int64_t>(at("symmetry")) == 1, "Mirror the clay across the object's YZ plane.",
+          [setAttr](bool on) { setAttr("symmetry", on ? "x" : "off"); });
+    check("Sharp Edges", surface->as<bool>(at("sharpEdges")), "Keep hard joins and box edges sharp. For hard-surface clay; slower.",
+          [setAttr](bool on) { setAttr("sharpEdges", on); });
+    check("Colors", surface->as<bool>(at("colors")), "Write each shape's color to the clay color set.", [setAttr](bool on) { setAttr("colors", on); });
+    v->addLayout(form);
+
+    auto* row = new QHBoxLayout;
+    auto button = [&](const char* text, const char* cmd, json flags, const char* tip) {
+        auto* b = new QPushButton(text);
+        b->setToolTip(tip);
+        flags["args"] = {objectPath};
+        QObject::connect(b, &QPushButton::clicked, b, [cmd, flags] { runClay(cmd, flags); });
+        row->addWidget(b);
+    };
+    button("Add Shape", "addClayPrimitive", json::object(), "Add a sphere after the other shapes.");
+    button("Add Cut", "addClayPrimitive", {{"operation", "subtract"}}, "Add a sphere that carves the clay before it.");
+    button("Refresh", "refreshClay", json::object(), "Rewire the shapes in Outliner order.");
+    button("Convert", "convertClayToMesh", json::object(), "Bake to a plain mesh at the final voxel size.");
+    v->addLayout(row);
+    return w;
+}
 } // namespace
 
 void registerClayUi()
 {
     clayAction("clay.create", "Create Clay", "createClay", json::object(), "droplet",
-        "Creates a clay object: shapes that melt into each other with smooth joins, shown as one mesh. Starts with a sphere.");
+               "Creates a clay object: shapes that melt into each other with smooth joins, shown as one mesh. Starts with a sphere.");
     clayAction("clay.addShape", "Add Clay Shape", "addClayPrimitive", json::object(), "circle-plus",
-        "Adds a sphere, capsule, box or other shape to the selected clay object, after its other shapes. Pick the shape and join in the "
-        "option box.");
+               "Adds a sphere, capsule, box or other shape to the selected clay object, after its other shapes. Pick the shape and join "
+               "in the option box.");
     clayAction("clay.addCut", "Add Clay Cut", "addClayPrimitive", {{"operation", "subtract"}}, "circle-minus",
-        "Adds a shape that carves into the clay before it.");
+               "Adds a shape that carves into the clay before it.");
     clayAction("clay.group", "Group Clay Shapes", "groupClay", json::object(), "box-multiple",
-        "Groups the selected clay shapes, so they join each other first and a cut among them reaches only the group.");
+               "Groups the selected clay shapes, so they join each other first and a cut among them reaches only the group.");
     clayAction("clay.refresh", "Refresh Clay", "refreshClay", json::object(), "refresh",
-        "Rewires a clay object after its shapes were reordered or reparented in the Outliner. Shapes join in Outliner order.");
+               "Rewires a clay object after its shapes were reordered or reparented in the Outliner. Shapes join in Outliner order.");
     clayAction("clay.convert", "Convert Clay to Mesh", "convertClayToMesh", json::object(), "transform",
-        "Bakes the selected clay object into a plain mesh at its final voxel size, optionally quad remeshed in the option box.");
+               "Bakes the selected clay object into a plain mesh at its final voxel size, optionally quad remeshed in the option box.");
+
+    registerClayTool();
+    attributeEditor::addSection("clay", "Clay Surface", [](NodeId id) { return clayPanel(id); });
 }
 } // namespace lila::ui

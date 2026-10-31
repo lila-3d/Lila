@@ -88,3 +88,29 @@ TEST_CASE("clay commands: symmetry, a bad voxel size warns, convert bakes a plai
     CHECK(out->faceCapacity() > 0);
     CHECK(!g.source({g.find(baked)->id(), scene::MeshNode::kInMesh, -1}));
 }
+
+TEST_CASE("clay commands: a stroke is a chain in its own group, and clayShapeAt picks the shape at a point")
+{
+    reset();
+    const json made = run("createClay", {{"name", "Horn"}, {"empty", true}});
+    const std::string object = made[0], mesh = made[1];
+    const std::string stroke = run("addClayStroke", {{"args", {object}}, {"points", {{0, 8, 0}, {0, 20, 0}, {6, 28, 0}}}, {"radius", 3.0}, {"endRadius", 1.0}});
+    scene::Graph& g = scene::Graph::current();
+    REQUIRE(g.find(stroke));
+    CHECK(g.find(stroke)->type().name == "clayGroup");
+    CHECK(g.children(g.find(stroke)->id()).size() == 2);
+    scene::MeshPtr m = outMesh(mesh);
+    CHECK(m->bounds().max.y == doctest::Approx(29.0).epsilon(0.03));
+    CHECK(m->bounds().max.x == doctest::Approx(7.0).epsilon(0.05));
+
+    CHECK(run("clayShapeAt", {{"args", {object}}, {"point", {100, 0, 0}}}).is_string());
+    const json span = run("clayShapeAt", {{"args", {object}}, {"point", {3, 24, 0}}});
+    REQUIRE(span.is_string());
+    CHECK(g.parent(g.find(span.get<std::string>())->id()) == g.find(stroke)->id());
+
+    // Extending from a span adds to its stroke rather than starting a new one.
+    const std::string same = run("addClayStroke", {{"args", {span}}, {"extend", true}, {"points", {{6, 28, 0}, {12, 30, 0}}}, {"radius", 1.0}});
+    CHECK(g.find(same)->id() == g.find(stroke)->id());
+    CHECK(g.children(g.find(stroke)->id()).size() == 3);
+    CHECK(outMesh(mesh)->bounds().max.x == doctest::Approx(13.0).epsilon(0.05));
+}

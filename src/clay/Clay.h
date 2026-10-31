@@ -173,6 +173,8 @@ struct MeshOptions
     double voxelSize = 1.0;
     /** Newton steps that move each vertex onto the surface; 0 keeps surface nets' cell averages. */
     int projectSteps = 1;
+    /** Place vertices by dual contouring, so hard joins and box edges stay sharp; slower. */
+    bool sharp = false;
     /** Write the blended primitive colours as the color set "clay". */
     bool colors = true;
     /** Throws past this many bricks rather than run away with a tiny voxel size. */
@@ -191,8 +193,8 @@ public:
     Mesher(Mesher&&) noexcept;
     Mesher& operator=(Mesher&&) noexcept;
 
-    /** The mesh of field, reusing bricks from the last call where the field cannot have changed. */
-    geo::Mesh update(const Field& field, const MeshOptions& options);
+    /** The mesh of field, reusing bricks from the last call where the field cannot have changed; the same mesh when nothing did. */
+    std::shared_ptr<const geo::Mesh> update(const Field& field, const MeshOptions& options);
     /** Bricks re-meshed by the last update. */
     size_t lastRebuilt() const;
     size_t brickCount() const;

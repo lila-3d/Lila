@@ -2,9 +2,13 @@
 
 #include "core/Profile.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
 #include <map>
@@ -119,11 +123,11 @@ public:
         LILA_ZONE();
 
         const Field field(rootOf(*this), choice(*this, "symmetry") == 1);
-        const MeshOptions o{.voxelSize = num(*this, "voxelSize"), .colors = as<bool>(idx(*this, "colors"))};
+        const MeshOptions o{.voxelSize = num(*this, "voxelSize"), .sharp = as<bool>(idx(*this, "sharpEdges")), .colors = as<bool>(idx(*this, "colors"))};
         std::string warning;
         try
         {
-            setOutput(idx(*this, "outMesh"), MeshPtr(std::make_shared<geo::Mesh>(mMesher.update(field, o))));
+            setOutput(idx(*this, "outMesh"), MeshPtr(mMesher.update(field, o)));
         }
         catch (const std::exception& e)
         {
@@ -154,7 +158,7 @@ Node* meshOf(Graph& g, const Node& object)
     return nullptr;
 }
 
-Node* surfaceOf(Graph& g, const Node& object)
+Node* surfaceOfObject(Graph& g, const Node& object)
 {
     Node* mesh = meshOf(g, object);
     return mesh ? g.node(g.source({mesh->id(), MeshNode::kInMesh, -1})->node) : nullptr;
@@ -175,7 +179,7 @@ void collect(Graph& g, NodeId parent, int64_t depth, std::vector<std::pair<NodeI
 void sync(Graph& g, NodeId object)
 {
     Node* o = g.node(object);
-    Node* s = o ? surfaceOf(g, *o) : nullptr;
+    Node* s = o ? surfaceOfObject(g, *o) : nullptr;
     if (!s)
         return;
     const PlugRef items{s->id(), idx(*s, "items")};
@@ -193,7 +197,7 @@ void sync(Graph& g, NodeId object)
 }
 
 /** The clay object id is part of: itself, or its nearest clay ancestor. */
-Node* objectOf(Graph& g, NodeId id)
+Node* objectOfNode(Graph& g, NodeId id)
 {
     for (NodeId at = id; at != kNoNode; at = g.parent(at))
         if (Node* n = g.node(at); n && n->type().isA("clay"))
@@ -260,6 +264,76 @@ std::vector<FlagDef> shapeFlags()
     };
 }
 
+glm::dmat4 worldOf(Graph& g, NodeId id) { return std::get<glm::dmat4>(g.value({id, Transform::kWorldMatrix, -1})); }
+
+/**
+ * A capsule chain through world points, as round cones in a new group under parent: one per span, the radius running
+ * from radius at the first point to endRadius at the last. Consecutive cones share their end spheres, so the chain is
+ * smooth without a blend.
+ */
+Node* addStroke(Graph& g, Node& parent, const std::vector<glm::dvec3>& points, double radius, double endRadius, const Args& a, Node* into)
+{
+    Node* group = into ? into : g.createNode(*types::find("clayGroup"), a.get<std::string>("name", "ClayStroke"), parent.id(), true);
+    if (!into)
+        setAttrs(g, *group, a, "addClayStroke");
+    g.evaluate();
+    const glm::dmat4 toGroup = glm::inverse(worldOf(g, group->id()));
+    double total = 0.0;
+    for (size_t i = 1; i < points.size(); ++i)
+        total += glm::length(points[i] - points[i - 1]);
+    double along = 0.0;
+    for (size_t i = 1; i < points.size(); ++i)
+    {
+        const glm::dvec3 from = points[i - 1], to = points[i];
+        const double len = glm::length(to - from);
+        if (len < 1e-9)
+            continue;
+        const double r0 = glm::mix(radius, endRadius, total > 0.0 ? along / total : 0.0);
+        along += len;
+        const double r1 = glm::mix(radius, endRadius, total > 0.0 ? along / total : 1.0);
+        Node* p = g.createNode(*types::find("clayPrimitive"), "ClaySpan", group->id(), true);
+        auto set = [&](const char* attr, PlugValue v) { g.setValue({p->id(), idx(*p, attr), -1}, std::move(v)); };
+        set("shape", int64_t(Shape::Capsule));
+        set("blend", 0.0);
+        set("radius", r0);
+        set("endRadius", r1);
+        set("length", len);
+        if (a.has("color"))
+            set("color", vecFlag(a, "color"));
+        const glm::dmat4 world = glm::translate(glm::dmat4(1.0), 0.5 * (from + to)) *
+                                 glm::toMat4(glm::rotation(glm::dvec3(0, 1, 0), (to - from) / len));
+        Transform::setLocalMatrix(g, p->id(), toGroup * world);
+    }
+    return group;
+}
+
+/** The shape of a clay object nearest p (world), deepest inside first; cuts count, so their carved surfaces pick them. */
+Node* shapeAt(Graph& g, NodeId object, const glm::dvec3& p)
+{
+    g.evaluate();
+    std::vector<std::pair<NodeId, int64_t>> tree;
+    collect(g, object, 1, tree);
+    Node* best = nullptr;
+    double nearest = 1e300;
+    for (const auto& [id, depth] : tree)
+    {
+        Node* n = g.node(id);
+        const DataPtr d = n->as<DataPtr>(idx(*n, "outClay"));
+        if (!d || !n->type().isA("clayPrimitive"))
+            continue;
+        const Item& item = static_cast<const ItemData&>(*d).item;
+        const glm::dmat4& m = item.matrix;
+        const double scale = std::min({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
+        const double dist = distance(*item.shape, glm::dvec3(glm::inverse(m) * glm::dvec4(p, 1.0))) * scale;
+        if (dist < nearest)
+        {
+            nearest = dist;
+            best = n;
+        }
+    }
+    return best;
+}
+
 json addPrimitive(Graph& g, Node& parent, const Args& a)
 {
     Node* p = g.createNode(*types::find("clayPrimitive"), a.get<std::string>("name", "ClayPrimitive"), parent.id(), true);
@@ -272,7 +346,7 @@ json addPrimitive(Graph& g, Node& parent, const Args& a)
         const glm::dmat4 parentWorld = std::get<glm::dmat4>(g.value({parent.id(), Transform::kWorldMatrix, -1}));
         g.setValue({p->id(), Transform::kTranslate, -1}, glm::dvec3(glm::inverse(parentWorld) * glm::dvec4(vecFlag(a, "position"), 1.0)));
     }
-    sync(g, objectOf(g, parent.id())->id());
+    sync(g, objectOfNode(g, parent.id())->id());
     g.select({p->id()});
     return p->path();
 }
@@ -287,6 +361,9 @@ Node& containerOf(Graph& g, Node& n, const char* cmd)
     throw CommandError(std::string(cmd) + ": " + n.path() + " is not clay");
 }
 } // namespace
+
+Node* surfaceOf(const Node& object) { return clay::surfaceOfObject(Graph::current(), object); }
+Node* objectOf(NodeId id) { return clay::objectOfNode(Graph::current(), id); }
 
 void registerTypes()
 {
@@ -349,6 +426,7 @@ void registerTypes()
         param("voxelSize", PlugType::Float, 0.5, "Lattice spacing while editing, cm. Smaller is finer and slower.", {}, 0.01, 5.0),
         param("finalVoxelSize", PlugType::Float, 0.25, "Lattice spacing convertClayToMesh uses, cm.", {}, 0.01, 5.0),
         param("symmetry", PlugType::Enum, int64_t(0), "Mirror the clay across the object's YZ plane.", {"off", "x"}),
+        param("sharpEdges", PlugType::Bool, false, "Keep hard joins and box edges sharp (dual contouring). For hard-surface clay; slower."),
         param("colors", PlugType::Bool, true, "Write the shapes' colours to the clay color set."),
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the last build."},
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The clay surface."},
@@ -430,11 +508,69 @@ void registerCommands()
             g.setParent(group->id(), parent, false, at);
             for (Node* n : items)
                 g.setParent(n->id(), group->id(), true);
-            sync(g, objectOf(g, parent)->id());
+            sync(g, objectOfNode(g, parent)->id());
             g.select({group->id()});
             return group->path();
         },
         .examples = {"groupClay([\"Ear\", \"EarCut\"], blend=1)"},
+    });
+
+    ops::registerCommand({
+        .name = "addClayStroke",
+        .doc = "Add a capsule chain through world points to a clay object or group: tentacles, horns, limbs and strokes drawn "
+               "over the surface. The spans go in a new group. Returns the group.",
+        .positionalDoc = "clay object, group or shape",
+        .flags = {{"points", "pts", T::List, nullptr, "World points, two or more: [[x, y, z], ...]."},
+                  {"radius", "r", T::Float, 2.0, "Radius at the first point, cm.", {}, {}, 0.0},
+                  {"endRadius", "er", T::Float, nullptr, "Radius at the last point, cm; defaults to radius.", {}, {}, 0.0},
+                  {"operation", "op", T::String, "add", "How the stroke joins the clay before it.", kOps},
+                  {"blend", "b", T::Float, nullptr, "Smooth join radius of the stroke, cm.", {}, {}, 0.0},
+                  {"color", "c", T::Vec3, nullptr, "Linear colour."},
+                  {"extend", "x", T::Bool, false, "Given a stroke group (or one of its spans), add the spans to it rather than to a new group."},
+                  {"name", "n", T::String, nullptr, "Group name; made unique."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> t = targets(g, a, "addClayStroke");
+            if (t.empty())
+                throw CommandError("addClayStroke: select a clay object, group or shape");
+            std::vector<glm::dvec3> pts;
+            if (a.has("points") && a.flags["points"].is_array())
+                for (const json& p : a.flags["points"])
+                    pts.emplace_back(p.at(0).get<double>(), p.at(1).get<double>(), p.at(2).get<double>());
+            if (pts.size() < 2)
+                throw CommandError("addClayStroke: give two or more points");
+            Node* into = nullptr;
+            if (a.get<bool>("extend", false))
+                into = t.front()->type().isA("clayGroup") ? t.front() : g.node(g.parent(t.front()->id()));
+            if (into && !into->type().isA("clayGroup"))
+                throw CommandError("addClayStroke: extend needs a stroke group or one of its spans");
+            Node& parent = into ? *g.node(g.parent(into->id())) : containerOf(g, *t.front(), "addClayStroke");
+            const double r = std::max(0.0, a.get<double>("radius", 2.0));
+            Node* group = addStroke(g, parent, pts, r, std::max(0.0, a.get<double>("endRadius", r)), a, into);
+            sync(g, objectOfNode(g, parent.id())->id());
+            g.select({group->id()});
+            return group->path();
+        },
+        .examples = {"addClayStroke(\"Dog\", points=[[0, 20, -10], [0, 24, -18], [0, 30, -22]], radius=2, endRadius=0.5)"},
+    });
+
+    ops::registerCommand({
+        .name = "clayShapeAt",
+        .doc = "The clay shape of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts "
+               "count. Returns its path, or None for an object without shapes.",
+        .positionalDoc = "clay object or anything in it",
+        .flags = {{"point", "p", T::Vec3, nullptr, "World point."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> t = targets(g, a, "clayShapeAt");
+            Node* object = t.empty() ? nullptr : objectOfNode(g, t.front()->id());
+            if (!object || !a.has("point"))
+                throw CommandError("clayShapeAt: give a clay object and a point");
+            Node* n = shapeAt(g, object->id(), vecFlag(a, "point"));
+            return n ? json(n->path()) : json(nullptr);
+        },
+        .examples = {"clayShapeAt(\"Dog\", point=[3, 20, 8])"},
     });
 
     ops::registerCommand({
@@ -447,7 +583,7 @@ void registerCommands()
             json out = json::array();
             std::vector<NodeId> done;
             for (Node* n : targets(g, a, "refreshClay"))
-                if (Node* object = objectOf(g, n->id()); object && std::ranges::find(done, object->id()) == done.end())
+                if (Node* object = objectOfNode(g, n->id()); object && std::ranges::find(done, object->id()) == done.end())
                 {
                     done.push_back(object->id());
                     sync(g, object->id());
@@ -473,13 +609,15 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<Node*> t = targets(g, a, "convertClayToMesh");
-            Node* object = t.empty() ? nullptr : objectOf(g, t.front()->id());
+            Node* object = t.empty() ? nullptr : objectOfNode(g, t.front()->id());
             if (!object)
                 throw CommandError("convertClayToMesh: select a clay object");
-            Node* surface = surfaceOf(g, *object);
+            Node* surface = surfaceOfObject(g, *object);
             g.evaluate();
             const Field field(rootOf(*surface), choice(*surface, "symmetry") == 1);
-            MeshOptions o{.voxelSize = a.get<double>("voxelSize", num(*surface, "finalVoxelSize")), .colors = surface->as<bool>(idx(*surface, "colors"))};
+            MeshOptions o{.voxelSize = a.get<double>("voxelSize", num(*surface, "finalVoxelSize")),
+                          .sharp = surface->as<bool>(idx(*surface, "sharpEdges")),
+                          .colors = surface->as<bool>(idx(*surface, "colors"))};
             geo::Mesh m;
             try
             {
@@ -511,5 +649,35 @@ void registerCommands()
         },
         .examples = {"convertClayToMesh(\"Dog\")", "convertClayToMesh(\"Dog\", remesh=True, targetFaces=3000)"},
     });
+
+    using ops::options::Override;
+    Override shape;
+    shape.order = {"shape", "operation", "blend", "radius", "endRadius", "length", "extents", "rounding", "color"};
+    shape.hidden = {"name", "position", "rotation"};
+    shape.sections = {{"radius", "Size"}, {"endRadius", "Size"}, {"length", "Size"}, {"extents", "Size"}, {"rounding", "Size"}};
+    shape.ranges = {{"blend", {0.0, 50.0, 0.5, " cm"}},   {"radius", {0.0, 500.0, 1.0, " cm"}},  {"endRadius", {0.0, 500.0, 1.0, " cm"}},
+                    {"length", {0.0, 1000.0, 1.0, " cm"}}, {"rounding", {0.0, 100.0, 0.5, " cm"}}};
+    shape.adjust = {"extents", "color"};
+    shape.docs = "clay";
+    ops::options::setOverride("addClayPrimitive", std::move(shape));
+
+    Override create;
+    create.hidden = {"name", "position"};
+    create.ranges = {{"voxelSize", {0.05, 5.0, 0.05, " cm"}}};
+    create.docs = "clay";
+    ops::options::setOverride("createClay", std::move(create));
+
+    Override group;
+    group.hidden = {"name"};
+    group.ranges = {{"blend", {0.0, 50.0, 0.5, " cm"}}};
+    group.docs = "clay";
+    ops::options::setOverride("groupClay", std::move(group));
+
+    Override convert;
+    convert.order = {"voxelSize", "remesh", "targetFaces", "keepSource"};
+    convert.hidden = {"name"};
+    convert.ranges = {{"voxelSize", {0.05, 5.0, 0.05, " cm"}}, {"targetFaces", {8.0, 200000.0, 500.0, ""}}};
+    convert.docs = "clay";
+    ops::options::setOverride("convertClayToMesh", std::move(convert));
 }
 } // namespace lila::clay
