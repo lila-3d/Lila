@@ -11,5 +11,6 @@ if not exist "%~dp0%DIR%\build.ninja" (
 )
 cmake --build "%~dp0%DIR%" --config %CONFIG%
 set "RC=%ERRORLEVEL%"
-if "%RC%"=="0" (echo [done] Build succeeded) else (echo [failed] Build FAILED ^(exit %RC%^))
+set "T=%TIME: =0%"
+if "%RC%"=="0" (echo [done] Build succeeded at %T:~0,5%) else (echo [failed] Build FAILED at %T:~0,5% ^(exit %RC%^))
 exit /b %RC%
