@@ -250,18 +250,22 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     addOp("bulb", "Lightmap", "Generate Unreal lightmap uvs in uv1 (uvLightmap)", [this] { runCommand("uvLightmap"); });
     row2->endRow();
     // Cut and sew re-solve the islands they touch straight away in live mode.
-    auto cutOrSew = [this](const char* command, json call) {
+    auto cutOrSew = [this](const char* action, const char* command, json call) {
         json r = uvLive::cutOrSew(command, std::move(call));
         if (!r.is_null())
+        {
             mStatus->setText(QString(command) + ": " + QString::fromStdString(r.dump()));
+            actions::remember(action);
+        }
         mView->invalidate();
     };
-    addOp("scissors", "Cut", "Cut the uvs along the selected edges and let the cut open (uvCut)", [cutOrSew] { cutOrSew("uvCut", json::object()); });
+    addOp("scissors", "Cut", "Cut the uvs along the selected edges and let the cut open (uvCut)",
+          [cutOrSew] { cutOrSew("uv.cut", "uvCut", json::object()); });
     addOp("needle-thread", "Sew", "Move and Sew: weld the selected seams, the smaller island travelling to meet the other (uvSew). In edge mode you "
                  "can also drag a border edge onto its partner",
-          [cutOrSew] { cutOrSew("uvSew", json{{"move", true}}); });
+          [cutOrSew] { cutOrSew("uv.sew", "uvSew", json{{"move", true}}); });
     addOp("link", "Weld", "Weld the selected seams where they are, both sides meeting halfway (uvSew move=False)",
-          [cutOrSew] { cutOrSew("uvSew", json{{"move", false}}); });
+          [cutOrSew] { cutOrSew("uv.weld", "uvSew", json{{"move", false}}); });
     addOp("layout-grid", "Straighten", "Rectify islands into grids and rectangles (uvStraighten)", [this] { runCommand("uvStraighten"); });
     addMenuOp("align-left", "Align", "Straighten selected edges, align island sides to U or V (uvStraightenEdges, uvAlignToEdge)",
               {{"Straighten edges", "uvStraightenEdges", json::object()},
