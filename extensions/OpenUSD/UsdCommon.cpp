@@ -1,5 +1,7 @@
 #include "UsdCommon.h"
 
+#include <lila/UsdPlugins.h>
+
 #include <pxr/base/plug/plugin.h>
 #include <pxr/base/plug/registry.h>
 #include <pxr/base/tf/diagnosticMgr.h>
@@ -173,17 +175,48 @@ std::vector<std::string> Diagnostics::warnings()
     return mImpl->warnings;
 }
 
-bool registerPlugins(const fs::path& packageRoot, std::string* error)
+namespace
+{
+/** Plug loads plugin libraries with a plain LoadLibrary, whose dependency search skips the library's own folder: a
+ * plugin needing a library beside it that nothing has loaded yet (MaterialX, Hydra) finds it through PATH. */
+void addToPath([[maybe_unused]] const fs::path& folder)
 {
 #if defined(_WIN32)
-    // Plug loads plugin libraries with a plain LoadLibrary, whose dependency search skips the library's own folder:
-    // a plugin needing a package library nothing has loaded yet (MaterialX, Hydra) finds it through PATH.
-    const std::wstring dir = packageRoot.wstring();
+    const std::wstring dir = folder.wstring();
     std::wstring path(GetEnvironmentVariableW(L"PATH", nullptr, 0), L'\0');
     path.resize(GetEnvironmentVariableW(L"PATH", path.data(), DWORD(path.size())));
     if ((L";" + path + L";").find(L";" + dir + L";") == std::wstring::npos)
         SetEnvironmentVariableW(L"PATH", (path.empty() ? dir : path + L";" + dir).c_str());
 #endif
+}
+
+/** A PXR_PLUGINPATH_NAME entry's plugInfo files: its own, and each subfolder's own or resources/ one. */
+void plugInfoFiles(const fs::path& root, std::vector<std::string>& out)
+{
+    std::error_code ec;
+    if (!fs::is_directory(root, ec))
+        return;
+    if (fs::exists(root / "plugInfo.json", ec))
+        out.push_back(utf8(root / "plugInfo.json"));
+    for (const fs::directory_entry& e : fs::directory_iterator(root, ec))
+        for (const fs::path& f : {e.path() / "plugInfo.json", e.path() / "resources" / "plugInfo.json"})
+            if (fs::exists(f, ec))
+                out.push_back(utf8(f));
+}
+
+void registerExtensionPlugins(const fs::path& folder)
+{
+    addToPath(folder);
+    std::vector<std::string> files;
+    plugInfoFiles(folder, files);
+    if (!files.empty())
+        PlugRegistry::GetInstance().RegisterPlugins(files);
+}
+} // namespace
+
+bool registerPlugins(const fs::path& packageRoot, std::string* error)
+{
+    addToPath(packageRoot);
     PlugRegistry& reg = PlugRegistry::GetInstance();
     std::vector<std::string> paths;
     for (const fs::path& folder : {packageRoot / "usd", packageRoot / "plugin" / "usd"})
@@ -203,19 +236,19 @@ bool registerPlugins(const fs::path& packageRoot, std::string* error)
 #endif
         std::stringstream list(env);
         for (std::string entry; std::getline(list, entry, sep);)
-        {
-            std::error_code ec;
-            const fs::path root = fs::path(entry);
-            if (entry.empty() || !fs::is_directory(root, ec))
-                continue;
-            for (const fs::directory_entry& e : fs::directory_iterator(root, ec))
-                for (const fs::path& f : {e.path() / "plugInfo.json", e.path() / "resources" / "plugInfo.json"})
-                    if (fs::exists(f, ec))
-                        paths.push_back(utf8(f));
-        }
+            if (!entry.empty())
+                plugInfoFiles(fs::path(entry), paths);
     }
     if (!paths.empty())
         reg.RegisterPlugins(paths);
+    // Plug can't forget a plugin, so a folder stays registered after its extension unloads.
+    for (const fs::path* folder : usdPlugins::registry().allInOrder())
+        registerExtensionPlugins(*folder);
+    usdPlugins::registry().addListener([](RegistryChange change, const std::string& id, const std::string&) {
+        if (change == RegistryChange::Added)
+            if (const fs::path* folder = usdPlugins::registry().find(id))
+                registerExtensionPlugins(*folder);
+    });
     if (!reg.GetPluginWithName("usdGeom") || !reg.GetPluginWithName("usdShade") || !reg.GetPluginWithName("usdSkel"))
     {
         if (error)

@@ -93,6 +93,12 @@ TEST_CASE("manifest: parse, defaults and every problem at once")
     ext::Manifest pack = ext::Manifest::parse({{"id", "a"}, {"version", "1"}, {"sdk", "1.0"}, {"resources", "resources"}}, "C:/x");
     CHECK(pack.resourcesOnly());
     CHECK_FALSE(pack.library());
+
+    ext::Manifest hydra = ext::Manifest::parse({{"id", "a"}, {"version", "1"}, {"sdk", "1.0"}, {"usdPlugins", {"usd"}}}, "C:/x");
+    CHECK(hydra.usdPlugins == std::vector<std::string>{"usd"});
+    CHECK(ext::Manifest::parse(hydra.toJson(), "C:/x").usdPlugins == hydra.usdPlugins);
+    CHECK_THROWS_WITH_AS(ext::Manifest::parse({{"id", "a"}, {"version", "1"}, {"sdk", "1.0"}, {"usdPlugins", {"../out"}}}, "C:/x"),
+                         doctest::Contains("'usdPlugins' must be a folder inside"), ext::ManifestError);
     CHECK_FALSE(pack.pythonModule());
 }
 

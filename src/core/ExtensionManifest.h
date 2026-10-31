@@ -35,6 +35,7 @@ struct Dependency
  *       "entry": {"windows": "Hello.dll", "linux": "libHello.so", "macos": "libHello.dylib"},
  *       "python": "hello",                  // optional: module (folder or .py) relative to the package
  *       "resources": "resources",           // optional, the default; alone (no entry, no python) for a resource pack
+ *       "usdPlugins": ["usd"],              // optional: folders of USD plugins (Hydra render delegates), see lila::usdPlugins
  *       "dependencies": ["Other", {"id": "Base", "version": "1.2"}],
  *       "enabledByDefault": true,
  *       "license": {}                       // reserved
@@ -51,6 +52,7 @@ struct Manifest
     std::map<std::string, std::string> entry; // platform -> library, relative to the package
     std::string python;
     std::string resources = "resources";
+    std::vector<std::string> usdPlugins; // relative to the package
     std::vector<Dependency> dependencies;
     bool enabledByDefault = false;
     nlohmann::json license;

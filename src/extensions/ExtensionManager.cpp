@@ -7,6 +7,7 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "core/UsdPlugins.h"
 #include "core/Workspace.h"
 #include "extensions/Library.h"
 #include "lila/Extension.h"
@@ -346,6 +347,8 @@ void ExtensionManager::loadInfo(const ExtensionInfo& found, std::set<std::string
     {
         if (found.manifest)
         {
+            for (const std::string& folder : found.manifest->usdPlugins)
+                usdPlugins::add(*rec->ctx, root / folder);
             if (found.manifest->library())
                 loadNative(*rec);
             if (auto module = found.manifest->pythonModule())

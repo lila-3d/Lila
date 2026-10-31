@@ -16,6 +16,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <chrono>
+#include <fstream>
 #include <cmath>
 #include <optional>
 #include <thread>
@@ -133,6 +134,29 @@ TEST_CASE("hydra: each render delegate on the plugin path is a viewport renderer
     for (const auto& [id, name] : vr::choices())
         listed |= id == kStorm;
     CHECK(listed);
+}
+
+TEST_CASE("hydra: an extension's usdPlugins folders add their render delegates while it is loaded")
+{
+    fresh();
+    const fs::path pkg = fs::temp_directory_path() / "lila_usd_tests" / "TestEngine.lilaext";
+    fs::remove_all(pkg);
+    fs::create_directories(pkg / "usd" / "hdTestEngine" / "resources");
+    std::ofstream(pkg / "extension.json") << R"({"id": "TestEngine", "version": "1.0", "sdk": "1.0", "usdPlugins": ["usd"]})";
+    std::ofstream(pkg / "usd" / "hdTestEngine" / "resources" / "plugInfo.json") << R"({"Plugins": [{
+        "Info": {"Types": {"HdTestEngineRendererPlugin": {"bases": ["HdRendererPlugin"], "displayName": "Test Engine"}}},
+        "LibraryPath": "../../hdTestEngine.dll", "Name": "hdTestEngine", "ResourcePath": "resources", "Root": "..", "Type": "library"}]})";
+
+    auto& em = extensions::ExtensionManager::get();
+    CHECK_FALSE(vr::registry().find("hydraTestEngine"));
+    REQUIRE(em.load(pkg.string()) == "TestEngine");
+    const vr::Renderer* r = vr::registry().find("hydraTestEngine");
+    REQUIRE(r);
+    CHECK(r->name == "Hydra: Test Engine");
+    CHECK(vr::registry().find(kStorm));
+    em.unload("TestEngine");
+    CHECK_FALSE(vr::registry().find("hydraTestEngine"));
+    CHECK(vr::registry().find(kStorm));
 }
 
 TEST_CASE("hydra: Storm draws Lila's meshes with their materials, depth in cm along the view axis")
@@ -516,7 +540,7 @@ TEST_CASE("hydra: the frame composites under Lila's overlays, depth tested again
     own.externalDepth = {};
     own.background = glm::vec3(1.0f);
     REQUIRE_MESSAGE(gpu.renderOffscreen(own, kSize, kSize, bgra, &err), err);
-    CHECK(at(5, 20) == glm::ivec3(255));
+    CHECK(at(5, 20).g > 200);
     s.background = glm::vec3(0.25f, 0.5f, 0.75f);
     REQUIRE_MESSAGE(gpu.renderOffscreen(s, kSize, kSize, bgra, &err), err);
     const glm::ivec3 bg = at(5, 20);

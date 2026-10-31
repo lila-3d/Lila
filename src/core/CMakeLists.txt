@@ -30,6 +30,7 @@ lila_module(lila_core Foundation
     ResourceKey.cpp
     SystemMemory.cpp
     TextMatch.cpp
+    UsdPlugins.cpp
     Version.cpp
     VideoWriter.cpp
     Workspace.cpp)

@@ -102,8 +102,19 @@ Manifest Manifest::parse(const json& j, const fs::path& root)
             problems.push_back("'entry." + platform + "' must be a path inside the package");
     if (!m.python.empty() && !insidePackage(m.python))
         problems.push_back("'python' must be a path inside the package");
-    if (m.entry.empty() && m.python.empty() && !j.contains("resources"))
-        problems.push_back("give an 'entry' library, a 'python' module or both, or only 'resources' for a resource pack");
+    if (auto it = j.find("usdPlugins"); it != j.end() && !it->is_null())
+    {
+        if (!it->is_array())
+            problems.push_back("'usdPlugins' must be a list of folders");
+        else
+            for (const json& f : *it)
+                if (!f.is_string() || !insidePackage(f.get<std::string>()))
+                    problems.push_back("each of 'usdPlugins' must be a folder inside the package");
+                else
+                    m.usdPlugins.push_back(f.get<std::string>());
+    }
+    if (m.entry.empty() && m.python.empty() && m.usdPlugins.empty() && !j.contains("resources"))
+        problems.push_back("give an 'entry' library, a 'python' module or both, or only 'resources' or 'usdPlugins' for a resource pack");
 
     if (auto it = j.find("dependencies"); it != j.end() && !it->is_null())
     {
@@ -200,6 +211,8 @@ json Manifest::toJson() const
               {"enabledByDefault", enabledByDefault}};
     if (!python.empty())
         j["python"] = python;
+    if (!usdPlugins.empty())
+        j["usdPlugins"] = usdPlugins;
     return j;
 }
 

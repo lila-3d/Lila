@@ -760,8 +760,8 @@ void BatchRunPanel::applyState(const json& s)
     mExcludeSuffix->setText(text("excludeSuffix"));
     mExcludeContains->setText(text("excludeContains"));
 
-    auto pick = [](QComboBox* box, const QString& data) {
-        int i = box->findData(data);
+    auto pick = [](QComboBox* box, const QString& value) {
+        int i = box->findData(value);
         box->setCurrentIndex(std::max(0, i));
     };
     pick(mSave, s.contains("save") ? text("save") : QString("none"));

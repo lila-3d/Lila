@@ -1199,8 +1199,8 @@ void PreferencesDialog::resetAll()
 void PreferencesDialog::restoreBackup()
 {
     json backup = readBackup();
-    for (auto& [file, data] : backup.items())
-        PrefStore::get().setUserDoc(file, data);
+    for (auto& [file, doc] : backup.items())
+        PrefStore::get().setUserDoc(file, doc);
     log::info("preferences restored from {}", paths::toUtf8(backupPath()));
     rebuild();
 }

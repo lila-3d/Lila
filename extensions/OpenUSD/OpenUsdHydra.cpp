@@ -5,6 +5,7 @@
 #include "UsdBackend.h"
 
 #include <lila/Log.h>
+#include <lila/UsdPlugins.h>
 #include <lila/ViewportRenderers.h>
 
 #include <algorithm>
@@ -117,10 +118,12 @@ void scan(const fs::path& file, std::set<fs::path>& seen, std::map<std::string, 
     }
 }
 
-/** Every render delegate on the plugin path: the package's own plugins, then PXR_PLUGINPATH_NAME's. */
+/** Every render delegate on the plugin path: the package's own plugins, then extensions', then PXR_PLUGINPATH_NAME's. */
 std::vector<Delegate> delegates(const fs::path& packageRoot)
 {
     std::vector<fs::path> roots = {packageRoot / "plugin" / "usd", packageRoot / "usd"};
+    for (const fs::path* folder : usdPlugins::registry().allInOrder())
+        roots.push_back(*folder);
     if (const char* env = std::getenv("PXR_PLUGINPATH_NAME"))
     {
 #if defined(_WIN32)
@@ -172,8 +175,14 @@ namespace lila::usd
 void registerHydra(ext::Context& ctx)
 {
     namespace vr = ui::viewportRenderers;
+    // Extensions add and remove plugin folders as they load and unload, before or after this one.
+    static std::set<std::string> listed;
+    std::set<std::string> now;
     for (const Delegate& d : delegates(ctx.root()))
     {
+        now.insert(idOf(d));
+        if (listed.contains(idOf(d)))
+            continue;
         const std::string doc =
             d.plugin == "HdStormRendererPlugin"
                 ? "Pixar's Storm through Hydra, on Vulkan: the scene's meshes, materials (as UsdPreviewSurface), lights and cameras, "
@@ -195,6 +204,20 @@ void registerHydra(ext::Context& ctx)
                           }
                           return std::unique_ptr<vr::Session>(static_cast<vr::Session*>(session));
                       }});
+    }
+    for (const std::string& id : listed)
+        if (!now.contains(id))
+            vr::remove(id);
+    listed = std::move(now);
+    static int listener = 0;
+    if (!listener)
+    {
+        listener = usdPlugins::registry().addListener([&ctx](RegistryChange, const std::string&, const std::string&) { registerHydra(ctx); });
+        ctx.track("usdPlugins:listener", [] {
+            usdPlugins::registry().removeListener(listener);
+            listener = 0;
+            listed.clear();
+        });
     }
 }
 } // namespace lila::usd

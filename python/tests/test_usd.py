@@ -134,6 +134,25 @@ def test_handle_expires_with_the_node():
         pass
 
 
+def test_extension_usd_plugins_reach_plug():
+    from pxr import Plug
+
+    pkg = os.path.join(DIR, "PlugProbe.lilaext")
+    shutil.rmtree(pkg, ignore_errors=True)
+    os.makedirs(os.path.join(pkg, "usd", "hdPlugProbe", "resources"))
+    with open(os.path.join(pkg, "extension.json"), "w") as f:
+        f.write('{"id": "PlugProbe", "version": "1.0", "sdk": "1.0", "usdPlugins": ["usd"]}')
+    with open(os.path.join(pkg, "usd", "hdPlugProbe", "resources", "plugInfo.json"), "w") as f:
+        f.write('{"Plugins": [{"Info": {"Types": {"HdPlugProbeRendererPlugin": {"bases": ["HdRendererPlugin"], "displayName": "Plug Probe"}}},'
+                ' "LibraryPath": "../../hdPlugProbe.dll", "Name": "hdPlugProbe", "ResourcePath": "resources", "Root": "..", "Type": "library"}]}')
+    assert Plug.Registry().GetPluginWithName("hdPlugProbe") is None
+    ops.loadExtension(pkg)
+    try:
+        assert Plug.Registry().GetPluginWithName("hdPlugProbe") is not None
+    finally:
+        ops.unloadExtension("PlugProbe")
+
+
 def main():
     tests = [(k, v) for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
     for name, fn in tests:
