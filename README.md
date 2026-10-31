@@ -4,7 +4,7 @@
 
 ## Get it running (Windows)
 
-Needs Visual Studio 2022 (C++ workload, CMake 3.28+, vcpkg), Qt 6.11.1 (`msvc2022_64`, plus the Ninja tool from the Qt installer). Python 3.14 is used from `C:\Python314` if installed there, otherwise the first build downloads it into `.deps`. Defaults live in `scripts/env.cmd`; set `LILA_VS`, `LILA_QT_DIR`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override, and `LILA_MSVC_VER` (e.g. `14.44.35207`) to pick an MSVC toolset when several are installed. sccache and lld-link are used when found, and are optional.
+Needs Visual Studio 2022 (C++ workload, CMake 3.28+, vcpkg), Qt 6.11.1 (`msvc2022_64`, plus the Ninja tool from the Qt installer). An installed Python 3.14 is found in `C:\Python314` or python.org's default folders, otherwise the first build downloads it into `.deps`. Defaults live in `scripts/env.cmd`; set `LILA_VS`, `LILA_QT_DIR`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override, and `LILA_MSVC_VER` (e.g. `14.44.35207`) to pick an MSVC toolset when several are installed. sccache and lld-link are used when found, and are optional.
 
 ```
 build.bat                              # configures on first run (vcpkg deps; USD makes this long), then builds
