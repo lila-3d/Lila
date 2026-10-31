@@ -27,11 +27,13 @@ struct Maps
     render::TexturePtr orm;       // R occlusion, G roughness, B metallic
     render::TexturePtr emissive;
     bool occlusion = false, roughness = false, metallic = false;
+    /** A level has written the images; before that they are black, so draws keep the material's own maps. */
+    bool ready = false;
 };
 
 /**
  * The live maps of the texture set bound to a material, starting its evaluation the first time; nullopt when no set binds
- * to it (or the renderer is not running). Maps show black until the first preview lands. Main thread.
+ * to it (or the renderer is not running). Main thread.
  */
 LILA_UI_API std::optional<Maps> mapsFor(const std::string& material);
 

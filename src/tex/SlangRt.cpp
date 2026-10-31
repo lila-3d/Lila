@@ -1,15 +1,25 @@
 #include "tex/SlangRt.h"
 
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/Profile.h"
+#include "tex/Plan.h"
 
 #include <slang-com-ptr.h>
 #include <slang.h>
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <map>
 #include <mutex>
+#include <thread>
+#include <vector>
+
 
 namespace lila::tex::slangrt
 {
@@ -23,7 +33,7 @@ struct State
     std::string globalError;
     std::map<uint64_t, std::shared_ptr<const CpuKernel>> kernels;
     CacheStats stats;
-    int moduleCounter = 0;
+    std::atomic<int> moduleCounter = 0;
 };
 
 State& state()
@@ -49,7 +59,7 @@ slang::IGlobalSession* global(std::string* err)
     return s.global.get();
 }
 
-/** Loads source as a module, links it with texMain. Under the state mutex. */
+/** Loads source as a module, links it with texMain. */
 Slang::ComPtr<slang::IComponentType> link(slang::ISession* session, const std::string& source, std::string* err)
 {
     State& s = state();
@@ -81,6 +91,105 @@ Slang::ComPtr<slang::IComponentType> link(slang::ISession* session, const std::s
         return {};
     }
     return linked;
+}
+
+/**
+ * Slang global sessions aren't thread-safe, so SPIR-V compiles each take one from this pool, which grows to a few per core
+ * group: a set's passes compile side by side instead of one after another.
+ */
+class SessionPool
+{
+public:
+    Slang::ComPtr<slang::IGlobalSession> acquire()
+    {
+        {
+            std::unique_lock lock(mMutex);
+            mFreed.wait(lock, [&] { return !mFree.empty() || mCount < limit(); });
+            if (!mFree.empty())
+            {
+                Slang::ComPtr<slang::IGlobalSession> g = mFree.back();
+                mFree.pop_back();
+                return g;
+            }
+            ++mCount;
+        }
+        Slang::ComPtr<slang::IGlobalSession> g;
+        if (SLANG_FAILED(slang::createGlobalSession(g.writeRef())))
+        {
+            std::scoped_lock lock(mMutex);
+            --mCount;
+            mFreed.notify_one();
+            return {};
+        }
+        return g;
+    }
+
+    void release(Slang::ComPtr<slang::IGlobalSession>& g)
+    {
+        if (!g)
+            return;
+        std::scoped_lock lock(mMutex);
+        mFree.push_back(g);
+        mFreed.notify_one();
+    }
+
+private:
+    static int limit() { return int(std::clamp(std::thread::hardware_concurrency() / 4u, 2u, 8u)); }
+
+    std::mutex mMutex;
+    std::condition_variable mFreed;
+    std::vector<Slang::ComPtr<slang::IGlobalSession>> mFree;
+    int mCount = 0;
+};
+
+SessionPool& sessionPool()
+{
+    static SessionPool* pool = new SessionPool();
+    return *pool;
+}
+
+/** Compiled SPIR-V kept across sessions, by source and Slang build: <config>/cache/texspirv/<hash>.spv. */
+std::filesystem::path diskCacheFile(const std::string& source, const char* buildTag)
+{
+    const uint64_t h = hash64(source, hash64(std::string("spirv_1_6 column v1 ") + (buildTag ? buildTag : "")));
+    return paths::userConfigDir() / "cache" / "texspirv" / std::format("{:016x}.spv", h);
+}
+
+std::vector<uint32_t> readCached(const std::filesystem::path& file)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in)
+        return {};
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    if (size <= 0 || size % 4)
+        return {};
+    std::vector<uint32_t> code(size_t(size) / 4);
+    in.seekg(0);
+    in.read(reinterpret_cast<char*>(code.data()), size);
+    // SPIR-V starts with its magic number; anything else is a torn write.
+    if (!in || code[0] != 0x07230203u)
+        return {};
+    return code;
+}
+
+void writeCached(const std::filesystem::path& file, const std::vector<uint32_t>& code)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    std::filesystem::path tmp = file;
+    tmp += std::format(".{}.tmp", std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    {
+        std::ofstream out(tmp, std::ios::binary);
+        if (!out)
+            return;
+        out.write(reinterpret_cast<const char*>(code.data()), std::streamsize(code.size() * 4));
+        if (!out)
+            return;
+    }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec)
+        std::filesystem::remove(tmp, ec);
 }
 
 std::shared_ptr<const CpuKernel> compileCpu(const std::string& source, std::string* err)
@@ -187,16 +296,26 @@ std::shared_ptr<const CpuKernel> cpuKernel(const std::string& source, uint64_t h
 std::vector<uint32_t> spirv(const std::string& source, std::string* err)
 {
     LILA_ZONE();
-    State& s = state();
-    std::lock_guard lock(s.mutex);
-    std::string why;
-    slang::IGlobalSession* g = global(&why);
+    SessionPool& pool = sessionPool();
+    // Global sessions are created up front so the build tag that keys the disk cache is known.
+    Slang::ComPtr<slang::IGlobalSession> g = pool.acquire();
     if (!g)
     {
         if (err)
-            *err = why;
+            *err = "Slang couldn't start";
         return {};
     }
+    struct Release
+    {
+        SessionPool& pool;
+        Slang::ComPtr<slang::IGlobalSession>& g;
+        ~Release() { pool.release(g); }
+    } release{pool, g};
+
+    const std::filesystem::path cached = diskCacheFile(source, g->getBuildTagString());
+    if (std::vector<uint32_t> code = readCached(cached); !code.empty())
+        return code;
+
     slang::CompilerOptionEntry options[2];
     options[0].name = slang::CompilerOptionName::VulkanUseEntryPointName;
     options[0].value.intValue0 = 1;
@@ -217,6 +336,7 @@ std::vector<uint32_t> spirv(const std::string& source, std::string* err)
             *err = "couldn't create a Slang session";
         return {};
     }
+    std::string why;
     Slang::ComPtr<slang::IComponentType> linked = link(session.get(), source, &why);
     if (!linked)
     {
@@ -233,6 +353,7 @@ std::vector<uint32_t> spirv(const std::string& source, std::string* err)
     }
     std::vector<uint32_t> out(code->getBufferSize() / 4);
     std::memcpy(out.data(), code->getBufferPointer(), out.size() * 4);
+    writeCached(cached, out);
     return out;
 }
 

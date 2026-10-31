@@ -5,6 +5,7 @@
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "ops/Command.h"
 #include "render/PaintGpu.h"
 #include "render/Renderer.h"
 #include "render/TexEval.h"
@@ -61,6 +62,8 @@ struct LiveSet
     tex::SetSettings settings;
     Tiles tiles;
     Maps maps;
+    /** A level has written the current images; until then the material keeps its own maps rather than showing black. */
+    bool ready = false;
     std::string error;
     /** Shown through a virtual texture instead of whole images: its pages and what makes them. */
     std::shared_ptr<render::vt::Texture> virtualTexture;
@@ -542,7 +545,11 @@ bool runSlice(render::VulkanContext& vk)
         {
             // A finished level has written its images: show them.
             if (e.ev->step(vk, 40.0))
-                requestRedraw();
+                mainq::post([node = e.node] {
+                    if (auto it = gSets.find(node); it != gSets.end())
+                        it->second->ready = true;
+                    viewportTools::requestRedraw();
+                });
         }
         catch (const std::exception& ex)
         {
@@ -794,6 +801,7 @@ void rebuildVirtual(LiveSet& s)
 
 void rebuild(LiveSet& s)
 {
+    s.ready = false;
     dropEntries(s);
     s.tiles.clear();
     s.virtualTexture.reset();
@@ -1018,7 +1026,9 @@ std::optional<Maps> mapsFor(const std::string& material)
         live->node = it->second;
         replan(*live);
     }
-    return live->maps;
+    Maps maps = live->maps;
+    maps.ready = live->ready || live->virtualTexture != nullptr;
+    return maps;
 }
 
 render::GpuImageRef channelImage(const std::string& set, const std::string& channel, int udim)
@@ -1039,6 +1049,14 @@ void install()
     if (gInstalled)
         return;
     gInstalled = true;
+    if (!ops::find("texLiveStatus"))
+        ops::registerCommand({
+            .name = "texLiveStatus",
+            .doc = "The viewport's live texture sets: per set its material, tiles and evaluation levels (size, idle, passes, compiles, GPU "
+                   "milliseconds) and the last error; idle is whether every set has finished its latest edit.",
+            .undoable = false,
+            .run = [](const Args&) -> nlohmann::json { return {{"idle", idle()}, {"sets", status()}}; },
+        });
     gGraphListener = scene::Graph::current().addListener(onChange);
     gMeshListener = render::texgpu::addMeshMapListener([](const std::string& project) {
         mainq::post([project] {

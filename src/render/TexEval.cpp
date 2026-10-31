@@ -1,6 +1,8 @@
 #include "render/TexEval.h"
 #include "render/TexEvalInternal.h"
 
+#include <tbb/parallel_for.h>
+
 namespace lila::render::texgpu
 {
 namespace
@@ -396,21 +398,29 @@ std::string Evaluator::setPlan(Plan plan, Inputs inputs, std::vector<StoreTarget
     prep->schedules.resize(plan.passes.size());
     prep->stepCode.resize(plan.passes.size());
     for (size_t i = 0; i < plan.passes.size(); ++i)
+        if (plan.passes[i].kind == PassKind::Native)
+            if (std::string err = prepareNative(*prep, plan, i); !err.empty())
+                return err;
+    // The other passes compile side by side: each is seconds of Slang the first time it is seen.
+    std::vector<std::string> errors(plan.passes.size());
+    std::vector<uint8_t> fresh(plan.passes.size(), 0);
+    tbb::parallel_for(size_t(0), plan.passes.size(), size_t(1), [&](size_t i) {
+        const Pass& p = plan.passes[i];
+        if (p.kind == PassKind::Native)
+            return;
+        bool compiled = false;
+        prep->codeHash[i] = prep->gpuForm ? tex::hash64(gpuForms[i]) : p.hash;
+        prep->code[i] = spirvFor(prep->gpuForm ? gpuForms[i] : p.source, prep->codeHash[i], compiled, errors[i]);
+        fresh[i] = compiled ? 1 : 0;
+    });
+    for (size_t i = 0; i < plan.passes.size(); ++i)
     {
         const Pass& p = plan.passes[i];
         if (p.kind == PassKind::Native)
-        {
-            if (std::string err = prepareNative(*prep, plan, i); !err.empty())
-                return err;
             continue;
-        }
-        bool compiled = false;
-        std::string err;
-        prep->codeHash[i] = prep->gpuForm ? tex::hash64(gpuForms[i]) : p.hash;
-        prep->code[i] = spirvFor(prep->gpuForm ? gpuForms[i] : p.source, prep->codeHash[i], compiled, err);
         if (!prep->code[i])
-            return "pass for " + p.node + " failed to compile:\n" + err;
-        ++(compiled ? prep->compiled : prep->cached);
+            return "pass for " + p.node + " failed to compile:\n" + errors[i];
+        ++(fresh[i] ? prep->compiled : prep->cached);
     }
 
     // Buffers no pass touches and no output names (those of outputs another evaluation makes) take no room and load nothing.

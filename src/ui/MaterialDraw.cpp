@@ -90,7 +90,7 @@ render::MaterialStyle style(const scene::Node& n)
 void applyTextureSet(const scene::Node& n, render::Material& m)
 {
     std::optional<texLive::Maps> live = texLive::mapsFor(n.name());
-    if (!live)
+    if (!live || !live->ready)
         return;
     if (live->baseColor)
     {
