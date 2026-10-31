@@ -703,6 +703,14 @@ bool StartupDialog::eventFilter(QObject* obj, QEvent* e)
                 run();
             return true;
         }
+        // Space opens the highlighted scene or example like Enter, instead of toggling the list selection.
+        if (ke->key() == Qt::Key_Space && ke->modifiers() == Qt::NoModifier && (obj == mList || (mExamples && obj == mExamples)))
+        {
+            const bool example = obj == mExamples;
+            if (example ? mExamples->currentItem() != nullptr : mList->currentItem() != nullptr)
+                QTimer::singleShot(0, this, [this, example] { example ? openExampleSelected() : openSelected(mList); });
+            return true;
+        }
     }
     // The main window finishes activating after the dialog is shown at startup and would take the keyboard. Only then:
     // later activations are the user going back to the window.
