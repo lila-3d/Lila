@@ -47,6 +47,9 @@ public:
     QFont editorFont() const { return mFont; }
     /** Shared with other Python fields, such as the command line, so they complete like the editor does. */
     LspClient* languageClient() const { return mLsp; }
+    /** Fetches ruff and basedpyright and starts the language server, once. Runs on first show, or earlier for a field
+        that shares the server while the editor is hidden. */
+    void startTools();
     QString ruffExe() const { return mRuffExe; }
 
     void setEditorFont(const QFont& font);

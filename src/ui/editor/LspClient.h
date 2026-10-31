@@ -63,6 +63,8 @@ public:
 
     /** Returns the request id, or -1 if the server is not ready. */
     int request(const QString& method, json params, Handler handler);
+    /** The handler is dropped if `context` is destroyed before the reply arrives. */
+    int request(QObject* context, const QString& method, json params, Handler handler);
     void cancel(int id);
     void notify(const QString& method, json params);
 

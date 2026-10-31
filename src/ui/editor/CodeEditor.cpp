@@ -237,7 +237,7 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent)
         t->setSingleShot(true);
     mSyncTimer.setInterval(150);
     mLintTimer.setInterval(450);
-    mCompletionTimer.setInterval(30);
+    mCompletionTimer.setInterval(0);
     mSignatureTimer.setInterval(90);
     mOccurrenceTimer.setInterval(300);
     mSemanticTimer.setInterval(350);
@@ -365,6 +365,9 @@ void CodeEditor::openInLsp()
     mLsp->openDocument(mOpenUri, toPlainText());
     mDocDirty = false;
     mSemanticTimer.start();
+    // A call typed while the server was starting gets its signature now.
+    if (hasFocus())
+        mSignatureTimer.start();
 }
 
 void CodeEditor::syncDocument()
@@ -386,7 +389,7 @@ void CodeEditor::requestSemanticTokens()
     if (mSemanticRequest >= 0)
         mLsp->cancel(mSemanticRequest);
     int revision = document()->revision();
-    mSemanticRequest = mLsp->request("textDocument/semanticTokens/full", {{"textDocument", {{"uri", mOpenUri.toStdString()}}}},
+    mSemanticRequest = mLsp->request(this, "textDocument/semanticTokens/full", {{"textDocument", {{"uri", mOpenUri.toStdString()}}}},
                                      [this, revision, legend](const json& r, const json&) {
                                          mSemanticRequest = -1;
                                          // Tokens for older text would land on the wrong columns.
@@ -941,8 +944,7 @@ bool CodeEditor::handleEditingKey(QKeyEvent* e)
     }
     if (ctrl && key == Qt::Key_Space)
     {
-        mCompletionManual = true;
-        requestCompletion(true);
+        showCompletion();
         return true;
     }
     if (mods == (Qt::ControlModifier | Qt::ShiftModifier) && key == Qt::Key_Space)
@@ -1877,12 +1879,15 @@ void CodeEditor::afterTyping(const QString& typed)
         }
         else
         {
+            const int visible = mPopup->filter(word);
             if (mCompletionIncomplete && !ch.isNull())
             {
+                if (visible == 0)
+                    hideCompletion();
                 mCompletionManual = false;
                 mCompletionTimer.start();
             }
-            else if (mPopup->filter(word) == 0)
+            else if (visible == 0)
                 hideCompletion();
             return;
         }
@@ -1933,6 +1938,7 @@ void CodeEditor::requestCompletion(bool manual)
     int ws = text::wordStart(line, col);
     mCompletionStart = c.block().position() + ws;
     mCompletionBase = text::dottedPrefixAt(line, col).base;
+    mInterpreterEntries = interp::complete(mCompletionBase);
     int generation = ++mCompletionGeneration;
     bool arguments = false;
     if (!manual && ws == col)
@@ -1954,17 +1960,21 @@ void CodeEditor::requestCompletion(bool manual)
         else
             params["context"] = {{"triggerKind", manual || arguments ? 1 : 3}};
         mCompletionRequest =
-            mLsp->request("textDocument/completion", params, [this, manual, arguments, generation](const json& r, const json&) {
+            mLsp->request(this, "textDocument/completion", params, [this, manual, arguments, generation](const json& r, const json&) {
                 mCompletionRequest = -1;
                 showCompletions(r, manual, arguments, generation);
             });
         if (mCompletionRequest >= 0)
+        {
+            if (!arguments && !mPopup->isVisible())
+                showCompletions(json(), manual, false, generation, true);
             return;
+        }
     }
     showCompletions(json(), manual, arguments, generation);
 }
 
-void CodeEditor::showCompletions(const json& result, bool manual, bool arguments, int generation)
+void CodeEditor::showCompletions(const json& result, bool manual, bool arguments, int generation, bool provisional)
 {
     LILA_ZONE();
 
@@ -1981,7 +1991,8 @@ void CodeEditor::showCompletions(const json& result, bool manual, bool arguments
     QList<CompletionEntry> entries;
     QSet<QString> seen;
     const json* items = nullptr;
-    mCompletionIncomplete = false;
+    // Typing over provisional names asks again, so filtering them to nothing can't lose the server's answer.
+    mCompletionIncomplete = provisional;
     if (result.is_array())
         items = &result;
     else if (result.is_object())
@@ -2011,20 +2022,22 @@ void CodeEditor::showCompletions(const json& result, bool manual, bool arguments
     }
 
     // The live interpreter knows what analysis can't: commands generated at runtime, objects built by earlier runs.
-    for (CompletionEntry& e : interp::complete(mCompletionBase))
+    for (const CompletionEntry& e : mInterpreterEntries)
         if (!seen.contains(e.label))
-            entries.append(std::move(e));
+            entries.append(e);
 
     if (entries.isEmpty())
     {
-        hideCompletion();
+        if (!provisional)
+            hideCompletion();
         return;
     }
     mPopup->setEntries(std::move(entries));
     int visible = mPopup->filter(typed);
     if (visible == 0 || (!manual && visible == 1 && mPopup->entries()[mPopup->currentEntry()].label == typed))
     {
-        hideCompletion();
+        if (!provisional)
+            hideCompletion();
         return;
     }
     QRect r = cursorRect();
@@ -2053,7 +2066,7 @@ void CodeEditor::resolveCompletion(int index)
         return;
     int generation = mCompletionGeneration;
     QString label = e.label;
-    mLsp->request("completionItem/resolve", e.lspItem, [this, generation, index, label](const json& r, const json&) {
+    mLsp->request(this, "completionItem/resolve", e.lspItem, [this, generation, index, label](const json& r, const json&) {
         if (generation != mCompletionGeneration || !r.is_object() || index >= mPopup->entries().size())
             return;
         CompletionEntry& entry = mPopup->entries()[index];
@@ -2127,6 +2140,12 @@ void CodeEditor::acceptCompletion()
     }
 }
 
+void CodeEditor::showCompletion()
+{
+    mCompletionManual = true;
+    requestCompletion(true);
+}
+
 void CodeEditor::insertCall(const QString& code)
 {
     hideCompletion();
@@ -2172,7 +2191,7 @@ void CodeEditor::requestSignatureHelp()
     syncDocument();
     if (mSignatureRequest >= 0)
         mLsp->cancel(mSignatureRequest);
-    mSignatureRequest = mLsp->request("textDocument/signatureHelp", textDocumentPosition(textCursor()), [this](const json& r, const json&) {
+    mSignatureRequest = mLsp->request(this, "textDocument/signatureHelp", textDocumentPosition(textCursor()), [this](const json& r, const json&) {
         mSignatureRequest = -1;
         showSignature(r);
     });
@@ -2339,7 +2358,7 @@ void CodeEditor::requestHover(const QPoint& viewportPos)
     syncDocument();
     if (mHoverRequest >= 0)
         mLsp->cancel(mHoverRequest);
-    mHoverRequest = mLsp->request("textDocument/hover", textDocumentPosition(c), [this, show](const json& r, const json&) {
+    mHoverRequest = mLsp->request(this, "textDocument/hover", textDocumentPosition(c), [this, show](const json& r, const json&) {
         mHoverRequest = -1;
         show(r.is_object() ? markupText(r.value("contents", json())) : QString());
     });
@@ -2380,7 +2399,7 @@ void CodeEditor::goToDefinition(const QTextCursor& at)
         return;
     }
     syncDocument();
-    mLsp->request("textDocument/definition", textDocumentPosition(at), [this, symbol](const json& r, const json&) {
+    mLsp->request(this, "textDocument/definition", textDocumentPosition(at), [this, symbol](const json& r, const json&) {
         std::optional<Definition> d = firstDefinition(r);
         // Lila's API opens its docs; the stubs say less than the docs do.
         if ((d && isLilaApiPath(text::uriToPath(d->uri))) || (!d && symbol.startsWith("lila")))
@@ -2424,7 +2443,7 @@ void CodeEditor::renameSymbol()
     syncDocument();
     json params = textDocumentPosition(c);
     params["newName"] = name.toStdString();
-    mLsp->request("textDocument/rename", params, [this](const json& r, const json& err) {
+    mLsp->request(this, "textDocument/rename", params, [this](const json& r, const json& err) {
         if (!err.is_null())
         {
             Q_EMIT statusMessage("Rename failed: " + QString::fromStdString(err.value("message", std::string())));
@@ -2455,7 +2474,7 @@ void CodeEditor::requestOccurrences()
         return;
     syncDocument();
     int pos = c.position();
-    mLsp->request("textDocument/documentHighlight", textDocumentPosition(c), [this, pos](const json& r, const json&) {
+    mLsp->request(this, "textDocument/documentHighlight", textDocumentPosition(c), [this, pos](const json& r, const json&) {
         if (textCursor().position() != pos || !r.is_array() || r.size() < 2)
             return;
         QList<QTextEdit::ExtraSelection> list;
@@ -2573,7 +2592,7 @@ void CodeEditor::requestPeek()
     at.setPosition(mLinkStart);
     const int start = mLinkStart;
     const QString symbol = docsSymbolAt(at);
-    mPeekRequest = mLsp->request("textDocument/definition", textDocumentPosition(at), [this, start, symbol](const json& r, const json&) {
+    mPeekRequest = mLsp->request(this, "textDocument/definition", textDocumentPosition(at), [this, start, symbol](const json& r, const json&) {
         mPeekRequest = -1;
         if (start != mLinkStart)
             return;

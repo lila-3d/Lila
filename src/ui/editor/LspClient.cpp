@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 
 #include <QCoreApplication>
+#include <QPointer>
 
 namespace lila::ui
 {
@@ -245,6 +246,14 @@ int LspClient::request(const QString& method, json params, Handler handler)
     mPending.insert(id, std::move(handler));
     send({{"jsonrpc", "2.0"}, {"id", id}, {"method", method.toStdString()}, {"params", std::move(params)}});
     return id;
+}
+
+int LspClient::request(QObject* context, const QString& method, json params, Handler handler)
+{
+    return request(method, std::move(params), [guard = QPointer<QObject>(context), h = std::move(handler)](const json& r, const json& e) {
+        if (guard)
+            h(r, e);
+    });
 }
 
 void LspClient::cancel(int id)

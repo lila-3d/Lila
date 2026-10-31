@@ -1117,6 +1117,11 @@ void ScriptEditor::jumpToTrace(const QString& file, int line)
 void ScriptEditor::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    startTools();
+}
+
+void ScriptEditor::startTools()
+{
     if (mStarted)
         return;
     mStarted = true;

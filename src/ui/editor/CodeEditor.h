@@ -75,6 +75,8 @@ public:
 
     /** Inserts code at the cursor; a call ending in `(` gets its `)`, signature help and the argument list. */
     void insertCall(const QString& code);
+    /** Opens completion at the cursor, as Ctrl+Space does. */
+    void showCompletion();
 
     /** 0-based line and column. */
     void goToLine(int line, int col = 0);
@@ -209,8 +211,9 @@ private:
     void scheduleLint();
 
     void requestCompletion(bool manual);
-    /** `arguments`: opened by `(` or `,` in a call, shown only when the server offers keyword arguments. */
-    void showCompletions(const json& result, bool manual, bool arguments, int generation);
+    /** `arguments`: opened by `(` or `,` in a call, shown only when the server offers keyword arguments.
+        `provisional`: the interpreter's names shown while the server's answer is still on its way; never hides the popup. */
+    void showCompletions(const json& result, bool manual, bool arguments, int generation, bool provisional = false);
     void acceptCompletion();
     void resolveCompletion(int entryIndex);
     void hideCompletion();
@@ -280,6 +283,8 @@ private:
     bool mCompletionIncomplete = false;
     bool mCompletionManual = false;
     QString mCompletionBase;
+    /** The live interpreter's names for mCompletionBase, read once per request. */
+    QList<CompletionEntry> mInterpreterEntries;
     int mSignatureRequest = -1;
     json mLastSignature;
     int mHoverRequest = -1;

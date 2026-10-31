@@ -168,6 +168,7 @@ public:
         if (auto* editor = over->window()->findChild<ScriptEditor*>())
         {
             font = editor->editorFont();
+            editor->startTools();
             mEdit->setRuffExe(editor->ruffExe());
             mEdit->setLanguageClient(editor->languageClient());
         }
@@ -294,6 +295,12 @@ private:
             mFromHistory = true;
             updateResults();
             mEdit->moveCursor(QTextCursor::End);
+            return true;
+        case Qt::Key_Tab:
+            // An open completion list takes Tab before this; otherwise Tab completes rather than indents.
+            if (mods != Qt::NoModifier)
+                return false;
+            mEdit->showCompletion();
             return true;
         case Qt::Key_Escape: close(); return true;
         case Qt::Key_QuoteLeft:
