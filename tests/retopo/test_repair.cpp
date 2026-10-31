@@ -164,6 +164,14 @@ TEST_CASE("repair checks: holes")
     CHECK(geo::test::signedVolume(m) == doctest::Approx(1e6));
 }
 
+TEST_CASE("repair checks: triangles")
+{
+    geo::Mesh m = soup({{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}, {3, 3}, {0, 1, 2, 0, 2, 3});
+    CHECK(retopo::findIssues(m, only(MeshIssue::Triangle)).of(MeshIssue::Triangle) == std::vector<Index>{0, 1});
+    repairs(m, MeshIssue::Triangle, 2);
+    CHECK(m.numFaces() == 1);
+}
+
 TEST_CASE("repair checks: n-gons")
 {
     std::vector<glm::dvec3> pts;

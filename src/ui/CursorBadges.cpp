@@ -3,6 +3,8 @@
 #include "core/PrefStore.h"
 #include "core/Log.h"
 #include "core/Registry.h"
+#include "scene/Components.h"
+#include "scene/SoftSelect.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Manipulator.h"
@@ -199,6 +201,12 @@ void registerDefaults()
     add({"cloneDrag", "copy", [](const ViewportState&) { return tools::cloneDrag(); }, "Drag a handle to clone", {"tool.cloneDragOn"}});
     add({"softSelect.adjust", "circle-dotted", [](const ViewportState&) { return tools::softSelectAdjusting(); },
          "Drag to set the soft select radius", {"softSelect.keyDown", "softSelect.adjustOn"}});
+    add({"softSelect.on", "ripple",
+         [](const ViewportState&) {
+             return !tools::softSelectAdjusting() && scene::components::mode() != scene::ComponentMode::Object &&
+                    PrefStore::get().value<bool>("general", scene::softSelect::kEnabled, false);
+         },
+         "Soft select on", {"softSelect.toggle"}});
     add({"tabSelect.add", "circle-plus", [](const ViewportState& v) { return v.tabSelects == true; }, "Drag to select", {}, "Tab"});
     add({"tabSelect.remove", "circle-minus", [](const ViewportState& v) { return v.tabSelects == false; }, "Drag to deselect", {}, "Tab"});
     add({"select.lassoHold", "lasso", [](const ViewportState&) { return paintSelect::lassoHeld(); }, "Drag to lasso select",

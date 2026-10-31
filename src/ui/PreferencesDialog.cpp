@@ -834,6 +834,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(manip, "Enabled", "/softSelect/enabled", false);
         number(manip, "Radius (cm)", "/softSelect/radius", 25.0, 0.01, 100000.0, 1.0);
         addRow(manip, "Falloff", new SoftSelectPanel, "/softSelect/falloff");
+        number(manip, "Falloff display strength (0 to 1)", viewportDisplay::kSoftSelectEmphasis, viewportDisplay::kSoftSelectEmphasisDefault, 0.0,
+               1.0, 0.1, 2);
     });
 
     builtIn(r, "measure", "Measure", "general", [](Page& measure) {

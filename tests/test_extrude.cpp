@@ -367,3 +367,109 @@ TEST_CASE("polyTargetWeld: vertex into target, halfway, edges, and across symmet
     CHECK(meshOf(cube).numPoints() == 7);
     CHECK(hasPoint(meshOf(cube), glm::dvec3(0.0, before.position(px).y, before.position(px).z)));
 }
+
+/** Points without a partner mirrored across x = 0. */
+static int unmirrored(const geo::Mesh& m)
+{
+    std::set<std::array<long long, 3>> at;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            at.insert({std::llround(m.position(p).x * 1e3), std::llround(m.position(p).y * 1e3), std::llround(m.position(p).z * 1e3)});
+    int n = 0;
+    for (const auto& k : at)
+        n += !at.contains({-k[0], k[1], k[2]});
+    return n;
+}
+
+TEST_CASE("polyGridFill with symmetry fills both sides alike")
+{
+    for (double size : {0.4, 1.0})
+        for (const char* shape : {"side", "top", "fan"})
+        {
+            CAPTURE(size);
+            CAPTURE(shape);
+            run("newScene");
+            std::string cube = run("polyCube", {{"width", 120.0}, {"height", 120.0}, {"depth", 120.0}, {"subdivisionsX", 6}, {"subdivisionsY", 6},
+                                                {"subdivisionsZ", 6}})[0];
+            run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
+            const geo::Mesh& m = meshOf(cube);
+            std::vector<Index> faces;
+            Index side = geo::kInvalid;
+            for (Index f = 0; f < m.faceCapacity(); ++f)
+            {
+                if (!m.faceValid(f))
+                    continue;
+                glm::dvec3 c{0.0};
+                m.forEachFaceCorner(f, [&](Index fc) { c += m.position(m.cornerPoint(fc)) / 4.0; });
+                if (std::string(shape) == "top" && c.y > 59 && c.x > 10 && c.x < 50 && c.z > -30 && c.z < 30)
+                    faces.push_back(f);
+                if (std::string(shape) == "side" && c.x > 59 && c.y > -20 && c.y < 40 && c.z > -40 && c.z < 20)
+                    faces.push_back(f);
+                if (c.x > 59 && std::abs(c.y - 10) < 1 && std::abs(c.z - 10) < 1)
+                    side = f;
+            }
+            if (std::string(shape) == "fan")
+            {
+                REQUIRE(side != geo::kInvalid);
+                run("selectMode", {{"args", {"face"}}});
+                run("selectComponents", {{"args", {cube}}, {"faces", {side}}});
+                run("polyPoke");
+                REQUIRE(unmirrored(meshOf(cube)) == 0);
+                const geo::Mesh& poked = meshOf(cube);
+                Index centre = geo::kInvalid;
+                for (Index p = 0; p < poked.pointCapacity(); ++p)
+                    if (poked.pointValid(p) && glm::distance(poked.position(p), glm::dvec3(60, 10, 10)) < 1e-6)
+                        centre = p;
+                REQUIRE(centre != geo::kInvalid);
+                run("selectMode", {{"args", {"vertex"}}});
+                run("selectComponents", {{"args", {cube}}, {"vertices", {centre}}});
+            }
+            else
+            {
+                REQUIRE(!faces.empty());
+                run("selectMode", {{"args", {"face"}}});
+                run("selectComponents", {{"args", {cube}}, {"faces", faces}});
+            }
+            run("polyGridFill", {{"gridSize", size}});
+            CHECK(unmirrored(meshOf(cube)) == 0);
+            CHECK(zeroAreaFaces(meshOf(cube)) == 0);
+        }
+}
+
+/** Points without a partner mirrored across y = 0. */
+static int unmirroredY(const geo::Mesh& m)
+{
+    std::set<std::array<long long, 3>> at;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p))
+            at.insert({std::llround(m.position(p).x * 1e3), std::llround(m.position(p).y * 1e3), std::llround(m.position(p).z * 1e3)});
+    int n = 0;
+    for (const auto& k : at)
+        n += !at.contains({k[0], -k[1], k[2]});
+    return n;
+}
+
+TEST_CASE("polyGridFill with symmetry fills round mirrored fans alike")
+{
+    for (int sides : {12, 16, 20, 13})
+        for (double size : {0.4, 1.0})
+        {
+            CAPTURE(sides);
+            CAPTURE(size);
+            run("newScene");
+            std::string cyl = run("polyCylinder", {{"radius", 50.0}, {"height", 100.0}, {"subdivisionsAxis", sides}, {"capType", "fan"}})[0];
+            run("setSymmetry", {{"args", {cyl}}, {"axis", "y"}});
+            const geo::Mesh& m = meshOf(cyl);
+            Index top = geo::kInvalid;
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+                if (m.pointValid(p) && glm::distance(m.position(p), glm::dvec3(0, 50, 0)) < 1e-6)
+                    top = p;
+            REQUIRE(top != geo::kInvalid);
+            run("selectMode", {{"args", {"vertex"}}});
+            run("selectComponents", {{"args", {cyl}}, {"vertices", {top}}});
+            run("polyGridFill", {{"gridSize", size}});
+            CHECK(unmirroredY(meshOf(cyl)) == 0);
+            CHECK(zeroAreaFaces(meshOf(cyl)) == 0);
+            CHECK(coincidentFaces(meshOf(cyl)) == 0);
+        }
+}

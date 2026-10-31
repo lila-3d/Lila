@@ -33,6 +33,7 @@ enum class MeshIssue : uint8_t
     NonManifoldEdge,  // edges: three or more faces
     NonManifoldPoint, // points: faces around them form more than one fan
     Hole,             // edges: on an open border
+    Triangle,         // faces: three sides
     Ngon,             // faces: more than four sides
     Concave,          // faces: a corner bending inward
     ZeroAreaUv,       // faces: no area in uv set 0
@@ -57,7 +58,7 @@ LILA_SCENE_API const char* issueLabel(MeshIssue issue);
 struct LILA_SCENE_API RepairOptions
 {
     /** Which issues to look for and fix, by MeshIssue. */
-    std::array<bool, kIssueCount> checks = {true, true, true, true, true, true, false, false, false, false, true};
+    std::array<bool, kIssueCount> checks = {true, true, true, true, true, true, false, false, false, false, false, true};
     /** Distance under which points coincide and edges and faces are degenerate; negative scales with the mesh (1e-6 of the bounds diagonal). */
     double tolerance = -1.0;
     /** Repair also removes edges and points left without faces. */
@@ -96,8 +97,8 @@ struct LILA_SCENE_API RepairReport
 
 /**
  * Fixes the checked issues in order: welds coincident points, collapses zero-length edges, drops lamina copies, merges
- * zero-area slivers into a neighbour, splits non-manifold edges and points apart, fills holes, cuts n-gons and concave
- * faces into quads and triangles, conforms winding. Compacts.
+ * zero-area slivers into a neighbour, splits non-manifold edges and points apart, fills holes, joins triangles into quads,
+ * cuts n-gons and concave faces into quads and triangles, conforms winding. Compacts.
  */
 LILA_SCENE_API RepairReport repairMesh(geo::Mesh& mesh, const RepairOptions& opts = {});
 

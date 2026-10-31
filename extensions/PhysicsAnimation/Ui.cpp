@@ -5,6 +5,7 @@
 #include "World.h"
 
 #include <lila/Command.h>
+#include <lila/OptionBox.h>
 #include <lila/Events.h>
 #include <lila/Graph.h>
 #include <lila/Log.h>
@@ -49,9 +50,11 @@ const glm::vec4 kSimColor{0.95f, 0.85f, 0.15f, 1.0f};
 
 json runCommand(const char* name, const json& call = json::object())
 {
+    if (optionBox::shiftOpens(name, call))
+        return nullptr;
     try
     {
-        return ops::execute(name, call, CallSource::UI);
+        return ops::execute(name, ops::options::callWith(name, call), CallSource::UI);
     }
     catch (const std::exception& e)
     {

@@ -8,6 +8,7 @@
 #include "curve/Groom.h"
 #include "curve/GroomNode.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -109,7 +110,7 @@ void runUi(const char* cmd, const json& call)
 {
     try
     {
-        ops::execute(cmd, call, CallSource::UI);
+        ops::execute(cmd, ops::options::callWith(cmd, call), CallSource::UI);
     }
     catch (const CommandError& e)
     {

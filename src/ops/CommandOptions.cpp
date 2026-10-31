@@ -83,10 +83,10 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     O repair;
     repair.choices["mode"] = {{"select", "Select Matching Components"}, {"repair", "Repair Matching Components"}};
     repair.order = {"mode",          "coincident",       "zeroLengthEdges", "zeroAreaFaces", "flippedNormals", "lamina",    "nonManifoldEdges",
-                    "nonManifoldVertices", "holes",      "ngons",           "concave",       "zeroAreaUvs",    "tolerance", "removeLoose"};
+                    "nonManifoldVertices", "holes",      "triangles",       "ngons",           "concave",       "zeroAreaUvs",    "tolerance", "removeLoose"};
     for (const char* f : {"coincident", "zeroLengthEdges", "zeroAreaFaces", "flippedNormals"})
         repair.sections[f] = "Geometry";
-    for (const char* f : {"lamina", "nonManifoldEdges", "nonManifoldVertices", "holes", "ngons", "concave"})
+    for (const char* f : {"lamina", "nonManifoldEdges", "nonManifoldVertices", "holes", "triangles", "ngons", "concave"})
         repair.sections[f] = "Topology";
     repair.sections["zeroAreaUvs"] = "UVs";
     repair.sections["tolerance"] = "Tolerance";
@@ -96,6 +96,7 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
                      {"nonManifoldEdges", "Non-Manifold Edges"},
                      {"nonManifoldVertices", "Non-Manifold Vertices"},
                      {"holes", "Holes (Border Edges)"},
+                     {"triangles", "Triangles"},
                      {"ngons", "Faces With More Than 4 Sides"},
                      {"concave", "Concave Faces"},
                      {"zeroLengthEdges", "Zero-Length Edges"},

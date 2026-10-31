@@ -607,6 +607,44 @@ TEST_CASE("ops: grid fill")
         CHECK(countSides(m, 4) == m.numFaces());
     }
 
+    SUBCASE("rectangular holes put the grid's corners on theirs, mirrored holes alike")
+    {
+        PlaneOptions po;
+        po.width = po.depth = 120.0;
+        po.subdivX = po.subdivZ = 12;
+        Mesh m = makePlane(po);
+        std::vector<Index> hole;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+        {
+            glm::dvec3 c{0.0};
+            m.forEachFaceCorner(f, [&](Index fc) { c += m.position(m.cornerPoint(fc)) / 4.0; });
+            if (std::abs(c.x) > 10 && std::abs(c.x) < 30 && c.z > -20 && c.z < 10)
+                hole.push_back(f);
+        }
+        REQUIRE(hole.size() == 12);
+        GridFillOptions o;
+        o.gridSize = 1.0;
+        std::vector<Index> made;
+        SUBCASE("faces") { made = gridFillFaces(m, hole, o); }
+        SUBCASE("holes")
+        {
+            deleteFaces(m, hole);
+            std::vector<Index> inner;
+            for (Index e = 0; e < m.edgeCapacity(); ++e)
+                if (m.edgeValid(e) && std::abs(m.position(m.edgePoint(e, 0)).x) < 50 && std::abs(m.position(m.edgePoint(e, 0)).z) < 50)
+                    inner.push_back(e);
+            made = gridFillHoles(m, inner, o);
+        }
+        CHECK(made.size() == 12);
+        for (Index f : made)
+        {
+            std::vector<glm::dvec3> p;
+            m.forEachFaceCorner(f, [&](Index fc) { p.push_back(m.position(m.cornerPoint(fc))); });
+            REQUIRE(p.size() == 4);
+            CHECK(glm::length(glm::cross(p[2] - p[0], p[3] - p[1])) / 2 == doctest::Approx(100.0));
+        }
+    }
+
     SUBCASE("patches that are not discs are left alone")
     {
         Mesh m = fanCylinder(12);

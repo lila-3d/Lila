@@ -448,7 +448,7 @@ TEST_CASE("cut seams survive a planar projection under an auto bevel")
     run("uvCutEdges");
     run("selectMode", {{"args", {"object"}}});
     run("select", {{"args", {cube}}});
-    run("uvProject", {{"type", "planar"}, {"axis", "y"}});
+    run("uvProject", {{"type", "planar"}, {"axis", "y"}, {"keepSeams", true}});
     g.evaluate();
     cage = cageOf(cube);
     scene::MeshPtr out = g.find(cube)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);

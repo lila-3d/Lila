@@ -790,7 +790,7 @@ void registerCommands()
                   {"offsetV", "", T::Float, 0.0, "V offset, applied after the scale."},
                   {"viewDir", "", T::Vec3, nullptr, "World direction the camera looks along, for the seam; the UI passes the active view's."},
                   {"normalize", "", T::Bool, true, "Fit into 0-1 keeping proportions."},
-                  {"keepSeams", "", T::Bool, true, "Keep the seams already cut inside the faces; off joins the faces into the projection's islands."},
+                  {"keepSeams", "", T::Bool, false, "Keep the seams already cut inside the faces; off joins the faces into the projection's islands."},
                   {"matrix", "", T::List, nullptr, "Camera projection, column major, for type=camera."},
                   {"pack", "", T::Bool, false, "Pack the resulting islands afterwards."}},
         .run = [](const Args& a) -> json {
@@ -815,7 +815,7 @@ void registerCommands()
                 throw CommandError("uvProject: fit must be auto, world or object");
             o.fit = fit == "world" ? ProjectFit::World : fit == "object" ? ProjectFit::Object : ProjectFit::Auto;
             o.normalize = a.get<bool>("normalize", true);
-            o.keepSeams = a.get<bool>("keepSeams", true);
+            o.keepSeams = a.get<bool>("keepSeams", false);
             auto vec3 = [&](const char* name) -> std::optional<glm::dvec3> {
                 if (!a.has(name))
                     return std::nullopt;

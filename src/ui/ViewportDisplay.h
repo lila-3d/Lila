@@ -45,7 +45,13 @@ inline constexpr const char* kVertexColors = "/viewport/vertexColors"; // "off",
 inline constexpr const char* kColorChannel = "/viewport/colorChannel"; // "rgb", "r", "g", "b" or "a" (grayscale)
 /** Weight displays (skin weights, soft select falloff) as a grayscale ramp instead of the colour ramp. */
 inline constexpr const char* kGrayscaleWeights = "/viewport/grayscaleWeights";
-/** Selected objects and components draw highlighted, with the symmetry line; off, they draw as if unselected (manipulators still show). */
+/**
+ * How strongly components show the soft select falloff, 0 to 1: 0 only shades the vertex dots, higher tints the edges by
+ * weight and grows the dots with it; above 0.5 the edges draw at the selected edge width.
+ */
+inline constexpr const char* kSoftSelectEmphasis = "/softSelect/emphasis";
+inline constexpr double kSoftSelectEmphasisDefault = 0.5;
+/** Objects draw highlighted when selected; off, they draw as if unselected (manipulators and component modes still show). */
 inline constexpr const char* kHighlightSelection = "/viewport/highlightSelection";
 inline constexpr int kDefaultSamples = 8;
 /** Preview-only post over the shaded scene: an anisotropic Kuwahara (painted look) and depth/normal outlines. */

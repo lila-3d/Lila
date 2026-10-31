@@ -2,6 +2,7 @@
 
 #include "brush/BrushUi.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "core/Log.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -64,7 +65,7 @@ constexpr std::array<BrushInfo, size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Freeze, "snowflake", "Freeze", "Pin points so no brush moves them; Ctrl unfreezes."},
 }};
 
-bool runCommand(const char* name, const json& call) { return actions::run({{"command", name}, {"args", call}}); }
+bool runCommand(const char* name, const json& call) { return actions::run({{"command", name}, {"args", ops::options::callWith(name, call)}}); }
 
 QMainWindow* mainWindow()
 {
@@ -513,10 +514,12 @@ void registerSculptUi()
     actions::add({.id = "mesh.relaxKeepForm",
                   .label = "Relax (Keep Form)",
                   .category = "Mesh",
-                  .run = [] { runCommand("relaxMesh", {{"iterations", 10}, {"strength", 0.5}, {"pinCreases", true}, {"pinSeams", true}}); },
+                  .run = [] { runCommand("relaxMesh", {{"pinCreases", true}, {"pinSeams", true}}); },
                   .doc = "Even out the point spacing of the selected components (or whole meshes), sliding points along the "
                          "surface so the shape stays. Borders, creases and UV seams stay put.",
-                  .python = ops::toPython("relaxMesh", {{"iterations", 10}, {"pinCreases", true}, {"pinSeams", true}})});
+                  .python = ops::toPython("relaxMesh", {{"iterations", 10}, {"pinCreases", true}, {"pinSeams", true}}),
+                  .command = "relaxMesh",
+                  .call = {{"pinCreases", true}, {"pinSeams", true}}});
     actions::add({.id = "mesh.reproject",
                   .label = "Reproject onto Target",
                   .category = "Mesh",
@@ -531,7 +534,8 @@ void registerSculptUi()
                   },
                   .doc = "Shrinkwrap meshes onto a surface: select the target first, then the meshes to move. The shrinkwrap "
                          "command also projects along normals or a direction, with an offset.",
-                  .python = ops::toPython("shrinkwrap", {{"args", {"low"}}, {"target", "high"}, {"method", "closest"}, {"offset", 0.0}})});
+                  .python = ops::toPython("shrinkwrap", {{"args", {"low"}}, {"target", "high"}, {"method", "closest"}, {"offset", 0.0}}),
+                  .command = "shrinkwrap"});
     actions::add({.id = "mesh.transferShape",
                   .label = "Transfer Shape (High to Low)",
                   .category = "Mesh",
@@ -546,6 +550,7 @@ void registerSculptUi()
                   },
                   .doc = "Fit low-poly cages to a high poly (an imported sculpt) so their subdivision matches it, keeping UVs. "
                          "Select the high poly first.",
-                  .python = ops::toPython("transferShape", {{"args", {"high", "low"}}, {"method", "fit"}, {"levels", 2}})});
+                  .python = ops::toPython("transferShape", {{"args", {"high", "low"}}, {"method", "fit"}, {"levels", 2}}),
+                  .command = "transferShape"});
 }
 } // namespace lila::ui

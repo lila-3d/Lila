@@ -4,6 +4,8 @@
 #include "core/Registry.h"
 #include "ui/Owner.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -27,6 +29,19 @@ LILA_UI_API bool available(const std::string& actionId);
 
 /** Opens, or raises, the action's options dialog. */
 LILA_UI_API void open(const std::string& actionId);
+
+/**
+ * Opens, or raises, the options dialog of a command call that has no action, for panel buttons. title names the
+ * dialog. False, opening nothing, when the command has no settings beyond the call.
+ */
+LILA_UI_API bool openCommand(const std::string& title, const std::string& command, const nlohmann::json& call);
+
+/**
+ * For a panel button about to run a command: with Shift held, opens the call's options dialog instead and returns true.
+ * title defaults to the label of an action running the command. Run the call through ops::options::callWith otherwise,
+ * so the dialog's settings stick.
+ */
+LILA_UI_API bool shiftOpens(const std::string& command, const nlohmann::json& call, const std::string& title = {});
 
 /** Custom option boxes, by action id. */
 LILA_UI_API Registry<std::function<void()>>& customRegistry();

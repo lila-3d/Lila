@@ -394,8 +394,6 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         drawObjectSymmetryEdges(s);
         return;
     }
-    if (!viewportDisplay::highlightSelection())
-        return;
     scene::Graph& g = scene::Graph::current();
     std::vector<scene::NodeId> live = hilited(mIsolation);
     const ComponentPalette palette = componentPalette();
@@ -507,10 +505,26 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             continue;
         }
         std::vector<float> weights;
+        const float emphasis = float(std::clamp(
+            PrefStore::get().value<double>("general", viewportDisplay::kSoftSelectEmphasis, viewportDisplay::kSoftSelectEmphasisDefault), 0.0, 1.0));
         if (soft)
         {
             const auto& sel = scene::components::selected(id, mode);
             weights = scene::softWeights(m, world, scene::components::convert(m, mode, sel, ComponentMode::Vertex));
+            const bool gray = viewportDisplay::grayscaleWeights();
+            std::vector<render::LineVertex>& softEdges = emphasis > 0.5f ? s.selectedEdges : s.linesOnTop;
+            auto edgeColor = [&](float w) { return w > 0.0f ? glm::mix(palette.wire, viewportDisplay::falloffColor(w, gray), emphasis) : palette.wire; };
+            for (uint32_t e = 0; emphasis > 0.0f && e < m.edgeCapacity(); ++e)
+            {
+                if (!m.edgeValid(e) || !vis->edge(e) || (mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
+                    continue;
+                const uint32_t a = m.edgePoint(e, 0), b = m.edgePoint(e, 1);
+                const float wa = a < weights.size() ? weights[a] : 0.0f, wb = b < weights.size() ? weights[b] : 0.0f;
+                if (wa <= 0.0f && wb <= 0.0f)
+                    continue;
+                softEdges.push_back({wp(a), edgeColor(wa)});
+                softEdges.push_back({wp(b), edgeColor(wb)});
+            }
         }
         const bool edgeFaceVertices =
             mode != ComponentMode::Vertex && PrefStore::get().value<bool>("general", viewportDisplay::kVerticesInEdgeFaceModes, false);
@@ -551,7 +565,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
                 // Outside vertex mode only the falloff shows, as dots shaded by weight, and the selection's own vertices by pref.
                 if (mode != ComponentMode::Vertex && (wgt >= 1.0f ? !edgeFaceVertices : (wgt <= 0.0f && on[p] != 1)))
                     continue;
-                double half = 0.5 * (on[p] == 1 || wgt >= 1.0f ? thickness.vertexSelected : thickness.vertex) * atUnit * (view.ortho ? 1.0 : depth);
+                const double size = on[p] == 1 ? thickness.vertexSelected : thickness.vertex + (thickness.vertexSelected - thickness.vertex) * wgt * emphasis;
+                double half = 0.5 * size * atUnit * (view.ortho ? 1.0 : depth);
                 glm::dvec3 r = right * half, u = up * half;
                 glm::vec4 col = on[p] == 1 ? hotLinear
                                 : wgt > 0.0f ? viewportDisplay::falloffColor(wgt, grayWeights)

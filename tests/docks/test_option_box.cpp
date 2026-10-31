@@ -9,6 +9,7 @@
 #include <QDialog>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QStyleFactory>
 
 #include <cstdlib>
@@ -93,5 +94,53 @@ TEST_CASE("menu rows of commands with flags get an option box that opens the gen
     CHECK(probeRuns == 1);
     if (QDialog* again = optionsDialog())
         again->close();
+    QApplication::processEvents();
+}
+
+TEST_CASE("Apply in an action's options runs the action itself, and panel buttons open options on Shift")
+{
+    if (!ops::find("boxProbe"))
+        ops::registerCommand({.name = "boxProbe",
+                               .doc = "Probe.",
+                               .flags = {{"segments", "", ArgType::Int, 2, "How many."}, {"mode", "", ArgType::String, "a", "a | b"}},
+                               .undoable = false,
+                               .run = [](const Args&) -> json {
+                                   ++probeRuns;
+                                   return nullptr;
+                               }});
+    int lambdaRuns = 0;
+    ui::actions::add({.id = "test.boxGather",
+                      .label = "Box Gather",
+                      .category = "Mesh",
+                      .run = [&lambdaRuns] { ++lambdaRuns; },
+                      .doc = "Gathers its own arguments.",
+                      .command = "boxProbe"});
+    CHECK(ui::optionBox::available("test.boxGather"));
+    ui::optionBox::open("test.boxGather");
+    QApplication::processEvents();
+    QDialog* d = nullptr;
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (auto* dlg = qobject_cast<QDialog*>(w); dlg && dlg->isVisible() && dlg->windowTitle() == "Box Gather Options")
+            d = dlg;
+    REQUIRE(d);
+    QPushButton* apply = nullptr;
+    for (QPushButton* b : d->findChildren<QPushButton*>())
+        if (b->text() == "Apply")
+            apply = b;
+    REQUIRE(apply);
+    apply->click();
+    CHECK(lambdaRuns == 1);
+    d->close();
+    QApplication::processEvents();
+    ui::actions::remove("test.boxGather");
+
+    // Without Shift a panel button runs; select has no settings worth a dialog either way.
+    CHECK_FALSE(ui::optionBox::shiftOpens("boxProbe", json::object()));
+    CHECK_FALSE(ui::optionBox::openCommand("Select", "select", json::object()));
+    CHECK(ui::optionBox::openCommand("Box Probe", "boxProbe", json::object()));
+    QApplication::processEvents();
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (auto* dlg = qobject_cast<QDialog*>(w); dlg && dlg->isVisible())
+            dlg->close();
     QApplication::processEvents();
 }

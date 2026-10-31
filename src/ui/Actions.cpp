@@ -793,7 +793,8 @@ void registerBuiltins()
     togglePref("viewport.toggleBottomBar", "Show Bottom Bar", vd::kBottomBar, true,
                "The row along the bottom of each viewport panel: highlight under the cursor, selection masks, symmetry and snapping.");
     togglePref("viewport.toggleHighlightSelection", "Highlight Selection", vd::kHighlightSelection, true,
-               "Selected objects and components draw highlighted. Turn off to watch a selected mesh change without the highlight in the way.");
+               "Selected objects draw highlighted. Turn off to watch a selected mesh change without the highlight in the way; "
+               "component modes still show their components.");
     togglePref("viewport.togglePreselectObjects", "Highlight Objects Under Cursor", "/viewport/preselect/objects", false,
                "In object mode, the object under the cursor highlights before it is clicked.");
     togglePref("select.toggleSymmetric", "Symmetric Selection", "/select/symmetric", true,

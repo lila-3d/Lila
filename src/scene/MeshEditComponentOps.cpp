@@ -471,8 +471,8 @@ void registerMeshEditComponentCommands()
             return editSelected("Grid Fill", kind, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
                 const Ids all = withMirror(m, s, sel, kind);
                 if (kind == K::Edge)
-                    return faces(geo::gridFillHoles(m, all, o));
-                return faces(geo::gridFillFaces(m, kind == K::Vertex ? geo::facesOfPoints(m, all) : all, o));
+                    return faces(geo::gridFillHoles(m, all, o, s));
+                return faces(geo::gridFillFaces(m, kind == K::Vertex ? geo::facesOfPoints(m, all) : all, o, s));
             });
         },
     });

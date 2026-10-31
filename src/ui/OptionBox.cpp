@@ -1,5 +1,6 @@
 #include "ui/OptionBox.h"
 
+#include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
@@ -31,6 +32,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 
 namespace lila::ui::optionBox
@@ -67,7 +69,8 @@ QWidget* mainWindow()
 class OptionsDialog : public QDialog
 {
 public:
-    OptionsDialog(const Action& a, QWidget* parent) : QDialog(parent), mCommand(a.command), mCall(a.call.is_object() ? a.call : json::object())
+    OptionsDialog(const Action& a, QWidget* parent)
+        : QDialog(parent), mAction(a.id), mCommand(a.command), mCall(a.call.is_object() ? a.call : json::object())
     {
         setAttribute(Qt::WA_DeleteOnClose);
         setWindowTitle(QString::fromStdString(title(a)) + " Options");
@@ -206,7 +209,11 @@ private:
     void run()
     {
         saveSettings();
-        actions::runWithOptions(mCommand, mCall);
+        // An action that gathers its own arguments (the selection, a pick order) runs as itself, with these settings.
+        if (const Action* a = actions::find(mAction); a && a->run)
+            actions::run(json(mAction));
+        else
+            actions::runWithOptions(mCommand, mCall);
     }
 
     /** Stores the fields' values where Apply does, so the menu item, hotkeys and shelf run with them. */
@@ -261,6 +268,7 @@ private:
         return call;
     }
 
+    std::string mAction;
     std::string mCommand;
     json mCall;
     /** The fields' values, stored only by Apply or Save Settings so Close leaves the remembered ones alone. */
@@ -453,6 +461,57 @@ void open(const std::string& actionId)
     d->raise();
     d->activateWindow();
     flashLocate(d);
+}
+
+/** The label of an action making this call (or running this command), else the command's name in words. */
+std::string titleFor(const std::string& command, const nlohmann::json& call)
+{
+    std::string any;
+    for (const Action* a : actions::all())
+        if (a->command == command)
+        {
+            if (a->call == call)
+                return a->label;
+            if (any.empty())
+                any = a->label;
+        }
+    if (!any.empty())
+        return any;
+    std::string words;
+    for (char c : command)
+    {
+        if (std::isupper(static_cast<unsigned char>(c)) && !words.empty())
+            words += ' ';
+        words += words.empty() ? char(std::toupper(static_cast<unsigned char>(c))) : c;
+    }
+    return words;
+}
+
+bool shiftOpens(const std::string& command, const nlohmann::json& call, const std::string& title)
+{
+    if (!(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier))
+        return false;
+    return openCommand(title.empty() ? titleFor(command, call) : title, command, call);
+}
+
+bool openCommand(const std::string& title, const std::string& command, const nlohmann::json& call)
+{
+    const nlohmann::json fixed = call.is_object() ? call : nlohmann::json::object();
+    if (settingless(command) || !opt::hasOptions(command, fixed))
+        return false;
+    const std::string key = "command:" + command + fixed.dump();
+    QPointer<OptionsDialog>& d = dialogs()[key];
+    if (!d)
+    {
+        const CommandDef* def = ops::find(command);
+        d = new OptionsDialog(Action{.id = key, .label = title, .doc = def ? def->doc : std::string(), .command = command, .call = fixed},
+                              mainWindow());
+    }
+    d->show();
+    d->raise();
+    d->activateWindow();
+    flashLocate(d);
+    return true;
 }
 
 void decorateMenu(QMenu* menu)

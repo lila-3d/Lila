@@ -93,6 +93,7 @@ std::vector<FlagDef> repairFlags()
         "Edges shared by three or more faces (repair splits the extra faces off).",
         "Vertices where separate fans of faces meet, like a bowtie (repair gives each fan its own vertex).",
         "Edges on an open border (repair fills each hole with a face). Off by default: open meshes are often meant to be.",
+        "Triangles (repair joins neighbouring pairs into quads where they make good ones).",
         "Faces with more than four sides (repair triangulates them and joins the triangles back into convex quads where they fit).",
         "Faces with a corner bending inward (repair cuts them into convex quads and triangles).",
         "Faces with no area in the first uv set. Repair only reports them: they need a new unwrap.",
@@ -482,7 +483,7 @@ void registerCommands()
         .name = "meshRepair",
         .doc = "Find or fix broken geometry. mode='select' selects what each enabled check finds and reports the counts; "
                "mode='repair' fixes it: welds coincident points, collapses zero-length edges, drops lamina copies, merges "
-               "zero-area slivers into a neighbour, splits non-manifold edges and vertices apart, fills holes, cuts n-gons "
+               "zero-area slivers into a neighbour, splits non-manifold edges and vertices apart, fills holes, joins triangles into quads, cuts n-gons "
                "and concave faces into quads and triangles, conforms winding, removes loose points and edges.",
         .positionalDoc = "objects",
         .flags = repairFlags(),

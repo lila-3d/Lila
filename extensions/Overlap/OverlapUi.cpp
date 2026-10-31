@@ -4,6 +4,7 @@
 #include "Overlap.h"
 
 #include <lila/Command.h>
+#include <lila/OptionBox.h>
 #include <lila/Events.h>
 #include <lila/Graph.h>
 #include <lila/Log.h>
@@ -52,9 +53,11 @@ double numberOf(const Node& n, const char* name)
 /** Runs a command from the UI; failures go to the log rather than out of a Qt slot. */
 json runCommand(const char* name, const json& call = json::object())
 {
+    if (optionBox::shiftOpens(name, call))
+        return nullptr;
     try
     {
-        return ops::execute(name, call, CallSource::UI);
+        return ops::execute(name, ops::options::callWith(name, call), CallSource::UI);
     }
     catch (const std::exception& e)
     {

@@ -701,18 +701,9 @@ void UvEditor::hideEvent(QHideEvent* e)
     uvLive::setEditorShown(this, false);
 }
 
-/** The label of the action making this call, else the command's name, for its options dialog. */
-static std::string optionsTitle(const char* command, const json& call)
-{
-    for (const Action* a : actions::all())
-        if (a->command == command && a->call == call)
-            return a->label;
-    return command;
-}
-
 json UvEditor::runCommand(const char* command, const json& call)
 {
-    if ((QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) && optionBox::openCommand(optionsTitle(command, call), command, call))
+    if (optionBox::shiftOpens(command, call))
         return nullptr;
     json r;
     try

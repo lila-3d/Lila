@@ -235,9 +235,14 @@ struct GridFillOptions
  * Replaces each connected patch of faces, such as the triangle fan round a pole, with a quad grid inside a ring of
  * quads. A patch must be a disc with one border loop; others are left alone. Returns the new faces.
  */
-LILA_SCENE_API std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const GridFillOptions& opts = {});
-/** Fills the holes bordered by the given edges the same way (all holes when empty). Returns the new faces. */
-LILA_SCENE_API std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const GridFillOptions& opts = {});
+LILA_SCENE_API std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const GridFillOptions& opts = {},
+                                               const SymmetryMap* sym = nullptr);
+/**
+ * Fills the holes bordered by the given edges the same way (all holes when empty). Returns the new faces. With sym, a
+ * patch or hole that is the image of another is filled as that one's mirror, point for point.
+ */
+LILA_SCENE_API std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const GridFillOptions& opts = {},
+                                               const SymmetryMap* sym = nullptr);
 LILA_SCENE_API void flipNormals(Mesh& mesh, std::span<const Index> faces);
 /** Makes winding consistent within each connected part; closed parts face outward. All faces when empty. */
 LILA_SCENE_API void conformNormals(Mesh& mesh, std::span<const Index> faces = {});

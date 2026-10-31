@@ -423,7 +423,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     const glm::vec4 componentWire = componentPalette().wire;
     const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().edge, devicePixelRatioF());
     std::unordered_set<scene::NodeId> hilite;
-    if (highlight && scene::components::mode() != scene::ComponentMode::Object)
+    if (!rv && scene::components::mode() != scene::ComponentMode::Object)
         for (scene::NodeId id : hilited(mIsolation))
             hilite.insert(id);
     const bool aids = !rv && displayAids::anyDrawn(mHudPanel);

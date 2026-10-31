@@ -1,6 +1,7 @@
 #include "geo/Ops.h"
 #include "geo/OpsCommon.h"
 
+#include "geo/Symmetry.h"
 #include "geo/Topology.h"
 
 #include "core/Profile.h"
@@ -70,10 +71,14 @@ FillPoint blendPoint(Mesh& m, std::initializer_list<std::pair<const FillPoint*, 
 class Filler
 {
 public:
-    Filler(Mesh& m, Index srcFace) : mMesh(m), mSrcFace(srcFace) {}
+    /** flip winds every face the other way, for a border walked against the faces it fills. */
+    Filler(Mesh& m, Index srcFace, bool flip) : mMesh(m), mSrcFace(srcFace), mFlip(flip) {}
 
-    void face(std::initializer_list<const FillPoint*> pts)
+    void face(std::initializer_list<const FillPoint*> list)
     {
+        std::vector<const FillPoint*> pts(list);
+        if (mFlip)
+            std::reverse(pts.begin(), pts.end());
         std::vector<Index> ids;
         for (const FillPoint* p : pts)
             ids.push_back(p->id);
@@ -125,17 +130,60 @@ public:
 private:
     Mesh& mMesh;
     Index mSrcFace;
+    bool mFlip;
 };
 
-/** Fills a closed border, given in the winding the new faces take, round the centre point. */
-std::vector<Index> fillLoop(Mesh& m, std::vector<FillPoint> outer, const FillPoint& centre, Index srcFace, const GridFillOptions& o)
+/**
+ * The border point to start the grid from: the one whose four grid corners turn the most, so a rectangular hole keeps its
+ * corners as the grid's, and a mirrored hole picks the same corners whatever point its border was walked from.
+ */
+int cornerStart(const std::vector<FillPoint>& loop, int gridLoop)
+{
+    const int n = int(loop.size());
+    std::vector<double> turn(size_t(n), 0.0);
+    for (int i = 0; i < n; ++i)
+    {
+        const glm::dvec3 in = loop[size_t(i)].pos - loop[size_t((i + n - 1) % n)].pos;
+        const glm::dvec3 out = loop[size_t((i + 1) % n)].pos - loop[size_t(i)].pos;
+        const double len = glm::length(in) * glm::length(out);
+        if (len > 0.0)
+            turn[size_t(i)] = std::acos(std::clamp(glm::dot(in, out) / len, -1.0, 1.0));
+    }
+    const int a = gridLoop / 4, b = gridLoop / 2 - a;
+    int best = 0;
+    double bestScore = -1.0;
+    for (int s = 0; s < n; ++s)
+    {
+        const double score = turn[size_t(s)] + turn[size_t((s + a) % n)] + turn[size_t((s + a + b) % n)] + turn[size_t((s + 2 * a + b) % n)];
+        if (score > bestScore + 1e-9)
+        {
+            bestScore = score;
+            best = s;
+        }
+    }
+    return best;
+}
+
+/** The border point the grid starts from, the given rotation applied. */
+int fillStart(const std::vector<FillPoint>& outer, const GridFillOptions& o)
+{
+    const int n = int(outer.size());
+    const int start = n >= 4 ? cornerStart(outer, n % 2 == 0 ? n : n + 1) : 0;
+    return ((start + o.rotate) % n + n) % n;
+}
+
+/**
+ * Fills a closed border round the centre point, the grid starting at outer[0]. The border runs in the winding the new
+ * faces take, or against it with flip.
+ */
+std::vector<Index> fillLoop(Mesh& m, const std::vector<FillPoint>& outer, const FillPoint& centre, Index srcFace, const GridFillOptions& o,
+                            bool flip)
 {
     const int n = int(outer.size());
     if (n < 3)
         return {};
-    std::rotate(outer.begin(), outer.begin() + ((o.rotate % n) + n) % n, outer.end());
-    Filler fill(m, srcFace);
     const double s = std::clamp(o.gridSize, 0.05, 1.0);
+    Filler fill(m, srcFace, flip);
     if (s >= 1.0)
     {
         if (n % 2 == 0)
@@ -147,6 +195,11 @@ std::vector<Index> fillLoop(Mesh& m, std::vector<FillPoint> outer, const FillPoi
             {
                 ids.push_back(p.id);
                 corners.push_back(p.corners.src.empty() ? kInvalid : p.corners.src[0]);
+            }
+            if (flip)
+            {
+                std::reverse(ids.begin(), ids.end());
+                std::reverse(corners.begin(), corners.end());
             }
             if (const Index f = m.addFace(ids, srcFace, corners); f != kInvalid)
                 fill.out.push_back(f);
@@ -217,9 +270,70 @@ std::vector<std::vector<Index>> patches(const Mesh& m, std::span<const Index> se
     }
     return out;
 }
+/** A border to fill: its points in the winding of the faces that fill it, and the faces it replaces, if any. */
+struct Patch
+{
+    std::vector<FillPoint> border;
+    FillPoint centre;
+    Index srcFace = kInvalid;
+    std::vector<Index> faces;
+};
+
+/**
+ * Fills each patch. A patch that is a symmetry image of one already filled is filled from that one's border mapped
+ * across, so both get the same grid point for point and the symmetry still pairs them.
+ */
+std::vector<Index> fillPatches(Mesh& mesh, std::vector<Patch>& patches, const GridFillOptions& o, const SymmetryMap* sym)
+{
+    std::unordered_map<Index, size_t> owner;
+    for (size_t i = 0; i < patches.size(); ++i)
+        for (const FillPoint& p : patches[i].border)
+            owner[p.id] = i;
+    std::vector<uint8_t> done(patches.size(), 0);
+    std::vector<Index> out;
+    auto fill = [&](Patch& patch, const std::vector<FillPoint>& border, bool flip) {
+        detail::removeFacesClean(mesh, patch.faces);
+        const std::vector<Index> made = fillLoop(mesh, border, patch.centre, patch.srcFace, o, flip);
+        out.insert(out.end(), made.begin(), made.end());
+    };
+    for (size_t i = 0; i < patches.size(); ++i)
+    {
+        if (done[i])
+            continue;
+        done[i] = 1;
+        std::vector<FillPoint> border = patches[i].border;
+        const size_t n = border.size();
+        if (n >= 3)
+            std::rotate(border.begin(), border.begin() + fillStart(border, o), border.end());
+        fill(patches[i], border, false);
+        for (int g = 1; sym && n >= 3 && g < sym->order(); ++g)
+        {
+            std::vector<Index> image;
+            for (const FillPoint& p : border)
+                image.push_back(sym->image(g, p.id));
+            const auto it = owner.find(image[0]);
+            if (it == owner.end() || done[it->second] || patches[it->second].border.size() != n)
+                continue;
+            Patch& other = patches[it->second];
+            std::unordered_map<Index, size_t> at;
+            for (size_t k = 0; k < n; ++k)
+                at[other.border[k].id] = k;
+            std::vector<FillPoint> mapped;
+            for (Index q : image)
+                if (const auto found = at.find(q); found != at.end())
+                    mapped.push_back(other.border[found->second]);
+            if (mapped.size() != n)
+                continue;
+            done[it->second] = 1;
+            const bool flip = other.border[(at[image[0]] + 1) % n].id != image[1];
+            fill(other, mapped, flip);
+        }
+    }
+    return out;
+}
 } // namespace
 
-std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const GridFillOptions& opts)
+std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const GridFillOptions& opts, const SymmetryMap* sym)
 {
     LILA_ZONE();
 
@@ -227,8 +341,8 @@ std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const
     for (Index f : uniqueSorted(faces))
         if (mesh.faceValid(f))
             sel.push_back(f);
-    std::vector<Index> out;
-    for (const std::vector<Index>& patch : patches(mesh, sel))
+    std::vector<Patch> found;
+    for (std::vector<Index>& patch : patches(mesh, sel))
     {
         const std::vector<uint8_t> in = makeMask(mesh.faceCapacity(), patch);
         const std::vector<Index> rim = regionBoundaryEdges(mesh, patch);
@@ -242,43 +356,42 @@ std::vector<Index> gridFillFaces(Mesh& mesh, std::span<const Index> faces, const
             });
         if (!disc || leaving.size() != rim.size())
             continue;
-        std::vector<FillPoint> border;
+        Patch p;
         const Index first = leaving.begin()->second;
         Index c = first;
         do
         {
-            border.push_back(borderPoint(mesh, mesh.cornerPoint(c), c));
+            p.border.push_back(borderPoint(mesh, mesh.cornerPoint(c), c));
             const auto next = leaving.find(mesh.cornerPoint(mesh.cornerNext(c)));
-            if (next == leaving.end() || border.size() > rim.size())
+            if (next == leaving.end() || p.border.size() > rim.size())
                 break;
             c = next->second;
         } while (c != first);
         // Fewer points than rim edges means a second loop: a ring or a patch with holes.
-        if (c != first || border.size() != rim.size())
+        if (c != first || p.border.size() != rim.size())
             continue;
 
         std::vector<FillPoint> inside;
         for (Index f : patch)
             mesh.forEachFaceCorner(f, [&](Index fc) {
-                const Index p = mesh.cornerPoint(fc);
-                if (!leaving.contains(p) && std::none_of(inside.begin(), inside.end(), [&](const FillPoint& q) { return q.id == p; }))
-                    inside.push_back(borderPoint(mesh, p, fc));
+                const Index q = mesh.cornerPoint(fc);
+                if (!leaving.contains(q) && std::none_of(inside.begin(), inside.end(), [&](const FillPoint& r) { return r.id == q; }))
+                    inside.push_back(borderPoint(mesh, q, fc));
             });
-        const FillPoint centre = averagePoint(inside.empty() ? std::span<const FillPoint>(border) : std::span<const FillPoint>(inside));
-        const Index srcFace = mesh.cornerFace(leaving.begin()->second);
-        detail::removeFacesClean(mesh, patch);
-        const std::vector<Index> made = fillLoop(mesh, std::move(border), centre, srcFace, opts);
-        out.insert(out.end(), made.begin(), made.end());
+        p.centre = averagePoint(inside.empty() ? std::span<const FillPoint>(p.border) : std::span<const FillPoint>(inside));
+        p.srcFace = mesh.cornerFace(first);
+        p.faces = std::move(patch);
+        found.push_back(std::move(p));
     }
-    return out;
+    return fillPatches(mesh, found, opts, sym);
 }
 
-std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const GridFillOptions& opts)
+std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const GridFillOptions& opts, const SymmetryMap* sym)
 {
     LILA_ZONE();
 
     const std::vector<uint8_t> sel = makeMask(mesh.edgeCapacity(), edges);
-    std::vector<Index> out;
+    std::vector<Patch> found;
     for (const EdgePath& loop : boundaryLoops(mesh))
     {
         if (!loop.closed || loop.points.size() < 3)
@@ -288,14 +401,13 @@ std::vector<Index> gridFillHoles(Mesh& mesh, std::span<const Index> edges, const
             wanted |= sel[e] != 0;
         if (!wanted)
             continue;
-        std::vector<FillPoint> border;
+        Patch p;
         for (size_t i = 0; i < loop.points.size(); ++i)
-            border.push_back(borderPoint(mesh, loop.points[i], mesh.cornerNext(mesh.edgeCorner(loop.edges[i]))));
-        const FillPoint centre = averagePoint(border);
-        const Index srcFace = mesh.cornerFace(mesh.edgeCorner(loop.edges[0]));
-        const std::vector<Index> made = fillLoop(mesh, std::move(border), centre, srcFace, opts);
-        out.insert(out.end(), made.begin(), made.end());
+            p.border.push_back(borderPoint(mesh, loop.points[i], mesh.cornerNext(mesh.edgeCorner(loop.edges[i]))));
+        p.centre = averagePoint(p.border);
+        p.srcFace = mesh.cornerFace(mesh.edgeCorner(loop.edges[0]));
+        found.push_back(std::move(p));
     }
-    return out;
+    return fillPatches(mesh, found, opts, sym);
 }
 } // namespace lila::geo

@@ -6,6 +6,7 @@
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
@@ -306,7 +307,7 @@ void runCommand(const char* name, const json& call)
 {
     try
     {
-        ops::execute(name, call, CallSource::UI);
+        ops::execute(name, ops::options::callWith(name, call), CallSource::UI);
     }
     catch (const CommandError& e)
     {

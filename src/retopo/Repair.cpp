@@ -32,6 +32,7 @@ constexpr IssueInfo kIssues[kIssueCount] = {
     {IssueElement::Edge, "nonManifoldEdges", "non-manifold edges"},
     {IssueElement::Point, "nonManifoldVertices", "non-manifold vertices"},
     {IssueElement::Edge, "holes", "border edges"},
+    {IssueElement::Face, "triangles", "triangles"},
     {IssueElement::Face, "ngons", "n-gons"},
     {IssueElement::Face, "concave", "concave faces"},
     {IssueElement::Face, "zeroAreaUvs", "zero-area uv faces"},
@@ -272,11 +273,11 @@ std::vector<Index> borderEdges(const geo::Mesh& mesh)
     return out;
 }
 
-std::vector<Index> ngonFaces(const geo::Mesh& mesh)
+std::vector<Index> facesBySize(const geo::Mesh& mesh, bool ngons)
 {
     std::vector<Index> out;
     for (Index f = 0; f < mesh.faceCapacity(); ++f)
-        if (mesh.faceValid(f) && mesh.faceSize(f) > 4)
+        if (mesh.faceValid(f) && (ngons ? mesh.faceSize(f) > 4 : mesh.faceSize(f) == 3))
             out.push_back(f);
     return out;
 }
@@ -360,7 +361,8 @@ std::vector<Index> detect(const geo::Mesh& mesh, MeshIssue issue, double tol)
     case MeshIssue::NonManifoldEdge: return nonManifoldEdges(mesh);
     case MeshIssue::NonManifoldPoint: return nonManifoldPoints(mesh);
     case MeshIssue::Hole: return borderEdges(mesh);
-    case MeshIssue::Ngon: return ngonFaces(mesh);
+    case MeshIssue::Triangle: return facesBySize(mesh, false);
+    case MeshIssue::Ngon: return facesBySize(mesh, true);
     case MeshIssue::Concave: return concaveFaces(mesh);
     case MeshIssue::ZeroAreaUv: return zeroAreaUvFaces(mesh);
     case MeshIssue::Flipped: return flippedFaces(mesh);
@@ -414,6 +416,13 @@ Index fix(geo::Mesh& mesh, MeshIssue issue, double tol)
     case MeshIssue::NonManifoldEdge: return splitNonManifoldEdges(mesh);
     case MeshIssue::NonManifoldPoint: return splitNonManifoldPoints(mesh);
     case MeshIssue::Hole: geo::fillHoles(mesh, found); break;
+    case MeshIssue::Triangle:
+    {
+        geo::QuadrangulateOptions qo;
+        qo.maxFaceAngle = 20.0;
+        geo::quadrangulateFaces(mesh, found, qo);
+        break;
+    }
     case MeshIssue::Ngon: splitIntoQuadsAndTriangles(mesh, found); break;
     case MeshIssue::Concave: splitIntoQuadsAndTriangles(mesh, found); break;
     case MeshIssue::ZeroAreaUv: break;
