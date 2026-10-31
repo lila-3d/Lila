@@ -38,3 +38,4 @@ imgui.ini
 # Impeccable: per-developer config and critique notes
 .impeccable/config.local.json
 .impeccable/critique/
+.github/hooks/impeccable.json
