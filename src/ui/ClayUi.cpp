@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/Shelf.h"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -135,6 +136,12 @@ void registerClayUi()
                "Bakes the selected clay object into a plain mesh at its final voxel size, optionally quad remeshed in the option box.");
 
     registerClayTool();
+
+    json shelf = json::array();
+    for (const char* id : {"clay.create", "clay.tool", "clay.addShape", "clay.addCut", "clay.group", "clay.convert"})
+        if (const Action* act = actions::find(id))
+            shelf.push_back({{"label", act->label}, {"icon", act->icon}, {"target", id}, {"tooltip", act->doc}});
+    shelves::add({"Clay", std::move(shelf)});
     attributeEditor::addSection("clay", "Clay Surface", [](NodeId id) { return clayPanel(id); });
 }
 } // namespace lila::ui

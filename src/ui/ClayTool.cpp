@@ -17,6 +17,7 @@
 #include <glm/gtc/constants.hpp>
 
 #include <array>
+#include <map>
 
 namespace lila::ui
 {
@@ -220,7 +221,7 @@ public:
         mPressPx = mNowPx = e->position();
         mDragging = true;
         mView = view.camera;
-        mExtend.clear();
+        mExtend = scene::kNoNode;
         mStrokeRadius = mRadius;
         if (mStroke)
         {
@@ -242,7 +243,8 @@ public:
             call["blend"] = mBlend;
             call["position"] = jsonVec(mPress);
             if (json made = callClay("addClayPrimitive", call); made.is_string())
-                mLive = made.get<std::string>();
+                if (scene::Node* n = Graph::current().find(made.get<std::string>()))
+                    mLive = n->id();
         }
         return true;
     }
@@ -279,7 +281,8 @@ public:
                 for (const glm::dvec3& p : mStrokePoints)
                     pts.push_back(jsonVec(p));
                 json call = {{"points", pts}, {"radius", mStrokeRadius}, {"endRadius", mTaper ? mStrokeRadius * 0.4 : mStrokeRadius}};
-                if (mExtend.empty())
+                const scene::Node* extend = Graph::current().node(mExtend);
+                if (!extend)
                 {
                     std::string object = ensureObject();
                     call["args"] = {object};
@@ -288,7 +291,7 @@ public:
                 }
                 else
                 {
-                    call["args"] = {mExtend};
+                    call["args"] = {extend->path()};
                     call["extend"] = true;
                 }
                 callClay("addClayStroke", call);
@@ -405,7 +408,7 @@ private:
     void resizeLive(double r)
     {
         Graph& g = Graph::current();
-        scene::Node* n = mLive.empty() ? nullptr : g.find(mLive);
+        scene::Node* n = g.node(mLive);
         if (!n)
             return;
         r = std::max(0.05, r);
@@ -422,7 +425,7 @@ private:
         if (!mChunk)
             return;
         mChunk = false;
-        mLive.clear();
+        mLive = scene::kNoNode;
         keep ? UndoStack::get().closeChunk() : UndoStack::get().cancelChunk();
     }
 
@@ -442,26 +445,31 @@ private:
         const double r = n->as<double>(n->type().attrIndex("endRadius")) * scale;
         if (glm::length(p - end) > 1.5 * r + 1e-6)
             return;
-        mExtend = n->path();
+        mExtend = n->id();
         mPress = end;
         mStrokeRadius = std::max(0.05, r);
     }
 
-    /** The clay object of the selection, or empty. */
+    /** The clay object of the selection, or null. */
+    static scene::Node* objectNode()
+    {
+        for (NodeId id : Graph::current().selection())
+            if (scene::Node* o = clay::objectOf(id))
+                return o;
+        return nullptr;
+    }
+
+    /** The clay object of the selection as commands take it, or empty. */
     static std::string objectPath()
     {
-        Graph& g = Graph::current();
-        for (NodeId id : g.selection())
-            if (scene::Node* o = clay::objectOf(id))
-                return o->path();
-        return {};
+        scene::Node* o = objectNode();
+        return o ? o->path() : std::string();
     }
 
     bool surfaceHit(QPointF px, const ViewInfo& view, glm::dvec3& out) const
     {
         Graph& g = Graph::current();
-        const std::string path = objectPath();
-        scene::Node* object = path.empty() ? nullptr : g.find(path);
+        scene::Node* object = objectNode();
         if (!object)
             return false;
         g.evaluate();
@@ -493,7 +501,7 @@ private:
         glm::dvec3 centre(0.0);
         if (at)
             centre = *at;
-        else if (scene::Node* o = Graph::current().find(objectPath()))
+        else if (scene::Node* o = objectNode())
             centre = glm::dvec3(o->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
         glm::dvec3 o, d;
         view.ray(px, o, d);
@@ -509,8 +517,8 @@ private:
     QPointF mPressPx, mNowPx;
     std::vector<glm::dvec3> mStrokePoints;
     std::string mView;
-    std::string mLive;   // the shape being placed and sized
-    std::string mExtend; // the span a stroke continues from
+    scene::NodeId mLive = scene::kNoNode;   // the shape being placed and sized
+    scene::NodeId mExtend = scene::kNoNode; // the span a stroke continues from
     double mStrokeRadius = 5.0;
     bool mChunk = false;
     mutable geo::MeshBvh mBvh;
@@ -518,8 +526,184 @@ private:
 };
 } // namespace
 
+/** The one selected clay shape when no viewport tool is active, the one whose size and blend rings show. */
+scene::Node* handleShape()
+{
+    Graph& g = Graph::current();
+    if (viewportTools::active() || g.selection().size() != 1)
+        return nullptr;
+    scene::Node* n = g.node(g.selection().front());
+    return n && n->type().isA("clayPrimitive") ? n : nullptr;
+}
+
+double attrOf(const scene::Node& n, const char* attr) { return n.as<double>(n.type().attrIndex(attr)); }
+
+/** The shape's size as its rings show it: the radius, or a box's or ellipsoid's largest half size. */
+double sizeOf(const scene::Node& n)
+{
+    const int64_t shape = n.as<int64_t>(n.type().attrIndex("shape"));
+    if (shape == 1 || shape == 2)
+    {
+        const glm::dvec3 e = n.as<glm::dvec3>(n.type().attrIndex("extents"));
+        return std::max({e.x, e.y, e.z});
+    }
+    return attrOf(n, "radius");
+}
+
+struct Rings
+{
+    QPointF centre;
+    double size = 0.0, blend = 0.0; // pixels
+    double unit = 1.0;              // world units per pixel, through the shape's scale
+};
+
+std::optional<Rings> ringsOf(const scene::Node& n, const ViewInfo& view)
+{
+    const glm::dmat4 world = n.as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dvec3 centre(world[3]);
+    auto px = view.project(centre);
+    if (!px)
+        return std::nullopt;
+    const double scale = std::min({glm::length(glm::dvec3(world[0])), glm::length(glm::dvec3(world[1])), glm::length(glm::dvec3(world[2]))});
+    const double unit = view.unitsPerPixel(centre) / std::max(scale, 1e-9);
+    return Rings{*px, sizeOf(n) / unit, (sizeOf(n) + attrOf(n, "blend")) / unit, unit};
+}
+
+std::vector<QPointF> circle(QPointF c, double r)
+{
+    std::vector<QPointF> out;
+    for (int i = 0; i < 64; ++i)
+    {
+        const double a = glm::two_pi<double>() * i / 64.0;
+        out.emplace_back(c.x() + r * std::cos(a), c.y() + r * std::sin(a));
+    }
+    return out;
+}
+
+void drawRings(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
+{
+    const scene::Node* n = handleShape();
+    if (!n)
+        return;
+    if (auto r = ringsOf(*n, view))
+    {
+        p.polyline(circle(r->centre, r->size), 1.5f, glm::vec4(1.0f, 0.85f, 0.3f, 0.9f), true);
+        if (r->blend > r->size + 1.0)
+            p.dashedPolyline(circle(r->centre, r->blend), 1.0f, 6.0f, glm::vec4(1.0f, 0.85f, 0.3f, 0.6f), true);
+    }
+}
+
+/**
+ * Dragging a selected clay shape's ring: the solid one sizes the shape (radius, end radius, extents and rounding
+ * together), the dashed one sets its blend. One undo step.
+ */
+class RingDrag final : public ViewportTool
+{
+public:
+    RingDrag(NodeId shape, bool blend, Rings rings) : mShape(shape), mBlend(blend), mRings(rings)
+    {
+        UndoStack::get().openChunk(blend ? "Clay Blend" : "Clay Size");
+        if (scene::Node* n = Graph::current().node(mShape))
+            for (const char* attr : {"radius", "endRadius", "rounding", "blend"})
+                mStart[attr] = attrOf(*n, attr);
+        if (scene::Node* n = Graph::current().node(mShape))
+            mExtents = n->as<glm::dvec3>(n->type().attrIndex("extents"));
+        if (scene::Node* n = Graph::current().node(mShape))
+            mSize = sizeOf(*n);
+    }
+    const char* name() const override { return "Clay Ring"; }
+    void deactivate() override { finish(); }
+
+    // The viewport hands releases only to a tool that took the press, and the click hook took this one: the drag also
+    // ends at the first move without the button, or the next press.
+    bool mousePress(QMouseEvent*, const ViewInfo&) override
+    {
+        end();
+        return false;
+    }
+    bool mouseMove(QMouseEvent* e, const ViewInfo&) override
+    {
+        if (!(e->buttons() & Qt::LeftButton))
+        {
+            end();
+            return false;
+        }
+        Graph& g = Graph::current();
+        scene::Node* n = g.node(mShape);
+        if (!n)
+            return true;
+        const double px = glm::length(glm::dvec2(e->position().x() - mRings.centre.x(), e->position().y() - mRings.centre.y()));
+        auto set = [&](const char* attr, scene::PlugValue v) { g.setValue({n->id(), n->type().attrIndex(attr), -1}, std::move(v)); };
+        if (mBlend)
+            set("blend", std::max(0.0, px * mRings.unit - mSize));
+        else
+        {
+            const double k = std::max(px * mRings.unit, 0.01) / std::max(mSize, 1e-9);
+            for (const char* attr : {"radius", "endRadius", "rounding"})
+                set(attr, mStart[attr] * k);
+            set("extents", mExtents * k);
+        }
+        viewportTools::requestRedraw();
+        return true;
+    }
+    bool mouseRelease(QMouseEvent*, const ViewInfo&) override
+    {
+        end();
+        return true;
+    }
+    void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
+    {
+        if (scene::Node* n = Graph::current().node(mShape))
+            if (auto r = ringsOf(*n, view))
+            {
+                p.polyline(circle(r->centre, r->size), mBlend ? 1.0f : 2.5f, glm::vec4(1.0f, 0.85f, 0.3f, 1.0f), true);
+                p.dashedPolyline(circle(r->centre, r->blend), mBlend ? 2.5f : 1.0f, 6.0f, glm::vec4(1.0f, 0.85f, 0.3f, 0.8f), true);
+            }
+    }
+
+private:
+    void finish()
+    {
+        if (mOpen)
+            UndoStack::get().closeChunk();
+        mOpen = false;
+    }
+
+    void end()
+    {
+        finish();
+        // Not from inside the tool's own handler: set() destroys the tool.
+        QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
+    }
+
+    NodeId mShape = scene::kNoNode;
+    bool mBlend = false;
+    Rings mRings;
+    std::map<std::string, double> mStart;
+    glm::dvec3 mExtents{0.0};
+    double mSize = 1.0;
+    bool mOpen = true;
+};
+
+/** A click on a ring of the selected clay shape starts dragging it. */
+bool pressRings(QPointF px, const ViewInfo& view)
+{
+    const scene::Node* n = handleShape();
+    auto r = n ? ringsOf(*n, view) : std::nullopt;
+    if (!r)
+        return false;
+    const double d = glm::length(glm::dvec2(px.x() - r->centre.x(), px.y() - r->centre.y()));
+    const bool onSize = std::abs(d - r->size) < 6.0, onBlend = r->blend > r->size + 1.0 && std::abs(d - r->blend) < 6.0;
+    if (!onSize && !onBlend)
+        return false;
+    viewportTools::set(std::make_unique<RingDrag>(n->id(), onBlend && (!onSize || std::abs(d - r->blend) < std::abs(d - r->size)), *r));
+    return true;
+}
+
 void registerClayTool()
 {
+    viewportHooks::addDrawer("lila.clayRings", drawRings);
+    viewportHooks::setClickHook("lila.clayRings", pressRings);
     viewportHooks::addDrawer("lila.clayShapes", drawShapes);
     viewportHooks::addPicker("lila.clayShapes", pickShapes);
     if (!viewportTools::registry().find("clay.tool"))

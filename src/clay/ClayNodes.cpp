@@ -5,6 +5,7 @@
 #include "ops/CommandOptions.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
+#include "scene/Skin.h"
 #include "scene/Transform.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -334,6 +335,84 @@ Node* shapeAt(Graph& g, NodeId object, const glm::dvec3& p)
     return best;
 }
 
+/** A clay shape in world space, ready for distances. */
+struct Placed
+{
+    Primitive shape;
+    glm::dmat4 toLocal{1.0};
+    double scale = 1.0;
+    NodeId joint = kNoNode;
+
+    double distanceTo(const glm::dvec3& p) const { return distance(shape, glm::dvec3(toLocal * glm::dvec4(p, 1.0))) * scale; }
+};
+
+Placed placed(const Node& n)
+{
+    const Item& item = static_cast<const ItemData&>(*n.as<DataPtr>(idx(n, "outClay"))).item;
+    const glm::dmat4& m = item.matrix;
+    return {*item.shape, glm::inverse(m), std::min({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))})};
+}
+
+/** A group of capsules only: a stroke, which gets a joint chain. */
+bool isStroke(Graph& g, NodeId group)
+{
+    const auto& kids = g.children(group);
+    return !kids.empty() && std::ranges::all_of(kids, [&](NodeId c) {
+        const Node* n = g.node(c);
+        return n && n->type().isA("clayPrimitive") && n->as<int64_t>(idx(*n, "shape")) == int64_t(Shape::Capsule);
+    });
+}
+
+/**
+ * Starting skin weights from the clay: each point leans on the joints of the shapes it lies nearest, falling off with
+ * how much further each one is than the nearest.
+ */
+void weightFromClay(Graph& g, NodeId skinId, const std::vector<Placed>& shapes, int maxInfluences)
+{
+    const MeshPtr input = skin::inputMesh(g, skinId);
+    const NodeId meshId = skin::meshOf(g, skinId);
+    if (!input || meshId == kNoNode)
+        return;
+    std::map<NodeId, uint32_t> influence;
+    for (const skin::Influence& inf : skin::influences(g, skinId))
+        influence[inf.joint] = inf.index;
+    const glm::dmat4 world = worldOf(g, meshId);
+    // How far past the nearest shape a joint's weight fades: a little of the surface's own scale.
+    const double soft = std::max(0.25, 0.005 * glm::length(input->bounds().max - input->bounds().min));
+    WeightTable t;
+    t.points.resize(input->pointCapacity());
+    for (geo::Index p = 0; p < input->pointCapacity(); ++p)
+    {
+        if (!input->pointValid(p))
+            continue;
+        const glm::dvec3 at(world * glm::dvec4(input->position(p), 1.0));
+        std::map<NodeId, double> nearest;
+        double best = 1e300;
+        for (const Placed& s : shapes)
+        {
+            const double d = s.distanceTo(at);
+            auto [it, fresh] = nearest.try_emplace(s.joint, d);
+            if (!fresh)
+                it->second = std::min(it->second, d);
+            best = std::min(best, d);
+        }
+        std::vector<std::pair<uint32_t, float>> w;
+        for (const auto& [joint, d] : nearest)
+            if (auto it = influence.find(joint); it != influence.end())
+                w.emplace_back(it->second, float(1.0 / std::pow(std::max(d - best, 0.0) + soft, 4.0)));
+        std::ranges::sort(w, [](const auto& a, const auto& b) { return a.second > b.second; });
+        if (w.size() > size_t(maxInfluences))
+            w.resize(size_t(maxInfluences));
+        float sum = 0.0f;
+        for (const auto& e : w)
+            sum += e.second;
+        for (auto& e : w)
+            e.second /= std::max(sum, 1e-20f);
+        t.points[p] = std::move(w);
+    }
+    skin::setWeights(g, skinId, t);
+}
+
 json addPrimitive(Graph& g, Node& parent, const Args& a)
 {
     Node* p = g.createNode(*types::find("clayPrimitive"), a.get<std::string>("name", "ClayPrimitive"), parent.id(), true);
@@ -573,6 +652,81 @@ void registerCommands()
             return n ? json(n->path()) : json(nullptr);
         },
         .examples = {"clayShapeAt(\"Dog\", point=[3, 20, 8])"},
+    });
+
+    ops::registerCommand({
+        .name = "clayJoints",
+        .doc = "Joints from a clay object: a root at the object for the body, and a chain down each stroke (a group of capsules). "
+               "Given a mesh (the converted clay), binds it and starts its weights from the clay: each point leans on the "
+               "joints of the shapes it lies nearest. Returns [root, skinCluster or None].",
+        .positionalDoc = "clay object",
+        .flags = {{"mesh", "m", T::String, nullptr, "Mesh to bind, usually the clay converted with convertClayToMesh(keepSource=True)."},
+                  {"maxInfluences", "mi", T::Int, 4, "Influences per point.", {}, {}, 1.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> t = targets(g, a, "clayJoints");
+            Node* object = t.empty() ? nullptr : objectOfNode(g, t.front()->id());
+            if (!object)
+                throw CommandError("clayJoints: select a clay object");
+            g.evaluate();
+            auto vec = [](const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); };
+            const std::string root = ops::execute("joint", {{"position", vec(glm::dvec3(worldOf(g, object->id())[3]))},
+                                                            {"name", object->name() + "_root"}, {"parent", ""}, {"skipSelect", true}});
+            const NodeId rootId = g.find(root)->id();
+
+            std::vector<std::pair<NodeId, int64_t>> tree;
+            collect(g, object->id(), 1, tree);
+            std::vector<Placed> shapes;
+            std::vector<NodeId> strokes;
+            for (const auto& [id, depth] : tree)
+            {
+                Node* n = g.node(id);
+                if (n->type().isA("clayGroup") && isStroke(g, id))
+                    strokes.push_back(id);
+            }
+            for (const auto& [id, depth] : tree)
+            {
+                Node* n = g.node(id);
+                const bool inStroke = std::ranges::find(strokes, g.parent(id)) != strokes.end();
+                if (n->type().isA("clayPrimitive") && !inStroke && n->as<int64_t>(idx(*n, "operation")) == 0)
+                {
+                    shapes.push_back(placed(*n));
+                    shapes.back().joint = rootId;
+                }
+            }
+            for (NodeId stroke : strokes)
+            {
+                std::string parent = root;
+                const auto& spans = g.children(stroke);
+                int k = 0;
+                for (size_t i = 0; i <= spans.size(); ++i)
+                {
+                    // A joint at each span's start, and one at the last span's end.
+                    const Node& span = *g.node(spans[std::min(i, spans.size() - 1)]);
+                    const double half = 0.5 * span.as<double>(idx(span, "length"));
+                    const glm::dvec3 at(worldOf(g, span.id()) * glm::dvec4(0.0, i < spans.size() ? -half : half, 0.0, 1.0));
+                    parent = ops::execute("joint", {{"position", vec(at)}, {"name", g.node(stroke)->name() + "_" + std::to_string(++k)},
+                                                    {"parent", parent}, {"skipSelect", true}});
+                    if (i < spans.size())
+                    {
+                        shapes.push_back(placed(span));
+                        shapes.back().joint = g.find(parent)->id();
+                    }
+                }
+            }
+            ops::execute("orientJoint", {{"args", json::array({root})}});
+
+            json skinName = nullptr;
+            if (a.has("mesh"))
+            {
+                const std::string mesh = a.get<std::string>("mesh");
+                skinName = ops::execute("skinCluster", {{"args", json::array({root, mesh})}, {"maxInfluences", a.get<int>("maxInfluences", 4)}});
+                weightFromClay(g, skin::resolve(g, mesh, "clayJoints"), shapes, std::max(1, a.get<int>("maxInfluences", 4)));
+            }
+            g.select({rootId});
+            return json::array({g.node(rootId)->path(), skinName});
+        },
+        .examples = {"mesh = convertClayToMesh(\"Dog\", keepSource=True)\nclayJoints(\"Dog\", mesh=mesh)"},
     });
 
     ops::registerCommand({

@@ -114,3 +114,34 @@ TEST_CASE("clay commands: a stroke is a chain in its own group, and clayShapeAt 
     CHECK(g.children(g.find(stroke)->id()).size() == 3);
     CHECK(outMesh(mesh)->bounds().max.x == doctest::Approx(13.0).epsilon(0.05));
 }
+
+TEST_CASE("clay commands: clayJoints chains a stroke and weights the converted mesh from the clay")
+{
+    reset();
+    const json made = run("createClay", {{"name", "Worm"}});
+    const std::string object = made[0];
+    run("addClayStroke", {{"args", {object}}, {"points", {{0, 8, 0}, {0, 20, 0}, {0, 32, 0}}}, {"radius", 3.0}, {"endRadius", 2.0}, {"name", "Tail"}});
+    const std::string mesh = run("convertClayToMesh", {{"args", {object}}, {"keepSource", true}, {"voxelSize", 0.5}});
+    const json r = run("clayJoints", {{"args", {object}}, {"mesh", mesh}});
+    scene::Graph& g = scene::Graph::current();
+    REQUIRE(r[1].is_string());
+    // The root, then a joint at each span start and one at the end: 3 in the tail.
+    const scene::Node* root = g.find(r[0].get<std::string>());
+    REQUIRE(root);
+    CHECK(g.children(root->id()).size() == 1);
+
+    // A point at the tail tip leans on the tail's last joints; one at the bottom of the body on the root.
+    const scene::MeshPtr m = outMesh(mesh);
+    uint32_t tip = 0, bottom = 0;
+    for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+    {
+        if (m->position(p).y > m->position(tip).y)
+            tip = p;
+        if (m->position(p).y < m->position(bottom).y)
+            bottom = p;
+    }
+    const json w = run("skinPercent", {{"args", {mesh}}, {"vertices", {tip, bottom}}});
+    REQUIRE(w.size() == 2);
+    CHECK(w[0]["weights"].value("Tail_3", 0.0) + w[0]["weights"].value("Tail_2", 0.0) > 0.9);
+    CHECK(w[1]["weights"].value("Worm_root", 0.0) > 0.9);
+}
