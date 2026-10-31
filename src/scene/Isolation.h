@@ -35,7 +35,7 @@ struct LILA_SCENE_API Set
         Ids ids;
         uint32_t capacity = 0;
     };
-    /** Every node the view shows, whole or in part, plus the parents of isolated nodes for context. Empty when not isolating. */
+    /** Every node the view shows, whole or in part. Empty when not isolating. */
     std::unordered_set<NodeId> nodes;
     std::map<NodeId, Faces> partial;
     /** New and unique across the process on every change, so caches can key on it. */
@@ -56,7 +56,7 @@ LILA_SCENE_API Ids facesOf(const geo::Mesh& mesh, ComponentMode kind, const Ids&
 
 /**
  * Isolates the selection: meshes with components selected in the current mode show only the faces those touch;
- * other selected objects show whole, with their children. Parents of either stay for context.
+ * other selected objects show whole, with their children. Unselected parents stay hidden.
  */
 LILA_SCENE_API Set fromSelection(Graph& g);
 /** Adds the selection the way fromSelection takes it. A mesh shown whole stays whole. */

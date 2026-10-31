@@ -71,7 +71,7 @@ struct ActiveSet
 size_t shownCount(const std::vector<uint8_t>& mask) { return size_t(std::count(mask.begin(), mask.end(), uint8_t(1))); }
 } // namespace
 
-TEST_CASE("isolating objects shows them and their parents, nothing else")
+TEST_CASE("isolating objects shows them and their children, nothing else")
 {
     run("newScene");
     run("selectMode", {{"args", {"object"}}});
@@ -106,6 +106,24 @@ TEST_CASE("isolating objects shows them and their parents, nothing else")
     // Removing the last one leaves an isolation showing nothing rather than everything.
     CHECK(set.active());
     CHECK_FALSE(set.shows(b.id));
+}
+
+TEST_CASE("isolating a child leaves its unselected parent hidden")
+{
+    run("newScene");
+    run("selectMode", {{"args", {"object"}}});
+    Plane parent = plane(), child = plane();
+    run("parent", {{"args", {child.name, parent.name}}});
+    scene::Graph& g = scene::Graph::current();
+    g.select({child.id});
+    iso::Set set = iso::fromSelection(g);
+    CHECK(set.shows(child.id));
+    CHECK_FALSE(set.shows(parent.id));
+
+    g.select({parent.id});
+    set = iso::fromSelection(g);
+    CHECK(set.shows(parent.id));
+    CHECK(set.shows(child.id));
 }
 
 TEST_CASE("isolating components shows only the faces they touch")

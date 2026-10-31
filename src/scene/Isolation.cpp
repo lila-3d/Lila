@@ -40,12 +40,6 @@ void settle(Set::Faces& f, const geo::Mesh& m)
     f.capacity = uint32_t(std::max<geo::Index>(f.capacity, m.faceCapacity()));
 }
 
-void addParents(Set& set, const Graph& g, NodeId id)
-{
-    for (NodeId p = g.parent(id); p != kNoNode; p = g.parent(p))
-        set.nodes.insert(p);
-}
-
 /** The selection as isolation sees it: meshes with components of the current mode, and objects without. */
 struct Picked
 {
@@ -150,7 +144,6 @@ void addSelection(Set& set, Graph& g)
         kept.ids = sortedUnique(std::move(kept.ids));
         kept.capacity = m->faceCapacity();
         set.nodes.insert(node);
-        addParents(set, g, node);
     }
     for (NodeId id : p.objects)
     {
@@ -161,7 +154,6 @@ void addSelection(Set& set, Graph& g)
             set.nodes.insert(d);
             set.partial.erase(d);
         }
-        addParents(set, g, id);
     }
     set.touch();
 }
