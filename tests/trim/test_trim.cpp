@@ -486,3 +486,109 @@ TEST_CASE("hotspot: alt groups only swap trims of the same size")
         CHECK_FALSE(r.islands[0].poor);
     }
 }
+
+TEST_CASE("trim: the sheet's own high meshes bake on top of the generated relief")
+{
+    Sheet s = stripLadder("T_Motif", 128, 128, std::vector<int>{64, 64});
+    s.pxPerM = 128.0;
+    s.supersampling = 1;
+    s.maps = {"normal"};
+    const std::filesystem::path file = scratch("motif") / "T_Motif.lilatrim";
+    save(s, file);
+    SheetBakeOptions o;
+    o.backend = "cpu";
+    bakeSheet(s, file, o);
+    const lila::image::Image plain = lila::image::read(mapFile(s, file, "normal"));
+
+    // A 20 cm stud on the first strip, in sheet space: x right, z down the texture, y up off it.
+    geo::Mesh stud;
+    {
+        const glm::dvec3 lo{30.0, 0.0, 10.0}, hi{50.0, 20.0, 30.0};
+        const glm::dvec3 pts[] = {{lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z},
+                                  {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}};
+        const geo::Index sizes[] = {4, 4, 4, 4, 4, 4};
+        const geo::Index idx[] = {0, 1, 2, 3, 5, 4, 7, 6, 3, 2, 6, 7, 1, 0, 4, 5, 1, 5, 6, 2, 4, 0, 3, 7};
+        stud = geo::Mesh::fromPolygons(pts, sizes, idx);
+    }
+    o.high = {stud};
+    bakeSheet(s, file, o);
+    const lila::image::Image withStud = lila::image::read(mapFile(s, file, "normal"));
+    REQUIRE(withStud.width == plain.width);
+    // The stud's sides tilt the normals around its outline (texels 38 to 64 at 128 px per metre); the rest stays.
+    double inside = 0.0, outside = 0.0;
+    for (int y = 0; y < 128; ++y)
+        for (int x = 0; x < 128; ++x)
+        {
+            const size_t i = (size_t(y) * 128 + size_t(x)) * 4;
+            const double d = std::abs(withStud.rgba[i] - plain.rgba[i]) + std::abs(withStud.rgba[i + 1] - plain.rgba[i + 1]);
+            ((x >= 36 && x <= 66 && y >= 10 && y <= 42) ? inside : outside) += d;
+        }
+    CHECK(inside > 5.0);
+    CHECK(outside < inside * 0.2);
+}
+
+TEST_CASE("trim commands: a face as tall as the strip stays upright on it")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("upright") / "T_Up.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "ladder"}, {"width", 1024}, {"file", file.generic_string()}, {"bake", false}});
+    // Strip256 is 50 cm tall at 512 px per metre; the face is 42 cm wide and 50 cm tall, like a wall band's end.
+    const json made = ops::execute("createMesh", {{"points", {{0, 0, 0}, {42, 0, 0}, {42, 50, 0}, {0, 50, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "End"}});
+    const std::string end = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {end}}});
+    ops::execute("trimApply", {{"trim", "Strip256"}});
+    scene::Graph& g = scene::Graph::current();
+    const geo::Mesh m = *std::get<scene::MeshPtr>(g.value({g.find(end)->id(), scene::MeshNode::kOutMesh, -1}));
+    const glm::dvec2 bottom = uvAt(m, {0, 0, 0}), top = uvAt(m, {0, 50, 0}), right = uvAt(m, {42, 0, 0});
+    CHECK(std::abs(top.x - bottom.x) < 1e-6);
+    CHECK(top.y > bottom.y);
+    CHECK(std::abs(right.x - bottom.x) == doctest::Approx(42.0 / 200.0).epsilon(0.05));
+    // Centred on the strip, so a motif in the middle of the sheet lands in the middle of the face.
+    CHECK((right.x + bottom.x) * 0.5 == doctest::Approx(0.5).epsilon(1e-3));
+}
+
+TEST_CASE("trim commands: faces line up with the strip's motifs")
+{
+    loadTrims();
+    // A strip with a stud every 25 cm (four across the 100 cm sheet), baked from detail meshes.
+    Sheet s = stripLadder("T_Studs", 128, 128, std::vector<int>{64, 64});
+    s.pxPerM = 128.0;
+    s.supersampling = 1;
+    s.maps = {"normal"};
+    const std::filesystem::path file = scratch("studs") / "T_Studs.lilatrim";
+    save(s, file);
+    SheetBakeOptions o;
+    o.backend = "cpu";
+    for (int k = 0; k < 4; ++k)
+    {
+        const double x = 12.5 + 25.0 * k;
+        const glm::dvec3 lo{x - 5.0, 0.0, 20.0}, hi{x + 5.0, 12.0, 30.0};
+        const glm::dvec3 pts[] = {{lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z},
+                                  {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}};
+        const geo::Index sizes[] = {4, 4, 4, 4, 4, 4};
+        const geo::Index idx[] = {0, 1, 2, 3, 5, 4, 7, 6, 3, 2, 6, 7, 1, 0, 4, 5, 1, 5, 6, 2, 4, 0, 3, 7};
+        o.high.push_back(geo::Mesh::fromPolygons(pts, sizes, idx));
+    }
+    bakeSheet(s, file, o);
+    ops::execute("trimSheetCurrent", {{"args", {file.generic_string()}}});
+
+    auto place = [&](const char* name, double width) {
+        const json made = ops::execute("createMesh", {{"points", {{0, 0, 0}, {width, 0, 0}, {width, 50, 0}, {0, 50, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", name}});
+        const std::string n = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+        scene::components::setMode(scene::ComponentMode::Object);
+        ops::execute("select", {{"args", {n}}});
+        ops::execute("trimApply", {{"trim", 0}});
+        scene::Graph& g = scene::Graph::current();
+        const geo::Mesh m = *std::get<scene::MeshPtr>(g.value({g.find(n)->id(), scene::MeshNode::kOutMesh, -1}));
+        const double a = uvAt(m, {0, 0, 0}).x, b = uvAt(m, {width, 0, 0}).x;
+        return std::pair{std::min(a, b), std::max(a, b)};
+    };
+    // Studs are centred on u = 0.125 + k / 4. A 100 cm face holds four repeats, so its middle sits on a gap, u = k / 4.
+    const auto [lo, hi] = place("Long", 100.0);
+    CHECK(std::abs((lo + hi) * 0.5 * 4.0 - std::round((lo + hi) * 0.5 * 4.0)) < 0.05);
+    // A 25 cm face (one repeat) is centred on a stud.
+    const auto [elo, ehi] = place("End", 25.0);
+    const double mid = (elo + ehi) * 0.5;
+    CHECK(std::abs((mid - 0.125) * 4.0 - std::round((mid - 0.125) * 4.0)) < 0.05);
+}

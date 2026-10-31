@@ -456,6 +456,7 @@ std::vector<FlagDef> optionFlags()
         {"grid", "", T::Bool, true, "Ground grid in perspective views."},
         {"showSelection", "", T::Bool, true, "Tint selected components."},
         {"samples", "", T::Int, 1, "Jittered frames averaged into the image: 16 or more gives a supersampled still.", {}, {}, 1.0, 1024.0},
+        {"label", "", T::Bool, true, "Write the view's name in the top-left corner."},
     };
 }
 

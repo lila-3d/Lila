@@ -7,6 +7,7 @@
 #include <lila/Actions.h>
 #include <lila/Command.h>
 #include <lila/Extension.h>
+#include <lila/Graph.h>
 #include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
@@ -45,6 +46,38 @@ void run(const char* command, const json& call)
     {
         log::write(LogLevel::Warning, e.what());
     }
+}
+
+/**
+ * The selected meshes (and the meshes under selected groups) to bake as the current sheet's detail, leaving out the sheet's
+ * own generated high and low.
+ */
+std::vector<std::string> selectedDetail()
+{
+    scene::Graph& g = scene::Graph::current();
+    std::string sheet;
+    try
+    {
+        sheet = load(currentSheet()).name;
+    }
+    catch (const std::exception&)
+    {
+    }
+    std::vector<std::string> out;
+    auto add = [&](scene::NodeId id) {
+        scene::Node* n = g.node(id);
+        if (!n || !n->type().isA("mesh") || n->name() == sheet + "_High" || n->name() == sheet + "_Low")
+            return;
+        if (std::ranges::find(out, n->path()) == out.end())
+            out.push_back(n->path());
+    };
+    for (scene::NodeId id : g.selection())
+    {
+        add(id);
+        for (scene::NodeId d : g.descendants(id))
+            add(d);
+    }
+    return out;
 }
 
 /** How many times Cycle Trim has run since the last Auto Trim: each press takes the next-best match. */
@@ -310,6 +343,28 @@ void registerUi(ext::Context& ctx)
                            },
                        .doc = "Paint the current trim sheet by hand on a flat preview plane; strokes show on every mesh using the sheet.",
                        .python = "trimSheetPaint()"});
+    actions::add(ctx, {.id = "trims.detail",
+                       .label = "Bake Selection as Sheet Detail",
+                       .category = "Trim Sheets",
+                       .run =
+                           [] {
+                               const std::vector<std::string> detail = selectedDetail();
+                               if (detail.empty())
+                               {
+                                   log::write(LogLevel::Warning, "Select the meshes you modelled on the sheet's high poly.");
+                                   return;
+                               }
+                               run("trimSheetBake", {{"high", detail}});
+                           },
+                       .doc = "Bake the selected meshes into the current sheet on top of its generated relief: carvings, motifs, a sculpt. The sheet "
+                              "keeps them for every later bake.",
+                       .python = "trimSheetBake(high=['Rosette', 'Dentil'])"});
+    actions::add(ctx, {.id = "trims.detailClear",
+                       .label = "Bake Without Detail",
+                       .category = "Trim Sheets",
+                       .run = [] { run("trimSheetBake", {{"high", json::array()}}); },
+                       .doc = "Forget the sheet's detail meshes and bake its generated relief alone.",
+                       .python = "trimSheetBake(high=[])"});
     actions::add(ctx, {.id = "trims.editor",
                        .label = "Trim Sheet Editor",
                        .category = "Trim Sheets",
@@ -345,7 +400,7 @@ void registerUi(ext::Context& ctx)
                             .order = 60, .docs = "trim-sheets"});
 
     menus::addItem(ctx, {.id = "trims.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Trim Sheets"});
-    const char* order[] = {"trims.create", "trims.test", "trims.editor", "trims.bake", "trims.generate", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
+    const char* order[] = {"trims.create", "trims.test", "trims.editor", "trims.bake", "trims.generate", "trims.detail", "trims.detailClear", "trims.texture", "trims.paint", "", "trims.auto", "trims.cycle", "trims.shiftUp", "trims.shiftDown",
                            "trims.edges", "trims.decal", "trims.cut", "trims.curve", "trims.weightedNormals", "", "trims.export", "trims.send"};
     int sep = 0;
     for (const char* a : order)

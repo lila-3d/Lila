@@ -1,0 +1,234 @@
+{
+  "backend": "gpu",
+  "backendMode": "",
+  "dryRun": false,
+  "folder": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures",
+  "idMap": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_trimId.png",
+  "inputHash": "",
+  "lint": null,
+  "manifest": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_bake.json",
+  "outputs": [
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_normal.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "normal",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {},
+      "normalFormat": "directx",
+      "suffix": "normal",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_ao.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "ao",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {},
+      "normalFormat": "",
+      "suffix": "ao",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_curvature.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "curvature",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {
+        "curvatureAuto": true,
+        "curvatureRange": 0.4114505648612976,
+        "decode": "curvature = (value - 0.5) * 2 * curvatureRange (1/cm mean curvature, convex positive)",
+        "source": "mesh"
+      },
+      "normalFormat": "",
+      "suffix": "curvature",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_height.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "height",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {
+        "decode": "height = (value - 0.5) * 2 * heightRange",
+        "heightAuto": false,
+        "heightMax": 6.5,
+        "heightMin": -6.5,
+        "heightRange": 6.5
+      },
+      "normalFormat": "",
+      "suffix": "height",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_cavity.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "cavity",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {
+        "curvatureAuto": true,
+        "curvatureRange": 0.4114505648612976,
+        "source": "mesh"
+      },
+      "normalFormat": "",
+      "suffix": "cavity",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 8,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_normalobj.png",
+      "format": "png",
+      "groups": [
+        "T_Frieze"
+      ],
+      "height": 1024,
+      "layer": "",
+      "map": "objectNormal",
+      "materials": [
+        "Default"
+      ],
+      "meshes": [
+        "T_Frieze"
+      ],
+      "meta": {},
+      "normalFormat": "",
+      "suffix": "normalobj",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 32,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_trimIndex.exr",
+      "format": "exr",
+      "height": 1024,
+      "map": "trimIndex",
+      "udim": 1001,
+      "width": 1024
+    },
+    {
+      "bits": 32,
+      "colorSpace": "linear",
+      "file": "X:/Lila/resources/examples/TrimFrieze/TrimSheets/T_Frieze_Textures/T_Frieze_trimRect.exr",
+      "format": "exr",
+      "height": 1024,
+      "map": "trimRect",
+      "udim": 1001,
+      "width": 1024
+    }
+  ],
+  "seamError": 8.169934153556824e-05,
+  "seconds": 0.195276,
+  "stats": {
+    "backfaces": 0,
+    "groups": [
+      {
+        "backfaces": 0,
+        "frontal": 7.0,
+        "frontalAuto": false,
+        "group": "T_Frieze",
+        "highTriangles": 57714,
+        "hits": 16777216,
+        "lowTriangles": 2,
+        "measured": false,
+        "misses": 0,
+        "rear": 3.200000047683716,
+        "rearAuto": false,
+        "samples": 16777216
+      }
+    ],
+    "hits": 16777216,
+    "misses": 0,
+    "samples": 16777216
+  },
+  "timings": {
+    "finish": 0.0342815,
+    "gpu": 0.1412492,
+    "gpu:accumulate": 0.021929663999999998,
+    "gpu:dilate": 0.0009062400000000003,
+    "gpu:finalize": 0.00016860800000000002,
+    "gpu:map:ao": 0.03864048,
+    "gpu:map:cavity": 0.005725184,
+    "gpu:map:curvature": 0.005588991999999999,
+    "gpu:map:height": 0.00553984,
+    "gpu:map:normal": 0.003399584,
+    "gpu:map:objectNormal": 0.003392032,
+    "gpu:other": 4.5056000000000004e-05,
+    "gpu:raster": 0.012559103999999998,
+    "gpu:readback": 0.010795008,
+    "gpu:resolve": 0.00017075199999999998,
+    "gpu:trace": 0.004000608,
+    "gpuSetup": 0.0054903,
+    "plan": 7.77e-05,
+    "write": 0.12015050000000001,
+    "writeWait": 0.0183266
+  },
+  "totalSeconds": 0.3432176,
+  "trims": 8,
+  "warnings": []
+}

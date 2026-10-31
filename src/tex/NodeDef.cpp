@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -216,6 +217,16 @@ LibraryState& state()
     return s;
 }
 
+/**
+ * Texture graphs plan on worker threads while the main thread opens workspaces and registers extension nodes, and either
+ * may (re)scan the folders: every read and write of the library goes through this.
+ */
+std::recursive_mutex& libraryMutex()
+{
+    static std::recursive_mutex m;
+    return m;
+}
+
 std::string readText(const fs::path& path)
 {
     std::ifstream in(path, std::ios::binary);
@@ -311,6 +322,7 @@ fs::path workspaceDir()
 
 LibraryState& loaded()
 {
+    std::scoped_lock lock(libraryMutex());
     LibraryState& s = state();
     if (s.core.empty())
         for (NodeDef& d : coreDefs())
@@ -516,6 +528,7 @@ std::vector<NodeDef> readNodeFile(const fs::path& path)
 
 const NodeDef* findNode(std::string_view type)
 {
+    std::scoped_lock lock(libraryMutex());
     LibraryState& s = loaded();
     if (auto it = s.core.find(type); it != s.core.end())
         return &it->second;
@@ -532,6 +545,7 @@ const NodeDef* findNode(std::string_view type)
 
 std::vector<const NodeDef*> allNodes()
 {
+    std::scoped_lock lock(libraryMutex());
     LibraryState& s = loaded();
     std::map<std::string, const NodeDef*, std::less<>> byType;
     for (auto& [k, d] : s.builtin.nodes)
@@ -555,6 +569,7 @@ std::vector<const NodeDef*> allNodes()
 
 const HelperDef* findHelper(std::string_view name)
 {
+    std::scoped_lock lock(libraryMutex());
     LibraryState& s = loaded();
     for (Tier* t : {&s.workspace, &s.user})
         if (auto it = t->helpers.find(name); it != t->helpers.end())
@@ -575,9 +590,17 @@ std::vector<fs::path> nodeDirs()
     return out;
 }
 
-void reloadLibrary() { state().loaded = false; }
+void reloadLibrary()
+{
+    std::scoped_lock lock(libraryMutex());
+    state().loaded = false;
+}
 
-std::vector<std::string> libraryErrors() { return loaded().errors; }
+std::vector<std::string> libraryErrors()
+{
+    std::scoped_lock lock(libraryMutex());
+    return loaded().errors;
+}
 
 Registry<NodeDef>& extensionNodes()
 {
@@ -611,11 +634,15 @@ size_t registerExtensionDir(ext::Context& ctx, const fs::path& dir)
         registerExtensionNode(ctx, std::move(d));
         ++n;
     }
+    std::scoped_lock lock(libraryMutex());
     for (auto& [name, h] : t.helpers)
     {
         state().extensionHelpers[name] = h;
         std::string key = name;
-        ctx.track("texhelper:" + key, [key] { state().extensionHelpers.erase(key); });
+        ctx.track("texhelper:" + key, [key] {
+            std::scoped_lock unload(libraryMutex());
+            state().extensionHelpers.erase(key);
+        });
     }
     return n;
 }

@@ -112,6 +112,12 @@ struct Sheet
     /** Bake folder, absolute or relative to the .lilatrim; empty is <file stem>_Textures beside it. */
     std::string folder;
     int supersampling = 16;
+    /**
+     * Scene meshes baked as high poly detail, in sheet space as trimSheetGenerate lays the sheet out (x right, z down the
+     * texture, y up off it): motifs, real geometry, a sculpt. Added to the generated relief, or instead of it with highReplaces.
+     */
+    std::vector<std::string> high;
+    bool highReplaces = false;
     std::vector<Trim> trims;
 
     /** World size of a trim, cm. */

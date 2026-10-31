@@ -16,6 +16,8 @@ struct SheetBakeOptions
     std::vector<size_t> only;
     /** Wrap tiling strips (see GenerateOptions::tile). */
     bool tile = true;
+    /** The sheet's high meshes (Sheet::high), in sheet space; copies wrap one sheet width to each side when tile is on. */
+    std::vector<geo::Mesh> high;
 };
 
 /**

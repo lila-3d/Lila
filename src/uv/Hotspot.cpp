@@ -277,12 +277,15 @@ void placeChart(Chart& chart, const HotspotTrim& t, bool rotate, const HotspotOp
     else if (fit == TrimFit::Seamless && kind == TrimKind::StripU)
     {
         scale = glm::dvec2(room.y / size.y);
-        origin = glm::dvec2(rmin.x + (opts.randomOffset ? rand0 * (t.max.x - t.min.x) : 0.0), rmin.y);
+        // Unslid islands sit centred on the strip, so an end face shows the motif in the middle and a long face is symmetric.
+        const double centred = (t.min.x + t.max.x - size.x * scale.x) * 0.5;
+        origin = glm::dvec2(opts.randomOffset ? rmin.x + rand0 * (t.max.x - t.min.x) : centred, rmin.y);
     }
     else if (fit == TrimFit::Seamless && kind == TrimKind::StripV)
     {
         scale = glm::dvec2(room.x / size.x);
-        origin = glm::dvec2(rmin.x, rmin.y + (opts.randomOffset ? rand0 * (t.max.y - t.min.y) : 0.0));
+        const double centred = (t.min.y + t.max.y - size.y * scale.y) * 0.5;
+        origin = glm::dvec2(rmin.x, opts.randomOffset ? rmin.y + rand0 * (t.max.y - t.min.y) : centred);
     }
     else
     {

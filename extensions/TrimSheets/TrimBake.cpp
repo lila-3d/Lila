@@ -116,6 +116,31 @@ void standUp(const std::filesystem::path& file, int bits)
     image::write(file, img, bits);
 }
 
+/**
+ * The user's high meshes join the generated relief (or replace it), with a copy a sheet width to each side so tiling strips
+ * bake seamless, and the ray distances grow to reach their tops and hollows.
+ */
+void addHigh(Generated& g, const Sheet& sheet, const SheetBakeOptions& opts)
+{
+    if (opts.high.empty())
+        return;
+    if (sheet.highReplaces)
+        g.high = geo::Mesh();
+    const double width = sheet.worldExtent().x;
+    for (const geo::Mesh& m : opts.high)
+        for (const double dx : opts.tile ? std::vector<double>{0.0, -width, width} : std::vector<double>{0.0})
+        {
+            geo::Mesh copy = m;
+            for (geo::Index p = 0; p < copy.pointCapacity(); ++p)
+                if (copy.pointValid(p))
+                    copy.setPosition(p, copy.position(p) + glm::dvec3(dx, 0.0, 0.0));
+            g.high.append(copy);
+        }
+    const geo::Bounds b = g.high.bounds();
+    g.above = std::max(g.above, b.max.y);
+    g.below = std::max(g.below, -b.min.y);
+}
+
 /** Copies the trims' rectangles, grown by pad, from src into dst (same size). */
 void composite(image::Image& dst, const image::Image& src, const Sheet& sheet, std::span<const size_t> only)
 {
@@ -179,7 +204,8 @@ nlohmann::json bakeSheet(const Sheet& sheet, const std::filesystem::path& sheetF
     // Neighbours stay in the high on a partial rebake so their occlusion on the rebaked trims stays the same.
     GenerateOptions go;
     go.tile = opts.tile;
-    const Generated g = generate(sheet, go);
+    Generated g = generate(sheet, go);
+    addHigh(g, sheet, opts);
     if (g.high.numFaces() == 0)
         throw std::runtime_error("the sheet has no trims to bake");
 

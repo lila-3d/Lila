@@ -15,6 +15,7 @@
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
+#include <lila/Paths.h>
 #include <lila/Prefs.h>
 #include <lila/Profile.h>
 #include <lila/Tasks.h>
@@ -28,6 +29,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <numbers>
 #include <sstream>
 
 using namespace lila;
@@ -74,9 +76,8 @@ std::filesystem::path loadedPath(const Args& a, const char* cmd, std::string_vie
         p = currentSheet();
     if (p.empty())
         throw CommandError(std::string(cmd) + ": no sheet; give sheet= or make one with trimSheetCreate");
-    std::filesystem::path f(p);
-    if (f.is_relative() && Workspace::get().isOpen())
-        f = Workspace::get().root() / f;
+    // Relative paths are as scenes store them: against the workspace, then the scene's folder.
+    const std::filesystem::path f = paths::resolvePath(p);
     if (!std::filesystem::exists(f))
         throw CommandError(std::string(cmd) + ": no trim sheet at " + f.generic_string());
     return f;
@@ -149,6 +150,106 @@ json sheetSummary(const Sheet& s, const std::filesystem::path& f)
             {"trims", trimsJ}};
 }
 
+/** How a tiling strip's detail repeats along it, in uv: the repeat and where one motif is centred. Zero period: plain. */
+struct Motif
+{
+    double period = 0.0;
+    double centre = 0.0;
+};
+
+/**
+ * The repeat of a strip's carved or modelled detail, read from its baked normal map: detail on a tiling strip repeats a
+ * whole number of times across the sheet, so the repeat is the shortest sheet width / k the strip matches itself at.
+ */
+Motif measureMotif(const Sheet& s, const std::filesystem::path& f, size_t trim)
+{
+    Motif out;
+    const Trim& t = s.trims[trim];
+    const lila::image::Image img = lila::image::read(mapFile(s, f, "normal"));
+    if (img.width < 8 || t.kind != uv::TrimKind::StripU)
+        return out;
+    const int w = img.width;
+    const double sy = double(img.height) / s.height;
+    const int y0 = std::clamp(int(t.min.y * sy), 0, img.height), y1 = std::clamp(int(t.max.y * sy), y0, img.height);
+    if (y1 - y0 < 2)
+        return out;
+    // How far each column leans from flat; the profile is the same in every column, so only detail varies along it.
+    std::vector<double> sig(size_t(w), 0.0);
+    for (int y = y0; y < y1; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const float* px = &img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4];
+            sig[size_t(x)] += std::abs(px[0] - 0.5) + std::abs(px[1] - 0.5);
+        }
+    double mean = 0.0;
+    for (double v : sig)
+        mean += v;
+    mean /= w;
+    double spread = 0.0;
+    for (double& v : sig)
+    {
+        v -= mean;
+        spread += std::abs(v);
+    }
+    spread /= w;
+    if (spread < 1e-3 * (y1 - y0))
+        return out;
+    auto at = [&](double x) {
+        x = std::fmod(x, double(w));
+        if (x < 0.0)
+            x += w;
+        const int i = int(x);
+        const double f2 = x - i;
+        return sig[size_t(i)] * (1.0 - f2) + sig[size_t((i + 1) % w)] * f2;
+    };
+    int repeats = 1;
+    for (int k = w / 4; k >= 2; --k)
+    {
+        const double shift = double(w) / k;
+        double err = 0.0;
+        for (int x = 0; x < w; ++x)
+            err += std::abs(sig[size_t(x)] - at(x + shift));
+        if (err / w < 0.2 * spread)
+        {
+            repeats = k;
+            break;
+        }
+    }
+    const double period = double(w) / repeats;
+    // The motif's centre: the circular centroid of the detail over one repeat.
+    double cx = 0.0, sx = 0.0;
+    for (int x = 0; x < w; ++x)
+    {
+        const double a = 2.0 * std::numbers::pi * x / period;
+        const double weight = std::max(0.0, sig[size_t(x)]);
+        cx += weight * std::cos(a);
+        sx += weight * std::sin(a);
+    }
+    double centre = std::atan2(sx, cx) / (2.0 * std::numbers::pi) * period;
+    if (centre < 0.0)
+        centre += period;
+    out.period = period / w;
+    out.centre = (centre + 0.5) / w;
+    return out;
+}
+
+/**
+ * Slides a placed chart along its tiling strip so the motifs sit symmetrically: an odd number of repeats across it puts a
+ * motif in its middle, an even number a gap, so a short end shows one centred motif and a long face ends between motifs.
+ */
+void alignToMotif(uv::Chart& ch, const Motif& m)
+{
+    if (m.period <= 0.0 || ch.uv.empty())
+        return;
+    const double lo = ch.uvMin().x, hi = ch.uvMax().x;
+    const double middle = (lo + hi) * 0.5;
+    const long repeats = std::max(1L, std::lround((hi - lo) / m.period));
+    const double anchor = m.centre + (repeats % 2 == 0 ? m.period * 0.5 : 0.0);
+    const double target = anchor + std::round((middle - anchor) / m.period) * m.period;
+    for (glm::dvec2& p : ch.uv)
+        p.x += target - middle;
+}
+
 /** The rotation that fits an island onto one trim best. */
 bool bestRotation(const uv::IslandMeasure& m, const uv::HotspotTrim& t)
 {
@@ -156,8 +257,11 @@ bool bestRotation(const uv::IslandMeasure& m, const uv::HotspotTrim& t)
         return false;
     switch (t.kind)
     {
-    case uv::TrimKind::StripU: return m.height > m.width;
-    case uv::TrimKind::StripV: return m.width > m.height;
+    // A strip fixes one side: turn only when the other side fits it clearly better, so world up survives where it can.
+    case uv::TrimKind::StripU:
+        return std::abs(std::log2(m.width / std::max(t.worldSize.y, 1e-9))) + 0.25 < std::abs(std::log2(m.height / std::max(t.worldSize.y, 1e-9)));
+    case uv::TrimKind::StripV:
+        return std::abs(std::log2(m.height / std::max(t.worldSize.x, 1e-9))) + 0.25 < std::abs(std::log2(m.width / std::max(t.worldSize.x, 1e-9)));
     default:
     {
         const double ta = t.worldSize.x / std::max(t.worldSize.y, 1e-9);
@@ -211,7 +315,7 @@ void tagNode(const std::string& node, const std::filesystem::path& sheet)
     {
         ops::execute("addAttr", {{"args", {node}}, {"longName", kNodeSheet}, {"dataType", "string"}, {"doc", "Trim sheet the faces are mapped with."}});
     }
-    ops::execute("setAttr", {{"args", {node + "." + kNodeSheet, sheet.generic_string()}}});
+    ops::execute("setAttr", {{"args", {node + "." + kNodeSheet, paths::storedPath(sheet)}}});
 }
 
 /** The Lila material the sheet's faces use, made or updated with the baked maps. */
@@ -295,11 +399,66 @@ std::vector<FlagDef> hotspotFlags()
             {"normalWeight", "nw", AT::Float, 0.5, "How much facing matters, for trims with a preferred direction.", {}, {}, 0.0, 10.0}};
 }
 
+/** Where a sheet keeps a copy of its high meshes, so it bakes the same in any scene. */
+std::filesystem::path highFile(const Sheet& s, const std::filesystem::path& f) { return textureFolder(s, f) / (s.name + "_high.obj"); }
+
+/**
+ * The sheet's high meshes in sheet space: from the scene when they are all there (world space, which trimSheetGenerate
+ * lays out as sheet space), saved beside the textures for next time; else the copy saved by the last bake that had them.
+ */
+std::vector<geo::Mesh> highMeshes(const Sheet& s, const std::filesystem::path& f, const char* cmd)
+{
+    std::vector<geo::Mesh> out;
+    if (s.high.empty())
+        return out;
+    Graph& g = Graph::current();
+    std::vector<std::string> missing;
+    for (const std::string& name : s.high)
+    {
+        Node* n = g.find(name);
+        if (!n || !n->type().isA("mesh"))
+        {
+            missing.push_back(name);
+            continue;
+        }
+        geo::Mesh m = *std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+        const glm::dmat4 world = std::get<glm::dmat4>(g.value({n->id(), scene::Transform::kWorldMatrix, -1}));
+        for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+            if (m.pointValid(p))
+                m.setPosition(p, glm::dvec3(world * glm::dvec4(m.position(p), 1.0)));
+        out.push_back(std::move(m));
+    }
+    const std::filesystem::path saved = highFile(s, f);
+    if (missing.empty())
+    {
+        geo::Mesh all;
+        for (const geo::Mesh& m : out)
+            all.append(m);
+        std::filesystem::create_directories(saved.parent_path());
+        if (!geo::writeObjFile(saved.string(), all))
+            log::warn("{}: couldn't save the high meshes to {}", cmd, saved.generic_string());
+        return out;
+    }
+    geo::ObjReadOptions ro;
+    ro.splitObjects = false;
+    const geo::ObjReadResult r = std::filesystem::exists(saved) ? geo::readObjFile(saved.string(), ro) : geo::ObjReadResult{};
+    if (r.objects.empty())
+        throw CommandError(std::string(cmd) + ": the sheet's high meshes (" + missing.front() + "...) aren't in the scene and none were saved; "
+                           "open the scene that has them, or trimSheetBake(high=[]) to bake without them");
+    out.clear();
+    for (const geo::ObjObject& o : r.objects)
+        out.push_back(o.mesh);
+    return out;
+}
+
 /** The bake result recorded beside the textures, for sends. */
 std::filesystem::path bakeRecord(const Sheet& s, const std::filesystem::path& f) { return textureFolder(s, f) / (s.name + "_bake.json"); }
 
-json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOptions& o, const char* cmd)
+json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOptions& opts, const char* cmd)
 {
+    SheetBakeOptions o = opts;
+    if (o.high.empty())
+        o.high = highMeshes(s, f, cmd);
     json r;
     try
     {
@@ -335,7 +494,7 @@ bool hasTextureSet(const std::string& set)
 /** A bake project named after the sheet and pointed at its texture folder: texture sets read the sheet's bake through it. */
 std::string ensureBakeProject(const Sheet& s, const std::filesystem::path& f, const char* cmd)
 {
-    const std::string folder = textureFolder(s, f).generic_string();
+    const std::string folder = paths::storedPath(textureFolder(s, f));
     if (Node* n = Graph::current().find(s.name))
     {
         if (n->type().name != "bakeProject")
@@ -537,6 +696,26 @@ std::filesystem::path defaultSheetFolder()
 
 void registerCommands(ext::Context& ctx)
 {
+    // A scene with meshes mapped onto a sheet makes that sheet current when it opens, so its palette and tools are ready.
+    ctx.subscribe(events::Event::SceneOpened, [](const events::EventData&) {
+        Graph& g = Graph::current();
+        for (const scene::NodeId id : g.nodes())
+            if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                try
+                {
+                    const json v = ops::execute("getAttr", {{"args", {n->path() + "." + kNodeSheet}}});
+                    if (const std::filesystem::path f = v.is_string() ? paths::resolvePath(v.get<std::string>()) : std::filesystem::path();
+                        !f.empty() && std::filesystem::exists(f))
+                    {
+                        setCurrentSheet(f.generic_string());
+                        return;
+                    }
+                }
+                catch (const std::exception&)
+                {
+                }
+    });
+
     ctx.registerCommand({
         .name = "trimSheetCreate",
         .doc = "Make a trim sheet from a preset and bake it: the layout and every trim's profile go in a .lilatrim file, the generated "
@@ -743,13 +922,24 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
                   {"trims", "t", AT::List, nullptr, "Trim indices or names to rebake; all when not given."},
-                  {"backend", "", AT::String, "auto", "auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
+                  {"backend", "", AT::String, "auto", "auto, gpu or cpu.", {"auto", "gpu", "cpu"}},
+                  {"high", "hi", AT::List, nullptr,
+                   "Scene meshes to bake as extra high poly detail, laid on the sheet as trimSheetGenerate shows it; remembered by the "
+                   "sheet for later bakes. An empty list goes back to the generated relief alone."},
+                  {"highReplaces", "hr", AT::Bool, nullptr, "The high meshes are the whole high poly, instead of adding to the generated one."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
             const std::filesystem::path f = loadedPath(a, "trimSheetBake");
-            const Sheet s = loadOr(f, "trimSheetBake");
+            Sheet s = loadOr(f, "trimSheetBake");
+            if (a.has("high") || a.has("highReplaces"))
+            {
+                if (a.has("high"))
+                    s.high = a.flags["high"].get<std::vector<std::string>>();
+                s.highReplaces = a.get<bool>("highReplaces", s.highReplaces);
+                save(s, f);
+            }
             SheetBakeOptions o;
             o.backend = a.get<std::string>("backend", "auto");
             if (a.has("trims"))
@@ -872,7 +1062,8 @@ void registerCommands(ext::Context& ctx)
                                       {"splitAngle", "sa", AT::Float, 30.0, "Split islands where faces meet sharper than this, degrees.", {}, {}, 0.0, 180.0},
                                       {"orient", "o", AT::String, "worldUp", "worldUp, longestU or asIs.", {"worldUp", "longestU", "asIs"}},
                                       {"seed", "s", AT::Int, int64_t(0), "Offset along strips."},
-                                      {"randomOffset", "ro", AT::Bool, true, "Slide islands along tiling strips."}};
+                                      {"randomOffset", "ro", AT::Bool, false,
+                                       "Slide islands to a random place along tiling strips; off centres them, so motifs sit symmetrically."}};
             return f;
         }(),
         .run = [](const Args& a) -> json {
@@ -887,6 +1078,8 @@ void registerCommands(ext::Context& ctx)
             const std::string set = a.get<std::string>("uvSet", "uv0");
             const std::string rotate = a.get<std::string>("rotate", "auto");
             uv::HotspotOptions o = hotspotOptions(a);
+            o.randomOffset = a.get<bool>("randomOffset", false);
+            const Motif motif = o.randomOffset ? Motif{} : measureMotif(s, f, size_t(ti));
             std::vector<std::string> nodes;
             json out = uv::editUvMeshes("Apply Trim", scene::ComponentMode::Face, [&](geo::Mesh& m, const Ids& ids, Node& node) -> json {
                 const std::vector<geo::Index> faces = facesOrAll(m, ids);
@@ -898,6 +1091,7 @@ void registerCommands(ext::Context& ctx)
                     const uint64_t key = ch.faces.empty() ? 0 : ch.faces.front();
                     uv::placeChart(ch, trims[size_t(ti)], rot, o, uv::hotspotRandom(o.seed, key, 1), uv::hotspotRandom(o.seed, key, 2),
                                    uv::hotspotRandom(o.seed, key, 3));
+                    alignToMotif(ch, motif);
                 }
                 uv::writeCharts(m, charts, set);
                 tagFaces(m, faces, ti, materialName(s));
@@ -1432,7 +1626,7 @@ void registerCommands(ext::Context& ctx)
                 try
                 {
                     const json v = ops::execute("getAttr", {{"args", {n->path() + "." + kNodeSheet}}});
-                    if (v.is_string() && std::filesystem::path(v.get<std::string>()).lexically_normal() == f.lexically_normal())
+                    if (v.is_string() && paths::resolvePath(v.get<std::string>()).lexically_normal() == f.lexically_normal())
                         if (const json m = link::mappingOf(n->path()); m.is_object() && m.contains("contentPath"))
                             meshes.push_back(m["contentPath"]);
                 }

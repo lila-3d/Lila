@@ -25,10 +25,6 @@
             {
               "name": "roughness",
               "type": "gray"
-            },
-            {
-              "name": "height",
-              "type": "gray"
             }
           ],
           "nodes": [
@@ -122,12 +118,6 @@
               "out",
               "GroupOutput",
               "roughness"
-            ],
-            [
-              "Grain",
-              "out",
-              "GroupOutput",
-              "height"
             ]
           ]
         },

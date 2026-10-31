@@ -329,16 +329,11 @@ json BakeResult::toJson() const
 
 fs::path resolveFolder(const std::string& folder)
 {
-    fs::path p = paths::fromUtf8(folder.empty() ? std::string("bake") : folder);
+    const std::string stored = folder.empty() ? std::string("bake") : folder;
+    // As other stored paths: the workspace, then the scene's folder (an opened example's too), whichever has it.
+    fs::path p = paths::resolvePath(stored);
     if (p.is_relative())
-    {
-        fs::path base = fs::current_path();
-        if (Workspace::get().isOpen())
-            base = Workspace::get().root();
-        else if (!io::currentPath().empty())
-            base = io::currentPath().parent_path();
-        p = base / p;
-    }
+        p = fs::current_path() / p;
     return p.lexically_normal();
 }
 

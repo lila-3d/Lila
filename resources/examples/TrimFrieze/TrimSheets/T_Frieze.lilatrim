@@ -1,0 +1,318 @@
+{
+  "folder": "",
+  "height": 1024,
+  "high": [
+    "Ring0",
+    "Boss0",
+    "Petal0_0",
+    "Petal0_1",
+    "Petal0_2",
+    "Petal0_3",
+    "Petal0_4",
+    "Petal0_5",
+    "Petal0_6",
+    "Petal0_7",
+    "Ring1",
+    "Boss1",
+    "Petal1_0",
+    "Petal1_1",
+    "Petal1_2",
+    "Petal1_3",
+    "Petal1_4",
+    "Petal1_5",
+    "Petal1_6",
+    "Petal1_7",
+    "Ring2",
+    "Boss2",
+    "Petal2_0",
+    "Petal2_1",
+    "Petal2_2",
+    "Petal2_3",
+    "Petal2_4",
+    "Petal2_5",
+    "Petal2_6",
+    "Petal2_7",
+    "Ring3",
+    "Boss3",
+    "Petal3_0",
+    "Petal3_1",
+    "Petal3_2",
+    "Petal3_3",
+    "Petal3_4",
+    "Petal3_5",
+    "Petal3_6",
+    "Petal3_7",
+    "Ring4",
+    "Boss4",
+    "Petal4_0",
+    "Petal4_1",
+    "Petal4_2",
+    "Petal4_3",
+    "Petal4_4",
+    "Petal4_5",
+    "Petal4_6",
+    "Petal4_7",
+    "Dentil0",
+    "Dentil1",
+    "Dentil2",
+    "Dentil3",
+    "Dentil4",
+    "Dentil5",
+    "Dentil6",
+    "Dentil7",
+    "Dentil8",
+    "Dentil9",
+    "Dentil10",
+    "Dentil11",
+    "Dentil12",
+    "Dentil13",
+    "Dentil14",
+    "Dentil15",
+    "Dentil16",
+    "Dentil17",
+    "Dentil18",
+    "Dentil19"
+  ],
+  "highReplaces": false,
+  "lilatrim": 1,
+  "maps": [
+    "normal",
+    "ao",
+    "curvature",
+    "height",
+    "cavity",
+    "objectNormal"
+  ],
+  "material": "Trim Sandstone",
+  "mipLevel": 3,
+  "name": "T_Frieze",
+  "padding": 4,
+  "preset": "ladder",
+  "pxPerM": 512.0,
+  "supersampling": 16,
+  "trims": [
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        256
+      ],
+      "min": [
+        0,
+        0
+      ],
+      "name": "Frieze",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "recessed"
+      },
+      "reserved": false,
+      "tags": []
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        512
+      ],
+      "min": [
+        0,
+        256
+      ],
+      "name": "Panel",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "raised"
+      },
+      "reserved": false,
+      "tags": []
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        768
+      ],
+      "min": [
+        0,
+        512
+      ],
+      "name": "Courses",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "groove"
+      },
+      "reserved": false,
+      "tags": []
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        896
+      ],
+      "min": [
+        0,
+        768
+      ],
+      "name": "Dentils",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "step"
+      },
+      "reserved": false,
+      "tags": []
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        960
+      ],
+      "min": [
+        0,
+        896
+      ],
+      "name": "Torus",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "halfPipe"
+      },
+      "reserved": false,
+      "tags": []
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        992
+      ],
+      "min": [
+        0,
+        960
+      ],
+      "name": "Bead",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "halfPipe"
+      },
+      "reserved": false,
+      "tags": [
+        "edge"
+      ]
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        1008
+      ],
+      "min": [
+        0,
+        992
+      ],
+      "name": "Edge",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "raised"
+      },
+      "reserved": false,
+      "tags": [
+        "edge"
+      ]
+    },
+    {
+      "allowRotate": true,
+      "altGroup": -1,
+      "fit": "seamless",
+      "insetPx": 2.0,
+      "kind": "stripU",
+      "max": [
+        1024,
+        1024
+      ],
+      "min": [
+        0,
+        1008
+      ],
+      "name": "EdgeB",
+      "profile": {
+        "angle": 45.0,
+        "bevelPx": 6.0,
+        "detailPx": 10.0,
+        "seed": 0,
+        "segments": 1,
+        "spacingPx": 64.0,
+        "style": "doubleBevel"
+      },
+      "reserved": false,
+      "tags": [
+        "edge"
+      ]
+    }
+  ],
+  "width": 1024
+}

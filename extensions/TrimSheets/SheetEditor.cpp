@@ -10,6 +10,7 @@
 #include <lila/Log.h>
 #include <lila/Panels.h>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -403,6 +404,7 @@ QWidget* makeEditor(QWidget* parent)
     title->setWordWrap(true);
     v->addWidget(title);
     auto* canvas = new SheetCanvas(w);
+    canvas->setObjectName("trimSheetCanvas");
     v->addWidget(canvas, 1);
     auto* warnings = new QLabel(w);
     warnings->setWordWrap(true);
@@ -425,6 +427,7 @@ QWidget* makeEditor(QWidget* parent)
     bevel->setSuffix(" px");
     auto* tags = new QLineEdit(props);
     tags->setPlaceholderText("wall, edge, floor...");
+    auto* reserved = new QCheckBox("Auto never picks it; it goes only where you click it", props);
     auto* size = new QLabel(props);
     form->addRow("Name", name);
     form->addRow("Size", size);
@@ -432,15 +435,36 @@ QWidget* makeEditor(QWidget* parent)
     form->addRow("Style", style);
     form->addRow("Bevel", bevel);
     form->addRow("Tags", tags);
+    form->addRow("Reserved", reserved);
     v->addWidget(props);
 
     auto* buttons = new QHBoxLayout();
     auto* bake = new QPushButton("Bake", w);
+    auto* material = new QComboBox(w);
+    material->setToolTip("The smart material Texture puts on the sheet.");
+    try
+    {
+        for (const json& m : ops::execute("texSmartMaterials", json::object()))
+            if (m.value("kind", std::string()) == "material")
+            {
+                material->addItem(QString::fromStdString(m.value("name", std::string())));
+                material->setItemData(material->count() - 1, QString::fromStdString(m.value("description", std::string())), Qt::ToolTipRole);
+            }
+    }
+    catch (const std::exception& e)
+    {
+        log::write(LogLevel::Warning, e.what());
+    }
     auto* texture = new QPushButton("Texture", w);
-    texture->setToolTip("Put the sheet's smart material on its texture set (trimSheetTexture).");
+    texture->setToolTip("Replace the sheet's texturing with the chosen smart material.");
+    auto* detail = new QPushButton("Bake Detail", w);
+    detail->setToolTip("Bake the selected meshes into the sheet on top of its relief (Level > Trim Sheets > Show Trim Sheet High/Low "
+                       "shows where to model them).");
     auto* paint = new QPushButton("Paint", w);
     paint->setToolTip("Paint the sheet by hand on a flat preview plane.");
     buttons->addWidget(bake);
+    buttons->addWidget(detail);
+    buttons->addWidget(material, 1);
     buttons->addWidget(texture);
     buttons->addWidget(paint);
     v->addLayout(buttons);
@@ -458,6 +482,8 @@ QWidget* makeEditor(QWidget* parent)
         state->loading = true;
         const std::optional<Sheet>& s = canvas->sheet();
         props->setEnabled(s && i >= 0);
+        if (s && !s->material.empty() && material->findText(QString::fromStdString(s->material)) >= 0)
+            material->setCurrentText(QString::fromStdString(s->material));
         if (s)
         {
             title->setText(QString::fromStdString(std::format("<b>{}</b>  {} x {} px, {:g} px/m", s->name, s->width, s->height, s->pxPerM)));
@@ -486,6 +512,7 @@ QWidget* makeEditor(QWidget* parent)
             for (const std::string& tag : t.tags)
                 joined += (joined.empty() ? "" : ", ") + tag;
             tags->setText(QString::fromStdString(joined));
+            reserved->setChecked(t.reserved);
         }
         state->loading = false;
     };
@@ -507,6 +534,7 @@ QWidget* makeEditor(QWidget* parent)
     QObject::connect(kind, &QComboBox::currentTextChanged, w, [=](const QString& k) { apply({{"kind", k.toStdString()}}); });
     QObject::connect(style, &QComboBox::currentTextChanged, w, [=](const QString& st) { apply({{"profile", {{"style", st.toStdString()}}}}); });
     QObject::connect(bevel, &QDoubleSpinBox::editingFinished, w, [=] { apply({{"profile", {{"bevelPx", bevel->value()}}}}); });
+    QObject::connect(reserved, &QCheckBox::toggled, w, [=](bool on) { apply({{"reserved", on}}); });
     QObject::connect(tags, &QLineEdit::editingFinished, w, [=] {
         json list = json::array();
         for (const QString& t : tags->text().split(',', Qt::SkipEmptyParts))
@@ -534,7 +562,12 @@ QWidget* makeEditor(QWidget* parent)
         state->layout = false;
         canvas->refresh(true);
     });
-    QObject::connect(texture, &QPushButton::clicked, w, [=] { runUi("trimSheetTexture", json::object()); });
+    QObject::connect(detail, &QPushButton::clicked, w, [=] {
+        actions::run(json("trims.detail"));
+        canvas->refresh(true);
+    });
+    QObject::connect(texture, &QPushButton::clicked, w,
+                     [=] { runUi("trimSheetTexture", {{"material", material->currentText().toStdString()}, {"replace", true}}); });
     QObject::connect(paint, &QPushButton::clicked, w, [] { actions::run(json("trims.paint")); });
     show(-1);
     return w;

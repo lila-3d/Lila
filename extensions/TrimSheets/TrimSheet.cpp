@@ -276,6 +276,8 @@ json Sheet::toJson() const
             {"maps", maps},
             {"folder", folder},
             {"supersampling", supersampling},
+            {"high", high},
+            {"highReplaces", highReplaces},
             {"trims", t}};
 }
 
@@ -293,6 +295,8 @@ Sheet Sheet::fromJson(const json& j)
     s.maps = j.value("maps", s.maps);
     s.folder = j.value("folder", std::string());
     s.supersampling = j.value("supersampling", s.supersampling);
+    s.high = j.value("high", std::vector<std::string>());
+    s.highReplaces = j.value("highReplaces", false);
     for (const json& t : j.value("trims", json::array()))
         s.trims.push_back(Trim::fromJson(t));
     return s;

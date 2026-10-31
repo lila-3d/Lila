@@ -754,6 +754,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
         if (auto ws = Workspace::detect(scene))
             Workspace::get().open(*ws);
     log::info("opened {} as {}", file.string(), keepPath ? scene.string() : title);
+    events::send({.type = events::Event::SceneOpened, .path = scene.empty() ? file : scene});
 }
 
 std::string displayName()
