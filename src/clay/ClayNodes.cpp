@@ -434,6 +434,7 @@ void registerTypes()
     };
     surface.create = [] { return std::make_unique<SurfaceNode>(); };
     types::registerType(std::move(surface));
+    registerGnNodes();
 }
 
 void registerCommands()

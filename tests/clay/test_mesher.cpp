@@ -1,5 +1,7 @@
 #include "clay/Clay.h"
 #include "geo/ColorSets.h"
+#include "gn/Exec.h"
+#include "gn/Gn.h"
 
 #include <doctest/doctest.h>
 
@@ -208,3 +210,54 @@ TEST_CASE("clay mesher: sharp edges keep a box's corners, closed")
     CHECK(corner(soft) < corner(hard) - 0.3);
     CHECK(volume(hard) == doctest::Approx(480.0).epsilon(0.01));
 }
+
+namespace clay_gn_tests
+{
+gn::GeometryPtr evalNodes(std::vector<gn::GNode> nodes, std::vector<gn::GLink> links)
+{
+    gn::Group g = gn::Group::makeDefault("T");
+    g.links.clear();
+    g.nodes.insert(g.nodes.end(), nodes.begin(), nodes.end());
+    g.links = std::move(links);
+    gn::PlanPtr plan = gn::compile(g);
+    REQUIRE_MESSAGE(plan->error.empty(), plan->error);
+    return gn::execute(*plan, {});
+}
+
+using N = gn::GNode;
+using L = gn::GLink;
+
+TEST_CASE("clay node: points and curves melt together, either can cut")
+{
+    // A sphere of radius 5 at each corner of a 100 cube.
+    auto points = evalNodes({N{"C", "MeshCube", {}, {}}, N{"P", "Clay", {}, {{"pointRadius", 5.0}, {"voxelSize", 1.0}}}},
+                            {L{"C", "mesh", "P", "points"}, L{"P", "mesh", "GroupOutput", "geometry"}});
+    REQUIRE(points->mesh);
+    CHECK(points->mesh->bounds().max.x == doctest::Approx(55.0).epsilon(0.01));
+    checkClosed(*points->mesh);
+
+    // A tube of radius 2 from y 0 to 100.
+    auto tube = evalNodes({N{"C", "CurveLine", {}, {}}, N{"T", "Clay", {}, {{"curveRadius", 2.0}, {"voxelSize", 0.5}}}},
+                          {L{"C", "curve", "T", "curves"}, L{"T", "mesh", "GroupOutput", "geometry"}});
+    REQUIRE(tube->mesh);
+    CHECK(tube->mesh->bounds().max.y == doctest::Approx(102.0).epsilon(0.01));
+    CHECK(tube->mesh->bounds().max.x == doctest::Approx(2.0).epsilon(0.03));
+    checkClosed(*tube->mesh);
+
+    // Both in one node: the tube runs from the corner sphere at (50, 50, 50) up to y 150, one shell.
+    auto both = evalNodes({N{"C", "MeshCube", {}, {}}, N{"L", "CurveLine", {}, {{"start", {50, 50, 50}}, {"end", {50, 150, 50}}}},
+                           N{"B", "Clay", {}, {{"pointRadius", 5.0}, {"curveRadius", 2.0}, {"voxelSize", 1.0}}}},
+                          {L{"C", "mesh", "B", "points"}, L{"L", "curve", "B", "curves"}, L{"B", "mesh", "GroupOutput", "geometry"}});
+    REQUIRE(both->mesh);
+    CHECK(both->mesh->bounds().max.y == doctest::Approx(152.0).epsilon(0.01));
+    checkClosed(*both->mesh);
+
+    // Cutting with the tube instead: nothing above the spheres.
+    auto cut = evalNodes({N{"C", "MeshCube", {}, {}}, N{"L", "CurveLine", {}, {{"start", {50, 50, 50}}, {"end", {50, 150, 50}}}},
+                          N{"B", "Clay", {}, {{"pointRadius", 5.0}, {"curveRadius", 2.0}, {"cutWithCurves", true}, {"voxelSize", 1.0}}}},
+                         {L{"C", "mesh", "B", "points"}, L{"L", "curve", "B", "curves"}, L{"B", "mesh", "GroupOutput", "geometry"}});
+    REQUIRE(cut->mesh);
+    CHECK(cut->mesh->bounds().max.y < 56.0);
+    checkClosed(*cut->mesh);
+}
+} // namespace clay_gn_tests

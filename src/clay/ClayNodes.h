@@ -26,6 +26,8 @@ LILA_SCENE_API scene::Node* objectOf(scene::NodeId id);
 
 /** claySurface (meshes the tree), clayPrimitive and clayGroup (transforms that feed it). */
 LILA_SCENE_API void registerTypes();
+/** The Clay geometry node. */
+LILA_SCENE_API void registerGnNodes();
 /** createClay, addClayPrimitive, groupClay, refreshClay, convertClayToMesh. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::clay

@@ -5,6 +5,7 @@
 #include "core/MainQueue.h"
 #include "io/SceneFile.h"
 #include "clay/ClayNodes.h"
+#include "gn/Gn.h"
 #include "retopo/RetopoCommands.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -28,6 +29,7 @@ int main(int argc, char** argv)
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::retopo::registerCommands();
+    lila::gn::registerTypes();
     lila::clay::registerTypes();
     lila::clay::registerCommands();
 
