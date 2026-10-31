@@ -798,6 +798,8 @@ void registerBuiltins()
                "In object mode, the object under the cursor highlights before it is clicked.");
     togglePref("select.toggleSymmetric", "Symmetric Selection", "/select/symmetric", true,
                "With symmetry on, clicking, dragging and loop picks select the mirror images too.");
+    togglePref("viewport.toggleSymmetryLine", "Show Symmetry Line", vd::kSymmetryEdges, true,
+               "With symmetry on, the edges on the mirror plane draw in red.");
     cmd("select.symmetrize", "Symmetrize Selection", "Select", "symmetrizeSelection", json::object(),
         "Adds the mirror image of the component selection under the mesh's symmetry.");
     togglePref("viewport.togglePreselectComponents", "Highlight Components Under Cursor", "/viewport/preselect/components", true,

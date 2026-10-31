@@ -126,7 +126,7 @@ void MainWindow::buildMenus()
     menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",
                                "#Mirror", "mesh.mirror"});
     addSubmenu("Mesh", "Symmetry");
-    menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "",
+    menus::addActions("Mesh/Symmetry", {"mesh.toggleSymmetry", "mesh.symmetryX", "mesh.symmetryY", "mesh.symmetryZ", "mesh.symmetryRadial", "mesh.symmetryOff", "viewport.toggleSymmetryLine", "",
                                  "mesh.symmetryCheck", "mesh.symmetrizePositive", "mesh.symmetrizeNegative", "mesh.symmetryRebuild", "mesh.symmetrizeRadial",
                                  "mesh.symmetryRepair", "mesh.symmetryRebuildTopological"});
     menus::addActions("Mesh", {"#Topology", "mesh.triangulate", "mesh.quadrangulate", "mesh.subdivide", "#Attributes",

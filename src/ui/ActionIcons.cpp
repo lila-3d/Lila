@@ -119,6 +119,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"select.ring", "circle-dotted"},
     {"select.symmetrize", "flip-vertical"},
     {"select.toggleSymmetric", "flip-vertical"},
+    {"viewport.toggleSymmetryLine", "flip-vertical"},
     {"select.hierarchy", "hierarchy-3"},
     {"select.pickWalkUp", "arrow-up"},
     {"select.pickWalkDown", "arrow-down"},
