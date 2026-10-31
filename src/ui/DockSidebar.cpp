@@ -280,18 +280,32 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
         }
         if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonDblClick)
         {
-            // The first click of a double-click on another tab only switches to it; the tab must already have been showing.
-            if (!mPressOnCurrentTab || index < 0 || index != bar->currentIndex())
-                return false;
-            QPointer<QDockWidget> d = dockForTab(bar, index);
-            QTimer::singleShot(0, this, [this, d] {
-                if (d)
-                    collapse(d);
-            });
-            return true;
+            bool swallow = mCollapsedByClick;
+            mCollapsedByClick = false;
+            return swallow;
+        }
+        // Clicking the tab already showing collapses it; a drag past the threshold is a move or undock instead.
+        if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonRelease)
+        {
+            bool click = (mouse->position().toPoint() - mTabPressPos).manhattanLength() < QApplication::startDragDistance();
+            if (mPressOnCurrentTab && click && index >= 0 && index == bar->currentIndex())
+            {
+                mPressOnCurrentTab = false;
+                mCollapsedByClick = true;
+                QPointer<QDockWidget> d = dockForTab(bar, index);
+                QTimer::singleShot(0, this, [this, d] {
+                    if (d)
+                        collapse(d);
+                });
+            }
+            return false;
         }
         if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonPress)
+        {
             mPressOnCurrentTab = index >= 0 && index == bar->currentIndex();
+            mTabPressPos = mouse->position().toPoint();
+            mCollapsedByClick = false;
+        }
         if (mouse->button() == Qt::LeftButton && e->type() == QEvent::MouseButtonPress && index >= 0 && index != bar->currentIndex())
         {
             rememberSize(dockForTab(bar, bar->currentIndex()));

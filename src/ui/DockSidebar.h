@@ -141,5 +141,7 @@ private:
     std::map<QDockWidget*, QSize> mSizes;
     std::map<QString, int> mTabSizes;
     bool mPressOnCurrentTab = false;
+    QPoint mTabPressPos;
+    bool mCollapsedByClick = false;
 };
 } // namespace lila::ui
