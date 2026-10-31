@@ -5,9 +5,11 @@
 #include "io/Examples.h"
 #include "io/Samples.h"
 #include "io/Recovery.h"
+#include "ui/WelcomeNews.h"
 
 #include <QDialog>
 #include <QElapsedTimer>
+#include <QPointer>
 
 #include <nlohmann/json.hpp>
 
@@ -16,6 +18,7 @@
 #include <vector>
 
 class QCheckBox;
+class QHBoxLayout;
 class QListWidget;
 class QPushButton;
 class QTreeWidget;
@@ -24,11 +27,6 @@ class QVBoxLayout;
 
 namespace lila::ui
 {
-namespace news
-{
-struct Item;
-}
-
 LILA_UI_API void openCrashReport(const std::filesystem::path& dir);
 LILA_UI_API void openCrashFolder(const std::filesystem::path& dir);
 /** Puts report.txt on the clipboard. */
@@ -70,8 +68,8 @@ inline constexpr const char* kShowWelcomePref = "/startup/showWelcome";
 inline constexpr const char* kShowRecentPref = "/startup/showDialog";
 
 /**
- * The frameless startup picker. welcome: the Essentials button over recent scenes, news and examples in three columns;
- * otherwise the recent scenes alone.
+ * The frameless startup picker. welcome: the title and Essentials button over two zones, New Scene, Open and the recent
+ * scenes down the left, the latest news over the samples and examples on the right; otherwise the recent scenes alone.
  * Enter or double-click opens, Esc dismisses; a click outside also dismisses the recent scenes alone, not the welcome.
  */
 class LILA_UI_API StartupDialog : public QDialog
@@ -100,23 +98,34 @@ private:
     void openSelected(QTreeWidget* list);
     void openExampleSelected();
     void openSampleSelected();
-    /** The strip of downloadable sample scenes under the essentials banner; null when there are none. */
-    QListWidget* makeSampleStrip();
     void showRecentMenu(const QPoint& at);
     /** Drops the scene from the recent files pref and the list. */
     void removeRecent(QTreeWidgetItem* item);
-    /** Rebuilds the news column; it hides when there is nothing to show, and the examples widen into its space. */
+    /**
+     * The band over the examples: the news card, opening on the newest item not yet seen, and beside it the showcase
+     * entry shown fewest times, or an invitation to send work in while the feed has none running.
+     */
     void showNews(const std::vector<news::Item>& items);
+    /** Shows the news item at mNewsShown. */
+    void showNewsItem();
+    QWidget* makeShowcasePlaceholder();
     /** The examples list's width for that many cards across. */
     int examplesWidth(int across) const;
 
     Hooks mHooks;
     QWidget* mNews = nullptr;
-    QVBoxLayout* mNewsCards = nullptr;
+    QHBoxLayout* mNewsBand = nullptr;
+    QPointer<QWidget> mNewsCard;
+    QPointer<QWidget> mShowcaseCard;
+    std::vector<std::string> mSeenBefore;
+    bool mSeenLoaded = false;
+    std::string mShowcaseId;
+    std::vector<news::Item> mNewsItems;
+    size_t mNewsShown = 0;
     QTreeWidget* mList = nullptr;
     QListWidget* mExamples = nullptr;
+    QWidget* mExamplesArea = nullptr;
     std::vector<io::examples::Example> mExampleList;
-    QListWidget* mSamples = nullptr;
     std::vector<io::samples::Sample> mSampleList;
     QElapsedTimer mReclaimFocus;
     bool mWelcome = false;

@@ -53,27 +53,28 @@ void pressOutside(QWidget* dialog)
 }
 } // namespace
 
-TEST_CASE("welcome dialog shows two rows of three examples without scrolling and ignores clicks outside")
+TEST_CASE("welcome dialog shows whole rows of three examples and ignores clicks outside")
 {
     QPointer<ui::StartupDialog> welcome = new ui::StartupDialog({}, true, nullptr);
     auto* examples = welcome->findChild<QListWidget*>("welcomeExamples");
     REQUIRE(examples);
     examples->clear();
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 12; ++i)
         new QListWidgetItem(QString("Example %1").arg(i), examples);
     welcome->present();
     pump();
-    CHECK_FALSE(examples->verticalScrollBar()->isVisible());
     CHECK_FALSE(examples->horizontalScrollBar()->isVisible());
+    CHECK(examples->verticalScrollBar()->isVisible());
     const QRect first = examples->visualItemRect(examples->item(0));
     CHECK(examples->visualItemRect(examples->item(2)).top() == first.top());
     CHECK(examples->visualItemRect(examples->item(3)).top() > first.top());
-    CHECK(examples->viewport()->rect().contains(examples->visualItemRect(examples->item(5))));
-
-    new QListWidgetItem("Example 6", examples);
-    examples->doItemsLayout();
-    pump();
-    CHECK(examples->verticalScrollBar()->isVisible());
+    const QRect view = examples->viewport()->rect();
+    for (int i = 0; i < examples->count(); ++i)
+    {
+        const QRect card = examples->visualItemRect(examples->item(i));
+        CAPTURE(i);
+        CHECK((!card.intersects(view) || view.contains(card)));
+    }
 
     pressOutside(welcome);
     REQUIRE(welcome);

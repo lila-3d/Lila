@@ -99,16 +99,88 @@ std::vector<Item> parse(const json& feed, std::string_view url, std::string_view
         item.title = j.value("title", "");
         item.body = j.value("body", "");
         item.author = j.value("author", "");
+        item.authorUrl = j.value("authorUrl", "");
+        item.until = j.value("until", "");
         item.url = j.value("url", "");
         if (const std::string image = j.value("image", ""); !image.empty())
             item.image = base.resolved(QUrl(QString::fromStdString(image))).toString().toStdString();
+        if (item.id.empty())
+            item.id = item.date + " " + item.title;
         out.push_back(std::move(item));
     }
     // ISO dates sort as text; stable so same-day items keep the feed's order.
     std::stable_sort(out.begin(), out.end(), [](const Item& a, const Item& b) { return a.date > b.date; });
-    if (out.size() > limit)
-        out.resize(limit);
+    size_t news = 0, showcase = 0;
+    std::erase_if(out, [&](const Item& item) { return ++(isShowcase(item) ? showcase : news) > limit; });
     return out;
+}
+
+bool isShowcase(const Item& item)
+{
+    return item.type == "spotlight";
+}
+
+bool running(const Item& item, std::string_view today)
+{
+    return item.until.empty() || std::string_view(item.until) >= today;
+}
+
+size_t firstUnseen(const std::vector<Item>& items, const std::vector<std::string>& seen)
+{
+    for (size_t i = 0; i < items.size(); ++i)
+        if (std::ranges::find(seen, items[i].id) == seen.end())
+            return i;
+    return 0;
+}
+
+int pickShowcase(const std::vector<Item>& showcase, const json& views)
+{
+    int best = -1;
+    int64_t fewest = 0;
+    for (size_t i = 0; i < showcase.size(); ++i)
+    {
+        const json& v = views.is_object() ? views.value(showcase[i].id, json(0)) : json(0);
+        const int64_t n = v.is_number_integer() ? v.get<int64_t>() : 0;
+        // Ties keep the earlier, newer entry.
+        if (best < 0 || n < fewest)
+        {
+            best = int(i);
+            fewest = n;
+        }
+    }
+    return best;
+}
+
+std::vector<std::string> seenIds()
+{
+    std::vector<std::string> out;
+    const json seen = PrefStore::get().value("general", kSeenPref, json::array());
+    for (const json& id : seen.is_array() ? seen : json::array())
+        if (id.is_string())
+            out.push_back(id.get<std::string>());
+    return out;
+}
+
+void markSeen(const std::string& id)
+{
+    std::vector<std::string> seen = seenIds();
+    if (std::ranges::find(seen, id) != seen.end())
+        return;
+    seen.push_back(id);
+    // Older ids have long left the feed.
+    if (seen.size() > 200)
+        seen.erase(seen.begin(), seen.end() - 200);
+    PrefStore::get().set("general", kSeenPref, json(seen));
+}
+
+void countView(const std::string& id)
+{
+    json views = PrefStore::get().value("general", kShowcaseViewsPref, json::object());
+    if (!views.is_object())
+        views = json::object();
+    const json n = views.value(id, json(0));
+    views[id] = (n.is_number_integer() ? n.get<int64_t>() : 0) + 1;
+    PrefStore::get().set("general", kShowcaseViewsPref, views);
 }
 
 std::vector<Item> cached()

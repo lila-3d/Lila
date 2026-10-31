@@ -236,6 +236,37 @@ TEST_CASE("updater compares versions and reads the manifest")
     CHECK(up::parseManifest(json::array()).version.empty());
 }
 
+TEST_CASE("welcome news opens on the newest unseen item and rotates the showcase")
+{
+    const json feed = json::parse(R"({"items": [
+        {"id": "update", "date": "2026-11-01", "title": "Huge update"},
+        {"id": "art", "date": "2026-10-31", "title": "A ship", "type": "spotlight", "author": "Ana", "until": "2026-11-30"},
+        {"id": "older", "date": "2026-10-20", "title": "Older news"},
+        {"id": "oldart", "date": "2026-09-01", "title": "A tree", "type": "spotlight", "until": "2026-10-01"},
+        {"date": "2026-10-10", "title": "No id"}
+    ]})");
+    const auto items = ui::news::parse(feed, "", "0.2.0");
+    std::vector<ui::news::Item> news, showcase;
+    for (const auto& item : items)
+        (ui::news::isShowcase(item) ? showcase : news).push_back(item);
+    REQUIRE(news.size() == 3);
+    REQUIRE(showcase.size() == 2);
+    CHECK(news[2].id == "2026-10-10 No id");
+
+    CHECK(ui::news::firstUnseen(news, {}) == 0);
+    CHECK(ui::news::firstUnseen(news, {"update"}) == 1);
+    CHECK(ui::news::firstUnseen(news, {"update", "older", "2026-10-10 No id"}) == 0);
+
+    CHECK(ui::news::running(showcase[0], "2026-11-30"));
+    CHECK_FALSE(ui::news::running(showcase[0], "2026-12-01"));
+    CHECK(ui::news::running(news[0], "2030-01-01"));
+
+    CHECK(ui::news::pickShowcase({}, json::object()) == -1);
+    CHECK(ui::news::pickShowcase(showcase, json::object()) == 0);
+    CHECK(ui::news::pickShowcase(showcase, {{"art", 2}, {"oldart", 1}}) == 1);
+    CHECK(ui::news::pickShowcase(showcase, {{"art", 1}, {"oldart", 1}}) == 0);
+}
+
 TEST_CASE("welcome news keeps what this version should show, newest first")
 {
     const json feed = json::parse(R"({"items": [
@@ -253,7 +284,8 @@ TEST_CASE("welcome news keeps what this version should show, newest first")
     CHECK(items[1].id == "old");
     CHECK(items[1].type == "news");
     CHECK(items[1].image == "https://lila-3d.github.io/assets/news/old.jpg");
-    CHECK(ui::news::parse(feed, "https://lila-3d.github.io/news.json", "0.2.0", 1).size() == 1);
+    // The limit counts news and showcase entries separately.
+    CHECK(ui::news::parse(feed, "https://lila-3d.github.io/news.json", "0.2.0", 1).size() == 2);
     CHECK(ui::news::parse(json::array(), "", "0.2.0").empty());
     CHECK(ui::news::parse(json::parse(R"({"items": 5})"), "", "0.2.0").empty());
 }
