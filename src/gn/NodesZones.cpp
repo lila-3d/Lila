@@ -1,5 +1,8 @@
 #include "gn/Exec.h"
 #include "gn/NodesCommon.h"
+#include "gn/Zones.h"
+#include "gn/GeometryIO.h"
+#include "gn/Stateful.h"
 
 #include "core/Profile.h"
 #include "geo/Ops.h"
@@ -248,6 +251,219 @@ void forEachNode()
             },
     });
 }
+/** The simulation zone's subgroup, from the definition lowering stored on the node. */
+PlanPtr simulationPlan(const GNode& n)
+{
+    auto it = n.values.find("definition");
+    if (it == n.values.end() || !it->is_object())
+        throw ExecError(n.name + ": the simulation zone has no body");
+    return cachedPlan(*it);
+}
+
+bool isCapture(const std::string& name) { return name.starts_with("__capture"); }
+
+/** State between steps: the geometry and each item (the subgroup's outputs). */
+json stateOf(const Plan& plan, GeometryPtr geometry, const std::function<Value(const GOutput&, size_t)>& item)
+{
+    json items = json::object();
+    for (size_t k = 0; k < plan.group.outputs.size(); ++k)
+        items[plan.group.outputs[k].name] = valueToJson(plan.group.outputs[k].type, item(plan.group.outputs[k], k));
+    return {{"geometry", geometryToJson(*geometry)}, {"items", items}};
+}
+
+class ZoneSim final : public NodeSim
+{
+public:
+    Setup configure(const SimInputs& latest) override
+    {
+        Setup s;
+        s.startFrame = latest.i("startFrame");
+        s.substeps = int(std::clamp<int64_t>(latest.i("substeps"), 1, 64));
+        s.paramsHash = std::hash<std::string>()(latest.node().values.value("definition", json()).dump());
+        return s;
+    }
+
+    void reset(const SimInputs& in, std::vector<uint8_t>& state) override
+    {
+        PlanPtr plan = simulationPlan(in.node());
+        state = toBytes(stateOf(*plan, in.geometry("geometry"), [&](const GOutput& o, size_t) { return in.value(o.name); }));
+    }
+
+    void step(const SimInputs& in, std::vector<uint8_t>& state, const scene::sim::StepInfo& at) override
+    {
+        PlanPtr plan = simulationPlan(in.node());
+        json last = fromBytes(state);
+        ExecEnv env;
+        env.time = at.seconds;
+        env.input = geometryFromJson(last.at("geometry"));
+        for (const GInput& i : plan->group.inputs)
+        {
+            if (i.name == "deltaTime")
+                env.params[i.name] = Value{.field = constantFloat(at.dt)};
+            else if (isCapture(i.name))
+                env.params[i.name] = in.value(i.name);
+            else if (last["items"].contains(i.name))
+                env.params[i.name] = valueFromStored(i.type, last["items"][i.name]);
+        }
+        std::vector<Value> out;
+        try
+        {
+            out = executeOutputs(*plan, env);
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(in.node().name + ": " + e.what());
+        }
+        GeometryPtr geometry = !out.empty() && out[0].geometry ? out[0].geometry : makeGeometry({});
+        state = toBytes(stateOf(*plan, geometry, [&](const GOutput& o, size_t k) { return k + 1 < out.size() ? out[k + 1] : defaultValue(o.type); }));
+    }
+};
+
+void simulationRunner()
+{
+    static const std::vector<std::string> driven = {"deltaTime"};
+    auto stateful = std::make_shared<StatefulDecl>();
+    stateful->create = [] { return std::make_unique<ZoneSim>(); };
+    stateful->output = [](ExecContext& c, const std::vector<uint8_t>* state) {
+        PlanPtr plan = simulationPlan(c.node);
+        if (!state)
+        {
+            c.out("geometry", c.geometry("geometry"));
+            for (const GOutput& o : plan->group.outputs)
+                if (int k = c.sockets.outputIndex(o.name), i = c.sockets.inputIndex(o.name); k >= 0 && i >= 0 && !c.inputs[size_t(i)].empty())
+                    c.outputs[size_t(k)] = c.inputs[size_t(i)][0];
+            return;
+        }
+        json s = fromBytes(*state);
+        c.out("geometry", geometryFromJson(s.at("geometry")));
+        for (const GOutput& o : plan->group.outputs)
+            if (int k = c.sockets.outputIndex(o.name); k >= 0 && s["items"].contains(o.name))
+                c.outputs[size_t(k)] = valueFromStored(o.type, s["items"][o.name]);
+    };
+    registerDecl({
+        .type = "SimulationZone",
+        .label = "Simulation",
+        .category = "Zones",
+        .doc = "A simulation zone after evaluation lowered it: steps its subgroup frame by frame.",
+        .dynamicSockets =
+            [](const Group& g, const GNode& n) {
+                return zoneSockets(g, n, {in("startFrame", T::Int, 1), bounded(in("substeps", T::Int, 1), 1, 64)}, driven);
+            },
+        .stateful = stateful,
+        .hidden = true,
+    });
+}
+
+json itemDefault(SocketType t)
+{
+    if (t == SocketType::String)
+        return "";
+    if (!isDataType(t))
+        return nullptr;
+    return zeroJson(t);
+}
+
+void addItemSockets(std::vector<SocketDecl>& list, const std::vector<ZoneItem>& items, bool inputs)
+{
+    for (const ZoneItem& i : items)
+    {
+        bool data = isDataType(i.type);
+        if (inputs)
+            list.push_back(data ? fin(i.name, i.type, itemDefault(i.type)) : in(i.name, i.type, itemDefault(i.type)));
+        else
+            list.push_back(data ? fout(i.name, i.type) : out(i.name, i.type));
+    }
+}
+
+const char* lanesDoc(const ZoneKind& k)
+{
+    return std::string_view(k.input) == "ClosureInput" ? " Its inputs and outputs are set in the Node Editor's side panel."
+                                                       : " Values carried through besides the geometry are items, added in the Node Editor's side panel.";
+}
+
+/** A zone's input node. own: its inputs ahead of the items; drivenDocs: one per ZoneKind::driven value. */
+void zoneInputNode(const ZoneKind& k, std::string doc, std::vector<SocketDecl> own, std::vector<std::string> drivenDocs, std::vector<PropDecl> props = {})
+{
+    registerDecl({
+        .type = k.input,
+        .label = std::string(k.label) + " Input",
+        .category = "Zones",
+        .doc = std::move(doc) + lanesDoc(k),
+        .props = std::move(props),
+        .dynamicSockets =
+            [&k, own, drivenDocs](const Group& g, const GNode& n) {
+                Sockets s;
+                const GNode* outNode = zoneOutputOf(g, n);
+                std::vector<ZoneItem> items = outNode ? itemsOf(*outNode, k.inputItems) : std::vector<ZoneItem>{};
+                if (std::string_view(k.input) != "ClosureInput")
+                {
+                    s.inputs = own;
+                    if (k.geometry)
+                        s.inputs.push_back(geoIn("geometry", "Geometry going into the zone."));
+                    addItemSockets(s.inputs, items, true);
+                }
+                for (size_t d = 0; d < k.driven.size(); ++d)
+                    s.outputs.push_back(fout(k.driven[d].first, k.driven[d].second, d < drivenDocs.size() ? drivenDocs[d] : ""));
+                if (k.geometry)
+                    s.outputs.push_back(geoOut("geometry"));
+                addItemSockets(s.outputs, items, false);
+                return s;
+            },
+    });
+}
+
+void zoneOutputNode(const ZoneKind& k, std::string doc)
+{
+    registerDecl({
+        .type = k.output,
+        .label = std::string(k.label) + " Output",
+        .category = "Zones",
+        .doc = std::move(doc),
+        .dynamicSockets =
+            [&k](const Group&, const GNode& n) {
+                Sockets s;
+                if (k.geometry)
+                    s.inputs.push_back(geoIn("geometry"));
+                addItemSockets(s.inputs, itemsOf(n, k.outputItems), true);
+                if (std::string_view(k.output) == "ClosureOutput")
+                    s.outputs.push_back(out("closure", T::Closure, "The zone as a closure, with the values it reads from outside captured."));
+                else
+                {
+                    s.outputs.push_back(geoOut("geometry"));
+                    addItemSockets(s.outputs, itemsOf(n, k.outputItems), false);
+                }
+                return s;
+            },
+    });
+}
+
+void zoneNodes()
+{
+    const std::vector<ZoneKind>& kinds = zoneKinds();
+    zoneInputNode(kinds[0],
+                  "Start of a repeat zone: the nodes between it and Repeat Output run Iterations times, each pass taking the last one's "
+                  "geometry and items.",
+                  {bounded(in("iterations", T::Int, 1, "Number of passes; 0 passes the inputs through."), 0, 100000)}, {"The pass number, from 0."});
+    zoneOutputNode(kinds[0], "End of a repeat zone: what reaches it feeds the next pass, and after the last pass comes out here.");
+    zoneInputNode(kinds[1],
+                  "Start of a for-each zone: the nodes between it and For Each Output run once per element (each mesh part, face, curve or "
+                  "instance), in parallel, each seeing only its element as the geometry.",
+                  {}, {"The element's number.", "How many elements there are."},
+                  {prop("element", {"part", "face", "curve", "instance"}, "part",
+                        "part: each connected mesh part; face: each mesh face; curve: each curve; instance: each instance, realized.")});
+    zoneOutputNode(kinds[1], "End of a for-each zone: the elements' geometry joined; items come from the last element.");
+    zoneInputNode(kinds[2],
+                  "Start of a simulation zone: the nodes between it and Simulation Output step the geometry and items forward one frame at a "
+                  "time from Start Frame, each step starting from the last. Items keep single values; store per-element state as attributes.",
+                  {in("startFrame", T::Int, 1, "Frame the simulation starts on; before it, the inputs pass through."),
+                   bounded(in("substeps", T::Int, 1, "Steps per frame."), 1, 64)},
+                  {"Seconds the step covers."});
+    zoneOutputNode(kinds[2], "End of a simulation zone: the state at the current frame, cached frame by frame.");
+    zoneInputNode(kinds[3], "Start of a closure zone: its outputs are the closure's inputs, given by whichever Evaluate Closure runs it.", {}, {});
+    zoneOutputNode(kinds[3],
+                   "End of a closure zone: the nodes between Closure Input and here become a closure, a value that Evaluate Closure runs later "
+                   "with its own inputs. Values the zone reads from outside are captured where the closure is made.");
+}
 } // namespace lila::gn::nodes::zones
 
 namespace lila::gn::nodes
@@ -256,5 +472,7 @@ void registerZoneNodes()
 {
     zones::repeatNode();
     zones::forEachNode();
+    zones::zoneNodes();
+    zones::simulationRunner();
 }
 } // namespace lila::gn::nodes

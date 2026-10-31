@@ -47,6 +47,8 @@ std::vector<D4> toLanes(const Column& c, size_t n)
                     out[k] = D4(x, 0.0);
                 else if constexpr (std::is_same_v<V, glm::dvec4>)
                     out[k] = x;
+                else if constexpr (std::is_same_v<V, glm::dmat4>)
+                    out[k] = x[3];
                 else
                     out[k] = D4(double(x), 0.0, 0.0, 0.0);
             }

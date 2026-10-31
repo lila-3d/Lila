@@ -24,8 +24,20 @@ template <class T> T fromDouble(double d)
         return d != 0.0 ? 1 : 0;
     else if constexpr (std::is_same_v<T, glm::dvec4>)
         return glm::dvec4(d, d, d, 1.0);
+    else if constexpr (std::is_same_v<T, glm::dmat4>)
+        return glm::dmat4(1.0);
     else
         return glm::dvec3(d);
+}
+
+/** Blender's Euler XYZ (R = Rz * Ry * Rx) as a matrix, for rotations feeding a matrix socket. */
+glm::dmat4 eulerMatrix(const glm::dvec3& e)
+{
+    double cx = std::cos(e.x), sx = std::sin(e.x), cy = std::cos(e.y), sy = std::sin(e.y), cz = std::cos(e.z), sz = std::sin(e.z);
+    glm::dmat3 rx(1, 0, 0, 0, cx, sx, 0, -sx, cx);
+    glm::dmat3 ry(cy, 0, -sy, 0, 1, 0, sy, 0, cy);
+    glm::dmat3 rz(cz, sz, 0, -sz, cz, 0, 0, 0, 1);
+    return glm::dmat4(rz * ry * rx);
 }
 
 template <class S> double toDouble(const S& s)
@@ -42,6 +54,12 @@ template <class T, class S> T convertOne(const S& s)
 {
     if constexpr (std::is_same_v<T, S>)
         return s;
+    else if constexpr (std::is_same_v<T, glm::dmat4> && std::is_same_v<S, glm::dvec3>)
+        return eulerMatrix(s);
+    else if constexpr (std::is_same_v<T, glm::dmat4>)
+        return glm::dmat4(1.0);
+    else if constexpr (std::is_same_v<S, glm::dmat4>)
+        return T{};
     else if constexpr (std::is_same_v<T, glm::dvec3> && std::is_same_v<S, glm::dvec4>)
         return glm::dvec3(s);
     else if constexpr (std::is_same_v<T, glm::dvec4> && std::is_same_v<S, glm::dvec3>)
@@ -456,6 +474,7 @@ Column convert(const Column& c, SocketType to)
     case SocketType::Vector:
     case SocketType::Rotation: return convertTo<glm::dvec3>(c);
     case SocketType::Color: return convertTo<glm::dvec4>(c);
+    case SocketType::Matrix: return convertTo<glm::dmat4>(c);
     default: return c;
     }
 }
@@ -526,6 +545,7 @@ FieldPtr constantInt(int64_t v) { return constantField(SocketType::Int, Column::
 FieldPtr constantBool(bool v) { return constantField(SocketType::Bool, Column::of(uint8_t(v ? 1 : 0))); }
 FieldPtr constantVector(const glm::dvec3& v, SocketType type) { return constantField(type, Column::of(v)); }
 FieldPtr constantColor(const glm::dvec4& v) { return constantField(SocketType::Color, Column::of(v)); }
+FieldPtr constantMatrix(const glm::dmat4& m) { return constantField(SocketType::Matrix, Column::of(m)); }
 
 FieldPtr convertField(const FieldPtr& f, SocketType to)
 {

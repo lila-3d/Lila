@@ -488,7 +488,7 @@ VatResult plannedVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, 
     return planned(g, meshes, o);
 }
 
-VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o)
+VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o, const MeshGetter& getter)
 {
     LILA_ZONE();
 
@@ -519,7 +519,7 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
             restPieces = findRigidPieces(f.meshes);
             rest = std::move(m);
         }
-    }, "Exporting vertex animation");
+    }, "Exporting vertex animation", getter);
     if (restIndex >= 0)
         restSample = samples[size_t(restIndex)];
     else
@@ -532,7 +532,7 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
             rest = combine(f);
             restSample = measure(*rest, f.frame, positionsOnly);
             restPieces = findRigidPieces(f.meshes);
-        }, "Sampling the rest frame");
+        }, "Sampling the rest frame", getter);
     }
     if (!rest || rest->numPoints() == 0)
         throw std::runtime_error("the rest frame has no vertices");

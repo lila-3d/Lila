@@ -1,11 +1,15 @@
 #include "ui/GnViewerDraw.h"
 
 #include "core/Profile.h"
+#include "gn/Gn.h"
 #include "gn/Viewer.h"
+#include "gn/Volume.h"
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
 #include "ui/ViewportHooks.h"
+
+#include <map>
 
 namespace lila::ui
 {
@@ -90,7 +94,70 @@ void drawViewers(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         }
     }
 }
+/** The surface a volume shows in the viewport: zero for a signed distance, a tenth of the peak for a density. */
+std::shared_ptr<const geo::Mesh> volumePreview(const std::shared_ptr<const gn::Volume>& v)
+{
+    static std::map<const gn::Volume*, std::pair<std::weak_ptr<const gn::Volume>, std::shared_ptr<const geo::Mesh>>> cache;
+    std::erase_if(cache, [](const auto& e) { return e.second.first.expired(); });
+    if (auto it = cache.find(v.get()); it != cache.end())
+        return it->second.second;
+    float peak = 0.0f;
+    for (float x : v->values)
+        peak = std::max(peak, x);
+    double threshold = v->isSdf() ? 0.0 : std::max(1e-6, 0.1 * double(peak));
+    auto mesh = std::make_shared<const geo::Mesh>(gn::volumeToMesh(*v, threshold));
+    cache[v.get()] = {v, mesh};
+    return mesh;
+}
+
+/** Each gn modifier's volume as a see-through surface inside its grid's box; volumes never reach the output mesh. */
+void drawVolumes(render::FrameState& s, OverlayPainter&, const ViewInfo&)
+{
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    for (const auto& [modifier, geometry] : gn::modifierGeometries())
+    {
+        if (!geometry || !geometry->volume || geometry->volume->empty() || !g.node(modifier))
+            continue;
+        scene::Node* meshNode = g.node(scene::modifiers::meshOf(g, modifier));
+        if (!meshNode)
+            continue;
+        glm::dmat4 world = meshNode->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        const gn::Volume& v = *geometry->volume;
+        const glm::vec4 tint = v.isSdf() ? glm::vec4(0.55f, 0.75f, 0.95f, 0.45f) : glm::vec4(0.85f, 0.85f, 0.85f, 0.3f);
+        const geo::Mesh& m = *volumePreview(geometry->volume);
+        auto wp = [&](const glm::dvec3& p) { return glm::vec3(world * glm::dvec4(p, 1.0)); };
+        for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        {
+            if (!m.faceValid(f))
+                continue;
+            std::vector<geo::Index> corners;
+            m.forEachFaceCorner(f, [&](geo::Index c) { corners.push_back(m.cornerPoint(c)); });
+            for (size_t k = 1; k + 1 < corners.size(); ++k)
+                for (geo::Index p : {corners[0], corners[k], corners[k + 1]})
+                    s.tris3d.push_back({wp(m.position(p)), tint});
+        }
+        // The grid's box, through its own transform so a rotated grid shows rotated.
+        glm::dvec3 hi = glm::dvec3(v.dims) - 0.5;
+        glm::dvec3 corner[8];
+        for (int k = 0; k < 8; ++k)
+            corner[k] = v.worldOf({k & 1 ? hi.x : -0.5, k & 2 ? hi.y : -0.5, k & 4 ? hi.z : -0.5});
+        const glm::vec4 edge(0.9f, 0.9f, 0.9f, 0.6f);
+        for (int a = 0; a < 8; ++a)
+            for (int bit : {1, 2, 4})
+                if (!(a & bit))
+                {
+                    s.linesOnTop.push_back({wp(corner[a]), edge});
+                    s.linesOnTop.push_back({wp(corner[a | bit]), edge});
+                }
+    }
+}
 } // namespace
 
-void registerGnViewerDrawer() { viewportHooks::addDrawer("lila.gnViewer", drawViewers); }
+void registerGnViewerDrawer()
+{
+    viewportHooks::addDrawer("lila.gnViewer", drawViewers);
+    viewportHooks::addDrawer("lila.gnVolumes", drawVolumes);
+}
 } // namespace lila::ui

@@ -30,6 +30,7 @@
       ]
     },
     "draco",
+    "openvdb",
     {
       "name": "tracy",
       "features": [

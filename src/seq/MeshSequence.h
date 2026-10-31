@@ -14,6 +14,7 @@
 namespace lila::scene
 {
 class Graph;
+class Node;
 }
 
 /**
@@ -95,12 +96,17 @@ struct FrameMeshes
     std::vector<geo::Mesh> meshes;
 };
 
+/** The mesh a node shows at the frame being sampled, in its local space; null to leave it out. */
+using MeshGetter = std::function<std::shared_ptr<const geo::Mesh>(scene::Node& node)>;
+
 /**
  * Main thread. Samples every frame, calling `sink` for each; the scene time is restored afterwards, also on a throw.
- * Opens a cancellable progress scope titled `title` (progress::Cancelled when cancelled).
+ * Opens a cancellable progress scope titled `title` (progress::Cancelled when cancelled). getter, when given, reads each
+ * node's mesh instead of its output (or cage).
  */
 LILA_SCENE_API void sample(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const SequenceOptions& o,
-                           const std::function<void(FrameMeshes&)>& sink, const std::string& title = "Exporting mesh sequence");
+                           const std::function<void(FrameMeshes&)>& sink, const std::string& title = "Exporting mesh sequence",
+                           const MeshGetter& getter = {});
 
 /** Writes one file per frame (obj, fbx) or one .abc. Returns the paths written. Throws std::runtime_error. */
 LILA_SCENE_API std::vector<fs::path> exportSequence(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const SequenceOptions& o);

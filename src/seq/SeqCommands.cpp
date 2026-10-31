@@ -1,5 +1,6 @@
 #include "seq/MeshSequence.h"
 #include "seq/RigidPieces.h"
+#include "seq/Imposter.h"
 #include "seq/Vat.h"
 
 #include "core/Log.h"
@@ -126,6 +127,8 @@ json run(const std::vector<scene::NodeId>& meshes, const SequenceOptions& o, boo
 void registerCommands()
 {
     registerAlembicImport();
+    registerVatNode();
+    registerImposterNode();
     std::vector<FlagDef> seqFlags = sampleFlags();
     seqFlags.push_back({"format", "f", T::String, "fbx", "fbx or obj (a file per frame) or abc (one Alembic file).", {"fbx", "obj", "abc"}});
     seqFlags.push_back({"folder", "fo", T::String, "sequences", "Output folder; relative paths are under the workspace."});

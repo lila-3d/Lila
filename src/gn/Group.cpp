@@ -431,7 +431,10 @@ std::vector<GLink> Group::linksInto(std::string_view n, std::string_view socket)
     return out;
 }
 
-bool runsGroup(std::string_view type) { return type == kGroupNodeDeclType || type == "RepeatGroup" || type == "ForEachElement"; }
+bool runsGroup(std::string_view type)
+{
+    return type == kGroupNodeDeclType || type == "RepeatGroup" || type == "ForEachElement" || type == "SimulationZone" || type == "MakeClosure";
+}
 
 std::vector<std::string> referencedGroups(const Group& g)
 {

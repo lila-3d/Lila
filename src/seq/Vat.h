@@ -136,11 +136,17 @@ struct VatResult
 /** materialParams as one line, to type into a material by hand. */
 LILA_SCENE_API std::string vatMaterialSummary(const nlohmann::json& materialParams);
 
-/** Main thread. Samples and writes every file and logs vatMaterialSummary. Throws std::runtime_error (a constant mode mismatch names the frame) or progress::Cancelled. */
-LILA_SCENE_API VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o);
+/**
+ * Main thread. Samples and writes every file and logs vatMaterialSummary. Throws std::runtime_error (a constant mode
+ * mismatch names the frame) or progress::Cancelled. getter, when given, reads the meshes sampled (see sample()).
+ */
+LILA_SCENE_API VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o, const MeshGetter& getter = {});
 
 /** The paths exportVat writes, without evaluating; metadata holds only what the options decide. */
 LILA_SCENE_API VatResult plannedVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o);
+
+/** The Vertex Animation Texture geometry node and gnEncodeVat. Called by registerCommands. */
+void registerVatNode();
 
 /** A decoded texture: width * height RGBA texels, row 0 first. PNG texels are 0 to 1. */
 struct VatImage

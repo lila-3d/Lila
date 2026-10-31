@@ -45,6 +45,49 @@ void NodeCanvas::drawBackground(QPainter* p, const QRectF& rect)
     for (double x = std::floor(rect.left() / step) * step; x < rect.right(); x += step)
         for (double y = std::floor(rect.top() / step) * step; y < rect.bottom(); y += step)
             p->drawPoint(QPointF(x, y));
+    drawZones(p);
+}
+
+void NodeCanvas::drawZones(QPainter* p)
+{
+    struct Region
+    {
+        QRectF rect;
+        QColor color;
+        QString label;
+    };
+    std::vector<Region> regions;
+    if (!mInfo.is_object())
+        return;
+    for (const json& z : mInfo.value("zones", json::array()))
+    {
+        QRectF r;
+        auto add = [&](const std::string& name) {
+            if (auto it = mNodes.find(name); it != mNodes.end())
+                r = r.isNull() ? it->second->sceneBoundingRect() : r.united(it->second->sceneBoundingRect());
+        };
+        add(z.value("input", ""));
+        add(z.value("output", ""));
+        for (const json& n : z.value("nodes", json::array()))
+            add(n.get<std::string>());
+        if (r.isNull())
+            continue;
+        std::string kind = z.value("kind", "");
+        const char* token = kind == "Repeat" ? "zoneRepeat" : kind == "Simulation" ? "zoneSimulation" : kind == "Closure" ? "zoneClosure" : "zoneForEach";
+        regions.push_back({r.adjusted(-16, -30, 16, 16), themeColor(token), qs(kind)});
+    }
+    std::sort(regions.begin(), regions.end(), [](const Region& a, const Region& b) { return a.rect.width() * a.rect.height() > b.rect.width() * b.rect.height(); });
+    for (const Region& r : regions)
+    {
+        QColor fill = r.color, edge = r.color;
+        fill.setAlpha(70);
+        edge.setAlpha(200);
+        p->setPen(QPen(edge, 1.5));
+        p->setBrush(fill);
+        p->drawRoundedRect(r.rect, 10, 10);
+        p->setPen(edge.lighter(170));
+        p->drawText(r.rect.adjusted(12, 6, -12, 0), Qt::AlignTop | Qt::AlignLeft, r.label);
+    }
 }
 
 void NodeCanvas::wheelEvent(QWheelEvent* e)

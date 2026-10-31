@@ -69,6 +69,14 @@ struct LILA_SCENE_API Sockets
 
 class ExecContext;
 struct StatefulDecl;
+
+/** A button in the Node Editor's side panel: runs gn<verb>(group, node). */
+struct NodeAction
+{
+    std::string label;
+    std::string verb;
+    std::string doc;
+};
 struct StepCache;
 
 struct LILA_SCENE_API NodeDecl
@@ -84,6 +92,9 @@ struct LILA_SCENE_API NodeDecl
     std::function<void(ExecContext&)> exec;
     /** Set for simulation nodes (gn/Stateful.h), which run through it instead of exec. */
     std::shared_ptr<const StatefulDecl> stateful;
+    /** Made by evaluation only (zones lower to these), so the node library and menus leave it out. */
+    bool hidden = false;
+    std::vector<NodeAction> actions;
 
     Sockets socketsFor(const Group& g, const GNode& n) const;
     const PropDecl* prop(std::string_view id) const;
@@ -113,12 +124,50 @@ LILA_SCENE_API bool linkable(SocketType from, SocketType to);
  */
 LILA_SCENE_API std::string compatibleSocket(const Group& g, const NodeDecl& d, SocketType type, bool wantInput);
 
+struct Bundle;
+struct Closure;
+struct Plan;
+
 /** What a socket carries during evaluation. Which member is used follows the socket type. */
 struct Value
 {
     GeometryPtr geometry;
     FieldPtr field;
     std::string string;
+    std::shared_ptr<const Bundle> bundle;
+    std::shared_ptr<const Closure> closure;
+};
+
+/** Values by name, each keeping its socket type, as Combine Bundle makes them. */
+struct Bundle
+{
+    struct Item
+    {
+        std::string name;
+        SocketType type = SocketType::Float;
+        Value value;
+    };
+    std::vector<Item> items;
+
+    const Item* find(std::string_view name) const
+    {
+        for (const Item& i : items)
+            if (i.name == name)
+                return &i;
+        return nullptr;
+    }
+};
+
+/**
+ * A group to run later with the values it captured where it was made. Its plan's group inputs are the closure's
+ * inputs followed by the captured ones; its outputs are the closure's outputs.
+ */
+struct Closure
+{
+    std::shared_ptr<const Plan> plan;
+    std::map<std::string, Value> captured;
+    /** Names of the inputs and outputs a caller sees, with their types (captured inputs left out). */
+    std::vector<std::pair<std::string, SocketType>> inputs, outputs;
 };
 
 /** Another scene object as seen by an Object Info node. */

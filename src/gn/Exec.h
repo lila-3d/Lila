@@ -43,6 +43,8 @@ struct Plan
     int statefulStep = -1;
     /** A step feeding the simulation node depends on time, so its inputs differ from frame to frame. */
     bool statefulInputsUseTime = false;
+    /** Per step, whether the output or viewer needs it: steps only a baked Bake node reads are skipped. Empty when all run. */
+    std::vector<uint8_t> needed;
 };
 
 /**

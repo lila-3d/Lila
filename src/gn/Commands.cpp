@@ -1,7 +1,9 @@
+#include "gn/Bake.h"
 #include "gn/Clipboard.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 #include "gn/Routing.h"
+#include "gn/Zones.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -27,6 +29,7 @@ scene::Node* applyGroup(scene::Graph& g, scene::Node& groupNode, scene::Node& me
 void createGroupNode(scene::Graph& g, const Group& grp);
 void registerGroupCommands();
 } // namespace detail
+void registerSpreadsheetCommand();
 
 namespace
 {
@@ -122,6 +125,22 @@ bool reaches(const Group& grp, const std::string& from, const std::string& to)
     return false;
 }
 
+/**
+ * Linking a closure into an Evaluate Closure, or a bundle into a Separate Bundle, that has no items yet gives it the
+ * items of the zone or Combine Bundle making the value.
+ */
+void syncSignature(Group& grp, const GNode& from, GNode& to, SocketType type)
+{
+    if (type == SocketType::Closure && to.type == "EvaluateClosure" && itemsOf(to, "inputs").empty() && itemsOf(to, "outputs").empty() &&
+        from.type == "ClosureOutput")
+    {
+        to.values["inputs"] = itemsToJson(itemsOf(from, "inputs"));
+        to.values["outputs"] = itemsToJson(itemsOf(from, "outputs"));
+    }
+    if (type == SocketType::Bundle && to.type == "SeparateBundle" && itemsOf(to).empty() && from.type == "CombineBundle")
+        to.values["items"] = itemsToJson(itemsOf(from));
+}
+
 json socketJson(const SocketDecl& s, const GNode& n, const Group& grp, bool input)
 {
     json j = {{"id", s.id}, {"type", socketTypeName(s.type)}, {"field", s.field}};
@@ -173,6 +192,24 @@ json nodeJson(const GNode& n, const Group& grp)
     j["inputs"] = ins;
     j["outputs"] = outs;
     j["props"] = props;
+    // A zone input's items live on its output; both show them.
+    const GNode* owner = &n;
+    if (zoneOfInput(n.type))
+        owner = zoneOutputOf(grp, n);
+    for (const NodeAction& act : d->actions)
+        j["actions"].push_back({{"label", act.label}, {"verb", act.verb}, {"doc", act.doc}});
+    if (n.type == "Bake")
+    {
+        if (isBaked(n))
+            j["actions"].push_back({{"label", "Delete Bake"}, {"verb", "DeleteBake"}, {"doc", "Delete the saved files and evaluate live again."}});
+        j["baked"] = isBaked(n);
+    }
+    if (owner)
+        for (const std::string& key : itemListsOf(owner->type))
+        {
+            json list = {{"key", key}, {"node", owner->name}, {"items", itemsToJson(itemsOf(*owner, key))}};
+            j["itemLists"].push_back(std::move(list));
+        }
     return j;
 }
 
@@ -182,7 +219,10 @@ void checkValue(const SocketDecl& s, const json& v, const char* cmd)
     bool ok = true;
     switch (s.type)
     {
-    case SocketType::Geometry: ok = false; break;
+    case SocketType::Geometry:
+    case SocketType::Bundle:
+    case SocketType::Closure: ok = false; break;
+    case SocketType::Matrix: ok = v.is_array() && v.size() == 16 && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); }); break;
     case SocketType::String: ok = v.is_string(); break;
     case SocketType::Vector:
     case SocketType::Rotation: ok = (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) || v.is_number(); break;
@@ -239,6 +279,8 @@ void registerCommands()
     using T = ArgType;
     registerNodeLibrary();
     detail::registerGroupCommands();
+    registerBakeCommands();
+    registerSpreadsheetCommand();
 
     ops::registerCommand({
         .name = "gnCreateGroup",
@@ -262,7 +304,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "gnAddNode",
-        .doc = "Add a node to a group. Returns its name. gnNodeTypes lists the types.",
+        .doc = "Add a node to a group. Returns its name. gnNodeTypes lists the types. A zone node adds its input and output, paired.",
         .positionalDoc = "group type",
         .flags = {{"position", "", T::List, nullptr, "[x, y] on the canvas."}, {"name", "", T::String, nullptr, "Wanted name; made unique."}},
         .run = [](const Args& a) -> json {
@@ -277,7 +319,23 @@ void registerCommands()
                 GNode n{grp.uniqueNodeName(base), type, {0.0, 0.0}, json::object()};
                 if (a.has("position"))
                     n.position = {a.flags["position"][0].get<double>(), a.flags["position"][1].get<double>()};
-                grp.nodes.push_back(n);
+                const ZoneKind* zone = zoneOfInput(type);
+                if (!zone)
+                    zone = zoneOfOutput(type);
+                if (!zone)
+                {
+                    grp.nodes.push_back(n);
+                    return n.name;
+                }
+                // A zone is added whole: its input, and its output to the right, paired.
+                bool isInput = type == zone->input;
+                GNode in{isInput ? n.name : grp.uniqueNodeName(zone->input), zone->input, n.position - glm::dvec2(isInput ? 0.0 : 400.0, 0.0), json::object()};
+                grp.nodes.push_back(in);
+                GNode out{isInput ? grp.uniqueNodeName(zone->output) : n.name, zone->output, in.position + glm::dvec2(400.0, 0.0), json::object()};
+                grp.nodes.back().values["output"] = out.name;
+                grp.nodes.push_back(out);
+                if (zone->geometry)
+                    grp.links.push_back({in.name, "geometry", out.name, "geometry"});
                 return n.name;
             });
         },
@@ -285,14 +343,15 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "gnDeleteNode",
-        .doc = "Delete nodes from a group, with their links.",
+        .doc = "Delete nodes from a group, with their links. A zone's input and output go together.",
         .positionalDoc = "group nodes...",
         .run = [](const Args& a) -> json {
             return editGroup(a, "gnDeleteNode", [&](Group& grp) -> json {
+                std::vector<std::string> names;
                 for (size_t i = 1; i < a.positional.size(); ++i)
+                    names.push_back(nodeIn(grp, a.positional[i].get<std::string>(), "gnDeleteNode").name);
+                for (const std::string& name : withZonePartners(grp, names))
                 {
-                    std::string name = a.positional[i].get<std::string>();
-                    nodeIn(grp, name, "gnDeleteNode");
                     std::erase_if(grp.nodes, [&](const GNode& n) { return n.name == name; });
                     std::erase_if(grp.links, [&](const GLink& l) { return l.fromNode == name || l.toNode == name; });
                 }
@@ -325,6 +384,7 @@ void registerCommands()
                                        socketTypeName(tsock.inputs[ii].type));
                 if (fn == tn || reaches(grp, fn, tn))
                     throw CommandError("gnConnect: that link would make a cycle");
+                syncSignature(grp, from, to, fsock.outputs[oi].type);
                 GLink link{fn, fs, tn, ts};
                 if (!tsock.inputs[ii].multi)
                     std::erase_if(grp.links, [&](const GLink& l) { return l.toNode == tn && l.toSocket == ts; });
@@ -398,6 +458,71 @@ void registerCommands()
                     throw CommandError("gnSetValue: " + nn + " has no input or property '" + sid + "'");
                 checkValue(s.inputs[ii], value, "gnSetValue");
                 n.values[sid] = clampNumber(value, s.inputs[ii].min, s.inputs[ii].max, s.inputs[ii].type == SocketType::Int);
+                return nullptr;
+            });
+        },
+    });
+
+    ops::registerCommand({
+        .name = "gnSetItems",
+        .doc = "Set the items a zone, bundle node or Evaluate Closure carries: gnSetItems(group, 'RepeatOutput', 'items', [{'name': 'count', "
+               "'type': 'float'}]). A zone's items live on its output node, and naming its input works too. Closures have two lists, "
+               "inputs and outputs. Links and values follow items through renames; links to removed items go.",
+        .positionalDoc = "group node list items",
+        .flags = {{"renames", "", T::Any, nullptr, "{old: new} item names, so their links and values carry over."}},
+        .run = [](const Args& a) -> json {
+            std::string nn = positionalString(a, 1, "gnSetItems", "node");
+            std::string key = positionalString(a, 2, "gnSetItems", "list");
+            if (a.positional.size() < 4 || !a.positional[3].is_array())
+                throw CommandError("gnSetItems: items must be a list of {name, type}");
+            std::vector<ZoneItem> items;
+            for (const json& e : a.positional[3])
+            {
+                ZoneItem it;
+                if (!e.is_object() || !e.contains("name") || !e["name"].is_string() || !parseSocketType(e.value("type", ""), &it.type))
+                    throw CommandError("gnSetItems: bad item " + e.dump() + ": expected {name, type} with a socket type");
+                it.name = e["name"].get<std::string>();
+                items.push_back(std::move(it));
+            }
+            return editGroup(a, "gnSetItems", [&](Group& grp) -> json {
+                GNode* n = &nodeIn(grp, nn, "gnSetItems");
+                if (zoneOfInput(n->type))
+                {
+                    const GNode* out = zoneOutputOf(grp, *n);
+                    if (!out)
+                        throw CommandError("gnSetItems: " + nn + " has no zone output");
+                    n = grp.node(out->name);
+                }
+                std::vector<std::string> lists = itemListsOf(n->type);
+                if (std::find(lists.begin(), lists.end(), key) == lists.end())
+                    throw CommandError("gnSetItems: " + n->name + " has no item list '" + key + "'");
+                if (std::string why = itemsProblem(items, reservedItemNames(n->type)); !why.empty())
+                    throw CommandError("gnSetItems: " + why);
+                const GNode* partner = zoneOfOutput(n->type) ? zoneInputOf(grp, *n) : nullptr;
+                std::set<std::string> touched = {n->name};
+                if (partner)
+                    touched.insert(partner->name);
+                if (a.has("renames"))
+                    for (auto& [from, to] : a.flags["renames"].items())
+                    {
+                        if (!to.is_string())
+                            continue;
+                        std::string fresh = to.get<std::string>();
+                        for (GLink& l : grp.links)
+                        {
+                            if (touched.contains(l.fromNode) && l.fromSocket == from)
+                                l.fromSocket = fresh;
+                            if (touched.contains(l.toNode) && l.toSocket == from)
+                                l.toSocket = fresh;
+                        }
+                        for (const std::string& name : touched)
+                            if (GNode* t = grp.node(name); t && t->values.contains(from))
+                            {
+                                t->values[fresh] = t->values[from];
+                                t->values.erase(from);
+                            }
+                    }
+                n->values[key] = itemsToJson(items);
                 return nullptr;
             });
         },
@@ -491,9 +616,13 @@ void registerCommands()
                     off = {a.flags["offset"][0].get<double>(), a.flags["offset"][1].get<double>()};
                 std::map<std::string, std::string> renamed;
                 json names = json::array();
+                std::vector<std::string> picked;
                 for (size_t i = 1; i < a.positional.size(); ++i)
+                    picked.push_back(nodeIn(grp, a.positional[i].get<std::string>(), "gnDuplicateNodes").name);
+                const size_t firstCopy = grp.nodes.size();
+                for (const std::string& name : withZonePartners(grp, picked))
                 {
-                    GNode copy = nodeIn(grp, a.positional[i].get<std::string>(), "gnDuplicateNodes");
+                    GNode copy = *grp.node(name);
                     if (copy.type == "GroupOutput")
                         continue;
                     std::string old = copy.name;
@@ -503,6 +632,8 @@ void registerCommands()
                     grp.nodes.push_back(copy);
                     names.push_back(copy.name);
                 }
+                for (size_t k = firstCopy; k < grp.nodes.size(); ++k)
+                    retargetZoneCopy(grp.nodes[k], renamed);
                 std::vector<GLink> extra;
                 for (const GLink& l : grp.links)
                     if (renamed.contains(l.fromNode) && renamed.contains(l.toNode))
@@ -708,7 +839,11 @@ void registerCommands()
             for (scene::NodeId id : instancesOf(graph(), n.id()))
                 inst.push_back(graph().node(id)->path());
             PlanPtr plan = compile(grp);
-            json out = {{"name", grp.name}, {"definition", grp.toJson()}, {"nodes", nodes}, {"modifiers", inst}, {"typeName", typeNameFor(grp)}};
+            json zones = json::array();
+            for (const ZoneRegion& z : zoneRegions(grp))
+                zones.push_back({{"input", z.input}, {"output", z.output}, {"kind", z.kind->label}, {"nodes", z.body}});
+            json out = {{"name", grp.name}, {"definition", grp.toJson()}, {"nodes", nodes},      {"modifiers", inst},
+                        {"typeName", typeNameFor(grp)}, {"zones", zones}};
             if (!plan->error.empty())
                 out["error"] = plan->error;
             return out;
@@ -742,6 +877,8 @@ void registerCommands()
             json out = json::array();
             for (const NodeDecl* d : allDecls())
             {
+                if (d->hidden)
+                    continue;
                 json e = {{"type", d->type}, {"label", d->label}, {"category", d->category}, {"doc", d->doc}};
                 if (const std::string* owner = declRegistry().ownerOf(d->type); owner && !owner->empty())
                     e["owner"] = *owner;

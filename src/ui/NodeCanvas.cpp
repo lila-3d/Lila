@@ -581,6 +581,8 @@ void NodeCanvas::selectAll()
 
 void NodeCanvas::nodeMoved(NodeItem* n)
 {
+    if (mInfo.is_object() && !mInfo.value("zones", json::array()).empty())
+        mScene.invalidate(QRectF(), QGraphicsScene::BackgroundLayer);
     if (!mTies.empty())
     {
         layoutTies();

@@ -44,6 +44,9 @@ public:
     glm::dvec3 v(std::string_view id) const;
     std::string s(std::string_view id) const;
     std::string prop(std::string_view id) const { return mDecl->propValue(mNode, id); }
+    /** What reached an input; an empty value when unconnected. */
+    const Value& value(std::string_view id) const { return in(id); }
+    const Sockets& sockets() const { return mSockets; }
     /** Content hash of every input: geometry by value, single values by value. The framework chains it per step. */
     uint64_t hash() const { return mHash; }
 
@@ -110,7 +113,7 @@ LILA_SCENE_API bool simulationStateReady(scene::NodeId modifier, double time);
 /** Republishes inputs simulationInputs returned earlier, for a modifier restoring a cached frame instead of evaluating. */
 LILA_SCENE_API void restoreSimulationInputs(scene::NodeId modifier, std::shared_ptr<const SimInputs> inputs);
 
-/** Whether the group has a simulation node at its top level. */
+/** Whether the group has a simulation node or simulation zone at its top level. */
 LILA_SCENE_API bool hasStateful(const Group& g);
 
 /** The framework hook and solver type for modifiers running simulation groups. Called by registerTypes. */

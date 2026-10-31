@@ -1,3 +1,4 @@
+#include "gn/Bake.h"
 #include "gn/NodesCommon.h"
 
 namespace lila::gn
@@ -33,5 +34,8 @@ void registerNodeLibrary()
     nodes::registerVolumeNodes();
     nodes::registerWrangleNode();
     nodes::registerZoneNodes();
+    nodes::registerMatrixNodes();
+    nodes::registerBundleNodes();
+    registerBakeNode();
 }
 } // namespace lila::gn

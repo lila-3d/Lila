@@ -75,6 +75,7 @@ add_subdirectory(extensions/Brushwork)
 add_subdirectory(extensions/OpenUSD)
 add_subdirectory(extensions/Lights)
 add_subdirectory(extensions/TrimSheets)
+add_subdirectory(extensions/NanoVDB)
 include(LilaSdkInstall)
 include(LilaDocs)
 

@@ -89,6 +89,13 @@ const std::vector<TokenInfo> kTokens = {
     {"socketVector", "Vector socket", "Node Editor"},
     {"socketRotation", "Rotation socket", "Node Editor"},
     {"socketColor", "Colour socket", "Node Editor"},
+    {"socketMatrix", "Matrix socket", "Node Editor"},
+    {"socketBundle", "Bundle socket", "Node Editor"},
+    {"socketClosure", "Closure socket", "Node Editor"},
+    {"zoneRepeat", "Repeat zone", "Node Editor"},
+    {"zoneForEach", "For Each zone", "Node Editor"},
+    {"zoneSimulation", "Simulation zone", "Node Editor"},
+    {"zoneClosure", "Closure zone", "Node Editor"},
 };
 
 // Today's interface, value for value: the code that draws each part keeps its own numbers while these match.
@@ -111,7 +118,9 @@ const Pairs kMonotone = {
     {"nodeAttribute", "#4c4c4c"}, {"nodeInput", "#4c4c4c"},     {"nodeOutput", "#4c4c4c"},     {"nodeUtilities", "#4c4c4c"},
     {"nodeColor", "#4c4c4c"},     {"nodeTexture", "#4c4c4c"},   {"socketGeometry", "#ebebeb"}, {"socketFloat", "#b9b9b9"},
     {"socketInt", "#b9b9b9"},     {"socketBool", "#696969"},    {"socketString", "#7d7d7d"},   {"socketVector", "#969696"},
-    {"socketRotation", "#969696"}, {"socketColor", "#d2d2d2"},
+    {"socketRotation", "#969696"}, {"socketColor", "#d2d2d2"},   {"socketMatrix", "#a0a0a0"},   {"socketBundle", "#8c8c8c"},
+    {"socketClosure", "#bcbcbc"},  {"zoneRepeat", "#5a5a5a"},    {"zoneForEach", "#5a5a5a"},    {"zoneSimulation", "#5a5a5a"},
+    {"zoneClosure", "#5a5a5a"},
 };
 
 // Monotone's neutrals with hue where it helps scanning: selection, active state, axes and node categories.
@@ -126,6 +135,8 @@ const Pairs kColour = {
     {"nodeTexture", "#7a4a20"},   {"socketGeometry", "#00d6a3"},  {"socketFloat", "#a1a1a1"},      {"socketInt", "#598c5c"},
     {"socketBool", "#cca6d6"},    {"socketString", "#70b2ff"},    {"socketVector", "#6363c7"},     {"socketRotation", "#a663c7"},
     {"socketColor", "#c7c729"},   {"statusWarning", "#f2d16b"},    {"statusError", "#f2655c"},
+    {"socketMatrix", "#7a4ad6"},  {"socketBundle", "#3fa59a"},     {"socketClosure", "#d6604a"},
+    {"zoneRepeat", "#6a4a8a"},    {"zoneForEach", "#2f6a5a"},      {"zoneSimulation", "#7a5a2a"},   {"zoneClosure", "#7a3a3a"},
 };
 
 // Sampled from the Lila icon: navy ink, its sky and pale blues, and the icon's blue for selection.
@@ -149,6 +160,8 @@ const Pairs kLight = {
     {"nodeTexture", "#ecc8a0"},    {"socketGeometry", "#00a37c"}, {"socketFloat", "#6b6b6b"},      {"socketInt", "#3f7a43"},
     {"socketBool", "#9a6aa8"},     {"socketString", "#2f7fd6"},   {"socketVector", "#4a4ab0"},     {"socketRotation", "#8a4ab0"},
     {"socketColor", "#a39a1f"},    {"statusWarning", "#a36b00"},    {"statusError", "#c8261c"},
+    {"socketMatrix", "#5a2ab0"},   {"socketBundle", "#1f8076"},     {"socketClosure", "#b0402a"},
+    {"zoneRepeat", "#cbb8e6"},     {"zoneForEach", "#b0dccf"},      {"zoneSimulation", "#e6d0a8"},   {"zoneClosure", "#e6b8b0"},
 };
 
 // Deep navy with a cyan accent, for long sessions in a dark room.
@@ -226,7 +239,7 @@ Theme withCategoryHues(Theme t)
     for (auto& [id, hex] : kColour)
     {
         std::string_view key = id;
-        if ((key.starts_with("node") || key.starts_with("socket") || key.starts_with("axis") || key.starts_with("gridAxis")) &&
+        if ((key.starts_with("node") || key.starts_with("socket") || key.starts_with("zone") || key.starts_with("axis") || key.starts_with("gridAxis")) &&
             !t.colors.contains(key))
             t.colors[std::string(key)] = *parseColor(hex);
     }

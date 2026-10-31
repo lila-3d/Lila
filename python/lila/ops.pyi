@@ -34,6 +34,48 @@ def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = 
         doc: What it is for: editors show it as a tooltip.
     """
 
+def addClayPrimitive(*objects: Any, shape: str | None = None, operation: str | None = None, blend: float | None = None, radius: float | None = None, endRadius: float | None = None, length: float | None = None, extents: Sequence[float] | None = None, rounding: float | None = None, color: Sequence[float] | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, name: str | None = None, sh: str | None = None, op: str | None = None, b: float | None = None, r: float | None = None, er: float | None = None, l: float | None = None, ex: Sequence[float] | None = None, rn: float | None = None, c: Sequence[float] | None = None, p: Sequence[float] | None = None, ro: Sequence[float] | None = None, n: str | None = None) -> Any:
+    """Add a clay shape to a clay object or group, after its other shapes. Given a shape, adds next to it. Returns the new shape.
+
+    Args:
+        objects: clay object, group or shape.
+        shape: Primitive shape. Short form sh. One of 'sphere', 'ellipsoid', 'box', 'capsule', 'cylinder', 'cone', 'torus'. Default 'sphere'.
+        operation: Add to, subtract from, or intersect with the clay before it. Short form op. One of 'add', 'subtract', 'intersect'. Default 'add'.
+        blend: Smooth join radius, cm; 0 is a hard edge. Short form b.
+        radius: Sphere radius; capsule and cone radius at -Y; cylinder radius; torus ring radius. cm. Short form r.
+        endRadius: Capsule and cone radius at +Y; torus tube radius. cm. Short form er.
+        length: Capsule, cylinder and cone length along Y, cm. Short form l.
+        extents: Box half sizes, ellipsoid semi-axes, cm. Short form ex.
+        rounding: Box, cylinder and cone edge rounding, cm. Short form rn.
+        color: Linear colour, written to the clay color set. Short form c.
+        position: World position. Short form p.
+        rotation: Rotation in degrees. Short form ro.
+        name: Name; made unique. Short form n.
+
+    Examples:
+        addClayPrimitive("Dog", shape="capsule", radius=4, endRadius=3, length=20, position=[8, 10, 0], rotation=[0, 0, 90])
+
+        addClayPrimitive("Dog", shape="sphere", operation="subtract", radius=2, blend=0.5)
+    """
+
+def addClayStroke(*objects: Any, points: Sequence[Any] | None = None, radius: float | None = None, endRadius: float | None = None, operation: str | None = None, blend: float | None = None, color: Sequence[float] | None = None, extend: bool | None = None, name: str | None = None, pts: Sequence[Any] | None = None, r: float | None = None, er: float | None = None, op: str | None = None, b: float | None = None, c: Sequence[float] | None = None, x: bool | None = None, n: str | None = None) -> Any:
+    """Add a capsule chain through world points to a clay object or group: tentacles, horns, limbs and strokes drawn over the surface. The spans go in a new group. Returns the group.
+
+    Args:
+        objects: clay object, group or shape.
+        points: World points, two or more: [[x, y, z], ...]. Short form pts.
+        radius: Radius at the first point, cm. Short form r. Default 2.0.
+        endRadius: Radius at the last point, cm; defaults to radius. Short form er.
+        operation: How the stroke joins the clay before it. Short form op. One of 'add', 'subtract', 'intersect'. Default 'add'.
+        blend: Smooth join radius of the stroke, cm. Short form b.
+        color: Linear colour. Short form c.
+        extend: Given a stroke group (or one of its spans), add the spans to it rather than to a new group. Short form x. Default False.
+        name: Group name; made unique. Short form n.
+
+    Examples:
+        addClayStroke("Dog", points=[[0, 20, -10], [0, 24, -18], [0, 30, -22]], radius=2, endRadius=0.5)
+    """
+
 def addCollider(*objects: Any, capsuleRadius: float | None = None, capsuleLength: float | None = None) -> Any:
     """Add colliders to a collision deformer: meshes, or transforms as capsules along their Y.
 
@@ -1242,6 +1284,30 @@ def circle(center: Sequence[float] | None = None, normal: Sequence[float] | None
         name: Name; made unique. Short form n.
     """
 
+def clayJoints(*objects: Any, mesh: str | None = None, maxInfluences: int | None = None, m: str | None = None, mi: int | None = None) -> Any:
+    """Joints from a clay object: a root at the object for the body, and a chain down each stroke (a group of capsules). Given a mesh (the converted clay), binds it and starts its weights from the clay: each point leans on the joints of the shapes it lies nearest. Returns [root, skinCluster or None].
+
+    Args:
+        objects: clay object.
+        mesh: Mesh to bind, usually the clay converted with convertClayToMesh. Short form m.
+        maxInfluences: Influences per point. Short form mi. Default 4.
+
+    Examples:
+        mesh = convertClayToMesh("Dog")
+        clayJoints("Dog", mesh=mesh)
+    """
+
+def clayShapeAt(*objects: Any, point: Sequence[float] | None = None, p: Sequence[float] | None = None) -> Any:
+    """The clay shape of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts count. Returns its path, or None for an object without shapes.
+
+    Args:
+        objects: clay object or anything in it.
+        point: World point. Short form p.
+
+    Examples:
+        clayShapeAt("Dog", point=[3, 20, 8])
+    """
+
 def clearLoopKey(*objects: Any, attribute: Any | None = None, at: Any | None = None) -> Any:
     """Turn the loop key off on curves (nodes, plugs or curves, default the selection): the last key is an ordinary key again and cycling post infinity goes back to constant. Returns the number of curves changed.
 
@@ -1341,6 +1407,23 @@ def contour(*objects: Any, axis: Sequence[float] | None = None, origin: Sequence
         bridge: Close cuts through open meshes across their gaps instead of leaving them open.
         constructionHistory: Keep the contour node so the curves follow the meshes and settings. Short form ch. Default True.
         name: Curve name; made unique. Short form n.
+    """
+
+def convertClayToMesh(*objects: Any, voxelSize: float | None = None, keepSource: bool | None = None, remesh: bool | None = None, targetFaces: int | None = None, name: str | None = None, vs: float | None = None, ks: bool | None = None, rm: bool | None = None, tf: int | None = None, n: str | None = None) -> Any:
+    """Bake a clay object into a plain mesh at the surface's finalVoxelSize, optionally quad remeshed. The clay object stays, hidden, unless keepSource is off. Returns the new mesh.
+
+    Args:
+        objects: clay object.
+        voxelSize: Lattice spacing, cm; defaults to the surface's finalVoxelSize. Short form vs.
+        keepSource: Keep the clay object, hidden, to edit and convert again; off deletes it. Short form ks. Default True.
+        remesh: Quad remesh the result. Short form rm. Default False.
+        targetFaces: Face count for remesh. Short form tf. Default 2000.
+        name: Mesh name; made unique. Defaults to the clay object's name. Short form n.
+
+    Examples:
+        convertClayToMesh("Dog")
+
+        convertClayToMesh("Dog", remesh=True, targetFaces=3000)
     """
 
 def convertCurve(*objects: Any, type: str | None = None, tolerance: float | None = None, t: str | None = None, tol: float | None = None) -> Any:
@@ -1444,6 +1527,20 @@ def createBakeProject(name: str | None = None, target: str | None = None, folder
         name: Name; bakeProject1 when empty. Short form n.
         target: Apply a target profile's maps and naming (see bakeTargets). Short form t.
         folder: Output folder; relative paths are under the workspace, else the scene file's folder. Short form fo.
+    """
+
+def createClay(name: str | None = None, position: Sequence[float] | None = None, voxelSize: float | None = None, symmetry: str | None = None, empty: bool | None = None, *, n: str | None = None, p: Sequence[float] | None = None, vs: float | None = None, sy: str | None = None, e: bool | None = None) -> Any:
+    """Create a clay object: a transform holding clay shapes, and a mesh under it that shows them blended by a claySurface. Starts with one sphere unless empty. Returns [object, mesh, surface, firstShape or None].
+
+    Args:
+        name: Object name; made unique. Short form n. Default 'Clay'.
+        position: World position. Short form p.
+        voxelSize: Lattice spacing while editing, cm. Short form vs.
+        symmetry: Mirror across the object's YZ plane. Short form sy. One of 'off', 'x'.
+        empty: Start with no shapes. Short form e. Default False.
+
+    Examples:
+        createClay(name="Dog", symmetry="x")
     """
 
 def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | None = None, n: str | None = None, e: bool | None = None) -> Any:
@@ -2923,7 +3020,7 @@ def gnAddInput(*objects: Any, label: str | None = None, description: str | None 
     """
 
 def gnAddNode(*objects: Any, position: Sequence[Any] | None = None, name: str | None = None) -> Any:
-    """Add a node to a group. Returns its name. gnNodeTypes lists the types.
+    """Add a node to a group. Returns its name. gnNodeTypes lists the types. A zone node adds its input and output, paired.
 
     Args:
         objects: group type.
@@ -2936,6 +3033,27 @@ def gnApply(*objects: Any) -> Any:
 
     Args:
         objects: mesh group.
+    """
+
+def gnBake(*objects: Any, start: int | None = None, end: int | None = None, modifier: str | None = None, directory: str | None = None) -> Any:
+    """Bake a Bake node: evaluate a mesh running its group, save what reaches the node (once, or per frame in animation mode) and switch the node to reading the saved files. Returns the folder written.
+
+    Args:
+        objects: group node.
+        start: First frame (animation mode); defaults to the playback range's.
+        end: Last frame (animation mode); defaults to the playback range's.
+        modifier: The modifier to evaluate when several meshes run the group; defaults to the first.
+        directory: Folder for the files; defaults to bakes/<group>_<node> next to the scene.
+    """
+
+def gnBakeImposter(*objects: Any, folder: str | None = None, name: str | None = None, modifier: str | None = None) -> Any:
+    """Bake an Imposter node: evaluate a mesh running its group at the current frame, view what reaches the node from every atlas direction and write the base colour and normal-depth atlases, a card mesh FBX and a JSON of the material inputs. Returns {files, materialParams}.
+
+    Args:
+        objects: group node.
+        folder: Where to write; defaults to imposters/ next to the scene.
+        name: File base name; defaults to the mesh's.
+        modifier: The modifier to evaluate when several meshes run the group; defaults to the first.
     """
 
 def gnBuildGroup(*objects: Any, replace: bool | None = None) -> Any:
@@ -2967,8 +3085,15 @@ def gnCreateGroup(*objects: Any) -> Any:
         objects: name.
     """
 
+def gnDeleteBake(*objects: Any) -> Any:
+    """Delete a Bake node's saved files and go back to evaluating the nodes before it.
+
+    Args:
+        objects: group node.
+    """
+
 def gnDeleteNode(*objects: Any) -> Any:
-    """Delete nodes from a group, with their links.
+    """Delete nodes from a group, with their links. A zone's input and output go together.
 
     Args:
         objects: group nodes...
@@ -2988,6 +3113,18 @@ def gnDuplicateNodes(*objects: Any, offset: Sequence[Any] | None = None) -> Any:
     Args:
         objects: group nodes...
         offset: [x, y] shift for the copies. Default [40, 40].
+    """
+
+def gnEncodeVat(*objects: Any, start: float | None = None, end: float | None = None, folder: str | None = None, name: str | None = None, modifier: str | None = None) -> Any:
+    """Encode a Vertex Animation Texture node: sample what reaches it on a mesh running its group, frame by frame, and write the vertex animation textures (see exportVertexAnimation for the files). Returns {files, materialParams}.
+
+    Args:
+        objects: group node.
+        start: First frame; defaults to the playback range's.
+        end: Last frame; defaults to the playback range's.
+        folder: Where to write; defaults to vat/ next to the scene.
+        name: File base name; {name} is the mesh. Default '{name}'.
+        modifier: The modifier to sample when several meshes run the group; defaults to the first.
     """
 
 def gnExportGroup(*objects: Any) -> Any:
@@ -3156,6 +3293,14 @@ def gnSetInputInfo(*objects: Any, label: str | None = None, description: str | N
         panel: Panel (category) the input shows under; empty for none.
     """
 
+def gnSetItems(*objects: Any, renames: Any | None = None) -> Any:
+    """Set the items a zone, bundle node or Evaluate Closure carries: gnSetItems(group, 'RepeatOutput', 'items', [{'name': 'count', 'type': 'float'}]). A zone's items live on its output node, and naming its input works too. Closures have two lists, inputs and outputs. Links and values follow items through renames; links to removed items go.
+
+    Args:
+        objects: group node list items.
+        renames: {old: new} item names, so their links and values carry over.
+    """
+
 def gnSetNodeFlags(*objects: Any, muted: bool | None = None, collapsed: bool | None = None, hideUnused: bool | None = None) -> Any:
     """Set how nodes draw and run: gnSetNodeFlags(group, 'Math', 'Noise', muted=True). muted bypasses a node (its first input of a matching type passes through to each output); collapsed draws only its header; hideUnused draws only its linked sockets. Flags left out stay as they are.
 
@@ -3178,6 +3323,17 @@ def gnSetValue(*objects: Any) -> Any:
 
     Args:
         objects: group node.socket value.
+    """
+
+def gnSpreadsheet(*objects: Any, component: str | None = None, domain: str | None = None, start: int | None = None, count: int | None = None) -> Any:
+    """The evaluated geometry of a mesh's top geometry-nodes modifier (or the modifier named) as a table: one row per element of a component's domain, a column per attribute. Without a geometry-nodes modifier, the mesh as it ends up. Also lists every component with its element counts.
+
+    Args:
+        objects: target.
+        component: mesh, points, curves, instances or volume. Default 'mesh'.
+        domain: point, edge, face or corner for meshes; point or curve for curves. Default 'point'.
+        start: First row. Default 0.
+        count: Most rows to return. Default 1000.
     """
 
 def gnUngroup(*objects: Any) -> Any:
@@ -3226,6 +3382,19 @@ def group(*objects: Any, name: str | None = None, empty: bool | None = None, par
         name: Group name. Short form n.
         empty: Create an empty group. Short form em. Default False.
         parent: Parent for the new group. Short form p.
+    """
+
+def groupClay(*objects: Any, operation: str | None = None, blend: float | None = None, name: str | None = None, op: str | None = None, b: float | None = None, n: str | None = None) -> Any:
+    """Group clay shapes that share a parent, so they join each other first and then the clay before them as one. The group takes the first shape's place in the join order. Returns the group.
+
+    Args:
+        objects: shapes.
+        operation: How the group joins the clay before it. Short form op. One of 'add', 'subtract', 'intersect'. Default 'add'.
+        blend: Smooth join radius of the group, cm. Short form b.
+        name: Group name; made unique. Short form n. Default 'ClayGroup'.
+
+    Examples:
+        groupClay(["Ear", "EarCut"], blend=1)
     """
 
 def growSelection() -> Any:
@@ -5388,6 +5557,16 @@ def redo() -> Any:
 
 def references() -> Any:
     """Every reference: namespace, path, loaded, and its local edits."""
+
+def refreshClay(*objects: Any) -> Any:
+    """Rewire clay objects to their shapes after shapes were reordered or reparented outside the clay commands. Siblings join in outliner order. Returns the objects refreshed.
+
+    Args:
+        objects: clay objects or anything in them.
+
+    Examples:
+        refreshClay("Dog")
+    """
 
 def relaxMesh(*objects: Any, iterations: int | None = None, strength: float | None = None, target: str | None = None, project: bool | None = None, pinBoundary: bool | None = None, sharpAngle: float | None = None, keepHardEdges: bool | None = None, pinCreases: bool | None = None, pinHard: bool | None = None, pinSeams: bool | None = None) -> Any:
     """Even out point spacing while keeping the form: points slide over the mesh's own starting surface (or a target mesh), points on sharp creases and hard edges slide only along them, and crease corners and cone tips stay. No face is allowed to fold over. Moves only the selected components when there is a component selection. Honours the mesh's symmetry.
@@ -8133,7 +8312,7 @@ def uvAlignToEdge(uvSet: str | None = None, axis: str | None = None) -> Any:
         axis: u, v, or nearest. One of 'nearest', 'u', 'v'. Default 'nearest'.
     """
 
-def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
     """Automatic uvs: seams, low-stretch unwrap and pack, in one step.
 
     Args:
@@ -8148,6 +8327,8 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: f
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
+        useViews: Keep seams out of sight of the seam views (uvSeamView). Default True.
+        views: Cameras or locators seams hide from; every seam view in the scene when not given.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.
@@ -8171,7 +8352,7 @@ def uvAuto(uvSet: str | None = None, iterations: int | None = None, hardAngle: f
         workingResolution: Search raster cells across a tile; 0 uses the resolution up to 4096. Default 0.
     """
 
-def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None) -> Any:
+def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None, keepSeams: bool | None = None, maxDistortion: float | None = None, visibility: bool | None = None, merge: bool | None = None, method: str | None = None, distortionBound: float | None = None, seamWeight: float | None = None, useViews: bool | None = None, views: Sequence[Any] | None = None) -> Any:
     """Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and split it where it would stretch.
 
     Args:
@@ -8184,6 +8365,8 @@ def uvAutoSeams(hardAngle: float | None = None, useHardEdges: bool | None = None
         method: split (hard edges, open to disks, split where stretched) or optcuts (Auto Seams 2: seams and distortion optimised together). One of 'split', 'optcuts'. Default 'split'.
         distortionBound: optcuts: stretch (symmetric Dirichlet excess, all islands) to get under. Default 0.05.
         seamWeight: optcuts: price of seam length against stretch; higher keeps seams shorter. Default 0.5.
+        useViews: Keep seams out of sight of the seam views (uvSeamView). Default True.
+        views: Cameras or locators seams hide from; every seam view in the scene when not given.
     """
 
 def uvBff(uvSet: str | None = None, boundary: str | None = None, cones: int | None = None, exactLengths: bool | None = None, pack: bool | None = None) -> Any:
@@ -8211,6 +8394,13 @@ def uvCut(*objects: Any, uvSet: str | None = None, edges: Sequence[Any] | None =
 
 def uvCutEdges() -> Any:
     """Mark the selected edges as uv seams."""
+
+def uvDelete(uvSet: str | None = None) -> Any:
+    """Delete the uvs of the selected faces, leaving the faces: their uvs collapse to 0,0, so unwrap and projections treat them as having none. With whole meshes selected, removes the uv set.
+
+    Args:
+        uvSet: UV set; the current one (uvSetCurrent) when not given.
+    """
 
 def uvLayout(uvSet: str | None = None, resolution: int | None = None) -> Any:
     """UV report for the selection: islands, overlapping and folded faces, distortion and texel density.
@@ -8281,7 +8471,7 @@ def uvOrient(uvSet: str | None = None, mode: str | None = None) -> Any:
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
-        mode: bbox, principal or edge. Default 'bbox'.
+        mode: bbox, principal or edge. One of 'bbox', 'principal', 'edge'. Default 'bbox'.
     """
 
 def uvPack(uvSet: str | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None, layout: str | None = None, groupBy: str | None = None, groupAttr: str | None = None, keep: str | None = None, fixPinned: bool | None = None, perObject: bool | None = None) -> Any:
@@ -8325,7 +8515,7 @@ def uvPin(uvSet: str | None = None) -> Any:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
     """
 
-def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | None = None, fit: str | None = None, center: Sequence[float] | None = None, rotation: Sequence[float] | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, radius: float | None = None, seamAngle: float | None = None, scaleU: float | None = None, scaleV: float | None = None, offsetU: float | None = None, offsetV: float | None = None, viewDir: Sequence[float] | None = None, normalize: bool | None = None, matrix: Sequence[Any] | None = None, pack: bool | None = None) -> Any:
+def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | None = None, fit: str | None = None, center: Sequence[float] | None = None, rotation: Sequence[float] | None = None, width: float | None = None, height: float | None = None, depth: float | None = None, radius: float | None = None, seamAngle: float | None = None, scaleU: float | None = None, scaleV: float | None = None, offsetU: float | None = None, offsetV: float | None = None, viewDir: Sequence[float] | None = None, normalize: bool | None = None, keepSeams: bool | None = None, matrix: Sequence[Any] | None = None, pack: bool | None = None) -> Any:
     """Project uvs onto the selected faces: planar, box, cylindrical, spherical or camera (matrix=object to clip, 16 numbers). The frame is fitted to the faces unless given; returns the frame used.
 
     Args:
@@ -8346,8 +8536,18 @@ def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | Non
         offsetV: V offset, applied after the scale. Default 0.0.
         viewDir: World direction the camera looks along, for the seam; the UI passes the active view's.
         normalize: Fit into 0-1 keeping proportions. Default True.
+        keepSeams: Keep the seams already cut inside the faces; off joins the faces into the projection's islands. Default True.
         matrix: Camera projection, column major, for type=camera.
         pack: Pack the resulting islands afterwards. Default False.
+    """
+
+def uvSeamView(position: Sequence[float] | None = None, weight: float | None = None, name: str | None = None, *, p: Sequence[float] | None = None, w: float | None = None, n: str | None = None) -> Any:
+    """Create a seam view: a locator that uvAuto and uvAutoSeams keep seams out of sight of, such as where a first person camera sits or where a character's face is seen from. Move it and run Auto UV again to see the seams move. Its seamView attribute is the weight: higher hides seams harder, negative draws them towards it. Returns its path.
+
+    Args:
+        position: World position. Short form p.
+        weight: How hard seams avoid what it sees; negative draws them towards it. Short form w. Default 1.0.
+        name: Name; made unique among its siblings. Short form n. Default 'seamView'.
     """
 
 def uvSetCurrent(*objects: Any) -> Any:
@@ -8447,15 +8647,16 @@ def uvUnpin(uvSet: str | None = None, all: bool | None = None) -> Any:
         all: Unpin every uv of the meshes. Default False.
     """
 
-def uvUnwrap(uvSet: str | None = None, method: str | None = None, iterations: int | None = None, pins: bool | None = None, pack: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
-    """Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands are cut open first. Islands keep their place unless pack=True or they had no uvs.
+def uvUnwrap(uvSet: str | None = None, method: str | None = None, iterations: int | None = None, pins: bool | None = None, pack: bool | None = None, openIslands: bool | None = None, resolution: int | None = None, padding: float | None = None, margin: float | None = None, paddingMips: int | None = None, rotateStep: int | None = None, angles: Sequence[Any] | None = None, freeRotation: bool | None = None, flip: bool | None = None, orient: bool | None = None, scaleMode: str | None = None, normalize: bool | None = None, stack: bool | None = None, stackMirrored: bool | None = None, stackTolerance: float | None = None, tilesU: int | None = None, tilesV: int | None = None, region: Sequence[Any] | None = None, texelsPerUnit: float | None = None, effort: int | None = None, timeLimit: float | None = None, workingResolution: int | None = None) -> Any:
+    """Unwrap the selected faces' islands along their seams (LSCM, refined with SLIM for low stretch). Closed or holed islands are an error unless openIslands=True cuts them open. Islands keep their place unless pack=True or they had no uvs.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
-        method: slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept). Default 'slim'.
+        method: slim (low stretch), conformal (LSCM only) or bff (Boundary First Flattening: conformal, boundary lengths kept). One of 'slim', 'conformal', 'bff'. Default 'slim'.
         iterations: SLIM iterations. Default 12.
         pins: Respect pinned uvs (corner attribute uvPin). Default True.
         pack: Pack the unwrapped islands into 0-1. Default False.
+        openIslands: Cut closed or holed islands open where they cannot unfold, instead of stopping. Default False.
         resolution: Target texture size, px. Padding and margin are in its texels. Default 1024.
         padding: Texels between islands, held exactly (the search never lets two islands closer). Default 4.0.
         margin: Texels from the tile (or region) border; negative is half the padding. Default -1.0.

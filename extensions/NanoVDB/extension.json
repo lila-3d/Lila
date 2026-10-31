@@ -1,0 +1,14 @@
+{
+    "id": "NanoVDB",
+    "name": "NanoVDB",
+    "version": "1.0.0",
+    "vendor": "Lila",
+    "description": "Geometry-node volumes to and from OpenVDB (.vdb) and NanoVDB (.nvdb) files: export a mesh's volume with exportVDB or exportNanoVDB, read one in with the Read VDB or Read NanoVDB node.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "NanoVDB.dll",
+        "linux": "NanoVDB.so",
+        "macos": "NanoVDB.dylib"
+    },
+    "enabledByDefault": true
+}

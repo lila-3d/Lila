@@ -17,6 +17,7 @@ add_executable(lila_gn_tests
     test_nodes_volume.cpp
     test_nodes_wrangle.cpp
     test_nodes_zones.cpp
+    test_nodes_canvas_zones.cpp
     test_routing.cpp
     test_ties.cpp)
 target_link_libraries(lila_gn_tests PRIVATE LilaScene doctest::doctest)

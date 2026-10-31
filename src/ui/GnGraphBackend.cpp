@@ -11,6 +11,7 @@
 #pragma pop_macro("emit")
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
+#include "ui/GnSpreadsheet.h"
 #include "ui/GnViewerDraw.h"
 #include "ui/NodeEditor.h"
 #include "ui/Theme.h"
@@ -172,10 +173,16 @@ public:
             return {themeColor("socketGeometry"), SocketShape::Circle, SocketMark::None, 6.0};
         if (type == "rotation")
             return {themeColor("socketRotation"), SocketShape::Circle, SocketMark::Hole};
+        if (type == "matrix")
+            return {themeColor("socketMatrix"), SocketShape::Square, SocketMark::Hole};
+        if (type == "bundle")
+            return {themeColor("socketBundle"), SocketShape::Circle, SocketMark::Ring};
+        if (type == "closure")
+            return {themeColor("socketClosure"), SocketShape::Circle, SocketMark::Dot};
         return GraphBackend::socketStyle(type);
     }
 
-    bool valueless(const std::string& type) const override { return type == "geometry"; }
+    bool valueless(const std::string& type) const override { return type == "geometry" || type == "matrix" || type == "bundle" || type == "closure"; }
 
     double wireWidth(const std::string& type) const override { return type == "geometry" ? 3.5 : 2.0; }
 
@@ -202,7 +209,7 @@ public:
             {"Geometry", "nodeGeometry"}, {"Mesh", "nodeMesh"},           {"Mesh Primitives", "nodeMesh"}, {"Curve", "nodeCurve"},
             {"Curve Primitives", "nodeCurve"}, {"Point", "nodePoint"},    {"Instances", "nodeInstances"}, {"Attribute", "nodeAttribute"},
             {"Input", "nodeInput"},       {"Output", "nodeOutput"},       {"Utilities", "nodeUtilities"}, {"Color", "nodeColor"},
-            {"Texture", "nodeTexture"},   {"Group", "nodeGroupIo"},
+            {"Texture", "nodeTexture"},   {"Group", "nodeGroupIo"},       {"Zones", "nodeGroupIo"},
         };
         if (type != "GroupInput" && type != "GroupOutput")
             for (auto& [name, token] : kTokens)
@@ -211,12 +218,15 @@ public:
         return GraphBackend::headerColor(type, category);
     }
 
-    std::vector<std::string> inputTypes() const override { return {"float", "int", "bool", "vector", "rotation", "color", "string"}; }
+    std::vector<std::string> inputTypes() const override
+    {
+        return {"float", "int", "bool", "vector", "rotation", "color", "string", "matrix", "bundle", "closure"};
+    }
 
     QString canvasHint() const override
     {
         return GraphBackend::canvasHint() +
-               " Ctrl+G groups the selection, Ctrl+Alt+G ungroups, double-click a Group node to open its group, Ctrl+Shift+click a "
+               " Repeat, For Each, Simulation and Closure zones run the nodes between their input and output. Ctrl+G groups the selection, Ctrl+Alt+G ungroups, double-click a Group node to open its group, Ctrl+Shift+click a "
                "node to preview it in a Viewer. Drop a .lilanodes file here to import it.";
     }
 
@@ -248,5 +258,6 @@ void registerGnGraphBackend()
         return;
     graphBackends::add(std::make_shared<GnBackend>());
     registerGnViewerDrawer();
+    registerGnSpreadsheet();
 }
 } // namespace lila::ui

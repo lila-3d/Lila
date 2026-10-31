@@ -40,6 +40,10 @@ LILA_SCENE_API std::vector<scene::NodeId> instancesOf(scene::Graph& g, scene::No
 LILA_SCENE_API bool isGnModifier(const scene::Node& n);
 /** The heightfield a gn modifier's group produced on its last evaluation; null when it made none or failed. */
 LILA_SCENE_API std::shared_ptr<const geo::Heightfield> modifierHeightfield(scene::NodeId modifier);
+/** Everything a gn modifier's group produced on its last evaluation (volumes, curves, instances unrealized); null when none. */
+LILA_SCENE_API GeometryPtr modifierGeometry(scene::NodeId modifier);
+/** modifierGeometry for every gn modifier holding one. */
+LILA_SCENE_API std::vector<std::pair<scene::NodeId, GeometryPtr>> modifierGeometries();
 /** The group node feeding a gn modifier, or null. */
 LILA_SCENE_API scene::Node* groupOfModifier(scene::Graph& g, const scene::Node& modifier);
 

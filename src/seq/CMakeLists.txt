@@ -5,7 +5,10 @@ lila_module(lila_seq Scene
     PieceJoints.cpp
     RigidPieces.cpp
     SeqCommands.cpp
-    Vat.cpp)
+    Vat.cpp
+    VatNode.cpp
+    ImposterNode.cpp
+    Imposter.h)
 
 find_package(Alembic CONFIG REQUIRED)
 find_package(miniz CONFIG REQUIRED)

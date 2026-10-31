@@ -123,7 +123,10 @@ bool valueFits(SocketType t, const json& v)
 {
     switch (t)
     {
-    case SocketType::Geometry: return false;
+    case SocketType::Geometry:
+    case SocketType::Bundle:
+    case SocketType::Closure: return false;
+    case SocketType::Matrix: return v.is_array() && v.size() == 16 && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); });
     case SocketType::String: return v.is_string();
     case SocketType::Vector:
     case SocketType::Rotation: return (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) || v.is_number();

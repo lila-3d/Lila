@@ -14,8 +14,12 @@
 
 namespace lila::gn
 {
-/** Storage per socket type: Float double, Int int64_t, Bool uint8_t, Vector and Rotation dvec3, Color dvec4 (linear RGBA). */
-using ColumnData = std::variant<std::vector<double>, std::vector<int64_t>, std::vector<uint8_t>, std::vector<glm::dvec3>, std::vector<glm::dvec4>>;
+/**
+ * Storage per socket type: Float double, Int int64_t, Bool uint8_t, Vector and Rotation dvec3, Color dvec4 (linear RGBA),
+ * Matrix dmat4.
+ */
+using ColumnData =
+    std::variant<std::vector<double>, std::vector<int64_t>, std::vector<uint8_t>, std::vector<glm::dvec3>, std::vector<glm::dvec4>, std::vector<glm::dmat4>>;
 
 /** One value per element, or one value for all of them when single. */
 struct LILA_SCENE_API Column
@@ -46,6 +50,8 @@ template <class T> constexpr SocketType socketOf()
         return SocketType::Bool;
     else if constexpr (std::is_same_v<T, glm::dvec4>)
         return SocketType::Color;
+    else if constexpr (std::is_same_v<T, glm::dmat4>)
+        return SocketType::Matrix;
     else
         return SocketType::Vector;
 }
@@ -111,6 +117,7 @@ LILA_SCENE_API FieldPtr constantInt(int64_t v);
 LILA_SCENE_API FieldPtr constantBool(bool v);
 LILA_SCENE_API FieldPtr constantVector(const glm::dvec3& v, SocketType type = SocketType::Vector);
 LILA_SCENE_API FieldPtr constantColor(const glm::dvec4& v);
+LILA_SCENE_API FieldPtr constantMatrix(const glm::dmat4& m);
 /** Wraps a field so it evaluates to another socket type. */
 LILA_SCENE_API FieldPtr convertField(const FieldPtr& f, SocketType to);
 

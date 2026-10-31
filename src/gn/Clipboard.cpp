@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "gn/NodeLib.h"
+#include "gn/Zones.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +22,10 @@ std::string valueProblem(const SocketDecl& s, const json& v)
     bool ok = true;
     switch (s.type)
     {
-    case SocketType::Geometry: ok = false; break;
+    case SocketType::Geometry:
+    case SocketType::Bundle:
+    case SocketType::Closure: ok = false; break;
+    case SocketType::Matrix: ok = v.is_array() && v.size() == 16 && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); }); break;
     case SocketType::String: ok = v.is_string(); break;
     case SocketType::Vector:
     case SocketType::Rotation: ok = (v.is_array() && v.size() == 3 && v[0].is_number() && v[1].is_number() && v[2].is_number()) || v.is_number(); break;
@@ -84,7 +88,7 @@ std::string copyNodesText(const Group& g, const std::vector<std::string>& names)
 
     std::vector<const GNode*> picked;
     std::set<std::string> set;
-    for (const std::string& name : names)
+    for (const std::string& name : withZonePartners(g, names))
     {
         const GNode* n = g.node(name);
         if (!n)
@@ -241,6 +245,8 @@ std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dv
         Sockets s = d->socketsFor(probe, n);
         for (auto& [key, v] : n.values.items())
         {
+            if (isStructuralValue(n.type, key))
+                continue;
             if (const PropDecl* p = d->prop(key))
             {
                 if (!v.is_string())
@@ -315,6 +321,7 @@ std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dv
     centre /= double(pasted.size());
     std::map<std::string, std::string> renamed;
     std::vector<std::string> out;
+    const size_t firstPasted = next.nodes.size();
     for (GNode n : pasted)
     {
         std::string old = n.name;
@@ -324,6 +331,8 @@ std::vector<std::string> pasteNodesText(Group& g, std::string_view text, glm::dv
         out.push_back(n.name);
         next.nodes.push_back(std::move(n));
     }
+    for (size_t k = firstPasted; k < next.nodes.size(); ++k)
+        retargetZoneCopy(next.nodes[k], renamed);
     for (const GLink& l : links)
         next.links.push_back({renamed[l.fromNode], l.fromSocket, renamed[l.toNode], l.toSocket});
     std::set<std::string> kept;

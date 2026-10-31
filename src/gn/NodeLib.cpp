@@ -67,6 +67,16 @@ glm::dvec4 vec4(const json& j)
     }
     return {0.0, 0.0, 0.0, 1.0};
 }
+
+/** 16 numbers, column by column; anything else is the identity. */
+glm::dmat4 matrixFromJson(const json& j)
+{
+    glm::dmat4 m(1.0);
+    if (j.is_array() && j.size() == 16)
+        for (int k = 0; k < 16; ++k)
+            m[k / 4][k % 4] = j[size_t(k)].get<double>();
+    return m;
+}
 } // namespace
 
 int Sockets::inputIndex(std::string_view id) const
@@ -151,8 +161,10 @@ bool linkable(SocketType from, SocketType to)
 {
     if (from == to)
         return true;
-    if (from == SocketType::Geometry || to == SocketType::Geometry)
+    if (!isDataType(from) && from != SocketType::String || !isDataType(to) && to != SocketType::String)
         return false;
+    if (from == SocketType::Matrix || to == SocketType::Matrix)
+        return from == SocketType::Rotation && to == SocketType::Matrix;
     if (to == SocketType::String)
         return isDataType(from);
     return from != SocketType::String;
@@ -191,6 +203,9 @@ Value defaultValue(SocketType t)
     case SocketType::Int: v.field = constantInt(0); break;
     case SocketType::Bool: v.field = constantBool(false); break;
     case SocketType::Color: v.field = constantColor(glm::dvec4(0.0, 0.0, 0.0, 1.0)); break;
+    case SocketType::Matrix: v.field = constantMatrix(glm::dmat4(1.0)); break;
+    case SocketType::Bundle:
+    case SocketType::Closure: break;
     default: v.field = constantVector(glm::dvec3(0.0), t); break;
     }
     return v;
@@ -205,7 +220,9 @@ Value valueFromJson(SocketType t, const json& j)
     {
         switch (t)
         {
-        case SocketType::Geometry: return defaultValue(t);
+        case SocketType::Geometry:
+        case SocketType::Bundle:
+        case SocketType::Closure: return defaultValue(t);
         case SocketType::String: v.string = j.is_string() ? j.get<std::string>() : j.dump(); break;
         case SocketType::Float: v.field = constantFloat(j.is_boolean() ? double(j.get<bool>()) : j.get<double>()); break;
         case SocketType::Int: v.field = constantInt(j.is_boolean() ? int64_t(j.get<bool>()) : int64_t(std::llround(j.get<double>()))); break;
@@ -213,6 +230,7 @@ Value valueFromJson(SocketType t, const json& j)
         case SocketType::Vector: v.field = constantVector(vec3(j, glm::dvec3(0.0))); break;
         case SocketType::Rotation: v.field = constantVector(glm::radians(vec3(j, glm::dvec3(0.0))), SocketType::Rotation); break;
         case SocketType::Color: v.field = constantColor(vec4(j)); break;
+        case SocketType::Matrix: v.field = constantMatrix(matrixFromJson(j)); break;
         }
     }
     catch (const std::exception&)

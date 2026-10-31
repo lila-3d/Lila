@@ -420,6 +420,9 @@ SimInputs::SimInputs(const GNode& node, const NodeDecl& decl, Sockets sockets, s
             case SocketType::Int: h = hashPod(evaluateSingle<int64_t>(v.field), h); break;
             case SocketType::Bool: h = hashPod(evaluateSingle<uint8_t>(v.field), h); break;
             case SocketType::Color: h = hashPod(evaluateSingle<glm::dvec4>(v.field), h); break;
+            case SocketType::Matrix: h = hashPod(evaluateSingle<glm::dmat4>(v.field), h); break;
+            case SocketType::Bundle:
+            case SocketType::Closure: h = hashPod(uintptr_t(v.bundle.get()) ^ uintptr_t(v.closure.get()), h); break;
             default: h = hashPod(evaluateSingle<glm::dvec3>(v.field), h); break;
             }
         }
@@ -511,7 +514,7 @@ void restoreSimulationInputs(NodeId modifier, std::shared_ptr<const SimInputs> i
 bool hasStateful(const Group& g)
 {
     for (const GNode& n : g.nodes)
-        if (const NodeDecl* d = findDecl(n.type); d && d->stateful)
+        if (const NodeDecl* d = findDecl(n.type); d && (d->stateful || d->type == "SimulationInput"))
             return true;
     return false;
 }

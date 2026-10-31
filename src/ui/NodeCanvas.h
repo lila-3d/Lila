@@ -729,6 +729,8 @@ protected:
     void drawGhostLines(QPainter* p);
 
     void drawBackground(QPainter* p, const QRectF& rect) override;
+    /** Each zone as a tinted box around its input, output and the nodes between them, outer zones first. */
+    void drawZones(QPainter* p);
 
     void wheelEvent(QWheelEvent* e) override;
 

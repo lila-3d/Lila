@@ -35,6 +35,15 @@ lila_module(lila_gn Scene
     NodesVolume.cpp
     NodesWrangle.cpp
     NodesZones.cpp
+    NodesMatrix.cpp
+    NodesBundle.cpp
+    Zones.cpp
+    GeometryIO.cpp
+    Bake.cpp
+    Spreadsheet.cpp
+    Bake.h
+    GeometryIO.h
+    Zones.h
     Expression.cpp
     Volume.cpp
     Stateful.cpp

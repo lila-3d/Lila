@@ -15,7 +15,7 @@ namespace lila::gn
 {
 namespace
 {
-constexpr std::array<const char*, 8> kSocketNames = {"geometry", "float", "int", "bool", "vector", "rotation", "string", "color"};
+constexpr std::array<const char*, 11> kSocketNames = {"geometry", "float", "int", "bool", "vector", "rotation", "string", "color", "matrix", "bundle", "closure"};
 constexpr std::array<const char*, 6> kDomainNames = {"point", "edge", "face", "corner", "curve", "instance"};
 
 /**
@@ -130,7 +130,10 @@ bool parseSocketType(std::string_view name, SocketType* out)
     return false;
 }
 
-bool isDataType(SocketType t) { return t != SocketType::Geometry && t != SocketType::String; }
+bool isDataType(SocketType t)
+{
+    return t != SocketType::Geometry && t != SocketType::String && t != SocketType::Bundle && t != SocketType::Closure;
+}
 
 const char* domainName(Domain d) { return kDomainNames[size_t(d)]; }
 

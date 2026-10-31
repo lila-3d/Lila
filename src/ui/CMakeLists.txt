@@ -52,6 +52,7 @@ lila_module(lila_ui UI
     AnimatedSend.cpp AnimatedSend.h
     Ghosting.cpp Ghosting.h
     GnViewerDraw.cpp GnViewerDraw.h
+    GnSpreadsheet.cpp GnSpreadsheet.h
     GraphEditor.cpp GraphEditor.h
     PoseLibrary.cpp PoseLibrary.h
     ControlPicker.cpp ControlPicker.h

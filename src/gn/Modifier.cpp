@@ -52,26 +52,27 @@ struct TypeLayout
     int ownerAttr = -1;
 };
 
-struct Heightfields
+/** Each modifier's last result whole, before it became the output mesh: heightfields, volumes, the spreadsheet read it. */
+struct Outputs
 {
     std::mutex mutex;
-    std::map<NodeId, std::shared_ptr<const geo::Heightfield>> byModifier;
+    std::map<NodeId, GeometryPtr> byModifier;
 };
 
-Heightfields& heightfields()
+Outputs& outputs()
 {
     // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
-    static Heightfields* h = new Heightfields;
-    return *h;
+    static Outputs* o = new Outputs;
+    return *o;
 }
 
-void setHeightfield(NodeId modifier, std::shared_ptr<const geo::Heightfield> h)
+void setOutputGeometry(NodeId modifier, GeometryPtr g)
 {
-    std::lock_guard lock(heightfields().mutex);
-    if (h)
-        heightfields().byModifier[modifier] = std::move(h);
+    std::lock_guard lock(outputs().mutex);
+    if (g)
+        outputs().byModifier[modifier] = std::move(g);
     else
-        heightfields().byModifier.erase(modifier);
+        outputs().byModifier.erase(modifier);
 }
 
 /** Modifiers whose group reads Is Viewport or the active camera, re-evaluated when either changes. */
@@ -127,7 +128,7 @@ public:
             noteSimulationModifier(id(), false, false);
             noteViewModifier(id(), false);
             clearInstanceView(id());
-            setHeightfield(id(), nullptr);
+            setOutputGeometry(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -152,7 +153,7 @@ public:
         if (!mPlan)
         {
             clearInstanceView(id());
-            setHeightfield(id(), nullptr);
+            setOutputGeometry(id(), nullptr);
             setOutput(outAttr, in);
             return;
         }
@@ -195,7 +196,7 @@ public:
             if (mPlan->viewerStep >= 0)
                 env.viewer = &sink;
             GeometryPtr result = execute(*mPlan, env);
-            setHeightfield(id(), result->heightfield);
+            setOutputGeometry(id(), result);
             scene::MeshPtr out = std::make_shared<geo::Mesh>(toOutputMesh(*result));
             if (InstanceViewPtr view = makeInstanceView(*result, out))
                 setInstanceView(id(), std::move(view));
@@ -213,7 +214,7 @@ public:
             setOutput(outAttr, in);
             clearViewerData(id());
             clearInstanceView(id());
-            setHeightfield(id(), nullptr);
+            setOutputGeometry(id(), nullptr);
         }
     }
 
@@ -223,7 +224,7 @@ public:
         if (mPlan && mPlan->statefulStep >= 0 && !simulationStateReady(id(), ctx.time))
             return {.keep = false};
         auto p = std::make_shared<Published>(
-            Published{instanceView(id()), modifierHeightfield(id()), viewerData(id()), mPlan && mPlan->statefulStep >= 0 ? simulationInputs(id()) : nullptr});
+            Published{instanceView(id()), modifierGeometry(id()), viewerData(id()), mPlan && mPlan->statefulStep >= 0 ? simulationInputs(id()) : nullptr});
         size_t bytes = sizeof(Published);
         if (p->view)
             bytes += p->view->instanceCount * sizeof(glm::mat4);
@@ -237,7 +238,7 @@ public:
             setInstanceView(id(), p->view);
         else
             clearInstanceView(id());
-        setHeightfield(id(), p ? p->heightfield : nullptr);
+        setOutputGeometry(id(), p ? p->geometry : nullptr);
         if (p && p->viewer)
             setViewerData(id(), p->viewer);
         else
@@ -252,7 +253,7 @@ public:
         forgetSimulationModifier(id());
         noteViewModifier(id(), false);
         clearInstanceView(id());
-        setHeightfield(id(), nullptr);
+        setOutputGeometry(id(), nullptr);
     }
 
 private:
@@ -260,7 +261,7 @@ private:
     struct Published
     {
         InstanceViewPtr view;
-        std::shared_ptr<const geo::Heightfield> heightfield;
+        GeometryPtr geometry;
         ViewerPtr viewer;
         std::shared_ptr<const SimInputs> simInputs;
     };
@@ -475,6 +476,24 @@ AttrDef paramAttr(const GInput& in)
         a.type = PlugType::String;
         a.defaultValue = d.is_string() ? d.get<std::string>() : std::string();
         a.flags &= ~scene::AttrKeyable;
+        break;
+    case SocketType::Matrix:
+    {
+        a.type = PlugType::Matrix;
+        glm::dmat4 m(1.0);
+        if (d.is_array() && d.size() == 16)
+            for (int k = 0; k < 16; ++k)
+                m[k / 4][k % 4] = d[size_t(k)].get<double>();
+        a.defaultValue = m;
+        break;
+    }
+    case SocketType::Geometry:
+    case SocketType::Bundle:
+    case SocketType::Closure:
+        // Only a link inside a parent group can feed these; on the modifier they read as empty.
+        a.type = PlugType::String;
+        a.defaultValue = std::string();
+        a.flags = (a.flags & ~scene::AttrKeyable) | scene::AttrHidden;
         break;
     default:
         a.type = PlugType::Float;
@@ -839,9 +858,21 @@ bool isGnModifier(const Node& n) { return dynamic_cast<const GnModifierNode*>(&n
 
 std::shared_ptr<const geo::Heightfield> modifierHeightfield(NodeId modifier)
 {
-    std::lock_guard lock(heightfields().mutex);
-    auto it = heightfields().byModifier.find(modifier);
-    return it == heightfields().byModifier.end() ? nullptr : it->second;
+    GeometryPtr g = modifierGeometry(modifier);
+    return g ? g->heightfield : nullptr;
+}
+
+GeometryPtr modifierGeometry(NodeId modifier)
+{
+    std::lock_guard lock(outputs().mutex);
+    auto it = outputs().byModifier.find(modifier);
+    return it == outputs().byModifier.end() ? nullptr : it->second;
+}
+
+std::vector<std::pair<NodeId, GeometryPtr>> modifierGeometries()
+{
+    std::lock_guard lock(outputs().mutex);
+    return {outputs().byModifier.begin(), outputs().byModifier.end()};
 }
 
 Node* groupOfModifier(Graph& g, const Node& modifier)

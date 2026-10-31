@@ -1,8 +1,11 @@
 #include "gn/Exec.h"
 
+#include "gn/Bake.h"
+
 #include "core/Profile.h"
 #include "gn/Routing.h"
 #include "gn/Stateful.h"
+#include "gn/Zones.h"
 
 #include <functional>
 #include <map>
@@ -23,6 +26,8 @@ void markDependencies(Plan& plan)
         if (stateful && plan.statefulStep < 0)
             plan.statefulStep = int(s);
         step.dynamic = stateful || step.decl->type == "SceneTime" || step.decl->type == "IsViewport" || step.decl->type == "ActiveCamera" ||
+                       // Nodes with side-panel actions record their inputs for them (gn/Bake.h), so they must run each time.
+                       !step.decl->actions.empty() ||
                        (runsGroup(step.decl->type) && (plan.usesTime || plan.usesView)) ||
                        step.decl->type == "Viewer" || int(s) == plan.outputStep;
         for (const std::vector<Plan::Source>& links : step.inputs)
@@ -42,6 +47,35 @@ void markDependencies(Plan& plan)
             for (const std::vector<Plan::Source>& links : plan.steps[s].inputs)
                 for (const Plan::Source& src : links)
                     plan.steps[size_t(src.step)].feedsStateful = true;
+}
+/** Plan::needed: back from the output and viewer, stopping at baked Bake nodes. */
+void markNeeded(Plan& plan)
+{
+    plan.needed.clear();
+    bool anyBaked = false;
+    for (const Plan::Step& s : plan.steps)
+        anyBaked = anyBaked || isBaked(plan.group.nodes[s.node]);
+    if (!anyBaked)
+        return;
+    plan.needed.assign(plan.steps.size(), 0);
+    std::vector<int> stack;
+    for (int root : {plan.outputStep, plan.viewerStep, plan.statefulStep})
+        if (root >= 0)
+            stack.push_back(root);
+    while (!stack.empty())
+    {
+        int s = stack.back();
+        stack.pop_back();
+        if (plan.needed[size_t(s)])
+            continue;
+        plan.needed[size_t(s)] = 1;
+        const Plan::Step& step = plan.steps[size_t(s)];
+        if (isBaked(plan.group.nodes[step.node]))
+            continue;
+        for (const std::vector<Plan::Source>& links : step.inputs)
+            for (const Plan::Source& src : links)
+                stack.push_back(src.step);
+    }
 }
 } // namespace
 
@@ -76,6 +110,11 @@ PlanPtr compile(const Group& g)
     auto plan = std::make_shared<Plan>();
     plan->group = g;
     resolveRouting(plan->group.nodes, plan->group.links, routingHooks(g));
+    if (std::string error = lowerZones(plan->group); !error.empty())
+    {
+        plan->error = error;
+        return plan;
+    }
     const Group& grp = plan->group;
 
     std::map<std::string, size_t, std::less<>> byName;
@@ -151,6 +190,7 @@ PlanPtr compile(const Group& g)
     }
     plan->outputStep = stepOf[outIndex];
     markDependencies(*plan);
+    markNeeded(*plan);
     if (const GNode* viewer = activeViewer(grp))
     {
         std::string error = plan->error;
@@ -160,6 +200,7 @@ PlanPtr compile(const Group& g)
         {
             plan->viewerStep = stepOf[vi];
             markDependencies(*plan);
+            markNeeded(*plan);
         }
         plan->error = error;
     }
@@ -208,11 +249,14 @@ std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
         cache->valid.assign(plan.steps.size(), 0);
         cache->results.assign(plan.steps.size(), {});
     }
+    const bool skipUnneeded = !plan.needed.empty() && !bakeCaptureActive();
     for (size_t s = 0; s < plan.steps.size(); ++s)
     {
         const Plan::Step& step = plan.steps[s];
         const GNode& node = plan.group.nodes[step.node];
         if (env.sampleOnly && !step.feedsStateful)
+            continue;
+        if (skipUnneeded && !plan.needed[s])
             continue;
         if (cache && !step.dynamic && cache->valid[s])
         {
@@ -226,7 +270,8 @@ std::vector<Value> executeOutputs(const Plan& plan, const ExecEnv& env)
         {
             const SocketDecl& sd = step.sockets.inputs[k];
             for (const Plan::Source& src : step.inputs[k])
-                ctx.inputs[k].push_back(convertValue(results[src.step][src.output], src.type, sd.type));
+                if (!results[src.step].empty())
+                    ctx.inputs[k].push_back(convertValue(results[src.step][src.output], src.type, sd.type));
             if (!ctx.inputs[k].empty() || sd.multi)
                 continue;
             auto it = node.values.find(sd.id);

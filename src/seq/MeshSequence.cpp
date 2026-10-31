@@ -237,7 +237,7 @@ std::vector<scene::NodeId> meshNodes(scene::Graph& g, const std::vector<scene::N
 }
 
 void sample(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const SequenceOptions& o, const std::function<void(FrameMeshes&)>& sink,
-            const std::string& title)
+            const std::string& title, const MeshGetter& getter)
 {
     LILA_ZONE();
 
@@ -265,7 +265,9 @@ void sample(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const Seq
                 scene::Node* n = g.node(id);
                 if (!n)
                     continue;
-                scene::MeshPtr m = o.applyModifiers ? n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh) : scene::modifiers::cage(g, id);
+                std::shared_ptr<const geo::Mesh> m = getter               ? getter(*n)
+                                                     : o.applyModifiers ? n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh)
+                                                                        : scene::modifiers::cage(g, id);
                 if (!m)
                     continue;
                 geo::Mesh copy = *m;

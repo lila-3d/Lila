@@ -27,6 +27,11 @@ enum class SocketType : uint8_t
     Rotation, // Euler XYZ, radians
     String,
     Color, // linear RGBA
+    Matrix, // 4x4 transform, column-major
+    /** Named values of any type travelling as one (Combine Bundle). */
+    Bundle,
+    /** A piece of node graph run where it is evaluated (Closure zone, Evaluate Closure). */
+    Closure,
 };
 
 LILA_SCENE_API const char* socketTypeName(SocketType t);

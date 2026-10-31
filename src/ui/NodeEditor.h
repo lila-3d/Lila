@@ -149,6 +149,8 @@ private:
     void editInputInfo(const std::string& input, const nlohmann::json& current);
     /** A Send's name field, or a Receive's pick of the Sends in the group. */
     QWidget* portalNameEditor(QWidget* parent, const nlohmann::json& info, const std::string& node, bool receive);
+    /** Rows editing an item list a zone, bundle node or Evaluate Closure carries (gnSetItems). */
+    QWidget* itemListEditor(QWidget* parent, const nlohmann::json& list);
 
     GraphBackendPtr mBackend;
     QString mGroup;

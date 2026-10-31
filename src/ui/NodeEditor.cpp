@@ -1319,6 +1319,77 @@ QWidget* NodeEditor::portalNameEditor(QWidget* parent, const json& info, const s
     return combo;
 }
 
+QWidget* NodeEditor::itemListEditor(QWidget* parent, const json& list)
+{
+    static const char* kTypes[] = {"float", "int", "bool", "vector", "rotation", "color", "string", "matrix", "geometry", "bundle", "closure"};
+    const std::string group = mGroup.toStdString(), node = list.value("node", ""), key = list.value("key", "");
+    const json items = list.value("items", json::array());
+    auto* box = new QWidget(parent);
+    auto* v = new QVBoxLayout(box);
+    v->setContentsMargins(0, 6, 0, 0);
+    v->setSpacing(2);
+    v->addWidget(heading(box, pretty(key)));
+    auto set = [backend = mBackend, group, node, key](json next, json renames) {
+        json call = args({group, node, key, std::move(next)});
+        if (!renames.empty())
+            call["renames"] = std::move(renames);
+        runVerb(*backend, "SetItems", call);
+    };
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        auto* row = new QWidget(box);
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        auto* name = new QLineEdit(qs(items[i].value("name", "")), row);
+        name->setToolTip("The item's name, which is also its socket's.");
+        QObject::connect(name, &QLineEdit::editingFinished, name, [set, items, i, name] {
+            std::string old = items[i].value("name", ""), fresh = name->text().trimmed().toStdString();
+            if (fresh.empty() || fresh == old)
+                return;
+            json next = items;
+            next[i]["name"] = fresh;
+            set(next, json{{old, fresh}});
+        });
+        auto* type = new QComboBox(row);
+        for (const char* t : kTypes)
+            type->addItem(pretty(t), t);
+        type->setCurrentIndex(std::max(0, type->findData(qs(items[i].value("type", "float")))));
+        QObject::connect(type, &QComboBox::activated, type, [set, items, i, type](int) {
+            json next = items;
+            next[i]["type"] = type->currentData().toString().toStdString();
+            set(next, json::object());
+        });
+        auto* remove = new QToolButton(row);
+        remove->setText("Remove");
+        remove->setToolTip("Remove this item and its links.");
+        QObject::connect(remove, &QToolButton::clicked, remove, [set, items, i] {
+            json next = items;
+            next.erase(i);
+            set(next, json::object());
+        });
+        h->addWidget(name, 1);
+        h->addWidget(type);
+        h->addWidget(remove);
+        v->addWidget(row);
+    }
+    auto* add = new QToolButton(box);
+    add->setText("Add Item");
+    add->setToolTip("Add a value that travels through: a socket on both sides.");
+    QObject::connect(add, &QToolButton::clicked, add, [set, items] {
+        std::set<std::string> taken;
+        for (const json& it : items)
+            taken.insert(it.value("name", ""));
+        std::string name = "value";
+        for (int k = 1; taken.contains(name); ++k)
+            name = "value" + std::to_string(k);
+        json next = items;
+        next.push_back({{"name", name}, {"type", "float"}});
+        set(next, json::object());
+    });
+    v->addWidget(add, 0, Qt::AlignLeft);
+    return box;
+}
+
 void NodeEditor::jumpToPortalSource() { mCanvas->jumpToPortal(true); }
 
 void NodeEditor::frameSelection() { mCanvas->frameSelection(); }
@@ -1581,6 +1652,30 @@ void NodeEditor::rebuildSidePanel()
             form->addRow(label, row);
         }
         lay->addLayout(form);
+        for (const json& list : node->value("itemLists", json::array()))
+            lay->addWidget(itemListEditor(panel, list));
+        if (node->contains("actions"))
+        {
+            auto* row = new QWidget(panel);
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 6, 0, 0);
+            if (node->value("baked", false))
+                h->addWidget(new QLabel("Baked", row));
+            for (const json& act : (*node)["actions"])
+            {
+                auto* b = new QToolButton(row);
+                b->setText(qs(act.value("label", "")));
+                b->setToolTip(qs(act.value("doc", "")));
+                QObject::connect(b, &QToolButton::clicked, b, [backend = mBackend, group, nodeName, verb = act.value("verb", "")] {
+                    QApplication::setOverrideCursor(Qt::WaitCursor);
+                    runVerb(*backend, verb, args({group, nodeName}));
+                    QApplication::restoreOverrideCursor();
+                });
+                h->addWidget(b);
+            }
+            h->addStretch(1);
+            lay->addWidget(row);
+        }
     }
     else
     {
