@@ -11,6 +11,7 @@ set(LILA_UNITY_SKIP
     extensions/Puppeteer/rig/Modes.cpp
     extensions/RigTemplates/Template.cpp
     src/render/DeformGpu.cpp
+    src/ui/StrapTool.cpp
     extensions/RigTemplates/Ui.cpp
     extensions/Settlement/Commands.cpp
     extensions/Settlement/Generate.cpp

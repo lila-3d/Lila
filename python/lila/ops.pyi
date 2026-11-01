@@ -3354,7 +3354,7 @@ def gnSaveGroup(*objects: Any, scope: str | None = None) -> Any:
     """
 
 def gnSendImposter(*objects: Any, contentPath: str | None = None, folder: str | None = None, name: str | None = None, modifier: str | None = None, wait: bool | None = None, w: bool | None = None) -> Any:
-    """Bake an Imposter node (as gnBakeImposter) and import it into the connected Unreal project: the card mesh, both atlases and a material instance of LilaLink's imposter material, which turns the card to the camera's nearest view. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.
+    """Bake an Imposter node (as gnBakeImposter) and import it into the connected Unreal project: the card mesh, both atlases and a material instance of LilaLink's imposter material, which blends the three views nearest the camera. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.
 
     Args:
         objects: group node.
@@ -6537,6 +6537,14 @@ def screenshot(path: str | None = None, target: str | None = None, *, p: str | N
 def sculptCancel() -> Any:
     """Leave sculpt mode without changing the mesh, discarding the proxy (a kept proxy stays as it was)."""
 
+def sculptColor(op: str | None = None, color: Sequence[Any] | None = None) -> Any:
+    """Fill the sculpt's polypaint with a color (masked points keep theirs) or clear it back to white.
+
+    Args:
+        op: fill or clear. One of 'fill', 'clear'. Default 'fill'.
+        color: Fill color, linear [r, g, b]. Default [1.0, 1.0, 1.0].
+    """
+
 def sculptCorrective(*objects: Any) -> Any:
     """Start a corrective: pose the rig, then this copies the mesh as it looks now into <mesh>_corrective, in place, and hides the mesh. Sculpt the fix on the copy, then run addCorrective. Returns the sculpt mesh.
 
@@ -6556,7 +6564,7 @@ def sculptEnter(*objects: Any, mode: str | None = None, levels: int | None = Non
     """
 
 def sculptExit(method: str | None = None, keepProxy: bool | None = None, iterations: int | None = None) -> Any:
-    """Leave sculpt mode, moving the low-poly cage onto the sculpt. method='fit' solves for the cage whose subdivision best matches the sculpt (least squares through the subdivision stencils); 'closest' and 'normal' project each cage point onto the sculpted surface instead. Only positions change: UVs and other attributes stay. keepProxy stores the proxy as a hidden child mesh to resume from. Returns {mesh, maxMove}.
+    """Leave sculpt mode, moving the low-poly cage onto the sculpt. method='fit' solves for the cage whose subdivision best matches the sculpt (least squares through the subdivision stencils); 'closest' and 'normal' project each cage point onto the sculpted surface instead. Only positions change: UVs and other attributes stay, except that polypaint lands on the cage's polypaint color set, sampled from the sculpt. keepProxy stores the proxy, polypaint included, as a hidden child mesh to resume from and to bake from. Returns {mesh, maxMove}.
 
     Args:
         method: fit, closest or normal. One of 'fit', 'closest', 'normal'. Default 'fit'.
@@ -6574,13 +6582,15 @@ def sculptMask(op: str | None = None, layer: str | None = None, iterations: int 
     """
 
 def sculptState() -> Any:
-    """The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen}."""
+    """The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen, painted}."""
 
-def sculptStroke(brush: str | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
+def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
     """One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
 
     Args:
-        brush: Brush. One of 'draw', 'clayStrips', 'inflate', 'grab', 'smooth', 'flatten', 'pinch', 'crease', 'scrape', 'mask', 'relax', 'freeze'. Default 'draw'.
+        brush: draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, trimDynamic, polish, fold, mask, relax, freeze, paint, or a brush an extension registered. Default 'draw'.
+        paint: Shape brushes also paint color where they move points. Default False.
+        color: Paint color, linear [r, g, b]. Default [1.0, 1.0, 1.0].
         falloff: Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name. Default 'smooth'.
         strength: 0 to 1. Default 0.5.
         invert: Dig, unmask, unfreeze or magnify instead. Default False.
@@ -7533,6 +7543,47 @@ def splitRingsEditSelection(*objects: Any) -> Any:
 
 def stop() -> Any:
     """Stop playback."""
+
+def strap(*objects: Any, style: str | None = None, width: float | None = None, thickness: float | None = None, bevel: float | None = None, strands: int | None = None, strandSides: int | None = None, lay: float | None = None, buckle: bool | None = None, buckleAt: float | None = None, buckleLength: float | None = None, buckleScale: float | None = None, flip: bool | None = None, texelDensity: float | None = None, gap: float | None = None, bridge: float | None = None, taut: bool | None = None, tolerance: float | None = None, preset: str | None = None, faces: Sequence[Any] | None = None, start: Sequence[float] | None = None, end: Sequence[float] | None = None, view: Sequence[float] | None = None, startDir: Sequence[float] | None = None, endDir: Sequence[float] | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+    """Strap meshes: the slash from start to end, seen along view, cuts them in its plane, and a band or rope goes round the loops it crosses (several are bundled into one), sitting on the surface. The path curve and the strap stay live while history is on. Returns [mesh, curve, curveStrap, curveStrapPath].
+
+    Args:
+        objects: meshes (default: the selected meshes or components, else every visible mesh).
+        style: A flat band, or rope of twisted strands. One of 'band', 'rope'.
+        width: Width across, cm (rope: its diameter).
+        thickness: Band thickness off the surface, cm.
+        bevel: Band corners cut back this far, cm.
+        strands: Rope strands.
+        strandSides: Sides around each strand.
+        lay: Rope length per turn of the strands, cm; loops round it to whole turns.
+        buckle: A buckle on a band, a whipping on rope.
+        buckleAt: Where the buckle sits, as a fraction of the length.
+        buckleLength: Buckle length along the strap, cm.
+        buckleScale: Buckle width over the strap's.
+        flip: Put the strap on the other side of the path.
+        texelDensity: V per cm along the strap; 0 fits it to 0..1.
+        gap: cm between the surface and the strap.
+        bridge: Span hollows narrower than twice this many cm, as a stiff strap would; 0 follows every dip.
+        taut: Pulled tight: span every hollow (the convex hull of what the strap goes around).
+        tolerance: Simplify the path within this many cm; 0 keeps every crossing.
+        preset: Starting settings: strap, rope, tape, metalBand or zipTie (flags given as well win). One of 'strap', 'rope', 'tape', 'metalBand', 'zipTie'.
+        faces: Per mesh given, the face ids that count, or null for all of it.
+        start: World point where the slash starts.
+        end: World point where the slash ends.
+        view: Direction the slash is seen along (both rays), default -Y.
+        startDir: Direction of the ray through start (a perspective slash), instead of view.
+        endDir: Direction of the ray through end, instead of view.
+        constructionHistory: Keep the strap nodes so the strap follows the meshes and settings. Short form ch. Default True.
+        name: Mesh name; made unique. Short form n.
+    """
+
+def strapPreset(*objects: Any, preset: str | None = None) -> Any:
+    """Apply a strap preset (strap, rope, tape, metalBand or zipTie) to strap nodes, or the straps feeding the given or selected meshes.
+
+    Args:
+        objects: straps.
+        preset: strap, rope, tape, metalBand or zipTie. One of 'strap', 'rope', 'tape', 'metalBand', 'zipTie'. Default 'strap'.
+    """
 
 def suggestSplitPlanes(*objects: Any, minFaces: int | None = None, mf: int | None = None) -> Any:
     """Planes where the joints a click selects meet on a skinned mesh, fitted to each boundary and facing the child joint. Returns [{origin, normal, radius}] for splitMesh.
