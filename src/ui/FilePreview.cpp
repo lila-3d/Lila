@@ -4,10 +4,12 @@
 #include "fbx/Fbx.h"
 #include "geo/ObjIO.h"
 #include "io/ScenePreview.h"
+#include "ui/TextureCache.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
@@ -23,6 +25,13 @@ namespace
 {
 constexpr int kFpDefaultMaxMb = 50;
 constexpr float kFpFov = 0.6f;
+constexpr int kFpThumbSize = 1024;
+
+bool fpIsImage(const QString& ext)
+{
+    static const QStringList exts = {"png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff", "exr", "hdr", "psd", "webp", "dds", "gif"};
+    return exts.contains(ext);
+}
 
 std::vector<glm::vec3> fpObjTriangles(const QString& path)
 {
@@ -60,14 +69,19 @@ FilePreview::FilePreview(QWidget* parent) : QWidget(parent), mAlive(std::make_sh
 {
     setMinimumHeight(160);
     setCursor(Qt::OpenHandCursor);
+    mTextureListener = textures::addListener([this] { pollImage(); });
 }
 
-FilePreview::~FilePreview() { *mAlive = false; }
+FilePreview::~FilePreview()
+{
+    *mAlive = false;
+    textures::removeListener(mTextureListener);
+}
 
 bool FilePreview::canPreview(const QString& path)
 {
     const QString ext = QFileInfo(path).suffix().toLower();
-    return ext == "fbx" || ext == "obj" || ext == "lila" || ext == "lilaa";
+    return ext == "fbx" || ext == "obj" || ext == "lila" || ext == "lilaa" || fpIsImage(ext);
 }
 
 bool FilePreview::setFile(const QString& path)
@@ -80,6 +94,9 @@ bool FilePreview::setFile(const QString& path)
     mMessage.clear();
     mLoading = false;
     mDirty = true;
+    mIsImage = false;
+    mThumb = {};
+    setCursor(Qt::OpenHandCursor);
     const QFileInfo fi(path);
     if (path.isEmpty() || !canPreview(path) || !fi.isFile())
     {
@@ -96,6 +113,14 @@ bool FilePreview::setFile(const QString& path)
     }
     mLoading = true;
     mMessage = "Loading...";
+    if (fpIsImage(fi.suffix().toLower()))
+    {
+        mIsImage = true;
+        setCursor(Qt::ArrowCursor);
+        pollImage();
+        update();
+        return true;
+    }
     update();
     std::thread([path, generation = mGeneration, alive = mAlive, self = this] {
         std::vector<glm::vec3> corners = fpLoad(path);
@@ -121,6 +146,28 @@ void FilePreview::loaded(std::vector<glm::vec3> corners)
     mCenter = mCorners.empty() ? glm::vec3(0.0f) : (lo + hi) * 0.5f;
     mRadius = mCorners.empty() ? 1.0f : std::max(glm::length(hi - lo) * 0.5f, 1e-6f);
     resetView();
+}
+
+void FilePreview::pollImage()
+{
+    if (!mIsImage || !mLoading)
+        return;
+    const std::string path = mFile.toStdString();
+    mThumb = textures::thumbnail(path, kFpThumbSize);
+    if (mThumb.isNull())
+    {
+        if (textures::thumbnailError(path, kFpThumbSize).empty())
+            return;
+        mMessage = "Can't read image";
+    }
+    else
+    {
+        // The thumbnail is scaled down, so the file's own size comes from its header when Qt can read one.
+        const QSize size = QImageReader(mFile).size();
+        mMessage = size.isValid() ? QString("%1 x %2").arg(size.width()).arg(size.height()) : QString();
+    }
+    mLoading = false;
+    update();
 }
 
 void FilePreview::resetView()
@@ -202,6 +249,24 @@ void FilePreview::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.fillRect(rect(), palette().color(QPalette::Base));
+    if (mIsImage)
+    {
+        const QRect area = rect().adjusted(4, 4, -4, mMessage.isEmpty() ? -4 : -4 - fontMetrics().height());
+        if (!mThumb.isNull() && area.isValid())
+        {
+            const QSizeF fitted = QSizeF(mThumb.size()).scaled(QSizeF(area.size()).boundedTo(mThumb.size()), Qt::KeepAspectRatio);
+            const QRectF target(area.center().x() - fitted.width() / 2.0, area.top() + (area.height() - fitted.height()) / 2.0,
+                                fitted.width(), fitted.height());
+            p.setRenderHint(QPainter::SmoothPixmapTransform);
+            p.drawImage(target, mThumb);
+        }
+        if (!mMessage.isEmpty())
+        {
+            p.setPen(themeColor("dimText"));
+            p.drawText(rect().adjusted(6, 4, -6, -4), mThumb.isNull() ? Qt::AlignCenter : Qt::AlignHCenter | Qt::AlignBottom, mMessage);
+        }
+        return;
+    }
     if (mDirty)
         rasterize();
     p.drawImage(0, 0, mImage);
@@ -216,7 +281,7 @@ void FilePreview::mousePressEvent(QMouseEvent* event) { mLastMouse = event->posi
 
 void FilePreview::mouseMoveEvent(QMouseEvent* event)
 {
-    if (!(event->buttons() & Qt::LeftButton))
+    if (mIsImage || !(event->buttons() & Qt::LeftButton))
         return;
     const QPoint d = event->position().toPoint() - mLastMouse;
     mLastMouse = event->position().toPoint();
@@ -226,10 +291,16 @@ void FilePreview::mouseMoveEvent(QMouseEvent* event)
     update();
 }
 
-void FilePreview::mouseDoubleClickEvent(QMouseEvent*) { resetView(); }
+void FilePreview::mouseDoubleClickEvent(QMouseEvent*)
+{
+    if (!mIsImage)
+        resetView();
+}
 
 void FilePreview::wheelEvent(QWheelEvent* event)
 {
+    if (mIsImage)
+        return;
     mZoom = std::clamp(mZoom * std::pow(0.999f, float(event->angleDelta().y())), 0.2f, 5.0f);
     mDirty = true;
     update();

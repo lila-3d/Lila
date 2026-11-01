@@ -33,6 +33,8 @@ LILA_UI_API render::TexturePtr packed(const std::string& orm, const std::string&
 
 /** Square preview of an image for the material editor, null while loading. */
 LILA_UI_API QImage thumbnail(const std::string& path, int size);
+/** Why thumbnail(path, size) failed, empty when it loaded or is still loading. */
+LILA_UI_API std::string thumbnailError(const std::string& path, int size);
 
 /** Drops a get() image from the cache, e.g. a frame of an image sequence that is no longer shown. */
 LILA_UI_API void release(const std::string& path, bool srgb);

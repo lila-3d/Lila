@@ -670,6 +670,13 @@ QImage thumbnail(const std::string& path, int size)
            }).thumb;
 }
 
+std::string thumbnailError(const std::string& path, int size)
+{
+    auto& c = cache();
+    auto it = c.entries.find("t" + std::to_string(size) + "|" + path);
+    return it == c.entries.end() ? std::string() : it->second.error;
+}
+
 void release(const std::string& path, bool srgb)
 {
     cache().entries.erase((srgb ? "c|" : "d|") + path);

@@ -3,6 +3,7 @@
 #include "core/PrefStore.h"
 #include "ui/FileDialog.h"
 #include "ui/FilePreview.h"
+#include "ui/TextureCache.h"
 #include "vcs/SourceControl.h"
 
 #include <QApplication>
@@ -10,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -287,4 +289,34 @@ TEST_CASE("file dialog: model preview loads small OBJs and refuses large ones")
     CHECK(limited.triangleCount() == 0);
     PrefStore::get().set("general", ui::FilePreview::kMaxMbPref, 50);
     CHECK_FALSE(limited.setFile({}));
+}
+
+TEST_CASE("file dialog: preview shows images")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QString png = tmp.path() + "/red.png";
+    QImage img(64, 32, QImage::Format_RGBA8888);
+    img.fill(Qt::red);
+    REQUIRE(img.save(png));
+    CHECK(ui::FilePreview::canPreview(png));
+    CHECK(ui::FilePreview::canPreview(tmp.path() + "/sky.exr"));
+
+    ui::FilePreview preview;
+    REQUIRE(preview.setFile(png));
+    REQUIRE(ui::textures::waitForLoads(5.0));
+    CHECK_FALSE(preview.loading());
+    CHECK(preview.showingImage());
+
+    const QString bad = tmp.path() + "/broken.png";
+    {
+        QFile f(bad);
+        REQUIRE(f.open(QIODevice::WriteOnly));
+        f.write("not a png");
+    }
+    ui::FilePreview broken;
+    REQUIRE(broken.setFile(bad));
+    REQUIRE(ui::textures::waitForLoads(5.0));
+    CHECK_FALSE(broken.loading());
+    CHECK_FALSE(broken.showingImage());
 }

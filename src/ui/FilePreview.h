@@ -12,8 +12,9 @@
 namespace lila::ui
 {
 /**
- * The file dialog's model preview: FBX, OBJ and Lila scene files under a size limit load on a worker thread and draw as a shaded
- * turntable, software rasterized so it needs no GPU context. Drag orbits, the wheel zooms, double-click resets.
+ * The file dialog's preview. FBX, OBJ and Lila scene files under a size limit load on a worker thread and draw as a shaded
+ * turntable, software rasterized so it needs no GPU context: drag orbits, the wheel zooms, double-click resets. Images
+ * (anything the texture loader reads, EXR and HDR included) draw fitted to the pane.
  */
 class LILA_UI_API FilePreview : public QWidget
 {
@@ -29,6 +30,7 @@ public:
     bool setFile(const QString& path);
     QString file() const { return mFile; }
     size_t triangleCount() const { return mCorners.size() / 3; }
+    bool showingImage() const { return !mThumb.isNull(); }
     /** True while the worker is still reading the file. */
     bool loading() const { return mLoading; }
 
@@ -44,6 +46,7 @@ private:
     void loaded(std::vector<glm::vec3> corners);
     void resetView();
     void rasterize();
+    void pollImage();
 
     QString mFile;
     QString mMessage;
@@ -53,6 +56,9 @@ private:
     float mYaw = 0.0f, mPitch = 0.0f, mZoom = 1.0f;
     QPoint mLastMouse;
     QImage mImage;
+    bool mIsImage = false;
+    QImage mThumb;
+    int mTextureListener = -1;
     bool mDirty = true;
     bool mLoading = false;
     /** Bumped per load, so a slow worker's result for an earlier file is dropped. */
