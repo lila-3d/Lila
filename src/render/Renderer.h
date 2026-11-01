@@ -52,6 +52,8 @@ public:
     ViewportId addViewport(uintptr_t nativeWindow, int width, int height);
     /** Blocks until the render thread has let go of the window. */
     void removeViewport(ViewportId id);
+    /** Lets go of every window at once, before the UI tears its widgets down. Later calls for those ids do nothing. */
+    void removeAllViewports();
     void resize(ViewportId id, int width, int height);
     void submit(ViewportId id, FrameState state);
     FrameStats stats(ViewportId id) const;

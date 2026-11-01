@@ -5563,6 +5563,17 @@ void Renderer::removeViewport(ViewportId id)
     m->removed.wait(lock, [&] { return !m->viewports.contains(id) || m->quit; });
 }
 
+void Renderer::removeAllViewports()
+{
+    if (!m->started)
+        return;
+    std::unique_lock lock(m->mutex);
+    for (auto& [id, v] : m->viewports)
+        m->toRemove.push_back(id);
+    m->cv.notify_all();
+    m->removed.wait(lock, [&] { return m->viewports.empty() || m->quit; });
+}
+
 void Renderer::resize(ViewportId id, int width, int height)
 {
     {

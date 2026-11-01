@@ -298,6 +298,8 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
         QTimer::singleShot(3000, &window, [] { docs::startAutoUpdate(); });
         updater::startAutoCheck(&window);
         rc = app.exec();
+        // Tearing the window down resizes and hides viewports, and a swapchain rebuilt for one of those crashes some drivers.
+        render::Renderer::get().removeAllViewports();
         docs::shutdown();
     }
     // A bake still running on the GPU must stop before the renderer does.
