@@ -31,7 +31,8 @@ struct Entry
 /** Object-space BVH of a mesh snapshot; snapshots are immutable, so a new one after an edit misses and rebuilds. */
 std::shared_ptr<const geo::MeshBvh> bvhFor(const scene::MeshPtr& mesh)
 {
-    static std::unordered_map<const geo::Mesh*, Entry> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::unordered_map<const geo::Mesh*, Entry>();
     auto it = cache.find(mesh.get());
     if (it != cache.end() && it->second.source.lock() == mesh)
         return it->second.bvh;

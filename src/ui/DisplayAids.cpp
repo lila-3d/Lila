@@ -106,7 +106,8 @@ struct Cached
 
 std::unordered_map<const geo::Mesh*, Cached>& cache()
 {
-    static std::unordered_map<const geo::Mesh*, Cached> map;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& map = *new std::unordered_map<const geo::Mesh*, Cached>();
     return map;
 }
 

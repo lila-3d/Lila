@@ -349,7 +349,8 @@ static std::shared_ptr<const render::PointCloud> vertexDots(scene::NodeId id, co
         uint64_t serial = 0;
         std::shared_ptr<const render::PointCloud> cloud;
     };
-    static std::unordered_map<scene::NodeId, Entry> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::unordered_map<scene::NodeId, Entry>();
     Entry& e = cache[id];
     const uint64_t serial = scene::components::serial();
     if (e.cloud && e.mesh.lock() == mesh && e.smooth == shape.smooth && e.vis == vis && e.world == shape.world && e.sym == sym && e.serial == serial)

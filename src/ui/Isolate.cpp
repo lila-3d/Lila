@@ -54,7 +54,8 @@ std::shared_ptr<const scene::isolation::Visibility> visibility(const Set* set, s
         std::weak_ptr<const geo::Mesh> source;
         std::shared_ptr<const scene::isolation::Visibility> vis;
     };
-    static std::map<std::pair<const geo::Mesh*, uint64_t>, Entry> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::map<std::pair<const geo::Mesh*, uint64_t>, Entry>();
     auto key = std::make_pair(cage.get(), maskKey(*set, id));
     if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == cage)
         return it->second.vis;

@@ -180,7 +180,8 @@ const Seams& seamLines(const MeshPtr& mesh, const std::string& set)
         std::string set;
         Seams seams;
     };
-    static std::vector<Entry> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::vector<Entry>();
     for (Entry& e : cache)
         if (e.mesh.lock() == mesh && e.set == set)
             return e.seams;

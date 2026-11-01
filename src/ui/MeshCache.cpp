@@ -31,7 +31,8 @@ struct Entry
 
 std::unordered_map<const geo::Mesh*, Entry>& cache()
 {
-    static std::unordered_map<const geo::Mesh*, Entry> c;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& c = *new std::unordered_map<const geo::Mesh*, Entry>();
     return c;
 }
 
@@ -390,7 +391,8 @@ const Entry* entryFor(const scene::MeshPtr& mesh, bool tangents = false, scene::
     // Entries of deleted meshes hold gigabytes on dense meshes, so they go as soon as anything new is cached.
     std::erase_if(c, [](const auto& kv) { return kv.second.source.expired(); });
     // A mesh too big for the memory left stays undrawn, reported once, rather than taking the app down.
-    static std::weak_ptr<const geo::Mesh> failed;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& failed = *new std::weak_ptr<const geo::Mesh>();
     if (failed.lock() == mesh)
         return nullptr;
     try
@@ -453,7 +455,8 @@ std::shared_ptr<const MaskedMesh> maskedRenderMeshFor(const scene::MeshPtr& mesh
         std::shared_ptr<const render::RenderMesh> base;
         std::shared_ptr<const MaskedMesh> result;
     };
-    static std::map<std::tuple<const geo::Mesh*, uint64_t, bool>, Masked> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::map<std::tuple<const geo::Mesh*, uint64_t, bool>, Masked>();
     auto key = std::make_tuple(mesh.get(), maskKey, cageWire != nullptr);
     if (auto it = cache.find(key); it != cache.end() && it->second.source.lock() == mesh && it->second.base == full->built)
         return it->second.result;
@@ -546,7 +549,8 @@ std::shared_ptr<const SmoothCage> smoothCageFor(const scene::MeshPtr& mesh, int 
         bool keepHardEdges = false;
         std::shared_ptr<const SmoothCage> result;
     };
-    static std::unordered_map<const geo::Mesh*, Smoothed> cache;
+    // Never destroyed: at exit the meshes' owners (extension DLLs among them) may already be unloaded.
+    static auto& cache = *new std::unordered_map<const geo::Mesh*, Smoothed>();
     const bool keepHardEdges = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothHardEdges, false);
     auto it = cache.find(mesh.get());
     if (it != cache.end() && it->second.level == level && it->second.keepHardEdges == keepHardEdges && it->second.source.lock() == mesh)
