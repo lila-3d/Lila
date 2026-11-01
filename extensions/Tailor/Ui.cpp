@@ -154,6 +154,7 @@ void registerUi(ext::Context& ctx)
 
     registerPatternEditor(ctx);
     registerGrabTool(ctx);
+    registerAnimation(ctx);
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
     int sep = 0;
     for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",

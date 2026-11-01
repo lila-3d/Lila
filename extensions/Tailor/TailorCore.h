@@ -190,6 +190,8 @@ public:
     void step();
     const std::vector<Vec3>& positions() const { return x_; }
     std::vector<Vec3>& positionsMutable() { return x_; }
+    const std::vector<Vec3>& velocities() const { return v_; }
+    std::vector<Vec3>& velocitiesMutable() { return v_; }
     /** Per-vertex stretch ratio (current / rest), for the fit map. */
     std::vector<float> strainMap() const;
 

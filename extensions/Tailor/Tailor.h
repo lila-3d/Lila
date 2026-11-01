@@ -93,6 +93,29 @@ private:
     std::thread mThread;
 };
 
+/** What a garment node drapes: its pattern with fabric and particle distance applied, meshed, and its solver settings. */
+struct GarmentInputs
+{
+    Garment garment;
+    ClothMesh cloth;
+    SolverSettings settings;
+    int64_t frames = 90;
+    uint64_t key = 0;
+    lila::scene::NodeId collider = lila::scene::kNoNode;
+};
+/** Throws std::invalid_argument when the garment can't be read. */
+GarmentInputs garmentInputs(lila::scene::Graph& g, const lila::scene::Node& op);
+
+/** The frame an animated garment last simulated to, positions in metres. */
+struct AnimatedFrame
+{
+    int64_t frame = -1;
+    std::vector<Vec3> positions;
+};
+/** Null until the simulation has a frame. Main thread. */
+const AnimatedFrame* animatedFrame(lila::scene::NodeId garment);
+void registerAnimation(lila::ext::Context& ctx);
+
 /** Main thread. The garment node registers its live drape here, null to drop it. */
 void registerLive(lila::scene::NodeId garment, const std::shared_ptr<LiveDrape>& live);
 std::shared_ptr<LiveDrape> liveDrape(lila::scene::NodeId garment);

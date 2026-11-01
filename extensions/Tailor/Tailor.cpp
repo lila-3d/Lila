@@ -14,6 +14,7 @@
 #include <lila/Profile.h>
 #include <lila/Relocate.h>
 #include <lila/Tasks.h>
+#include <lila/Transform.h>
 #include <lila/Uv.h>
 #include <lila/ViewportTool.h>
 
@@ -119,6 +120,8 @@ enum GarmentAttr
     kGpu,
     kLive,
     kFloor,
+    kAnimate,
+    kStartFrame,
 };
 
 void hashMix(uint64_t& h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); }
@@ -337,6 +340,10 @@ private:
                 lowest = std::min(lowest, (colliderWorld * glm::dvec4(collider->position(p), 1.0)).y);
             settings.floorY = float(lowest / kCmPerM);
         }
+
+        if (as<bool>(kAnimate))
+            if (const AnimatedFrame* f = animatedFrame(id()); f && f->positions.size() == cm.rest3d.size())
+                return output(cm, f->positions);
 
         if (as<bool>(kLive) && drapeInBackground())
         {
@@ -652,6 +659,11 @@ NodeType garmentType()
                 "the cloth where it got to.", .category = "Simulation"},
         {.name = "floor", .type = PlugType::Bool, .defaultValue = true, .flags = kGarmentIn,
          .doc = "A ground the cloth rests on, level with the collider's lowest point (its feet).", .category = "Simulation"},
+        {.name = "animate", .type = PlugType::Bool, .defaultValue = false, .flags = kGarmentIn,
+         .doc = "Simulate over the timeline against the collider as it moves (a skinned or animated body), cached per frame "
+                "like other simulations. Starts draped at startFrame.", .category = "Simulation"},
+        {.name = "startFrame", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kGarmentIn,
+         .doc = "The frame an animated garment starts from, draped onto the collider as it stands there.", .category = "Simulation"},
     };
     t.create = [] { return std::make_unique<GarmentNode>(); };
     return t;
@@ -767,6 +779,49 @@ void stopDrapes()
     for (const auto& j : jobs)
         j->job.wait();
     drapeJobs().clear();
+}
+
+GarmentInputs garmentInputs(Graph& g, const Node& op)
+{
+    GarmentInputs in;
+    const std::string& text = op.as<std::string>(kGarment);
+    if (text.empty())
+        throw std::invalid_argument("the garment has no pattern");
+    in.garment = garmentFromJson(json::parse(text));
+    if (const std::string& preset = op.as<std::string>(kFabric); !preset.empty())
+    {
+        const Fabric* f = findFabric(preset);
+        if (!f)
+            throw std::invalid_argument("unknown fabric preset '" + preset + "'");
+        in.garment.fabrics.at(0) = *f;
+    }
+    if (const double pd = op.as<double>(kParticleDistance); pd > 0.0)
+        for (Panel& p : in.garment.panels)
+            p.particleDistance = float(pd / kCmPerM);
+    in.cloth = buildClothMesh(in.garment);
+    in.frames = op.as<int64_t>(kFrames);
+    in.key = std::hash<std::string>{}(text);
+    hashMix(in.key, std::hash<std::string>{}(op.as<std::string>(kFabric)));
+    hashMix(in.key, std::hash<double>{}(op.as<double>(kParticleDistance)));
+    hashMix(in.key, uint64_t(in.frames));
+    hashMix(in.key, uint64_t(op.as<int64_t>(kStartFrame)));
+    if (const std::optional<PlugRef> src = g.source({op.id(), kColliderMesh}))
+    {
+        in.collider = src->node;
+        if (op.as<bool>(kFloor))
+        {
+            const PlugValue v = g.value({src->node, MeshNode::kOutMesh});
+            const PlugValue w = g.value({src->node, Transform::kWorldMatrix});
+            if (const MeshPtr* m = std::get_if<MeshPtr>(&v); m && *m && std::get_if<glm::dmat4>(&w))
+            {
+                double lowest = 1e30;
+                for (geo::Index p = 0; p < (*m)->pointCapacity(); ++p)
+                    lowest = std::min(lowest, (std::get<glm::dmat4>(w) * glm::dvec4((*m)->position(p), 1.0)).y);
+                in.settings.floorY = float(lowest / kCmPerM);
+            }
+        }
+    }
+    return in;
 }
 
 bool registerNodes(ext::Context& ctx)
