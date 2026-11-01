@@ -323,29 +323,74 @@ class Node:
 
     # mesh arrays (numpy, fast enough for meshes of millions of points)
 
-    def points_array(self, base=False, world=False):
+    # Every getter taking out= writes into that numpy array instead of allocating, and returns it: C-contiguous,
+    # writable, the getter's shape or flat, any of float32/float64 (and int32/uint32/int64/bool for integer data).
+
+    def mesh_counts(self, base=False):
+        """(points, edges, faces, corners): the sizes of the arrays below, without building any."""
+        return _lila.mesh_counts(self.path, base)
+
+    def points_array(self, base=False, world=False, out=None):
         """(N, 3) float64 numpy array of the points in points' order, read-only. A view of the mesh itself when it can be
         (object space, no deleted points), else a copy. base=True reads the base mesh under modifiers; world=True
         world space. Safe to read from any thread: it is a snapshot that later edits don't change."""
-        return _lila.mesh_points_array(self.path, base, world)
+        return _lila.mesh_points_array(self.path, base, world, out)
 
-    def face_arrays(self, base=False):
+    def face_arrays(self, base=False, out=None):
         """(counts, points): uint32 numpy arrays of corners per face and every face's point indices in a row, so face i is
-        points[offsets[i]:offsets[i] + counts[i]] with offsets = numpy.cumsum(counts) - counts."""
-        return _lila.mesh_face_arrays(self.path, base)
+        points[offsets[i]:offsets[i] + counts[i]] with offsets = numpy.cumsum(counts) - counts. out is a pair."""
+        return _lila.mesh_face_arrays(self.path, base, out)
 
-    def material_array(self, base=False):
+    def edge_arrays(self, base=False, out=None):
+        """(E, 2) uint32 numpy array of each edge's two point indices, in the order of edge attributes."""
+        return _lila.mesh_edge_arrays(self.path, base, out)
+
+    def material_array(self, base=False, out=None):
         """(slots, names): a uint32 numpy array of each face's material slot, in face_arrays' face order, and the slot
         names it indexes, so face i uses names[slots[i]]. listMaterials gives the material bound to each slot name."""
-        return _lila.mesh_material_array(self.path, base)
+        return _lila.mesh_material_array(self.path, base, out)
 
-    def normals_array(self, base=False):
-        """(C, 3) float32 numpy array of normals per face-vertex (faces in order, corners around each face), as drawn."""
-        return _lila.mesh_normals_array(self.path, base)
+    def normals_array(self, base=False, out=None):
+        """(C, 3) float32 numpy array of normals per face-vertex (faces in order, corners around each face), as drawn.
+        Cached per mesh state: calls until the next edit return the same read-only array."""
+        return _lila.mesh_normals_array(self.path, base, out)
 
-    def uvs_array(self, uv_set="uv0", base=False):
+    def tangents_array(self, uv_set="uv0", base=False, out=None):
+        """(C, 4) float32 numpy array of MikkTSpace tangents per face-vertex, in normals_array's order; w is the bitangent
+        sign (see bitangents_array). Cached like normals_array."""
+        return _lila.mesh_tangents_array(self.path, uv_set, base, out)
+
+    def bitangents_array(self, uv_set="uv0", base=False, out=None):
+        """(C, 3) float32 bitangents per face-vertex: cross(normal, tangent.xyz) * tangent.w, as MikkTSpace and Unreal
+        derive them."""
+        import numpy as np
+        t = self.tangents_array(uv_set, base)
+        b = np.cross(self.normals_array(base), t[:, :3])
+        b *= t[:, 3:4]
+        if out is None:
+            return b
+        out.reshape(b.shape)[...] = b
+        return out
+
+    def uvs_array(self, uv_set="uv0", base=False, out=None):
         """(C, 2) float32 numpy array of a uv set per face-vertex, in normals_array's order."""
-        return _lila.mesh_uv_array(self.path, uv_set, base)
+        return _lila.mesh_uv_array(self.path, uv_set, base, out)
+
+    def attribute_names(self, base=False):
+        """[(name, domain, type)] of every mesh attribute: domain point/edge/face/corner, type float..float4/int/bool."""
+        return _lila.mesh_attribute_names(self.path, base)
+
+    def attribute_array(self, name, domain=None, base=False, out=None):
+        """(array, domain): an attribute (vertex colors, crease, hard, smoothGroup, your own...) in its domain's order:
+        points_array rows, edge_arrays rows, face_arrays faces, or face-vertex for corner. Float types come back float32
+        (N,) or (N, k), int int32, bool bool. domain is needed only when the name is on more than one domain."""
+        return _lila.mesh_attribute_array(self.path, name, domain or "", base, out)
+
+    def morph_targets(self):
+        """The mesh's morph targets as exporters write them, in-betweens expanded to their own entries: a list of
+        {"name", "weight", "indices", "deltas"}, with sparse float64 (K, 3) object-space deltas on points_array(base=True)
+        rows. Dense: d = numpy.zeros((N, 3)); d[t["indices"]] = t["deltas"]."""
+        return _lila.mesh_morph_targets(self.path)
 
     @property
     def uv_sets(self):

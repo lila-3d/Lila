@@ -54,6 +54,73 @@ ops.undo()
 assert np.allclose(cube.normals_array(), normals)
 print("test_mesh_arrays normals cache: ok")
 
+assert cube.mesh_counts() == (8, 12, 6, 24)
+buf = np.empty((8, 3), np.float32)
+assert cube.points_array(out=buf) is buf and np.allclose(buf, pts)
+flat = np.empty(24, np.float64)
+cube.points_array(world=True, out=flat)
+assert np.allclose(flat.reshape(8, 3), pts)
+n32 = np.empty((24, 3), np.float64)
+assert np.allclose(cube.normals_array(out=n32), normals)
+uvs = np.empty((24, 2), np.float32)
+assert np.array_equal(cube.uvs_array(out=uvs), cube.uvs_array())
+counts64, points64 = np.empty(6, np.int64), np.empty(24, np.int32)
+cube.face_arrays(out=(counts64, points64))
+assert counts64.tolist() == counts.tolist() and points64.tolist() == face_points.tolist()
+slots_out = np.empty(6, np.int32)
+assert cube.material_array(out=slots_out)[0] is slots_out
+for bad, why in [(np.empty((8, 2)), "shape"), (np.empty((8, 3), np.int32), "float32 or float64"), (np.empty((3, 8)).T, "C-contiguous"),
+                 (np.empty((8, 3), np.float16), "dtype")]:
+    try:
+        cube.points_array(out=bad)
+        raise AssertionError("accepted " + why)
+    except ValueError as e:
+        assert why in str(e), (why, str(e))
+ro = np.empty((8, 3))
+ro.flags.writeable = False
+try:
+    cube.points_array(out=ro)
+    raise AssertionError("accepted a read-only out")
+except ValueError:
+    pass
+print("test_mesh_arrays out: ok")
+
+edges = cube.edge_arrays()
+assert edges.shape == (12, 2) and edges.dtype == np.uint32
+face_edges = {frozenset((f[i], f[(i + 1) % len(f)])) for f in cube.faces for i in range(len(f))}
+assert {frozenset(e) for e in edges.tolist()} == face_edges
+names = {(n, d): t for n, d, t in cube.attribute_names()}
+assert names[("uv0", "corner")] == "float2", names
+uv_attr, domain = cube.attribute_array("uv0")
+assert domain == "corner" and np.array_equal(uv_attr, cube.uvs_array())
+try:
+    cube.attribute_array("nope")
+    raise AssertionError("found a missing attribute")
+except ValueError as e:
+    assert "attribute_names" in str(e)
+print("test_mesh_arrays attributes: ok")
+
+tangents = cube.tangents_array()
+assert tangents.shape == (24, 4) and tangents.dtype == np.float32
+assert np.allclose(np.linalg.norm(tangents[:, :3], axis=1), 1.0, atol=1e-4) and np.allclose(np.abs(tangents[:, 3]), 1.0)
+assert np.allclose(np.einsum("ij,ij->i", tangents[:, :3], normals), 0.0, atol=1e-4)
+assert np.shares_memory(tangents, cube.tangents_array())
+bitangents = cube.bitangents_array()
+assert np.allclose(np.einsum("ij,ij->i", bitangents, normals), 0.0, atol=1e-4)
+assert np.allclose(np.einsum("ij,ij->i", bitangents, tangents[:, :3]), 0.0, atol=1e-4)
+print("test_mesh_arrays tangents: ok")
+
+assert cube.morph_targets() == []
+target = lila.Node(ops.polyCube(width=2, height=2, depth=2)[0])
+moved = target.points_array().copy()
+moved[5] += (0.0, 0.5, 0.0)
+target.set_points(moved)
+ops.morph(target.path, cube.path)
+morphs = cube.morph_targets()
+assert len(morphs) == 1, morphs
+assert morphs[0]["indices"].tolist() == [5] and np.allclose(morphs[0]["deltas"], [[0.0, 0.5, 0.0]]), morphs
+print("test_mesh_arrays morphs: ok")
+
 with ThreadPoolExecutor(max_workers=4) as pool:
     sums = list(pool.map(lambda r: pts[r[0]:r[1]].sum(axis=0), [(0, 2), (2, 4), (4, 6), (6, 8)]))
 assert np.allclose(np.sum(sums, axis=0), pts.sum(axis=0))
