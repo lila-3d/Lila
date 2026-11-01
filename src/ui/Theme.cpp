@@ -54,11 +54,32 @@ namespace lila::ui
 {
 namespace
 {
-/** Alt belongs to the hotkeys (Alt+letter bindings, Alt-drag camera), so a lone Alt never focuses the menu bar. */
+/**
+ * Lila's style over Fusion. Alt belongs to the hotkeys (Alt+letter bindings, Alt-drag camera), so a lone Alt never
+ * focuses the menu bar. Selected and hovered rows in lists and trees get a rounded, inset highlight: rounded at the
+ * row's two ends, square between its cells.
+ */
 class NoAltMenuStyle : public QProxyStyle
 {
 public:
     using QProxyStyle::QProxyStyle;
+
+    void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* painter, const QWidget* widget) const override
+    {
+        if (const auto* item = qstyleoption_cast<const QStyleOptionViewItem*>(option))
+        {
+            // The row's own fill keeps alternating colours only; the cells draw the selection.
+            if (element == PE_PanelItemViewRow && (item->state & State_Selected))
+            {
+                if (item->features & QStyleOptionViewItem::Alternate)
+                    painter->fillRect(item->rect, item->palette.brush(QPalette::AlternateBase));
+                return;
+            }
+            if (element == PE_PanelItemViewItem && drawRowHighlight(*item, painter))
+                return;
+        }
+        QProxyStyle::drawPrimitive(element, option, painter, widget);
+    }
 
     int styleHint(StyleHint hint, const QStyleOption* option, const QWidget* widget, QStyleHintReturn* ret) const override
     {
@@ -101,6 +122,40 @@ public:
     }
 
 private:
+    /** A rounded highlight for a selected or hovered cell; false leaves the cell to Fusion. */
+    static bool drawRowHighlight(const QStyleOptionViewItem& item, QPainter* p)
+    {
+        const bool selected = item.state & State_Selected;
+        const bool hover = (item.state & State_MouseOver) && (item.state & State_Enabled);
+        if (!selected && !hover)
+            return false;
+        if (item.backgroundBrush.style() != Qt::NoBrush)
+            p->fillRect(item.rect, item.backgroundBrush);
+        QColor fill;
+        if (selected)
+            fill = item.palette.color(item.state & State_Active ? QPalette::Active : QPalette::Inactive, QPalette::Highlight);
+        else
+        {
+            fill = themeColor("hover");
+            fill.setAlphaF(0.25f);
+        }
+        using Pos = QStyleOptionViewItem::ViewItemPosition;
+        const Pos pos = item.viewItemPosition;
+        const bool first = pos == Pos::Beginning || pos == Pos::OnlyOne || pos == Pos::Invalid;
+        const bool last = pos == Pos::End || pos == Pos::OnlyOne || pos == Pos::Invalid;
+        constexpr qreal kRadius = 3, kInset = 2;
+        // Inset at the ends only, and widened under the corners between cells, so a row's cells join into one bar.
+        QRectF r = QRectF(item.rect).adjusted(first ? kInset : -kRadius, 1, last ? -kInset : kRadius, -1);
+        p->save();
+        p->setClipRect(item.rect);
+        p->setRenderHint(QPainter::Antialiasing);
+        p->setPen(Qt::NoPen);
+        p->setBrush(fill);
+        p->drawRoundedRect(r, kRadius, kRadius);
+        p->restore();
+        return true;
+    }
+
     /** The menu's dashed tear-off row, with a section's title at its left when it has one. */
     static void drawTearRow(QPainter* p, const QRect& rect, const QPalette& pal, bool hot, const QString& title)
     {
@@ -300,8 +355,16 @@ QString appStyleSheet(const themes::Theme& t)
         QStatusBar { background: %5; }
         QStatusBar QToolButton { border: none; padding: 1px 8px; }
         QStatusBar QToolButton:checked { background: %6; }
+        QTabBar#shelfTabs::tab { background: transparent; border: none; border-bottom: 2px solid transparent;
+                                 padding: 4px 10px 3px; margin-right: 2px; color: %7; }
+        QTabBar#shelfTabs::tab:hover { color: %8; }
+        QTabBar#shelfTabs::tab:selected { color: %8; border-bottom-color: %9; }
+        QWidget#shelfPanel QToolButton { border: none; border-radius: 4px; padding: 2px 6px; background: transparent; }
+        QWidget#shelfPanel QToolButton:hover { background: %10; }
+        QWidget#shelfPanel QToolButton:pressed { background: %6; }
     )")
-        .arg(c("border"), c("panel"), c("separator"), c("hover"), c("statusBar"), c("checked"));
+        .arg(c("border"), c("panel"), c("separator"), c("hover"), c("statusBar"), c("checked"), c("dimText"), c("text"), c("accent"))
+        .arg(c("button"));
 }
 
 void applyColors(QApplication& app)
@@ -489,6 +552,19 @@ private:
     themes::Theme mTheme;
 };
 } // namespace
+
+QLabel* emptyStateLabel(const QString& text, QWidget* parent)
+{
+    auto* label = new QLabel(text, parent);
+    label->setObjectName("emptyState");
+    label->setAlignment(Qt::AlignCenter);
+    label->setWordWrap(true);
+    label->setContentsMargins(16, 24, 16, 24);
+    QPalette pal = label->palette();
+    pal.setColor(QPalette::WindowText, themeColor("dimText"));
+    label->setPalette(pal);
+    return label;
+}
 
 QColor themeColor(std::string_view token)
 {

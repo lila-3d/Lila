@@ -116,8 +116,7 @@ void StatusOutput::paintEvent(QPaintEvent*)
     QFontMetrics fm(f);
     int iconW = error || warning ? kIconSize + 5 : 0;
     QString text = fm.elidedText(QString::fromStdString(last.text), Qt::ElideRight, std::max(0, width() - iconW - 8));
-    int total = iconW + fm.horizontalAdvance(text);
-    int x = std::max(4, (width() - total) / 2);
+    int x = 4;
     if (iconW)
     {
         // Severity reads by the icon and weight as well, so grey themes need no hue.

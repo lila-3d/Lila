@@ -13,12 +13,17 @@ class QApplication;
 class QFont;
 class QWidget;
 
+class QLabel;
+
 namespace lila::ui
 {
 /** Fonts, style and the current theme's colours; follows theme changes live. */
 LILA_UI_API void applyTheme(QApplication& app);
 /** Code/output font from prefs (default JetBrains Mono). */
 LILA_UI_API QFont monoFont();
+
+/** A panel's empty-state hint: dim, centred and wrapped, for the space a panel's content would fill. */
+LILA_UI_API QLabel* emptyStateLabel(const QString& text, QWidget* parent);
 
 /** The current theme's colour for a token (see themes::tokens). */
 LILA_UI_API QColor themeColor(std::string_view token);

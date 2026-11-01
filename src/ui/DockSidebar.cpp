@@ -9,6 +9,7 @@
 
 #include <QAction>
 #include <QDockWidget>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QMainWindow>
 #include <QMouseEvent>
@@ -27,7 +28,9 @@ namespace lila::ui
 {
 namespace
 {
-constexpr int kTitleHeight = 22;
+constexpr int kTitleHeight = 26;
+/** How visible the title bar's buttons are until the pointer reaches the bar. */
+constexpr qreal kDimButtons = 0.4;
 
 QToolButton* titleButton(const QString& iconName, const QString& tip, QWidget* parent)
 {
@@ -121,7 +124,7 @@ void setDockDocs(QDockWidget* dock, const std::string& page)
 DockTitleBar::DockTitleBar(QDockWidget* dock) : QWidget(dock), mDock(dock)
 {
     auto* h = mButtons = new QHBoxLayout(this);
-    h->setContentsMargins(6, 2, 2, 2);
+    h->setContentsMargins(8, 4, 4, 4);
     h->setSpacing(0);
     h->addStretch(1);
     QToolButton* collapse = titleButton("minus", "Collapse to the side", this);
@@ -138,6 +141,30 @@ DockTitleBar::DockTitleBar(QDockWidget* dock) : QWidget(dock), mDock(dock)
     setDocsPage(dock->property(kDocsPage).toString().toStdString());
 }
 
+void DockTitleBar::lightButtons(bool lit)
+{
+    for (int i = 0; i < mButtons->count(); ++i)
+        if (QWidget* w = mButtons->itemAt(i)->widget())
+        {
+            auto* effect = qobject_cast<QGraphicsOpacityEffect*>(w->graphicsEffect());
+            if (!effect)
+                w->setGraphicsEffect(effect = new QGraphicsOpacityEffect(w));
+            effect->setOpacity(lit ? 1.0 : kDimButtons);
+        }
+}
+
+void DockTitleBar::enterEvent(QEnterEvent* e)
+{
+    QWidget::enterEvent(e);
+    lightButtons(true);
+}
+
+void DockTitleBar::leaveEvent(QEvent* e)
+{
+    QWidget::leaveEvent(e);
+    lightButtons(false);
+}
+
 void DockTitleBar::setDocsPage(const std::string& page)
 {
     delete mHelp;
@@ -147,6 +174,7 @@ void DockTitleBar::setDocsPage(const std::string& page)
         mHelp = docs::helpButton(page, this);
         mButtons->insertWidget(1, mHelp);
     }
+    lightButtons(underMouse());
     update();
 }
 
@@ -173,10 +201,15 @@ void DockTitleBar::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.fillRect(rect(), themeShade(58));
-    p.setPen(palette().color(QPalette::WindowText));
-    QRect text = rect().adjusted(6, 0, 0, 0);
+    // A hairline under the header, so it reads as the panel's top edge rather than a row of its content.
+    p.fillRect(QRect(0, height() - 1, width(), 1), themeColor("separator"));
+    QFont title = font();
+    title.setWeight(QFont::DemiBold);
+    p.setFont(title);
+    p.setPen(themeColor("text"));
+    QRect text = rect().adjusted(8, 0, 0, -1);
     text.setRight(buttonsLeft() - 4);
-    p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, text.width()));
+    p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(mDock->windowTitle(), Qt::ElideRight, text.width()));
 }
 
 void DockTitleBar::mouseDoubleClickEvent(QMouseEvent* e)

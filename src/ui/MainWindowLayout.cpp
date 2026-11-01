@@ -61,9 +61,9 @@ void MainWindow::applyDefaultDockSizes()
     auto* undoHistory = findChild<QDockWidget*>(kUndoHistoryDock);
     auto* quickSets = findChild<QDockWidget*>(kQuickSelectSetsDock);
     if (outliner && undoHistory && quickSets && outliner->isVisible() && undoHistory->isVisible() && quickSets->isVisible())
-        resizeDocks({outliner, quickSets, undoHistory}, {height() / 2, height() / 5, height() * 3 / 10}, Qt::Vertical);
+        resizeDocks({outliner, quickSets, undoHistory}, {height() * 3 / 5, height() / 5, height() / 5}, Qt::Vertical);
     else if (outliner && undoHistory && outliner->isVisible() && undoHistory->isVisible())
-        resizeDocks({outliner, undoHistory}, {height() * 2 / 3, height() / 3}, Qt::Vertical);
+        resizeDocks({outliner, undoHistory}, {height() * 4 / 5, height() / 5}, Qt::Vertical);
     auto* channels = findChild<QDockWidget*>("channelBox");
     auto* layers = findChild<QDockWidget*>(kDisplayLayersDock);
     if (channels && layers && channels->isVisible() && layers->isVisible())

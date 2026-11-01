@@ -1021,7 +1021,7 @@ QWidget* StartupDialog::makeShowcasePlaceholder()
     invite.url = "https://lila-3d.github.io/";
     QPixmap art;
     for (const io::examples::Example& x : mExampleList)
-        if (x.name == "Curve Car" && !x.thumbnail.empty())
+        if (x.name == "Trim Frieze" && !x.thumbnail.empty())
             art = QPixmap(qpath(x.thumbnail));
     return new ShowcaseCard(invite, art, mNews);
 }

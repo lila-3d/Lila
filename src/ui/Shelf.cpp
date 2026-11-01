@@ -964,10 +964,13 @@ void ShelfPage::dropEvent(QDropEvent* e)
 
 ShelfPanel::ShelfPanel(QWidget* parent) : QWidget(parent)
 {
+    // The app style sheet draws the shelf's tabs and buttons by these names.
+    setObjectName("shelfPanel");
     auto* v = new QVBoxLayout(this);
     v->setContentsMargins(0, 0, 0, 0);
     v->setSpacing(0);
     mTabs = new QTabBar(this);
+    mTabs->setObjectName("shelfTabs");
     mTabs->setExpanding(false);
     mTabs->setDrawBase(false);
     mTabs->setContextMenuPolicy(Qt::CustomContextMenu);

@@ -919,11 +919,14 @@ void ModifierStackWidget::rebuild()
     mMore->setEnabled(mMesh != scene::kNoNode);
     if (!mMesh)
     {
-        mTitle->setText("Select a mesh to see its modifiers");
+        mTitle->hide();
         mFooter->clear();
+        mListLayout->addStretch(1);
+        mListLayout->addWidget(emptyStateLabel("Select a mesh to see its modifiers.", this));
         mListLayout->addStretch(1);
         return;
     }
+    mTitle->show();
     mTitle->setText(QString::fromStdString(nameOf(mMesh)));
     mUpdaters.push_back([this] { mTitle->setText(QString::fromStdString(nameOf(mMesh))); });
 

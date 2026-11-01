@@ -58,7 +58,10 @@ template <class T> bool closeShownWindow()
 /** A window toggle: tucks the panel into its sidebar (or hides it) when it is showing, otherwise reveals it. */
 LILA_UI_API void toggleDock(QDockWidget* dock);
 
-/** Dock title bar: title, then a docs button when it has a page, collapse, float and close. Double-click floats or re-docks. */
+/**
+ * Dock title bar: a semibold title, then a docs button when it has a page, collapse, float and close, which stay dim
+ * until the pointer is over the bar. Double-click floats or re-docks.
+ */
 class LILA_UI_API DockTitleBar : public QWidget
 {
     Q_OBJECT
@@ -75,8 +78,11 @@ Q_SIGNALS:
 protected:
     void paintEvent(QPaintEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
+    void enterEvent(QEnterEvent* e) override;
+    void leaveEvent(QEvent* e) override;
 
 private:
+    void lightButtons(bool lit);
     /** Where the title text has to stop: the left edge of the first shown button. */
     int buttonsLeft() const;
 

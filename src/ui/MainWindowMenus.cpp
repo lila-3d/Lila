@@ -489,7 +489,8 @@ void MainWindow::buildStatusBar()
     {
         auto* line = new StatusOutput([output] { revealDock(output); },
                                       [output] { return dockShowing(output); }, this);
-        statusBar()->addWidget(line, 1);
+        // First, so the last output line reads from the window's left edge.
+        statusBar()->insertWidget(0, line, 1);
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
     installSpinScrub(this);
