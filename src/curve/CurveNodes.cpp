@@ -11,6 +11,7 @@
 #include "curve/PipeNode.h"
 #include "curve/SurfaceConform.h"
 #include "curve/SketchNode.h"
+#include "curve/StrapNode.h"
 #include "curve/PlanarNodes.h"
 #include "curve/Sweep.h"
 #include "curve/Tessellate.h"
@@ -995,6 +996,7 @@ void registerTypes()
     registerAlongTypes();
     registerContourType();
     registerCableType();
+    registerStrapTypes();
     registerVehicleTypes();
     registerGroomType();
     registerProvider();

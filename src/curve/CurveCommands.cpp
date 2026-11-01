@@ -10,6 +10,7 @@
 #include "curve/PipeNode.h"
 #include "curve/VehicleNodes.h"
 #include "curve/SketchNode.h"
+#include "curve/StrapNode.h"
 #include "curve/PlanarNodes.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
@@ -977,6 +978,7 @@ void registerCommands()
     registerAlongCommands();
     registerContourCommands();
     registerCableCommands();
+    registerStrapCommands();
     registerLiveSurfaceCommands();
     registerEzCurveCommand();
     registerVehicleCommands();

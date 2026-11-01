@@ -471,6 +471,7 @@ void registerCurveUi()
     registerPipeTool();
     registerCableTool();
     registerSectionTool();
+    registerStrapTool();
     registerVehicleCurveUi();
     registerSketchTool();
     registerCurveSculptTool();

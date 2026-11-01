@@ -22,6 +22,8 @@ void registerPipeTool();
 void registerCableTool();
 /** The section tool and contour action (SectionTool.cpp); called by registerCurveUi. */
 void registerSectionTool();
+/** The strap tool and strap preset actions (StrapTool.cpp); called by registerCurveUi. */
+void registerStrapTool();
 /** Blend, match, trim, extend, split, fair, curve network and border blend actions and tools (VehicleCurveUi.cpp). */
 void registerVehicleCurveUi();
 /** The blend curve tool (BlendCurveTool.cpp). */

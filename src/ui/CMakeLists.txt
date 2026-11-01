@@ -31,7 +31,7 @@ lila_module(lila_ui UI
     SmartJoinUi.cpp SmartJoinUi.h
     Camera.cpp
     ChannelBox.cpp ChannelBox.h
-    CurveTools.cpp CurveToolkit.cpp CurveToolkit.h CurveToolsCommon.h EzCurveTool.cpp CurvePointTool.cpp CurveUi.cpp CurveUi.h PipeTool.cpp CableTool.cpp SectionTool.cpp PlanarCurveUi.cpp
+    CurveTools.cpp CurveToolkit.cpp CurveToolkit.h CurveToolsCommon.h EzCurveTool.cpp CurvePointTool.cpp CurveUi.cpp CurveUi.h PipeTool.cpp CableTool.cpp SectionTool.cpp StrapTool.cpp PlanarCurveUi.cpp
     BlendCurveTool.cpp CurvePick.cpp CurvePick.h TrimCurveTool.cpp VehicleCurveUi.cpp
     SketchTool.cpp SketchUi.cpp SketchUi.h CurveSculptTool.cpp
     DisplayLayersPanel.cpp DisplayLayersPanel.h

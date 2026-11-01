@@ -157,9 +157,10 @@ void MainWindow::buildMenus()
     menu("Curves", "Curves", Area::MenuBar, {}, "curves", modelingLevel);
     menus::addActions("Curves", {"window.curveToolkit", "#Create", "curve.ezCurve", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
                                  "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
-                                 "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes and Cables", "curve.pipeTool", "curve.pipe",
+                                 "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes, Cables and Straps", "curve.pipeTool", "curve.pipe",
                                  "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable", "curve.pipePresetConduit", "curve.cableTool",
-                                 "curve.cable", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.evenSpacing", "curve.fit", "curve.project",
+                                 "curve.cable", "curve.strapTool", "curve.strapPresetStrap", "curve.strapPresetRope", "curve.strapPresetTape",
+                                 "curve.strapPresetMetalBand", "curve.strapPresetZipTie", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.evenSpacing", "curve.fit", "curve.project",
                                  "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Blend and Trim",
                                  "curve.blendTool", "curve.blend", "curve.match", "curve.trimTool", "curve.extend", "curve.split", "curve.fair"});
     addSubmenu("Curves", "Planar");

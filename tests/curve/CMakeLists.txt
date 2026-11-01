@@ -20,6 +20,7 @@ add_executable(lila_curve_tests
     test_planar_scene.cpp
     test_roof.cpp
     test_sketch.cpp
+    test_strap.cpp
     test_svg.cpp
     test_text.cpp
     test_vehicle_math.cpp
