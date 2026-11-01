@@ -14,6 +14,7 @@
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 #include "ui/Icons.h"
+#include "ui/Telemetry.h"
 #include "ui/Theme.h"
 #include "ui/WelcomeNews.h"
 #include "vcs/SourceControl.h"
@@ -25,6 +26,7 @@
 #include <QCheckBox>
 #include <QDate>
 #include <QDateTime>
+#include <QFile>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -34,6 +36,7 @@
 #include <QPainterPath>
 #include <QStyle>
 #include <QStyledItemDelegate>
+#include <QSvgRenderer>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QLabel>
@@ -563,7 +566,9 @@ protected:
     }
 };
 
-/** The welcome page's title row: the app icon and name on the left, the Essentials button on the right. */
+QFrame* makeSupportCard(QWidget* parent);
+
+/** The welcome page's title row: the app icon and name on the left, the support card and Essentials button on the right. */
 QWidget* makeWelcomeHeader(QWidget* parent, QPushButton*& essentials)
 {
     auto* header = new QWidget(parent);
@@ -578,6 +583,9 @@ QWidget* makeWelcomeHeader(QWidget* parent, QPushButton*& essentials)
     row->addWidget(title);
     row->addStretch(1);
     essentials = new EssentialsButton(header);
+    QFrame* support = makeSupportCard(header);
+    support->setFixedHeight(essentials->minimumHeight());
+    row->addWidget(support);
     row->addWidget(essentials);
     return header;
 }
@@ -765,6 +773,70 @@ private:
     QString mUrl;
 };
 
+/** A tabler icon drawn in a theme colour other than the icon tint, at size logical pixels. */
+QPixmap tintedIcon(const QString& name, const QColor& color, int size, qreal dpr)
+{
+    QFile f(QString::fromStdWString((paths::resourcesDir() / "icons" / "tabler").wstring()) + "/" + name + ".svg");
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    QSvgRenderer renderer(f.readAll().replace("currentColor", color.name().toLatin1()));
+    QPixmap pm(QSize(size, size) * dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    renderer.render(&p, QRectF(0, 0, pm.width(), pm.height()));
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
+/** The donation card in the welcome header, beside Essentials. The Steam build leaves out the Steam button, since Lila is already owned there. */
+QFrame* makeSupportCard(QWidget* parent)
+{
+    auto* card = new QFrame(parent);
+    card->setObjectName("supportCard");
+    auto* layout = new QHBoxLayout(card);
+    layout->setContentsMargins(14, 0, 14, 0);
+    layout->setSpacing(8);
+
+    auto* heart = new QLabel(card);
+    heart->setPixmap(tintedIcon("heart", themeColor("accent"), 16, card->devicePixelRatioF()));
+    layout->addWidget(heart, 0, Qt::AlignVCenter);
+    auto* pitch = new QLabel(QString("Lila is free. <span style=\"color: %1; font-weight: 600;\">Chip in?</span>").arg(themeColor("brightText").name()), card);
+    pitch->setObjectName("supportLead");
+    layout->addWidget(pitch, 0, Qt::AlignVCenter);
+    layout->addSpacing(8);
+
+    struct Link
+    {
+        const char* icon;
+        const char* label;
+        const char* url;
+        const char* tip;
+    };
+    std::vector<Link> links = {
+        {"coffee", "Ko-fi", "https://ko-fi.com/jaredtaylor", "One-off or monthly donation on Ko-fi"},
+        {"brand-github", "Sponsors", "https://github.com/sponsors/Vaei/", "One-off or monthly sponsorship on GitHub Sponsors"},
+    };
+    if (telemetry::installChannel(paths::executableDir()) != "steam")
+        links.push_back({"brand-steam", "Steam", "https://store.steampowered.com/app/5520720/", "Buy Lila on Steam: adds achievements that teach you what's new"});
+
+    auto* buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    buttons->setAlignment(Qt::AlignVCenter);
+    for (const Link& l : links)
+    {
+        auto* b = new QPushButton(icon(l.icon), l.label, card);
+        b->setFixedHeight(30);
+        b->setToolTip(QString("%1\n%2").arg(l.tip, l.url));
+        b->setCursor(Qt::PointingHandCursor);
+        const QUrl url(l.url);
+        QObject::connect(b, &QPushButton::clicked, b, [url] { QDesktopServices::openUrl(url); });
+        buttons->addWidget(b, 1);
+    }
+    layout->addLayout(buttons);
+    return card;
+}
+
 QLabel* makeHeading(QWidget* parent, const QString& text)
 {
     auto* heading = new QLabel(text, parent);
@@ -788,7 +860,9 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
                           "QFrame#newsCard:hover { border-color: %7; }"
                           "QLabel#newsMeta, QLabel#newsBody { color: %5; }"
                           "QLabel#newsTitle { color: %4; font-size: 11pt; font-weight: 600; }"
-                          "QLabel#newsFresh { color: %8; font-weight: 600; }")
+                          "QLabel#newsFresh { color: %8; font-weight: 600; }"
+                          "QFrame#supportCard { background: %6; border: 1px solid %2; border-radius: 6px; }"
+                          "QLabel#supportLead { color: %5; font-size: 10pt; }")
                       .arg(themeColor("window").name(), themeColor("border").name(), themeColor("text").name(), themeColor("brightText").name(),
                            themeColor("dimText").name(), themeColor("base").name(), themeColor("hover").name(), themeColor("accent").name()));
 
@@ -954,6 +1028,8 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     if (mExamples)
     {
         connect(mExamples, &QListWidget::itemActivated, this, [this] { openExampleSelected(); }, Qt::QueuedConnection);
+        mExamples->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(mExamples, &QListWidget::customContextMenuRequested, this, [this](const QPoint& at) { showExampleMenu(at); });
         // One selection across the two lists, so Enter opens what is highlighted.
         connect(mExamples, &QListWidget::itemPressed, mList, [this] { mList->setCurrentItem(nullptr); });
         connect(mList, &QTreeWidget::itemPressed, mExamples, [this] { mExamples->setCurrentItem(nullptr); });
@@ -1167,6 +1243,50 @@ void StartupDialog::showRecentMenu(const QPoint& at)
     menu.addAction(icon("folder-search"), "Open Containing Folder", [path] { fileOps::reveal(path); });
     menu.addAction(icon("x"), "Remove from Recents", [this, item] { removeRecent(item); });
     menu.exec(mList->viewport()->mapToGlobal(at));
+}
+
+void StartupDialog::showExampleMenu(const QPoint& at)
+{
+    QListWidgetItem* item = mExamples->itemAt(at);
+    if (!item || !item->data(kSampleRole).toBool())
+        return;
+    const size_t index = size_t(item->data(kKindRole).toInt());
+    const io::samples::Sample& s = mSampleList[index];
+    const fs::path dir = io::samples::installDir(s);
+    std::error_code ec;
+    if (io::samples::bundled(s) || !fs::exists(dir, ec))
+        return;
+
+    QStringList sharing;
+    for (const io::samples::Sample& other : mSampleList)
+        if (other.archive == s.archive && other.id != s.id)
+            sharing << QString::fromStdString(other.name);
+    const QString what = sharing.isEmpty() ? QString("Move Download to Trash") : "Move Download to Trash (with " + sharing.join(", ") + ")";
+
+    QMenu menu(this);
+    menu.addAction(icon("folder-search"), "Open Containing Folder", [dir] { fileOps::reveal(qpath(dir)); });
+    menu.addAction(icon("trash"), what, [this, index] { trashSample(index); });
+    menu.exec(mExamples->viewport()->mapToGlobal(at));
+}
+
+void StartupDialog::trashSample(size_t index)
+{
+    const io::samples::Sample s = mSampleList[index];
+    const QString dir = qpath(io::samples::installDir(s));
+    if (!QFile::moveToTrash(dir))
+    {
+        QMessageBox::warning(this, "Move to Trash", "Couldn't move " + dir + " to the trash. A scene from it may still be open.");
+        return;
+    }
+    for (int row = 0; row < mExamples->count(); ++row)
+    {
+        QListWidgetItem* item = mExamples->item(row);
+        if (!item->data(kSampleRole).toBool())
+            continue;
+        const io::samples::Sample& x = mSampleList[size_t(item->data(kKindRole).toInt())];
+        if (x.archive == s.archive)
+            item->setData(kBadgeRole, "Download  " + QString::fromStdString(io::samples::formatSize(x.size)));
+    }
 }
 
 void StartupDialog::removeRecent(QTreeWidgetItem* item)

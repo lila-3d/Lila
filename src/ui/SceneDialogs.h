@@ -99,6 +99,9 @@ private:
     void openExampleSelected();
     void openSampleSelected();
     void showRecentMenu(const QPoint& at);
+    void showExampleMenu(const QPoint& at);
+    /** Moves a downloaded sample to the trash, with every sample sharing its download, and badges them for download again. */
+    void trashSample(size_t index);
     /** Drops the scene from the recent files pref and the list. */
     void removeRecent(QTreeWidgetItem* item);
     /**
