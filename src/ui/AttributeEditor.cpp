@@ -705,6 +705,8 @@ void AttributeEditor::rebuild()
     if (!n)
     {
         mBodyLayout->addStretch(1);
+        mBodyLayout->addWidget(emptyStateLabel("Select an object to see its attributes.", this));
+        mBodyLayout->addStretch(2);
         return;
     }
     if (QWidget* list = issueList())

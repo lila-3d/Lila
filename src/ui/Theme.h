@@ -13,6 +13,7 @@ class QApplication;
 class QFont;
 class QWidget;
 
+class QAbstractItemView;
 class QLabel;
 
 namespace lila::ui
@@ -24,6 +25,8 @@ LILA_UI_API QFont monoFont();
 
 /** A panel's empty-state hint: dim, centred and wrapped, for the space a panel's content would fill. */
 LILA_UI_API QLabel* emptyStateLabel(const QString& text, QWidget* parent);
+/** Shows an emptyStateLabel over the view while its model has no rows. */
+LILA_UI_API void setEmptyHint(QAbstractItemView* view, const QString& text);
 
 /** The current theme's colour for a token (see themes::tokens). */
 LILA_UI_API QColor themeColor(std::string_view token);

@@ -78,6 +78,11 @@ void UvView::setShowStacks(bool on)
 void UvView::frameAll()
 {
     sync();
+    frameShown();
+}
+
+void UvView::frameShown()
+{
     glm::dvec2 lo(0.0), hi(1.0);
     bool any = false;
     for (const MeshUv& m : mMeshes)
@@ -493,6 +498,7 @@ void UvView::sync()
     const std::string set = uv::currentUvSet();
     std::vector<scene::NodeId> ids = shownMeshes();
     std::vector<MeshUv> next;
+    bool added = false;
     for (scene::NodeId id : ids)
     {
         scene::Node* n = g.node(id);
@@ -508,10 +514,14 @@ void UvView::sync()
             next.push_back(std::move(*old));
             continue;
         }
+        added |= old == mMeshes.end();
         next.push_back(build(id, n->path(), mesh, set));
     }
     mMeshes = std::move(next);
     applyLive();
+    // A mesh newly shown (a new selection) is framed, so its uvs never open off screen.
+    if (added && mFramed)
+        frameShown();
 }
 
 void UvView::applyLive()

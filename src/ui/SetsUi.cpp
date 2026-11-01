@@ -9,6 +9,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/Theme.h"
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -113,6 +114,7 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
+    setEmptyHint(mTree, "No sets yet. + makes a quick select set from the selection.");
     mTree->setColumnCount(2);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);

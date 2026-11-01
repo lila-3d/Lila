@@ -23,6 +23,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImage>
+#include <QAbstractItemView>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -564,6 +565,56 @@ QLabel* emptyStateLabel(const QString& text, QWidget* parent)
     pal.setColor(QPalette::WindowText, themeColor("dimText"));
     label->setPalette(pal);
     return label;
+}
+
+namespace
+{
+/** Keeps an empty-state label over an item view's viewport, shown only while the model is empty. */
+class EmptyHint : public QObject
+{
+public:
+    EmptyHint(QAbstractItemView* view, const QString& text) : QObject(view), mView(view)
+    {
+        mLabel = emptyStateLabel(text, view->viewport());
+        mLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        view->viewport()->installEventFilter(this);
+        if (QAbstractItemModel* m = view->model())
+        {
+            connect(m, &QAbstractItemModel::rowsInserted, this, &EmptyHint::update);
+            connect(m, &QAbstractItemModel::rowsRemoved, this, &EmptyHint::update);
+            connect(m, &QAbstractItemModel::modelReset, this, &EmptyHint::update);
+            connect(m, &QAbstractItemModel::layoutChanged, this, &EmptyHint::update);
+        }
+        update();
+    }
+
+protected:
+    bool eventFilter(QObject*, QEvent* e) override
+    {
+        if (e->type() == QEvent::Resize && mLabel)
+            mLabel->setGeometry(mView->viewport()->rect());
+        return false;
+    }
+
+private:
+    void update()
+    {
+        // The view's model outlives its viewport while the view is destroyed, and empties itself on the way out.
+        if (!mLabel)
+            return;
+        QAbstractItemModel* m = mView->model();
+        mLabel->setGeometry(mView->viewport()->rect());
+        mLabel->setVisible(!m || m->rowCount() == 0);
+    }
+
+    QAbstractItemView* mView;
+    QPointer<QLabel> mLabel;
+};
+} // namespace
+
+void setEmptyHint(QAbstractItemView* view, const QString& text)
+{
+    new EmptyHint(view, text);
 }
 
 QColor themeColor(std::string_view token)

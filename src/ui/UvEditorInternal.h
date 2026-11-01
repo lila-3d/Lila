@@ -196,6 +196,8 @@ private:
     UvTexturePaint::ToUv uvOf() const;
 
     void frame(glm::dvec2 lo, glm::dvec2 hi);
+    /** Frames every shown mesh's uvs and the 0-1 square, from what is already synced. */
+    void frameShown();
 
     void zoomAbout(QPointF at, double f);
 

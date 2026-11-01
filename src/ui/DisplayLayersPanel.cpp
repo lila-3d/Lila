@@ -11,6 +11,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
+#include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QColorDialog>
@@ -185,6 +186,7 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
+    setEmptyHint(mTree, "No display layers yet. The buttons above make one, empty or from the selection.");
     mTree->setColumnCount(kColumnCount);
     mTree->setHeaderHidden(true);
     mTree->setRootIsDecorated(false);
