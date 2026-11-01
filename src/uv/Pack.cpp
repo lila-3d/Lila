@@ -706,6 +706,26 @@ std::vector<double> baseAngles(const PackOptions& o)
 }
 
 /**
+ * Smallest bounding rectangle turn, held to the rotations the pack allows: any angle with free rotation, the nearest
+ * multiple of rotateStep otherwise, and none for an exact angle list or a step of 0.
+ */
+void preOrientChart(Chart& ch, const PackOptions& o)
+{
+    if (ch.uv.size() < 2)
+        return;
+    double angle = minAreaRectAngle(ch.uv);
+    if (!o.freeRotation)
+    {
+        if (!o.angles.empty() || o.rotateStep <= 0)
+            return;
+        const double step = glm::radians(double(o.rotateStep));
+        angle = std::round(angle / step) * step;
+    }
+    if (std::abs(angle) > 1e-12)
+        transformChart(ch, ch.uvCentroid(), angle);
+}
+
+/**
  * Free rotation: of every 5 degrees and the angles that put a hull edge on an axis, the few whose bounding box is
  * smallest, each with its quarter turns.
  */
@@ -912,7 +932,7 @@ PackResult packCharts(std::span<Chart> charts, const PackOptions& opts, std::spa
         if (!opts.lockScale && opts.normalizeScale)
             matchSurfaceArea(ch);
         if (opts.preOrient)
-            orientChart(ch, OrientMode::BoundingBox);
+            preOrientChart(ch, opts);
         glm::dvec2 lo = ch.uvMin();
         for (glm::dvec2& p : ch.uv)
             p -= lo;

@@ -55,13 +55,16 @@ std::vector<uint8_t> edgeMask(const geo::Mesh& m, const Ids& edges)
 }
 
 /** Faces of every uv island that has one of the edges. */
-std::vector<Index> islandFacesOfEdges(const geo::Mesh& m, const Ids& edges)
+std::vector<Index> islandFacesOfEdges(const geo::Mesh& m, const Ids& edges, const std::string& set)
 {
     std::vector<Index> faces;
     for (Index e : edges)
         if (m.edgeValid(e))
             m.forEachEdgeCorner(e, [&](Index c) { faces.push_back(m.cornerFace(c)); });
-    return faces;
+    ChartOptions co;
+    co.source = IslandSource::Uvs;
+    co.uvSet = set;
+    return islandsOfFaces(m, faces, co);
 }
 
 OptimizeMode modeArg(const Args& a)
@@ -367,7 +370,7 @@ void registerOptimizeCommands()
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvStraightenEdges: no " + set + " uvs; unwrap first");
                 std::vector<uint8_t> sel = edgeMask(m, e);
-                std::vector<Chart> charts = uvIslands(m, islandFacesOfEdges(m, e), set);
+                std::vector<Chart> charts = uvIslands(m, islandFacesOfEdges(m, e, set), set);
                 std::atomic<size_t> chains{0};
                 tbb::parallel_for(size_t(0), charts.size(), size_t(1), [&](size_t i) { chains += straightenEdges(charts[i], m, sel, iterations); });
                 writeCharts(m, charts, set);
@@ -389,7 +392,7 @@ void registerOptimizeCommands()
                 if (m.cornerAttrs().get<glm::vec2>(set).empty())
                     throw CommandError("uvAlignToEdge: no " + set + " uvs; unwrap first");
                 std::vector<uint8_t> sel = edgeMask(m, e);
-                std::vector<Chart> charts = uvIslands(m, islandFacesOfEdges(m, e), set);
+                std::vector<Chart> charts = uvIslands(m, islandFacesOfEdges(m, e, set), set);
                 size_t turned = 0;
                 for (Chart& ch : charts)
                     turned += alignToEdges(ch, m, sel, ax) ? 1 : 0;

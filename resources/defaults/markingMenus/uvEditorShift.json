@@ -14,12 +14,14 @@
   },
   "SW": { "label": "Pack", "action": "uv.pack" },
   "W": { "label": "Unwrap", "action": "uv.unwrap" },
+  "NW": { "label": "Orient", "action": "uv.orient" },
+  "outer": {
+    "NW": [{ "label": "Orient to Edge", "action": "uv.orientByEdge" }]
+  },
   "overflow": [
     { "label": "Auto Seams", "action": "uv.autoSeams" },
     { "label": "Cut", "action": "uv.cut" },
     { "label": "Sew", "action": "uv.sew" },
-    { "label": "Orient", "action": "uv.orient" },
-    { "label": "Orient to Edge", "action": "uv.orientByEdge" },
     { "separator": true },
     { "label": "Rotate Left 90", "action": "uv.rotateLeft" },
     { "label": "Rotate Right 90", "action": "uv.rotateRight" },

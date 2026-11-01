@@ -302,6 +302,32 @@ TEST_CASE("pack: rotation helps long islands")
     }
 }
 
+TEST_CASE("pack: pre-orient keeps to the rotation step")
+{
+    SoupBuilder b;
+    const double tilt = glm::radians(17.0);
+    const glm::dvec2 u(std::cos(tilt), std::sin(tilt)), v(-u.y, u.x);
+    for (int i = 0; i < 12; ++i)
+    {
+        glm::dvec2 o(40.0 * i, 0.0);
+        double w = 10.0 + i, h = 3.0;
+        Index p0 = b.point(o), p1 = b.point(o + u * w), p2 = b.point(o + u * w + v * h), p3 = b.point(o + v * h);
+        b.face({p0, p1, p2, p3});
+        b.next();
+    }
+    geo::Mesh m = b.build();
+    uv::PackOptions po;
+    po.rotateStep = 90;
+    REQUIRE(uv::packIslands(m, {}, "uv0", po).ok);
+    for (const uv::Chart& ch : islands(m))
+    {
+        const auto loop = ch.boundaryLoops().front();
+        glm::dvec2 e = ch.uv[loop[1]] - ch.uv[loop[0]];
+        double off = std::fmod(std::atan2(e.y, e.x) - tilt + glm::two_pi<double>() * 2.0, glm::half_pi<double>());
+        CHECK(std::min(off, glm::half_pi<double>() - off) < 1e-3);
+    }
+}
+
 TEST_CASE("pack: identical and mirrored islands stack")
 {
     SoupBuilder b;

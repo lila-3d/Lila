@@ -200,3 +200,28 @@ TEST_CASE("a live stroke is one undo step and its preview records nothing")
     run("undo");
     CHECK(u.undoLabel() == "UV Live Drag");
 }
+
+TEST_CASE("uvAlignToEdge and uvOrient turn the whole island, not just the selected part")
+{
+    std::string p = plane();
+    run("uvTransform", {{"rotate", 30.0}, {"perIsland", true}});
+    Index edge = middleLine(*meshOf(p)).front();
+    run("selectComponents", {{"args", {p}}, {"edges", {edge}}});
+    CHECK(run("uvAlignToEdge")["islands"] == 1);
+
+    run("select", {{"args", {p}}});
+    CHECK(run("uvLayout")["islands"] == 1);
+    scene::MeshPtr mesh = meshOf(p);
+    const geo::Mesh& after = *mesh;
+    auto uv = after.cornerAttrs().get<glm::vec2>("uv0");
+    // The selected edge lies on an axis.
+    glm::vec2 d(0.0f);
+    after.forEachEdgeCorner(edge, [&](Index c) { d = uv[after.cornerNext(c)] - uv[c]; });
+    CHECK(std::min(std::abs(d.x), std::abs(d.y)) < 1e-4f);
+
+    run("uvTransform", {{"rotate", 30.0}, {"perIsland", true}});
+    run("selectComponents", {{"args", {p}}, {"faces", {0}}});
+    CHECK(run("uvOrient")["islands"] == 1);
+    run("select", {{"args", {p}}});
+    CHECK(run("uvLayout")["islands"] == 1);
+}

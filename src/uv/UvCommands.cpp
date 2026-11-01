@@ -1178,7 +1178,7 @@ void registerCommands()
                     ChartOptions co;
                     co.source = IslandSource::Uvs;
                     co.uvSet = set;
-                    std::vector<Chart> charts = buildCharts(m, f, co);
+                    std::vector<Chart> charts = buildCharts(m, islandsOfFaces(m, f, co), co);
                     for (Chart& ch : charts)
                         orientChart(ch, om);
                     writeCharts(m, charts, set);
