@@ -365,8 +365,8 @@ void registerCommands()
     ops::registerCommand({
         .name = "gnSendImposter",
         .doc = "Bake an Imposter node (as gnBakeImposter) and import it into the connected Unreal project: the card mesh, both "
-               "atlases and a material instance of LilaLink's imposter material, which turns the card to the camera's nearest "
-               "view. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.",
+               "atlases and a material instance of LilaLink's imposter material, which blends the three "
+               "views nearest the camera. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.",
         .positionalDoc = "group node",
         .flags = {{"contentPath", "", T::String, nullptr, "The card mesh in Unreal; defaults to /Game/Lila/Imposters/SM_<name>."},
                   {"folder", "", T::String, nullptr, "Where to write the bake; defaults to imposters/ next to the scene."},

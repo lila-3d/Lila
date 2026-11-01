@@ -60,7 +60,7 @@ void imposterNode()
         .doc = "Bakes what reaches it into an octahedral imposter for Unreal: Bake in the side panel views it from Frames x Frames "
                "directions and writes a base colour atlas (alpha is coverage), a normal atlas (alpha is depth), a card mesh FBX and a "
                "JSON of the material inputs into imposters/ next to the scene; Send to Unreal bakes and imports it through LilaLink with a "
-               "material that turns the card to the nearest view. Base colour comes from the mesh's current colour set, else light grey. "
+               "material that blends the three nearest views. Base colour comes from the mesh's current colour set, else light grey. "
                "Geometry passes through; Card is the square the imposter draws on.",
         .props = {prop("layout", {"octahedral", "hemi-octahedral"}, "hemi-octahedral",
                        "octahedral: views from every side; hemi-octahedral: only from above, twice the detail for things seen from the ground.")},
@@ -134,7 +134,11 @@ ImposterResult bakeImposter(const geo::Mesh& source, const ImposterOptions& o)
                 geo::BvhHit hit;
                 const size_t at = (size_t(cy * res + j) * size_t(size) + size_t(cx * res + i)) * 4;
                 if (!bvh.raycast(origin, -d, hit, radius * 4.0))
+                {
+                    // On the card plane, so filtering at the silhouette doesn't pull the parallax step out of shape.
+                    normal[at + 3] = 0.5f;
                     continue;
+                }
                 glm::vec3 nrm = glm::normalize(bvh.interpolate<glm::vec3>(normals, hit.triangle, hit.bary));
                 if (glm::dot(glm::dvec3(nrm), d) < 0.0)
                     nrm = -nrm;
