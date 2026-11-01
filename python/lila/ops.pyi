@@ -1200,6 +1200,51 @@ def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None =
         generator: Keep the primitive's generator so its size stays editable. Short form g. Default False.
     """
 
+def brushPresetDelete(*objects: Any) -> Any:
+    """Delete one of your or the project's brush presets.
+
+    Args:
+        objects: id.
+    """
+
+def brushPresetExport(*objects: Any, file: str | None = None) -> Any:
+    """Write a preset to a .lilabrush file to share, its alpha image inside.
+
+    Args:
+        objects: id.
+        file: The file to write.
+    """
+
+def brushPresetInstall(*objects: Any, scope: str | None = None) -> Any:
+    """Copy .lilabrush files into your brushes folder, or the project's, numbering a name that is taken. Returns their ids.
+
+    Args:
+        objects: files.
+        scope: user or project. One of 'user', 'project'. Default 'user'.
+    """
+
+def brushPresetSave(*objects: Any, brush: str | None = None, tool: str | None = None, settings: Any | None = None, alpha: str | None = None, icon: str | None = None, doc: str | None = None, scope: str | None = None, replace: bool | None = None) -> Any:
+    """Save a brush with its stroke settings as a preset: a .lilabrush file in your brushes folder, or the project's. The alpha image is stored inside the file. Returns the preset's summary.
+
+    Args:
+        objects: label.
+        brush: The brush it drives: a built-in's name or a registered brush's. Default 'draw'.
+        tool: The tool it is for. Default 'sculpt'.
+        settings: Stroke settings (radius, strength, falloff, spacing, ...); missing keys take the defaults.
+        alpha: Alpha image: a file or a library alpha (alpha://...).
+        icon: An icon name; empty uses the brush's.
+        doc: Tooltip text.
+        scope: user or project. One of 'user', 'project'. Default 'user'.
+        replace: Overwrite a preset of the same name instead of numbering the new one. Default False.
+    """
+
+def brushPresets(tool: str | None = None) -> Any:
+    """The brush presets in Lila's, the extensions', the studio's, your and the project's brushes folders: [{id, label, tool, brush, icon, doc, source, category, file, alpha}].
+
+    Args:
+        tool: Only presets for this tool (sculpt).
+    """
+
 def cable(*objects: Any, sagMode: str | None = None, slack: float | None = None, sag: float | None = None, gravity: Sequence[float] | None = None, count: int | None = None, spread: float | None = None, sagVariation: float | None = None, seed: int | None = None, drape: bool | None = None, clearance: float | None = None, iterations: int | None = None, samples: int | None = None, tolerance: float | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, colliders: Sequence[Any] | None = None, pipe: bool | None = None, pipeRadius: float | None = None, pipeSides: int | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, c: bool | None = None, col: Sequence[Any] | None = None, pr: float | None = None, ps: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Hang cables between anchor points: true catenaries by slack (extra length) or sag depth under gravity, bundles of several with seeded spread and sag variation, optionally draped over meshes, optionally piped. Live: moving the anchor curve's points or editing the settings updates them. Returns [cable curve, curveCable, anchor curve, pipe mesh or None] per anchor curve.
 
@@ -6649,11 +6694,11 @@ def selectByAngle(angle: float | None = None) -> Any:
     """
 
 def selectByMaterial(*objects: Any, faces: bool | None = None, f: bool | None = None) -> Any:
-    """Select the objects a material is assigned to, or with faces=true the faces it is assigned to. Returns the objects.
+    """Select what a material is assigned to: whole objects when it covers every face of each, otherwise just the faces it is assigned to. faces=true always selects faces, faces=false always whole objects. Returns the objects.
 
     Args:
         objects: material.
-        faces: Select the assigned faces instead of whole objects. Short form f. Default False.
+        faces: Force faces (true) or whole objects (false); unset picks by coverage. Short form f.
     """
 
 def selectComponents(*objects: Any, vertices: Sequence[Any] | None = None, edges: Sequence[Any] | None = None, faces: Sequence[Any] | None = None, add: bool | None = None, deselect: bool | None = None, toggle: bool | None = None, symmetric: bool | None = None) -> Any:
