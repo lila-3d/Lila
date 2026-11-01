@@ -71,11 +71,11 @@ const std::vector<std::pair<std::string, json>>& presets()
     static const std::vector<std::pair<std::string, json>> all = {
         {"Modeling", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "modelingToolkit",
                              "modifierStack", "displayLayers", "timeSlider"},
-                            {"modelingToolkit"}, {{"modelingToolkit", {{"width", 0.44}}}, {"modifierStack", {{"height", 0.35}}}},
+                            {"modelingToolkit"}, {{"modelingToolkit", {{"width", "fit"}}}, {"modifierStack", {{"height", 0.35}}}},
                             {"modifierStack"})},
         {"Level", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "levelToolkit", "stagehand.library",
                           "displayLayers", "timeSlider"},
-                         {"levelToolkit"}, {{"levelToolkit", {{"width", 0.44}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
+                         {"levelToolkit"}, {{"levelToolkit", {{"width", "fit"}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
         {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
         {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},

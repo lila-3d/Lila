@@ -77,6 +77,8 @@ struct Row
     /** Each value column is at least this wide, so a count can change without the block resizing. */
     double minWidth = 0.0;
     double gap = kColumnGap;
+    /** Column names, drawn dim like the labels. */
+    bool header = false;
 };
 using Block = std::vector<Row>;
 
@@ -127,7 +129,7 @@ void drawBlock(OverlayPainter& p, const Block& b, const QRectF& at)
         for (size_t i = 0; i < r.values.size(); ++i)
         {
             x += cols.gap + cols.values[i];
-            p.text(QPointF(x, y), r.values[i], text, OverlayPainter::Right);
+            p.text(QPointF(x, y), r.values[i], r.header ? dim : text, OverlayPainter::Right);
         }
         y += kLine;
     }
@@ -165,7 +167,7 @@ std::vector<scene::Node*> selectedMeshes(scene::Graph& g)
 Block polyCountBlock(const scene::hud::PolyStats& s, const PartOn& on)
 {
     using PC = scene::hud::PolyCount;
-    Block b;
+    Block b{{"", {"Scene", "Selected", "Components"}, countWidth(), kCountGap, true}};
     for (auto [part, label, field] : {std::tuple{"verts", "Verts:", &PC::verts}, {"edges", "Edges:", &PC::edges}, {"faces", "Faces:", &PC::faces},
                                       {"tris", "Tris:", &PC::tris}, {"uvs", "UVs:", &PC::uvs}})
         if (on(part))
@@ -175,6 +177,8 @@ Block polyCountBlock(const scene::hud::PolyStats& s, const PartOn& on)
             if (field == &PC::tris && s.uniqueTris != s.scene.tris)
                 b.push_back({"Unique Tris:", {count(s.uniqueTris), count(s.uniqueObjectTris)}, countWidth(), kCountGap});
         }
+    if (b.size() == 1)
+        b.clear();
     return b;
 }
 

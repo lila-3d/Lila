@@ -14,6 +14,7 @@
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStatusBar>
 #include <QStyle>
 #include <QPointer>
 #include <QStyleOptionToolButton>
@@ -52,6 +53,7 @@ public:
     {
         setText(text);
         setAutoRaise(true);
+        setCheckable(true);
         setFocusPolicy(Qt::NoFocus);
         setCursor(Qt::PointingHandCursor);
     }
@@ -84,13 +86,32 @@ protected:
 private:
     Qt::Orientation mOrientation;
 };
+/**
+ * The extent resizeDocks has to be given to keep a shown dock the size it is: its slot, which for a dock in a tab group
+ * or beside others in a column is larger than the dock. Recording the dock's own size instead loses the difference on
+ * every hide and show. Measured by resizing to the dock's size and putting back what that took off.
+ */
+int slotExtent(QMainWindow* window, QDockWidget* dock, Qt::Orientation orientation)
+{
+    auto measure = [&] { return orientation == Qt::Horizontal ? dock->width() : dock->height(); };
+    const int own = measure();
+    if (!dock->isVisible() || own <= 0)
+        return own;
+    window->resizeDocks({dock}, {own}, orientation);
+    const int lost = own - measure();
+    if (lost != 0)
+        window->resizeDocks({dock}, {own + lost}, orientation);
+    return own + lost;
+}
+
 const std::map<Qt::DockWidgetArea, std::pair<Qt::ToolBarArea, const char*>>& stripAreas()
 {
     static const std::map<Qt::DockWidgetArea, std::pair<Qt::ToolBarArea, const char*>> areas = {
         {Qt::LeftDockWidgetArea, {Qt::LeftToolBarArea, "sidebarLeft"}},
         {Qt::RightDockWidgetArea, {Qt::RightToolBarArea, "sidebarRight"}},
         {Qt::TopDockWidgetArea, {Qt::TopToolBarArea, "sidebarTop"}},
-        {Qt::BottomDockWidgetArea, {Qt::BottomToolBarArea, "sidebarBottom"}},
+        // Not "sidebarBottom": saved layouts name a toolbar that, and restoring one would pull the strip out of the status bar.
+        {Qt::BottomDockWidgetArea, {Qt::BottomToolBarArea, "sidebarStatus"}},
     };
     return areas;
 }
@@ -259,7 +280,14 @@ void DockSidebars::rememberSize(QDockWidget* dock)
     if (area == Qt::NoDockWidgetArea)
         return;
     bool sideways = area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea;
-    mTabSizes[dock->objectName()] = sideways ? dock->width() : dock->height();
+    mTabSizes[dock->objectName()] = slotExtent(mWindow, dock, sideways ? Qt::Horizontal : Qt::Vertical);
+}
+
+void DockSidebars::rememberShownSizes()
+{
+    for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
+        if (d->parentWidget() == mWindow && dockShowing(d))
+            rememberSize(d);
 }
 
 void DockSidebars::restoreSize(QDockWidget* dock)
@@ -290,7 +318,7 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
         // A state restored before the first show is applied lazily by the layout, dropping the strips it doesn't name.
         else if (e->type() == QEvent::Show || e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)
             for (auto& [area, bar] : mStrips)
-                if (mWindow->toolBarArea(bar) != stripAreas().at(area).first)
+                if (area != Qt::BottomDockWidgetArea && mWindow->toolBarArea(bar) != stripAreas().at(area).first)
                 {
                     QTimer::singleShot(0, this, &DockSidebars::refreshStrips);
                     break;
@@ -358,15 +386,35 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
     return false;
 }
 
+void DockSidebars::dropTab(QDockWidget* dock)
+{
+    auto it = mTabs.find(dock);
+    if (it == mTabs.end())
+        return;
+    it->second->deleteLater();
+    mTabs.erase(it);
+    mOpen.erase(dock);
+    mSizes.erase(dock);
+    refreshStrips();
+}
+
+void DockSidebars::dropStaleTabLater(QDockWidget* dock)
+{
+    // Later: these come mid layout change (a restoreState among them), and moving the strips then breaks the layout.
+    QTimer::singleShot(0, this, [this, d = QPointer<QDockWidget>(dock)] {
+        if (!d || !mOpen.count(d))
+            return;
+        const Qt::DockWidgetArea area = mWindow->dockWidgetArea(d);
+        auto tab = mTabs.find(d);
+        const bool moved = tab == mTabs.end() || !mStrips.count(area) || tab->second->parentWidget() != mStrips[area];
+        if (d->isHidden() || d->isFloating() || moved)
+            dropTab(d);
+    });
+}
+
 void DockSidebars::close(QDockWidget* dock)
 {
-    if (auto it = mTabs.find(dock); it != mTabs.end())
-    {
-        it->second->deleteLater();
-        mTabs.erase(it);
-        mSizes.erase(dock);
-        refreshStrips();
-    }
+    dropTab(dock);
     rememberSize(dock);
     dock->close();
     Q_EMIT changed();
@@ -381,7 +429,12 @@ void DockSidebars::manage(QDockWidget* dock)
     connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible) {
         if (visible && isCollapsed(dock))
             expand(dock);
+        // Closed from its own title bar: an open panel's tab goes with it. Hidden behind another tab is not closed.
+        else if (!visible && mOpen.count(dock))
+            dropStaleTabLater(dock);
     });
+    connect(dock, &QDockWidget::topLevelChanged, this, [this, dock] { dropStaleTabLater(dock); });
+    connect(dock, &QDockWidget::dockLocationChanged, this, [this, dock] { dropStaleTabLater(dock); });
     connect(dock->toggleViewAction(), &QAction::triggered, this, [this, dock](bool checked) {
         if (checked)
         {
@@ -511,16 +564,33 @@ void toggleDock(QDockWidget* dock)
         dock->hide();
 }
 
+bool DockSidebars::placeStrip(Qt::DockWidgetArea area, QToolBar* bar)
+{
+    if (area == Qt::BottomDockWidgetArea)
+    {
+        QStatusBar* status = mWindow->statusBar();
+        if (bar->parentWidget() == status)
+            return false;
+        mWindow->removeToolBar(bar);
+        status->insertWidget(0, bar);
+        return true;
+    }
+    Qt::ToolBarArea toolArea = stripAreas().at(area).first;
+    if (bar->parentWidget() == mWindow && mWindow->toolBarArea(bar) == toolArea)
+        return false;
+    mWindow->addToolBar(toolArea, bar);
+    return true;
+}
+
 QToolBar* DockSidebars::strip(Qt::DockWidgetArea area)
 {
     auto it = mStrips.find(area);
     if (it != mStrips.end())
     {
-        if (Qt::ToolBarArea toolArea = stripAreas().at(area).first; mWindow->toolBarArea(it->second) != toolArea)
-            mWindow->addToolBar(toolArea, it->second);
+        placeStrip(area, it->second);
         return it->second;
     }
-    auto [toolArea, name] = stripAreas().at(area);
+    auto name = stripAreas().at(area).second;
     auto* bar = new QToolBar(mWindow);
     bar->setObjectName(name);
     bar->setMovable(false);
@@ -528,7 +598,7 @@ QToolBar* DockSidebars::strip(Qt::DockWidgetArea area)
     bar->toggleViewAction()->setVisible(false);
     bar->setContextMenuPolicy(Qt::PreventContextMenu);
     bar->setStyleSheet("QToolBar { background: #2c2c2c; border: none; padding: 0; spacing: 2px; }");
-    mWindow->addToolBar(toolArea, bar);
+    placeStrip(area, bar);
     bar->hide();
     mStrips[area] = bar;
     return bar;
@@ -541,29 +611,42 @@ void DockSidebars::collapse(QDockWidget* dock)
     Qt::DockWidgetArea area = mWindow->dockWidgetArea(dock);
     if (area == Qt::NoDockWidgetArea)
         return;
+    rememberSize(dock);
     QToolBar* bar = strip(area);
     Qt::Orientation orientation = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea) ? Qt::Vertical : Qt::Horizontal;
-    bar->setOrientation(orientation);
-    auto* tab = new SideTab(dock->windowTitle(), orientation, bar);
-    tab->setToolTip("Expand " + dock->windowTitle());
-    tab->installEventFilter(this);
-    QAction* action = bar->addWidget(tab);
-    connect(tab, &QToolButton::clicked, this, [this, dock] { expand(dock); });
-    connect(tab, &QObject::destroyed, bar, [bar, action] { bar->removeAction(action); });
-    mTabs[dock] = tab;
-    mSizes[dock] = dock->size();
-    // Freed space goes to the viewport, not to the panels left in the area.
+    if (auto open = mTabs.find(dock); open != mTabs.end())
+    {
+        mOpen.erase(dock);
+        auto* tab = static_cast<QToolButton*>(open->second);
+        tab->setChecked(false);
+        tab->setToolTip("Expand " + dock->windowTitle());
+    }
+    else
+    {
+        bar->setOrientation(orientation);
+        auto* tab = new SideTab(dock->windowTitle(), orientation, bar);
+        tab->setToolTip("Expand " + dock->windowTitle());
+        tab->installEventFilter(this);
+        QAction* action = bar->addWidget(tab);
+        connect(tab, &QToolButton::clicked, this, [this, dock] { isCollapsed(dock) ? expand(dock) : collapse(dock); });
+        connect(tab, &QObject::destroyed, bar, [bar, action] { bar->removeAction(action); });
+        mTabs[dock] = tab;
+    }
+    mSizes[dock] = QSize(slotExtent(mWindow, dock, Qt::Horizontal), slotExtent(mWindow, dock, Qt::Vertical));
+    // Freed space goes to the viewport, not to the panels left in the area. Only the tabs showing: a tab behind
+    // another holds a stale size that would win over the shown one's.
     QList<QDockWidget*> neighbours;
     QList<int> sizes;
+    const Qt::Orientation across = orientation == Qt::Vertical ? Qt::Horizontal : Qt::Vertical;
     for (QDockWidget* other : mWindow->findChildren<QDockWidget*>())
-        if (other != dock && other->isVisible() && !other->isFloating() && mWindow->dockWidgetArea(other) == area)
+        if (other != dock && dockShowing(other) && !other->isFloating() && mWindow->dockWidgetArea(other) == area)
         {
             neighbours << other;
-            sizes << (orientation == Qt::Vertical ? other->width() : other->height());
+            sizes << slotExtent(mWindow, other, across);
         }
     dock->hide();
     if (!neighbours.isEmpty())
-        mWindow->resizeDocks(neighbours, sizes, orientation == Qt::Vertical ? Qt::Horizontal : Qt::Vertical);
+        mWindow->resizeDocks(neighbours, sizes, across);
     refreshStrips();
     Q_EMIT changed();
 }
@@ -571,11 +654,12 @@ void DockSidebars::collapse(QDockWidget* dock)
 void DockSidebars::expand(QDockWidget* dock)
 {
     auto it = mTabs.find(dock);
-    if (it == mTabs.end())
+    if (it == mTabs.end() || mOpen.count(dock))
         return;
-    QWidget* tab = it->second;
-    mTabs.erase(it);
-    tab->deleteLater();
+    mOpen.insert(dock);
+    auto* tab = static_cast<QToolButton*>(it->second);
+    tab->setChecked(true);
+    tab->setToolTip("Collapse " + dock->windowTitle());
     dock->show();
     dock->raise();
     if (auto size = mSizes.find(dock); size != mSizes.end() && size->second.width() > 40 && size->second.height() > 40)
@@ -591,14 +675,16 @@ void DockSidebars::expand(QDockWidget* dock)
 
 bool DockSidebars::isCollapsed(const QDockWidget* dock) const
 {
-    return mTabs.count(const_cast<QDockWidget*>(dock)) > 0;
+    auto* d = const_cast<QDockWidget*>(dock);
+    return mTabs.count(d) > 0 && !mOpen.count(d);
 }
 
 QStringList DockSidebars::collapsedNames() const
 {
     QStringList names;
     for (auto& [dock, tab] : mTabs)
-        names << dock->objectName();
+        if (!mOpen.count(dock))
+            names << dock->objectName();
     return names;
 }
 
@@ -633,8 +719,15 @@ void DockSidebars::rescueStranded()
 
 void DockSidebars::expandAll()
 {
-    while (!mTabs.empty())
-        expand(mTabs.begin()->first);
+    std::vector<QDockWidget*> all;
+    for (auto& [dock, tab] : mTabs)
+        all.push_back(dock);
+    // A layout change starts from no tabs at all: the ones it collapses come back, open panels' tabs don't.
+    for (QDockWidget* dock : all)
+    {
+        expand(dock);
+        dropTab(dock);
+    }
 }
 
 void DockSidebars::refreshStrips()
@@ -642,8 +735,7 @@ void DockSidebars::refreshStrips()
     for (auto& [area, bar] : mStrips)
     {
         // restoreState drops toolbars its state doesn't name, leaving them unplaced at the window's corner.
-        if (Qt::ToolBarArea toolArea = stripAreas().at(area).first; mWindow->toolBarArea(bar) != toolArea)
-            mWindow->addToolBar(toolArea, bar);
+        placeStrip(area, bar);
         bool any = false;
         for (auto& [dock, tab] : mTabs)
             any |= tab->parentWidget() == bar;

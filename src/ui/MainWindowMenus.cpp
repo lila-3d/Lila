@@ -3,6 +3,8 @@
 #include "ui/MenuSets.h"
 #include "ui/Shelf.h"
 
+#include <QToolBar>
+
 namespace lila::ui
 {
 using namespace mainWindowDetail;
@@ -489,8 +491,9 @@ void MainWindow::buildStatusBar()
     {
         auto* line = new StatusOutput([output] { revealDock(output); },
                                       [output] { return dockShowing(output); }, this);
-        // First, so the last output line reads from the window's left edge.
-        statusBar()->insertWidget(0, line, 1);
+        // At the left, after the bottom panels' tabs when they are already there, so the last output line reads first.
+        const bool tabs = statusBar()->findChild<QToolBar*>("sidebarStatus", Qt::FindDirectChildrenOnly) != nullptr;
+        statusBar()->insertWidget(tabs ? 1 : 0, line, 1);
         connect(output, &QDockWidget::visibilityChanged, line, qOverload<>(&QWidget::update));
     }
     installSpinScrub(this);

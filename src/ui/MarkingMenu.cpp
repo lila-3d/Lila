@@ -726,9 +726,13 @@ void MarkingMenu::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    // Grayscale only.
-    const QColor itemBg(44, 44, 44, 235), itemBorder(95, 95, 95), text(220, 220, 220);
-    const QColor hiBg(150, 150, 150, 245), hiText(15, 15, 15), disabledText(110, 110, 110);
+    // The theme's greys and selection colour, so the menu matches the panels it opens over.
+    const QColor itemBg = themeShade(44, 235), itemBorder = themeShade(80), text = themeColor("text");
+    QColor hiBg = themeColor("highlight");
+    hiBg.setAlpha(245);
+    const QColor hiText = themeColor("highlightText"), disabledText = themeColor("disabled");
+    const QColor shadow(0, 0, 0, 90);
+    constexpr qreal kCorner = 4;
 
     for (size_t li = 0; li < mLevels.size(); ++li)
     {
@@ -740,7 +744,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
         p.setBrush(themeShade(30, 200));
         p.drawEllipse(l.center, 5, 5);
 
-        auto drawItem = [&](const Item& it, bool hi, bool radial) {
+        auto drawItem = [&](const Item& it, bool hi) {
             if (it.column)
                 return;
             if (it.separator)
@@ -754,7 +758,11 @@ void MarkingMenu::paintEvent(QPaintEvent*)
             const bool boxHot = hi && top && mOnBox && !it.box.isEmpty() && (mOverflow >= 0 || (mOnBoxSince.isValid() && mOnBoxSince.elapsed() >= kBoxDwellMs));
             hi = hi && !boxHot;
             QPainterPath path;
-            path.addRoundedRect(it.rect, radial ? 4 : 2, radial ? 4 : 2);
+            path.addRoundedRect(it.rect, kCorner, kCorner);
+            // A hard 1px shadow under each item keeps it legible over a bright model.
+            p.setPen(Qt::NoPen);
+            p.setBrush(shadow);
+            p.drawPath(path.translated(0, 1.5));
             p.setPen(QPen(itemBorder, 1));
             p.setBrush(hi && top ? hiBg : itemBg);
             p.drawPath(path);
@@ -776,7 +784,7 @@ void MarkingMenu::paintEvent(QPaintEvent*)
                 {
                     p.setPen(Qt::NoPen);
                     p.setBrush(hiBg);
-                    p.drawRoundedRect(it.box.adjusted(1, 2, -2, -2), 2, 2);
+                    p.drawRoundedRect(it.box.adjusted(1, 2, -2, -2), kCorner - 1, kCorner - 1);
                 }
                 QRectF square = QRectF(0, 0, 12, 12);
                 square.moveCenter(it.box.center() - QPointF(1, 0));
@@ -786,9 +794,9 @@ void MarkingMenu::paintEvent(QPaintEvent*)
         };
         for (int i = 0; i < 8; ++i)
             if (l.compass[i])
-                drawItem(*l.compass[i], top && i == mSlot, true);
+                drawItem(*l.compass[i], top && i == mSlot);
         for (int i = 0; i < int(l.overflow.size()); ++i)
-            drawItem(l.overflow[i], top && i == mOverflow, l.overflow[i].outerSlot >= 0);
+            drawItem(l.overflow[i], top && i == mOverflow);
     }
 
     p.setOpacity(1.0);

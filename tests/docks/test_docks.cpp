@@ -649,3 +649,23 @@ TEST_CASE("revealing a floating dock that was never sized centres it at a usable
     CHECK_FALSE(panels::floatingMisplaced(dock));
     CHECK(dock->width() >= 200);
 }
+
+TEST_CASE("collapsing and revealing a tabbed dock keeps its width")
+{
+    Window w;
+    QDockWidget* attrs = w.docks["attributeEditor"];
+    attrs->raise();
+    settle();
+    w.win.resizeDocks({attrs}, {520}, Qt::Horizontal);
+    settle();
+    const int width = attrs->width();
+    for (int i = 0; i < 3; ++i)
+    {
+        w.sidebars->collapse(attrs);
+        settle();
+        w.sidebars->reveal(attrs);
+        settle();
+        CAPTURE(i);
+        CHECK(std::abs(attrs->width() - width) < 4);
+    }
+}

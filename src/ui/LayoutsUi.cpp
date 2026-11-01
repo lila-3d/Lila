@@ -99,6 +99,17 @@ LayoutController::LayoutController(QMainWindow* window, DockSidebars* sidebars, 
                       if (!cur.empty())
                           addToShelf(cur);
                   }, [] { return !layouts::current().empty(); }, "Adds a shelf button that switches to the current layout."});
+    actions::add({"window.layout.revertBuiltIn", "Revert to Built-in Layout", "Windows", [this] {
+                      std::string cur = layouts::current();
+                      std::optional<layouts::Entry> e = layouts::find(cur);
+                      if (!e || !e->shadowsBuiltIn)
+                          return;
+                      run("deleteLayout", {{"name", cur}});
+                      run("applyLayout", {{"name", cur}});
+                  }, [] {
+                      std::optional<layouts::Entry> e = layouts::find(layouts::current());
+                      return e && e->shadowsBuiltIn;
+                  }, "Drops your saved version of the current layout and applies the built-in one."});
     QPointer<LayoutController> self(this);
     mContributedListener = layouts::contributed().addListener([self](RegistryChange, const std::string&, const std::string&) {
         if (self)
@@ -201,6 +212,11 @@ void LayoutController::fillMenu()
     mMenu->addAction(icon("pencil"), "Manage Layouts...", this, [] { actions::run(json("window.layout.manage")); });
     mMenu->addSeparator();
     mMenu->addAction("Reset to Default", this, [] { actions::run(json("window.resetLayout")); });
+    std::optional<layouts::Entry> current = layouts::find(cur);
+    QAction* revert = mMenu->addAction("Revert to Built-in", this, [] { actions::run(json("window.layout.revertBuiltIn")); });
+    revert->setEnabled(current && current->shadowsBuiltIn);
+    revert->setStatusTip(current && current->shadowsBuiltIn ? QString("Drop your saved %1 layout and use the built-in one").arg(QString::fromStdString(cur))
+                                                           : QString("The current layout is not a saved version of a built-in one"));
 }
 
 void LayoutController::refreshSwitcher()
@@ -292,8 +308,11 @@ json LayoutController::capture() const
             collapsed.push_back(name.toStdString());
     json tabSizes = json::object();
     if (mSidebars)
+    {
+        mSidebars->rememberShownSizes();
         for (auto& [name, size] : mSidebars->tabSizes())
             tabSizes[name.toStdString()] = size;
+    }
     QDockWidget* shelf = dock("shelf");
     return {{"version", 1},
             {"tabSizes", std::move(tabSizes)},
@@ -388,6 +407,11 @@ void LayoutController::apply(const json& layout)
             if (size.is_number_integer())
                 tabSizes[QString::fromStdString(name)] = size.get<int>();
         mSidebars->setTabSizes(std::move(tabSizes));
+        // The state just restored holds the sizes the layout was saved at; the remembered ones may predate them.
+        QTimer::singleShot(0, mSidebars, [sidebars = QPointer<DockSidebars>(mSidebars)] {
+            if (sidebars)
+                sidebars->rememberShownSizes();
+        });
     }
     else if (layout.contains("preset"))
         applyPreset(layout["preset"]);
@@ -418,7 +442,11 @@ void LayoutController::apply(const json& layout)
             QDockWidget* d = dock(QString::fromStdString(name));
             if (!d || d->isHidden() || d->isFloating() || !s.is_object())
                 continue;
-            if (s.contains("width"))
+            // "fit": as narrow as the panel goes, for toolkits whose fixed rows drop to icons rather than reflow; otherwise a
+            // share of the window.
+            if (s.value("width", json()) == "fit")
+                window->resizeDocks({d}, {d->minimumSizeHint().width()}, Qt::Horizontal);
+            else if (s.contains("width") && s["width"].is_number())
                 window->resizeDocks({d}, {int(s["width"].get<double>() * window->width())}, Qt::Horizontal);
             if (s.contains("height"))
                 window->resizeDocks({d}, {int(s["height"].get<double>() * window->height())}, Qt::Vertical);
@@ -449,8 +477,9 @@ void LayoutController::saveAs()
     auto* v = new QVBoxLayout(&dlg);
     v->addWidget(new QLabel("Name"));
     auto* name = new QLineEdit;
+    // The current layout's name, built-ins included: saving over a built-in is how most people make it their own.
     std::string cur = layouts::current();
-    if (std::optional<layouts::Entry> e = layouts::find(cur); e && e->origin != layouts::Origin::BuiltIn)
+    if (layouts::find(cur))
         name->setText(QString::fromStdString(cur));
     name->selectAll();
     v->addWidget(name);
@@ -468,8 +497,13 @@ void LayoutController::saveAs()
         }
         layouts::Origin scope = inFolder->isChecked() ? layouts::Origin::Workspace : layouts::Origin::User;
         std::optional<layouts::Entry> existing = layouts::find(n);
-        bool clash = existing && existing->origin == scope;
-        if (clash && QMessageBox::question(&dlg, "Save Layout", QString("Replace the %1 layout?").arg(QString::fromStdString(n))) != QMessageBox::Yes)
+        const bool builtIn = existing && existing->origin == layouts::Origin::BuiltIn;
+        QString question;
+        if (builtIn)
+            question = QString("Replace the built-in %1 layout? Manage Layouts can revert it.").arg(QString::fromStdString(n));
+        else if (existing && existing->origin == scope)
+            question = QString("Replace the %1 layout?").arg(QString::fromStdString(n));
+        if (!question.isEmpty() && QMessageBox::question(&dlg, "Save Layout", question) != QMessageBox::Yes)
             return;
         dlg.accept();
     });

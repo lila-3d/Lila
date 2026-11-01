@@ -7,6 +7,7 @@
 #include <QWidget>
 
 #include <map>
+#include <set>
 #include <string>
 
 class QDockWidget;
@@ -93,7 +94,9 @@ private:
 
 /**
  * Collapsing a docked panel hides it and leaves a tab on a thin strip along its window edge; clicking the tab brings it
- * back where it was. Collapsed panels persist through the layout prefs.
+ * back where it was. The tab stays, checked, while the panel is open, so the same click collapses it again; it goes when
+ * the panel is moved, floated or closed. The bottom strip sits at the left of the status bar rather than in a band of
+ * its own. Collapsed panels persist through the layout prefs.
  */
 class LILA_UI_API DockSidebars : public QObject
 {
@@ -124,6 +127,8 @@ public:
      */
     std::map<QString, int> tabSizes() const { return mTabSizes; }
     void setTabSizes(std::map<QString, int> sizes) { mTabSizes = std::move(sizes); }
+    /** Takes the size of every docked panel showing now as the one it comes back at, over any remembered earlier. */
+    void rememberShownSizes();
 
 Q_SIGNALS:
     void changed();
@@ -133,7 +138,13 @@ protected:
 
 private:
     QToolBar* strip(Qt::DockWidgetArea area);
+    /** Puts a strip on its window edge, or the bottom one into the status bar; false when it already was. */
+    bool placeStrip(Qt::DockWidgetArea area, QToolBar* bar);
     void refreshStrips();
+    /** Removes the dock's strip tab, open or collapsed. */
+    void dropTab(QDockWidget* dock);
+    /** Once the current layout change settles, drops an open dock's tab if the dock was closed, floated or moved. */
+    void dropStaleTabLater(QDockWidget* dock);
     void hookTabBars();
     QDockWidget* dockForTab(QTabBar* bar, int index) const;
     void rememberSize(QDockWidget* dock);
@@ -144,6 +155,8 @@ private:
     QMainWindow* mWindow;
     std::map<Qt::DockWidgetArea, QToolBar*> mStrips;
     std::map<QDockWidget*, QWidget*> mTabs;
+    /** Docks whose strip tab stays while they are open. */
+    std::set<QDockWidget*> mOpen;
     std::map<QDockWidget*, QSize> mSizes;
     std::map<QString, int> mTabSizes;
     bool mPressOnCurrentTab = false;
