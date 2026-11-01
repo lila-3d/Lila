@@ -21,11 +21,17 @@ struct ViewInfo;
  */
 namespace viewportToast
 {
+enum class Kind
+{
+    Info,
+    Error, // red accent: something failed
+};
+
 /** Shows text in view, or in every viewport when view is null. A toast with the same text restarts instead of stacking. */
-LILA_UI_API void show(const QString& text, QWidget* view = nullptr, int durationMs = 2000);
+LILA_UI_API void show(const QString& text, QWidget* view = nullptr, int durationMs = 2000, Kind kind = Kind::Info);
 
 /** Shows text in the active viewport, or in every viewport when there is none. */
-LILA_UI_API void showActive(const QString& text, int durationMs = 2000);
+LILA_UI_API void showActive(const QString& text, int durationMs = 2000, Kind kind = Kind::Info);
 
 /** Sets what showActive() and the viewportToast command target. */
 LILA_UI_API void setActive(std::function<QWidget*()> active);

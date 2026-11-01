@@ -1,0 +1,14 @@
+{
+    "id": "GoZ",
+    "name": "GoZ",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "Send meshes to ZBrush and back with GoZ, and import and export .GoZ files.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "GoZ.dll",
+        "linux": "GoZ.so",
+        "macos": "GoZ.dylib"
+    },
+    "enabledByDefault": true
+}

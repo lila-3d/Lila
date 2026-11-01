@@ -26,6 +26,7 @@ struct Toast
     QPointer<QWidget> view;
     bool everyView = false;
     qint64 expires = 0;
+    Kind kind = Kind::Info;
 };
 
 std::function<QWidget*()>& activeProvider()
@@ -69,19 +70,19 @@ QTimer& ticker()
 }
 } // namespace
 
-void show(const QString& text, QWidget* view, int durationMs)
+void show(const QString& text, QWidget* view, int durationMs, Kind kind)
 {
     const qint64 expires = clock().elapsed() + std::max(durationMs, 1);
     std::erase_if(toasts(), [&](const Toast& t) { return t.text == text && t.view == view && t.everyView == !view; });
-    toasts().push_back({text, view, !view, expires});
+    toasts().push_back({text, view, !view, expires, kind});
     if (!ticker().isActive())
         ticker().start();
     viewportTools::requestRedraw();
 }
 
-void showActive(const QString& text, int durationMs)
+void showActive(const QString& text, int durationMs, Kind kind)
 {
-    show(text, activeProvider() ? activeProvider()() : nullptr, durationMs);
+    show(text, activeProvider() ? activeProvider()() : nullptr, durationMs, kind);
 }
 
 void setActive(std::function<QWidget*()> active)
@@ -105,17 +106,19 @@ void registerCommands()
                    .defaultValue = 2.0,
                    .doc = "Seconds before it is gone, including the fade.",
                    .min = 0.1,
-                   .max = 60.0}},
+                   .max = 60.0},
+                  {.name = "error", .shortName = "e", .type = ArgType::Bool, .doc = "Mark it as a failure, with a red accent."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string() || a.positional[0].get<std::string>().empty())
                 throw CommandError("viewportToast: text expected");
             const QString text = QString::fromStdString(a.positional[0].get<std::string>());
             const int ms = int(a.get<double>("duration") * 1000.0);
+            const Kind kind = a.get<bool>("error") ? Kind::Error : Kind::Info;
             if (a.get<bool>("all"))
-                show(text, nullptr, ms);
+                show(text, nullptr, ms, kind);
             else
-                showActive(text, ms);
+                showActive(text, ms, kind);
             return nullptr;
         },
         .examples = {"viewportToast(\"Exported 12 meshes\")", "viewportToast(\"Render done\", all=True, duration=4)"},
@@ -144,7 +147,8 @@ void draw(OverlayPainter& p, const ViewInfo& info, const QWidget* view, const st
                 }
         }
         p.rect(r, {0.08f, 0.08f, 0.08f, 0.82f * alpha});
-        p.rect(QRectF(r.left(), r.top(), 3.0, r.height()), {0.35f, 0.65f, 1.0f, alpha});
+        const bool error = it->kind == Kind::Error;
+        p.rect(QRectF(r.left(), r.top(), 3.0, r.height()), error ? glm::vec4(1.0f, 0.35f, 0.3f, alpha) : glm::vec4(0.35f, 0.65f, 1.0f, alpha));
         p.text(QPointF(r.left() + 11.0, r.top() + 17.5), it->text, {0.95f, 0.95f, 0.95f, alpha});
         bottom = r.top() - kGap;
     }
