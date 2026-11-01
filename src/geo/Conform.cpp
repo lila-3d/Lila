@@ -251,7 +251,7 @@ glm::dvec2 onPolygon(double theta, double start, int sides, const glm::dvec2& c,
     return glm::mix(p0, p1, t);
 }
 
-Points circleOfLoop(const Points& pts, const CircleOptions& o)
+Points circleOfLoop(const Points& pts, const CircleOptions& o, std::vector<double>* radii)
 {
     const size_t n = pts.size();
     if (n < 3)
@@ -276,6 +276,8 @@ Points circleOfLoop(const Points& pts, const CircleOptions& o)
         phi[i] = std::atan2(q[i].y - c.y, q[i].x - c.x);
     }
     r = o.radius > 0.0 ? o.radius : r / double(n);
+    if (radii)
+        radii->push_back(r);
     std::vector<double> f = chainFractions(pts, true, o.spacing == Spacing::Even ? Spacing::Even : Spacing::Keep);
     const double rot = glm::radians(o.rotation);
     const double start = bestStart(phi, f) + rot;
@@ -290,7 +292,7 @@ Points circleOfLoop(const Points& pts, const CircleOptions& o)
 }
 
 /** An open chain onto the arc of its best-fit circle between its ends; unchanged when it is straight. */
-Points circleOfArc(const Points& pts, const CircleOptions& o)
+Points circleOfArc(const Points& pts, const CircleOptions& o, std::vector<double>* radii)
 {
     const size_t n = pts.size();
     if (n < 3)
@@ -304,6 +306,8 @@ Points circleOfArc(const Points& pts, const CircleOptions& o)
     if (!fitCircle(q, c, fitted))
         return pts;
     const double r = o.radius > 0.0 ? o.radius : fitted;
+    if (radii)
+        radii->push_back(r);
     std::vector<double> phi(n);
     phi[0] = std::atan2(q[0].y - c.y, q[0].x - c.x);
     for (size_t i = 1; i < n; ++i)
@@ -745,7 +749,7 @@ PointMoves straighten(const Mesh& mesh, const ShapeSelection& sel, const Straigh
     return moves;
 }
 
-PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const CircleOptions& opts)
+PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const CircleOptions& opts, std::vector<double>* radii)
 {
     LILA_ZONE();
 
@@ -753,12 +757,12 @@ PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const Circle
     for (const EdgePath& c : sel.chains)
     {
         Points pts = positionsOf(mesh, c.points);
-        addMoves(moves, c.points, c.closed ? circleOfLoop(pts, opts) : circleOfArc(pts, opts));
+        addMoves(moves, c.points, c.closed ? circleOfLoop(pts, opts, radii) : circleOfArc(pts, opts, radii));
     }
     if (sel.loose.size() >= 3)
     {
         std::vector<Index> ids = angleOrder(mesh, sel.loose);
-        addMoves(moves, ids, circleOfLoop(positionsOf(mesh, ids), opts));
+        addMoves(moves, ids, circleOfLoop(positionsOf(mesh, ids), opts, radii));
     }
     return moves;
 }

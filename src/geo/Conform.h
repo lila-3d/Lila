@@ -69,9 +69,10 @@ struct CircleOptions
 };
 /**
  * Closed chains onto their best-fit circle, aligned to move the points least. Open chains become an arc between their
- * ends; loose points are taken in angle order as one loop.
+ * ends; loose points are taken in angle order as one loop. `radii`, when given, receives each circle's radius used.
  */
-LILA_SCENE_API PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const CircleOptions& opts = {});
+LILA_SCENE_API PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const CircleOptions& opts = {},
+                                      std::vector<double>* radii = nullptr);
 
 struct RectangleOptions
 {

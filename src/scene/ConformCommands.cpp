@@ -8,6 +8,7 @@
 #include "scene/Components.h"
 #include "scene/ConformTargets.h"
 #include "scene/Graph.h"
+#include "scene/LastOp.h"
 #include "scene/MeshNodes.h"
 #include "scene/SphereState.h"
 #include "scene/Transform.h"
@@ -100,6 +101,18 @@ void conformSelected(const char* command, const char* what, double strength, con
     }, allowWhole);
     if (edited == 0)
         throw CommandError(std::format("{}: {}", command, what));
+}
+
+/** With radius 0 (fit), the fitted radius becomes the op's radius, so adjusting it starts from the circle the loops already make. */
+void recordFittedRadius(const Args& a, const std::vector<double>& radii)
+{
+    if (a.get<double>("radius", 0.0) > 0.0 || radii.empty())
+        return;
+    // Loops of different sizes keep fitting each their own; one radius would force them all to it.
+    const auto [lo, hi] = std::minmax_element(radii.begin(), radii.end());
+    if (*hi - *lo > 1e-3 * *hi)
+        return;
+    lastOp::limitFlag("radius", std::round(*hi * 1000.0) / 1000.0);
 }
 
 SphereState& sphereState()
@@ -259,12 +272,19 @@ void registerConformCommands()
                   {"flatten", "", T::Bool, true, "Put the points in the circle's plane; off keeps each one's height off it."},
                   strength},
         .run = [](const Args& a) -> json {
+            std::vector<double> radii;
             conformSelected("polyCircularize", "select edge loops, faces or vertices to make round", a.get<double>("strength", 1.0),
                             [&](const geo::Mesh& m, const glm::dmat4& world, const geo::ShapeSelection& sel) {
                                 geo::CircleOptions o{spacingArg(a, "even"), toLocalLength(world, std::max(0.0, a.get<double>("radius"))),
                                                      a.get<double>("rotation"), a.get<int>("sides"), a.get<bool>("flatten", true)};
-                                return geo::circularize(m, sel, o);
+                                std::vector<double> local;
+                                geo::PointMoves moves = geo::circularize(m, sel, o, &local);
+                                const double toWorld = toLocalLength(world, 1.0) > 1e-12 ? 1.0 / toLocalLength(world, 1.0) : 1.0;
+                                for (double r : local)
+                                    radii.push_back(r * toWorld);
+                                return moves;
                             });
+            recordFittedRadius(a, radii);
             return nullptr;
         },
     });

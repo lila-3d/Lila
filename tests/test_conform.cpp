@@ -79,7 +79,8 @@ TEST_CASE("conform: circularize a face region keeps the border on one circle and
     for (Index f = 0; f < plane.faceCapacity(); ++f)
         all.push_back(f);
     geo::ShapeSelection s = geo::shapeOfFaces(plane, all);
-    geo::PointMoves moves = geo::circularize(plane, s, {});
+    std::vector<double> used;
+    geo::PointMoves moves = geo::circularize(plane, s, {}, &used);
     CHECK(moves.size() == 16);
     geo::followInterior(plane, s.interior, moves);
     CHECK(moves.size() == 25);
@@ -97,6 +98,8 @@ TEST_CASE("conform: circularize a face region keeps the border on one circle and
     }
     CHECK(spreadOf(radii) < 1e-6);
     CHECK(spreadOf(gaps) < 1e-6);
+    REQUIRE(used.size() == 1);
+    CHECK(used[0] == doctest::Approx(radii[0]));
     // The rectangle's mean radius, give or take.
     CHECK(radii[0] > 30.0);
     CHECK(radii[0] < 50.0);
