@@ -136,6 +136,44 @@ void fdSetBookmarkName(const QString& dir, const QString& name)
 
 QString fdClean(const QString& dir) { return dir.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(dir)); }
 
+/** A typed path with a leading ~ and %VAR%, $VAR and ${VAR} expanded; unset variables stay as typed. */
+QString fdExpand(QString path)
+{
+    if (path.startsWith('~') && (path.size() == 1 || path[1] == '/' || path[1] == '\\'))
+        path = QDir::homePath() + path.mid(1);
+    static const QRegularExpression var(R"re(%([A-Za-z_][A-Za-z0-9_()]*)%|\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*))re");
+    QString out;
+    qsizetype last = 0;
+    for (auto it = var.globalMatch(path); it.hasNext();)
+    {
+        const QRegularExpressionMatch m = it.next();
+        QString name = m.captured(1);
+        if (name.isEmpty())
+            name = m.captured(2);
+        if (name.isEmpty())
+            name = m.captured(3);
+        out += path.mid(last, m.capturedStart() - last);
+        out += qEnvironmentVariableIsSet(name.toLocal8Bit().constData()) ? qEnvironmentVariable(name.toLocal8Bit().constData())
+                                                                         : m.captured();
+        last = m.capturedEnd();
+    }
+    return out + path.mid(last);
+}
+
+/** The child of dir on the way to from ("C:/a" for dir "C:" ... from "C:/a/b"), or empty when from is not under dir. */
+QString fdChildToward(const QString& dir, const QString& from)
+{
+    if (from.isEmpty() || from == dir)
+        return {};
+    if (dir.isEmpty())
+        return from.startsWith('/') ? QString() : from.section('/', 0, 0) + '/';
+    const QString prefix = dir.endsWith('/') ? dir : dir + '/';
+    if (!from.startsWith(prefix, Qt::CaseInsensitive))
+        return {};
+    const qsizetype slash = from.indexOf('/', prefix.size());
+    return slash < 0 ? from : from.left(slash);
+}
+
 void fdSetRecentFiles(const QString& key, const QStringList& list)
 {
     json arr = json::array();
@@ -365,6 +403,8 @@ struct FileDialog::Impl
     QLabel* status = nullptr;
 
     QString dir;
+    /** The folder just left, highlighted when show() lands on one of its ancestors. */
+    QString revealChild;
     QStringList history;
     int historyPos = -1;
     QStringList result;
@@ -384,6 +424,7 @@ struct FileDialog::Impl
     void setHeaderModes();
     void rebuildCrumbs();
     void show(const QString& d, bool record);
+    void revealCameFrom();
     void applyTypeFilter();
     void queueCounts();
     void updateCounts();
@@ -675,7 +716,15 @@ void FileDialog::Impl::build(const QString& caption)
     QObject::connect(proxy, &QAbstractItemModel::rowsRemoved, q, [this] { queueCounts(); });
     QObject::connect(proxy, &QAbstractItemModel::layoutChanged, q, [this] { queueCounts(); });
     QObject::connect(proxy, &QAbstractItemModel::modelReset, q, [this] { queueCounts(); });
-    QObject::connect(fs, &QFileSystemModel::directoryLoaded, q, [this] { queueCounts(); });
+    QObject::connect(fs, &QFileSystemModel::directoryLoaded, q, [this](const QString& loaded) {
+        queueCounts();
+        // Sorting finishes only once the folder loads, which moves the came-from row.
+        if (fdClean(loaded) == dir)
+        {
+            revealCameFrom();
+            revealChild.clear();
+        }
+    });
     QObject::connect(fs, &QFileSystemModel::fileRenamed, q, [this] { queueCounts(); });
 
     auto shortcut = [&](const QKeySequence& keys, auto fn) {
@@ -1058,6 +1107,7 @@ void FileDialog::Impl::rebuildCrumbs()
 void FileDialog::Impl::show(const QString& raw, bool record)
 {
     const QString d = fdClean(raw);
+    const QString from = dir;
     status->hide();
     dir = d;
     if (record)
@@ -1073,6 +1123,8 @@ void FileDialog::Impl::show(const QString& raw, bool record)
     view->setRootIndex(proxy->mapFromSource(fs->index(d)));
     view->clearSelection();
     view->scrollToTop();
+    revealChild = fdChildToward(d, from);
+    revealCameFrom();
     back->setEnabled(historyPos > 0);
     forward->setEnabled(historyPos + 1 < history.size());
     up->setEnabled(!d.isEmpty());
@@ -1088,6 +1140,20 @@ void FileDialog::Impl::show(const QString& raw, bool record)
         (*it)->setSelected(FdKind((*it)->data(0, FdKindRole).toInt()) != FdKind::Header &&
                            (*it)->data(0, FdPathRole).toString() == d);
     queueCounts();
+}
+
+void FileDialog::Impl::revealCameFrom()
+{
+    if (revealChild.isEmpty())
+        return;
+    const QModelIndex index = proxy->mapFromSource(fs->index(revealChild));
+    if (!index.isValid())
+        return;
+    // A highlight only: picking a folder would otherwise fill the Folder field and change what OK returns.
+    const QString typed = name->text();
+    view->setCurrentIndex(index);
+    name->setText(typed);
+    view->scrollTo(index, QAbstractItemView::PositionAtCenter);
 }
 
 void FileDialog::Impl::applyTypeFilter()
@@ -1177,9 +1243,7 @@ void FileDialog::Impl::editPath()
 
 void FileDialog::Impl::commitPathEdit()
 {
-    QString text = pathEdit->text().trimmed();
-    if (text.startsWith('~'))
-        text = QDir::homePath() + text.mid(1);
+    const QString text = fdExpand(pathEdit->text().trimmed());
     const QFileInfo fi(text);
     if (fi.isDir())
         show(fi.absoluteFilePath(), true);
@@ -1640,8 +1704,7 @@ bool FileDialog::tryAccept()
         return false;
     };
     auto absolute = [this](QString n) {
-        if (n.startsWith('~'))
-            n = QDir::homePath() + n.mid(1);
+        n = fdExpand(n);
         return fdClean(QFileInfo(n).isAbsolute() ? n : m->dir + '/' + n);
     };
     auto finish = [this](QStringList paths) {
