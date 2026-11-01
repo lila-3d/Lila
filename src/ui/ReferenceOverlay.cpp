@@ -47,8 +47,10 @@
 
 #include <glm/gtc/constants.hpp>
 
+#include <array>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace lila::ui::referenceOverlays
@@ -118,6 +120,8 @@ struct State
     DragKind drag = DragKind::None;
     int cropEdge = 0; // 0 top, 1 right, 2 bottom, 3 left, of the quad as shown
     int hoverButton = -1; // the HUD button under the cursor, for its tooltip
+    /** Lines the current move snapped to, in view pixels: x positions of vertical lines, y of horizontal ones. */
+    std::vector<double> guideX, guideY;
     std::string dragOverlay;
     QPointF press;
     Overlay start;
@@ -224,6 +228,62 @@ void toNdc(const ViewInfo& view, const std::array<glm::dvec2, 4>& px, glm::vec3 
         out[k] = glm::vec3(px[size_t(k)].x / view.width * 2.0 - 1.0, px[size_t(k)].y / view.height * 2.0 - 1.0, 0.0);
 }
 
+constexpr const char* kSnapOverlaysPref = "/references/snapOverlays";
+constexpr const char* kSnapGridPref = "/references/snapGrid";
+/** Grid spacing in view heights. */
+constexpr const char* kGridPref = "/references/gridSpacing";
+
+bool snapToOverlays()
+{
+    return PrefStore::get().value<bool>("general", kSnapOverlaysPref, true);
+}
+
+bool snapToGrid()
+{
+    return PrefStore::get().value<bool>("general", kSnapGridPref, false);
+}
+
+double gridSpacing(double viewHeight)
+{
+    return std::max(4.0, PrefStore::get().value<double>("general", kGridPref, 0.05) * viewHeight);
+}
+
+/** Left, centre and right (or top, middle, bottom) of the quad's screen bounds along one axis. */
+std::array<double, 3> spans(const std::array<glm::dvec2, 4>& c, int axis)
+{
+    double lo = c[0][axis], hi = lo;
+    for (const glm::dvec2& p : c)
+    {
+        lo = std::min(lo, p[axis]);
+        hi = std::max(hi, p[axis]);
+    }
+    return {lo, (lo + hi) * 0.5, hi};
+}
+
+/**
+ * The nudge along one axis that puts an edge or the centre of the moving quad on the nearest target within reach, and
+ * the target it lands on. Grid targets are taken for the quad's edges only.
+ */
+std::pair<double, std::optional<double>> snapAxis(const std::array<double, 3>& moving, const std::vector<double>& targets, double grid, double reach)
+{
+    double best = reach;
+    std::pair<double, std::optional<double>> out{0.0, std::nullopt};
+    auto consider = [&](double from, double to) {
+        if (std::abs(to - from) < best)
+        {
+            best = std::abs(to - from);
+            out = {to - from, to};
+        }
+    };
+    for (double m : moving)
+        for (double t : targets)
+            consider(m, t);
+    if (grid > 0.0)
+        for (double m : {moving[0], moving[2]})
+            consider(m, std::round(m / grid) * grid);
+    return out;
+}
+
 struct HudButton
 {
     const char* id;
@@ -248,6 +308,8 @@ const HudButton kHud[] = {
     {"goto", "camera", "Go to View", 1, "Put the camera back at the angle the overlay is bound to"},
     {"lens", "aperture", "Lens", 1, "Set the view's lens to the photo's focal length, so the perspective matches"},
     {"park", "layout-sidebar-right", "Park", 1, "Line every overlay up opaque down the right edge, beside the model"},
+    {"snap", "magnet", "Snap", 1, "Snap moved overlays to the edges and centres of the others (hold Ctrl to move freely)"},
+    {"grid", "grid-dots", "Grid", 1, "Snap moved overlays to a grid (hold Ctrl to move freely)"},
     {"duplicate", "copy", "Duplicate", 1, "Copy this overlay, to show another part of the same sheet (crop each copy). Ctrl+D"},
     {"uncrop", "crop", "Full Image", 1, "Undo the crop and show the whole image"},
     {"remove", "trash", "Remove", 1, "Remove this overlay (Ctrl+Z brings it back)"},
@@ -336,7 +398,7 @@ void drawKeys(OverlayPainter& p, const ViewInfo& view)
 {
     const QString o = keyOr("referenceOverlay.keyDown", "O");
     const std::pair<QString, QString> rows[] = {
-        {"Drag the image", "Move"},
+        {"Drag the image", "Move (Ctrl: no snapping)"},
         {"Drag a corner", "Scale"},
         {"Drag an edge", "Crop"},
         {"Drag the knob", "Rotate (Shift snaps to 15\u00B0)"},
@@ -413,6 +475,10 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
         }
         else if (std::string_view(kHud[i].id) == "ghost")
             on = o.ghost;
+        else if (std::string_view(kHud[i].id) == "snap")
+            on = snapToOverlays();
+        else if (std::string_view(kHud[i].id) == "grid")
+            on = snapToGrid();
         else if (std::string_view(kHud[i].id) == "hide")
         {
             iconName = o.visible ? "eye" : "eye-off";
@@ -458,6 +524,26 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
         }
 }
 
+/** The grid, faint, and the lines the move snapped to, while an overlay is being moved. */
+void drawGuides(OverlayPainter& p, const ViewInfo& view)
+{
+    const State& st = state();
+    if (snapToGrid())
+    {
+        const double g = gridSpacing(view.height);
+        const glm::vec4 faint(1.0f, 1.0f, 1.0f, 0.12f);
+        for (double x = g; x < view.width; x += g)
+            p.line(QPointF(x, 0), QPointF(x, view.height), 1.0f, faint);
+        for (double y = g; y < view.height; y += g)
+            p.line(QPointF(0, y), QPointF(view.width, y), 1.0f, faint);
+    }
+    const glm::vec4 guide(1.0f, 0.35f, 0.75f, 0.9f);
+    for (double x : st.guideX)
+        p.line(QPointF(x, 0), QPointF(x, view.height), 1.0f, guide);
+    for (double y : st.guideY)
+        p.line(QPointF(0, y), QPointF(view.width, y), 1.0f, guide);
+}
+
 void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
 {
     LILA_ZONE();
@@ -501,6 +587,8 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
         if (o->ghost)
             s.xray = true;
     }
+    if (st.drag == DragKind::Move && st.start.view == view.camera)
+        drawGuides(p, view);
     if (st.adjust && st.adjustView == view.camera)
         if (const Overlay* o = set.overlay(activeIn(view.camera)))
             drawHud(p, view, *o);
@@ -644,7 +732,7 @@ void parkView(const std::string& view)
     refs::apply(std::move(set), "Park Reference Overlays");
 }
 
-/** A copy of the overlay, nudged down and right so both show, made the active one. */
+/** A copy of the overlay in the same place, made the active one. */
 void duplicate(const std::string& id)
 {
     refs::Set next = refs::current();
@@ -653,11 +741,11 @@ void duplicate(const std::string& id)
         return;
     Overlay copy = *o;
     copy.id = next.newOverlayId();
-    copy.offset += glm::dvec2(0.04);
     copy.bound = {};
     next.overlays.push_back(copy);
     refs::apply(std::move(next), "Duplicate Reference Overlay");
     state().active[copy.view] = copy.id;
+    viewportToast::showActive("Reference overlay duplicated: the copy is on top, drag it away or crop it", 3000);
 }
 
 void uncrop(const std::string& id)
@@ -697,6 +785,14 @@ void hudAction(const std::string& button, const std::string& view)
         uncrop(id);
     else if (button == "docs")
         docs::open("reference-images");
+    else if (button == "snap" || button == "grid")
+    {
+        const char* pref = button == "snap" ? kSnapOverlaysPref : kSnapGridPref;
+        const bool on = !(button == "snap" ? snapToOverlays() : snapToGrid());
+        PrefStore::get().set("general", pref, on);
+        viewportToast::showActive(QString(button == "snap" ? "Snapping to other overlays %1" : "Snapping to the grid %1").arg(on ? "on" : "off"));
+        redraw();
+    }
     else if (button == "hide")
     {
         const bool show = !o->visible;
@@ -926,7 +1022,37 @@ void moveDrag(QMouseEvent* e, const ViewInfo& view)
     edit(st.dragOverlay, [&](Overlay& o) {
         switch (st.drag)
         {
-        case DragKind::Move: o.offset = s0.offset + (px - press) / std::max(size.y, 1.0); break;
+        case DragKind::Move:
+        {
+            o.offset = s0.offset + (px - press) / std::max(size.y, 1.0);
+            st.guideX.clear();
+            st.guideY.clear();
+            const bool free = e->modifiers() & Qt::ControlModifier;
+            const bool others = snapToOverlays() && !free, grid = snapToGrid() && !free;
+            if (!others && !grid)
+                break;
+            std::vector<double> tx, ty;
+            if (others)
+                for (const Overlay* other : refs::current().overlaysIn(view.camera))
+                    if (other->id != o.id && other->visible)
+                    {
+                        const auto c = cornersOf(*other, size);
+                        for (double v : spans(c, 0))
+                            tx.push_back(v);
+                        for (double v : spans(c, 1))
+                            ty.push_back(v);
+                    }
+            const auto c = cornersOf(o, size);
+            const double spacing = grid ? gridSpacing(size.y) : 0.0;
+            const auto [dx, gx] = snapAxis(spans(c, 0), tx, spacing, 8.0);
+            const auto [dy, gy] = snapAxis(spans(c, 1), ty, spacing, 8.0);
+            o.offset += glm::dvec2(dx, dy) / std::max(size.y, 1.0);
+            if (gx)
+                st.guideX.push_back(*gx);
+            if (gy)
+                st.guideY.push_back(*gy);
+            break;
+        }
         case DragKind::Scale: o.scale = std::clamp(s0.scale * std::exp((px.x - press.x) / 250.0), 0.02, 20.0); break;
         case DragKind::ScaleCorner:
         {
@@ -1007,6 +1133,8 @@ void releaseDrag(QMouseEvent*, const ViewInfo&)
 {
     State& st = state();
     const DragKind kind = std::exchange(st.drag, DragKind::None);
+    st.guideX.clear();
+    st.guideY.clear();
     const Overlay* now = refs::current().overlay(st.dragOverlay);
     if (kind == DragKind::None || !now)
         return;

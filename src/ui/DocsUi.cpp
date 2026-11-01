@@ -55,6 +55,7 @@
 #include <functional>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -1389,12 +1390,36 @@ std::string pageTitle(const std::string& page)
     return docs::pageTitle(root ? root->dir / "docs" : fs::path(), page);
 }
 
+namespace
+{
+/** A sidebar title in the title case of menu labels: "Reference images" reads "Reference Images"; small words and names with dots stay. */
+std::string labelCase(const std::string& title)
+{
+    static const std::set<std::string> kSmall = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "vs"};
+    std::string out;
+    size_t i = 0;
+    while (i < title.size())
+    {
+        const size_t end = std::min(title.find(' ', i), title.size());
+        std::string word = title.substr(i, end - i);
+        const bool first = out.empty();
+        if (!word.empty() && word.find('.') == std::string::npos && (first || !kSmall.contains(word)))
+            word[0] = char(std::toupper(static_cast<unsigned char>(word[0])));
+        out += word;
+        if (end < title.size())
+            out += ' ';
+        i = end + 1;
+    }
+    return out;
+}
+} // namespace
+
 std::string pageAction(const std::string& page)
 {
     std::string id = pageActionId(page);
     if (!actions::find(id))
     {
-        std::string title = pageTitle(page);
+        std::string title = labelCase(pageTitle(page));
         actions::add({.id = id,
                       .label = "Open " + title + " Docs",
                       .category = "Help",
