@@ -40,6 +40,8 @@ struct Sample
     std::string scene;        // file name of the .lila setup.py writes
     std::string camera;       // the scene's camera the viewport looks through when it opens; empty frames the scene
     bool featured = false;    // listed first and drawn with an accent border
+    /** The importer setup.py converts with ("blend"); the scene is converted again when that importer's version changes. */
+    std::string converter;
     fs::path folder;          // resources/samples/<id>
     fs::path thumbnail;       // thumb.png in folder; empty when there is none
 };
@@ -57,6 +59,10 @@ LILA_SCENE_API fs::path installDir(const Sample& s);
 LILA_SCENE_API bool unpacked(const Sample& s);
 LILA_SCENE_API fs::path scenePath(const Sample& s);
 LILA_SCENE_API bool installed(const Sample& s);
+/** Registers an importer's version, so samples it converted with an older version are set up again. */
+LILA_SCENE_API void setConverterVersion(const std::string& converter, const std::string& version);
+/** Records that the scene was just set up with the current converter. */
+LILA_SCENE_API void stamp(const Sample& s);
 
 /** "1.2 GB" */
 LILA_SCENE_API std::string formatSize(std::uint64_t bytes);

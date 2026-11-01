@@ -310,7 +310,8 @@ bool setUp(const Sample& s, const fs::path& source, std::string& why)
                              ", 'SOURCE': " + json(paths::toUtf8(source)).dump() +
                              ", 'OUT': " + json(paths::toUtf8(io::samples::scenePath(s))).dump() +
                              "}\nexec(compile(open(_g['__file__'], encoding='utf-8').read(), _g['__file__'], 'exec'), _g)\n";
-    if (!python::run(code, "<sample setup>").ok || !io::samples::installed(s))
+    std::error_code ec;
+    if (!python::run(code, "<sample setup>").ok || !fs::is_regular_file(io::samples::scenePath(s), ec))
     {
         why = "setting up the scene failed; the Script Output has the details";
         return false;
@@ -385,6 +386,7 @@ void fetch(QWidget* parent, const Sample& s, std::function<bool()> mayReplaceSce
     }
     if (!setUp(s, source, why))
         return fail(why);
+    io::samples::stamp(s);
     writeCredit(s);
     log::info("sample {} ready in {}", s.id, paths::toUtf8(dir));
     ready();

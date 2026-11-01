@@ -340,5 +340,89 @@ def make_curves():
     oracle("curves")
 
 
-for fn in (make_basic, make_modifiers, make_rig, make_instances, make_curves):
+def make_constrained():
+    """A deform bone posed only by a constraint from a rotated control bone, as production rigs do."""
+    reset()
+    arm = bpy.data.armatures.new("Ctrl")
+    rig = link(bpy.data.objects.new("CtrlRig", arm))
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    root = arm.edit_bones.new("ROOT")
+    root.head, root.tail = (0, 0, 0), (0, 0, 0.5)
+    ctrl = arm.edit_bones.new("CTRL")
+    ctrl.head, ctrl.tail, ctrl.parent = (0, 0, 0.5), (0, 0, 1.5), root
+    ctrl.use_deform = False
+    deform = arm.edit_bones.new("DEF")
+    deform.head, deform.tail, deform.parent = (0, 0, 0.5), (0, 0, 1.5), root
+    bpy.ops.object.mode_set(mode="OBJECT")
+    rig.pose.bones["CTRL"].rotation_mode = "XYZ"
+    rig.pose.bones["CTRL"].rotation_euler = (math.radians(50), 0, math.radians(20))
+    c = rig.pose.bones["DEF"].constraints.new("COPY_TRANSFORMS")
+    c.target, c.subtarget = rig, "CTRL"
+
+    def column(bm):
+        bmesh.ops.create_cube(bm, size=0.3)
+        for v in bm.verts:
+            v.co.z = v.co.z + 1.0
+    body = mesh_object("Stick", column)
+    g0 = body.vertex_groups.new(name="ROOT")
+    g1 = body.vertex_groups.new(name="DEF")
+    for v in body.data.vertices:
+        (g1 if v.co.z > 1.0 else g0).add([v.index], 1.0, "REPLACE")
+    body.modifiers.new("Armature", "ARMATURE").object = rig
+    deps = bpy.context.evaluated_depsgraph_get()
+    m = body.evaluated_get(deps).to_mesh()
+    top = max(range(len(m.vertices)), key=lambda i: (m.vertices[i].co.z, m.vertices[i].co.x, m.vertices[i].co.y))
+    pts = [list(body.matrix_world @ v.co) for v in m.vertices]
+    body.evaluated_get(deps).to_mesh_clear()
+    oracle("constrained", {"points": pts, "deformBone": "DEF"})
+
+
+def make_cards():
+    """Shading only seen in stylised scenes: an emission card cut out by its image's alpha, a Transparent-only card, a fog volume."""
+    reset()
+    img = bpy.data.images.new("card", 4, 4, alpha=True)
+    img.pixels = [1.0 if k < 3 else float(i % 2) for i in range(16) for k in range(4)]
+    img.pack()
+
+    def material(name, build):
+        m = bpy.data.materials.new(name)
+        m.use_nodes = True
+        nt = m.node_tree
+        for n in list(nt.nodes):
+            if n.bl_idname != "ShaderNodeOutputMaterial":
+                nt.nodes.remove(n)
+        build(nt, nt.nodes["Material Output"])
+        return m
+
+    def card(nt, out):
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = img
+        em = nt.nodes.new("ShaderNodeEmission")
+        tr = nt.nodes.new("ShaderNodeBsdfTransparent")
+        mix = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(tex.outputs["Color"], em.inputs["Color"])
+        nt.links.new(tex.outputs["Alpha"], mix.inputs["Fac"])
+        nt.links.new(tr.outputs["BSDF"], mix.inputs[1])
+        nt.links.new(em.outputs["Emission"], mix.inputs[2])
+        nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
+
+    def clear(nt, out):
+        nt.links.new(nt.nodes.new("ShaderNodeBsdfTransparent").outputs["BSDF"], out.inputs["Surface"])
+
+    def fog(nt, out):
+        nt.links.new(nt.nodes.new("ShaderNodeVolumePrincipled").outputs["Volume"], out.inputs["Volume"])
+
+    for i, (name, build) in enumerate((("Card", card), ("Clear", clear), ("Fog", fog))):
+        ob = mesh_object(name, lambda bm: bmesh.ops.create_grid(bm, x_segments=1, y_segments=1, size=1.0) if name != "Fog" else cube(bm, 10.0))
+        ob.location = (i * 3.0, 0, 0)
+        ob.data.materials.append(material(name, build))
+    # Hidden with the outliner's eye: stored on the view layer, not the object.
+    eye = mesh_object("EyeHidden", cube)
+    eye.location = (0, 5, 0)
+    eye.hide_set(True)
+    oracle("cards")
+
+
+for fn in (make_basic, make_modifiers, make_rig, make_instances, make_curves, make_constrained, make_cards):
     fn()

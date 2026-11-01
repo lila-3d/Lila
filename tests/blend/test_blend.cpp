@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <functional>
 
@@ -395,4 +396,146 @@ TEST_CASE("blend import: evaluate with Blender, when asked")
     const json& b = o["objects"]["Wave"]["bounds"];
     checkVec(lo, glm::min(point(b[0]), point(b[1])), 0.01);
     checkVec(hi, glm::max(point(b[0]), point(b[1])), 0.01);
+}
+
+TEST_CASE("blend import: a deform bone posed by a constraint keeps Blender's pose")
+{
+    for (const char* v : kVersions)
+    {
+        CAPTURE(v);
+        Graph& g = fresh();
+        load(v, "constrained");
+        const json o = oracle(v, "constrained");
+        g.evaluate();
+        MeshPtr m = outMesh(g, "Stick");
+        const glm::dmat4 w = worldOf(g, "Stick");
+        const json& pts = o["points"];
+        REQUIRE(m->numPoints() == pts.size());
+        for (size_t p = 0; p < pts.size(); ++p)
+        {
+            CAPTURE(p);
+            checkVec(glm::dvec3(w * glm::dvec4(m->position(geo::Index(p)), 1.0)), point(pts[p]), 0.05);
+        }
+    }
+}
+
+TEST_CASE("blend import: emission cards cut out by alpha; transparent and volume-only objects hidden")
+{
+    for (const char* v : kVersions)
+    {
+        CAPTURE(v);
+        Graph& g = fresh();
+        load(v, "cards");
+        MeshPtr mesh = outMesh(g, "Card");
+        REQUIRE(mesh->materialNames().size() == 1);
+        Node* card = materials::find(g, mesh->materialNames()[0]);
+        REQUIRE(card);
+        CHECK(card->as<int64_t>(material::kShadingModel) == int64_t(material::ShadingModel::Unlit));
+        CHECK(card->as<int64_t>(material::kBlendMode) == int64_t(material::BlendMode::Masked));
+        CHECK(fs::exists(fs::path(card->as<std::string>(material::kBaseColorMap))));
+        CHECK(fs::path(card->as<std::string>(material::kBaseColorMap)).extension() == ".png");
+        CHECK(node(g, "Card")->as<bool>(Transform::kVisibility));
+        CHECK_FALSE(node(g, "Clear")->as<bool>(Transform::kVisibility));
+        CHECK_FALSE(node(g, "Fog")->as<bool>(Transform::kVisibility));
+        CHECK_FALSE(node(g, "EyeHidden")->as<bool>(Transform::kVisibility));
+    }
+}
+
+TEST_CASE("blend probe" * doctest::skip())
+{
+    const char* file = std::getenv("LILA_BLEND_PROBE");
+    if (!file)
+        return;
+    Graph& g = fresh();
+    blend::ImportOptions opts;
+    if (std::getenv("LILA_BLEND_EVALUATE"))
+        opts.evaluate = "unsupported";
+    const blend::ImportResult r = blend::importBlend(g, fs::path(file), opts);
+    g.evaluate();
+    for (NodeId id : r.meshes)
+    {
+        Node* n = g.node(id);
+        MeshPtr m = std::get<MeshPtr>(g.value({id, MeshNode::kOutMesh, -1}));
+        if (!m)
+            continue;
+        const auto [lo, hi] = bounds(*m);
+        std::string mats;
+        for (const std::string& s : m->materialNames())
+        {
+            Node* mat = materials::find(g, s);
+            mats += s + (mat ? std::format("[sm{} bm{} op{} map:{}]", mat->as<int64_t>(material::kShadingModel), mat->as<int64_t>(material::kBlendMode),
+                                           mat->as<double>(material::kOpacity), fs::path(mat->as<std::string>(material::kBaseColorMap)).filename().string())
+                               : "[none]") + " ";
+        }
+        std::string uv;
+        if (std::span<const glm::vec2> u = m->cornerAttrs().get<glm::vec2>(geo::attr::uvName(0)); !u.empty())
+            uv = std::format(" uv0[{:.3f},{:.3f}]", u[m->faceCorner(0)].x, u[m->faceCorner(0)].y);
+        MESSAGE(n->path() << " vis=" << n->as<bool>(Transform::kVisibility) << " size=" << glm::length(hi - lo) << uv << " " << mats);
+    }
+}
+
+TEST_CASE("blend probe: world bounds against Blender's" * doctest::skip())
+{
+    // LILA_BLEND_PROBE: a .blend; LILA_BLEND_BOUNDS: {object: [[min], [max]]} Blender's world bounds, metres, Z up.
+    const char* file = std::getenv("LILA_BLEND_PROBE");
+    const char* boundsFile = std::getenv("LILA_BLEND_BOUNDS");
+    if (!file || !boundsFile)
+        return;
+    Graph& g = fresh();
+    const blend::ImportResult r = blend::importBlend(g, fs::path(file));
+    g.evaluate();
+    std::ifstream in(boundsFile);
+    const json want = json::parse(in);
+    for (const auto& [name, b] : want.items())
+    {
+        if (!r.objectNames.count(name))
+            continue;
+        const std::string path = r.objectNames.at(name);
+        MeshPtr m = std::get<MeshPtr>(g.value({node(g, path)->id(), MeshNode::kOutMesh, -1}));
+        const glm::dmat4 w = worldOf(g, path);
+        glm::dvec3 lo(1e300), hi(-1e300);
+        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+            if (m->pointValid(p))
+            {
+                const glm::dvec3 q(w * glm::dvec4(m->position(p), 1.0));
+                lo = glm::min(lo, q);
+                hi = glm::max(hi, q);
+            }
+        const glm::dvec3 a = point(b[0]), c = point(b[1]);
+        const double err = std::max(glm::length(lo - glm::min(a, c)), glm::length(hi - glm::max(a, c)));
+        MESSAGE(name << " off by " << err << " cm");
+    }
+}
+
+TEST_CASE("blend probe: joint positions against Blender's" * doctest::skip())
+{
+    // LILA_BLEND_PROBE: a .blend; LILA_BLEND_HEADS: {bone: [x, y, z]} Blender's world bone heads; LILA_BLEND_RIG: the armature object.
+    const char* file = std::getenv("LILA_BLEND_PROBE");
+    const char* headsFile = std::getenv("LILA_BLEND_HEADS");
+    const char* rig = std::getenv("LILA_BLEND_RIG");
+    if (!file || !headsFile || !rig)
+        return;
+    Graph& g = fresh();
+    const blend::ImportResult r = blend::importBlend(g, fs::path(file));
+    g.evaluate();
+    std::ifstream in(headsFile);
+    const json want = json::parse(in);
+    const std::string root = r.objectNames.at(rig);
+    for (const auto& [bone, head] : want.items())
+    {
+        std::string safe = bone;
+        for (char& c : safe)
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_')
+                c = '_';
+        Node* j = g.find(root + "|" + safe) ? g.find(root + "|" + safe) : nullptr;
+        if (!j)
+            for (NodeId id : r.joints)
+                if (g.node(id)->name() == safe && g.node(id)->path().starts_with(root))
+                    j = g.node(id);
+        if (!j)
+            continue;
+        const double err = glm::length(glm::dvec3(worldOf(g, j->path())[3]) - point(head));
+        if (err > 0.5)
+            MESSAGE(bone << " off by " << err << " cm");
+    }
 }

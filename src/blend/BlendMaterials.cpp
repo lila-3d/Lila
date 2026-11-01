@@ -32,6 +32,8 @@ std::string extensionFor(const uint8_t* d, size_t n)
         return ".dds";
     if (n >= 10 && std::memcmp(d, "#?RADIANCE", 10) == 0)
         return ".hdr";
+    if (n >= 2 && d[0] == 'B' && d[1] == 'M')
+        return ".bmp";
     return ".tga";
 }
 
@@ -180,9 +182,11 @@ std::string Importer::imagePath(const View& image)
         for (char& c : fileName)
             if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
                 c = '_';
+        // The extension comes from the bytes: Blender names copies "a.png.001", and the name may not say the format at all.
+        const std::string ext = extensionFor(bytes->data, size);
         fs::path target = textureDir / fs::path(std::u8string(fileName.begin(), fileName.end()));
-        if (target.extension().empty())
-            target += extensionFor(bytes->data, size);
+        if (target.extension().string() != ext)
+            target += ext;
         std::error_code ec;
         fs::create_directories(textureDir, ec);
         std::ofstream f(target, std::ios::binary);
@@ -216,6 +220,19 @@ std::string Importer::imagePath(const View& image)
         r.warnings.push_back(std::format("image '{}': {} not found", name, s));
     out = s;
     return out;
+}
+
+std::string Importer::preferredUv(const std::vector<std::string>& slots) const
+{
+    std::string want;
+    for (const std::string& slot : slots)
+        if (auto it = materialUv.find(slot); it != materialUv.end())
+        {
+            if (!want.empty() && want != it->second)
+                return {};
+            want = it->second;
+        }
+    return want;
 }
 
 std::vector<std::string> Importer::materialSlots(const View& object, const View& data)
@@ -277,7 +294,7 @@ std::string Importer::material(const View& ma)
         View node;
         Shaders::Context ctx;
     };
-    Found bsdf, emission, diffuse;
+    Found bsdf, emission, diffuse, cutout;
     bool transparentMix = false;
     std::function<void(const View&, const Shaders::Context&, int)> walk = [&](const View& in, const Shaders::Context& ctx, int depth) {
         if (depth > 8)
@@ -296,16 +313,51 @@ std::string Importer::material(const View& ma)
             transparentMix = true;
         else if (kind == "ShaderNodeMixShader" || kind == "ShaderNodeAddShader")
         {
+            std::vector<View> shadersIn;
             for (const View& s : src.node.list("inputs", "bNodeSocket"))
                 if (s.str("name") == "Shader" || s.str("identifier").starts_with("Shader"))
-                    walk(s, src.ctx, depth + 1);
-            if (kind == "ShaderNodeMixShader")
+                    shadersIn.push_back(s);
+            // Mixed with a Transparent BSDF, the factor is the cutout: an image's alpha behind it masks the surface.
+            if (kind == "ShaderNodeMixShader" && shadersIn.size() == 2)
+                for (const View& s : shadersIn)
+                    if (const Shaders::Source t = shaders.follow(s, src.ctx); t.node && Shaders::idname(t.node) == "ShaderNodeBsdfTransparent")
+                        cutout = {src.node, src.ctx};
+            for (const View& s : shadersIn)
+                walk(s, src.ctx, depth + 1);
+            if (kind == "ShaderNodeMixShader" && !cutout.node)
                 notes.push_back("a Mix Shader (its first BSDF is used)");
         }
         else
-            notes.push_back(std::format("a {} surface", kind));
+        {
+            // Shader to RGB toon setups and the like: the shader behind them.
+            bool found = false;
+            for (const View& s : src.node.list("inputs", "bNodeSocket"))
+                if (const Shaders::Source t = shaders.follow(s, src.ctx); t.node)
+                {
+                    const size_t before = notes.size();
+                    walk(s, src.ctx, depth + 1);
+                    found = found || bsdf.node || emission.node || diffuse.node;
+                    notes.resize(std::min(notes.size(), before));
+                }
+            if (!found)
+                notes.push_back(std::format("a {} surface", kind));
+        }
     };
     walk(Shaders::input(output, "Surface"), top, 0);
+
+    // Nothing on the surface, or only a Transparent BSDF (volume-only boxes, holdout cards): Blender draws nothing there.
+    if (!bsdf.node && !emission.node && !diffuse.node)
+    {
+        const bool volumeOnly = !shaders.follow(Shaders::input(output, "Surface"), top).node && shaders.follow(Shaders::input(output, "Volume"), top).node;
+        if (transparentMix || volumeOnly)
+        {
+            set(kOpacity, 0.0);
+            set(kBlendMode, int64_t(BlendMode::Masked));
+            invisibleMaterials.insert(slot);
+            r.skipped.push_back(std::format("material '{}': {}; it draws nothing", ma.idName(), volumeOnly ? "a volume shader" : "only a Transparent BSDF"));
+            return slot;
+        }
+    }
 
     // The value an input of a found node shows when nothing feeds it (from the group node it came through, if any).
     auto valueSocket = [&](const Found& f, std::string_view name) {
@@ -321,6 +373,34 @@ std::string Importer::material(const View& ma)
         View node;
         int channel = -1; // separate color / RGB output: 0 r, 1 g, 2 b
         bool alpha = false;
+        std::string uv; // the UV map a UV Map node names, empty for the default
+    };
+    // A mix's own layer (its A input) before what it mixes in, and factors last: the base image is the one that shows.
+    auto colourInputsFirst = [](const View& node) {
+        std::vector<View> ins = node.list("inputs", "bNodeSocket");
+        auto rank = [](const View& sock) {
+            const std::string n = sock.str("name");
+            return n == "A" || n == "Color1" ? 0 : n == "Fac" || n == "Factor" ? 2 : 1;
+        };
+        std::stable_sort(ins.begin(), ins.end(), [&](const View& a, const View& b) { return rank(a) < rank(b); });
+        return ins;
+    };
+    // An Image Texture node: its image, and the UV map a UV Map node feeds it.
+    auto imageOf = [&](const Shaders::Source& tex, Map& out) {
+        out.image = tex.node.deref("id");
+        out.node = tex.node;
+        out.alpha = tex.socket && tex.socket.str("name") == "Alpha";
+        if (const Shaders::Source vec = shaders.follow(Shaders::input(tex.node, "Vector"), tex.ctx); vec.node)
+        {
+            const std::string v = Shaders::idname(vec.node);
+            if (v == "ShaderNodeUVMap")
+            {
+                if (const View storage = vec.node.deref("storage"))
+                    out.uv = storage.str("uv_map");
+            }
+            else if (v != "ShaderNodeTexCoord")
+                notes.push_back(std::format("texture coordinates from a {}", v));
+        }
     };
     auto mapOf = [&](const Found& f, std::string_view inputName, const char* what) -> Map {
         Map out;
@@ -330,15 +410,7 @@ std::string Importer::material(const View& ma)
             const std::string kind = Shaders::idname(src.node);
             if (kind == "ShaderNodeTexImage")
             {
-                out.image = src.node.deref("id");
-                out.node = src.node;
-                out.alpha = src.socket && src.socket.str("name") == "Alpha";
-                if (const Shaders::Source vec = shaders.follow(Shaders::input(src.node, "Vector"), src.ctx); vec.node)
-                {
-                    const std::string v = Shaders::idname(vec.node);
-                    if (v != "ShaderNodeUVMap" && v != "ShaderNodeTexCoord")
-                        notes.push_back(std::format("{} texture coordinates from a {}", what, v));
-                }
+                imageOf(src, out);
                 return out;
             }
             if (kind == "ShaderNodeSeparateColor" || kind == "ShaderNodeSeparateRGB" || kind == "ShaderNodeSeparateXYZ")
@@ -356,20 +428,21 @@ std::string Importer::material(const View& ma)
                 src = shaders.follow(Shaders::input(src.node, "Color"), src.ctx);
                 continue;
             }
-            notes.push_back(std::format("{} through a {} node (the first image behind it is used as is)", what, kind));
+            // A colour mix showing its base layer is the usual tint or overlay setup; anything else is worth a note.
+            if (kind != "ShaderNodeMix" && kind != "ShaderNodeMixRGB")
+                notes.push_back(std::format("{} through a {} node (the first image behind it is used as is)", what, kind));
             // Mix, math, ramps and the like: the nearest image behind them, breadth first.
             std::vector<Shaders::Source> level = {src};
             for (int depth = 0; depth < 4 && !level.empty(); ++depth)
             {
                 std::vector<Shaders::Source> next;
                 for (const Shaders::Source& at : level)
-                    for (const View& in : at.node.list("inputs", "bNodeSocket"))
+                    for (const View& in : colourInputsFirst(at.node))
                         if (Shaders::Source s2 = shaders.follow(in, at.ctx); s2.node)
                         {
                             if (Shaders::idname(s2.node) == "ShaderNodeTexImage")
                             {
-                                out.image = s2.node.deref("id");
-                                out.node = s2.node;
+                                imageOf(s2, out);
                                 return out;
                             }
                             next.push_back(std::move(s2));
@@ -394,6 +467,8 @@ std::string Importer::material(const View& ma)
         const std::string p = imagePath(m.image);
         if (p.empty())
             return false;
+        if (!m.uv.empty() && !materialUv.count(slot))
+            materialUv[slot] = m.uv;
         set(attr, p);
         if (const TextureSampling s = sampling(m); !s.isDefault())
             materials::setSampling(g, id, attr, s);
@@ -504,15 +579,35 @@ std::string Importer::material(const View& ma)
     if (emission.node && !bsdf.node)
     {
         const double strength = socketFloat(valueSocket(emission, "Strength"), 1.0);
+        const Map m = mapOf(emission, "Color", "emission");
+        const glm::dvec3 color(socketColor(valueSocket(emission, "Color"), glm::dvec4(1.0)));
         if (!diffuse.node)
-            set(kBaseColor, glm::dvec3(0.0));
-        if (const Map m = mapOf(emission, "Color", "emission"); m.image)
-            setMap(kEmissiveMap, m);
-        else
-            set(kEmissiveColor, glm::dvec3(socketColor(valueSocket(emission, "Color"), glm::dvec4(1.0))));
-        set(kEmissiveIntensity, strength);
-        if (!diffuse.node)
+        {
+            // An emission-only surface is a flat, unlit colour: Unlit shows the base colour as is.
             set(kShadingModel, int64_t(ShadingModel::Unlit));
+            set(kBaseColor, m.image ? glm::dvec3(1.0) : color * strength);
+            if (m.image)
+                setMap(kBaseColorMap, m);
+        }
+        else
+        {
+            if (m.image)
+                setMap(kEmissiveMap, m);
+            else
+                set(kEmissiveColor, color);
+            set(kEmissiveIntensity, strength);
+        }
+    }
+    if (cutout.node && (bsdf.node || emission.node || diffuse.node))
+    {
+        const Shaders::Source fac = shaders.follow(Shaders::input(cutout.node, "Fac"), cutout.ctx);
+        const Shaders::Source facAlt = fac.node || fac.unlinked ? fac : shaders.follow(Shaders::input(cutout.node, "Factor"), cutout.ctx);
+        if (facAlt.node || socketFloat(facAlt.unlinked, 1.0) < 1.0)
+        {
+            set(kBlendMode, int64_t(BlendMode::Masked));
+            set(kOpacityMaskClip, 0.5);
+            set(kTwoSided, true);
+        }
     }
     if (ma.has("blend_flag") && !(ma.i("blend_flag") & (1 << 0)))
         set(kTwoSided, true);

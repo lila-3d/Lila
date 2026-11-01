@@ -13,5 +13,7 @@
     "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
     "credit": "House of Chores by Blender Studio, the Blender 4.3 splash demo file, licensed CC BY.",
     "source": "https://www.blender.org/download/demo-files/",
+    "converter": "blend",
+    "camera": "Camera_render",
     "scene": "houseofchores.lila"
 }

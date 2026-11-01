@@ -294,7 +294,9 @@ std::shared_ptr<geo::Mesh> Importer::buildMesh(const View& me, const View& objec
         if (a.domain == 3 && a.type == 6 && !isInternal(a.name) && a.covers(nL))
             uvs.push_back(&a);
     const std::string defaultUv = me.cstr("default_uv_map_attribute");
+    const std::string materialsUv = preferredUv(slots);
     std::stable_partition(uvs.begin(), uvs.end(), [&](const MeshAttr* a) { return a->name == defaultUv; });
+    std::stable_partition(uvs.begin(), uvs.end(), [&](const MeshAttr* a) { return a->name == materialsUv; });
     for (size_t s = 0; s < uvs.size(); ++s)
     {
         handled.insert(uvs[s]->name);

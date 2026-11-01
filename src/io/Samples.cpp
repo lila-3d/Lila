@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <map>
 #include <format>
 #include <fstream>
 
@@ -50,6 +51,7 @@ std::vector<Sample> list(const fs::path& dir)
         s.scene = j.value("scene", "");
         s.camera = j.value("camera", "");
         s.featured = j.value("featured", false);
+        s.converter = j.value("converter", "");
         s.folder = e.path();
         if (fs::is_regular_file(e.path() / "thumb.png", ec))
             s.thumbnail = e.path() / "thumb.png";
@@ -88,10 +90,50 @@ fs::path scenePath(const Sample& s)
     return (bundled(s) ? s.folder : installDir(s)) / paths::fromUtf8(s.scene);
 }
 
+std::map<std::string, std::string>& converterVersions()
+{
+    static std::map<std::string, std::string> versions;
+    return versions;
+}
+
+fs::path stampPath(const Sample& s)
+{
+    fs::path p = scenePath(s);
+    return p += ".setup";
+}
+
+/** "<converter> <version>" of the importer that would set the sample up now; empty when it has none. */
+std::string currentStamp(const Sample& s)
+{
+    if (s.converter.empty())
+        return {};
+    auto it = converterVersions().find(s.converter);
+    return s.converter + " " + (it == converterVersions().end() ? std::string("0") : it->second);
+}
+
 bool installed(const Sample& s)
 {
     std::error_code ec;
-    return fs::is_regular_file(scenePath(s), ec);
+    if (!fs::is_regular_file(scenePath(s), ec))
+        return false;
+    const std::string want = currentStamp(s);
+    if (want.empty())
+        return true;
+    std::ifstream f(stampPath(s));
+    std::string have;
+    std::getline(f, have);
+    return have == want;
+}
+
+void setConverterVersion(const std::string& converter, const std::string& version)
+{
+    converterVersions()[converter] = version;
+}
+
+void stamp(const Sample& s)
+{
+    if (const std::string st = currentStamp(s); !st.empty())
+        std::ofstream(stampPath(s)) << st << '\n';
 }
 
 std::string formatSize(std::uint64_t bytes)

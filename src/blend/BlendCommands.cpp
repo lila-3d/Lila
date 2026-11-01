@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "core/Progress.h"
 #include "io/References.h"
+#include "io/Samples.h"
 #include "io/SceneFile.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -248,6 +249,7 @@ json info(const File& file)
 void registerCommands()
 {
     using T = ArgType;
+    io::samples::setConverterVersion("blend", kImporterVersion);
 
     {
         std::vector<FlagDef> flags = {{"path", "", T::String, nullptr, "The .blend file (or pass it first)."},

@@ -13,5 +13,7 @@
     "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
     "credit": "Singularity by Blender Studio, the Blender 5.1 splash demo file, licensed CC BY.",
     "source": "https://www.blender.org/download/demo-files/",
+    "converter": "blend",
+    "camera": "CAM_Camera",
     "scene": "singularity.lila"
 }

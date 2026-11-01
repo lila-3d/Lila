@@ -298,17 +298,30 @@ void Importer::run()
     }
     View layerCollection;
     if (const std::vector<View> layers = scene.list("view_layers", "ViewLayer"); !layers.empty())
+    {
         if (const std::vector<View> lcs = layers.front().list("layer_collections", "LayerCollection"); !lcs.empty())
             layerCollection = lcs.front();
+        // Objects hidden in the view layer (the outliner's eye) keep the flag on their base, not the object.
+        for (const View& base : layers.front().list("object_bases", "Base"))
+            if (base.i("flag") & (1 << 8))
+                hiddenInLayer.insert(base.deref("object").data());
+    }
 
     for (const View& o : file.ids("OB"))
         if (const View p = o.deref("parent"))
             children[p.data()].push_back(o);
-    std::function<void(const View&, const View&, int)> gather = [&](const View& c, const View& lc, int d) {
+    // Objects only in hidden collections stay hidden wherever they end up (under a parent elsewhere, say).
+    std::set<const uint8_t*> shownSomewhere;
+    std::function<void(const View&, const View&, int, bool)> gather = [&](const View& c, const View& lc, int d, bool hiddenAbove) {
         if (d > kMaxDepth || (lc && (lc.i("flag") & kLayerCollectionExclude)))
             return;
+        const bool hidden = hiddenAbove || (c.i("flag") & kCollectionHideViewport) || (lc && (lc.i("flag") & kLayerCollectionHide));
         for (const View& e : c.list("gobject", "CollectionObject"))
+        {
             inLayer.insert(e.deref("ob").data());
+            if (!hidden)
+                shownSomewhere.insert(e.deref("ob").data());
+        }
         const std::vector<View> childLayers = lc ? lc.list("layer_collections", "LayerCollection") : std::vector<View>{};
         for (const View& child : c.list("children", "CollectionChild"))
             if (const View sub = child.deref("collection"))
@@ -317,10 +330,13 @@ void Importer::run()
                 for (const View& l : childLayers)
                     if (l.deref("collection").data() == sub.data())
                         sublc = l;
-                gather(sub, sublc, d + 1);
+                gather(sub, sublc, d + 1, hidden);
             }
     };
-    gather(master, layerCollection, 0);
+    gather(master, layerCollection, 0, false);
+    for (const uint8_t* o : inLayer)
+        if (!shownSomewhere.count(o))
+            hiddenInLayer.insert(o);
 
     {
         progress::Scope build("Building the scene", 1.0);
@@ -338,6 +354,7 @@ void Importer::run()
         buildModifiers();
     }
     applyPoses();
+    applyObjectConstraints();
     if (opts.animation)
     {
         progress::Scope anim("Animation", 1.0);
@@ -345,7 +362,11 @@ void Importer::run()
     }
     evaluateWithBlender();
     if (opts.setPlayback)
+    {
         fbx::setPlayback(fps, rd.num("sfra", 0, 1.0) / fps, rd.num("efra", 0, 250.0) / fps);
+        // The frame the file was saved on: the stored pose (constraints included) is the rig at that frame.
+        g.setTime(rd.num("cfra", 0, rd.num("sfra", 0, 1.0)) / fps);
+    }
     r.ok = true;
 }
 
@@ -398,7 +419,9 @@ NodeId Importer::buildObject(const View& object, NodeId parent, std::set<const u
         return kNoNode;
     const int type = object.i("type");
     const int restrict = object.has("visibility_flag") ? object.i("visibility_flag") : object.i("restrictflag");
-    const bool hidden = restrict & ob::kHideViewport;
+    // Invisible to the camera: shadow casters and other render tricks, which show as solid walls in a viewport.
+    const bool cameraHidden = (restrict & ob::kHideCamera) != 0;
+    const bool hidden = (restrict & ob::kHideViewport) || hiddenInLayer.count(object.data()) || cameraHidden;
     if (hidden && !opts.hidden)
         return kNoNode;
 
@@ -480,6 +503,8 @@ NodeId Importer::buildObject(const View& object, NodeId parent, std::set<const u
     on.id = on.self = id;
     if (hidden)
         g.setValue({id, Transform::kVisibility, -1}, false);
+    if (cameraHidden)
+        issue(id, "Hidden: Blender's camera doesn't see it (a shadow caster or other render helper).", false);
 
     // Transform.
     {
@@ -542,6 +567,9 @@ NodeId Importer::buildObject(const View& object, NodeId parent, std::set<const u
             else
             {
                 std::shared_ptr<geo::Mesh> m = buildMesh(data, object);
+                if (m && !m->materialNames().empty() &&
+                    std::all_of(m->materialNames().begin(), m->materialNames().end(), [&](const std::string& s) { return invisibleMaterials.count(s) != 0; }))
+                    invisibleMeshes.insert(data.data());
                 if (m)
                 {
                     g.setValue({id, scene::MeshNode::kInMesh, -1}, scene::MeshPtr(m));
@@ -566,13 +594,23 @@ NodeId Importer::buildObject(const View& object, NodeId parent, std::set<const u
         break;
     case ob::kCurve:
         if (data)
+        {
             buildCurve(id, object, on);
+            // Geometry nodes on a curve usually make the mesh shown (ground, paths): only Blender can make it.
+            if (!object.list("modifiers").empty() && opts.evaluate != "off" && !instance)
+                toEvaluate.push_back({id, object.idName(), true, materialSlots(object, data)});
+        }
         break;
     case ob::kArmature:
         if (data)
             buildArmature(id, object, on);
         break;
     default: break;
+    }
+    if (type == ob::kMesh && data && invisibleMeshes.count(data.data()))
+    {
+        g.setValue({id, Transform::kVisibility, -1}, false);
+        issue(id, "Hidden: its materials draw nothing in Blender (transparent or volume only).", false);
     }
     if (!instance || !objects.count(object.data()))
     {

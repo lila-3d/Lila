@@ -166,13 +166,49 @@ constexpr const char* kEvaluateScript = R"PY(
 import bpy, struct, sys, os
 args = sys.argv[sys.argv.index("--") + 1:]
 out_dir, names = args[0], args[1:]
+# Objects only seen through collection instances are outside the view layer, so nothing evaluates them: link them in.
+layer = bpy.context.view_layer.objects
+extra = bpy.data.collections.new("lila_evaluate")
+bpy.context.scene.collection.children.link(extra)
+for name in names:
+    ob = bpy.data.objects.get(name)
+    if ob is not None and layer.get(ob.name) is None:
+        extra.objects.link(ob)
 deps = bpy.context.evaluated_depsgraph_get()
+
+def instanced(ob):
+    """The geometry nodes' instances of ob, joined into one temporary mesh in ob's space (to_mesh leaves them out)."""
+    import bmesh
+    inv = ob.matrix_world.inverted()
+    bm = bmesh.new()
+    for inst in deps.object_instances:
+        if not inst.is_instance or inst.parent is None or inst.parent.original != ob or inst.object.type != "MESH":
+            continue
+        part = bpy.data.meshes.new_from_object(inst.object, preserve_all_data_layers=True, depsgraph=deps)
+        part.transform(inv @ inst.matrix_world.copy())
+        bm.from_mesh(part)
+        bpy.data.meshes.remove(part)
+    if not bm.verts:
+        bm.free()
+        return None
+    out = bpy.data.meshes.new("lila_instances")
+    bm.to_mesh(out)
+    bm.free()
+    return out
+
 for i, name in enumerate(names):
     ob = bpy.data.objects.get(name)
-    if ob is None or ob.type != "MESH":
+    if ob is None:
         continue
     e = ob.evaluated_get(deps)
-    m = e.to_mesh()
+    try:
+        m = e.to_mesh()
+    except RuntimeError:
+        m = None
+    if m is None or len(m.polygons) == 0:
+        m = instanced(ob) or m
+    if m is None:
+        continue
     nv, nf, nc = len(m.vertices), len(m.polygons), len(m.loops)
     pos = [0.0] * (nv * 3); m.vertices.foreach_get("co", pos)
     sizes = [0] * nf; m.polygons.foreach_get("loop_total", sizes)
@@ -183,22 +219,30 @@ for i, name in enumerate(names):
         m.corner_normals.foreach_get("vector", normals)
     except Exception:
         pass
-    uv = []
-    layer = m.uv_layers.active_render if hasattr(m.uv_layers, "active_render") else None
-    if layer is None and len(m.uv_layers):
-        layer = m.uv_layers[0]
-    if layer is not None:
+    layers = list(m.uv_layers)
+    default = next((l for l in layers if getattr(l, "active_render", False)), None)
+    if default is not None:
+        layers.remove(default)
+        layers.insert(0, default)
+    uvs = []
+    for layer in layers:
         uv = [0.0] * (nc * 2); layer.data.foreach_get("uv", uv)
+        uvs.append((layer.name, uv))
     with open(os.path.join(out_dir, "%d.bin" % i), "wb") as f:
-        f.write(struct.pack("<4i", nv, nf, nc, 1 if uv else 0))
+        f.write(struct.pack("<4i", nv, nf, nc, len(uvs)))
         f.write(struct.pack("<%df" % len(pos), *pos))
         f.write(struct.pack("<%di" % nf, *sizes))
         f.write(struct.pack("<%di" % nc, *corners))
         f.write(struct.pack("<%di" % nf, *mats))
         f.write(struct.pack("<%df" % len(normals), *normals))
-        if uv:
+        for name, uv in uvs:
+            b = name.encode("utf-8")
+            f.write(struct.pack("<i", len(b)) + b)
             f.write(struct.pack("<%df" % len(uv), *uv))
-    e.to_mesh_clear()
+    if m.name == "lila_instances":
+        bpy.data.meshes.remove(m)
+    else:
+        e.to_mesh_clear()
 )PY";
 
 template <class T>
@@ -237,7 +281,7 @@ void Importer::buildModifiers()
                               ((opts.evaluate == "unsupported" && unsupported) || (opts.evaluate == "all" && !mods.empty()));
         if (evaluate)
         {
-            toEvaluate.push_back({job.mesh, object.idName()});
+            toEvaluate.push_back({job.mesh, object.idName(), false, {}});
             continue;
         }
         if (!opts.modifiers)
@@ -311,23 +355,27 @@ void Importer::evaluateWithBlender()
     }
     vcs::ProcessSpec spec;
     spec.argv = {utf8(blender), "-b", "--factory-startup", utf8(file.path()), "--python", utf8(script), "--", utf8(dir)};
-    for (const auto& [node, name] : toEvaluate)
-        spec.argv.push_back(name);
+    for (const Evaluate& e : toEvaluate)
+        spec.argv.push_back(e.name);
     spec.timeoutMs = 30 * 60 * 1000;
     vcs::ProcessResult res;
     {
         progress::Scope wait("Evaluating in Blender", 1.0);
         res = vcs::systemRunner()->run(spec);
     }
-    if (!res.started || res.exitCode != 0)
+    if (!res.started)
     {
-        r.warnings.push_back(std::format("Evaluate with Blender: {} failed ({})", utf8(blender), res.started ? std::format("exit code {}", res.exitCode) : "not started"));
+        r.warnings.push_back(std::format("Evaluate with Blender: {} didn't start", utf8(blender)));
         fs::remove_all(dir, ec);
         return;
     }
+    // A crash on the way out still leaves every mesh written before it.
+    if (res.exitCode != 0)
+        r.warnings.push_back(std::format("Evaluate with Blender: {} exited with code {}; the meshes it wrote are used", utf8(blender), res.exitCode));
     for (size_t i = 0; i < toEvaluate.size(); ++i)
     {
-        const auto& [node, name] = toEvaluate[i];
+        const std::string& name = toEvaluate[i].name;
+        NodeId node = toEvaluate[i].node;
         std::ifstream in(dir / std::format("{}.bin", i), std::ios::binary);
         int32_t head[4] = {};
         if (!in || !in.read(reinterpret_cast<char*>(head), sizeof(head)) || head[0] < 0 || head[1] < 0 || head[2] < 0)
@@ -335,13 +383,32 @@ void Importer::evaluateWithBlender()
             r.warnings.push_back(std::format("Evaluate with Blender: no result for '{}'", name));
             continue;
         }
-        std::vector<float> pos, normals, uv;
+        std::vector<float> pos, normals;
         std::vector<int32_t> sizes, corners, mats;
-        if (!readArray(in, pos, size_t(head[0]) * 3) || !readArray(in, sizes, size_t(head[1])) || !readArray(in, corners, size_t(head[2])) ||
-            !readArray(in, mats, size_t(head[1])) || !readArray(in, normals, size_t(head[2]) * 3) || (head[3] && !readArray(in, uv, size_t(head[2]) * 2)))
+        std::vector<std::vector<float>> uvLayers(size_t(std::clamp(head[3], 0, 8)));
+        std::vector<std::string> uvNames(uvLayers.size());
+        bool ok = readArray(in, pos, size_t(head[0]) * 3) && readArray(in, sizes, size_t(head[1])) && readArray(in, corners, size_t(head[2])) &&
+                  readArray(in, mats, size_t(head[1])) && readArray(in, normals, size_t(head[2]) * 3);
+        for (size_t s = 0; s < uvLayers.size() && ok; ++s)
+        {
+            int32_t len = 0;
+            ok = bool(in.read(reinterpret_cast<char*>(&len), 4)) && len >= 0 && len < 4096;
+            if (ok)
+            {
+                uvNames[s].resize(size_t(len));
+                ok = bool(in.read(uvNames[s].data(), len)) && readArray(in, uvLayers[s], size_t(head[2]) * 2);
+            }
+        }
+        if (!ok)
         {
             r.warnings.push_back(std::format("Evaluate with Blender: '{}' came back damaged", name));
             continue;
+        }
+        if (toEvaluate[i].curve)
+        {
+            // The curve stays; the mesh its modifiers make rides along as a child.
+            node = createNode("mesh", g.node(node)->name() + "Mesh", node);
+            r.meshes.push_back(node);
         }
         const scene::PlugValue old = g.storedValue({node, scene::MeshNode::kInMesh, -1});
         const auto* oldMesh = std::get_if<scene::MeshPtr>(&old);
@@ -350,34 +417,58 @@ void Importer::evaluateWithBlender()
             m->addPoint(axes.point(glm::dvec3(pos[p * 3], pos[p * 3 + 1], pos[p * 3 + 2])));
         if (oldMesh && *oldMesh)
             m->materialNames() = (*oldMesh)->materialNames();
-        std::span<glm::vec3> nrm = m->cornerAttrs().getOrAdd<glm::vec3>(geo::attr::kNormal);
-        std::span<glm::vec2> uvs = head[3] ? m->cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0)) : std::span<glm::vec2>();
-        std::span<int32_t> mat = m->materialNames().empty() ? std::span<int32_t>() : m->faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
+        else if (toEvaluate[i].curve)
+            m->materialNames() = toEvaluate[i].slots;
+        // Faces first, then the corner values through each Blender corner's Lila corner.
+        std::vector<geo::Index> cornerOf(corners.size(), geo::kInvalid);
+        std::vector<std::pair<geo::Index, int32_t>> faceMats;
         std::vector<geo::Index> pts;
         size_t at = 0;
         for (size_t f = 0; f < size_t(head[1]); ++f)
         {
-            pts.assign(corners.begin() + std::ptrdiff_t(at), corners.begin() + std::ptrdiff_t(at + size_t(std::max(0, sizes[f]))));
+            const size_t n = size_t(std::max(0, sizes[f]));
+            if (at + n > corners.size())
+                break;
+            pts.assign(corners.begin() + std::ptrdiff_t(at), corners.begin() + std::ptrdiff_t(at + n));
             const size_t first = at;
-            at += size_t(std::max(0, sizes[f]));
+            at += n;
+            if (std::any_of(pts.begin(), pts.end(), [&](geo::Index p) { return p >= geo::Index(head[0]); }))
+                continue;
             const geo::Index face = m->addFace(pts);
             if (face == geo::kInvalid)
                 continue;
-            nrm = m->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
-            if (head[3])
-                uvs = m->cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
-            if (!m->materialNames().empty())
-                mat = m->faceAttrs().get<int32_t>(geo::attr::kMaterial);
             geo::Index c = m->findCorner(face, pts.front());
             for (size_t k = first; k < at && c != geo::kInvalid; ++k, c = m->cornerNext(c))
+                cornerOf[k] = c;
+            faceMats.push_back({face, mats[f]});
+        }
+        std::span<glm::vec3> nrm = m->cornerAttrs().getOrAdd<glm::vec3>(geo::attr::kNormal);
+        for (size_t k = 0; k < cornerOf.size(); ++k)
+            if (cornerOf[k] != geo::kInvalid)
             {
                 const glm::dvec3 n = axes.direction(glm::dvec3(normals[k * 3], normals[k * 3 + 1], normals[k * 3 + 2]));
-                nrm[c] = glm::vec3(glm::length(n) > 0.0 ? glm::normalize(n) : n);
-                if (head[3])
-                    uvs[c] = glm::vec2(uv[k * 2], uv[k * 2 + 1]);
+                nrm[cornerOf[k]] = glm::vec3(glm::length(n) > 0.0 ? glm::normalize(n) : n);
             }
-            if (!mat.empty())
-                mat[face] = std::clamp<int32_t>(mats[f], 0, int32_t(m->materialNames().size()) - 1);
+        // The UV map the materials read goes first, as on meshes read from the file.
+        if (const std::string want = preferredUv(m->materialNames()); !want.empty())
+            if (auto at = std::find(uvNames.begin(), uvNames.end(), want); at != uvNames.end() && at != uvNames.begin())
+            {
+                const size_t k = size_t(at - uvNames.begin());
+                std::rotate(uvLayers.begin(), uvLayers.begin() + std::ptrdiff_t(k), uvLayers.begin() + std::ptrdiff_t(k) + 1);
+                std::rotate(uvNames.begin(), uvNames.begin() + std::ptrdiff_t(k), uvNames.begin() + std::ptrdiff_t(k) + 1);
+            }
+        for (size_t s = 0; s < uvLayers.size(); ++s)
+        {
+            std::span<glm::vec2> uvs = m->cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(int(s)));
+            for (size_t k = 0; k < cornerOf.size(); ++k)
+                if (cornerOf[k] != geo::kInvalid)
+                    uvs[cornerOf[k]] = glm::vec2(uvLayers[s][k * 2], uvLayers[s][k * 2 + 1]);
+        }
+        if (!m->materialNames().empty())
+        {
+            std::span<int32_t> mat = m->faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
+            for (const auto& [face, index] : faceMats)
+                mat[face] = std::clamp<int32_t>(index, 0, int32_t(m->materialNames().size()) - 1);
         }
         g.setValue({node, scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::move(m)));
         r.evaluated.push_back(name);

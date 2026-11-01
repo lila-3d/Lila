@@ -34,7 +34,7 @@ inline constexpr int kEmpty = 0, kMesh = 1, kCurve = 2, kSurface = 3, kFont = 4,
                      kLightProbe = 13, kLattice = 22, kArmature = 25, kGpencilLegacy = 26, kCurves = 27, kPointCloud = 28, kVolume = 29,
                      kGreasePencil = 30;
 inline constexpr int kParentObject = 0, kParentSkeleton = 4, kParentVertex = 6, kParentBone = 7, kParentVertex3 = 5;
-inline constexpr int kHideViewport = 1 << 0, kHideRender = 1 << 2;
+inline constexpr int kHideViewport = 1 << 0, kHideRender = 1 << 2, kHideCamera = 1 << 3;
 inline constexpr int kDupliCollection = 1 << 8;
 } // namespace ob
 
@@ -150,6 +150,8 @@ public:
     std::unordered_map<const uint8_t*, std::vector<View>> children;
     /** Objects in a collection the view layer includes. */
     std::set<const uint8_t*> inLayer;
+    /** Objects hidden with the view layer's eye toggle. */
+    std::set<const uint8_t*> hiddenInLayer;
     /** While a collection instance is built: the objects it holds. */
     std::set<const uint8_t*> instanceMembers;
 
@@ -173,6 +175,14 @@ public:
     std::string material(const View& material);
     std::string imagePath(const View& image);
     std::map<const uint8_t*, std::string> imagePaths;
+    /** The UV map a material's textures read, by slot, when a UV Map node names one. */
+    std::map<std::string, std::string> materialUv;
+    /** The UV map this mesh's materials all read, when they name one: it goes first, the set Lila draws and exports with. */
+    std::string preferredUv(const std::vector<std::string>& slots) const;
+    /** Material slots that draw nothing in Blender (transparent-only or volume shaders). */
+    std::set<std::string> invisibleMaterials;
+    /** Mesh data whose every material draws nothing. */
+    std::set<const uint8_t*> invisibleMeshes;
     fs::path textureDir;
 
     // BlendRig.cpp
@@ -180,6 +190,10 @@ public:
     void buildSkins();
     void buildMorphs();
     void applyPoses();
+    /** Copy Transforms constraints on objects (a camera following a rig's bone), applied at the saved frame. */
+    void applyObjectConstraints();
+    /** Objects a constraint places: their own keys are overridden in Blender, so they are not imported. */
+    std::set<const uint8_t*> constrainedObjects;
     void importAnimation();
     struct SkinJob
     {
@@ -208,7 +222,15 @@ public:
     /** Hard edges from a "Smooth by Angle" node group or 4.0's auto smooth, applied to the mesh before it is set. */
     void smoothByAngle(const View& object, const View& meshData, geo::Mesh& m);
     void evaluateWithBlender();
-    std::vector<std::pair<NodeId, std::string>> toEvaluate;
+    struct Evaluate
+    {
+        NodeId node = kNoNode;
+        std::string name;
+        /** A curve whose modifiers make a mesh: the mesh goes on a new child, with these material slots. */
+        bool curve = false;
+        std::vector<std::string> slots;
+    };
+    std::vector<Evaluate> toEvaluate;
 };
 
 inline std::string utf8(const fs::path& p)

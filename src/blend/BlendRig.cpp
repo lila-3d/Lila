@@ -147,11 +147,72 @@ void Importer::applyPoses()
                 rot = scene::matrixToEuler(axes.F * R * glm::transpose(axes.F), rest.order);
             }
             g.setValue({j, Transform::kRotateOrder, -1}, int64_t(rest.order));
+            // The pose Blender evaluated when it saved, constraints and drivers included: deform bones driven by
+            // constraints keep zero channels, so only this puts them where the rig shows them.
+            if (const glm::dmat4 P = ch.mat4("pose_mat"); ch.has("pose_mat") && std::abs(glm::determinant(glm::dmat3(P))) > 1e-9)
+            {
+                glm::dmat4 local = P;
+                if (const View parent = ch.deref("parent"))
+                {
+                    const glm::dmat4 Pp = parent.mat4("pose_mat");
+                    if (std::abs(glm::determinant(glm::dmat3(Pp))) > 1e-9)
+                        local = glm::inverse(Pp) * P;
+                }
+                const fbx::Trs trs = fbx::decomposeWith(axes.matrix(local), rest.r, rest.order, rot);
+                g.setValue({j, Transform::kRotate, -1}, trs.r);
+                g.setValue({j, Transform::kTranslate, -1}, trs.t);
+                g.setValue({j, Transform::kScale, -1}, trs.s);
+                continue;
+            }
             g.setValue({j, Transform::kRotate, -1}, rot);
             g.setValue({j, Transform::kTranslate, -1}, rest.t + rest.r * axes.point(ch.vec3("loc")));
             g.setValue({j, Transform::kScale, -1}, axes.scale(ch.vec3("size", glm::dvec3(1.0))));
         }
     }
+}
+
+void Importer::applyObjectConstraints()
+{
+    constexpr int kCopyTransforms = 23;
+    bool evaluated = false;
+    for (auto& [data, on] : objects)
+        for (const View& con : on.object.list("constraints", "bConstraint"))
+        {
+            if (con.num("enforce", 0, 1.0) <= 0.0 || (con.i("flag") & ((1 << 9) | (1 << 2))))
+                continue;
+            if (con.i("type") != kCopyTransforms)
+            {
+                warnOnce("objectConstraint:" + on.object.idName(),
+                         std::format("'{}': object constraints other than Copy Transforms are not applied", on.object.idName()));
+                continue;
+            }
+            const View settings = con.deref("data");
+            const View target = settings ? settings.deref("tar") : View();
+            auto it = target ? objects.find(target.data()) : objects.end();
+            if (it == objects.end())
+                continue;
+            NodeId from = it->second.id;
+            if (const std::string bone = settings.str("subtarget"); !bone.empty())
+                if (auto jt = it->second.joints.find(bone); jt != it->second.joints.end())
+                    from = jt->second;
+            if (!evaluated)
+            {
+                g.evaluate();
+                evaluated = true;
+            }
+            // The node's own matrix (its rotate axis aside) takes the target's world, relative to its parent.
+            const glm::dmat4 targetWorld = g.node(from)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+            const NodeId parent = g.parent(on.id);
+            const glm::dmat4 parentWorld = parent != kNoNode ? g.node(parent)->as<glm::dmat4>(scene::Transform::kWorldMatrix) : glm::dmat4(1.0);
+            const fbx::Trs trs = fbx::decompose(glm::inverse(parentWorld) * targetWorld);
+            g.setValue({on.id, Transform::kRotateOrder, -1}, int64_t(scene::RotateOrder::XYZ));
+            g.setValue({on.id, Transform::kTranslate, -1}, trs.t);
+            g.setValue({on.id, Transform::kRotate, -1}, trs.r);
+            g.setValue({on.id, Transform::kScale, -1}, trs.s);
+            constrainedObjects.insert(data);
+            if (evaluated)
+                g.evaluate();
+        }
 }
 
 void Importer::buildSkins()
@@ -512,10 +573,21 @@ void Importer::importAnimation()
             else
                 unconverted.insert(std::format("{}: {}", object.idName(), raw));
         }
+        // Constraints place bones from other bones in Blender. Lila doesn't run them, so keys on the rest of the rig would
+        // pull it apart: the whole rig keeps the pose Blender saved, which includes every constraint.
+        bool rigConstrained = false;
+        if (const View pose = object.deref("pose"))
+            for (const View& c : pose.list("chanbase", "bPoseChannel"))
+                for (const View& con : c.list("constraints", "bConstraint"))
+                    rigConstrained = rigConstrained || (con.num("enforce", 0, 1.0) > 0.0 && !(con.i("flag") & ((1 << 9) | (1 << 2))));
+        if (rigConstrained && byTarget.size() > (byTarget.count("") ? 1u : 0u))
+            r.skipped.push_back(std::format("'{}': bone animation (its bones are driven by constraints, so the rig keeps the pose of the saved frame)", object.idName()));
         for (const auto& [target, ch] : byTarget)
         {
             if (target.empty())
             {
+                if (constrainedObjects.count(objectData))
+                    continue;
                 const NodeId node = on.self;
                 const glm::dvec3 dloc = object.vec3("dloc");
                 const glm::dvec3 dscale = object.has("dscale") ? object.vec3("dscale", glm::dvec3(1.0)) : glm::dvec3(1.0);
@@ -549,6 +621,8 @@ void Importer::importAnimation()
                 for (const View& c : pose.list("chanbase", "bPoseChannel"))
                     if (c.str("name") == target)
                         chan = c;
+            if (rigConstrained)
+                continue;
             for (int a = 0; a < 3; ++a)
             {
                 const int la = axes.axis[a];

@@ -96,6 +96,9 @@ LILA_SCENE_API ImportResult importBlend(scene::Graph& graph, const File& file, c
 /** What blendInfo reports: version, ID counts, object types, modifier and node types used, libraries. */
 LILA_SCENE_API nlohmann::json info(const File& file);
 
+/** Bumped whenever an import of the same file would come out differently, so cached conversions (sample scenes) are redone. */
+inline constexpr const char* kImporterVersion = "2";
+
 /** blendImport, blendOpen, blendConvert, blendInfo. Needs the scene and io commands. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::blend
