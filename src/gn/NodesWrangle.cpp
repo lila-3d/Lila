@@ -146,7 +146,7 @@ private:
 };
 
 const char* kLanguageDoc =
-    "Statements end in ';'. Types: float, int, vector, vector4 (declare with 'float x = 1;' or just assign). Operators + - * / % "
+    "Statements end in ';'. Types: float, int, vector, vector4 (declare with 'float x = 1;' or assign). Operators + - * / % "
     "^ (power), comparisons, && || !, ?:, x.y components, += -= *= /= ++ --; if/else, for, while, break, continue. @name reads "
     "or writes an attribute: @P position, @N normal (read-only), @Cd colour, @id, @ptnum (element index), @numelem; f@ i@ v@ "
     "p@ give a type, float otherwise. a, b, c (floats) and d (vector) or ch(\"a\") read the inputs. Functions: sin cos tan asin "
