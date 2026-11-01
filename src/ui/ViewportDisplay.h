@@ -29,6 +29,7 @@ inline constexpr const char* kGrid = "/viewport/grid";
 inline constexpr const char* kBackfaceCulling = "/viewport/backfaceCulling";
 inline constexpr const char* kXray = "/viewport/xray";
 inline constexpr const char* kLighting = "/viewport/lighting"; // "environment", "studio" or "flat"
+inline constexpr const char* kSceneLights = "/viewport/sceneLights"; // false: lights and domes light nothing in the viewport
 inline constexpr const char* kShadows = "/viewport/shadows";
 inline constexpr const char* kDefaultMaterial = "/viewport/defaultMaterial";
 inline constexpr const char* kExposure = "/viewport/exposure"; // stops

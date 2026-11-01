@@ -2,6 +2,7 @@
 // viewport and by renders; another provider registered for a light takes it over.
 
 #include "Glyphs.h"
+#include "Handles.h"
 
 #include <lila/Actions.h>
 #include <lila/Command.h>
@@ -79,6 +80,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
     gState.ctx = &ctx;
     scene::lights::registerProvider(ctx, {.id = scene::lights::kLilaProvider, .name = "Lila Lights"});
     addUi(ctx);
+    lights_ext::addHandles(ctx);
     return 0;
 }
 

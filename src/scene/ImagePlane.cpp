@@ -45,7 +45,7 @@ std::vector<AttrDef> imagePlaneAttrs()
 {
     std::vector<AttrDef> a(size_t(int(ImagePlane::kCount) - int(Transform::kCount)));
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Transform::kCount)]; };
-    at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored | AttrFile,
+    at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored | AttrFile | AttrImage,
                                   .doc = "Image file (PNG, JPG, TGA, HDR, BMP). Relative paths resolve from the workspace root, then the scene folder."};
     at(ImagePlane::kUseFrameExtension) =
         boolAttr("useFrameExtension", false, "Image sequence: the file name's frame number follows the time slider.");

@@ -11,6 +11,7 @@
 #include "ui/CameraHistory.h"
 #include "ui/Gizmo.h"
 #include "ui/GizmoMath.h"
+#include "ui/NodeHandles.h"
 #include "ui/Overlay.h"
 #include "ui/PaintSelect.h"
 #include "ui/SelectionHandlers.h"
@@ -307,6 +308,7 @@ private:
     GizmoSlot mGizmo;        // the active provider's
     GizmoSlot mDefaultGizmo; // gizmos::kDefault's, when it isn't the active one
     Gizmo* mGizmoDrag = nullptr; // took the press; null when no gizmo drag is under way
+    nodeHandles::Driver mNodeHandles;
     gizmo::CursorWrap mCursorWrap;
     int mGizmoListener = 0;
     int mHandlerListener = 0;

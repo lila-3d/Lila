@@ -106,6 +106,7 @@
       "4": "viewport.wireframe",
       "5": "viewport.shaded",
       "6": "viewport.textured",
+      "7": "viewport.toggleLighting",
       "Ctrl+6": "viewport.wireOnShaded",
       "Ctrl+Shift+1": "viewport.bookmarkSet1",
       "Ctrl+Shift+2": "viewport.bookmarkSet2",

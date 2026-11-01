@@ -316,7 +316,9 @@ void ViewportWidget::updateCursor()
     }
     // Set explicitly: the native viewport window otherwise keeps whatever cursor it was entered with, like a text caret.
     Gizmo* gz = currentGizmo();
-    Qt::CursorShape shape = !gz                    ? Qt::ArrowCursor
+    Qt::CursorShape shape = mNodeHandles.dragging()   ? Qt::ClosedHandCursor
+                            : mNodeHandles.hovering() ? Qt::PointingHandCursor
+                            : !gz                    ? Qt::ArrowCursor
                             : gz->dragging()       ? Qt::ClosedHandCursor
                             : gz->hoveringLocked() ? Qt::ForbiddenCursor
                             : gz->hovering()       ? Qt::OpenHandCursor
@@ -577,6 +579,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         gz->setView(view);
         gz->draw(painter);
     }
+    mNodeHandles.draw(painter, view);
     renderPasses::run(renderPasses::Stage::Overlay, passes);
     drawSoftSelectRadius(painter);
     if (hud::shown(mHudPanel, "originAxis"))

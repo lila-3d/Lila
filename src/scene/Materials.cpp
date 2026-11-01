@@ -39,7 +39,7 @@ AttrDef colorAttr(std::string name, glm::dvec3 def, std::string doc)
 
 AttrDef pathAttr(std::string name, std::string doc)
 {
-    return {.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrFile,
+    return {.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrFile | AttrImage,
             .doc = std::move(doc)};
 }
 

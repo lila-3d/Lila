@@ -66,7 +66,7 @@ std::vector<AttrDef> lightAttrs()
     at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm. Directional: the sun's angular radius, degrees.", 0.0);
     at(Light::kCastShadows) = {.name = "castShadows", .shortName = "cs", .type = PlugType::Bool, .defaultValue = true, .flags = kStored,
                                .doc = "Casts shadows."};
-    at(Light::kTexture) = stringAttr("texture", "tex", "Dome: environment image. Point and spot: IES profile.");
+    at(Light::kTexture) = stringAttr("texture", "tex", "Dome: environment image. Point and spot: IES profile.", AttrFile | AttrImage);
     at(Light::kProvider) = stringAttr("provider", "prv", "Light provider asked first for this light; empty lets any handle it.");
     at(Light::kSourceFormat) = stringAttr("sourceFormat", "sfm", "What the light was read as, empty when made in Lila.", AttrHidden);
     at(Light::kExtra) = stringAttr("extra", "ext", "JSON of the source format's settings beyond these, written back on export.", AttrHidden);

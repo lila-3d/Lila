@@ -13,6 +13,7 @@
 #include "ui/Deletion.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
+#include "ui/ImagePicker.h"
 #include "ui/Issues.h"
 #include "ui/CodeEdit.h"
 #include "ui/MultilineEdit.h"
@@ -882,6 +883,14 @@ void AttributeEditor::rebuild()
             {
                 auto* picker = new FontPicker;
                 connect(picker, &FontPicker::chosen, this, [this, attr](const QString& font) { set(attr, font.toStdString()); });
+                mUpdaters.push_back([picker, ref] { picker->setValue(std::get<std::string>(Graph::current().value(ref))); });
+                field = picker;
+                break;
+            }
+            if ((def.flags & scene::AttrImage) && !readOnly)
+            {
+                auto* picker = new ImagePicker(imagePicker::libraryFor(n->type(), def.name), niceName(def.name));
+                connect(picker, &ImagePicker::chosen, this, [this, attr](const QString& v) { set(attr, v.toStdString()); });
                 mUpdaters.push_back([picker, ref] { picker->setValue(std::get<std::string>(Graph::current().value(ref))); });
                 field = picker;
                 break;

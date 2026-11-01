@@ -1,5 +1,6 @@
 #include "ui/ViewportDisplay.h"
 
+#include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "render/CubeLut.h"
 #include "render/DisplayOptions.h"
@@ -10,6 +11,7 @@
 #include "scene/Transform.h"
 #include "scene/PostProcess.h"
 #include "scene/Relocate.h"
+#include "ui/Environments.h"
 #include "ui/Theme.h"
 
 #include <glm/gtc/constants.hpp>
@@ -87,6 +89,27 @@ glm::dmat4 reverseDepth(const glm::dmat4& zeroToOne)
     r[3][2] = 1.0;
     return r * zeroToOne;
 }
+
+/**
+ * A dome light takes over the environment: its image (else the viewport's), turned with the dome about the up axis, at
+ * its intensity times its colour's brightness. Only one dome lights the scene.
+ */
+void applyDome(render::FrameState& s, const scene::lights::Settings& l, const glm::dmat4& world)
+{
+    if (!l.texture.empty())
+    {
+        // Lila's own HDRIs are stored by file name, the rest as scene paths.
+        s.envPath = environments::resolve(l.texture);
+        if (std::filesystem::path(paths::fromUtf8(s.envPath)).is_relative())
+            s.envPath = paths::toUtf8(paths::resolvePath(l.texture));
+    }
+    const glm::dvec3 x = glm::dvec3(world[0]);
+    const double yaw = s.zUp ? std::atan2(x.y, x.x) : std::atan2(-x.z, x.x);
+    s.envRotation += float(glm::degrees(yaw));
+    const glm::dvec3 c = scene::lights::effectiveColor(l);
+    const double brightness = 0.2126 * c.x + 0.7152 * c.y + 0.0722 * c.z;
+    s.envIntensity *= float(std::max(l.intensity, 0.0) * unitScale(l) * brightness);
+}
 } // namespace
 
 void applyLights(render::FrameState& s)
@@ -111,6 +134,9 @@ void applyLights(render::FrameState& s)
         }
         return sceneBounds;
     };
+    if (!PrefStore::get().value<bool>("general", kSceneLights, true))
+        return;
+    bool domeDone = false;
     for (scene::NodeId id : g.nodes())
     {
         const scene::Node* n = g.node(id);
@@ -120,9 +146,16 @@ void applyLights(render::FrameState& s)
         if (!owner || owner->id != lights::kLilaProvider)
             continue;
         const lights::Settings l = lights::worldSettings(*n);
-        if (l.kind == lights::Kind::Dome || l.intensity <= 0.0)
-            continue;
         const glm::dmat4 world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+        if (l.kind == lights::Kind::Dome)
+        {
+            if (!domeDone)
+                applyDome(s, l, world);
+            domeDone = true;
+            continue;
+        }
+        if (l.intensity <= 0.0)
+            continue;
         render::LightDraw d;
         d.kind = l.kind == lights::Kind::Spot          ? render::LightDraw::Spot
                  : l.kind == lights::Kind::Directional ? render::LightDraw::Directional

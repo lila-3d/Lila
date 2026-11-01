@@ -80,6 +80,9 @@ lila_module(lila_ui UI
     Gizmo.cpp Gizmo.h ViewInfo.cpp ViewInfo.h ViewportState.h
     DrawOverrides.cpp DrawOverrides.h RenderPasses.cpp RenderPasses.h SelectionHandlers.cpp SelectionHandlers.h
     ExtrudeHandles.cpp ExtrudeHandles.h
+    NodeHandles.cpp NodeHandles.h
+    ColorPopup.cpp ColorPopup.h
+    ImagePicker.cpp ImagePicker.h
     MaterialDraw.cpp MaterialDraw.h
     MaterialEditor.cpp MaterialEditor.h
     MeasureTool.cpp MeasureTool.h

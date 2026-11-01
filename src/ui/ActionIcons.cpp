@@ -506,6 +506,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"viewport.lighting.environment", "world"},
     {"viewport.lighting.studio", "bulb"},
     {"viewport.lighting.flat", "bulb-off"},
+    {"viewport.toggleLighting", "bulb"},
     {"viewport.vertexColors.off", "palette-off"},
     {"viewport.vertexColors.shaded", "palette"},
     {"viewport.vertexColors.unlit", "palette"},

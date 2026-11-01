@@ -145,6 +145,12 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         mChannelDrag = true;
         return;
     }
+    if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && mNodeHandles.press(e->position(), viewInfo()))
+    {
+        updateCursor();
+        submit();
+        return;
+    }
     if ((e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) && !(e->modifiers() & Qt::AltModifier))
         if (Gizmo* gz = currentGizmo())
         {
@@ -236,6 +242,12 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         channelSlider::drag(e->globalPosition().toPoint(), e->modifiers());
         return;
     }
+    if (mNodeHandles.dragging())
+    {
+        mNodeHandles.drag(e->position(), viewInfo(), e->modifiers());
+        requestFrame();
+        return;
+    }
     if (Gizmo* gz = mGizmoDrag)
     {
         const glm::dvec2 at = mCursorWrap.map({e->position().x(), e->position().y()});
@@ -254,17 +266,24 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         updateTabHover(e->position());
     if (e->buttons() == Qt::NoButton)
     {
+        const bool handleChanged = mNodeHandles.hover(e->position(), viewInfo());
         Gizmo* gz = currentGizmo();
         if (gz)
         {
             gz->setView(viewInfo());
-            if (gz->hover(e->position()))
+            // A node handle under the cursor takes the press, so the manipulator shows nothing hovered.
+            if (gz->hover(mNodeHandles.hovering() ? QPointF(-1e6, -1e6) : e->position()) || handleChanged)
             {
                 updateCursor();
                 requestFrame();
             }
         }
-        if ((gz && gz->hovering()) || (e->modifiers() & Qt::AltModifier) || viewportTools::active())
+        else if (handleChanged)
+        {
+            updateCursor();
+            requestFrame();
+        }
+        if (mNodeHandles.hovering() || (gz && gz->hovering()) || (e->modifiers() & Qt::AltModifier) || viewportTools::active())
             clearPreselect();
         else
             queuePreselect(e->position());
@@ -357,6 +376,13 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     {
         mChannelDrag = false;
         channelSlider::end();
+        return;
+    }
+    if (mNodeHandles.dragging() && e->button() == Qt::LeftButton)
+    {
+        mNodeHandles.release();
+        updateCursor();
+        submit();
         return;
     }
     if (mGizmoDrag && (e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton || e->button() == Qt::RightButton))
@@ -521,6 +547,13 @@ void ViewportWidget::escape()
     {
         mFramePickArmed = false;
         updateCursor();
+        return;
+    }
+    if (mNodeHandles.dragging())
+    {
+        mNodeHandles.cancel();
+        updateCursor();
+        submit();
         return;
     }
     QKeyEvent e(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
