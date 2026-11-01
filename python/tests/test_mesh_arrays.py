@@ -44,6 +44,16 @@ ops.undo()
 assert np.allclose(cube.points_array(), pts)
 print("test_mesh_arrays write: ok")
 
+normals = cube.normals_array()
+assert np.shares_memory(normals, cube.normals_array())  # cached per snapshot
+moved = pts.copy()
+moved[0] += 1.0
+cube.set_points(moved)
+assert not np.allclose(cube.normals_array(), normals)
+ops.undo()
+assert np.allclose(cube.normals_array(), normals)
+print("test_mesh_arrays normals cache: ok")
+
 with ThreadPoolExecutor(max_workers=4) as pool:
     sums = list(pool.map(lambda r: pts[r[0]:r[1]].sum(axis=0), [(0, 2), (2, 4), (4, 6), (6, 8)]))
 assert np.allclose(np.sum(sums, axis=0), pts.sum(axis=0))

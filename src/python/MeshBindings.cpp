@@ -19,6 +19,7 @@
 
 #include <cstring>
 #include <memory>
+#include <unordered_map>
 
 namespace nb = nanobind;
 
@@ -176,15 +177,30 @@ std::pair<IndexArray, IndexArray> faceArrays(const std::string& mesh, bool base)
     return {IndexArray(countData, {faces}, bufferOwner(counts)), IndexArray(pointData, {corners}, bufferOwner(points))};
 }
 
-nb::ndarray<nb::numpy, const float, nb::shape<-1, 3>> normalsArray(const std::string& mesh, bool base)
+struct FaceVertexNormals
 {
-    scene::MeshPtr m = meshOf(mesh, base, "normals_array");
-    std::unique_ptr<glm::vec3[]> out;
-    size_t corners = 0;
+    std::unique_ptr<glm::vec3[]> data;
+    size_t count = 0;
+};
+using NormalsPtr = std::shared_ptr<const FaceVertexNormals>;
+
+/** Face-vertex normals per mesh snapshot. Snapshots never change, so an entry holds while its mesh lives. Main thread only. */
+struct CachedNormals
+{
+    std::weak_ptr<const geo::Mesh> mesh;
+    NormalsPtr normals;
+};
+std::unordered_map<const geo::Mesh*, CachedNormals> gNormalsCache;
+
+NormalsPtr faceVertexNormals(const scene::MeshPtr& m)
+{
+    std::erase_if(gNormalsCache, [](const auto& e) { return e.second.mesh.expired(); });
+    if (auto it = gNormalsCache.find(m.get()); it != gNormalsCache.end())
+        return it->second.normals;
+    auto out = std::make_shared<FaceVertexNormals>();
     {
         nb::gil_scoped_release nogil;
         FaceLayout l = faceLayout(*m);
-        corners = l.offsets.back();
         std::span<const glm::vec3> stored = m->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
         std::vector<glm::vec3> computed;
         if (stored.size() != m->cornerCapacity())
@@ -192,10 +208,19 @@ nb::ndarray<nb::numpy, const float, nb::shape<-1, 3>> normalsArray(const std::st
             computed = geo::cornerNormals(*m);
             stored = computed;
         }
-        out = gatherCorners(*m, l, stored);
+        out->data = gatherCorners(*m, l, stored);
+        out->count = l.offsets.back();
     }
-    const float* data = reinterpret_cast<const float*>(out.get());
-    return {data, {corners, size_t(3)}, bufferOwner(out)};
+    gNormalsCache[m.get()] = {m, out};
+    return out;
+}
+
+nb::ndarray<nb::numpy, const float, nb::shape<-1, 3>> normalsArray(const std::string& mesh, bool base)
+{
+    NormalsPtr n = faceVertexNormals(meshOf(mesh, base, "normals_array"));
+    const float* data = reinterpret_cast<const float*>(n->data.get());
+    const size_t corners = n->count;
+    return {data, {corners, size_t(3)}, nb::capsule(new NormalsPtr(std::move(n)), [](void* p) noexcept { delete static_cast<NormalsPtr*>(p); })};
 }
 
 nb::ndarray<nb::numpy, const float, nb::shape<-1, 2>> uvArray(const std::string& mesh, const std::string& set, bool base)
