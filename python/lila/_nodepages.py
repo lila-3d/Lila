@@ -3,7 +3,8 @@ so every node's description, sockets and properties match what the Node Editor s
 
     lila.exe -b -c "import lila._nodepages as p; p.write(r'X:/Lila-3D/docs')"
 
-lila._apipages.write runs it too. Every .md under docs/nodes/ is generated: fix the text in the node declarations.
+lila._apipages.write runs it too. Every .md under docs/nodes/ is generated: fix the text in the node declarations. A node
+with a picture in docs/images/nodes/<type>.webp shows it under its description.
 """
 
 import os
@@ -12,13 +13,14 @@ from . import ops
 from ._apipages import _HEADER, _cell, _flat, _write_if_changed
 
 FOLDER = "nodes"
+IMAGES = "images/nodes"
 
 
 def write(docs_dir):
     """Rewrites docs_dir/nodes/ and removes pages that are no longer generated. Returns the paths written."""
     out_dir = os.path.join(docs_dir, FOLDER)
     os.makedirs(out_dir, exist_ok=True)
-    pages = render()
+    pages = render(docs_dir)
     written = []
     for name, text in pages.items():
         path = os.path.join(out_dir, name)
@@ -30,15 +32,19 @@ def write(docs_dir):
     return written
 
 
-def render():
-    """{file name: markdown} for every page."""
+def render(docs_dir=None):
+    """{file name: markdown} for every page. Given docs_dir, nodes with a picture under it show the picture."""
+    images = set()
+    if docs_dir and os.path.isdir(os.path.join(docs_dir, IMAGES)):
+        images = {f[:-5] for f in os.listdir(os.path.join(docs_dir, IMAGES)) if f.endswith(".webp")}
+    gn_node = lambda n, level: _gn_node(n, level, images)
     return {
         "geometry-nodes.md": _page(
             "Geometry node reference",
             "Every geometry node, by menu category. Diamond sockets in the editor take or give fields (kind *field* here). "
             "Inputs left unlinked use the default shown, or the implicit input named (Position, Normal, Index, ID).",
             ops.gnNodeTypes(detail=True),
-            _gn_node,
+            gn_node,
         ),
         "texture-nodes.md": _page(
             "Texture node reference",
@@ -66,18 +72,20 @@ def _page(title, intro, nodes, render_node):
     return "\n".join(lines)
 
 
-def _heading(n, level):
+def _heading(n, level, images=()):
     label = n.get("label") or n["type"]
     lines = [f"{level} {label}", ""]
     if label.replace(" ", "") != n["type"]:
         lines += [f"Type `{n['type']}`.", ""]
     if n.get("doc"):
         lines += [_flat(n["doc"]), ""]
+    if n["type"] in images:
+        lines += [f"![{label}](../{IMAGES}/{n['type']}.webp)", ""]
     return lines
 
 
-def _gn_node(n, level):
-    lines = _heading(n, level)
+def _gn_node(n, level, images=()):
+    lines = _heading(n, level, images)
     rows = []
     for s in n.get("inputs") or []:
         kind = "input, field" if s.get("field") else "input"

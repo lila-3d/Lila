@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "mcp/McpServer.h"
 #include "render/Renderer.h"
@@ -342,6 +343,11 @@ QImage render(const Options& o, Timing* timing, int repeat)
         if (textured)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+        if (viewportDisplay::vertexColorMode() != render::VertexColorMode::Off && !geo::colors::current(*shown).empty())
+        {
+            d.vertexColors = viewportDisplay::vertexColorMode();
+            d.colorChannel = viewportDisplay::colorChannel();
+        }
         d.flags = 0;
         if (o.display != "wireframe")
             d.flags |= render::DrawShaded;

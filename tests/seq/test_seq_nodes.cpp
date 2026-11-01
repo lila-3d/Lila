@@ -103,7 +103,7 @@ TEST_CASE("an Imposter node bakes octahedral atlases and gives a card")
     CHECK(fs::exists(r["files"]["baseColor"].get<std::string>()));
     CHECK(fs::exists(r["files"]["normal"].get<std::string>()));
     CHECK(fs::exists(r["files"]["mesh"].get<std::string>()));
-    CHECK(r["materialParams"]["FramesXY"] == 4);
-    CHECK(r["materialParams"]["Default Mesh Size"].get<double>() == doctest::Approx(100.0).epsilon(0.02));
+    CHECK(r["materialParams"]["Frames"] == 4);
+    CHECK(r["materialParams"]["Radius"].get<double>() == doctest::Approx(50.0).epsilon(0.02));
     fs::remove_all(dir);
 }

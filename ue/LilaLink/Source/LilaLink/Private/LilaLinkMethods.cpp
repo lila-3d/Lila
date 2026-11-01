@@ -5,6 +5,7 @@
 #include "LilaLinkMasonry.h"
 #include "LilaLinkPlacements.h"
 #include "LilaLinkSequence.h"
+#include "LilaLinkImposter.h"
 #include "LilaLinkLandscape.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTextures.h"
@@ -107,7 +108,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")),
-		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials"))});
+		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters"))});
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }
@@ -368,6 +369,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	Methods.Add(TEXT("runPython"), LilaLink::Sync(&RunPython));
 	LilaLink::AddSequenceMethods(Methods);
 	LilaLink::AddVatMethods(Methods);
+	LilaLink::AddImposterMethods(Methods);
 	LilaLink::AddTextureMethods(Methods);
 	LilaLink::AddMLDeformerMethods(Methods);
 	LilaLink::AddSplineMethods(Methods);

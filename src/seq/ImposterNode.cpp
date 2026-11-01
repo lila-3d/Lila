@@ -59,8 +59,9 @@ void imposterNode()
         .category = "Game",
         .doc = "Bakes what reaches it into an octahedral imposter for Unreal: Bake in the side panel views it from Frames x Frames "
                "directions and writes a base colour atlas (alpha is coverage), a normal atlas (alpha is depth), a card mesh FBX and a "
-               "JSON of the material inputs into imposters/ next to the scene. Base colour comes from the mesh's current colour set, "
-               "else light grey. Geometry passes through; Card is the square the imposter draws on.",
+               "JSON of the material inputs into imposters/ next to the scene; Send to Unreal bakes and imports it through LilaLink with a "
+               "material that turns the card to the nearest view. Base colour comes from the mesh's current colour set, else light grey. "
+               "Geometry passes through; Card is the square the imposter draws on.",
         .props = {prop("layout", {"octahedral", "hemi-octahedral"}, "hemi-octahedral",
                        "octahedral: views from every side; hemi-octahedral: only from above, twice the detail for things seen from the ground.")},
         .sockets = {.inputs = {geoIn("geometry"), bounded(in("frames", gn::SocketType::Int, 12, "Views per side of the atlas."), 2, 32),
@@ -75,7 +76,8 @@ void imposterNode()
                 auto [centre, radius] = sphereOf(m);
                 c.out("card", gn::meshGeometry(cardMesh(centre, radius)));
             },
-        .actions = {{"Bake", "BakeImposter", "View what reaches this node from every frame's direction and write the imposter atlases."}},
+        .actions = {{"Bake", "BakeImposter", "View what reaches this node from every frame's direction and write the imposter atlases."},
+                    {"Send to Unreal", "SendImposter", "Bake, then import the card, atlases and imposter material into the connected Unreal project."}},
     });
 }
 
@@ -185,7 +187,7 @@ ImposterResult bakeImposter(const geo::Mesh& source, const ImposterOptions& o)
                                "the view looks from the decoded direction toward the centre, z up"},
                   {"files", {{"baseColor", r.baseColor.filename().generic_string()}, {"normal", r.normal.filename().generic_string()},
                              {"mesh", r.mesh.filename().generic_string()}}},
-                  {"materialParams", {{"FramesXY", n}, {"UpperHemisphereOnlyImpostor", hemi}, {"Default Mesh Size", radius * 2.0},
+                  {"materialParams", {{"Frames", n}, {"Hemi", hemi ? 1 : 0}, {"Centre", {centre.x, centre.y, centre.z}}, {"Radius", radius},
                                       {"BaseColor", r.baseColor.filename().generic_string()},
                                       {"Normal", r.normal.filename().generic_string()}}}};
     std::ofstream(r.meta) << r.metadata.dump(2);

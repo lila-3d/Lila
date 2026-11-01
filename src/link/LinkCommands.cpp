@@ -362,6 +362,53 @@ void registerCommands()
         },
     });
 
+    ops::registerCommand({
+        .name = "gnSendImposter",
+        .doc = "Bake an Imposter node (as gnBakeImposter) and import it into the connected Unreal project: the card mesh, both "
+               "atlases and a material instance of LilaLink's imposter material, which turns the card to the camera's nearest "
+               "view. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.",
+        .positionalDoc = "group node",
+        .flags = {{"contentPath", "", T::String, nullptr, "The card mesh in Unreal; defaults to /Game/Lila/Imposters/SM_<name>."},
+                  {"folder", "", T::String, nullptr, "Where to write the bake; defaults to imposters/ next to the scene."},
+                  {"name", "", T::String, nullptr, "File base name; defaults to the mesh's."},
+                  {"modifier", "", T::String, nullptr, "The modifier to evaluate when several meshes run the group; defaults to the first."},
+                  {"wait", "w", T::Bool, false, "Block until Unreal finishes and return its reply."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            std::shared_ptr<RpcClient> client = requireClient();
+            json features = Link::get().status().value("features", json::array());
+            if (!features.is_array() || std::ranges::find(features, json("imposters")) == features.end())
+                throw CommandError("gnSendImposter: the LilaLink plugin predates imposters; rebuild it from Lila's ue/LilaLink");
+            json call = {{"args", a.positional}};
+            for (const char* f : {"folder", "name", "modifier"})
+                if (a.has(f))
+                    call[f] = a.get<std::string>(f);
+            json baked = ops::execute("gnBakeImposter", call);
+            const std::string meta = baked["files"]["meta"].get<std::string>();
+            const std::string contentPath = a.get<std::string>("contentPath", "/Game/Lila/Imposters/SM_" + fs::path(meta).stem().string());
+            json params = {{"contentPath", contentPath}, {"metaFile", meta}};
+            json out = {{"files", baked["files"]}, {"contentPath", contentPath}};
+            if (a.get<bool>("wait"))
+            {
+                RpcResult r = client->call("importImposter", params, importCallOptions());
+                if (!r.ok)
+                    throw CommandError("gnSendImposter: " + r.error);
+                out.update(r.result);
+                return out;
+            }
+            client->callOnMain("importImposter", params, importCallOptions(), [contentPath](RpcResult r) {
+                if (!r.ok)
+                    return log::error("Unreal import of {} failed: {}", contentPath, r.error);
+                json errors = r.result.value("errors", json::array());
+                for (const json& e : errors)
+                    log::error("Unreal: {}: {}", contentPath, e.dump());
+                if (errors.empty())
+                    log::info("Unreal: imported {}", r.result.value("assets", json::array()).dump());
+            });
+            return out;
+        },
+    });
+
     registerMlDeformerCommands();
 }
 } // namespace lila::link
