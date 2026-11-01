@@ -371,7 +371,8 @@ void KnifeTool::finish(bool closed)
 {
     scene::Graph& g = scene::Graph::current();
     scene::Node* n = g.node(mNode);
-    if (mPoints.size() < 2 || !n)
+    const bool edgePoint = mPoints.size() == 1 && mPoints[0].point.kind == Kind::Edge;
+    if ((mPoints.size() < 2 && !edgePoint) || !n)
     {
         cancel();
         return;

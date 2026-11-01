@@ -15,6 +15,64 @@
 
 namespace lila::scene::detail
 {
+namespace
+{
+/** A single knife point on an edge: splits that edge (and its symmetric images) with a new vertex there. */
+json insertEdgePoint(Graph& g, Node& n, PlugRef base, geo::Mesh mesh, const geo::KnifePoint& k, const geo::SymmetryMap* sym, bool select)
+{
+    if (!mesh.edgeValid(k.id))
+        throw CommandError("polyKnife: " + n.path() + " has no edge " + std::to_string(k.id));
+    const Index a = mesh.edgePoint(k.id, 0);
+    const Index b = mesh.edgePoint(k.id, 1);
+    // Each image edge is split at the image of the spot, so t flips when the image runs the other way.
+    std::vector<std::pair<Index, double>> splits{{k.id, k.t}};
+    for (int e = 1; sym && e < sym->order(); ++e)
+    {
+        const Index ia = sym->image(e, a);
+        const Index ib = sym->image(e, b);
+        if (ia == geo::kInvalid || ib == geo::kInvalid)
+            continue;
+        const Index ie = mesh.findEdge(ia, ib);
+        if (ie == geo::kInvalid || std::ranges::any_of(splits, [&](const auto& s) { return s.first == ie; }))
+            continue;
+        splits.emplace_back(ie, mesh.edgePoint(ie, 0) == ia ? k.t : 1.0 - k.t);
+    }
+
+    UndoChunk chunk("Knife");
+    std::vector<glm::dvec3> before;
+    int drive = 0;
+    if (sym)
+    {
+        before.assign(mesh.positions().begin(), mesh.positions().end());
+        drive = sym->majorityWedge(Ids{a, b});
+    }
+    const Index firstNew = mesh.pointCapacity();
+    Ids points, edges;
+    for (const auto& [e, t] : splits)
+    {
+        points.push_back(mesh.splitEdge(e, t));
+        edges.push_back(mesh.lastSplitEdge());
+    }
+    geo::clearSymmetryKeys(mesh, firstNew);
+    if (sym)
+        maintainSymmetry(n, mesh, before, drive);
+    geo::MeshRemap remap;
+    mesh.compact(&remap);
+    Ids mappedPoints = remapIds(points, remap.points);
+    Ids mappedEdges = remapIds(edges, remap.edges);
+    auto edited = std::make_shared<geo::Mesh>(std::move(mesh));
+    g.setValue(base, MeshPtr(edited));
+    modifiers::baseRemapped(g, n.id(), remap, *edited);
+    objectSets::meshRemapped(g, n.id(), remap);
+    if (select)
+    {
+        components::setAll({{n.id(), mappedPoints}}, {}, {});
+        components::setMode(ComponentMode::Vertex);
+    }
+    return mappedEdges;
+}
+} // namespace
+
 void registerMeshEditKnifeCommands()
 {
     using T = ArgType;
@@ -26,7 +84,7 @@ void registerMeshEditKnifeCommands()
                "crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from "
                "eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge "
                "loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's "
-               "symmetry. Returns the new edges.",
+               "symmetry. A single point on an edge inserts a vertex there. Returns the new edges.",
         .flags = {{"mesh", "", T::String, nullptr, "Mesh to cut; default: the selected or hilited mesh."},
                   {"points", "", T::List, nullptr,
                    "Path points: {\"vertex\": id}, {\"edge\": id, \"t\": 0..1 from its first point}, or {\"face\": id, \"position\": "
@@ -107,8 +165,10 @@ void registerMeshEditKnifeCommands()
                     else
                         throw CommandError("polyKnife: each point is {vertex:}, {edge:, t:} or {face:, position:}");
                 }
+                if (pts.size() == 1 && pts[0].kind == geo::KnifePoint::Kind::Edge)
+                    return insertEdgePoint(g, n, base, std::move(mesh), pts[0], sym ? &*sym : nullptr, a.get<bool>("select"));
                 if (pts.size() < 2)
-                    throw CommandError("polyKnife: give at least two points");
+                    throw CommandError("polyKnife: give at least two points, or one on an edge");
                 geo::KnifeOptions o;
                 o.closed = a.get<bool>("closed");
                 o.through = a.get<bool>("through");

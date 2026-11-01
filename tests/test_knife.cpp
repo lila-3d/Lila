@@ -51,3 +51,22 @@ TEST_CASE("polyKnife: deleteEdge joins its two faces in one undo step")
     CHECK(faces(cube) == 6);
     CHECK_THROWS(run("polyKnife", {{"mesh", cube}, {"deleteEdge", 999}}));
 }
+
+TEST_CASE("polyKnife: one point on an edge inserts a vertex")
+{
+    run("newScene");
+    std::string cube = run("polyCube")[0];
+    const int points = run("meshInfo", {{"args", {cube}}})["points"].get<int>();
+    json cut = run("polyKnife", {{"mesh", cube}, {"points", {{{"edge", 0}, {"t", 0.3}}}}});
+    CHECK(cut.size() == 1);
+    CHECK(run("meshInfo", {{"args", {cube}}})["points"].get<int>() == points + 1);
+    CHECK(faces(cube) == 6);
+    CHECK(run("selectMode") == "vertex");
+    run("undo");
+    CHECK(run("meshInfo", {{"args", {cube}}})["points"].get<int>() == points);
+
+    std::string plane = run("polyPlane", {{"subdivisionsX", 4}, {"subdivisionsZ", 1}})[0];
+    run("setSymmetry", {{"args", {plane}}, {"axis", "x"}});
+    CHECK(run("polyKnife", {{"mesh", plane}, {"points", {{{"edge", 0}, {"t", 0.5}}}}}).size() == 2);
+    CHECK(run("symmetryCheck", {{"args", {plane}}})[plane]["unmatched"].get<int>() == 0);
+}
