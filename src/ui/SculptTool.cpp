@@ -4,6 +4,7 @@
 #include <tbb/parallel_for.h>
 
 #include "brush/BrushUi.h"
+#include "brush/Presets.h"
 #include "ops/Command.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
@@ -51,6 +52,7 @@ SculptSettings loadSettings()
         s.brush = sculpt::Brush::Custom;
         s.custom = brushName;
     }
+    s.preset = p.value<std::string>(kPrefs, "/sculpt/preset", s.preset);
     s.paint = p.value<bool>(kPrefs, "/sculpt/paint", s.paint);
     if (json c = p.value(kPrefs, "/sculpt/color"); c.is_array() && c.size() == 3 && c[0].is_number() && c[1].is_number() && c[2].is_number())
         s.color = glm::vec3(c[0].get<float>(), c[1].get<float>(), c[2].get<float>());
@@ -70,6 +72,7 @@ SculptSettings loadSettings()
     s.shareStrength = p.value<bool>(kPrefs, "/sculpt/shareStrength", s.shareStrength);
     s.shareStroke = p.value<bool>(kPrefs, "/sculpt/shareStroke", s.shareStroke);
     s.wireframe = p.value<bool>(kPrefs, "/sculpt/wireframe", s.wireframe);
+    s.wireOpacity = std::clamp(p.value<double>(kPrefs, "/sculpt/wireOpacity", s.wireOpacity), 0.05, 1.0);
     s.material = p.value<std::string>(kPrefs, "/sculpt/material", s.material);
     if (json per = p.value(kPrefs, "/sculpt/perBrush"); per.is_object())
         for (auto& [name, j] : per.items())
@@ -77,7 +80,12 @@ SculptSettings loadSettings()
     return s;
 }
 
-std::string brushKey(sculpt::Brush b, const std::string& custom) { return b == sculpt::Brush::Custom ? custom : std::string(sculpt::brushName(b)); }
+std::string brushKey(sculpt::Brush b, const std::string& custom, const std::string& preset)
+{
+    if (!preset.empty())
+        return "preset:" + preset;
+    return b == sculpt::Brush::Custom ? custom : std::string(sculpt::brushName(b));
+}
 
 /** A brush's starting settings the first time it is picked. */
 brush::BrushSettings defaultStroke(sculpt::Brush b)
@@ -401,6 +409,7 @@ private:
         const glm::dmat4 w = worldOf(*mSession);
         viewportTools::setOrbitPoint(xformPoint(w, d.center));
         const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
+        mDabWorldRadius = d.radius * scale;
         const glm::dmat3 nrm = glm::transpose(glm::inverse(glm::dmat3(w)));
         mDabs.push_back({{"center", vecJson(xformPoint(w, d.center))},
                          {"normal", vecJson(glm::normalize(nrm * d.normal))},
@@ -461,9 +470,10 @@ private:
         mSession.reset();
         if (rec.empty())
             return;
-        rec.pivotMoved = true;
         rec.pivotBefore = mPivotBefore;
         rec.pivotAfter = viewportTools::orbitPoint();
+        // Undo leaves the tumble point alone when no earlier stroke set it, or when it moved less than a brush width.
+        rec.pivotMoved = rec.pivotBefore && rec.pivotAfter && glm::distance(*rec.pivotBefore, *rec.pivotAfter) > 2.0 * mDabWorldRadius;
         uint64_t token = sculpt::nextLiveToken();
         s->liveToken = token;
         s->live = std::move(rec);
@@ -497,6 +507,7 @@ private:
     std::shared_ptr<sculpt::Session> mSession;
     sculpt::BrushSettings mSettings;
     std::optional<glm::dvec3> mPivotBefore;
+    double mDabWorldRadius = 0.0;
     std::string mFalloffName;
     brush::Stroke mStroke;
     bool mStroking = false;
@@ -543,7 +554,7 @@ public:
         if (sculptSettings().wireframe)
         {
             d.flags |= render::DrawWire;
-            d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, 1.0f);
+            d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, float(std::clamp(sculptSettings().wireOpacity, 0.05, 1.0)));
         }
         s.meshes.push_back(std::move(d));
 
@@ -681,6 +692,7 @@ void sculptSettingsChanged()
     const SculptSettings& s = sculptSettings();
     PrefStore& p = PrefStore::get();
     p.set(kPrefs, "/sculpt/brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush)));
+    p.set(kPrefs, "/sculpt/preset", s.preset);
     p.set(kPrefs, "/sculpt/paint", s.paint);
     p.set(kPrefs, "/sculpt/color", json::array({s.color.r, s.color.g, s.color.b}));
     s.stroke.savePrefs("/sculpt");
@@ -695,6 +707,7 @@ void sculptSettingsChanged()
     p.set(kPrefs, "/sculpt/shareStrength", s.shareStrength);
     p.set(kPrefs, "/sculpt/shareStroke", s.shareStroke);
     p.set(kPrefs, "/sculpt/wireframe", s.wireframe);
+    p.set(kPrefs, "/sculpt/wireOpacity", s.wireOpacity);
     p.set(kPrefs, "/sculpt/material", s.material);
     json per = json::object();
     for (const auto& [name, b] : s.perBrush)
@@ -715,26 +728,60 @@ int addSculptSettingsListener(std::function<void()> fn)
 
 void removeSculptSettingsListener(int id) { settingsListeners().erase(id); }
 
-void selectSculptBrush(sculpt::Brush b, const std::string& custom)
+namespace
 {
-    SculptSettings& s = sculptSettings();
-    const std::string from = brushKey(s.brush, s.custom), to = brushKey(b, custom);
+/**
+ * Stores the current brush's stroke settings and swaps in the next one's (or first, its defaults), keeping what is shared.
+ * Only the radius is shared to or from a preset: its stroke and strength are what make it the preset.
+ */
+void swapStroke(SculptSettings& s, const std::string& to, const brush::BrushSettings& first)
+{
+    const std::string from = brushKey(s.brush, s.custom, s.preset);
     if (from != to)
     {
         s.perBrush[from] = s.stroke;
         auto it = s.perBrush.find(to);
-        const brush::BrushSettings stored = it != s.perBrush.end() ? it->second : defaultStroke(b);
-        brush::BrushSettings next = s.shareStroke ? s.stroke : stored;
+        const brush::BrushSettings stored = it != s.perBrush.end() ? it->second : first;
+        const bool preset = from.starts_with("preset:") || to.starts_with("preset:");
+        brush::BrushSettings next = s.shareStroke && !preset ? s.stroke : stored;
         const brush::BrushSettings& radius = s.shareRadius ? s.stroke : stored;
         next.radiusUnit = radius.radiusUnit;
         next.radius = radius.radius;
         next.worldRadius = radius.worldRadius;
-        next.strength = (s.shareStrength ? s.stroke : stored).strength;
+        next.strength = (s.shareStrength && !preset ? s.stroke : stored).strength;
         s.stroke = next;
     }
+}
+} // namespace
+
+void selectSculptBrush(sculpt::Brush b, const std::string& custom)
+{
+    SculptSettings& s = sculptSettings();
+    swapStroke(s, brushKey(b, custom, {}), defaultStroke(b));
     s.brush = b;
     s.custom = b == sculpt::Brush::Custom ? custom : std::string();
+    s.preset.clear();
     sculptSettingsChanged();
+}
+
+bool selectSculptPreset(const std::string& id)
+{
+    std::optional<brush::presets::Preset> p = brush::presets::find(id);
+    if (!p)
+        return false;
+    sculpt::BrushSettings resolved;
+    if (!sculpt::setBrush(resolved, p->brush))
+    {
+        log::warn("Brush preset {}: no brush named {}", id, p->brush);
+        return false;
+    }
+    SculptSettings& s = sculptSettings();
+    swapStroke(s, brushKey(resolved.brush, resolved.custom, id), p->settings);
+    s.brush = resolved.brush;
+    s.custom = resolved.custom;
+    s.preset = id;
+    sculptSettingsChanged();
+    return true;
 }
 
 std::vector<std::pair<std::string, std::string>> sculptMaterials()

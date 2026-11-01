@@ -34,6 +34,7 @@
 #include "scene/Graph.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
+#include "brush/Presets.h"
 #include "sculpt/SculptSession.h"
 #include "stream/ChangeStream.h"
 #include "seq/MeshSequence.h"
@@ -173,6 +174,7 @@ void startCore()
     curve::registerCommands();
     clay::registerCommands();
     sculpt::registerCommands();
+    brush::presets::registerCommands();
     vcolor::registerCommands();
     vcs::registerCommands();
     extensions::registerCommands();

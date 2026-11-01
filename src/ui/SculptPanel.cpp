@@ -1,6 +1,8 @@
 #include "ui/SculptPanel.h"
 
+#include "brush/Alphas.h"
 #include "brush/BrushUi.h"
+#include "brush/Presets.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "core/Log.h"
@@ -11,6 +13,7 @@
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
+#include "ui/FileDialog.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/ModelingToolkit.h"
@@ -23,7 +26,17 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDockWidget>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileSystemWatcher>
+#include <QImageReader>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMimeData>
+#include <QUrl>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -33,6 +46,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -72,8 +86,40 @@ constexpr std::array<BrushInfo, size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Paint, "paint", "Paint", "Paint polypaint in the Polypaint color without moving anything. The mask shields points."},
 }};
 
-/** Brush button ids past the built-ins pick a registered brush. */
+/** Brush button ids past the built-ins pick a registered brush, and past those a preset. */
 constexpr int kCustomBrushId = 1000;
+constexpr int kPresetId = 2000;
+
+/** A preset's button icon: its own icon, else its alpha, else its brush's. */
+QIcon presetIcon(const brush::presets::Preset& p)
+{
+    if (!p.icon.empty())
+        return icon(QString::fromStdString(p.icon));
+    if (const std::string file = brush::alphas::resolve(p.settings.alphaPath); !file.empty())
+    {
+        QImageReader reader(QString::fromStdString(file));
+        reader.setScaledSize(QSize(48, 48));
+        if (QImage img = reader.read(); !img.isNull())
+            return QIcon(QPixmap::fromImage(img));
+    }
+    if (auto b = sculpt::brushFromName(p.brush))
+        for (const BrushInfo& info : kBrushes)
+            if (info.brush == *b)
+                return icon(info.icon);
+    if (const sculpt::BrushDef* def = sculpt::brushRegistry().find(p.brush); def && !def->icon.empty())
+        return icon(QString::fromStdString(def->icon));
+    return icon("puzzle");
+}
+
+std::vector<std::string> droppedPresets(const QMimeData* mime)
+{
+    const QString ext = QString::fromUtf8(brush::presets::kExtension.data(), qsizetype(brush::presets::kExtension.size()));
+    std::vector<std::string> out;
+    for (const QUrl& url : mime->urls())
+        if (url.isLocalFile() && url.toLocalFile().endsWith(ext, Qt::CaseInsensitive))
+            out.push_back(url.toLocalFile().toStdString());
+    return out;
+}
 
 QColor swatchColor(const glm::vec3& linear)
 {
@@ -238,6 +284,34 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     rebuildCustomBrushes();
     col->addWidget(mBrushBox);
 
+    // Presets
+    mPresetBox = new QGroupBox("Presets", this);
+    auto* presetCol = new QVBoxLayout(mPresetBox);
+    mPresetFlow = new FlowLayout(3);
+    presetCol->addLayout(mPresetFlow);
+    auto* presetRow = new QHBoxLayout;
+    auto* savePresetButton = new QToolButton(mPresetBox);
+    savePresetButton->setIcon(icon("bookmark-plus"));
+    savePresetButton->setText("Save Preset");
+    savePresetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    savePresetButton->setToolTip("Save the current brush and its settings, alpha included, as a preset");
+    auto* importButton = new QToolButton(mPresetBox);
+    importButton->setIcon(icon("file-import"));
+    importButton->setText("Import");
+    importButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    importButton->setToolTip("Install .lilabrush files (or drop them on this panel)");
+    presetRow->addWidget(savePresetButton);
+    presetRow->addWidget(importButton);
+    presetRow->addStretch(1);
+    presetCol->addLayout(presetRow);
+    col->addWidget(mPresetBox);
+    connect(savePresetButton, &QToolButton::clicked, this, [this] { savePreset(); });
+    connect(importButton, &QToolButton::clicked, this, [this] { importPresets(); });
+    setAcceptDrops(true);
+    mPresetWatcher = new QFileSystemWatcher(this);
+    connect(mPresetWatcher, &QFileSystemWatcher::directoryChanged, this, [] { brush::presets::notifyChanged(); });
+    rebuildPresets();
+
     // Brush settings
     auto* settingsBox = new QGroupBox("Brush", this);
     auto* bform = new QFormLayout(settingsBox);
@@ -318,6 +392,10 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mWireframe->setToolTip("The sculpt mesh's wireframe (Shift+F in the viewport)");
     setCheckDefault(mWireframe, SculptSettings{}.wireframe);
     dform->addRow(mWireframe);
+    mWireOpacity = new QSlider(Qt::Horizontal, displayBox);
+    mWireOpacity->setRange(5, 100);
+    mWireOpacity->setToolTip("How strongly the wireframe draws over the sculpt");
+    dform->addRow("Wire Opacity", mWireOpacity);
     col->addWidget(displayBox);
 
     // Polypaint
@@ -364,7 +442,12 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
 
     auto changed = [] { sculptSettingsChanged(); };
     connect(mBrushes, &QButtonGroup::idClicked, this, [this](int id) {
-        if (id >= kCustomBrushId && size_t(id - kCustomBrushId) < mCustomBrushes.size())
+        if (id >= kPresetId && size_t(id - kPresetId) < mPresets.size())
+        {
+            if (!selectSculptPreset(mPresets[size_t(id - kPresetId)]))
+                syncFromSettings();
+        }
+        else if (id >= kCustomBrushId && size_t(id - kCustomBrushId) < mCustomBrushes.size())
             selectSculptBrush(sculpt::Brush::Custom, mCustomBrushes[size_t(id - kCustomBrushId)]);
         else
             selectSculptBrush(sculpt::Brush(id));
@@ -385,6 +468,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mShareStrength, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStrength = on; changed(); });
     connect(mShareStroke, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStroke = on; changed(); });
     connect(mWireframe, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().wireframe = on; changed(); });
+    connect(mWireOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().wireOpacity = v / 100.0; changed(); });
     connect(mMaterial, &QComboBox::currentIndexChanged, this, [this, changed](int) {
         sculptSettings().material = mMaterial->currentData().toString().toStdString();
         changed();
@@ -425,6 +509,17 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mBrushRegistryListener = sculpt::brushRegistry().addListener([this](RegistryChange, const std::string&, const std::string&) {
         QTimer::singleShot(0, this, [this] {
             rebuildCustomBrushes();
+            rebuildPresets();
+            syncFromSettings();
+        });
+    });
+    mPresetListener = brush::presets::addListener([this] {
+        if (mPresetsQueued)
+            return;
+        mPresetsQueued = true;
+        QTimer::singleShot(0, this, [this] {
+            mPresetsQueued = false;
+            rebuildPresets();
             syncFromSettings();
         });
     });
@@ -448,21 +543,23 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
 SculptPanel::~SculptPanel()
 {
     sculpt::brushRegistry().removeListener(mBrushRegistryListener);
+    brush::presets::removeListener(mPresetListener);
     removeSculptSettingsListener(mSettingsListener);
     sculpt::removeListener(mSessionListener);
     scene::Graph::current().removeListener(mGraphListener);
 }
 
-QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, const QString& doc)
+QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, const QString& doc, FlowLayout* flow)
 {
-    auto* btn = new QToolButton(mBrushBox);
+    flow = flow ? flow : mBrushFlow;
+    auto* btn = new QToolButton(flow == mBrushFlow ? mBrushBox : mPresetBox);
     btn->setIcon(ic);
     btn->setText(label);
     btn->setCheckable(true);
     btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     btn->setMinimumWidth(66);
     btn->setToolTip(doc.isEmpty() ? label : QString("%1\n%2").arg(label, doc));
-    mBrushFlow->addWidget(btn);
+    flow->addWidget(btn);
     return btn;
 }
 
@@ -484,19 +581,155 @@ void SculptPanel::rebuildCustomBrushes()
     }
 }
 
+void SculptPanel::rebuildPresets()
+{
+    for (size_t k = 0; k < mPresets.size(); ++k)
+        if (QAbstractButton* b = mBrushes->button(kPresetId + int(k)))
+        {
+            mBrushes->removeButton(b);
+            delete b;
+        }
+    mPresets.clear();
+    for (const brush::presets::Preset& p : brush::presets::library("sculpt"))
+    {
+        QString doc = QString::fromStdString(p.doc);
+        const QString where = QString::fromStdString(p.sourceLabel + (p.category.empty() ? "" : " / " + p.category));
+        doc += doc.isEmpty() ? where : "\n" + where;
+        QToolButton* btn = brushButton(presetIcon(p), QString::fromStdString(p.label), doc, mPresetFlow);
+        const size_t index = mPresets.size();
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(btn, &QToolButton::customContextMenuRequested, this, [this, btn, index](const QPoint& at) { presetMenu(index, btn->mapToGlobal(at)); });
+        mBrushes->addButton(btn, kPresetId + int(index));
+        mPresets.push_back(p.id);
+    }
+
+    if (!mPresetWatcher->directories().isEmpty())
+        mPresetWatcher->removePaths(mPresetWatcher->directories());
+    std::error_code ec;
+    for (const brush::presets::Folder& f : brush::presets::folders())
+        if (std::filesystem::is_directory(f.dir, ec))
+            mPresetWatcher->addPath(QString::fromStdWString(f.dir.wstring()));
+}
+
+void SculptPanel::savePreset()
+{
+    SculptSettings& s = sculptSettings();
+    std::optional<brush::presets::Preset> current = s.preset.empty() ? std::nullopt : brush::presets::find(s.preset);
+    const bool own = current && (current->source == "user" || current->source == "project");
+    const std::string brushName = s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush));
+    QString suggested = current ? QString::fromStdString(current->label)
+                        : s.brush == sculpt::Brush::Custom ? QString::fromStdString(s.custom)
+                                                           : QString(kBrushes[size_t(s.brush)].label);
+    bool ok = false;
+    const QString label = QInputDialog::getText(this, "Save Brush Preset", "Name", QLineEdit::Normal, suggested, &ok).trimmed();
+    if (!ok || label.isEmpty())
+        return;
+    // Saving under the open preset's own name updates it in place; any other name makes a new one.
+    const bool replace = own && label.toStdString() == current->label;
+    json call = {{"args", {label.toStdString()}},
+                 {"brush", brushName},
+                 {"settings", s.stroke.toJson()},
+                 {"alpha", s.stroke.alphaPath},
+                 {"scope", replace ? current->source : std::string("user")},
+                 {"replace", replace}};
+    json result;
+    try
+    {
+        result = ops::execute("brushPresetSave", call, CallSource::UI);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("{}", e.what());
+        return;
+    }
+    const std::string id = result.value("id", "");
+    if (id.empty())
+        return;
+    if (replace)
+        s.perBrush.erase("preset:" + id);
+    rebuildPresets();
+    selectSculptPreset(id);
+}
+
+void SculptPanel::importPresets()
+{
+    const fileDialog::ContextScope scope("brushPresets", "Brush Presets");
+    const QStringList files = fileDialog::getOpenFileNames(this, "Import Brush Presets", {}, "Brush presets (*.lilabrush)");
+    if (files.isEmpty())
+        return;
+    json args = json::array();
+    for (const QString& f : files)
+        args.push_back(f.toStdString());
+    runCommand("brushPresetInstall", {{"args", args}});
+}
+
+void SculptPanel::presetMenu(size_t index, const QPoint& globalPos)
+{
+    if (index >= mPresets.size())
+        return;
+    std::optional<brush::presets::Preset> p = brush::presets::find(mPresets[index]);
+    if (!p)
+        return;
+    QMenu menu(this);
+    menu.addAction(icon("file-export"), "Export...", this, [this, p] {
+        const fileDialog::ContextScope scope("brushPresets", "Brush Presets");
+        const QString file = fileDialog::getSaveFileName(this, "Export Brush Preset", QString::fromStdString(p->label + ".lilabrush"),
+                                                         "Brush presets (*.lilabrush)");
+        if (!file.isEmpty())
+            runCommand("brushPresetExport", {{"args", {p->id}}, {"file", file.toStdString()}});
+    });
+    menu.addAction(icon("folder-open"), "Show in Folder", this, [p] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(p->file.parent_path().wstring())));
+    });
+    if (p->source == "user" || p->source == "project")
+    {
+        menu.addSeparator();
+        menu.addAction(icon("trash"), "Delete", this, [p] {
+            if (!runCommand("brushPresetDelete", {{"args", {p->id}}}))
+                return;
+            SculptSettings& s = sculptSettings();
+            s.perBrush.erase("preset:" + p->id);
+            if (s.preset == p->id)
+                selectSculptBrush(s.brush, s.custom);
+        });
+    }
+    menu.exec(globalPos);
+}
+
+void SculptPanel::dragEnterEvent(QDragEnterEvent* e)
+{
+    if (droppedPresets(e->mimeData()).empty())
+        return e->ignore();
+    e->acceptProposedAction();
+}
+
+void SculptPanel::dropEvent(QDropEvent* e)
+{
+    std::vector<std::string> files = droppedPresets(e->mimeData());
+    if (files.empty())
+        return e->ignore();
+    e->acceptProposedAction();
+    // After the drop returns, so Explorer's drag loop isn't held.
+    QTimer::singleShot(0, this, [files] { runCommand("brushPresetInstall", {{"args", files}}); });
+}
+
 void SculptPanel::syncFromSettings()
 {
     const SculptSettings& s = sculptSettings();
     QSignalBlocker b1(mRadius), b2(mStrength), b3(mSpacing), b4(mFalloff), b5(mFrontFaces), b6(mShowCage), b7(mMode), b8(mLevels),
         b9(mResolution), b10(mExitMethod), b11(mKeepProxy), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
-        b16(mWireframe), b17(mMaterial);
+        b16(mWireframe), b17(mMaterial), b18(mWireOpacity);
     mShareRadius->setChecked(s.shareRadius);
     mShareStrength->setChecked(s.shareStrength);
     mShareStroke->setChecked(s.shareStroke);
     mWireframe->setChecked(s.wireframe);
+    mWireOpacity->setValue(int(std::lround(s.wireOpacity * 100.0)));
+    mWireOpacity->setEnabled(s.wireframe);
     mMaterial->setCurrentIndex(std::max(0, mMaterial->findData(QString::fromStdString(s.material))));
     int checked = int(s.brush);
-    if (s.brush == sculpt::Brush::Custom)
+    if (auto preset = std::ranges::find(mPresets, s.preset); !s.preset.empty() && preset != mPresets.end())
+        checked = kPresetId + int(preset - mPresets.begin());
+    else if (s.brush == sculpt::Brush::Custom)
     {
         auto it = std::ranges::find(mCustomBrushes, s.custom);
         checked = it == mCustomBrushes.end() ? -1 : kCustomBrushId + int(it - mCustomBrushes.begin());
@@ -558,6 +791,31 @@ void SculptPanel::refreshSession()
 void registerSculptUi()
 {
     installSculptDrawer();
+
+    ops::registerCommand({
+        .name = "sculptBrush",
+        .doc = "Pick the sculpt tool's brush: a built-in or registered brush by name, or a brush preset by id (see brushPresets). "
+               "Returns {brush, preset}.",
+        .flags = {{.name = "brush", .type = ArgType::String, .doc = "A brush name: draw, clayStrips, damStandard, ... or a registered brush's."},
+                  {.name = "preset", .type = ArgType::String, .doc = "A brush preset id, such as user/Skin Pores."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (const std::string preset = a.get<std::string>("preset"); !preset.empty())
+            {
+                if (!selectSculptPreset(preset))
+                    throw CommandError("sculptBrush: no usable preset '" + preset + "'");
+            }
+            else if (a.has("brush"))
+            {
+                sculpt::BrushSettings resolved;
+                if (!sculpt::setBrush(resolved, a.get<std::string>("brush")))
+                    throw CommandError("sculptBrush: no brush '" + a.get<std::string>("brush") + "'");
+                selectSculptBrush(resolved.brush, resolved.custom);
+            }
+            const SculptSettings& s = sculptSettings();
+            return {{"brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush))}, {"preset", s.preset}};
+        },
+    });
 
     actions::add({.id = "window.sculpt",
                   .label = "Sculpt Panel",

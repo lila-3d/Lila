@@ -62,7 +62,11 @@ void scanDir(const fs::path& dir, const std::string& tier, const std::string& ow
         rel.replace_extension();
         try
         {
-            Preset p = Preset::fromJson(readJsonFile(f));
+            const json doc = readJsonFile(f);
+            // The same folders hold other tools' presets (sculpt).
+            if (doc.is_object() && doc.value("tool", "paint") != "paint")
+                continue;
+            Preset p = Preset::fromJson(doc);
             p.id = rel.generic_string();
             p.tier = tier;
             p.owner = owner;

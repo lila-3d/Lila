@@ -3,6 +3,8 @@ lila_module(lila_brush Scene
     Alphas.h
     Brush.cpp
     Brush.h
+    Presets.cpp
+    Presets.h
     Stroke.cpp
     Stroke.h
     Surface.cpp

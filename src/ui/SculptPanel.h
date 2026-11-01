@@ -10,7 +10,12 @@
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+class QDragEnterEvent;
+class QDropEvent;
+class QFileSystemWatcher;
+class QPoint;
 class QDoubleSpinBox;
+class QSlider;
 class QGroupBox;
 class QIcon;
 class QLabel;
@@ -44,8 +49,14 @@ public:
 private:
     void syncFromSettings();
     void refreshSession();
-    QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc);
+    QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc, FlowLayout* flow = nullptr);
     void rebuildCustomBrushes();
+    void rebuildPresets();
+    void savePreset();
+    void importPresets();
+    void presetMenu(size_t index, const QPoint& globalPos);
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
     QGroupBox* mBrushBox = nullptr;
     FlowLayout* mBrushFlow = nullptr;
@@ -53,12 +64,20 @@ private:
     /** Registered brush names, in button order. */
     std::vector<std::string> mCustomBrushes;
     int mBrushRegistryListener = 0;
+    QGroupBox* mPresetBox = nullptr;
+    FlowLayout* mPresetFlow = nullptr;
+    /** Preset ids, in button order. */
+    std::vector<std::string> mPresets;
+    int mPresetListener = 0;
+    QFileSystemWatcher* mPresetWatcher = nullptr;
+    bool mPresetsQueued = false;
     QToolButton* mColor = nullptr;
     QCheckBox* mPaint = nullptr;
     QCheckBox* mShareRadius = nullptr;
     QCheckBox* mShareStrength = nullptr;
     QCheckBox* mShareStroke = nullptr;
     QCheckBox* mWireframe = nullptr;
+    QSlider* mWireOpacity = nullptr;
     QComboBox* mMaterial = nullptr;
     QComboBox* mFalloff = nullptr;
     QDoubleSpinBox* mRadius = nullptr;
@@ -85,7 +104,7 @@ private:
 
 /**
  * Registers the sculpt actions (window.sculpt, sculpt.tool, sculpt.enter, sculpt.exit, sculpt.cancel, sculpt.brush.*,
- * sculpt.mask*, sculpt.freezeClear, mesh.relaxKeepForm, mesh.reproject, mesh.transferShape) and the viewport drawer.
+ * sculpt.mask*, sculpt.freezeClear, mesh.relaxKeepForm, mesh.reproject, mesh.transferShape), the sculptBrush command and the viewport drawer.
  */
 LILA_UI_API void registerSculptUi();
 } // namespace lila::ui

@@ -19,6 +19,8 @@ struct SculptSettings
     sculpt::Brush brush = sculpt::Brush::Draw;
     /** The registered brush's name when brush is Custom. */
     std::string custom;
+    /** The brush preset in use (brush::presets id), empty for the plain brush. */
+    std::string preset;
     /** Shape brushes paint polypaint too; the Paint brush always does. */
     bool paint = false;
     /** Polypaint color, linear RGB. */
@@ -44,6 +46,8 @@ struct SculptSettings
     bool showCage = true;
     /** The sculpt mesh's wireframe (not the cage's). */
     bool wireframe = false;
+    /** How strongly the wireframe draws over the surface, 0.05 to 1. */
+    double wireOpacity = 1.0;
     /** A sculptMaterials() id. */
     std::string material = "clay";
     std::string proxyMode = "subdivide";
@@ -61,6 +65,8 @@ LILA_UI_API void removeSculptSettingsListener(int id);
 
 /** Picks a brush (custom names a registered one): stores the old brush's stroke settings and swaps in the new one's. */
 LILA_UI_API void selectSculptBrush(sculpt::Brush brush, const std::string& custom = {});
+/** Picks a brush preset: its brush, with its stroke settings the first time and the user's tweaks to them after. False when it is gone. */
+LILA_UI_API bool selectSculptPreset(const std::string& id);
 /** The preview materials sculpt mode can draw with, as (id, label). */
 LILA_UI_API std::vector<std::pair<std::string, std::string>> sculptMaterials();
 

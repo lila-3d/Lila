@@ -21,7 +21,8 @@
  *     "payload":   { tex::paint::Payload JSON: kind, channels, blend, filterRadius, amount, source, tip, normalMode... },
  *     "particles": { tex::paint::ParticleSpec JSON } }
  *
- * Every part is optional: a preset only changes what it names, so "Smudge" can keep the current colours.
+ * Every part is optional: a preset only changes what it names, so "Smudge" can keep the current colours. Files with a
+ * "tool" other than "paint" belong to another tool (brush/Presets.h) and are skipped.
  */
 namespace lila::tex::brushes
 {
