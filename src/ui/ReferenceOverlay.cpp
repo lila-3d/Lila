@@ -308,6 +308,8 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
     if (o.bound.set)
         info += "   Bound";
     p.label(QPointF(view.width * 0.5 - OverlayPainter::textWidth(info) * 0.5, kHudTop + kHudSize + 34), info);
+    const QString hint = "Drag the image to move it, a corner to scale, the knob to rotate.   Delete removes it.   Esc or a click outside it when done.";
+    p.label(QPointF(view.width * 0.5 - OverlayPainter::textWidth(hint) * 0.5, kHudTop + kHudSize + 58), hint);
 }
 
 void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
@@ -494,7 +496,12 @@ void hudAction(const std::string& button, const std::string& view)
     else if (button == "park")
         parkView(view);
     else if (button == "remove")
+    {
         runCommand("referenceOverlay", {{"remove", json::array({id})}});
+        if (refs::current().overlaysIn(view).empty())
+            setAdjust(false);
+        viewportToast::showActive("Reference overlay removed (Ctrl+Z brings it back)", 3000);
+    }
     else if (button == "done")
         setAdjust(false);
 }
@@ -506,9 +513,17 @@ public:
     using QObject::QObject;
     bool eventFilter(QObject* obj, QEvent* e) override
     {
-        if (e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape && state().adjust)
+        if (e->type() != QEvent::KeyPress || !state().adjust || QApplication::activeModalWidget())
+            return QObject::eventFilter(obj, e);
+        const int key = static_cast<QKeyEvent*>(e)->key();
+        if (key == Qt::Key_Escape)
         {
             setAdjust(false);
+            return true;
+        }
+        if (key == Qt::Key_Delete || key == Qt::Key_Backspace)
+        {
+            hudAction("remove", state().adjustView);
             return true;
         }
         return QObject::eventFilter(obj, e);
@@ -537,8 +552,12 @@ void setAdjust(bool on, const std::string& view)
     }
     else
     {
+        const bool was = st.adjust;
+        const std::string left = st.adjustView;
         st.adjust = false;
         st.adjustView.clear();
+        if (was && !refs::current().overlaysIn(left).empty())
+            viewportToast::showActive("Reference overlay kept. Tap O to hide or show it, Shift+O to adjust it again", 4000);
         if (filter)
         {
             qApp->removeEventFilter(filter);
@@ -606,7 +625,11 @@ bool pressDrag(QMouseEvent* e, const ViewInfo& view)
         else if (hit(*o, size, px))
             st.drag = DragKind::Move;
         else
+        {
             st.drag = DragKind::None;
+            setAdjust(false);
+            return false;
+        }
         return true;
     }
     st.drag = e->button() == Qt::LeftButton ? DragKind::Move : e->button() == Qt::RightButton ? DragKind::Scale : e->button() == Qt::MiddleButton ? DragKind::Rotate : DragKind::None;
@@ -719,11 +742,19 @@ void keyUp()
 
 // --- Adding --------------------------------------------------------------------------------------------------------
 
+/** A new overlay opens in adjust mode, so its handles, toolbar and hints show how to place it or get rid of it. */
+void introduce(const std::string& view)
+{
+    if (!refs::current().overlaysIn(view).empty())
+        setAdjust(true, view);
+}
+
 /** Adds image files to the set (no window tab) and shows each as an overlay in view. */
 void addFiles(const std::vector<std::string>& files, const std::string& view)
 {
     for (const std::string& f : files)
         runCommand("referenceOverlay", {{"args", json::array({f})}, {"view", view}});
+    introduce(view);
 }
 
 void registerCommand()
@@ -988,7 +1019,10 @@ std::string show(const std::string& imageId, const std::string& view)
     if (!view.empty())
         call["view"] = view;
     json r = runCommand("referenceOverlay", call);
-    return r.is_string() ? r.get<std::string>() : std::string();
+    if (!r.is_string())
+        return {};
+    introduce(view.empty() ? activeViewName() : view);
+    return r.get<std::string>();
 }
 
 std::string activeOverlay(const std::string& view)
@@ -1183,6 +1217,7 @@ void install(std::function<ViewportWidget*()> activeView)
                 return true;
             }
         runCommand("referenceOverlay", {{"args", json::array({image})}, {"view", view}});
+        introduce(view);
         return true;
     });
     state().textureListener = textures::addListener([] {

@@ -514,7 +514,7 @@ Set Set::fromJson(const nlohmann::json& j)
         o.view = i.value("view", "persp");
         o.anchor = Anchor(indexOf(kAnchors, i.value("anchor", ""), 0));
         o.offset = vec2(i.value("offset", json()), glm::dvec2(0.0));
-        o.scale = std::max(0.01, i.value("scale", 0.9));
+        o.scale = std::max(0.01, i.value("scale", 0.6));
         o.rotation = i.value("rotation", 0.0);
         o.opacity = std::clamp(i.value("opacity", 0.3), 0.0, 1.0);
         o.depth = Depth(indexOf(kDepths, i.value("depth", ""), 1));

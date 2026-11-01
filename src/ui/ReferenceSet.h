@@ -84,7 +84,7 @@ struct Overlay
     /** Image centre from the anchor point, in view heights, y down. */
     glm::dvec2 offset{0.0};
     /** Shown height in view heights. */
-    double scale = 0.9;
+    double scale = 0.6;
     double rotation = 0.0; // degrees clockwise on screen
     double opacity = 0.3;
     Depth depth = Depth::Front;
