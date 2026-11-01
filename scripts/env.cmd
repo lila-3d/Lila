@@ -1,7 +1,6 @@
 @echo off
-rem Dev shell: MSVC, Qt, Python, vcpkg. Override any of these before calling.
+rem Dev shell: MSVC, Python, vcpkg (which builds Qt too). Override any of these before calling.
 if not defined LILA_VS set "LILA_VS=C:\Program Files\Microsoft Visual Studio\2022\Community"
-if not defined LILA_QT_DIR set "LILA_QT_DIR=C:\Qt\6.11.1\msvc2022_64"
 for %%P in ("C:\Python314" "%LOCALAPPDATA%\Python\pythoncore-3.14-64" "%LOCALAPPDATA%\Programs\Python\Python314" "%ProgramFiles%\Python314") do (
     if not defined LILA_PYTHON_DIR if exist "%%~P\libs\python314.lib" set "LILA_PYTHON_DIR=%%~P"
 )
@@ -22,4 +21,4 @@ where cl >nul 2>&1 || (
     exit /b 1
 )
 del "%LILA_VCVARS_LOG%" >nul 2>&1
-set "PATH=%LILA_QT_DIR%\..\..\Tools\Ninja;%LILA_QT_DIR%\bin;%LILA_PYTHON_DIR%;%PATH%"
+set "PATH=%LILA_PYTHON_DIR%;%PATH%"

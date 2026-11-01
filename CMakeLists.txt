@@ -41,7 +41,18 @@ endif()
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 find_package(Python 3.14 EXACT REQUIRED COMPONENTS Interpreter Development.Module Development.Embed)
+# Qt is vcpkg's, also in build folders whose cache still points at a Qt installed elsewhere.
+if(VCPKG_INSTALLED_DIR)
+    get_cmake_property(_cache_vars CACHE_VARIABLES)
+    foreach(_var IN LISTS _cache_vars)
+        if(_var MATCHES "^Qt6.+_DIR$" AND NOT "${${_var}}" MATCHES "^${VCPKG_INSTALLED_DIR}")
+            unset(${_var} CACHE)
+        endif()
+    endforeach()
+    set(Qt6_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/Qt6" CACHE PATH "" FORCE)
+endif()
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
+include(LilaDeployQt)
 # Q_SIGNALS, Q_SLOTS and Q_EMIT only: the precompiled header puts Qt in every source, where signals, slots and emit are
 # ordinary names.
 add_compile_definitions(QT_NO_KEYWORDS)

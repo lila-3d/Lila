@@ -24,17 +24,12 @@ if(WIN32)
     target_link_libraries(lilawer PRIVATE lila_crashkit)
     add_dependencies(lilabatch lilacrash lilawer)
 endif()
-set_target_properties(lila PROPERTIES VS_DEBUGGER_ENVIRONMENT "PATH=${Qt6_DIR}/../../../bin;%PATH%")
 
 if(WIN32)
     # Python and Qt next to the exe so it runs without PATH setup.
     cmake_path(GET Python_EXECUTABLE PARENT_PATH _pyhome)
-    get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
-    cmake_path(GET _qmake PARENT_PATH _qtbin)
     add_custom_command(TARGET lila POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_pyhome}/python3.dll ${_pyhome}/python${Python_VERSION_MAJOR}${Python_VERSION_MINOR}.dll $<TARGET_FILE_DIR:lila>
-        COMMAND ${_qtbin}/windeployqt.exe --no-translations --no-system-d3d-compiler --no-opengl-sw --no-compiler-runtime $<TARGET_FILE:lila> $<TARGET_FILE:LilaUI> > NUL
-        # The offscreen platform, for the headless widget tests that run from this folder.
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_qtbin}/../plugins/platforms/qoffscreen$<$<CONFIG:Debug>:d>.dll $<TARGET_FILE_DIR:lila>/platforms
-        COMMENT "Deploying Python and Qt runtime")
+        COMMENT "Deploying the Python runtime")
+    lila_deploy_qt(lila)
 endif()
