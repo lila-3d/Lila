@@ -8,6 +8,12 @@ if not defined LILA_PYTHON_DIR call "%~dp0fetch-python.cmd" || exit /b 1
 if not defined VCPKG_ROOT set "VCPKG_ROOT=%LILA_VS%\VC\vcpkg"
 if not defined SCCACHE_DIR set "SCCACHE_DIR=X:\sccache"
 if not defined SCCACHE_CACHE_SIZE set "SCCACHE_CACHE_SIZE=120G"
+rem An existing build dir (optional %1) keeps the toolset it was configured with; mixing toolsets fails at link time.
+if not defined LILA_MSVC_VER if not "%~1"=="" if exist "%~1\CMakeCache.txt" (
+    for /d %%V in ("%LILA_VS%\VC\Tools\MSVC\*") do (
+        findstr /c:"MSVC/%%~nxV/bin" "%~1\CMakeCache.txt" >nul 2>&1 && set "LILA_MSVC_VER=%%~nxV"
+    )
+)
 set "LILA_VCVARS_LOG=%TEMP%\lila_vcvars_%RANDOM%%RANDOM%.log"
 if defined LILA_MSVC_VER (
     call "%LILA_VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=%LILA_MSVC_VER% >"%LILA_VCVARS_LOG%" 2>&1

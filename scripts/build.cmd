@@ -1,7 +1,7 @@
 @echo off
 rem build.cmd [debug|dev|release]   (default dev)
 setlocal
-call "%~dp0env.cmd"
+call "%~dp0env.cmd" "%~dp0..\build"
 set "PRESET=%~1"
 if "%PRESET%"=="" set "PRESET=dev"
 cd /d "%~dp0.."
