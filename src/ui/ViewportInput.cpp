@@ -38,6 +38,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
     }
     if (e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier) && viewportHooks::handleClick(e->position(), viewInfo()))
         return;
+    if (viewportHooks::pressDrag(e, viewInfo()))
+    {
+        requestFrame();
+        return;
+    }
     if (mTabHeld && !viewportTools::active() && e->button() == Qt::LeftButton && !(e->modifiers() & Qt::AltModifier))
     {
         tabSelect::Mode m = tabSelect::modeAtPress(selectedUnder(e->position()), e->modifiers() & Qt::ShiftModifier,
@@ -200,6 +205,12 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
 {
     QPointF d = e->position() - mLastPos;
     mLastPos = e->position();
+    if (viewportHooks::dragging())
+    {
+        viewportHooks::moveDrag(e, viewInfo());
+        requestFrame();
+        return;
+    }
     // Badges follow the cursor, which otherwise only redraws the view when the hover changes.
     if (e->buttons() == Qt::NoButton && !cursorBadges::active(state(e->position())).empty())
         requestFrame();
@@ -326,6 +337,11 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
     // Runs after this release is handled, so it sees the new selection and hilite.
     if (e->buttons() == Qt::NoButton && !(e->modifiers() & Qt::AltModifier))
         queuePreselect(e->position());
+    if (viewportHooks::releaseDrag(e, viewInfo()))
+    {
+        requestFrame();
+        return;
+    }
     if (mTabStroke.active())
     {
         if (e->button() == Qt::LeftButton)
@@ -505,6 +521,11 @@ bool ViewportWidget::selectLoopAt(QPointF at, Qt::KeyboardModifiers mods)
 void ViewportWidget::wheelEvent(QWheelEvent* e)
 {
     finishViewTurn();
+    if (viewportHooks::handleWheel(e, viewInfo()))
+    {
+        requestFrame();
+        return;
+    }
     if (ViewportTool* tool = viewportTools::active(); tool && tool->wheel(e, viewInfo()))
     {
         submit();

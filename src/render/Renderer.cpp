@@ -372,8 +372,9 @@ struct ImagePlanePush
     glm::vec4 uv;
     glm::vec4 params; // opacity, brightness, contrast, grayscale
     glm::vec4 texel;
+    glm::vec4 outline; // rgb: line color, display-encoded; w: 1 for outline mode
 };
-static_assert(sizeof(ImagePlanePush) == 176, "matches ImagePlanePush in imageplane.slang");
+static_assert(sizeof(ImagePlanePush) == 192, "matches ImagePlanePush in imageplane.slang");
 
 struct Buffer
 {
@@ -5038,6 +5039,7 @@ struct Renderer::Impl
             push.uv = p.uv;
             push.params = glm::vec4(std::clamp(p.opacity, 0.0f, 1.0f), p.brightness, p.contrast, p.grayscale ? 1.0f : 0.0f);
             push.texel = glm::vec4(0.5f / float(std::max(p.image->width, 1)), 0.5f / float(std::max(p.image->height, 1)), 0.0f, behind ? 1.0f : 0.0f);
+            push.outline = glm::vec4(p.outlineColor, p.outline ? 1.0f : 0.0f);
             vkCmdPushConstants(cmd, imagePlaneLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
             vkCmdDraw(cmd, 6, 1, 0, 0);
         }

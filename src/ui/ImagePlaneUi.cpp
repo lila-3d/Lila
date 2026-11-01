@@ -12,6 +12,7 @@
 #include "scene/ImagePlane.h"
 #include "ui/Actions.h"
 #include "ui/NodeLookup.h"
+#include "ui/ReferenceOverlay.h"
 #include "ui/Animation.h"
 #include "ui/Camera.h"
 #include "ui/TextureCache.h"
@@ -318,8 +319,13 @@ public:
                 return QObject::eventFilter(obj, e);
             d->acceptProposedAction();
             mView->setFocus(Qt::OtherFocusReason);
+            // Alt drops reference overlays, glued to the screen, instead of camera-attached planes.
+            const bool overlay = d->modifiers() & Qt::AltModifier;
             for (const std::string& f : files)
-                create(f, mView->viewName());
+                if (overlay)
+                    referenceOverlays::show(f, mView->viewName());
+                else
+                    create(f, mView->viewName());
             return true;
         }
         return QObject::eventFilter(obj, e);

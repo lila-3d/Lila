@@ -108,7 +108,9 @@ void MainWindow::buildMenus()
     addSubmenu("Create", "Polygon Primitives");
     menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
-    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.imagePlane"});
+    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup"});
+    addSubmenu("Create", "Reference Images");
+    menus::addActions("Create/Reference Images", {"create.imagePlane", "reference.addImages", "referenceOverlay.addImage"});
     addSubmenu("Create", "Sets");
     menus::addActions("Create/Sets", {"sets.create", "sets.createQuickSelect"});
 
@@ -338,7 +340,7 @@ void MainWindow::buildMenus()
     });
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
     menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
-                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "#Customize", "window.hotkeyEditor",
+                           "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "reference.addImages", "reference.clickable", "#Customize", "window.hotkeyEditor",
                            "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
@@ -451,14 +453,15 @@ void MainWindow::buildPanelMenus()
     menus::addActions("panel.View", {"viewport.view.persp", "viewport.view.top", "viewport.view.front", "viewport.view.right", "viewport.view.left",
                               "viewport.view.back", "viewport.view.bottom", "", "viewport.frameSelected", "viewport.frameAll",
                               "viewport.cameraUndo", "viewport.cameraRedo", "", "viewport.toggleResolutionGate", "viewport.toggleFilmGate",
-                              "viewport.cameraSettings", "", "viewport.imagePlaneImport"});
+                              "viewport.cameraSettings", "", "viewport.imagePlaneImport", "referenceOverlay.addImage", "referenceOverlay.adjust",
+                              "referenceOverlay.bindView", "referenceOverlay.goToView", "referenceOverlay.park"});
     menus::addActions("panel.Shading", {"viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "", "viewport.toggleAO",
                                  "viewport.aid.twoSidedLighting", "viewport.aid.backfaceTint",
                                  "", "display.smoothOff", "display.smoothCage", "display.smoothOn", "viewport.smoothSubdivisions"});
     menus::addActions("panel.Show", {"display.hide", "display.show", "display.showLastHidden", "display.showAll", "", "viewport.isolate", "viewport.isolateAdd",
                               "viewport.isolateRemove", "viewport.show.curve", "viewport.show.mesh", "viewport.show.joint", "viewport.show.light",
                               "viewport.show.locator", "rig.xrayJoints", "measure.toggleShow",
-                              "viewport.toggleImagePlanes", "", "viewport.toggleDebugDraw", "viewport.clearDebugDraw"});
+                              "viewport.toggleImagePlanes", "referenceOverlay.toggle", "", "viewport.toggleDebugDraw", "viewport.clearDebugDraw"});
     menus::addActions("panel.Renderer", {"window.renderSettings"});
     menus::addActions("panel.Panels", {"viewport.lookThroughSelected"});
     // Maya's Panels > Perspective / Orthographic: the views plus every camera node, rebuilt as the menu opens.

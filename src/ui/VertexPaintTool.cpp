@@ -17,6 +17,7 @@
 #include "scene/SoftSelect.h"
 #include "ui/Actions.h"
 #include "ui/FlowLayout.h"
+#include "ui/PaintColor.h"
 #include "ui/Icons.h"
 #include "ui/Tools.h"
 #include "ui/MeshCache.h"
@@ -1419,6 +1420,11 @@ void startVertexPaint()
 
 void registerVertexPaintUi()
 {
+    paintColor::addListener([](const glm::vec3& c) {
+        settings().color = glm::vec4(c, settings().color.a);
+        pushRecent(settings().color);
+        save();
+    });
     actions::add({.id = "vcolor.paint",
                   .label = "Paint Vertex Colors",
                   .category = "Vertex Colors",

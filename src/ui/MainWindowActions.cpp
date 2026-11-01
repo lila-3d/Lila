@@ -2,6 +2,9 @@
 #include "ui/CameraBookmarks.h"
 #include "ui/RenderOutputDialog.h"
 #include "ui/PerfTrace.h"
+#include "ui/ReferenceOverlay.h"
+#include "ui/ReferenceSet.h"
+#include "ui/ReferenceWindow.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 #include "ui/ViewportToast.h"
@@ -232,6 +235,9 @@ void MainWindow::registerActions()
                   [this] { return mViewports->active()->isolating() && actions::hasSelection(); },
                   "Hides the selected objects or components in the active view's isolation."});
     imagePlanes::install([this] { return mViewports->active(); });
+    references::install();
+    references::windows::install();
+    referenceOverlays::install([this] { return mViewports->active(); });
     sets::registerActions(this);
     GameExporter::registerActions(this);
     MeshSequenceExporter::registerActions(this);

@@ -63,6 +63,8 @@ lila_module(lila_ui UI
     Hotbox.cpp Hotbox.h HotboxZone.h HotkeyChord.h
     Icons.cpp Icons.h
     ImagePlaneUi.cpp ImagePlaneUi.h
+    PaintColor.cpp PaintColor.h
+    ReferenceSet.cpp ReferenceSet.h ReferenceWindow.cpp ReferenceWindow.h ReferenceOverlay.cpp ReferenceOverlay.h
     LayoutsUi.cpp LayoutsUi.h
     MarkingMenu.cpp MarkingMenu.h
     MarkingMenuEditor.cpp MarkingMenuEditor.h

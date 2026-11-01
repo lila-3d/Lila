@@ -11,6 +11,8 @@
 #include <QRectF>
 
 class QMimeData;
+class QMouseEvent;
+class QWheelEvent;
 
 #include <functional>
 #include <string>
@@ -86,6 +88,31 @@ LILA_UI_API bool removeClickHook(std::string_view id);
 /** The first hook (by id) that takes the click; true then. */
 LILA_UI_API bool handleClick(QPointF px, const ViewInfo& view);
 
+/**
+ * A mouse drag taken before the active tool or navigation sees it, for a held key's adjustment (moving a reference
+ * overlay while O is down). press returns true to take the drag; move and release then follow until that button lets go.
+ */
+struct DragHook
+{
+    std::function<bool(QMouseEvent* e, const ViewInfo& view)> press;
+    std::function<void(QMouseEvent* e, const ViewInfo& view)> move;
+    std::function<void(QMouseEvent* e, const ViewInfo& view)> release;
+};
+/** Adding an id again replaces it. */
+LILA_UI_API void setDragHook(std::string id, DragHook hook);
+LILA_UI_API bool removeDragHook(std::string_view id);
+/** Offers a press to each hook by id; true when one took it and owns the drag until releaseDrag. */
+LILA_UI_API bool pressDrag(QMouseEvent* e, const ViewInfo& view);
+/** True while a hook owns a drag. */
+LILA_UI_API bool dragging();
+LILA_UI_API void moveDrag(QMouseEvent* e, const ViewInfo& view);
+/** Ends the drag when e's button is the one that started it; true while the drag was the hook's. */
+LILA_UI_API bool releaseDrag(QMouseEvent* e, const ViewInfo& view);
+/** A wheel turn taken before the tool and the camera (reference overlay opacity while O is down). */
+using WheelHook = std::function<bool(QWheelEvent* e, const ViewInfo& view)>;
+LILA_UI_API void setWheelHook(std::string id, WheelHook fn);
+LILA_UI_API bool removeWheelHook(std::string_view id);
+LILA_UI_API bool handleWheel(QWheelEvent* e, const ViewInfo& view);
 /** View-only hiding (a bake group's highs while its cage is painted): the node is neither drawn nor picked, and the scene is untouched. */
 using HideHook = std::function<bool(scene::NodeId id)>;
 /** Adding an id again replaces it. */

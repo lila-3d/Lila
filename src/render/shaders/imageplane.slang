@@ -8,6 +8,7 @@ struct ImagePlanePush
     float4 uv;         // u0, v0, u1, v1
     float4 params;     // opacity, brightness, contrast, grayscale
     float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler; w: 1 behind the scene
+    float4 outline;    // rgb: line color, display-encoded; w: 1 draws only the image's edges
 };
 
 [[vk::push_constant]] ImagePlanePush pc;
@@ -44,9 +45,36 @@ float3 toLinear(float3 c)
     return select(c <= 0.04045, c / 12.92, pow((c + 0.055) / 1.055, 2.4));
 }
 
+float luma(float2 uv)
+{
+    float4 c = image.Sample(clamp(uv, pc.texel.xy, 1.0 - pc.texel.xy));
+    return dot(toDisplay(c.rgb), float3(0.2126, 0.7152, 0.0722)) * c.a;
+}
+
+/** Sobel edge strength of the image's display luminance around uv, steps of about 1.5 texels. */
+float edge(float2 uv)
+{
+    float2 s = pc.texel.xy * 3.0;
+    float tl = luma(uv + float2(-s.x, -s.y)), t = luma(uv + float2(0, -s.y)), tr = luma(uv + float2(s.x, -s.y));
+    float l = luma(uv + float2(-s.x, 0)), r = luma(uv + float2(s.x, 0));
+    float bl = luma(uv + float2(-s.x, s.y)), b = luma(uv + float2(0, s.y)), br = luma(uv + float2(s.x, s.y));
+    float gx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+    float gy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+    return sqrt(gx * gx + gy * gy);
+}
+
 [shader("fragment")]
 float4 imagePlanePS(VSOut i) : SV_Target
 {
+    if (pc.outline.w > 0.5)
+    {
+        // Contrast steepens the line threshold; brightness lowers it.
+        float e = saturate((edge(i.uv) - 0.08 - pc.params.y * 0.5) * 4.0 * pc.params.z);
+        float ea = e * pc.params.x;
+        if (ea < 0.002)
+            discard;
+        return float4(toLinear(pc.outline.rgb), ea);
+    }
     float4 c = image.Sample(clamp(i.uv, pc.texel.xy, 1.0 - pc.texel.xy));
     float a = c.a * pc.params.x;
     // Clear texels write no depth, so geometry behind a cut-out reference stays visible.

@@ -95,6 +95,9 @@ struct ImagePlaneDraw
     float brightness = 0.0f; // added in display space
     float contrast = 1.0f;   // around mid gray, in display space
     bool grayscale = false;
+    /** Only the image's edges, in outlineColor (display-encoded): a tracing sheet that leaves what is under it visible. */
+    bool outline = false;
+    glm::vec3 outlineColor{0.25f, 0.85f, 1.0f};
     Depth depth = Depth::Behind;
 };
 

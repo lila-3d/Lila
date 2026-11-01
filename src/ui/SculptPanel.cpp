@@ -10,6 +10,7 @@
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
 #include "vcolor/Paint.h"
+#include "ui/ReferenceOverlay.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
@@ -435,6 +436,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     tflow->addWidget(actionButton("mesh.reproject", "magnet", "Reproject onto Target", toolsBox));
     tflow->addWidget(actionButton("mesh.transferShape", "transform", "Transfer Shape", toolsBox));
     col->addWidget(toolsBox);
+    col->addWidget(referenceOverlays::createSculptSection(this));
     col->addStretch(1);
 
     syncFromSettings();

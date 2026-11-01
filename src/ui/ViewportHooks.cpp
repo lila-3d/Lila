@@ -3,6 +3,9 @@
 #include "core/Log.h"
 #include "core/Registry.h"
 
+#include <QMouseEvent>
+#include <QWheelEvent>
+
 #include <algorithm>
 #include <map>
 
@@ -219,4 +222,104 @@ bool handleDrop(const QMimeData& mime, const DropTarget& target, bool commit)
             return true;
     return false;
 }
+namespace
+{
+std::map<std::string, DragHook, std::less<>>& dragHooks()
+{
+    static std::map<std::string, DragHook, std::less<>> h;
+    return h;
+}
+
+std::map<std::string, WheelHook, std::less<>>& wheelHooks()
+{
+    static std::map<std::string, WheelHook, std::less<>> h;
+    return h;
+}
+
+struct ActiveDrag
+{
+    std::string id;
+    Qt::MouseButton button = Qt::NoButton;
+};
+
+ActiveDrag& activeDrag()
+{
+    static ActiveDrag d;
+    return d;
+}
+
+const DragHook* activeHook()
+{
+    auto it = dragHooks().find(activeDrag().id);
+    return it == dragHooks().end() ? nullptr : &it->second;
+}
+} // namespace
+
+void setDragHook(std::string id, DragHook hook) { dragHooks()[std::move(id)] = std::move(hook); }
+
+bool removeDragHook(std::string_view id)
+{
+    auto it = dragHooks().find(id);
+    if (it == dragHooks().end())
+        return false;
+    if (activeDrag().id == id)
+        activeDrag() = {};
+    dragHooks().erase(it);
+    return true;
+}
+
+bool pressDrag(QMouseEvent* e, const ViewInfo& view)
+{
+    if (dragging())
+        return true;
+    for (const auto& [id, hook] : dragHooks())
+        if (hook.press && hook.press(e, view))
+        {
+            activeDrag() = {id, e->button()};
+            return true;
+        }
+    return false;
+}
+
+bool dragging() { return activeHook() != nullptr; }
+
+void moveDrag(QMouseEvent* e, const ViewInfo& view)
+{
+    if (const DragHook* h = activeHook(); h && h->move)
+        h->move(e, view);
+}
+
+bool releaseDrag(QMouseEvent* e, const ViewInfo& view)
+{
+    const DragHook* h = activeHook();
+    if (!h)
+        return false;
+    if (e->button() != activeDrag().button)
+        return true;
+    auto release = h->release;
+    activeDrag() = {};
+    if (release)
+        release(e, view);
+    return true;
+}
+
+void setWheelHook(std::string id, WheelHook fn) { wheelHooks()[std::move(id)] = std::move(fn); }
+
+bool removeWheelHook(std::string_view id)
+{
+    auto it = wheelHooks().find(id);
+    if (it == wheelHooks().end())
+        return false;
+    wheelHooks().erase(it);
+    return true;
+}
+
+bool handleWheel(QWheelEvent* e, const ViewInfo& view)
+{
+    for (const auto& [id, fn] : wheelHooks())
+        if (fn && fn(e, view))
+            return true;
+    return false;
+}
+
 } // namespace lila::ui::viewportHooks
