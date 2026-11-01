@@ -476,6 +476,11 @@ struct Viewport
     uint64_t lutKey = 0;               // the LUT the compose sets point at
     std::chrono::steady_clock::time_point lastExposure{};
     bool wantsMore = false;
+    /** Still accumulating with no new state: the next of those frames draws at convergeAt, one per display refresh. */
+    bool converging = false;
+    std::chrono::steady_clock::time_point convergeAt{};
+    std::chrono::duration<double> refreshInterval{1.0 / 60.0};
+    std::chrono::steady_clock::time_point refreshCheck{}; // the monitor's rate is read again after this, as windows move
     VkDescriptorSet rtaoSet = VK_NULL_HANDLE, bevelSet = VK_NULL_HANDLE, shadowSet = VK_NULL_HANDLE;
     uint64_t rtaoGeneration = 0, bevelGeneration = 0, shadowGeneration = 0; // Impl::tlasGeneration the sets point at
     Image bevel;    // rounded normals from the bevel pass
@@ -5365,17 +5370,28 @@ struct Renderer::Impl
             if (!tasks.empty())
                 return true;
             // A viewport with no frame state yet can't draw, and waking for it would spin with the mutex held.
+            const auto now = std::chrono::steady_clock::now();
             for (auto& [id, v] : viewports)
-                if (v->pending && v->hasState)
+                if (v->hasState && (v->pending || (v->converging && now >= v->convergeAt)))
                     return true;
             return false;
+        };
+        auto nextConverge = [&] {
+            std::optional<std::chrono::steady_clock::time_point> next;
+            for (auto& [id, v] : viewports)
+                if (v->converging && v->hasState && (!next || v->convergeAt < *next))
+                    next = v->convergeAt;
+            return next;
         };
         while (true)
         {
             // Big uploads leave big staging buffers, slow to free: they go once the GPU is done with them, while the
             // thread is idle, instead of in front of the next frame drawn into the same slot.
+            const auto converge = nextConverge();
             if (reclaimStaging())
                 cv.wait_for(lock, std::chrono::milliseconds(20), ready);
+            else if (converge)
+                cv.wait_until(lock, *converge, ready);
             else
                 cv.wait(lock, ready);
             if (quit)
@@ -5423,9 +5439,10 @@ struct Renderer::Impl
             for (auto& [id, vp] : viewports)
             {
                 Viewport& v = *vp;
-                if (!v.pending || !v.hasState)
+                if (!v.hasState || !(v.pending || (v.converging && std::chrono::steady_clock::now() >= v.convergeAt)))
                     continue;
                 v.pending = false;
+                v.converging = false;
                 if (!v.surface)
                 {
                     v.surface = createSurface(vk.instance, v.window);
@@ -5460,9 +5477,19 @@ struct Renderer::Impl
                 v.stats = v.timing;
                 if (retry && v.retries++ < 3)
                     v.pending = true;
-                // Still converging on the same state: draw it again, unless a new one is already waiting.
+                // Still converging on the same state: draw it again a refresh later, unless a new state comes first.
+                // Mailbox presentation never blocks, so without this the same image redraws thousands of times a second.
                 else if (v.wantsMore && !retry)
-                    v.pending = true;
+                {
+                    if (v.refreshCheck <= std::chrono::steady_clock::now())
+                    {
+                        v.refreshInterval = std::chrono::duration<double>(1.0 / refreshHz(v.window));
+                        v.refreshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+                    }
+                    v.converging = true;
+                    v.convergeAt = std::chrono::steady_clock::now() +
+                                   std::chrono::duration_cast<std::chrono::steady_clock::duration>(v.refreshInterval);
+                }
             }
         }
 

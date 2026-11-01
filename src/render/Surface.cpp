@@ -26,4 +26,21 @@ VkSurfaceKHR createSurface(VkInstance instance, uintptr_t nativeWindow)
 #endif
     return surface;
 }
+
+double refreshHz(uintptr_t nativeWindow)
+{
+#ifdef _WIN32
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (HMONITOR monitor = MonitorFromWindow(HWND(nativeWindow), MONITOR_DEFAULTTONEAREST);
+        monitor && GetMonitorInfoW(monitor, &info) && EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) &&
+        mode.dmDisplayFrequency > 1)
+        return double(mode.dmDisplayFrequency);
+#else
+    (void)nativeWindow;
+#endif
+    return 60.0;
+}
 } // namespace lila::render
