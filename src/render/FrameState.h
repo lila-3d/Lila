@@ -89,6 +89,8 @@ struct ImagePlaneDraw
         Front,  // over every mesh
     };
     glm::vec3 corners[4]{};               // top left, top right, bottom right, bottom left
+    /** corners are view NDC (x, y; z unused) rather than world points: glued to the screen, untouched by the camera. */
+    bool screen = false;
     glm::vec4 uv{0.0f, 0.0f, 1.0f, 1.0f}; // u0, v0, u1, v1; v0 is the image's top row
     TexturePtr image;                     // sRGB
     float opacity = 1.0f;

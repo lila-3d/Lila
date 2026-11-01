@@ -4,7 +4,7 @@
 struct ImagePlanePush
 {
     float4x4 viewProj;
-    float4 corners[4]; // xyz: top left, top right, bottom right, bottom left
+    float4 corners[4]; // xyz: top left, top right, bottom right, bottom left; w 0: xy are NDC, glued to the screen
     float4 uv;         // u0, v0, u1, v1
     float4 params;     // opacity, brightness, contrast, grayscale
     float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler; w: 1 behind the scene
@@ -27,7 +27,8 @@ VSOut imagePlaneVS(uint id : SV_VertexID)
     uint c = order[id];
     float2 t = float2(c == 1 || c == 2 ? 1.0 : 0.0, c >= 2 ? 1.0 : 0.0);
     VSOut o;
-    o.pos = mul(pc.viewProj, float4(pc.corners[c].xyz, 1.0));
+    // Screen quads skip the camera, so its TAA jitter and motion never shake them; reversed-Z puts 1 at the near plane.
+    o.pos = pc.corners[c].w < 0.5 ? float4(pc.corners[c].xy, 1.0, 1.0) : mul(pc.viewProj, float4(pc.corners[c].xyz, 1.0));
     // Behind the scene: at the far plane, so only what nothing covers takes it (reversed-Z clears to 0).
     if (pc.texel.w > 0.5)
         o.pos.z = 0.0;

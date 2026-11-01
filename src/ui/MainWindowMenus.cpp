@@ -1,4 +1,5 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 #include "ui/MenuSets.h"
 #include "ui/Shelf.h"
@@ -98,7 +99,7 @@ void MainWindow::buildMenus()
                         "edit.makeUnique", "edit.convertToInstance", "select.instances", "select.instanceSource", "edit.group", "edit.lodGroup", "edit.generateLods", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
                         "window.preferences", "window.extensionManager"});
 
-    menu("Modify", "M&odify");
+    menu("Modify", "Modify");
     menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.zeroPivotRotation", "modify.bakePivot", "modify.matchPivot", "modify.matchPivotPosition", "modify.matchPivotOrient", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
     addSubmenu("Modify", "Scene Origin");
@@ -110,7 +111,9 @@ void MainWindow::buildMenus()
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup"});
     addSubmenu("Create", "Reference Images");
-    menus::addActions("Create/Reference Images", {"create.imagePlane", "reference.addImages", "referenceOverlay.addImage"});
+    menus::addActions("Create/Reference Images", {"create.imagePlane", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
+                                                   "referenceOverlay.toggle", "referenceOverlay.next", ""});
+    menus::addItem({.menu = "Create/Reference Images", .action = docs::pageAction("reference-images")});
     addSubmenu("Create", "Sets");
     menus::addActions("Create/Sets", {"sets.create", "sets.createQuickSelect"});
 

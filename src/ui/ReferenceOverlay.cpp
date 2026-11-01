@@ -114,6 +114,7 @@ struct State
     std::string adjustView;
     std::map<std::string, std::string> active; // view -> overlay id
     std::set<std::string> hiddenViews;
+    std::map<std::string, std::string> solo; // view -> the overlay shown on its own (Alt+O), absent for all
     DragKind drag = DragKind::None;
     int cropEdge = 0; // 0 top, 1 right, 2 bottom, 3 left, of the quad as shown
     int hoverButton = -1; // the HUD button under the cursor, for its tooltip
@@ -198,6 +199,17 @@ void edit(const std::string& id, const std::function<void(Overlay&)>& fn)
     });
 }
 
+/** Edits the overlay as an undo step, for the toolbar buttons and menu items. */
+void editUndoable(const std::string& id, const std::string& label, const std::function<void(Overlay&)>& fn)
+{
+    refs::Set next = refs::current();
+    if (Overlay* o = next.overlay(id))
+    {
+        fn(*o);
+        refs::apply(std::move(next), label);
+    }
+}
+
 void redraw()
 {
     viewportTools::requestRedraw();
@@ -205,16 +217,11 @@ void redraw()
 
 // --- Drawing -------------------------------------------------------------------------------------------------------
 
-/** World corners of view-pixel corners, just behind the near plane. */
-void toWorld(const ViewInfo& view, const std::array<glm::dvec2, 4>& px, glm::vec3 (&out)[4])
+/** NDC corners of view-pixel corners. */
+void toNdc(const ViewInfo& view, const std::array<glm::dvec2, 4>& px, glm::vec3 (&out)[4])
 {
-    const glm::dmat4 inv = glm::inverse(view.viewProj());
     for (int k = 0; k < 4; ++k)
-    {
-        const glm::dvec2 ndc(px[size_t(k)].x / view.width * 2.0 - 1.0, px[size_t(k)].y / view.height * 2.0 - 1.0);
-        const glm::dvec4 p = inv * glm::dvec4(ndc.x, ndc.y, 0.99, 1.0);
-        out[k] = glm::vec3(glm::dvec3(p) / p.w);
-    }
+        out[k] = glm::vec3(px[size_t(k)].x / view.width * 2.0 - 1.0, px[size_t(k)].y / view.height * 2.0 - 1.0, 0.0);
 }
 
 struct HudButton
@@ -240,7 +247,7 @@ const HudButton kHud[] = {
     {"goto", "camera", "Go to View", 1, "Put the camera back at the angle the overlay is bound to"},
     {"lens", "aperture", "Lens", 1, "Set the view's lens to the photo's focal length, so the perspective matches"},
     {"park", "layout-sidebar-right", "Park", 1, "Line every overlay up opaque down the right edge, beside the model"},
-    {"duplicate", "copy", "Duplicate", 1, "Copy this overlay, to show another part of the same sheet (crop each copy)"},
+    {"duplicate", "copy", "Duplicate", 1, "Copy this overlay, to show another part of the same sheet (crop each copy). Ctrl+D"},
     {"uncrop", "crop", "Full Image", 1, "Undo the crop and show the whole image"},
     {"remove", "trash", "Remove", 1, "Remove this overlay (Ctrl+Z brings it back)"},
     {"docs", "book", "Docs", 1, "Open the Reference Images docs"},
@@ -334,13 +341,14 @@ void drawKeys(OverlayPainter& p, const ViewInfo& view)
         {"Drag the knob", "Rotate (Shift snaps to 15\u00B0)"},
         {"Wheel over the image", "Opacity"},
         {"Delete", "Remove"},
+        {"Ctrl+D", "Duplicate"},
         {"Esc, or click outside", "Done"},
         {"", ""},
         {o + " tap", "Hide or show this view's overlays"},
         {o + " hold", "Full strength while held, to compare"},
         {o + " + drag", "Move; right-drag scales, middle-drag rotates, wheel fades"},
         {keyOr("referenceOverlay.adjust", "Shift+O"), "Adjust again"},
-        {keyOr("referenceOverlay.next", "Alt+O"), "Next overlay on its own"},
+        {keyOr("referenceOverlay.next", "Alt+O"), "Each overlay on its own in turn, then all again"},
     };
     double keyWidth = 0.0;
     for (const auto& [k, what] : rows)
@@ -458,6 +466,8 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
     {
         if (hidden || !o->visible)
             continue;
+        if (auto solo = st.solo.find(view.camera); solo != st.solo.end() && solo->second != o->id && !o->bound.set)
+            continue;
         const refs::Image* img = set.image(o->image);
         if (!img)
             continue;
@@ -469,7 +479,8 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
             continue;
         const double aspect = double(tex->width) / double(tex->height);
         render::ImagePlaneDraw d;
-        toWorld(view, refs::overlayCorners(*o, img, aspect, size), d.corners);
+        toNdc(view, refs::overlayCorners(*o, img, aspect, size), d.corners);
+        d.screen = true;
         d.uv = glm::vec4(refs::overlayUv(*o, img));
         d.image = tex;
         d.opacity = float((st.blink ? 1.0 : o->opacity) * fade);
@@ -492,6 +503,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
 
 void setAdjust(bool on, const std::string& view = {});
 
+/** Makes the next (or previous) overlay of the view the active one, for the toolbar's Prev and Next. */
 void cycle(const std::string& view, int step)
 {
     const auto overlays = refs::current().overlaysIn(view);
@@ -505,15 +517,57 @@ void cycle(const std::string& view, int step)
     const int n = int(overlays.size());
     const std::string next = overlays[size_t(((i + step) % n + n) % n)]->id;
     state().active[view] = next;
-    state().hiddenViews.erase(view);
-    // Alone: the others hide, except bound ones, which show by the view's angle anyway.
-    refs::tweak([&](refs::Set& s) {
-        for (Overlay& o : s.overlays)
-            if (o.view == view)
-                o.visible = o.id == next || o.bound.set;
-    });
-    if (const refs::Image* img = refs::current().image(refs::current().overlay(next)->image))
-        viewportToast::showActive(QString::fromStdString(img->name));
+    if (auto it = state().solo.find(view); it != state().solo.end())
+        it->second = next;
+    redraw();
+}
+
+/**
+ * Alt+O: each overlay of the view on its own in turn, then all of them again. Bound overlays keep showing by the view's
+ * angle. The last step also shows any overlay that was hidden, so every overlay can always be brought back.
+ */
+void soloNext(const std::string& view)
+{
+    const auto overlays = refs::current().overlaysIn(view);
+    if (overlays.empty())
+    {
+        viewportToast::showActive("No reference overlays in this view: drag a Reference tab onto it, or Alt+drop an image");
+        return;
+    }
+    State& st = state();
+    st.hiddenViews.erase(view);
+    const auto it = st.solo.find(view);
+    size_t next = 0;
+    if (it != st.solo.end())
+    {
+        for (size_t k = 0; k < overlays.size(); ++k)
+            if (overlays[k]->id == it->second)
+                next = k + 1;
+    }
+    if (next >= overlays.size())
+    {
+        st.solo.erase(view);
+        if (std::ranges::any_of(overlays, [](const Overlay* o) { return !o->visible; }))
+        {
+            refs::Set set = refs::current();
+            for (Overlay& o : set.overlays)
+                if (o.view == view)
+                    o.visible = true;
+            refs::apply(std::move(set), "Show All Reference Overlays");
+        }
+        viewportToast::showActive("All reference overlays");
+    }
+    else
+    {
+        const Overlay* o = overlays[next];
+        st.solo[view] = o->id;
+        st.active[view] = o->id;
+        if (!o->visible)
+            edit(o->id, [](Overlay& ov) { ov.visible = true; });
+        if (const refs::Image* img = refs::current().image(o->image))
+            viewportToast::showActive(QString::fromStdString(img->name) + QString("   (%1 of %2, %3 again for all)").arg(next + 1).arg(overlays.size()).arg(keyOr("referenceOverlay.next", "Alt+O")));
+    }
+    redraw();
 }
 
 void bindToView(const std::string& id, bool matchLens)
@@ -531,7 +585,7 @@ void bindToView(const std::string& id, bool matchLens)
     if (matchLens && !cam.ortho)
         cam.focalLength = o->focalLength;
     const ViewInfo info = v->viewInfo();
-    edit(id, [&](Overlay& ov) {
+    editUndoable(id, "Bind Reference Overlay", [&](Overlay& ov) {
         ov.bound.set = true;
         ov.bound.target = cam.target;
         ov.bound.distance = cam.distance;
@@ -578,7 +632,9 @@ void parkView(const std::string& view)
 {
     ViewportWidget* v = viewWidget(view);
     const glm::dvec2 size = v ? glm::dvec2(v->width(), v->height()) : glm::dvec2(16.0, 9.0);
-    refs::tweak([&](refs::Set& s) { refs::park(s, view, aspectOf, size); });
+    refs::Set set = refs::current();
+    refs::park(set, view, aspectOf, size);
+    refs::apply(std::move(set), "Park Reference Overlays");
 }
 
 /** A copy of the overlay, nudged down and right so both show, made the active one. */
@@ -606,7 +662,7 @@ void uncrop(const std::string& id)
     ViewportWidget* v = viewWidget(o->view);
     const glm::dvec2 size = v ? glm::dvec2(v->width(), v->height()) : glm::dvec2(16.0, 9.0);
     const double aspect = aspectOf(*img);
-    edit(id, [&](Overlay& ov) { refs::setCrop(ov, img, aspect, size, {0.0, 0.0, 1.0, 1.0}); });
+    editUndoable(id, "Uncrop Reference Overlay", [&](Overlay& ov) { refs::setCrop(ov, img, aspect, size, {0.0, 0.0, 1.0, 1.0}); });
 }
 
 void hudAction(const std::string& button, const std::string& view)
@@ -618,11 +674,11 @@ void hudAction(const std::string& button, const std::string& view)
     if (button == "prev" || button == "next")
         cycle(view, button == "prev" ? -1 : 1);
     else if (button == "fainter" || button == "stronger")
-        edit(id, [&](Overlay& ov) { ov.opacity = std::clamp(ov.opacity + (button == "fainter" ? -0.1 : 0.1), 0.05, 1.0); });
+        editUndoable(id, "Reference Overlay Opacity", [&](Overlay& ov) { ov.opacity = std::clamp(ov.opacity + (button == "fainter" ? -0.1 : 0.1), 0.05, 1.0); });
     else if (button == "depth")
-        edit(id, [](Overlay& ov) { ov.depth = ov.depth == refs::Depth::Front ? refs::Depth::Behind : refs::Depth::Front; });
+        editUndoable(id, "Reference Overlay Depth", [](Overlay& ov) { ov.depth = ov.depth == refs::Depth::Front ? refs::Depth::Behind : refs::Depth::Front; });
     else if (button == "mode")
-        edit(id, [](Overlay& ov) { ov.mode = refs::Mode((int(ov.mode) + 1) % 3); });
+        editUndoable(id, "Reference Overlay Mode", [](Overlay& ov) { ov.mode = refs::Mode((int(ov.mode) + 1) % 3); });
     else if (button == "flipH" || button == "flipV")
     {
         if (const refs::Image* img = refs::current().image(o->image))
@@ -635,11 +691,11 @@ void hudAction(const std::string& button, const std::string& view)
     else if (button == "docs")
         docs::open("reference-images");
     else if (button == "ghost")
-        edit(id, [](Overlay& ov) { ov.ghost = !ov.ghost; });
+        editUndoable(id, "Reference Overlay Ghost", [](Overlay& ov) { ov.ghost = !ov.ghost; });
     else if (button == "bind")
     {
         if (o->bound.set)
-            edit(id, [](Overlay& ov) { ov.bound = {}; });
+            editUndoable(id, "Unbind Reference Overlay", [](Overlay& ov) { ov.bound = {}; });
         else
             bindToView(id, false);
     }
@@ -688,6 +744,11 @@ public:
         if (key == Qt::Key_Delete || key == Qt::Key_Backspace)
         {
             hudAction("remove", state().adjustView);
+            return true;
+        }
+        if (key == Qt::Key_D && static_cast<QKeyEvent*>(e)->modifiers() == Qt::ControlModifier)
+        {
+            hudAction("duplicate", state().adjustView);
             return true;
         }
         return QObject::eventFilter(obj, e);
@@ -901,9 +962,36 @@ void cropTo(const std::string& id, const Overlay& start, int edge, glm::dvec2 vi
     });
 }
 
+const char* dragLabel(DragKind kind)
+{
+    switch (kind)
+    {
+    case DragKind::Move: return "Move Reference Overlay";
+    case DragKind::Scale:
+    case DragKind::ScaleCorner: return "Scale Reference Overlay";
+    case DragKind::Rotate:
+    case DragKind::RotateKnob: return "Rotate Reference Overlay";
+    case DragKind::Crop: return "Crop Reference Overlay";
+    default: return "Edit Reference Overlay";
+    }
+}
+
 void releaseDrag(QMouseEvent*, const ViewInfo&)
 {
-    state().drag = DragKind::None;
+    State& st = state();
+    const DragKind kind = std::exchange(st.drag, DragKind::None);
+    const Overlay* now = refs::current().overlay(st.dragOverlay);
+    if (kind == DragKind::None || !now)
+        return;
+    const Overlay& was = st.start;
+    if (now->offset == was.offset && now->scale == was.scale && now->rotation == was.rotation && now->crop == was.crop)
+        return;
+    // The drag edited the set live without undo; put the start back quietly so the undo step spans the whole drag.
+    const Overlay after = *now;
+    edit(st.dragOverlay, [&](Overlay& o) { o = was; });
+    refs::Set next = refs::current();
+    *next.overlay(after.id) = after;
+    refs::apply(std::move(next), dragLabel(kind));
 }
 
 bool wheel(QWheelEvent* e, const ViewInfo& view)
@@ -968,6 +1056,8 @@ void keyUp()
             viewportToast::showActive("No reference overlays in this view: drag a Reference tab onto it, or Alt+drop an image");
         else if (!st.hiddenViews.erase(view))
             st.hiddenViews.insert(view);
+        else
+            st.solo.erase(view);
     }
     redraw();
 }
@@ -1202,8 +1292,8 @@ void registerActions()
     actions::add({.id = "referenceOverlay.next",
                   .label = "Next Reference Overlay",
                   .category = "View",
-                  .run = [viewName] { cycle(viewName(), 1); },
-                  .doc = "Shows the view's next reference overlay alone (front, side, three-quarter...).",
+                  .run = [viewName] { soloNext(viewName()); },
+                  .doc = "Shows the view's reference overlays one at a time (front, side, three-quarter...), then all of them again.",
                   .icon = "chevron-right"});
     actions::add({.id = "referenceOverlay.bindView",
                   .label = "Bind Reference Overlay to View",
@@ -1408,15 +1498,15 @@ QWidget* createSculptSection(QWidget* parent)
     });
     QObject::connect(depth, &QComboBox::currentIndexChanged, box, [=](int i) {
         if (!*busy)
-            edit(activeId(), [i](Overlay& o) { o.depth = i == 0 ? refs::Depth::Front : refs::Depth::Behind; });
+            editUndoable(activeId(), "Reference Overlay Depth", [i](Overlay& o) { o.depth = i == 0 ? refs::Depth::Front : refs::Depth::Behind; });
     });
     QObject::connect(mode, &QComboBox::currentIndexChanged, box, [=](int i) {
         if (!*busy)
-            edit(activeId(), [i](Overlay& o) { o.mode = refs::Mode(i); });
+            editUndoable(activeId(), "Reference Overlay Mode", [i](Overlay& o) { o.mode = refs::Mode(i); });
     });
     QObject::connect(ghost, &QToolButton::toggled, box, [=](bool on) {
         if (!*busy)
-            edit(activeId(), [on](Overlay& o) { o.ghost = on; });
+            editUndoable(activeId(), "Reference Overlay Ghost", [on](Overlay& o) { o.ghost = on; });
     });
     QObject::connect(remove, &QToolButton::clicked, box, [=] {
         if (std::string id = activeId(); !id.empty())

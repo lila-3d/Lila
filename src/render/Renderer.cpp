@@ -5035,7 +5035,7 @@ struct Renderer::Impl
             ImagePlanePush push;
             push.viewProj = viewProj;
             for (int i = 0; i < 4; ++i)
-                push.corners[i] = glm::vec4(p.corners[i], 1.0f);
+                push.corners[i] = glm::vec4(p.corners[i], p.screen ? 0.0f : 1.0f);
             push.uv = p.uv;
             push.params = glm::vec4(std::clamp(p.opacity, 0.0f, 1.0f), p.brightness, p.contrast, p.grayscale ? 1.0f : 0.0f);
             push.texel = glm::vec4(0.5f / float(std::max(p.image->width, 1)), 0.5f / float(std::max(p.image->height, 1)), 0.0f, behind ? 1.0f : 0.0f);
