@@ -433,6 +433,23 @@ TEST_CASE("hydra: Lila's curves draw as basis curves a few pixels wide")
     CHECK(coveredIn(storm.draw("curve_moved"), 64, kSize) < ring / 4);
 }
 
+TEST_CASE("hydra: with curves in the scene, a camera move alone still skips the scene sync")
+{
+    fresh();
+    run("circle", {{"radius", 100.0}, {"normal", {0, 0, 1}}, {"name", "Ring"}});
+    cube("Still", 50.0);
+    Storm storm;
+    if (!storm.session)
+        return;
+    CHECK(px(storm.draw("curve_skip_before"), 64, 64).a == 1.0f);
+    // Curve widths follow the camera, but only they are refreshed: the moved cube stays where the last sync left it.
+    storm.holdRevision = true;
+    moveTo("Still", {-150.0, 0.0, 0.0});
+    CHECK(px(storm.draw("curve_skip_held", {10.0, 0.0, 300.0}), 64, 64).a == 1.0f);
+    storm.holdRevision = false;
+    CHECK(px(storm.draw("curve_skip_synced", {10.0, 0.0, 300.0}), 64, 64).a == 0.0f);
+}
+
 TEST_CASE("hydra: smooth preview subdivides the cage, and isolate select hides objects and faces per view")
 {
     fresh();

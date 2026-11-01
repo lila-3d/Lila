@@ -74,8 +74,8 @@ public:
         size_t added = 0, dirtied = 0, removed = 0;
     };
     Counts lastSync() const { return mCounts; }
-    /** Whether a prim's look follows the camera (curve widths), so a camera move needs a sync too. */
-    bool viewDependent() const;
+    /** Main thread, after a sync: what follows the camera alone (curve widths) for a view that moved with the scene unchanged. */
+    void syncView(const ViewContext& view);
     /** The material slots the meshes use. */
     const std::set<std::string>& usedSlots() const { return mSlots; }
 
@@ -114,6 +114,8 @@ private:
     void put(const pxr::SdfPath& path, Prim prim);
     void drop(const pxr::SdfPath& path);
     pxr::HdContainerDataSourceHandle nodeSource(const Node& n) const;
+    /** The width n's curve draws with from view, keeping was's while it stays within 15%, so small moves dirty nothing. */
+    static float curveWidth(const Node& n, const ViewContext& view, float was);
     std::shared_ptr<const MeshData> meshData(const scene::MeshPtr& mesh, int level);
     std::shared_ptr<const CurveData> curveData(const scene::Node& n);
 

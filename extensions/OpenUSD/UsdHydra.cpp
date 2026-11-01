@@ -441,6 +441,7 @@ public:
         mRequested = std::chrono::steady_clock::now();
         if (sceneCurrent(r))
         {
+            mLila->syncView(viewContext(r));
             // Stage edits made outside Lila's graph still arrive.
             mMaterialIndex->ApplyPendingUpdates();
             for (auto& [node, c] : mStages)
@@ -491,14 +492,12 @@ private:
     {
         const scene::isolation::Set* iso = r.view.isolation;
         return mSynced && r.sceneRevision == mSyncedRevision && r.time == mSyncedTime && iso == mSyncedIsolation &&
-               (!iso || iso->version == mSyncedIsolationVersion) && !mLila->viewDependent();
+               (!iso || iso->version == mSyncedIsolationVersion);
     }
 
-    void sync(const vr::Request& r)
+    /** What Lila's prims need from r's view; it refers to r, so it lives no longer. */
+    static ViewContext viewContext(const vr::Request& r)
     {
-        LILA_ZONE();
-        Graph& g = *r.graph;
-        g.evaluate();
         ViewContext view;
         view.isolation = r.view.isolation;
         // Request::view measures logical pixels, the frame device ones.
@@ -506,6 +505,15 @@ private:
         view.unitsPerPixel = [&r, device](const glm::dvec3& at) { return r.view.unitsPerPixel(at) / device; };
         view.curvePixels = float(2.0 * device);
         view.curveColor = ui::themeLinear("curve", view.curveColor);
+        return view;
+    }
+
+    void sync(const vr::Request& r)
+    {
+        LILA_ZONE();
+        Graph& g = *r.graph;
+        g.evaluate();
+        const ViewContext view = viewContext(r);
         mLila->sync(g, view, [this](const std::string& slot) { return mMaterials.bind(slot); });
         mMaterials.sync(g, mLila->usedSlots());
         mMaterialIndex->ApplyPendingUpdates();

@@ -548,12 +548,36 @@ SdfPathVector LilaSceneIndex::GetChildPrimPaths(const SdfPath& path) const
     return {};
 }
 
-bool LilaSceneIndex::viewDependent() const
+float LilaSceneIndex::curveWidth(const Node& n, const ViewContext& view, float was)
 {
-    for (const auto& [id, n] : mNodes)
-        if (n.curve)
-            return true;
-    return false;
+    // Lila draws curves a few pixels wide whatever their distance; Hydra's widths are in scene units.
+    const double perPixel = view.unitsPerPixel ? view.unitsPerPixel(glm::dvec3(n.world * glm::dvec4(n.curve->centre, 1.0))) : 0.1;
+    const float width = float(std::max(perPixel, 1e-4) * view.curvePixels);
+    return was > 0.0f && std::abs(width / was - 1.0f) < 0.15f ? was : width;
+}
+
+void LilaSceneIndex::syncView(const ViewContext& view)
+{
+    LILA_ZONE();
+    mCounts = {};
+    HdSceneIndexObserver::DirtiedPrimEntries dirtied;
+    for (auto& [id, n] : mNodes)
+    {
+        if (!n.curve)
+            continue;
+        const float width = curveWidth(n, view, n.width);
+        if (width == n.width)
+            continue;
+        n.width = width;
+        put(n.path, {n.type, nodeSource(n)});
+        HdDataSourceLocatorSet locators;
+        locators.insert(HdPrimvarsSchema::GetDefaultLocator());
+        locators.insert(HdExtentSchema::GetDefaultLocator());
+        dirtied.emplace_back(n.path, locators);
+        ++mCounts.dirtied;
+    }
+    if (!dirtied.empty())
+        _SendPrimsDirtied(dirtied);
 }
 
 void LilaSceneIndex::sync(Graph& g, const ViewContext& view, const std::function<SdfPath(const std::string&)>& bind)
@@ -621,12 +645,7 @@ void LilaSceneIndex::sync(Graph& g, const ViewContext& view, const std::function
             if (!n.curve)
                 continue;
             n.own = curveColor;
-            // Lila draws curves a few pixels wide whatever their distance; Hydra's widths are in scene units, so the width
-            // is set for the curve's middle from this view and only refreshed when it drifts.
-            const double perPixel = view.unitsPerPixel ? view.unitsPerPixel(glm::dvec3(n.world * glm::dvec4(n.curve->centre, 1.0))) : 0.1;
-            n.width = float(std::max(perPixel, 1e-4) * view.curvePixels);
-            if (was != mNodes.end() && was->second.width > 0.0f && std::abs(n.width / was->second.width - 1.0f) < 0.15f)
-                n.width = was->second.width;
+            n.width = curveWidth(n, view, was != mNodes.end() ? was->second.width : 0.0f);
         }
         else if (sn->type().isA("camera"))
         {
