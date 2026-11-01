@@ -13,16 +13,12 @@
 #include <optional>
 #include <vector>
 
-class QCheckBox;
-class QComboBox;
-class QDoubleSpinBox;
 class QKeyEvent;
-class QLineEdit;
 class QMouseEvent;
-class QSpinBox;
 
 namespace lila::ui
 {
+class ImagePicker;
 class OverlayPainter;
 struct ViewInfo;
 } // namespace lila::ui
@@ -39,7 +35,7 @@ using SettingsRef = std::function<BrushSettings&()>;
  * Held-key brush controls while a brush tool is active, the same in every tool:
  *
  *   B or F held + LMB drag   radius (F tapped still frames the selection); MMB drag starts from the smallest
- *   M or Shift+F + drag      strength; B or F held + RMB drag too
+ *   M or Shift+F + drag      strength; B or F held + RMB drag too (a tapped Shift+F is the tool's, see setStrengthTap)
  *   [ ]                      radius smaller / larger
  *
  * Also reads pen pressure from tablet events, which it leaves unaccepted so Qt still sends the mouse events.
@@ -76,6 +72,9 @@ public:
     /** Where the cursor ring belongs: where an adjustment began, so its size reads against the surface there. */
     QPointF anchor(QPointF hover) const { return mAdjusting != Adjust::None ? mStart : hover; }
 
+    /** Runs when Shift+F is tapped without dragging (sculpting toggles the wireframe). */
+    void setStrengthTap(std::function<void()> fn) { mStrengthTap = std::move(fn); }
+
     /** The pen's latest pressure, 1 when no pen event came recently. */
     double pressure() const;
     StrokeInput input(const QMouseEvent* e) const;
@@ -90,6 +89,7 @@ private:
     SettingsRef mSettings;
     std::function<void()> mChanged, mFinished;
     std::function<bool(int, Qt::KeyboardModifiers, bool)> mOnKey;
+    std::function<void()> mStrengthTap;
     std::vector<int> mExtraKeys;
     std::unique_ptr<Filter> mFilter;
 
@@ -135,8 +135,9 @@ LILA_UI_API QPointF ringPosition(const Stroke& stroke, QPointF hover);
 LILA_UI_API glm::dvec3 screenRight(const lila::ui::ViewInfo& view, const glm::dmat4& world);
 
 /**
- * The Stroke options group for brush tool panels: radius unit, flow, pressure curves, stroke mode, stabiliser,
- * jitter, tip angle, roundness and alpha, radial symmetry. Collapsed by default; the state is remembered.
+ * The Stroke options group for brush tool panels: radius unit, flow, stroke mode, stabiliser, jitter, tip angle,
+ * roundness, alpha (from the alpha library or any image), radial symmetry, and pen pressure in its own group. Both
+ * start collapsed; their state is remembered.
  */
 class LILA_UI_API StrokeOptions : public QWidget
 {
@@ -151,21 +152,9 @@ private:
     SettingsRef mSettings;
     std::function<void()> mChanged;
     QWidget* mBody = nullptr;
-    QComboBox* mUnit = nullptr;
-    QDoubleSpinBox* mWorldRadius = nullptr;
-    QDoubleSpinBox* mFlow = nullptr;
-    QCheckBox* mPressure[3]{};
-    QDoubleSpinBox* mPressureFloor = nullptr;
-    QDoubleSpinBox* mPressureExp = nullptr;
-    QComboBox* mMode = nullptr;
-    QDoubleSpinBox* mLazy = nullptr;
-    QDoubleSpinBox* mSmoothing = nullptr;
-    QDoubleSpinBox* mJitter[4]{};
-    QDoubleSpinBox* mAngle = nullptr;
-    QCheckBox* mFollow = nullptr;
-    QDoubleSpinBox* mRoundness = nullptr;
-    QLineEdit* mAlpha = nullptr;
-    QSpinBox* mRadialCount = nullptr;
-    QComboBox* mRadialAxis = nullptr;
+    QWidget* mWorldRadius = nullptr;
+    lila::ui::ImagePicker* mAlpha = nullptr;
+    /** Each field's refresh from the settings, without reporting a change. */
+    std::vector<std::function<void()>> mSync;
 };
 } // namespace lila::brush::ui

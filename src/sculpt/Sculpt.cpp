@@ -15,7 +15,8 @@ namespace lila::sculpt
 namespace
 {
 constexpr std::array<std::string_view, size_t(Brush::Count)> kBrushNames = {
-    "draw", "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch", "crease", "scrape", "mask", "relax", "freeze"};
+    "draw",      "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch",  "crease", "scrape",
+    "damStandard", "trimDynamic", "polish", "fold", "mask", "relax", "freeze", "paint"};
 constexpr std::array<std::string_view, size_t(Falloff::Count)> kFalloffNames = {"smooth", "sphere", "root", "sharp", "linear", "constant"};
 
 // Per-dab step sizes as fractions of the radius at full strength; with dabs every tenth of a radius a stroke builds up
@@ -23,6 +24,9 @@ constexpr std::array<std::string_view, size_t(Falloff::Count)> kFalloffNames = {
 constexpr double kDrawStep = 0.03;
 constexpr double kPinchStep = 0.15;
 constexpr double kClayDepth = 0.12;
+constexpr double kDamPinch = 0.25;
+constexpr double kTrimDepth = 0.04;
+constexpr double kFoldPinch = 0.3;
 
 glm::dvec3 reflectVector(const geo::SymmetryPlane& plane, const glm::dvec3& v) { return v - 2.0 * glm::dot(v, plane.normal) * plane.normal; }
 
@@ -56,8 +60,56 @@ glm::dvec3 closestOnTriangle(const glm::dvec3& p, const glm::dvec3& a, const glm
     return a + ab * (vb * denom) + ac * (vc * denom);
 }
 
-bool movesPoints(Brush b) { return b != Brush::Mask && b != Brush::Freeze; }
+bool movesPoints(Brush b) { return b != Brush::Mask && b != Brush::Freeze && b != Brush::Paint; }
+
+constexpr glm::vec4 kWhite(1.0f);
 } // namespace
+
+Registry<BrushDef>& brushRegistry()
+{
+    static Registry<BrushDef> r;
+    return r;
+}
+
+ext::Context::Handle registerBrush(ext::Context& ctx, std::string name, BrushDef def)
+{
+    if (name.empty() || brushFromName(name))
+    {
+        ctx.log(LogLevel::Error, "sculpt brush '" + name + "': that name belongs to a built-in brush");
+        return 0;
+    }
+    if (!def.displace)
+    {
+        ctx.log(LogLevel::Error, "sculpt brush '" + name + "' has no displace function");
+        return 0;
+    }
+    try
+    {
+        return ctx.add(brushRegistry(), "sculptBrush", std::move(name), std::move(def));
+    }
+    catch (const std::exception& e)
+    {
+        ctx.log(LogLevel::Error, std::string("sculpt brush: ") + e.what());
+        return 0;
+    }
+}
+
+std::string brushId(const BrushSettings& s) { return s.brush == Brush::Custom ? s.custom : std::string(brushName(s.brush)); }
+
+bool setBrush(BrushSettings& s, std::string_view name)
+{
+    if (auto b = brushFromName(name))
+    {
+        s.brush = *b;
+        s.custom.clear();
+        return true;
+    }
+    if (!brushRegistry().contains(name))
+        return false;
+    s.brush = Brush::Custom;
+    s.custom = std::string(name);
+    return true;
+}
 
 std::string_view brushName(Brush b) { return b < Brush::Count ? kBrushNames[size_t(b)] : std::string_view(); }
 
@@ -99,6 +151,7 @@ SculptMesh::SculptMesh(geo::Mesh mesh) : mMesh(std::move(mesh))
     mDisp.assign(n, glm::dvec3(0.0));
     mMaskDelta.assign(n, 0.0f);
     mFreezeSet.assign(n, 0);
+    mPaint.assign(n, 0.0f);
 
     mAdjOffsets.assign(size_t(n) + 1, 0);
     for (Index e = 0; e < mMesh.edgeCapacity(); ++e)
@@ -237,6 +290,12 @@ void SculptMesh::beginStroke(const BrushSettings& settings)
     mSettings = settings;
     mSettings.strength = std::clamp(settings.strength, 0.0, 1.0);
     mFalloffTable = brush::FalloffTable(mSettings.falloff);
+    mCustom = nullptr;
+    if (mSettings.brush == Brush::Custom)
+        if (const BrushDef* def = brushRegistry().find(mSettings.custom))
+            mCustom = def->displace;
+    if (painting())
+        ensureColor();
     mStroking = true;
     mGrab.clear();
     mRecord = {};
@@ -322,6 +381,23 @@ void SculptMesh::touch(Index p)
     mDisp[p] = glm::dvec3(0.0);
     mMaskDelta[p] = 0.0f;
     mFreezeSet[p] = 0;
+    mPaint[p] = 0.0f;
+}
+
+bool SculptMesh::painting() const
+{
+    return mSettings.brush == Brush::Paint || (mSettings.paint && movesPoints(mSettings.brush) && mSettings.brush != Brush::Grab);
+}
+
+void SculptMesh::ensureColor()
+{
+    if (mColor.empty())
+        mColor.assign(mMesh.pointCapacity(), kWhite);
+}
+
+bool SculptMesh::painted() const
+{
+    return std::ranges::any_of(mColor, [](const glm::vec4& c) { return c != kWhite; });
 }
 
 glm::dvec3 SculptMesh::originalPosition(Index p) const
@@ -355,6 +431,8 @@ void SculptMesh::addDisplacement(const Side& s)
 
     const size_t n = s.points.size();
     std::vector<glm::dvec3> out(n, glm::dvec3(0.0));
+    const bool paint = painting();
+    std::vector<float> paintOut(paint ? n : 0, 0.0f);
     const double r = s.dab.radius, sign = mSettings.invert ? -1.0 : 1.0, pressure = s.dab.opacity * s.dab.flow;
     const glm::dvec3 N = s.areaNormal, C = s.areaCenter;
 
@@ -366,6 +444,9 @@ void SculptMesh::addDisplacement(const Side& s)
     const glm::dvec3 ay = glm::cross(N, ax);
     const glm::dvec3 clayPlane = C + N * (r * kClayDepth * sign);
     const Brush brush = mSettings.brush;
+    if (brush == Brush::Custom && !mCustom)
+        return;
+    const BrushArea area{.mesh = *this, .dab = s.dab, .normal = N, .center = C, .radius = r, .sign = sign};
 
     tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 1024), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t i = range.begin(); i < range.end(); ++i)
@@ -375,6 +456,8 @@ void SculptMesh::addDisplacement(const Side& s)
             double w = pointWeight(p, s.weights[i]) * pressure;
             if (w <= 0.0)
                 continue;
+            if (paint)
+                paintOut[i] = float(std::min(w, 1.0));
             glm::dvec3 d(0.0);
             switch (brush)
             {
@@ -416,21 +499,76 @@ void SculptMesh::addDisplacement(const Side& s)
                 break;
             }
             case Brush::Pinch: d = tangential(C - P, N) * (w * kPinchStep * sign); break;
+            case Brush::DamStandard:
+                // The cut falls off faster than the pinch, so the groove stays a narrow V.
+                d = tangential(C - P, N) * (std::min(w, 1.0) * kDamPinch) - N * (w * w * r * kDrawStep * 1.5 * sign);
+                break;
+            case Brush::TrimDynamic:
+            {
+                // A plane just under the brush, moving with it: what stands above is cut flat (Ctrl: what sinks below is filled).
+                const double dist = glm::dot(P - (C - N * (r * kTrimDepth * sign)), N);
+                if (dist * sign > 0.0)
+                    d = -N * (dist * std::min(w, 1.0));
+                break;
+            }
+            case Brush::Polish:
+            {
+                auto nb = neighbours(p);
+                if (nb.empty())
+                    break;
+                glm::dvec3 avg(0.0);
+                for (Index q : nb)
+                    avg += mMesh.position(q);
+                avg /= double(nb.size());
+                // Bumps are smoothed only along the brush normal and the surface eased onto its plane, so forms go flat and crisp.
+                const double k = std::min(w, 1.0);
+                d = N * (glm::dot(avg - P, N) * k) - N * (glm::dot(P - C, N) * k * 0.25);
+                break;
+            }
+            case Brush::Fold:
+            {
+                // A ridge along the stroke: raised, and pinched toward its centre line from either side only.
+                const double across = glm::dot(P - C, ay);
+                d = N * (w * r * kDrawStep * sign) - ay * (across * std::min(w, 1.0) * kFoldPinch);
+                break;
+            }
             case Brush::Crease: d = tangential(C - P, N) * (w * kPinchStep) - N * (w * r * kDrawStep * sign); break;
+            case Brush::Custom: d = mCustom(area, BrushSample{.point = p, .position = P, .normal = glm::dvec3(mNormals[p]), .weight = w}); break;
             case Brush::Grab:
             case Brush::Mask:
             case Brush::Freeze:
+            case Brush::Paint:
             case Brush::Count: break;
             }
             out[i] = d;
         }
     });
     for (size_t i = 0; i < n; ++i)
+    {
         if (out[i] != glm::dvec3(0.0))
         {
             touch(s.points[i]);
             mDisp[s.points[i]] += out[i];
         }
+        if (paint && paintOut[i] > 0.0f)
+        {
+            touch(s.points[i]);
+            mPaint[s.points[i]] = std::max(mPaint[s.points[i]], paintOut[i]);
+        }
+    }
+}
+
+void SculptMesh::addPaint(const Side& s)
+{
+    for (size_t i = 0; i < s.points.size(); ++i)
+    {
+        const Index p = s.points[i];
+        const double w = s.weights[i] * mSettings.strength * s.dab.opacity * s.dab.flow * (1.0 - double(mMask[p]));
+        if (w <= 0.0)
+            continue;
+        touch(p);
+        mPaint[p] = std::max(mPaint[p], float(std::min(w, 1.0)));
+    }
 }
 
 void SculptMesh::addMaskChange(const Side& s)
@@ -465,20 +603,23 @@ void SculptMesh::symmetrizeChanges()
             if (mSymmetry.orbitPoint(p, 0) != p)
                 continue;
             glm::dvec3 disp(0.0);
-            float mask = 0.0f;
+            float mask = 0.0f, paint = 0.0f;
             for (int g = 0; g < n; ++g)
             {
                 const Index q = mSymmetry.orbitPoint(p, g);
                 disp += mSymmetry.transformVector(mSymmetry.inverse(g), mDisp[q]);
                 mask += mMaskDelta[q];
+                paint += mPaint[q];
             }
             disp /= double(n);
             mask /= float(n);
+            paint /= float(n);
             for (int g = 0; g < n; ++g)
             {
                 const Index q = mSymmetry.orbitPoint(p, g);
                 mDisp[q] = mSymmetry.transformVector(g, disp);
                 mMaskDelta[q] = mask;
+                mPaint[q] = paint;
             }
         }
         return;
@@ -503,6 +644,8 @@ void SculptMesh::symmetrizeChanges()
         mDisp[q] = reflectVector(pl, avg);
         const float m = (mMaskDelta[p] + mMaskDelta[q]) * 0.5f;
         mMaskDelta[p] = mMaskDelta[q] = m;
+        const float paint = (mPaint[p] + mPaint[q]) * 0.5f;
+        mPaint[p] = mPaint[q] = paint;
         const int8_t f = mFreezeSet[p] ? mFreezeSet[p] : mFreezeSet[q];
         mFreezeSet[p] = mFreezeSet[q] = f;
     }
@@ -512,14 +655,16 @@ void SculptMesh::commitChanges()
 {
     LILA_ZONE();
 
-    std::vector<Index> moved;
+    std::vector<Index> moved, recolored;
     bool maskChanged = false;
+    const glm::vec4 brushColor(mSettings.color, 1.0f);
     for (Index p : mChanged)
     {
         const bool move = mDisp[p] != glm::dvec3(0.0);
         const float newMask = std::clamp(mMask[p] + mMaskDelta[p], 0.0f, 1.0f);
         const uint8_t newFrozen = mFreezeSet[p] > 0 ? 1 : mFreezeSet[p] < 0 ? 0 : mFrozen[p];
-        if (!move && newMask == mMask[p] && newFrozen == mFrozen[p])
+        const bool recolor = mPaint[p] > 0.0f && !mColor.empty() && mColor[p] != brushColor;
+        if (!move && !recolor && newMask == mMask[p] && newFrozen == mFrozen[p])
             continue;
         if (mStroking && mStrokeStamp[p] != mStroke)
         {
@@ -529,6 +674,8 @@ void SculptMesh::commitChanges()
             mRecord.before.push_back(mMesh.position(p));
             mRecord.maskBefore.push_back(mMask[p]);
             mRecord.frozenBefore.push_back(mFrozen[p]);
+            if (!mColor.empty())
+                mRecord.colorBefore.push_back(mColor[p]);
         }
         if (move)
         {
@@ -538,12 +685,22 @@ void SculptMesh::commitChanges()
         maskChanged |= newMask != mMask[p] || newFrozen != mFrozen[p];
         mMask[p] = newMask;
         mFrozen[p] = newFrozen;
+        if (recolor)
+        {
+            mColor[p] = glm::mix(mColor[p], brushColor, std::min(mPaint[p], 1.0f));
+            recolored.push_back(p);
+        }
     }
     mChanged.clear();
     if (!moved.empty())
     {
         refresh(moved);
         ++mVersion;
+    }
+    if (!recolored.empty())
+    {
+        writeVertices(recolored);
+        ++mColorVersion;
     }
     if (maskChanged)
         ++mMaskVersion;
@@ -605,6 +762,8 @@ void SculptMesh::dab(const Dab& d)
                 computeArea(s);
                 addDisplacement(s);
             }
+            else if (mSettings.brush == Brush::Paint)
+                addPaint(s);
             else
                 addMaskChange(s);
         }
@@ -621,11 +780,16 @@ StrokeRecord SculptMesh::endStroke()
     r.after.resize(r.points.size());
     r.maskAfter.resize(r.points.size());
     r.frozenAfter.resize(r.points.size());
+    const bool colored = !mColor.empty() && r.colorBefore.size() == r.points.size();
+    if (colored)
+        r.colorAfter.resize(r.points.size());
     for (size_t i = 0; i < r.points.size(); ++i)
     {
         r.after[i] = mMesh.position(r.points[i]);
         r.maskAfter[i] = mMask[r.points[i]];
         r.frozenAfter[i] = mFrozen[r.points[i]];
+        if (colored)
+            r.colorAfter[i] = mColor[r.points[i]];
     }
     if (++mStroke == 0)
     {
@@ -642,7 +806,10 @@ void SculptMesh::apply(const StrokeRecord& r, bool undo)
     const auto& pos = undo ? r.before : r.after;
     const auto& mask = undo ? r.maskBefore : r.maskAfter;
     const auto& frozen = undo ? r.frozenBefore : r.frozenAfter;
-    std::vector<Index> moved;
+    const auto& colors = undo ? r.colorBefore : r.colorAfter;
+    if (!colors.empty())
+        ensureColor();
+    std::vector<Index> moved, recolored;
     bool maskChanged = false;
     for (size_t i = 0; i < r.points.size(); ++i)
     {
@@ -664,11 +831,21 @@ void SculptMesh::apply(const StrokeRecord& r, bool undo)
             mFrozen[p] = frozen[i];
             maskChanged = true;
         }
+        if (i < colors.size() && colors[i] != mColor[p])
+        {
+            mColor[p] = colors[i];
+            recolored.push_back(p);
+        }
     }
     if (!moved.empty())
     {
         refresh(moved);
         ++mVersion;
+    }
+    if (!recolored.empty())
+    {
+        writeVertices(recolored);
+        ++mColorVersion;
     }
     if (maskChanged)
         ++mMaskVersion;
@@ -753,6 +930,49 @@ void SculptMesh::setMask(std::span<const float> mask)
     ++mMaskVersion;
 }
 
+void SculptMesh::setColors(std::span<const glm::vec4> colors)
+{
+    ensureColor();
+    std::vector<Index> all;
+    for (Index p = 0; p < mColor.size() && p < colors.size(); ++p)
+    {
+        mColor[p] = colors[p];
+        all.push_back(p);
+    }
+    writeVertices(all);
+    ++mColorVersion;
+}
+
+StrokeRecord SculptMesh::colorChange(const std::vector<glm::vec4>& next)
+{
+    StrokeRecord r;
+    for (Index p = 0; p < mColor.size(); ++p)
+        if (mMesh.pointValid(p) && next[p] != mColor[p])
+        {
+            r.points.push_back(p);
+            r.colorBefore.push_back(mColor[p]);
+            r.colorAfter.push_back(next[p]);
+        }
+    apply(r, false);
+    return r;
+}
+
+StrokeRecord SculptMesh::fillColor(const glm::vec3& color)
+{
+    ensureColor();
+    std::vector<glm::vec4> next(mColor);
+    for (Index p = 0; p < next.size(); ++p)
+        next[p] = glm::mix(mColor[p], glm::vec4(color, 1.0f), 1.0f - mMask[p]);
+    return colorChange(next);
+}
+
+StrokeRecord SculptMesh::clearColor()
+{
+    if (mColor.empty())
+        return {};
+    return colorChange(std::vector<glm::vec4>(mColor.size(), kWhite));
+}
+
 void SculptMesh::refresh(std::span<const Index> moved)
 {
     LILA_ZONE();
@@ -819,6 +1039,7 @@ void SculptMesh::writeVertices(std::span<const Index> points)
         v.pos = glm::vec3(mMesh.position(p));
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+        v.color = mColor.empty() ? kWhite : mColor[p];
         dv.write(p, v);
     }
 }
@@ -840,10 +1061,25 @@ std::shared_ptr<const render::RenderMesh> SculptMesh::renderMesh()
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
         v.uv = v.uv1 = glm::vec2(0.0f);
+        v.color = mColor.empty() ? kWhite : mColor[p];
     });
     const auto& corners = mBvh.triangles().corners;
     rm->indices.resize(corners.size());
     tbb::parallel_for(size_t(0), corners.size(), [&](size_t i) { rm->indices[i] = uint32_t(mMesh.cornerPoint(corners[i])); });
+    // Which triangle sides are polygon edges, so the shader draws the wireframe without the triangulation's diagonals.
+    const size_t tris = corners.size() / 3;
+    rm->edgeMask.assign((tris + 7) / 8, 0u);
+    tbb::parallel_for(size_t(0), rm->edgeMask.size(), [&](size_t w) {
+        uint32_t word = 0;
+        for (size_t t = w * 8; t < std::min(w * 8 + 8, tris); ++t)
+            for (int k = 0; k < 3; ++k)
+            {
+                const Index a = corners[t * 3 + size_t(k)], b = corners[t * 3 + size_t((k + 1) % 3)];
+                if (mMesh.cornerNext(a) == b || mMesh.cornerNext(b) == a)
+                    word |= 1u << ((t & 7) * 4 + size_t(k));
+            }
+        rm->edgeMask[w] = word;
+    });
     // Strokes may push the surface past its starting bounds, so leave room.
     geo::Bounds b = mMesh.bounds();
     glm::dvec3 pad = b.size() * 0.25 + glm::dvec3(1e-3);

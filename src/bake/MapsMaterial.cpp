@@ -183,6 +183,18 @@ void vertexColorKernel(const MapContext& ctx, std::span<const TexelSample> sampl
         valid[i] = 1;
     }
 }
+
+/** The material's base colour, or with option source vertexColor the high's vertex colours (polypaint). */
+CpuKernel baseColorKernel()
+{
+    return [material = materialKernel(Channel::BaseColor)](const MapContext& ctx, std::span<const TexelSample> samples,
+                                                          std::span<const HitRecord> hits, std::span<glm::vec4> out, std::span<uint8_t> valid) {
+        if (ctx.settings.options.value("source", std::string("material")) == "vertexColor")
+            vertexColorKernel(ctx, samples, hits, out, valid);
+        else
+            material(ctx, samples, hits, out, valid);
+    };
+}
 } // namespace
 
 TransferSource transferSource(const MaterialInput& mat, std::string_view map)
@@ -256,10 +268,11 @@ void registerMaterialMaps()
     registerMap({.id = "baseColor",
                  .label = "Base Colour",
                  .suffix = "basecolor",
-                 .doc = std::string("sRGB base colour.") + transfer,
+                 .doc = std::string("sRGB base colour.") + transfer +
+                        " Option source vertexColor reads the high's vertex colours instead (polypaint), option set naming the colour set.",
                  .background = {0.5f, 0.5f, 0.5f, 1.0f},
                  .linear = false,
-                 .cpu = materialKernel(Channel::BaseColor),
+                 .cpu = baseColorKernel(),
                  .prepare = materialPrepare(Channel::BaseColor)});
     registerMap({.id = "roughness",
                  .label = "Roughness",

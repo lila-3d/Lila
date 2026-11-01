@@ -173,7 +173,7 @@ Image readPngImpl(const fs::path& path, std::string* err)
     std::vector<unsigned char> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (data.size() < 8 || data[1] != 'P' || data[2] != 'N' || data[3] != 'G')
         return fail("not a PNG");
-    int w = 0, h = 0, bits = 0;
+    int w = 0, h = 0, bits = 0, channels = 4;
     std::vector<unsigned char> idat;
     for (size_t at = 8; at + 12 <= data.size();)
     {
@@ -187,8 +187,11 @@ Image readPngImpl(const fs::path& path, std::string* err)
             w = int(be32(body));
             h = int(be32(body + 4));
             bits = body[8];
-            if (body[9] != 6 || (bits != 8 && bits != 16) || body[12] != 0)
-                return fail("only non-interlaced RGBA 8 or 16 bit");
+            // Colour types 0 gray, 2 RGB, 4 gray and alpha, 6 RGBA.
+            const int colorType = body[9];
+            channels = colorType == 0 ? 1 : colorType == 2 ? 3 : colorType == 4 ? 2 : colorType == 6 ? 4 : 0;
+            if (channels == 0 || (bits != 8 && bits != 16) || body[12] != 0)
+                return fail("only non-interlaced gray, RGB or RGBA, 8 or 16 bit");
         }
         else if (type == "IDAT")
             idat.insert(idat.end(), body, body + len);
@@ -196,7 +199,7 @@ Image readPngImpl(const fs::path& path, std::string* err)
     }
     if (w <= 0 || h <= 0)
         return fail("no IHDR");
-    const size_t bpp = size_t(bits / 8) * 4;
+    const size_t bpp = size_t(bits / 8) * size_t(channels);
     const size_t stride = 1 + size_t(w) * bpp;
     std::vector<unsigned char> raw(stride * size_t(h));
     mz_ulong rawSize = mz_ulong(raw.size());
@@ -228,9 +231,18 @@ Image readPngImpl(const fs::path& path, std::string* err)
             }
             cur[i] = static_cast<unsigned char>(row[1 + i] + pred);
         }
-        for (size_t i = 0; i < size_t(w) * 4; ++i)
-            img.rgba[size_t(y) * size_t(w) * 4 + i] =
-                bits == 16 ? float((cur[2 * i] << 8) | cur[2 * i + 1]) / 65535.0f : float(cur[i]) / 255.0f;
+        auto sample = [&](size_t i) { return bits == 16 ? float((cur[2 * i] << 8) | cur[2 * i + 1]) / 65535.0f : float(cur[i]) / 255.0f; };
+        for (size_t x = 0; x < size_t(w); ++x)
+        {
+            float* out = &img.rgba[(size_t(y) * size_t(w) + x) * 4];
+            const size_t at = x * size_t(channels);
+            if (channels >= 3)
+                for (int k = 0; k < 3; ++k)
+                    out[k] = sample(at + size_t(k));
+            else
+                out[0] = out[1] = out[2] = sample(at);
+            out[3] = channels == 4 ? sample(at + 3) : channels == 2 ? sample(at + 1) : 1.0f;
+        }
         prev.swap(cur);
     }
     return img;

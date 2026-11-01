@@ -17,6 +17,7 @@
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
+#include "ui/ImagePicker.h"
 #include "ui/MaterialDraw.h"
 #include "ui/SpinScrub.h"
 #include "ui/TextureCache.h"
@@ -119,15 +120,6 @@ json createAndAssign(bool always)
     return name;
 }
 
-/** Trims whitespace and one pair of surrounding double quotes, as Explorer's Copy as path adds. */
-std::string unquotedPath(QString text)
-{
-    text = text.trimmed();
-    if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
-        text = text.mid(1, text.size() - 2).trimmed();
-    return text.toStdString();
-}
-
 /** The local image files among dropped urls (Explorer, Lila's file dialog). */
 std::vector<std::string> droppedImages(const QMimeData* mime)
 {
@@ -222,19 +214,6 @@ QIcon swatchIcon(const QColor& c)
     p.setPen(QColor(20, 20, 20));
     p.drawRect(pm.rect().adjusted(0, 0, -1, -1));
     return QIcon(pm);
-}
-
-QPixmap thumbPixmap(const QImage& img, int size)
-{
-    QPixmap pm(size, size);
-    pm.fill(QColor(40, 40, 40));
-    if (!img.isNull())
-    {
-        QPainter p(&pm);
-        QImage s = img.scaled(size, size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        p.drawImage((size - s.width()) / 2, (size - s.height()) / 2, s);
-    }
-    return pm;
 }
 
 /** A lit ball, shaded on the CPU like the viewport's key light plus ambient; the base color map wraps it. */
@@ -706,50 +685,25 @@ void MaterialEditor::rebuild()
 
     auto texture = [&](const char* text, const char* channel, int attr) {
         QLabel* l = label(text);
-        auto* box = new QWidget(mBody);
-        auto* h = new QHBoxLayout(box);
-        h->setContentsMargins(0, 0, 0, 0);
-        auto* thumb = new QLabel(box);
-        thumb->setFixedSize(kThumb, kThumb);
-        auto* path = new QLineEdit(box);
-        path->setPlaceholderText("none");
-        auto* browse = new QToolButton(box);
-        browse->setArrowType(Qt::DownArrow);
-        browse->setToolTip("Project textures, Browse... for any file");
-        auto* clear = new QToolButton(box);
-        clear->setText("x");
-        h->addWidget(thumb);
-        h->addWidget(path, 1);
-        h->addWidget(browse);
-        h->addWidget(clear);
+        auto* box = new ImagePicker(nullptr, text, mBody);
         grid->addWidget(box, row++, 1, 1, 2);
         auto apply = [this, channel](const std::string& p) {
             if (scene::Node* m = current())
                 run("setMaterialTexture", {{"args", json::array({m->path()})}, {"channel", channel}, {"path", p}});
         };
-        connect(path, &QLineEdit::editingFinished, this, [path, apply, this, attr] {
-            std::string p = unquotedPath(path->text());
-            path->setText(QString::fromStdString(p));
-            scene::Node* m = current();
-            if (m && p != m->as<std::string>(attr))
-                apply(p);
-        });
+        box->setResolver([](const std::string& p) { return paths::fromUtf8(scene::materials::resolvePath(p)); });
+        box->setProblem([](const std::filesystem::path& f) { return textures::error(paths::toUtf8(f)); });
         // One file goes in this slot whatever its name; several are sorted into slots by name.
-        auto drop = [this, apply](const std::vector<std::string>& files) {
-            if (files.size() == 1)
-                apply(files[0]);
-            else if (scene::Node* m = current())
+        box->setDropMany([this](const std::vector<std::string>& files) {
+            if (scene::Node* m = current())
                 assignByName(*m, files);
-        };
-        box->setAcceptDrops(true);
-        for (QWidget* w : {box, static_cast<QWidget*>(path)})
-            w->installEventFilter(new TextureDrop(w, drop));
-        connect(browse, &QToolButton::clicked, this, [this, box, apply, attr] {
-            scene::Node* m = current();
-            texturePicker::open(box, m ? m->as<std::string>(attr) : std::string(), apply);
         });
-        connect(clear, &QToolButton::clicked, this, [apply] { apply(""); });
-        onMiddleClickReset(l, [apply] { apply(""); }, "none", path);
+        connect(box, &ImagePicker::chosen, this, [this, apply, attr](const QString& v) {
+            scene::Node* m = current();
+            if (m && v.toStdString() != m->as<std::string>(attr))
+                apply(v.toStdString());
+        });
+        onMiddleClickReset(l, [apply] { apply(""); }, "none", box);
         if (const int first = scene::materials::samplingAttr(attr); first >= 0)
         {
             // Wrap U, wrap V and filter on a row of their own, shown while the map is set.
@@ -783,17 +737,9 @@ void MaterialEditor::rebuild()
                     opts->setVisible(!m->as<std::string>(attr).empty());
             });
         }
-        mUpdaters.push_back([this, thumb, path, attr] {
-            scene::Node* m = current();
-            if (!m)
-                return;
-            const std::string& p = m->as<std::string>(attr);
-            if (!path->hasFocus())
-                path->setText(QString::fromStdString(p));
-            std::string resolved = scene::materials::resolvePath(p);
-            thumb->setPixmap(thumbPixmap(textures::thumbnail(resolved, kThumb * 2), kThumb));
-            std::string err = p.empty() ? std::string() : textures::error(resolved);
-            thumb->setToolTip(QString::fromStdString(err.empty() ? p : err));
+        mUpdaters.push_back([this, box, attr] {
+            if (scene::Node* m = current())
+                box->setValue(m->as<std::string>(attr));
         });
     };
 

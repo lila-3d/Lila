@@ -5,6 +5,7 @@
 #include "ui/CodeEdit.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
+#include "ui/ImagePicker.h"
 #include "ui/TexturePicker.h"
 #include "ui/Theme.h"
 
@@ -541,14 +542,11 @@ void addParam(QFormLayout* form, QWidget* parent, const json& p, const SetFn& se
     }
     if (type == "image")
     {
-        std::string current = value.is_string() ? value.get<std::string>() : std::string();
-        auto* b = new QToolButton(parent);
-        b->setText(current.empty() ? QString("None") : QFileInfo(qs(current)).fileName());
-        b->setToolTip(current.empty() ? tip : qs(current));
-        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        QObject::connect(b, &QToolButton::clicked, b, [b, current, changed] { texturePicker::open(b, current, [changed](const std::string& path) { changed(path); }); });
-        form->addRow(label, b);
+        auto* picker = new ImagePicker(nullptr, labelOf(p), parent);
+        picker->setValue(value.is_string() ? value.get<std::string>() : std::string());
+        picker->setToolTip(tip);
+        QObject::connect(picker, &ImagePicker::chosen, picker, [changed](const QString& path) { changed(path.toStdString()); });
+        form->addRow(label, picker);
         return;
     }
     if (type == "code")

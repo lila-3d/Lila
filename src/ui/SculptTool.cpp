@@ -14,6 +14,7 @@
 #include "ui/Actions.h"
 #include "ui/MeshCache.h"
 #include "ui/ViewportHooks.h"
+#include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
 #include "ui/Tools.h"
 
@@ -41,8 +42,18 @@ SculptSettings loadSettings()
 {
     SculptSettings s;
     const PrefStore& p = PrefStore::get();
-    if (auto b = sculpt::brushFromName(p.value<std::string>(kPrefs, "/sculpt/brush", "draw")))
+    const std::string brushName = p.value<std::string>(kPrefs, "/sculpt/brush", "draw");
+    if (auto b = sculpt::brushFromName(brushName))
         s.brush = *b;
+    else if (!brushName.empty())
+    {
+        // Extensions may register the brush after the settings first load.
+        s.brush = sculpt::Brush::Custom;
+        s.custom = brushName;
+    }
+    s.paint = p.value<bool>(kPrefs, "/sculpt/paint", s.paint);
+    if (json c = p.value(kPrefs, "/sculpt/color"); c.is_array() && c.size() == 3 && c[0].is_number() && c[1].is_number() && c[2].is_number())
+        s.color = glm::vec3(c[0].get<float>(), c[1].get<float>(), c[2].get<float>());
     s.stroke.loadPrefs("/sculpt");
     if (!brush::Falloff::find(s.stroke.falloff))
         s.stroke.falloff = "smooth";
@@ -55,7 +66,104 @@ SculptSettings loadSettings()
     s.resolution = std::clamp(p.value<int>(kPrefs, "/sculpt/resolution", s.resolution), 16, 2048);
     s.exitMethod = p.value<std::string>(kPrefs, "/sculpt/exitMethod", s.exitMethod);
     s.keepProxy = p.value<bool>(kPrefs, "/sculpt/keepProxy", s.keepProxy);
+    s.shareRadius = p.value<bool>(kPrefs, "/sculpt/shareRadius", s.shareRadius);
+    s.shareStrength = p.value<bool>(kPrefs, "/sculpt/shareStrength", s.shareStrength);
+    s.shareStroke = p.value<bool>(kPrefs, "/sculpt/shareStroke", s.shareStroke);
+    s.wireframe = p.value<bool>(kPrefs, "/sculpt/wireframe", s.wireframe);
+    s.material = p.value<std::string>(kPrefs, "/sculpt/material", s.material);
+    if (json per = p.value(kPrefs, "/sculpt/perBrush"); per.is_object())
+        for (auto& [name, j] : per.items())
+            s.perBrush[name] = brush::BrushSettings::fromJson(j, SculptSettings{}.stroke);
     return s;
+}
+
+std::string brushKey(sculpt::Brush b, const std::string& custom) { return b == sculpt::Brush::Custom ? custom : std::string(sculpt::brushName(b)); }
+
+/** A brush's starting settings the first time it is picked. */
+brush::BrushSettings defaultStroke(sculpt::Brush b)
+{
+    brush::BrushSettings s = SculptSettings{}.stroke;
+    switch (b)
+    {
+    case sculpt::Brush::DamStandard:
+        s.radius = 25.0;
+        s.strength = 0.6;
+        s.falloff = "sharp";
+        break;
+    case sculpt::Brush::Crease:
+    case sculpt::Brush::Pinch: s.falloff = "sharp"; break;
+    case sculpt::Brush::TrimDynamic: s.strength = 0.7; break;
+    case sculpt::Brush::Fold:
+        s.radius = 40.0;
+        s.strength = 0.4;
+        s.falloff = "root";
+        break;
+    case sculpt::Brush::Mask:
+    case sculpt::Brush::Paint: s.strength = 1.0; break;
+    default: break;
+    }
+    return s;
+}
+
+/** A sculpt preview material; colours linear. */
+struct SculptMaterial
+{
+    const char* id;
+    const char* label;
+    render::Material material;
+};
+
+const std::vector<SculptMaterial>& materialPresets()
+{
+    static const std::vector<SculptMaterial> presets = [] {
+        auto lit = [](glm::vec3 color, float roughness, float specular = 0.5f, float metallic = 0.0f) {
+            render::Material m;
+            m.baseColor = color;
+            m.roughness = roughness;
+            m.specular = specular;
+            m.metallic = metallic;
+            return m;
+        };
+        auto skin = [&](glm::vec3 color, float roughness, glm::vec3 scatter, float amount) {
+            render::Material m = lit(color, roughness);
+            m.style.model = render::ShadingModel::Skin;
+            m.style.subsurfaceColor = scatter;
+            m.style.subsurfaceAmount = amount;
+            return m;
+        };
+        auto coat = [&](glm::vec3 color, float roughness, float coatRoughness) {
+            render::Material m = lit(color, roughness);
+            m.style.model = render::ShadingModel::Clearcoat;
+            m.style.clearcoat = 1.0f;
+            m.style.clearcoatRoughness = coatRoughness;
+            return m;
+        };
+        render::Material toon = lit(glm::vec3(0.55f), 0.9f, 0.2f);
+        toon.style.model = render::ShadingModel::Toon;
+        toon.style.toonShadowColor = glm::vec3(0.22f, 0.24f, 0.32f);
+        toon.style.toonOuterColor = glm::vec3(0.05f);
+        return std::vector<SculptMaterial>{
+            {"clay", "Clay", lit(glm::vec3(0.42f), 0.6f)},
+            {"terracotta", "Terracotta", lit(glm::vec3(0.42f, 0.17f, 0.09f), 0.85f, 0.3f)},
+            {"redWax", "Red Wax", skin(glm::vec3(0.35f, 0.035f, 0.025f), 0.35f, glm::vec3(0.9f, 0.15f, 0.08f), 0.7f)},
+            {"skin", "Skin", skin(glm::vec3(0.55f, 0.32f, 0.24f), 0.5f, glm::vec3(0.9f, 0.3f, 0.2f), 0.8f)},
+            {"chalk", "Chalk", lit(glm::vec3(0.78f), 1.0f, 0.15f)},
+            {"jade", "Jade", skin(glm::vec3(0.08f, 0.32f, 0.16f), 0.2f, glm::vec3(0.3f, 0.8f, 0.45f), 0.8f)},
+            {"bronze", "Bronze", lit(glm::vec3(0.6f, 0.38f, 0.2f), 0.35f, 0.5f, 1.0f)},
+            {"ceramic", "Ceramic", coat(glm::vec3(0.82f), 0.5f, 0.05f)},
+            {"plastic", "Toy Plastic", coat(glm::vec3(0.06f, 0.15f, 0.55f), 0.4f, 0.1f)},
+            {"toon", "Toon", toon},
+        };
+    }();
+    return presets;
+}
+
+const render::Material& sculptMaterial(const std::string& id)
+{
+    for (const SculptMaterial& m : materialPresets())
+        if (id == m.id)
+            return m.material;
+    return materialPresets().front().material;
 }
 
 glm::dvec3 xformPoint(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
@@ -70,6 +178,12 @@ public:
 
     void activate() override
     {
+        mControls.setStrengthTap([] {
+            SculptSettings& s = sculptSettings();
+            s.wireframe = !s.wireframe;
+            sculptSettingsChanged();
+            viewportToast::showActive(s.wireframe ? "Wireframe on" : "Wireframe off", 1000);
+        });
         mControls.activate();
         mListener = sculpt::addListener([] { viewportTools::requestRedraw(); });
     }
@@ -155,9 +269,16 @@ public:
         }
         // Shift smooths and Ctrl inverts the next stroke, so the message names the brush that stroke would use.
         const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
-        const sculpt::Brush brush = mStroking ? mSettings.brush : (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
+        sculpt::BrushSettings shown = mSettings;
+        if (!mStroking)
+        {
+            shown.brush = (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
+            shown.custom = st.custom;
+        }
         const bool invert = mStroking ? mSettings.invert : (mods & Qt::ControlModifier) != 0;
-        QString name = QString::fromUtf8(sculpt::brushName(brush).data(), qsizetype(sculpt::brushName(brush).size()));
+        QString name = QString::fromStdString(sculpt::brushId(shown));
+        if (shown.brush == sculpt::Brush::Custom && !sculpt::brushRegistry().contains(shown.custom))
+            name += " (not loaded)";
         if (invert)
             name += " (inverted)";
         drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
@@ -214,14 +335,22 @@ private:
         const SculptSettings& st = sculptSettings();
         mSession = sculpt::active();
         sculpt::syncSymmetry(s);
-        mSettings.brush = (mods & Qt::ShiftModifier) ? sculpt::Brush::Smooth : st.brush;
+        const bool smoothing = (mods & Qt::ShiftModifier) && st.brush != sculpt::Brush::Smooth;
+        mSettings.brush = smoothing ? sculpt::Brush::Smooth : st.brush;
+        mSettings.custom = st.custom;
+        mSettings.paint = st.paint;
+        mSettings.color = st.color;
         mSettings.falloff = st.stroke.resolveFalloff();
         mFalloffName = st.stroke.falloff;
         mSettings.strength = st.stroke.strength;
+        // Shift smooths with the Smooth brush's own strength.
+        if (auto it = st.perBrush.find("smooth"); smoothing && !st.shareStrength && it != st.perBrush.end())
+            mSettings.strength = it->second.strength;
         mSettings.invert = (mods & Qt::ControlModifier) != 0;
         mSettings.frontFacesOnly = st.frontFacesOnly;
         mSettings.radial = st.stroke.radial;
         s.sculpt.beginStroke(mSettings);
+        mPivotBefore = viewportTools::orbitPoint();
         mDabs = json::array();
         mStroking = true;
         brush::BrushSettings stroke = st.stroke;
@@ -270,6 +399,7 @@ private:
     {
         mSession->sculpt.dab(d);
         const glm::dmat4 w = worldOf(*mSession);
+        viewportTools::setOrbitPoint(xformPoint(w, d.center));
         const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
         const glm::dmat3 nrm = glm::transpose(glm::inverse(glm::dmat3(w)));
         mDabs.push_back({{"center", vecJson(xformPoint(w, d.center))},
@@ -331,10 +461,15 @@ private:
         mSession.reset();
         if (rec.empty())
             return;
+        rec.pivotMoved = true;
+        rec.pivotBefore = mPivotBefore;
+        rec.pivotAfter = viewportTools::orbitPoint();
         uint64_t token = sculpt::nextLiveToken();
         s->liveToken = token;
         s->live = std::move(rec);
-        json call = {{"brush", std::string(sculpt::brushName(mSettings.brush))},
+        json call = {{"brush", sculpt::brushId(mSettings)},
+                     {"paint", mSettings.paint},
+                     {"color", json::array({mSettings.color.r, mSettings.color.g, mSettings.color.b})},
                      {"falloff", mFalloffName},
                      {"strength", mSettings.strength},
                      {"invert", mSettings.invert},
@@ -361,6 +496,7 @@ private:
 
     std::shared_ptr<sculpt::Session> mSession;
     sculpt::BrushSettings mSettings;
+    std::optional<glm::dvec3> mPivotBefore;
     std::string mFalloffName;
     brush::Stroke mStroke;
     bool mStroking = false;
@@ -393,9 +529,22 @@ public:
         render::MeshDraw d;
         d.mesh = session->sculpt.renderMesh();
         d.world = glm::mat4(world);
-        d.baseColor = glm::vec3(0.42f);
-        d.roughness = 0.6f;
-        d.flags = render::DrawShaded;
+        const render::Material& mat = sculptMaterial(sculptSettings().material);
+        d.materials = {mat};
+        d.baseColor = mat.baseColor;
+        d.roughness = mat.roughness;
+        // Polypaint tints the material: white paint shows the material as it is.
+        if (!session->sculpt.colors().empty())
+        {
+            d.vertexColors = render::VertexColorMode::Shaded;
+            if (sculptSettings().material == "clay")
+                d.materials[0].baseColor = d.baseColor = glm::vec3(0.8f);
+        }
+        if (sculptSettings().wireframe)
+        {
+            d.flags |= render::DrawWire;
+            d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, 1.0f);
+        }
         s.meshes.push_back(std::move(d));
 
         if (sculptSettings().showCage)
@@ -531,7 +680,9 @@ void sculptSettingsChanged()
 {
     const SculptSettings& s = sculptSettings();
     PrefStore& p = PrefStore::get();
-    p.set(kPrefs, "/sculpt/brush", std::string(sculpt::brushName(s.brush)));
+    p.set(kPrefs, "/sculpt/brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush)));
+    p.set(kPrefs, "/sculpt/paint", s.paint);
+    p.set(kPrefs, "/sculpt/color", json::array({s.color.r, s.color.g, s.color.b}));
     s.stroke.savePrefs("/sculpt");
     p.set(kPrefs, "/sculpt/frontFacesOnly", s.frontFacesOnly);
     p.set(kPrefs, "/sculpt/showCage", s.showCage);
@@ -540,6 +691,15 @@ void sculptSettingsChanged()
     p.set(kPrefs, "/sculpt/resolution", s.resolution);
     p.set(kPrefs, "/sculpt/exitMethod", s.exitMethod);
     p.set(kPrefs, "/sculpt/keepProxy", s.keepProxy);
+    p.set(kPrefs, "/sculpt/shareRadius", s.shareRadius);
+    p.set(kPrefs, "/sculpt/shareStrength", s.shareStrength);
+    p.set(kPrefs, "/sculpt/shareStroke", s.shareStroke);
+    p.set(kPrefs, "/sculpt/wireframe", s.wireframe);
+    p.set(kPrefs, "/sculpt/material", s.material);
+    json per = json::object();
+    for (const auto& [name, b] : s.perBrush)
+        per[name] = b.toJson();
+    p.set(kPrefs, "/sculpt/perBrush", per);
     auto copy = settingsListeners();
     for (auto& [id, fn] : copy)
         fn();
@@ -555,6 +715,36 @@ int addSculptSettingsListener(std::function<void()> fn)
 
 void removeSculptSettingsListener(int id) { settingsListeners().erase(id); }
 
+void selectSculptBrush(sculpt::Brush b, const std::string& custom)
+{
+    SculptSettings& s = sculptSettings();
+    const std::string from = brushKey(s.brush, s.custom), to = brushKey(b, custom);
+    if (from != to)
+    {
+        s.perBrush[from] = s.stroke;
+        auto it = s.perBrush.find(to);
+        const brush::BrushSettings stored = it != s.perBrush.end() ? it->second : defaultStroke(b);
+        brush::BrushSettings next = s.shareStroke ? s.stroke : stored;
+        const brush::BrushSettings& radius = s.shareRadius ? s.stroke : stored;
+        next.radiusUnit = radius.radiusUnit;
+        next.radius = radius.radius;
+        next.worldRadius = radius.worldRadius;
+        next.strength = (s.shareStrength ? s.stroke : stored).strength;
+        s.stroke = next;
+    }
+    s.brush = b;
+    s.custom = b == sculpt::Brush::Custom ? custom : std::string();
+    sculptSettingsChanged();
+}
+
+std::vector<std::pair<std::string, std::string>> sculptMaterials()
+{
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const SculptMaterial& m : materialPresets())
+        out.emplace_back(m.id, m.label);
+    return out;
+}
+
 void startSculptTool()
 {
     if (!sculptToolActive())
@@ -569,6 +759,10 @@ bool sculptToolActive()
 
 void installSculptDrawer()
 {
+    sculpt::setPivotHandler([](const std::optional<glm::dvec3>& p) {
+        if (sculptToolActive() && PrefStore::get().value<bool>("general", viewportTools::kOrbitUndoPref, true))
+            viewportTools::setOrbitPoint(p);
+    });
     static SculptDrawer drawer;
     viewportHooks::addDrawer([](render::FrameState& s, OverlayPainter& p, const ViewInfo& v) { drawer.draw(s, p, v); });
 }

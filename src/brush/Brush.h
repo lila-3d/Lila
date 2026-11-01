@@ -166,7 +166,7 @@ struct LILA_SCENE_API BrushSettings
     bool followStroke = false;
     /** 1 round, toward 0 a flat ellipse across the angle. */
     double roundness = 1.0;
-    /** Image file shaping the tip; empty for none. */
+    /** Image file shaping the tip, or a library alpha (alpha://source/file, see brush/Alphas.h); empty for none. */
     std::string alphaPath;
     std::shared_ptr<const AlphaImage> alpha;
 

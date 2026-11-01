@@ -70,7 +70,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         return;
     }
     if (e->button() == Qt::RightButton && !(e->modifiers() & Qt::AltModifier))
-        if (Gizmo* gz = currentGizmo())
+        if (Gizmo* gz = drawnGizmo())
         {
             gz->setView(viewInfo());
             if (gz->wantsRightButton(e->position()) && gz->press(e->position(), e->button(), e->modifiers()))
@@ -152,7 +152,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         return;
     }
     if ((e->button() == Qt::LeftButton || e->button() == Qt::MiddleButton) && !(e->modifiers() & Qt::AltModifier))
-        if (Gizmo* gz = currentGizmo())
+        if (Gizmo* gz = drawnGizmo())
         {
             gz->setView(viewInfo());
             if (gz->press(e->position(), e->button(), e->modifiers()))
@@ -267,7 +267,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     if (e->buttons() == Qt::NoButton)
     {
         const bool handleChanged = mNodeHandles.hover(e->position(), viewInfo());
-        Gizmo* gz = currentGizmo();
+        Gizmo* gz = drawnGizmo();
         if (gz)
         {
             gz->setView(viewInfo());
@@ -306,6 +306,9 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         // Orthographic views pan instead of tumbling, like Maya.
         if (mCamera.ortho)
             mCamera.track(d.x() / width(), d.y() / height(), double(width()) / height());
+        else if (auto pivot = viewportTools::orbitPoint();
+                 pivot && mLookThrough == scene::kNoNode && PrefStore::get().value<bool>("general", viewportTools::kOrbitStrokePref, true))
+            mCamera.tumbleAbout(*pivot, d.x() * 0.4, d.y() * 0.4);
         else
             mCamera.tumble(d.x() * 0.4, d.y() * 0.4);
         break;

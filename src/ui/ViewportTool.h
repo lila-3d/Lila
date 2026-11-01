@@ -100,5 +100,13 @@ LILA_UI_API void requestRedraw();
 
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
+
+/** The "general" pref: tumbling orbits the point a brush last touched instead of the center of interest. On by default. */
+inline constexpr const char* kOrbitStrokePref = "/viewport/orbitLastStroke";
+/** The "general" pref: undoing a brush stroke puts the tumble point back where it was before it. On by default. */
+inline constexpr const char* kOrbitUndoPref = "/viewport/orbitUndo";
+/** Where a brush tool last pressed, dragged or released on the surface, in world space; cleared when the tool changes. */
+LILA_UI_API void setOrbitPoint(std::optional<glm::dvec3> point);
+LILA_UI_API std::optional<glm::dvec3> orbitPoint();
 } // namespace viewportTools
 } // namespace lila::ui

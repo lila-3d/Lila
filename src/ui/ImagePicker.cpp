@@ -10,15 +10,17 @@
 #include "ui/Environments.h"
 #include "ui/FileDialog.h"
 #include "ui/Icons.h"
+#include "ui/TexturePicker.h"
 
-#include <QComboBox>
 #include <QDesktopServices>
+#include <QDropEvent>
+#include <QLineEdit>
+#include <QMimeData>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QMenu>
 #include <QPixmap>
-#include <QSignalBlocker>
-#include <QStandardItemModel>
+#include <QPointer>
 #include <QToolButton>
 #include <QUrl>
 
@@ -33,22 +35,8 @@ namespace lila::ui
 {
 namespace
 {
-const QString kBrowseItem = "\x01browse";
 const QString kImageFiles = "Images (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.psd *.webp)";
 
-/** Calls opening before its list shows, so files added to the folders since appear. */
-class RefillCombo final : public QComboBox
-{
-public:
-    using QComboBox::QComboBox;
-    std::function<void()> opening;
-    void showPopup() override
-    {
-        if (opening)
-            opening();
-        QComboBox::showPopup();
-    }
-};
 } // namespace
 
 namespace imagePicker
@@ -69,13 +57,18 @@ std::map<std::string, std::string, std::less<>>& bindings()
     return m;
 }
 
-bool isImage(const fs::path& p)
+} // namespace
+
+bool isImageFile(const fs::path& p)
 {
     std::string ext = paths::toUtf8(p.extension());
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     static const std::vector<std::string> kExts{".png", ".jpg", ".jpeg", ".tga", ".hdr", ".exr", ".bmp", ".tif", ".tiff", ".psd", ".webp"};
     return std::ranges::find(kExts, ext) != kExts.end();
 }
+
+namespace
+{
 
 /** The images in dir, by name, under group. */
 std::vector<Entry> folderEntries(const fs::path& dir, const QString& group, bool storeFileName)
@@ -84,7 +77,7 @@ std::vector<Entry> folderEntries(const fs::path& dir, const QString& group, bool
     std::error_code ec;
     if (!dir.empty())
         for (const auto& e : fs::directory_iterator(dir, ec))
-            if (e.is_regular_file(ec) && isImage(e.path()))
+            if (e.is_regular_file(ec) && isImageFile(e.path()))
                 files.push_back(e.path());
     std::ranges::sort(files);
     std::vector<Entry> out;
@@ -117,6 +110,7 @@ void addBuiltIns()
         .userDir = user,
         .projectDir = [] { return projectSubdir("hdri"); },
         .filter = "HDR images (*.hdr *.exr);;" + kImageFiles,
+        .extensions = {".hdr", ".exr"},
     });
     bindings()["light.texture"] = "hdri";
 }
@@ -228,6 +222,17 @@ QIcon thumbnail(const fs::path& file, int size)
     cache[key] = {stamp, icon};
     return icon;
 }
+QImage thumbnailImage(const fs::path& file, int size)
+{
+    try
+    {
+        return loadThumb(file, size);
+    }
+    catch (const std::exception&)
+    {
+        return {};
+    }
+}
 } // namespace imagePicker
 
 ImagePicker::ImagePicker(const imagePicker::Library* library, QString title, QWidget* parent)
@@ -236,19 +241,43 @@ ImagePicker::ImagePicker(const imagePicker::Library* library, QString title, QWi
     auto* row = new QHBoxLayout(this);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(3);
-    auto* combo = new RefillCombo(this);
-    combo->opening = [this] { fill(); };
-    mCombo = combo;
-    mCombo->setIconSize(QSize(48, 24));
-    mCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    mCombo->setMinimumContentsLength(10);
-    row->addWidget(mCombo, 1);
-    connect(mCombo, &QComboBox::activated, this, [this](int index) {
-        const QString data = mCombo->itemData(index).toString();
-        if (data == kBrowseItem)
-            browse();
-        else
-            Q_EMIT chosen(data);
+    mThumb = new QToolButton(this);
+    mThumb->setObjectName("imageThumb");
+    mThumb->setAutoRaise(true);
+    mThumb->setIconSize(QSize(40, 26));
+    mThumb->setToolTip("Pick an image: type to filter");
+    mPath = new QLineEdit(this);
+    mPath->setObjectName("imagePath");
+    mPath->setPlaceholderText("None");
+    mName = new QToolButton(this);
+    mName->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    mName->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    mName->setToolTip("Pick an image: type to filter");
+    mName->hide();
+    mOpen = new QToolButton(this);
+    mOpen->setArrowType(Qt::DownArrow);
+    mOpen->setToolTip("Pick from the library and the project's textures, or Browse...; type to filter");
+    mClear = new QToolButton(this);
+    mClear->setIcon(icon("x"));
+    mClear->setToolTip("None");
+    row->addWidget(mThumb);
+    row->addWidget(mPath, 1);
+    row->addWidget(mName, 1);
+    row->addWidget(mOpen);
+    row->addWidget(mClear);
+    for (QToolButton* b : {mThumb, mName, mOpen})
+        connect(b, &QToolButton::clicked, this, [this] { open(); });
+    connect(mClear, &QToolButton::clicked, this, [this] { choose({}); });
+    connect(mPath, &QLineEdit::editingFinished, this, [this] {
+        if (!mPath->isModified())
+            return;
+        mPath->setModified(false);
+        QString text = mPath->text().trimmed();
+        if (text.size() >= 2 && text.startsWith('"') && text.endsWith('"'))
+            text = text.mid(1, text.size() - 2);
+        if (text == mShown)
+            return;
+        choose(text.toStdString());
     });
 
     if (mLibrary)
@@ -281,67 +310,170 @@ ImagePicker::ImagePicker(const imagePicker::Library* library, QString title, QWi
         manage->setMenu(menu);
         row->addWidget(manage);
     }
-    fill();
+
+    setAcceptDrops(true);
+    for (QWidget* w : {static_cast<QWidget*>(this), static_cast<QWidget*>(mPath), static_cast<QWidget*>(mThumb), static_cast<QWidget*>(mName)})
+        w->installEventFilter(this);
+    refresh();
 }
 
 void ImagePicker::setValue(const std::string& value)
 {
-    if (value == mValue && mCombo->count() > 0)
+    if (value == mValue && !mShown.isNull())
         return;
     mValue = value;
-    fill();
+    refresh();
 }
 
-void ImagePicker::fill()
+void ImagePicker::setEditable(bool on)
 {
-    QSignalBlocker block(mCombo);
-    mCombo->clear();
-    mCombo->addItem("None", QString());
-    int selected = 0;
-    QString group;
-    auto* model = qobject_cast<QStandardItemModel*>(mCombo->model());
-    if (mLibrary && mLibrary->entries)
-        for (const imagePicker::Entry& e : mLibrary->entries())
+    mEditable = on;
+    mPath->setVisible(on);
+    mName->setVisible(!on);
+}
+
+void ImagePicker::setClearable(bool on) { mClear->setVisible(on); }
+
+void ImagePicker::setDrops(bool on) { mDrops = on; }
+
+void ImagePicker::setDropMany(std::function<void(const std::vector<std::string>&)> fn) { mDropMany = std::move(fn); }
+
+void ImagePicker::setResolver(std::function<fs::path(const std::string&)> fn)
+{
+    mResolve = std::move(fn);
+    refresh();
+}
+
+void ImagePicker::setProblem(std::function<std::string(const fs::path&)> fn)
+{
+    mProblem = std::move(fn);
+    refresh();
+}
+
+void ImagePicker::choose(const std::string& value)
+{
+    mValue = value;
+    refresh();
+    Q_EMIT chosen(QString::fromStdString(value));
+}
+
+void ImagePicker::refresh()
+{
+    QString name, tip;
+    QIcon thumb;
+    if (mValue.empty())
+        name = QString();
+    else
+    {
+        const imagePicker::Entry* found = nullptr;
+        std::vector<imagePicker::Entry> entries;
+        if (mLibrary && mLibrary->entries)
         {
-            if (e.group != group)
-            {
-                group = e.group;
-                mCombo->insertSeparator(mCombo->count());
-                mCombo->addItem(group);
-                if (model)
-                    model->item(mCombo->count() - 1)->setEnabled(false);
-            }
-            mCombo->addItem(imagePicker::thumbnail(e.file), e.name, QString::fromStdString(e.value));
-            mCombo->setItemData(mCombo->count() - 1, QString::fromStdString(paths::toUtf8(e.file)), Qt::ToolTipRole);
-            if (e.value == mValue)
-                selected = mCombo->count() - 1;
+            entries = mLibrary->entries();
+            for (const imagePicker::Entry& e : entries)
+                if (e.value == mValue)
+                    found = &e;
         }
-    if (!mValue.empty() && selected == 0)
-    {
-        mCombo->insertSeparator(mCombo->count());
-        const fs::path file = paths::resolvePath(mValue);
+        const fs::path file = found ? found->file : mResolve ? mResolve(mValue) : paths::resolvePath(mValue);
         std::error_code ec;
-        const bool exists = fs::exists(file, ec);
-        mCombo->addItem(imagePicker::thumbnail(file), QString::fromStdString(paths::toUtf8(fs::path(paths::fromUtf8(mValue)).filename())) + (exists ? "" : " (missing)"),
-                        QString::fromStdString(mValue));
-        mCombo->setItemData(mCombo->count() - 1, QString::fromStdString(paths::toUtf8(file)), Qt::ToolTipRole);
-        selected = mCombo->count() - 1;
+        const bool exists = !file.empty() && fs::exists(file, ec);
+        thumb = imagePicker::thumbnail(file);
+        // Library images show their name; files show their path, as typed or stored.
+        name = found ? found->name : QString::fromStdString(mValue);
+        const std::string problem = !exists ? std::string("missing") : mProblem ? mProblem(file) : std::string();
+        tip = QString::fromStdString(paths::toUtf8(file)) + (problem.empty() ? QString() : "\n" + QString::fromStdString(problem));
+        if (!exists)
+            name += " (missing)";
     }
-    mCombo->insertSeparator(mCombo->count());
-    mCombo->addItem(icon("folder-open"), "Browse...", kBrowseItem);
-    mCombo->setCurrentIndex(selected);
+    mShown = name.isNull() ? QString("") : name;
+    if (!mPath->hasFocus())
+    {
+        mPath->setText(mShown);
+        mPath->setModified(false);
+    }
+    mPath->setToolTip(tip);
+    mName->setText(mValue.empty() ? QString("None") : name);
+    mName->setToolTip(tip);
+    mThumb->setIcon(thumb.isNull() ? icon(mValue.empty() ? "photo-off" : "photo-x") : thumb);
+    mThumb->setToolTip(tip.isEmpty() ? QString("Pick an image: type to filter") : tip);
+    mClear->setEnabled(!mValue.empty());
 }
 
-void ImagePicker::browse()
+bool ImagePicker::eventFilter(QObject* watched, QEvent* event)
 {
-    const QString filter = (mLibrary && !mLibrary->filter.isEmpty() ? mLibrary->filter : kImageFiles) + ";;All Files (*)";
-    const QString f = fileDialog::getOpenFileName(this, mTitle, {}, filter);
-    if (f.isEmpty())
+    switch (event->type())
     {
-        fill();
-        return;
+    case QEvent::DragEnter:
+    case QEvent::DragMove:
+    {
+        auto* e = static_cast<QDropEvent*>(event);
+        if (!mDrops || !isEnabled() || droppedImageFiles(e->mimeData()).empty())
+            break;
+        e->acceptProposedAction();
+        return true;
     }
-    Q_EMIT chosen(QString::fromStdString(paths::storedPath(fs::path(f.toStdU16String()))));
+    case QEvent::Drop:
+    {
+        auto* e = static_cast<QDropEvent*>(event);
+        const std::vector<std::string> files = mDrops ? droppedImageFiles(e->mimeData()) : std::vector<std::string>();
+        if (files.empty())
+            break;
+        e->acceptProposedAction();
+        if (files.size() > 1 && mDropMany)
+            mDropMany(files);
+        else
+            choose(paths::storedPath(paths::fromUtf8(files.front())));
+        return true;
+    }
+    default: break;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+std::vector<std::string> droppedImageFiles(const QMimeData* mime)
+{
+    std::vector<std::string> files;
+    if (!mime || !mime->hasUrls())
+        return files;
+    for (const QUrl& url : mime->urls())
+        if (url.isLocalFile())
+            if (const fs::path p(url.toLocalFile().toStdU16String()); imagePicker::isImageFile(p))
+                files.push_back(paths::toUtf8(fs::absolute(p)));
+    return files;
+}
+
+void ImagePicker::open()
+{
+    texturePicker::Options o;
+    o.current = mValue;
+    o.title = mTitle;
+    if (mLibrary)
+    {
+        if (mLibrary->entries)
+            o.items = [lib = mLibrary] {
+                std::vector<texturePicker::Item> out;
+                for (const imagePicker::Entry& e : lib->entries())
+                    out.push_back({e.value, e.name, e.file, e.group});
+                return out;
+            };
+        o.projectTextures = mLibrary->projectTextures;
+        o.extensions = mLibrary->extensions;
+        o.browseFilter = mLibrary->filter;
+        o.actions.emplace_back("Add to My " + mLibrary->title + "...", [this] { addTo(mLibrary->userDir); });
+        if (mLibrary->projectDir && !mLibrary->projectDir().empty())
+            o.actions.emplace_back("Add to Project " + mLibrary->title + "...", [this] { addTo(mLibrary->projectDir()); });
+    }
+    else
+        o.browseFilter = kImageFiles;
+    QPointer<ImagePicker> self(this);
+    texturePicker::open(this, std::move(o), [self](const std::string& value) {
+        if (!self)
+            return;
+        // Files from the project or a browse are stored as the scene stores paths; library values as they are.
+        std::error_code ec;
+        const bool file = !value.empty() && fs::path(paths::fromUtf8(value)).is_absolute() && fs::exists(paths::fromUtf8(value), ec);
+        self->choose(file ? paths::storedPath(paths::fromUtf8(value)) : value);
+    });
 }
 
 void ImagePicker::addTo(const fs::path& dir)
@@ -364,6 +496,6 @@ void ImagePicker::addTo(const fs::path& dir)
             last = dst;
     }
     if (!last.empty())
-        Q_EMIT chosen(QString::fromStdString(paths::storedPath(last)));
+        choose(mLibrary->valueFor ? mLibrary->valueFor(last) : paths::storedPath(last));
 }
 } // namespace lila::ui

@@ -148,7 +148,7 @@ GpuResident::Kernel GpuResident::makeKernel(size_t m, size_t g)
             normalMaps();
         }
     }
-    else if (id == "vertexColor")
+    else if (id == "vertexColor" || (id == "baseColor" && option(o, "source", std::string("material")) == "vertexColor"))
     {
         p.map = kMapVertexColor;
         p.extra = colorTable(g, option(o, "set", std::string()), false);

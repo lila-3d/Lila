@@ -9,6 +9,7 @@
 #include "scene/TextureFolders.h"
 #include "ui/Icons.h"
 #include "ui/FileDialog.h"
+#include "ui/ImagePicker.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -18,11 +19,11 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QImageReader>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -50,11 +51,16 @@ enum Kind
 {
     kNone,
     kBrowse,
+    kHeader,
+    /** A library row. */
     kFile,
+    kProject,
 };
 constexpr int kKindRole = Qt::UserRole;
-constexpr int kRelRole = Qt::UserRole + 1;
+constexpr int kValueRole = Qt::UserRole + 1;
 constexpr int kThumbRole = Qt::UserRole + 2;
+constexpr int kFileRole = Qt::UserRole + 3;
+constexpr const char* kImages = "Images (*.png *.tga *.jpg *.jpeg *.exr *.tif *.tiff *.psd *.hdr *.bmp *.dds *.webp)";
 
 QString qs(const std::string& s)
 {
@@ -100,21 +106,10 @@ struct Thumbs
         if (auto it = done.find(k); it != done.end())
             return &it->second;
         if (pending.insert(k).second)
-        {
-            QString path = QString::fromStdU16String(file.u16string());
-            QThreadPool::globalInstance()->start([k, path] {
-                QImageReader reader(path);
-                QImage img;
-                if (reader.canRead())
-                {
-                    QSize size = reader.size();
-                    if (size.isValid() && (size.width() > kIcon * 2 || size.height() > kIcon * 2))
-                        reader.setScaledSize(size.scaled(kIcon * 2, kIcon * 2, Qt::KeepAspectRatio));
-                    img = reader.read();
-                }
+            QThreadPool::globalInstance()->start([k, file] {
+                QImage img = imagePicker::thumbnailImage(file, kIcon * 2);
                 QMetaObject::invokeMethod(qApp, [k, img] { get().arrived(k, img); }, Qt::QueuedConnection);
             });
-        }
         return nullptr;
     }
 
@@ -138,47 +133,79 @@ struct Thumbs
     }
 };
 
+/** A path compared without touching the disk: canonical where it exists, lowercased. */
+std::string comparable(const std::string& stored)
+{
+    if (stored.empty())
+        return {};
+    std::error_code ec;
+    return textMatch::lower(paths::toUtf8(fs::weakly_canonical(paths::resolvePath(stored), ec)));
+}
+
 class Popup : public QFrame
 {
 public:
-    Popup(QWidget* anchor, const std::string& current, std::function<void(const std::string&)> pick)
-        : QFrame(anchor->window(), Qt::Popup), mAnchor(anchor), mPick(std::move(pick))
+    Popup(QWidget* anchor, Options options, std::function<void(const std::string&)> pick)
+        : QFrame(anchor->window(), Qt::Popup), mAnchor(anchor), mOptions(std::move(options)), mPick(std::move(pick))
     {
         setAttribute(Qt::WA_DeleteOnClose);
         setFrameShape(QFrame::StyledPanel);
-        if (!current.empty())
-        {
-            std::error_code ec;
-            mCurrent = textMatch::lower(paths::toUtf8(fs::weakly_canonical(paths::resolvePath(current), ec)));
-        }
+        mCurrentFile = comparable(mOptions.current);
+        if (mOptions.items)
+            mItems = mOptions.items();
 
         auto* lay = new QVBoxLayout(this);
         lay->setContentsMargins(6, 6, 6, 6);
         lay->setSpacing(4);
         mEdit = new QLineEdit(this);
-        mEdit->setPlaceholderText("Search project textures");
+        mEdit->setPlaceholderText("Search " + mOptions.title.toLower() + (mOptions.title.endsWith('s') ? "" : "s"));
         mEdit->setClearButtonEnabled(true);
         mList = new QListWidget(this);
         mList->setIconSize({kIcon, kIcon});
-        mList->setUniformItemSizes(true);
         mList->setFocusPolicy(Qt::NoFocus);
         mList->setTextElideMode(Qt::ElideMiddle);
         auto* foot = new QHBoxLayout;
         mStatus = new QLabel(this);
         mStatus->setEnabled(false);
-        auto* refresh = new QToolButton(this);
-        refresh->setIcon(icon("refresh"));
-        refresh->setToolTip("Rescan the project folder");
-        refresh->setAutoRaise(true);
-        auto* folders = new QToolButton(this);
-        folders->setText("Texture Folders...");
-        folders->setIcon(icon("filter"));
-        folders->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        folders->setToolTip("Which folders of the project are listed, for the workspace and this scene");
-        folders->setAutoRaise(true);
         foot->addWidget(mStatus, 1);
-        foot->addWidget(refresh);
-        foot->addWidget(folders);
+        if (mOptions.projectTextures)
+        {
+            auto* refresh = new QToolButton(this);
+            refresh->setIcon(icon("refresh"));
+            refresh->setToolTip("Rescan the project folder");
+            refresh->setAutoRaise(true);
+            auto* folders = new QToolButton(this);
+            folders->setText("Texture Folders...");
+            folders->setIcon(icon("filter"));
+            folders->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            folders->setToolTip("Which folders of the project are listed, for the workspace and this scene");
+            folders->setAutoRaise(true);
+            foot->addWidget(refresh);
+            foot->addWidget(folders);
+            connect(refresh, &QToolButton::clicked, this, [] { pt::Index::get().refresh(); });
+            connect(folders, &QToolButton::clicked, this, [this] {
+                QPointer<QWidget> parent = mAnchor ? mAnchor->window() : nullptr;
+                close();
+                showFoldersDialog(parent);
+            });
+        }
+        if (!mOptions.actions.empty())
+        {
+            auto* more = new QToolButton(this);
+            more->setIcon(icon("library-plus"));
+            more->setToolTip("Add to the library, or open its folders");
+            more->setAutoRaise(true);
+            more->setPopupMode(QToolButton::InstantPopup);
+            auto* menu = new QMenu(more);
+            for (const auto& [label, run] : mOptions.actions)
+                connect(menu->addAction(label), &QAction::triggered, this, [this, run] {
+                    close();
+                    if (run)
+                        run();
+                });
+            more->setMenu(menu);
+            foot->addWidget(more);
+        }
         lay->addWidget(mEdit);
         lay->addWidget(mList, 1);
         lay->addLayout(foot);
@@ -187,24 +214,22 @@ public:
         connect(mEdit, &QLineEdit::textChanged, this, [this] { refill(); });
         connect(mList, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) { activate(it); });
         connect(mList->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { requestThumbs(); });
-        connect(refresh, &QToolButton::clicked, this, [] { pt::Index::get().refresh(); });
-        connect(folders, &QToolButton::clicked, this, [this] {
-            QPointer<QWidget> parent = mAnchor ? mAnchor->window() : nullptr;
-            close();
-            showFoldersDialog(parent);
-        });
 
-        mListener = pt::Index::get().addListener([this] { refill(); });
+        if (mOptions.projectTextures)
+        {
+            mListener = pt::Index::get().addListener([this] { refill(); });
+            pt::Index::get().follow();
+        }
         mThumbSlot = Thumbs::get().waiting.size();
         Thumbs::get().waiting.push_back([this](const std::string& k) { thumbArrived(k); });
-        pt::Index::get().follow();
         refill();
         place();
     }
 
     ~Popup() override
     {
-        pt::Index::get().removeListener(mListener);
+        if (mOptions.projectTextures)
+            pt::Index::get().removeListener(mListener);
         Thumbs::get().waiting[mThumbSlot] = nullptr;
     }
 
@@ -221,8 +246,6 @@ protected:
         if (obj != mEdit || e->type() != QEvent::KeyPress)
             return false;
         auto* k = static_cast<QKeyEvent*>(e);
-        int n = mList->count();
-        int row = mList->currentRow();
         switch (k->key())
         {
         case Qt::Key_Down:
@@ -230,10 +253,8 @@ protected:
         case Qt::Key_PageDown:
         case Qt::Key_PageUp:
         {
-            if (!n)
-                return true;
-            int step = k->key() == Qt::Key_Down ? 1 : k->key() == Qt::Key_Up ? -1 : k->key() == Qt::Key_PageDown ? 10 : -10;
-            mList->setCurrentRow(std::clamp(row + step, 0, n - 1));
+            const int step = k->key() == Qt::Key_Down ? 1 : k->key() == Qt::Key_Up ? -1 : k->key() == Qt::Key_PageDown ? 10 : -10;
+            moveCurrent(step);
             return true;
         }
         case Qt::Key_Return:
@@ -244,10 +265,25 @@ protected:
     }
 
 private:
+    /** Moves the highlight by step rows, over the headings. */
+    void moveCurrent(int step)
+    {
+        const int n = mList->count();
+        if (!n)
+            return;
+        int row = std::clamp(mList->currentRow() + step, 0, n - 1);
+        const int dir = step > 0 ? 1 : -1;
+        while (row >= 0 && row < n && mList->item(row)->data(kKindRole).toInt() == kHeader)
+            row += dir;
+        if (row < 0 || row >= n)
+            return;
+        mList->setCurrentRow(row);
+    }
+
     void place()
     {
         int w = std::max(mAnchor->width(), 380);
-        resize(w, 420);
+        resize(w, 460);
         QPoint at = mAnchor->mapToGlobal(QPoint(0, mAnchor->height()));
         if (QScreen* screen = mAnchor->screen())
         {
@@ -259,29 +295,40 @@ private:
         move(at);
     }
 
+    bool isCurrent(const Item& item) const
+    {
+        return !mOptions.current.empty() && (item.value == mOptions.current || (!mCurrentFile.empty() && comparable(item.value) == mCurrentFile));
+    }
+
+    QListWidgetItem* header(const QString& text)
+    {
+        auto* it = new QListWidgetItem(text, mList);
+        it->setData(kKindRole, kHeader);
+        it->setFlags(Qt::NoItemFlags);
+        QFont f = it->font();
+        f.setBold(true);
+        it->setFont(f);
+        return it;
+    }
+
+    QListWidgetItem* fileRow(const QString& text, const fs::path& file, Kind kind, const QString& value)
+    {
+        auto* it = new QListWidgetItem(text, mList);
+        it->setData(kKindRole, kind);
+        it->setData(kValueRole, value);
+        it->setData(kFileRole, QString::fromStdU16String(file.u16string()));
+        it->setToolTip(QString::fromStdU16String(file.u16string()));
+        it->setSizeHint({0, kIcon + 6});
+        return it;
+    }
+
     void refill()
     {
         QString keep;
         if (QListWidgetItem* it = mList->currentItem())
-            keep = it->data(kRelRole).toString();
-
-        pt::Index::Snapshot snap = pt::Index::get().snapshot();
-        mRoot = snap.root;
-        tf::Rules rules = tf::current();
-        std::vector<std::string> files = rules.filter.apply(snap.files);
-        std::string queryText = mEdit->text().trimmed().toStdString();
+            keep = it->data(kValueRole).toString();
+        const std::string queryText = mEdit->text().trimmed().toStdString();
         textMatch::Query query(queryText);
-
-        // Matches in the file name rank above ones that only match a folder.
-        std::vector<const std::string*> byName, byFolder;
-        for (const std::string& f : files)
-        {
-            if (!query.matches({f}))
-                continue;
-            size_t slash = f.rfind('/');
-            std::string_view name = slash == std::string::npos ? std::string_view(f) : std::string_view(f).substr(slash + 1);
-            (query.empty() || query.matches({name}) ? byName : byFolder).push_back(&f);
-        }
 
         mList->clear();
         auto special = [&](Kind kind, const char* text, const char* iconName, const char* words) {
@@ -295,32 +342,92 @@ private:
         special(kBrowse, "Browse...", "folder-open", "browse file");
 
         QListWidgetItem* select = nullptr;
-        for (const auto* list : {&byName, &byFolder})
-            for (const std::string* f : *list)
+        auto mark = [&](QListWidgetItem* it, bool current) {
+            if (current)
             {
-                fs::path abs = snap.root / paths::fromUtf8(*f);
-                size_t slash = f->rfind('/');
-                QString name = qs(slash == std::string::npos ? *f : f->substr(slash + 1));
-                QString folder = slash == std::string::npos ? QString() : qs(f->substr(0, slash));
-                auto* it = new QListWidgetItem(folder.isEmpty() ? name : name + "\n" + folder, mList);
-                it->setData(kKindRole, kFile);
-                it->setData(kRelRole, qs(*f));
-                it->setToolTip(QString::fromStdU16String(abs.u16string()));
-                it->setSizeHint({0, kIcon + 6});
-                if (!mCurrent.empty() && textMatch::lower(paths::toUtf8(abs.lexically_normal())) == mCurrent)
-                {
-                    QFont bold = it->font();
-                    bold.setBold(true);
-                    it->setFont(bold);
-                    if (!select && keep.isEmpty())
-                        select = it;
-                }
-                if (!keep.isEmpty() && it->data(kRelRole).toString() == keep)
+                QFont bold = it->font();
+                bold.setBold(true);
+                it->setFont(bold);
+                if (!select && keep.isEmpty())
                     select = it;
             }
+            if (!keep.isEmpty() && it->data(kValueRole).toString() == keep)
+                select = it;
+        };
+
+        // The library, by group; a group's heading shows only while it has matches.
+        QString group;
+        bool listedCurrent = false;
+        size_t libraryShown = 0;
+        for (const Item& item : mItems)
+        {
+            const std::string name = item.name.toStdString(), groupText = item.group.toStdString();
+            if (!query.matches({std::string_view(name), std::string_view(groupText)}))
+                continue;
+            if (item.group != group || !libraryShown)
+            {
+                group = item.group;
+                if (!group.isEmpty())
+                    header(group);
+            }
+            ++libraryShown;
+            const bool current = isCurrent(item);
+            listedCurrent |= current;
+            mark(fileRow(item.name, item.file, kFile, QString::fromStdString(item.value)), current);
+        }
+
+        // The current file when the library doesn't hold it.
+        if (!mOptions.current.empty() && !listedCurrent && !mOptions.projectTextures && query.empty())
+        {
+            const fs::path file = paths::resolvePath(mOptions.current);
+            std::error_code ec;
+            header("Current");
+            const QString name = QString::fromStdU16String(file.filename().u16string()) + (fs::exists(file, ec) ? "" : " (missing)");
+            mark(fileRow(name, file, kFile, QString::fromStdString(mOptions.current)), true);
+        }
+
+        size_t projectShown = 0;
+        pt::Index::Snapshot snap;
+        if (mOptions.projectTextures)
+        {
+            snap = pt::Index::get().snapshot();
+            mRoot = snap.root;
+            tf::Rules rules = tf::current();
+            std::vector<std::string> files = rules.filter.apply(snap.files);
+            // Matches in the file name rank above ones that only match a folder.
+            std::vector<const std::string*> byName, byFolder;
+            for (const std::string& f : files)
+            {
+                if (!mOptions.extensions.empty())
+                {
+                    const std::string ext = textMatch::lower(paths::toUtf8(fs::path(paths::fromUtf8(f)).extension()));
+                    if (std::ranges::find(mOptions.extensions, ext) == mOptions.extensions.end())
+                        continue;
+                }
+                if (!query.matches({f}))
+                    continue;
+                size_t slash = f.rfind('/');
+                std::string_view name = slash == std::string::npos ? std::string_view(f) : std::string_view(f).substr(slash + 1);
+                (query.empty() || query.matches({name}) ? byName : byFolder).push_back(&f);
+            }
+            projectShown = byName.size() + byFolder.size();
+            if (projectShown && !mItems.empty())
+                header("Project");
+            for (const auto* list : {&byName, &byFolder})
+                for (const std::string* f : *list)
+                {
+                    fs::path abs = snap.root / paths::fromUtf8(*f);
+                    size_t slash = f->rfind('/');
+                    QString name = qs(slash == std::string::npos ? *f : f->substr(slash + 1));
+                    QString folder = slash == std::string::npos ? QString() : qs(f->substr(0, slash));
+                    const bool current = !mCurrentFile.empty() && textMatch::lower(paths::toUtf8(abs.lexically_normal())) == mCurrentFile;
+                    mark(fileRow(folder.isEmpty() ? name : name + "\n" + folder, abs, kProject, qs(paths::toUtf8(abs))), current);
+                }
+        }
+
         if (!select && !query.empty())
             for (int i = 0; i < mList->count() && !select; ++i)
-                if (mList->item(i)->data(kKindRole).toInt() == kFile)
+                if (int kind = mList->item(i)->data(kKindRole).toInt(); kind == kFile || kind == kProject)
                     select = mList->item(i);
         if (!select && mList->count())
             select = mList->item(0);
@@ -328,22 +435,30 @@ private:
         if (select)
             mList->scrollToItem(select);
 
-        size_t shown = byName.size() + byFolder.size();
         QString status;
-        if (snap.root.empty() && !snap.scanning)
-            status = "No project folder: open a workspace or save the scene";
-        else if (snap.scanning && snap.files.empty())
-            status = "Scanning...";
-        else
+        if (!mItems.empty())
+            status = QString("%1 of %2 %3").arg(libraryShown).arg(mItems.size()).arg(mOptions.title.toLower() + (mOptions.title.endsWith('s') ? "" : "s"));
+        if (mOptions.projectTextures)
         {
-            status = QString("%1 of %2 textures").arg(shown).arg(snap.files.size());
-            if (snap.truncated)
-                status += " (folder too large, partial)";
-            else if (snap.scanning)
-                status += " (rescanning)";
+            if (!status.isEmpty())
+                status += ", ";
+            if (snap.root.empty() && !snap.scanning)
+                status += mItems.empty() ? "No project folder: open a workspace or save the scene" : "no project folder";
+            else if (snap.scanning && snap.files.empty())
+                status += "scanning the project...";
+            else
+            {
+                status += QString("%1 project textures").arg(projectShown);
+                if (snap.truncated)
+                    status += " (folder too large, partial)";
+                else if (snap.scanning)
+                    status += " (rescanning)";
+            }
+            mStatus->setToolTip(QString::fromStdU16String(snap.root.u16string()));
         }
+        if (!status.isEmpty())
+            status[0] = status[0].toUpper();
         mStatus->setText(status);
-        mStatus->setToolTip(QString::fromStdU16String(snap.root.u16string()));
         requestThumbs();
     }
 
@@ -361,12 +476,13 @@ private:
         for (int i = first; i <= last && i < mList->count(); ++i)
         {
             QListWidgetItem* it = mList->item(i);
-            if (it->data(kKindRole).toInt() != kFile || !it->data(kThumbRole).isNull())
+            const int kind = it->data(kKindRole).toInt();
+            if ((kind != kFile && kind != kProject) || !it->data(kThumbRole).isNull())
                 continue;
-            fs::path abs = mRoot / paths::fromUtf8(it->data(kRelRole).toString().toStdString());
-            std::string k = Thumbs::key(abs);
+            fs::path file(it->data(kFileRole).toString().toStdU16String());
+            std::string k = Thumbs::key(file);
             it->setData(kThumbRole, qs(k));
-            if (const QPixmap* pm = Thumbs::get().find(k, abs))
+            if (const QPixmap* pm = Thumbs::get().find(k, file))
                 it->setIcon(*pm);
         }
     }
@@ -384,31 +500,36 @@ private:
     {
         if (!it)
             return;
+        const int kind = it->data(kKindRole).toInt();
+        if (kind == kHeader)
+            return;
         auto pick = mPick;
         QPointer<QWidget> anchor = mAnchor;
-        fs::path root = mRoot;
-        int kind = it->data(kKindRole).toInt();
-        std::string chosen;
-        if (kind == kFile)
-            chosen = paths::toUtf8(root / paths::fromUtf8(it->data(kRelRole).toString().toStdString()));
+        const fs::path root = mRoot;
+        const QString title = mOptions.title;
+        const QString filter = mOptions.browseFilter.isEmpty() ? QString(kImages) : mOptions.browseFilter;
+        std::string chosen = it->data(kValueRole).toString().toStdString();
         close();
         if (kind == kBrowse)
         {
             QString start = root.empty() ? QString() : QString::fromStdU16String(root.u16string());
-            QString f = ui::fileDialog::getOpenFileName(anchor ? anchor->window() : nullptr, "Texture", start,
-                                                     "Images (*.png *.tga *.jpg *.jpeg *.exr *.tif *.tiff *.psd *.hdr *.bmp *.dds);;All files (*)");
+            QString f = ui::fileDialog::getOpenFileName(anchor ? anchor->window() : nullptr, title, start, filter + ";;All files (*)");
             if (f.isEmpty())
                 return;
             chosen = paths::toUtf8(fs::path(f.toStdU16String()));
         }
+        else if (kind == kNone)
+            chosen.clear();
         if (pick)
             pick(chosen);
     }
 
     QPointer<QWidget> mAnchor;
+    Options mOptions;
+    std::vector<Item> mItems;
     std::function<void(const std::string&)> mPick;
-    /** The slot's file, canonical and lowercased, to compare against listed paths without touching the disk. */
-    std::string mCurrent;
+    /** The current value as a file, canonical and lowercased, to compare against listed paths without touching the disk. */
+    std::string mCurrentFile;
     fs::path mRoot;
     QLineEdit* mEdit = nullptr;
     QListWidget* mList = nullptr;
@@ -562,11 +683,18 @@ private:
 };
 } // namespace
 
-void open(QWidget* anchor, const std::string& current, std::function<void(const std::string&)> pick)
+void open(QWidget* anchor, Options options, std::function<void(const std::string&)> pick)
 {
     if (!anchor)
         return;
-    (new Popup(anchor, current, std::move(pick)))->start();
+    (new Popup(anchor, std::move(options), std::move(pick)))->start();
+}
+
+void open(QWidget* anchor, const std::string& current, std::function<void(const std::string&)> pick)
+{
+    Options o;
+    o.current = current;
+    open(anchor, std::move(o), std::move(pick));
 }
 
 void showFoldersDialog(QWidget* parent)

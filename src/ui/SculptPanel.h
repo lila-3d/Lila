@@ -4,13 +4,19 @@
 
 #include <QWidget>
 
+#include <string>
+#include <vector>
+
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QGroupBox;
+class QIcon;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QToolButton;
 
 namespace lila::brush::ui
 {
@@ -19,12 +25,15 @@ class StrokeOptions;
 
 namespace lila::ui
 {
+class FlowLayout;
+
 /** Dock object name for the sculpt panel. */
 inline constexpr const char* kSculptDock = "sculptPanel";
 
 /**
- * Sculpt tool panel: Enter/Exit Sculpt with the proxy options, brush buttons, radius/strength/falloff/spacing,
- * symmetry, mask and freeze operations, and the standalone reprojection tools.
+ * Sculpt tool panel: Enter/Exit Sculpt with the proxy options, brush buttons (registered brushes included),
+ * radius/strength/falloff/spacing and which of them brushes share, symmetry, the display material and wireframe, polypaint,
+ * mask and freeze operations, and the standalone reprojection tools.
  */
 class LILA_UI_API SculptPanel : public QWidget
 {
@@ -35,8 +44,22 @@ public:
 private:
     void syncFromSettings();
     void refreshSession();
+    QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc);
+    void rebuildCustomBrushes();
 
+    QGroupBox* mBrushBox = nullptr;
+    FlowLayout* mBrushFlow = nullptr;
     QButtonGroup* mBrushes = nullptr;
+    /** Registered brush names, in button order. */
+    std::vector<std::string> mCustomBrushes;
+    int mBrushRegistryListener = 0;
+    QToolButton* mColor = nullptr;
+    QCheckBox* mPaint = nullptr;
+    QCheckBox* mShareRadius = nullptr;
+    QCheckBox* mShareStrength = nullptr;
+    QCheckBox* mShareStroke = nullptr;
+    QCheckBox* mWireframe = nullptr;
+    QComboBox* mMaterial = nullptr;
     QComboBox* mFalloff = nullptr;
     QDoubleSpinBox* mRadius = nullptr;
     QDoubleSpinBox* mStrength = nullptr;

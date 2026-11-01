@@ -7,6 +7,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
+#include "vcolor/Paint.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
@@ -20,6 +21,7 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
@@ -60,10 +62,24 @@ constexpr std::array<BrushInfo, size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Pinch, "arrows-minimize", "Pinch", "Pull points toward the brush centre to sharpen edges; Ctrl spreads them."},
     {sculpt::Brush::Crease, "chisel", "Crease", "Cut a sharp groove; Ctrl raises a sharp ridge."},
     {sculpt::Brush::Scrape, "shovel", "Scrape", "Shave off what sticks out of the average plane; Ctrl fills dips."},
+    {sculpt::Brush::DamStandard, "slash", "Dam Standard", "Cut a narrow V groove that pinches its edges in, for wrinkles and seams; Ctrl raises a sharp ridge."},
+    {sculpt::Brush::TrimDynamic, "cut", "Trim Dynamic", "Cut flat to a plane just under the brush, for hard planes; Ctrl fills up to it."},
+    {sculpt::Brush::Polish, "sparkles", "Polish", "Smooth along the surface's normal only and ease onto its plane: crisp, flat forms."},
+    {sculpt::Brush::Fold, "ripple", "Fold", "Raise a cloth fold along the stroke, pinched from the sides; Ctrl presses a crease in."},
     {sculpt::Brush::Mask, "mask", "Mask", "Paint the mask, which shields points from every brush; Ctrl erases it."},
     {sculpt::Brush::Relax, "wave-sine", "Relax", "Even out the point spacing, sliding along the surface so the form stays."},
     {sculpt::Brush::Freeze, "snowflake", "Freeze", "Pin points so no brush moves them; Ctrl unfreezes."},
+    {sculpt::Brush::Paint, "paint", "Paint", "Paint polypaint in the Polypaint color without moving anything. The mask shields points."},
 }};
+
+/** Brush button ids past the built-ins pick a registered brush. */
+constexpr int kCustomBrushId = 1000;
+
+QColor swatchColor(const glm::vec3& linear)
+{
+    const glm::vec4 s = vcolor::linearToSrgb(glm::vec4(glm::clamp(linear, 0.0f, 1.0f), 1.0f));
+    return QColor::fromRgbF(s.r, s.g, s.b);
+}
 
 bool runCommand(const char* name, const json& call) { return actions::run({{"command", name}, {"args", ops::options::callWith(name, call)}}); }
 
@@ -212,24 +228,15 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     col->addWidget(session);
 
     // Brushes
-    auto* brushBox = new QGroupBox("Brushes", this);
-    auto* flow = new FlowLayout(3);
-    brushBox->setLayout(flow);
+    mBrushBox = new QGroupBox("Brushes", this);
+    mBrushFlow = new FlowLayout(3);
+    mBrushBox->setLayout(mBrushFlow);
     mBrushes = new QButtonGroup(this);
     mBrushes->setExclusive(true);
     for (const BrushInfo& b : kBrushes)
-    {
-        auto* btn = new QToolButton(brushBox);
-        btn->setIcon(icon(b.icon));
-        btn->setText(b.label);
-        btn->setCheckable(true);
-        btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-        btn->setMinimumWidth(66);
-        btn->setToolTip(QString("%1\n%2").arg(b.label, b.doc));
-        flow->addWidget(btn);
-        mBrushes->addButton(btn, int(b.brush));
-    }
-    col->addWidget(brushBox);
+        mBrushes->addButton(brushButton(icon(b.icon), b.label, b.doc), int(b.brush));
+    rebuildCustomBrushes();
+    col->addWidget(mBrushBox);
 
     // Brush settings
     auto* settingsBox = new QGroupBox("Brush", this);
@@ -272,6 +279,23 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mSymmetry->addItem("Radial", "radial");
     mSymmetry->setToolTip("The mesh's symmetry setting: strokes mirror exactly across it, or repeat exactly round its radial axis.");
     bform->addRow("Symmetry", mSymmetry);
+    auto* shareRow = new QHBoxLayout;
+    const SculptSettings shareDefaults;
+    mShareRadius = new QCheckBox("Radius", settingsBox);
+    mShareStrength = new QCheckBox("Strength", settingsBox);
+    mShareStroke = new QCheckBox("Stroke", settingsBox);
+    mShareRadius->setToolTip("Every brush uses the same radius; off, each brush keeps its own");
+    mShareStrength->setToolTip("Every brush uses the same strength; off, each brush keeps its own");
+    mShareStroke->setToolTip("Every brush uses the same falloff, spacing, alpha, stabiliser and the rest of the Stroke group; off, "
+                             "each brush keeps its own");
+    setCheckDefault(mShareRadius, shareDefaults.shareRadius);
+    setCheckDefault(mShareStrength, shareDefaults.shareStrength);
+    setCheckDefault(mShareStroke, shareDefaults.shareStroke);
+    shareRow->addWidget(mShareRadius);
+    shareRow->addWidget(mShareStrength);
+    shareRow->addWidget(mShareStroke);
+    shareRow->addStretch(1);
+    bform->addRow("Shared", shareRow);
     mShowCage = new QCheckBox("Show cage", settingsBox);
     mShowCage->setToolTip("Draw the low-poly cage over the sculpt as Exit will leave it, refitted as you sculpt.");
     setCheckDefault(mShowCage, defaults.showCage);
@@ -280,6 +304,39 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return sculptSettings().stroke; },
                                                   [] { sculptSettingsChanged(); });
     col->addWidget(mStrokeOptions);
+
+    // Display
+    auto* displayBox = new QGroupBox("Display", this);
+    auto* dform = new QFormLayout(displayBox);
+    mMaterial = new QComboBox(displayBox);
+    for (const auto& [id, label] : sculptMaterials())
+        mMaterial->addItem(QString::fromStdString(label), QString::fromStdString(id));
+    mMaterial->setToolTip("The material the sculpt is drawn with while sculpting; the mesh's own comes back on exit");
+    setComboDefault(mMaterial, std::max(0, mMaterial->findData(QString::fromStdString(SculptSettings{}.material))));
+    dform->addRow("Material", mMaterial);
+    mWireframe = new QCheckBox("Wireframe", displayBox);
+    mWireframe->setToolTip("The sculpt mesh's wireframe (Shift+F in the viewport)");
+    setCheckDefault(mWireframe, SculptSettings{}.wireframe);
+    dform->addRow(mWireframe);
+    col->addWidget(displayBox);
+
+    // Polypaint
+    auto* paintBox = new QGroupBox("Polypaint", this);
+    auto* pform = new QFormLayout(paintBox);
+    mColor = new QToolButton(paintBox);
+    mColor->setMinimumWidth(60);
+    mColor->setToolTip("The color the Paint brush, and shape brushes with Paint while sculpting, lay down");
+    pform->addRow("Color", mColor);
+    mPaint = new QCheckBox("Paint while sculpting", paintBox);
+    mPaint->setToolTip("Shape brushes also paint the color wherever they move the surface");
+    setCheckDefault(mPaint, SculptSettings{}.paint);
+    pform->addRow(mPaint);
+    auto* pflow = new QHBoxLayout;
+    pflow->addWidget(actionButton("sculpt.colorFill", "bucket-droplet", "Fill", paintBox));
+    pflow->addWidget(actionButton("sculpt.colorClear", "eraser", "Clear", paintBox));
+    pflow->addStretch(1);
+    pform->addRow(pflow);
+    col->addWidget(paintBox);
 
     // Mask
     auto* maskBox = new QGroupBox("Mask and Freeze", this);
@@ -306,9 +363,11 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     refreshSession();
 
     auto changed = [] { sculptSettingsChanged(); };
-    connect(mBrushes, &QButtonGroup::idClicked, this, [](int id) {
-        sculptSettings().brush = sculpt::Brush(id);
-        sculptSettingsChanged();
+    connect(mBrushes, &QButtonGroup::idClicked, this, [this](int id) {
+        if (id >= kCustomBrushId && size_t(id - kCustomBrushId) < mCustomBrushes.size())
+            selectSculptBrush(sculpt::Brush::Custom, mCustomBrushes[size_t(id - kCustomBrushId)]);
+        else
+            selectSculptBrush(sculpt::Brush(id));
         if (sculpt::active())
             startSculptTool();
     });
@@ -321,6 +380,23 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     });
     connect(mFrontFaces, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().frontFacesOnly = on; changed(); });
     connect(mShowCage, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().showCage = on; changed(); });
+    connect(mPaint, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().paint = on; changed(); });
+    connect(mShareRadius, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareRadius = on; changed(); });
+    connect(mShareStrength, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStrength = on; changed(); });
+    connect(mShareStroke, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStroke = on; changed(); });
+    connect(mWireframe, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().wireframe = on; changed(); });
+    connect(mMaterial, &QComboBox::currentIndexChanged, this, [this, changed](int) {
+        sculptSettings().material = mMaterial->currentData().toString().toStdString();
+        changed();
+    });
+    connect(mColor, &QToolButton::clicked, this, [this, changed] {
+        QColor c = QColorDialog::getColor(swatchColor(sculptSettings().color), this, "Polypaint Color");
+        if (!c.isValid())
+            return;
+        const glm::vec4 lin = vcolor::srgbToLinear(glm::vec4(float(c.redF()), float(c.greenF()), float(c.blueF()), 1.0f));
+        sculptSettings().color = glm::vec3(lin);
+        changed();
+    });
     connect(mMode, &QComboBox::currentIndexChanged, this, [this, changed](int) {
         sculptSettings().proxyMode = mMode->currentData().toString().toStdString();
         changed();
@@ -346,6 +422,12 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mCancel, &QPushButton::clicked, this, [] { actions::run(json("sculpt.cancel")); });
 
     mSettingsListener = addSculptSettingsListener([this] { syncFromSettings(); });
+    mBrushRegistryListener = sculpt::brushRegistry().addListener([this](RegistryChange, const std::string&, const std::string&) {
+        QTimer::singleShot(0, this, [this] {
+            rebuildCustomBrushes();
+            syncFromSettings();
+        });
+    });
     auto queue = [this] {
         if (mRefreshQueued)
             return;
@@ -365,18 +447,70 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
 
 SculptPanel::~SculptPanel()
 {
+    sculpt::brushRegistry().removeListener(mBrushRegistryListener);
     removeSculptSettingsListener(mSettingsListener);
     sculpt::removeListener(mSessionListener);
     scene::Graph::current().removeListener(mGraphListener);
+}
+
+QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, const QString& doc)
+{
+    auto* btn = new QToolButton(mBrushBox);
+    btn->setIcon(ic);
+    btn->setText(label);
+    btn->setCheckable(true);
+    btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    btn->setMinimumWidth(66);
+    btn->setToolTip(doc.isEmpty() ? label : QString("%1\n%2").arg(label, doc));
+    mBrushFlow->addWidget(btn);
+    return btn;
+}
+
+void SculptPanel::rebuildCustomBrushes()
+{
+    for (size_t k = 0; k < mCustomBrushes.size(); ++k)
+        if (QAbstractButton* b = mBrushes->button(kCustomBrushId + int(k)))
+        {
+            mBrushes->removeButton(b);
+            delete b;
+        }
+    mCustomBrushes = sculpt::brushRegistry().idsInOrder();
+    for (size_t k = 0; k < mCustomBrushes.size(); ++k)
+    {
+        const sculpt::BrushDef& def = *sculpt::brushRegistry().find(mCustomBrushes[k]);
+        const QString label = QString::fromStdString(def.label.empty() ? mCustomBrushes[k] : def.label);
+        mBrushes->addButton(brushButton(icon(QString::fromStdString(def.icon.empty() ? "puzzle" : def.icon)), label, QString::fromStdString(def.doc)),
+                            kCustomBrushId + int(k));
+    }
 }
 
 void SculptPanel::syncFromSettings()
 {
     const SculptSettings& s = sculptSettings();
     QSignalBlocker b1(mRadius), b2(mStrength), b3(mSpacing), b4(mFalloff), b5(mFrontFaces), b6(mShowCage), b7(mMode), b8(mLevels),
-        b9(mResolution), b10(mExitMethod), b11(mKeepProxy);
-    if (QAbstractButton* b = mBrushes->button(int(s.brush)))
+        b9(mResolution), b10(mExitMethod), b11(mKeepProxy), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
+        b16(mWireframe), b17(mMaterial);
+    mShareRadius->setChecked(s.shareRadius);
+    mShareStrength->setChecked(s.shareStrength);
+    mShareStroke->setChecked(s.shareStroke);
+    mWireframe->setChecked(s.wireframe);
+    mMaterial->setCurrentIndex(std::max(0, mMaterial->findData(QString::fromStdString(s.material))));
+    int checked = int(s.brush);
+    if (s.brush == sculpt::Brush::Custom)
+    {
+        auto it = std::ranges::find(mCustomBrushes, s.custom);
+        checked = it == mCustomBrushes.end() ? -1 : kCustomBrushId + int(it - mCustomBrushes.begin());
+    }
+    if (QAbstractButton* b = mBrushes->button(checked))
         b->setChecked(true);
+    else if (QAbstractButton* on = mBrushes->checkedButton())
+    {
+        mBrushes->setExclusive(false);
+        on->setChecked(false);
+        mBrushes->setExclusive(true);
+    }
+    mPaint->setChecked(s.paint);
+    mColor->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid rgb(20,20,20); min-height: 16px; }").arg(swatchColor(s.color).name()));
     mRadius->setValue(s.stroke.radius);
     mStrength->setValue(s.stroke.strength);
     mSpacing->setValue(s.stroke.spacing);
@@ -487,8 +621,7 @@ void registerSculptUi()
                       .label = std::string("Sculpt Brush: ") + b.label,
                       .category = "Sculpt",
                       .run = [brush] {
-                          sculptSettings().brush = brush;
-                          sculptSettingsChanged();
+                          selectSculptBrush(brush);
                           if (sculpt::active())
                               startSculptTool();
                       },
@@ -510,6 +643,23 @@ void registerSculptUi()
     maskAction("sculpt.maskFill", "Mask All", "fill", "mask", "Mask everything (then paint with Ctrl to free areas).");
     maskAction("sculpt.maskBlur", "Blur Mask", "blur", "mask", "Soften the mask's edges.");
     maskAction("sculpt.freezeClear", "Unfreeze All", "clear", "freeze", "Free every frozen point.");
+    actions::add({.id = "sculpt.colorFill",
+                  .label = "Fill Polypaint",
+                  .category = "Sculpt",
+                  .run = [] {
+                      const glm::vec3 c = sculptSettings().color;
+                      runCommand("sculptColor", {{"op", "fill"}, {"color", json::array({c.r, c.g, c.b})}});
+                  },
+                  .enabled = [] { return sculpt::active() != nullptr; },
+                  .doc = "Fill the sculpt's polypaint with the Polypaint color; masked points keep theirs.",
+                  .python = ops::toPython("sculptColor", {{"op", "fill"}, {"color", json::array({1.0, 0.5, 0.2})}})});
+    actions::add({.id = "sculpt.colorClear",
+                  .label = "Clear Polypaint",
+                  .category = "Sculpt",
+                  .run = [] { runCommand("sculptColor", {{"op", "clear"}}); },
+                  .enabled = [] { return sculpt::active() != nullptr; },
+                  .doc = "Clear the sculpt's polypaint back to white.",
+                  .python = ops::toPython("sculptColor", {{"op", "clear"}})});
 
     actions::add({.id = "mesh.relaxKeepForm",
                   .label = "Relax (Keep Form)",

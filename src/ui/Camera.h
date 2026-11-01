@@ -79,6 +79,8 @@ struct LILA_UI_API Camera
     glm::dmat4 proj(double aspect) const;
 
     void tumble(double dxDeg, double dyDeg);
+    /** Tumbles around pivot instead of the target: the eye swings round it and the target follows, without a jump. */
+    void tumbleAbout(const glm::dvec3& pivot, double dxDeg, double dyDeg);
     /** Pan by a fraction of the view width/height. */
     void track(double dxFrac, double dyFrac, double aspect);
     void dolly(double factor);

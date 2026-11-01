@@ -76,6 +76,22 @@ void Camera::tumble(double dxDeg, double dyDeg)
     pitch = std::clamp(pitch - dyDeg, -89.9, 89.9);
 }
 
+void Camera::tumbleAbout(const glm::dvec3& pivot, double dxDeg, double dyDeg)
+{
+    if (ortho)
+        return;
+    auto basis = [this] {
+        const glm::dvec3 f = forward(), r = right();
+        return glm::dmat3(r, glm::cross(r, f), -f);
+    };
+    const glm::dmat3 before = basis();
+    const glm::dvec3 eyeBefore = eye();
+    tumble(dxDeg, dyDeg);
+    // The turn tumble made, applied to the eye about the pivot instead of the target.
+    const glm::dvec3 e = pivot + basis() * glm::transpose(before) * (eyeBefore - pivot);
+    target = e + forward() * distance;
+}
+
 void Camera::track(double dxFrac, double dyFrac, double aspect)
 {
     glm::dvec2 ext = viewExtents(aspect) * (ortho ? 2.0 : 2.0 * distance);

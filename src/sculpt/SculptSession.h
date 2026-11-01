@@ -17,7 +17,7 @@
  * subdivision fits the sculpt. The proxy lives outside the scene, so it is never saved, unless exiting keeps it as a
  * hidden child mesh "<mesh>_sculptProxy" that the next Enter Sculpt resumes from.
  *
- * Commands: sculptEnter, sculptExit, sculptCancel, sculptStroke, sculptMask, sculptState, transferShape. Entering,
+ * Commands: sculptEnter, sculptExit, sculptCancel, sculptStroke, sculptMask, sculptColor, sculptState, transferShape. Entering,
  * exiting and each stroke are single undo steps.
  */
 namespace lila::sculpt
@@ -26,6 +26,8 @@ inline constexpr const char* kProxySuffix = "_sculptProxy";
 /** Point layers on a kept proxy holding the mask and freeze state. */
 inline constexpr const char* kMaskLayer = "sculptMask";
 inline constexpr const char* kFreezeLayer = "sculptFreeze";
+/** The color set polypaint lives in, on a kept proxy and on the cage after Exit Sculpt. */
+inline constexpr const char* kColorSet = "polypaint";
 
 enum class ProxyMode : uint8_t
 {
@@ -71,6 +73,9 @@ LILA_SCENE_API void notify();
 LILA_SCENE_API void syncSymmetry(Session& s);
 
 LILA_SCENE_API uint64_t nextLiveToken();
+
+/** Gets the tumble point a stroke's undo or redo goes back to (StrokeRecord::pivotBefore and pivotAfter). */
+LILA_SCENE_API void setPivotHandler(std::function<void(const std::optional<glm::dvec3>&)> handler);
 
 /**
  * The cage positions (per point capacity, object space) sculptExit would leave with this method ("fit", "closest" or

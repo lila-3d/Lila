@@ -4,12 +4,15 @@
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "geo/ColorSets.h"
 #include "geo/Symmetry.h"
 #include "retopo/Retopo.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "sculpt/Reproject.h"
+
+#include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <atomic>
@@ -27,6 +30,7 @@ using scene::Node;
 using scene::NodeId;
 using scene::PlugRef;
 using scene::Transform;
+namespace colors = geo::colors;
 
 std::shared_ptr<Session>& activeRef()
 {
@@ -70,6 +74,12 @@ struct SwitchAction : UndoAction
     }
 };
 
+std::function<void(const std::optional<glm::dvec3>&)>& pivotHandler()
+{
+    static std::function<void(const std::optional<glm::dvec3>&)> fn;
+    return fn;
+}
+
 struct StrokeAction : UndoAction
 {
     std::shared_ptr<Session> session;
@@ -78,11 +88,15 @@ struct StrokeAction : UndoAction
     void undo() override
     {
         session->sculpt.apply(record, true);
+        if (record.pivotMoved && pivotHandler())
+            pivotHandler()(record.pivotBefore);
         notify();
     }
     void redo() override
     {
         session->sculpt.apply(record, false);
+        if (record.pivotMoved && pivotHandler())
+            pivotHandler()(record.pivotAfter);
         notify();
     }
     size_t bytes() const override
@@ -91,7 +105,7 @@ struct StrokeAction : UndoAction
         return sizeof(*this) + r.points.capacity() * sizeof(Index)
             + (r.before.capacity() + r.after.capacity()) * sizeof(glm::dvec3)
             + (r.maskBefore.capacity() + r.maskAfter.capacity()) * sizeof(float) + r.frozenBefore.capacity()
-            + r.frozenAfter.capacity();
+            + r.frozenAfter.capacity() + (r.colorBefore.capacity() + r.colorAfter.capacity()) * sizeof(glm::vec4);
     }
     void sharedBytes(UndoShared& shared) const override { shared.add(session.get(), sessionBytes(*session)); }
 };
@@ -158,14 +172,22 @@ glm::dvec3 vec3(const json& j, const glm::dvec3& fallback = glm::dvec3(0.0))
     return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
 }
 
+glm::vec3 colorArg(const Args& a, const char* cmd)
+{
+    const json c = a.flags.value("color", json::array({1.0, 1.0, 1.0}));
+    if (!c.is_array() || c.size() < 3 || !c[0].is_number() || !c[1].is_number() || !c[2].is_number())
+        throw CommandError(std::string(cmd) + ": color must be [r, g, b], linear 0 to 1");
+    return {c[0].get<float>(), c[1].get<float>(), c[2].get<float>()};
+}
+
 BrushSettings settingsFrom(const Args& a)
 {
     BrushSettings s;
     std::string name = a.get<std::string>("brush", "draw");
-    auto b = brushFromName(name);
-    if (!b)
+    if (!setBrush(s, name))
         throw CommandError("sculptStroke: unknown brush " + name);
-    s.brush = *b;
+    s.paint = a.get<bool>("paint");
+    s.color = colorArg(a, "sculptStroke");
     std::string falloff = a.get<std::string>("falloff", "smooth");
     auto f = brush::Falloff::find(falloff);
     if (!f)
@@ -295,7 +317,31 @@ void buildProxy(Session& s, const Args& a, Node& n)
             }
         s.sculpt.apply(r, false);
     }
+    if (colors::has(s.sculpt.mesh(), kColorSet))
+        s.sculpt.setColors(colors::pointColors(s.sculpt.mesh(), kColorSet));
     (void)g;
+}
+
+/** Each cage point's polypaint: the sculpt's color at the closest point of its surface. */
+void paintCage(const Session& s, geo::Mesh& cage)
+{
+    LILA_ZONE();
+
+    const SculptMesh& sm = s.sculpt;
+    const auto& corners = sm.bvh().triangles().corners;
+    std::vector<glm::vec4> perPoint(cage.pointCapacity(), glm::vec4(1.0f));
+    tbb::parallel_for(Index(0), cage.pointCapacity(), [&](Index p) {
+        geo::BvhClosest hit;
+        if (!cage.pointValid(p) || !sm.bvh().closestPoint(cage.position(p), hit))
+            return;
+        glm::vec4 c(0.0f);
+        for (int k = 0; k < 3; ++k)
+            c += sm.colors()[sm.mesh().cornerPoint(corners[size_t(hit.triangle) * 3 + k])] * float(hit.bary[k]);
+        perPoint[p] = c;
+    });
+    colors::add(cage, kColorSet);
+    colors::setFromPoints(cage, kColorSet, perPoint);
+    colors::settle(cage, kColorSet);
 }
 
 /** The proxy as a mesh to keep in the scene, with its mask and freeze state. */
@@ -309,6 +355,13 @@ MeshPtr proxyToKeep(const Session& s)
         mask[p] = s.sculpt.mask()[p];
         freeze[p] = s.sculpt.frozen()[p] ? 1.0f : 0.0f;
     }
+    if (s.sculpt.painted())
+    {
+        colors::add(*m, kColorSet);
+        colors::setFromPoints(*m, kColorSet, s.sculpt.colors());
+    }
+    else
+        colors::remove(*m, kColorSet);
     return m;
 }
 } // namespace
@@ -343,6 +396,8 @@ void syncSymmetry(Session& s)
 }
 
 uint64_t nextLiveToken() { return gLiveToken.fetch_add(1); }
+
+void setPivotHandler(std::function<void(const std::optional<glm::dvec3>&)> handler) { pivotHandler() = std::move(handler); }
 
 struct ExitSolver
 {
@@ -460,7 +515,8 @@ void registerCommands()
         .doc = "Leave sculpt mode, moving the low-poly cage onto the sculpt. method='fit' solves for the cage whose "
                "subdivision best matches the sculpt (least squares through the subdivision stencils); 'closest' and 'normal' "
                "project each cage point onto the sculpted surface instead. Only positions change: UVs and other attributes "
-               "stay. keepProxy stores the proxy as a hidden child mesh to resume from. Returns {mesh, maxMove}.",
+               "stay, except that polypaint lands on the cage's polypaint color set, sampled from the sculpt. keepProxy "
+               "stores the proxy, polypaint included, as a hidden child mesh to resume from and to bake from. Returns {mesh, maxMove}.",
         .flags = {{"method", "", T::String, "fit", "fit, closest or normal.", {"fit", "closest", "normal"}},
                   {"keepProxy", "", T::Bool, false, "Keep the sculpt as a hidden child mesh."},
                   {"iterations", "", T::Int, 3, "Project-and-fit rounds for remeshed proxies.", {}, {}, 1.0, 20.0}},
@@ -485,6 +541,8 @@ void registerCommands()
                     maxMove = std::max(maxMove, glm::length(pos[p] - s->cage.position(p)));
                     mesh.setPosition(p, pos[p]);
                 }
+            if (s->sculpt.painted())
+                paintCage(*s, mesh);
             g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
 
             Node* kept = s->proxyNode != scene::kNoNode ? g.node(s->proxyNode) : nullptr;
@@ -525,7 +583,10 @@ void registerCommands()
         .doc = "One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, "
                "delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, "
                "frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.",
-        .flags = {{"brush", "", T::String, "draw", "Brush.", {"draw", "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch", "crease", "scrape", "mask", "relax", "freeze"}},
+        .flags = {{"brush", "", T::String, "draw", "draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, "
+                                                     "trimDynamic, polish, fold, mask, relax, freeze, paint, or a brush an extension registered."},
+                  {"paint", "", T::Bool, false, "Shape brushes also paint color where they move points."},
+                  {"color", "", T::List, json::array({1.0, 1.0, 1.0}), "Paint color, linear [r, g, b]."},
                   {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},
                   {"strength", "", T::Float, 0.5, "0 to 1.", {}, {}, 0.0, 1.0},
                   {"invert", "", T::Bool, false, "Dig, unmask, unfreeze or magnify instead."},
@@ -591,8 +652,28 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "sculptColor",
+        .doc = "Fill the sculpt's polypaint with a color (masked points keep theirs) or clear it back to white.",
+        .flags = {{"op", "", T::String, "fill", "fill or clear.", {"fill", "clear"}},
+                  {"color", "", T::List, json::array({1.0, 1.0, 1.0}), "Fill color, linear [r, g, b]."}},
+        .run = [](const Args& a) -> json {
+            std::shared_ptr<Session> s = requireSession("sculptColor");
+            const bool clear = a.get<std::string>("op", "fill") == "clear";
+            StrokeRecord rec = clear ? s->sculpt.clearColor() : s->sculpt.fillColor(colorArg(a, "sculptColor"));
+            size_t count = rec.points.size();
+            if (!rec.empty())
+            {
+                UndoChunk chunk(clear ? "Clear Polypaint" : "Fill Polypaint");
+                UndoStack::get().record(std::make_unique<StrokeAction>(s, std::move(rec)));
+            }
+            notify();
+            return {{"points", count}};
+        },
+    });
+
+    ops::registerCommand({
         .name = "sculptState",
-        .doc = "The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen}.",
+        .doc = "The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen, painted}.",
         .undoable = false,
         .run = [](const Args&) -> json {
             std::shared_ptr<Session> s = activeRef();
@@ -613,7 +694,8 @@ void registerCommands()
                     {"faces", s->sculpt.mesh().numFaces()},
                     {"symmetry", s->sculpt.symmetric()},
                     {"masked", masked},
-                    {"frozen", frozen}};
+                    {"frozen", frozen},
+                    {"painted", s->sculpt.painted()}};
         },
     });
 

@@ -8,16 +8,31 @@
 #include "ui/ViewInfo.h"
 #include "ui/ViewportTool.h"
 #include "ui/FileDialog.h"
+#include "ui/FlagFields.h"
+#include "ui/ImagePicker.h"
+#include "ui/SpinScrub.h"
+
+#include "brush/Alphas.h"
+#include "core/Log.h"
+#include "core/Paths.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
+#include <QIcon>
+#include <QImage>
+#include <QMenu>
+#include <QPixmap>
+#include <QStandardItemModel>
+#include <QUrl>
 #include <QDateTime>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QSignalBlocker>
@@ -29,6 +44,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <map>
 
 namespace lila::brush::ui
 {
@@ -37,6 +54,7 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kMinRadius = 2.0, kMaxRadius = 2000.0;
 constexpr const char* kOpenPref = "/brush/strokeOptionsOpen";
+constexpr const char* kPressureOpenPref = "/brush/pressureOptionsOpen";
 
 bool isViewport(QWidget* w) { return w && w->inherits("lila::ui::ViewportWidget"); }
 
@@ -141,9 +159,14 @@ bool BrushControls::key(int k, Qt::KeyboardModifiers mods, bool down)
     }
     if (k != mArmedKey)
         return true;
-    // A tapped F still frames the selection, as everywhere else.
+    // A tapped F still frames the selection, as everywhere else; a tapped Shift+F is the tool's.
     if (k == Qt::Key_F && !mArmedUsed && mAdjusting == Adjust::None)
-        QTimer::singleShot(0, [] { lila::ui::actions::run(json("viewport.frameSelected")); });
+    {
+        if (mArmed == Adjust::Radius)
+            QTimer::singleShot(0, [] { lila::ui::actions::run(json("viewport.frameSelected")); });
+        else if (mStrengthTap)
+            QTimer::singleShot(0, mStrengthTap);
+    }
     mArmed = Adjust::None;
     mArmedKey = 0;
     return true;
@@ -190,8 +213,9 @@ bool BrushControls::mouseMove(const QMouseEvent* e)
         return false;
     BrushSettings& s = mSettings();
     const double dx = e->position().x() - mStart.x();
+    // Strength follows both axes: right or up raises it, left or down lowers it.
     if (mAdjusting == Adjust::Strength)
-        s.strength = std::clamp(mFrom + dx / 300.0, 0.0, 1.0);
+        s.strength = std::clamp(mFrom + (dx - (e->position().y() - mStart.y())) / 300.0, 0.0, 1.0);
     else if (s.radiusUnit == RadiusUnit::World)
         s.worldRadius = std::clamp(std::max(mFrom, 1e-3) * std::pow(2.0, dx / 100.0), 1e-3, 1e6);
     else
@@ -245,7 +269,7 @@ QPointF ringPosition(const Stroke& stroke, QPointF hover)
 void drawCursor(lila::ui::OverlayPainter& p, const lila::ui::ViewInfo& view, const BrushSettings& s, QPointF at,
                 const std::optional<CursorSurface>& surface, const CursorOptions& o)
 {
-    const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f);
+    const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f), strength(0.82f, 0.82f, 0.82f, 0.95f);
     if (o.stroke && o.stroke->active())
     {
         const StrokeSampler& sm = o.stroke->sampler();
@@ -290,7 +314,7 @@ void drawCursor(lila::ui::OverlayPainter& p, const lila::ui::ViewInfo& view, con
         if (roundness < 1.0)
             p.polyline(ring(r, roundness, 48), 1.0f, dim, true);
         if (o.strengthRing)
-            p.polyline(ring(r * s.strength, 1.0, 48), 1.0f, dim, true);
+            p.polyline(ring(r * s.strength, 1.0, 48), 1.5f, strength, true);
         if (o.normalTick)
         {
             auto c = view.project(surface->point), tip = view.project(surface->point + n * r * 0.35);
@@ -307,225 +331,267 @@ void drawCursor(lila::ui::OverlayPainter& p, const lila::ui::ViewInfo& view, con
         pts.push_back(at + QPointF(std::cos(a), std::sin(a)) * s.radius);
     }
     p.polyline(pts, 1.0f, dim, true);
+    if (o.strengthRing)
+    {
+        for (QPointF& q : pts)
+            q = at + (q - at) * s.strength;
+        p.polyline(pts, 1.5f, strength, true);
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ StrokeOptions
+
+namespace
+{
+namespace opt = lila::ops::options;
+
+opt::Field numberField(const char* flag, const char* label, bool integer, double lo, double hi, double step, const char* doc,
+                       const char* suffix = "")
+{
+    opt::Field f;
+    f.flag = flag;
+    f.label = label;
+    f.kind = integer ? opt::FieldKind::Int : opt::FieldKind::Float;
+    f.min = lo;
+    f.max = hi;
+    f.step = step;
+    f.doc = doc;
+    f.suffix = suffix;
+    return f;
+}
+
+opt::Field checkField(const char* flag, const char* label, const char* doc)
+{
+    opt::Field f;
+    f.flag = flag;
+    f.label = label;
+    f.kind = opt::FieldKind::Check;
+    f.doc = doc;
+    return f;
+}
+
+opt::Field choiceField(const char* flag, const char* label, std::vector<std::pair<std::string, std::string>> choices, const char* doc)
+{
+    opt::Field f;
+    f.flag = flag;
+    f.label = label;
+    f.kind = opt::FieldKind::Choice;
+    f.doc = doc;
+    for (auto& [value, text] : choices)
+    {
+        f.choices.push_back(value);
+        f.choiceLabels.push_back(text);
+    }
+    return f;
+}
+
+double numberOf(const json& v) { return v.is_number() ? v.get<double>() : v.is_boolean() ? double(v.get<bool>()) : 0.0; }
+
+const QString kImageFilter = "Images (*.png *.exr *.tga *.tif *.tiff *.psd)";
+
+/** The brush alpha library in the shared image picker, registered on first use. */
+const lila::ui::imagePicker::Library* alphaLibrary()
+{
+    namespace ip = lila::ui::imagePicker;
+    if (const ip::Library* lib = ip::library("alphas"))
+        return lib;
+    ip::addLibrary({
+        .id = "alphas",
+        .title = "Alphas",
+        .entries =
+            [] {
+                std::vector<ip::Entry> out;
+                for (const alphas::Entry& e : alphas::library())
+                    out.push_back({e.ref, QString::fromStdString(e.name), e.file,
+                                   QString::fromStdString(e.category.empty() ? e.sourceLabel : e.sourceLabel + ": " + e.category)});
+                return out;
+            },
+        .userDir = alphas::userDir(),
+        .projectDir = [] { return alphas::projectDir(); },
+        .filter = kImageFilter,
+        .projectTextures = false,
+        .valueFor =
+            [](const std::filesystem::path& file) {
+                std::error_code ec;
+                for (const alphas::Entry& e : alphas::library())
+                    if (std::filesystem::equivalent(e.file, file, ec))
+                        return e.ref;
+                return lila::paths::toUtf8(file);
+            },
+    });
+    return ip::library("alphas");
+}
+
+/** A header button over a body that it shows and hides, collapsed by default; the state is kept in the pref. */
+QWidget* collapsible(QWidget* parent, QVBoxLayout* into, const char* title, const char* tip, const char* pref)
+{
+    auto* header = new QToolButton(parent);
+    header->setText(title);
+    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    header->setAutoRaise(true);
+    header->setToolTip(tip);
+    into->addWidget(header);
+    auto* body = new QWidget(parent);
+    into->addWidget(body);
+    const bool open = PrefStore::get().value<bool>("general", pref, false);
+    body->setVisible(open);
+    header->setIcon(lila::ui::icon(open ? "chevron-down" : "chevron-right"));
+    QObject::connect(header, &QToolButton::clicked, header, [header, body, pref] {
+        const bool show = !body->isVisible();
+        body->setVisible(show);
+        header->setIcon(lila::ui::icon(show ? "chevron-down" : "chevron-right"));
+        PrefStore::get().set("general", pref, show);
+    });
+    return body;
+}
+} // namespace
 
 StrokeOptions::StrokeOptions(QWidget* parent, SettingsRef settings, std::function<void()> changed)
     : QWidget(parent), mSettings(std::move(settings)), mChanged(std::move(changed))
 {
     auto* col = new QVBoxLayout(this);
     col->setContentsMargins(0, 0, 0, 0);
-    auto* header = new QToolButton(this);
-    header->setText("Stroke");
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setAutoRaise(true);
-    header->setToolTip("Pressure, stabiliser, line strokes, jitter, tip shape and radial symmetry, shared by every brush");
-    col->addWidget(header);
-    mBody = new QWidget(this);
-    col->addWidget(mBody);
-    auto* form = new QFormLayout(mBody);
-    form->setContentsMargins(8, 0, 0, 0);
+    mBody = collapsible(this, col, "Stroke", "Stabiliser, line strokes, jitter, tip shape, radial symmetry and pen pressure, shared by every brush",
+                        kOpenPref);
+    auto* bodyCol = new QVBoxLayout(mBody);
+    bodyCol->setContentsMargins(8, 0, 0, 0);
+    auto* form = new QFormLayout;
+    bodyCol->addLayout(form);
+    QFormLayout* target = form;
 
-    auto spin = [&](double lo, double hi, double step, int decimals, const char* tip, const QString& suffix = {}) {
-        auto* s = new QDoubleSpinBox(mBody);
-        s->setRange(lo, hi);
-        s->setSingleStep(step);
-        s->setDecimals(decimals);
-        s->setSuffix(suffix);
-        s->setToolTip(tip);
-        connect(s, &QDoubleSpinBox::valueChanged, this, [this] { edited(); });
-        return s;
+    using Get = std::function<json(const BrushSettings&)>;
+    using Put = std::function<void(BrushSettings&, const json&)>;
+    auto add = [&](opt::Field f, Get get, Put put) {
+        f.defaultValue = get(BrushSettings{});
+        lila::ui::FlagFieldWidgets w = lila::ui::makeFlagField(f, get(mSettings()), [this, put](const json& v) {
+            put(mSettings(), v);
+            edited();
+        }, target->parentWidget());
+        w.field->setToolTip(QString::fromStdString(f.doc));
+        if (w.label)
+            target->addRow(w.label, w.field);
+        else
+            target->addRow(w.field);
+        mSync.push_back([this, set = w.set, get] { set(get(mSettings())); });
+        return w.field;
     };
-    auto check = [&](const char* label, const char* tip) {
-        auto* c = new QCheckBox(label, mBody);
-        c->setToolTip(tip);
-        connect(c, &QCheckBox::toggled, this, [this] { edited(); });
-        return c;
+    auto number = [](double BrushSettings::* member) {
+        return std::pair<Get, Put>{[member](const BrushSettings& s) { return json(s.*member); },
+                                   [member](BrushSettings& s, const json& v) { s.*member = numberOf(v); }};
+    };
+    auto addNumber = [&](opt::Field f, double BrushSettings::* member) {
+        auto [get, put] = number(member);
+        return add(std::move(f), get, put);
     };
 
-    auto* unitRow = new QHBoxLayout;
-    mUnit = new QComboBox(mBody);
-    mUnit->addItem("Screen", "screen");
-    mUnit->addItem("World", "world");
-    mUnit->setToolTip("Screen: the radius stays the same size on screen however far the surface is. World: a fixed size on the surface.");
-    mWorldRadius = spin(0.001, 100000.0, 0.5, 3, "Brush radius on the surface, in scene units", " cm");
-    unitRow->addWidget(mUnit);
-    unitRow->addWidget(mWorldRadius, 1);
-    form->addRow("Radius in", unitRow);
-    connect(mUnit, &QComboBox::activated, this, [this] { edited(); });
+    add(choiceField("radiusUnit", "Radius in", {{"screen", "Screen"}, {"world", "World"}},
+                    "Screen: the radius stays the same size on screen however far the surface is. World: a fixed size on the surface."),
+        [](const BrushSettings& s) { return json(s.radiusUnit == RadiusUnit::World ? "world" : "screen"); },
+        [](BrushSettings& s, const json& v) { s.radiusUnit = v == "world" ? RadiusUnit::World : RadiusUnit::Screen; });
+    mWorldRadius = addNumber(numberField("worldRadius", "World radius", false, 0.001, 100000.0, 0.5, "Brush radius on the surface, in scene units", " cm"),
+                             &BrushSettings::worldRadius);
+    addNumber(numberField("flow", "Flow", false, 0.0, 1.0, 0.05, "How much each dab adds; strokes that build up do so more slowly below 1"),
+              &BrushSettings::flow);
 
-    mFlow = spin(0.0, 1.0, 0.05, 3, "How much each dab adds; strokes that build up do so more slowly below 1");
-    form->addRow("Flow", mFlow);
+    add(choiceField("mode", "Stroke", {{"freehand", "Freehand"}, {"line", "Line"}},
+                    "Line: drag from where the line starts to where it ends; the dabs go down on release"),
+        [](const BrushSettings& s) { return json(s.mode == StrokeMode::Line ? "line" : "freehand"); },
+        [](BrushSettings& s, const json& v) { s.mode = v == "line" ? StrokeMode::Line : StrokeMode::Freehand; });
+    addNumber(numberField("lazyRadius", "Lazy radius", false, 0.0, 500.0, 5.0,
+                          "Lazy mouse: the brush trails the cursor on a string this long, so strokes come out steady", " px"),
+              &BrushSettings::lazyRadius);
+    addNumber(numberField("smoothing", "Smoothing", false, 0.0, 0.95, 0.05, "Eases each move toward the cursor instead of jumping to it"),
+              &BrushSettings::smoothing);
 
-    auto* pressRow = new QHBoxLayout;
-    const char* names[] = {"Size", "Opacity", "Flow"};
+    struct JitterField
+    {
+        const char* flag;
+        const char* label;
+        double hi, step;
+        const char* doc;
+        const char* suffix;
+        double Jitter::* member;
+    };
+    const JitterField jitters[] = {
+        {"jitterPosition", "Scatter", 4.0, 0.05, "Scatter each dab by up to this fraction of the radius", "", &Jitter::position},
+        {"jitterSize", "Size jitter", 1.0, 0.05, "Shrink each dab by up to this fraction", "", &Jitter::size},
+        {"jitterOpacity", "Opacity jitter", 1.0, 0.05, "Lighten each dab by up to this fraction", "", &Jitter::opacity},
+        {"jitterAngle", "Angle jitter", 180.0, 5.0, "Turn each dab's tip by up to this many degrees", " deg", &Jitter::angle},
+    };
+    for (const JitterField& j : jitters)
+    {
+        double Jitter::* m = j.member;
+        add(numberField(j.flag, j.label, false, 0.0, j.hi, j.step, j.doc, j.suffix), [m](const BrushSettings& s) { return json(s.jitter.*m); },
+            [m](BrushSettings& s, const json& v) { s.jitter.*m = numberOf(v); });
+    }
+
+    addNumber(numberField("angle", "Tip angle", false, -360.0, 360.0, 5.0, "Tip angle, counterclockwise on screen", " deg"), &BrushSettings::angle);
+    add(checkField("followStroke", "Follow stroke", "The tip angle turns with the direction of the stroke"),
+        [](const BrushSettings& s) { return json(s.followStroke); }, [](BrushSettings& s, const json& v) { s.followStroke = numberOf(v) != 0.0; });
+    addNumber(numberField("roundness", "Roundness", false, 0.01, 1.0, 0.05, "1 is round; lower squeezes the tip into an ellipse across its angle"),
+              &BrushSettings::roundness);
+
+    mAlpha = new lila::ui::ImagePicker(alphaLibrary(), "Alpha", mBody);
+    mAlpha->setToolTip("A grayscale image that shapes the tip: white is where the brush acts, black where it doesn't. Lila's "
+                       "alphas, extensions', yours and the project's; type to filter.");
+    auto* alphaLabel = new QLabel("Alpha", mBody);
+    form->addRow(alphaLabel, mAlpha);
+    auto setAlpha = [this](const std::string& path) {
+        BrushSettings& s = mSettings();
+        if (path != s.alphaPath)
+        {
+            s.alphaPath = path;
+            s.alpha.reset();
+        }
+        mAlpha->setValue(path);
+        edited();
+    };
+    lila::ui::onMiddleClickReset(alphaLabel, [setAlpha] { setAlpha({}); }, "none", mAlpha);
+    connect(mAlpha, &lila::ui::ImagePicker::chosen, this, [setAlpha](const QString& v) { setAlpha(v.toStdString()); });
+    mSync.push_back([this] { mAlpha->setValue(mSettings().alphaPath); });
+
+    add(numberField("radialCount", "Radial copies", true, 1, 64, 1, "Copies of every dab turned evenly about the object's axis; 1 is off"),
+        [](const BrushSettings& s) { return json(s.radial.count); },
+        [](BrushSettings& s, const json& v) { s.radial.count = int(std::lround(numberOf(v))); });
+    add(choiceField("radialAxis", "Radial axis", {{"x", "X"}, {"y", "Y"}, {"z", "Z"}}, "The object axis the copies turn about, through the object's pivot origin"),
+        [](const BrushSettings& s) { return json(std::string(1, char('x' + std::clamp(s.radial.axis, 0, 2)))); },
+        [](BrushSettings& s, const json& v) {
+            const std::string a = v.is_string() ? v.get<std::string>() : std::string("y");
+            s.radial.axis = std::clamp(a.empty() ? 1 : a[0] - 'x', 0, 2);
+        });
+
+    // Pen tablets only, so out of the way until opened.
+    QWidget* pressure = collapsible(mBody, bodyCol, "Pressure", "How pen pressure scales size, opacity and flow", kPressureOpenPref);
+    target = new QFormLayout(pressure);
+    target->setContentsMargins(8, 0, 0, 0);
+    const char* pressureNames[] = {"Size", "Opacity", "Flow"};
+    PressureCurve BrushSettings::* curves[] = {&BrushSettings::pressureSize, &BrushSettings::pressureOpacity, &BrushSettings::pressureFlow};
     for (int k = 0; k < 3; ++k)
     {
-        mPressure[k] = check(names[k], "Pen pressure scales this");
-        pressRow->addWidget(mPressure[k]);
+        PressureCurve BrushSettings::* c = curves[k];
+        add(checkField("pressure", pressureNames[k], "Pen pressure scales this"), [c](const BrushSettings& s) { return json((s.*c).enabled); },
+            [c](BrushSettings& s, const json& v) { (s.*c).enabled = numberOf(v) != 0.0; });
     }
-    pressRow->addStretch(1);
-    form->addRow("Pressure", pressRow);
-    auto* curveRow = new QHBoxLayout;
-    mPressureFloor = spin(0.0, 1.0, 0.05, 2, "What the lightest touch still gives", "");
-    mPressureFloor->setPrefix("min ");
-    mPressureExp = spin(0.1, 5.0, 0.1, 2, "Pressure curve: below 1 a light touch already reaches far, above 1 it takes a firm press");
-    mPressureExp->setPrefix("curve ");
-    curveRow->addWidget(mPressureFloor);
-    curveRow->addWidget(mPressureExp);
-    form->addRow("", curveRow);
-
-    mMode = new QComboBox(mBody);
-    mMode->addItem("Freehand", "freehand");
-    mMode->addItem("Line", "line");
-    mMode->setToolTip("Line: drag from where the line starts to where it ends; the dabs go down on release");
-    form->addRow("Stroke", mMode);
-    connect(mMode, &QComboBox::activated, this, [this] { edited(); });
-
-    auto* lazyRow = new QHBoxLayout;
-    mLazy = spin(0.0, 500.0, 5.0, 0, "Lazy mouse: the brush trails the cursor on a string this long, so strokes come out steady", " px");
-    mSmoothing = spin(0.0, 0.95, 0.05, 2, "Eases each move toward the cursor instead of jumping to it");
-    mSmoothing->setPrefix("smooth ");
-    lazyRow->addWidget(mLazy);
-    lazyRow->addWidget(mSmoothing);
-    form->addRow("Stabiliser", lazyRow);
-
-    auto* jitterRow = new QHBoxLayout;
-    const char* jitterNames[] = {"pos ", "size ", "opac ", "angle "};
-    const char* jitterTips[] = {"Scatter each dab by up to this fraction of the radius", "Shrink each dab by up to this fraction",
-                                "Lighten each dab by up to this fraction", "Turn each dab's tip by up to this many degrees"};
-    for (int k = 0; k < 4; ++k)
-    {
-        mJitter[k] = spin(0.0, k == 3 ? 180.0 : k == 0 ? 4.0 : 1.0, k == 3 ? 5.0 : 0.05, k == 3 ? 0 : 2, jitterTips[k]);
-        mJitter[k]->setPrefix(jitterNames[k]);
-        jitterRow->addWidget(mJitter[k]);
-    }
-    form->addRow("Jitter", jitterRow);
-
-    auto* tipRow = new QHBoxLayout;
-    mAngle = spin(-360.0, 360.0, 5.0, 0, "Tip angle, counterclockwise on screen", " deg");
-    mRoundness = spin(0.01, 1.0, 0.05, 2, "1 is round; lower squeezes the tip into an ellipse across its angle");
-    mRoundness->setPrefix("round ");
-    mFollow = check("Follow", "The tip angle turns with the direction of the stroke");
-    tipRow->addWidget(mAngle);
-    tipRow->addWidget(mRoundness);
-    tipRow->addWidget(mFollow);
-    form->addRow("Tip", tipRow);
-
-    auto* alphaRow = new QHBoxLayout;
-    mAlpha = new QLineEdit(mBody);
-    mAlpha->setPlaceholderText("none");
-    mAlpha->setToolTip("A grayscale image that shapes the tip (white paints, black doesn't)");
-    auto* browse = new QToolButton(mBody);
-    browse->setIcon(lila::ui::icon("folder-open"));
-    browse->setToolTip("Choose an alpha image");
-    auto* clear = new QToolButton(mBody);
-    clear->setIcon(lila::ui::icon("x"));
-    clear->setToolTip("No alpha");
-    alphaRow->addWidget(mAlpha, 1);
-    alphaRow->addWidget(browse);
-    alphaRow->addWidget(clear);
-    form->addRow("Alpha", alphaRow);
-    connect(mAlpha, &QLineEdit::editingFinished, this, [this] { edited(); });
-    connect(browse, &QToolButton::clicked, this, [this] {
-        QString f = lila::ui::fileDialog::getOpenFileName(this, "Brush Alpha", mAlpha->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
-        if (f.isEmpty())
-            return;
-        mAlpha->setText(f);
-        edited();
-    });
-    connect(clear, &QToolButton::clicked, this, [this] {
-        mAlpha->clear();
-        edited();
-    });
-
-    auto* radialRow = new QHBoxLayout;
-    mRadialCount = new QSpinBox(mBody);
-    mRadialCount->setRange(1, 64);
-    mRadialCount->setToolTip("Copies of every dab turned evenly about the object's axis; 1 is off");
-    mRadialAxis = new QComboBox(mBody);
-    mRadialAxis->addItems({"X", "Y", "Z"});
-    mRadialAxis->setToolTip("The object axis the copies turn about, through the object's pivot origin");
-    radialRow->addWidget(mRadialCount);
-    radialRow->addWidget(mRadialAxis);
-    radialRow->addStretch(1);
-    form->addRow("Radial", radialRow);
-    connect(mRadialCount, &QSpinBox::valueChanged, this, [this] { edited(); });
-    connect(mRadialAxis, &QComboBox::activated, this, [this] { edited(); });
-
-    const bool open = PrefStore::get().value<bool>("general", kOpenPref, false);
-    mBody->setVisible(open);
-    header->setIcon(lila::ui::icon(open ? "chevron-down" : "chevron-right"));
-    connect(header, &QToolButton::clicked, this, [this, header] {
-        const bool show = !mBody->isVisible();
-        mBody->setVisible(show);
-        header->setIcon(lila::ui::icon(show ? "chevron-down" : "chevron-right"));
-        PrefStore::get().set("general", kOpenPref, show);
-    });
+    // One floor and curve for all three pressure targets.
+    add(numberField("pressureFloor", "Minimum", false, 0.0, 1.0, 0.05, "What the lightest touch still gives"),
+        [](const BrushSettings& s) { return json(s.pressureSize.floor); },
+        [](BrushSettings& s, const json& v) { s.pressureSize.floor = s.pressureOpacity.floor = s.pressureFlow.floor = numberOf(v); });
+    add(numberField("pressureCurve", "Curve", false, 0.1, 5.0, 0.1, "Below 1 a light touch already reaches far, above 1 it takes a firm press"),
+        [](const BrushSettings& s) { return json(s.pressureSize.exponent); },
+        [](BrushSettings& s, const json& v) { s.pressureSize.exponent = s.pressureOpacity.exponent = s.pressureFlow.exponent = numberOf(v); });
     sync();
 }
 
 void StrokeOptions::sync()
 {
-    const BrushSettings& s = mSettings();
-    std::vector<QSignalBlocker> blocks;
-    blocks.reserve(24);
-    for (QObject* o : std::initializer_list<QObject*>{mUnit, mWorldRadius, mFlow, mPressure[0], mPressure[1], mPressure[2], mPressureFloor,
-                                                      mPressureExp, mMode, mLazy, mSmoothing, mJitter[0], mJitter[1], mJitter[2], mJitter[3],
-                                                      mAngle, mFollow, mRoundness, mAlpha, mRadialCount, mRadialAxis})
-        blocks.emplace_back(o);
-    mUnit->setCurrentIndex(s.radiusUnit == RadiusUnit::World ? 1 : 0);
-    mWorldRadius->setValue(s.worldRadius);
-    mWorldRadius->setEnabled(s.radiusUnit == RadiusUnit::World);
-    mFlow->setValue(s.flow);
-    mPressure[0]->setChecked(s.pressureSize.enabled);
-    mPressure[1]->setChecked(s.pressureOpacity.enabled);
-    mPressure[2]->setChecked(s.pressureFlow.enabled);
-    mPressureFloor->setValue(s.pressureSize.floor);
-    mPressureExp->setValue(s.pressureSize.exponent);
-    mMode->setCurrentIndex(s.mode == StrokeMode::Line ? 1 : 0);
-    mLazy->setValue(s.lazyRadius);
-    mSmoothing->setValue(s.smoothing);
-    mJitter[0]->setValue(s.jitter.position);
-    mJitter[1]->setValue(s.jitter.size);
-    mJitter[2]->setValue(s.jitter.opacity);
-    mJitter[3]->setValue(s.jitter.angle);
-    mAngle->setValue(s.angle);
-    mFollow->setChecked(s.followStroke);
-    mRoundness->setValue(s.roundness);
-    mAlpha->setText(QString::fromStdString(s.alphaPath));
-    mRadialCount->setValue(s.radial.count);
-    mRadialAxis->setCurrentIndex(s.radial.axis);
+    for (auto& f : mSync)
+        f();
+    mWorldRadius->setEnabled(mSettings().radiusUnit == RadiusUnit::World);
 }
 
 void StrokeOptions::edited()
 {
     BrushSettings& s = mSettings();
-    s.radiusUnit = mUnit->currentIndex() == 1 ? RadiusUnit::World : RadiusUnit::Screen;
-    s.worldRadius = mWorldRadius->value();
-    s.flow = mFlow->value();
-    PressureCurve* curves[] = {&s.pressureSize, &s.pressureOpacity, &s.pressureFlow};
-    for (int k = 0; k < 3; ++k)
-    {
-        curves[k]->enabled = mPressure[k]->isChecked();
-        curves[k]->floor = mPressureFloor->value();
-        curves[k]->exponent = mPressureExp->value();
-    }
-    s.mode = mMode->currentIndex() == 1 ? StrokeMode::Line : StrokeMode::Freehand;
-    s.lazyRadius = mLazy->value();
-    s.smoothing = mSmoothing->value();
-    s.jitter = {mJitter[0]->value(), mJitter[1]->value(), mJitter[2]->value(), mJitter[3]->value()};
-    s.angle = mAngle->value();
-    s.followStroke = mFollow->isChecked();
-    s.roundness = mRoundness->value();
-    const std::string alpha = mAlpha->text().trimmed().toStdString();
-    if (alpha != s.alphaPath)
-    {
-        s.alphaPath = alpha;
-        s.alpha.reset();
-    }
-    s.radial = {mRadialCount->value(), mRadialAxis->currentIndex()};
     mWorldRadius->setEnabled(s.radiusUnit == RadiusUnit::World);
     if (mChanged)
         mChanged();

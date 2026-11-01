@@ -29,6 +29,7 @@
 #include "ui/Updater.h"
 #include "ui/ThemeModel.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportTool.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/EditorPalette.h"
 #include "ui/editor/Format.h"
@@ -772,6 +773,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(viewport, "Frame All zoom factor", "/viewport/frameAll/zoomFactor", 1.0, 0.1, 100.0, 0.25, 2);
         toggle(viewport, "Frame Under Cursor also zooms in", "/viewport/frameUnderCursor/zoom", false);
         number(viewport, "Frame Under Cursor zoom factor", "/viewport/frameUnderCursor/zoomFactor", 4.0, 0.1, 100.0, 0.25, 2);
+        section(viewport, "Brushes");
+        toggle(viewport, "Tumble around the last brush stroke", viewportTools::kOrbitStrokePref, true);
+        toggle(viewport, "Undoing a stroke moves the tumble point back", viewportTools::kOrbitUndoPref, true);
         section(viewport, "View Cube");
         number(viewport, "Turn time (s, 0 snaps)", "/viewport/viewCube/turnTime", 0.15, 0.0, 2.0, 0.05, 2);
         toggle(viewport, "Left-drag tumbles", "/viewport/viewCube/leftDrag", true);

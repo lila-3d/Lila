@@ -1,4 +1,6 @@
 lila_module(lila_brush Scene
+    Alphas.cpp
+    Alphas.h
     Brush.cpp
     Brush.h
     Stroke.cpp

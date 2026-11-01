@@ -1,5 +1,6 @@
 #include "brush/Brush.h"
 
+#include "brush/Alphas.h"
 #include "core/ImageIO.h"
 #include "core/PrefStore.h"
 
@@ -158,7 +159,7 @@ void BrushSettings::ensureAlpha()
     if (alphaPath.empty())
         alpha.reset();
     else if (!alpha)
-        alpha = AlphaImage::load(alphaPath);
+        alpha = AlphaImage::load(alphas::resolve(alphaPath));
 }
 
 json BrushSettings::toJson() const

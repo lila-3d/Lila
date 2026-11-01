@@ -222,7 +222,8 @@ TEST_CASE("symmetric strokes stay symmetric")
     CHECK(asymmetry(s) == 0.0);
     for (sculpt::Brush brush : {sculpt::Brush::Draw, sculpt::Brush::ClayStrips, sculpt::Brush::Inflate, sculpt::Brush::Smooth,
                                 sculpt::Brush::Flatten, sculpt::Brush::Pinch, sculpt::Brush::Crease, sculpt::Brush::Scrape,
-                                sculpt::Brush::Relax, sculpt::Brush::Grab})
+                                sculpt::Brush::Relax, sculpt::Brush::Grab, sculpt::Brush::DamStandard, sculpt::Brush::TrimDynamic,
+                                sculpt::Brush::Polish, sculpt::Brush::Fold})
     {
         sculpt::BrushSettings b;
         b.brush = brush;

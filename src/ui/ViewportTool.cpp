@@ -80,6 +80,7 @@ namespace
 {
 std::unique_ptr<ViewportTool> gTool;
 std::string gToolId; // registered id gTool came from
+std::optional<glm::dvec3> gOrbitPoint;
 std::map<int, std::function<void()>> gListeners;
 int gNext = 1;
 
@@ -87,6 +88,7 @@ void install(std::unique_ptr<ViewportTool> tool, std::string id)
 {
     if (gTool)
         gTool->deactivate();
+    gOrbitPoint.reset();
     gTool = std::move(tool);
     gToolId = gTool ? std::move(id) : std::string();
     if (gTool)
@@ -165,4 +167,8 @@ int addListener(std::function<void()> fn)
 }
 
 void removeListener(int id) { gListeners.erase(id); }
+
+void setOrbitPoint(std::optional<glm::dvec3> point) { gOrbitPoint = point; }
+
+std::optional<glm::dvec3> orbitPoint() { return gOrbitPoint; }
 } // namespace lila::ui::viewportTools

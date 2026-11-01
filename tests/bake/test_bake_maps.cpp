@@ -329,7 +329,7 @@ TEST_CASE("rounded edges bevel a hard cube within the radius only")
     CHECK(edge > 10);
 }
 
-TEST_CASE("vertex colour bakes a named colour set")
+TEST_CASE("vertex colour bakes a named colour set, as its own map or as base colour")
 {
     newScene();
     const fs::path dir = tempDir("vcol");
@@ -352,6 +352,12 @@ TEST_CASE("vertex colour bakes a named colour set")
     setMap(p, "vertexColor", {{"set", ""}});
     const image::Image first = readImage(outputFor(ops::execute("bake", {{"project", p}, {"maps", {"vertexColor"}}}), "vertexColor"));
     CHECK(glm::vec3(texel(first, 1, 8)) == glm::vec3(0, 1, 0));
+
+    // Base colour reads the same colours with source vertexColor (sculpt polypaint).
+    setMap(p, "baseColor", {{"source", "vertexColor"}, {"set", "paint"}});
+    const image::Image base = readImage(outputFor(ops::execute("bake", {{"project", p}, {"maps", {"baseColor"}}}), "baseColor"));
+    CHECK(glm::vec3(texel(base, 1, 8)) == glm::vec3(1, 0, 0));
+    CHECK(glm::vec3(texel(base, 14, 8)) == glm::vec3(0, 0, 1));
 }
 
 TEST_CASE("material transfer: constants, textures, the high's normal map and ORM packing")
