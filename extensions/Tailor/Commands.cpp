@@ -1100,6 +1100,87 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "tailorExportAnimation",
+        .doc = "Export an animated garment's simulation for a game or a cutscene: simulates the frames first, then writes an "
+               "Alembic file (an Unreal Geometry Cache) or vertex animation textures. Returns what the exporter returns.",
+        .positionalDoc = "garment",
+        .flags = {{"format", "fmt", T::String, "alembic", "alembic or vat.", {"alembic", "vat"}},
+                  {"start", "st", T::Int, json(), "First frame; the garment's startFrame when left out."},
+                  {"end", "e", T::Int, json(), "Last frame, inclusive."},
+                  {"path", "p", T::String, json(), "Alembic: the .abc file. VAT: the output folder."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorExportAnimation");
+            if (!op.as<bool>(plugIndex(op, "animate")))
+                throw CommandError("tailorExportAnimation: " + op.name() + " isn't animated; turn on its animate attribute");
+            const std::vector<PlugRef> fed = g.destinations({op.id(), plugIndex(op, "outMesh")});
+            const Node* mesh = fed.empty() ? nullptr : g.node(fed.front().node);
+            if (!mesh)
+                throw CommandError("tailorExportAnimation: the garment feeds no mesh");
+            json call = {{"args", {mesh->path()}}};
+            const int64_t start = a.has("start") ? a.get<int64_t>("start") : op.as<int64_t>(plugIndex(op, "startFrame"));
+            call["start"] = double(start);
+            if (!a.has("end"))
+                throw CommandError("tailorExportAnimation: give end, the last frame");
+            call["end"] = double(a.get<int64_t>("end"));
+            // Every exported frame must be in the cache: the garment shows cached frames as the exporter steps time.
+            ops::execute("simulate", {{"args", {op.path()}}, {"frame", a.get<int64_t>("end")}});
+            const bool vat = a.get<std::string>("format") == "vat";
+            if (a.has("path"))
+                call[vat ? "folder" : "path"] = a.get<std::string>("path");
+            return ops::execute(vat ? "exportVertexAnimation" : "exportAlembic", call);
+        },
+        .examples = {"tailorExportAnimation('Cloak', end=120, path='anim/cloak.abc')", "tailorExportAnimation('Cloak', format='vat')"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorRefit",
+        .doc = "Move a garment onto another body: grades the pattern by the bodies' measurements (widths by chest, lengths by "
+               "height), stands it where the new body stands and drapes it there. Returns the scale factors used.",
+        .positionalDoc = "garment",
+        .flags = {{"collider", "c", T::String, json(), "The new body mesh."},
+                  {"grade", "gr", T::Bool, true, "Scale the pattern to the new body; off only moves it."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorRefit");
+            Node* target = a.has("collider") ? g.find(a.get<std::string>("collider")) : nullptr;
+            if (!target || !target->type().isA("mesh"))
+                throw CommandError("tailorRefit: give collider, the new body mesh");
+            Body from;
+            Vec3 fromFeet{0.f, 0.f, 0.f};
+            if (const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")}))
+                if (Node* old = g.node(src->node))
+                    from = measureCollider(g, *old, fromFeet);
+            Vec3 toFeet{0.f, 0.f, 0.f};
+            const Body to = measureCollider(g, *target, toFeet);
+            const bool grade = a.get<bool>("grade");
+            const float sx = grade ? to.chest / std::max(from.chest, 0.01f) : 1.f;
+            const float sy = grade ? to.height / std::max(from.height, 0.01f) : 1.f;
+            Garment gm = readGarment(op);
+            auto scale = [&](std::vector<Vec2>& pts) {
+                for (Vec2& v : pts)
+                    v = {v[0] * sx, v[1] * sy};
+            };
+            for (Panel& p : gm.panels)
+            {
+                scale(p.outline);
+                for (auto& h : p.holes)
+                    scale(h);
+                for (auto& l : p.internalLines)
+                    scale(l);
+                p.origin = {toFeet[0] + (p.origin[0] - fromFeet[0]) * sx, toFeet[1] + (p.origin[1] - fromFeet[1]) * sy,
+                            toFeet[2] + (p.origin[2] - fromFeet[2]) * sx};
+                p.wrapRadius *= sx;
+            }
+            writeGarment(g, op, gm);
+            g.connect({target->id(), MeshNode::kOutMesh}, {op.id(), plugIndex(op, "colliderMesh")}, true);
+            g.connect({target->id(), Transform::kWorldMatrix}, {op.id(), plugIndex(op, "colliderMatrix")}, true);
+            return {{"width", sx}, {"length", sy}};
+        },
+        .examples = {"tailorRefit('Tunic', collider='Hero')"},
+    });
+
+    ctx.registerCommand({
         .name = "tailorFreeze",
         .doc = "Freeze panels so they collide without moving, or set them back to active, deactivated or strengthened.\n\n"
                "Returns the panels changed.",

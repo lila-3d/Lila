@@ -13,6 +13,7 @@
 #include <lila/Plug.h>
 #include <lila/Profile.h>
 #include <lila/Relocate.h>
+#include <lila/Simulation.h>
 #include <lila/Tasks.h>
 #include <lila/Transform.h>
 #include <lila/Uv.h>
@@ -122,6 +123,7 @@ enum GarmentAttr
     kFloor,
     kAnimate,
     kStartFrame,
+    kFitMap,
 };
 
 void hashMix(uint64_t& h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); }
@@ -159,6 +161,44 @@ namespace
 
 /** The surface as a scene mesh in cm: uv0 the packed panels, uv1 the flat pattern (one unit per metre, so a fabric
  *  texture tiles at its real size), and face ints panel and side (0 outer, 1 inner, 2 rim). */
+/**
+ * The fit map as point colours: red where the cloth is stretched past its pattern (full red at 15%), blue where it is
+ * compressed (full blue at 15%), white where it lies at rest. Each point takes its triangles' extremes.
+ */
+void writeFitMap(const GarmentSurface& s, geo::Mesh& mesh)
+{
+    std::vector<float> stretch(s.points.size(), 1.f), squash(s.points.size(), 1.f);
+    for (size_t f = 0; f < s.tris.size(); ++f)
+    {
+        if (s.triSide[f] != GarmentSurface::Outer)
+            continue;
+        const auto& t = s.tris[f];
+        const auto& uv = s.fabricUv[f];
+        const glm::dvec2 d1(uv[1][0] - uv[0][0], uv[1][1] - uv[0][1]), d2(uv[2][0] - uv[0][0], uv[2][1] - uv[0][1]);
+        const double det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-12)
+            continue;
+        auto p = [&](int i) { return glm::dvec3(s.points[size_t(t[size_t(i)])][0], s.points[size_t(t[size_t(i)])][1], s.points[size_t(t[size_t(i)])][2]); };
+        const glm::dvec3 e1 = p(1) - p(0), e2 = p(2) - p(0);
+        // Deformation gradient columns: the pattern's x and y axes as they lie on the drape.
+        const glm::dvec3 fx = (e1 * d2.y - e2 * d1.y) / det, fy = (e2 * d1.x - e1 * d2.x) / det;
+        const double a = glm::dot(fx, fx), b = glm::dot(fx, fy), c = glm::dot(fy, fy);
+        const double half = 0.5 * (a + c), disc = std::sqrt(std::max(0.0, half * half - (a * c - b * b)));
+        const float hi = float(std::sqrt(std::max(0.0, half + disc))), lo = float(std::sqrt(std::max(0.0, half - disc)));
+        for (int v : t)
+        {
+            stretch[size_t(v)] = std::max(stretch[size_t(v)], hi);
+            squash[size_t(v)] = std::min(squash[size_t(v)], lo);
+        }
+    }
+    std::span<glm::vec4> colour = mesh.pointAttrs().getOrAdd<glm::vec4>(geo::attr::kColor);
+    for (size_t i = 0; i < colour.size() && i < stretch.size(); ++i)
+    {
+        const float red = std::clamp((stretch[i] - 1.f) / 0.15f, 0.f, 1.f), blue = std::clamp((1.f - squash[i]) / 0.15f, 0.f, 1.f);
+        colour[i] = red >= blue ? glm::vec4(1.f, 1.f - red, 1.f - red, 1.f) : glm::vec4(1.f - blue, 1.f - blue, 1.f, 1.f);
+    }
+}
+
 MeshPtr surfaceToMesh(const GarmentSurface& s)
 {
     std::vector<glm::dvec3> pts(s.points.size());
@@ -263,9 +303,10 @@ public:
             registerLive(id(), nullptr);
     }
 
-    void compute(const EvalContext&) override
+    void compute(const EvalContext& ctx) override
     {
         LILA_ZONE();
+        mTime = ctx.time;
         std::string warning;
         try
         {
@@ -287,7 +328,11 @@ private:
         SurfaceOptions o;
         o.weldSeams = as<bool>(kWeldSeams);
         o.thickness = float(std::max(0.0, as<double>(kThickness)) / kCmPerM);
-        return surfaceToMesh(garmentSurface(cm, positions, mPackedUv, o));
+        const GarmentSurface surface = garmentSurface(cm, positions, mPackedUv, o);
+        MeshPtr mesh = surfaceToMesh(surface);
+        if (as<bool>(kFitMap))
+            writeFitMap(surface, const_cast<geo::Mesh&>(*mesh));
+        return mesh;
     }
 
     MeshPtr build()
@@ -342,8 +387,18 @@ private:
         }
 
         if (as<bool>(kAnimate))
+        {
+            // The simulated frame at the time evaluated (exports sample other times); else the last one shown.
+            if (const auto f = sim::cached(Graph::current(), id(), sim::frameOf(mTime)); f && f->state.size() == 6 * cm.rest3d.size())
+            {
+                std::vector<Vec3> x(cm.rest3d.size());
+                for (size_t i = 0; i < x.size(); ++i)
+                    x[i] = {float(f->state[3 * i]), float(f->state[3 * i + 1]), float(f->state[3 * i + 2])};
+                return output(cm, x);
+            }
             if (const AnimatedFrame* f = animatedFrame(id()); f && f->positions.size() == cm.rest3d.size())
                 return output(cm, f->positions);
+        }
 
         if (as<bool>(kLive) && drapeInBackground())
         {
@@ -511,6 +566,7 @@ private:
     std::vector<Vec3> mDrape;
     std::shared_ptr<DrapeJob> mJob;
     std::shared_ptr<LiveDrape> mLive;
+    double mTime = 0.0;
 };
 
 constexpr uint32_t kGarmentIn = AttrInput | AttrStorable;
@@ -625,6 +681,8 @@ NodeType garmentType()
     NodeType t;
     t.name = kGarmentType;
     t.icon = "shirt";
+    // Animated garments show the simulated frame at the current time.
+    t.timeDependent = true;
     t.doc = "A garment: pattern panels sewn by seams, meshed at a particle distance and draped onto a collider. Feeds a mesh's inMesh.";
     t.ownAttrs = {
         {.name = "garment", .type = PlugType::String, .defaultValue = std::string(), .flags = kGarmentIn | AttrHidden | AttrMultiline,
@@ -664,6 +722,9 @@ NodeType garmentType()
                 "like other simulations. Starts draped at startFrame.", .category = "Simulation"},
         {.name = "startFrame", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kGarmentIn,
          .doc = "The frame an animated garment starts from, draped onto the collider as it stands there.", .category = "Simulation"},
+        {.name = "fitMap", .type = PlugType::Bool, .defaultValue = false, .flags = kGarmentIn,
+         .doc = "Colour the drape by fit: red where the cloth is stretched past its pattern, blue where it is compressed, "
+                "white at rest. Show it with the viewport's vertex colours.", .category = "Output"},
     };
     t.create = [] { return std::make_unique<GarmentNode>(); };
     return t;
