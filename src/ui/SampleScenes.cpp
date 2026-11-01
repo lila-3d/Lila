@@ -84,20 +84,24 @@ bool confirm(QWidget* parent, const Sample& s)
 
     const bool have = io::samples::installed(s);
     const bool local = io::samples::bundled(s);
+    const bool shared = !have && io::samples::unpacked(s);
     const fs::path dir = io::samples::installDir(s);
     const std::uint64_t needed = s.size + s.diskSize;
     const std::uint64_t free = freeSpace(dir);
     auto* form = new QFormLayout;
-    const QString host = QUrl(qstr(s.url)).host();
+    const QString host = QUrl(qstr(s.files.empty() ? s.url : s.files.front().url)).host();
     if (local)
         form->addRow("Status:", new QLabel("Included with Lila", &d));
     else if (have)
         form->addRow("Status:", new QLabel("Downloaded", &d));
+    else if (shared)
+        form->addRow("Status:", new QLabel("Already downloaded, needs setting up", &d));
     else
         form->addRow("Download:", new QLabel(qstr(s.size ? formatSize(s.size) : std::string("unknown size")) + " from " + host, &d));
     if (!local)
     {
-        form->addRow(have ? "On disk:" : "Needs:", new QLabel(qstr(formatSize(s.diskSize)) + " (" + qstr(formatSize(free)) + " free)", &d));
+        if (!shared)
+            form->addRow(have ? "On disk:" : "Needs:", new QLabel(qstr(formatSize(s.diskSize)) + " (" + qstr(formatSize(free)) + " free)", &d));
         auto* where = new QLabel(QDir::toNativeSeparators(qpath(dir)), &d);
         where->setTextInteractionFlags(Qt::TextSelectableByMouse);
         form->addRow("Saved to:", where);
@@ -126,7 +130,7 @@ bool confirm(QWidget* parent, const Sample& s)
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &d);
     QPushButton* go = buttons->addButton(have ? "Open" : "Download and Open", QDialogButtonBox::AcceptRole);
     go->setDefault(true);
-    if (!have && free && needed > free)
+    if (!have && !shared && free && needed > free)
     {
         go->setEnabled(false);
         auto* warn = new QLabel("Not enough free space: needs " + qstr(formatSize(needed)) + " while downloading.", &d);
@@ -153,7 +157,8 @@ QProgressDialog* progress(QWidget* parent, const QString& label)
 }
 
 /** Downloads s.url into file; false (with why set) on failure or cancel (why empty). */
-bool download(QWidget* parent, const Sample& s, const fs::path& file, std::string& why)
+bool download(QWidget* parent, const QString& label, const std::string& url, std::uint64_t expected, const std::string& sha256,
+              const fs::path& file, std::string& why)
 {
     QFile out(qpath(file));
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -162,10 +167,10 @@ bool download(QWidget* parent, const Sample& s, const fs::path& file, std::strin
         return false;
     }
     QNetworkAccessManager nam;
-    QNetworkRequest req{QUrl(qstr(s.url))};
+    QNetworkRequest req{QUrl(qstr(url))};
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
     QNetworkReply* reply = nam.get(req);
-    QProgressDialog* bar = progress(parent, "Downloading " + qstr(s.name) + "...");
+    QProgressDialog* bar = progress(parent, label);
     QEventLoop loop;
     bool writeFailed = false;
     QObject::connect(reply, &QNetworkReply::readyRead, &loop, [&] {
@@ -177,10 +182,10 @@ bool download(QWidget* parent, const Sample& s, const fs::path& file, std::strin
     });
     QObject::connect(reply, &QNetworkReply::downloadProgress, bar, [&](qint64 got, qint64 total) {
         if (total <= 0)
-            total = qint64(s.size);
+            total = qint64(expected);
         if (total > 0)
             bar->setValue(int(std::min<qint64>(1000, got * 1000 / total)));
-        bar->setLabelText("Downloading " + qstr(s.name) + "...  " + qstr(formatSize(std::uint64_t(got))) +
+        bar->setLabelText(label + "  " + qstr(formatSize(std::uint64_t(got))) +
                           (total > 0 ? " of " + qstr(formatSize(std::uint64_t(total))) : QString()));
     });
     QObject::connect(bar, &QProgressDialog::canceled, reply, &QNetworkReply::abort);
@@ -197,12 +202,12 @@ bool download(QWidget* parent, const Sample& s, const fs::path& file, std::strin
         why = "cannot write " + paths::toUtf8(file) + " (disk full?)";
     else if (reply->error() != QNetworkReply::NoError)
         why = reply->errorString().toStdString();
-    else if (!s.sha256.empty())
+    else if (!sha256.empty())
     {
         QFile in(qpath(file));
         QCryptographicHash hash(QCryptographicHash::Sha256);
         if (!in.open(QIODevice::ReadOnly) || !hash.addData(&in) ||
-            QString(hash.result().toHex()).compare(qstr(s.sha256), Qt::CaseInsensitive) != 0)
+            QString(hash.result().toHex()).compare(qstr(sha256), Qt::CaseInsensitive) != 0)
             why = "the download is damaged or has changed (checksum mismatch)";
     }
     return why.empty();
@@ -315,7 +320,7 @@ bool setUp(const Sample& s, const fs::path& source, std::string& why)
 
 void writeCredit(const Sample& s)
 {
-    std::ofstream f(io::samples::installDir(s) / "CREDIT.txt");
+    std::ofstream f(io::samples::installDir(s) / paths::fromUtf8("CREDIT-" + s.id + ".txt"));
     f << s.name << "\n\n" << s.credit << "\n\nLicense: " << s.license << " " << s.licenseUrl << "\nSource: " << s.source << "\n";
 }
 } // namespace
@@ -343,15 +348,41 @@ void fetch(QWidget* parent, const Sample& s, std::function<bool()> mayReplaceSce
         }
     };
     std::string why;
-    if (!download(parent, s, zip, why))
-        return fail(why);
-    fs::remove_all(source, ec);
-    if (!unpack(parent, s, zip, source, why))
+    if (!io::samples::unpacked(s) && !s.files.empty())
     {
+        // Into a side folder first, so a cancelled or failed set never looks complete.
+        const fs::path part = dir / "source.part";
+        fs::remove_all(part, ec);
+        for (size_t i = 0; i < s.files.size(); ++i)
+        {
+            const fs::path rel = safeRelative(s.files[i].path);
+            if (rel.empty())
+                return fail("unsafe file path " + s.files[i].path);
+            fs::create_directories((part / rel).parent_path(), ec);
+            const QString label = "Downloading " + qstr(s.name) + (s.files.size() > 1 ? QString(" (%1 of %2)...").arg(i + 1).arg(s.files.size()) : "...");
+            if (!download(parent, label, s.files[i].url, s.files.size() == 1 ? s.size : 0, "", part / rel, why))
+            {
+                fs::remove_all(part, ec);
+                return fail(why);
+            }
+        }
         fs::remove_all(source, ec);
-        return fail(why);
+        fs::rename(part, source, ec);
+        if (ec)
+            return fail("cannot move the download into place: " + ec.message());
     }
-    fs::remove(zip, ec);
+    else if (!io::samples::unpacked(s))
+    {
+        if (!download(parent, "Downloading " + qstr(s.name) + "...", s.url, s.size, s.sha256, zip, why))
+            return fail(why);
+        fs::remove_all(source, ec);
+        if (!unpack(parent, s, zip, source, why))
+        {
+            fs::remove_all(source, ec);
+            return fail(why);
+        }
+        fs::remove(zip, ec);
+    }
     if (!setUp(s, source, why))
         return fail(why);
     writeCredit(s);

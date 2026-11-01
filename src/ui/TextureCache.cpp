@@ -303,6 +303,18 @@ Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks 
             px.linear = true;
         }
     }
+    else if (ext == ".webp")
+    {
+        std::string err;
+        px.floats = image::readWebp(path, &err);
+        if (px.floats.rgba.empty())
+            error = err;
+        else
+        {
+            px.rgba8 = toRgba8(px.floats, false);
+            px.floats = {};
+        }
+    }
     else if (ext == ".exr" || ext == ".tif" || ext == ".tiff" || ext == ".psd")
     {
         std::string err;

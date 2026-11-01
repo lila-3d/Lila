@@ -18,6 +18,7 @@
     "meshoptimizer",
     "joltphysics",
     "miniz",
+    "libwebp",
     "zlib",
     "draco",
     {

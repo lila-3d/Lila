@@ -34,8 +34,12 @@ std::vector<Sample> list(const fs::path& dir)
         Sample s;
         s.id = paths::toUtf8(e.path().filename());
         s.name = j.value("name", s.id);
+        s.archive = j.value("archive", s.id);
         s.description = j.value("description", "");
         s.url = j.value("url", "");
+        for (const json& f : j.value("files", json::array()))
+            if (f.is_object() && f.contains("url") && f.contains("path"))
+                s.files.push_back({f["url"].get<std::string>(), f["path"].get<std::string>()});
         s.size = j.value("size", std::uint64_t(0));
         s.diskSize = j.value("diskSize", std::uint64_t(0));
         s.sha256 = j.value("sha256", "");
@@ -63,12 +67,20 @@ const Sample* find(const std::vector<Sample>& all, const std::string& idOrName)
 
 fs::path installDir(const Sample& s)
 {
-    return paths::userConfigDir() / "samples" / paths::fromUtf8(s.id);
+    return paths::userConfigDir() / "samples" / paths::fromUtf8(s.archive);
+}
+
+bool unpacked(const Sample& s)
+{
+    // The download is removed only once unpacking finished, and a failed unpack removes the folder.
+    std::error_code ec;
+    const fs::path dir = installDir(s);
+    return !fs::exists(dir / "download.zip", ec) && fs::is_directory(dir / "source", ec) && !fs::is_empty(dir / "source", ec);
 }
 
 bool bundled(const Sample& s)
 {
-    return s.url.empty();
+    return s.url.empty() && s.files.empty();
 }
 
 fs::path scenePath(const Sample& s)

@@ -1,0 +1,17 @@
+{
+    "name": "Singularity",
+    "description": "Blender 5.1's splash scene by Blender Studio: glowing creatures in a deep, dark alien landscape.",
+    "files": [
+        {
+            "url": "https://download.blender.org/demo/splash/blender-5.1-splash.blend",
+            "path": "blender-5.1-splash.blend"
+        }
+    ],
+    "size": 669966622,
+    "diskSize": 1339933244,
+    "license": "CC BY",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "Singularity by Blender Studio, the Blender 5.1 splash demo file, licensed CC BY.",
+    "source": "https://www.blender.org/download/demo-files/",
+    "scene": "singularity.lila"
+}

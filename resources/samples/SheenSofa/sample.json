@@ -1,0 +1,17 @@
+{
+    "name": "Sheen Wood Leather Sofa",
+    "description": "A wood and leather sofa with woven fabric cushions: sheen and specular fabric materials, tiling and atlas UVs, vertex colour.",
+    "files": [
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/SheenWoodLeatherSofa/glTF-Binary/SheenWoodLeatherSofa.glb",
+            "path": "SheenWoodLeatherSofa.glb"
+        }
+    ],
+    "size": 10107912,
+    "diskSize": 40000000,
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "Sheen Wood Leather Sofa by Darmstadt Graphics Group GmbH, from the Khronos glTF Sample Assets, licensed CC BY 4.0; based on sofa_03 from Poly Haven (CC0).",
+    "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/SheenWoodLeatherSofa",
+    "scene": "sheen_sofa.lila"
+}

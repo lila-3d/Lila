@@ -5,6 +5,7 @@
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include <miniz.h>
+#include <webp/decode.h>
 #include <glm/gtc/packing.hpp>
 #include <tbb/parallel_for.h>
 
@@ -1150,6 +1151,25 @@ std::vector<std::pair<std::string, Image>> readPsdLayers(const fs::path& path, s
     return parsePsd(path, f, err, true) ? std::move(f.layers) : std::vector<std::pair<std::string, Image>>{};
 }
 
+Image readWebp(const fs::path& path, std::string* err)
+{
+    std::ifstream in(path, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    int w = 0, h = 0;
+    uint8_t* px = bytes.empty() ? nullptr : WebPDecodeRGBA(bytes.data(), bytes.size(), &w, &h);
+    if (!px)
+    {
+        if (err)
+            *err = bytes.empty() ? "cannot open file" : "not a readable WebP image";
+        return {};
+    }
+    Image img{w, h, std::vector<float>(size_t(w) * size_t(h) * 4)};
+    for (size_t i = 0; i < img.rgba.size(); ++i)
+        img.rgba[i] = px[i] / 255.0f;
+    WebPFree(px);
+    return img;
+}
+
 Image read(const fs::path& path, std::string* err)
 {
     const std::string ext = lowerExt(path);
@@ -1161,6 +1181,8 @@ Image read(const fs::path& path, std::string* err)
         return readTiff(path, err);
     if (ext == ".psd")
         return readPsd(path, err);
+    if (ext == ".webp")
+        return readWebp(path, err);
     if (ext == ".dds")
     {
         dds::File f;

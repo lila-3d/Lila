@@ -62,7 +62,10 @@ TEST_CASE("samples: bundled ones ship their scene; downloads have a license, a c
         }
         CHECK_FALSE(s.license.empty());
         CHECK_FALSE(s.credit.empty());
-        CHECK(s.url.starts_with("https://"));
+        if (s.files.empty())
+            CHECK(s.url.starts_with("https://"));
+        for (const io::samples::Sample::File& f : s.files)
+            CHECK(f.url.starts_with("https://"));
         CHECK(fs::is_regular_file(s.folder / "setup.py"));
     }
 }

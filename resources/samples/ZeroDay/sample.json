@@ -1,0 +1,15 @@
+{
+    "name": "Zero-Day: Measure One",
+    "description": "Beeple's Zero-Day, Measure One: a sci-fi machine hall, 1.4 million triangles, 7,000 meshes and over 10,000 emissive triangles.",
+    "url": "https://developer.nvidia.com/downloads/beeple",
+    "archive": "ZeroDay",
+    "size": 1137877895,
+    "diskSize": 2600000000,
+    "sha256": "",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "source": "https://developer.nvidia.com/orca/beeple-zero-day",
+    "scene": "zero_day_measure_one.lila",
+    "credit": "Zero-Day by Mike Winkelmann (Beeple), from NVIDIA's Open Research Content Archive (ORCA), licensed CC BY 4.0. Lila converts Measure One to a .lila and lowers its exposure a stop.",
+    "camera": "DynamicCamera2"
+}

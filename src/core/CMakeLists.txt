@@ -37,7 +37,8 @@ lila_module(lila_core Foundation
     Workspace.cpp)
 
 find_package(miniz CONFIG REQUIRED)
-target_link_libraries(lila_core PRIVATE miniz::miniz)
+find_package(WebP CONFIG REQUIRED)
+target_link_libraries(lila_core PRIVATE miniz::miniz WebP::webpdecoder)
 target_include_directories(lila_core SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/bcdec)
 if(WIN32)
     target_link_libraries(lila_core PRIVATE mfplat mfreadwrite mfuuid ole32)

@@ -19,9 +19,17 @@ namespace fs = std::filesystem;
 struct Sample
 {
     std::string id; // the folder name
+    std::string archive; // the id whose download it shares and installs beside (its own id unless sample.json names another)
     std::string name;
     std::string description;
-    std::string url;          // the archive, a .zip; empty for a bundled sample
+    std::string url;          // the archive, a .zip; empty for a bundled sample or one made of files
+    /** Plain files to fetch instead of an archive (a glTF and its textures, a .blend): url and path under source/. */
+    struct File
+    {
+        std::string url;
+        std::string path;
+    };
+    std::vector<File> files;
     std::uint64_t size = 0;   // bytes to download
     std::uint64_t diskSize = 0; // bytes once unpacked and set up
     std::string sha256;       // of the archive; empty skips the check
@@ -43,8 +51,10 @@ LILA_SCENE_API const Sample* find(const std::vector<Sample>& all, const std::str
 
 /** Ships with Lila: the scene is in the sample's folder, nothing to download. */
 LILA_SCENE_API bool bundled(const Sample& s);
-/** Where a sample downloads, unpacks and is set up: <user config>/samples/<id>. */
+/** Where a sample downloads, unpacks and is set up: <user config>/samples/<archive>. */
 LILA_SCENE_API fs::path installDir(const Sample& s);
+/** The archive is unpacked in installDir/source: a sample sharing it only needs setting up. */
+LILA_SCENE_API bool unpacked(const Sample& s);
 LILA_SCENE_API fs::path scenePath(const Sample& s);
 LILA_SCENE_API bool installed(const Sample& s);
 

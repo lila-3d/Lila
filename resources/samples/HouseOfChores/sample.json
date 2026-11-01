@@ -1,0 +1,17 @@
+{
+    "name": "House of Chores",
+    "description": "Blender 4.3's splash scene by Blender Studio: a ramshackle storybook house by a pond, painted-look shading.",
+    "files": [
+        {
+            "url": "https://download.blender.org/demo/splash/blender-4.3-splash.blend",
+            "path": "blender-4.3-splash.blend"
+        }
+    ],
+    "size": 238749897,
+    "diskSize": 477499794,
+    "license": "CC BY",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "House of Chores by Blender Studio, the Blender 4.3 splash demo file, licensed CC BY.",
+    "source": "https://www.blender.org/download/demo-files/",
+    "scene": "houseofchores.lila"
+}

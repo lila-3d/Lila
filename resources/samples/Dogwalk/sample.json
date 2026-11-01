@@ -1,0 +1,17 @@
+{
+    "name": "DOGWALK",
+    "description": "Blender 4.5's splash scene by Blender Studio, from their game DOGWALK: a child, a big shaggy dog and a snowman in the snow.",
+    "files": [
+        {
+            "url": "https://download.blender.org/demo/splash/blender-4.5-splash.blend",
+            "path": "blender-4.5-splash.blend"
+        }
+    ],
+    "size": 401947045,
+    "diskSize": 803894090,
+    "license": "CC BY",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "DOGWALK by Blender Studio, the Blender 4.5 splash demo file, licensed CC BY.",
+    "source": "https://www.blender.org/download/demo-files/",
+    "scene": "dogwalk.lila"
+}

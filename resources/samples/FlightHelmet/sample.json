@@ -1,0 +1,81 @@
+{
+    "name": "Flight Helmet",
+    "description": "A WWII flight helmet on a stand: leather, glass, rubber and metal PBR materials in close-up. A material and texture check.",
+    "files": [
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet.bin",
+            "path": "FlightHelmet/FlightHelmet.bin"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet.gltf",
+            "path": "FlightHelmet/FlightHelmet.gltf"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_BaseColor.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_GlassPlasticMat_BaseColor.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_Normal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_GlassPlasticMat_Normal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_GlassPlasticMat_OcclusionRoughMetal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_GlassPlasticMat_OcclusionRoughMetal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_BaseColor.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LeatherPartsMat_BaseColor.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_Normal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LeatherPartsMat_Normal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LeatherPartsMat_OcclusionRoughMetal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LeatherPartsMat_OcclusionRoughMetal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_BaseColor.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LensesMat_BaseColor.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_Normal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LensesMat_Normal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_LensesMat_OcclusionRoughMetal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_LensesMat_OcclusionRoughMetal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_BaseColor.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_MetalPartsMat_BaseColor.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_Normal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_MetalPartsMat_Normal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_MetalPartsMat_OcclusionRoughMetal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_MetalPartsMat_OcclusionRoughMetal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_BaseColor.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_RubberWoodMat_BaseColor.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_Normal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_RubberWoodMat_Normal.png"
+        },
+        {
+            "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/FlightHelmet/glTF/FlightHelmet_Materials_RubberWoodMat_OcclusionRoughMetal.png",
+            "path": "FlightHelmet/FlightHelmet_Materials_RubberWoodMat_OcclusionRoughMetal.png"
+        }
+    ],
+    "size": 48392569,
+    "diskSize": 96785138,
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "credit": "Flight Helmet from the Khronos glTF Sample Assets, public domain (CC0); glTF conversion by Gary Hsu.",
+    "source": "https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/FlightHelmet",
+    "scene": "flight_helmet.lila"
+}

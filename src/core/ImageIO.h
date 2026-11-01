@@ -78,6 +78,7 @@ LILA_FOUNDATION_API Image readTga(const fs::path& path, std::string* err = nullp
 LILA_FOUNDATION_API Image readTiff(const fs::path& path, std::string* err = nullptr);
 /** The flattened image of an uncompressed 8/16 bit RGB PSD. */
 LILA_FOUNDATION_API Image readPsd(const fs::path& path, std::string* err = nullptr);
+LILA_FOUNDATION_API Image readWebp(const fs::path& path, std::string* err = nullptr);
 /** The layers of an uncompressed 8/16 bit RGB PSD, bottom first as stored, with their names. */
 LILA_FOUNDATION_API std::vector<std::pair<std::string, Image>> readPsdLayers(const fs::path& path, std::string* err = nullptr);
 /** By extension. */
