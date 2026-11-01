@@ -50,3 +50,4 @@ else()
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/LilaExtension.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/LilaShaders.cmake")

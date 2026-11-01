@@ -22,6 +22,8 @@ struct GpuTuning
     float closedGap = 1e-4f;      // a zero-rest seam closes for good below this gap
     float boundFraction = 0.4f;   // VBD conservative bound: share of the distance to the nearest primitive
     float strengthen = 10.f;      // stiffness multiplier on Strengthened panels
+    float dampingScale = 0.01f;   // fabric damping to the Rayleigh coefficient, seconds
+    int redetectEvery = 3;        // iterations between contact re-detections while vertices hit their bounds
 };
 
 /**
@@ -29,7 +31,7 @@ struct GpuTuning
  * graph colours, AVBD hard constraints for seams, pins and strain limits, anisotropic StVK membrane from the pattern,
  * dihedral bending, SDF collider contact and vertex-triangle self contact with conservative displacement bounds.
  *
- * Every call blocks on a task on Lila's render thread, so none may come from the render thread itself. Use it only when
+ * Every call blocks on a lila::gpu session run, so none may come from the render thread itself. Use it only when
  * available(); headless runs and tests use ClothSolver.
  */
 class ClothGpu
@@ -40,7 +42,7 @@ public:
     ClothGpu(const ClothGpu&) = delete;
     ClothGpu& operator=(const ClothGpu&) = delete;
 
-    /** True while the renderer is running. */
+    /** True while the renderer is running (lila::gpu::available). */
     static bool available();
 
     /** Builds the topology (colouring, adjacency, rest shapes) and uploads it. False with err when the GPU fails. */
@@ -50,6 +52,8 @@ public:
     /** World to grid as the 3 rows of a rigid 3x4 transform (identity by default), for colliders that move rigidly. */
     void setColliderTransform(int index, const std::array<float, 12>& worldToGrid);
     void setPins(std::vector<Pin> pins);
+    /** Moves every vertex there and zeroes velocities, on the next step (continuing a drape from where it got to). */
+    void setPositions(std::vector<Vec3> positions);
     /** One frame of settings.dt: seam closing, then substeps x iterations, then the positions read back. */
     bool step(std::string* err = nullptr);
 

@@ -254,3 +254,22 @@ TEST_CASE("solver is deterministic")
         same = same && a[i] == b[i];
     CHECK(same);
 }
+
+TEST_CASE("cloth rests on the floor")
+{
+    ClothMesh mesh;
+    clothGrid(mesh, 0, 11, 11, 0.4f, 0.4f, {-0.2f, 0.3f, -0.2f}, {1.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
+    Garment g;
+    g.panels.resize(1);
+    SolverSettings s;
+    s.floorY = 0.1f;
+    ClothSolver solver;
+    solver.reset(mesh, g, s);
+    for (int frame = 0; frame < 90; ++frame)
+        solver.step();
+    float lowest = 1.f;
+    for (const Vec3& p : solver.positions())
+        lowest = std::min(lowest, p[1]);
+    CHECK(lowest > 0.1f - 0.002f);
+    CHECK(lowest < 0.12f);
+}

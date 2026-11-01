@@ -37,5 +37,6 @@ endforeach()
 install(FILES $<TARGET_LINKER_FILE:LilaFoundation> $<TARGET_LINKER_FILE:LilaScene> $<TARGET_LINKER_FILE:LilaUI> ${_tbb_implib}
         DESTINATION lib COMPONENT sdk)
 install(FILES ${_sdk_cmake}/LilaSDKConfig.cmake ${_sdk_cmake}/LilaSDKConfigVersion.cmake ${CMAKE_SOURCE_DIR}/cmake/LilaExtension.cmake
+        ${CMAKE_SOURCE_DIR}/cmake/LilaShaders.cmake
         DESTINATION lib/cmake/LilaSDK COMPONENT sdk)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/extensions/examples/ DESTINATION examples COMPONENT sdk PATTERN __pycache__ EXCLUDE)

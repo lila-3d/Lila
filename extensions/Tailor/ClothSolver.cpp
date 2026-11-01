@@ -520,6 +520,28 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
         e = end;
     }
 
+    // Folded seams: hinges across the sewn edge with the seam's rest angle.
+    for (const SeamHinge& sh : seamHinges(mesh, g))
+    {
+        auto restArea = [&](int t) {
+            const auto& tri = mesh.tris[size_t(t)];
+            const vec2 p0 = hasUv ? vec2(mesh.uv[tri[0]][0], mesh.uv[tri[0]][1]) : vec2(0.f);
+            const vec2 e1 = hasUv ? vec2(mesh.uv[tri[1]][0], mesh.uv[tri[1]][1]) - p0 : vec2(0.f);
+            const vec2 e2 = hasUv ? vec2(mesh.uv[tri[2]][0], mesh.uv[tri[2]][1]) - p0 : vec2(0.f);
+            return 0.5f * std::abs(e1.x * e2.y - e2.x * e1.y);
+        };
+        const float areas = restArea(sh.tris[0]) + restArea(sh.tris[1]);
+        const float restLen = glm::length(toVec(mesh.rest3d[sh.v[0]]) - toVec(mesh.rest3d[sh.v[1]]));
+        if (areas <= 1e-14f || restLen <= 1e-9f)
+            continue;
+        Hinge hg;
+        for (int k = 0; k < 4; ++k)
+            hg.v[k] = sh.v[k];
+        hg.stiffness = 6.f * sh.bend * restLen * restLen / areas;
+        hg.restAngle = sh.restAngle;
+        hinges.push_back(hg);
+    }
+
     for (size_t i = 0; i < mesh.seamPairs.size(); ++i)
     {
         const int a = mesh.seamPairs[i][0], b = mesh.seamPairs[i][1];
@@ -534,6 +556,17 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
         l.closed = l.rest <= 1e-6f && l.limit <= kClosedGap;
         if (l.closed)
             l.limit = 0.f;
+        links.push_back(l);
+    }
+    for (const SeamShrink& sk : seamShrinks(mesh, g))
+    {
+        if (!movable[sk.a] && !movable[sk.b])
+            continue;
+        Link l;
+        l.kind = LinkKind::Strain;
+        l.a = sk.a;
+        l.b = sk.b;
+        l.limit = sk.limit;
         links.push_back(l);
     }
 
@@ -978,13 +1011,18 @@ bool ClothSolver::Impl::bodyContact(int i, const vec3& p, const std::vector<cons
         pen = r - phi;
         nrm = g / gl;
     }
+    if (const float floorPen = r - (p.y - s.floorY); floorPen > pen)
+    {
+        pen = floorPen;
+        nrm = vec3(0.f, 1.f, 0.f);
+    }
     return pen > 0.f;
 }
 
 void ClothSolver::Impl::updateDuals(const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders)
 {
     using namespace vbd;
-    if (!colliders.empty())
+    if (!colliders.empty() || s.floorY > -1e29f)
         tbb::parallel_for(tbb::blocked_range<int>(0, n, 256), [&](const tbb::blocked_range<int>& r) {
             for (int i = r.begin(); i != r.end(); ++i)
             {

@@ -5,6 +5,7 @@ lila_module(lila_render UI
     BakerResident.cpp
     BakerKernels.cpp
     Compute.cpp
+    GpuCompute.cpp
     CubeLut.cpp
     ClayGpu.cpp
     DeformGpu.cpp

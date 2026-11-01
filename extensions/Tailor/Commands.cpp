@@ -147,6 +147,21 @@ std::vector<SeamSide> parseSides(const Garment& gm, const std::string& text, con
     return out;
 }
 
+/** [[x, y], ...] in cm to pattern points in metres. */
+std::vector<Vec2> pointsArg(const json& list, const char* cmd)
+{
+    std::vector<Vec2> out;
+    if (list.is_array())
+        for (const json& p : list)
+            if (p.is_array() && p.size() >= 2 && p[0].is_number() && p[1].is_number())
+                out.push_back({float(p[0].get<double>() / kCmPerM), float(p[1].get<double>() / kCmPerM)});
+            else
+                throw CommandError(std::string(cmd) + ": points are [x, y] pairs in cm");
+    if (out.empty())
+        throw CommandError(std::string(cmd) + ": give points as [[x, y], ...] in cm");
+    return out;
+}
+
 std::vector<std::string> presetChoices()
 {
     std::vector<std::string> out;
@@ -195,6 +210,60 @@ Body measureCollider(Graph& g, Node& collider, Vec3& offset)
     return measureBody(pts, tris, &offset);
 }
 
+/** Where panels meet on a garment mesh (edges between faces of different panels), as world polylines in cm. */
+json seamGuides(const geo::Mesh& m)
+{
+    const std::span<const int32_t> panel = m.faceAttrs().get<int32_t>("panel");
+    if (panel.empty())
+        return json::array();
+    std::vector<std::vector<geo::Index>> next(m.pointCapacity());
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+    {
+        if (!m.edgeValid(e) || m.edgeFaceCount(e) != 2)
+            continue;
+        const geo::Index c = m.edgeCorner(e);
+        const geo::Index f0 = m.cornerFace(c), f1 = m.cornerFace(m.cornerRadial(c));
+        if (f0 >= panel.size() || f1 >= panel.size() || panel[f0] == panel[f1])
+            continue;
+        const geo::Index a = m.edgePoint(e, 0), b = m.edgePoint(e, 1);
+        next[a].push_back(b);
+        next[b].push_back(a);
+    }
+    json lines = json::array();
+    std::vector<uint8_t> used(m.pointCapacity(), 0);
+    auto point = [&](geo::Index p) {
+        const glm::dvec3 q = m.position(p);
+        return json::array({q.x, q.y, q.z});
+    };
+    // Start at chain ends first so open seams come out whole, then sweep up closed loops.
+    for (int pass = 0; pass < 2; ++pass)
+        for (geo::Index s = 0; s < m.pointCapacity(); ++s)
+        {
+            if (used[s] || next[s].empty() || (pass == 0 && next[s].size() == 2))
+                continue;
+            json line = json::array({point(s)});
+            used[s] = 1;
+            for (geo::Index cur = s;;)
+            {
+                geo::Index step = geo::kInvalid;
+                for (geo::Index nb : next[cur])
+                    if (!used[nb])
+                    {
+                        step = nb;
+                        break;
+                    }
+                if (step == geo::kInvalid)
+                    break;
+                used[step] = 1;
+                line.push_back(point(step));
+                cur = step;
+            }
+            if (line.size() >= 2)
+                lines.push_back(std::move(line));
+        }
+    return lines;
+}
+
 /**
  * Point float attribute clothMaxDistance: how far each point sits from the collider's surface, cm. Near zero where the
  * garment rests on the body, large where it hangs free; Chaos Cloth's Max Distance mask reads it directly.
@@ -218,7 +287,7 @@ void writeMaxDistance(Graph& g, const Node& collider, geo::Mesh& garment)
 }
 
 /** A tailorGarment node holding gm, fed by the collider flag (or selection) and feeding a new mesh. Returns [mesh, garment]. */
-json createGarment(const Garment& gm, const std::string& block, const Args& a, const char* cmd)
+json createGarment(const Garment& gm, const std::string& block, const Args& a, const char* cmd, const std::string& meshName = {})
 {
     const std::string fabric = a.get<std::string>("fabric");
     fabricArg(fabric, cmd);
@@ -237,7 +306,7 @@ json createGarment(const Garment& gm, const std::string& block, const Args& a, c
         g.connect({collider->id(), MeshNode::kOutMesh}, {op->id(), plugIndex(*op, "colliderMesh")});
         g.connect({collider->id(), Transform::kWorldMatrix}, {op->id(), plugIndex(*op, "colliderMatrix")});
     }
-    Node* mesh = g.createNode(*types::find("mesh"), a.get<std::string>("name"), kNoNode, true);
+    Node* mesh = g.createNode(*types::find("mesh"), meshName.empty() ? a.get<std::string>("name") : meshName, kNoNode, true);
     g.connect({op->id(), plugIndex(*op, "outMesh")}, {mesh->id(), MeshNode::kInMesh});
     g.select({mesh->id()});
     if (a.get<bool>("wait"))
@@ -463,7 +532,10 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "garment",
         .flags = {{"name", "n", T::String, json(), "Name of the new mesh; the garment mesh's name plus _baked when left out."},
                   {"skin", "sk", T::Bool, true, "Bind to the collider's joints and copy its weights when it is skinned."},
-                  {"maxInfluences", "mi", T::Int, int64_t(4), "Influences per point.", {}, {}, 1.0, 16.0}},
+                  {"maxInfluences", "mi", T::Int, int64_t(4), "Influences per point.", {}, {}, 1.0, 16.0},
+                  {"retopo", "rt", T::Int, int64_t(0), "Quad remesh to about this many faces, seams kept as edge loops; 0 keeps the cloth triangles.",
+                   {}, {}, 0.0, 200000.0},
+                  {"lods", "lod", T::Int, int64_t(0), "Extra levels of detail to generate in a LOD group.", {}, {}, 0.0, 7.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorBake");
@@ -485,11 +557,36 @@ void registerCommands(ext::Context& ctx)
             }
             const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")});
             const Node* collider = src ? g.node(src->node) : nullptr;
-            auto out = std::make_shared<geo::Mesh>(**mesh);
+            const json guides = seamGuides(**mesh);
+            if (!Graph::validName(name))
+                name = "Garment_baked";
+            const bool remesh = a.get<int64_t>("retopo") > 0;
+            Node* baked = g.createNode(*types::find("mesh"), remesh ? name + "_drape" : name, kNoNode, true);
+            g.setValue({baked->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(**mesh)));
+            if (const int64_t faces = a.get<int64_t>("retopo"); faces > 0)
+            {
+                const std::string drape = baked->path();
+                const json r = ops::execute("quadRemesh", {{"args", {drape}},
+                                                           {"targetFaces", faces},
+                                                           {"guidePoints", guides},
+                                                           {"timeout", 120.0},
+                                                           {"keepSource", false},
+                                                           {"name", name}});
+                baked = g.find(r.value("name", drape));
+                if (!baked)
+                    throw CommandError("tailorBake: the remesh left no mesh");
+            }
             if (collider)
-                writeMaxDistance(g, *collider, *out);
-            Node* baked = g.createNode(*types::find("mesh"), Graph::validName(name) ? name : "Garment_baked", kNoNode, true);
-            g.setValue({baked->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(out)));
+            {
+                g.evaluate();
+                const PlugValue bv = g.value({baked->id(), MeshNode::kOutMesh});
+                if (const MeshPtr* bm = std::get_if<MeshPtr>(&bv); bm && *bm)
+                {
+                    auto out = std::make_shared<geo::Mesh>(**bm);
+                    writeMaxDistance(g, *collider, *out);
+                    g.setValue({baked->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(out)));
+                }
+            }
 
             json result = {{"mesh", baked->path()}, {"skinned", false}};
             if (collider && a.get<bool>("skin"))
@@ -513,10 +610,388 @@ void registerCommands(ext::Context& ctx)
                     result["skinned"] = true;
                 }
             }
+            if (const int64_t lods = a.get<int64_t>("lods"); lods > 0)
+            {
+                result["lodGroup"] = ops::execute("lodGroup", {{"args", {baked->path()}}, {"generate", lods}});
+                result["mesh"] = baked->path();
+            }
             g.select({baked->id()});
             return result;
         },
-        .examples = {"tailorBake('Outfit')", "tailorBake('Cloak', name='SM_Cloak', skin=False)"},
+        .examples = {"tailorBake('Outfit')", "tailorBake('Cloak', name='SM_Cloak', skin=False)", "tailorBake('Tunic', retopo=3000, lods=2)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorEditPanel",
+        .doc = "Change a panel: its outline points (same count), grain, particle distance, layer or name.\n\n"
+               "Points are pattern space, cm, counter-clockwise. Seams keep their vertex indices. Returns the panel's name.",
+        .positionalDoc = "garment",
+        .flags = {{"panel", "p", T::String, json(), "Panel by name or index."},
+                  {"outline", "o", T::List, json(), "Outline points [[x, y], ...], cm; the count must match."},
+                  {"grainAngle", "ga", T::Float, json(), "Warp direction in pattern space, degrees."},
+                  {"particleDistance", "pd", T::Float, json(), "This panel's cloth edge length, cm.", {}, {}, 0.1, 50.0},
+                  {"layer", "l", T::Int, json(), "Layer: higher layers sit outside lower ones."},
+                  {"rename", "rn", T::String, json(), "New name."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorEditPanel");
+            Garment gm = readGarment(op);
+            Panel& p = gm.panels[size_t(panelIndex(gm, a.flags.value("panel", json()), "tailorEditPanel"))];
+            if (a.has("outline"))
+            {
+                const std::vector<Vec2> pts = pointsArg(a.flags["outline"], "tailorEditPanel");
+                if (pts.size() != p.outline.size())
+                    throw CommandError("tailorEditPanel: the outline has " + std::to_string(p.outline.size()) + " points, not " +
+                                       std::to_string(pts.size()) + "; use tailorInsertPoint or tailorDeletePoint to change the count");
+                p.outline = pts;
+            }
+            if (a.has("grainAngle"))
+                p.grainAngle = float(a.get<double>("grainAngle") * std::numbers::pi / 180.0);
+            if (a.has("particleDistance"))
+                p.particleDistance = float(a.get<double>("particleDistance") / kCmPerM);
+            if (a.has("layer"))
+                p.layer = int(a.get<int64_t>("layer"));
+            if (a.has("rename"))
+            {
+                const std::string name = a.get<std::string>("rename");
+                for (const Panel& other : gm.panels)
+                    if (&other != &p && other.name == name)
+                        throw CommandError("tailorEditPanel: there already is a panel " + name);
+                p.name = name;
+            }
+            const std::string name = p.name;
+            writeGarment(g, op, gm);
+            return name;
+        },
+        .examples = {"tailorEditPanel('Garment', panel='Front', grainAngle=90)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorInsertPoint",
+        .doc = "Insert an outline point into a panel before point index, at a position in pattern space (cm). Seams keep "
+               "sewing the same stretch of outline. Returns the new point's index.",
+        .positionalDoc = "garment",
+        .flags = {{"panel", "p", T::String, json(), "Panel by name or index."},
+                  {"index", "i", T::Int, json(), "The new point's index; the old point there moves up one."},
+                  {"position", "pos", T::List, json(), "[x, y], cm."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorInsertPoint");
+            Garment gm = readGarment(op);
+            const int pi = panelIndex(gm, a.flags.value("panel", json()), "tailorInsertPoint");
+            Panel& p = gm.panels[size_t(pi)];
+            const int n = int(p.outline.size());
+            const int k = int(a.get<int64_t>("index"));
+            if (k < 0 || k > n)
+                throw CommandError("tailorInsertPoint: index out of 0.." + std::to_string(n));
+            const std::vector<Vec2> pos = pointsArg(json::array({a.flags.value("position", json())}), "tailorInsertPoint");
+            p.outline.insert(p.outline.begin() + k, pos.front());
+            for (Seam& s : gm.seams)
+                for (auto* sides : {&s.a, &s.b})
+                    for (SeamSide& side : *sides)
+                        if (side.panel == pi)
+                        {
+                            side.from += side.from >= k ? 1 : 0;
+                            side.to += side.to >= k ? 1 : 0;
+                        }
+            writeGarment(g, op, gm);
+            return int64_t(k);
+        },
+        .examples = {"tailorInsertPoint('Garment', panel='Front', index=2, position=[10, 40])"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorDeletePoint",
+        .doc = "Delete an outline point from a panel (it keeps at least 3). Seams ending there end at the next point; a seam "
+               "left without length is removed. Returns the number of seams removed.",
+        .positionalDoc = "garment",
+        .flags = {{"panel", "p", T::String, json(), "Panel by name or index."}, {"index", "i", T::Int, json(), "The point to delete."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorDeletePoint");
+            Garment gm = readGarment(op);
+            const int pi = panelIndex(gm, a.flags.value("panel", json()), "tailorDeletePoint");
+            Panel& p = gm.panels[size_t(pi)];
+            const int n = int(p.outline.size());
+            const int k = int(a.get<int64_t>("index"));
+            if (k < 0 || k >= n)
+                throw CommandError("tailorDeletePoint: index out of 0.." + std::to_string(n - 1));
+            if (n <= 3)
+                throw CommandError("tailorDeletePoint: a panel needs at least 3 points");
+            p.outline.erase(p.outline.begin() + k);
+            auto shift = [&](int v) { return v > k ? v - 1 : (v == k ? k % (n - 1) : v); };
+            const size_t before = gm.seams.size();
+            for (Seam& s : gm.seams)
+                for (auto* sides : {&s.a, &s.b})
+                    for (SeamSide& side : *sides)
+                        if (side.panel == pi)
+                        {
+                            side.from = shift(side.from);
+                            side.to = shift(side.to);
+                        }
+            std::erase_if(gm.seams, [](const Seam& s) {
+                for (const auto* sides : {&s.a, &s.b})
+                    for (const SeamSide& side : *sides)
+                        if (side.from == side.to)
+                            return true;
+                return false;
+            });
+            writeGarment(g, op, gm);
+            return int64_t(before - gm.seams.size());
+        },
+        .examples = {"tailorDeletePoint('Garment', panel='Front', index=2)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorAddPanel",
+        .doc = "Add a rectangular panel, placed flat in front of the garment's other panels, ready to reshape and sew.\n\n"
+               "Returns the new panel's name.",
+        .positionalDoc = "garment",
+        .flags = {{"name", "n", T::String, "Panel", "Name; made unique."},
+                  {"width", "w", T::Float, 40.0, "cm.", {}, {}, 1.0, 1000.0},
+                  {"height", "ht", T::Float, 60.0, "cm.", {}, {}, 1.0, 1000.0},
+                  {"layer", "l", T::Int, int64_t(0), "Layer: higher layers sit outside lower ones."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorAddPanel");
+            Garment gm = readGarment(op);
+            Panel p;
+            std::string base = a.get<std::string>("name");
+            p.name = base;
+            for (int k = 2; std::any_of(gm.panels.begin(), gm.panels.end(), [&](const Panel& o) { return o.name == p.name; }); ++k)
+                p.name = base + std::to_string(k);
+            const float w = float(a.get<double>("width") / kCmPerM), h = float(a.get<double>("height") / kCmPerM);
+            p.outline = {{0.f, 0.f}, {w, 0.f}, {w, h}, {0.f, h}};
+            p.layer = int(a.get<int64_t>("layer"));
+            // In front of everything placed so far, centred on it, facing +Z.
+            float zMax = 0.f, xMid = 0.f, yMid = 1.f;
+            if (!gm.panels.empty())
+            {
+                float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+                zMax = -1e9f;
+                for (const Panel& o : gm.panels)
+                {
+                    x0 = std::min(x0, o.origin[0]);
+                    x1 = std::max(x1, o.origin[0]);
+                    y0 = std::min(y0, o.origin[1]);
+                    y1 = std::max(y1, o.origin[1]);
+                    zMax = std::max(zMax, o.origin[2]);
+                }
+                xMid = 0.5f * (x0 + x1);
+                yMid = 0.5f * (y0 + y1);
+            }
+            p.origin = {xMid - 0.5f * w, yMid - 0.5f * h, zMax + 0.1f};
+            p.right = {1.f, 0.f, 0.f};
+            p.up = {0.f, 1.f, 0.f};
+            const std::string name = p.name;
+            gm.panels.push_back(std::move(p));
+            writeGarment(g, op, gm);
+            return name;
+        },
+        .examples = {"tailorAddPanel('Garment', name='Pocket', width=15, height=18)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorDeletePanel",
+        .doc = "Delete panels and every seam that sews them. Returns the number of seams removed.",
+        .positionalDoc = "garment",
+        .flags = {{"panel", "p", T::List, json(), "Panels by name or index."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorDeletePanel");
+            Garment gm = readGarment(op);
+            if (!a.has("panel") || a.flags["panel"].empty())
+                throw CommandError("tailorDeletePanel: name the panels");
+            std::vector<int> gone = panelsArg(gm, a, "panel", "tailorDeletePanel");
+            std::sort(gone.begin(), gone.end());
+            auto removed = [&](int p) { return std::binary_search(gone.begin(), gone.end(), p); };
+            const size_t before = gm.seams.size();
+            std::erase_if(gm.seams, [&](const Seam& s) {
+                for (const auto* sides : {&s.a, &s.b})
+                    for (const SeamSide& side : *sides)
+                        if (removed(side.panel))
+                            return true;
+                return false;
+            });
+            for (Seam& s : gm.seams)
+                for (auto* sides : {&s.a, &s.b})
+                    for (SeamSide& side : *sides)
+                        side.panel -= int(std::lower_bound(gone.begin(), gone.end(), side.panel) - gone.begin());
+            for (auto it = gone.rbegin(); it != gone.rend(); ++it)
+                gm.panels.erase(gm.panels.begin() + *it);
+            writeGarment(g, op, gm);
+            return int64_t(before - gm.seams.size());
+        },
+        .examples = {"tailorDeletePanel('Garment', panel=['Pocket'])"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorUnsew",
+        .doc = "Remove seams by index. Returns how many were removed.",
+        .positionalDoc = "garment",
+        .flags = {{"seam", "s", T::List, json(), "Seam indices, as tailorSew returned them."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorUnsew");
+            Garment gm = readGarment(op);
+            std::vector<int64_t> idx;
+            json list = a.flags.value("seam", json::array());
+            if (!list.is_array())
+                list = json::array({list});
+            for (const json& v : list)
+                if (v.is_number_integer() && v.get<int64_t>() >= 0 && size_t(v.get<int64_t>()) < gm.seams.size())
+                    idx.push_back(v.get<int64_t>());
+            std::sort(idx.begin(), idx.end());
+            idx.erase(std::unique(idx.begin(), idx.end()), idx.end());
+            for (auto it = idx.rbegin(); it != idx.rend(); ++it)
+                gm.seams.erase(gm.seams.begin() + *it);
+            writeGarment(g, op, gm);
+            return int64_t(idx.size());
+        },
+        .examples = {"tailorUnsew('Garment', seam=[3])"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorLive",
+        .doc = "Keep a garment simulating in real time (on) or stop it where it got to (off). Live garments answer pattern "
+               "edits as they happen and can be pulled with the Grab Cloth tool. Returns whether it is live.",
+        .positionalDoc = "garment",
+        .flags = {{"on", "o", T::Bool, true, "Live or not."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorLive");
+            g.setValue({op.id(), plugIndex(op, "live")}, a.get<bool>("on"));
+            return a.get<bool>("on");
+        },
+        .examples = {"tailorLive('Garment')", "tailorLive('Garment', on=False)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorDrawPanel",
+        .doc = "Make a panel from a closed outline drawn on the body: the points (world, cm) are unrolled around the body's "
+               "vertical axis into a flat pattern piece that wraps back onto the body at a clearance.\n\n"
+               "Adds to the named or selected garment; with none, starts a garment on the selected mesh. Returns [garment, "
+               "panel names].",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pt", T::List, json(), "The outline, [[x, y, z], ...] in world cm, at least 3."},
+                  {"name", "n", T::String, "Panel", "Panel name; made unique."},
+                  {"mirror", "m", T::Bool, false, "Also add the mirror image across the body's centre."},
+                  {"clearance", "cl", T::Float, 1.5, "How far the panel starts outside the body, cm.", {}, {}, 0.0, 50.0},
+                  {"layer", "l", T::Int, int64_t(0), "Layer: higher layers sit outside lower ones."},
+                  {"collider", "c", T::String, json(), "The body, when a new garment is started; the selected mesh otherwise."},
+                  {"fabric", "fab", T::String, "Cotton", "Fabric preset of a new garment.", presetChoices()},
+                  {"particleDistance", "pd", T::Float, 2.0, "Cloth edge length of a new garment, cm.", {}, {}, 0.1, 50.0},
+                  {"simulate", "sim", T::Bool, true, "Drape a new garment."},
+                  {"frames", "fr", T::Int, int64_t(90), "Solver frames for a new garment.", {}, {}, 0.0, 10000.0},
+                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<glm::dvec3> pts;
+            const json list = a.flags.value("points", json());
+            if (list.is_array())
+                for (const json& p : list)
+                    if (p.is_array() && p.size() >= 3)
+                        pts.push_back(glm::dvec3(p[0].get<double>(), p[1].get<double>(), p[2].get<double>()) / kCmPerM);
+            if (pts.size() < 3)
+                throw CommandError("tailorDrawPanel: give at least 3 points as [[x, y, z], ...] in cm");
+
+            Node* op = nullptr;
+            try
+            {
+                op = &garmentArg(g, a, "tailorDrawPanel");
+            }
+            catch (const CommandError&)
+            {
+                op = nullptr;
+            }
+            Node* collider = nullptr;
+            if (op)
+            {
+                const std::optional<PlugRef> src = g.source({op->id(), plugIndex(*op, "colliderMesh")});
+                collider = src ? g.node(src->node) : nullptr;
+            }
+            else
+                collider = colliderArg(g, a);
+
+            // The body's vertical axis: its feet centre, else the outline's own centre.
+            glm::dvec2 axis(0.0);
+            if (collider)
+            {
+                Vec3 feet{0.f, 0.f, 0.f};
+                measureCollider(g, *collider, feet);
+                axis = {feet[0], feet[2]};
+            }
+            else
+            {
+                for (const glm::dvec3& p : pts)
+                    axis += glm::dvec2(p.x, p.z) / double(pts.size());
+            }
+
+            std::vector<double> theta(pts.size());
+            double radius = 0.0;
+            for (size_t i = 0; i < pts.size(); ++i)
+            {
+                theta[i] = std::atan2(pts[i].x - axis.x, pts[i].z - axis.y);
+                // Keep the angle continuous along the outline so a panel crossing the back doesn't jump a full turn.
+                if (i > 0)
+                    while (theta[i] - theta[i - 1] > std::numbers::pi)
+                        theta[i] -= 2.0 * std::numbers::pi;
+                if (i > 0)
+                    while (theta[i] - theta[i - 1] < -std::numbers::pi)
+                        theta[i] += 2.0 * std::numbers::pi;
+                radius += glm::length(glm::dvec2(pts[i].x, pts[i].z) - axis) / double(pts.size());
+            }
+            radius += a.get<double>("clearance") / kCmPerM;
+            double centre = 0.0;
+            for (double t : theta)
+                centre += t / double(theta.size());
+
+            Garment gm = op ? readGarment(*op) : Garment{};
+            auto makePanel = [&](const std::string& base, double side) {
+                Panel p;
+                p.name = base;
+                for (int k = 2; std::any_of(gm.panels.begin(), gm.panels.end(), [&](const Panel& o) { return o.name == p.name; }); ++k)
+                    p.name = base + " " + std::to_string(k);
+                for (size_t i = 0; i < pts.size(); ++i)
+                    p.outline.push_back({float(side * (theta[i] - centre) * radius), float(pts[i].y)});
+                double area = 0.0;
+                for (size_t i = 0; i < p.outline.size(); ++i)
+                {
+                    const Vec2 &u = p.outline[i], &v = p.outline[(i + 1) % p.outline.size()];
+                    area += double(u[0]) * v[1] - double(v[0]) * u[1];
+                }
+                if (area < 0.0)
+                    std::reverse(p.outline.begin(), p.outline.end());
+                // Pattern x runs around the body at this radius, y is height; see Panel's placement convention.
+                const double c = side * centre;
+                p.origin = {float(axis.x + radius * std::sin(c)), 0.f, float(axis.y + radius * std::cos(c))};
+                p.right = {float(std::cos(c)), 0.f, float(-std::sin(c))};
+                p.up = {0.f, 1.f, 0.f};
+                p.wrapRadius = float(radius);
+                p.layer = int(a.get<int64_t>("layer"));
+                gm.panels.push_back(std::move(p));
+                return gm.panels.back().name;
+            };
+            json names = json::array();
+            const std::string base = a.get<std::string>("name");
+            names.push_back(makePanel(a.get<bool>("mirror") ? base + " L" : base, 1.0));
+            if (a.get<bool>("mirror"))
+            {
+                // Mirror across x = axis: the angle flips sign.
+                for (double& t : theta)
+                    t = -t;
+                centre = -centre;
+                names.push_back(makePanel(base + " R", 1.0));
+            }
+            if (op)
+            {
+                writeGarment(g, *op, gm);
+                return json::array({op->path(), names});
+            }
+            const json made = createGarment(gm, std::string(), a, "tailorDrawPanel", "Garment");
+            return json::array({made[1], names});
+        },
+        .examples = {"tailorDrawPanel(points=[[-15, 140, 12], [15, 140, 12], [15, 100, 14], [-15, 100, 14]], name='Bib', collider='Mannequin')"},
     });
 
     ctx.registerCommand({

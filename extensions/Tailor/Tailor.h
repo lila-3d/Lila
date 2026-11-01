@@ -5,7 +5,16 @@
 #include <lila/Command.h>
 #include <lila/Mesh.h>
 
+#include <lila/Node.h>
+
 #include <glm/mat4x4.hpp>
+
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <vector>
 
 #include <string>
 
@@ -44,7 +53,52 @@ struct DrapeNow
 /** Cancels running drapes and waits for them; for unloading. */
 void stopDrapes();
 
+/**
+ * A garment simulating continuously on its own thread, at most in real time, while its live attribute is on. The node
+ * shows positions() every evaluation; the Grab Cloth tool pulls a vertex with grab().
+ */
+class LiveDrape
+{
+public:
+    LiveDrape(lila::scene::NodeId garment, uint64_t key, std::shared_ptr<const ClothMesh> cloth, Garment g, Sdf collider,
+              bool useGpu, SolverSettings settings, std::vector<Vec3> start);
+    ~LiveDrape();
+    LiveDrape(const LiveDrape&) = delete;
+    LiveDrape& operator=(const LiveDrape&) = delete;
+
+    /** The inputs it was started for; another key means start again. */
+    uint64_t key() const { return mKey; }
+    const ClothMesh& cloth() const { return *mCloth; }
+    std::vector<Vec3> positions() const;
+    /** Ends the thread; positions() keeps the last state. */
+    void stop();
+    /** Pins vertex to target (metres) until release(). */
+    void grab(int vertex, const Vec3& target);
+    void release();
+
+private:
+    void run(lila::scene::NodeId garment, const Garment& g, const Sdf& collider, bool useGpu);
+
+    uint64_t mKey;
+    std::shared_ptr<const ClothMesh> mCloth;
+    SolverSettings mSettings;
+    mutable std::mutex mMutex;
+    std::vector<Vec3> mLatest;
+    std::optional<Pin> mGrab;
+    std::atomic<bool> mStop{false};
+    std::atomic<bool> mRefreshQueued{false};
+    std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);
+    std::thread mThread;
+};
+
+/** Main thread. The garment node registers its live drape here, null to drop it. */
+void registerLive(lila::scene::NodeId garment, const std::shared_ptr<LiveDrape>& live);
+std::shared_ptr<LiveDrape> liveDrape(lila::scene::NodeId garment);
+std::vector<lila::scene::NodeId> liveGarments();
+
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+void registerPatternEditor(lila::ext::Context& ctx);
+void registerGrabTool(lila::ext::Context& ctx);
 } // namespace tailor

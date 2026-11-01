@@ -2,6 +2,7 @@
 
 #include "TailorCore.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -116,4 +117,99 @@ TEST_CASE("surface: packed UVs replace uv but not fabricUv")
     const GarmentSurface s = garmentSurface(m, m.rest3d, packed);
     CHECK(s.uv[2][1][1] == doctest::Approx(0.25f));
     CHECK(s.fabricUv[2][1][1] != doctest::Approx(0.25f));
+}
+
+namespace
+{
+/** Two 0.2 x 0.3 m panels side by side in the XY plane facing +Z, sewn along x = 0 with the given fold. */
+ClothMesh hingedPair(int nu, int nv, Garment& g, float fold)
+{
+    ClothMesh m;
+    for (int panel = 0; panel < 2; ++panel)
+    {
+        const int base = int(m.rest3d.size());
+        for (int j = 0; j < nv; ++j)
+            for (int i = 0; i < nu; ++i)
+            {
+                const float u = 0.2f * float(i) / float(nu - 1), v = 0.3f * float(j) / float(nv - 1);
+                m.rest3d.push_back({panel == 0 ? u - 0.2f : u, v, 0.f});
+                m.uv.push_back({u, v});
+                m.vertPanel.push_back(panel);
+            }
+        for (int j = 0; j + 1 < nv; ++j)
+            for (int i = 0; i + 1 < nu; ++i)
+            {
+                const int a = base + j * nu + i;
+                m.tris.push_back({a, a + 1, a + nu + 1});
+                m.tris.push_back({a, a + nu + 1, a + nu});
+                m.triPanel.push_back(panel);
+                m.triPanel.push_back(panel);
+            }
+    }
+    for (int j = 0; j < nv; ++j)
+    {
+        m.seamPairs.push_back({j * nu + nu - 1, nu * nv + j * nu});
+        m.seamRestLength.push_back(0.f);
+        m.seamOfPair.push_back(0);
+    }
+    g.panels.resize(2);
+    g.fabrics = {*findFabric("Denim")};
+    g.seams.resize(1);
+    g.seams[0].foldAngle = fold;
+    return m;
+}
+
+float panelAngle(const ClothMesh& m, const std::vector<Vec3>& x)
+{
+    Vec3 n[2] = {{0, 0, 0}, {0, 0, 0}};
+    for (size_t t = 0; t < m.tris.size(); ++t)
+    {
+        const Vec3 &a = x[size_t(m.tris[t][0])], &b = x[size_t(m.tris[t][1])], &c = x[size_t(m.tris[t][2])];
+        const float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        Vec3& s = n[m.triPanel[t]];
+        s = {s[0] + e1[1] * e2[2] - e1[2] * e2[1], s[1] + e1[2] * e2[0] - e1[0] * e2[2], s[2] + e1[0] * e2[1] - e1[1] * e2[0]};
+    }
+    const float d = n[0][0] * n[1][0] + n[0][1] * n[1][1] + n[0][2] * n[1][2];
+    const float l = std::hypot(n[0][0], n[0][1], n[0][2]) * std::hypot(n[1][0], n[1][1], n[1][2]);
+    return std::acos(std::clamp(d / l, -1.f, 1.f)) * 180.f / 3.14159265f;
+}
+} // namespace
+
+TEST_CASE("surface: a folded seam holds its angle")
+{
+    for (float fold : {0.f, 1.5707963f})
+    {
+        Garment g;
+        const ClothMesh m = hingedPair(7, 9, g, fold);
+        CHECK(seamHinges(m, g).size() == (fold == 0.f ? 0u : 8u));
+        SolverSettings s;
+        s.gravity = {0.f, 0.f, 0.f};
+        ClothSolver solver;
+        solver.reset(m, g, s);
+        // A nudge out of plane so the fold has a side to start on.
+        std::vector<Vec3>& x = solver.positionsMutable();
+        for (size_t i = size_t(7 * 9); i < x.size(); ++i)
+            x[i][2] += 0.01f * x[i][0];
+        for (int f = 0; f < 300; ++f)
+            solver.step();
+        CAPTURE(fold);
+        CHECK(std::abs(panelAngle(m, solver.positions()) - fold * 180.f / 3.14159265f) < 3.f);
+    }
+}
+
+TEST_CASE("surface: a shrunk seam gathers its edge")
+{
+    Garment g;
+    ClothMesh m = hingedPair(7, 9, g, 0.f);
+    g.seams[0].shrink = 0.7f;
+    CHECK(seamShrinks(m, g).size() == 16u);
+    SolverSettings s;
+    s.gravity = {0.f, 0.f, 0.f};
+    ClothSolver solver;
+    solver.reset(m, g, s);
+    for (int f = 0; f < 200; ++f)
+        solver.step();
+    const auto& x = solver.positions();
+    const Vec3 &top = x[size_t(8 * 7 + 6)], &bottom = x[size_t(6)];
+    CHECK(std::hypot(top[0] - bottom[0], top[1] - bottom[1], top[2] - bottom[2]) < 0.3f * 0.75f);
 }

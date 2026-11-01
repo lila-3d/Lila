@@ -68,14 +68,18 @@ struct ClothScene
     uint* dminT;  // float bits
     float* bound;
     uint* state;  // [0] a vertex hit its bound this iteration; [4..] indirect dispatch args for re-detection
-    uint* reserved; // keeps gravity 16-byte aligned under scalar and std430 layout alike
+    float2* body;   // collider contact as an AVBD constraint per vertex: stiffness, normal force
+    float* grid0;   // collider distance grids, x fastest
+    float* grid1;
+    float* grid2;
+    float* grid3;
 
     uint nVerts, nTris, nHinges, nLinks;
     uint nColliders, hashMask, selfCollision, nMovable;
     float h, lambdaDecay, stiffnessDecay, beta;
     float kMax, thickness, queryRadius, cellSize;
     float boundFraction, frictionSlip, drag, seamKeep;
-    float closedGap, pad0, pad1, pad2;
+    float closedGap, floorY, pad1, pad2;
     float4 gravity;
 };
 
@@ -89,7 +93,6 @@ struct ClothPush
 };
 
 [[vk::push_constant]] ClothPush pc;
-[[vk::binding(0, 0)]] Texture3D<float> sdfTex[kMaxColliders];
 
 // ------------------------------------------------------------------------------------------------ math
 
@@ -175,19 +178,19 @@ float3 clampToBound(ClothScene* s, uint i, float3 p, out bool clamped)
 
 // ------------------------------------------------------------------------------------------------ SDF colliders
 
-/** Constant indices only: indexing the grid array with a variable needs a device feature Lila may not enable. */
-float texel(uint c, int3 p)
+float texel(ClothScene* s, uint c, int3 p, int3 dims)
 {
+    uint i = uint((p.z * dims.y + p.y) * dims.x + p.x);
     switch (c)
     {
     case 0:
-        return sdfTex[0].Load(int4(p, 0));
+        return s->grid0[i];
     case 1:
-        return sdfTex[1].Load(int4(p, 0));
+        return s->grid1[i];
     case 2:
-        return sdfTex[2].Load(int4(p, 0));
+        return s->grid2[i];
     default:
-        return sdfTex[3].Load(int4(p, 0));
+        return s->grid3[i];
     }
 }
 
@@ -206,10 +209,10 @@ float sdfSample(ClothScene* s, uint c, float3 p, out float3 grad)
     float3 out3 = (u - uc) * oc.w;
     int3 i0 = min(int3(uc), dims - 2);
     float3 fr = uc - float3(i0);
-    float c000 = texel(c, i0), c100 = texel(c, i0 + int3(1, 0, 0));
-    float c010 = texel(c, i0 + int3(0, 1, 0)), c110 = texel(c, i0 + int3(1, 1, 0));
-    float c001 = texel(c, i0 + int3(0, 0, 1)), c101 = texel(c, i0 + int3(1, 0, 1));
-    float c011 = texel(c, i0 + int3(0, 1, 1)), c111 = texel(c, i0 + int3(1, 1, 1));
+    float c000 = texel(s, c, i0, dims), c100 = texel(s, c, i0 + int3(1, 0, 0), dims);
+    float c010 = texel(s, c, i0 + int3(0, 1, 0), dims), c110 = texel(s, c, i0 + int3(1, 1, 0), dims);
+    float c001 = texel(s, c, i0 + int3(0, 0, 1), dims), c101 = texel(s, c, i0 + int3(1, 0, 1), dims);
+    float c011 = texel(s, c, i0 + int3(0, 1, 1), dims), c111 = texel(s, c, i0 + int3(1, 1, 1), dims);
     float fx = fr.x, fy = fr.y, fz = fr.z;
     float c00 = c000 + (c100 - c000) * fx, c10 = c010 + (c110 - c010) * fx;
     float c01 = c001 + (c101 - c001) * fx, c11 = c011 + (c111 - c011) * fx;
@@ -224,38 +227,56 @@ float sdfSample(ClothScene* s, uint c, float3 p, out float3 grad)
     return value + length(out3);
 }
 
-void addSdfContacts(ClothScene* s, uint i, float3 xi, float3 xs, inout float3 f, inout float3x3 H)
+/** ClothSolver::bodyContact: the deepest penetration into any collider and its push-out normal; false when clear. */
+bool bodyContact(ClothScene* s, uint i, float3 p, out float pen, out float3 n)
 {
-    float4 ex = s->vextra[i];
-    float r = s->thickness + 0.5 * ex.x;
-    float kc = ex.y;
-    float mu = s->vinfo[i].z;
+    float r = s->thickness + 0.5 * s->vextra[i].x;
+    pen = 0.0;
+    n = float3(0, 1, 0);
     for (uint c = 0; c < s->nColliders; ++c)
     {
         float3 g;
-        float phi = sdfSample(s, c, xi, g);
-        if (phi >= r)
+        float phi = sdfSample(s, c, p, g);
+        if (phi >= r || r - phi <= pen)
             continue;
         float gl = length(g);
         if (gl < 1e-8)
             continue;
-        float3 n = g / gl;
-        float pen = r - phi;
-        f += kc * pen * n;
-        float3x3 nn = outer(n, n);
-        H += kc * nn;
-        // Lagged friction against the tangential slip this substep.
-        float3 slip = xi - xs;
-        float3 u = slip - n * dot(n, slip);
-        float scale = mu * kc * pen / max(length(u), s->frictionSlip);
-        f -= scale * u;
-        H += scale * (kI - nn);
+        pen = r - phi;
+        n = g / gl;
     }
+    float floorPen = r - (p.y - s->floorY);
+    if (floorPen > pen)
+    {
+        pen = floorPen;
+        n = float3(0, 1, 0);
+    }
+    return pen > 0.0;
+}
+
+void addSdfContacts(ClothScene* s, uint i, float3 xi, float3 xs, inout float3 f, inout float3x3 H)
+{
+    float pen;
+    float3 n;
+    if (!bodyContact(s, i, xi, pen, n))
+        return;
+    float2 dual = s->body[i];
+    float kc = dual.x;
+    float fn = max(0.0, kc * pen + dual.y);
+    f += fn * n;
+    float3x3 nn = outer(n, n);
+    H += kc * nn;
+    // Lagged friction against the tangential slip this substep.
+    float3 slip = xi - xs;
+    float3 u = slip - n * dot(n, slip);
+    float scale = s->vinfo[i].z * fn / max(length(u), s->frictionSlip);
+    f -= scale * u;
+    H += scale * (kI - nn);
 }
 
 // ------------------------------------------------------------------------------------------------ elastic terms
 
-void addMembrane(ClothScene* s, uint i, inout float3 fe, inout float3x3 He)
+void addMembrane(ClothScene* s, uint i, inout float3 fe, inout float3x3 He, inout float3x3 Hg)
 {
     for (uint k = s->triOff[i]; k < s->triOff[i + 1]; ++k)
     {
@@ -290,7 +311,8 @@ void addMembrane(ClothScene* s, uint i, inout float3 fe, inout float3x3 He)
         float3 w = c1 * f0 + c0 * f1;
         // The geometric term goes indefinite under compression; its negative part is dropped to keep the block SPD.
         float geometric = max(0.0, S00 * c0 * c0 + 2.0 * S01 * c0 * c1 + S11 * c1 * c1);
-        He += t.rest.x * (kWarp * c0 * c0 * outer(f0, f0) + kWeft * c1 * c1 * outer(f1, f1) + kShear * outer(w, w) + geometric * kI);
+        He += t.rest.x * (kWarp * c0 * c0 * outer(f0, f0) + kWeft * c1 * c1 * outer(f1, f1) + kShear * outer(w, w));
+        Hg += (t.rest.x * geometric) * kI;
     }
 }
 
@@ -487,6 +509,8 @@ void beginStepCS(uint3 tid: SV_DispatchThreadID)
         pd.w = max(s->vextra[i].z, pd.w * s->stiffnessDecay);
         s->pinDual[i] = pd;
     }
+    float2 b = s->body[i];
+    s->body[i] = float2(max(s->vextra[i].y, b.x * s->stiffnessDecay), b.y * s->lambdaDecay);
 }
 
 [shader("compute")]
@@ -536,14 +560,15 @@ void solveCS(uint3 tid: SV_DispatchThreadID)
 
     float3 fe = float3(0.0);
     float3x3 He = float3x3(0, 0, 0, 0, 0, 0, 0, 0, 0);
-    addMembrane(s, i, fe, He);
+    float3x3 Hg = float3x3(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    addMembrane(s, i, fe, He, Hg);
     addBending(s, i, fe, He);
     // Rayleigh damping on the elastic terms, against the motion since the substep started.
     float kd = info.w / s->h;
     fe -= kd * mul(He, xi - xs);
     He *= 1.0 + kd;
     f += fe;
-    H += He;
+    H += He + Hg;
 
     addLinks(s, i, f, H);
     addSdfContacts(s, i, xi, xs, f, H);
@@ -611,6 +636,16 @@ void dualPinsCS(uint3 tid: SV_DispatchThreadID)
         return;
     ClothScene* s = pc.scene;
     uint i = pc.first + tid.x;
+    if (s->nColliders > 0 || s->floorY > -1e29)
+    {
+        float2 b = s->body[i];
+        float pen;
+        float3 n;
+        if (movable(s, i) && bodyContact(s, i, P(s, i), pen, n))
+            s->body[i] = float2(min(b.x + s->beta * pen, s->kMax), max(0.0, b.x * pen + b.y));
+        else
+            s->body[i] = float2(b.x, 0.0);
+    }
     float4 pin = s->pin[i];
     if (pin.w <= 0.0)
         return;

@@ -1,11 +1,6 @@
 #include "ClothGpu.h"
 
-// TODO(sdk): the Lila SDK (sdk/include/lila) has no GPU compute surface, so this file is written against Lila's
-// internal render API (render/Compute.h, render/Renderer.h, render/VulkanContext.h), VMA and raw Vulkan. Tailor
-// cannot build as an SDK-only extension until that surface exists.
-#include "render/Compute.h"
-#include "render/Renderer.h"
-#include "render/VulkanContext.h"
+#include <lila/GpuCompute.h>
 
 #include <algorithm>
 #include <atomic>
@@ -23,9 +18,7 @@ namespace tailor
 {
 namespace
 {
-namespace rc = lila::render::compute;
-using lila::render::Renderer;
-using lila::render::VulkanContext;
+namespace gpu = lila::gpu;
 
 using F4 = std::array<float, 4>;
 
@@ -37,7 +30,6 @@ constexpr uint32_t kMovable = 1;
 constexpr uint32_t kSeam = 0;
 constexpr uint32_t kStrain = 1;
 constexpr uint32_t kMaxIndirectItems = 65535u * kGroup;
-constexpr VkShaderStageFlags kCompute = VK_SHADER_STAGE_COMPUTE_BIT;
 
 struct GpuTri
 {
@@ -91,28 +83,32 @@ enum Buf
     BDminT,
     BBound,
     BState,
-    BReserved,
+    BBody,
+    BGrid0, // collider distance grids, x fastest
+    BGrid1,
+    BGrid2,
+    BGrid3,
     BufCount
 };
 
 /** Mirrors ClothScene in cloth_vbd.slang. */
 struct GpuScene
 {
-    VkDeviceAddress ptr[BufCount];
+    uint64_t ptr[BufCount];
     uint32_t nVerts, nTris, nHinges, nLinks;
     uint32_t nColliders, hashMask, selfCollision, nMovable;
     float h, lambdaDecay, stiffnessDecay, beta;
     float kMax, thickness, queryRadius, cellSize;
     float boundFraction, frictionSlip, drag, seamKeep;
-    float closedGap, pad0, pad1, pad2;
+    float closedGap, floorY, pad1, pad2;
     float gravity[4];
 };
-static_assert(BufCount == 34);
-static_assert(offsetof(GpuScene, gravity) == 368 && sizeof(GpuScene) == 384);
+static_assert(BufCount == 38);
+static_assert(offsetof(GpuScene, gravity) == 400 && sizeof(GpuScene) == 416);
 
 struct ClothPush
 {
-    VkDeviceAddress scene;
+    uint64_t scene;
     uint32_t first, count, pass, pad;
 };
 static_assert(sizeof(ClothPush) == 24);
@@ -228,7 +224,7 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
         const Panel* p = panelOf(vertPanel(i));
         const Fabric& f = fabricOf(p);
         const PanelState state = p ? p->state : PanelState::Active;
-        damping[size_t(i)] = f.damping;
+        damping[size_t(i)] = f.damping * tune.dampingScale;
         friction[size_t(i)] = f.friction;
         thickness[size_t(i)] = f.thickness;
         t.movable[size_t(i)] = state == PanelState::Active || state == PanelState::Strengthened;
@@ -252,8 +248,8 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
 
     // Rest corners in the grain frame: warp along x, scaled by the fabric's shrink.
     using V2 = std::array<float, 2>;
-    std::vector<std::array<V2, 3>> restCorners(size_t(nt));
-    std::vector<std::vector<uint32_t>> vTri(size_t(n)), vHinge(size_t(n)), vLink(size_t(n));
+    std::vector<std::array<V2, 3>> restCorners(static_cast<size_t>(nt));
+    std::vector<std::vector<uint32_t>> vTri(static_cast<size_t>(n)), vHinge(static_cast<size_t>(n)), vLink(static_cast<size_t>(n));
     t.tris.assign(size_t(nt), GpuTri{});
     for (int f = 0; f < nt; ++f)
     {
@@ -401,6 +397,32 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
         e = end;
     }
 
+    // Folded seams, as ClothSolver builds them.
+    for (const SeamHinge& sh : seamHinges(mesh, g))
+    {
+        auto restArea = [&](int f) {
+            if (!hasUv)
+                return 0.f;
+            const auto& tri = mesh.tris[size_t(f)];
+            const float ax = mesh.uv[size_t(tri[1])][0] - mesh.uv[size_t(tri[0])][0], ay = mesh.uv[size_t(tri[1])][1] - mesh.uv[size_t(tri[0])][1];
+            const float bx = mesh.uv[size_t(tri[2])][0] - mesh.uv[size_t(tri[0])][0], by = mesh.uv[size_t(tri[2])][1] - mesh.uv[size_t(tri[0])][1];
+            return 0.5f * std::abs(ax * by - bx * ay);
+        };
+        const float areas = restArea(sh.tris[0]) + restArea(sh.tris[1]);
+        const float restLen = float(d3Len(d3Sub(toD(mesh.rest3d[size_t(sh.v[0])]), toD(mesh.rest3d[size_t(sh.v[1])]))));
+        if (areas <= 1e-14f || restLen <= 1e-9f)
+            continue;
+        GpuHinge hg{};
+        for (int k = 0; k < 4; ++k)
+            hg.v[k] = uint32_t(sh.v[size_t(k)]);
+        hg.p[0] = sh.restAngle;
+        hg.p[1] = 6.f * sh.bend * restLen * restLen / areas;
+        const uint32_t hi = uint32_t(t.hinges.size());
+        t.hinges.push_back(hg);
+        for (uint32_t r = 0; r < 4; ++r)
+            vHinge[hg.v[r]].push_back(hi << 2 | r);
+    }
+
     for (size_t i = 0; i < mesh.seamPairs.size(); ++i)
     {
         const int a = mesh.seamPairs[i][0], b = mesh.seamPairs[i][1];
@@ -413,6 +435,9 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
             limit = 0.f;
         addLink(a, b, kSeam, limit, rest, closed);
     }
+    for (const SeamShrink& sk : seamShrinks(mesh, g))
+        if (t.movable[size_t(sk.a)] || t.movable[size_t(sk.b)])
+            addLink(sk.a, sk.b, kStrain, sk.limit, 0.f, false);
     for (uint32_t k = 0; k < uint32_t(t.links.size()); ++k)
     {
         vLink[t.links[k].v[0]].push_back(k << 1);
@@ -420,7 +445,7 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
     }
 
     // Seam partners act as one vertex for self collision.
-    std::vector<int> weld(size_t(n));
+    std::vector<int> weld(static_cast<size_t>(n));
     std::iota(weld.begin(), weld.end(), 0);
     for (const GpuLink& l : t.links)
         if (l.v[2] == kSeam)
@@ -433,7 +458,7 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
         t.weld[size_t(i)] = uint32_t(weldRoot(weld, i));
 
     // Greedy colouring in vertex order over triangles, hinges and links, as ClothSolver does.
-    std::vector<std::vector<int>> adj(size_t(n));
+    std::vector<std::vector<int>> adj(static_cast<size_t>(n));
     auto connect = [&](int a, int b) {
         adj[size_t(a)].push_back(b);
         adj[size_t(b)].push_back(a);
@@ -494,85 +519,18 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
     return t;
 }
 
-struct Image
-{
-    VkImage image = VK_NULL_HANDLE;
-    VmaAllocation alloc = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-};
-
-void destroy(VulkanContext& vk, Image& img)
-{
-    if (img.view)
-        vkDestroyImageView(vk.device, img.view, nullptr);
-    if (img.image)
-        vmaDestroyImage(vk.allocator, img.image, img.alloc);
-    img = {};
-}
-
-void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayout to)
-{
-    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-    b.oldLayout = from;
-    b.newLayout = to;
-    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = image;
-    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    di.imageMemoryBarrierCount = 1;
-    di.pImageMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd, &di);
-}
-
-/** A 3D R32F distance grid (x fastest, as Sdf::values), filled by a copy recorded into cmd. Read with texel loads. */
-Image uploadGrid(VulkanContext& vk, VkCommandBuffer cmd, int nx, int ny, int nz, const float* values, std::vector<rc::Buffer>& staging)
-{
-    Image img;
-    VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ici.imageType = VK_IMAGE_TYPE_3D;
-    ici.format = VK_FORMAT_R32_SFLOAT;
-    ici.extent = {uint32_t(nx), uint32_t(ny), uint32_t(nz)};
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-    VmaAllocationCreateInfo aci{};
-    aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-    if (vmaCreateImage(vk.allocator, &ici, &aci, &img.image, &img.alloc, nullptr) != VK_SUCCESS)
-        throw std::runtime_error("Tailor: could not allocate a collider grid");
-    VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vci.image = img.image;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_3D;
-    vci.format = ici.format;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    if (vkCreateImageView(vk.device, &vci, nullptr, &img.view) != VK_SUCCESS)
-    {
-        destroy(vk, img);
-        throw std::runtime_error("Tailor: could not create a collider grid view");
-    }
-    staging.push_back(rc::hostBuffer(vk, values, size_t(nx) * ny * nz * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
-    imageBarrier(cmd, img.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = ici.extent;
-    vkCmdCopyBufferToImage(cmd, staging.back().buffer, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    imageBarrier(cmd, img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    return img;
-}
-
 uint32_t nextPow2(uint32_t v)
 {
-    uint32_t p = 1024;
+    uint32_t p = 1;
     while (p < v && p < (1u << 30))
         p <<= 1;
     return p;
 }
 
 bool validGrid(const Sdf& s) { return s.nx >= 2 && s.ny >= 2 && s.nz >= 2 && s.cell > 0.f && s.values.size() >= size_t(s.nx) * s.ny * s.nz; }
+
+/** Session ids past the topology buffers. */
+constexpr int kSceneBuffer = BufCount;
 } // namespace
 
 struct ClothGpu::Impl
@@ -593,21 +551,11 @@ struct ClothGpu::Impl
     std::vector<int> pinVerts; // the pinned set the duals belong to
     bool pinsDirty = false;
     bool pinDualsReset = false;
+    std::vector<Vec3> pendingPositions;
 
-    // Render thread, under mutex.
-    rc::Buffer buf[BufCount]{};
-    rc::Buffer scene{}, readback{};
-    Image grids[kMaxColliders]{};
-    Image dummy{};
-    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
-    VkDescriptorPool pool = VK_NULL_HANDLE;
-    VkDescriptorSet set = VK_NULL_HANDLE;
-    VkPipelineLayout layout = VK_NULL_HANDLE;
-    VkPipeline pipes[KernelCount]{};
-    std::vector<uint32_t> code;
-    uint64_t codeHash = 0;
-    rc::Submitter submit;
+    gpu::Session session;
     uint32_t hashSize = 0;
+    uint32_t liveColliders = 0;
 
     Impl()
     {
@@ -615,111 +563,18 @@ struct ClothGpu::Impl
             xf = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     }
 
-    void releaseLocked(VulkanContext& vk)
+    static void upload(gpu::Recorder& r, int id, const void* data, size_t bytes, gpu::BufferKind kind = gpu::BufferKind::Storage)
     {
-        for (rc::Buffer& b : buf)
-            rc::destroy(vk, b);
-        rc::destroy(vk, scene);
-        rc::destroy(vk, readback);
-        for (Image& g : grids)
-            destroy(vk, g);
-        destroy(vk, dummy);
-        if (pool)
-            vkDestroyDescriptorPool(vk.device, pool, nullptr);
-        if (setLayout)
-            vkDestroyDescriptorSetLayout(vk.device, setLayout, nullptr);
-        rc::destroy(vk, layout);
-        submit.destroy(vk);
-        // Pipelines belong to the shared cache, which the renderer clears when it stops.
-        pool = VK_NULL_HANDLE;
-        set = VK_NULL_HANDLE;
-        setLayout = VK_NULL_HANDLE;
-        layout = VK_NULL_HANDLE;
-        for (VkPipeline& p : pipes)
-            p = VK_NULL_HANDLE;
-        ready = false;
-    }
-
-    /** Set layout, descriptor set, the dummy grid and the pipelines, made once per device. */
-    void ensureDevice(VulkanContext& vk, VkCommandBuffer cmd, std::vector<rc::Buffer>& staging)
-    {
-        if (!setLayout)
-        {
-            VkDescriptorSetLayoutBinding b{0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaxColliders, kCompute, nullptr};
-            VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            lci.bindingCount = 1;
-            lci.pBindings = &b;
-            vkCreateDescriptorSetLayout(vk.device, &lci, nullptr, &setLayout);
-            VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaxColliders};
-            VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-            pci.maxSets = 1;
-            pci.poolSizeCount = 1;
-            pci.pPoolSizes = &size;
-            vkCreateDescriptorPool(vk.device, &pci, nullptr, &pool);
-            if (setLayout && pool)
-            {
-                VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-                ai.descriptorPool = pool;
-                ai.descriptorSetCount = 1;
-                ai.pSetLayouts = &setLayout;
-                vkAllocateDescriptorSets(vk.device, &ai, &set);
-            }
-            if (!set)
-                throw std::runtime_error("Tailor: could not create the collider descriptor set");
-        }
-        if (!dummy.image)
-        {
-            const float far[8] = {1e4f, 1e4f, 1e4f, 1e4f, 1e4f, 1e4f, 1e4f, 1e4f};
-            dummy = uploadGrid(vk, cmd, 2, 2, 2, far, staging);
-            writeDescriptors(vk);
-        }
-        if (!layout)
-        {
-            const VkDescriptorSetLayout sets[] = {setLayout};
-            layout = rc::pipelineLayout(vk, sizeof(ClothPush), kCompute, sets);
-        }
-        if (code.empty())
-        {
-            std::string err;
-            code = rc::loadSpirv("cloth_vbd.spv", &err);
-            if (code.empty())
-                throw std::runtime_error(err);
-            codeHash = rc::spirvHash(code);
-        }
-        const uint64_t key = rc::layoutKey(sizeof(ClothPush), kCompute, "tailor.cloth.sdf4");
-        for (int k = 0; k < KernelCount; ++k)
-            pipes[k] = rc::sharedPipelines().get(vk, layout, key, code, codeHash, kEntries[k]);
-    }
-
-    void writeDescriptors(VulkanContext& vk)
-    {
-        VkDescriptorImageInfo infos[kMaxColliders];
-        for (uint32_t c = 0; c < kMaxColliders; ++c)
-            infos[c] = {VK_NULL_HANDLE, grids[c].view ? grids[c].view : dummy.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        w.dstSet = set;
-        w.dstBinding = 0;
-        w.descriptorCount = kMaxColliders;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        w.pImageInfo = infos;
-        vkUpdateDescriptorSets(vk.device, 1, &w, 0, nullptr);
-    }
-
-    void upload(VulkanContext& vk, VkCommandBuffer cmd, Buf id, const void* data, size_t bytes, std::vector<rc::Buffer>& staging,
-                VkBufferUsageFlags usage = 0)
-    {
-        rc::destroy(vk, buf[id]);
-        buf[id] = rc::makeBuffer(vk, std::max<size_t>(bytes, 16), usage, rc::Host::None);
+        r.buffer(id, bytes, kind);
         if (data && bytes)
-        {
-            staging.push_back(rc::hostBuffer(vk, data, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
-            rc::copy(cmd, staging.back(), buf[id], bytes);
-        }
+            r.upload(id, data, bytes);
+        else
+            r.fill(id, 0);
     }
 
-    template <class T> void upload(VulkanContext& vk, VkCommandBuffer cmd, Buf id, const std::vector<T>& v, std::vector<rc::Buffer>& staging)
+    template <class T> static void upload(gpu::Recorder& r, int id, const std::vector<T>& v)
     {
-        upload(vk, cmd, id, v.data(), v.size() * sizeof(T), staging);
+        upload(r, id, v.data(), v.size() * sizeof(T));
     }
 
     /** Pin targets for every vertex; only movable vertices take pins, as in ClothSolver. */
@@ -740,78 +595,85 @@ struct ClothGpu::Impl
         return d;
     }
 
-    /** Uploads the whole topology and state. Render thread. */
-    void uploadAll(VulkanContext& vk, VkCommandBuffer cmd, std::vector<rc::Buffer>& staging)
+    void loadKernels(gpu::Recorder& r)
+    {
+        for (int k = 0; k < KernelCount; ++k)
+            r.kernel(k, "cloth_vbd.spv", kEntries[k], sizeof(ClothPush));
+    }
+
+    /** Uploads the whole topology and state. */
+    void uploadAll(gpu::Recorder& r)
     {
         const uint32_t n = topo.n, nt = uint32_t(topo.tris.size());
-        upload(vk, cmd, BX, topo.x, staging);
-        upload(vk, cmd, BXStart, topo.x, staging);
-        upload(vk, cmd, BXNew, topo.x, staging);
-        upload(vk, cmd, BXDetect, topo.x, staging);
-        upload(vk, cmd, BY, topo.x, staging);
-        upload(vk, cmd, BVel, std::vector<F4>(n, F4{0, 0, 0, 0}), staging);
-        upload(vk, cmd, BVInfo, topo.vinfo, staging);
-        upload(vk, cmd, BVExtra, topo.vextra, staging);
-        upload(vk, cmd, BPin, pinTargets(), staging);
-        upload(vk, cmd, BPinDual, freshPinDuals(), staging);
-        upload(vk, cmd, BTriOff, topo.triOff, staging);
-        upload(vk, cmd, BTriAdj, topo.triAdj, staging);
-        upload(vk, cmd, BHingeOff, topo.hingeOff, staging);
-        upload(vk, cmd, BHingeAdj, topo.hingeAdj, staging);
-        upload(vk, cmd, BLinkOff, topo.linkOff, staging);
-        upload(vk, cmd, BLinkAdj, topo.linkAdj, staging);
-        upload(vk, cmd, BColour, topo.colour, staging);
-        upload(vk, cmd, BWeld, topo.weld, staging);
-        upload(vk, cmd, BTris, topo.tris, staging);
-        upload(vk, cmd, BHinges, topo.hinges, staging);
-        upload(vk, cmd, BLinks, topo.links, staging);
+        upload(r, BX, topo.x);
+        upload(r, BXStart, topo.x);
+        upload(r, BXNew, topo.x);
+        upload(r, BXDetect, topo.x);
+        upload(r, BY, topo.x);
+        upload(r, BVel, std::vector<F4>(n, F4{0, 0, 0, 0}));
+        upload(r, BVInfo, topo.vinfo);
+        upload(r, BVExtra, topo.vextra);
+        upload(r, BPin, pinTargets());
+        upload(r, BPinDual, freshPinDuals());
+        upload(r, BTriOff, topo.triOff);
+        upload(r, BTriAdj, topo.triAdj);
+        upload(r, BHingeOff, topo.hingeOff);
+        upload(r, BHingeAdj, topo.hingeAdj);
+        upload(r, BLinkOff, topo.linkOff);
+        upload(r, BLinkAdj, topo.linkAdj);
+        upload(r, BColour, topo.colour);
+        upload(r, BWeld, topo.weld);
+        upload(r, BTris, topo.tris);
+        upload(r, BHinges, topo.hinges);
+        upload(r, BLinks, topo.links);
         std::vector<F4> linkDual(topo.links.size());
         for (size_t k = 0; k < topo.links.size(); ++k)
             linkDual[k] = {0.f, 0.f, 0.f, topo.links[k].p[2]};
-        upload(vk, cmd, BLinkDual, linkDual, staging);
-        upload(vk, cmd, BColliders, nullptr, size_t(kMaxColliders) * 5 * sizeof(F4), staging);
-        upload(vk, cmd, BCellHead, nullptr, size_t(hashSize) * 4, staging);
-        upload(vk, cmd, BCellNext, nullptr, size_t(n) * 4, staging);
-        upload(vk, cmd, BVtCount, std::vector<uint32_t>(n, 0), staging);
-        upload(vk, cmd, BVt, nullptr, size_t(n) * kMaxVt * 4, staging);
-        upload(vk, cmd, BTvCount, std::vector<uint32_t>(n, 0), staging);
-        upload(vk, cmd, BTv, nullptr, size_t(n) * kMaxTv * 8, staging);
-        upload(vk, cmd, BDminV, nullptr, size_t(n) * 4, staging);
-        upload(vk, cmd, BDminT, nullptr, size_t(nt) * 4, staging);
-        upload(vk, cmd, BBound, std::vector<float>(n, 1e30f), staging);
-        const std::vector<uint32_t> state(kStateWords, 0);
-        upload(vk, cmd, BState, state.data(), state.size() * 4, staging, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-        upload(vk, cmd, BReserved, nullptr, 16, staging);
-        rc::destroy(vk, scene);
-        scene = rc::makeBuffer(vk, sizeof(GpuScene), 0, rc::Host::None);
-        rc::destroy(vk, readback);
-        readback = rc::makeBuffer(vk, std::max<size_t>(size_t(n) * sizeof(F4), 16), 0, rc::Host::Read);
+        upload(r, BLinkDual, linkDual);
+        upload(r, BColliders, nullptr, size_t(kMaxColliders) * 5 * sizeof(F4));
+        upload(r, BCellHead, nullptr, size_t(hashSize) * 4);
+        upload(r, BCellNext, nullptr, size_t(n) * 4);
+        upload(r, BVtCount, nullptr, size_t(n) * 4);
+        upload(r, BVt, nullptr, size_t(n) * kMaxVt * 4);
+        upload(r, BTvCount, nullptr, size_t(n) * 4);
+        upload(r, BTv, nullptr, size_t(n) * kMaxTv * 8);
+        upload(r, BDminV, nullptr, size_t(n) * 4);
+        upload(r, BDminT, nullptr, size_t(nt) * 4);
+        upload(r, BBound, std::vector<float>(n, 1e30f));
+        upload(r, BState, nullptr, size_t(kStateWords) * 4, gpu::BufferKind::Indirect);
+        std::vector<std::array<float, 2>> body(n);
+        for (uint32_t i = 0; i < n; ++i)
+            body[i] = {topo.vextra[i][1], 0.f};
+        upload(r, BBody, body);
+        r.buffer(kSceneBuffer, sizeof(GpuScene));
     }
 
-    void uploadColliders(VulkanContext& vk, VkCommandBuffer cmd, std::vector<rc::Buffer>& staging)
+    void uploadColliders(gpu::Recorder& r)
     {
-        for (Image& g : grids)
-            destroy(vk, g);
-        for (size_t c = 0; c < colliders.size() && c < kMaxColliders; ++c)
-            if (validGrid(colliders[c]))
-                grids[c] = uploadGrid(vk, cmd, colliders[c].nx, colliders[c].ny, colliders[c].nz, colliders[c].values.data(), staging);
-        writeDescriptors(vk);
+        liveColliders = 0;
+        for (uint32_t c = 0; c < kMaxColliders; ++c)
+        {
+            const int id = BGrid0 + int(c);
+            if (c < colliders.size() && validGrid(colliders[c]))
+            {
+                upload(r, id, colliders[c].values.data(), size_t(colliders[c].nx) * colliders[c].ny * colliders[c].nz * 4);
+                liveColliders = c + 1;
+            }
+            else
+                upload(r, id, nullptr, 16);
+        }
     }
 
-    GpuScene sceneData() const
+    GpuScene sceneData(const gpu::Recorder& r) const
     {
         GpuScene g{};
         for (int b = 0; b < BufCount; ++b)
-            g.ptr[b] = buf[b].address;
+            g.ptr[b] = r.address(b);
         g.nVerts = topo.n;
         g.nTris = uint32_t(topo.tris.size());
         g.nHinges = uint32_t(topo.hinges.size());
         g.nLinks = uint32_t(topo.links.size());
-        uint32_t live = 0;
-        for (uint32_t c = 0; c < kMaxColliders; ++c)
-            if (grids[c].image)
-                live = c + 1;
-        g.nColliders = live;
+        g.nColliders = liveColliders;
         g.hashMask = hashSize - 1;
         g.selfCollision = settings.selfCollision ? 1u : 0u;
         g.nMovable = uint32_t(topo.colour.size());
@@ -828,6 +690,7 @@ struct ClothGpu::Impl
         g.drag = 1.f / (1.f + tune.airDrag * h);
         g.seamKeep = 1.f - std::clamp(settings.seamCloseRate, 0.f, 1.f);
         g.closedGap = tune.closedGap;
+        g.floorY = settings.floorY;
         for (int k = 0; k < 3; ++k)
             g.gravity[k] = settings.gravity[size_t(k)];
         return g;
@@ -836,54 +699,51 @@ struct ClothGpu::Impl
     /** Grid transform rows, origin and cell, dims (as uint bits) per collider; an invalid grid gets zero dims. */
     std::vector<F4> colliderRecords() const
     {
-        std::vector<F4> r(size_t(kMaxColliders) * 5, F4{0, 0, 0, 0});
+        std::vector<F4> rec(size_t(kMaxColliders) * 5, F4{0, 0, 0, 0});
         for (size_t c = 0; c < colliders.size() && c < kMaxColliders; ++c)
         {
             const Sdf& s = colliders[c];
             const auto& xf = colliderXf[c];
             for (size_t row = 0; row < 3; ++row)
-                r[c * 5 + row] = {xf[row * 4], xf[row * 4 + 1], xf[row * 4 + 2], xf[row * 4 + 3]};
-            r[c * 5 + 3] = {s.origin[0], s.origin[1], s.origin[2], s.cell};
+                rec[c * 5 + row] = {xf[row * 4], xf[row * 4 + 1], xf[row * 4 + 2], xf[row * 4 + 3]};
+            rec[c * 5 + 3] = {s.origin[0], s.origin[1], s.origin[2], s.cell};
             if (validGrid(s))
-                r[c * 5 + 4] = {bitsToFloat(uint32_t(s.nx)), bitsToFloat(uint32_t(s.ny)), bitsToFloat(uint32_t(s.nz)), 0.f};
+                rec[c * 5 + 4] = {bitsToFloat(uint32_t(s.nx)), bitsToFloat(uint32_t(s.ny)), bitsToFloat(uint32_t(s.nz)), 0.f};
         }
-        return r;
+        return rec;
     }
 
-    void bind(VkCommandBuffer cmd, Kernel k) { vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipes[k]); }
-
-    void dispatch(VkCommandBuffer cmd, Kernel k, uint32_t first, uint32_t count)
+    /** Items [first, first + count) of kernel k in chunks under the group limit, then a barrier. */
+    void dispatch(gpu::Recorder& r, uint64_t scene, Kernel k, uint32_t first, uint32_t count)
     {
-        if (!count)
-            return;
-        bind(cmd, k);
-        ClothPush push{scene.address, 0, 0, 0, 0};
-        rc::dispatchChunks(cmd, layout, push, first, count, kGroup, [](ClothPush& p, uint32_t f, uint32_t c) {
-            p.first = f;
-            p.count = c;
-        });
-        rc::memoryBarrier(cmd);
+        const uint32_t chunk = gpu::Recorder::maxGroups * kGroup;
+        for (uint32_t done = 0; done < count; done += chunk)
+        {
+            const uint32_t c = std::min(chunk, count - done);
+            ClothPush push{scene, first + done, c, 0, 0};
+            r.dispatch(k, &push, (c + kGroup - 1) / kGroup);
+        }
+        if (count)
+            r.barrier();
     }
 
     /** Re-detection sized by redetectArgsCS: zero groups unless a vertex hit its bound in the last iteration. */
-    void dispatchIndirect(VkCommandBuffer cmd, Kernel k, uint32_t count, uint32_t slot)
+    void dispatchIndirect(gpu::Recorder& r, uint64_t scene, Kernel k, uint32_t count, uint32_t slot)
     {
-        bind(cmd, k);
-        ClothPush push{scene.address, 0, count, 0, 0};
-        vkCmdPushConstants(cmd, layout, kCompute, 0, sizeof push, &push);
-        vkCmdDispatchIndirect(cmd, buf[BState].buffer, VkDeviceSize(4 + slot * 3) * 4);
-        rc::memoryBarrier(cmd);
+        ClothPush push{scene, 0, count, 0, 0};
+        r.dispatchIndirect(k, &push, BState, size_t(4 + slot * 3) * 4);
+        r.barrier();
     }
 
-    void detect(VkCommandBuffer cmd)
+    void detect(gpu::Recorder& r, uint64_t scene)
     {
-        dispatch(cmd, KHashClear, 0, hashSize);
-        dispatch(cmd, KHashInsert, 0, topo.n);
-        dispatch(cmd, KHashQuery, 0, uint32_t(topo.tris.size()));
-        dispatch(cmd, KContactFinalize, 0, topo.n);
+        dispatch(r, scene, KHashClear, 0, hashSize);
+        dispatch(r, scene, KHashInsert, 0, topo.n);
+        dispatch(r, scene, KHashQuery, 0, uint32_t(topo.tris.size()));
+        dispatch(r, scene, KContactFinalize, 0, topo.n);
     }
 
-    void record(VkCommandBuffer cmd)
+    void record(gpu::Recorder& r, uint64_t scene)
     {
         const uint32_t n = topo.n, nl = uint32_t(topo.links.size()), nt = uint32_t(topo.tris.size());
         const bool self = settings.selfCollision;
@@ -891,182 +751,104 @@ struct ClothGpu::Impl
         // Indirect dispatches take no chunking; past their limit re-detection waits for the next substep.
         const bool indirect = std::max({hashSize, n, nt}) <= kMaxIndirectItems;
 
-        dispatch(cmd, KAdvanceSeams, 0, nl);
+        dispatch(r, scene, KAdvanceSeams, 0, nl);
         for (int sub = 0; sub < std::max(1, settings.substeps); ++sub)
         {
-            dispatch(cmd, KBeginStep, 0, n);
-            dispatch(cmd, KBeginLinks, 0, nl);
+            dispatch(r, scene, KBeginStep, 0, n);
+            dispatch(r, scene, KBeginLinks, 0, nl);
             if (self)
-                detect(cmd);
-            dispatch(cmd, KInitGuess, 0, n);
+                detect(r, scene);
+            dispatch(r, scene, KInitGuess, 0, n);
             for (int it = 0; it < iterations; ++it)
             {
                 for (size_t c = 0; c + 1 < topo.colourOff.size(); ++c)
                 {
                     const uint32_t first = topo.colourOff[c], count = topo.colourOff[c + 1] - first;
-                    dispatch(cmd, KSolve, first, count);
-                    dispatch(cmd, KCommit, first, count);
+                    dispatch(r, scene, KSolve, first, count);
+                    dispatch(r, scene, KCommit, first, count);
                 }
-                dispatch(cmd, KDualLinks, 0, nl);
-                dispatch(cmd, KDualPins, 0, n);
-                if (self && indirect && it + 1 < iterations)
+                dispatch(r, scene, KDualLinks, 0, nl);
+                dispatch(r, scene, KDualPins, 0, n);
+                if (self && indirect && it % tune.redetectEvery == tune.redetectEvery - 1 && it + 1 < iterations)
                 {
-                    // dispatch() ends in a barrier over all commands, indirect argument reads included.
-                    dispatch(cmd, KRedetectArgs, 0, 1);
-                    dispatchIndirect(cmd, KHashClear, hashSize, 0);
-                    dispatchIndirect(cmd, KHashInsert, n, 1);
-                    dispatchIndirect(cmd, KHashQuery, nt, 2);
-                    dispatchIndirect(cmd, KContactFinalize, n, 3);
+                    dispatch(r, scene, KRedetectArgs, 0, 1);
+                    dispatchIndirect(r, scene, KHashClear, hashSize, 0);
+                    dispatchIndirect(r, scene, KHashInsert, n, 1);
+                    dispatchIndirect(r, scene, KHashQuery, nt, 2);
+                    dispatchIndirect(r, scene, KContactFinalize, n, 3);
                 }
             }
-            dispatch(cmd, KEndStep, 0, n);
+            dispatch(r, scene, KEndStep, 0, n);
         }
-        const VkBufferCopy toHost{0, 0, VkDeviceSize(n) * sizeof(F4)};
-        vkCmdCopyBuffer(cmd, buf[BX].buffer, readback.buffer, 1, &toHost);
+        r.readback(BX, size_t(n) * sizeof(F4));
     }
 
-    /** A reset's upload (uploadTopology) or one frame (simulate). Render thread, under mutex. */
-    void run(VulkanContext& vk, bool uploadTopology, bool simulate)
+    /** A reset's upload (uploadTopology) or one frame (simulate). Under mutex. */
+    bool run(bool uploadTopology, bool simulate, std::string* err)
     {
-        submit.init(vk);
-        std::vector<rc::Buffer> staging;
-        auto freeStaging = [&] {
-            for (rc::Buffer& b : staging)
-                rc::destroy(vk, b);
-            staging.clear();
-        };
-        try
+        if (!uploadTopology && !session.valid())
         {
-            submit.run(vk, [&](VkCommandBuffer cmd) {
-                ensureDevice(vk, cmd, staging);
+            if (err)
+                *err = "Tailor: the GPU solver lost its device state; reset it";
+            return false;
+        }
+        const bool ok = session.run(
+            [&](gpu::Recorder& r) {
+                loadKernels(r);
                 if (uploadTopology)
-                    uploadAll(vk, cmd, staging);
+                    uploadAll(r);
                 if (collidersDirty || uploadTopology)
                 {
-                    uploadColliders(vk, cmd, staging);
+                    uploadColliders(r);
                     collidersDirty = false;
                 }
                 if (pinsDirty && !uploadTopology)
                 {
-                    upload(vk, cmd, BPin, pinTargets(), staging);
+                    upload(r, BPin, pinTargets());
                     if (pinDualsReset)
-                        upload(vk, cmd, BPinDual, freshPinDuals(), staging);
+                        upload(r, BPinDual, freshPinDuals());
                 }
                 pinsDirty = pinDualsReset = false;
-                const GpuScene g = sceneData();
-                staging.push_back(rc::hostBuffer(vk, &g, sizeof g, VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
-                rc::copy(cmd, staging.back(), scene, sizeof g);
+                if (pendingPositions.size() == topo.n)
+                {
+                    std::vector<F4> x(topo.n);
+                    for (uint32_t i = 0; i < topo.n; ++i)
+                        x[i] = {pendingPositions[i][0], pendingPositions[i][1], pendingPositions[i][2], 0.f};
+                    for (int b : {BX, BXStart, BXNew, BXDetect, BY})
+                        upload(r, b, x);
+                    upload(r, BVel, std::vector<F4>(topo.n, F4{0, 0, 0, 0}));
+                }
+                pendingPositions.clear();
+                const GpuScene g = sceneData(r);
+                r.upload(kSceneBuffer, &g, sizeof g);
                 const std::vector<F4> rec = colliderRecords();
-                staging.push_back(rc::hostBuffer(vk, rec.data(), rec.size() * sizeof(F4), VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
-                rc::copy(cmd, staging.back(), buf[BColliders], rec.size() * sizeof(F4));
-                rc::memoryBarrier(cmd);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, nullptr);
+                r.upload(BColliders, rec.data(), rec.size() * sizeof(F4));
+                r.barrier();
                 if (simulate)
-                    record(cmd);
-            });
-        }
-        catch (...)
+                    record(r, r.address(kSceneBuffer));
+            },
+            err);
+        if (!ok || !simulate)
+            return ok;
+        std::vector<F4> x(topo.n);
+        if (!session.read(BX, x.data(), x.size() * sizeof(F4)))
         {
-            freeStaging();
-            throw;
+            if (err)
+                *err = "Tailor: the GPU solver read back nothing";
+            return false;
         }
-        freeStaging();
-        if (simulate)
-        {
-            vmaInvalidateAllocation(vk.allocator, readback.alloc, 0, VK_WHOLE_SIZE);
-            const F4* x = static_cast<const F4*>(readback.mapped);
-            positions.resize(topo.n);
-            for (uint32_t i = 0; i < topo.n; ++i)
-                positions[i] = {x[i][0], x[i][1], x[i][2]};
-        }
+        positions.resize(topo.n);
+        for (uint32_t i = 0; i < topo.n; ++i)
+            positions[i] = {x[i][0], x[i][1], x[i][2]};
+        return true;
     }
 };
 
-namespace
-{
-std::once_flag gStopHook;
-std::mutex gLiveMutex;
-std::atomic<std::thread::id> gRenderThread;
+ClothGpu::ClothGpu() : impl_(std::make_shared<Impl>()) {}
 
-/** Releasers of live solvers, run when the renderer stops; each returns false once its solver is gone. */
-std::vector<std::function<bool(VulkanContext&)>>& liveSolvers()
-{
-    static std::vector<std::function<bool(VulkanContext&)>> live;
-    return live;
-}
+ClothGpu::~ClothGpu() = default;
 
-/** An extension DLL links its own volk, whose entry points stay null until loaded for Lila's device. */
-void ensureVolk(VulkanContext& vk)
-{
-    if (volkGetLoadedDevice() == vk.device)
-        return;
-    volkInitialize();
-    volkLoadInstance(vk.instance);
-    volkLoadDevice(vk.device);
-}
-
-/** Runs fn on the render thread and waits; false with err when the renderer is not running or the task threw. */
-template <class F> bool onRenderThread(F&& fn, std::string* err)
-{
-    Renderer& r = Renderer::get();
-    const char* problem = !r.running()                                          ? "Tailor: the GPU solver needs the renderer"
-                          : std::this_thread::get_id() == gRenderThread.load() ? "Tailor: the GPU solver cannot wait on the render thread"
-                                                                                : nullptr;
-    if (problem)
-    {
-        if (err)
-            *err = problem;
-        return false;
-    }
-    try
-    {
-        r.runTask([&](VulkanContext& vk) {
-             gRenderThread = std::this_thread::get_id();
-             ensureVolk(vk);
-             fn(vk);
-             return true;
-         })
-            .get();
-    }
-    catch (const std::exception& e)
-    {
-        if (err)
-            *err = e.what();
-        return false;
-    }
-    return true;
-}
-} // namespace
-
-ClothGpu::ClothGpu() : impl_(std::make_shared<Impl>())
-{
-    std::call_once(gStopHook, [] {
-        Renderer::get().addStopHook([](VulkanContext& vk) {
-            std::scoped_lock live(gLiveMutex);
-            auto& l = liveSolvers();
-            l.erase(std::remove_if(l.begin(), l.end(), [&](auto& release) { return !release(vk); }), l.end());
-        });
-    });
-    std::weak_ptr<Impl> weak = impl_;
-    std::scoped_lock live(gLiveMutex);
-    liveSolvers().push_back([weak](VulkanContext& vk) {
-        auto impl = weak.lock();
-        if (!impl)
-            return false;
-        std::scoped_lock lock(impl->mutex);
-        impl->releaseLocked(vk);
-        return true;
-    });
-}
-
-ClothGpu::~ClothGpu()
-{
-    std::scoped_lock lock(impl_->mutex);
-    if (impl_->submit.pool || impl_->scene.buffer)
-        onRenderThread([&](VulkanContext& vk) { impl_->releaseLocked(vk); }, nullptr);
-}
-
-bool ClothGpu::available() { return Renderer::get().running(); }
+bool ClothGpu::available() { return gpu::available(); }
 
 bool ClothGpu::reset(const ClothMesh& mesh, const Garment& g, const SolverSettings& s, std::string* err)
 {
@@ -1085,7 +867,7 @@ bool ClothGpu::reset(const ClothMesh& mesh, const Garment& g, const SolverSettin
     m.ready = false;
     if (m.topo.n == 0)
         return true;
-    if (!onRenderThread([&](VulkanContext& vk) { m.run(vk, true, false); }, err))
+    if (!m.run(true, false, err))
         return false;
     m.ready = true;
     return true;
@@ -1125,6 +907,13 @@ void ClothGpu::setPins(std::vector<Pin> pins)
     m.pinsDirty = true;
 }
 
+void ClothGpu::setPositions(std::vector<Vec3> positions)
+{
+    std::scoped_lock lock(impl_->mutex);
+    impl_->positions = positions;
+    impl_->pendingPositions = std::move(positions);
+}
+
 bool ClothGpu::step(std::string* err)
 {
     std::scoped_lock lock(impl_->mutex);
@@ -1137,7 +926,7 @@ bool ClothGpu::step(std::string* err)
             *err = "Tailor: the GPU solver has no device state; reset it";
         return false;
     }
-    if (!onRenderThread([&](VulkanContext& vk) { m.run(vk, false, true); }, err))
+    if (!m.run(false, true, err))
     {
         m.ready = false;
         return false;

@@ -102,8 +102,31 @@ struct ClothMesh
     std::vector<int> vertPanel;
     std::vector<std::array<int, 2>> seamPairs; // vertices to be sewn together
     std::vector<float> seamRestLength;     // usually 0
+    std::vector<int> seamOfPair;           // Garment::seams index of each pair, in sewing order along the seam
     std::vector<std::array<int, 2>> creaseEdges; // internal-line edges (keep sharp rest angle)
 };
+
+/** A bending hinge across a folded seam: edge v[0]-v[1] on one side, wings v[2] and v[3] on either panel. */
+struct SeamHinge
+{
+    std::array<int, 4> v{};
+    std::array<int, 2> tris{}; // the wings' triangles, for the hinge's area
+    float restAngle = 0.f;
+    float bend = 0.f; // N*m, the stiffer of the two fabrics times kSeamStiffening
+};
+
+/** Hinges that hold every seam with a fold angle at that angle (a pressed hem, a crisp collar). Plain seams get none. */
+std::vector<SeamHinge> seamHinges(const ClothMesh& mesh, const Garment& g);
+
+/** An outline edge along a seam with shrink < 1, held to at most limit (metres): an elastic gather. */
+struct SeamShrink
+{
+    int a = -1, b = -1;
+    float limit = 0.f;
+};
+
+/** Both sides' edges of every seam whose shrink is below 1, at shrink times their rest length. */
+std::vector<SeamShrink> seamShrinks(const ClothMesh& mesh, const Garment& g);
 
 /** Mesh every active/frozen panel at its particle distance, place it in 3D and resample seams to matching vertex pairs. */
 ClothMesh buildClothMesh(const Garment& g);
@@ -129,6 +152,7 @@ struct SolverSettings
     float collisionThickness = 0.004f;
     bool selfCollision = true;
     float seamCloseRate = 0.25f; // fraction of remaining seam gap closed per step while sewing
+    float floorY = -1e30f;       // a ground plane the cloth rests on, metres; far below means none
     uint32_t seed = 1;
 };
 

@@ -12,6 +12,7 @@
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Node.h>
+#include <lila/ViewportTool.h>
 
 #include <QHeaderView>
 #include <QTreeWidget>
@@ -130,6 +131,20 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.bake", .label = "Bake to Game Mesh", .category = "Tailor",
                        .doc = "Make a plain mesh from the selected garment's drape, skinned like its collider when that is skinned.",
                        .python = "tailorBake('Garment')", .command = "tailorBake", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.live", .label = "Live Drape", .category = "Tailor",
+                       .doc = "Keep the selected garment simulating in real time.", .python = "tailorLive('Garment')",
+                       .command = "tailorLive", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.stopLive", .label = "Stop Live Drape", .category = "Tailor",
+                       .doc = "Stop the selected garment where it got to.", .python = "tailorLive('Garment', on=False)",
+                       .command = "tailorLive", .call = {{"on", false}}});
+    actions::add(ctx, {.id = "tailor.drawPanel", .label = "Draw Panel on Body", .category = "Tailor",
+                       .run = [] { viewportTools::activate("tailor.drawPanel"); },
+                       .doc = "Click an outline on the selected body or garment's body; Enter makes it a panel, M mirrors it.",
+                       .icon = "pencil"});
+    actions::add(ctx, {.id = "tailor.grab", .label = "Grab Cloth", .category = "Tailor",
+                       .run = [] { viewportTools::activate("tailor.grab"); },
+                       .doc = "Pull a live garment around in the viewport; the selected garment goes live if none is.",
+                       .icon = "hand-grab"});
     actions::add(ctx, {.id = "tailor.freeze", .label = "Freeze Garment", .category = "Tailor",
                        .doc = "Freeze the selected garment's panels: they collide but no longer move.", .python = "tailorFreeze('Garment')",
                        .command = "tailorFreeze", .call = nlohmann::json::object()});
@@ -137,10 +152,13 @@ void registerUi(ext::Context& ctx)
                        .doc = "Set the selected garment's panels back to active.", .python = "tailorFreeze('Garment', state='active')",
                        .command = "tailorFreeze", .call = {{"state", "active"}}});
 
+    registerPatternEditor(ctx);
+    registerGrabTool(ctx);
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
     int sep = 0;
-    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
-                          "tailor.sew", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.bake"})
+    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
+                          "tailor.sew", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab", "",
+                          "tailor.freeze", "tailor.unfreeze", "", "tailor.bake"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("tailor.menu.") + a, .menu = "Tailor", .action = a});

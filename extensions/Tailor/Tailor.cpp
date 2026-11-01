@@ -2,6 +2,7 @@
 // and draped by the cloth solver onto an optional collider. Its outMesh feeds an ordinary mesh.
 
 #include "Tailor.h"
+#include "ClothGpu.h"
 #include "TailorCore.h"
 
 #include <lila/Extension.h>
@@ -115,6 +116,9 @@ enum GarmentAttr
     kWarning,
     kWeldSeams,
     kThickness,
+    kGpu,
+    kLive,
+    kFloor,
 };
 
 void hashMix(uint64_t& h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); }
@@ -252,6 +256,8 @@ public:
     {
         if (mJob)
             mJob->job.cancel();
+        if (mLive)
+            registerLive(id(), nullptr);
     }
 
     void compute(const EvalContext&) override
@@ -316,10 +322,49 @@ private:
         uint64_t key = meshKey;
         hashMix(key, std::hash<std::string>{}(as<std::string>(kFabric)));
         hashMix(key, uint64_t(frames));
+        hashMix(key, uint64_t(as<bool>(kGpu)));
+        hashMix(key, uint64_t(as<bool>(kFloor)));
         hashMix(key, uint64_t(uintptr_t(collider.get())));
         for (int c = 0; c < 4; ++c)
             for (int r = 0; r < 4; ++r)
                 hashMix(key, std::hash<double>{}(colliderWorld[c][r]));
+
+        SolverSettings settings;
+        if (as<bool>(kFloor) && collider && !collider->empty())
+        {
+            double lowest = 1e30;
+            for (geo::Index p = 0; p < collider->pointCapacity(); ++p)
+                lowest = std::min(lowest, (colliderWorld * glm::dvec4(collider->position(p), 1.0)).y);
+            settings.floorY = float(lowest / kCmPerM);
+        }
+
+        if (as<bool>(kLive) && drapeInBackground())
+        {
+            if (!mLive || mLive->key() != key)
+            {
+                std::vector<Vec3> start = mLive ? mLive->positions() : mDrape;
+                if (start.size() != cm.rest3d.size())
+                    start = cm.rest3d;
+                Sdf sdf;
+                if (collider && !collider->empty())
+                    sdf = colliderSdf(*collider, colliderWorld);
+                mLive.reset();
+                mLive = std::make_shared<LiveDrape>(id(), key, mCloth, g, std::move(sdf), as<bool>(kGpu), settings, std::move(start));
+                registerLive(id(), mLive);
+            }
+            return output(cm, mLive->positions());
+        }
+        if (mLive)
+        {
+            // Turning live off keeps the cloth where it got to.
+            if (mLive->key() == key)
+            {
+                mDrape = mLive->positions();
+                mDrapeKey = key;
+            }
+            mLive.reset();
+            registerLive(id(), nullptr);
+        }
 
         if (key == mDrapeKey && mDrape.size() == cm.rest3d.size())
             return output(cm, mDrape);
@@ -329,13 +374,13 @@ private:
             if (mJob)
                 mJob->job.cancel();
             mJob.reset();
-            mDrape = drape(cm, g, collider, colliderWorld, frames, nullptr);
+            mDrape = drape(cm, g, collider, colliderWorld, frames, as<bool>(kGpu), settings, nullptr);
             mDrapeKey = key;
             return output(cm, mDrape);
         }
 
         if (!mJob || mJob->key != key)
-            startDrape(key, g, collider, colliderWorld, frames);
+            startDrape(key, g, collider, colliderWorld, frames, settings);
         std::vector<Vec3> shown;
         {
             std::lock_guard lock(mJob->mutex);
@@ -351,35 +396,68 @@ private:
         return output(cm, shown.size() == cm.rest3d.size() ? shown : cm.rest3d);
     }
 
-    /** Runs the solver; with a task, reports progress to it, publishes every few frames and stops when cancelled. */
+    /**
+     * Runs the solver, on the GPU when asked and the renderer runs (falling back to the CPU solver if the GPU fails);
+     * with a task, reports progress to it, publishes every few frames and stops when cancelled.
+     */
     static std::vector<Vec3> drape(const ClothMesh& cm, const Garment& g, const MeshPtr& collider,
-                                   const glm::dmat4& colliderWorld, int64_t frames, tasks::Task* task,
+                                   const glm::dmat4& colliderWorld, int64_t frames, bool useGpu, const SolverSettings& settings,
+                                   tasks::Task* task,
                                    const std::function<void(const std::vector<Vec3>&)>& publish = {})
     {
         Sdf sdf;
-        ClothSolver solver;
-        solver.reset(cm, g, SolverSettings{});
+        std::vector<const Sdf*> colliders;
         if (collider && !collider->empty())
         {
             sdf = colliderSdf(*collider, colliderWorld);
-            solver.setColliders({&sdf});
+            colliders.push_back(&sdf);
         }
-        for (int64_t k = 0; k < frames; ++k)
-        {
+        auto tick = [&](int64_t k, const std::vector<Vec3>& positions) {
+            if (publish && (k + 1) % kPublishEvery == 0 && k + 1 < frames)
+                publish(positions);
+        };
+        auto beginFrame = [&] {
             if (task)
             {
                 task->checkCancel();
                 task->progress.step(1.0);
             }
+        };
+
+        if (useGpu && ClothGpu::available())
+        {
+            ClothGpu solver;
+            std::string err;
+            solver.setColliders(colliders);
+            bool ok = solver.reset(cm, g, settings, &err);
+            for (int64_t k = 0; ok && k < frames; ++k)
+            {
+                beginFrame();
+                ok = solver.step(&err);
+                if (ok)
+                    tick(k, solver.positions());
+            }
+            if (ok)
+                return solver.positions();
+            log::warn("Tailor: GPU drape failed, using the CPU solver: {}", err);
+        }
+
+        ClothSolver solver;
+        solver.reset(cm, g, settings);
+        solver.setColliders(colliders);
+        for (int64_t k = 0; k < frames; ++k)
+        {
+            beginFrame();
             solver.step();
-            if (publish && (k + 1) % kPublishEvery == 0 && k + 1 < frames)
-                publish(solver.positions());
+            tick(k, solver.positions());
         }
         return solver.positions();
     }
 
-    void startDrape(uint64_t key, const Garment& g, const MeshPtr& collider, const glm::dmat4& colliderWorld, int64_t frames)
+    void startDrape(uint64_t key, const Garment& g, const MeshPtr& collider, const glm::dmat4& colliderWorld, int64_t frames,
+                    const SolverSettings& settings)
     {
+        const bool useGpu = as<bool>(kGpu);
         if (mJob)
             mJob->job.cancel();
         auto job = std::make_shared<DrapeJob>();
@@ -398,8 +476,8 @@ private:
         };
         job->job = tasks::runInBackground(
             "Draping " + name(), double(frames),
-            [job, cloth = mCloth, g, collider, colliderWorld, frames, publish](tasks::Task& t) {
-                std::vector<Vec3> result = drape(*cloth, g, collider, colliderWorld, frames, &t, publish);
+            [job, cloth = mCloth, g, collider, colliderWorld, frames, useGpu, settings, publish](tasks::Task& t) {
+                std::vector<Vec3> result = drape(*cloth, g, collider, colliderWorld, frames, useGpu, settings, &t, publish);
                 std::lock_guard lock(job->mutex);
                 job->latest = std::move(result);
                 job->finished = true;
@@ -425,6 +503,7 @@ private:
     uint64_t mDrapeKey = 0;
     std::vector<Vec3> mDrape;
     std::shared_ptr<DrapeJob> mJob;
+    std::shared_ptr<LiveDrape> mLive;
 };
 
 constexpr uint32_t kGarmentIn = AttrInput | AttrStorable;
@@ -461,6 +540,13 @@ NodeType garmentType()
         {.name = "thickness", .type = PlugType::Float, .defaultValue = 0.0, .flags = kGarmentIn,
          .doc = "Shell thickness, cm, grown towards the wearer with rims on open edges; 0 is a single sheet.", .minValue = 0.0,
          .softMax = 2.0, .category = "Output"},
+        {.name = "gpu", .type = PlugType::Bool, .defaultValue = true, .flags = kGarmentIn,
+         .doc = "Drape on the GPU when the viewport is running; the CPU solver otherwise, and in batch runs.", .category = "Simulation"},
+        {.name = "live", .type = PlugType::Bool, .defaultValue = false, .flags = kGarmentIn,
+         .doc = "Keep simulating in real time, so the cloth answers edits and the Grab Cloth tool as they happen. Off keeps "
+                "the cloth where it got to.", .category = "Simulation"},
+        {.name = "floor", .type = PlugType::Bool, .defaultValue = true, .flags = kGarmentIn,
+         .doc = "A ground the cloth rests on, level with the collider's lowest point (its feet).", .category = "Simulation"},
     };
     t.create = [] { return std::make_unique<GarmentNode>(); };
     return t;
@@ -566,6 +652,10 @@ DrapeNow::~DrapeNow() { --gDrapeNow; }
 
 void stopDrapes()
 {
+    for (lila::scene::NodeId id : liveGarments())
+        if (auto live = liveDrape(id))
+            live->stop();
+    lila::mainq::drain();
     std::vector<std::shared_ptr<DrapeJob>> jobs = drapeJobs();
     for (const auto& j : jobs)
         j->job.cancel();

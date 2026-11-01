@@ -145,3 +145,84 @@ GarmentSurface garmentSurface(const ClothMesh& mesh, const std::vector<Vec3>& po
 }
 
 } // namespace tailor
+
+namespace tailor
+{
+namespace
+{
+/** Folded seams are sewn as pressed: this much stiffer than the fabric's own bending. */
+constexpr float kSeamStiffening = 10.f;
+} // namespace
+
+std::vector<SeamHinge> seamHinges(const ClothMesh& mesh, const Garment& g)
+{
+    std::vector<SeamHinge> out;
+    if (mesh.seamOfPair.size() != mesh.seamPairs.size())
+        return out;
+    // Each edge with its triangle and the triangle's third vertex; seam edges lie on the outline, so they have one.
+    std::map<std::pair<int, int>, std::pair<int, int>> wing;
+    for (size_t t = 0; t < mesh.tris.size(); ++t)
+        for (int k = 0; k < 3; ++k)
+        {
+            const int a = mesh.tris[t][k], b = mesh.tris[t][(k + 1) % 3];
+            wing[{std::min(a, b), std::max(a, b)}] = {int(t), mesh.tris[t][(k + 2) % 3]};
+        }
+    auto find = [&](int a, int b) -> const std::pair<int, int>* {
+        const auto it = wing.find({std::min(a, b), std::max(a, b)});
+        return it == wing.end() ? nullptr : &it->second;
+    };
+    auto bendOf = [&](int tri) {
+        const int panel = size_t(tri) < mesh.triPanel.size() ? mesh.triPanel[size_t(tri)] : 0;
+        const int f = panel >= 0 && size_t(panel) < g.panels.size() ? g.panels[size_t(panel)].fabric : 0;
+        const Fabric fab = f >= 0 && size_t(f) < g.fabrics.size() ? g.fabrics[size_t(f)] : Fabric{};
+        return std::max(fab.bendWarp, fab.bendWeft);
+    };
+    for (size_t k = 0; k + 1 < mesh.seamPairs.size(); ++k)
+    {
+        const int s = mesh.seamOfPair[k];
+        if (s != mesh.seamOfPair[k + 1] || s < 0 || size_t(s) >= g.seams.size() || g.seams[size_t(s)].foldAngle == 0.f)
+            continue;
+        const auto [a0, b0] = mesh.seamPairs[k];
+        const auto [a1, b1] = mesh.seamPairs[k + 1];
+        const auto* wa = find(a0, a1);
+        const auto* wb = find(b0, b1);
+        if (!wa || !wb)
+            continue;
+        SeamHinge h;
+        h.v = {a0, a1, wa->second, wb->second};
+        h.tris = {wa->first, wb->first};
+        h.restAngle = g.seams[size_t(s)].foldAngle;
+        h.bend = std::max(bendOf(wa->first), bendOf(wb->first)) * kSeamStiffening;
+        out.push_back(h);
+    }
+    return out;
+}
+} // namespace tailor
+
+namespace tailor
+{
+std::vector<SeamShrink> seamShrinks(const ClothMesh& mesh, const Garment& g)
+{
+    std::vector<SeamShrink> out;
+    if (mesh.seamOfPair.size() != mesh.seamPairs.size())
+        return out;
+    auto restLen = [&](int a, int b) {
+        const Vec3 &p = mesh.rest3d[size_t(a)], &q = mesh.rest3d[size_t(b)];
+        return std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    };
+    for (size_t k = 0; k + 1 < mesh.seamPairs.size(); ++k)
+    {
+        const int s = mesh.seamOfPair[k];
+        if (s != mesh.seamOfPair[k + 1] || s < 0 || size_t(s) >= g.seams.size() || g.seams[size_t(s)].shrink >= 1.f)
+            continue;
+        const float shrink = std::max(g.seams[size_t(s)].shrink, 0.05f);
+        for (int side = 0; side < 2; ++side)
+        {
+            const int a = mesh.seamPairs[k][size_t(side)], b = mesh.seamPairs[k + 1][size_t(side)];
+            if (a != b)
+                out.push_back({a, b, shrink * restLen(a, b)});
+        }
+    }
+    return out;
+}
+} // namespace tailor

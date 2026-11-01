@@ -1005,6 +1005,7 @@ std::vector<double> seamSamples(std::vector<double> hard, std::vector<double> so
 struct SeamPlan
 {
     std::vector<std::vector<int>> a, b;
+    int seam = -1;
 };
 
 Vec3 placePoint(const Panel& p, const P2& q)
@@ -1099,6 +1100,7 @@ ClothMesh buildClothMesh(const Garment& g)
             }
         };
         SeamPlan plan;
+        plan.seam = int(&seam - g.seams.data());
         for (double f : samples)
         {
             plan.a.emplace_back();
@@ -1145,6 +1147,7 @@ ClothMesh buildClothMesh(const Garment& g)
                         continue;
                     mesh.seamPairs.push_back({va, vb});
                     mesh.seamRestLength.push_back(0.f);
+                    mesh.seamOfPair.push_back(plan.seam);
                 }
     return mesh;
 }
