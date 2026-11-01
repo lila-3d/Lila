@@ -86,6 +86,39 @@ TEST_CASE("uvPack packs every selected mesh into one layout and stacks")
     CHECK_THROWS(run("uvPack", {{"scaleMode", "lock"}, {"tilesU", 1}, {"padding", 600}}));
 }
 
+TEST_CASE("uvPack on a material's faces leaves the rest of a partly assigned mesh alone")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0], b = run("polyCube")[0];
+    run("select", {{"args", {a, b}}});
+    run("uvProject", {{"type", "box"}});
+    run("uvPack", {{"resolution", 512}, {"padding", 4}});
+    run("createMaterial", {{"args", {"M_Blue"}}});
+    run("assignMaterial", {{"args", {"M_Blue", a}}});
+    run("assignMaterial", {{"args", {"M_Blue", b}}, {"faces", {1, 3}}});
+    auto uvsOf = [&](const std::string& object, std::vector<geo::Index> faces) {
+        scene::Graph& g = scene::Graph::current();
+        g.evaluate();
+        const geo::Mesh& m = *g.find(object)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        std::span<const glm::vec2> uvs = m.cornerAttrs().get<glm::vec2>("uv0");
+        std::vector<glm::vec2> out;
+        for (geo::Index c : uv::uvCornersOfFaces(m, "uv0", faces))
+            out.push_back(uvs[c]);
+        return out;
+    };
+    const std::vector<glm::vec2> rest = uvsOf(b, {0, 2, 4, 5}), mine = uvsOf(b, {1, 3});
+    run("selectByMaterial", {{"args", {"M_Blue"}}});
+    const double alone = run("uvPack", {{"resolution", 512}, {"padding", 4}, {"keep", "none"}})["texelsPerUnit"].get<double>();
+    CHECK(uvsOf(b, {0, 2, 4, 5}) == rest);
+    CHECK(uvsOf(b, {1, 3}) != mine);
+
+    // Keeping the unselected islands in place: those of another material take no room in this layout.
+    run("undo");
+    const double kept = run("uvPack", {{"resolution", 512}, {"padding", 4}, {"keep", "unselected"}})["texelsPerUnit"].get<double>();
+    CHECK(kept == doctest::Approx(alone).epsilon(0.02));
+    CHECK(uvsOf(b, {0, 2, 4, 5}) == rest);
+}
+
 TEST_CASE("uvPack perObject gives each mesh a layout of its own")
 {
     run("newScene");

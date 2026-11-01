@@ -18,6 +18,7 @@
 #include <map>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <thread>
 
 namespace lila::uv
@@ -1375,6 +1376,54 @@ PackResult packCharts(std::span<Chart> charts, const PackOptions& opts, std::spa
     return res;
 }
 
+namespace
+{
+/**
+ * Removes the fixed islands that share no material with a moving one: another material is another texture, so
+ * its islands take no room in this layout.
+ */
+void dropFixedOfOtherMaterials(std::span<const PackTarget> targets, std::vector<Chart>& charts, std::vector<PackChartInfo>& info,
+                               std::vector<size_t>& owner)
+{
+    auto materialsOf = [&](size_t i) {
+        const geo::Mesh& mesh = *targets[owner[i]].mesh;
+        std::span<const int32_t> ids = mesh.faceAttrs().get<int32_t>(geo::attr::kMaterial);
+        const auto& names = mesh.materialNames();
+        std::set<std::string> out;
+        for (Index f : charts[i].faces)
+        {
+            const int32_t id = f < ids.size() ? ids[f] : 0;
+            out.insert(id >= 0 && size_t(id) < names.size() ? names[size_t(id)] : "#" + std::to_string(id));
+        }
+        return out;
+    };
+    std::set<std::string> moving;
+    for (size_t i = 0; i < charts.size(); ++i)
+        if (!info[i].fixed)
+            moving.merge(materialsOf(i));
+    size_t kept = 0;
+    for (size_t i = 0; i < charts.size(); ++i)
+    {
+        if (info[i].fixed)
+        {
+            const std::set<std::string> mine = materialsOf(i);
+            if (std::none_of(mine.begin(), mine.end(), [&](const std::string& m) { return moving.count(m) != 0; }))
+                continue;
+        }
+        if (kept != i)
+        {
+            charts[kept] = std::move(charts[i]);
+            info[kept] = info[i];
+            owner[kept] = owner[i];
+        }
+        ++kept;
+    }
+    charts.resize(kept);
+    info.resize(kept);
+    owner.resize(kept);
+}
+} // namespace
+
 PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, const PackOptions& opts)
 {
     LILA_ZONE();
@@ -1435,6 +1484,7 @@ PackResult packMeshes(std::span<PackTarget> targets, std::string_view uvSet, con
             owner.push_back(t);
         }
     }
+    dropFixedOfOtherMaterials(targets, charts, info, owner);
     // Degenerate islands get a fresh unwrap so they have an area to pack; positions go to world space for density.
     tbb::parallel_for(size_t(0), charts.size(), [&](size_t i) {
         if (info[i].fixed)

@@ -155,6 +155,7 @@ private:
         std::string name;
         scene::MeshPtr mesh;
         std::string set;
+        std::vector<Index> only;         // the faces shown, sorted; empty shows them all
         std::vector<Index> faces;
         std::vector<uint32_t> faceStart; // per face, plus one
         std::vector<Index> corner;       // per entry
@@ -208,7 +209,10 @@ private:
     /** Shows the live solver's latest uvs and pins in place of the mesh's while a session matches it. */
     void applyLive();
 
-    static MeshUv build(scene::NodeId id, const std::string& name, scene::MeshPtr mesh, const std::string& set);
+    /** In face mode with faces selected, the selected faces of each mesh (none for a mesh without any); empty otherwise. */
+    static std::vector<std::vector<Index>> shownFaces(const std::vector<scene::NodeId>& meshes);
+    static MeshUv build(scene::NodeId id, const std::string& name, scene::MeshPtr mesh, const std::string& set,
+                        std::vector<Index> only = {});
 
     /** Entries the selection moves: wedges of selected faces, or corners of selected points and edge ends. */
     std::vector<uint8_t> selectedEntries(const MeshUv& mu) const;

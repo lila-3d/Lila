@@ -741,10 +741,11 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "selectByMaterial",
-        .doc = "Select the objects a material is assigned to, or with faces=true the faces it is assigned to. Returns the "
+        .doc = "Select what a material is assigned to: whole objects when it covers every face of each, otherwise just the "
+               "faces it is assigned to. faces=true always selects faces, faces=false always whole objects. Returns the "
                "objects.",
         .positionalDoc = "material",
-        .flags = {{"faces", "f", T::Bool, false, "Select the assigned faces instead of whole objects."}},
+        .flags = {{"faces", "f", T::Bool, nullptr, "Force faces (true) or whole objects (false); unset picks by coverage."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -753,6 +754,7 @@ void registerCommands()
             g.evaluate();
             json objects = json::array();
             std::vector<std::pair<std::string, json>> faces;
+            bool partial = false;
             for (NodeId id : g.nodes())
             {
                 Node* n = g.node(id);
@@ -766,12 +768,16 @@ void registerCommands()
                         hit.push_back(f);
                 if (hit.empty())
                     continue;
+                partial |= hit.size() < mesh->numFaces();
                 objects.push_back(n->path());
                 faces.emplace_back(n->path(), std::move(hit));
             }
             ops::execute("select", objects.empty() ? json{{"clear", true}} : json{{"args", objects}});
-            if (!a.get<bool>("faces"))
+            if (objects.empty() || !(a.has("faces") ? a.get<bool>("faces") : partial))
+            {
+                ops::execute("selectMode", {{"args", {"object"}}});
                 return objects;
+            }
             ops::execute("selectMode", {{"args", {"face"}}});
             bool first = true;
             for (auto& [name, ids] : faces)

@@ -328,7 +328,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     auto* del = iconButton("trash", "Delete the material.");
     auto* showAssigned = iconButton("target", "Show the material assigned to the selected object.");
     auto* selectUsers =
-        iconButton("pointer", "Select the objects this material is assigned to. Shift+click selects the assigned faces.");
+        iconButton("pointer", "Select what this material is assigned to: whole objects, or just the faces where it covers part of a mesh.");
     for (QPushButton* b : {mAssign, add, del, showAssigned, selectUsers})
         buttons->addWidget(b);
     buttons->addStretch();
@@ -374,7 +374,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     connect(showAssigned, &QPushButton::clicked, this, [this] { followSelection(); });
     connect(selectUsers, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
-            run("selectByMaterial", {{"args", json::array({n->path()})}, {"faces", bool(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier)}});
+            run("selectByMaterial", {{"args", json::array({n->path()})}});
     });
     connect(mList, &QListWidget::currentTextChanged, this, [this](const QString& name) {
         scene::Node* n = scene::materials::find(scene::Graph::current(), name.toStdString());

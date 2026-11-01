@@ -497,25 +497,28 @@ void UvView::sync()
     g.evaluate();
     const std::string set = uv::currentUvSet();
     std::vector<scene::NodeId> ids = shownMeshes();
+    std::vector<std::vector<Index>> only = shownFaces(ids);
     std::vector<MeshUv> next;
     bool added = false;
-    for (scene::NodeId id : ids)
+    for (size_t i = 0; i < ids.size(); ++i)
     {
+        const scene::NodeId id = ids[i];
         scene::Node* n = g.node(id);
         // The base under any modifiers: component ids and uv edits index it.
         scene::MeshPtr mesh = n && n->type().isA("mesh") ? scene::modifiers::cage(g, id) : nullptr;
-        if (!mesh)
+        if (!mesh || (only.size() && only[i].empty()))
             continue;
+        std::vector<Index> faces = only.size() ? std::move(only[i]) : std::vector<Index>{};
         auto old = std::find_if(mMeshes.begin(), mMeshes.end(), [&](const MeshUv& m) { return m.node == id; });
         // Meshes are immutable once published, so the same pointer means the same uvs.
-        if (old != mMeshes.end() && old->mesh == mesh && old->set == set)
+        if (old != mMeshes.end() && old->mesh == mesh && old->set == set && old->only == faces)
         {
             old->name = n->path();
             next.push_back(std::move(*old));
             continue;
         }
         added |= old == mMeshes.end();
-        next.push_back(build(id, n->path(), mesh, set));
+        next.push_back(build(id, n->path(), mesh, set, std::move(faces)));
     }
     mMeshes = std::move(next);
     applyLive();
@@ -550,7 +553,27 @@ void UvView::applyLive()
     }
 }
 
-UvView::MeshUv UvView::build(scene::NodeId id, const std::string& name, scene::MeshPtr mesh, const std::string& set)
+std::vector<std::vector<Index>> UvView::shownFaces(const std::vector<scene::NodeId>& meshes)
+{
+    std::vector<std::vector<Index>> out;
+    if (scene::components::mode() != ComponentMode::Face)
+        return out;
+    bool any = false;
+    out.resize(meshes.size());
+    for (size_t i = 0; i < meshes.size(); ++i)
+    {
+        const auto& ids = scene::components::selected(meshes[i], ComponentMode::Face);
+        out[i].assign(ids.begin(), ids.end());
+        std::sort(out[i].begin(), out[i].end());
+        any |= !out[i].empty();
+    }
+    if (!any)
+        out.clear();
+    return out;
+}
+
+UvView::MeshUv UvView::build(scene::NodeId id, const std::string& name, scene::MeshPtr mesh, const std::string& set,
+                             std::vector<Index> only)
 {
     LILA_ZONE();
 
@@ -559,15 +582,20 @@ UvView::MeshUv UvView::build(scene::NodeId id, const std::string& name, scene::M
     out.name = name;
     out.mesh = mesh;
     out.set = set;
+    out.only = std::move(only);
     const geo::Mesh& m = *mesh;
     std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
     if (uv.empty())
         return out;
     std::span<const bool> seam = m.edgeAttrs().get<bool>(geo::attr::kSeam);
     out.entryOf.assign(m.cornerCapacity(), ~0u);
-    for (Index f = 0; f < m.faceCapacity(); ++f)
+    std::vector<Index> all;
+    if (out.only.empty())
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            all.push_back(f);
+    for (Index f : out.only.empty() ? all : out.only)
     {
-        if (!m.faceValid(f))
+        if (f >= m.faceCapacity() || !m.faceValid(f))
             continue;
         out.faces.push_back(f);
         out.faceStart.push_back(uint32_t(out.corner.size()));
@@ -598,8 +626,8 @@ UvView::MeshUv UvView::build(scene::NodeId id, const std::string& name, scene::M
                 bool sameDir = m.cornerPoint(r) == m.cornerPoint(c);
                 glm::vec2 ra = sameDir ? uv[r] : uv[m.cornerNext(r)], rb = sameDir ? uv[m.cornerNext(r)] : uv[r];
                 split = !same(ra, uv[c]) || !same(rb, uv[m.cornerNext(c)]);
-                // Shared edges are drawn once, from the lower corner.
-                if (!split && r < c)
+                // Shared edges are drawn once, from the lower corner, unless its face is hidden.
+                if (!split && r < c && out.entryOf[r] != ~0u)
                     continue;
             }
             out.segments.push_back({k, k2, e, split || (!seam.empty() && seam[e])});
