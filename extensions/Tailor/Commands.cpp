@@ -397,7 +397,7 @@ void registerCommands(ext::Context& ctx)
                   {"params", "pr", T::Any, json::object(),
                    "Block parameters by name, metres and 0/1 for switches, e.g. {'sleeveStyle': 9, 'sleeveLength': 0.6}. "
                    "Sleeve styles: 0 set-in, 1 cuffed, 2 bishop, 3 bell, 4 puff, 5 cap, 6 flutter, 7 leg-of-mutton, 8 poet, "
-                   "9 drop-shoulder, 10 batwing."}},
+                   "9 drop-shoulder, 10 batwing, 11 raglan, 12 marie, 13 flounce, 14 slit, 15 tiered, 16 petal, 17 cape."}},
         .run = [](const Args& a) -> json {
             Garment gm;
             std::string error;

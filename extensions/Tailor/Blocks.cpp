@@ -260,8 +260,8 @@ float Body::chestRadius() const { return chest / (2.f * kPi); }
 
 const char* sleeveStyleName(SleeveStyle s)
 {
-    static const char* names[] = {"set-in", "cuffed", "bishop", "bell", "puff", "cap", "flutter", "leg-of-mutton", "poet",
-                                  "drop-shoulder", "batwing"};
+    static const char* names[] = {"set-in", "cuffed", "bishop", "bell",    "puff",   "cap",    "flutter", "leg-of-mutton", "poet",
+                                  "drop-shoulder", "batwing", "raglan", "marie", "flounce", "slit", "tiered", "petal", "cape"};
     const int i = int(s);
     return i >= 0 && i < int(SleeveStyle::Count) ? names[i] : "set-in";
 }
@@ -292,6 +292,13 @@ SleeveShape sleeveShape(SleeveStyle s)
     case SleeveStyle::LegOfMutton: return {0.9f, 0.5f, 0.6f, 0.f, 0.95f};
     case SleeveStyle::Poet: return {0.7f, 0.25f, 1.3f, 0.05f, 0.95f};
     case SleeveStyle::DropShoulder: return {0.25f, 0.f, 0.8f, 0.f, -1.f, 0.08f};
+    case SleeveStyle::Raglan: return {0.f, 0.f, 0.75f};
+    case SleeveStyle::Marie: return {0.6f, 0.05f, 1.3f, 0.04f, 0.95f};
+    case SleeveStyle::Flounce: return {0.6f, 0.04f, 0.85f, 0.f, 0.5f};
+    case SleeveStyle::Slit: return {0.6f, 0.04f, 0.9f, 0.f, 0.95f};
+    case SleeveStyle::Tiered: return {0.6f, 0.04f, 1.f, 0.f, 0.6f};
+    case SleeveStyle::Petal: return {0.6f, 0.04f, 1.1f, 0.f, 0.16f};
+    case SleeveStyle::Cape: return {0.65f, 0.f, 3.2f, 0.f, 0.45f};
     default: return {};
     }
 }
@@ -340,6 +347,7 @@ Garment top(const Body& body, const TopParams& p)
     const SleeveStyle style = SleeveStyle(std::clamp(p.sleeveStyle, 0, int(SleeveStyle::Count) - 1));
     const SleeveShape shape = sleeveShape(style);
     const bool batwing = style == SleeveStyle::Batwing && p.sleeveLength > 0.02f;
+    const bool raglan = style == SleeveStyle::Raglan && p.sleeveLength > 0.02f;
     const float shoulderY = body.shoulderY();
     const float len = std::clamp(p.length, 0.25f, shoulderY - 0.02f);
     const float hemY = shoulderY - len;
@@ -360,7 +368,8 @@ Garment top(const Body& body, const TopParams& p)
     const float drop = std::max(p.dropShoulder > 0.f ? p.dropShoulder : shape.drop, 0.f);
     float ya = std::max(yT - std::sqrt(std::max(bicepHalf * bicepHalf - dx * dx, 0.0036f)), 0.06f);
     ya = std::max(ya - 0.5f * drop - (batwing ? 0.14f : 0.f), 0.06f);
-    const Vec2 neckPt{nx, yN};
+    // A raglan line ends on the neckline, a little down and in from the neck point.
+    const Vec2 neckPt = raglan ? Vec2{nx * 0.85f, yN - 0.03f} : Vec2{nx, yN};
     const Vec2 shoulderDir{sx - nx, yT - yN};
     const float sl = std::hypot(shoulderDir[0], shoulderDir[1]);
     const Vec2 tip{sx + shoulderDir[0] / sl * drop, yT + shoulderDir[1] / sl * drop};
@@ -396,6 +405,13 @@ Garment top(const Body& body, const TopParams& p)
         rS = int(half.size());
         half.push_back(shoulderEnd);
     }
+    else if (raglan)
+    {
+        // The raglan line: up from the underarm, curving slightly in, to the neckline. There is no shoulder seam.
+        for (const Vec2& q : bezier({wc, ya}, {wc - 0.03f, ya + 0.6f * (neckPt[1] - ya)}, neckPt))
+            half.push_back(q);
+        rS = int(half.size());
+    }
     else
     {
         // Set-in armholes scoop: down from the shoulder, then out to the underarm. Dropped ones run nearly straight.
@@ -423,7 +439,7 @@ Garment top(const Body& body, const TopParams& p)
 
     if (!p.openFront)
     {
-        const Symmetric f = symmetric(half, yN, nx, std::clamp(p.neckDepth, 0.01f, yN * 0.8f));
+        const Symmetric f = symmetric(half, neckPt[1], neckPt[0], std::clamp(p.neckDepth, 0.01f, neckPt[1] * 0.8f));
         Panel front = makePanel("Front", f.outline);
         placeBody(front, z0, true);
         g.panels.push_back(std::move(front));
@@ -460,7 +476,7 @@ Garment top(const Body& body, const TopParams& p)
     }
 
     const int bk = int(g.panels.size());
-    const Symmetric bs = symmetric(half, yN, nx, 0.02f);
+    const Symmetric bs = symmetric(half, neckPt[1], neckPt[0], 0.02f);
     Panel back = makePanel("Back", bs.outline);
     placeBody(back, z0, false);
     g.panels.push_back(std::move(back));
@@ -478,8 +494,11 @@ Garment top(const Body& body, const TopParams& p)
     // The back faces -Z, so its +x half lies on the wearer's right (-X).
     g.seams.push_back(seam({fPlus.side}, {bMinus.side}));
     g.seams.push_back(seam({fMinus.side}, {bPlus.side}));
-    g.seams.push_back(seam({fPlus.shoulder}, {bMinus.shoulder}));
-    g.seams.push_back(seam({fMinus.shoulder}, {bPlus.shoulder}));
+    if (!raglan)
+    {
+        g.seams.push_back(seam({fPlus.shoulder}, {bMinus.shoulder}));
+        g.seams.push_back(seam({fMinus.shoulder}, {bPlus.shoulder}));
+    }
 
     if (batwing || p.sleeveLength <= 0.02f || ls <= 0.02f)
         return g;
@@ -488,55 +507,188 @@ Garment top(const Body& body, const TopParams& p)
     // style's cap height. Pattern y runs from the bicep line (0) down the arm; the cap rises to -capHeight.
     const float armhole = runLength(g.panels[size_t(fPlus.arm.panel)].outline, fPlus.arm.from, fPlus.arm.to);
     const float depth = std::max(tip[1] - ya, 0.05f);
-    const float h = shape.capHeight * depth;
-    const float target = 2.f * armhole * (1.f + shape.capEase);
-    float lo = 0.05f, hi = target;
-    for (int i = 0; i < 40; ++i)
+    float h = shape.capHeight * depth;
+    float w;
+    if (raglan)
     {
-        const float w = 0.5f * (lo + hi);
-        (capLength(w, h) < target ? lo : hi) = w;
+        w = body.chest * 0.36f * (1.f + std::max(p.sleeveEase, 0.f));
+        h = 0.f;
     }
-    const float w = lo;
-    const float wristW = w * shape.wrist * (1.f + std::max(p.sleeveFlare, 0.f));
+    else
+    {
+        const float target = 2.f * armhole * (1.f + shape.capEase);
+        float lo = 0.05f, hi = target;
+        for (int i = 0; i < 40; ++i)
+        {
+            const float mid = 0.5f * (lo + hi);
+            (capLength(mid, h) < target ? lo : hi) = mid;
+        }
+        w = lo;
+    }
+    const float flare = 1.f + std::max(p.sleeveFlare, 0.f);
+    // Pieces below the main sleeve: tiers, puffs and bands share the sleeve's length with it.
+    const bool marie = style == SleeveStyle::Marie, tiered = style == SleeveStyle::Tiered, flounce = style == SleeveStyle::Flounce;
     const float cuffH = shape.cuff > 0.f ? std::min(shape.cuff, ls * 0.5f) : 0.f;
-    const float sleeveLen = ls - cuffH;
+    float mainLen = ls - cuffH;
+    if (marie || tiered)
+        mainLen = (ls - cuffH) / 3.f;
+    else if (flounce)
+        mainLen = ls * 0.55f;
+    const float wristW = (marie || tiered) ? w * (marie ? 1.3f : 1.f) : w * shape.wrist * flare;
+
     Builder sb;
-    sb.add(-0.5f * w, 0.f);
-    for (const Vec2& q : capCurve(w, h))
-        sb.add(q[0], q[1]);
-    const int capEnd = sb.add(0.5f * w, 0.f);
-    sb.add(0.5f * wristW, sleeveLen);
-    sb.add(-0.5f * wristW, sleeveLen);
+    int capEnd = 0, hemFrom = 0, hemTo = 0, backTop = -1, frontTop = -1;
+    if (raglan)
+    {
+        // Back raglan edge, the neck edge over the shoulder, front raglan edge; straight, as long as the body's line.
+        const float nw = 0.08f;
+        const float span = std::max(0.5f * (w - nw), 0.01f);
+        const float hr = std::sqrt(std::max(armhole * armhole - span * span, 0.0025f));
+        sb.add(-0.5f * w, 0.f);
+        backTop = sb.add(-0.5f * nw, -hr);
+        frontTop = sb.add(0.5f * nw, -hr);
+        capEnd = sb.add(0.5f * w, 0.f);
+        h = 0.5f * hr;
+    }
+    else
+    {
+        sb.add(-0.5f * w, 0.f);
+        for (const Vec2& q : capCurve(w, h))
+            sb.add(q[0], q[1]);
+        capEnd = sb.add(0.5f * w, 0.f);
+    }
+    hemFrom = sb.add(0.5f * wristW, mainLen);
+    if (style == SleeveStyle::Petal)
+    {
+        // The hem rises in the middle, up over the top of the arm.
+        const int n = std::max(6, int(std::ceil(wristW / kStep)));
+        for (int i = 1; i < n; ++i)
+        {
+            const float t = float(i) / float(n);
+            sb.add(0.5f * wristW * (1.f - 2.f * t), mainLen * (1.f - 0.65f * std::sin(kPi * t)));
+        }
+    }
+    hemTo = sb.add(-0.5f * wristW, mainLen);
     const float rs = w / (2.f * kPi);
-    // The cuff fits the wrist with a little ease; a fuller sleeve gathers into it along the seam.
     // Short sleeves band the upper arm, long ones the wrist.
     const float armGirth = ls < 0.4f * body.armLength ? 0.8f * w : std::max(body.armLength * 0.27f, 0.16f);
-    const float cuffW = std::min(wristW, armGirth);
+
     for (float s : {1.f, -1.f})
     {
-        const int sp = int(g.panels.size());
-        Panel sleeve = makePanel(s > 0.f ? "Sleeve L" : "Sleeve R", sb.pts);
+        const std::string side = s > 0.f ? " L" : " R";
         const Vec3 up{s * std::cos(th), -std::sin(th), 0.f};
         const Vec3 nrm{s * std::sin(th), std::cos(th), 0.f};
         // On the arm's axis: the shoulder joint sits a little inside and below the shoulder point.
         const Vec3 joint{s * (sx - 0.03f + drop * std::cos(th)), shoulderY - 0.04f - drop * std::sin(th), 0.f};
         const Vec3 bicep = add3(joint, mul3(up, h));
+        // The body's armhole as the sleeve meets it: front run, back run, in the order this side's cap walks.
+        const std::vector<SeamSide> armChain = s > 0.f ? std::vector<SeamSide>{fPlus.arm, bMinus.arm} : std::vector<SeamSide>{bPlus.arm, fMinus.arm};
+
+        SeamSide hem;
+        if (style == SleeveStyle::Slit)
+        {
+            // Two halves split along the top of the arm; the split stays open.
+            Builder backHalf, frontHalf;
+            const int mid = capEnd / 2;
+            for (int i = 0; i <= mid; ++i)
+                backHalf.add(sb.pts[size_t(i)][0], sb.pts[size_t(i)][1]);
+            backHalf.add(sb.pts[size_t(mid)][0], mainLen);
+            const int backHemEnd = backHalf.add(-0.5f * wristW, mainLen);
+            for (int i = mid; i <= capEnd; ++i)
+                frontHalf.add(sb.pts[size_t(i)][0], sb.pts[size_t(i)][1]);
+            const int frontCap = int(frontHalf.pts.size()) - 1;
+            frontHalf.add(0.5f * wristW, mainLen);
+            frontHalf.add(sb.pts[size_t(mid)][0], mainLen);
+            const int bp = int(g.panels.size());
+            Panel bpanel = makePanel("Sleeve Back" + side, backHalf.pts), fpanel = makePanel("Sleeve Front" + side, frontHalf.pts);
+            place(bpanel, add3(bicep, mul3(nrm, rs)), up, nrm, rs);
+            place(fpanel, add3(bicep, mul3(nrm, rs + 0.005f)), up, nrm, rs + 0.005f);
+            g.panels.push_back(std::move(bpanel));
+            g.panels.push_back(std::move(fpanel));
+            g.seams.push_back(seam(armChain, {{bp, 0, mid}, {bp + 1, 0, frontCap}}));
+            g.seams.push_back(seam({{bp + 1, frontCap, frontCap + 1}}, {{bp, backHemEnd, 0}}));
+            continue;
+        }
+
+        const int sp = int(g.panels.size());
+        Panel sleeve = makePanel("Sleeve" + side, sb.pts);
         place(sleeve, add3(bicep, mul3(nrm, rs)), up, nrm, rs);
         g.panels.push_back(std::move(sleeve));
-        if (s > 0.f)
-            g.seams.push_back(seam({fPlus.arm, bMinus.arm}, {{sp, 0, capEnd}}));
+        if (raglan)
+        {
+            // This side's +x edge faces front on the left arm and back on the right, as with a set-in cap.
+            const SeamSide toFront = s > 0.f ? fPlus.arm : bPlus.arm, toBack = s > 0.f ? bMinus.arm : fMinus.arm;
+            g.seams.push_back(seam({toFront}, {{sp, frontTop, capEnd}}));
+            g.seams.push_back(seam({toBack}, {{sp, 0, backTop}}));
+        }
         else
-            g.seams.push_back(seam({bPlus.arm, fMinus.arm}, {{sp, 0, capEnd}}));
-        g.seams.push_back(seam({{sp, capEnd, capEnd + 1}}, {{sp, capEnd + 2, 0}}));
+            g.seams.push_back(seam(armChain, {{sp, 0, capEnd}}));
+        g.seams.push_back(seam({{sp, capEnd, hemFrom}}, {{sp, hemTo, 0}}));
+        hem = {sp, hemFrom, hemTo};
+
+        // A closed tube below the last piece: top edge sewn to its hem (gathered when the hem is longer), side seamed.
+        float along = mainLen;
+        auto tube = [&](const std::string& name, float top, float bottom, float height) {
+            const int tp = int(g.panels.size());
+            const float r = std::max(top, bottom) / (2.f * kPi);
+            Panel t = makePanel(name + side, {{-0.5f * top, 0.f}, {0.5f * top, 0.f}, {0.5f * bottom, height}, {-0.5f * bottom, height}});
+            place(t, add3(add3(bicep, mul3(up, along)), mul3(nrm, r)), up, nrm, r);
+            g.panels.push_back(std::move(t));
+            g.seams.push_back(seam({hem}, {{tp, 0, 1}}));
+            g.seams.push_back(seam({{tp, 1, 2}}, {{tp, 3, 0}}));
+            hem = {tp, 2, 3};
+            along += height;
+        };
+        const float third = (ls - cuffH) / 3.f;
+        if (marie)
+        {
+            const float band = 0.04f;
+            tube("Band A", 0.85f * w, 0.85f * w, band);
+            tube("Puff B", 1.3f * w, 1.3f * w, third - band);
+            tube("Band B", 0.75f * w, 0.75f * w, band);
+            tube("Puff C", 1.3f * w, 1.3f * w, third - band);
+        }
+        else if (tiered)
+        {
+            float width = wristW;
+            for (const char* name : {"Tier B", "Tier C"})
+            {
+                width *= 1.45f;
+                tube(name, width, width * 1.15f, third);
+                width *= 1.15f;
+            }
+        }
         if (cuffH > 0.f)
         {
-            const int cp = int(g.panels.size());
-            Panel cuff = makePanel(s > 0.f ? "Cuff L" : "Cuff R", {{-0.5f * cuffW, 0.f}, {0.5f * cuffW, 0.f}, {0.5f * cuffW, cuffH}, {-0.5f * cuffW, cuffH}});
-            const Vec3 at = add3(add3(bicep, mul3(up, sleeveLen)), mul3(nrm, cuffW / (2.f * kPi)));
-            place(cuff, at, up, nrm, cuffW / (2.f * kPi));
-            g.panels.push_back(std::move(cuff));
-            g.seams.push_back(seam({{sp, capEnd + 1, capEnd + 2}}, {{cp, 0, 1}}));
-            g.seams.push_back(seam({{cp, 1, 2}}, {{cp, 3, 0}}));
+            const float cw = std::min(marie ? 1.3f * w : wristW, armGirth);
+            tube("Cuff", cw, cw, cuffH);
+        }
+        if (flounce)
+        {
+            // A three-quarter ring: its inner edge is the elbow hem, its outer edge falls in a circle.
+            const float sweep = 1.5f * kPi, r1 = wristW / sweep, r2 = r1 + std::max(ls - mainLen, 0.08f);
+            Builder fb;
+            const int n = std::max(12, int(std::ceil(sweep * r2 / kStep)));
+            for (int i = 0; i <= n; ++i)
+            {
+                const float a = -0.5f * sweep + sweep * float(i) / float(n);
+                fb.add(r2 * std::sin(a), -r2 * std::cos(a));
+            }
+            const int innerStart = int(fb.pts.size());
+            for (int i = n; i >= 0; --i)
+            {
+                const float a = -0.5f * sweep + sweep * float(i) / float(n);
+                fb.add(r1 * std::sin(a), -r1 * std::cos(a));
+            }
+            const int innerEnd = int(fb.pts.size()) - 1;
+            const int fp = int(g.panels.size());
+            Panel fl = makePanel("Flounce" + side, fb.pts);
+            place(fl, add3(add3(bicep, mul3(up, mainLen + r1)), mul3(nrm, wristW / (2.f * kPi))), up, nrm, wristW / (2.f * kPi));
+            g.panels.push_back(std::move(fl));
+            // Both run right to left already.
+            g.seams.push_back(seam({hem}, {{fp, innerStart, innerEnd}}, false));
+            // Close the ring: the two cut ends sewn together.
+            g.seams.push_back(seam({{fp, n, innerStart}}, {{fp, innerEnd, 0}}));
         }
     }
     return g;
@@ -1013,6 +1165,13 @@ std::vector<Block> makeBlocks()
     out.push_back(makeBlock<TeeParams>("tee", "T-Shirt", topFields<TeeParams>(), plain(&tee)));
     out.push_back(makeBlock<TunicParams>("tunic", "Tunic", topFields<TunicParams>(), plain(&tunic)));
     out.push_back(makeBlock<RobeParams>("robe", "Robe", topFields<RobeParams>(), plain(&robe)));
+    out.push_back(makeBlock<RaglanTeeParams>("raglanTee", "Raglan Tee", topFields<RaglanTeeParams>(), [](const Body& b, const RaglanTeeParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<MarieBlouseParams>("marieBlouse", "Marie-Sleeve Blouse", topFields<MarieBlouseParams>(), [](const Body& b, const MarieBlouseParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<FlounceSleeveTopParams>("flounceSleeveTop", "Flounce-Sleeve Top", topFields<FlounceSleeveTopParams>(), [](const Body& b, const FlounceSleeveTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<SlitSleeveTopParams>("slitSleeveTop", "Slit-Sleeve Top", topFields<SlitSleeveTopParams>(), [](const Body& b, const SlitSleeveTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<TieredSleeveBlouseParams>("tieredSleeveBlouse", "Tiered-Sleeve Blouse", topFields<TieredSleeveBlouseParams>(), [](const Body& b, const TieredSleeveBlouseParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<PetalSleeveTopParams>("petalSleeveTop", "Petal-Sleeve Top", topFields<PetalSleeveTopParams>(), [](const Body& b, const PetalSleeveTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<CapeSleeveTopParams>("capeSleeveTop", "Cape-Sleeve Top", topFields<CapeSleeveTopParams>(), [](const Body& b, const CapeSleeveTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
     out.push_back(makeBlock<DropShoulderTopParams>("dropShoulderTop", "Drop-Shoulder Top", topFields<DropShoulderTopParams>(), [](const Body& b, const DropShoulderTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
     out.push_back(makeBlock<ShirtParams>("shirt", "Shirt", topFields<ShirtParams>(), [](const Body& b, const ShirtParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
     out.push_back(makeBlock<PeasantBlouseParams>("peasantBlouse", "Peasant Blouse", topFields<PeasantBlouseParams>(), [](const Body& b, const PeasantBlouseParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));

@@ -105,7 +105,8 @@ void checkGarment(const Garment& g, const std::string& name)
         bool gathered = false;
         for (const auto* sides : {&s.a, &s.b})
             for (const SeamSide& side : *sides)
-                gathered |= g.panels[side.panel].name.rfind("Sleeve", 0) == 0 || g.panels[side.panel].name.rfind("Cuff", 0) == 0;
+                for (const char* piece : {"Sleeve", "Cuff", "Band", "Puff", "Tier", "Flounce"})
+                    gathered |= g.panels[side.panel].name.rfind(piece, 0) == 0;
         if (!gathered)
             CHECK(std::abs(la - lb) <= 0.05f * std::max(la, lb));
     }
@@ -375,7 +376,7 @@ TEST_CASE("every sleeve style drafts a cap that fits its armhole and drapes")
         }
         bool sleeves = false;
         for (const Panel& p : g.panels)
-            sleeves |= p.name == "Sleeve L";
+            sleeves |= p.name.rfind("Sleeve", 0) == 0;
         CHECK(sleeves == (SleeveStyle(st) != SleeveStyle::Batwing));
         for (Panel& p : g.panels)
             p.particleDistance = 0.035f;
@@ -452,7 +453,8 @@ TEST_CASE("sleeve templates build and pass the pattern check")
 {
     const Body body;
     for (const char* id : {"dropShoulderTop", "shirt", "peasantBlouse", "puffBlouse", "poetShirt", "bellSleeveDress", "flutterTop",
-                           "capSleeveTop", "batwingTop", "legOfMuttonBlouse"})
+                           "capSleeveTop", "batwingTop", "legOfMuttonBlouse", "raglanTee", "marieBlouse", "flounceSleeveTop",
+                           "slitSleeveTop", "tieredSleeveBlouse", "petalSleeveTop", "capeSleeveTop"})
     {
         CAPTURE(std::string(id));
         Garment g;

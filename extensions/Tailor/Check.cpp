@@ -138,7 +138,9 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
             const float h = runHeight(g.panels[size_t(sl.panel)].outline, sl.from, sl.to);
             const float width = std::hypot(g.panels[size_t(sl.panel)].outline[size_t(sl.to)][0] - g.panels[size_t(sl.panel)].outline[size_t(sl.from)][0],
                                            g.panels[size_t(sl.panel)].outline[size_t(sl.to)][1] - g.panels[size_t(sl.panel)].outline[size_t(sl.from)][1]);
-            if (body && width > 0.f && h < 0.3f * width)
+            // A cap cut in several pieces (a slit sleeve) can't be judged from one of them.
+            const bool wholeCap = (isSleeve(g, seam.a) ? seam.a : seam.b).size() == 1;
+            if (body && wholeCap && width > 0.f && h < 0.3f * width)
             {
                 float tipX = 0.f;
                 for (const SeamSide& bs : isSleeve(g, seam.a) ? seam.b : seam.a)

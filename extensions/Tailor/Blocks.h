@@ -81,6 +81,13 @@ enum class SleeveStyle : int
     Poet,        // full, gathered at cap and cuff
     DropShoulder, // shoulder carried onto the arm, low flat cap
     Batwing,     // cut in one with the body, deep underarm
+    Raglan,      // a diagonal seam from underarm to neck; the sleeve takes in the shoulder
+    Marie,       // long and full, banded into a row of puffs
+    Flounce,     // fitted to the elbow, a circular flounce below
+    Slit,        // split along the top of the arm, open
+    Tiered,      // tiers, each gathered onto the one above
+    Petal,       // short, the hem curved up over the arm like a tulip
+    Cape,        // short and very full, falling from the shoulder
     Count
 };
 const char* sleeveStyleName(SleeveStyle s);
@@ -251,6 +258,97 @@ struct LegOfMuttonParams : TopParams
         sleeveEase = 0.3f;
         sleeveStyle = int(SleeveStyle::LegOfMutton);
         neckDepth = 0.08f;
+    }
+};
+
+struct RaglanTeeParams : TopParams
+{
+    RaglanTeeParams()
+    {
+        length = 0.68f;
+        ease = 0.14f;
+        sleeveLength = 0.25f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Raglan);
+        neckDepth = 0.08f;
+    }
+};
+
+struct MarieBlouseParams : TopParams
+{
+    MarieBlouseParams()
+    {
+        length = 0.62f;
+        ease = 0.12f;
+        sleeveLength = 0.62f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Marie);
+        neckDepth = 0.1f;
+    }
+};
+
+struct FlounceSleeveTopParams : TopParams
+{
+    FlounceSleeveTopParams()
+    {
+        length = 0.62f;
+        ease = 0.1f;
+        sleeveLength = 0.55f;
+        sleeveEase = 0.25f;
+        sleeveStyle = int(SleeveStyle::Flounce);
+        neckDepth = 0.1f;
+    }
+};
+
+struct SlitSleeveTopParams : TopParams
+{
+    SlitSleeveTopParams()
+    {
+        length = 0.64f;
+        ease = 0.14f;
+        sleeveLength = 0.6f;
+        sleeveEase = 0.35f;
+        sleeveStyle = int(SleeveStyle::Slit);
+        neckDepth = 0.1f;
+    }
+};
+
+struct TieredSleeveBlouseParams : TopParams
+{
+    TieredSleeveBlouseParams()
+    {
+        length = 0.62f;
+        ease = 0.14f;
+        sleeveLength = 0.45f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Tiered);
+        neckDepth = 0.1f;
+    }
+};
+
+struct PetalSleeveTopParams : TopParams
+{
+    PetalSleeveTopParams()
+    {
+        length = 0.6f;
+        ease = 0.1f;
+        sleeveLength = 0.16f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Petal);
+        neckDepth = 0.1f;
+    }
+};
+
+struct CapeSleeveTopParams : TopParams
+{
+    CapeSleeveTopParams()
+    {
+        length = 0.62f;
+        ease = 0.1f;
+        sleeveLength = 0.3f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Cape);
+        neckDepth = 0.1f;
     }
 };
 
