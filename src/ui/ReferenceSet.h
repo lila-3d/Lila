@@ -83,8 +83,10 @@ struct Overlay
     Anchor anchor = Anchor::Center;
     /** Image centre from the anchor point, in view heights, y down. */
     glm::dvec2 offset{0.0};
-    /** Shown height in view heights. */
+    /** Shown height of the cropped image in view heights. */
     double scale = 0.6;
+    /** The part of the image shown, (u0, v0, u1, v1) of the unflipped image, v down. */
+    glm::dvec4 crop{0.0, 0.0, 1.0, 1.0};
     double rotation = 0.0; // degrees clockwise on screen
     double opacity = 0.3;
     Depth depth = Depth::Front;
@@ -188,8 +190,12 @@ LILA_UI_API DropAction dropAction(bool shift, bool hasCurrentTab);
 /** An overlay's screen corners in view pixels, top left, top right, bottom right, bottom left of the image as shown. */
 LILA_UI_API std::array<glm::dvec2, 4> overlayCorners(const Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize);
 LILA_UI_API bool overlayContains(const Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize, glm::dvec2 px);
-/** The image's (u0, v0, u1, v1) for the corners overlayCorners gives: flips swap the ends. */
-LILA_UI_API glm::dvec4 overlayUv(const Image* img);
+/** The image's (u0, v0, u1, v1) for the corners overlayCorners gives: the crop, with flips swapping the ends. */
+LILA_UI_API glm::dvec4 overlayUv(const Overlay& o, const Image* img);
+/** The image (u, v) under view pixel px, outside 0..1 when px is off the image. */
+LILA_UI_API glm::dvec2 overlayImageUv(const Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize, glm::dvec2 px);
+/** Changes the crop keeping the image where it is on screen: only the shown part grows or shrinks. */
+LILA_UI_API void setCrop(Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize, glm::dvec4 crop);
 /** How much of the overlay shows with the view looking along forward: 1 unbound or at the bound view, 0 past fadeAngle. */
 LILA_UI_API double boundFade(const Overlay& o, const glm::dvec3& forward);
 /** Lays the view's overlays out down its right edge, opaque: Spotlight's tile, for keeping references beside the model. */

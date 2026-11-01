@@ -8,9 +8,13 @@
 #include <QTreeWidget>
 #include <QWidget>
 
+#include <functional>
 #include <set>
+#include <string>
 #include <unordered_map>
 #include <vector>
+
+class QMenu;
 
 namespace lila::ui
 {
@@ -66,6 +70,8 @@ private:
     void addSetRows();
     /** The right-click menu of a set row or one of its member rows. */
     void showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos);
+    /** The outliner::RowSource groups after the sets. */
+    void addSourceRows();
     void startMove();
     /** Shades the rows of the selection's unselected ancestors. */
     void shadeAncestors();
@@ -78,6 +84,8 @@ private:
     std::vector<uint64_t> mEventSubs;
     /** Set rows start collapsed; these were opened. */
     std::set<scene::NodeId> mOpenSets;
+    /** RowSource groups that were opened. */
+    std::set<std::string> mOpenSources;
     int mListener = 0;
     bool mQueued = false;
     bool mRestyleQueued = false;
@@ -111,3 +119,38 @@ public:
     explicit OutlinerPanel(QWidget* parent = nullptr);
 };
 } // namespace lila::ui
+
+namespace lila::ui::outliner
+{
+/** A row of a RowSource: something listed in the outliner that is not a scene node. */
+struct ExtraRow
+{
+    std::string id;
+    std::string label;
+    std::string icon;
+    std::string tooltip;
+    bool hidden = false; // drawn dimmed
+};
+
+/**
+ * Rows the outliner lists after the hierarchy under a group row of their own, for things that live outside the scene
+ * graph (reference overlays). Clicking a row activates it; the group row hides when there are no rows.
+ */
+struct RowSource
+{
+    std::string id;
+    std::string title;
+    std::string icon;
+    std::function<std::vector<ExtraRow>()> rows;
+    std::function<void(const std::string&)> activate;
+    /** The row shown selected, empty for none. */
+    std::function<std::string()> current;
+    std::function<void(const std::string& id, const std::string& name)> rename;
+    /** Fills the right-click menu of a row. */
+    std::function<void(QMenu*, const std::string&)> menu;
+};
+
+LILA_UI_API void addRowSource(RowSource source);
+/** Rebuilds every outliner's rows once the event loop comes round; call when a source's rows change. */
+LILA_UI_API void refreshRowSources();
+} // namespace lila::ui::outliner

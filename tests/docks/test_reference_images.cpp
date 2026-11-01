@@ -113,6 +113,40 @@ TEST_CASE("reference window drops: Shift replaces the shown tab, otherwise new t
     CHECK(refs::ReferenceWindow::dropActionFor(Qt::ShiftModifier, true) == refs::DropAction::Replace);
 }
 
+TEST_CASE("reference overlay crop keeps the image where it is on screen")
+{
+    const glm::dvec2 view(800, 600);
+    refs::Overlay o;
+    o.scale = 0.5; // a 2:1 image, 600 x 300 px centred
+    const glm::dvec2 before = refs::overlayCorners(o, nullptr, 2.0, view)[1];
+    // Keep the right third, as for the back view of a model sheet.
+    refs::setCrop(o, nullptr, 2.0, view, {2.0 / 3.0, 0.0, 1.0, 1.0});
+    auto c = refs::overlayCorners(o, nullptr, 2.0, view);
+    CHECK(near(c[1], before));
+    CHECK(near(c[0], {500, 150}));
+    CHECK(o.scale == doctest::Approx(0.5));
+    CHECK(refs::overlayImageUv(o, nullptr, 2.0, view, {600, 300}).x == doctest::Approx(5.0 / 6.0));
+
+    // A flipped image crops the same part of the picture, now on the left side of the quad.
+    refs::Image flipped{.id = "f", .flipH = true};
+    CHECK(refs::overlayUv(o, &flipped) == glm::dvec4(1, 0, 2.0 / 3.0, 1));
+
+    // Cropping the height shrinks the shown height with it.
+    refs::setCrop(o, nullptr, 2.0, view, {2.0 / 3.0, 0.0, 1.0, 0.5});
+    CHECK(o.scale == doctest::Approx(0.25));
+    c = refs::overlayCorners(o, nullptr, 2.0, view);
+    CHECK(near(c[1], before));
+
+    refs::Set s;
+    s.images.push_back({.id = "ref1", .path = "sheet.png"});
+    o.id = "overlay1";
+    o.image = "ref1";
+    s.overlays.push_back(o);
+    const refs::Set back = refs::Set::fromJson(s.toJson());
+    REQUIRE(back.overlays.size() == 1);
+    CHECK(back.overlays[0].crop == o.crop);
+}
+
 TEST_CASE("reference overlay layout: anchors, aspect, quarter turns, flips and hit tests")
 {
     const glm::dvec2 view(800, 600);
@@ -139,7 +173,7 @@ TEST_CASE("reference overlay layout: anchors, aspect, quarter turns, flips and h
     CHECK(near((c[0] + c[2]) * 0.5, {500, 150}));
 
     refs::Image flipped{.id = "f", .flipH = true};
-    CHECK(refs::overlayUv(&flipped) == glm::dvec4(1, 0, 0, 1));
+    CHECK(refs::overlayUv(refs::Overlay{}, &flipped) == glm::dvec4(1, 0, 0, 1));
 
     // Re-anchoring keeps the overlay where it is on screen.
     refs::Overlay r = o;

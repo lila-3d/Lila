@@ -55,6 +55,25 @@ constexpr int kUnloadedRefRole = Qt::UserRole + 3; // namespace of an unloaded r
 // Set rows carry the set's id here rather than in kIdRole, so clicking one selects its members, not the set node.
 constexpr int kSetRole = Qt::UserRole + 4;
 constexpr int kSetMemberRole = Qt::UserRole + 5; // a member row's member string, as setMembers lists it
+constexpr int kSourceRole = Qt::UserRole + 6;    // the outliner::RowSource id of a group row and its rows
+constexpr int kSourceRowRole = Qt::UserRole + 7; // the ExtraRow id of a source's row
+
+std::vector<outliner::RowSource>& rowSources()
+{
+    static std::vector<outliner::RowSource> s;
+    return s;
+}
+
+const outliner::RowSource* rowSource(const QTreeWidgetItem* item)
+{
+    if (!item || !item->data(0, kSourceRole).isValid())
+        return nullptr;
+    const std::string id = item->data(0, kSourceRole).toString().toStdString();
+    for (const outliner::RowSource& src : rowSources())
+        if (src.id == id)
+            return &src;
+    return nullptr;
+}
 
 std::vector<Outliner*> gOutliners;
 
@@ -392,6 +411,12 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     connect(this, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
         if (mSyncing)
             return;
+        if (const outliner::RowSource* src = rowSource(item); src && item->data(0, kSourceRowRole).isValid())
+        {
+            if (src->rename && !item->text(0).trimmed().isEmpty())
+                src->rename(item->data(0, kSourceRowRole).toString().toStdString(), item->text(0).trimmed().toStdString());
+            return scheduleRebuild();
+        }
         auto id = item->data(0, kIdRole).toULongLong();
         if (!id)
             id = item->data(0, kSetRole).toULongLong();
@@ -414,7 +439,9 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     connect(this, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
         if (mSyncing)
             return;
-        if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
+        if (item->data(0, kSourceRole).isValid() && !item->data(0, kSourceRowRole).isValid())
+            mOpenSources.erase(item->data(0, kSourceRole).toString().toStdString());
+        else if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
             mOpenSets.erase(set);
         else
             mExpanded.erase(item->data(0, kIdRole).toULongLong());
@@ -423,13 +450,17 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
     connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         if (mSyncing)
             return;
-        if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
+        if (item->data(0, kSourceRole).isValid() && !item->data(0, kSourceRowRole).isValid())
+            mOpenSources.insert(item->data(0, kSourceRole).toString().toStdString());
+        else if (scene::NodeId set = item->data(0, kSetRole).toULongLong())
             mOpenSets.insert(set);
         else
             mExpanded.insert(item->data(0, kIdRole).toULongLong());
         scheduleRestyle();
     });
     connect(this, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
+        if (const outliner::RowSource* src = rowSource(item); src && src->activate && item->data(0, kSourceRowRole).isValid())
+            return src->activate(item->data(0, kSourceRowRole).toString().toStdString());
         if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
             runCommand("selectSetMembers", {{"args", {set->path()}}});
     });
@@ -677,6 +708,7 @@ void Outliner::rebuild()
         add(id, nullptr);
     if (showSets())
         addSetRows();
+    addSourceRows();
     // An unloaded reference has no nodes, so it gets a placeholder row to load it back from.
     for (const io::Reference& r : io::refs::all())
         if (!r.loaded)
@@ -699,6 +731,8 @@ void Outliner::rebuild()
     for (int i = 0; i < topLevelItemCount(); ++i)
         if (QTreeWidgetItem* top = topLevelItem(i); top->data(0, kSetRole).isValid())
             top->setExpanded(mOpenSets.contains(top->data(0, kSetRole).toULongLong()));
+        else if (top->data(0, kSourceRole).isValid())
+            top->setExpanded(mOpenSources.contains(top->data(0, kSourceRole).toString().toStdString()));
     applyFilter();
     mSyncing = false;
     restyle();
@@ -733,6 +767,33 @@ void Outliner::addSetRows()
             row->setData(0, kSetMemberRole, QString::fromStdString(m));
             row->setFlags(Qt::ItemIsEnabled);
             row->setForeground(0, themeShade(150));
+        }
+    }
+}
+
+void Outliner::addSourceRows()
+{
+    for (const outliner::RowSource& src : rowSources())
+    {
+        const std::vector<outliner::ExtraRow> rows = src.rows ? src.rows() : std::vector<outliner::ExtraRow>{};
+        if (rows.empty())
+            continue;
+        auto* group = new QTreeWidgetItem(this);
+        group->setText(0, QString::fromStdString(src.title));
+        group->setData(0, kSourceRole, QString::fromStdString(src.id));
+        group->setFlags(Qt::ItemIsEnabled);
+        group->setIcon(0, rowIcon(QString::fromStdString(src.icon), false, false));
+        for (const outliner::ExtraRow& r : rows)
+        {
+            auto* row = new QTreeWidgetItem(group);
+            row->setText(0, QString::fromStdString(r.label));
+            row->setData(0, kSourceRole, QString::fromStdString(src.id));
+            row->setData(0, kSourceRowRole, QString::fromStdString(r.id));
+            row->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | (src.rename ? Qt::ItemIsEditable : Qt::ItemFlags()));
+            row->setIcon(0, rowIcon(QString::fromStdString(r.icon.empty() ? src.icon : r.icon), false, r.hidden));
+            row->setToolTip(0, QString::fromStdString(r.tooltip));
+            if (r.hidden)
+                row->setForeground(0, themeShade(100));
         }
     }
 }
@@ -879,6 +940,20 @@ void Outliner::applyFilter()
         }
         else if (top->data(0, kUnloadedRefRole).isValid())
             top->setHidden(true);
+        else if (top->data(0, kSourceRole).isValid())
+        {
+            bool any = false;
+            for (int r = 0; r < top->childCount(); ++r)
+            {
+                const std::string label = top->child(r)->text(0).toStdString();
+                const bool match = mFilter.matches(label, label, nullptr);
+                top->child(r)->setHidden(!match);
+                any |= match;
+            }
+            top->setHidden(!any);
+            if (any)
+                top->setExpanded(true);
+        }
     }
 }
 
@@ -888,6 +963,11 @@ void Outliner::syncSelectionFromScene()
     const auto& sel = scene::Graph::current().selection();
     for (QTreeWidgetItemIterator it(this); *it; ++it)
     {
+        if (const outliner::RowSource* src = rowSource(*it); src && (*it)->data(0, kSourceRowRole).isValid())
+        {
+            (*it)->setSelected(src->current && src->current() == (*it)->data(0, kSourceRowRole).toString().toStdString());
+            continue;
+        }
         auto id = (*it)->data(0, kIdRole).toULongLong();
         (*it)->setSelected(id && std::find(sel.begin(), sel.end(), id) != sel.end());
     }
@@ -1010,6 +1090,15 @@ void Outliner::showContextMenu(const QPoint& pos)
     if (clickedItem && (clickedItem->data(0, kSetRole).isValid() || clickedItem->data(0, kSetMemberRole).isValid()))
     {
         showSetMenu(clickedItem, viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (const outliner::RowSource* src = rowSource(clickedItem))
+    {
+        if (src->menu && clickedItem->data(0, kSourceRowRole).isValid())
+        {
+            src->menu(&menu, clickedItem->data(0, kSourceRowRole).toString().toStdString());
+            menu.exec(viewport()->mapToGlobal(pos));
+        }
         return;
     }
     if (clickedItem && clickedItem->data(0, kUnloadedRefRole).isValid())
@@ -1292,3 +1381,19 @@ OutlinerPanel::OutlinerPanel(QWidget* parent) : QWidget(parent)
     });
 }
 } // namespace lila::ui
+
+namespace lila::ui::outliner
+{
+void addRowSource(RowSource source)
+{
+    std::erase_if(rowSources(), [&](const RowSource& s) { return s.id == source.id; });
+    rowSources().push_back(std::move(source));
+    refreshRowSources();
+}
+
+void refreshRowSources()
+{
+    for (Outliner* o : gOutliners)
+        o->scheduleRebuild();
+}
+} // namespace lila::ui::outliner

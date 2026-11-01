@@ -10,8 +10,11 @@
 #include "ui/Actions.h"
 #include "ui/Camera.h"
 #include "ui/CursorBadges.h"
+#include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
+#include "ui/Hotkeys.h"
 #include "ui/Icons.h"
+#include "ui/Outliner.h"
 #include "ui/Overlay.h"
 #include "ui/ReferenceSet.h"
 #include "ui/ReferenceWindow.h"
@@ -22,6 +25,7 @@
 #include "ui/ViewportWidget.h"
 
 #include <QApplication>
+#include <QMenu>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFormLayout>
@@ -97,6 +101,7 @@ enum class DragKind
     ScaleCorner, // a corner handle: by distance from the centre
     Rotate,      // middle drag while O is held: by distance dragged
     RotateKnob,  // the knob: by angle around the centre
+    Crop,        // an edge: that side of the crop follows the cursor
 };
 
 struct State
@@ -110,6 +115,8 @@ struct State
     std::map<std::string, std::string> active; // view -> overlay id
     std::set<std::string> hiddenViews;
     DragKind drag = DragKind::None;
+    int cropEdge = 0; // 0 top, 1 right, 2 bottom, 3 left, of the quad as shown
+    int hoverButton = -1; // the HUD button under the cursor, for its tooltip
     std::string dragOverlay;
     QPointF press;
     Overlay start;
@@ -128,14 +135,19 @@ double holdDelayMs()
     return 180.0;
 }
 
-double aspectOf(const refs::Image& img)
+QSize pixelSizeOf(const refs::Image& img)
 {
     const std::string file = refs::fileOf(img);
     render::TexturePtr t = textures::get(file, true);
     if (t && t->width > 0 && t->height > 0)
-        return double(t->width) / double(t->height);
+        return {int(t->width), int(t->height)};
     // Still loading: the file header has the size.
-    const QSize size = QImageReader(QString::fromStdString(file)).size();
+    return QImageReader(QString::fromStdString(file)).size();
+}
+
+double aspectOf(const refs::Image& img)
+{
+    const QSize size = pixelSizeOf(img);
     return size.isValid() && size.height() > 0 ? double(size.width()) / double(size.height()) : 1.0;
 }
 
@@ -210,16 +222,31 @@ struct HudButton
     const char* id;
     const char* icon;
     const char* label;
+    int row;
+    const char* tip;
 };
 
 const HudButton kHud[] = {
-    {"prev", "chevron-left", "Prev"},       {"next", "chevron-right", "Next"},      {"fainter", "minus", "Fainter"},
-    {"stronger", "plus", "Stronger"},       {"depth", "stack-front", "Front"},      {"mode", "photo", "Image"},
-    {"flip", "flip-vertical", "Flip"},      {"ghost", "ghost", "Ghost"},          {"bind", "pin", "Bind"},
-    {"goto", "camera", "Go to View"},       {"lens", "aperture", "Lens"},          {"park", "layout-sidebar-right", "Park"},
-    {"remove", "trash", "Remove"},          {"done", "check", "Done"},
+    {"prev", "chevron-left", "Prev", 0, "The previous overlay in this view"},
+    {"next", "chevron-right", "Next", 0, "The next overlay in this view"},
+    {"fainter", "minus", "Fainter", 0, "Lower the opacity (or turn the wheel over the image)"},
+    {"stronger", "plus", "Stronger", 0, "Raise the opacity (or turn the wheel over the image)"},
+    {"depth", "stack-front", "Front", 0, "Front draws over the model; Behind draws under it, so the model hides it"},
+    {"mode", "photo", "Image", 0, "Image, Gray to judge values, or Outline: only the photo's edges, so the model stays visible"},
+    {"flipH", "flip-vertical", "Flip H", 0, "Mirror the image left to right"},
+    {"flipV", "flip-horizontal", "Flip V", 0, "Mirror the image top to bottom"},
+    {"ghost", "ghost", "Ghost", 0, "Draw the model see-through while this overlay shows"},
+    {"bind", "pin", "Bind", 1, "Tie the overlay to this camera angle: it shows only from here and fades as you orbit away. Click again to unbind"},
+    {"goto", "camera", "Go to View", 1, "Put the camera back at the angle the overlay is bound to"},
+    {"lens", "aperture", "Lens", 1, "Set the view's lens to the photo's focal length, so the perspective matches"},
+    {"park", "layout-sidebar-right", "Park", 1, "Line every overlay up opaque down the right edge, beside the model"},
+    {"duplicate", "copy", "Duplicate", 1, "Copy this overlay, to show another part of the same sheet (crop each copy)"},
+    {"uncrop", "crop", "Full Image", 1, "Undo the crop and show the whole image"},
+    {"remove", "trash", "Remove", 1, "Remove this overlay (Ctrl+Z brings it back)"},
+    {"docs", "book", "Docs", 1, "Open the Reference Images docs"},
+    {"done", "check", "Done", 1, "Finish adjusting (Esc)"},
 };
-constexpr double kHudSize = 26.0, kHudGap = 6.0, kHudTop = 34.0, kKnob = 26.0;
+constexpr double kHudSize = 26.0, kHudGap = 6.0, kHudTop = 34.0, kHudRow = kHudSize + 30.0, kKnob = 26.0;
 
 /** Each button's slot fits its widest caption, so captions never run into each other. */
 double hudSlot(int index)
@@ -235,16 +262,47 @@ double hudSlot(int index)
 
 QRectF hudRect(int index, double viewWidth)
 {
+    const int row = kHud[index].row;
     double total = 0.0, before = 0.0;
     for (int i = 0; i < int(std::size(kHud)); ++i)
     {
+        if (kHud[i].row != row)
+            continue;
         if (i == index)
             before = total;
         total += hudSlot(i) + kHudGap;
     }
     total -= kHudGap;
     const double x = viewWidth * 0.5 - total * 0.5 + before + (hudSlot(index) - kHudSize) * 0.5;
-    return {x, kHudTop, kHudSize, kHudSize};
+    return {x, kHudTop + row * kHudRow, kHudSize, kHudSize};
+}
+
+/** The HUD button under px, -1 for none. */
+int hudButtonAt(QPointF px, double viewWidth)
+{
+    for (int i = 0; i < int(std::size(kHud)); ++i)
+        if (hudRect(i, viewWidth).adjusted(-3, -3, 3, 18).contains(px))
+            return i;
+    return -1;
+}
+
+/** The edge of the quad (0 top, 1 right, 2 bottom, 3 left) within reach of px, away from the corners; -1 for none. */
+int edgeAt(const std::array<glm::dvec2, 4>& c, glm::dvec2 px)
+{
+    for (int e = 0; e < 4; ++e)
+    {
+        const glm::dvec2 a = c[size_t(e)], b = c[size_t(e + 1) % 4], ab = b - a;
+        const double len2 = glm::dot(ab, ab);
+        if (len2 < 1.0)
+            continue;
+        const double t = glm::dot(px - a, ab) / len2;
+        const double len = std::sqrt(len2);
+        if (t * len < 12.0 || (1.0 - t) * len < 12.0)
+            continue;
+        if (glm::length(a + ab * t - px) < 6.0)
+            return e;
+    }
+    return -1;
 }
 
 glm::dvec2 knobOf(const std::array<glm::dvec2, 4>& c)
@@ -257,6 +315,47 @@ glm::dvec2 knobOf(const std::array<glm::dvec2, 4>& c)
 QPointF qp(glm::dvec2 v)
 {
     return {v.x, v.y};
+}
+
+QString keyOr(const char* action, const char* fallback)
+{
+    const QString k = Hotkeys::get().keyFor(action);
+    return k.isEmpty() ? QString(fallback) : k;
+}
+
+/** The ways to work an overlay, listed in the view's bottom left while adjusting. */
+void drawKeys(OverlayPainter& p, const ViewInfo& view)
+{
+    const QString o = keyOr("referenceOverlay.keyDown", "O");
+    const std::pair<QString, QString> rows[] = {
+        {"Drag the image", "Move"},
+        {"Drag a corner", "Scale"},
+        {"Drag an edge", "Crop"},
+        {"Drag the knob", "Rotate (Shift snaps to 15\u00B0)"},
+        {"Wheel over the image", "Opacity"},
+        {"Delete", "Remove"},
+        {"Esc, or click outside", "Done"},
+        {"", ""},
+        {o + " tap", "Hide or show this view's overlays"},
+        {o + " hold", "Full strength while held, to compare"},
+        {o + " + drag", "Move; right-drag scales, middle-drag rotates, wheel fades"},
+        {keyOr("referenceOverlay.adjust", "Shift+O"), "Adjust again"},
+        {keyOr("referenceOverlay.next", "Alt+O"), "Next overlay on its own"},
+    };
+    double keyWidth = 0.0;
+    for (const auto& [k, what] : rows)
+        keyWidth = std::max(keyWidth, double(OverlayPainter::textWidth(k)));
+    const double line = 17.0, x = 14.0;
+    double y = view.height - 70.0 - line * double(std::size(rows));
+    const glm::vec4 key(0.3f, 0.75f, 1.0f, 1.0f), white(0.95f, 0.95f, 0.95f, 1.0f);
+    p.setShadow(true);
+    for (const auto& [k, what] : rows)
+    {
+        p.text(QPointF(x, y), k, key);
+        p.text(QPointF(x + keyWidth + 12.0, y), what, white);
+        y += line;
+    }
+    p.setShadow(false);
 }
 
 void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
@@ -274,6 +373,13 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
     const glm::dvec2 knob = knobOf(c);
     p.line(qp((c[0] + c[1]) * 0.5), qp(knob), 1.5f, accent);
     p.disc(qp(knob), 6.0f, accent);
+    // Crop handles: a short bar along the middle of each edge.
+    for (int e = 0; e < 4; ++e)
+    {
+        const glm::dvec2 a = c[size_t(e)], b = c[size_t(e + 1) % 4];
+        const glm::dvec2 mid = (a + b) * 0.5, along = glm::length(b - a) > 1e-6 ? glm::normalize(b - a) : glm::dvec2(1, 0);
+        p.line(qp(mid - along * 10.0), qp(mid + along * 10.0), 4.0f, accent);
+    }
     p.setShadow(false);
     for (int i = 0; i < int(std::size(kHud)); ++i)
     {
@@ -299,17 +405,42 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
             on = o.ghost;
         else if (std::string_view(kHud[i].id) == "bind")
             on = o.bound.set;
-        else if (std::string_view(kHud[i].id) == "flip")
+        else if (std::string_view(kHud[i].id) == "flipH")
             on = refs::current().image(o.image) && refs::current().image(o.image)->flipH;
+        else if (std::string_view(kHud[i].id) == "flipV")
+            on = refs::current().image(o.image) && refs::current().image(o.image)->flipV;
         p.icon(r.adjusted(3, 3, -3, -3), iconName, on ? accent : white);
         p.text(QPointF(r.center().x(), r.bottom() + 14), label, white, OverlayPainter::Center);
     }
-    QString info = QString("Opacity %1%   Lens %2 mm").arg(int(std::lround(o.opacity * 100))).arg(o.focalLength, 0, 'f', 0);
+    const double shownW = glm::length(c[1] - c[0]), shownH = glm::length(c[3] - c[0]);
+    QString info = QString("Size %1 x %2 px").arg(std::lround(shownW)).arg(std::lround(shownH));
+    if (const refs::Image* img = refs::current().image(o.image))
+        if (const QSize px = pixelSizeOf(*img); px.isValid() && px.height() > 0)
+            info += QString(" (%1% of the image's pixels)").arg(std::lround(shownH / ((o.crop.w - o.crop.y) * px.height()) * 100.0));
+    double rotation = std::fmod(o.rotation, 360.0);
+    if (rotation > 180.0)
+        rotation -= 360.0;
+    else if (rotation <= -180.0)
+        rotation += 360.0;
+    const glm::dvec2 offset = o.offset * view.height;
+    info += QString("   Rotation %1\u00B0   Offset %2, %3 px   Opacity %4%")
+                .arg(rotation, 0, 'f', 1)
+                .arg(std::lround(offset.x))
+                .arg(std::lround(offset.y))
+                .arg(std::lround(o.opacity * 100));
+    if (o.crop != glm::dvec4(0.0, 0.0, 1.0, 1.0))
+        info += "   Cropped";
     if (o.bound.set)
         info += "   Bound";
-    p.label(QPointF(view.width * 0.5 - OverlayPainter::textWidth(info) * 0.5, kHudTop + kHudSize + 34), info);
-    const QString hint = "Drag the image to move it, a corner to scale, the knob to rotate.   Delete removes it.   Esc or a click outside it when done.";
-    p.label(QPointF(view.width * 0.5 - OverlayPainter::textWidth(hint) * 0.5, kHudTop + kHudSize + 58), hint);
+    p.label(QPointF(view.width * 0.5 - OverlayPainter::textWidth(info) * 0.5, kHudTop + kHudRow + kHudSize + 34), info);
+    drawKeys(p, view);
+    if (const int b = state().hoverButton; b >= 0)
+        {
+            const QString tip = kHud[b].tip;
+            const QRectF r = hudRect(b, view.width);
+            const double x = std::clamp(r.center().x() - OverlayPainter::textWidth(tip) * 0.5, 8.0, std::max(8.0, view.width - OverlayPainter::textWidth(tip) - 8.0));
+            p.label(QPointF(x, kHudTop + kHudRow + kHudSize + 58), tip);
+        }
 }
 
 void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
@@ -339,7 +470,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
         const double aspect = double(tex->width) / double(tex->height);
         render::ImagePlaneDraw d;
         toWorld(view, refs::overlayCorners(*o, img, aspect, size), d.corners);
-        d.uv = glm::vec4(refs::overlayUv(img));
+        d.uv = glm::vec4(refs::overlayUv(*o, img));
         d.image = tex;
         d.opacity = float((st.blink ? 1.0 : o->opacity) * fade);
         d.brightness = float(img->brightness);
@@ -450,6 +581,34 @@ void parkView(const std::string& view)
     refs::tweak([&](refs::Set& s) { refs::park(s, view, aspectOf, size); });
 }
 
+/** A copy of the overlay, nudged down and right so both show, made the active one. */
+void duplicate(const std::string& id)
+{
+    refs::Set next = refs::current();
+    const Overlay* o = next.overlay(id);
+    if (!o)
+        return;
+    Overlay copy = *o;
+    copy.id = next.newOverlayId();
+    copy.offset += glm::dvec2(0.04);
+    copy.bound = {};
+    next.overlays.push_back(copy);
+    refs::apply(std::move(next), "Duplicate Reference Overlay");
+    state().active[copy.view] = copy.id;
+}
+
+void uncrop(const std::string& id)
+{
+    const Overlay* o = refs::current().overlay(id);
+    const refs::Image* img = o ? refs::current().image(o->image) : nullptr;
+    if (!img)
+        return;
+    ViewportWidget* v = viewWidget(o->view);
+    const glm::dvec2 size = v ? glm::dvec2(v->width(), v->height()) : glm::dvec2(16.0, 9.0);
+    const double aspect = aspectOf(*img);
+    edit(id, [&](Overlay& ov) { refs::setCrop(ov, img, aspect, size, {0.0, 0.0, 1.0, 1.0}); });
+}
+
 void hudAction(const std::string& button, const std::string& view)
 {
     const std::string id = activeIn(view);
@@ -464,12 +623,17 @@ void hudAction(const std::string& button, const std::string& view)
         edit(id, [](Overlay& ov) { ov.depth = ov.depth == refs::Depth::Front ? refs::Depth::Behind : refs::Depth::Front; });
     else if (button == "mode")
         edit(id, [](Overlay& ov) { ov.mode = refs::Mode((int(ov.mode) + 1) % 3); });
-    else if (button == "flip")
+    else if (button == "flipH" || button == "flipV")
     {
-        const refs::Image* img = refs::current().image(o->image);
-        if (img)
-            runCommand("referenceImage", {{"edit", img->id}, {"flipH", !img->flipH}});
+        if (const refs::Image* img = refs::current().image(o->image))
+            runCommand("referenceImage", {{"edit", img->id}, {button, !(button == "flipH" ? img->flipH : img->flipV)}});
     }
+    else if (button == "duplicate")
+        duplicate(id);
+    else if (button == "uncrop")
+        uncrop(id);
+    else if (button == "docs")
+        docs::open("reference-images");
     else if (button == "ghost")
         edit(id, [](Overlay& ov) { ov.ghost = !ov.ghost; });
     else if (button == "bind")
@@ -556,6 +720,7 @@ void setAdjust(bool on, const std::string& view)
         const std::string left = st.adjustView;
         st.adjust = false;
         st.adjustView.clear();
+        st.hoverButton = -1;
         if (was && !refs::current().overlaysIn(left).empty())
             viewportToast::showActive("Reference overlay kept. Tap O to hide or show it, Shift+O to adjust it again", 4000);
         if (filter)
@@ -565,6 +730,20 @@ void setAdjust(bool on, const std::string& view)
         }
     }
     redraw();
+    outliner::refreshRowSources();
+}
+
+/** Makes the overlay its view's active one and adjusts it there. */
+void adjustOverlay(const std::string& id)
+{
+    const Overlay* o = refs::current().overlay(id);
+    if (!o)
+        return;
+    const std::string view = o->view;
+    state().active[view] = id;
+    if (!o->visible)
+        edit(id, [](Overlay& ov) { ov.visible = true; });
+    setAdjust(true, view);
 }
 
 bool pressDrag(QMouseEvent* e, const ViewInfo& view)
@@ -579,12 +758,11 @@ bool pressDrag(QMouseEvent* e, const ViewInfo& view)
     st.viewSize = size;
     if (inAdjust && e->button() == Qt::LeftButton)
     {
-        for (int i = 0; i < int(std::size(kHud)); ++i)
-            if (hudRect(i, view.width).adjusted(-3, -3, 3, 18).contains(e->position()))
-            {
-                hudAction(kHud[i].id, view.camera);
-                return true;
-            }
+        if (const int b = hudButtonAt(e->position(), view.width); b >= 0)
+        {
+            hudAction(kHud[b].id, view.camera);
+            return true;
+        }
     }
     std::string id = activeIn(view.camera);
     const refs::Set& set = refs::current();
@@ -622,6 +800,11 @@ bool pressDrag(QMouseEvent* e, const ViewInfo& view)
             st.drag = DragKind::RotateKnob;
         else if (std::ranges::any_of(c, near))
             st.drag = DragKind::ScaleCorner;
+        else if (const int edge = edgeAt(c, px); edge >= 0)
+        {
+            st.drag = DragKind::Crop;
+            st.cropEdge = edge;
+        }
         else if (hit(*o, size, px))
             st.drag = DragKind::Move;
         else
@@ -636,6 +819,8 @@ bool pressDrag(QMouseEvent* e, const ViewInfo& view)
     return st.drag != DragKind::None || inAdjust;
 }
 
+void cropTo(const std::string& id, const Overlay& start, int edge, glm::dvec2 viewSize, glm::dvec2 px);
+
 void moveDrag(QMouseEvent* e, const ViewInfo& view)
 {
     State& st = state();
@@ -645,6 +830,11 @@ void moveDrag(QMouseEvent* e, const ViewInfo& view)
     const Overlay& s0 = st.start;
     const bool snap = e->modifiers() & Qt::ShiftModifier;
     const glm::dvec2 centre = centreOf(cornersOf(s0, size));
+    if (st.drag == DragKind::Crop)
+    {
+        cropTo(st.dragOverlay, s0, st.cropEdge, size, px);
+        return;
+    }
     edit(st.dragOverlay, [&](Overlay& o) {
         switch (st.drag)
         {
@@ -675,6 +865,42 @@ void moveDrag(QMouseEvent* e, const ViewInfo& view)
     });
 }
 
+/** Moves one side of the crop to the image point under px, keeping the rest of the image still. */
+void cropTo(const std::string& id, const Overlay& start, int edge, glm::dvec2 viewSize, glm::dvec2 px)
+{
+    const refs::Image* img = refs::current().image(start.image);
+    if (!img)
+        return;
+    const double aspect = aspectOf(*img);
+    const glm::dvec2 uv = refs::overlayImageUv(start, img, aspect, viewSize, px);
+    glm::dvec4 crop = start.crop;
+    constexpr double kMin = 0.02;
+    // The quad's top and left edges carry the crop's low ends unless flipped.
+    if (edge == 0 || edge == 2)
+    {
+        const bool low = (edge == 0) != img->flipV;
+        if (low)
+            crop.y = std::clamp(uv.y, 0.0, crop.w - kMin);
+        else
+            crop.w = std::clamp(uv.y, crop.y + kMin, 1.0);
+    }
+    else
+    {
+        const bool low = (edge == 3) != img->flipH;
+        if (low)
+            crop.x = std::clamp(uv.x, 0.0, crop.z - kMin);
+        else
+            crop.z = std::clamp(uv.x, crop.x + kMin, 1.0);
+    }
+    Overlay next = start;
+    refs::setCrop(next, img, aspect, viewSize, crop);
+    edit(id, [&](Overlay& o) {
+        o.crop = next.crop;
+        o.scale = next.scale;
+        o.offset = next.offset;
+    });
+}
+
 void releaseDrag(QMouseEvent*, const ViewInfo&)
 {
     state().drag = DragKind::None;
@@ -683,11 +909,17 @@ void releaseDrag(QMouseEvent*, const ViewInfo&)
 bool wheel(QWheelEvent* e, const ViewInfo& view)
 {
     State& st = state();
-    if (!st.keyHeld)
-        return false;
     const std::string id = activeIn(view.camera);
     if (id.empty())
         return false;
+    if (!st.keyHeld)
+    {
+        const Overlay* o = refs::current().overlay(id);
+        const bool overImage = st.adjust && st.adjustView == view.camera && o &&
+                               hit(*o, glm::dvec2(view.width, view.height), glm::dvec2(e->position().x(), e->position().y()));
+        if (!overImage)
+            return false;
+    }
     st.keyUsed = true;
     st.blink = false;
     st.hiddenViews.erase(view.camera);
@@ -780,6 +1012,8 @@ void registerCommand()
                   {.name = "offset", .shortName = "of", .type = ArgType::List, .doc = "[x, y] from the anchor to the image centre, in view heights, y down."},
                   {.name = "scale", .shortName = "s", .type = ArgType::Float, .doc = "Shown height in view heights.", .min = 0.01, .max = 20.0},
                   {.name = "rotation", .shortName = "r", .type = ArgType::Float, .doc = "Degrees clockwise."},
+                  {.name = "crop", .shortName = "cr", .type = ArgType::List,
+                   .doc = "[u0, v0, u1, v1]: the part of the image shown, 0 to 1 from its top left. The image stays where it is on screen."},
                   {.name = "visible", .shortName = "vis", .type = ArgType::Bool, .doc = "Shown or hidden."},
                   {.name = "ghost", .shortName = "gh", .type = ArgType::Bool, .doc = "Draw the meshes see-through while the overlay shows."},
                   {.name = "outlineColor", .shortName = "oc", .type = ArgType::Vec3, .doc = "Line color of outline mode, display RGB 0 to 1."},
@@ -894,6 +1128,16 @@ void registerCommand()
                     o.scale = a.get<double>("scale");
                 if (a.has("rotation"))
                     o.rotation = a.get<double>("rotation");
+                if (a.has("crop"))
+                {
+                    const json& c = a.flags["crop"];
+                    if (!c.is_array() || c.size() != 4)
+                        throw CommandError("crop is [u0, v0, u1, v1]");
+                    const refs::Image* img = refs::current().image(o.image);
+                    ViewportWidget* v = viewWidget(o.view);
+                    refs::setCrop(o, img, img ? aspectOf(*img) : 1.0, v ? glm::dvec2(v->width(), v->height()) : glm::dvec2(16.0, 9.0),
+                                  {c[0].get<double>(), c[1].get<double>(), c[2].get<double>(), c[3].get<double>()});
+                }
                 if (a.has("visible"))
                     o.visible = a.get<bool>("visible");
                 if (a.has("ghost"))
@@ -1225,6 +1469,66 @@ void install(std::function<ViewportWidget*()> activeView)
             redraw();
     });
     refs::addListener(redraw);
+    refs::addListener(outliner::refreshRowSources);
+    outliner::addRowSource({
+        .id = "referenceOverlays",
+        .title = "Reference Overlays",
+        .icon = "photo",
+        .rows =
+            [] {
+                std::vector<outliner::ExtraRow> rows;
+                const refs::Set& set = refs::current();
+                for (const Overlay& o : set.overlays)
+                {
+                    const refs::Image* img = set.image(o.image);
+                    const std::string name = img ? img->name : o.image;
+                    rows.push_back({.id = o.id,
+                                    .label = name + "  (" + o.view + ")",
+                                    .icon = "photo",
+                                    .tooltip = "Reference overlay in " + o.view + "\nClick to adjust it in the view.",
+                                    .hidden = !o.visible || state().hiddenViews.contains(o.view)});
+                }
+                return rows;
+            },
+        .activate = [](const std::string& id) { adjustOverlay(id); },
+        .current = []() -> std::string {
+            const State& st = state();
+            return st.adjust ? activeIn(st.adjustView) : std::string();
+        },
+        .rename =
+            [](const std::string& id, const std::string& name) {
+                if (const Overlay* o = refs::current().overlay(id))
+                    runCommand("referenceImage", {{"edit", o->image}, {"name", name}});
+            },
+        .menu =
+            [](QMenu* m, const std::string& id) {
+                const Overlay* o = refs::current().overlay(id);
+                if (!o)
+                    return;
+                m->addAction(icon("adjustments"), "Adjust", [id] { adjustOverlay(id); });
+                m->addAction(icon(o->visible ? "eye-off" : "eye"), o->visible ? "Hide" : "Show",
+                             [id, on = !o->visible] { runCommand("referenceOverlay", {{"edit", id}, {"visible", on}}); });
+                m->addAction(icon("copy"), "Duplicate", [id] { duplicate(id); });
+                m->addAction(icon("crop"), "Show Full Image", [id] { uncrop(id); });
+                m->addSeparator();
+                m->addAction(icon("trash"), "Remove", [id] { runCommand("referenceOverlay", {{"remove", json::array({id})}}); });
+            },
+    });
+    // Hovering a toolbar button names what it does; the badge also keeps the view redrawing as the cursor moves.
+    for (int i = 0; i < int(std::size(kHud)); ++i)
+        cursorBadges::add({.id = std::string("referenceOverlay.hud.") + kHud[i].id,
+                           .icon = kHud[i].icon,
+                           .active =
+                               [i](const ViewportState& v) {
+                                   State& st = state();
+                                   const bool on = st.adjust && st.adjustView == v.view.camera && hudButtonAt(v.cursor, v.view.width) == i;
+                                   if (on)
+                                       st.hoverButton = i;
+                                   else if (st.hoverButton == i)
+                                       st.hoverButton = -1;
+                                   return on;
+                               },
+                           .message = kHud[i].tip});
     cursorBadges::add({.id = "referenceOverlay.key",
                        .icon = "layers-subtract",
                        .active = [](const ViewportState& v) { return state().keyHeld && !refs::current().overlaysIn(v.view.camera).empty(); },

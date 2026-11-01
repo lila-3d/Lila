@@ -466,6 +466,8 @@ nlohmann::json Set::toJson() const
                   {"outlineColor", json::array({o.outlineColor.r, o.outlineColor.g, o.outlineColor.b})},
                   {"fadeAngle", o.fadeAngle},
                   {"focalLength", o.focalLength}};
+        if (o.crop != glm::dvec4(0.0, 0.0, 1.0, 1.0))
+            j["crop"] = json::array({o.crop.x, o.crop.y, o.crop.z, o.crop.w});
         if (o.bound.set)
             j["bound"] = {{"target", vec(o.bound.target)}, {"distance", o.bound.distance}, {"yaw", o.bound.yaw},
                           {"pitch", o.bound.pitch}, {"focalLength", o.bound.focalLength}, {"ortho", o.bound.ortho},
@@ -525,6 +527,8 @@ Set Set::fromJson(const nlohmann::json& j)
         o.outlineColor = glm::vec3(c);
         o.fadeAngle = std::clamp(i.value("fadeAngle", 15.0), 1.0, 180.0);
         o.focalLength = std::max(1.0, i.value("focalLength", 105.0));
+        if (const json& cr = i.value("crop", json()); cr.is_array() && cr.size() == 4)
+            o.crop = glm::clamp(glm::dvec4(cr[0].get<double>(), cr[1].get<double>(), cr[2].get<double>(), cr[3].get<double>()), 0.0, 1.0);
         if (const json& b = i.value("bound", json()); b.is_object())
         {
             o.bound.set = true;
@@ -820,8 +824,23 @@ glm::dvec2 anchorPoint(Anchor a, glm::dvec2 view)
 }
 } // namespace
 
+namespace
+{
+glm::dvec2 centreOf4(const std::array<glm::dvec2, 4>& c)
+{
+    return (c[0] + c[1] + c[2] + c[3]) * 0.25;
+}
+
+/** The cropped image's shown width over height, before quarter turns. */
+double croppedAspect(const Overlay& o, double imageAspect)
+{
+    return imageAspect * std::max(o.crop.z - o.crop.x, 1e-6) / std::max(o.crop.w - o.crop.y, 1e-6);
+}
+} // namespace
+
 std::array<glm::dvec2, 4> overlayCorners(const Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize)
 {
+    imageAspect = croppedAspect(o, imageAspect);
     const int turns = img ? img->quarterTurns : 0;
     const double h = std::max(viewSize.y, 1.0);
     // Shown height is scale view heights; on a quarter turn that is the image's own width.
@@ -856,14 +875,48 @@ bool overlayContains(const Overlay& o, const Image* img, double imageAspect, glm
     return !(pos && neg);
 }
 
-glm::dvec4 overlayUv(const Image* img)
+glm::dvec4 overlayUv(const Overlay& o, const Image* img)
 {
-    glm::dvec4 uv(0.0, 0.0, 1.0, 1.0);
+    glm::dvec4 uv = o.crop;
     if (img && img->flipH)
         std::swap(uv.x, uv.z);
     if (img && img->flipV)
         std::swap(uv.y, uv.w);
     return uv;
+}
+
+glm::dvec2 overlayImageUv(const Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize, glm::dvec2 px)
+{
+    const auto c = overlayCorners(o, img, imageAspect, viewSize);
+    const glm::dvec2 ex = c[1] - c[0], ey = c[3] - c[0], d = px - c[0];
+    // Fractions across the shown quad from its first corner, which carries uv.xy.
+    const double fx = glm::dot(d, ex) / std::max(glm::dot(ex, ex), 1e-12);
+    const double fy = glm::dot(d, ey) / std::max(glm::dot(ey, ey), 1e-12);
+    const glm::dvec4 uv = overlayUv(o, img);
+    return {uv.x + (uv.z - uv.x) * fx, uv.y + (uv.w - uv.y) * fy};
+}
+
+void setCrop(Overlay& o, const Image* img, double imageAspect, glm::dvec2 viewSize, glm::dvec4 crop)
+{
+    crop = glm::clamp(crop, 0.0, 1.0);
+    if (crop.z - crop.x < 0.01 || crop.w - crop.y < 0.01)
+        return;
+    const auto c = overlayCorners(o, img, imageAspect, viewSize);
+    const glm::dvec4 uv = overlayUv(o, img);
+    // Screen position of an image point under the current crop, so the new crop's centre lands where it shows now.
+    auto at = [&](double u, double v) {
+        const double fx = (u - uv.x) / (uv.z - uv.x), fy = (v - uv.y) / (uv.w - uv.y);
+        return c[0] + (c[1] - c[0]) * fx + (c[3] - c[0]) * fy;
+    };
+    const glm::dvec2 centre = at((crop.x + crop.z) * 0.5, (crop.y + crop.w) * 0.5);
+    const bool turned = img && img->quarterTurns % 2;
+    const double before = turned ? o.crop.z - o.crop.x : o.crop.w - o.crop.y;
+    const double after = turned ? crop.z - crop.x : crop.w - crop.y;
+    o.scale *= after / std::max(before, 1e-9);
+    o.crop = crop;
+    const double h = std::max(viewSize.y, 1.0);
+    const glm::dvec2 now = centreOf4(overlayCorners(o, img, imageAspect, viewSize));
+    o.offset += (centre - now) / h;
 }
 
 double boundFade(const Overlay& o, const glm::dvec3& forward)
@@ -895,7 +948,7 @@ void park(Set& set, const std::string& view, const std::function<double(const Im
     for (Overlay* o : mine)
     {
         const Image* img = set.image(o->image);
-        double aspect = img ? imageAspect(*img) : 1.0;
+        double aspect = img ? croppedAspect(*o, imageAspect(*img)) : 1.0;
         if (img && img->quarterTurns % 2)
             aspect = 1.0 / std::max(aspect, 1e-6);
         o->anchor = Anchor::TopRight;
