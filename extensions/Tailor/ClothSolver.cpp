@@ -763,7 +763,8 @@ void ClothSolver::Impl::detect()
         l.clear();
     if (!s.selfCollision)
     {
-        std::fill(bound.begin(), bound.end(), kInf);
+        // Without contacts to bound them, steps still stay a few query radii long so stiff constraints can't fling points.
+        std::fill(bound.begin(), bound.end(), 10.f * queryRadius);
         return;
     }
 

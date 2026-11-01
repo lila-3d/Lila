@@ -213,3 +213,38 @@ TEST_CASE("surface: a shrunk seam gathers its edge")
     const Vec3 &top = x[size_t(8 * 7 + 6)], &bottom = x[size_t(6)];
     CHECK(std::hypot(top[0] - bottom[0], top[1] - bottom[1], top[2] - bottom[2]) < 0.3f * 0.75f);
 }
+
+TEST_CASE("binding: a thick render mesh follows the cloth")
+{
+    // Sim: a flat sheet. Render: a shell 1 cm above and below it at another resolution.
+    Garment g;
+    ClothMesh m = hingedPair(7, 9, g, 0.f);
+    std::vector<Vec3> render;
+    for (int j = 0; j <= 12; ++j)
+        for (int i = 0; i <= 10; ++i)
+            for (float side : {-0.01f, 0.01f})
+                render.push_back({-0.2f + 0.4f * float(i) / 10.f, 0.3f * float(j) / 12.f, side});
+    const RenderBinding b = bindRenderMesh(m.rest3d, m.tris, render);
+    for (int t : b.tri)
+        REQUIRE(t >= 0);
+
+    // Unchanged cloth gives the render mesh back.
+    const std::vector<Vec3> same = deformRenderMesh(b, m.rest3d, m.tris);
+    float err = 0.f;
+    for (size_t i = 0; i < render.size(); ++i)
+        err = std::max(err, std::hypot(same[i][0] - render[i][0], same[i][1] - render[i][1], same[i][2] - render[i][2]));
+    CHECK(err < 1e-5f);
+
+    // A rigid turn of the cloth turns the shell with it, thickness kept.
+    std::vector<Vec3> turned = m.rest3d;
+    for (Vec3& p : turned)
+        p = {p[2], p[1], -p[0]};
+    const std::vector<Vec3> moved = deformRenderMesh(b, turned, m.tris);
+    err = 0.f;
+    for (size_t i = 0; i < render.size(); ++i)
+    {
+        const Vec3 want{render[i][2], render[i][1], -render[i][0]};
+        err = std::max(err, std::hypot(moved[i][0] - want[0], moved[i][1] - want[1], moved[i][2] - want[2]));
+    }
+    CHECK(err < 0.002f);
+}

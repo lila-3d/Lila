@@ -7,6 +7,7 @@
 #include "TailorCore.h"
 
 #include <lila/Command.h>
+#include <lila/Diagnostics.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
 #include <lila/Mesh.h>
@@ -286,6 +287,44 @@ void writeMaxDistance(Graph& g, const Node& collider, geo::Mesh& garment)
     }
 }
 
+/** Checks a garment against its collider's measurements and posts the findings as diagnostics on its mesh. */
+json checkGarment(Graph& g, Node& op)
+{
+    const Garment gm = readGarment(op);
+    std::optional<Body> body;
+    if (const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")}))
+        if (Node* collider = g.node(src->node))
+        {
+            Vec3 feet;
+            body = measureCollider(g, *collider, feet);
+        }
+    const std::vector<PatternIssue> issues = checkPattern(gm, body ? &*body : nullptr);
+    const std::vector<PlugRef> fed = g.destinations({op.id(), plugIndex(op, "outMesh")});
+    const Node* mesh = fed.empty() ? &op : g.node(fed.front().node);
+    diagnostics::clear("tailor", mesh->id());
+    json out = json::array();
+    for (const PatternIssue& i : issues)
+    {
+        diagnostics::Issue d;
+        d.source = "tailor";
+        d.severity = i.level == PatternIssue::Error ? diagnostics::Severity::Error
+                     : i.level == PatternIssue::Warning ? diagnostics::Severity::Warning
+                                                         : diagnostics::Severity::Info;
+        d.target = mesh->path();
+        d.message = i.message + ". " + i.tip;
+        diagnostics::report(d);
+        json j = {{"level", i.level == PatternIssue::Error ? "error" : i.level == PatternIssue::Warning ? "warning" : "info"},
+                  {"message", i.message},
+                  {"tip", i.tip}};
+        if (i.panel >= 0)
+            j["panel"] = gm.panels[size_t(i.panel)].name;
+        if (i.seam >= 0)
+            j["seam"] = i.seam;
+        out.push_back(j);
+    }
+    return out;
+}
+
 /** A tailorGarment node holding gm, fed by the collider flag (or selection) and feeding a new mesh. Returns [mesh, garment]. */
 json createGarment(const Garment& gm, const std::string& block, const Args& a, const char* cmd, const std::string& meshName = {})
 {
@@ -331,6 +370,17 @@ json meshStats(Graph& g, const Node& op)
 
 void registerCommands(ext::Context& ctx)
 {
+    diagnostics::validators().add("tailor", {.doc = "Pattern checks on every garment (tailorCheck).", .run = [] {
+        Graph& g = Graph::current();
+        std::vector<NodeId> garments;
+        for (NodeId id : g.nodes())
+            if (const Node* n = g.node(id); n && n->type().isA(kGarmentType))
+                garments.push_back(id);
+        for (NodeId id : garments)
+            if (Node* n = g.node(id))
+                checkGarment(g, *n);
+    }}, ctx.owner());
+
     ctx.registerCommand({
         .name = "tailorCreateBlock",
         .doc = "Start a garment from a parametric block (tee, tunic, cloak, ...) and drape it onto a collider mesh.\n\n"
@@ -343,7 +393,11 @@ void registerCommands(ext::Context& ctx)
                   {"simulate", "sim", T::Bool, true, "Drape it; off leaves the panels where the block placed them."},
                   {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0},
                   {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."},
-                  {"fit", "ft", T::Bool, true, "Size the block to the collider's measurements and stand it where the collider stands."}},
+                  {"fit", "ft", T::Bool, true, "Size the block to the collider's measurements and stand it where the collider stands."},
+                  {"params", "pr", T::Any, json::object(),
+                   "Block parameters by name, metres and 0/1 for switches, e.g. {'sleeveStyle': 9, 'sleeveLength': 0.6}. "
+                   "Sleeve styles: 0 set-in, 1 cuffed, 2 bishop, 3 bell, 4 puff, 5 cap, 6 flutter, 7 leg-of-mutton, 8 poet, "
+                   "9 drop-shoulder, 10 batwing."}},
         .run = [](const Args& a) -> json {
             Garment gm;
             std::string error;
@@ -352,7 +406,12 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             if (Node* collider = colliderArg(g, a); collider && a.get<bool>("fit"))
                 body = measureCollider(g, *collider, offset);
-            if (!buildBlock(a.get<std::string>("block"), gm, &error, body))
+            BlockParamValues values;
+            if (const json pj = a.flags.value("params", json::object()); pj.is_object())
+                for (const auto& [k, v] : pj.items())
+                    if (v.is_number() || v.is_boolean())
+                        values[k] = v.is_boolean() ? (v.get<bool>() ? 1.f : 0.f) : v.get<float>();
+            if (!buildBlock(a.get<std::string>("block"), gm, &error, body, values))
                 throw CommandError("tailorCreateBlock: " + error);
             for (Panel& p : gm.panels)
                 for (int k = 0; k < 3; ++k)
@@ -992,6 +1051,52 @@ void registerCommands(ext::Context& ctx)
             return json::array({made[1], names});
         },
         .examples = {"tailorDrawPanel(points=[[-15, 140, 12], [15, 140, 12], [15, 100, 14], [-15, 100, 14]], name='Bib', collider='Mannequin')"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorBindRenderMesh",
+        .doc = "Latch a render mesh to a garment's cloth, like APEX's latch to nearest: every render point follows the "
+               "nearest cloth triangle with its offset kept, so a thick, sculpted or retopologised mesh moves with the drape, "
+               "live drapes included. Both meshes are taken as they are now; keep their transforms the same (freeze them). "
+               "Returns the tailorBinding node.",
+        .positionalDoc = "garment",
+        .flags = {{"mesh", "m", T::String, json(), "The render mesh to latch."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorBindRenderMesh");
+            Node* render = a.has("mesh") ? g.find(a.get<std::string>("mesh")) : nullptr;
+            if (!render || !render->type().isA("mesh"))
+                throw CommandError("tailorBindRenderMesh: give mesh, the render mesh to latch");
+            {
+                DrapeNow now;
+                g.evaluate();
+            }
+            const PlugValue sim = g.value({op.id(), plugIndex(op, "outMesh")});
+            const PlugValue rest = g.value({render->id(), MeshNode::kOutMesh});
+            if (!std::get_if<MeshPtr>(&sim) || !std::get<MeshPtr>(sim) || !std::get_if<MeshPtr>(&rest) || !std::get<MeshPtr>(rest))
+                throw CommandError("tailorBindRenderMesh: the garment or the render mesh has no geometry");
+            Node* bind = g.createNode(*types::find(kBindingType), {}, kNoNode, true);
+            g.setValue({bind->id(), plugIndex(*bind, "restMesh")}, std::get<MeshPtr>(rest));
+            g.setValue({bind->id(), plugIndex(*bind, "bindSim")}, std::get<MeshPtr>(sim));
+            g.connect({op.id(), plugIndex(op, "outMesh")}, {bind->id(), plugIndex(*bind, "simMesh")});
+            g.connect({bind->id(), plugIndex(*bind, "outMesh")}, {render->id(), MeshNode::kInMesh});
+            return bind->path();
+        },
+        .examples = {"tailorBindRenderMesh('Cloak', mesh='SM_Cloak_Thick')"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorCheck",
+        .doc = "Check a garment's pattern the way a pattern maker would: sleeve cap ease, dropped-shoulder sleeves on an "
+               "undropped shoulder, seams that don't match, ease round the chest against the collider, panels too small for the "
+               "cloth, crossed outlines, grain. Each finding comes with a tip, shows in the Pattern Editor and as a diagnostic "
+               "on the garment mesh. Returns the findings.",
+        .positionalDoc = "garment",
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            return checkGarment(g, garmentArg(g, a, "tailorCheck"));
+        },
+        .examples = {"tailorCheck('Tunic')"},
     });
 
     ctx.registerCommand({

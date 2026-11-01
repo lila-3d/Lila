@@ -27,6 +27,8 @@ namespace tailor
 {
 /** The DG node holding a garment and producing its draped mesh. */
 inline constexpr const char* kGarmentType = "tailorGarment";
+/** A render mesh latched to a garment's cloth. */
+inline constexpr const char* kBindingType = "tailorBinding";
 /** Garments are solved in metres; the scene is in centimetres. */
 inline constexpr double kCmPerM = 100.0;
 

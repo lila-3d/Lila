@@ -63,7 +63,27 @@ struct TopParams
     float neckDepth = 0.08f;       // front neck depth; the V depth when the front is open
     bool openFront = false;
     float overlap = 0.f;           // open front: how far each front panel crosses the centre line
+    int sleeveStyle = 0;           // SleeveStyle
+    float dropShoulder = 0.f;      // shoulder line carried past the shoulder point; drop-shoulder style defaults it
 };
+
+/** The sleeve families of a pattern maker's chart. Each sets cap height, cap ease, wrist width, cuff and default length. */
+enum class SleeveStyle : int
+{
+    SetIn,       // T-shirt: plain set-in, a little cap ease
+    Cuffed,      // shirt: tapered into a cuff
+    Bishop,      // full lower sleeve gathered into a cuff
+    Bell,        // flares from the elbow
+    Puff,        // short, gathered at cap and band
+    Cap,         // a few cm over the shoulder
+    Flutter,     // short, flared hem
+    LegOfMutton, // big gathered cap, narrow wrist
+    Poet,        // full, gathered at cap and cuff
+    DropShoulder, // shoulder carried onto the arm, low flat cap
+    Batwing,     // cut in one with the body, deep underarm
+    Count
+};
+const char* sleeveStyleName(SleeveStyle s);
 
 struct TeeParams : TopParams {};
 
@@ -95,6 +115,142 @@ struct RobeParams : TopParams
         neckDepth = 0.35f;
         openFront = true;
         overlap = 0.08f;
+    }
+};
+
+// Tops cut for one sleeve style each: the templates a pattern maker would start from.
+
+struct DropShoulderTopParams : TopParams
+{
+    DropShoulderTopParams()
+    {
+        length = 0.68f;
+        ease = 0.22f;
+        sleeveLength = 0.3f;
+        sleeveEase = 0.45f;
+        sleeveStyle = int(SleeveStyle::DropShoulder);
+        dropShoulder = 0.09f;
+        neckDepth = 0.07f;
+    }
+};
+
+struct ShirtParams : TopParams
+{
+    ShirtParams()
+    {
+        length = 0.78f;
+        ease = 0.14f;
+        sleeveLength = 0.62f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Cuffed);
+        neckDepth = 0.06f;
+        openFront = true;
+        overlap = 0.02f;
+    }
+};
+
+struct PeasantBlouseParams : TopParams
+{
+    PeasantBlouseParams()
+    {
+        length = 0.66f;
+        ease = 0.25f;
+        sleeveLength = 0.6f;
+        sleeveEase = 0.4f;
+        sleeveStyle = int(SleeveStyle::Bishop);
+        neckDepth = 0.12f;
+    }
+};
+
+struct PuffBlouseParams : TopParams
+{
+    PuffBlouseParams()
+    {
+        length = 0.6f;
+        ease = 0.12f;
+        sleeveLength = 0.18f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Puff);
+        neckDepth = 0.1f;
+    }
+};
+
+struct PoetShirtParams : TopParams
+{
+    PoetShirtParams()
+    {
+        length = 0.8f;
+        ease = 0.22f;
+        sleeveLength = 0.62f;
+        sleeveEase = 0.4f;
+        sleeveStyle = int(SleeveStyle::Poet);
+        neckDepth = 0.14f;
+    }
+};
+
+struct BellSleeveDressParams : TopParams
+{
+    BellSleeveDressParams()
+    {
+        length = 1.15f;
+        ease = 0.14f;
+        sleeveLength = 0.6f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Bell);
+        hemFlare = 0.12f;
+        neckDepth = 0.09f;
+    }
+};
+
+struct FlutterTopParams : TopParams
+{
+    FlutterTopParams()
+    {
+        length = 0.62f;
+        ease = 0.12f;
+        sleeveLength = 0.16f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::Flutter);
+        neckDepth = 0.12f;
+    }
+};
+
+struct CapSleeveTopParams : TopParams
+{
+    CapSleeveTopParams()
+    {
+        length = 0.6f;
+        ease = 0.08f;
+        sleeveLength = 0.07f;
+        sleeveEase = 0.25f;
+        sleeveStyle = int(SleeveStyle::Cap);
+        neckDepth = 0.08f;
+    }
+};
+
+struct BatwingTopParams : TopParams
+{
+    BatwingTopParams()
+    {
+        length = 0.65f;
+        ease = 0.25f;
+        sleeveLength = 0.5f;
+        sleeveEase = 0.4f;
+        sleeveStyle = int(SleeveStyle::Batwing);
+        neckDepth = 0.1f;
+    }
+};
+
+struct LegOfMuttonParams : TopParams
+{
+    LegOfMuttonParams()
+    {
+        length = 0.62f;
+        ease = 0.1f;
+        sleeveLength = 0.6f;
+        sleeveEase = 0.3f;
+        sleeveStyle = int(SleeveStyle::LegOfMutton);
+        neckDepth = 0.08f;
     }
 };
 
@@ -214,6 +370,8 @@ struct OutfitParams
 Garment tee(const Body& body, const TeeParams& p = {});
 Garment tunic(const Body& body, const TunicParams& p = {});
 Garment robe(const Body& body, const RobeParams& p = {});
+/** Any top: tee, tunic, robe and the sleeve-style templates all draft through it. */
+Garment top(const Body& body, const TopParams& p);
 Garment top(const Body& body, const TopParams& p);
 Garment trousers(const Body& body, const TrousersParams& p = {});
 Garment skirt(const Body& body, const SkirtParams& p = {});
@@ -267,6 +425,28 @@ void mannequin(const Body& body, std::vector<Vec3>& points, std::vector<std::arr
  *  girths as a tape would read them around horizontal sections; other lengths scaled by height. `offset` gets the
  *  centre of its feet, where garments built for the result go. */
 Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset = nullptr);
+
+/** Something a pattern maker would flag, with what to do about it. */
+struct PatternIssue
+{
+    enum Level
+    {
+        Info,
+        Warning,
+        Error
+    };
+    Level level = Warning;
+    int panel = -1; // the panel it is about, or -1
+    int seam = -1;  // the seam it is about, or -1
+    std::string message;
+    std::string tip;
+};
+
+/**
+ * Checks a pattern: outlines, panel sizes against the cloth resolution, grain, seams that don't match (with sleeve cap
+ * ease judged as a pattern maker would), dropped-shoulder sleeves on an undropped shoulder, and, given the body, chest ease.
+ */
+std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body = nullptr);
 
 /** Builds a block by id. Unknown names in `values` are ignored, values are clamped to the parameter range. */
 bool buildBlock(const std::string& id, Garment& out, std::string* error = nullptr, const Body& body = {},

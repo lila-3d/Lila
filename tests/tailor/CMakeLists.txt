@@ -6,7 +6,9 @@ add_executable(lila_tailor_tests main.cpp test_cloth_solver.cpp test_meshing.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Tailor/GarmentCodeImport.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Tailor/Blocks.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Tailor/Mannequin.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/Tailor/Surface.cpp)
+    ${CMAKE_SOURCE_DIR}/extensions/Tailor/Surface.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Tailor/Binding.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Tailor/Check.cpp)
 target_include_directories(lila_tailor_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Tailor)
 target_link_libraries(lila_tailor_tests PRIVATE TBB::tbb glm::glm doctest::doctest nlohmann_json::nlohmann_json)
 add_test(NAME lila_tailor_tests COMMAND lila_tailor_tests)

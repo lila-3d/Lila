@@ -128,6 +128,25 @@ struct SeamShrink
 /** Both sides' edges of every seam whose shrink is below 1, at shrink times their rest length. */
 std::vector<SeamShrink> seamShrinks(const ClothMesh& mesh, const Garment& g);
 
+/**
+ * A render mesh latched to the simulated cloth (APEX's "latch to nearest"): each render point keeps the nearest sim
+ * triangle, the barycentric weights of its foot point there, and its offset in that triangle's local frame, so a thick or
+ * separately modelled mesh follows the cloth exactly, thickness included.
+ */
+struct RenderBinding
+{
+    std::vector<int> tri; // -1 when unbound: local then holds the point itself
+    std::vector<std::array<float, 3>> bary;
+    std::vector<Vec3> local; // along the foot's tangent, bitangent and smoothed normal
+};
+
+/** Binds render points to the sim mesh as it is now (both in the same space). */
+RenderBinding bindRenderMesh(const std::vector<Vec3>& simPositions, const std::vector<std::array<int, 3>>& simTris,
+                             const std::vector<Vec3>& renderPoints);
+/** The render points for the sim mesh's current positions. */
+std::vector<Vec3> deformRenderMesh(const RenderBinding& binding, const std::vector<Vec3>& simPositions,
+                                   const std::vector<std::array<int, 3>>& simTris);
+
 /** Mesh every active/frozen panel at its particle distance, place it in 3D and resample seams to matching vertex pairs. */
 ClothMesh buildClothMesh(const Garment& g);
 

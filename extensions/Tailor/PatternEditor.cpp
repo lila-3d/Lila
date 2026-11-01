@@ -14,6 +14,8 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
+#include <QSplitter>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -89,6 +91,17 @@ public:
     }
 
     std::function<void(const QString&)> onTitle;
+    /** The pattern check's findings, after every refresh. */
+    std::function<void(const json&)> onIssues;
+
+    void highlight(int panel, int seam)
+    {
+        mSelected = panel;
+        mHighlightSeam = seam;
+        update();
+    }
+
+    const Garment& garment() const { return mG; }
 
     void setMode(Mode m)
     {
@@ -124,6 +137,20 @@ public:
         layoutPanels();
         if (changed)
             fit();
+        if (onIssues)
+        {
+            json issues = json::array();
+            if (n)
+                try
+                {
+                    issues = ops::execute("tailorCheck", {{"args", {mPath}}});
+                }
+                catch (const std::exception& e)
+                {
+                    log::warn("Pattern Editor: {}", e.what());
+                }
+            onIssues(issues);
+        }
         if (onTitle)
             onTitle(n ? QString::fromStdString(n->name()) + QString("  %1 panels, %2 seams").arg(mG.panels.size()).arg(mG.seams.size())
                       : QString("Select a garment"));
@@ -496,6 +523,7 @@ private:
     {
         const Seam& seam = mG.seams[s];
         const QColor c = seamColour(s);
+        const float width = int(s) == mHighlightSeam ? 8.f : 4.f;
         double la = 0.0, lb = 0.0;
         QPointF ma, mb;
         auto drawSides = [&](const std::vector<SeamSide>& sides, double& len, QPointF& mid) {
@@ -504,7 +532,7 @@ private:
                 if (side.panel < 0 || size_t(side.panel) >= mG.panels.size())
                     continue;
                 const auto pts = sidePoints(side);
-                p.setPen(QPen(c, 4.0, Qt::SolidLine, Qt::RoundCap));
+                p.setPen(QPen(c, width, Qt::SolidLine, Qt::RoundCap));
                 for (size_t i = 0; i + 1 < pts.size(); ++i)
                     p.drawLine(pts[i], pts[i + 1]);
                 if (!pts.empty())
@@ -514,7 +542,10 @@ private:
         };
         drawSides(seam.a, la, ma);
         drawSides(seam.b, lb, mb);
-        const bool mismatch = std::abs(la - lb) > 0.01 * std::max(la, lb) + 1e-4;
+        // Red for sides that should match but don't; a difference of 15% or more is a gather, as the pattern check reads it.
+        const double ratio = std::max(la, lb) / std::max(std::min(la, lb), 1e-6) - 1.0;
+        const bool mismatch = std::abs(la - lb) > 0.01 * std::max(la, lb) + 1e-4 && ratio < 0.15 && seam.shrink >= 1.f &&
+                              seam.a.size() == 1 && seam.b.size() == 1; // a sleeve cap against its armhole chain eases on purpose
         p.setPen(QPen(mismatch ? QColor(240, 80, 70) : c, 1.0, Qt::DotLine));
         p.drawLine(ma, mb);
         if (mismatch)
@@ -616,6 +647,7 @@ private:
     Vec2 mDragStart{0.f, 0.f};
     std::optional<Hit> mSewFrom;
     int mSelected = -1;
+    int mHighlightSeam = -1;
 };
 
 QWidget* makePatternEditor(QWidget* parent)
@@ -645,7 +677,42 @@ QWidget* makePatternEditor(QWidget* parent)
     bar->addSpacing(12);
     bar->addWidget(title, 1);
     col->addLayout(bar);
-    col->addWidget(view, 1);
+    auto* split = new QSplitter(Qt::Vertical, w);
+    split->addWidget(view);
+    auto* issues = new QListWidget(w);
+    issues->setWordWrap(true);
+    issues->setToolTip("The pattern check: what a pattern maker would flag, with what to change. Click one to see where.");
+    split->addWidget(issues);
+    split->setStretchFactor(0, 4);
+    split->setStretchFactor(1, 1);
+    col->addWidget(split, 1);
+    view->onIssues = [issues](const json& found) {
+        issues->clear();
+        if (found.empty())
+        {
+            issues->addItem("No problems found.");
+            return;
+        }
+        for (const json& f : found)
+        {
+            const std::string level = f.value("level", "info");
+            auto* item = new QListWidgetItem(QString::fromStdString(f.value("message", "") + "\n" + f.value("tip", "")));
+            item->setForeground(level == "error" ? QColor(240, 110, 100) : level == "warning" ? QColor(240, 200, 110) : QColor(170, 190, 220));
+            item->setData(Qt::UserRole, QString::fromStdString(f.value("panel", "")));
+            item->setData(Qt::UserRole + 1, f.contains("seam") ? f["seam"].get<int>() : -1);
+            issues->addItem(item);
+        }
+    };
+    QObject::connect(issues, &QListWidget::currentItemChanged, view, [view](QListWidgetItem* item) {
+        if (!item)
+            return;
+        const std::string panel = item->data(Qt::UserRole).toString().toStdString();
+        int pi = -1;
+        for (size_t k = 0; k < view->garment().panels.size(); ++k)
+            if (view->garment().panels[k].name == panel)
+                pi = int(k);
+        view->highlight(pi, item->data(Qt::UserRole + 1).toInt());
+    });
 
     QObject::connect(edit, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Edit); });
     QObject::connect(sew, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Sew); });

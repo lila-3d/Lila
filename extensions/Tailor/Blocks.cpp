@@ -258,9 +258,88 @@ using namespace blocks_detail;
 
 float Body::chestRadius() const { return chest / (2.f * kPi); }
 
+const char* sleeveStyleName(SleeveStyle s)
+{
+    static const char* names[] = {"set-in", "cuffed", "bishop", "bell", "puff", "cap", "flutter", "leg-of-mutton", "poet",
+                                  "drop-shoulder", "batwing"};
+    const int i = int(s);
+    return i >= 0 && i < int(SleeveStyle::Count) ? names[i] : "set-in";
+}
+
+namespace blocks_detail
+{
+/** What a sleeve style drafts: cap height as a share of armhole depth, cap ease, wrist and cuff, default length. */
+struct SleeveShape
+{
+    float capHeight = 0.65f;
+    float capEase = 0.04f; // cap seam longer than the armhole by this fraction; more gathers
+    float wrist = 0.75f;   // wrist width over bicep width (before sleeveFlare)
+    float cuff = 0.f;      // cuff band height, 0 for none
+    float length = -1.f;   // default sleeve length as a share of the arm; -1 keeps the block's
+    float drop = 0.f;      // default dropped shoulder, metres
+};
+
+SleeveShape sleeveShape(SleeveStyle s)
+{
+    switch (s)
+    {
+    case SleeveStyle::Cuffed: return {0.55f, 0.04f, 0.7f, 0.06f};
+    case SleeveStyle::Bishop: return {0.6f, 0.05f, 1.25f, 0.05f, 0.95f};
+    case SleeveStyle::Bell: return {0.6f, 0.04f, 2.2f, 0.f, 0.95f};
+    case SleeveStyle::Puff: return {0.85f, 0.4f, 1.3f, 0.04f, 0.2f};
+    case SleeveStyle::Cap: return {0.6f, 0.03f, 1.1f, 0.f, 0.1f};
+    case SleeveStyle::Flutter: return {0.55f, 0.03f, 2.4f, 0.f, 0.25f};
+    case SleeveStyle::LegOfMutton: return {0.9f, 0.5f, 0.6f, 0.f, 0.95f};
+    case SleeveStyle::Poet: return {0.7f, 0.25f, 1.3f, 0.05f, 0.95f};
+    case SleeveStyle::DropShoulder: return {0.25f, 0.f, 0.8f, 0.f, -1.f, 0.08f};
+    default: return {};
+    }
+}
+
+/** Bell-shaped sleeve cap from (-w/2, 0) over (0, -h) to (w/2, 0), y towards the shoulder negative. Excludes the ends. */
+std::vector<Vec2> capCurve(float w, float h)
+{
+    std::vector<Vec2> out;
+    const int n = std::max(8, int(std::ceil(w / kStep)));
+    for (int i = 1; i < n; ++i)
+    {
+        const float t = -1.f + 2.f * float(i) / float(n);
+        out.push_back({0.5f * w * t, -h * 0.5f * (1.f + std::cos(kPi * t))});
+    }
+    return out;
+}
+
+float capLength(float w, float h)
+{
+    std::vector<Vec2> c = capCurve(w, h);
+    c.insert(c.begin(), Vec2{-0.5f * w, 0.f});
+    c.push_back({0.5f * w, 0.f});
+    float len = 0.f;
+    for (size_t i = 0; i + 1 < c.size(); ++i)
+        len += dist2d(c[i], c[i + 1]);
+    return len;
+}
+
+/** Quadratic Bezier points from a towards b around control c, without a and b. */
+std::vector<Vec2> bezier(const Vec2& a, const Vec2& c, const Vec2& b)
+{
+    std::vector<Vec2> out;
+    const int n = std::max(3, int(std::ceil((dist2d(a, c) + dist2d(c, b)) / kStep)));
+    for (int i = 1; i < n; ++i)
+    {
+        const float t = float(i) / float(n), u = 1.f - t;
+        out.push_back({u * u * a[0] + 2.f * u * t * c[0] + t * t * b[0], u * u * a[1] + 2.f * u * t * c[1] + t * t * b[1]});
+    }
+    return out;
+}
+} // namespace blocks_detail
+
 Garment top(const Body& body, const TopParams& p)
 {
     Garment g = withFabric(p.openFront ? "Wool" : "Linen");
+    const SleeveStyle style = SleeveStyle(std::clamp(p.sleeveStyle, 0, int(SleeveStyle::Count) - 1));
+    const SleeveShape shape = sleeveShape(style);
+    const bool batwing = style == SleeveStyle::Batwing && p.sleeveLength > 0.02f;
     const float shoulderY = body.shoulderY();
     const float len = std::clamp(p.length, 0.25f, shoulderY - 0.02f);
     const float hemY = shoulderY - len;
@@ -275,10 +354,16 @@ Garment top(const Body& body, const TopParams& p)
     const float yT = len;
     const float yN = len + 0.035f;
 
+    // Armhole depth from the bicep the sleeve needs, then the shoulder carried past the shoulder point when dropped.
     const float dx = std::abs(wc - sx);
-    float armhole = std::max(body.chest * 0.33f * (1.f + std::max(p.sleeveEase, 0.f)) * 0.5f, dx + 0.05f);
-    const float ya = std::max(yT - std::sqrt(armhole * armhole - dx * dx), 0.06f);
-    armhole = std::hypot(dx, yT - ya);
+    const float bicepHalf = body.chest * 0.33f * (1.f + std::max(p.sleeveEase, 0.f)) * 0.5f;
+    const float drop = std::max(p.dropShoulder > 0.f ? p.dropShoulder : shape.drop, 0.f);
+    float ya = std::max(yT - std::sqrt(std::max(bicepHalf * bicepHalf - dx * dx, 0.0036f)), 0.06f);
+    ya = std::max(ya - 0.5f * drop - (batwing ? 0.14f : 0.f), 0.06f);
+    const Vec2 neckPt{nx, yN};
+    const Vec2 shoulderDir{sx - nx, yT - yN};
+    const float sl = std::hypot(shoulderDir[0], shoulderDir[1]);
+    const Vec2 tip{sx + shoulderDir[0] / sl * drop, yT + shoulderDir[1] / sl * drop};
     const float slit = std::clamp(p.slit, 0.f, ya - 0.05f);
 
     std::vector<Vec2> half{{wh, 0.f}};
@@ -290,23 +375,65 @@ Garment top(const Body& body, const TopParams& p)
     }
     const int rU = int(half.size());
     half.push_back({wc, ya});
-    const int rS = int(half.size());
-    half.push_back({sx, yT});
+    int rS, rWrist0 = -1, rWrist1 = -1;
+    const float th = body.armAngle;
+    const float ls = std::min(shape.length > 0.f ? shape.length * body.armLength : p.sleeveLength, body.armLength);
+    if (batwing)
+    {
+        // Cut on: the underarm sweeps out along the arm, the top runs from the wrist back up to the neck.
+        const Vec2 armDir{std::cos(th), -std::sin(th)};
+        const float wristHalf = std::max(0.07f, bicepHalf * 0.45f) * (1.f + std::max(p.sleeveFlare, 0.f));
+        const Vec2 shoulderEnd = tip;
+        const Vec2 wristTop{shoulderEnd[0] + armDir[0] * ls, shoulderEnd[1] + armDir[1] * ls};
+        const Vec2 n{armDir[1], -armDir[0]}; // below the arm line
+        const Vec2 wristBottom{wristTop[0] + n[0] * 2.f * wristHalf, wristTop[1] + n[1] * 2.f * wristHalf};
+        for (const Vec2& q : bezier({wc, ya}, {wc + 0.05f, ya + 0.02f}, wristBottom))
+            half.push_back(q);
+        rWrist0 = int(half.size());
+        half.push_back(wristBottom);
+        rWrist1 = int(half.size());
+        half.push_back(wristTop);
+        rS = int(half.size());
+        half.push_back(shoulderEnd);
+    }
+    else
+    {
+        // Set-in armholes scoop: down from the shoulder, then out to the underarm. Dropped ones run nearly straight.
+        const float straight = std::min(drop / 0.08f, 1.f);
+        const Vec2 control{tip[0] + (wc - tip[0]) * 0.5f * straight, ya + (tip[1] - ya) * (0.25f + 0.25f * straight)};
+        std::vector<Vec2> curve = bezier({wc, ya}, control, tip);
+        for (const Vec2& q : curve)
+            half.push_back(q);
+        rS = int(half.size());
+        half.push_back(tip);
+    }
     const int rN = int(half.size());
-    half.push_back({nx, yN});
+    half.push_back(neckPt);
 
-    struct Runs { SeamSide side, arm, shoulder; };
+    struct Runs { SeamSide side, arm, shoulder, wrist; };
     Runs fPlus, fMinus, bPlus, bMinus;
     const float z0 = 2.f * wc / kPi + kGap;
+    // Batwing fronts lie flat: wrapped round the torso, the sleeves would curl round it too.
+    auto placeBody = [&](Panel& panel, float z, bool front) {
+        if (batwing)
+            place(panel, {0.f, hemY, front ? z : -z}, {0.f, 1.f, 0.f}, {0.f, 0.f, front ? 1.f : -1.f}, 0.f);
+        else
+            placeAround(panel, hemY, z, wh, front);
+    };
 
     if (!p.openFront)
     {
         const Symmetric f = symmetric(half, yN, nx, std::clamp(p.neckDepth, 0.01f, yN * 0.8f));
         Panel front = makePanel("Front", f.outline);
-        placeAround(front, hemY, z0, wh, true);
+        placeBody(front, z0, true);
         g.panels.push_back(std::move(front));
-        fPlus = {f.plusRun(0, rSide, rU), f.plusRun(0, rU, rS), f.plusRun(0, rS, rN)};
-        fMinus = {f.minusRun(0, rSide, rU), f.minusRun(0, rU, rS), f.minusRun(0, rS, rN)};
+        fPlus = {f.plusRun(0, rSide, rU), f.plusRun(0, rU, rS), f.plusRun(0, rS, rN), {}};
+        fMinus = {f.minusRun(0, rSide, rU), f.minusRun(0, rU, rS), f.minusRun(0, rS, rN), {}};
+        if (batwing)
+        {
+            fPlus = {f.plusRun(0, rSide, rWrist0), {}, f.plusRun(0, rWrist1, rN), {}};
+            fMinus = {f.minusRun(0, rSide, rWrist0), {}, f.minusRun(0, rWrist1, rN), {}};
+        }
     }
     else
     {
@@ -320,22 +447,33 @@ Garment top(const Body& body, const TopParams& p)
         Panel fl = makePanel("Front L", b.pts);
         Panel fr = makePanel("Front R", mirrorX(b.pts));
         // The wearer's left laps over the right, so it sits a little further out.
-        placeAround(fl, hemY, z0 + 0.012f, wh, true);
-        placeAround(fr, hemY, z0, wh, true);
+        placeBody(fl, z0 + 0.012f, true);
+        placeBody(fr, z0, true);
         g.panels.push_back(std::move(fl));
         g.panels.push_back(std::move(fr));
         auto run = [](int r0, int r1) { return SeamSide{0, 1 + r0, 1 + r1}; };
-        fPlus = {run(rSide, rU), run(rU, rS), run(rS, rN)};
-        fMinus = {mirrorRun(fPlus.side, n, 1), mirrorRun(fPlus.arm, n, 1), mirrorRun(fPlus.shoulder, n, 1)};
+        if (batwing)
+            fPlus = {run(rSide, rWrist0), {}, run(rWrist1, rN), {}};
+        else
+            fPlus = {run(rSide, rU), run(rU, rS), run(rS, rN), {}};
+        fMinus = {mirrorRun(fPlus.side, n, 1), batwing ? SeamSide{} : mirrorRun(fPlus.arm, n, 1), mirrorRun(fPlus.shoulder, n, 1), {}};
     }
 
     const int bk = int(g.panels.size());
     const Symmetric bs = symmetric(half, yN, nx, 0.02f);
     Panel back = makePanel("Back", bs.outline);
-    placeAround(back, hemY, z0, wh, false);
+    placeBody(back, z0, false);
     g.panels.push_back(std::move(back));
-    bPlus = {bs.plusRun(bk, rSide, rU), bs.plusRun(bk, rU, rS), bs.plusRun(bk, rS, rN)};
-    bMinus = {bs.minusRun(bk, rSide, rU), bs.minusRun(bk, rU, rS), bs.minusRun(bk, rS, rN)};
+    if (batwing)
+    {
+        bPlus = {bs.plusRun(bk, rSide, rWrist0), {}, bs.plusRun(bk, rWrist1, rN), {}};
+        bMinus = {bs.minusRun(bk, rSide, rWrist0), {}, bs.minusRun(bk, rWrist1, rN), {}};
+    }
+    else
+    {
+        bPlus = {bs.plusRun(bk, rSide, rU), bs.plusRun(bk, rU, rS), bs.plusRun(bk, rS, rN), {}};
+        bMinus = {bs.minusRun(bk, rSide, rU), bs.minusRun(bk, rU, rS), bs.minusRun(bk, rS, rN), {}};
+    }
 
     // The back faces -Z, so its +x half lies on the wearer's right (-X).
     g.seams.push_back(seam({fPlus.side}, {bMinus.side}));
@@ -343,28 +481,62 @@ Garment top(const Body& body, const TopParams& p)
     g.seams.push_back(seam({fPlus.shoulder}, {bMinus.shoulder}));
     g.seams.push_back(seam({fMinus.shoulder}, {bPlus.shoulder}));
 
-    if (p.sleeveLength > 0.02f)
+    if (batwing || p.sleeveLength <= 0.02f || ls <= 0.02f)
+        return g;
+
+    // Sleeve: cap length matched to the armhole (front + back) plus the style's ease, solved for bicep width at the
+    // style's cap height. Pattern y runs from the bicep line (0) down the arm; the cap rises to -capHeight.
+    const float armhole = runLength(g.panels[size_t(fPlus.arm.panel)].outline, fPlus.arm.from, fPlus.arm.to);
+    const float depth = std::max(tip[1] - ya, 0.05f);
+    const float h = shape.capHeight * depth;
+    const float target = 2.f * armhole * (1.f + shape.capEase);
+    float lo = 0.05f, hi = target;
+    for (int i = 0; i < 40; ++i)
     {
-        const float c = 2.f * armhole;
-        const float ls = std::min(p.sleeveLength, body.armLength);
-        const float cc = c * (1.f - 0.35f * ls / body.armLength) * (1.f + std::max(p.sleeveFlare, 0.f));
-        const std::vector<Vec2> outline{{-c * 0.5f, 0.f}, {c * 0.5f, 0.f}, {cc * 0.5f, ls}, {-cc * 0.5f, ls}};
-        const float rs = c / (2.f * kPi);
-        const float th = body.armAngle;
-        for (float s : {1.f, -1.f})
+        const float w = 0.5f * (lo + hi);
+        (capLength(w, h) < target ? lo : hi) = w;
+    }
+    const float w = lo;
+    const float wristW = w * shape.wrist * (1.f + std::max(p.sleeveFlare, 0.f));
+    const float cuffH = shape.cuff > 0.f ? std::min(shape.cuff, ls * 0.5f) : 0.f;
+    const float sleeveLen = ls - cuffH;
+    Builder sb;
+    sb.add(-0.5f * w, 0.f);
+    for (const Vec2& q : capCurve(w, h))
+        sb.add(q[0], q[1]);
+    const int capEnd = sb.add(0.5f * w, 0.f);
+    sb.add(0.5f * wristW, sleeveLen);
+    sb.add(-0.5f * wristW, sleeveLen);
+    const float rs = w / (2.f * kPi);
+    // The cuff fits the wrist with a little ease; a fuller sleeve gathers into it along the seam.
+    // Short sleeves band the upper arm, long ones the wrist.
+    const float armGirth = ls < 0.4f * body.armLength ? 0.8f * w : std::max(body.armLength * 0.27f, 0.16f);
+    const float cuffW = std::min(wristW, armGirth);
+    for (float s : {1.f, -1.f})
+    {
+        const int sp = int(g.panels.size());
+        Panel sleeve = makePanel(s > 0.f ? "Sleeve L" : "Sleeve R", sb.pts);
+        const Vec3 up{s * std::cos(th), -std::sin(th), 0.f};
+        const Vec3 nrm{s * std::sin(th), std::cos(th), 0.f};
+        // On the arm's axis: the shoulder joint sits a little inside and below the shoulder point.
+        const Vec3 joint{s * (sx - 0.03f + drop * std::cos(th)), shoulderY - 0.04f - drop * std::sin(th), 0.f};
+        const Vec3 bicep = add3(joint, mul3(up, h));
+        place(sleeve, add3(bicep, mul3(nrm, rs)), up, nrm, rs);
+        g.panels.push_back(std::move(sleeve));
+        if (s > 0.f)
+            g.seams.push_back(seam({fPlus.arm, bMinus.arm}, {{sp, 0, capEnd}}));
+        else
+            g.seams.push_back(seam({bPlus.arm, fMinus.arm}, {{sp, 0, capEnd}}));
+        g.seams.push_back(seam({{sp, capEnd, capEnd + 1}}, {{sp, capEnd + 2, 0}}));
+        if (cuffH > 0.f)
         {
-            const int sp = int(g.panels.size());
-            Panel sl = makePanel(s > 0.f ? "Sleeve L" : "Sleeve R", outline);
-            const Vec3 up{s * std::cos(th), -std::sin(th), 0.f};
-            const Vec3 n{s * std::sin(th), std::cos(th), 0.f};
-            const Vec3 joint{s * (sx - 0.03f), shoulderY - 0.04f, 0.f};
-            place(sl, add3(joint, mul3(n, rs)), up, n, rs);
-            g.panels.push_back(std::move(sl));
-            if (s > 0.f)
-                g.seams.push_back(seam({fPlus.arm, bMinus.arm}, {{sp, 0, 1}}));
-            else
-                g.seams.push_back(seam({bPlus.arm, fMinus.arm}, {{sp, 0, 1}}));
-            g.seams.push_back(seam({{sp, 1, 2}}, {{sp, 3, 0}}));
+            const int cp = int(g.panels.size());
+            Panel cuff = makePanel(s > 0.f ? "Cuff L" : "Cuff R", {{-0.5f * cuffW, 0.f}, {0.5f * cuffW, 0.f}, {0.5f * cuffW, cuffH}, {-0.5f * cuffW, cuffH}});
+            const Vec3 at = add3(add3(bicep, mul3(up, sleeveLen)), mul3(nrm, cuffW / (2.f * kPi)));
+            place(cuff, at, up, nrm, cuffW / (2.f * kPi));
+            g.panels.push_back(std::move(cuff));
+            g.seams.push_back(seam({{sp, capEnd + 1, capEnd + 2}}, {{cp, 0, 1}}));
+            g.seams.push_back(seam({{cp, 1, 2}}, {{cp, 3, 0}}));
         }
     }
     return g;
@@ -809,7 +981,9 @@ std::vector<Field<P>> topFields()
             {"slit", &P::slit, 0.f, 0.8f},
             {"neckDepth", &P::neckDepth, 0.01f, 0.6f},
             {"openFront", &P::openFront},
-            {"overlap", &P::overlap, 0.f, 0.2f}};
+            {"overlap", &P::overlap, 0.f, 0.2f},
+            {"sleeveStyle", &P::sleeveStyle, 0, int(SleeveStyle::Count) - 1},
+            {"dropShoulder", &P::dropShoulder, 0.f, 0.2f}};
 }
 
 template <class P>
@@ -839,6 +1013,16 @@ std::vector<Block> makeBlocks()
     out.push_back(makeBlock<TeeParams>("tee", "T-Shirt", topFields<TeeParams>(), plain(&tee)));
     out.push_back(makeBlock<TunicParams>("tunic", "Tunic", topFields<TunicParams>(), plain(&tunic)));
     out.push_back(makeBlock<RobeParams>("robe", "Robe", topFields<RobeParams>(), plain(&robe)));
+    out.push_back(makeBlock<DropShoulderTopParams>("dropShoulderTop", "Drop-Shoulder Top", topFields<DropShoulderTopParams>(), [](const Body& b, const DropShoulderTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<ShirtParams>("shirt", "Shirt", topFields<ShirtParams>(), [](const Body& b, const ShirtParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<PeasantBlouseParams>("peasantBlouse", "Peasant Blouse", topFields<PeasantBlouseParams>(), [](const Body& b, const PeasantBlouseParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<PuffBlouseParams>("puffBlouse", "Puff-Sleeve Blouse", topFields<PuffBlouseParams>(), [](const Body& b, const PuffBlouseParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<PoetShirtParams>("poetShirt", "Poet Shirt", topFields<PoetShirtParams>(), [](const Body& b, const PoetShirtParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<BellSleeveDressParams>("bellSleeveDress", "Bell-Sleeve Dress", topFields<BellSleeveDressParams>(), [](const Body& b, const BellSleeveDressParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<FlutterTopParams>("flutterTop", "Flutter-Sleeve Top", topFields<FlutterTopParams>(), [](const Body& b, const FlutterTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<CapSleeveTopParams>("capSleeveTop", "Cap-Sleeve Top", topFields<CapSleeveTopParams>(), [](const Body& b, const CapSleeveTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<BatwingTopParams>("batwingTop", "Batwing Top", topFields<BatwingTopParams>(), [](const Body& b, const BatwingTopParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
+    out.push_back(makeBlock<LegOfMuttonParams>("legOfMuttonBlouse", "Leg-of-Mutton Blouse", topFields<LegOfMuttonParams>(), [](const Body& b, const LegOfMuttonParams& p, std::vector<BlockAnchor>*) { return top(b, p); }));
     out.push_back(makeBlock<TrousersParams>("trousers", "Trousers",
                                             {{"length", &TrousersParams::length, 0.3f, 1.2f},
                                              {"ease", &TrousersParams::ease, 0.f, 0.6f},

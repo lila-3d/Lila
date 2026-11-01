@@ -508,6 +508,111 @@ private:
 
 constexpr uint32_t kGarmentIn = AttrInput | AttrStorable;
 
+/** Points of a mesh and its faces fanned into triangles, as the binding takes them. */
+void meshTriangles(const geo::Mesh& m, std::vector<Vec3>& pts, std::vector<std::array<int, 3>>& tris)
+{
+    pts.assign(m.pointCapacity(), Vec3{0.f, 0.f, 0.f});
+    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        const glm::dvec3 q = m.position(p);
+        pts[p] = {float(q.x), float(q.y), float(q.z)};
+    }
+    tris.clear();
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const std::vector<geo::Index> c = m.faceCorners(f);
+        for (size_t k = 1; k + 1 < c.size(); ++k)
+            tris.push_back({int(m.cornerPoint(c[0])), int(m.cornerPoint(c[k])), int(m.cornerPoint(c[k + 1]))});
+    }
+}
+
+enum BindingAttr
+{
+    kRestMesh,
+    kBindSim,
+    kSimMesh,
+    kBoundMesh,
+    kBindWarning,
+};
+
+/** A render mesh latched to a garment's cloth: bound once against the cloth as it was, then moved with it. */
+class BindingNode final : public Node
+{
+public:
+    void compute(const EvalContext&) override
+    {
+        LILA_ZONE();
+        const MeshPtr& rest = as<MeshPtr>(kRestMesh);
+        const MeshPtr& bindSim = as<MeshPtr>(kBindSim);
+        const MeshPtr& sim = as<MeshPtr>(kSimMesh);
+        std::string warning;
+        if (!rest || rest->empty())
+        {
+            setOutput(kBoundMesh, MeshPtr());
+            setOutput(kBindWarning, std::string("no render mesh"));
+            return;
+        }
+        if (!bindSim || !sim || bindSim->pointCapacity() != sim->pointCapacity())
+        {
+            // The garment was re-meshed since binding (a pattern edit): show the render mesh as it was bound.
+            setOutput(kBoundMesh, rest);
+            setOutput(kBindWarning, std::string(sim ? "the garment changed shape since binding; bind again" : "no garment connected"));
+            return;
+        }
+        if (rest.get() != mRestKey || bindSim.get() != mSimKey)
+        {
+            std::vector<Vec3> simPts, restPts;
+            std::vector<std::array<int, 3>> restTris;
+            meshTriangles(*bindSim, simPts, mTris);
+            meshTriangles(*rest, restPts, restTris);
+            mBinding = bindRenderMesh(simPts, mTris, restPts);
+            mRestKey = rest.get();
+            mSimKey = bindSim.get();
+        }
+        std::vector<Vec3> now;
+        std::vector<std::array<int, 3>> tris;
+        meshTriangles(*sim, now, tris);
+        const std::vector<Vec3> moved = deformRenderMesh(mBinding, now, mTris);
+        auto out = std::make_shared<geo::Mesh>(*rest);
+        std::span<glm::dvec3> pos = out->positions();
+        for (size_t i = 0; i < moved.size() && i < pos.size(); ++i)
+            pos[i] = glm::dvec3(moved[i][0], moved[i][1], moved[i][2]);
+        setOutput(kBoundMesh, MeshPtr(std::move(out)));
+        setOutput(kBindWarning, warning);
+    }
+
+private:
+    const void* mRestKey = nullptr;
+    const void* mSimKey = nullptr;
+    RenderBinding mBinding;
+    std::vector<std::array<int, 3>> mTris;
+};
+
+NodeType bindingType()
+{
+    NodeType t;
+    t.name = kBindingType;
+    t.icon = "link";
+    t.doc = "A render mesh latched to a garment's cloth (latch to nearest): each point follows its nearest cloth triangle, "
+            "offset kept, so a thick or separately modelled mesh moves with the drape. Feeds the render mesh's inMesh.";
+    t.ownAttrs = {
+        {.name = "restMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The render mesh as it was bound."},
+        {.name = "bindSim", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "The garment's cloth when it was bound."},
+        {.name = "simMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
+         .doc = "The garment's cloth now: connect the garment's outMesh."},
+        {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
+         .doc = "The render mesh moved with the cloth."},
+        {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the binding."},
+    };
+    t.create = [] { return std::make_unique<BindingNode>(); };
+    return t;
+}
+
+
 NodeType garmentType()
 {
     NodeType t;
@@ -667,7 +772,8 @@ void stopDrapes()
 bool registerNodes(ext::Context& ctx)
 {
     relocate::registerNeutral(kGarmentType);
-    return types::registerType(ctx, garmentType()) != nullptr;
+    relocate::registerNeutral(kBindingType);
+    return types::registerType(ctx, garmentType()) != nullptr && types::registerType(ctx, bindingType()) != nullptr;
 }
 } // namespace tailor
 
