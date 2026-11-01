@@ -22,3 +22,6 @@ where cl >nul 2>&1 || (
 )
 del "%LILA_VCVARS_LOG%" >nul 2>&1
 set "PATH=%LILA_PYTHON_DIR%;%PATH%"
+rem Without Visual Studio's CMake tools there is no Ninja on PATH; vcpkg downloads its own.
+where ninja >nul 2>&1 || if exist "%VCPKG_ROOT%\vcpkg.exe" for /f "delims=" %%N in ('call "%VCPKG_ROOT%\vcpkg.exe" fetch ninja') do if exist "%%~N" set "PATH=%%~dpN;%PATH%"
+where ninja >nul 2>&1 || echo [warn] No Ninja found. Install Visual Studio's "C++ CMake tools for Windows" or put ninja.exe on PATH.

@@ -1256,10 +1256,11 @@ TEST_CASE("usd stage: edits inside LOD levels are written into their variants, a
     const std::string mesh = "                def Mesh \"Mesh\"\n                {{\n                    int[] faceVertexCounts = [3]\n"
                              "                    int[] faceVertexIndices = [0, 1, 2]\n                    point3f[] points = [(0, 0, 0), ({}, 0, 0), (0, 1, 0)]\n"
                              "                }}\n";
+    const auto lodMesh = [&](int pointX) { return std::vformat(mesh, std::make_format_args(pointX)); };
     const std::string text = "#usda 1.0\n(\n    defaultPrim = \"World\"\n    metersPerUnit = 0.01\n    upAxis = \"Z\"\n)\ndef Xform \"World\"\n{\n"
                              "    def Xform \"Chair\" (\n        variants = {\n            string LOD = \"LOD0\"\n        }\n        prepend variantSets = \"LOD\"\n    )\n"
                              "    {\n        variantSet \"LOD\" = {\n            \"LOD0\" {\n" +
-                             std::vformat(mesh, std::make_format_args(1)) + "            }\n            \"LOD1\" {\n" + std::vformat(mesh, std::make_format_args(2)) +
+                             lodMesh(1) + "            }\n            \"LOD1\" {\n" + lodMesh(2) +
                              "            }\n        }\n    }\n}\n";
     writeFile(dir / "lods.usda", text);
     const std::string stage = openStage(dir / "lods.usda")["stage"];
