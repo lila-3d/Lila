@@ -73,6 +73,8 @@ struct ClothScene
     float* grid1;
     float* grid2;
     float* grid3;
+    float4* flat;   // pattern position (xy) and panel (z, bits) per vertex
+    uint* spare;
 
     uint nVerts, nTris, nHinges, nLinks;
     uint nColliders, hashMask, selfCollision, nMovable;
@@ -761,6 +763,16 @@ void hashQueryCS(uint3 tid: SV_DispatchThreadID)
                         uint wv = s->weld[vi];
                         if (wv == w0.x || wv == w0.y || wv == w0.z || (!movable(s, vi) && !triMoves))
                             continue;
+                        // Closer in the flat pattern than twice the query radius: the same stretch of fabric, not a contact.
+                        float4 fv = s->flat[vi];
+                        float4 fa = s->flat[tv.x], fb = s->flat[tv.y], fc = s->flat[tv.z];
+                        if (asuint(fv.z) == asuint(fa.z) && asuint(fv.z) == asuint(fb.z) && asuint(fv.z) == asuint(fc.z))
+                        {
+                            float3 rw = closestBary(float3(fv.xy, 0.0), float3(fa.xy, 0.0), float3(fb.xy, 0.0), float3(fc.xy, 0.0));
+                            float2 rq = fa.xy * rw.x + fb.xy * rw.y + fc.xy * rw.z;
+                            if (length(fv.xy - rq) < 2.0 * R)
+                                continue;
+                        }
                         float3 bary = closestBary(p, a, b, c);
                         float3 q = a * bary.x + b * bary.y + c * bary.z;
                         float dist = length(p - q);

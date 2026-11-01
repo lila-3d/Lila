@@ -88,6 +88,8 @@ enum Buf
     BGrid1,
     BGrid2,
     BGrid3,
+    BFlat,  // per vertex: pattern position and panel, to skip contacts within one stretch of fabric
+    BSpare, // keeps gravity 16-byte aligned
     BufCount
 };
 
@@ -103,8 +105,8 @@ struct GpuScene
     float closedGap, floorY, pad1, pad2;
     float gravity[4];
 };
-static_assert(BufCount == 38);
-static_assert(offsetof(GpuScene, gravity) == 400 && sizeof(GpuScene) == 416);
+static_assert(BufCount == 40);
+static_assert(offsetof(GpuScene, gravity) == 416 && sizeof(GpuScene) == 432);
 
 struct ClothPush
 {
@@ -190,7 +192,7 @@ int weldRoot(std::vector<int>& parent, int i)
 struct Topology
 {
     uint32_t n = 0;
-    std::vector<F4> x, vinfo, vextra;
+    std::vector<F4> x, vinfo, vextra, flat;
     std::vector<float> mass;
     std::vector<uint8_t> movable;
     std::vector<GpuTri> tris;
@@ -506,12 +508,16 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
     t.x.resize(size_t(n));
     t.vinfo.resize(size_t(n));
     t.vextra.resize(size_t(n));
+    t.flat.resize(size_t(n));
     for (int i = 0; i < n; ++i)
     {
         const size_t u = size_t(i);
         t.x[u] = {mesh.rest3d[u][0], mesh.rest3d[u][1], mesh.rest3d[u][2], 0.f};
         t.vinfo[u] = {t.mass[u], bitsToFloat(t.movable[u] ? kMovable : 0u), friction[u], damping[u]};
         t.vextra[u] = {thickness[u], tune.contactStiffness + 1e3f * t.mass[u] / h2, std::max(1.f, 10.f * t.mass[u] / h2), 0.f};
+        // Without a pattern every vertex gets its own panel id, so nothing is skipped.
+        const uint32_t panel = hasUv && u < mesh.vertPanel.size() ? uint32_t(mesh.vertPanel[u]) : 0x80000000u | uint32_t(u);
+        t.flat[u] = {hasUv ? mesh.uv[u][0] : 0.f, hasUv ? mesh.uv[u][1] : 0.f, bitsToFloat(panel), 0.f};
     }
     toCsr(vTri, t.triOff, t.triAdj);
     toCsr(vHinge, t.hingeOff, t.hingeAdj);
@@ -645,6 +651,8 @@ struct ClothGpu::Impl
         for (uint32_t i = 0; i < n; ++i)
             body[i] = {topo.vextra[i][1], 0.f};
         upload(r, BBody, body);
+        upload(r, BFlat, topo.flat);
+        upload(r, BSpare, nullptr, 16);
         r.buffer(kSceneBuffer, sizeof(GpuScene));
     }
 
