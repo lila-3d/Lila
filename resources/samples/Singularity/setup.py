@@ -10,6 +10,7 @@ if not src:
     raise RuntimeError("blender-5.1-splash.blend is not in the download")
 
 ops.newScene()
-ops.importFile(src)
+# Modifiers and geometry nodes Lila can't rebuild are baked by an installed Blender, when there is one.
+ops.importFile(src, options={"evaluate": "unsupported"})
 ops.select(clear=True)
 ops.saveScene(OUT)

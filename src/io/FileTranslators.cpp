@@ -249,6 +249,13 @@ void registerBuiltins()
          .extensions = {".ma", ".mb"},
          .open = {.command = "mayaOpen", .flags = {{"force", true}}},
          .import = {.command = "mayaImport"}});
+    add({.id = "blender",
+         .label = "Blender scenes",
+         .doc = "Blender .blend files, read without Blender: objects, collections, meshes, materials, cameras, lights, curves, armatures, "
+                "shape keys, animation and the modifiers Lila has. Opening one starts an untitled scene; saving it makes the .lila.",
+         .extensions = {".blend"},
+         .open = {.command = "blendOpen", .flags = {{"force", true}}},
+         .import = {.command = "blendImport"}});
     add({.id = "fbx",
          .label = "FBX",
          .doc = "Autodesk FBX: meshes, skeletons, skin weights, morph targets and animation. Exports convert to Unreal's axes.",

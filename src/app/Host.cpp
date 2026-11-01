@@ -5,6 +5,7 @@
 #include "bake/BakePipeline.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchRunner.h"
+#include "blend/Blend.h"
 #include "clay/ClayNodes.h"
 #include "core/CrashUpload.h"
 #include "core/Events.h"
@@ -180,6 +181,7 @@ void startCore()
     fbx::registerCommands();
     gltf::registerCommands();
     maya::registerCommands();
+    blend::registerCommands();
     batch::registerCommands();
     io::translators::registerBuiltins();
     io::translators::registerCommands();
