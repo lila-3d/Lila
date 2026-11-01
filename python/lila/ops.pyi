@@ -205,6 +205,19 @@ def addToSet(*objects: Any) -> Any:
         objects: set, members.
     """
 
+def addValidator(*objects: Any, command: str | None = None, doc: str | None = None, c: str | None = None, d: str | None = None) -> Any:
+    """Registers a command as a validator: validate runs it, and what it reports belongs to the validator.
+
+    Args:
+        objects: name.
+        command: The command to run; it reports with reportIssue. Short form c.
+        doc: What it checks. Short form d.
+
+    Examples:
+        lila.extension.register_command("checkNaming", check_naming)
+        addValidator("naming", command="checkNaming", doc="Prefixes and suffixes")
+    """
+
 def addWrapDriver(*objects: Any) -> Any:
     """Add driver meshes to a wrap deformer and rebind it.
 
@@ -1308,6 +1321,16 @@ def clayShapeAt(*objects: Any, point: Sequence[float] | None = None, p: Sequence
 
     Examples:
         clayShapeAt("Dog", point=[3, 20, 8])
+    """
+
+def clearIssues(*objects: Any, source: str | None = None, severity: str | None = None, id: int | None = None, src: str | None = None, sv: str | None = None, i: int | None = None) -> Any:
+    """Removes issues: those of the given objects, source or severity, or every one when nothing narrows it.
+
+    Args:
+        objects: objects.
+        source: Only this reporter's. Short form src.
+        severity: Only this severity. Short form sv. One of 'info', 'warning', 'error'.
+        id: Only the issue with this id. Short form i.
     """
 
 def clearLoopKey(*objects: Any, attribute: Any | None = None, at: Any | None = None) -> Any:
@@ -2825,6 +2848,13 @@ def fixDuplicateJointNames(*objects: Any) -> Any:
         objects: roots.
     """
 
+def fixIssue(*objects: Any) -> Any:
+    """Runs an issue's fix, then runs its validator again (or drops the issue when no validator reported it).
+
+    Args:
+        objects: ids.
+    """
+
 def floodDeformerWeights(*objects: Any, value: float | None = None, mode: str | None = None, strength: float | None = None, points: Sequence[Any] | None = None, layer: int | None = None, mesh: str | None = None) -> Any:
     """Apply a weight to every point of a deformer's weight map (or a field's painted layer), or to points= / the selected components, as the paint tool's flood does.
 
@@ -3907,6 +3937,17 @@ def listExtensions(loaded: bool | None = None, searchPaths: bool | None = None) 
         searchPaths: Return the search paths instead. Default False.
     """
 
+def listIssues(*objects: Any, source: str | None = None, severity: str | None = None, blocking: str | None = None, hierarchy: bool | None = None, src: str | None = None, sv: str | None = None, bl: str | None = None, hi: bool | None = None) -> Any:
+    """The current issues, as dicts {id, source, severity, target, object, component, attribute, message, resolved, blocks, fix}.
+
+    Args:
+        objects: objects.
+        source: Only this reporter's. Short form src.
+        severity: Only this severity and worse. Short form sv. One of 'info', 'warning', 'error'.
+        blocking: Only issues that block this command. Short form bl.
+        hierarchy: With objects: their descendants' issues too. Short form hi. Default False.
+    """
+
 def listLayouts() -> Any:
     """UI layouts: [{name, origin, current, shadowsBuiltIn}]. origin is builtin | user | workspace."""
 
@@ -4282,8 +4323,8 @@ def meshInfo(*objects: Any) -> Any:
         objects: object.
     """
 
-def meshRepair(*objects: Any, mode: str | None = None, coincident: bool | None = None, zeroLengthEdges: bool | None = None, lamina: bool | None = None, zeroAreaFaces: bool | None = None, nonManifoldEdges: bool | None = None, nonManifoldVertices: bool | None = None, holes: bool | None = None, ngons: bool | None = None, concave: bool | None = None, zeroAreaUvs: bool | None = None, flippedNormals: bool | None = None, tolerance: float | None = None, removeLoose: bool | None = None) -> Any:
-    """Find or fix broken geometry. mode='select' selects what each enabled check finds and reports the counts; mode='repair' fixes it: welds coincident points, collapses zero-length edges, drops lamina copies, merges zero-area slivers into a neighbour, splits non-manifold edges and vertices apart, fills holes, cuts n-gons and concave faces into quads and triangles, conforms winding, removes loose points and edges.
+def meshRepair(*objects: Any, mode: str | None = None, coincident: bool | None = None, zeroLengthEdges: bool | None = None, lamina: bool | None = None, zeroAreaFaces: bool | None = None, nonManifoldEdges: bool | None = None, nonManifoldVertices: bool | None = None, holes: bool | None = None, triangles: bool | None = None, ngons: bool | None = None, concave: bool | None = None, zeroAreaUvs: bool | None = None, flippedNormals: bool | None = None, tolerance: float | None = None, removeLoose: bool | None = None) -> Any:
+    """Find or fix broken geometry. mode='select' selects what each enabled check finds and reports the counts; mode='repair' fixes it: welds coincident points, collapses zero-length edges, drops lamina copies, merges zero-area slivers into a neighbour, splits non-manifold edges and vertices apart, fills holes, joins triangles into quads, cuts n-gons and concave faces into quads and triangles, conforms winding, removes loose points and edges.
 
     Args:
         objects: objects.
@@ -4295,6 +4336,7 @@ def meshRepair(*objects: Any, mode: str | None = None, coincident: bool | None =
         nonManifoldEdges: Edges shared by three or more faces (repair splits the extra faces off). Default True.
         nonManifoldVertices: Vertices where separate fans of faces meet, like a bowtie (repair gives each fan its own vertex). Default True.
         holes: Edges on an open border (repair fills each hole with a face). Off by default: open meshes are often meant to be. Default False.
+        triangles: Triangles (repair joins neighbouring pairs into quads where they make good ones). Default False.
         ngons: Faces with more than four sides (repair triangulates them and joins the triangles back into convex quads where they fit). Default False.
         concave: Faces with a corner bending inward (repair cuts them into convex quads and triangles). Default False.
         zeroAreaUvs: Faces with no area in the first uv set. Repair only reports them: they need a new unwrap. Default False.
@@ -4602,6 +4644,14 @@ def openRecoveredScene(*objects: Any, force: bool | None = None, f: bool | None 
 
     Args:
         objects: path.
+        force: Discard unsaved changes in the current scene. Short form f. Default False.
+    """
+
+def openSample(*objects: Any, force: bool | None = None, f: bool | None = None) -> Any:
+    """Open a downloaded sample scene by id or name (from samples) as an untitled scene. Not undoable.
+
+    Args:
+        objects: name.
         force: Discard unsaved changes in the current scene. Short form f. Default False.
     """
 
@@ -5734,6 +5784,13 @@ def removeSpace(*objects: Any, space: Any | None = None, sp: Any | None = None) 
         space: Space name or index (not 0, the parent). Short form sp.
     """
 
+def removeValidator(*objects: Any) -> Any:
+    """Unregisters validators and clears what they reported.
+
+    Args:
+        objects: names.
+    """
+
 def rename(*objects: Any) -> Any:
     """rename(old, new) or rename(new) for the single selected object. Returns the renamed node's path.
 
@@ -5877,6 +5934,25 @@ def reorderDisplayLayer(*objects: Any, index: int | None = None, i: int | None =
     Args:
         objects: layer.
         index: Row it moves to. Short form i. Default 0.
+    """
+
+def reportIssue(*objects: Any, message: str | None = None, severity: str | None = None, source: str | None = None, blocks: Sequence[Any] | None = None, fix: str | None = None, m: str | None = None, sv: str | None = None, src: str | None = None, b: Sequence[Any] | None = None, fx: str | None = None) -> Any:
+    """Attaches info, a warning or an error to an object, one of its components or an attribute.
+
+    The target is "<object>[.<component>[:<attribute>]]": a Lila path or a USD prim path, then an attribute ("crate.translateX") or a component (a node type, attribute category, Attribute Editor section or attribute namespace) with an optional attribute in it. No target attaches it to the scene. The outliner badges the object, the Attribute Editor marks the component and attribute. Issues are not saved with the scene; validators report them again when they run.
+
+    Args:
+        objects: target.
+        message: What is wrong and, ideally, how to fix it. Short form m.
+        severity: How bad it is. Short form sv. One of 'info', 'warning', 'error'. Default 'warning'.
+        source: Who reports it, so it can clear its own. Defaults to the validator running, else "user". Short form src.
+        blocks: Commands it refuses to let run until it is cleared. Short form b. Example: `reportIssue("crate", m="No collision", severity="error", blocks=["exportFbx"])`
+        fix: Python that fixes it, run by fixIssue and the Fix button. Short form fx.
+
+    Examples:
+        reportIssue("/World/crate.health:max", m="Max health must be above 0", severity="error")
+
+        reportIssue("crate", m="Over the triangle budget", fix="lila.ops.polyReduce('crate', percentage=50)")
     """
 
 def rerootSkeleton(*objects: Any) -> Any:
@@ -6138,6 +6214,9 @@ def sampleField(*objects: Any) -> Any:
     Args:
         objects: field, mesh.
     """
+
+def samples() -> Any:
+    """Sample scenes: shipped with Lila, or third-party ones it downloads on request: {id, name, installed, path, size, license, credit, source}. Download them from the Welcome screen's Sample Scenes."""
 
 def saveBakeTarget(*objects: Any, project: str | None = None, label: str | None = None, scope: str | None = None, overwrite: bool | None = None, group: str | None = None, backend: str | None = None, doc: str | None = None, pj: str | None = None, l: str | None = None, sc: str | None = None, ow: bool | None = None, g: str | None = None, be: str | None = None, d: str | None = None) -> Any:
     """Save a project's bake settings as a reusable preset (a target profile): output settings, maps with their options and channel packs, the backend, and group defaults (distances, cage offset, AO occluders, backfaces, the bake-only modifier stack, self as high) taken from group= or the project's first group. Meshes are never saved. scope=user (every project) or workspace (.lila/bake/targets). It then lists in bakeTargets and the Baker's target menu. Returns {name, file}.
@@ -8539,7 +8618,7 @@ def uvProject(uvSet: str | None = None, type: str | None = None, axis: str | Non
         offsetV: V offset, applied after the scale. Default 0.0.
         viewDir: World direction the camera looks along, for the seam; the UI passes the active view's.
         normalize: Fit into 0-1 keeping proportions. Default True.
-        keepSeams: Keep the seams already cut inside the faces; off joins the faces into the projection's islands. Default True.
+        keepSeams: Keep the seams already cut inside the faces; off joins the faces into the projection's islands. Default False.
         matrix: Camera projection, column major, for type=camera.
         pack: Pack the resulting islands afterwards. Default False.
     """
@@ -8695,6 +8774,14 @@ def uvUnwrapSymmetric(uvSet: str | None = None, axis: str | None = None, mode: s
         pack: Pack into 0-1 afterwards. Default False.
     """
 
+def validate(*objects: Any, list: bool | None = None, l: bool | None = None) -> Any:
+    """Runs validators, each clearing the issues it reported last time first. Every one when none are named. Returns the issue counts by severity.
+
+    Args:
+        objects: validators.
+        list: Return the validators {name: doc} instead of running any. Short form l. Default False.
+    """
+
 def vertexColorAdjust(*objects: Any, colorSet: str | None = None, operation: str | None = None, inBlack: float | None = None, inWhite: float | None = None, gamma: float | None = None, outBlack: float | None = None, outWhite: float | None = None, channels: str | None = None, target: str | None = None) -> Any:
     """Adjust vertex colors: invert, or levels (input black and white points, gamma, output range), per channel.
 
@@ -8812,13 +8899,14 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
 def viewportStats() -> Any:
     """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included."""
 
-def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, a: bool | None = None, d: float | None = None) -> Any:
+def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, error: bool | None = None, a: bool | None = None, d: float | None = None, e: bool | None = None) -> Any:
     """Pop up a short message in the bottom-right corner of the active viewport; it fades out after duration. Showing the same text again restarts it instead of adding another.
 
     Args:
         objects: text.
         all: Show it in every viewport, not only the active one. Short form a.
         duration: Seconds before it is gone, including the fade. Short form d. Default 2.0.
+        error: Mark it as a failure, with a red accent. Short form e.
 
     Examples:
         viewportToast("Exported 12 meshes")
