@@ -259,6 +259,15 @@ const std::vector<Block>& blocks();
 const Block* findBlock(const std::string& id);
 std::vector<std::string> blockNames();
 
+/** A smooth stand-in body with `body`'s measurements: feet at y = 0, facing +Z, metres, closed and wound outward.
+ *  Meshed at `cell` spacing; the blocks are placed around exactly this shape. */
+void mannequin(const Body& body, std::vector<Vec3>& points, std::vector<std::array<int, 3>>& tris, float cell = 0.012f);
+
+/** Measures a standing body mesh (metres, +Y up, facing +Z): height from its bounds; chest, waist, hip, neck and head
+ *  girths as a tape would read them around horizontal sections; other lengths scaled by height. `offset` gets the
+ *  centre of its feet, where garments built for the result go. */
+Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset = nullptr);
+
 /** Builds a block by id. Unknown names in `values` are ignored, values are clamped to the parameter range. */
 bool buildBlock(const std::string& id, Garment& out, std::string* error = nullptr, const Body& body = {},
                 const BlockParamValues& values = {}, std::vector<BlockAnchor>* anchors = nullptr);

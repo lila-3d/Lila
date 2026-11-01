@@ -181,6 +181,42 @@ Node* colliderArg(Graph& g, const Args& a)
     return nullptr;
 }
 
+/** The collider's body measurements and where its feet stand, in metres. */
+Body measureCollider(Graph& g, Node& collider, Vec3& offset)
+{
+    g.evaluate();
+    const PlugValue v = g.value({collider.id(), MeshNode::kOutMesh});
+    const MeshPtr* mesh = std::get_if<MeshPtr>(&v);
+    if (!mesh || !*mesh || (*mesh)->empty())
+        return {};
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    colliderTriangles(**mesh, std::get<glm::dmat4>(g.value({collider.id(), Transform::kWorldMatrix})), pts, tris);
+    return measureBody(pts, tris, &offset);
+}
+
+/**
+ * Point float attribute clothMaxDistance: how far each point sits from the collider's surface, cm. Near zero where the
+ * garment rests on the body, large where it hangs free; Chaos Cloth's Max Distance mask reads it directly.
+ */
+void writeMaxDistance(Graph& g, const Node& collider, geo::Mesh& garment)
+{
+    const PlugValue v = g.value({collider.id(), MeshNode::kOutMesh});
+    const MeshPtr* body = std::get_if<MeshPtr>(&v);
+    if (!body || !*body || (*body)->empty())
+        return;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    colliderTriangles(**body, std::get<glm::dmat4>(g.value({collider.id(), Transform::kWorldMatrix})), pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.02f, 0.4f);
+    std::span<float> dist = garment.pointAttrs().getOrAdd<float>("clothMaxDistance");
+    for (geo::Index p = 0; p < garment.pointCapacity(); ++p)
+    {
+        const glm::dvec3 q = garment.position(p) / kCmPerM;
+        dist[p] = std::max(0.f, sdf.sample({float(q.x), float(q.y), float(q.z)})) * float(kCmPerM);
+    }
+}
+
 /** A tailorGarment node holding gm, fed by the collider flag (or selection) and feeding a new mesh. Returns [mesh, garment]. */
 json createGarment(const Garment& gm, const std::string& block, const Args& a, const char* cmd)
 {
@@ -204,6 +240,12 @@ json createGarment(const Garment& gm, const std::string& block, const Args& a, c
     Node* mesh = g.createNode(*types::find("mesh"), a.get<std::string>("name"), kNoNode, true);
     g.connect({op->id(), plugIndex(*op, "outMesh")}, {mesh->id(), MeshNode::kInMesh});
     g.select({mesh->id()});
+    if (a.get<bool>("wait"))
+    {
+        DrapeNow now;
+        g.touch(op->id());
+        g.evaluate();
+    }
     return json::array({mesh->path(), op->path()});
 }
 
@@ -230,13 +272,22 @@ void registerCommands(ext::Context& ctx)
                   {"fabric", "fab", T::String, "Cotton", "Fabric preset.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Target cloth edge length, cm.", {}, {}, 0.1, 50.0},
                   {"simulate", "sim", T::Bool, true, "Drape it; off leaves the panels where the block placed them."},
-                  {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0}},
+                  {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0},
+                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."},
+                  {"fit", "ft", T::Bool, true, "Size the block to the collider's measurements and stand it where the collider stands."}},
         .run = [](const Args& a) -> json {
             Garment gm;
             std::string error;
-            // TODO: fit the block to the collider (size from its bounds, placement from arrangement points).
-            if (!buildBlock(a.get<std::string>("block"), gm, &error))
+            Body body;
+            Vec3 offset{0.f, 0.f, 0.f};
+            Graph& g = Graph::current();
+            if (Node* collider = colliderArg(g, a); collider && a.get<bool>("fit"))
+                body = measureCollider(g, *collider, offset);
+            if (!buildBlock(a.get<std::string>("block"), gm, &error, body))
                 throw CommandError("tailorCreateBlock: " + error);
+            for (Panel& p : gm.panels)
+                for (int k = 0; k < 3; ++k)
+                    p.origin[k] += offset[k];
             return createGarment(gm, a.get<std::string>("block"), a, "tailorCreateBlock");
         },
         .examples = {"tailorCreateBlock(block='tunic', collider='Body')"},
@@ -252,7 +303,8 @@ void registerCommands(ext::Context& ctx)
                   {"fabric", "fab", T::String, "Cotton", "Fabric preset.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Target cloth edge length, cm.", {}, {}, 0.1, 50.0},
                   {"simulate", "sim", T::Bool, true, "Drape it; off leaves the panels where the file placed them."},
-                  {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0}},
+                  {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0},
+                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."}},
         .run = [](const Args& a) -> json {
             if (!a.has("file"))
                 throw CommandError("tailorImportGarmentCode: give a file");
@@ -271,16 +323,23 @@ void registerCommands(ext::Context& ctx)
                "Returns the draped mesh's vertex and triangle counts and any warning.",
         .positionalDoc = "garment",
         .flags = {{"frames", "fr", T::Int, json(), "Solver frames to run; the garment's own setting when left out.", {}, {}, 0.0, 10000.0},
-                  {"simulate", "sim", T::Bool, true, "Off shows the panels undraped."}},
+                  {"simulate", "sim", T::Bool, true, "Off shows the panels undraped."},
+                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorSimulate");
             if (a.has("frames"))
                 g.setValue({op.id(), plugIndex(op, "frames")}, a.get<int64_t>("frames"));
             g.setValue({op.id(), plugIndex(op, "simulate")}, a.get<bool>("simulate", true));
+            std::optional<DrapeNow> now;
+            if (a.get<bool>("wait"))
+            {
+                now.emplace();
+                g.touch(op.id());
+            }
             return meshStats(g, op);
         },
-        .examples = {"tailorSimulate('Garment', frames=200)"},
+        .examples = {"tailorSimulate('Garment', frames=200, wait=True)"},
     });
 
     ctx.registerCommand({
@@ -350,6 +409,114 @@ void registerCommands(ext::Context& ctx)
             return int64_t(gm.seams.size() - 1);
         },
         .examples = {"tailorSew('Garment', sideA='Front:1:2', sideB='Back:3:4', reversed=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorMannequin",
+        .doc = "Make a stand-in body with the measurements the blocks are cut for, to drape garments onto.\n\n"
+               "Feet on the ground, facing +Z, in an A-pose. Blocks measure whatever they drape onto, so any size fits. Returns the new mesh.",
+        .flags = {{"name", "n", T::String, "Mannequin", "Name of the new mesh."},
+                  {"height", "ht", T::Float, 180.0, "Standing height, cm.", {}, {}, 100.0, 230.0},
+                  {"chest", "ch", T::Float, 96.0, "Chest girth, cm.", {}, {}, 60.0, 160.0},
+                  {"waist", "wa", T::Float, 82.0, "Waist girth, cm.", {}, {}, 50.0, 160.0},
+                  {"hip", "hp", T::Float, 98.0, "Hip girth, cm.", {}, {}, 60.0, 170.0}},
+        .run = [](const Args& a) -> json {
+            Body body;
+            const float s = float(a.get<double>("height")) / (body.height * float(kCmPerM));
+            body.height *= s;
+            body.shoulderWidth *= s;
+            body.armLength *= s;
+            body.inseam *= s;
+            body.neck *= s;
+            body.head *= s;
+            body.chest = float(a.get<double>("chest") / kCmPerM);
+            body.waist = float(a.get<double>("waist") / kCmPerM);
+            body.hip = float(a.get<double>("hip") / kCmPerM);
+            std::vector<Vec3> pts;
+            std::vector<std::array<int, 3>> tris;
+            mannequin(body, pts, tris);
+            std::vector<glm::dvec3> positions(pts.size());
+            for (size_t k = 0; k < pts.size(); ++k)
+                positions[k] = glm::dvec3(pts[k][0], pts[k][1], pts[k][2]) * kCmPerM;
+            std::vector<geo::Index> sizes(tris.size(), 3), idx;
+            idx.reserve(tris.size() * 3);
+            for (const auto& t : tris)
+                for (int v : t)
+                    idx.push_back(geo::Index(v));
+            Graph& g = Graph::current();
+            const std::string name = a.get<std::string>("name");
+            Node* n = g.createNode(*types::find("mesh"), Graph::validName(name) ? name : "Mannequin", kNoNode, true);
+            g.setValue({n->id(), MeshNode::kInMesh, -1},
+                       MeshPtr(std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(positions, sizes, idx))));
+            g.select({n->id()});
+            return n->path();
+        },
+        .examples = {"tailorMannequin()", "tailorCreateBlock(block='cloakTunicBelt', collider=tailorMannequin())"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorBake",
+        .doc = "Turn a draped garment into a plain mesh for the game: the drape as it stands, seams welded and thickness "
+               "applied as set on the garment, uv0 packed, uv1 the fabric pattern, and point attribute clothMaxDistance (cm from the body) as a runtime cloth mask.\n\n"
+               "When the collider is skinned, the new mesh is bound to the same joints and takes its weights by closest "
+               "point, ready to export with the character. Returns the new mesh.",
+        .positionalDoc = "garment",
+        .flags = {{"name", "n", T::String, json(), "Name of the new mesh; the garment mesh's name plus _baked when left out."},
+                  {"skin", "sk", T::Bool, true, "Bind to the collider's joints and copy its weights when it is skinned."},
+                  {"maxInfluences", "mi", T::Int, int64_t(4), "Influences per point.", {}, {}, 1.0, 16.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorBake");
+            {
+                DrapeNow now;
+                g.evaluate();
+            }
+            const PlugValue v = g.value({op.id(), plugIndex(op, "outMesh")});
+            const MeshPtr* mesh = std::get_if<MeshPtr>(&v);
+            if (!mesh || !*mesh || (*mesh)->empty())
+                throw CommandError("tailorBake: " + op.name() + " has no mesh: " + op.as<std::string>(plugIndex(op, "warning")));
+
+            std::string name = a.has("name") ? a.get<std::string>("name") : std::string();
+            if (name.empty())
+            {
+                const std::vector<PlugRef> out = g.destinations({op.id(), plugIndex(op, "outMesh")});
+                const Node* fed = out.empty() ? nullptr : g.node(out.front().node);
+                name = (fed ? fed->name() : op.name()) + "_baked";
+            }
+            const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")});
+            const Node* collider = src ? g.node(src->node) : nullptr;
+            auto out = std::make_shared<geo::Mesh>(**mesh);
+            if (collider)
+                writeMaxDistance(g, *collider, *out);
+            Node* baked = g.createNode(*types::find("mesh"), Graph::validName(name) ? name : "Garment_baked", kNoNode, true);
+            g.setValue({baked->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(out)));
+
+            json result = {{"mesh", baked->path()}, {"skinned", false}};
+            if (collider && a.get<bool>("skin"))
+            {
+                json info;
+                try
+                {
+                    info = ops::execute("skinInfo", {{"args", {collider->path()}}});
+                }
+                catch (const std::exception&)
+                {
+                    info = json();
+                }
+                if (info.is_object() && info.contains("influences") && !info["influences"].empty())
+                {
+                    json bindArgs = info["influences"];
+                    bindArgs.push_back(baked->path());
+                    ops::execute("skinCluster", {{"args", bindArgs}, {"bindTo", "selected"},
+                                                 {"maxInfluences", a.get<int64_t>("maxInfluences")}});
+                    ops::execute("copySkinWeights", {{"args", {collider->path(), baked->path()}}});
+                    result["skinned"] = true;
+                }
+            }
+            g.select({baked->id()});
+            return result;
+        },
+        .examples = {"tailorBake('Outfit')", "tailorBake('Cloak', name='SM_Cloak', skin=False)"},
     });
 
     ctx.registerCommand({

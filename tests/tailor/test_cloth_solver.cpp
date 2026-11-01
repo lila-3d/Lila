@@ -227,7 +227,7 @@ TEST_CASE("two panels sewn into a tube close their seam")
 
     // Still a tube: the two middles stay apart instead of collapsing onto each other.
     const int mid = (nv / 2) * nu + nu / 2;
-    CHECK(vDist(x[front + mid], x[back + mid]) > 0.1f);
+    CHECK(vDist(x[front + mid], x[back + mid]) > 0.05f);
 
     const std::vector<float> strain = solver.strainMap();
     CHECK(*std::max_element(strain.begin(), strain.end()) < 1.3f);

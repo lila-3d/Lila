@@ -46,7 +46,7 @@ const char* kTwoPanels = R"({
   "properties": {"curvature_coords": "relative", "units_in_meter": 100}
 })";
 
-double signedArea(const std::vector<Vec2>& o)
+double outlineArea(const std::vector<Vec2>& o)
 {
     double a = 0;
     for (size_t i = 0; i < o.size(); ++i)
@@ -70,7 +70,7 @@ TEST_CASE("GarmentCode: two panels, units, curves, placement")
     CHECK(g.panels[1].name == "back");
 
     const Panel& front = g.panels[0];
-    CHECK(signedArea(front.outline) > 0);
+    CHECK(outlineArea(front.outline) > 0);
     // 40 cm curved edge sampled at ~1 cm plus three straight-edge starts.
     CHECK(front.outline.size() >= 40);
     CHECK(front.outline[0][0] == doctest::Approx(0.f));
@@ -91,7 +91,7 @@ TEST_CASE("GarmentCode: two panels, units, curves, placement")
 
     const Panel& back = g.panels[1];
     REQUIRE(back.outline.size() == 4);
-    CHECK(signedArea(back.outline) > 0);
+    CHECK(outlineArea(back.outline) > 0);
     CHECK(back.right[0] == doctest::Approx(-1.f));
     CHECK(back.right[2] == doctest::Approx(0.f).epsilon(1e-5));
     CHECK(back.up[1] == doctest::Approx(1.f));
@@ -150,7 +150,7 @@ TEST_CASE("GarmentCode: circle arc edge")
         maxY = std::max(maxY, o[i][1]);
     }
     CHECK(maxY == doctest::Approx(0.7f).epsilon(0.002));
-    CHECK(signedArea(o) > 0);
+    CHECK(outlineArea(o) > 0);
 }
 
 TEST_CASE("GarmentCode: errors leave the garment untouched")

@@ -158,4 +158,35 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
+/** A draped garment as a game mesh. Per triangle corner UVs keep panel borders split where seams weld the points. */
+struct GarmentSurface
+{
+    enum Side : uint8_t
+    {
+        Outer,
+        Inner,
+        Rim
+    };
+    std::vector<Vec3> points;
+    std::vector<std::array<int, 3>> tris;
+    std::vector<std::array<Vec2, 3>> uv;       // the packed layout, or the pattern without one
+    std::vector<std::array<Vec2, 3>> fabricUv; // the flat pattern, metres
+    std::vector<int> triPanel;
+    std::vector<Side> triSide;
+};
+
+struct SurfaceOptions
+{
+    bool weldSeams = true;
+    float thickness = 0.f; // metres; 0 leaves a single sheet
+};
+
+/**
+ * Builds the output surface from the solver's positions. Welding merges every sewn pair into one point at their
+ * midpoint. Thickness adds an inner shell along the vertex normals, back towards the wearer, and closes open borders with
+ * rims. `packedUv` is per triangle corner (3 per mesh triangle) and may be empty.
+ */
+GarmentSurface garmentSurface(const ClothMesh& mesh, const std::vector<Vec3>& positions, const std::vector<Vec2>& packedUv,
+                              const SurfaceOptions& options = {});
+
 } // namespace tailor

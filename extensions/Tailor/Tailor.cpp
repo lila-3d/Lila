@@ -5,15 +5,23 @@
 #include "TailorCore.h"
 
 #include <lila/Extension.h>
+#include <lila/Graph.h>
 #include <lila/Log.h>
 #include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Plug.h>
 #include <lila/Profile.h>
 #include <lila/Relocate.h>
+#include <lila/Tasks.h>
+#include <lila/Uv.h>
+#include <lila/ViewportTool.h>
+
+#include <QCoreApplication>
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
+#include <mutex>
 
 using namespace lila;
 using namespace lila::scene;
@@ -23,8 +31,6 @@ namespace tailor
 {
 namespace
 {
-constexpr double kCmPerM = 100.0;
-
 constexpr const char* kStateNames[] = {"active", "frozen", "deactivated", "strengthened"};
 
 json vec2Json(const Vec2& v) { return json::array({v[0], v[1]}); }
@@ -107,20 +113,30 @@ enum GarmentAttr
     kColliderMatrix,
     kOutMesh,
     kWarning,
+    kWeldSeams,
+    kThickness,
 };
 
 void hashMix(uint64_t& h, uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); }
 
-/** The collider in garment space (metres), triangulated. */
 Sdf colliderSdf(const geo::Mesh& m, const glm::dmat4& world)
 {
-    std::vector<Vec3> pts(m.pointCapacity());
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    colliderTriangles(m, world, pts, tris);
+    return sdfFromMesh(pts, tris, 0.01f, 0.05f);
+}
+} // namespace
+
+void colliderTriangles(const geo::Mesh& m, const glm::dmat4& world, std::vector<Vec3>& pts, std::vector<std::array<int, 3>>& tris)
+{
+    pts.assign(m.pointCapacity(), Vec3{0.f, 0.f, 0.f});
     for (geo::Index p = 0; p < m.pointCapacity(); ++p)
     {
         const glm::dvec3 w = glm::dvec3(world * glm::dvec4(m.position(p), 1.0)) / kCmPerM;
         pts[p] = {float(w.x), float(w.y), float(w.z)};
     }
-    std::vector<std::array<int, 3>> tris;
+    tris.clear();
     for (geo::Index f = 0; f < m.faceCapacity(); ++f)
     {
         if (!m.faceValid(f))
@@ -129,40 +145,115 @@ Sdf colliderSdf(const geo::Mesh& m, const glm::dmat4& world)
         for (size_t k = 1; k + 1 < c.size(); ++k)
             tris.push_back({int(m.cornerPoint(c[0])), int(m.cornerPoint(c[k])), int(m.cornerPoint(c[k + 1]))});
     }
-    return sdfFromMesh(pts, tris, 0.01f, 0.05f);
 }
 
-MeshPtr clothToMesh(const ClothMesh& cm, const std::vector<Vec3>& positions)
+namespace
 {
-    std::vector<glm::dvec3> pts(positions.size());
-    for (size_t k = 0; k < positions.size(); ++k)
-        pts[k] = glm::dvec3(positions[k][0], positions[k][1], positions[k][2]) * kCmPerM;
-    std::vector<geo::Index> sizes(cm.tris.size(), 3), idx;
-    idx.reserve(cm.tris.size() * 3);
-    for (const auto& t : cm.tris)
+
+/** The surface as a scene mesh in cm: uv0 the packed panels, uv1 the flat pattern (one unit per metre, so a fabric
+ *  texture tiles at its real size), and face ints panel and side (0 outer, 1 inner, 2 rim). */
+MeshPtr surfaceToMesh(const GarmentSurface& s)
+{
+    std::vector<glm::dvec3> pts(s.points.size());
+    for (size_t k = 0; k < s.points.size(); ++k)
+        pts[k] = glm::dvec3(s.points[k][0], s.points[k][1], s.points[k][2]) * kCmPerM;
+    std::vector<geo::Index> sizes(s.tris.size(), 3), idx;
+    idx.reserve(s.tris.size() * 3);
+    for (const auto& t : s.tris)
         for (int v : t)
             idx.push_back(geo::Index(v));
     auto mesh = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(pts, sizes, idx));
 
-    // UVs are the flat pattern, one UV unit per metre.
     std::span<glm::vec2> uv = mesh->cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+    std::span<glm::vec2> fabricUv = mesh->cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(1));
     std::span<int32_t> panel = mesh->faceAttrs().getOrAdd<int32_t>("panel");
-    for (geo::Index f = 0; f < mesh->faceCapacity(); ++f)
+    std::span<int32_t> side = mesh->faceAttrs().getOrAdd<int32_t>("side");
+    for (geo::Index f = 0; f < mesh->faceCapacity() && f < s.tris.size(); ++f)
     {
         if (!mesh->faceValid(f))
             continue;
-        if (f < cm.triPanel.size())
-            panel[f] = cm.triPanel[f];
-        for (geo::Index c : mesh->faceCorners(f))
-            if (const geo::Index p = mesh->cornerPoint(c); p < cm.uv.size())
-                uv[c] = glm::vec2(cm.uv[p][0], cm.uv[p][1]);
+        panel[f] = s.triPanel[f];
+        side[f] = int32_t(s.triSide[f]);
+        const std::vector<geo::Index> corners = mesh->faceCorners(f);
+        for (size_t k = 0; k < corners.size() && k < 3; ++k)
+        {
+            uv[corners[k]] = glm::vec2(s.uv[f][k][0], s.uv[f][k][1]);
+            fabricUv[corners[k]] = glm::vec2(s.fabricUv[f][k][0], s.fabricUv[f][k][1]);
+        }
     }
     return mesh;
+}
+
+/** The panels packed into uv 0-1 by surface area, turned only by half turns so the grain stays vertical. Per triangle corner. */
+std::vector<Vec2> packPattern(const ClothMesh& cm)
+{
+    const GarmentSurface flat = garmentSurface(cm, cm.rest3d, {}, {.weldSeams = false});
+    MeshPtr mesh = surfaceToMesh(flat);
+    geo::Mesh& m = const_cast<geo::Mesh&>(*mesh);
+    uv::PackOptions opts;
+    opts.rotateStep = 0;
+    opts.angles = {0.0, 180.0};
+    opts.preOrient = false;
+    opts.padding = 8.0;
+    uv::packIslands(m, {}, geo::attr::uvName(0), opts);
+    const std::span<const glm::vec2> packed = std::as_const(m).cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    std::vector<Vec2> out(cm.tris.size() * 3, Vec2{0.f, 0.f});
+    for (geo::Index f = 0; f < m.faceCapacity() && f < flat.tris.size(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const std::vector<geo::Index> corners = m.faceCorners(f);
+        for (size_t k = 0; k < corners.size() && k < 3; ++k)
+            out[3 * f + k] = {packed[corners[k]].x, packed[corners[k]].y};
+    }
+    return out;
+}
+
+/** One drape on a worker thread. It publishes its positions every few frames; the garment node shows the latest. */
+struct DrapeJob
+{
+    uint64_t key = 0;
+    std::mutex mutex;
+    std::vector<Vec3> latest; // guarded by mutex
+    bool finished = false;    // guarded by mutex
+    std::atomic<bool> refreshQueued{false};
+    tasks::Job job;
+};
+
+/** Jobs still running, so unloading can stop them. Main thread only. */
+std::vector<std::shared_ptr<DrapeJob>>& drapeJobs()
+{
+    static std::vector<std::shared_ptr<DrapeJob>> jobs;
+    return jobs;
+}
+
+constexpr int64_t kPublishEvery = 5;
+
+std::atomic<int> gDrapeNow{0};
+
+/** Batch runs (no Qt application) and scripts holding a DrapeNow get the finished drape from the evaluation itself. */
+bool drapeInBackground() { return gDrapeNow.load() == 0 && QCoreApplication::instance() != nullptr; }
+
+/** Re-evaluates a garment whose drape moved on, from the main thread. */
+void refreshGarment(NodeId id)
+{
+    Graph& g = Graph::current();
+    if (!g.node(id))
+        return;
+    g.touch(id);
+    g.evaluate();
+    ui::viewportTools::requestRedraw();
 }
 
 class GarmentNode final : public Node
 {
 public:
+    ~GarmentNode() override
+    {
+        if (mJob)
+            mJob->job.cancel();
+    }
+
     void compute(const EvalContext&) override
     {
         LILA_ZONE();
@@ -182,6 +273,14 @@ public:
     }
 
 private:
+    MeshPtr output(const ClothMesh& cm, const std::vector<Vec3>& positions) const
+    {
+        SurfaceOptions o;
+        o.weldSeams = as<bool>(kWeldSeams);
+        o.thickness = float(std::max(0.0, as<double>(kThickness)) / kCmPerM);
+        return surfaceToMesh(garmentSurface(cm, positions, mPackedUv, o));
+    }
+
     MeshPtr build()
     {
         const std::string& text = as<std::string>(kGarment);
@@ -199,42 +298,133 @@ private:
             for (Panel& p : g.panels)
                 p.particleDistance = float(pd / kCmPerM);
 
-        const ClothMesh cm = buildClothMesh(g);
+        uint64_t meshKey = std::hash<std::string>{}(text);
+        hashMix(meshKey, std::hash<double>{}(as<double>(kParticleDistance)));
+        if (meshKey != mClothKey || !mCloth)
+        {
+            mCloth = std::make_shared<const ClothMesh>(buildClothMesh(g));
+            mPackedUv = packPattern(*mCloth);
+            mClothKey = meshKey;
+        }
+        const ClothMesh& cm = *mCloth;
         const int64_t frames = as<int64_t>(kFrames);
         if (!as<bool>(kSimulate) || frames <= 0 || cm.rest3d.empty())
-            return clothToMesh(cm, cm.rest3d);
+            return output(cm, cm.rest3d);
 
         const MeshPtr& collider = as<MeshPtr>(kColliderMesh);
         const glm::dmat4& colliderWorld = as<glm::dmat4>(kColliderMatrix);
-        uint64_t key = std::hash<std::string>{}(text);
+        uint64_t key = meshKey;
         hashMix(key, std::hash<std::string>{}(as<std::string>(kFabric)));
-        hashMix(key, std::hash<double>{}(as<double>(kParticleDistance)));
         hashMix(key, uint64_t(frames));
         hashMix(key, uint64_t(uintptr_t(collider.get())));
         for (int c = 0; c < 4; ++c)
             for (int r = 0; r < 4; ++r)
                 hashMix(key, std::hash<double>{}(colliderWorld[c][r]));
 
-        if (key != mDrapeKey || mDrape.size() != cm.rest3d.size())
+        if (key == mDrapeKey && mDrape.size() == cm.rest3d.size())
+            return output(cm, mDrape);
+
+        if (!drapeInBackground())
         {
-            Sdf sdf;
-            ClothSolver solver;
-            solver.reset(cm, g, SolverSettings{});
-            if (collider && !collider->empty())
-            {
-                sdf = colliderSdf(*collider, colliderWorld);
-                solver.setColliders({&sdf});
-            }
-            for (int64_t k = 0; k < frames; ++k)
-                solver.step();
-            mDrape = solver.positions();
+            if (mJob)
+                mJob->job.cancel();
+            mJob.reset();
+            mDrape = drape(cm, g, collider, colliderWorld, frames, nullptr);
             mDrapeKey = key;
+            return output(cm, mDrape);
         }
-        return clothToMesh(cm, mDrape);
+
+        if (!mJob || mJob->key != key)
+            startDrape(key, g, collider, colliderWorld, frames);
+        std::vector<Vec3> shown;
+        {
+            std::lock_guard lock(mJob->mutex);
+            if (mJob->finished && mJob->latest.size() == cm.rest3d.size())
+            {
+                mDrape = mJob->latest;
+                mDrapeKey = key;
+            }
+            shown = mJob->latest;
+        }
+        if (mDrapeKey == key)
+            mJob.reset();
+        return output(cm, shown.size() == cm.rest3d.size() ? shown : cm.rest3d);
     }
 
+    /** Runs the solver; with a task, reports progress to it, publishes every few frames and stops when cancelled. */
+    static std::vector<Vec3> drape(const ClothMesh& cm, const Garment& g, const MeshPtr& collider,
+                                   const glm::dmat4& colliderWorld, int64_t frames, tasks::Task* task,
+                                   const std::function<void(const std::vector<Vec3>&)>& publish = {})
+    {
+        Sdf sdf;
+        ClothSolver solver;
+        solver.reset(cm, g, SolverSettings{});
+        if (collider && !collider->empty())
+        {
+            sdf = colliderSdf(*collider, colliderWorld);
+            solver.setColliders({&sdf});
+        }
+        for (int64_t k = 0; k < frames; ++k)
+        {
+            if (task)
+            {
+                task->checkCancel();
+                task->progress.step(1.0);
+            }
+            solver.step();
+            if (publish && (k + 1) % kPublishEvery == 0 && k + 1 < frames)
+                publish(solver.positions());
+        }
+        return solver.positions();
+    }
+
+    void startDrape(uint64_t key, const Garment& g, const MeshPtr& collider, const glm::dmat4& colliderWorld, int64_t frames)
+    {
+        if (mJob)
+            mJob->job.cancel();
+        auto job = std::make_shared<DrapeJob>();
+        job->key = key;
+        const NodeId id = this->id();
+        auto publish = [job, id](const std::vector<Vec3>& positions) {
+            {
+                std::lock_guard lock(job->mutex);
+                job->latest = positions;
+            }
+            if (!job->refreshQueued.exchange(true))
+                tasks::postToMain([job, id] {
+                    job->refreshQueued = false;
+                    refreshGarment(id);
+                });
+        };
+        job->job = tasks::runInBackground(
+            "Draping " + name(), double(frames),
+            [job, cloth = mCloth, g, collider, colliderWorld, frames, publish](tasks::Task& t) {
+                std::vector<Vec3> result = drape(*cloth, g, collider, colliderWorld, frames, &t, publish);
+                std::lock_guard lock(job->mutex);
+                job->latest = std::move(result);
+                job->finished = true;
+            },
+            [job, id](std::exception_ptr) {
+                auto& jobs = drapeJobs();
+                jobs.erase(std::remove(jobs.begin(), jobs.end(), job), jobs.end());
+                bool finished;
+                {
+                    std::lock_guard lock(job->mutex);
+                    finished = job->finished;
+                }
+                if (finished)
+                    refreshGarment(id);
+            });
+        drapeJobs().push_back(job);
+        mJob = std::move(job);
+    }
+
+    uint64_t mClothKey = 0;
+    std::shared_ptr<const ClothMesh> mCloth;
+    std::vector<Vec2> mPackedUv;
     uint64_t mDrapeKey = 0;
     std::vector<Vec3> mDrape;
+    std::shared_ptr<DrapeJob> mJob;
 };
 
 constexpr uint32_t kGarmentIn = AttrInput | AttrStorable;
@@ -263,9 +453,14 @@ NodeType garmentType()
         {.name = "colliderMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden,
          .doc = "The collider's world matrix: connect its worldMatrix."},
         {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
-         .doc = "The draped garment, cm, with the flat pattern as UVs and a face int attribute panel."},
+         .doc = "The draped garment, cm: uv0 the packed panels, uv1 the flat pattern in metres, face ints panel and side."},
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput,
          .doc = "Problems with the last build."},
+        {.name = "weldSeams", .type = PlugType::Bool, .defaultValue = true, .flags = kGarmentIn,
+         .doc = "Merge sewn points so the garment is one connected mesh; off keeps each panel separate.", .category = "Output"},
+        {.name = "thickness", .type = PlugType::Float, .defaultValue = 0.0, .flags = kGarmentIn,
+         .doc = "Shell thickness, cm, grown towards the wearer with rims on open edges; 0 is a single sheet.", .minValue = 0.0,
+         .softMax = 2.0, .category = "Output"},
     };
     t.create = [] { return std::make_unique<GarmentNode>(); };
     return t;
@@ -366,6 +561,19 @@ Garment garmentFromJson(const json& j)
     return g;
 }
 
+DrapeNow::DrapeNow() { ++gDrapeNow; }
+DrapeNow::~DrapeNow() { --gDrapeNow; }
+
+void stopDrapes()
+{
+    std::vector<std::shared_ptr<DrapeJob>> jobs = drapeJobs();
+    for (const auto& j : jobs)
+        j->job.cancel();
+    for (const auto& j : jobs)
+        j->job.wait();
+    drapeJobs().clear();
+}
+
 bool registerNodes(ext::Context& ctx)
 {
     relocate::registerNeutral(kGarmentType);
@@ -380,4 +588,9 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     tailor::registerCommands(ctx);
     tailor::registerUi(ctx);
     return 0;
+}
+
+LILA_EXTENSION_EXPORT void lilaExtensionUninit(lila::ext::Context&)
+{
+    tailor::stopDrapes();
 }

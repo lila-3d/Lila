@@ -38,6 +38,8 @@ constexpr float kContactStiffness = 1e4f;
 constexpr float kAirDrag = 0.2f;       // 1/s
 constexpr float kFrictionSlip = 1e-5f; // tangential slip in metres still treated as sticking
 constexpr float kClosedGap = 1e-4f;
+constexpr int kRedetectEvery = 3;     // iterations between contact re-detections while vertices hit their bounds
+constexpr float kDampingScale = 0.01f; // fabric damping 0.01 becomes a 1e-4 s stiffness-proportional (Rayleigh) term
 
 vec3 toVec(const Vec3& v) { return {v[0], v[1], v[2]}; }
 Vec3 toArr(const vec3& v) { return {v.x, v.y, v.z}; }
@@ -199,6 +201,51 @@ uint64_t cellKey(int x, int y, int z)
            (uint64_t(int64_t(z) + kBias) & kMask);
 }
 
+/** Open-addressed map from a cell key to its run in the key-sorted vertex list. */
+struct CellTable
+{
+    struct Slot
+    {
+        uint64_t key = ~0ull;
+        int begin = 0, end = 0;
+    };
+    std::vector<Slot> slots;
+    uint64_t mask = 0;
+
+    static uint64_t hash(uint64_t k) { return (k ^ (k >> 29)) * 0xbf58476d1ce4e5b9ull; }
+
+    void build(const std::vector<std::pair<uint64_t, int>>& sorted)
+    {
+        size_t size = 64;
+        while (size < sorted.size() * 2)
+            size *= 2;
+        slots.assign(size, {});
+        mask = size - 1;
+        for (size_t i = 0; i < sorted.size();)
+        {
+            size_t j = i;
+            while (j < sorted.size() && sorted[j].first == sorted[i].first)
+                ++j;
+            uint64_t h = hash(sorted[i].first) & mask;
+            while (slots[h].key != ~0ull)
+                h = (h + 1) & mask;
+            slots[h] = {sorted[i].first, int(i), int(j)};
+            i = j;
+        }
+    }
+
+    const Slot* find(uint64_t key) const
+    {
+        for (uint64_t h = hash(key) & mask;; h = (h + 1) & mask)
+        {
+            if (slots[h].key == key)
+                return &slots[h];
+            if (slots[h].key == ~0ull)
+                return nullptr;
+        }
+    }
+};
+
 int findRoot(std::vector<int>& parent, int i)
 {
     while (parent[i] != i)
@@ -228,8 +275,11 @@ struct ClothSolver::Impl
     std::vector<int> pinOf, pinVerts;
 
     std::vector<float> mass, damping, friction, thickness;
+    std::vector<float> bodyK, bodyLambda; // collider contact as an AVBD constraint: stiffness and normal force per vertex
     std::vector<uint8_t> movable, collidable, triCollides;
-    std::vector<int> weld;
+    std::vector<int> weld, vPanel;
+    std::vector<vec3> restFlat; // pattern position (x, y, 0); empty without UVs
+    std::vector<std::vector<int>> nearRing; // per weld root: roots within two rings, sorted; never self-contacts
     std::vector<std::vector<vbd::Ref>> vTris, vHinges, vLinks;
     std::vector<std::vector<int>> colours;
 
@@ -239,6 +289,7 @@ struct ClothSolver::Impl
     std::vector<std::vector<vbd::Contact>> perTri;
     std::vector<std::vector<int>> asVertex, asTriangle;
     std::vector<std::pair<uint64_t, int>> cells;
+    vbd::CellTable cellTable;
     std::vector<float> bound, nearV, nearT;
 
     std::vector<vec3> x, v, xStart, xDetect, y, xNew;
@@ -249,7 +300,9 @@ struct ClothSolver::Impl
     void advanceSeams();
     void substep(const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders);
     void detect();
-    void updateDuals(const std::vector<Pin>& pins);
+    void updateDuals(const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders);
+    /** Deepest penetration of vertex i into the colliders and the push-out normal; false when clear. */
+    bool bodyContact(int i, const vec3& p, const std::vector<const Sdf*>& colliders, float& pen, vec3& nrm) const;
     vec3 solveVertex(int i, const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders) const;
     bool contactGap(const vbd::Contact& c, float& pen, vec3& normal, vec3& bary) const;
 
@@ -300,6 +353,14 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
     }
 
     const bool hasUv = mesh.uv.size() == mesh.rest3d.size();
+    vPanel.resize(n);
+    restFlat.clear();
+    for (int i = 0; i < n; ++i)
+    {
+        vPanel[i] = vertPanel(i);
+        if (hasUv)
+            restFlat.push_back(vec3(mesh.uv[i][0], mesh.uv[i][1], 0.f));
+    }
     tris.clear();
     std::vector<int> triPanel;
     for (size_t t = 0; t < mesh.tris.size(); ++t)
@@ -503,6 +564,31 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
     for (int i = 0; i < n; ++i)
         weld[i] = findRoot(weld, i);
 
+    // A vertex near triangles of its own neighbourhood is resting fabric, not a collision.
+    std::vector<std::vector<int>> ring1(n);
+    for (const auto& tri : tris)
+        for (int k = 0; k < 3; ++k)
+            for (int l = 0; l < 3; ++l)
+                if (k != l)
+                    ring1[weld[tri[k]]].push_back(weld[tri[l]]);
+    for (auto& r : ring1)
+    {
+        std::sort(r.begin(), r.end());
+        r.erase(std::unique(r.begin(), r.end()), r.end());
+    }
+    nearRing.assign(n, {});
+    for (int i = 0; i < n; ++i)
+    {
+        if (weld[i] != i)
+            continue;
+        std::vector<int>& out = nearRing[i];
+        out = ring1[i];
+        for (int nb : ring1[i])
+            out.insert(out.end(), ring1[nb].begin(), ring1[nb].end());
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+    }
+
     // Greedy colouring over the stencils that couple vertices: triangles, hinges and links.
     std::vector<std::vector<int>> adj(n);
     auto connect = [&](int a, int b) {
@@ -562,6 +648,10 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
     y.assign(n, vec3(0.f));
     xNew.assign(n, vec3(0.f));
     clamped.assign(n, 0);
+    bodyK.assign(n, 0.f);
+    for (int i = 0; i < n; ++i)
+        bodyK[i] = contactStiffness(i);
+    bodyLambda.assign(n, 0.f);
 }
 
 void ClothSolver::Impl::syncPins(const std::vector<Pin>& pins)
@@ -652,6 +742,7 @@ void ClothSolver::Impl::detect()
         if (collidable[i])
             cells.emplace_back(cellKey(cellOf(x[i].x), cellOf(x[i].y), cellOf(x[i].z)), i);
     std::sort(cells.begin(), cells.end());
+    cellTable.build(cells);
 
     const int nt = int(tris.size());
     tbb::parallel_for(tbb::blocked_range<int>(0, nt, 32), [&](const tbb::blocked_range<int>& range) {
@@ -675,13 +766,31 @@ void ClothSolver::Impl::detect()
                 for (int cy = cellOf(lo.y); cy <= cellOf(hi.y); ++cy)
                     for (int cx = cellOf(lo.x); cx <= cellOf(hi.x); ++cx)
                     {
-                        const uint64_t key = cellKey(cx, cy, cz);
-                        auto it = std::lower_bound(cells.begin(), cells.end(), std::pair<uint64_t, int>(key, -1));
-                        for (; it != cells.end() && it->first == key; ++it)
+                        const CellTable::Slot* slot = cellTable.find(cellKey(cx, cy, cz));
+                        if (!slot)
+                            continue;
+                        for (int k = slot->begin; k < slot->end; ++k)
                         {
-                            const int vi = it->second;
+                            const int vi = cells[k].second;
                             const int wv = weld[vi];
                             if (wv == w0[0] || wv == w0[1] || wv == w0[2] || (!movable[vi] && !triMoves))
+                                continue;
+                            if (!restFlat.empty() && vPanel[vi] == vPanel[tri[0]] && vPanel[vi] == vPanel[tri[1]] &&
+                                vPanel[vi] == vPanel[tri[2]])
+                            {
+                                // Closer in the flat pattern than the query radius: the same stretch of fabric.
+                                vec3 rb;
+                                const vec3 rq = closestOnTriangle(restFlat[vi], restFlat[tri[0]], restFlat[tri[1]], restFlat[tri[2]], rb);
+                                if (glm::length(restFlat[vi] - rq) < 2.f * R)
+                                    continue;
+                            }
+                            const std::vector<int>& ring = nearRing[wv];
+                            if (std::binary_search(ring.begin(), ring.end(), w0[0]) ||
+                                std::binary_search(ring.begin(), ring.end(), w0[1]) ||
+                                std::binary_search(ring.begin(), ring.end(), w0[2]))
+                                continue;
+                            const vec3& xv = x[vi];
+                            if (xv.x < lo.x || xv.y < lo.y || xv.z < lo.z || xv.x > hi.x || xv.y > hi.y || xv.z > hi.z)
                                 continue;
                             vec3 bary;
                             const vec3 q = closestOnTriangle(x[vi], a, b, c, bary);
@@ -728,7 +837,7 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
     mat3 H(inertia);
 
     vec3 fe(0.f);
-    mat3 He(0.f);
+    mat3 He(0.f), Hg(0.f);
     for (const Ref& r : vTris[i])
     {
         const Membrane& m = membranes[r.index];
@@ -751,7 +860,8 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
         const vec3 w = c1 * f0 + c0 * f1;
         const float geometric = std::max(0.f, S00 * c0 * c0 + 2.f * S01 * c0 * c1 + S11 * c1 * c1);
         He += m.area * (m.kWarp * c0 * c0 * outer(f0, f0) + m.kWeft * c1 * c1 * outer(f1, f1) +
-                        m.kShear * outer(w, w) + mat3(geometric));
+                        m.kShear * outer(w, w));
+        Hg += mat3(m.area * geometric);
     }
     for (const Ref& r : vHinges[i])
     {
@@ -765,11 +875,11 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
         He += hg.stiffness * outer(gi, gi);
     }
     // Rayleigh damping on the elastic terms, against the motion since the substep started.
-    const float kd = damping[i] / h;
+    const float kd = damping[i] * kDampingScale / h;
     fe -= kd * (He * (xi - xStart[i]));
     He *= 1.f + kd;
     f += fe;
-    H += He;
+    H += He + Hg;
 
     for (const Ref& r : vLinks[i])
     {
@@ -799,29 +909,19 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
         H += mat3(ps.k);
     }
 
-    for (const Sdf* sdf : colliders)
+    float pen;
+    vec3 nrm;
+    if (bodyContact(i, xi, colliders, pen, nrm))
     {
-        if (!sdf)
-            continue;
-        Vec3 grad;
-        const float phi = sdf->sample(toArr(xi), &grad);
-        const float r = s.collisionThickness + 0.5f * thickness[i];
-        if (phi >= r)
-            continue;
-        vec3 nrm = toVec(grad);
-        const float gl = glm::length(nrm);
-        if (gl < 1e-8f)
-            continue;
-        nrm /= gl;
-        const float kc = contactStiffness(i);
-        const float pen = r - phi;
-        f += kc * pen * nrm;
+        const float kc = bodyK[i];
+        const float fn = std::max(0.f, kc * pen + bodyLambda[i]);
+        f += fn * nrm;
         const mat3 nn = outer(nrm, nrm);
         H += kc * nn;
         // Lagged friction against the tangential slip this substep, sticking below kFrictionSlip.
         const vec3 slip = xi - xStart[i];
         const vec3 u = slip - nrm * glm::dot(nrm, slip);
-        const float scale = friction[i] * kc * pen / std::max(glm::length(u), kFrictionSlip);
+        const float scale = friction[i] * fn / std::max(glm::length(u), kFrictionSlip);
         f -= scale * u;
         H += scale * (mat3(1.f) - nn);
     }
@@ -829,8 +929,7 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
     for (int ci : asVertex[i])
     {
         const Contact& c = contacts[ci];
-        float pen;
-        vec3 nrm, bary;
+        vec3 bary;
         if (!contactGap(c, pen, nrm, bary))
             continue;
         const float kc = contactStiffness(c.v);
@@ -840,8 +939,7 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
     for (int ci : asTriangle[i])
     {
         const Contact& c = contacts[ci];
-        float pen;
-        vec3 nrm, bary;
+        vec3 bary;
         if (!contactGap(c, pen, nrm, bary))
             continue;
         const auto& t = tris[c.t];
@@ -860,9 +958,47 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
     return xi + dx;
 }
 
-void ClothSolver::Impl::updateDuals(const std::vector<Pin>& pins)
+bool ClothSolver::Impl::bodyContact(int i, const vec3& p, const std::vector<const Sdf*>& colliders, float& pen,
+                                    vec3& nrm) const
+{
+    pen = 0.f;
+    const float r = s.collisionThickness + 0.5f * thickness[i];
+    for (const Sdf* sdf : colliders)
+    {
+        if (!sdf)
+            continue;
+        Vec3 grad;
+        const float phi = sdf->sample(vbd::toArr(p), &grad);
+        if (phi >= r || r - phi <= pen)
+            continue;
+        const vec3 g = vbd::toVec(grad);
+        const float gl = glm::length(g);
+        if (gl < 1e-8f)
+            continue;
+        pen = r - phi;
+        nrm = g / gl;
+    }
+    return pen > 0.f;
+}
+
+void ClothSolver::Impl::updateDuals(const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders)
 {
     using namespace vbd;
+    if (!colliders.empty())
+        tbb::parallel_for(tbb::blocked_range<int>(0, n, 256), [&](const tbb::blocked_range<int>& r) {
+            for (int i = r.begin(); i != r.end(); ++i)
+            {
+                float pen;
+                vec3 nrm;
+                if (!movable[i] || !bodyContact(i, x[i], colliders, pen, nrm))
+                {
+                    bodyLambda[i] = 0.f;
+                    continue;
+                }
+                bodyLambda[i] = std::max(0.f, bodyK[i] * pen + bodyLambda[i]);
+                bodyK[i] = std::min(bodyK[i] + kConstraintBeta * pen, kConstraintKMax);
+            }
+        });
     for (Link& l : links)
     {
         const vec3 d = x[l.a] - x[l.b];
@@ -911,6 +1047,11 @@ void ClothSolver::Impl::substep(const std::vector<Pin>& pins, const std::vector<
         ps.lambda *= kLambdaDecay;
         ps.k = std::max(ps.kStart, ps.k * kStiffnessDecay);
     }
+    for (int i = 0; i < n; ++i)
+    {
+        bodyLambda[i] *= kLambdaDecay;
+        bodyK[i] = std::max(contactStiffness(i), bodyK[i] * kStiffnessDecay);
+    }
 
     detect();
     for (int i = 0; i < n; ++i)
@@ -933,8 +1074,8 @@ void ClothSolver::Impl::substep(const std::vector<Pin>& pins, const std::vector<
             for (int i : colour)
                 x[i] = xNew[i];
         }
-        updateDuals(pins);
-        if (s.selfCollision && it + 1 < s.iterations &&
+        updateDuals(pins, colliders);
+        if (s.selfCollision && it % kRedetectEvery == kRedetectEvery - 1 && it + 1 < s.iterations &&
             std::find(clamped.begin(), clamped.end(), uint8_t(1)) != clamped.end())
             detect();
     }

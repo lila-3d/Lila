@@ -3,7 +3,9 @@
 #include "Blocks.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <map>
 #include <string>
 
 using namespace tailor;
@@ -218,5 +220,131 @@ TEST_CASE("blocks: panels start outside the body")
                 continue;
             CHECK(std::hypot(p.origin[0], p.origin[2]) > body.chestRadius());
         }
+    }
+}
+
+TEST_CASE("mannequin is a closed body the blocks fit around")
+{
+    const Body body;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(body, pts, tris);
+    REQUIRE(tris.size() > 1000);
+
+    std::map<std::pair<int, int>, int> edgeUse;
+    double volume = 0.0;
+    float top = 0.f;
+    for (const auto& t : tris)
+    {
+        for (int k = 0; k < 3; ++k)
+            ++edgeUse[{std::min(t[k], t[(k + 1) % 3]), std::max(t[k], t[(k + 1) % 3])}];
+        const Vec3 &a = pts[t[0]], &b = pts[t[1]], &c = pts[t[2]];
+        volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
+    }
+    for (const Vec3& p : pts)
+        top = std::max(top, p[1]);
+    int open = 0;
+    int pinched = 0;
+    for (const auto& [e, uses] : edgeUse)
+    {
+        open += uses % 2;
+        pinched += uses > 2;
+    }
+    // Surface nets can pinch two sheets along an edge on diagonal limbs; that is still watertight.
+    CHECK(open == 0);
+    CHECK(pinched < 20);
+    CHECK(volume > 0.04);
+    CHECK(volume < 0.12);
+    CHECK(top == doctest::Approx(body.height).epsilon(0.03));
+
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.02f, 0.1f);
+    CHECK(sdf.sample({0.f, body.chestY(), 0.f}) < -0.05f);
+    CHECK(sdf.sample({0.f, body.chestY(), body.chestRadius() + 0.1f}) > 0.f);
+}
+
+TEST_CASE("tunic drapes onto the mannequin without passing through")
+{
+    const Body body;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(body, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.05f);
+
+    Garment g;
+    REQUIRE(buildBlock("tunic", g));
+    for (Panel& p : g.panels)
+        p.particleDistance = 0.03f;
+    const ClothMesh cm = buildClothMesh(g);
+    ClothSolver solver;
+    solver.reset(cm, g, SolverSettings{});
+    solver.setColliders({&sdf});
+    for (int frame = 0; frame < 90; ++frame)
+        solver.step();
+
+    int inside = 0, finite = 0;
+    float lowest = 10.f;
+    for (const Vec3& p : solver.positions())
+    {
+        finite += std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+        inside += sdf.sample(p) < -0.005f;
+        lowest = std::min(lowest, p[1]);
+    }
+    CHECK(finite == int(solver.positions().size()));
+    CHECK(inside < int(solver.positions().size()) / 100);
+    // Hangs from the shoulders instead of falling off.
+    CHECK(lowest > 0.4f);
+    float maxGap = 0.f;
+    for (const auto& pr : cm.seamPairs)
+    {
+        const Vec3 &a = solver.positions()[pr[0]], &b = solver.positions()[pr[1]];
+        maxGap = std::max(maxGap, std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+    }
+    CHECK(maxGap < 0.01f);
+}
+
+TEST_CASE("perf: outfit drape" * doctest::skip())
+{
+    const Body body;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(body, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.05f);
+    Garment g;
+    REQUIRE(buildBlock("cloakTunicBelt", g));
+    const ClothMesh cm = buildClothMesh(g);
+    for (bool self : {false, true})
+    {
+        SolverSettings s;
+        s.selfCollision = self;
+        ClothSolver solver;
+        solver.reset(cm, g, s);
+        solver.setColliders({&sdf});
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int frame = 0; frame < 20; ++frame)
+            solver.step();
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        MESSAGE(cm.rest3d.size() << " verts, self " << self << ": " << ms / 20.0 << " ms/frame");
+    }
+}
+
+TEST_CASE("measuring a mannequin gives back its measurements")
+{
+    for (const Body& want : {Body{}, Body{.height = 1.62f, .chest = 1.1f, .waist = 1.0f, .hip = 1.08f}})
+    {
+        std::vector<Vec3> pts;
+        std::vector<std::array<int, 3>> tris;
+        mannequin(want, pts, tris);
+        for (Vec3& p : pts)
+            p = {p[0] + 2.f, p[1] + 0.5f, p[2] - 1.f};
+        Vec3 offset;
+        const Body got = measureBody(pts, tris, &offset);
+        CAPTURE(want.height);
+        CHECK(got.height == doctest::Approx(want.height).epsilon(0.03));
+        CHECK(got.chest == doctest::Approx(want.chest).epsilon(0.06));
+        CHECK(got.waist == doctest::Approx(want.waist).epsilon(0.06));
+        CHECK(got.hip == doctest::Approx(want.hip).epsilon(0.06));
+        CHECK(offset[0] == doctest::Approx(2.f).epsilon(0.01));
+        CHECK(offset[1] == doctest::Approx(0.5f).epsilon(0.02));
+        CHECK(std::abs(offset[2] + 1.f) < 0.03f);
     }
 }

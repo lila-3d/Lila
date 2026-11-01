@@ -101,7 +101,7 @@ void registerUi(ext::Context& ctx)
 {
     actions::add(ctx, {.id = "tailor.createBlock", .label = "Garment from Block", .category = "Tailor",
                        .doc = "Start a garment from a parametric block and drape it onto the selected mesh.",
-                       .python = "tailorCreateBlock(block='tunic', collider='Body')", .command = "tailorCreateBlock",
+                       .python = "tailorCreateBlock(block='tunic', collider='Mannequin')", .command = "tailorCreateBlock",
                        .call = nlohmann::json::object(), .icon = "shirt"});
     actions::add(ctx, {.id = "tailor.importGarmentCode",
                        .label = "Import GarmentCode Pattern...",
@@ -124,6 +124,12 @@ void registerUi(ext::Context& ctx)
                        .doc = "Sew two runs of panel outline on the selected garment together.",
                        .python = "tailorSew('Garment', sideA='Front:1:2', sideB='Back:3:4')", .command = "tailorSew",
                        .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.mannequin", .label = "Mannequin", .category = "Tailor",
+                       .doc = "Make a stand-in body to drape garments onto; blocks fit whatever body they drape onto.",
+                       .python = "tailorMannequin(height=180, chest=96)", .command = "tailorMannequin", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.bake", .label = "Bake to Game Mesh", .category = "Tailor",
+                       .doc = "Make a plain mesh from the selected garment's drape, skinned like its collider when that is skinned.",
+                       .python = "tailorBake('Garment')", .command = "tailorBake", .call = nlohmann::json::object()});
     actions::add(ctx, {.id = "tailor.freeze", .label = "Freeze Garment", .category = "Tailor",
                        .doc = "Freeze the selected garment's panels: they collide but no longer move.", .python = "tailorFreeze('Garment')",
                        .command = "tailorFreeze", .call = nlohmann::json::object()});
@@ -133,8 +139,8 @@ void registerUi(ext::Context& ctx)
 
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
     int sep = 0;
-    for (const char* a : {"tailor.createBlock", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric", "tailor.sew", "",
-                          "tailor.freeze", "tailor.unfreeze"})
+    for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
+                          "tailor.sew", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.bake"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("tailor.menu.") + a, .menu = "Tailor", .action = a});
