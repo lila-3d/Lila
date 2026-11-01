@@ -8,6 +8,7 @@
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
+#include <lila/Paths.h>
 #include <lila/Profile.h>
 #include <lila/Transform.h>
 
@@ -33,6 +34,7 @@
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hd/visibilitySchema.h>
 #include <pxr/imaging/hd/xformSchema.h>
+#include <pxr/imaging/hio/image.h>
 #include <pxr/imaging/pxOsd/tokens.h>
 #include <pxr/usd/sdf/assetPath.h>
 
@@ -40,6 +42,7 @@
 #include <format>
 #include <functional>
 #include <iterator>
+#include <map>
 
 PXR_NAMESPACE_USING_DIRECTIVE
 
@@ -95,6 +98,36 @@ size_t mix(size_t h, size_t v) { return h ^ (v + 0x9e3779b97f4a7c15ull + (h << 6
 size_t hashOf(double v) { return std::hash<double>()(v); }
 size_t hashOf(const glm::dvec3& v) { return mix(mix(hashOf(v.x), hashOf(v.y)), hashOf(v.z)); }
 
+/** Whether Hio can read the image at path, remembered until the file changes. */
+bool readableImage(const fs::path& path)
+{
+    static std::map<fs::path, std::pair<fs::file_time_type, bool>> known;
+    std::error_code ec;
+    const fs::file_time_type written = fs::last_write_time(path, ec);
+    if (ec)
+        return false;
+    auto it = known.find(path);
+    if (it == known.end() || it->second.first != written)
+        it = known.insert_or_assign(path, std::pair{written, HioImage::OpenForReading(paths::toUtf8(path)) != nullptr}).first;
+    return it->second.second;
+}
+
+/**
+ * A dome image as a path Hydra can open: Lila's own HDRIs are stored by file name, the rest as scene paths. Empty when
+ * the file is missing or unreadable, since Storm faults the GPU filtering a dome texture it could not load.
+ */
+std::string domeTexture(const std::string& stored)
+{
+    std::error_code ec;
+    fs::path path = paths::fromUtf8(stored);
+    if (path.is_relative())
+        if (fs::path shipped = paths::resourcesDir() / "hdri" / path; fs::exists(shipped, ec))
+            path = shipped;
+    if (path.is_relative())
+        path = paths::resolvePath(stored);
+    return fs::is_regular_file(path, ec) && readableImage(path) ? paths::toUtf8(path) : std::string();
+}
+
 /** A UsdLux-style light: sphere (points and spots, shaped by a cone), distant, rect, disk or dome. */
 std::pair<TfToken, HdContainerDataSourceHandle> lightSource(const scene::Node& n, size_t& hash)
 {
@@ -141,8 +174,8 @@ std::pair<TfToken, HdContainerDataSourceHandle> lightSource(const scene::Node& n
         break;
     case Kind::Dome:
         type = HdPrimTypeTokens->domeLight;
-        if (!l.texture.empty())
-            p.push_back({HdLightTokens->textureFile, retained(SdfAssetPath(l.texture, l.texture))});
+        if (const std::string file = l.texture.empty() ? std::string() : domeTexture(l.texture); !file.empty())
+            p.push_back({HdLightTokens->textureFile, retained(SdfAssetPath(file, file))});
         break;
     }
     return {type, container(p)};

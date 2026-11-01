@@ -67,24 +67,43 @@ using namespace usd::hydra;
 using scene::Graph;
 using scene::NodeId;
 
-/** One Vulkan Hgi for every session, kept for the process: Storm's shared resources outlive any one viewport. */
-Hgi* sharedHgi(std::string& error)
+/** The Hgi new sessions get. Never freed, so Storm's shared resources outlive any one viewport and exit ordering. */
+std::shared_ptr<Hgi>& currentHgi()
 {
-    static Hgi* hgi = nullptr;
+    static auto* hgi = new std::shared_ptr<Hgi>();
+    return *hgi;
+}
+
+/**
+ * One Vulkan Hgi for every session. Main thread. A lost one is replaced through forgetHgi, and goes once the last
+ * session drawing with it closes.
+ */
+std::shared_ptr<Hgi> sharedHgi(std::string& error)
+{
     static std::string failure;
-    static std::once_flag once;
-    std::call_once(once, [] {
+    static bool tried = false;
+    std::shared_ptr<Hgi>& hgi = currentHgi();
+    if (!hgi && !tried)
+    {
         HgiUniquePtr h = Hgi::CreateNamedHgi(HgiTokens->Vulkan);
         if (!h)
             failure = "HgiVulkan is not available";
         else if (!h->IsBackendSupported())
             failure = "no Vulkan device Hydra can use";
         else
-            hgi = h.release();
-    });
+            hgi = std::shared_ptr<Hgi>(h.release());
+        tried = !hgi;
+    }
     if (!hgi)
         error = failure;
     return hgi;
+}
+
+/** New sessions get a new Hgi from now on, when lost is still the current one. */
+void forgetHgi(const Hgi* lost)
+{
+    if (currentHgi().get() == lost)
+        currentHgi().reset();
 }
 
 /**
@@ -283,7 +302,8 @@ public:
             return;
         }
         std::string hgiError;
-        Hgi* hgi = sharedHgi(hgiError);
+        mHgiOwner = sharedHgi(hgiError);
+        Hgi* hgi = mHgiOwner.get();
         HdContainerDataSourceHandle drivers;
         if (hgi)
         {
@@ -381,6 +401,8 @@ public:
         mMaterialIndex->SetStage(mMaterials.stage());
         mIndex->InsertSceneIndex(mMaterialIndex, materialsRoot());
         mHgi = hgi;
+        mPanel = panel;
+        mWatch = HgiDeviceWatch::create(hgi);
         if (const auto device = hgi ? render::GpuImage::sharingDevice() : std::nullopt)
         {
             std::string interopError;
@@ -582,8 +604,39 @@ private:
             deliver(r, proj);
         if (mHgi)
             mHgi->EndFrame();
+        if (mWatch && mWatch->lost())
+        {
+            deviceLost();
+            return;
+        }
         if (!mTasks->IsConverged())
             refineLater(r.serial);
+    }
+
+    /**
+     * Hydra's GPU device is gone, so this session only repeats its last frame. Opens the panel's renderer again on a new
+     * Hgi; after a few losses it falls back to Lila's own, since something in the scene keeps faulting the GPU.
+     */
+    void deviceLost()
+    {
+        if (mLostReported)
+            return;
+        mLostReported = true;
+        static int losses = 0;
+        const bool retry = ++losses <= 3;
+        const std::string note = retry ? "Hydra's GPU device was lost (a GPU fault in the render delegate); restarting the Hydra viewport"
+                                       : "Hydra's GPU device keeps getting lost; the viewport is back on Lila's renderer";
+        log::error("{}", note);
+        LILA_MESSAGE(note.c_str(), note.size());
+        forgetHgi(mHgi);
+        mainq::post([panel = mPanel, retry] {
+            const std::string id = vr::selected(panel);
+            if (id == vr::kLila)
+                return;
+            vr::select(panel, vr::kLila);
+            if (retry)
+                vr::select(panel, id);
+        });
     }
 
     /** Progressive delegates: draw again a moment later, until they converge or a newer request comes. */
@@ -854,7 +907,12 @@ private:
 
     bool mOk = false;
     bool mStorm = false;
+    int mPanel = 0;
+    bool mLostReported = false;
+    /** Declared before everything drawing with it, so it outlives them. */
+    std::shared_ptr<Hgi> mHgiOwner;
     Hgi* mHgi = nullptr;
+    std::unique_ptr<HgiDeviceWatch> mWatch;
     HdPluginRenderDelegateUniqueHandle mDelegate;
     HdDriver mDriver;
     std::unique_ptr<HdRenderIndex> mIndex;

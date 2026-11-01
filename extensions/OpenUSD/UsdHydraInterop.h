@@ -58,4 +58,22 @@ private:
     struct Impl;
     std::unique_ptr<Impl> m;
 };
+/**
+ * Notices when HgiVulkan's device is lost, as a GPU fault in a delegate's work leaves it: Hgi carries on, every submit
+ * failing quietly, and its AOVs keep the last frame drawn. Checks with an empty submit and fence per frame. Main thread.
+ */
+class HgiDeviceWatch
+{
+public:
+    /** Null when hgi isn't HgiVulkan. */
+    static std::unique_ptr<HgiDeviceWatch> create(pxr::Hgi* hgi);
+    ~HgiDeviceWatch();
+    /** Call after a frame's work is submitted. True once the device is lost, or has not finished a frame for many seconds. */
+    bool lost();
+
+private:
+    HgiDeviceWatch();
+    struct Impl;
+    std::unique_ptr<Impl> m;
+};
 } // namespace lila::usd::hydra

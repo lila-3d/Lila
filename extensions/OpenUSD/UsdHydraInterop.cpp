@@ -10,6 +10,7 @@
 #include <pxr/imaging/hgiVulkan/instance.h>
 #include <pxr/imaging/hgiVulkan/texture.h>
 
+#include <chrono>
 #include <cstring>
 #include <vector>
 
@@ -452,4 +453,90 @@ void HgiInterop::wait(size_t n)
     if (n < m->slots.size() && m->slots[n].fence)
         m->vkWaitForFences(m->device, 1, &m->slots[n].fence, VK_TRUE, UINT64_MAX);
 }
+struct HgiDeviceWatch::Impl
+{
+    PFN_vkCreateFence vkCreateFence = nullptr;
+    PFN_vkDestroyFence vkDestroyFence = nullptr;
+    PFN_vkGetFenceStatus vkGetFenceStatus = nullptr;
+    PFN_vkResetFences vkResetFences = nullptr;
+    PFN_vkWaitForFences vkWaitForFences = nullptr;
+    PFN_vkQueueSubmit vkQueueSubmit = nullptr;
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    bool pending = false;
+    bool lost = false;
+    std::chrono::steady_clock::time_point submitted;
+};
+
+HgiDeviceWatch::HgiDeviceWatch() : m(std::make_unique<Impl>()) {}
+
+HgiDeviceWatch::~HgiDeviceWatch()
+{
+    if (!m->fence)
+        return;
+    // A lost device reports its fences signalled, so this never waits long on one.
+    if (m->pending)
+        m->vkWaitForFences(m->device, 1, &m->fence, VK_TRUE, 2'000'000'000);
+    m->vkDestroyFence(m->device, m->fence, nullptr);
+}
+
+std::unique_ptr<HgiDeviceWatch> HgiDeviceWatch::create(Hgi* hgi)
+{
+    auto* vk = dynamic_cast<HgiVulkan*>(hgi);
+    const HMODULE loader = GetModuleHandleW(L"vulkan-1.dll");
+    const auto getInstanceProc = loader ? reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(loader, "vkGetInstanceProcAddr")) : nullptr;
+    if (!vk || !vk->GetPrimaryDevice() || !vk->GetVulkanInstance() || !getInstanceProc)
+        return nullptr;
+    std::unique_ptr<HgiDeviceWatch> out(new HgiDeviceWatch());
+    Impl& m = *out->m;
+    HgiVulkanDevice* dev = vk->GetPrimaryDevice();
+    const auto getDeviceProc =
+        reinterpret_cast<PFN_vkGetDeviceProcAddr>(getInstanceProc(vk->GetVulkanInstance()->GetVulkanInstance(), "vkGetDeviceProcAddr"));
+    if (!getDeviceProc)
+        return nullptr;
+    m.device = dev->GetVulkanDevice();
+    m.queue = dev->GetCommandQueue()->GetVulkanGraphicsQueue();
+#define LILA_WATCH_LOAD(name) m.name = reinterpret_cast<PFN_##name>(getDeviceProc(m.device, #name));
+    LILA_WATCH_LOAD(vkCreateFence)
+    LILA_WATCH_LOAD(vkDestroyFence)
+    LILA_WATCH_LOAD(vkGetFenceStatus)
+    LILA_WATCH_LOAD(vkResetFences)
+    LILA_WATCH_LOAD(vkWaitForFences)
+    LILA_WATCH_LOAD(vkQueueSubmit)
+#undef LILA_WATCH_LOAD
+    if (!m.vkCreateFence || !m.vkDestroyFence || !m.vkGetFenceStatus || !m.vkResetFences || !m.vkWaitForFences || !m.vkQueueSubmit)
+        return nullptr;
+    VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (m.vkCreateFence(m.device, &fci, nullptr, &m.fence) != VK_SUCCESS)
+        return nullptr;
+    return out;
+}
+
+bool HgiDeviceWatch::lost()
+{
+    constexpr auto kHung = std::chrono::seconds(10);
+    if (m->lost)
+        return true;
+    if (m->pending)
+    {
+        const VkResult r = m->vkGetFenceStatus(m->device, m->fence);
+        if (r == VK_NOT_READY)
+        {
+            m->lost = std::chrono::steady_clock::now() - m->submitted > kHung;
+            return m->lost;
+        }
+        if (r != VK_SUCCESS)
+            return m->lost = true;
+        m->vkResetFences(m->device, 1, &m->fence);
+        m->pending = false;
+    }
+    // Empty, so it signals once everything submitted before it has finished.
+    if (const VkResult r = m->vkQueueSubmit(m->queue, 0, nullptr, m->fence); r != VK_SUCCESS)
+        return m->lost = r == VK_ERROR_DEVICE_LOST;
+    m->pending = true;
+    m->submitted = std::chrono::steady_clock::now();
+    return false;
+}
+
 } // namespace lila::usd::hydra

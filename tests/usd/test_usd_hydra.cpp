@@ -6,6 +6,7 @@
 
 #include "core/ImageIO.h"
 #include "core/MainQueue.h"
+#include "core/Paths.h"
 #include "render/FrameState.h"
 #include "render/Renderer.h"
 #include "scene/Isolation.h"
@@ -354,6 +355,38 @@ TEST_CASE("hydra: Lila's lights light the scene in place of the eye light")
     const glm::vec4 lit = px(storm.draw("light_sun"), 64, 64);
     CHECK(lit.r > 0.1f);
     CHECK(lit.r > 3.0f * lit.b);
+}
+
+TEST_CASE("hydra: a dome light's built-in HDRI resolves for Storm, and an unreadable image is left out rather than faulting the GPU")
+{
+    fresh();
+    cube("Domed", 100.0);
+    Storm storm;
+    if (!storm.session)
+        return;
+    const std::string hdri = "forest_slope_2k.hdr";
+    if (!fs::exists(paths::resourcesDir() / "hdri" / hdri))
+    {
+        MESSAGE("no built-in " << hdri << ": dome case skipped");
+        return;
+    }
+    scene::lights::Settings dome;
+    dome.kind = scene::lights::Kind::Dome;
+    dome.texture = hdri;
+    scene::lights::create(graph(), "Dome", scene::kNoNode, dome);
+    // The dome shows behind everything, so coverage is read from depth.
+    CHECK(depthAt(storm.draw("dome_hdri"), 64, 64) > 0.0f);
+    // A lost device repeats its last frame, so a frame showing the move proves it is still drawing.
+    moveTo("Domed", {-150.0, 0.0, 0.0});
+    CHECK(depthAt(storm.draw("dome_hdri_moved"), 64, 64) == 0.0f);
+
+    const fs::path bogus = fs::temp_directory_path() / "lila_usd_tests" / "not_an_image.hdr";
+    fs::create_directories(bogus.parent_path());
+    std::ofstream(bogus) << "not an image";
+    graph().setValue({node("Dome").id(), scene::Light::kTexture, -1}, paths::toUtf8(bogus));
+    CHECK(depthAt(storm.draw("dome_bogus"), 64, 64) == 0.0f);
+    moveTo("Domed", {0.0, 0.0, 0.0});
+    CHECK(depthAt(storm.draw("dome_bogus_moved"), 64, 64) > 0.0f);
 }
 
 TEST_CASE("hydra: moving a Lila node moves its Hydra prim, and a new node appears")
