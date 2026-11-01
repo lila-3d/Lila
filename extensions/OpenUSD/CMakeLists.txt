@@ -10,7 +10,7 @@ if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
 else()
     set(_usd_pkg ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions/OpenUSD.lilaext)
 endif()
-set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdHydra.cpp UsdHydraScene.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp
+set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdHydra.cpp UsdHydraInterop.cpp UsdHydraScene.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp
     UsdMaterials.cpp UsdMaterialX.cpp UsdMaterialXDoc.cpp UsdStage.cpp UsdBackend.h UsdCommon.h UsdHydraScene.h UsdImport.h UsdExport.h
     UsdMaterials.h UsdMaterialX.h UsdStage.h)
 # pxr's Python bindings (the pxr_boost python target), when the USD build has them: lila.usd hands scripts the live
@@ -23,7 +23,7 @@ add_library(lila_openusd_core SHARED ${_usd_core_sources})
 # Hydra (UsdHydra*): the viewport renderers, which hand LilaUI their sessions. MaterialX (found by pxr) for standalone
 # .mtlx documents; .mtlx layers in stages come through the usdMtlx plugin.
 target_link_libraries(lila_openusd_core PRIVATE LilaScene LilaUI usd usdGeom usdShade usdSkel usdLux usdUtils
-    hd hdx hgi glf cameraUtil usdImaging MaterialXCore MaterialXFormat)
+    hd hdx hgi hgiVulkan glf cameraUtil usdImaging MaterialXCore MaterialXFormat)
 # LilaUI's headers bring Qt's, whose slots and signals macros clash with ordinary names here.
 target_compile_definitions(lila_openusd_core PRIVATE QT_NO_KEYWORDS)
 if(TARGET python)

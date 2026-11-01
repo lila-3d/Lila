@@ -21,6 +21,9 @@ struct Delivered
     bool closed = false;
     uint64_t newest = 0;
     render::TexturePtr color, depth;
+    bool bottomUp = false, premultiplied = false;
+    float exposure = 1.0f;
+    std::optional<glm::vec4> depthUnproject;
     /** CPU frames upload into these, reused while the size and format hold. */
     render::GpuImageRef colorImage, depthImage;
 };
@@ -124,8 +127,11 @@ std::string invalid(const Frame& f)
     const size_t pixels = size_t(std::max(f.width, 0)) * size_t(std::max(f.height, 0));
     if (!f.image && (f.width <= 0 || f.height <= 0))
         return "no size";
-    if (!f.image && f.rgba8.size() != pixels * 4 && f.rgba32f.size() != pixels * 4)
+    if (!f.image && f.rgba8.size() != pixels * 4 && f.rgba32f.size() != pixels * 4 &&
+        (f.texels.empty() || f.texels.size() != pixels * size_t(render::texelBytes(f.texelFormat))))
         return "colour does not match its size";
+    if (!f.image && !f.texels.empty() && f.texelFormat != render::TextureFormat::RGBA8 && f.texelFormat != render::TextureFormat::RGBA16F)
+        return "texels are not RGBA8 or RGBA16F";
     if (!f.depthImage && !f.depth.empty() && f.depth.size() != pixels)
         return "depth does not match its size";
     if (f.image && f.image->format() != render::TextureFormat::RGBA8 && f.image->format() != render::TextureFormat::RGBA16F)
@@ -155,6 +161,12 @@ void accept(const std::shared_ptr<Delivered>& d, int panel, Frame f)
             img->update(0, 0, f.width, f.height, f.rgba8);
             d->color = img->asTexture();
         }
+        else if (!f.texels.empty())
+        {
+            render::GpuImageRef img = imageFor(d->colorImage, f.width, f.height, f.texelFormat, false);
+            img->update(0, 0, f.width, f.height, std::move(f.texels));
+            d->color = img->asTexture();
+        }
         else
         {
             render::GpuImageRef img = imageFor(d->colorImage, f.width, f.height, render::TextureFormat::RGBA16F, false);
@@ -172,6 +184,16 @@ void accept(const std::shared_ptr<Delivered>& d, int panel, Frame f)
         }
         else
             d->depth = nullptr;
+        d->bottomUp = f.bottomUp;
+        d->premultiplied = f.premultiplied;
+        d->exposure = f.exposure;
+        d->depthUnproject.reset();
+        if (f.glDepthProj)
+        {
+            const glm::dmat4 inv = glm::inverse(*f.glDepthProj);
+            // View z = (zz * ndc + zw) / (wz + ww - wz * (1 - ndc)), as the composite shader takes it.
+            d->depthUnproject = glm::vec4(float(inv[2][2]), float(inv[3][2]), float(inv[3][3] + inv[2][3]), float(-inv[2][3]));
+        }
     }
     mainq::post([panel] { redrawPanel(panel); });
 }
@@ -398,8 +420,13 @@ bool apply(int panel, Request r, render::FrameState& s)
         return false;
     s.externalScene = true;
     std::scoped_lock lock(again->second.delivered->mutex);
-    s.externalColor = again->second.delivered->color;
-    s.externalDepth = again->second.delivered->depth;
+    const Delivered& d = *again->second.delivered;
+    s.externalColor = d.color;
+    s.externalDepth = d.depth;
+    s.externalBottomUp = d.bottomUp;
+    s.externalPremultiplied = d.premultiplied;
+    s.externalExposure = d.exposure;
+    s.externalDepthUnproject = d.depthUnproject;
     return true;
 }
 

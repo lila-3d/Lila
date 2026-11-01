@@ -74,6 +74,8 @@ public:
         size_t added = 0, dirtied = 0, removed = 0;
     };
     Counts lastSync() const { return mCounts; }
+    /** Whether a prim's look follows the camera (curve widths), so a camera move needs a sync too. */
+    bool viewDependent() const;
     /** The material slots the meshes use. */
     const std::set<std::string>& usedSlots() const { return mSlots; }
 

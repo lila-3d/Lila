@@ -6,7 +6,8 @@ struct ExternalPush
 {
     float4 size;   // image extent, then its inverse
     float4 projZ;  // proj[2][2], proj[3][2], proj[2][3], proj[3][3]: view-space z to clip z and w
-    float4 params; // x: 1 when there is depth
+    float4 params; // x: 1 when there is depth, y: 1 for rows bottom up, z: 1 for premultiplied colour, w: colour multiplier
+    float4 unproject; // with params.x 2: OpenGL window depth to view z, (x * ndc + y) / (z + w * (1 - ndc))
 };
 
 [[vk::push_constant]] ExternalPush pc;
@@ -39,13 +40,23 @@ struct ExternalPSOut
 ExternalPSOut externalPS(ExternalVSOut i)
 {
     ExternalPSOut o;
-    o.color = colorTex.Sample(clamp(i.uv, 0.5 * pc.size.zw, 1.0 - 0.5 * pc.size.zw));
+    float2 uv = pc.params.y > 0.5 ? float2(i.uv.x, 1.0 - i.uv.y) : i.uv;
+    o.color = colorTex.Sample(clamp(uv, 0.5 * pc.size.zw, 1.0 - 0.5 * pc.size.zw));
+    if (pc.params.z > 0.5 && o.color.a > 0.0 && o.color.a < 1.0)
+        o.color.rgb /= o.color.a;
+    o.color.rgb *= pc.params.w;
     // Reversed-Z: 0 is the far plane the target was cleared to, so a miss leaves the depth as it was.
     o.depth = 0.0;
     if (pc.params.x > 0.5)
     {
-        int2 p = clamp(int2(i.uv * pc.size.xy), int2(0), int2(pc.size.xy) - 1);
+        int2 p = clamp(int2(uv * pc.size.xy), int2(0), int2(pc.size.xy) - 1);
         float d = depthTex.Load(int3(p, 0)).r;
+        if (pc.params.x > 1.5)
+        {
+            // 1 - ndc taken from 1 - d keeps the precision near the far plane that ndc itself loses.
+            float e = 2.0 * (1.0 - d);
+            d = d < 1.0 && o.color.a > 0.0 ? -(pc.unproject.x * (1.0 - e) + pc.unproject.y) / (pc.unproject.z + pc.unproject.w * e) : 0.0;
+        }
         if (d > 0.0 && d < 3.0e38)
         {
             float z = -d;

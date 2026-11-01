@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -71,9 +72,10 @@ struct LILA_UI_API Request
 };
 
 /**
- * An image for a request. Colour comes from the CPU (rgba8 or rgba32f) or already on Lila's GPU (image), with straight
- * alpha over the viewport's background; depth is optional, from the CPU (depth) or the GPU (depthImage). A frame whose
- * size differs from the view is stretched over it.
+ * An image for a request. Colour comes from the CPU (rgba8, texels or rgba32f) or already on Lila's GPU (image), with
+ * straight alpha over the viewport's background unless premultiplied; depth is optional, from the CPU (depth) or the GPU
+ * (depthImage). A frame whose size differs from the view is stretched over it. bottomUp, premultiplied, exposure and
+ * glDepthProj let a renderer hand over its buffers as they are and leave the conversion to Lila's composite.
  */
 struct Frame
 {
@@ -83,6 +85,20 @@ struct Frame
     std::vector<uint8_t> rgba8;
     /** Linear float RGBA, row 0 at the top: width * height * 4 floats. Shown as given; apply Request::exposure yourself. */
     std::vector<float> rgba32f;
+    /** Colour texels as they are, tightly packed in texelFormat (RGBA8 or RGBA16F, both linear). Used before rgba32f. */
+    std::vector<uint8_t> texels;
+    render::TextureFormat texelFormat = render::TextureFormat::RGBA16F;
+    /** Colour and depth rows run bottom up (Hydra's buffers) instead of top down. */
+    bool bottomUp = false;
+    /** Colour alpha is premultiplied. */
+    bool premultiplied = false;
+    /** Lila multiplies colour by this, for a renderer that leaves Request::exposure to it. */
+    float exposure = 1.0f;
+    /**
+     * When set, depth or depthImage holds OpenGL window depth (0 near, 1 far) for this OpenGL clip-space projection
+     * instead of view distances; 1, or zero alpha, is nothing hit.
+     */
+    std::optional<glm::dmat4> glDepthProj;
     /**
      * An image on Lila's device (render::Renderer::context()), RGBA8 sRGB or RGBA16F, written through
      * render::Renderer::runTask so it is complete before it is delivered. Wins over the CPU colour.

@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "render/Renderer.h"
+#include "render/SharedMemory.h"
 
 #include <algorithm>
 #include <cstring>
@@ -22,6 +23,8 @@ struct Dead
     VmaAllocation alloc = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkImageView storageView = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE; // a shared image's, instead of alloc
+    void* handle = nullptr;
 };
 
 struct Registry
@@ -44,7 +47,12 @@ void destroyDead(VulkanContext& vk, const Dead& d)
         vkDestroyImageView(vk.device, d.storageView, nullptr);
     if (d.view)
         vkDestroyImageView(vk.device, d.view, nullptr);
-    if (d.image)
+    if (d.memory)
+    {
+        vkDestroyImage(vk.device, d.image, nullptr);
+        sharedMemory::release(vk, d.memory, d.handle);
+    }
+    else if (d.image)
         vmaDestroyImage(vk.allocator, d.image, d.alloc);
 }
 
@@ -117,10 +125,71 @@ GpuImage::~GpuImage()
     std::scoped_lock lock(r.mutex);
     r.live.erase(this);
     if (mImage)
-        r.dead.push_back({mImage, mAlloc, mView, mStorageView});
+        r.dead.push_back({mImage, mAlloc, mView, mStorageView, mSharedMemory, mShared ? mShared->handle : nullptr});
+}
+
+std::future<void> GpuImage::realize(std::vector<GpuImageRef> images)
+{
+    Renderer& r = Renderer::get();
+    if (!r.running())
+    {
+        std::promise<void> p;
+        p.set_exception(std::make_exception_ptr(std::runtime_error("GpuImage::realize: the renderer is not running")));
+        return p.get_future();
+    }
+    return r.runTask([images = std::move(images)](VulkanContext& vk) {
+        compute::Submitter sub;
+        sub.init(vk);
+        std::vector<compute::Buffer> staging;
+        auto cleanup = [&] {
+            for (compute::Buffer& b : staging)
+                compute::destroy(vk, b);
+            sub.destroy(vk);
+        };
+        try
+        {
+            sub.run(vk, [&](VkCommandBuffer cmd) {
+                for (const GpuImageRef& img : images)
+                    img->prepare(vk, cmd, staging);
+            });
+        }
+        catch (...)
+        {
+            cleanup();
+            throw;
+        }
+        cleanup();
+        return true;
+    });
+}
+
+std::optional<std::array<uint8_t, 16>> GpuImage::sharingDevice()
+{
+    Renderer& r = Renderer::get();
+    const VulkanContext* vk = r.running() ? r.context() : nullptr;
+    if (!vk || !vk->externalMemory)
+        return std::nullopt;
+    return vk->deviceUuid;
+}
+
+std::optional<SharedImageMemory> GpuImage::sharedMemory() const
+{
+    std::scoped_lock lock(mSharedMutex);
+    return mShared;
+}
+
+void GpuImage::acquireExternal()
+{
+    mAcquire = true;
+    changed(0, 0, mDesc.width, mDesc.height);
 }
 
 void GpuImage::update(int x, int y, int w, int h, std::span<const uint8_t> texels)
+{
+    update(x, y, w, h, std::vector<uint8_t>(texels.begin(), texels.end()));
+}
+
+void GpuImage::update(int x, int y, int w, int h, std::vector<uint8_t>&& texels)
 {
     if (x < 0 || y < 0 || w < 1 || h < 1 || x + w > mDesc.width || y + h > mDesc.height)
         throw std::invalid_argument("GpuImage::update: region outside the image");
@@ -131,7 +200,7 @@ void GpuImage::update(int x, int y, int w, int h, std::span<const uint8_t> texel
         // A region covering the whole image makes everything queued before it moot.
         if (x == 0 && y == 0 && w == mDesc.width && h == mDesc.height)
             mPending.clear();
-        mPending.push_back({x, y, w, h, std::vector<uint8_t>(texels.begin(), texels.end())});
+        mPending.push_back({x, y, w, h, std::move(texels)});
     }
     changed(x, y, x + w, y + h);
 }
@@ -207,7 +276,7 @@ void GpuImage::updateRgba(int x, int y, int w, int h, std::span<const float> rgb
 {
     std::vector<uint8_t> texels;
     encodeTexels(mDesc.format, mDesc.srgb, rgba, texels);
-    update(x, y, w, h, texels);
+    update(x, y, w, h, std::move(texels));
 }
 
 TexturePtr GpuImage::asTexture()
@@ -253,7 +322,7 @@ bool GpuImage::prepare(VulkanContext& vk, VkCommandBuffer cmd, std::vector<compu
         const bool storage = (formatFeatures(vk, storageFormat) & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
         constexpr VkFormatFeatureFlags blit =
             VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-        mMips = mDesc.mips && (features & blit) == blit ? mipCount() : 1;
+        mMips = mDesc.mips && !mDesc.shared && (features & blit) == blit ? mipCount() : 1;
 
         VkImageCreateInfo ici{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         const bool split = storage && storageFormat != mFormat;
@@ -267,14 +336,26 @@ bool GpuImage::prepare(VulkanContext& vk, VkCommandBuffer cmd, std::vector<compu
         ici.samples = VK_SAMPLE_COUNT_1_BIT;
         ici.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                     (storage ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
-        VmaAllocationCreateInfo aci{};
-        aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-        if (VkResult r = vmaCreateImage(vk.allocator, &ici, &aci, &mImage, &mAlloc, nullptr); r != VK_SUCCESS)
+        if (mDesc.shared)
         {
-            log::warn("render: cannot create the {}x{} GPU image {} ({})", mDesc.width, mDesc.height, mDesc.name, vkResultName(r));
-            mImage = VK_NULL_HANDLE;
-            mFailed = true;
-            return false;
+            if (!createShared(vk, ici))
+            {
+                log::warn("render: cannot create the {}x{} shared GPU image {}", mDesc.width, mDesc.height, mDesc.name);
+                mFailed = true;
+                return false;
+            }
+        }
+        else
+        {
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+            if (VkResult r = vmaCreateImage(vk.allocator, &ici, &aci, &mImage, &mAlloc, nullptr); r != VK_SUCCESS)
+            {
+                log::warn("render: cannot create the {}x{} GPU image {} ({})", mDesc.width, mDesc.height, mDesc.name, vkResultName(r));
+                mImage = VK_NULL_HANDLE;
+                mFailed = true;
+                return false;
+            }
         }
         VkImageViewUsageCreateInfo sampledUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
         sampledUsage.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -304,6 +385,21 @@ bool GpuImage::prepare(VulkanContext& vk, VkCommandBuffer cmd, std::vector<compu
         imageBarrier(cmd, mImage, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
                      VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    }
+    if (!fresh && mAcquire.exchange(false))
+    {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.dstStageMask = kReadStages;
+        b.dstAccessMask = kReadAccess;
+        b.oldLayout = b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
+        b.dstQueueFamilyIndex = vk.queueFamily;
+        b.image = mImage;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkDependencyInfo di{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        di.imageMemoryBarrierCount = 1;
+        di.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &di);
     }
     if (pending.empty())
     {
@@ -444,9 +540,36 @@ void GpuImage::recordReadRect(VkCommandBuffer cmd, const compute::Buffer& into, 
                  VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, 0, kReadStages, kReadAccess);
 }
 
+bool GpuImage::createShared(VulkanContext& vk, VkImageCreateInfo ici)
+{
+    VkExternalMemoryImageCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
+    external.handleTypes = sharedMemory::kHandleType;
+    ici.pNext = &external;
+    if (!vk.externalMemory || vkCreateImage(vk.device, &ici, nullptr, &mImage) != VK_SUCCESS)
+    {
+        mImage = VK_NULL_HANDLE;
+        return false;
+    }
+    SharedImageMemory m{.format = ici.format, .flags = ici.flags, .usage = ici.usage, .width = mDesc.width, .height = mDesc.height};
+    if (!sharedMemory::allocate(vk, mImage, mSharedMemory, m.handle, m.size))
+    {
+        vkDestroyImage(vk.device, mImage, nullptr);
+        mImage = VK_NULL_HANDLE;
+        return false;
+    }
+    std::scoped_lock lock(mSharedMutex);
+    mShared = m;
+    return true;
+}
+
 void GpuImage::destroyDevice(VulkanContext& vk)
 {
-    destroyDead(vk, {mImage, mAlloc, mView, mStorageView});
+    destroyDead(vk, {mImage, mAlloc, mView, mStorageView, mSharedMemory, mShared ? mShared->handle : nullptr});
+    {
+        std::scoped_lock lock(mSharedMutex);
+        mShared.reset();
+    }
+    mSharedMemory = VK_NULL_HANDLE;
     mImage = VK_NULL_HANDLE;
     mAlloc = VK_NULL_HANDLE;
     mView = mStorageView = VK_NULL_HANDLE;

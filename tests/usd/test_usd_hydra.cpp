@@ -14,6 +14,7 @@
 #include "ui/ViewportRenderers.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include <chrono>
 #include <fstream>
@@ -32,12 +33,89 @@ constexpr int kPanel = 11;
 constexpr const char* kStorm = "hydraStorm";
 const glm::dvec3 kEye(0.0, 0.0, 600.0);
 
+/** Sessions deliver from their own threads: frames land on the main queue, like the viewport's redraws. */
+template <typename Fn>
+vr::Deliver onMain(Fn fn)
+{
+    return [fn](vr::Frame f) { mainq::post([fn, f = std::move(f)]() mutable { fn(std::move(f)); }); };
+}
+
+/** Drains the main queue until done() or ten seconds pass. */
+template <typename Fn>
+bool pumpUntil(Fn done)
+{
+    const auto start = std::chrono::steady_clock::now();
+    while (!done() && std::chrono::steady_clock::now() - start < std::chrono::seconds(10))
+    {
+        mainq::drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return done();
+}
+
+/** A frame as Lila's composite shows it: straight-alpha float RGBA top row first, exposed, depth as view distance in cm. */
+vr::Frame resolved(const vr::Frame& in)
+{
+    const int w = in.width, h = in.height;
+    const size_t n = size_t(w) * size_t(h);
+    std::vector<float> rgba(n * 4);
+    auto decode = [&](std::span<const uint8_t> bytes, render::TextureFormat format) {
+        for (size_t i = 0; i < n * 4; ++i)
+            rgba[i] = format == render::TextureFormat::RGBA8 ? bytes[i] / 255.0f
+                                                              : glm::unpackHalf1x16(reinterpret_cast<const uint16_t*>(bytes.data())[i]);
+    };
+    if (in.image)
+        decode(render::readGpuImage(in.image), in.image->format());
+    else if (!in.texels.empty())
+        decode(in.texels, in.texelFormat);
+    else
+        rgba = in.rgba32f;
+    std::vector<float> depth = in.depth;
+    if (in.depthImage)
+    {
+        const std::vector<uint8_t> bytes = render::readGpuImage(in.depthImage);
+        depth.assign(reinterpret_cast<const float*>(bytes.data()), reinterpret_cast<const float*>(bytes.data()) + n);
+    }
+    vr::Frame out;
+    out.serial = in.serial;
+    out.width = w;
+    out.height = h;
+    out.rgba32f.resize(n * 4);
+    if (!depth.empty())
+        out.depth.resize(n);
+    const glm::dmat4 unproject = in.glDepthProj ? glm::inverse(*in.glDepthProj) : glm::dmat4(1.0);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const size_t from = size_t(in.bottomUp ? h - 1 - y : y) * w + x, to = size_t(y) * w + x;
+            const float a = rgba[from * 4 + 3];
+            const float scale = (in.premultiplied && a > 0.0f && a < 1.0f ? 1.0f / a : 1.0f) * in.exposure;
+            for (int c = 0; c < 3; ++c)
+                out.rgba32f[to * 4 + c] = rgba[from * 4 + c] * scale;
+            out.rgba32f[to * 4 + 3] = a;
+            if (depth.empty())
+                continue;
+            const float d = depth[from];
+            if (!in.glDepthProj)
+                out.depth[to] = d;
+            else if (d < 1.0f && a > 0.0f)
+            {
+                const glm::dvec4 v = unproject * glm::dvec4(0.0, 0.0, 2.0 * d - 1.0, 1.0);
+                out.depth[to] = float(-v.z / v.w);
+            }
+        }
+    return out;
+}
+
 /** A Storm session drawing what requests ask for, keeping the newest frame. */
 struct Storm
 {
     std::unique_ptr<vr::Session> session;
     std::optional<vr::Frame> frame;
     uint64_t serial = 0;
+    /** What requests carry as Request::sceneRevision; raised by every request unless held. */
+    uint64_t revision = 0;
+    bool holdRevision = false;
 
     Storm()
     {
@@ -59,7 +137,12 @@ struct Storm
         r.view.eye = eye;
         r.view.width = r.view.height = kSize;
         r.graph = &graph();
-        r.deliver = [this](vr::Frame f) { frame = std::move(f); };
+        r.sceneRevision = holdRevision ? revision : ++revision;
+        // Only the newest request's frames, as the viewport keeps: a refinement of an older one may still arrive.
+        r.deliver = onMain([this](vr::Frame f) {
+            if (f.serial == serial)
+                frame = std::move(f);
+        });
         return r;
     }
 
@@ -70,9 +153,8 @@ struct Storm
         vr::Request r = request(eye);
         r.view.isolation = isolation;
         session->render(r);
-        for (int i = 0; i < 100 && !frame; ++i)
-            mainq::drain();
-        REQUIRE(frame);
+        REQUIRE(pumpUntil([this] { return frame.has_value(); }));
+        frame = resolved(*frame);
         REQUIRE(frame->width == kSize);
         REQUIRE(frame->rgba32f.size() == size_t(kSize) * kSize * 4);
         image::Image img;
@@ -184,6 +266,74 @@ TEST_CASE("hydra: Storm draws Lila's meshes with their materials, depth in cm al
     storm.session->sceneChanged(scene::Change::Value, node("Red").id());
     const glm::vec4 blue = px(storm.draw("box_blue"), 64, 64);
     CHECK(blue.b > 3.0f * blue.r);
+}
+
+TEST_CASE("hydra: a request with the scene unchanged only moves the camera, and the next scene change syncs")
+{
+    fresh();
+    cube("Still", 100.0);
+    Storm storm;
+    if (!storm.session)
+        return;
+    CHECK(px(storm.draw("skip_before"), 64, 64).a == 1.0f);
+    // The graph changes but the requests say it didn't: the session draws the scene it has from the new camera.
+    storm.holdRevision = true;
+    moveTo("Still", {-150.0, 0.0, 0.0});
+    const vr::Frame& held = storm.draw("skip_held", {10.0, 0.0, 600.0});
+    CHECK(px(held, 64, 64).a == 1.0f);
+    storm.holdRevision = false;
+    CHECK(px(storm.draw("skip_synced", {10.0, 0.0, 600.0}), 64, 64).a == 0.0f);
+}
+
+TEST_CASE("hydra: with Lila's renderer running on the same GPU, Storm's frames reach it without leaving the GPU")
+{
+    fresh();
+    render::Renderer& gpu = render::Renderer::get();
+    if (!gpu.running() && !gpu.start())
+    {
+        MESSAGE("no GPU for Lila's renderer");
+        return;
+    }
+    if (!render::GpuImage::sharingDevice())
+    {
+        MESSAGE("Lila's device can't share memory: frames go through the CPU");
+        return;
+    }
+    cube("Box", 100.0);
+    run("createMaterial", {{"args", {"Red"}}, {"baseColor", {0.8, 0.05, 0.05}}, {"roughness", 0.6}});
+    run("assignMaterial", {{"args", {"Red", "Box"}}});
+    Storm storm;
+    if (!storm.session)
+        return;
+    // The first frames go through the CPU while the shared images are made.
+    std::optional<vr::Frame> raw;
+    for (int i = 0; i < 200 && !(raw && raw->image); ++i)
+    {
+        storm.frame.reset();
+        storm.session->render(storm.request());
+        REQUIRE(pumpUntil([&] { return storm.frame.has_value(); }));
+        raw = storm.frame;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(raw);
+    REQUIRE(raw->image);
+    CHECK(raw->depthImage);
+    CHECK(raw->rgba32f.empty());
+    CHECK(raw->texels.empty());
+    CHECK(raw->bottomUp);
+    CHECK(raw->premultiplied);
+    const vr::Frame f = resolved(*raw);
+    const glm::vec4 centre = px(f, 64, 64);
+    CHECK(centre.a == doctest::Approx(1.0f));
+    CHECK(centre.r > 3.0f * centre.g);
+    CHECK(px(f, 2, 2).a == 0.0f);
+    CHECK(depthAt(f, 64, 64) == doctest::Approx(550.0f).epsilon(0.01));
+    CHECK(depthAt(f, 2, 2) <= 0.0f);
+
+    // Later frames cycle through the shared images and keep matching what is drawn.
+    moveTo("Box", {-150.0, 0.0, 0.0});
+    for (int i = 0; i < 5; ++i)
+        CHECK(px(storm.draw("shared_moved"), 64, 64).a == 0.0f);
 }
 
 TEST_CASE("hydra: Lila's lights light the scene in place of the eye light")
@@ -416,7 +566,7 @@ TEST_CASE("hydra: a progressive delegate (Embree) delivers frames as it converge
     Storm requests; // only for its request helper; its own session stays idle
     std::vector<vr::Frame> frames;
     vr::Request r = requests.request();
-    r.deliver = [&frames](vr::Frame f) { frames.push_back(std::move(f)); };
+    r.deliver = onMain([&frames](vr::Frame f) { frames.push_back(std::move(f)); });
     session->render(r);
     // Refinements come back through the main queue: pump it until a second passes without one.
     auto quietSince = std::chrono::steady_clock::now();
@@ -434,8 +584,11 @@ TEST_CASE("hydra: a progressive delegate (Embree) delivers frames as it converge
     }
     MESSAGE("Embree delivered " << frames.size() << " frames");
     REQUIRE(frames.size() >= 3);
-    for (const vr::Frame& f : frames)
+    for (vr::Frame& f : frames)
+    {
         CHECK(f.serial == r.serial);
+        f = resolved(f);
+    }
     const vr::Frame& last = frames.back();
     REQUIRE(last.width == kSize);
     CHECK(px(last, 64, 64).a == doctest::Approx(1.0f));
@@ -455,7 +608,7 @@ TEST_CASE("hydra: a progressive delegate (Embree) delivers frames as it converge
     const size_t before = frames.size();
     vr::Request moved = requests.request({50.0, 0.0, 600.0});
     std::vector<vr::Frame> newer;
-    moved.deliver = [&newer](vr::Frame f) { newer.push_back(std::move(f)); };
+    moved.deliver = onMain([&newer](vr::Frame f) { newer.push_back(std::move(f)); });
     session->render(moved);
     for (int i = 0; i < 50; ++i)
     {
@@ -480,10 +633,12 @@ TEST_CASE("hydra: delegates other than Storm get smooth preview meshes subdivide
         std::optional<vr::Frame> frame;
         uint64_t frames = 0;
         vr::Request r = requests.request();
-        r.deliver = [&](vr::Frame f) {
+        r.deliver = onMain([&, serial = r.serial](vr::Frame f) {
+            if (f.serial != serial)
+                return;
             frame = std::move(f);
             ++frames;
-        };
+        });
         session->render(r);
         auto quietSince = std::chrono::steady_clock::now();
         const auto start = quietSince;
@@ -499,7 +654,7 @@ TEST_CASE("hydra: delegates other than Storm get smooth preview meshes subdivide
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         REQUIRE(frame);
-        return coveredIn(*frame, 0, kSize);
+        return coveredIn(resolved(*frame), 0, kSize);
     };
     const int cage = covered();
     graph().setValue({node("Round").id(), scene::MeshNode::kSmoothPreview, -1}, int64_t(2));
@@ -555,10 +710,11 @@ TEST_CASE("hydra: the frame composites under Lila's overlays, depth tested again
     vr::Request r = req.request();
     r.deliver = {};
     REQUIRE(vr::apply(kPanel, r, s));
-    for (int i = 0; i < 100 && !s.externalColor; ++i)
+    for (int i = 0; i < 1000 && !s.externalColor; ++i)
     {
         mainq::drain();
         REQUIRE(vr::apply(kPanel, r, s));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     REQUIRE(s.externalColor);
     CHECK(s.externalDepth);

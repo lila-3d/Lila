@@ -277,7 +277,8 @@ struct ExternalPush
 {
     glm::vec4 size;   // image extent, then its inverse
     glm::vec4 projZ;  // proj[2][2], proj[3][2], proj[2][3], proj[3][3]: view-space z to clip z and w
-    glm::vec4 params; // x: 1 when there is depth
+    glm::vec4 params; // x: 1 when there is depth (2 for window depth), y: rows bottom up, z: premultiplied, w: colour multiplier
+    glm::vec4 unproject;
 };
 
 struct WirePush
@@ -4988,7 +4989,9 @@ struct Renderer::Impl
         const float w = float(std::max(s.externalColor->width, 1)), h = float(std::max(s.externalColor->height, 1));
         p.size = glm::vec4(w, h, 1.0f / w, 1.0f / h);
         p.projZ = glm::vec4(float(s.proj[2][2]), float(s.proj[3][2]), float(s.proj[2][3]), float(s.proj[3][3]));
-        p.params = glm::vec4(depth ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        p.params = glm::vec4(!depth ? 0.0f : s.externalDepthUnproject ? 2.0f : 1.0f, s.externalBottomUp ? 1.0f : 0.0f,
+                             s.externalPremultiplied ? 1.0f : 0.0f, s.externalExposure);
+        p.unproject = s.externalDepthUnproject.value_or(glm::vec4(0.0f));
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, externalLayout, 0, 1, &set, 0, nullptr);
         vkCmdPushConstants(cmd, externalLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -32,6 +33,21 @@ struct GpuImageDesc
     bool mips = false;
     /** Where it shows in logs and captures. */
     std::string name;
+    /** In memory of its own that another Vulkan device in the process can import (sharedMemory); no mips. */
+    bool shared = false;
+};
+
+/** A shared GpuImage's memory and the parameters an importing device creates its alias of the image with. */
+struct SharedImageMemory
+{
+    /** An opaque Win32 handle the image owns and closes: import it while the image lives. */
+    void* handle = nullptr;
+    uint64_t size = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkImageCreateFlags flags = 0;
+    VkImageUsageFlags usage = 0;
+    int width = 0;
+    int height = 0;
 };
 
 class GpuImage;
@@ -53,6 +69,10 @@ class LILA_UI_API GpuImage : public std::enable_shared_from_this<GpuImage>
 public:
     /** Throws std::invalid_argument for a size below 1 or above 16384. */
     static GpuImageRef create(const GpuImageDesc& desc);
+    /** Makes the images' device images now, on the render thread; the future throws when the renderer isn't running. Any thread. */
+    static std::future<void> realize(std::vector<GpuImageRef> images);
+    /** The deviceUUID of the GPU shared images live on; nullopt when the renderer isn't running or can't share memory. */
+    static std::optional<std::array<uint8_t, 16>> sharingDevice();
     ~GpuImage();
     GpuImage(const GpuImage&) = delete;
     GpuImage& operator=(const GpuImage&) = delete;
@@ -82,11 +102,21 @@ public:
      * Throws std::invalid_argument when the region is outside the image or texels is the wrong size.
      */
     void update(int x, int y, int w, int h, std::span<const uint8_t> texels);
+    /** The same, taking the texels without a copy. */
+    void update(int x, int y, int w, int h, std::vector<uint8_t>&& texels);
     /** update from RGBA floats (4 per texel), encoded with encodeTexels. */
     void updateRgba(int x, int y, int w, int h, std::span<const float> rgba);
 
     /** A material texture that samples this image (a TextureImage whose gpu is this). Any thread. */
     TexturePtr asTexture();
+
+    /** A shared image's memory once a task or frame has prepared it; nullopt before, or for an image that isn't shared. Any thread. */
+    std::optional<SharedImageMemory> sharedMemory() const;
+    /**
+     * Any thread: another device wrote this shared image, leaving it SHADER_READ_ONLY_OPTIMAL and released to
+     * VK_QUEUE_FAMILY_EXTERNAL, and that work has finished. The next prepare acquires it, and the redraw shows it.
+     */
+    void acquireExternal();
 
     // ---------------------------------------------------------------- render thread
 
@@ -128,6 +158,7 @@ public:
 private:
     explicit GpuImage(const GpuImageDesc& desc);
     void destroyDevice(VulkanContext& vk);
+    bool createShared(VulkanContext& vk, VkImageCreateInfo ici);
     void recordMips(VkCommandBuffer cmd, VkImageLayout from, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess);
     uint32_t mipCount() const;
 
@@ -159,6 +190,10 @@ private:
     // Render thread.
     VkImage mImage = VK_NULL_HANDLE;
     VmaAllocation mAlloc = VK_NULL_HANDLE;
+    VkDeviceMemory mSharedMemory = VK_NULL_HANDLE; // instead of mAlloc for a shared image
+    std::atomic<bool> mAcquire{false};
+    mutable std::mutex mSharedMutex;
+    std::optional<SharedImageMemory> mShared; // guarded by mSharedMutex
     VkImageView mView = VK_NULL_HANDLE;
     VkImageView mStorageView = VK_NULL_HANDLE;
     VkFormat mFormat = VK_FORMAT_UNDEFINED;

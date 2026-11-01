@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -283,6 +284,17 @@ struct FrameState
     TexturePtr externalColor;
     /** R32F distance along the view axis in cm, 0 or less where nothing was hit; null when the renderer gave none. */
     TexturePtr externalDepth;
+    /** externalColor and externalDepth store row 0 at the bottom. */
+    bool externalBottomUp = false;
+    /** externalColor is premultiplied; the draw divides alpha out. */
+    bool externalPremultiplied = false;
+    /** Multiplies externalColor's rgb. */
+    float externalExposure = 1.0f;
+    /**
+     * When set, externalDepth holds OpenGL window depth (1 or zero alpha: nothing hit), turned into view distance by
+     * z = (x * ndc + y) / (z + w * (1 - ndc)): see viewportRenderers' Frame::glDepthProj.
+     */
+    std::optional<glm::vec4> externalDepthUnproject;
     std::vector<LineVertex> lines;
     std::vector<LineVertex> linesOnTop; // like lines, biased toward the camera and writing no depth (edges over faces)
     /** Selected component edges: drawn like linesOnTop, at their own width in device pixels. */

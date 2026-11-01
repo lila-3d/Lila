@@ -19,6 +19,7 @@ lila_module(lila_render UI
     PaintGpu.cpp
     Renderer.cpp
     ShadingModels.cpp
+    SharedMemory.cpp
     Surface.cpp
     TexEval.cpp
     TexEvalState.cpp

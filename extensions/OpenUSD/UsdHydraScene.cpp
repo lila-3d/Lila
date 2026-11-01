@@ -515,6 +515,14 @@ SdfPathVector LilaSceneIndex::GetChildPrimPaths(const SdfPath& path) const
     return {};
 }
 
+bool LilaSceneIndex::viewDependent() const
+{
+    for (const auto& [id, n] : mNodes)
+        if (n.curve)
+            return true;
+    return false;
+}
+
 void LilaSceneIndex::sync(Graph& g, const ViewContext& view, const std::function<SdfPath(const std::string&)>& bind)
 {
     LILA_ZONE();

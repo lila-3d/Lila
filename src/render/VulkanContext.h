@@ -5,6 +5,8 @@
 #include <volk.h>
 #include <vk_mem_alloc.h>
 
+#include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,10 @@ public:
     bool memoryBudget = false;
     /** VK_KHR_ or VK_EXT_calibrated_timestamps (whichever the device has) with hostQueryReset, for the profiler's GPU zones; null without. */
     const char* calibratedTimestamps = nullptr;
+    /** VK_KHR_external_memory_win32: GpuImages another Vulkan device in the process can import (GpuImageDesc::shared). */
+    bool externalMemory = false;
+    /** VkPhysicalDeviceIDProperties::deviceUUID: another device with the same one drives the same GPU. */
+    std::array<uint8_t, 16> deviceUuid{};
     uint32_t asScratchAlignment = 256;
 
 private:

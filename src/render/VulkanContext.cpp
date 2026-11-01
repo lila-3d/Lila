@@ -255,6 +255,19 @@ bool VulkanContext::init(bool validation)
     }
     else
         calibratedTimestamps = nullptr;
+#ifdef _WIN32
+    if (hasDeviceExtension(physical, "VK_KHR_external_memory_win32"))
+    {
+        devExts.push_back("VK_KHR_external_memory_win32");
+        externalMemory = true;
+    }
+#endif
+    {
+        VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id};
+        vkGetPhysicalDeviceProperties2(physical, &p2);
+        std::memcpy(deviceUuid.data(), id.deviceUUID, deviceUuid.size());
+    }
     descriptorIndexing = f12Have.descriptorIndexing && f12Have.runtimeDescriptorArray && f12Have.descriptorBindingPartiallyBound &&
                          f12Have.shaderSampledImageArrayNonUniformIndexing && f12Have.descriptorBindingSampledImageUpdateAfterBind &&
                          f12Have.descriptorBindingVariableDescriptorCount && f12Have.descriptorBindingUpdateUnusedWhilePending &&

@@ -1,9 +1,12 @@
 // Hydra viewport renderers: each viewport session owns a render index for one render delegate, fed by Lila's scene
-// index, its materials and the live stages (UsdHydraScene.h), drawn through HdxTaskController and read back from its
-// color and depth AOVs as CPU pixels. Storm runs on Vulkan through its own device, headless.
+// index, its materials and the live stages (UsdHydraScene.h), drawn through HdxTaskController. Storm runs on Vulkan
+// through its own device, headless; AOVs that are HgiVulkan textures on Lila's GPU are copied into images Lila's device
+// shares (UsdHydraInterop.h), others are mapped and handed over as they are. Either way a worker thread finishes the
+// frame, and Lila's composite flips, unpremultiplies, exposes and unprojects it.
 
 #include "UsdBackend.h"
 #include "UsdCommon.h"
+#include "UsdHydraInterop.h"
 #include "UsdHydraScene.h"
 #include "UsdStage.h"
 
@@ -37,13 +40,18 @@
 #include <pxr/imaging/hdx/taskController.h>
 #include <pxr/imaging/hdx/tokens.h>
 #include <pxr/imaging/hgi/hgi.h>
+#include <pxr/imaging/hgi/texture.h>
 #include <pxr/imaging/hgi/tokens.h>
 #include <pxr/usdImaging/usdImaging/sceneIndex.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <chrono>
+#include <condition_variable>
+#include <cstring>
 #include <format>
+#include <functional>
+#include <future>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -133,6 +141,67 @@ void forRows(int h, Fn&& fn)
             fn(y);
     });
 }
+
+/** Runs one job at a time on a thread of its own, so a session's frame finishes while the main thread moves on. */
+class Worker
+{
+public:
+    Worker() : mThread([this] { loop(); }) {}
+    ~Worker()
+    {
+        {
+            std::scoped_lock lock(mMutex);
+            mStop = true;
+        }
+        mChanged.notify_all();
+        mThread.join();
+    }
+    /** Waits for the job before, then starts this one. */
+    void run(std::function<void()> job)
+    {
+        std::unique_lock lock(mMutex);
+        mChanged.wait(lock, [this] { return !mJob; });
+        mJob = std::move(job);
+        mChanged.notify_all();
+    }
+    void wait()
+    {
+        std::unique_lock lock(mMutex);
+        mChanged.wait(lock, [this] { return !mJob; });
+    }
+
+private:
+    void loop()
+    {
+        LILA_THREAD_NAME("Hydra frames");
+        std::unique_lock lock(mMutex);
+        while (true)
+        {
+            mChanged.wait(lock, [this] { return mStop || mJob; });
+            if (!mJob)
+                return;
+            std::function<void()> job = mJob;
+            lock.unlock();
+            try
+            {
+                job();
+            }
+            catch (const std::exception& e)
+            {
+                log::error("Hydra viewport: {}", e.what());
+            }
+            lock.lock();
+            mJob = nullptr;
+            mChanged.notify_all();
+        }
+    }
+
+    std::mutex mMutex;
+    std::condition_variable mChanged;
+    std::function<void()> mJob;
+    bool mStop = false;
+    std::thread mThread;
+};
 
 /** A render setting's value as Lila's settings carry it: bool, number or string; null for any other type. */
 nlohmann::json toJson(const VtValue& v)
@@ -311,12 +380,22 @@ public:
         mMaterialIndex = UsdImagingSceneIndex::New(HdRetainedContainerDataSource::New(), [](const HdSceneIndexBaseRefPtr& in) { return in; });
         mMaterialIndex->SetStage(mMaterials.stage());
         mIndex->InsertSceneIndex(mMaterialIndex, materialsRoot());
+        mHgi = hgi;
+        if (const auto device = hgi ? render::GpuImage::sharingDevice() : std::nullopt)
+        {
+            std::string interopError;
+            mInterop = HgiInterop::create(hgi, *device, interopError);
+            if (!mInterop)
+                log::info("Hydra viewport: frames go through the CPU: {}", interopError);
+        }
         mOk = true;
     }
 
     ~HydraSession() override
     {
         *mAlive = false;
+        finishLast();
+        mInterop.reset();
         if (mIndex)
         {
             for (auto& [node, c] : mStages)
@@ -326,7 +405,6 @@ public:
         }
         mTasks.reset();
         mIndex.reset();
-    
     }
 
     bool ok() const { return mOk; }
@@ -336,20 +414,18 @@ public:
         LILA_ZONE();
         if (!r.graph || r.width <= 0 || r.height <= 0)
             return;
+        finishLast();
         mLast = r;
-        Graph& g = *r.graph;
-        g.evaluate();
-        ViewContext view;
-        view.isolation = r.view.isolation;
-        // Request::view measures logical pixels, the frame device ones.
-        const double device = r.view.width > 0.0 ? r.width / r.view.width : 1.0;
-        view.unitsPerPixel = [&r, device](const glm::dvec3& at) { return r.view.unitsPerPixel(at) / device; };
-        view.curvePixels = float(2.0 * device);
-        view.curveColor = ui::themeLinear("curve", view.curveColor);
-        mLila->sync(g, view, [this](const std::string& slot) { return mMaterials.bind(slot); });
-        mMaterials.sync(g, mLila->usedSlots());
-        mMaterialIndex->ApplyPendingUpdates();
-        syncStages(g, view, r.time);
+        mRequested = std::chrono::steady_clock::now();
+        if (sceneCurrent(r))
+        {
+            // Stage edits made outside Lila's graph still arrive.
+            mMaterialIndex->ApplyPendingUpdates();
+            for (auto& [node, c] : mStages)
+                c.usd->ApplyPendingUpdates();
+        }
+        else
+            sync(r);
         draw();
     }
 
@@ -370,6 +446,7 @@ public:
 
     bool setSetting(const std::string& key, const nlohmann::json& value) override
     {
+        finishLast();
         const TfToken k(key);
         VtValue current = mDelegate->GetRenderSetting(k);
         if (current.IsEmpty())
@@ -387,6 +464,38 @@ public:
     LilaSceneIndex::Counts lastSync() const { return mLila->lastSync(); }
 
 private:
+    /** Whether the scene indices already hold what r shows, so only the camera or size changed. */
+    bool sceneCurrent(const vr::Request& r) const
+    {
+        const scene::isolation::Set* iso = r.view.isolation;
+        return mSynced && r.sceneRevision == mSyncedRevision && r.time == mSyncedTime && iso == mSyncedIsolation &&
+               (!iso || iso->version == mSyncedIsolationVersion) && !mLila->viewDependent();
+    }
+
+    void sync(const vr::Request& r)
+    {
+        LILA_ZONE();
+        Graph& g = *r.graph;
+        g.evaluate();
+        ViewContext view;
+        view.isolation = r.view.isolation;
+        // Request::view measures logical pixels, the frame device ones.
+        const double device = r.view.width > 0.0 ? r.width / r.view.width : 1.0;
+        view.unitsPerPixel = [&r, device](const glm::dvec3& at) { return r.view.unitsPerPixel(at) / device; };
+        view.curvePixels = float(2.0 * device);
+        view.curveColor = ui::themeLinear("curve", view.curveColor);
+        mLila->sync(g, view, [this](const std::string& slot) { return mMaterials.bind(slot); });
+        mMaterials.sync(g, mLila->usedSlots());
+        mMaterialIndex->ApplyPendingUpdates();
+        syncStages(g, view, r.time);
+        mHasLights = sceneHasLights();
+        mSynced = true;
+        mSyncedRevision = r.sceneRevision;
+        mSyncedTime = r.time;
+        mSyncedIsolation = r.view.isolation;
+        mSyncedIsolationVersion = r.view.isolation ? r.view.isolation->version : 0;
+    }
+
     void syncStages(Graph& g, const ViewContext& view, double time)
     {
         std::set<NodeId> live;
@@ -454,16 +563,25 @@ private:
     void draw()
     {
         LILA_ZONE();
+        finishLast();
         const vr::Request& r = mLast;
         const glm::dmat4 proj = glProjection(r);
         mTasks->SetRenderBufferSize(GfVec2i(r.width, r.height));
         mTasks->SetFraming(CameraUtilFraming(GfRect2i(GfVec2i(0, 0), r.width, r.height)));
         mTasks->SetFreeCameraMatrices(usd::toGf(r.view.view), usd::toGf(proj));
-        mTasks->SetLightingState(sceneHasLights() ? mSceneLights : mEyeLight);
+        mTasks->SetLightingState(mHasLights ? mSceneLights : mEyeLight);
         HdTaskSharedPtrVector tasks = mTasks->GetRenderingTasks();
-        mEngine.Execute(mIndex.get(), &tasks);
+        // One frame for HgiVulkan, so it cleans up once rather than after every submit.
+        if (mHgi)
+            mHgi->StartFrame();
+        {
+            LILA_ZONE_N("Hydra Execute");
+            mEngine.Execute(mIndex.get(), &tasks);
+        }
         if (r.deliver)
-            r.deliver(readBack(r, proj));
+            deliver(r, proj);
+        if (mHgi)
+            mHgi->EndFrame();
         if (!mTasks->IsConverged())
             refineLater(r.serial);
     }
@@ -476,87 +594,267 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             mainq::post([alive, serial, this] {
                 if (const auto a = alive.lock(); a && *a && mLast.serial == serial)
+                {
+                    mRequested = std::chrono::steady_clock::now();
                     draw();
+                }
             });
         }).detach();
     }
 
-    vr::Frame readBack(const vr::Request& r, const glm::dmat4& proj)
+    /** Waits for the frame on its way to the viewport, then unmaps the buffers it was read from: Hydra may write them again. */
+    void finishLast()
+    {
+        LILA_ZONE_N("Hydra wait for last frame");
+        mWorker.wait();
+        for (HdRenderBuffer* b : mMapped)
+            b->Unmap();
+        mMapped.clear();
+    }
+
+    void deliver(const vr::Request& r, const glm::dmat4& proj)
+    {
+        LILA_ZONE();
+        HdRenderBuffer* color = mTasks->GetRenderOutput(HdAovTokens->color);
+        if (!color)
+            return;
+        color->Resolve();
+        HdRenderBuffer* depth = mTasks->GetRenderOutput(HdAovTokens->depth);
+        if (depth)
+            depth->Resolve();
+        const bool gpu = deliverOnGpu(r, proj, color, depth);
+        if (!gpu)
+            deliverFromCpu(r, proj, color, depth);
+        LILA_PLOT("Hydra frames on the GPU", int64_t(gpu));
+    }
+
+    static HgiTexture* hgiTexture(const HdRenderBuffer* b)
+    {
+        const VtValue v = b ? b->GetResource(false) : VtValue();
+        return v.IsHolding<HgiTextureHandle>() ? v.UncheckedGet<HgiTextureHandle>().Get() : nullptr;
+    }
+
+    /** Delegates drawing with HgiVulkan on Lila's GPU: their AOVs are copied into images Lila's device shares, never leaving the GPU. */
+    bool deliverOnGpu(const vr::Request& r, const glm::dmat4& proj, HdRenderBuffer* color, HdRenderBuffer* depth)
+    {
+        HgiTexture* c = mInterop ? hgiTexture(color) : nullptr;
+        if (!c || !mInterop->copyable(c, true))
+            return false;
+        HgiTexture* d = hgiTexture(depth);
+        if (d && (!mInterop->copyable(d, false) || d->GetDescriptor().dimensions != c->GetDescriptor().dimensions))
+            d = nullptr;
+        const GfVec3i size = c->GetDescriptor().dimensions;
+        if (!targetsReady(size[0], size[1]))
+            return false;
+        const size_t slot = mNextTarget;
+        if (!mInterop->copy(slot, c, d))
+            return false;
+        mNextTarget = (mNextTarget + 1) % mTargets.size();
+
+        const Targets t = mTargets[slot];
+        vr::Frame f;
+        f.serial = r.serial;
+        f.width = size[0];
+        f.height = size[1];
+        f.image = t.color;
+        if (d)
+        {
+            f.depthImage = t.depth;
+            f.glDepthProj = proj;
+        }
+        f.bottomUp = true;
+        f.premultiplied = true;
+        f.exposure = r.exposure;
+        mWorker.run([interop = mInterop.get(), slot, t, f = std::move(f), deliver = r.deliver, requested = mRequested]() mutable {
+            {
+                LILA_ZONE_N("Hydra wait for GPU copy");
+                interop->wait(slot);
+            }
+            t.color->acquireExternal();
+            if (f.depthImage)
+                t.depth->acquireExternal();
+            deliver(std::move(f));
+            plotLatency(requested);
+        });
+        return true;
+    }
+
+    /**
+     * The shared colour and depth images for a w x h frame, made on Lila's device and imported into Hydra's. A ring of
+     * them, so a copy never lands in an image a frame Lila is still drawing samples. False while they are on their way.
+     */
+    bool targetsReady(int w, int h)
+    {
+        constexpr size_t kTargets = 4;
+        if (w != mTargetWidth || h != mTargetHeight)
+        {
+            mInterop->clearSlots();
+            mTargets.clear();
+            mImported = false;
+            mNextTarget = 0;
+            mTargetWidth = w;
+            mTargetHeight = h;
+            std::vector<render::GpuImageRef> all;
+            for (size_t i = 0; i < kTargets; ++i)
+            {
+                Targets t;
+                t.color = render::GpuImage::create(
+                    {.width = w, .height = h, .format = render::TextureFormat::RGBA16F, .name = "Hydra colour", .shared = true});
+                t.depth = render::GpuImage::create({.width = w, .height = h, .format = render::TextureFormat::R32F, .name = "Hydra depth", .shared = true});
+                all.push_back(t.color);
+                all.push_back(t.depth);
+                mTargets.push_back(std::move(t));
+            }
+            mRealizing = render::GpuImage::realize(std::move(all));
+        }
+        if (mImported)
+            return true;
+        if (!mRealizing.valid() || mRealizing.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return false;
+        std::string why;
+        try
+        {
+            mRealizing.get();
+        }
+        catch (const std::exception& e)
+        {
+            why = e.what();
+        }
+        for (size_t i = 0; why.empty() && i < mTargets.size(); ++i)
+        {
+            const auto c = mTargets[i].color->sharedMemory(), d = mTargets[i].depth->sharedMemory();
+            if (!c || !d)
+                why = "Lila's device could not share the images";
+            else if (!mInterop->setSlot(i, sharedTarget(*c), sharedTarget(*d)))
+                why = "Hydra's device could not import them";
+        }
+        if (!why.empty())
+        {
+            log::warn("Hydra viewport: frames go through the CPU: {}", why);
+            const std::string note = "Hydra frames go through the CPU: " + why;
+            LILA_MESSAGE(note.c_str(), note.size());
+            mInterop.reset();
+            mTargets.clear();
+            return false;
+        }
+        mImported = true;
+        return true;
+    }
+
+    /** For traces: from the request (or refinement) to its frame handed to the viewport. */
+    static void plotLatency(std::chrono::steady_clock::time_point requested)
+    {
+        [[maybe_unused]] const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - requested).count();
+        LILA_PLOT("Hydra request to frame (ms)", ms);
+    }
+
+    static SharedTarget sharedTarget(const render::SharedImageMemory& m)
+    {
+        return {.handle = m.handle,
+                .size = m.size,
+                .format = uint32_t(m.format),
+                .flags = uint32_t(m.flags),
+                .usage = uint32_t(m.usage),
+                .width = m.width,
+                .height = m.height};
+    }
+
+    /**
+     * Any other delegate: its buffers are mapped here and copied as they are on the worker, flipping, unpremultiplying,
+     * exposing and unprojecting left to Lila's composite. They stay mapped until finishLast.
+     */
+    void deliverFromCpu(const vr::Request& r, const glm::dmat4& proj, HdRenderBuffer* color, HdRenderBuffer* depth)
+    {
+        const int w = int(color->GetWidth()), h = int(color->GetHeight());
+        const HdFormat cf = color->GetFormat();
+        LILA_ZONE_N("Hydra map");
+        const auto* c = static_cast<const uint8_t*>(color->Map());
+        mMapped.push_back(color);
+        if (!c || w <= 0 || h <= 0)
+            return;
+        const uint8_t* d = nullptr;
+        HdFormat df = HdFormatInvalid;
+        if (depth && int(depth->GetWidth()) == w && int(depth->GetHeight()) == h)
+        {
+            d = static_cast<const uint8_t*>(depth->Map());
+            mMapped.push_back(depth);
+            df = depth->GetFormat();
+        }
+        mWorker.run([=, serial = r.serial, exposure = r.exposure, deliver = r.deliver, requested = mRequested] {
+            vr::Frame f = cpuFrame(c, cf, d, df, w, h);
+            f.serial = serial;
+            f.bottomUp = true;
+            f.premultiplied = true;
+            f.exposure = exposure;
+            if (!f.depth.empty())
+                f.glDepthProj = proj;
+            deliver(std::move(f));
+            plotLatency(requested);
+        });
+    }
+
+    /** A frame of a delegate's pixels in the nearest format Lila takes: RGBA8 and RGBA16F colour as they are, others as half floats. */
+    static vr::Frame cpuFrame(const uint8_t* c, HdFormat cf, const uint8_t* d, HdFormat df, int w, int h)
     {
         LILA_ZONE();
         vr::Frame f;
-        f.serial = r.serial;
-        HdRenderBuffer* color = mTasks->GetRenderOutput(HdAovTokens->color);
-        if (!color)
-            return f;
-        color->Resolve();
-        const int w = int(color->GetWidth()), h = int(color->GetHeight());
-        const HdFormat cf = color->GetFormat();
-        const uint8_t* data = static_cast<const uint8_t*>(color->Map());
-        if (!data || w <= 0 || h <= 0)
-        {
-            color->Unmap();
-            return f;
-        }
         f.width = w;
         f.height = h;
-        f.rgba32f.resize(size_t(w) * h * 4);
-        const size_t stride = HdDataSizeOfFormat(cf);
-        const int components = int(HdGetComponentCount(cf));
-        const float exposure = r.exposure;
-        withReader(cf, [&](auto read) {
-            // Hydra's buffers start at the bottom row; Lila's frames at the top.
-            forRows(h, [&](int y) {
-                const uint8_t* p = data + size_t(h - 1 - y) * w * stride;
-                float* o = &f.rgba32f[size_t(y) * w * 4];
-                for (int x = 0; x < w; ++x, p += stride, o += 4)
-                {
-                    const float a = components >= 4 ? read(p, 3) : 1.0f;
-                    // Hydra's colour is premultiplied; frames carry straight alpha.
-                    const float unpremultiply = (a > 0.0f && a < 1.0f ? 1.0f / a : 1.0f) * exposure;
-                    for (int c = 0; c < 3; ++c)
-                        o[c] = read(p, std::min(c, components - 1)) * unpremultiply;
-                    o[3] = std::clamp(a, 0.0f, 1.0f);
-                }
-            });
-        });
-        color->Unmap();
-
-        if (HdRenderBuffer* depth = mTasks->GetRenderOutput(HdAovTokens->depth))
+        const size_t pixels = size_t(w) * size_t(h);
+        if (cf == HdFormatUNorm8Vec4 || cf == HdFormatFloat16Vec4)
         {
-            depth->Resolve();
-            const HdFormat df = depth->GetFormat();
-            const uint8_t* d = static_cast<const uint8_t*>(depth->Map());
-            if (d && int(depth->GetWidth()) == w && int(depth->GetHeight()) == h)
+            f.texelFormat = cf == HdFormatUNorm8Vec4 ? render::TextureFormat::RGBA8 : render::TextureFormat::RGBA16F;
+            f.texels.assign(c, c + pixels * HdDataSizeOfFormat(cf));
+        }
+        else
+        {
+            f.texelFormat = render::TextureFormat::RGBA16F;
+            f.texels.resize(pixels * 8);
+            const size_t stride = HdDataSizeOfFormat(cf);
+            const int components = int(HdGetComponentCount(cf));
+            auto* out = reinterpret_cast<GfHalf*>(f.texels.data());
+            withReader(cf, [&](auto read) {
+                forRows(h, [&](int y) {
+                    const uint8_t* p = c + size_t(y) * w * stride;
+                    GfHalf* o = out + size_t(y) * w * 4;
+                    for (int x = 0; x < w; ++x, p += stride, o += 4)
+                    {
+                        for (int k = 0; k < 3; ++k)
+                            o[k] = GfHalf(read(p, std::min(k, components - 1)));
+                        o[3] = GfHalf(components >= 4 ? read(p, 3) : 1.0f);
+                    }
+                });
+            });
+        }
+        if (d)
+        {
+            f.depth.resize(pixels);
+            if (df == HdFormatFloat32)
+                std::memcpy(f.depth.data(), d, pixels * sizeof(float));
+            else
             {
-                // Window depth to clip space, then back through the projection to the view axis: with x and y at 0
-                // only these four entries of the inverse projection matter.
-                const glm::dmat4 unproject = glm::inverse(proj);
-                const double zz = unproject[2][2], zw = unproject[3][2], wz = unproject[2][3], ww = unproject[3][3];
-                const size_t ds = HdDataSizeOfFormat(df);
-                f.depth.resize(size_t(w) * h);
+                const size_t stride = HdDataSizeOfFormat(df);
                 withReader(df, [&](auto read) {
                     forRows(h, [&](int y) {
-                        const uint8_t* p = d + size_t(h - 1 - y) * w * ds;
-                        const size_t row = size_t(y) * w;
-                        for (int x = 0; x < w; ++x, p += ds)
-                        {
-                            const float z = read(p, 0);
-                            if (z >= 1.0f || f.rgba32f[(row + x) * 4 + 3] <= 0.0f)
-                                continue;
-                            const double ndc = 2.0 * z - 1.0;
-                            f.depth[row + x] = float(-(zz * ndc + zw) / (wz * ndc + ww));
-                        }
+                        const uint8_t* p = d + size_t(y) * w * stride;
+                        float* o = &f.depth[size_t(y) * w];
+                        for (int x = 0; x < w; ++x, p += stride)
+                            o[x] = read(p, 0);
                     });
                 });
             }
-            depth->Unmap();
         }
         return f;
     }
 
+    struct Targets
+    {
+        render::GpuImageRef color, depth;
+    };
+
     bool mOk = false;
     bool mStorm = false;
+    Hgi* mHgi = nullptr;
     HdPluginRenderDelegateUniqueHandle mDelegate;
     HdDriver mDriver;
     std::unique_ptr<HdRenderIndex> mIndex;
@@ -569,6 +867,23 @@ private:
     GlfSimpleLightingContextRefPtr mEyeLight, mSceneLights;
     std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);
     vr::Request mLast;
+    std::chrono::steady_clock::time_point mRequested;
+
+    bool mSynced = false;
+    uint64_t mSyncedRevision = 0;
+    double mSyncedTime = 0.0;
+    const scene::isolation::Set* mSyncedIsolation = nullptr;
+    uint64_t mSyncedIsolationVersion = 0;
+    bool mHasLights = false;
+
+    std::unique_ptr<HgiInterop> mInterop;
+    std::vector<Targets> mTargets;
+    std::future<void> mRealizing;
+    bool mImported = false;
+    size_t mNextTarget = 0;
+    int mTargetWidth = 0, mTargetHeight = 0;
+    std::vector<HdRenderBuffer*> mMapped;
+    Worker mWorker;
 };
 } // namespace
 

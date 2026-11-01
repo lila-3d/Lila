@@ -10,6 +10,7 @@
 #include "ui/ViewportRenderers.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -433,6 +434,52 @@ TEST_CASE("viewport renderer: GPU images, linear float pixels and frames of anot
     bad.view = glm::translate(bad.view, glm::dvec3(3.0, 0.0, 0.0));
     REQUIRE(vr::apply(kPanel, requestFor(bad), bad));
     CHECK(near(at(draw(bad, "malformed"), 20, 64), {255, 0, 0}));
+}
+
+TEST_CASE("viewport renderer: buffers as a renderer keeps them, bottom up, premultiplied, unexposed, with OpenGL window depth")
+{
+    if (!gpu())
+        return;
+    ProbeRenderer pr("test.raw");
+    // Stored bottom row first: the view's top half is red at half alpha, its bottom half opaque blue, both premultiplied.
+    // The left half is a surface 300 cm away, in front of the line; the right half 900 cm away, behind it.
+    const glm::dmat4 gl = glm::perspectiveRH_NO(1.0, 1.0, 1.0, 10000.0);
+    auto window = [&gl](double distance) {
+        const glm::dvec4 c = gl * glm::dvec4(0.0, 0.0, -distance, 1.0);
+        return float(c.z / c.w * 0.5 + 0.5);
+    };
+    pr.probe.answer = [&](const vr::Request& r) {
+        vr::Frame f;
+        f.width = r.width;
+        f.height = r.height;
+        f.texelFormat = TextureFormat::RGBA16F;
+        f.texels.resize(size_t(r.width) * r.height * 8);
+        f.depth.resize(size_t(r.width) * r.height);
+        auto* t = reinterpret_cast<uint16_t*>(f.texels.data());
+        for (int sy = 0; sy < r.height; ++sy)
+            for (int x = 0; x < r.width; ++x)
+            {
+                const size_t i = size_t(sy) * r.width + x;
+                const glm::vec4 c = sy >= r.height / 2 ? glm::vec4(0.5f, 0.0f, 0.0f, 0.5f) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+                for (int k = 0; k < 4; ++k)
+                    t[i * 4 + k] = glm::packHalf1x16(c[k]);
+                f.depth[i] = window(x < r.width / 2 ? 300.0 : 900.0);
+            }
+        f.bottomUp = true;
+        f.premultiplied = true;
+        f.exposure = 0.5f;
+        f.glDepthProj = gl;
+        return f;
+    };
+    FrameState s = baseFrame();
+    addLine(s);
+    REQUIRE(vr::apply(kPanel, requestFor(s), s));
+    const auto img = draw(s, "raw");
+    // Red 1 at alpha 0.5, halved by the exposure, over black: 0.25 linear.
+    CHECK(near(at(img, 20, 20), {137, 0, 0}));
+    CHECK(near(at(img, 20, 108), {0, 0, 188}));
+    CHECK(brightIn(img, 0, kSize / 2 - 2, 60, 68) == 0);
+    CHECK(brightIn(img, kSize / 2 + 2, kSize, 60, 68) > 40);
 }
 
 TEST_CASE("viewport renderer: the example extension rasterises the scene on its own thread, preview then full size")
