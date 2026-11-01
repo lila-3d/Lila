@@ -122,6 +122,52 @@ TEST_CASE("normals: hard and smooth")
     CHECK(hardCount == 48);
 }
 
+TEST_CASE("normals: plan matches cornerNormals and holds while only points move")
+{
+    auto check = [](const Mesh& m, CornerNormalPlan& plan, const CornerNormalOptions& opts) {
+        const std::vector<glm::vec3> expect = cornerNormals(m, opts);
+        std::vector<glm::vec3> rows(plan.rows());
+        plan.compute(m, rows);
+        size_t row = 0;
+        for (Index f = 0; f < m.faceCapacity(); ++f)
+            if (m.faceValid(f))
+                m.forEachFaceCorner(f, [&](Index c) {
+                    CHECK(glm::length(rows[row] - expect[c]) < 1e-5f);
+                    ++row;
+                });
+        CHECK(row == plan.rows());
+    };
+
+    Mesh cyl = makeCylinder({50.0, 100.0, 24, 2});
+    setSoftEdges(cyl);
+    setHardEdgesByAngle(cyl, 30.0);
+    Mesh sphere = makeSphere({50.0, 32, 16});
+    sphere.removeFace(5);
+    for (NormalWeight w : {NormalWeight::Uniform, NormalWeight::Area, NormalWeight::Angle, NormalWeight::AreaAngle})
+        for (Mesh* m : {&cyl, &sphere})
+        {
+            const CornerNormalOptions opts{w};
+            CornerNormalPlan plan(*m, opts);
+            check(*m, plan, opts);
+
+            Mesh moved = *m;
+            CHECK(moved.topologyId() == m->topologyId());
+            for (Index p = 0; p < moved.pointCapacity(); ++p)
+                moved.setPosition(p, moved.position(p) * glm::dvec3(1.0, 1.5, 0.5) + glm::dvec3(0.0, 0.01 * double(p % 7), 0.0));
+            REQUIRE(plan.fits(moved));
+            check(moved, plan, opts);
+        }
+
+    Mesh changed = cyl;
+    CHECK(CornerNormalPlan(cyl).fits(changed));
+    setSoftEdges(changed);
+    CHECK_FALSE(CornerNormalPlan(cyl).fits(changed));
+    changed = cyl;
+    changed.removeFace(0);
+    CHECK(changed.topologyId() != cyl.topologyId());
+    CHECK_FALSE(CornerNormalPlan(cyl).fits(changed));
+}
+
 TEST_CASE("normals: mikktspace tangents")
 {
     Mesh plane = makePlane();

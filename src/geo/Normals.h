@@ -41,6 +41,40 @@ LILA_SCENE_API std::vector<glm::vec3> cornerNormals(const Mesh& mesh, const Corn
 /** Writes cornerNormals() into the corner "normal" attribute. */
 LILA_SCENE_API void updateCornerNormals(Mesh& mesh, const CornerNormalOptions& opts = {});
 
+/**
+ * cornerNormals' topology work done once and reused while only points move: which smooth fan each corner is in, in
+ * face-vertex order (valid faces in id order, each from faceCorner). compute() is then a few linear passes.
+ */
+class LILA_SCENE_API CornerNormalPlan
+{
+public:
+    explicit CornerNormalPlan(const Mesh& mesh, const CornerNormalOptions& opts = {});
+
+    /** True while mesh has the topology and hard edges this plan was made from. */
+    bool fits(const Mesh& mesh) const;
+    /** Face-vertex rows, numCorners(). */
+    size_t rows() const { return mRowPoint.size(); }
+    /** Where each valid face's rows start, plus the total. */
+    std::span<const uint32_t> faceOffsets() const { return mFaceOffsets; }
+
+    /** cornerNormals(mesh) in row order into out (rows() long). Parallel; one call at a time, as it reuses scratch. */
+    void compute(const Mesh& mesh, std::span<glm::vec3> out);
+
+private:
+    CornerNormalOptions mOpts;
+    uint64_t mTopology = 0;
+    std::vector<uint8_t> mHard;
+    UninitVector<uint32_t> mFaceOffsets;
+    UninitVector<uint32_t> mRowPoint;
+    UninitVector<uint32_t> mRowFace; // index into mFaceOffsets
+    UninitVector<uint32_t> mRowFan;
+    UninitVector<uint32_t> mFanOffsets;
+    UninitVector<uint32_t> mFanRows;
+    UninitVector<glm::dvec3> mArea;
+    UninitVector<double> mRowAngle;
+    UninitVector<glm::vec3> mFanNormal;
+};
+
 enum class WeightedNormalMode : uint8_t
 {
     FaceArea,

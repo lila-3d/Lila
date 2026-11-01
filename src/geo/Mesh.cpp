@@ -107,6 +107,12 @@ void Mesh::reserve(size_t points, size_t edges, size_t faces, size_t corners)
     mCorners.reserve(corners);
 }
 
+uint64_t Mesh::newTopologyId()
+{
+    static std::atomic<uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Topology primitives
 
 void Mesh::diskInsert(Index e, Index p)
@@ -381,6 +387,7 @@ Bounds Mesh::faceBounds(std::span<const Index> faces) const
 
 Index Mesh::addPoint(const glm::dvec3& pos)
 {
+    touchTopology();
     const Index p = Index(mPointPos.size());
     mPointPos.push_back(pos);
     mPointEdge.push_back(kInvalid);
@@ -392,6 +399,7 @@ Index Mesh::addPoint(const glm::dvec3& pos)
 
 Index Mesh::addEdge(Index a, Index b)
 {
+    touchTopology();
     if (a == b)
         return kInvalid;
     const Index e = findEdge(a, b);
@@ -400,6 +408,7 @@ Index Mesh::addEdge(Index a, Index b)
 
 Index Mesh::addFace(std::span<const Index> points)
 {
+    touchTopology();
     const size_t n = points.size();
     if (n < 3 || hasRepeats(points))
         return kInvalid;
@@ -444,6 +453,7 @@ Index Mesh::addFace(std::span<const Index> points, Index srcFace, std::span<cons
 
 void Mesh::removeFace(Index f)
 {
+    touchTopology();
     if (!faceValid(f))
         return;
     Index c = mFaces[f].corner;
@@ -460,6 +470,7 @@ void Mesh::removeFace(Index f)
 
 void Mesh::removeEdge(Index e)
 {
+    touchTopology();
     if (!edgeValid(e))
         return;
     while (mEdges[e].corner != kInvalid)
@@ -472,6 +483,7 @@ void Mesh::removeEdge(Index e)
 
 void Mesh::removePoint(Index p)
 {
+    touchTopology();
     if (!pointValid(p))
         return;
     while (mPointEdge[p] != kInvalid)
@@ -482,6 +494,7 @@ void Mesh::removePoint(Index p)
 
 void Mesh::removeLoose(std::span<const Index> edges, std::span<const Index> points)
 {
+    touchTopology();
     for (Index e : edges)
         if (edgeValid(e) && mEdges[e].corner == kInvalid)
             removeEdge(e);
@@ -492,6 +505,7 @@ void Mesh::removeLoose(std::span<const Index> edges, std::span<const Index> poin
 
 void Mesh::removeAllLoose()
 {
+    touchTopology();
     LILA_ZONE();
 
     for (Index e = 0; e < edgeCapacity(); ++e)
@@ -504,6 +518,7 @@ void Mesh::removeAllLoose()
 
 Index Mesh::splitEdge(Index e, double t)
 {
+    touchTopology();
     const Index a = mEdges[e].v[0];
     const Index b = mEdges[e].v[1];
     const Index m = addPoint(glm::mix(mPointPos[a], mPointPos[b], t));
@@ -557,6 +572,7 @@ Index Mesh::splitEdge(Index e, double t)
 
 Index Mesh::splitFace(Index f, Index ca, Index cb)
 {
+    touchTopology();
     if (ca == cb || mCorners[ca].face != f || mCorners[cb].face != f || mCorners[ca].next == cb
         || mCorners[cb].next == ca)
         return kInvalid;
@@ -610,6 +626,7 @@ Index Mesh::splitFace(Index f, Index ca, Index cb)
 
 Index Mesh::joinFaces(Index e)
 {
+    touchTopology();
     if (!isManifoldEdge(e))
         return kInvalid;
     const Index c1 = mEdges[e].corner;
@@ -653,6 +670,7 @@ Index Mesh::joinFaces(Index e)
 
 bool Mesh::setFacePoints(Index f, std::span<const Index> points)
 {
+    touchTopology();
     if (!faceValid(f) || points.size() != mFaces[f].size || hasRepeats(points))
         return false;
     for (Index p : points)
@@ -671,6 +689,7 @@ bool Mesh::setFacePoints(Index f, std::span<const Index> points)
 
 void Mesh::flipFace(Index f)
 {
+    touchTopology();
     std::vector<Index> corners = faceCorners(f);
     const size_t n = corners.size();
     std::vector<Index> edges(n);
@@ -695,6 +714,7 @@ void Mesh::clear()
 
 void Mesh::compact(MeshRemap* remap)
 {
+    touchTopology();
     LILA_ZONE();
 
     MeshRemap local;
@@ -772,6 +792,7 @@ void Mesh::compact(MeshRemap* remap)
 
 Index Mesh::append(const Mesh& other)
 {
+    touchTopology();
     LILA_ZONE();
 
     for (size_t d = 0; d < size_t(Domain::Count); ++d)

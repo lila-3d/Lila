@@ -4,17 +4,21 @@
 #include "third_party/mikktspace/mikktspace.h"
 
 #include "core/Profile.h"
+#include "core/UninitVector.h"
 
 #include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_scan.h>
 #include <tbb/parallel_sort.h>
 #include <tbb/task_arena.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numeric>
 
@@ -37,16 +41,103 @@ std::vector<glm::dvec3> faceAreaVectors(const Mesh& mesh)
     return out;
 }
 
-glm::dvec3 cornerContribution(const Mesh& mesh, Index c, const glm::dvec3& areaVec, NormalWeight w)
+/** A corner's share of its fan normal; angle() is the corner's angle, called only when the weight needs it. */
+template <class Angle> glm::dvec3 contribution(const glm::dvec3& areaVec, NormalWeight w, Angle&& angle)
 {
     switch (w)
     {
     case NormalWeight::Uniform: return glm::normalize(areaVec);
     case NormalWeight::Area: return areaVec;
-    case NormalWeight::Angle: return glm::normalize(areaVec) * cornerAngle(mesh, c);
-    case NormalWeight::AreaAngle: return areaVec * cornerAngle(mesh, c);
+    case NormalWeight::Angle: return glm::normalize(areaVec) * angle();
+    case NormalWeight::AreaAngle: return areaVec * angle();
     }
     return areaVec;
+}
+
+glm::dvec3 cornerContribution(const Mesh& mesh, Index c, const glm::dvec3& areaVec, NormalWeight w)
+{
+    return contribution(areaVec, w, [&] { return cornerAngle(mesh, c); });
+}
+
+double angleAt(const glm::dvec3& p, const glm::dvec3& prev, const glm::dvec3& next)
+{
+    const glm::dvec3 a = prev - p;
+    const glm::dvec3 b = next - p;
+    const double la = glm::length(a), lb = glm::length(b);
+    if (la <= 0.0 || lb <= 0.0)
+        return 0.0;
+    // atan2 stays accurate for angles near 0 and pi.
+    return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
+}
+
+/** The corners around one point and the smooth fans they fall into. */
+struct FanScratch
+{
+    std::vector<Index> corners;
+    std::vector<Index> parent;
+    std::vector<glm::dvec3> sum;
+    std::vector<uint32_t> ordinal;
+
+    /** The fan of corners[i], as the index of one corner in it. */
+    Index find(Index i)
+    {
+        while (parent[i] != i)
+            i = parent[i] = parent[parent[i]];
+        return i;
+    }
+};
+
+/** Fills s with p's corners grouped into fans: corners on either side of a soft manifold edge share one. */
+void groupFans(const Mesh& mesh, Index p, std::span<const bool> hard, FanScratch& s)
+{
+    s.corners.clear();
+    mesh.forEachPointCorner(p, [&](Index c) { s.corners.push_back(c); });
+    const size_t k = s.corners.size();
+    s.parent.resize(k);
+    std::iota(s.parent.begin(), s.parent.end(), Index(0));
+    if (k < 2)
+        return;
+    auto local = [&](Index c) {
+        for (size_t i = 0; i < k; ++i)
+            if (s.corners[i] == c)
+                return Index(i);
+        return kInvalid;
+    };
+    mesh.forEachPointEdge(p, [&](Index e) {
+        if (!hard.empty() && hard[e])
+            return;
+        if (!mesh.isManifoldEdge(e))
+            return;
+        const Index r1 = mesh.edgeCorner(e);
+        const Index r2 = mesh.cornerRadial(r1);
+        const Index a = local(mesh.cornerPoint(r1) == p ? r1 : mesh.cornerNext(r1));
+        const Index b = local(mesh.cornerPoint(r2) == p ? r2 : mesh.cornerNext(r2));
+        if (a != kInvalid && b != kInvalid)
+            s.parent[s.find(a)] = s.find(b);
+    });
+}
+
+std::span<const bool> hardEdges(const Mesh& mesh, const CornerNormalOptions& opts)
+{
+    return opts.useHardEdges ? mesh.edgeAttrs().get<bool>(attr::kHard) : std::span<const bool>{};
+}
+
+/** Exclusive prefix sum of v in place; returns the total. */
+template <class Vec> uint32_t scanCounts(Vec& v)
+{
+    return tbb::parallel_scan(
+        tbb::blocked_range<size_t>(0, v.size(), 1 << 16), uint32_t(0),
+        [&](const tbb::blocked_range<size_t>& r, uint32_t sum, bool final) {
+            for (size_t i = r.begin(); i < r.end(); ++i)
+            {
+                const uint32_t x = v[i];
+                if (final)
+                    v[i] = sum;
+                sum += x;
+            }
+            return sum;
+        },
+        std::plus<uint32_t>());
 }
 
 glm::dvec3 safeNormalize(const glm::dvec3& v, const glm::dvec3& fallback)
@@ -58,14 +149,8 @@ glm::dvec3 safeNormalize(const glm::dvec3& v, const glm::dvec3& fallback)
 
 double cornerAngle(const Mesh& mesh, Index c)
 {
-    const glm::dvec3 p = mesh.position(mesh.cornerPoint(c));
-    const glm::dvec3 a = mesh.position(mesh.cornerPoint(mesh.cornerPrev(c))) - p;
-    const glm::dvec3 b = mesh.position(mesh.cornerNextPoint(c)) - p;
-    const double la = glm::length(a), lb = glm::length(b);
-    if (la <= 0.0 || lb <= 0.0)
-        return 0.0;
-    // atan2 stays accurate for angles near 0 and pi.
-    return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
+    return angleAt(mesh.position(mesh.cornerPoint(c)), mesh.position(mesh.cornerPoint(mesh.cornerPrev(c))),
+                   mesh.position(mesh.cornerNextPoint(c)));
 }
 
 std::vector<glm::dvec3> faceNormals(const Mesh& mesh)
@@ -106,66 +191,29 @@ std::vector<glm::vec3> cornerNormals(const Mesh& mesh, const CornerNormalOptions
     LILA_ZONE();
 
     const std::vector<glm::dvec3> area = faceAreaVectors(mesh);
-    std::span<const bool> hard = opts.useHardEdges ? mesh.edgeAttrs().get<bool>(attr::kHard) : std::span<const bool>{};
+    const std::span<const bool> hard = hardEdges(mesh, opts);
     std::vector<glm::vec3> out(mesh.cornerCapacity(), glm::vec3(0.0f));
 
-    struct Scratch
-    {
-        std::vector<Index> corners;
-        std::vector<Index> parent;
-        std::vector<glm::dvec3> sum;
-    };
-    tbb::enumerable_thread_specific<Scratch> scratch;
+    tbb::enumerable_thread_specific<FanScratch> scratch;
     tbb::parallel_for(tbb::blocked_range<Index>(0, mesh.pointCapacity(), kGrain), [&](const tbb::blocked_range<Index>& r) {
-        Scratch& s = scratch.local();
+        FanScratch& s = scratch.local();
         for (Index p = r.begin(); p < r.end(); ++p)
         {
             if (!mesh.pointValid(p))
                 continue;
-            s.corners.clear();
-            mesh.forEachPointCorner(p, [&](Index c) { s.corners.push_back(c); });
+            groupFans(mesh, p, hard, s);
             const size_t k = s.corners.size();
-            if (k == 0)
-                continue;
-            s.parent.resize(k);
-            std::iota(s.parent.begin(), s.parent.end(), Index(0));
-            auto find = [&](Index i) {
-                while (s.parent[i] != i)
-                    i = s.parent[i] = s.parent[s.parent[i]];
-                return i;
-            };
-            auto local = [&](Index c) {
-                for (size_t i = 0; i < k; ++i)
-                    if (s.corners[i] == c)
-                        return Index(i);
-                return kInvalid;
-            };
-
-            // Corners on either side of a soft manifold edge share a fan.
-            mesh.forEachPointEdge(p, [&](Index e) {
-                if (!hard.empty() && hard[e])
-                    return;
-                if (!mesh.isManifoldEdge(e))
-                    return;
-                const Index r1 = mesh.edgeCorner(e);
-                const Index r2 = mesh.cornerRadial(r1);
-                const Index a = local(mesh.cornerPoint(r1) == p ? r1 : mesh.cornerNext(r1));
-                const Index b = local(mesh.cornerPoint(r2) == p ? r2 : mesh.cornerNext(r2));
-                if (a != kInvalid && b != kInvalid)
-                    s.parent[find(a)] = find(b);
-            });
-
             s.sum.assign(k, glm::dvec3(0.0));
             for (size_t i = 0; i < k; ++i)
             {
                 const Index c = s.corners[i];
-                s.sum[find(Index(i))] += cornerContribution(mesh, c, area[mesh.cornerFace(c)], opts.weight);
+                s.sum[s.find(Index(i))] += cornerContribution(mesh, c, area[mesh.cornerFace(c)], opts.weight);
             }
             for (size_t i = 0; i < k; ++i)
             {
                 const Index c = s.corners[i];
                 const glm::dvec3 fallback = safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
-                out[c] = glm::vec3(safeNormalize(s.sum[find(Index(i))], fallback));
+                out[c] = glm::vec3(safeNormalize(s.sum[s.find(Index(i))], fallback));
             }
         }
     });
@@ -179,6 +227,153 @@ void updateCornerNormals(Mesh& mesh, const CornerNormalOptions& opts)
     const std::vector<glm::vec3> n = cornerNormals(mesh, opts);
     std::span<glm::vec3> dst = mesh.cornerAttrs().getOrAdd<glm::vec3>(attr::kNormal);
     std::copy(n.begin(), n.end(), dst.begin());
+}
+
+CornerNormalPlan::CornerNormalPlan(const Mesh& mesh, const CornerNormalOptions& opts) : mOpts(opts), mTopology(mesh.topologyId())
+{
+    LILA_ZONE();
+
+    const std::span<const bool> hard = hardEdges(mesh, opts);
+    mHard.resize(hard.size());
+    if (!hard.empty())
+        std::memcpy(mHard.data(), hard.data(), hard.size());
+
+    std::vector<Index> faces;
+    faces.reserve(mesh.numFaces());
+    for (Index f = 0; f < mesh.faceCapacity(); ++f)
+        if (mesh.faceValid(f))
+            faces.push_back(f);
+    mFaceOffsets.resize(faces.size() + 1);
+    tbb::parallel_for(size_t(0), faces.size(), [&](size_t i) { mFaceOffsets[i] = mesh.faceSize(faces[i]); });
+    mFaceOffsets.back() = 0;
+    const uint32_t rows = scanCounts(mFaceOffsets);
+
+    mRowPoint.resize(rows);
+    mRowFace.resize(rows);
+    UninitVector<uint32_t> cornerRow(mesh.cornerCapacity());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, faces.size(), kGrain), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t i = r.begin(); i < r.end(); ++i)
+        {
+            uint32_t row = mFaceOffsets[i];
+            mesh.forEachFaceCorner(faces[i], [&](Index c) {
+                mRowPoint[row] = mesh.cornerPoint(c);
+                mRowFace[row] = uint32_t(i);
+                cornerRow[c] = row++;
+            });
+        }
+    });
+
+    // Fans are numbered point by point, so each row first gets its fan's ordinal among the fans of its point.
+    mRowFan.resize(rows);
+    UninitVector<uint32_t> fanBase(size_t(mesh.pointCapacity()) + 1);
+    tbb::enumerable_thread_specific<FanScratch> scratch;
+    tbb::parallel_for(tbb::blocked_range<Index>(0, mesh.pointCapacity(), kGrain), [&](const tbb::blocked_range<Index>& r) {
+        FanScratch& s = scratch.local();
+        for (Index p = r.begin(); p < r.end(); ++p)
+        {
+            fanBase[p] = 0;
+            if (!mesh.pointValid(p))
+                continue;
+            groupFans(mesh, p, hard, s);
+            const size_t k = s.corners.size();
+            s.ordinal.resize(k);
+            uint32_t fans = 0;
+            for (size_t i = 0; i < k; ++i)
+                if (s.find(Index(i)) == Index(i))
+                    s.ordinal[i] = fans++;
+            for (size_t i = 0; i < k; ++i)
+                mRowFan[cornerRow[s.corners[i]]] = s.ordinal[s.find(Index(i))];
+            fanBase[p] = fans;
+        }
+    });
+    fanBase.back() = 0;
+    const uint32_t fans = scanCounts(fanBase);
+
+    mFanOffsets.resize(size_t(fans) + 1);
+    std::fill(mFanOffsets.begin(), mFanOffsets.end(), 0u);
+    tbb::parallel_for(tbb::blocked_range<uint32_t>(0, rows, kGrain), [&](const tbb::blocked_range<uint32_t>& r) {
+        for (uint32_t row = r.begin(); row < r.end(); ++row)
+        {
+            mRowFan[row] += fanBase[mRowPoint[row]];
+            std::atomic_ref<uint32_t>(mFanOffsets[mRowFan[row]]).fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    scanCounts(mFanOffsets);
+
+    mFanRows.resize(rows);
+    UninitVector<uint32_t> cursor(mFanOffsets.begin(), mFanOffsets.end() - 1);
+    tbb::parallel_for(tbb::blocked_range<uint32_t>(0, rows, kGrain), [&](const tbb::blocked_range<uint32_t>& r) {
+        for (uint32_t row = r.begin(); row < r.end(); ++row)
+            mFanRows[std::atomic_ref<uint32_t>(cursor[mRowFan[row]]).fetch_add(1, std::memory_order_relaxed)] = row;
+    });
+    // Sorted so a fan sums its corners in the same order every time.
+    tbb::parallel_for(tbb::blocked_range<uint32_t>(0, fans, kGrain), [&](const tbb::blocked_range<uint32_t>& r) {
+        for (uint32_t fan = r.begin(); fan < r.end(); ++fan)
+            std::sort(mFanRows.begin() + mFanOffsets[fan], mFanRows.begin() + mFanOffsets[fan + 1]);
+    });
+}
+
+bool CornerNormalPlan::fits(const Mesh& mesh) const
+{
+    if (mesh.topologyId() != mTopology)
+        return false;
+    const std::span<const bool> hard = hardEdges(mesh, mOpts);
+    return hard.size() == mHard.size() && (hard.empty() || std::memcmp(hard.data(), mHard.data(), hard.size()) == 0);
+}
+
+void CornerNormalPlan::compute(const Mesh& mesh, std::span<glm::vec3> out)
+{
+    LILA_ZONE();
+
+    const std::span<const glm::dvec3> pos = mesh.positions();
+    const bool angles = mOpts.weight == NormalWeight::Angle || mOpts.weight == NormalWeight::AreaAngle;
+    const size_t faces = mFaceOffsets.size() - 1;
+    mArea.resize(faces);
+    if (angles)
+        mRowAngle.resize(rows());
+    // Face by face, so the positions each face needs are loaded once for its area and its corner angles.
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, faces, kGrain), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t f = r.begin(); f < r.end(); ++f)
+        {
+            const uint32_t first = mFaceOffsets[f], end = mFaceOffsets[f + 1];
+            const glm::dvec3 origin = pos[mRowPoint[first]];
+            glm::dvec3 n(0.0);
+            for (uint32_t row = first; row < end; ++row)
+            {
+                const glm::dvec3& p = pos[mRowPoint[row]];
+                const glm::dvec3& next = pos[mRowPoint[row + 1 == end ? first : row + 1]];
+                n += glm::cross(p - origin, next - origin);
+                if (angles)
+                    mRowAngle[row] = angleAt(p, pos[mRowPoint[row == first ? end - 1 : row - 1]], next);
+            }
+            mArea[f] = n;
+        }
+    });
+
+    const size_t fans = mFanOffsets.size() - 1;
+    mFanNormal.resize(fans);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, fans, kGrain), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t fan = r.begin(); fan < r.end(); ++fan)
+        {
+            glm::dvec3 sum(0.0);
+            for (uint32_t j = mFanOffsets[fan]; j < mFanOffsets[fan + 1]; ++j)
+            {
+                const uint32_t row = mFanRows[j];
+                sum += contribution(mArea[mRowFace[row]], mOpts.weight, [&] { return mRowAngle[row]; });
+            }
+            // Zero marks a degenerate fan, whose corners take their own face's normal.
+            const double len = glm::length(sum);
+            mFanNormal[fan] = len > 1e-300 ? glm::vec3(sum / len) : glm::vec3(0.0f);
+        }
+    });
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, rows(), kGrain), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t row = r.begin(); row < r.end(); ++row)
+        {
+            const glm::vec3 n = mFanNormal[mRowFan[row]];
+            out[row] = n != glm::vec3(0.0f) ? n : glm::vec3(safeNormalize(mArea[mRowFace[row]], glm::dvec3(0.0, 1.0, 0.0)));
+        }
+    });
 }
 
 std::vector<glm::vec3> weightedNormals(const Mesh& mesh, const WeightedNormalOptions& opts)

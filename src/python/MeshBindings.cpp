@@ -400,24 +400,34 @@ struct CachedFloats
 };
 std::map<std::pair<const geo::Mesh*, std::string>, CachedFloats> gDerivedCache;
 
-/** The cached array of this kind for m, or compute(layout) gathered into face-vertex order (comps floats per corner) and cached. */
-template <class F> FloatsPtr derived(const scene::MeshPtr& m, const std::string& kind, size_t comps, F&& compute)
+/** The cached array of this kind for m, or make() run without the GIL and cached. */
+template <class F> FloatsPtr cachedOr(const scene::MeshPtr& m, const std::string& kind, F&& make)
 {
     std::erase_if(gDerivedCache, [](const auto& e) { return e.second.mesh.expired(); });
     if (auto it = gDerivedCache.find({m.get(), kind}); it != gDerivedCache.end())
         return it->second.floats;
-    auto out = std::make_shared<FaceVertexFloats>();
+    std::shared_ptr<FaceVertexFloats> out;
     {
         nb::gil_scoped_release nogil;
+        out = make();
+    }
+    gDerivedCache[{m.get(), kind}] = {m, out};
+    return out;
+}
+
+/** The cached array of this kind for m, or compute(layout) gathered into face-vertex order (comps floats per corner) and cached. */
+template <class F> FloatsPtr derived(const scene::MeshPtr& m, const std::string& kind, size_t comps, F&& compute)
+{
+    return cachedOr(m, kind, [&] {
+        auto out = std::make_shared<FaceVertexFloats>();
         FaceLayout l = faceLayout(*m);
         Dest d(l.offsets.back(), comps, Scalar::F32);
         gatherCorners(d, *m, l, compute());
         out->data = d.take();
         out->count = l.offsets.back();
         out->comps = comps;
-    }
-    gDerivedCache[{m.get(), kind}] = {m, out};
-    return out;
+        return out;
+    });
 }
 
 /** A cached array as a read-only view, or copied into out=. */
@@ -446,11 +456,27 @@ std::span<const glm::vec3> cornerNormalsOf(const geo::Mesh& m, std::vector<glm::
     return storage;
 }
 
+/** The last normals plan made: edits that only move points (a new mesh snapshot each time) keep using it. */
+std::unique_ptr<geo::CornerNormalPlan> gNormalPlan;
+
 nb::object normalsArray(const std::string& mesh, bool base, nb::handle out)
 {
     scene::MeshPtr m = meshOf(mesh, base, "normals_array");
-    std::vector<glm::vec3> storage;
-    FloatsPtr n = derived(m, "normal", 3, [&] { return reinterpret_cast<const float*>(cornerNormalsOf(*m, storage).data()); });
+    FloatsPtr n;
+    const std::span<const glm::vec3> stored = m->cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
+    if (stored.size() == m->cornerCapacity())
+        n = derived(m, "normal", 3, [&] { return reinterpret_cast<const float*>(stored.data()); });
+    else
+        n = cachedOr(m, "normal", [&] {
+            if (!gNormalPlan || !gNormalPlan->fits(*m))
+                gNormalPlan = std::make_unique<geo::CornerNormalPlan>(*m);
+            auto f = std::make_shared<FaceVertexFloats>();
+            f->count = gNormalPlan->rows();
+            f->comps = 3;
+            f->data = std::make_shared_for_overwrite<std::byte[]>(std::max<size_t>(1, f->count * sizeof(glm::vec3)));
+            gNormalPlan->compute(*m, {reinterpret_cast<glm::vec3*>(f->data.get()), f->count});
+            return f;
+        });
     return derivedResult(n, "normals_array", out);
 }
 

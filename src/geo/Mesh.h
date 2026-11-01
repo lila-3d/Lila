@@ -85,6 +85,11 @@ public:
     Index numFaces() const { return mNumFaces; }
     Index numCorners() const { return mNumCorners; }
     bool hasDeleted() const;
+    /**
+     * Same for every copy of this mesh until one of them changes its points, edges, faces or corners (moving points
+     * keeps it), so data derived from topology alone can be reused across copies. Unique per process.
+     */
+    uint64_t topologyId() const { return mTopologyId; }
     /** Approximate heap bytes held: element arrays and attribute layers. */
     size_t memoryBytes() const;
     bool empty() const { return mNumPoints == 0; }
@@ -307,6 +312,8 @@ private:
     void radialInsert(Index c, Index e);
     void radialRemove(Index c);
     void killCorner(Index c);
+    static uint64_t newTopologyId();
+    void touchTopology() { mTopologyId = newTopologyId(); }
 
     UninitVector<glm::dvec3> mPointPos;
     UninitVector<Index> mPointEdge;
@@ -319,6 +326,7 @@ private:
     Index mNumFaces = 0;
     Index mNumCorners = 0;
     Index mLastSplitEdge = kInvalid;
+    uint64_t mTopologyId = newTopologyId();
     AttributeSet mAttrs[size_t(Domain::Count)];
     std::vector<std::string> mMaterialNames;
     ColorSetInfo mColorSetInfo;
