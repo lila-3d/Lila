@@ -236,3 +236,30 @@ TEST_CASE("normals: parallel tangents match one call")
     const std::vector<glm::vec4> one1 = cornerTangents(many, tm, n, "uv0", false);
     CHECK(par == one1);
 }
+
+TEST_CASE("normals: parallel tangents on one connected mesh match one call")
+{
+    Mesh m = makePlane({100.0, 100.0, 300, 300});
+    // A second plane edge to edge, its own points on the same positions, so MikkTSpace welds across the seam.
+    Mesh side = makePlane({100.0, 100.0, 300, 300});
+    for (glm::dvec3& p : side.positions())
+        p.x += 100.0;
+    m.append(side);
+    for (glm::dvec3& p : m.positions())
+        p.y = 3.0 * std::sin(p.x * 0.2) * std::cos(p.z * 0.3);
+    std::span<glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+    REQUIRE(!uv.empty());
+    for (Index c = 0; c < m.cornerCapacity(); ++c)
+        uv[c] *= glm::vec2(1.0f, c % 7 == 0 ? -1.0f : 1.0f); // mirrored corners: mixed bitangent signs
+
+    const Triangulation tris = triangulate(m);
+    REQUIRE(tris.triangleCount() > (1u << 17));
+    const std::vector<glm::vec3> n = cornerNormals(m);
+    const std::vector<glm::vec4> par = cornerTangents(m, tris, n);
+    const std::vector<glm::vec4> one = cornerTangents(m, tris, n, "uv0", false);
+    REQUIRE(par.size() == one.size());
+    size_t differ = 0;
+    for (size_t c = 0; c < par.size(); ++c)
+        differ += par[c] != one[c];
+    CHECK(differ == 0);
+}

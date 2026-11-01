@@ -8,8 +8,12 @@
 #include <tbb/blocked_range.h>
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_sort.h>
+#include <tbb/task_arena.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -345,6 +349,7 @@ struct MikkData
     std::span<const glm::vec3> normals;
     std::span<const glm::vec2> uv;
     std::vector<glm::vec4>* out;
+    std::span<const char> own; // per triangle: write its tangents; empty writes all
 
     Index corner(int face, int vert) const { return tris->corners[size_t(face) * 3 + vert]; }
 };
@@ -393,68 +398,72 @@ void mikkTexCoord(const SMikkTSpaceContext* ctx, float out[], const int face, co
 void mikkSetBasic(const SMikkTSpaceContext* ctx, const float t[], const float sign, const int face, const int vert)
 {
     const MikkData& d = data(ctx);
+    if (!d.own.empty() && !d.own[face])
+        return;
     (*d.out)[d.corner(face, vert)] = glm::vec4(t[0], t[1], t[2], sign);
 }
-/**
- * Groups triangles into batches of whole point-connected parts, each batch at least minTriangles
- * unless it is the last. One batch when everything is connected.
- */
-std::vector<Triangulation> splitByPoints(const Mesh& mesh, const Triangulation& tris, Index minTriangles)
+
+/** Per point, one representative of every point at the same float position. MikkTSpace welds by value, not by id. */
+std::vector<Index> weldedPoints(const Mesh& mesh)
 {
     LILA_ZONE();
 
-    const Index n = tris.triangleCount();
-    if (n < 2 * minTriangles)
-        return {};
-    std::vector<Index> parent(mesh.pointCapacity());
-    std::iota(parent.begin(), parent.end(), Index(0));
-    auto find = [&](Index i) {
-        while (parent[i] != i)
-            i = parent[i] = parent[parent[i]];
-        return i;
+    auto key = [&](Index p) {
+        const glm::vec3 f = glm::vec3(mesh.position(p)) + 0.0f; // -0 and 0 weld
+        return std::array<uint32_t, 3>{std::bit_cast<uint32_t>(f.x), std::bit_cast<uint32_t>(f.y), std::bit_cast<uint32_t>(f.z)};
     };
-    for (Index t = 0; t < n; ++t)
+    std::vector<Index> order;
+    order.reserve(mesh.numPoints());
+    for (Index p = 0; p < mesh.pointCapacity(); ++p)
+        if (mesh.pointValid(p))
+            order.push_back(p);
+    tbb::parallel_sort(order.begin(), order.end(), [&](Index a, Index b) { return key(a) < key(b); });
+    std::vector<Index> weld(mesh.pointCapacity(), kInvalid);
+    for (size_t i = 0; i < order.size(); ++i)
+        weld[order[i]] = i > 0 && key(order[i]) == key(order[i - 1]) ? weld[order[i - 1]] : order[i];
+    return weld;
+}
+
+/** Triangles around each welded point, CSR: point w's triangles are tris[offsets[w], offsets[w + 1]), ascending. */
+struct PointTriangles
+{
+    std::vector<uint32_t> offsets;
+    std::vector<Index> tris;
+};
+
+PointTriangles pointTriangles(const Mesh& mesh, const Triangulation& tris, std::span<const Index> weld)
+{
+    LILA_ZONE();
+
+    PointTriangles a;
+    a.offsets.assign(size_t(mesh.pointCapacity()) + 1, 0);
+    const size_t n = tris.triangleCount();
+    for (size_t t = 0; t < n; ++t)
+        for (int k = 0; k < 3; ++k)
+            ++a.offsets[weld[mesh.cornerPoint(tris.corners[t * 3 + k])] + 1];
+    std::partial_sum(a.offsets.begin(), a.offsets.end(), a.offsets.begin());
+    a.tris.resize(a.offsets.back());
+    std::vector<uint32_t> fill(a.offsets.begin(), a.offsets.end() - 1);
+    for (size_t t = 0; t < n; ++t)
+        for (int k = 0; k < 3; ++k)
+            a.tris[fill[weld[mesh.cornerPoint(tris.corners[t * 3 + k])]]++] = Index(t);
+    return a;
+}
+
+/** Chunk boundaries in triangles, about size apart and never inside a face, so each corner is written by one chunk. */
+std::vector<Index> chunkBounds(const Triangulation& tris, Index size)
+{
+    const Index n = tris.triangleCount();
+    std::vector<Index> bounds{0};
+    for (Index t = size; t < n; t += size)
     {
-        const Index a = find(mesh.cornerPoint(tris.corners[size_t(t) * 3]));
-        for (int k = 1; k < 3; ++k)
-        {
-            const Index b = find(mesh.cornerPoint(tris.corners[size_t(t) * 3 + k]));
-            if (a != b)
-                parent[std::max(a, b)] = std::min(a, b);
-        }
+        while (t < n && tris.faces[t] == tris.faces[t - 1])
+            ++t;
+        if (t < n)
+            bounds.push_back(t);
     }
-    // Triangles per root, then roots packed into batches in id order.
-    std::vector<Index> rootTris(mesh.pointCapacity(), 0);
-    std::vector<Index> triRoot(n);
-    for (Index t = 0; t < n; ++t)
-    {
-        triRoot[t] = find(mesh.cornerPoint(tris.corners[size_t(t) * 3]));
-        ++rootTris[triRoot[t]];
-    }
-    std::vector<Index> batchOf(mesh.pointCapacity(), kInvalid);
-    Index batches = 0, fill = 0;
-    for (Index r = 0; r < mesh.pointCapacity(); ++r)
-    {
-        if (!rootTris[r])
-            continue;
-        if (fill >= minTriangles)
-        {
-            ++batches;
-            fill = 0;
-        }
-        batchOf[r] = batches;
-        fill += rootTris[r];
-    }
-    if (batches == 0)
-        return {};
-    std::vector<Triangulation> out(size_t(batches) + 1);
-    for (Index t = 0; t < n; ++t)
-    {
-        Triangulation& part = out[batchOf[triRoot[t]]];
-        part.corners.insert(part.corners.end(), tris.corners.begin() + size_t(t) * 3, tris.corners.begin() + size_t(t) * 3 + 3);
-        part.faces.push_back(tris.faces[t]);
-    }
-    return out;
+    bounds.push_back(n);
+    return bounds;
 }
 } // namespace
 
@@ -474,19 +483,58 @@ std::vector<glm::vec4> cornerTangents(const Mesh& mesh, const Triangulation& tri
     iface.m_getNormal = mikkNormal;
     iface.m_getTexCoord = mikkTexCoord;
     iface.m_setTSpaceBasic = mikkSetBasic;
-    auto run = [&](const Triangulation& part) {
-        MikkData d{&mesh, &part, normals, uv, &out};
+    auto run = [&](const Triangulation& part, std::span<const char> own) {
+        MikkData d{&mesh, &part, normals, uv, &out, own};
         SMikkTSpaceContext ctx{&iface, &d};
         genTangSpaceDefault(&ctx);
     };
 
-    // MikkTSpace only relates triangles through shared vertices, so parts sharing no point can run
-    // in parallel with the same result.
-    const std::vector<Triangulation> parts = parallel ? splitByPoints(mesh, tris, 1u << 16) : std::vector<Triangulation>{};
-    if (parts.size() <= 1)
-        run(tris);
-    else
-        tbb::parallel_for(size_t(0), parts.size(), [&](size_t i) { run(parts[i]); });
+    const Index n = tris.triangleCount();
+    const Index chunk = std::max<Index>(1u << 15, n / Index(4 * tbb::this_task_arena::max_concurrency()));
+    const std::vector<Index> bounds = parallel ? chunkBounds(tris, chunk) : std::vector<Index>{};
+    if (bounds.size() <= 2)
+    {
+        run(tris, {});
+        return out;
+    }
+
+    // A corner's tangent depends only on the triangles around its welded point. Each chunk runs with every triangle
+    // touching it, in the original order, and writes only its own corners: the same result as one call.
+    const std::vector<Index> weld = weldedPoints(mesh);
+    const PointTriangles around = pointTriangles(mesh, tris, weld);
+    tbb::parallel_for(size_t(0), bounds.size() - 1, size_t(1), [&](size_t c) {
+        const Index lo = bounds[c], hi = bounds[c + 1];
+        std::vector<Index> halo;
+        for (size_t i = size_t(lo) * 3; i < size_t(hi) * 3; ++i)
+        {
+            const Index w = weld[mesh.cornerPoint(tris.corners[i])];
+            for (uint32_t k = around.offsets[w]; k < around.offsets[w + 1]; ++k)
+                if (around.tris[k] < lo || around.tris[k] >= hi)
+                    halo.push_back(around.tris[k]);
+        }
+        std::sort(halo.begin(), halo.end());
+        halo.erase(std::unique(halo.begin(), halo.end()), halo.end());
+
+        Triangulation part;
+        std::vector<char> own;
+        const size_t count = size_t(hi - lo) + halo.size();
+        part.corners.reserve(count * 3);
+        part.faces.reserve(count);
+        own.reserve(count);
+        auto add = [&](Index t, bool mine) {
+            part.corners.insert(part.corners.end(), tris.corners.begin() + size_t(t) * 3, tris.corners.begin() + size_t(t) * 3 + 3);
+            part.faces.push_back(tris.faces[t]);
+            own.push_back(mine);
+        };
+        auto h = halo.begin();
+        for (; h != halo.end() && *h < lo; ++h)
+            add(*h, false);
+        for (Index t = lo; t < hi; ++t)
+            add(t, true);
+        for (; h != halo.end(); ++h)
+            add(*h, false);
+        run(part, own);
+    });
     return out;
 }
 

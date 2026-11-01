@@ -86,8 +86,8 @@ struct TangentOptions
 
 /**
  * MikkTSpace tangents per corner capacity (xyz tangent, w bitangent sign), the same as Unreal's,
- * computed on the given triangulation (the one used for export). Empty without the uv set. Parts of
- * the mesh that share no point run in parallel; the result is the same as one call.
+ * computed on the given triangulation (the one used for export). Empty without the uv set. Runs in
+ * parallel chunks, each with the triangles around it; the result is the same as one call.
  */
 LILA_SCENE_API std::vector<glm::vec4> cornerTangents(const Mesh& mesh, const Triangulation& tris, std::span<const glm::vec3> normals,
                                       std::string_view uvSet = "uv0", bool parallel = true);
