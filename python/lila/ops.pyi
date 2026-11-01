@@ -1066,6 +1066,28 @@ def bezierCurve(points: Sequence[Any] | None = None, handleL: Sequence[Any] | No
         name: Name; made unique. Short form n.
     """
 
+def blendConvert(*objects: Any, source: str | None = None, destination: str | None = None, force: bool | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, src: str | None = None, dst: str | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+    """Convert a Blender .blend file to a Lila scene: opened as its own scene, saved, and the scene left empty. Returns the destination, skipped features and warnings.
+
+    Args:
+        objects: source.
+        source: The .blend file. Short form src.
+        destination: The .lila or .lilaa to write; <file>.lila beside the source by default. Short form dst.
+        force: Discard unsaved changes in the current scene. Short form f. Default False.
+        namespace: Put every imported name in this namespace. Short form ns.
+        collections: Collections become groups holding their objects; off puts every object at the top. Default True.
+        materials: Create materials from the Principled BSDF and its image textures; packed images are written out. Default True.
+        skins: Rebuild Armature modifiers as skins from the vertex groups. Default True.
+        morphs: Rebuild shape keys as morphs. Default True.
+        animation: Import keyframed actions on objects, bones, shape keys, camera lenses and light power. Short form anim. Default True.
+        modifiers: Rebuild the modifiers Lila has (mirror, subdivision, bevel, array, triangulate, solidify, decimate, weighted normals) live. Default True.
+        hidden: Import objects and collections hidden in Blender's viewport, hidden; off skips them. Default True.
+        evaluate: off; unsupported: objects with modifiers Lila can't rebuild get Blender's evaluated mesh, baked; all: every object with modifiers does. Runs an installed Blender in the background. One of 'off', 'unsupported', 'all'. Default 'off'.
+        blenderPath: The Blender executable for evaluate; the newest installed one when empty.
+        setPlayback: Set the scene fps and playback range from the file. Default True.
+        textureDir: Where packed images are written; <file>.textures beside the .blend when empty.
+    """
+
 def blendCurve(*objects: Any, continuityA: str | None = None, continuityB: str | None = None, bulgeA: float | None = None, bulgeB: float | None = None, endA: str | None = None, endB: str | None = None, parameterA: float | None = None, parameterB: float | None = None, flipA: bool | None = None, flipB: bool | None = None, mesh: str | None = None, edge: int | None = None, edgeT: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ca: str | None = None, cb: str | None = None, ba: float | None = None, bb: float | None = None, pa: float | None = None, pb: float | None = None, m: str | None = None, e: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Bridge two curves with a blend curve, live: G0 position, G1 tangent, G2 curvature or G3 curvature-rate continuity at each end, with bulge. Joins the nearest ends unless endA/endB or parameterA/parameterB say otherwise; mesh= and edge= blend to a mesh border instead of the second curve. Returns [curve, curveBlend].
 
@@ -1086,6 +1108,58 @@ def blendCurve(*objects: Any, continuityA: str | None = None, continuityB: str |
         edgeT: Where along the edge, 0 to 1. Default 0.5.
         constructionHistory: Keep the history node so the result stays live. Short form ch. Default True.
         name: Name of the blend curve. Short form n.
+    """
+
+def blendImport(*objects: Any, path: str | None = None, parent: str | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+    """Import a Blender .blend file into the scene, without Blender: collections, objects, meshes (UVs, colors, sharp edges, creases, attributes), materials with their image textures, cameras, lights, curves, collection instances, armatures with skins, shape keys, animation and the modifiers Lila has. Anything it can't convert is reported (report=True returns the lists), and objects with modifiers it dropped are flagged as issues.
+
+    Args:
+        objects: path.
+        path: The .blend file (or pass it first).
+        parent: Parent the imported roots under this node. Short form p.
+        namespace: Put every imported name in this namespace. Short form ns.
+        collections: Collections become groups holding their objects; off puts every object at the top. Default True.
+        materials: Create materials from the Principled BSDF and its image textures; packed images are written out. Default True.
+        skins: Rebuild Armature modifiers as skins from the vertex groups. Default True.
+        morphs: Rebuild shape keys as morphs. Default True.
+        animation: Import keyframed actions on objects, bones, shape keys, camera lenses and light power. Short form anim. Default True.
+        modifiers: Rebuild the modifiers Lila has (mirror, subdivision, bevel, array, triangulate, solidify, decimate, weighted normals) live. Default True.
+        hidden: Import objects and collections hidden in Blender's viewport, hidden; off skips them. Default True.
+        evaluate: off; unsupported: objects with modifiers Lila can't rebuild get Blender's evaluated mesh, baked; all: every object with modifiers does. Runs an installed Blender in the background. One of 'off', 'unsupported', 'all'. Default 'off'.
+        blenderPath: The Blender executable for evaluate; the newest installed one when empty.
+        setPlayback: Set the scene fps and playback range from the file. Default True.
+        textureDir: Where packed images are written; <file>.textures beside the .blend when empty.
+        report: Return the import report instead of just the names. Default False.
+        select: Select the imported roots. Default True.
+    """
+
+def blendInfo(*objects: Any, path: str | None = None) -> Any:
+    """Read a Blender .blend file without importing it: the Blender version that saved it, its datablocks by type, object types, the modifiers, constraints and nodes it uses, linked libraries and packed images.
+
+    Args:
+        objects: path.
+        path: The .blend file (or pass it first).
+    """
+
+def blendOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+    """Open a Blender .blend file as a new, untitled scene (save it to keep it as .lila). Not undoable. Returns the import report.
+
+    Args:
+        objects: path.
+        path: The .blend file (or pass it first).
+        force: Discard unsaved changes. Short form f. Default False.
+        namespace: Put every imported name in this namespace. Short form ns.
+        collections: Collections become groups holding their objects; off puts every object at the top. Default True.
+        materials: Create materials from the Principled BSDF and its image textures; packed images are written out. Default True.
+        skins: Rebuild Armature modifiers as skins from the vertex groups. Default True.
+        morphs: Rebuild shape keys as morphs. Default True.
+        animation: Import keyframed actions on objects, bones, shape keys, camera lenses and light power. Short form anim. Default True.
+        modifiers: Rebuild the modifiers Lila has (mirror, subdivision, bevel, array, triangulate, solidify, decimate, weighted normals) live. Default True.
+        hidden: Import objects and collections hidden in Blender's viewport, hidden; off skips them. Default True.
+        evaluate: off; unsupported: objects with modifiers Lila can't rebuild get Blender's evaluated mesh, baked; all: every object with modifiers does. Runs an installed Blender in the background. One of 'off', 'unsupported', 'all'. Default 'off'.
+        blenderPath: The Blender executable for evaluate; the newest installed one when empty.
+        setPlayback: Set the scene fps and playback range from the file. Default True.
+        textureDir: Where packed images are written; <file>.textures beside the .blend when empty.
     """
 
 def borderBlend(segments: int | None = None, tensionA: float | None = None, tensionB: float | None = None, flip: bool | None = None, profiles: Sequence[Any] | None = None, merge: bool | None = None, meshA: str | None = None, edgesA: Sequence[Any] | None = None, meshB: str | None = None, edgesB: Sequence[Any] | None = None, constructionHistory: bool | None = None, name: str | None = None, *, s: int | None = None, ta: float | None = None, tb: float | None = None, ch: bool | None = None, n: str | None = None) -> Any:
@@ -3277,6 +3351,18 @@ def gnSaveGroup(*objects: Any, scope: str | None = None) -> Any:
     Args:
         objects: group.
         scope: user or workspace. Default 'user'.
+    """
+
+def gnSendImposter(*objects: Any, contentPath: str | None = None, folder: str | None = None, name: str | None = None, modifier: str | None = None, wait: bool | None = None, w: bool | None = None) -> Any:
+    """Bake an Imposter node (as gnBakeImposter) and import it into the connected Unreal project: the card mesh, both atlases and a material instance of LilaLink's imposter material, which turns the card to the camera's nearest view. Returns {files, contentPath}, plus Unreal's {assets, warnings, errors} with wait=True.
+
+    Args:
+        objects: group node.
+        contentPath: The card mesh in Unreal; defaults to /Game/Lila/Imposters/SM_<name>.
+        folder: Where to write the bake; defaults to imposters/ next to the scene.
+        name: File base name; defaults to the mesh's.
+        modifier: The modifier to evaluate when several meshes run the group; defaults to the first.
+        wait: Block until Unreal finishes and return its reply. Short form w. Default False.
     """
 
 def gnSetActiveViewer(*objects: Any) -> Any:
