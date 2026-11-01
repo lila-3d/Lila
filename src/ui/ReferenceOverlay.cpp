@@ -243,6 +243,7 @@ const HudButton kHud[] = {
     {"flipH", "flip-vertical", "Flip H", 0, "Mirror the image left to right"},
     {"flipV", "flip-horizontal", "Flip V", 0, "Mirror the image top to bottom"},
     {"ghost", "ghost", "Ghost", 0, "Draw the model see-through while this overlay shows"},
+    {"hide", "eye", "Hide", 0, "Hide or show this overlay alone (H). Hidden overlays stay listed in the Outliner"},
     {"bind", "pin", "Bind", 1, "Tie the overlay to this camera angle: it shows only from here and fades as you orbit away. Click again to unbind"},
     {"goto", "camera", "Go to View", 1, "Put the camera back at the angle the overlay is bound to"},
     {"lens", "aperture", "Lens", 1, "Set the view's lens to the photo's focal length, so the perspective matches"},
@@ -342,6 +343,7 @@ void drawKeys(OverlayPainter& p, const ViewInfo& view)
         {"Wheel over the image", "Opacity"},
         {"Delete", "Remove"},
         {"Ctrl+D", "Duplicate"},
+        {"H", "Hide or show it"},
         {"Esc, or click outside", "Done"},
         {"", ""},
         {o + " tap", "Hide or show this view's overlays"},
@@ -411,6 +413,11 @@ void drawHud(OverlayPainter& p, const ViewInfo& view, const Overlay& o)
         }
         else if (std::string_view(kHud[i].id) == "ghost")
             on = o.ghost;
+        else if (std::string_view(kHud[i].id) == "hide")
+        {
+            iconName = o.visible ? "eye" : "eye-off";
+            label = o.visible ? "Hide" : "Show";
+        }
         else if (std::string_view(kHud[i].id) == "bind")
             on = o.bound.set;
         else if (std::string_view(kHud[i].id) == "flipH")
@@ -690,6 +697,12 @@ void hudAction(const std::string& button, const std::string& view)
         uncrop(id);
     else if (button == "docs")
         docs::open("reference-images");
+    else if (button == "hide")
+    {
+        const bool show = !o->visible;
+        editUndoable(id, show ? "Show Reference Overlay" : "Hide Reference Overlay", [show](Overlay& ov) { ov.visible = show; });
+        viewportToast::showActive(show ? "Reference overlay shown" : "Reference overlay hidden: H or Show brings it back");
+    }
     else if (button == "ghost")
         editUndoable(id, "Reference Overlay Ghost", [](Overlay& ov) { ov.ghost = !ov.ghost; });
     else if (button == "bind")
@@ -733,9 +746,10 @@ public:
     using QObject::QObject;
     bool eventFilter(QObject* obj, QEvent* e) override
     {
-        if (e->type() != QEvent::KeyPress || !state().adjust || QApplication::activeModalWidget())
+        if (e->type() != QEvent::KeyPress || !state().adjust || QApplication::activeModalWidget() || typing())
             return QObject::eventFilter(obj, e);
         const int key = static_cast<QKeyEvent*>(e)->key();
+        const Qt::KeyboardModifiers mods = static_cast<QKeyEvent*>(e)->modifiers() & ~Qt::KeypadModifier;
         if (key == Qt::Key_Escape)
         {
             setAdjust(false);
@@ -746,12 +760,25 @@ public:
             hudAction("remove", state().adjustView);
             return true;
         }
-        if (key == Qt::Key_D && static_cast<QKeyEvent*>(e)->modifiers() == Qt::ControlModifier)
+        if (key == Qt::Key_D && mods == Qt::ControlModifier)
         {
             hudAction("duplicate", state().adjustView);
             return true;
         }
+        if (key == Qt::Key_H && mods == Qt::NoModifier)
+        {
+            hudAction("hide", state().adjustView);
+            return true;
+        }
         return QObject::eventFilter(obj, e);
+    }
+
+private:
+    /** Keys go to a text field being typed in, not to the overlay. */
+    static bool typing()
+    {
+        QWidget* w = QApplication::focusWidget();
+        return w && (w->inherits("QLineEdit") || w->inherits("QTextEdit") || w->inherits("QPlainTextEdit") || w->inherits("QAbstractSpinBox"));
     }
 };
 
@@ -1526,7 +1553,7 @@ void install(std::function<ViewportWidget*()> activeView)
     registerActions();
     for (const HudButton& b : kHud)
         overlayIcons::add(b.icon, {.tabler = b.icon});
-    for (const char* name : {"stack-back", "contrast", "vector"})
+    for (const char* name : {"stack-back", "contrast", "vector", "eye-off"})
         overlayIcons::add(name, {.tabler = name});
     viewportHooks::addDrawer("lila.referenceOverlays", draw);
     viewportHooks::setDragHook("referenceOverlays", {.press = pressDrag, .move = moveDrag, .release = releaseDrag});
@@ -1597,7 +1624,9 @@ void install(std::function<ViewportWidget*()> activeView)
                     return;
                 m->addAction(icon("adjustments"), "Adjust", [id] { adjustOverlay(id); });
                 m->addAction(icon(o->visible ? "eye-off" : "eye"), o->visible ? "Hide" : "Show",
-                             [id, on = !o->visible] { runCommand("referenceOverlay", {{"edit", id}, {"visible", on}}); });
+                             [id, on = !o->visible] {
+                                 editUndoable(id, on ? "Show Reference Overlay" : "Hide Reference Overlay", [on](Overlay& ov) { ov.visible = on; });
+                             });
                 m->addAction(icon("copy"), "Duplicate", [id] { duplicate(id); });
                 m->addAction(icon("crop"), "Show Full Image", [id] { uncrop(id); });
                 m->addSeparator();
