@@ -8,6 +8,7 @@
 #include "render/DrawBatches.h"
 #include "render/Environment.h"
 #include "render/GpuImage.h"
+#include "render/GpuProfile.h"
 #include "render/HdrImage.h"
 #include "render/DisplayOptions.h"
 #include "render/Surface.h"
@@ -3877,6 +3878,30 @@ struct Renderer::Impl
     }
     bool presentModeLogged = false;
 
+    /** Per-frame numbers for a performance trace, from the last frame the GPU finished. */
+    void plotFrame(const Renderer::FrameStats& t)
+    {
+        if (!LILA_PROFILER_CONNECTED())
+            return;
+        LILA_PLOT("Viewport GPU ms", t.gpuMs);
+        LILA_PLOT("Viewport AO GPU ms", t.aoMs);
+        LILA_PLOT("Viewport record CPU ms", t.cpuMs);
+        LILA_PLOT("Mesh draw calls", int64_t(t.meshDrawCalls));
+        LILA_PLOT("Mesh instances", int64_t(t.meshInstances));
+        if (vk.memoryBudget)
+        {
+            VmaBudget budgets[VK_MAX_MEMORY_HEAPS];
+            vmaGetHeapBudgets(vk.allocator, budgets);
+            const VkPhysicalDeviceMemoryProperties* mem = nullptr;
+            vmaGetMemoryProperties(vk.allocator, &mem);
+            uint64_t used = 0;
+            for (uint32_t h = 0; h < mem->memoryHeapCount; ++h)
+                if (mem->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                    used += budgets[h].usage;
+            LILA_PLOT("VRAM used MB", double(used) / (1024.0 * 1024.0));
+        }
+    }
+
     /** With the frame's fence signalled: what its timestamps measured. */
     void readTimings(Viewport& v, Frame& f)
     {
@@ -3924,14 +3949,23 @@ struct Renderer::Impl
         }
 
         Frame& f = v.frames[v.frameIndex];
-        vkWaitForFences(vk.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        {
+            LILA_ZONE_N("Wait for frame in flight");
+            vkWaitForFences(vk.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+        }
         f.feedback.collect();
         freeStaging(f);
         readTimings(v, f);
+        gpuProfile::collect();
         GpuImage::collectGarbage(vk);
 
         uint32_t imageIndex = 0;
-        VkResult r = v.offscreen ? VK_SUCCESS : vkAcquireNextImageKHR(vk.device, v.swapchain, UINT64_MAX, f.acquired, VK_NULL_HANDLE, &imageIndex);
+        VkResult r = VK_SUCCESS;
+        if (!v.offscreen)
+        {
+            LILA_ZONE_N("Acquire swapchain image");
+            r = vkAcquireNextImageKHR(vk.device, v.swapchain, UINT64_MAX, f.acquired, VK_NULL_HANDLE, &imageIndex);
+        }
         if (r == VK_ERROR_OUT_OF_DATE_KHR)
         {
             v.needsRecreate = true;
@@ -4008,6 +4042,9 @@ struct Renderer::Impl
             timestamp(cmd, f, 0);
             f.timed = true;
         }
+        gpuProfile::Sections gpuFrame(cmd), gpuPass(cmd);
+        LILA_GPU_SECTION(gpuFrame, "Viewport frame");
+        LILA_GPU_SECTION(gpuPass, "Uploads");
         ++frameCounter;
         prepareTextures(cmd, f, s);
         if (frameUsesVt && frameTableAddress && f.feedback.begin(vk, cmd, int(v.extent.width), int(v.extent.height), frameCounter))
@@ -4087,12 +4124,14 @@ struct Renderer::Impl
         const bool rtShadow = !frameRtLights.empty() && rtaoSetLayout && !s.xray && !s.externalScene && anyShaded(s);
         const bool prepass = (ao && !aoFast) || (post && s.outline && prepassPipeline && anyShaded(s) && !s.xray) || bevel || rtShadow;
         timestamp(cmd, f, 1);
+        LILA_GPU_SECTION(gpuPass, "Shadow maps");
         recordShadows(cmd, s);
         const auto aoStart = std::chrono::steady_clock::now();
         frameBevel = false;
         frameRtShadow = false;
         if (prepass)
         {
+            LILA_GPU_SECTION(gpuPass, "Prepass and AO");
             recordAo(cmd, f, v, s, vpScene, ao && !aoFast);
             if (bevel)
                 frameBevel = recordBevel(cmd, f, v, s, vpScene);
@@ -4121,6 +4160,7 @@ struct Renderer::Impl
         }
         v.timing.aoCpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - aoStart).count();
         timestamp(cmd, f, 2);
+        LILA_GPU_SECTION(gpuPass, "Scene");
 
         constexpr auto colorStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
         constexpr auto colorWrite = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
@@ -4264,6 +4304,7 @@ struct Renderer::Impl
         vkCmdEndRendering(cmd);
 
         // The scene becomes the compose pass's input, through the temporal history when that is on.
+        LILA_GPU_SECTION(gpuPass, "Temporal AA and post");
         const bool depthIsAo = !msaa && aoFast;
         const VkImage frameDepth = depthIsAo ? v.aoDepth.image : v.depth.image;
         const VkImageView frameDepthView = depthIsAo ? v.aoDepth.view : v.depth.view;
@@ -4312,6 +4353,7 @@ struct Renderer::Impl
         const PostResult postResult = recordPostStack(cmd, f, v, s, composeInput);
 
         // The frame: the composed scene, then lines and overlays depth tested against the scene's depth.
+        LILA_GPU_SECTION(gpuPass, "Compose and overlays");
         VkRenderingAttachmentInfo frameColor{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         frameColor.imageView = msaa ? v.color.view : v.views[imageIndex];
         frameColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -4474,6 +4516,8 @@ struct Renderer::Impl
         vkCmdEndRendering(cmd);
         if (f.feedback.active())
             f.feedback.end(vk, cmd);
+        gpuPass.end();
+        gpuFrame.end();
         timestamp(cmd, f, 3);
         v.timing.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
         v.timing.meshDrawCalls = frameMeshDraws;
@@ -4507,7 +4551,10 @@ struct Renderer::Impl
         pi.swapchainCount = 1;
         pi.pSwapchains = &v.swapchain;
         pi.pImageIndices = &imageIndex;
-        r = vkQueuePresentKHR(vk.queue, &pi);
+        {
+            LILA_ZONE_N("Present");
+            r = vkQueuePresentKHR(vk.queue, &pi);
+        }
         v.frameIndex = (v.frameIndex + 1) % kFramesInFlight;
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
         {
@@ -5404,6 +5451,7 @@ struct Renderer::Impl
                 };
                 bool retry = render(v, s, latch);
                 LILA_FRAME_MARK();
+                plotFrame(v.timing);
                 lock.lock();
                 ++v.timing.frames;
                 v.stats = v.timing;
@@ -5455,6 +5503,7 @@ bool Renderer::start()
     if (m->vk.properties.limits.maxPushConstantsSize < 256)
         log::warn("render: GPU push constant limit is {} bytes; grid may not draw", m->vk.properties.limits.maxPushConstantsSize);
     m->initDescriptors();
+    gpuProfile::start(m->vk);
     m->quit = false;
     m->started = true;
     m->thread = std::thread([this] { m->loop(); });
@@ -5473,6 +5522,7 @@ void Renderer::stop()
     m->thread.join();
     for (const auto& hook : m->stopHooks)
         hook(m->vk);
+    gpuProfile::stop();
     compute::sharedPipelines().clear(m->vk);
     GpuImage::releaseAll(m->vk);
     m->destroyPipelines();

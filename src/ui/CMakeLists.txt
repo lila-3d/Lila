@@ -132,6 +132,7 @@ lila_module(lila_ui UI
     PreferencesDialog.cpp PreferencesDialog.h
     Telemetry.cpp Telemetry.h
     SupportBundle.cpp SupportBundle.h
+    PerfTrace.cpp PerfTrace.h
     Updater.cpp Updater.h
     WelcomeNews.cpp WelcomeNews.h
     ProgressOverlay.cpp ProgressOverlay.h

@@ -43,6 +43,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | nanobind | BSD-3-Clause | Wenzel Jakob | https://github.com/wjakob/nanobind |
 | Zstandard | BSD-3-Clause (dual GPL-2.0, BSD chosen) | Meta Platforms, Inc. and affiliates | https://github.com/facebook/zstd |
 | Tracy Profiler | BSD-3-Clause | Bartosz Taudul | https://github.com/wolfpld/tracy |
+| Capstone (tracy-capture) | BSD-3-Clause | Nguyen Anh Quynh | https://github.com/capstone-engine/capstone |
 | doctest (tests only, not distributed) | MIT | Viktor Kirilov | https://github.com/doctest/doctest |
 | MikkTSpace | Zlib | Morten S. Mikkelsen | `src/geo/third_party/mikktspace` |
 | Dem Bones | BSD-3-Clause | Electronic Arts Inc. | `third_party/dem-bones` (licence in `third_party/dem-bones/LICENSE.md`), from https://github.com/electronicarts/dem-bones at 09b899b |

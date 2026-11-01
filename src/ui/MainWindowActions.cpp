@@ -1,6 +1,7 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/CameraBookmarks.h"
 #include "ui/RenderOutputDialog.h"
+#include "ui/PerfTrace.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 #include "ui/ViewportToast.h"
@@ -364,6 +365,7 @@ void MainWindow::registerActions()
                   "Looks for a newer Lila and offers to install it when Lila closes."});
     actions::add({"help.supportBundle", "Save Support Bundle...", "Help", [this] { support::showDialog(this); }, nullptr,
                   "Saves a zip with your system, this session's log, recent crash reports and prefs, to attach to a bug report."});
+    perfTrace::registerAll(this);
     actions::add({"help.telemetry", "Telemetry and Privacy...", "Help", [this] { showTelemetrySettings(this); }, nullptr,
                   "Choose whether Lila sends anonymous usage statistics and crash reports, and see what's sent."});
 }

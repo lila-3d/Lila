@@ -12,6 +12,7 @@ lila_module(lila_render UI
     DrawBatches.cpp
     Environment.cpp
     GpuImage.cpp
+    GpuProfile.cpp
     HdrImage.cpp
     MeshMaps.cpp
     PaintCommands.cpp

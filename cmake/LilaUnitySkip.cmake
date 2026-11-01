@@ -128,6 +128,7 @@ set(LILA_UNITY_SKIP
     src/ui/MorphPanel.cpp
     src/ui/OffsetsPanel.cpp
     src/ui/Outliner.cpp
+    src/ui/PerfTrace.cpp
     src/ui/PoseLibrary.cpp
     src/ui/RetopoPolesTool.cpp
     src/ui/SculptPanel.cpp

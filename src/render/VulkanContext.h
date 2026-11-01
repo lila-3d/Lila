@@ -46,6 +46,8 @@ public:
     bool fragmentBarycentric = false;
     /** VK_EXT_memory_budget: the allocator tracks per-heap budgets (vmaGetHeapBudgets). */
     bool memoryBudget = false;
+    /** VK_KHR_ or VK_EXT_calibrated_timestamps (whichever the device has) with hostQueryReset, for the profiler's GPU zones; null without. */
+    const char* calibratedTimestamps = nullptr;
     uint32_t asScratchAlignment = 256;
 
 private:

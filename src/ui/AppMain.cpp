@@ -3,6 +3,7 @@
 #include "bake/Bake.h"
 #include "bake/BakePipeline.h"
 #include "bake/Maps.h"
+#include "core/Profile.h"
 #include "core/ImageIO.h"
 #include "core/Paths.h"
 #include "core/Version.h"
@@ -223,6 +224,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
 {
     QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     QApplication app(argc, argv);
+    LILA_THREAD_NAME("Main");
     QApplication::setApplicationName("Lila");
     QApplication::setApplicationVersion(version::number());
     QApplication::setOrganizationName("Lila");

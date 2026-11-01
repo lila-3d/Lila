@@ -194,6 +194,7 @@ json execute(std::string_view name, const json& call, CallSource source)
 {
     LILA_ZONE();
     LILA_ZONE_TEXT(name.data(), name.size());
+    LILA_MESSAGE(name.data(), name.size());
     assert(mainq::isMainThread());
 
     const CommandDef* def = find(name);

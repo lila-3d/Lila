@@ -243,6 +243,18 @@ bool VulkanContext::init(bool validation)
         devExts.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         memoryBudget = true;
     }
+    // The profiler's GPU zones: CPU and GPU clocks read together, and query resets from the host.
+    if (hasDeviceExtension(physical, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME))
+        calibratedTimestamps = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
+    else if (hasDeviceExtension(physical, VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME))
+        calibratedTimestamps = VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
+    if (calibratedTimestamps && f12Have.hostQueryReset)
+    {
+        devExts.push_back(calibratedTimestamps);
+        f12.hostQueryReset = VK_TRUE;
+    }
+    else
+        calibratedTimestamps = nullptr;
     descriptorIndexing = f12Have.descriptorIndexing && f12Have.runtimeDescriptorArray && f12Have.descriptorBindingPartiallyBound &&
                          f12Have.shaderSampledImageArrayNonUniformIndexing && f12Have.descriptorBindingSampledImageUpdateAfterBind &&
                          f12Have.descriptorBindingVariableDescriptorCount && f12Have.descriptorBindingUpdateUnusedWhilePending &&
