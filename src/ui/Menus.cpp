@@ -195,6 +195,14 @@ QAction* addActionRow(QMenu* menu, const std::string& id)
     qa->setIcon(icon(QString::fromStdString(actions::iconFor(id))));
     if (a)
         qa->setStatusTip(QString::fromStdString(a->doc));
+    auto syncCheck = [qa, id] {
+        const Action* now = actions::find(id);
+        qa->setCheckable(now && now->checked);
+        if (qa->isCheckable())
+            qa->setChecked(now->checked());
+    };
+    syncCheck();
+    QObject::connect(menu, &QMenu::aboutToShow, qa, syncCheck);
     QObject::connect(qa, &QAction::triggered, menu, [id, menu = QPointer<QMenu>(menu)] {
         if (shelves::addModifierHeld())
             shelves::addToCurrent(id);

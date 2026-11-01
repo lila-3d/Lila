@@ -95,6 +95,31 @@ TEST_CASE("the menu builder keeps QMenus in step with the registry")
     CHECK_FALSE(builder.menu("BuilderTest"));
 }
 
+TEST_CASE("menu rows tick actions that have a checked state and refresh it when the menu opens")
+{
+    bool on = false;
+    actions::add({.id = "test.tickToggle", .label = "Tick", .run = [&on] { on = !on; }, .doc = "Test toggle.", .checked = [&on] { return on; }});
+    QWidget host;
+    menus::MenuBuilder builder(&host, {});
+    menus::addMenu({.id = "TickTest"});
+    menus::addActions("TickTest", {"test.tickToggle", "edit.undo"});
+    builder.rebuild();
+    QMenu* menu = builder.menu("TickTest");
+    REQUIRE(menu);
+    REQUIRE(menu->actions().size() == 2);
+    QAction* tick = menu->actions()[0];
+    CHECK(tick->isCheckable());
+    CHECK_FALSE(tick->isChecked());
+    CHECK_FALSE(menu->actions()[1]->isCheckable());
+
+    on = true;
+    Q_EMIT menu->aboutToShow();
+    CHECK(tick->isChecked());
+
+    menus::removeMenu("TickTest");
+    actions::remove("test.tickToggle");
+}
+
 TEST_CASE("registered preference pages get a tab and their rows are searchable")
 {
     ext::Context ctx("prefsTestExtension");
