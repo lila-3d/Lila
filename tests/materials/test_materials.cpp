@@ -97,6 +97,14 @@ TEST_CASE("create, assign and undo")
     CHECK(slots(cube) == std::map<std::string, int>{{"M_Brick", 6}});
     run("undo");
     CHECK(slots(cube) == std::map<std::string, int>{{"M_Red", 6}});
+
+    run("rename", {{"args", {red, "M_Stone"}}});
+    CHECK(slots(cube) == std::map<std::string, int>{{"M_Stone", 6}});
+    run("undo");
+    CHECK(slots(cube) == std::map<std::string, int>{{"M_Red", 6}});
+
+    run("batchRename", {{"args", {red}}, {"suffix", "_Old"}});
+    CHECK(slots(cube) == std::map<std::string, int>{{"M_Red_Old", 6}});
 }
 
 TEST_CASE("slots survive modeling ops")

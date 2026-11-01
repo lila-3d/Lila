@@ -269,7 +269,7 @@ void registerCommands()
                         continue;
                     std::string at = graph().path(id);
                     if (a.get<bool>("fix"))
-                        want = guarded([&] { return graph().rename(id, want); });
+                        want = guarded([&] { return materials::rename(graph(), id, want); });
                     out.push_back({at, want});
                 }
                 return out;
@@ -388,7 +388,7 @@ void registerCommands()
             if (nodeNamed(target).referenceId())
                 throw CommandError("rename: '" + target + "' comes from a reference and keeps its name");
             NodeId id = nodeNamed(target).id();
-            guarded([&] { return graph().rename(id, newName); });
+            guarded([&] { return materials::rename(graph(), id, newName); });
             return graph().path(id);
         },
     });

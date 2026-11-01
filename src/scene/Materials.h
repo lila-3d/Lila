@@ -197,6 +197,9 @@ LILA_SCENE_API std::vector<Node*> all(Graph& g);
 /** Creates a material node named exactly `name` when it is free (else made unique). Undoable. */
 LILA_SCENE_API Node* create(Graph& g, std::string_view name);
 
+/** Renames any node like Graph::rename; a material's slots on every mesh follow it. Returns the name it got. */
+LILA_SCENE_API std::string rename(Graph& g, NodeId id, const std::string& name);
+
 /** Source channel (0 R, 1 G, 2 B) of occlusion, roughness and metallic in a packed map of this layout. */
 LILA_SCENE_API std::array<int, 3> packedChannels(material::PackedLayout layout);
 

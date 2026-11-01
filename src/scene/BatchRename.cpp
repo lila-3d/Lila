@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/Naming.h"
 
 #include <algorithm>
@@ -257,13 +258,13 @@ void registerBatchRenameCommands()
                 int temp = 0;
                 for (const Plan& p : plans)
                     if (p.status == "renamed" || p.status == "clash")
-                        g.rename(p.id, "lilaBatchRename" + std::to_string(++temp));
+                        materials::rename(g, p.id, "lilaBatchRename" + std::to_string(++temp));
                 for (Plan& p : plans)
                     if (p.status == "renamed" || p.status == "clash")
                     {
                         try
                         {
-                            p.to = g.rename(p.id, p.to);
+                            p.to = materials::rename(g, p.id, p.to);
                         }
                         catch (const std::invalid_argument& e)
                         {

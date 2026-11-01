@@ -381,6 +381,16 @@ Node* create(Graph& g, std::string_view name)
     return g.createNode(*t, name.empty() ? std::string_view("M_Material") : name, kNoNode, false);
 }
 
+std::string rename(Graph& g, NodeId id, const std::string& name)
+{
+    Node* n = g.node(id);
+    const std::string from = n->name();
+    std::string to = g.rename(id, name);
+    if (to != from && n->type().isA("material"))
+        renameSlots(g, from, to);
+    return to;
+}
+
 std::array<int, 3> packedChannels(PackedLayout layout)
 {
     if (layout == PackedLayout::MRO)
@@ -842,11 +852,7 @@ void registerCommands()
             if (a.positional.size() != 2 || !a.positional[0].is_string() || !a.positional[1].is_string())
                 throw CommandError("renameMaterial: give the material and its new name");
             Node& n = materialArg(g, a.positional[0].get<std::string>(), "renameMaterial");
-            std::string from = n.name();
-            std::string to = g.rename(n.id(), a.positional[1].get<std::string>());
-            if (to != from)
-                renameSlots(g, from, to);
-            return to;
+            return rename(g, n.id(), a.positional[1].get<std::string>());
         },
     });
 }
