@@ -10,6 +10,7 @@
 #include "scene/Graph.h"
 #include "scene/RotationCurve.h"
 #include "ui/Animation.h"
+#include "ui/AudioUi.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
@@ -410,6 +411,7 @@ protected:
             p.drawText(QPointF(4, y - 3), formatValue(std::abs(v) < vStep * 1e-3 ? 0.0 : v));
         }
         p.fillRect(QRectF(0, 0, w, kRulerHeight), gray(24, 200));
+        audio::drawWaveform(p, QRectF(0, h - 52, w, 48), timeAt(0), timeAt(w), QColor(90, 160, 120, 110));
 
         // Current time.
         double tx = xOf(Graph::current().time());

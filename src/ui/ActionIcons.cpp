@@ -108,6 +108,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"create.cameraFromView", "camera-plus"},
     {"create.emptyGroup", "folder"},
     {"create.imagePlane", "photo"},
+    {"create.audio", "music"},
     {"help.licenses", "license"},
     {"sets.create", "box-multiple"},
     {"sets.createQuickSelect", "bookmark"},

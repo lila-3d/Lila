@@ -522,6 +522,24 @@ def attachCurve(*objects: Any, blend: bool | None = None, keepOriginal: bool | N
         keepOriginal: Keep the second curve. Short form kp. Default False.
     """
 
+def audio(*objects: Any, fileName: str | None = None, offset: float | None = None, gain: float | None = None, mute: bool | None = None, take: str | None = None, name: str | None = None, f: str | None = None, o: float | None = None, g: float | None = None, m: bool | None = None, t: str | None = None, n: str | None = None) -> Any:
+    """Create an audio node from a sound file, or edit the one named. Returns its name.
+
+    Audio plays under the time slider during playback and scrubbing. With take, it belongs to that take: heard only while the take is active, its offset counted from the take's start.
+
+    Args:
+        objects: audio node to edit (omit to create one).
+        fileName: Sound file; stored relative to the workspace root. Short form f.
+        offset: Frame the sound starts at. Short form o.
+        gain: Volume multiplier. Short form g.
+        mute: Silence it. Short form m.
+        take: Take it belongs to. Short form t.
+        name: Name; made unique. Short form n.
+
+    Examples:
+        audio(fileName='sound/dialogue.wav', offset=12)
+    """
+
 def autoBevel(*objects: Any, minAngle: float | None = None, maxAngle: float | None = None, side: str | None = None, thin: float | None = None, minLength: float | None = None, completeCorners: bool | None = None, mode: str | None = None, weightThreshold: float | None = None, offset: float | None = None, segments: int | None = None, profile: float | None = None, clamp: bool | None = None, smoothingAngle: float | None = None) -> Any:
     """Add an autoBevel modifier to the top of each mesh's stack: bevels fold edges found live on its input mesh. Returns the modifier names.
 
@@ -1130,6 +1148,17 @@ def bezierCurve(points: Sequence[Any] | None = None, handleL: Sequence[Any] | No
         handleType: Handle type for every anchor. Short form ht. One of 'auto', 'vector', 'aligned', 'free'.
         closed: A closed loop. Short form c. Default False.
         name: Name; made unique. Short form n.
+    """
+
+def bindMedia(*objects: Any, remove: bool | None = None, rm: bool | None = None) -> Any:
+    """Give a take its own audio and reference video: the media plays only while the take is active and starts from the take's start. remove takes them off the take again.
+
+    Args:
+        objects: take, then audio nodes or image planes.
+        remove: Unbind instead. Short form rm. Default False.
+
+    Examples:
+        bindMedia('Walk', 'walkVO', 'walkRef')
     """
 
 def blendConvert(*objects: Any, source: str | None = None, destination: str | None = None, force: bool | None = None, namespace: str | None = None, collections: bool | None = None, materials: bool | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, modifiers: bool | None = None, hidden: bool | None = None, evaluate: str | None = None, blenderPath: str | None = None, setPlayback: bool | None = None, textureDir: str | None = None, src: str | None = None, dst: str | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
@@ -2949,6 +2978,18 @@ def exportPly(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         colors: Write the current color set as 8-bit RGBA. Default True.
     """
 
+def exportSoundCues(path: str | None = None, start: float | None = None, end: float | None = None, profile: str | None = None, *, p: str | None = None, s: float | None = None, e: float | None = None, ax: str | None = None) -> Any:
+    """Write the sounds the cues fire, to play them in Unreal.
+
+    One row per sound by time: Frame, Time (seconds), X, Y, Z (cm, in the axis profile's space), Sound (file name without extension, to match an imported Sound Wave), File, Volume, Cue, Event, Object, Piece and Strength. A .csv imports into Unreal as a Data Table; a .json is a list of objects. Reads cached simulation frames only. Returns {path, sounds}.
+
+    Args:
+        path: The .csv or .json file. Short form p.
+        start: First frame. Default: the playback range's. Short form s.
+        end: Last frame. Default: the playback range's. Short form e.
+        profile: Axis profile of the positions: ue5, ue6 or generic (Lila's own). Short form ax. One of 'ue5', 'ue6', 'generic'. Default 'ue5'.
+    """
+
 def exportStl(*objects: Any, unit: str | None = None, upAxis: str | None = None, binary: bool | None = None, colors: bool | None = None) -> Any:
     """Export meshes to STL in world space, triangulated, defaulting to the selection and the meshes under it. Binary merges them into one solid; ASCII writes a solid per mesh. Returns the path.
 
@@ -3991,7 +4032,7 @@ def ikPose(*objects: Any, position: Sequence[float] | None = None, rotation: Seq
         rotateBy: World rotation added, degrees XYZ. Short form rb.
     """
 
-def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = None, name: str | None = None, showInAllViews: bool | None = None, skipSelect: bool | None = None, useFrameExtension: bool | None = None, frameOffset: int | None = None, fit: str | None = None, width: float | None = None, height: float | None = None, maintainRatio: bool | None = None, offsetX: float | None = None, offsetY: float | None = None, depth: float | None = None, rotation: float | None = None, alphaGain: float | None = None, brightness: float | None = None, contrast: float | None = None, displayColor: str | None = None, displayMode: str | None = None, placement: str | None = None, locked: bool | None = None, f: str | None = None, c: str | None = None, n: str | None = None, sia: bool | None = None, ss: bool | None = None, ufe: bool | None = None, fo: int | None = None, fi: str | None = None, w: float | None = None, h: float | None = None, mr: bool | None = None, ox: float | None = None, oy: float | None = None, d: float | None = None, ro: float | None = None, ag: float | None = None, br: float | None = None, ct: float | None = None, dc: str | None = None, dm: str | None = None, pl: str | None = None, lk: bool | None = None) -> Any:
+def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = None, name: str | None = None, showInAllViews: bool | None = None, skipSelect: bool | None = None, useFrameExtension: bool | None = None, frameOffset: int | None = None, startFrame: float | None = None, fps: float | None = None, fit: str | None = None, width: float | None = None, height: float | None = None, maintainRatio: bool | None = None, offsetX: float | None = None, offsetY: float | None = None, depth: float | None = None, rotation: float | None = None, alphaGain: float | None = None, brightness: float | None = None, contrast: float | None = None, displayColor: str | None = None, displayMode: str | None = None, placement: str | None = None, locked: bool | None = None, f: str | None = None, c: str | None = None, n: str | None = None, sia: bool | None = None, ss: bool | None = None, ufe: bool | None = None, fo: int | None = None, sf: float | None = None, fi: str | None = None, w: float | None = None, h: float | None = None, mr: bool | None = None, ox: float | None = None, oy: float | None = None, d: float | None = None, ro: float | None = None, ag: float | None = None, br: float | None = None, ct: float | None = None, dc: str | None = None, dm: str | None = None, pl: str | None = None, lk: bool | None = None) -> Any:
     """Create an image plane for modelling from reference images, or edit the image plane named. Returns its name.
 
     Args:
@@ -4002,7 +4043,9 @@ def imagePlane(*objects: Any, fileName: str | None = None, camera: str | None = 
         showInAllViews: Show an attached plane in every view, not only through its camera. Short form sia.
         skipSelect: Don't select the new plane. Short form ss. Default False.
         useFrameExtension: Image sequence following the time slider. Short form ufe.
-        frameOffset: Added to the current frame for the sequence file. Short form fo.
+        frameOffset: Added to the current frame for the sequence file or video frame. Short form fo.
+        startFrame: Video: the frame its first picture shows on. Short form sf.
+        fps: Video: playback rate; 0 for the file's own.
         fit: How the image fills its frame. Short form fi. One of 'fill', 'best', 'horizontal', 'vertical', 'toSize'.
         width: Frame width, cm. Short form w.
         height: Frame height, cm (with maintainRatio off). Short form h.
@@ -4464,6 +4507,9 @@ def listMaterials(*objects: Any) -> Any:
     Args:
         objects: [objects...].
     """
+
+def listMedia() -> Any:
+    """Every audio node and image plane with its file, whether it plays now (live), the takes it belongs to and the scene time its start falls on (seconds)."""
 
 def listOffsets() -> Any:
     """Offset layers bottom first: [{name, joints, compensated, space, range (frames or None), ease, weight, mute}]."""
@@ -8193,6 +8239,35 @@ def softSelectField(*objects: Any) -> Any:
         objects: field.
     """
 
+def soundCue(*objects: Any, eventType: str | None = None, minStrength: float | None = None, fullStrength: float | None = None, objects: str | None = None, sounds: Sequence[Any] | None = None, volume: float | None = None, minVolume: float | None = None, minInterval: float | None = None, seed: int | None = None, mute: bool | None = None, name: str | None = None, et: str | None = None, min: float | None = None, full: float | None = None, obj: str | None = None, snd: Sequence[Any] | None = None, v: float | None = None, mv: float | None = None, mi: float | None = None, sd: int | None = None, m: bool | None = None, n: str | None = None) -> Any:
+    """Create a sound cue, or edit the one named: sounds fired by simulation events (contact, break) above a strength, for the objects given. Returns its name.
+
+    Args:
+        objects: soundCue to edit (omit to create one).
+        eventType: any, contact or break. Short form et. One of 'any', 'contact', 'break'.
+        minStrength: Weaker events are silent (break: N s; contact: cm/s). Short form min.
+        fullStrength: Strength that plays at full volume. Short form full.
+        objects: Nodes or object sets, space separated; empty for all. Short form obj.
+        sounds: Sound files; one is picked per event. Short form snd.
+        volume: Loudest volume. Short form v.
+        minVolume: Quietest volume, as a fraction of volume. Short form mv.
+        minInterval: Seconds an object stays quiet after a sound. Short form mi.
+        seed: Changes which sound each event picks. Short form sd.
+        mute: Silence it. Short form m.
+        name: Name; made unique. Short form n.
+
+    Examples:
+        soundCue(eventType='break', minStrength=50, sounds=['sfx/crack1.wav', 'sfx/crack2.wav'], objects='wall')
+    """
+
+def soundCueTriggers(start: float | None = None, end: float | None = None, *, s: float | None = None, e: float | None = None) -> Any:
+    """The sounds the scene's cues fire over a frame range, from what the simulations have already cached: time, frame, sound, gain, cue, event, object, piece, strength and position.
+
+    Args:
+        start: First frame. Default: the playback range's. Short form s.
+        end: Last frame. Default: the playback range's. Short form e.
+    """
+
 def spaceLocator(name: str | None = None, position: Sequence[float] | None = None, skipSelect: bool | None = None, *, n: str | None = None, p: Sequence[float] | None = None, ss: bool | None = None) -> Any:
     """Create a locator. Returns its path.
 
@@ -9003,6 +9078,13 @@ def textureFolders(include: Sequence[Any] | None = None, exclude: Sequence[Any] 
         exclude: Exclude globs; [] clears them. Short form e.
         scene: Set the scene's override instead of the workspace's lists. Short form s. Default False.
         clear: Remove the lists at that level (with scene, the scene falls back to the workspace). Short form c. Default False.
+    """
+
+def timeSliderSound(sound: str | None = None, *, s: str | None = None) -> Any:
+    """The sound the time slider plays and draws (Maya's Time Slider > Audio). Without sound, returns it; an empty sound plays every audio node of the active takes.
+
+    Args:
+        sound: Audio node to play alone, or empty for all. Short form s.
     """
 
 def toggleSymmetry(*objects: Any, axis: str | None = None) -> Any:

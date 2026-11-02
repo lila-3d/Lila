@@ -2,6 +2,7 @@
 #include "ui/CameraBookmarks.h"
 #include "ui/CreditsDialog.h"
 #include "ui/LicensesDialog.h"
+#include "ui/AudioUi.h"
 #include "ui/RenderOutputDialog.h"
 #include "ui/PerfTrace.h"
 #include "ui/ReferenceOverlay.h"
@@ -237,6 +238,7 @@ void MainWindow::registerActions()
                   [this] { return mViewports->active()->isolating() && actions::hasSelection(); },
                   "Hides the selected objects or components in the active view's isolation."});
     imagePlanes::install([this] { return mViewports->active(); });
+    audio::install();
     references::install();
     references::windows::install();
     referenceOverlays::install([this] { return mViewports->active(); });

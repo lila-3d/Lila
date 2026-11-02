@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/Animation.h"
+#include "ui/AudioUi.h"
 #include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
@@ -161,6 +162,8 @@ protected:
         int first = frameOf(pb.minTime), last = frameOf(pb.maxTime);
         double ppf = pxPerFrame();
         int h = height();
+        audio::drawWaveform(p, QRectF(xOf(first - 0.5), 1, xOf(last + 0.5) - xOf(first - 0.5), h - 2), anim::secondsOf(first - 0.5),
+                            anim::secondsOf(last + 0.5), QColor(90, 160, 120, 150));
 
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() * 0.9);
@@ -278,6 +281,7 @@ private:
             return;
         ops::execute("currentTime", {{"args", {t}}});
         notifyTimeChanged();
+        audio::scrubbed(t);
     }
 
     void showMenu(QPoint at)
@@ -291,6 +295,7 @@ private:
         menu.addAction("Cut", [now] { runUi("cutKey", {{"time", now}}); });
         menu.addAction("Paste", [] { runUi("pasteKey"); });
         menu.addSeparator();
+        audio::fillMenu(menu.addMenu("Audio"));
         QMenu* speed = menu.addMenu("Playback Speed");
         for (anim::PlaybackSpeed s : anim::kPlaybackSpeeds)
         {

@@ -6,6 +6,7 @@
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/AudioUi.h"
 #include "ui/DockSidebar.h"
 #include "ui/GraphEditor.h"
 
@@ -105,7 +106,11 @@ struct Player
         wall.start();
         clock.reset(std::llround(anim::frameOf(t)), now());
         startTimer();
+        audio::playbackStarted(t, dir, soundSpeed(p));
     }
+
+    /** Real-time multiplier the sound plays at; 0 for the every-frame speeds, which play silent as in Maya. */
+    static double soundSpeed(const anim::Playback& p) { return anim::playsEveryFrame(p.speed) ? 0.0 : anim::speedScale(p.speed, p.customSpeed); }
 
     void startTimer()
     {
@@ -120,6 +125,7 @@ struct Player
         direction = 0;
         if (timer)
             timer->stop();
+        audio::playbackStopped();
         notifyTimeChanged();
     }
 
@@ -130,15 +136,33 @@ struct Player
         const anim::Playback& p = anim::playback();
         int64_t first = std::llround(anim::frameOf(p.minTime));
         int64_t last = std::llround(anim::frameOf(p.maxTime));
-        clock.resync(std::llround(anim::frameOf(Graph::current().time())), now());
+        const double before = Graph::current().time();
+        const int64_t shown = std::llround(anim::frameOf(before));
+        if (shown != clock.frame)
+        {
+            clock.reset(shown, now());
+            audio::playbackJumped(anim::secondsOf(double(shown)));
+        }
         if (p.speed != speed || p.customSpeed != customSpeed)
         {
             clock.reset(clock.frame, now());
             startTimer();
+            audio::playbackStopped();
+            audio::playbackStarted(anim::secondsOf(double(clock.frame)), direction, soundSpeed(p));
         }
-        if (!clock.advance(p.speed, p.fps, direction, now(), p.customSpeed))
+        // While sound plays it is the clock, so the picture shows the frame being heard.
+        if (const double heard = audio::audioClock(); heard >= 0.0)
+        {
+            const double f = anim::frameOf(heard);
+            const int64_t next = direction > 0 ? int64_t(std::floor(f + 1e-6)) : int64_t(std::ceil(f - 1e-6));
+            if (next == clock.frame)
+                return;
+            clock.frame = next;
+        }
+        else if (!clock.advance(p.speed, p.fps, direction, now(), p.customSpeed))
             return;
         int64_t frame = clock.frame;
+        bool wrapped = false;
         if (frame > last || frame < first)
         {
             if (!p.loop)
@@ -149,8 +173,12 @@ struct Player
             }
             frame = direction > 0 ? first : last;
             clock.reset(frame, now());
+            audio::playbackJumped(anim::secondsOf(double(frame)));
+            wrapped = true;
         }
         setTime(anim::secondsOf(double(frame)));
+        if (direction > 0 && !wrapped)
+            audio::playbackAdvanced(before, Graph::current().time());
     }
 };
 
@@ -183,6 +211,7 @@ void stepFrame(int delta)
     else if (frame < first)
         frame = last;
     setTime(anim::secondsOf(frame));
+    audio::scrubbed(anim::secondsOf(frame));
 }
 
 void stepKey(const char* which)
