@@ -552,12 +552,63 @@ void BuildToonFunction(UMaterialFunction* Function)
 	G.Finish();
 }
 
-/** MF_LilaToon in the masters folder, built when missing and then left to artists. */
-UMaterialFunction* ToonFunction(TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+/**
+ * MF_LilaPainterly: the base colour pushed through the palette by the light and the strokes (PainterlyColorCode), and the
+ * normal bent by triplanar stroke sheets in object space (PainterlyNormalCode), handed back in world space. Strokes is the
+ * StrokeMap default (a linear texture); without one the engine's white square stands in.
+ */
+void BuildPainterlyFunction(UMaterialFunction* Function, UTexture* Strokes)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::ToonFunction);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::BuildPainterlyFunction);
 
-	const FString Name = TEXT("MF_LilaToon");
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Painterly: palette shading and stroke-bent normals from a triplanar stroke sheet."));
+	const FStylisedInputs In = StylisedInputs(G);
+	UMaterialExpression* StrokeMap = G.TextureInput(TEXT("StrokeMap"), Strokes ? Strokes : LoadObject<UTexture>(nullptr, WhiteSquarePath),
+		Strokes ? SAMPLERTYPE_LinearColor : SAMPLERTYPE_Color, TEXT(""), TEXT("The stroke sheet: tilt in RG, shade in B, a random per stroke in A."));
+	UMaterialExpression* Strength = G.ScalarInput(TEXT("PainterlyStrength"), 1.0f, TEXT(""), TEXT("How much of the palette and strokes show."));
+	UMaterialExpression* Scale = G.ScalarInput(TEXT("StrokeScale"), 20.0f, TEXT(""), TEXT("Stroke sheet size in object-space units."));
+	UMaterialExpression* Ratio = G.ScalarInput(TEXT("StrokeLayerRatio"), 2.7f, TEXT(""), TEXT("Scale of the second stroke layer against the first."));
+	UMaterialExpression* StrokeNormal = G.ScalarInput(TEXT("StrokeNormal"), 0.6f, TEXT(""), TEXT("How far the strokes tilt the normal."));
+	UMaterialExpression* Boil = G.ScalarInput(TEXT("Boil"), 0.0f, TEXT(""), TEXT("1 jumps the strokes BoilFps times a second."));
+	UMaterialExpression* BoilFps = G.ScalarInput(TEXT("BoilFps"), 10.0f, TEXT(""), TEXT("Stroke jumps per second when Boil is 1."));
+
+	auto* LocalPos = G.New<UMaterialExpressionLocalPosition>(-900);
+	auto* ToLocal = G.New<UMaterialExpressionTransform>(-600);
+	ToLocal->TransformSourceType = TRANSFORMSOURCE_World;
+	ToLocal->TransformType = TRANSFORM_Local;
+	ToLocal->Input.Connect(0, In.Normal);
+	auto* Time = G.New<UMaterialExpressionTime>(-900);
+
+	auto* Bent = StylisedCustom(G, TEXT("Lila Painterly Normal"), PainterlyNormalCode,
+		{{TEXT("Strokes"), StrokeMap}, {TEXT("LocalPos"), LocalPos}, {TEXT("LocalNormal"), ToLocal}, {TEXT("StrokeScale"), Scale}, {TEXT("Ratio"), Ratio},
+			{TEXT("Strength"), Strength}, {TEXT("StrokeNormal"), StrokeNormal}, {TEXT("Boil"), Boil}, {TEXT("BoilFps"), BoilFps}, {TEXT("Time"), Time}});
+	auto* ToWorld = G.New<UMaterialExpressionTransform>(-100);
+	ToWorld->TransformSourceType = TRANSFORMSOURCE_Local;
+	ToWorld->TransformType = TRANSFORM_World;
+	ToWorld->Input.Connect(0, Bent);
+
+	auto* Color = StylisedCustom(G, TEXT("Lila Painterly Palette"), PainterlyColorCode,
+		{{TEXT("Base"), In.Base}, {TEXT("Normal"), In.Normal}, {TEXT("LightDir"), In.Light}, {TEXT("FallbackLight"), In.Fallback},
+			{TEXT("Strokes"), StrokeMap}, {TEXT("LocalPos"), LocalPos}, {TEXT("LocalNormal"), ToLocal}, {TEXT("StrokeScale"), Scale},
+			{TEXT("Ratio"), Ratio}, {TEXT("Boil"), Boil}, {TEXT("BoilFps"), BoilFps}, {TEXT("Time"), Time},
+			{TEXT("Shadow"), G.VectorInput(TEXT("PaletteShadow"), FLinearColor(0.10f, 0.12f, 0.25f), TEXT(""), TEXT("Palette colour of the shadows."))},
+			{TEXT("Light"), G.VectorInput(TEXT("PaletteLight"), FLinearColor(0.95f, 0.80f, 0.55f), TEXT(""), TEXT("Palette colour of the lights (3 or more colours)."))},
+			{TEXT("Accent"), G.VectorInput(TEXT("PaletteAccent"), FLinearColor(0.60f, 0.30f, 0.35f), TEXT(""), TEXT("Accent dabbed onto some strokes (4 colours)."))},
+			{TEXT("Count"), G.ScalarInput(TEXT("PaletteCount"), 3.0f, TEXT(""), TEXT("Palette colours, 2 to 4."))},
+			{TEXT("Contrast"), G.ScalarInput(TEXT("PaletteContrast"), 0.5f, TEXT(""), TEXT("Sharpness of the steps between palette colours."))},
+			{TEXT("Spread"), G.ScalarInput(TEXT("PaletteSpread"), 0.35f, TEXT(""), TEXT("How far the strokes push the light across the palette."))},
+			{TEXT("Strength"), Strength}});
+	G.Output(Color, TEXT("BaseColor"), TEXT("The painted base colour."));
+	G.Output(ToWorld, TEXT("Normal"), TEXT("The stroke-bent normal, world space: connect to Normal with Tangent Space Normal off."));
+	G.Finish();
+}
+
+/** MF_LilaToon or MF_LilaPainterly in the masters folder, built when missing and then left to artists. */
+UMaterialFunction* StylisedFunction(bool bToon, UTexture* Strokes, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedFunction);
+
+	const FString Name = bToon ? TEXT("MF_LilaToon") : TEXT("MF_LilaPainterly");
 	bool bCreated = false;
 	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(MastersFolder, Name, bCreated);
 	if (!Function)
@@ -567,28 +618,35 @@ UMaterialFunction* ToonFunction(TArray<FString>& OutCreated, TArray<FString>& Ou
 	}
 	if (bCreated)
 	{
-		BuildToonFunction(Function);
+		if (bToon)
+		{
+			BuildToonFunction(Function);
+		}
+		else
+		{
+			BuildPainterlyFunction(Function, Strokes);
+		}
 		OutCreated.AddUnique(Function->GetPathName());
 	}
 	return Function;
 }
 
 /**
- * Builds (once) the master material of a stylised model. M_LilaToon is Unlit with MF_LilaToon's colour as emissive (the
- * function built once too); M_LilaPainterly is a graph of parameters feeding Custom nodes. Strokes is the Painterly stroke
- * sheet's default (a linear texture); without one the engine's white square stands in.
+ * Builds (once) the master material of a stylised model on its function (built once too): M_LilaToon is Unlit with the
+ * toon colour as emissive, M_LilaPainterly takes the painted base colour and world-space normal and adds Metallic,
+ * Roughness and Specular parameters.
  */
 UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedMaster);
 
-	UMaterialFunction* Function = bToon ? ToonFunction(OutCreated, OutWarnings) : nullptr;
+	UMaterialFunction* Function = StylisedFunction(bToon, Strokes, OutCreated, OutWarnings);
 	const FString Name = bToon ? TEXT("M_LilaToon") : TEXT("M_LilaPainterly");
 	if (UMaterial* Existing = Cast<UMaterial>(MaterialAt(MastersFolder, Name)))
 	{
 		return Existing;
 	}
-	if (bToon && !Function)
+	if (!Function)
 	{
 		return nullptr;
 	}
@@ -601,130 +659,33 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 	}
 	OutCreated.AddUnique(Material->GetPathName());
 
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	bool bWired = false;
 	if (bToon)
 	{
 		Material->SetShadingModel(MSM_Unlit);
-		UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
-		if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("Color"), MP_EmissiveColor}}))
-		{
-			OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Name));
-		}
-		Material->PostEditChange();
-		Material->MarkPackageDirty();
-		return Material;
+		bWired = LilaLink::ConnectFunctionOutputs(Call, {{TEXT("Color"), MP_EmissiveColor}});
 	}
-
-	int32 Row = 0;
-	auto NextY = [&Row] { return (Row++) * 140; };
-	auto Make = [&](UClass* Class, int32 X) { return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, NextY()); };
-	auto Scalar = [&](const TCHAR* Param, float Value) {
-		auto* E = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -900));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		return E;
-	};
-	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value) {
-		auto* E = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -900));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		return E;
-	};
-	auto Custom = [&](const TCHAR* Description, const TCHAR* Code, std::initializer_list<const TCHAR*> InputNames) {
-		auto* E = Cast<UMaterialExpressionCustom>(Make(UMaterialExpressionCustom::StaticClass(), -300));
-		E->Description = Description;
-		E->Code = Code;
-		E->OutputType = CMOT_Float3;
-		E->Inputs.Reset();
-		for (const TCHAR* Input : InputNames)
-		{
-			FCustomInput& In = E->Inputs.AddDefaulted_GetRef();
-			In.InputName = Input;
-		}
-		return E;
-	};
-	auto Connect = [](UMaterialExpression* From, UMaterialExpression* To, const TCHAR* Input) {
-		UMaterialEditingLibrary::ConnectMaterialExpressions(From, TEXT(""), To, Input);
-	};
-
-	// Base colour: the constant, or the map when the instance turns UseBaseColorMap on (Lila's map replaces the constant).
-	auto* BaseMap = Cast<UMaterialExpressionTextureSampleParameter2D>(Make(UMaterialExpressionTextureSampleParameter2D::StaticClass(), -900));
-	BaseMap->ParameterName = TEXT("BaseColorMap");
-	BaseMap->Texture = LoadObject<UTexture>(nullptr, WhiteSquarePath);
-	auto* BaseLerp = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass(), -600));
-	Connect(Vector(TEXT("BaseColor"), FLinearColor(0.5f, 0.5f, 0.5f)), BaseLerp, TEXT("A"));
-	UMaterialEditingLibrary::ConnectMaterialExpressions(BaseMap, TEXT("RGB"), BaseLerp, TEXT("B"));
-	Connect(Scalar(TEXT("UseBaseColorMap"), 0.0f), BaseLerp, TEXT("Alpha"));
-
-	auto* Normal = Make(UMaterialExpressionVertexNormalWS::StaticClass(), -900);
-	auto* Light = Cast<UMaterialExpressionSkyAtmosphereLightDirection>(Make(UMaterialExpressionSkyAtmosphereLightDirection::StaticClass(), -900));
-	Light->LightIndex = 0;
-	UMaterialExpression* Fallback = Vector(TEXT("FallbackLightDirection"), FLinearColor(0.3f, 0.3f, 0.9f));
-
-	// The stroke normal is computed in object space and handed over in world space.
-	Material->bTangentSpaceNormal = false;
-	auto* StrokeMap = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -900));
-	StrokeMap->ParameterName = TEXT("StrokeMap");
-	StrokeMap->Texture = Strokes ? Strokes : LoadObject<UTexture>(nullptr, WhiteSquarePath);
-	StrokeMap->SamplerType = Strokes ? SAMPLERTYPE_LinearColor : SAMPLERTYPE_Color;
-	auto* LocalPos = Make(UMaterialExpressionLocalPosition::StaticClass(), -900);
-	auto* ToLocal = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -600));
-	ToLocal->TransformSourceType = TRANSFORMSOURCE_World;
-	ToLocal->TransformType = TRANSFORM_Local;
-	Connect(Normal, ToLocal, TEXT(""));
-	auto* Time = Make(UMaterialExpressionTime::StaticClass(), -900);
-	UMaterialExpression* Strength = Scalar(TEXT("PainterlyStrength"), 1.0f);
-	UMaterialExpression* Scale = Scalar(TEXT("StrokeScale"), 20.0f);
-	UMaterialExpression* Ratio = Scalar(TEXT("StrokeLayerRatio"), 2.7f);
-	UMaterialExpression* Boil = Scalar(TEXT("Boil"), 0.0f);
-	UMaterialExpression* BoilFps = Scalar(TEXT("BoilFps"), 10.0f);
-
-	auto* Bent = Custom(TEXT("Lila Painterly Normal"), PainterlyNormalCode,
-		{TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"), TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Strength"), TEXT("StrokeNormal"),
-			TEXT("Boil"), TEXT("BoilFps"), TEXT("Time")});
-	Connect(StrokeMap, Bent, TEXT("Strokes"));
-	Connect(LocalPos, Bent, TEXT("LocalPos"));
-	Connect(ToLocal, Bent, TEXT("LocalNormal"));
-	Connect(Scale, Bent, TEXT("StrokeScale"));
-	Connect(Ratio, Bent, TEXT("Ratio"));
-	Connect(Strength, Bent, TEXT("Strength"));
-	Connect(Scalar(TEXT("StrokeNormal"), 0.6f), Bent, TEXT("StrokeNormal"));
-	Connect(Boil, Bent, TEXT("Boil"));
-	Connect(BoilFps, Bent, TEXT("BoilFps"));
-	Connect(Time, Bent, TEXT("Time"));
-	auto* ToWorld = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -100));
-	ToWorld->TransformSourceType = TRANSFORMSOURCE_Local;
-	ToWorld->TransformType = TRANSFORM_World;
-	Connect(Bent, ToWorld, TEXT(""));
-	UMaterialEditingLibrary::ConnectMaterialProperty(ToWorld, TEXT(""), MP_Normal);
-
-	auto* Color = Custom(TEXT("Lila Painterly Palette"), PainterlyColorCode,
-		{TEXT("Base"), TEXT("Normal"), TEXT("LightDir"), TEXT("FallbackLight"), TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"),
-			TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Boil"), TEXT("BoilFps"), TEXT("Time"), TEXT("Shadow"), TEXT("Light"), TEXT("Accent"),
-			TEXT("Count"), TEXT("Contrast"), TEXT("Spread"), TEXT("Strength")});
-	Connect(BaseLerp, Color, TEXT("Base"));
-	Connect(Normal, Color, TEXT("Normal"));
-	Connect(Light, Color, TEXT("LightDir"));
-	Connect(Fallback, Color, TEXT("FallbackLight"));
-	Connect(StrokeMap, Color, TEXT("Strokes"));
-	Connect(LocalPos, Color, TEXT("LocalPos"));
-	Connect(ToLocal, Color, TEXT("LocalNormal"));
-	Connect(Scale, Color, TEXT("StrokeScale"));
-	Connect(Ratio, Color, TEXT("Ratio"));
-	Connect(Boil, Color, TEXT("Boil"));
-	Connect(BoilFps, Color, TEXT("BoilFps"));
-	Connect(Time, Color, TEXT("Time"));
-	Connect(Vector(TEXT("PaletteShadow"), FLinearColor(0.10f, 0.12f, 0.25f)), Color, TEXT("Shadow"));
-	Connect(Vector(TEXT("PaletteLight"), FLinearColor(0.95f, 0.80f, 0.55f)), Color, TEXT("Light"));
-	Connect(Vector(TEXT("PaletteAccent"), FLinearColor(0.60f, 0.30f, 0.35f)), Color, TEXT("Accent"));
-	Connect(Scalar(TEXT("PaletteCount"), 3.0f), Color, TEXT("Count"));
-	Connect(Scalar(TEXT("PaletteContrast"), 0.5f), Color, TEXT("Contrast"));
-	Connect(Scalar(TEXT("PaletteSpread"), 0.35f), Color, TEXT("Spread"));
-	Connect(Strength, Color, TEXT("Strength"));
-	UMaterialEditingLibrary::ConnectMaterialProperty(Color, TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Metallic"), 0.0f), TEXT(""), MP_Metallic);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Roughness"), 0.5f), TEXT(""), MP_Roughness);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Specular"), 0.5f), TEXT(""), MP_Specular);
-
+	else
+	{
+		Material->bTangentSpaceNormal = false;
+		bWired = LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Normal"), MP_Normal}});
+		int32 Row = 0;
+		auto Scalar = [&](const TCHAR* Param, float Value, EMaterialProperty Property) {
+			auto* E = Cast<UMaterialExpressionScalarParameter>(
+				UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionScalarParameter::StaticClass(), -400, 200 + (Row++) * 120));
+			E->ParameterName = Param;
+			E->DefaultValue = Value;
+			UMaterialEditingLibrary::ConnectMaterialProperty(E, TEXT(""), Property);
+		};
+		Scalar(TEXT("Metallic"), 0.0f, MP_Metallic);
+		Scalar(TEXT("Roughness"), 0.5f, MP_Roughness);
+		Scalar(TEXT("Specular"), 0.5f, MP_Specular);
+	}
+	if (!bWired)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Name));
+	}
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
 	return Material;

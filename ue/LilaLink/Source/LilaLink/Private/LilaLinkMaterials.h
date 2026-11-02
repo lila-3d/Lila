@@ -53,7 +53,11 @@ void SnapshotMaterials(UObject* Asset, FMaterialRequest& Request);
 void ApplyMaterials(const FMaterialRequest& Request, const TArray<FString>& ImportedAssets, TArray<FString>& OutCreated,
 	TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots);
 
-/** The Painterly ("painterly") or Toon ("toon") master material, built on first use; null with a warning for anything else. */
+/**
+ * The Painterly ("painterly") or Toon ("toon") master material, built on first use; null with a warning for anything else.
+ * Each calls its material function in the masters folder, MF_LilaPainterly (outputs BaseColor and a world-space Normal) or
+ * MF_LilaToon (output Color, for Emissive Color on an Unlit material), for users' own materials.
+ */
 UMaterialInterface* StylisedParent(const FString& Model, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
 
 /**
