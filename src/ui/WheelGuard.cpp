@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QEvent>
 #include <QScrollBar>
+#include <QWidget>
 
 namespace lila::ui
 {
@@ -33,11 +34,19 @@ protected:
             if ((w->focusPolicy() & Qt::WheelFocus) == Qt::WheelFocus)
                 w->setFocusPolicy(Qt::StrongFocus);
         }
-        else if (e->type() == QEvent::Wheel && guarded(obj) && !static_cast<QWidget*>(obj)->hasFocus())
+        else if (e->type() == QEvent::Wheel)
         {
-            // Ignored and filtered, the event goes on up to the parent, the panel's scroll area.
-            e->ignore();
-            return true;
+            // Scrolling anywhere else ends a field's hold on the wheel, so the page scrolling past it leaves it alone.
+            QWidget* focused = QApplication::focusWidget();
+            auto* w = qobject_cast<QWidget*>(obj);
+            if (focused && guarded(focused) && w && focused != w && !focused->isAncestorOf(w))
+                focused->clearFocus();
+            if (guarded(obj) && !static_cast<QWidget*>(obj)->hasFocus())
+            {
+                // Ignored and filtered, the event goes on up to the parent, the panel's scroll area.
+                e->ignore();
+                return true;
+            }
         }
         return false;
     }
