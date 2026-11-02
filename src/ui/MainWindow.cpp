@@ -98,6 +98,9 @@ MainWindow::MainWindow()
 MainWindow::~MainWindow()
 {
     panels::registry().removeListener(mPanelListener);
+    // Main-thread tasks queued by extensions can still run after the window is gone.
+    viewportRenderers::setActivePanel(nullptr);
+    ops::unregisterCommand("lookThru");
 }
 
 QDockWidget* MainWindow::addDock(const QString& title, const QString& objectName, QWidget* content, Qt::DockWidgetArea area)
