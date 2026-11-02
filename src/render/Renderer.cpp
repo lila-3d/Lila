@@ -97,6 +97,7 @@ constexpr uint32_t kVertexColorUnlit = 1u << 12;
 constexpr uint32_t kColorChannelShift = 13;
 constexpr uint32_t kOneSidedLighting = 1u << 16;
 constexpr uint32_t kNormalXY = 1u << 17; // two-channel normal map: Z rebuilt in the shader
+constexpr uint32_t kGreyBase = 1u << 18;  // base colour map supplies opacity only
 
 // Placeholder textures bound where a material has no map; never evicted.
 constexpr uint64_t kWhiteSrgbKey = ~uint64_t(0);
@@ -5175,6 +5176,11 @@ struct Renderer::Impl
                 p.flags &= ~(MatMetallicMap | MatRoughnessMap | MatOcclusionMap);
             if (emissive == kNoHandle)
                 p.flags &= ~MatEmissiveMap;
+            if (s.greyBaseColor)
+            {
+                p.base = glm::vec4(glm::vec3(0.5f), mat->roughness);
+                p.flags |= kGreyBase;
+            }
             p.maps[0] = base | normal << 16;
             p.maps[1] = orm | emissive << 16;
             p.textureTable = frameTableAddress;

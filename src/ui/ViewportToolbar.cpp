@@ -202,6 +202,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"viewport.toggleOutline", vd::kOutline, false},
         {"viewport.toggleShadows", vd::kShadows, true},
         {"viewport.defaultMaterial", vd::kDefaultMaterial, false},
+        {"viewport.greyBaseColor", vd::kGreyBaseColor, false},
         {"viewport.smoothSubdivisions", vd::kSmoothSubdivisions, false},
         {"viewport.toggleEnvBackground", "/viewport/env/background", true},
         {"viewport.toggleToolbar", vd::kToolbar, true},
@@ -596,6 +597,7 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.textured", "texture");
     actionButton("viewport.wireOnShaded", "box-model");
     actionButton("viewport.defaultMaterial", "ball-bowling", vc::Materials);
+    actionButton("viewport.greyBaseColor", "contrast", vc::Materials);
     menuButton("palette", "Vertex Colors", [this](QMenu* m) {
         for (const char* group : {"vertexColors", "colorChannel"})
         {

@@ -247,6 +247,8 @@ struct FrameState
     /** Display-encoded rgb mixed over back faces by alpha, to spot reversed normals; alpha 0 is off. */
     glm::vec4 backfaceTint{0.0f};
     bool xray = false;            // shaded meshes see-through
+    /** Materials shade with a 50% grey base colour; their maps' alpha, normals, ORM, emission and shading models still apply. */
+    bool greyBaseColor = false;
     /** Shaded lighting: the environment (falls back to the studio rig while none is loaded), the studio rig, or flat. */
     enum class Lighting
     {

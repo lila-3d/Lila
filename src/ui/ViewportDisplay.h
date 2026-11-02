@@ -32,6 +32,8 @@ inline constexpr const char* kLighting = "/viewport/lighting"; // "environment",
 inline constexpr const char* kSceneLights = "/viewport/sceneLights"; // false: lights and domes light nothing in the viewport
 inline constexpr const char* kShadows = "/viewport/shadows";
 inline constexpr const char* kDefaultMaterial = "/viewport/defaultMaterial";
+/** Materials keep everything but their base colour, which shades 50% grey. */
+inline constexpr const char* kGreyBaseColor = "/viewport/greyBaseColor";
 inline constexpr const char* kExposure = "/viewport/exposure"; // stops
 inline constexpr const char* kGamma = "/viewport/gamma";
 inline constexpr const char* kToolbar = "/viewport/toolbar";

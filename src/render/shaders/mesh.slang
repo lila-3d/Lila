@@ -400,6 +400,7 @@ static const uint kVertexColorUnlit = 1 << 12;
 static const uint kColorChannelShift = 13; // 3 bits: 0 rgb, 1 r, 2 g, 3 b, 4 a
 static const uint kOneSidedLighting = 1 << 16;
 static const uint kNormalXY = 1 << 17; // the normal map stores X and Y only (BC5)
+static const uint kGreyBase = 1 << 18;  // the base colour map supplies opacity only
 
 struct VSIn
 {
@@ -934,7 +935,8 @@ float4 shadeMesh(VSOut i, bool front)
     if ((flags & kBaseColorMap) != 0)
     {
         float4 t = sampleMap(kBaseColorSlot, uv);
-        baseColor = t.rgb;
+        if ((flags & kGreyBase) == 0)
+            baseColor = t.rgb;
         opacity *= t.a;
     }
     baseColor *= 1.0 - eyeRing;

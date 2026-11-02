@@ -788,6 +788,8 @@ void registerBuiltins()
     togglePref("viewport.smoothSubdivisions", "Show Smooth Subdivisions", vd::kSmoothSubdivisions, false,
                "Smooth preview draws the edges of every subdivided face, not just the edges of the mesh.");
     togglePref("viewport.defaultMaterial", "Use Default Material", vd::kDefaultMaterial, false, "Shades every mesh with the plain default material.");
+    togglePref("viewport.greyBaseColor", "Grey Base Color", vd::kGreyBaseColor, false,
+               "Materials shade with a 50% grey base color, keeping their normal, packed and other maps, opacity and shading model.");
     togglePref("viewport.toggleEnvBackground", "Environment Background", "/viewport/env/background", true, "Shows the HDRI behind the scene.");
     togglePref("viewport.toggleToolbar", "Show Toolbar", vd::kToolbar, true, "The icon row at the top of each viewport panel.");
     togglePref("viewport.toggleBottomBar", "Show Bottom Bar", vd::kBottomBar, true,

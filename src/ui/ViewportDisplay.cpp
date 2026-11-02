@@ -32,6 +32,7 @@ void apply(render::FrameState& s)
     s.grid = p.value<bool>("general", kGrid, true);
     s.backfaceCulling = p.value<bool>("general", kBackfaceCulling, false);
     s.xray = p.value<bool>("general", kXray, false);
+    s.greyBaseColor = p.value<bool>("general", kGreyBaseColor, false);
     s.lighting = render::lightingFromName(p.value<std::string>("general", kLighting, "environment"));
     if (!p.value<bool>("general", kShadows, true))
         s.groundShadow = 0.0f;

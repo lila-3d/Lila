@@ -284,6 +284,7 @@ void MainWindow::buildMenus()
 
     menu("Display", "Display", Area::MenuBar, syncChecks);
     menus::addActions("Display", {"#Shading", "viewport.wireframe", "viewport.shaded", "viewport.textured", "viewport.wireOnShaded", "viewport.defaultMaterial",
+                           "viewport.greyBaseColor",
                            "viewport.toggleXray", "viewport.toggleBackfaceCulling", "#Lighting and Effects"});
     addSubmenu("Display", "Lighting", syncChecks);
     menus::addActions("Display/Lighting", {"viewport.lighting.environment", "viewport.lighting.studio", "viewport.lighting.flat"});

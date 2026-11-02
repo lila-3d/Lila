@@ -513,6 +513,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"viewport.textured", "texture"},
     {"viewport.wireOnShaded", "cube-plus"},
     {"viewport.defaultMaterial", "palette-off"},
+    {"viewport.greyBaseColor", "contrast"},
     {"viewport.toggleXray", "eye-dotted"},
     {"viewport.toggleBackfaceCulling", "eye-off"},
     {"viewport.lighting.environment", "world"},
