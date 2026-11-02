@@ -7,7 +7,8 @@ namespace LilaLink
 /**
  * Materials for Lila's masonry walls: one master, M_LilaMasonry in the masters folder, built the first time it is asked
  * for and then left to artists (regenerate rebuilds its graph in place, keeping references), and an instance per wall
- * slot or shell.
+ * slot or shell. The master calls MF_LilaMasonry, beside it, which users' own materials can call too (outputs BaseColor,
+ * Roughness, AmbientOcclusion, tangent-space Normal); its inputs default to the parameters the instances set.
  *
  * masonryMaterials {folder, regenerate?, parent?, wallHeight, meshes: [static mesh paths], instances: [{name, slot,
  *   meshes?: [...], scalars: {param: value}, vectors: {param: [r, g, b]}, textures: {param: texture asset path},

@@ -1,6 +1,7 @@
 #include "LilaLinkMasonry.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMaterials.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -29,6 +30,8 @@
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionVertexNormalWS.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "UObject/Package.h"
@@ -36,8 +39,9 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 1;
+constexpr int32 MasterVersion = 2;
 const TCHAR* MasterName = TEXT("M_LilaMasonry");
+const TCHAR* FunctionName = TEXT("MF_LilaMasonry");
 const TCHAR* NeutralName = TEXT("T_LilaMasonryNeutral");
 const TCHAR* VersionTag = TEXT("Lila Masonry v");
 
@@ -151,54 +155,61 @@ UTexture* NeutralMask(TArray<FString>& OutCreated)
 	return Texture;
 }
 
-/** The version a master's graph was built at, from its Custom nodes' description; 0 when none says. */
+/** The version a master's graph was built at, from its Custom nodes' description, in it or in a function it calls; 0 when none says. */
 int32 VersionOf(UMaterial* Material)
 {
+	auto Tagged = [](TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions) {
+		for (UMaterialExpression* E : Expressions)
+		{
+			if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
+			{
+				return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
+			}
+		}
+		return 0;
+	};
+	if (const int32 Version = Tagged(Material->GetExpressions()))
+	{
+		return Version;
+	}
 	for (UMaterialExpression* E : Material->GetExpressions())
 	{
-		if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
+		const UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(E);
+		if (const UMaterialFunction* Function = Call ? Cast<UMaterialFunction>(Call->MaterialFunction) : nullptr)
 		{
-			return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
+			if (const int32 Version = Tagged(Function->GetExpressions()))
+			{
+				return Version;
+			}
 		}
 	}
 	return 0;
 }
 
-/** The master's whole graph: parameters and per-mesh inputs feeding four Custom nodes, one per material output. */
-void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
+/**
+ * MF_LilaMasonry: per-mesh inputs and the parameter inputs feeding four Custom nodes, one per output (BaseColor,
+ * Roughness, AmbientOcclusion, tangent-space Normal). Every parameter input defaults to the parameter of its name.
+ */
+void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMasonry::BuildMaster);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMasonry::BuildFunction);
 
-	int32 Row = 0;
-	auto NextY = [&Row] { return (Row++) * 120; };
-	auto Make = [&](UClass* Class, int32 X) { return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, NextY()); };
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Masonry: per-stone colour spread, cavity and edge wear from baked maps, and dirt by height."));
 	TMap<FString, UMaterialExpression*> Inputs;
-	auto Scalar = [&](const TCHAR* Param, float Value) {
-		auto* E = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -1200));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		Inputs.Add(Param, E);
+	auto Scalar = [&](const TCHAR* Param, float Value, const TCHAR* Description) { Inputs.Add(Param, G.ScalarInput(Param, Value, TEXT(""), Description)); };
+	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value, const TCHAR* Description) {
+		Inputs.Add(Param, G.VectorInput(Param, Value, TEXT(""), Description));
 	};
-	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value) {
-		auto* E = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -1200));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		Inputs.Add(Param, E);
+	auto Texture = [&](const TCHAR* Param, UTexture* Default, EMaterialSamplerType Type, const TCHAR* Description) {
+		Inputs.Add(Param, G.TextureInput(Param, Default, Type, TEXT(""), Description));
 	};
-	auto Texture = [&](const TCHAR* Param, UTexture* Default, EMaterialSamplerType Type) {
-		auto* E = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -1200));
-		E->ParameterName = Param;
-		E->Texture = Default;
-		E->SamplerType = Type;
-		Inputs.Add(Param, E);
-	};
-	auto Coord = [&](const TCHAR* Name, int32 Index) {
-		auto* E = Cast<UMaterialExpressionTextureCoordinate>(Make(UMaterialExpressionTextureCoordinate::StaticClass(), -1200));
+	auto Coord = [&](const TCHAR* Name, int32 Index, const TCHAR* Description) {
+		auto* E = G.New<UMaterialExpressionTextureCoordinate>(-1500);
 		E->CoordinateIndex = Index;
-		Inputs.Add(Name, E);
+		Inputs.Add(Name, G.Input(Name, FunctionInput_Vector2, E, Description));
 	};
 	auto InstanceData = [&](const TCHAR* Name, int32 Index, float Default) {
-		auto* E = Cast<UMaterialExpressionPerInstanceCustomData>(Make(UMaterialExpressionPerInstanceCustomData::StaticClass(), -1200));
+		auto* E = G.New<UMaterialExpressionPerInstanceCustomData>(-1200);
 		E->DataIndex = Index;
 		E->ConstDefaultValue = Default;
 		Inputs.Add(Name, E);
@@ -207,60 +218,60 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
 	UTexture* Flat = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineMaterials/FlatNormal.FlatNormal"));
 	UTexture* Neutral = NeutralMask(OutCreated);
-	Texture(TEXT("BaseColorMap"), White, SAMPLERTYPE_Color);
-	Texture(TEXT("DetailNormalMap"), Flat, SAMPLERTYPE_Normal);
-	Texture(TEXT("BakedNormalMap"), Flat, SAMPLERTYPE_Normal);
-	Texture(TEXT("BakedAOMap"), Neutral, SAMPLERTYPE_Masks);
-	Texture(TEXT("BakedCurvatureMap"), Neutral, SAMPLERTYPE_Masks);
-	Coord(TEXT("UV0"), 0);
-	Coord(TEXT("UV1"), 1);
+	Texture(TEXT("BaseColorMap"), White, SAMPLERTYPE_Color, TEXT("Stone colour texture, on UV1 or projected in world space."));
+	Texture(TEXT("DetailNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Tiling detail normal on UV1."));
+	Texture(TEXT("BakedNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Baked normal on UV0, for far stones and shells."));
+	Texture(TEXT("BakedAOMap"), Neutral, SAMPLERTYPE_Masks, TEXT("Baked ambient occlusion on UV0."));
+	Texture(TEXT("BakedCurvatureMap"), Neutral, SAMPLERTYPE_Masks, TEXT("Baked curvature on UV0, 0.5 flat."));
+	Coord(TEXT("UV0"), 0, TEXT("UVs of the baked maps; UV channel 0 when unconnected."));
+	Coord(TEXT("UV1"), 1, TEXT("UVs of the tiling textures; UV channel 1 when unconnected."));
 	// World position is large-world (double) and a Custom node takes floats: divide and wrap it with nodes that handle that first.
 	{
-		UMaterialExpression* World = Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
-		auto* Divide = Cast<UMaterialExpressionDivide>(Make(UMaterialExpressionDivide::StaticClass(), -1400));
+		UMaterialExpression* World = G.Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
+		auto* Divide = G.New<UMaterialExpressionDivide>(-1400);
 		UMaterialEditingLibrary::ConnectMaterialExpressions(World, TEXT(""), Divide, TEXT("A"));
-		auto* Wrap = Cast<UMaterialExpressionFmod>(Make(UMaterialExpressionFmod::StaticClass(), -1300));
+		auto* Wrap = G.New<UMaterialExpressionFmod>(-1300);
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Divide, TEXT(""), Wrap, TEXT("A"));
-		auto* Period = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass(), -1400));
+		auto* Period = G.New<UMaterialExpressionConstant>(-1400);
 		Period->R = 256.0f;
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Period, TEXT(""), Wrap, TEXT("B"));
 		Inputs.Add(TEXT("WorldTile"), Wrap);
 		Inputs.Add(TEXT("TileDivide"), Divide);
 	}
-	Inputs.Add(TEXT("LocalPos"), Make(UMaterialExpressionLocalPosition::StaticClass(), -1200));
-	Inputs.Add(TEXT("NormalWS"), Make(UMaterialExpressionVertexNormalWS::StaticClass(), -1200));
-	Inputs.Add(TEXT("VColor"), Make(UMaterialExpressionVertexColor::StaticClass(), -1200));
+	Inputs.Add(TEXT("LocalPos"), G.Make(UMaterialExpressionLocalPosition::StaticClass(), -1200));
+	Inputs.Add(TEXT("NormalWS"), G.Make(UMaterialExpressionVertexNormalWS::StaticClass(), -1200));
+	Inputs.Add(TEXT("VColor"), G.Make(UMaterialExpressionVertexColor::StaticClass(), -1200));
 	InstanceData(TEXT("InstRandom"), 0, 0.5f);
 	InstanceData(TEXT("InstHeight"), 1, 0.5f);
 
 	// Switches, as scalars so one master serves every slot without a shader permutation each.
-	Scalar(TEXT("StoneData"), 1.0f);       // 0 none (height from the mesh), 1 per instance custom data, 2 vertex colour R G
-	Scalar(TEXT("WorldAligned"), 0.0f);    // 1: base colour projected in world space (core, shells) instead of uv1
-	Scalar(TEXT("UseBakedNormal"), 0.0f);  // 1: the far stones and shells, whose geometry lacks the detail
-	Scalar(TEXT("HasBakedMaps"), 0.0f);
-	Scalar(TEXT("HasBaseColorMap"), 0.0f);
-	Scalar(TEXT("HasDetailNormal"), 0.0f);
-	Scalar(TEXT("WallHeight"), 200.0f);
-	Scalar(TEXT("TextureScale"), 1.0f);
-	Scalar(TEXT("TileSize"), 100.0f);
+	Scalar(TEXT("StoneData"), 1.0f, TEXT("Per-stone random and height: 0 none (height from the mesh), 1 per instance custom data 0 and 1, 2 vertex colour R and G."));
+	Scalar(TEXT("WorldAligned"), 0.0f, TEXT("1 projects BaseColorMap in world space (cores, shells) instead of on UV1."));
+	Scalar(TEXT("UseBakedNormal"), 0.0f, TEXT("1 for far stones and shells, whose geometry lacks the detail."));
+	Scalar(TEXT("HasBakedMaps"), 0.0f, TEXT("1 when the baked maps are set."));
+	Scalar(TEXT("HasBaseColorMap"), 0.0f, TEXT("1 when BaseColorMap is set."));
+	Scalar(TEXT("HasDetailNormal"), 0.0f, TEXT("1 when DetailNormalMap is set."));
+	Scalar(TEXT("WallHeight"), 200.0f, TEXT("Wall height in cm, for dirt by height when StoneData is 0."));
+	Scalar(TEXT("TextureScale"), 1.0f, TEXT("Tiling of the UV1 textures."));
+	Scalar(TEXT("TileSize"), 100.0f, TEXT("World-aligned projection size in cm."));
 	UMaterialEditingLibrary::ConnectMaterialExpressions(Inputs[TEXT("TileSize")], TEXT(""), Inputs[TEXT("TileDivide")], TEXT("B"));
-	Scalar(TEXT("RandomOffset"), 1.0f);
-	Scalar(TEXT("ValueSpread"), 0.08f);
-	Scalar(TEXT("ColorSpread"), 0.15f);
-	Scalar(TEXT("EdgeLighten"), 0.25f);
-	Scalar(TEXT("CavityStrength"), 0.5f);
-	Scalar(TEXT("DirtHeight"), 0.2f);
-	Scalar(TEXT("DirtFade"), 0.15f);
-	Scalar(TEXT("DirtStrength"), 0.5f);
-	Scalar(TEXT("BaseRoughness"), 0.8f);
-	Scalar(TEXT("CurvatureRoughness"), 0.3f);
-	Scalar(TEXT("RoughnessSpread"), 0.1f);
-	Scalar(TEXT("AOStrength"), 1.0f);
-	Scalar(TEXT("DetailNormalStrength"), 1.0f);
-	Vector(TEXT("Tint"), FLinearColor(0.6f, 0.55f, 0.5f));
-	Vector(TEXT("SpreadColor"), FLinearColor(0.9f, 0.82f, 0.75f));
-	Vector(TEXT("CavityColor"), FLinearColor(0.55f, 0.52f, 0.48f));
-	Vector(TEXT("DirtColor"), FLinearColor(0.45f, 0.42f, 0.35f));
+	Scalar(TEXT("RandomOffset"), 1.0f, TEXT("How far each stone's random shifts its UV1 texture."));
+	Scalar(TEXT("ValueSpread"), 0.08f, TEXT("Per-stone brightness spread."));
+	Scalar(TEXT("ColorSpread"), 0.15f, TEXT("Per-stone spread towards SpreadColor."));
+	Scalar(TEXT("EdgeLighten"), 0.25f, TEXT("Lightens convex edges."));
+	Scalar(TEXT("CavityStrength"), 0.5f, TEXT("Darkens cavities towards CavityColor."));
+	Scalar(TEXT("DirtHeight"), 0.2f, TEXT("Height, 0 to 1 up the wall, below which dirt gathers."));
+	Scalar(TEXT("DirtFade"), 0.15f, TEXT("Fade above DirtHeight."));
+	Scalar(TEXT("DirtStrength"), 0.5f, TEXT("Dirt amount."));
+	Scalar(TEXT("BaseRoughness"), 0.8f, TEXT("Roughness before curvature, spread and dirt."));
+	Scalar(TEXT("CurvatureRoughness"), 0.3f, TEXT("Rougher in cavities, smoother on edges."));
+	Scalar(TEXT("RoughnessSpread"), 0.1f, TEXT("Per-stone roughness spread."));
+	Scalar(TEXT("AOStrength"), 1.0f, TEXT("How much of the baked AO shows."));
+	Scalar(TEXT("DetailNormalStrength"), 1.0f, TEXT("Scales the detail normal."));
+	Vector(TEXT("Tint"), FLinearColor(0.6f, 0.55f, 0.5f), TEXT("Stone colour, multiplied with BaseColorMap."));
+	Vector(TEXT("SpreadColor"), FLinearColor(0.9f, 0.82f, 0.75f), TEXT("Colour some stones drift towards."));
+	Vector(TEXT("CavityColor"), FLinearColor(0.55f, 0.52f, 0.48f), TEXT("Multiplied into cavities."));
+	Vector(TEXT("DirtColor"), FLinearColor(0.45f, 0.42f, 0.35f), TEXT("Multiplied in where dirt gathers."));
 
 	const TArray<const TCHAR*> StoneInputs = {TEXT("StoneData"), TEXT("WallHeight"), TEXT("LocalPos"), TEXT("VColor"), TEXT("InstRandom"), TEXT("InstHeight")};
 	auto With = [&](std::initializer_list<const TCHAR*> Extra) {
@@ -269,7 +280,7 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		return All;
 	};
 	auto CustomOf = [&](const FString& Description, const FString& Code, ECustomMaterialOutputType Type, const TArray<const TCHAR*>& Names) {
-		auto* E = Cast<UMaterialExpressionCustom>(Make(UMaterialExpressionCustom::StaticClass(), -400));
+		auto* E = G.New<UMaterialExpressionCustom>(-400);
 		E->Description = Description;
 		E->Code = Code;
 		E->OutputType = Type;
@@ -304,22 +315,47 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		{TEXT("UseBakedNormal"), TEXT("HasBakedMaps"), TEXT("BakedNormalMap"), TEXT("UV0"), TEXT("HasDetailNormal"), TEXT("WorldAligned"),
 			TEXT("DetailNormalMap"), TEXT("UV1"), TEXT("TextureScale"), TEXT("DetailNormalStrength")});
 
-	UMaterialEditingLibrary::ConnectMaterialProperty(Color, TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Roughness, TEXT(""), MP_Roughness);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Occlusion, TEXT(""), MP_AmbientOcclusion);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Normal, TEXT(""), MP_Normal);
+	G.Output(Color, TEXT("BaseColor"), TEXT("Stone colour."));
+	G.Output(Roughness, TEXT("Roughness"), TEXT("Roughness."));
+	G.Output(Occlusion, TEXT("AmbientOcclusion"), TEXT("Baked occlusion scaled by AOStrength."));
+	G.Output(Normal, TEXT("Normal"), TEXT("Tangent-space normal."));
+	G.Finish();
+}
 
+/** M_LilaMasonry: MF_LilaMasonry's four outputs on the material's pins. */
+void BuildMaster(UMaterial* Material, UMaterialFunction* Function, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMasonry::BuildMaster);
+
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Roughness"), MP_Roughness},
+			{TEXT("AmbientOcclusion"), MP_AmbientOcclusion}, {TEXT("Normal"), MP_Normal}}))
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
+	}
 	Material->bUsedWithInstancedStaticMeshes = true;
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
 }
 
-/** The master: found, built when missing, rebuilt in place when asked. */
+/** The master and its function: each found, built when missing, rebuilt in place when asked. */
 UMaterial* Master(bool bRegenerate, bool& bOutBuilt, int32& OutVersion, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMasonry::Master);
 
 	const FString Folder = LilaLink::MastersFolderPath();
+	bool bFunctionCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(Folder, FunctionName, bFunctionCreated);
+	if (!Function)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not create %s in %s"), FunctionName, *Folder));
+		return nullptr;
+	}
+	if (bFunctionCreated || bRegenerate)
+	{
+		BuildFunction(Function, OutCreated);
+		OutCreated.AddUnique(Function->GetPathName());
+	}
 	UMaterial* Material = AssetAt<UMaterial>(Folder, MasterName);
 	bOutBuilt = false;
 	if (!Material)
@@ -332,14 +368,14 @@ UMaterial* Master(bool bRegenerate, bool& bOutBuilt, int32& OutVersion, TArray<F
 			return nullptr;
 		}
 		OutCreated.AddUnique(Material->GetPathName());
-		BuildMaster(Material, OutCreated);
+		BuildMaster(Material, Function, OutWarnings);
 		bOutBuilt = true;
 	}
 	else if (bRegenerate)
 	{
 		Material->Modify();
 		UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-		BuildMaster(Material, OutCreated);
+		BuildMaster(Material, Function, OutWarnings);
 		bOutBuilt = true;
 	}
 	OutVersion = VersionOf(Material);
