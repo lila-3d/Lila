@@ -19,6 +19,7 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 - Action, menu item, hotkey: `actions::add` (`src/ui/Actions.h`). Panels: `panels::add` (`src/ui/Panels.h`).
 - Tests: doctest suites under `tests/` (`lila_tests` plus per-area executables such as `tests/curve`, `tests/docks`); add new files to that folder's CMakeLists.
 - Python stubs `python/lila/ops.pyi` regenerate at startup of lila/lilabatch; don't hand-edit.
+- Unreal materials (LilaLink, any feature): always ship a material function (`MF_...`) users drop into their own materials, and offer the generated material or instance as a second option built on that function. Never only a provided material; when touching an existing feature that ships only a material (VAT, Masonry, Trim Sheets, imposters), add its function.
 - User docs: `X:\Lila-3D\docs` (not this repo). Essentials only for day-one things; document only what the UI doesn't already show. A new page in `_sidebar.md` needs its icon in `docs/theme.css` (the `::before` selector list and an `--icon` line); Lila-3D's pre-commit hook rejects a page without one.
 
 ## Build and test
@@ -28,7 +29,8 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 - Run executables only from `build/` or `build-night` (new paths trigger firewall prompts). No popups, ever.
 - Compiles go through sccache (shared cache in `X:\sccache`) and link with lld-link, so a fresh build dir or worktree is mostly cache hits.
 - Test instances: set `LILA_CONFIG_DIR=<scratch dir>` and `LILA_MCP_PORT=<free port>`, drive over MCP, kill only that instance's PID afterwards.
-- Known failing, not ours unless touched: `lila_seq_tests` (exportVertexAnimation png), `lila_sdk_build_examples` (blend_scene needs zstd), `lila_material_pack_tests` timeout.
+- Known failing, not ours unless touched: `lila_seq_tests` (exportVertexAnimation png), `lila_sdk_build_examples` (blend_scene needs zstd), `lila_material_pack_tests` timeout. They carry the CTest label `known_failing`, which the release gate and nightly skip (`-LE known_failing`); fix one, drop its label.
+- Nightly: scheduled task `LilaNightly` (04:00, `scripts\nightly_task.ps1` registers it) runs `scripts\nightly.py`: full build and tests in build-night, line coverage on Sundays (OpenCppCoverage in `%LOCALAPPDATA%\OpenCppCoverage`). Results in `build-night\nightly\latest.txt`; a failure there is a regression to chase. It skips if another session is using build-night.
 - Unity builds are on (PCH too when the compiler cache is off): use `Q_EMIT`/`Q_SIGNALS`/`Q_SLOTS`; a unity clash means rename the file-local helper or add the source to `cmake/LilaUnitySkip.cmake`.
 - Line endings are mixed per file. `sed -i` in git-bash strips CRLF; restore with `sed -i 's/$/\r/'` or edit with the Edit tool.
 - Other Claude sessions often work in this repo at the same time. Check `git status` and peer sessions before large moves or renames of shared files.
