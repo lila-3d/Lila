@@ -409,8 +409,8 @@ void MainWindow::fillEditorsMenu(QMenu* menu)
     // Panels by what they are for; a panel not named here (most extension panels) goes under Other.
     static const std::vector<std::pair<const char*, std::vector<const char*>>> kGroups = {
         {"Scene", {"Outliner", "Attribute Editor", "Channel Box", "Display Layers", "Quick Select Sets", "Rename", "Reference Editor",
-                   "Source Control", "Undo History", "Notes", "Shelf", "Docs"}},
-        {"Modeling", {"Modeling Toolkit", "Topology Toolkit", "Modifier Stack", "Node Editor", "Morph Targets", "Driven Channels",
+                   "Source Control", "Undo History", "Notes", "Shelf", "Docs", "Relationships"}},
+        {"Modeling", {"Modeling Toolkit", "Topology Toolkit", "Modifier Stack", "Node Editor", "Morph Targets", "Driven Channels", "Component Spreadsheet",
                       "Foliage Blades", "Tree Generator", "Ground Tiles", "Effects"}},
         {"UVs and Texturing", {"UV Editor", "Material Editor", "Material Browser", "Texture Set", "Texture Graph", "Texture", "2D View", "Baker"}},
         {"Animation and Rigging", {"Graph Editor", "Time Slider", "Anim Layers", "Pose Library", "Control Picker", "Offsets", "Rig Templates",

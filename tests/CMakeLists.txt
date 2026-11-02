@@ -20,6 +20,9 @@ add_executable(lila_tests
     test_duplicate.cpp
     test_user_attrs.cpp
     test_attr_authoring.cpp
+    test_lighting_channels.cpp
+    test_component_values.cpp
+    test_scene_graph.cpp
     test_unreal_components.cpp
     test_array_group.cpp
     test_docs.cpp

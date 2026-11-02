@@ -28,6 +28,8 @@ lila_module(lila_ui UI
     AttrView.cpp AttrView.h
     DrivePopover.cpp DrivePopover.h
     ConnectPopover.cpp ConnectPopover.h
+    ComponentSheet.cpp ComponentSheet.h
+    RelationshipsPanel.cpp RelationshipsPanel.h
     FileDialog.cpp FileDialog.h FilePreview.cpp FilePreview.h FileDrop.cpp FileDrop.h
     CodeEdit.cpp CodeEdit.h FontPicker.cpp FontPicker.h MultilineEdit.cpp MultilineEdit.h
     AutoBevelUi.cpp AutoBevelUi.h
@@ -104,6 +106,7 @@ lila_module(lila_ui UI
     SoftSelectPanel.cpp SoftSelectPanel.h
     ModifierStack.cpp ModifierStack.h
     NodeEditor.cpp NodeEditor.h NodeCanvas.cpp NodeCanvas.h NodeCanvasLayout.cpp NodeCanvasInput.cpp NodeCanvasWires.cpp NodeCanvasTies.cpp NodeCanvasFrames.cpp GraphBackend.cpp GraphBackend.h GnGraphBackend.cpp
+    SceneGraphBackend.cpp
     TexGraphBackend.cpp TexParams.cpp TexParams.h TexPreview.cpp TexPreview.h Texture2DView.cpp TextureGraphUi.h TextureSetPanel.cpp TextureSetPanel.h
     Overlay.cpp Overlay.h
     CursorBadges.cpp CursorBadges.h
