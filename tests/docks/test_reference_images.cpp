@@ -6,7 +6,9 @@
 #include "ui/ReferenceSet.h"
 #include "ui/ReferenceWindow.h"
 
+#include <QApplication>
 #include <QImage>
+#include <QKeyEvent>
 #include <QTabBar>
 
 #include <filesystem>
@@ -311,6 +313,23 @@ TEST_CASE("referenceOverlay: a file becomes an overlay-only image that leaves wi
     CHECK(refs::current().images.empty());
     UndoStack::get().undo();
     CHECK(refs::current().overlays.size() == 1);
+}
+
+TEST_CASE("referenceOverlay: clicking a hidden overlay's outliner row keeps it hidden")
+{
+    freshSet();
+    const std::string id = ops::execute("referenceOverlay", {{"args", {png("hidden.png", 20, 20)}}, {"view", "front"}}).get<std::string>();
+    ops::execute("referenceOverlay", {{"edit", id}, {"visible", false}});
+    referenceOverlays::activateRow(id);
+    CHECK_FALSE(refs::current().overlay(id)->visible);
+    CHECK(referenceOverlays::activeOverlay("front") == id);
+    ops::execute("referenceOverlay", {{"edit", id}, {"visible", true}});
+    referenceOverlays::activateRow(id);
+    CHECK(refs::current().overlay(id)->visible);
+    CHECK(referenceOverlays::adjusting());
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(qApp, &esc);
+    CHECK_FALSE(referenceOverlays::adjusting());
 }
 
 TEST_CASE("reference window: the tab bar shows from the second image")

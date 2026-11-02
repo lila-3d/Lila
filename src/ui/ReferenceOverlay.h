@@ -34,6 +34,8 @@ LILA_UI_API std::string show(const std::string& imageId, const std::string& view
 /** The overlay the hold-O keys and the adjust handles act on in view; empty when it has none. */
 LILA_UI_API std::string activeOverlay(const std::string& view);
 LILA_UI_API bool adjusting();
+/** Clicking the overlay's outliner row: makes it its view's active one, and adjusts it there unless it is hidden. */
+LILA_UI_API void activateRow(const std::string& id);
 /** The Sculpt panel's Reference Overlay section: the active view's overlays and their main settings. */
 LILA_UI_API QWidget* createSculptSection(QWidget* parent);
 } // namespace lila::ui::referenceOverlays

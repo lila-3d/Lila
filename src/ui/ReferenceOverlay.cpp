@@ -1519,6 +1519,17 @@ std::string activeOverlay(const std::string& view)
     return activeIn(view);
 }
 
+void activateRow(const std::string& id)
+{
+    const Overlay* o = refs::current().overlay(id);
+    if (!o)
+        return;
+    if (o->visible)
+        return adjustOverlay(id);
+    state().active[o->view] = id;
+    outliner::refreshRowSources();
+}
+
 bool adjusting()
 {
     return state().adjust;
@@ -1735,7 +1746,7 @@ void install(std::function<ViewportWidget*()> activeView)
                 }
                 return rows;
             },
-        .activate = [](const std::string& id) { adjustOverlay(id); },
+        .activate = [](const std::string& id) { activateRow(id); },
         .current = []() -> std::string {
             const State& st = state();
             return st.adjust ? activeIn(st.adjustView) : std::string();
