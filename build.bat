@@ -5,7 +5,13 @@ set "DIR=%~1"
 if "%DIR%"=="" set "DIR=build"
 set "CONFIG=%~2"
 if "%CONFIG%"=="" set "CONFIG=RelWithDebInfo"
-call "%~dp0scripts\env.cmd" "%~dp0%DIR%" || exit /b 1
+call "%~dp0scripts\env.cmd" || exit /b 1
+rem A build dir configured with another toolset reconfigures from scratch; its objects would not link with this one.
+if exist "%~dp0%DIR%\CMakeCache.txt" findstr /c:"MSVC/%LILA_MSVC_VER%." "%~dp0%DIR%\CMakeCache.txt" >nul || (
+    echo [note] %DIR% was configured with another MSVC toolset; reconfiguring it for %LILA_MSVC_VER%.
+    del "%~dp0%DIR%\CMakeCache.txt" "%~dp0%DIR%\build.ninja"
+    rmdir /s /q "%~dp0%DIR%\CMakeFiles"
+)
 if not exist "%~dp0%DIR%\build.ninja" (
     cmake --preset windows -S "%~dp0." -B "%~dp0%DIR%" || exit /b 1
 )

@@ -8,21 +8,13 @@ if not defined LILA_PYTHON_DIR call "%~dp0fetch-python.cmd" || exit /b 1
 if not defined VCPKG_ROOT set "VCPKG_ROOT=%LILA_VS%\VC\vcpkg"
 if not defined SCCACHE_DIR set "SCCACHE_DIR=X:\sccache"
 if not defined SCCACHE_CACHE_SIZE set "SCCACHE_CACHE_SIZE=120G"
-rem An existing build dir (optional %1) keeps the toolset it was configured with; mixing toolsets fails at link time.
-if not defined LILA_MSVC_VER if not "%~1"=="" if exist "%~1\CMakeCache.txt" (
-    for /d %%V in ("%LILA_VS%\VC\Tools\MSVC\*") do (
-        findstr /c:"MSVC/%%~nxV/bin" "%~1\CMakeCache.txt" >nul 2>&1 && set "LILA_MSVC_VER=%%~nxV"
-    )
-)
+rem The toolset pinned in the vcpkg triplet, so Lila and its dependencies always match.
+for /f "tokens=3 delims=() " %%V in ('findstr /c:"VCPKG_PLATFORM_TOOLSET_VERSION" "%~dp0..\cmake\triplets\x64-windows.cmake"') do set "LILA_MSVC_VER=%%V"
 set "LILA_VCVARS_LOG=%TEMP%\lila_vcvars_%RANDOM%%RANDOM%.log"
-if defined LILA_MSVC_VER (
-    call "%LILA_VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=%LILA_MSVC_VER% >"%LILA_VCVARS_LOG%" 2>&1
-) else (
-    call "%LILA_VS%\VC\Auxiliary\Build\vcvars64.bat" >"%LILA_VCVARS_LOG%" 2>&1
-)
+call "%LILA_VS%\VC\Auxiliary\Build\vcvars64.bat" -vcvars_ver=%LILA_MSVC_VER% >"%LILA_VCVARS_LOG%" 2>&1
 where cl >nul 2>&1 || (
     findstr /i "error" "%LILA_VCVARS_LOG%"
-    echo [error] vcvars64 under "%LILA_VS%" did not set up MSVC. Repair Visual Studio, or set LILA_VS or LILA_MSVC_VER.
+    echo [error] MSVC %LILA_MSVC_VER% is missing under "%LILA_VS%". Add it in the Visual Studio Installer ^(Individual components, MSVC v143 x64/x86 build tools, latest^), or set LILA_VS.
     del "%LILA_VCVARS_LOG%" >nul 2>&1
     exit /b 1
 )

@@ -14,8 +14,21 @@ if(NOT LILA_USD OR NOT LILA_VOLUMES)
         list(APPEND VCPKG_MANIFEST_FEATURES volumes)
     endif()
 endif()
+# Pins the MSVC toolset for dependencies (vcpkg otherwise picks the newest installed Visual Studio).
+set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/triplets")
 
 project(Lila VERSION 0.1.0 LANGUAGES C CXX)
+
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/triplets/x64-windows.cmake" _lila_toolset REGEX "VCPKG_PLATFORM_TOOLSET_VERSION")
+    string(REGEX MATCH "14\\.([0-9]+)" _lila_toolset "${_lila_toolset}")
+    math(EXPR _lila_msvc "1900 + ${CMAKE_MATCH_1}")
+    if(NOT MSVC_VERSION EQUAL _lila_msvc)
+        message(FATAL_ERROR "Lila builds with MSVC ${_lila_toolset} (cmake/triplets/x64-windows.cmake), this is ${MSVC_VERSION}. "
+            "Build with build.bat, which sets it up and reconfigures this build folder (${CMAKE_BINARY_DIR}). "
+            "If ${_lila_toolset} is missing, add it in the Visual Studio Installer.")
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
