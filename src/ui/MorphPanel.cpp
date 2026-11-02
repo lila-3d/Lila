@@ -13,14 +13,22 @@
 #include "ui/NodeLookup.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
+#include "ui/ValueReset.h"
 
 #include <QApplication>
 #include <QComboBox>
+#include <QDialog>
+#include <QElapsedTimer>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
@@ -214,6 +222,90 @@ private:
     double mInput = 0.0;
 };
 
+/** A middle click (not a drag) on a weight slider; the slider never sees the middle button, which would jump it. */
+class MiddleClickReset : public QObject
+{
+public:
+    MiddleClickReset(QWidget* target, std::function<void()> reset) : QObject(target), mReset(std::move(reset)) {}
+
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::MouseButtonRelease && e->type() != QEvent::MouseMove)
+            return false;
+        auto* m = static_cast<QMouseEvent*>(e);
+        const QPoint at = m->globalPosition().toPoint();
+        if (e->type() == QEvent::MouseMove)
+        {
+            mClick.move(at.x(), at.y());
+            return mClick.down();
+        }
+        if (m->button() != Qt::MiddleButton)
+            return false;
+        if (e->type() == QEvent::MouseButtonPress)
+            mClick.press(at.x(), at.y(), mClock.elapsed());
+        else if (mClick.release(at.x(), at.y(), mClock.elapsed()) && static_cast<QWidget*>(o)->isEnabled())
+        {
+            mReset();
+            flashReset(static_cast<QWidget*>(o));
+        }
+        return true;
+    }
+
+private:
+    std::function<void()> mReset;
+    valueReset::ClickTracker mClick;
+    QElapsedTimer mClock = [] {
+        QElapsedTimer t;
+        t.start();
+        return t;
+    }();
+};
+
+/** Both ends of a target's weight slider, one undo step. */
+void setSliderRange(const std::string& target, double lo, double hi)
+{
+    if (!(hi > lo))
+    {
+        log::warn("Morph slider range: the maximum must be above the minimum");
+        return;
+    }
+    UndoStack& undo = UndoStack::get();
+    undo.openChunk("Set Morph Slider Range");
+    run("setAttr", {{"args", {target + ".sliderMin", lo}}});
+    run("setAttr", {{"args", {target + ".sliderMax", hi}}});
+    undo.closeChunk();
+}
+
+/** Asks for a custom slider range; false when cancelled. */
+bool askSliderRange(QWidget* parent, double& lo, double& hi)
+{
+    QDialog d(parent);
+    d.setWindowTitle("Slider Range");
+    auto* form = new QFormLayout(&d);
+    auto spin = [&](double v) {
+        auto* s = new QDoubleSpinBox(&d);
+        s->setRange(-100.0, 100.0);
+        s->setDecimals(3);
+        s->setSingleStep(0.1);
+        s->setValue(v);
+        return s;
+    };
+    QDoubleSpinBox* min = spin(lo);
+    QDoubleSpinBox* max = spin(hi);
+    form->addRow("Min", min);
+    form->addRow("Max", max);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &d);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    form->addRow(buttons);
+    if (d.exec() != QDialog::Accepted)
+        return false;
+    lo = min->value();
+    hi = max->value();
+    return true;
+}
+
 const QStringList kTangents = {"linear", "spline", "flat", "step", "auto", "clamped"};
 } // namespace
 
@@ -321,6 +413,17 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
                 gCurrentTarget = r.get<std::string>();
     });
 
+    mTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mTree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        QTreeWidgetItem* item = mTree->itemAt(at);
+        if (!item)
+            return;
+        mTree->setCurrentItem(item);
+        QMenu menu;
+        fillTargetMenu(&menu, item);
+        menu.exec(mTree->viewport()->mapToGlobal(at));
+    });
+
     QPointer<MorphTargetsPanel> self(this);
     mGraphListener = Graph::current().addListener([self](scene::Change, scene::NodeId) {
         if (self)
@@ -350,10 +453,15 @@ void MorphTargetsPanel::scheduleRefresh()
 
 void MorphTargetsPanel::refresh()
 {
-    // A slider being dragged keeps its row; the release refreshes.
+    // A slider or value being dragged keeps its row; the release refreshes.
     for (QSlider* s : mTree->findChildren<QSlider*>())
         if (s->isSliderDown())
             return;
+    if (QApplication::mouseButtons() != Qt::NoButton && mTree->underMouse())
+    {
+        scheduleRefresh();
+        return;
+    }
     if (std::string m = selectedMorph(); !m.empty())
         mMorph = m;
     Graph& g = Graph::current();
@@ -396,12 +504,17 @@ void MorphTargetsPanel::refresh()
         item->setToolTip(kInfo, item->text(kInfo));
 
         const double weight = t["weight"].get<double>();
+        const double lo = t["sliderMin"].get<double>(), hi = std::max(t["sliderMax"].get<double>(), lo + 1e-3);
         auto* slider = new QSlider(Qt::Horizontal, mTree);
-        slider->setRange(0, kSliderSteps);
-        slider->setValue(int(std::lround(std::clamp(weight, 0.0, 1.0) * kSliderSteps)));
+        slider->setRange(int(std::lround(lo * kSliderSteps)), int(std::lround(hi * kSliderSteps)));
+        slider->setValue(int(std::lround(std::clamp(weight, lo, hi) * kSliderSteps)));
         slider->setEnabled(!driven);
+        slider->setToolTip(QString("%1 to %2").arg(lo).arg(hi) + "\n" + resetHint("0"));
+        slider->installEventFilter(new MiddleClickReset(slider, [node] { run("setAttr", {{"args", {node + ".weight", 0.0}}}); }));
         auto* value = new QDoubleSpinBox(mTree);
-        value->setRange(-10.0, 10.0);
+        value->setRange(std::min(-10.0, lo), std::max(10.0, hi));
+        value->setKeyboardTracking(false);
+        setSpinDefault(value, 0.0);
         value->setDecimals(3);
         value->setSingleStep(0.05);
         value->setFrame(false);
@@ -425,7 +538,7 @@ void MorphTargetsPanel::refresh()
             previewWeight(node, *start);
             run("setAttr", {{"args", {node + ".weight", w}}});
         });
-        connect(value, &QDoubleSpinBox::editingFinished, this, [value, node] { run("setAttr", {{"args", {node + ".weight", value->value()}}}); });
+        connect(value, &QDoubleSpinBox::valueChanged, this, [node](double w) { run("setAttr", {{"args", {node + ".weight", w}}}); });
         mTree->setItemWidget(item, kSlider, slider);
         mTree->setItemWidget(item, kValue, value);
 
@@ -438,6 +551,35 @@ void MorphTargetsPanel::refresh()
             mTree->setCurrentItem(item);
     }
     mTree->setUpdatesEnabled(true);
+}
+
+void MorphTargetsPanel::fillTargetMenu(QMenu* menu, QTreeWidgetItem* item)
+{
+    const std::string node = item->data(kName, kTargetRole).toString().toStdString();
+    scene::Node* n = findNode(node);
+    if (!n)
+        return;
+    const double lo = n->as<double>(scene::morphs::kSliderMin), hi = n->as<double>(scene::morphs::kSliderMax);
+    auto* slider = qobject_cast<QSlider*>(mTree->itemWidget(item, kSlider));
+    menu->addAction("Reset Weight", this, [node] { run("setAttr", {{"args", {node + ".weight", 0.0}}}); })
+        ->setEnabled(slider && slider->isEnabled());
+    QMenu* range = menu->addMenu("Slider Range");
+    bool preset = false;
+    for (auto [a, b] : {std::pair{0.0, 1.0}, std::pair{-1.0, 1.0}, std::pair{0.0, 2.0}})
+    {
+        QAction* act = range->addAction(QString("%1 to %2").arg(a).arg(b), this, [node, a, b] { setSliderRange(node, a, b); });
+        act->setCheckable(true);
+        act->setChecked(a == lo && b == hi);
+        preset |= act->isChecked();
+    }
+    range->addSeparator();
+    QAction* custom = range->addAction(preset ? QString("Custom...") : QString("Custom (%1 to %2)...").arg(lo).arg(hi), this, [this, node, lo, hi] {
+        double a = lo, b = hi;
+        if (askSliderRange(this, a, b))
+            setSliderRange(node, a, b);
+    });
+    custom->setCheckable(true);
+    custom->setChecked(!preset);
 }
 
 // ------------------------------------------------------------------------------------------------ driven channels

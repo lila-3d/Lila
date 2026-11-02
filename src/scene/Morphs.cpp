@@ -460,6 +460,8 @@ json targetInfo(Graph& graph, NodeId t)
     return {{"node", n->name()},
             {"name", n->as<std::string>(kMorphName)},
             {"weight", std::get<double>(graph.value({t, kWeight, -1}))},
+            {"sliderMin", n->as<double>(morphs::kSliderMin)},
+            {"sliderMax", n->as<double>(morphs::kSliderMax)},
             {"live", graph.source({t, kTargetMesh, -1}).has_value()},
             {"inBetweens", ib},
             {"driver", src ? json(graph.plugName(*src)) : json(nullptr)},
@@ -944,6 +946,11 @@ void registerTypes()
         connected("editMesh", PlugType::Mesh, MeshPtr(), "The mesh being sculpted in edit mode; stands in for the shape it edits."),
         hiddenStored("editWeight", PlugType::Float, 1.0, "Which shape the edit mesh edits: 1 the full shape, else an in-between's weight."),
         hiddenStored("pointWeights", PlugType::Data, DataPtr(), "Per-point weights scaling every shape of this target; points past the end weigh 1."),
+        {.name = "sliderMin", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable,
+         .doc = "The weight at the left end of the Morph Targets panel's slider; negative weights push the shape the other way.",
+         .category = "Slider"},
+        {.name = "sliderMax", .type = PlugType::Float, .defaultValue = 1.0, .flags = AttrInput | AttrStorable,
+         .doc = "The weight at the right end of the Morph Targets panel's slider; past 1 overshoots the shape.", .category = "Slider"},
     };
     target.create = [] { return std::make_unique<MorphTargetNode>(); };
     types::registerType(std::move(target));
@@ -1036,9 +1043,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "morphTargets",
-        .doc = "A morph's targets in order: [{node, name, weight, live, inBetweens, driver, editing}]. driver is the plug "
-               "setting the weight (a pose driver for a corrective), editing the edit mesh in edit mode. Set a weight with "
-               "setAttr(node + \".weight\", w).",
+        .doc = "A morph's targets in order: [{node, name, weight, sliderMin, sliderMax, live, inBetweens, driver, editing}]. "
+               "driver is the plug setting the weight (a pose driver for a corrective), editing the edit mesh in edit mode, "
+               "sliderMin and sliderMax the panel slider's range. Set a weight with setAttr(node + \".weight\", w).",
         .positionalDoc = "morph, mesh or target",
         .undoable = false,
         .run = [](const Args& a) -> json {

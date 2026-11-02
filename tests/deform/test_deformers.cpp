@@ -82,8 +82,15 @@ TEST_CASE("morph: weights, envelope, weight map, live targets and undo")
     json targets = run("morphTargets", {{"args", {bs}}});
     REQUIRE(targets.size() == 1);
     CHECK(targets[0]["name"] == "Smile");
+    CHECK(targets[0]["sliderMin"] == 0.0);
+    CHECK(targets[0]["sliderMax"] == 1.0);
     std::string smileTarget = targets[0]["node"];
     CHECK(samePoints(points(base), rest));
+    run("setAttr", {{"args", {smileTarget + ".sliderMin", -1.0}}});
+    CHECK(run("morphTargets", {{"args", {bs}}})[0]["sliderMin"] == -1.0);
+    run("setAttr", {{"args", {smileTarget + ".weight", -1.0}}});
+    CHECK(near(points(base)[0], rest[0] - glm::dvec3(0, 10, 0)));
+    run("setAttr", {{"args", {smileTarget + ".weight", 0.0}}});
 
     run("setAttr", {{"args", {smileTarget + ".weight", 1.0}}});
     CHECK(near(points(base)[0], rest[0] + glm::dvec3(0, 10, 0)));

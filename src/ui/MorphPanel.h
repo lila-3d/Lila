@@ -7,8 +7,10 @@
 #include <string>
 
 class QLabel;
+class QMenu;
 class QTableWidget;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace lila::ui
 {
@@ -25,6 +27,9 @@ class LILA_UI_API MorphTargetsPanel : public QWidget
 public:
     explicit MorphTargetsPanel(QWidget* parent = nullptr);
     ~MorphTargetsPanel() override;
+
+    /** A target row's right-click menu: reset its weight, set its slider range. */
+    void fillTargetMenu(QMenu* menu, QTreeWidgetItem* item);
 
 protected:
     void showEvent(QShowEvent* e) override;

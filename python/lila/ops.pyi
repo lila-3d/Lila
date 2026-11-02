@@ -4962,7 +4962,7 @@ def morph(*objects: Any, live: bool | None = None, name: str | None = None) -> A
     """
 
 def morphTargets(*objects: Any) -> Any:
-    """A morph's targets in order: [{node, name, weight, live, inBetweens, driver, editing}]. driver is the plug setting the weight (a pose driver for a corrective), editing the edit mesh in edit mode. Set a weight with setAttr(node + ".weight", w).
+    """A morph's targets in order: [{node, name, weight, sliderMin, sliderMax, live, inBetweens, driver, editing}]. driver is the plug setting the weight (a pose driver for a corrective), editing the edit mesh in edit mode, sliderMin and sliderMax the panel slider's range. Set a weight with setAttr(node + ".weight", w).
 
     Args:
         objects: morph, mesh or target.

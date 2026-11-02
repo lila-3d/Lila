@@ -61,6 +61,8 @@ enum TargetAttr
     kEditMesh,
     kEditWeight,
     kPointWeights,
+    kSliderMin,
+    kSliderMax,
 };
 
 /** The morph deformer in a mesh's stack, or kNoNode. */
