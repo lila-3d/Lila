@@ -6,7 +6,9 @@
 #include "ui/ChannelBox.h"
 
 #include <QApplication>
+#include <QDoubleSpinBox>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QTableWidget>
@@ -74,6 +76,16 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     CHECK(rowOf(table, "Translate X") >= 0);
     CHECK(rowOf(table, "Power") >= 0);
 
+    // Name mode cycles nice, long, short and back to nice.
+    auto* mode = box.findChild<QToolButton*>("cbNameMode");
+    for (const char* expect : {"translateX", "tx", "Translate X"})
+    {
+        mode->click();
+        cbSettle();
+        CHECK(rowOf(table, expect) >= 0);
+    }
+    CHECK(av::nameMode() == av::NameMode::Nice);
+
     // States: keyed, connected, locked.
     const NodeId b = Graph::current().find("B")->id();
     NodeId source = kNoNode;
@@ -91,11 +103,27 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     CHECK(names(table) == QStringList({"Rotate X", "Rotate Y", "Rotate Z"}));
     box.findChild<QLineEdit*>("cbFilter")->clear();
     auto* keyed = box.findChild<QToolButton*>("cbChip_Keyed");
+    CHECK(keyed->text().isEmpty());
+    CHECK_FALSE(keyed->icon().isNull());
+    CHECK_FALSE(keyed->isChecked());
+    // Chips wrap instead of setting the panel's width.
+    QWidget* chipRow = keyed->parentWidget();
+    CHECK(chipRow->minimumSizeHint().width() <= keyed->sizeHint().width() + 4);
+    CHECK(chipRow->layout()->heightForWidth(keyed->sizeHint().width() * 3) > chipRow->layout()->heightForWidth(1000));
     keyed->click();
     cbSettle();
+    CHECK(keyed->isChecked());
+    CHECK(keyed->toolTip().contains("Showing only keyed"));
     CHECK(names(table) == QStringList({"Translate X"}));
     keyed->click();
     cbSettle();
+    CHECK(keyed->isChecked());
+    CHECK(keyed->toolTip().contains("Hiding keyed"));
+    auto* trs = box.findChild<QToolButton*>("cbChip_TRS");
+    trs->click();
+    trs->click();
+    CHECK_FALSE(trs->icon().isNull());
+    trs->click();
     CHECK(rowOf(table, "Translate X") < 0);
     CHECK(rowOf(table, "Translate Y") >= 0);
     keyed->click();
@@ -137,6 +165,28 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     av::setNameMode(av::NameMode::Nice);
     cbSettle();
     av::setLead(kNoNode);
+}
+
+TEST_CASE("Channel Box settings: scrub speed presets set the speed and show which one is current")
+{
+    av::setScrubSpeed(1.0);
+    ui::ChannelBox box;
+    box.show();
+    cbSettle();
+    box.findChild<QToolButton*>("cbSettings")->click();
+    cbSettle();
+    auto* fast = box.findChild<QToolButton*>("cbScrubPreset_Fast");
+    auto* normal = box.findChild<QToolButton*>("cbScrubPreset_Normal");
+    REQUIRE(fast);
+    REQUIRE(normal);
+    CHECK(normal->isChecked());
+    fast->click();
+    CHECK(av::scrubSpeed() == doctest::Approx(4.0));
+    CHECK(fast->isChecked());
+    CHECK_FALSE(normal->isChecked());
+    box.findChild<QDoubleSpinBox*>("cbScrubSpeed")->setValue(2.5);
+    CHECK_FALSE(fast->isChecked());
+    av::setScrubSpeed(1.0);
 }
 
 TEST_CASE("Channel Box states: mute, breakdown, driven key; highlighted channels for the Graph Editor")

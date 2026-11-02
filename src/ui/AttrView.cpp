@@ -12,6 +12,8 @@
 #include <cmath>
 #include <optional>
 #include <fstream>
+#include <map>
+#include <memory>
 
 namespace lila::ui::attrView
 {
@@ -27,7 +29,7 @@ struct State
     bool held = false;
     bool used = false;
     std::vector<scene::PlugRef> highlighted;
-    std::map<int, std::function<void()>> listeners;
+    std::map<int, std::shared_ptr<std::function<void()>>> listeners;
     int next = 1;
 };
 State& state()
@@ -38,9 +40,10 @@ State& state()
 
 void notify()
 {
+    // Shared so a listener's mutable state survives the copy that guards against removal mid-notify.
     auto copy = state().listeners;
     for (auto& [id, fn] : copy)
-        fn();
+        (*fn)();
 }
 
 /** True when w or an ancestor is a panel that edits attributes (the property set by the AE and Channel Box). */
@@ -332,7 +335,7 @@ double scrubStep(double base, int dx)
 int addListener(std::function<void()> fn)
 {
     const int id = state().next++;
-    state().listeners[id] = std::move(fn);
+    state().listeners[id] = std::make_shared<std::function<void()>>(std::move(fn));
     return id;
 }
 

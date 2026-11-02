@@ -11,6 +11,7 @@
 #include <QMimeData>
 #include <QSpinBox>
 #include "ui/Panels.h"
+#include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "scene/RotationCurve.h"
 #include <QFrame>
@@ -329,6 +330,8 @@ void end()
 bool active() { return gSliderBox != nullptr; }
 } // namespace channelSlider
 
+static QIcon cbCrossedIcon(const QString& name);
+
 ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 {
     gBoxes.push_back(this);
@@ -435,30 +438,50 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     filterRow->addWidget(settings);
     layout->addLayout(filterRow);
     mChipRow = new QWidget(this);
-    auto* chips = new QHBoxLayout(mChipRow);
-    chips->setContentsMargins(0, 0, 0, 0);
-    chips->setSpacing(2);
-    for (const char* chip : {"Keyed", "Driven", "Connected", "User", "Locked", "TRS", "Type"})
+    auto* chips = new FlowLayout(2);
+    mChipRow->setLayout(chips);
+    struct ChipDef
+    {
+        const char* name;
+        const char* what;
+        const char* on;
+        const char* off;
+    };
+    static const ChipDef kChips[] = {
+        {"Keyed", "keyed", "key", "key-off"},
+        {"Driven", "driven", "steering-wheel", "steering-wheel-off"},
+        {"Connected", "connected", "plug-connected", "plug-connected-x"},
+        {"User", "user", "user", "user-off"},
+        {"Locked", "locked", "lock", "lock-off"},
+        {"TRS", "translate, rotate and scale", "arrows-move", nullptr},
+        {"Type", "the lead's own type's", "cube", "cube-off"},
+    };
+    for (const ChipDef& chip : kChips)
     {
         auto* b = new QToolButton(mChipRow);
-        b->setObjectName(QString("cbChip_") + chip);
-        b->setText(chip);
+        b->setObjectName(QString("cbChip_") + chip.name);
+        b->setIcon(icon(chip.on));
         b->setAutoRaise(true);
-        b->setToolTip(QString("Click: only %1 channels. Again: all but those. Again: off.")
-                          .arg(std::string_view(chip) == "Type" ? "the lead's own type's" : QString(chip).toLower()));
-        mChips[chip] = 0;
-        connect(b, &QToolButton::clicked, this, [this, b, name = std::string(chip)] {
-            int& s = mChips[name];
+        b->setCheckable(true);
+        const auto tip = [&chip](int s) {
+            const QString what = QString(chip.what);
+            const QString state = s == 1 ? "Showing only " + what + " channels."
+                                  : s == 2 ? "Hiding " + what + " channels."
+                                           : "Off.";
+            return QString("<b>%1</b><br>%2<br>Click to cycle: only %3, all but %3, off.").arg(chip.name, state, what);
+        };
+        b->setToolTip(tip(0));
+        mChips[chip.name] = 0;
+        connect(b, &QToolButton::clicked, this, [this, b, chip, tip] {
+            int& s = mChips[chip.name];
             s = (s + 1) % 3;
-            b->setText(QString(s == 2 ? "not " : "") + QString::fromStdString(name));
-            QFont f = b->font();
-            f.setBold(s != 0);
-            b->setFont(f);
+            b->setChecked(s != 0);
+            b->setIcon(s != 2 ? icon(chip.on) : chip.off ? icon(chip.off) : cbCrossedIcon(chip.on));
+            b->setToolTip(tip(s));
             scheduleRefresh();
         });
         chips->addWidget(b);
     }
-    chips->addStretch(1);
     layout->addWidget(mChipRow);
     mHint = new QFrame(this);
     mHint->setObjectName("cbHint");
@@ -858,6 +881,29 @@ QColor cbStateColor(uint32_t state)
 }
 } // namespace
 
+/** An icon with a slash through it, for a Tabler icon that has no -off variant. */
+static QIcon cbCrossedIcon(const QString& name)
+{
+    const QIcon base = icon(name);
+    QIcon out;
+    for (const auto& [mode, colour] : {std::pair{QIcon::Normal, "iconNormal"}, std::pair{QIcon::Active, "iconActive"}})
+    {
+        QPixmap pm = base.pixmap(QSize(16, 16), 2.0, mode, QIcon::Off);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setCompositionMode(QPainter::CompositionMode_Clear);
+        p.setPen(QPen(Qt::transparent, 3.5));
+        p.drawLine(QPointF(4, 4), QPointF(28, 28));
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        p.setPen(QPen(themeColor(colour), 2.0, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(4, 4), QPointF(28, 28));
+        p.end();
+        out.addPixmap(pm, mode, QIcon::Off);
+        out.addPixmap(pm, mode, QIcon::On);
+    }
+    return out;
+}
+
 static QIcon cbStateIcon(uint32_t state)
 {
     const QColor c = cbStateColor(state);
@@ -1083,8 +1129,45 @@ void ChannelBox::showSettings(QWidget* anchor)
     speed->setDecimals(2);
     speed->setSingleStep(0.25);
     speed->setValue(attrView::scrubSpeed());
-    connect(speed, &QDoubleSpinBox::valueChanged, pop, [](double v) { attrView::setScrubSpeed(v); });
-    f->addRow("Scrub speed", speed);
+    auto* speedRow = new QHBoxLayout;
+    speedRow->setSpacing(2);
+    speedRow->addWidget(speed, 1);
+    struct SpeedPreset
+    {
+        const char* name;
+        const char* icon;
+        double value;
+        const char* tip;
+    };
+    // A quarter and four times sit between the Ctrl and Shift drag modifiers rather than repeating them.
+    static const SpeedPreset kPresets[] = {
+        {"Fine", "feather", 0.25, "Fine (0.25): small props, careful rotations"},
+        {"Normal", "walk", 1.0, "Normal (1)"},
+        {"Fast", "run", 4.0, "Fast (4): large sets and layouts"},
+    };
+    std::vector<QToolButton*> presetButtons;
+    for (const SpeedPreset& p : kPresets)
+    {
+        auto* b = new QToolButton(pop);
+        b->setObjectName(QString("cbScrubPreset_") + p.name);
+        b->setIcon(icon(p.icon));
+        b->setAutoRaise(true);
+        b->setCheckable(true);
+        b->setToolTip(p.tip);
+        connect(b, &QToolButton::clicked, speed, [speed, v = p.value] { speed->setValue(v); });
+        speedRow->addWidget(b);
+        presetButtons.push_back(b);
+    }
+    const auto markPreset = [presetButtons](double v) {
+        for (size_t i = 0; i < presetButtons.size(); ++i)
+            presetButtons[i]->setChecked(std::abs(v - kPresets[i].value) < 1e-6);
+    };
+    markPreset(speed->value());
+    connect(speed, &QDoubleSpinBox::valueChanged, pop, [markPreset](double v) {
+        attrView::setScrubSpeed(v);
+        markPreset(v);
+    });
+    f->addRow("Scrub speed", speedRow);
     auto* hyper = new QCheckBox("Faster drags go further", pop);
     hyper->setObjectName("cbHyperbolic");
     hyper->setChecked(attrView::hyperbolicScrub());
@@ -1568,11 +1651,11 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
             mDragRow = -1;
             if (scene::Node* owner = Graph::current().node(row.node ? row.node : mNode))
             {
-                auto* data = new QMimeData;
-                data->setData(kCbPlugMime, QByteArray::fromStdString(owner->path() + "." + row.attr));
-                data->setText(QString::fromStdString(owner->path() + "." + row.attr));
+                auto* mime = new QMimeData;
+                mime->setData(kCbPlugMime, QByteArray::fromStdString(owner->path() + "." + row.attr));
+                mime->setText(QString::fromStdString(owner->path() + "." + row.attr));
                 auto* drag = new QDrag(mTable);
-                drag->setMimeData(data);
+                drag->setMimeData(mime);
                 drag->exec(Qt::LinkAction | Qt::CopyAction);
                 return true;
             }
