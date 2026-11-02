@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lila::geo
@@ -26,6 +27,10 @@ struct LILA_SCENE_API Screen
 
     /** nullopt behind the camera. */
     std::optional<glm::dvec2> project(const glm::dvec3& world) const;
+    /** The part of segment a-b in front of the near plane, in pixels; nullopt when none of it is. */
+    std::optional<std::pair<glm::dvec2, glm::dvec2>> projectSegment(const glm::dvec3& a, const glm::dvec3& b) const;
+    /** The part of the polygon in front of the near plane, in pixels; empty when none of it is. */
+    std::vector<glm::dvec2> projectPolygon(const std::vector<glm::dvec3>& corners) const;
 };
 
 /** How close, in pixels, the cursor must be to a vertex or edge for a click to take it. */

@@ -23,6 +23,62 @@ std::optional<glm::dvec2> Screen::project(const glm::dvec3& world) const
     return glm::dvec2((clip.x / clip.w * 0.5 + 0.5) * width, (clip.y / clip.w * 0.5 + 0.5) * height);
 }
 
+namespace
+{
+/** Signed distance to the near plane in clip space, positive in front: reversed-Z puts the near plane at z = w. */
+double inFront(const glm::dvec4& clip)
+{
+    return clip.w - clip.z;
+}
+
+glm::dvec4 nearCrossing(const glm::dvec4& a, const glm::dvec4& b)
+{
+    const double da = inFront(a), db = inFront(b);
+    return glm::mix(a, b, da / (da - db));
+}
+
+glm::dvec2 toPixels(const glm::dvec4& clip, double width, double height)
+{
+    return glm::dvec2((clip.x / clip.w * 0.5 + 0.5) * width, (clip.y / clip.w * 0.5 + 0.5) * height);
+}
+} // namespace
+
+std::optional<std::pair<glm::dvec2, glm::dvec2>> Screen::projectSegment(const glm::dvec3& a, const glm::dvec3& b) const
+{
+    glm::dvec4 ca = viewProj * glm::dvec4(a, 1.0), cb = viewProj * glm::dvec4(b, 1.0);
+    const bool aIn = inFront(ca) >= 0.0, bIn = inFront(cb) >= 0.0;
+    if (!aIn && !bIn)
+        return std::nullopt;
+    if (!aIn)
+        ca = nearCrossing(ca, cb);
+    else if (!bIn)
+        cb = nearCrossing(cb, ca);
+    if (ca.w <= 1e-12 || cb.w <= 1e-12)
+        return std::nullopt;
+    return std::pair{toPixels(ca, width, height), toPixels(cb, width, height)};
+}
+
+std::vector<glm::dvec2> Screen::projectPolygon(const std::vector<glm::dvec3>& corners) const
+{
+    std::vector<glm::dvec4> clip;
+    clip.reserve(corners.size());
+    for (const glm::dvec3& c : corners)
+        clip.push_back(viewProj * glm::dvec4(c, 1.0));
+    std::vector<glm::dvec2> out;
+    for (size_t i = 0; i < clip.size(); ++i)
+    {
+        const glm::dvec4& a = clip[i];
+        const glm::dvec4& b = clip[(i + 1) % clip.size()];
+        const bool aIn = inFront(a) >= 0.0, bIn = inFront(b) >= 0.0;
+        if (aIn && a.w > 1e-12)
+            out.push_back(toPixels(a, width, height));
+        if (aIn != bIn)
+            if (const glm::dvec4 x = nearCrossing(a, b); x.w > 1e-12)
+                out.push_back(toPixels(x, width, height));
+    }
+    return out;
+}
+
 double radius(ComponentMode mode)
 {
     return mode == ComponentMode::Vertex ? 12.0 : 8.0;
@@ -68,10 +124,11 @@ std::vector<Candidate> nearby(const geo::Mesh& m, const glm::dmat4& world, Compo
             {
                 if (!m.edgeValid(id))
                     continue;
-                auto s0 = at(m.edgePoint(id, 0)), s1 = at(m.edgePoint(id, 1));
-                if (!s0 || !s1)
+                auto worldOf = [&](geo::Index p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };
+                auto seg = screen.projectSegment(worldOf(m.edgePoint(id, 0)), worldOf(m.edgePoint(id, 1)));
+                if (!seg)
                     continue;
-                d = segDistance(cursor, *s0, *s1);
+                d = segDistance(cursor, seg->first, seg->second);
             }
             if (d < maxPx)
                 out.push_back({d, id});

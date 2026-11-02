@@ -4,6 +4,7 @@
 #include "geo/Mesh.h"
 #include "geo/Primitives.h"
 #include "geo/RenderMesh.h"
+#include "scene/Camera.h"
 #include "scene/ComponentPick.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
@@ -90,6 +91,34 @@ TEST_CASE("preselect: edges by distance to the projected segment")
     glm::dvec3 mid = cp::anchor(m, glm::dmat4(1.0), ComponentMode::Edge, c[0].id);
     CHECK(mid.x == doctest::Approx(0.5));
     CHECK(mid.y == doctest::Approx(0.0));
+}
+
+TEST_CASE("preselect: edges and faces reaching behind the camera are cut at the near plane")
+{
+    // Camera at the origin looking down -z, 90 degree view, near plane at 0.1.
+    const cp::Screen s{camera::projection({1.0, 1.0}, false, 0.1, 0.0), 100.0, 100.0};
+    geo::Mesh m;
+    geo::Index a = m.addPoint({0, -1, -1}), b = m.addPoint({0, -1, 1}), c = m.addPoint({1, -1, 1});
+    m.addFace({a, b, c});
+    const uint32_t ab = edgeBetween(m, a, b);
+
+    auto seg = s.projectSegment({0, -1, -1}, {0, -1, 1});
+    REQUIRE(seg);
+    CHECK(seg->first.x == doctest::Approx(50.0));
+    CHECK(seg->first.y == doctest::Approx(100.0));
+    CHECK(seg->second.y == doctest::Approx(550.0));
+    CHECK_FALSE(s.projectSegment({0, -1, 1}, {0, -1, 0.5}));
+
+    auto hits = cp::nearby(m, glm::dmat4(1.0), ComponentMode::Edge, s, {52, 120}, cp::radius(ComponentMode::Edge));
+    REQUIRE(!hits.empty());
+    CHECK(hits[0].id == ab);
+    CHECK(hits[0].px == doctest::Approx(2.0));
+
+    const std::vector<glm::dvec2> poly = s.projectPolygon({{-1, -1, -1}, {1, -1, -1}, {1, -1, 1}, {-1, -1, 1}});
+    REQUIRE(poly.size() == 4);
+    for (const glm::dvec2& p : poly)
+        CHECK(p.y >= 100.0 - 1e-9);
+    CHECK(s.projectPolygon({{-1, -1, 1}, {1, -1, 1}, {0, -1, 2}}).empty());
 }
 
 TEST_CASE("preselect: world transform and faces")

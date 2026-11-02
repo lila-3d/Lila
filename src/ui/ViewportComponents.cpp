@@ -57,6 +57,19 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
     };
 
     cp::Screen screen{mCamera.proj(aspect()) * mCamera.view(), double(width()), double(height())};
+    const glm::dvec3 fwd = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
+    const double nearDepth = view.ortho ? -std::numeric_limits<double>::infinity() : view.proj[3][2] / (view.proj[2][2] + 1.0);
+    auto depthOf = [&](const glm::dvec3& p) { return glm::dot(p - view.eye, fwd); };
+    // An edge reaching behind the camera is tested for occlusion on its part in view.
+    auto edgeAnchor = [&](const ComponentShape& shape, uint32_t e) {
+        const glm::dvec3 mid = shape.edgeAnchor(e);
+        if (depthOf(mid) >= nearDepth)
+            return mid;
+        glm::dvec3 a = shape.point(shape.cage.edgePoint(e, 0)), b = shape.point(shape.cage.edgePoint(e, 1));
+        if (depthOf(a) < depthOf(b))
+            std::swap(a, b);
+        return (a + glm::mix(a, b, (depthOf(a) - nearDepth) / (depthOf(a) - depthOf(b)))) * 0.5;
+    };
     const bool cull = paintSelect::backfaceCulling();
     double bestPx = cp::radius(mode);
     double bestRay = 1e300;
@@ -91,7 +104,7 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         {
             const uint32_t cid = shape.cageOf(mode, c.id);
             if (cid != geo::kInvalid && vis->shows(mode, cid) && (!cull || paintSelect::frontFacing(*mesh, world, mode, cid, view)) &&
-                visible(mode == ComponentMode::Vertex ? shape.point(cid) : shape.edgeAnchor(cid)))
+                visible(mode == ComponentMode::Vertex ? shape.point(cid) : edgeAnchor(shape, cid)))
             {
                 bestPx = c.px;
                 best.node = id;
@@ -152,6 +165,7 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
         };
         // Edges and faces count when the region touches them anywhere, or with the pref off only when it holds their centre.
         const bool touch = PrefStore::get().value<bool>("general", "/select/marqueeTouch", true);
+        const scene::componentPick::Screen screen{mCamera.proj(aspect()) * mCamera.view(), double(width()), double(height())};
         for (scene::NodeId id : hilited(mIsolation))
         {
             scene::Node* n = g.node(id);
@@ -160,7 +174,6 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                 continue;
             const geo::Mesh& m = *mesh;
             const ComponentShape shape(*n, m, mesh, shownWorld(*n));
-            auto toPx = [](QPointF p) { return glm::dvec2(p.x(), p.y()); };
             if (mode == ComponentMode::Vertex)
             {
                 for (uint32_t p = 0; p < m.pointCapacity(); ++p)
@@ -177,8 +190,10 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                     bool in = false;
                     if (touch)
                         shape.forEachSegment(e, [&](const glm::dvec3& a, const glm::dvec3& b) {
-                            auto s0 = project(a), s1 = project(b);
-                            in = in || (s0 && s1 && touchesSelectRegion(box, {toPx(*s0), toPx(*s1)}));
+                            if (in)
+                                return;
+                            auto seg = screen.projectSegment(a, b);
+                            in = seg && touchesSelectRegion(box, {seg->first, seg->second});
                         });
                     else if (auto s = project(shape.edgeAnchor(e)))
                         in = inSelectRegion(box, *s);
@@ -197,11 +212,8 @@ void ViewportWidget::pickComponents(QPointF a, QPointF b, Qt::KeyboardModifiers 
                             shape.forEachPolygon(f, [&](const std::vector<glm::dvec3>& corners) {
                                 if (in)
                                     return;
-                                std::vector<glm::dvec2> poly;
-                                for (const glm::dvec3& w : corners)
-                                    if (auto s = project(w))
-                                        poly.push_back(toPx(*s));
-                                in = poly.size() == corners.size() && touchesSelectRegion(box, poly);
+                                const std::vector<glm::dvec2> poly = screen.projectPolygon(corners);
+                                in = !poly.empty() && touchesSelectRegion(box, poly);
                             });
                         else if (auto s = project(c))
                             in = inSelectRegion(box, *s);
