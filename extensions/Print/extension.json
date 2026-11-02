@@ -1,0 +1,14 @@
+{
+    "id": "Print",
+    "name": "Print",
+    "version": "0.1.0",
+    "vendor": "Lila",
+    "description": "3D printing: printability checks, wall thickness and overhang maps, printer presets, hollowing, splitting with pegs, lay flat and 3MF.",
+    "sdk": "1.0",
+    "entry": {
+        "windows": "Print.dll",
+        "linux": "Print.so",
+        "macos": "Print.dylib"
+    },
+    "enabledByDefault": true
+}
