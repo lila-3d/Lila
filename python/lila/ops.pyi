@@ -8108,7 +8108,7 @@ def smoothDeformerWeights(*objects: Any, iterations: int | None = None, layer: i
     """
 
 def smoothPreview(*objects: Any, level: int | None = None) -> Any:
-    """Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off.
+    """Display meshes subdivided without changing them (the 1/2/3 keys), including every mesh under a given group. level 0 is off.
 
     Args:
         objects: objects.

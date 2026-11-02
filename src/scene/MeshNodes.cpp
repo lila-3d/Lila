@@ -589,7 +589,7 @@ void registerMeshCommands()
 
     ops::registerCommand({
         .name = "smoothPreview",
-        .doc = "Display meshes subdivided without changing them (the 1/2/3 keys). level 0 is off.",
+        .doc = "Display meshes subdivided without changing them (the 1/2/3 keys), including every mesh under a given group. level 0 is off.",
         .positionalDoc = "objects",
         .flags = {{"level", "", T::Int, 2, "Subdivision levels to display (0 to 3).", {}, {}, 0.0, 3.0}},
         .undoable = false,
@@ -605,9 +605,19 @@ void registerMeshCommands()
                 bool was;
                 ~Restore() { undo.setEnabled(was); }
             } restore{undo, was};
+            Graph& g = graph();
+            std::vector<NodeId> ids;
             for (const std::string& name : a.objects())
-                if (Node& n = nodeNamed(name); n.type().isA("mesh"))
-                    graph().setValue({n.id(), MeshNode::kSmoothPreview, -1}, level);
+            {
+                const NodeId id = nodeNamed(name).id();
+                ids.push_back(id);
+                std::ranges::copy(g.descendants(id), std::back_inserter(ids));
+            }
+            std::ranges::sort(ids);
+            ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+            for (NodeId id : ids)
+                if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                    g.setValue({id, MeshNode::kSmoothPreview, -1}, level);
             return nullptr;
         },
     });

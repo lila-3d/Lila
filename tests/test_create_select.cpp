@@ -146,3 +146,16 @@ TEST_CASE("createMesh puts each face corner's uv on that corner")
 
     CHECK_THROWS(run("createMesh", {{"points", {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}}}, {"faces", {{0, 1, 2}}}, {"uvs", {{0, 0}}}}));
 }
+
+TEST_CASE("smoothPreview on a group reaches every mesh below it")
+{
+    run("newScene");
+    std::string a = run("polyCube")[0], b = run("polyCube")[0];
+    std::string inner = run("group", {{"args", {b}}});
+    std::string outer = run("group", {{"args", {a, inner}}});
+    run("smoothPreview", {{"args", {outer}}, {"level", 2}});
+    const json meshes = run("ls", {{"type", "mesh"}});
+    REQUIRE(meshes.size() == 2);
+    for (const json& mesh : meshes)
+        CHECK(run("getAttr", {{"args", {mesh.get<std::string>() + ".smoothPreview"}}}).get<int>() == 2);
+}
