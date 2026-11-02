@@ -14,15 +14,15 @@ namespace lila::ui
 {
 /**
  * Translucent overlay over the main window listing the hotkeys live for the focus widget's context chain, grouped
- * by category. Bound to F1: held, it shows until the release; tapped, it stays open with its filter focused until F1,
- * Esc or a click outside it.
+ * by category. Bound to F1: held, it shows until the release; tapped, or opened any other way (menu, shelf, script),
+ * it stays open with its filter focused until F1, Esc or a click outside it.
  */
 class LILA_UI_API HotkeyCheatSheet : public QWidget
 {
     Q_OBJECT
 
 public:
-    /** Opens the sheet, or closes one left open by a tap. */
+    /** Opens the sheet (pinned unless a key is opening it), or closes a pinned one. */
     static void open();
     static void dismiss();
     /** The key's release: closes a held sheet, keeps a tapped one open for typing. */

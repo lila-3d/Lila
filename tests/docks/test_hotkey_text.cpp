@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QLineEdit>
+#include <QMainWindow>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QWidget>
@@ -242,4 +243,53 @@ TEST_CASE("the cheat sheet filters by action, key and category, sorted with Othe
     CHECK_FALSE(sheet.pinned());
     sheet.pin();
     CHECK(sheet.pinned());
+}
+
+TEST_CASE("the cheat sheet peeks only while F1 is held; a tap, the menu or a script leaves it open to filter")
+{
+    actions::add({.id = "help.hotkeyCheatSheet", .label = "Hotkey Cheat Sheet", .category = "Help", .run = [] { HotkeyCheatSheet::open(); },
+                  .doc = "Test stand-in."});
+    actions::add({.id = "help.hotkeyCheatSheetClose", .label = "Close Hotkey Cheat Sheet", .category = "Help",
+                  .run = [] { HotkeyCheatSheet::released(); }, .doc = "Test stand-in."});
+    QMainWindow main;
+    auto* w = new QWidget(&main);
+    main.setCentralWidget(w);
+    main.resize(1200, 800);
+    main.show();
+    w->setFocusPolicy(Qt::StrongFocus);
+    w->setFocus();
+    auto settle = [](int ms) {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms)
+            QApplication::processEvents();
+    };
+
+    actions::run(nlohmann::json("help.hotkeyCheatSheet"));
+    REQUIRE(HotkeyCheatSheet::active());
+    CHECK(HotkeyCheatSheet::active()->pinned());
+    actions::run(nlohmann::json("help.hotkeyCheatSheet"));
+    CHECK_FALSE(HotkeyCheatSheet::active());
+    settle(20);
+
+    Hotkeys::get().install();
+    w->grabKeyboard();
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_F1, Qt::NoModifier, 0, 0, 0);
+    QApplication::sendEvent(w, &down);
+    REQUIRE(HotkeyCheatSheet::active());
+    CHECK_FALSE(HotkeyCheatSheet::active()->pinned());
+    settle(400);
+    QKeyEvent up(QEvent::KeyRelease, Qt::Key_F1, Qt::NoModifier, 0, 0, 0);
+    QApplication::sendEvent(w, &up);
+    CHECK_FALSE(HotkeyCheatSheet::active());
+    settle(20);
+
+    QApplication::sendEvent(w, &down);
+    QApplication::sendEvent(w, &up);
+    REQUIRE(HotkeyCheatSheet::active());
+    CHECK(HotkeyCheatSheet::active()->pinned());
+    HotkeyCheatSheet::dismiss();
+    settle(20);
+    w->releaseKeyboard();
+    qApp->removeEventFilter(&Hotkeys::get());
 }

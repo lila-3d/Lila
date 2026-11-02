@@ -4,6 +4,7 @@
 #include "ui/Actions.h"
 #include "ui/HotkeyBindings.h"
 #include "ui/HotkeyChord.h"
+#include "ui/Hotkeys.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -73,6 +74,9 @@ void HotkeyCheatSheet::open()
     gSheet = new HotkeyCheatSheet(host, QApplication::focusWidget());
     gSheet->show();
     qApp->installEventFilter(gSheet);
+    // Only a key going down can be held; a menu, button or script opens it ready to filter.
+    if (!Hotkeys::fromKey())
+        gSheet->pin();
     achievementRules::cheatSheetShown();
 }
 
@@ -95,6 +99,8 @@ void HotkeyCheatSheet::dismiss()
         gSheet->mFocus->window()->activateWindow();
         gSheet->mFocus->setFocus();
     }
+    qApp->removeEventFilter(gSheet);
+    gSheet->hide();
     gSheet->deleteLater();
     gSheet = nullptr;
 }
