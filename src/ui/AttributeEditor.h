@@ -96,8 +96,23 @@ private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     /** The node's issues above its sections, each one a link to where it points. */
     QWidget* issueList();
-    /** The nodes edits go to: the shown one. */
+    /** The nodes edits go to: the shown one, or with Alt held every selected one (lead first). */
     std::vector<scene::NodeId> targets() const;
+    /** The node the editor shows: the pinned one, a focused related node, else the lead. */
+    scene::NodeId shownNode() const;
+    /** Selected nodes that have the plug path attr (attr, attr[2], translateX), lead first. */
+    std::vector<scene::NodeId> holders(const std::string& attr) const;
+    /** True when the selected holders of the plug disagree on its value. */
+    bool mixed(const scene::PlugRef& ref) const;
+    /** The chips, history, pin and Show button row; the multi-object pill. */
+    void rebuildHeader();
+    void refreshMultiState();
+    void showHint(const QString& text);
+    void showViewPopover(QWidget* anchor);
+    /** Shows a related node without changing the selection, recording it in the focus history. */
+    void focusNode(scene::NodeId id);
+    /** A signature of the shared view settings, so only a real change rebuilds. */
+    std::string viewSignature() const;
     void openAdd(QWidget* anchor, std::string category = {});
     void openEdit(const std::string& attr, QWidget* anchor);
     /** A component heading's menu: add here, save as a component, Unreal export, remove. */
@@ -115,6 +130,22 @@ private:
     QLineEdit* mName = nullptr;
     QLineEdit* mSearch = nullptr;
     QToolButton* mAdd = nullptr;
+    QWidget* mChips = nullptr;
+    QLabel* mMultiPill = nullptr;
+    QWidget* mHint = nullptr;
+    QLabel* mHintText = nullptr;
+    bool mPinned = false;
+    /** A related node shown in place of the lead until the selection changes. */
+    scene::NodeId mFocus = scene::kNoNode;
+    std::vector<scene::NodeId> mHistory;
+    int mHistoryAt = -1;
+    bool mNavigating = false;
+    std::vector<scene::NodeId> mLastSelection;
+    /** Count badges of the last multi-object edits, by attribute, kept until the selection changes. */
+    std::map<std::string, int> mBadgeCounts;
+    std::map<std::string, QLabel*> mBadges;
+    int mViewListener = 0;
+    std::string mViewSig;
     struct SearchRow
     {
         QFormLayout* form;

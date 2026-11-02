@@ -1,5 +1,7 @@
 #include "ui/AttributeEditor.h"
 #include "ui/AttrAuthoring.h"
+#include "ui/AttrView.h"
+#include "ui/DocsUi.h"
 #include "core/PrefStore.h"
 #include "scene/AttrComponents.h"
 
@@ -30,6 +32,8 @@
 #include <QGuiApplication>
 #include <QApplication>
 #include <QDrag>
+#include <QButtonGroup>
+#include <QRadioButton>
 #include <QMimeData>
 #include <QCheckBox>
 #include <QComboBox>
@@ -524,6 +528,8 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     outer->setContentsMargins(4, 4, 4, 4);
     outer->setSpacing(4);
 
+    setProperty("lilaMultiEditPanel", true);
+    attrView::installKeyWatch();
     auto* top = new QHBoxLayout;
     mType = new QLabel(this);
     mType->setStyleSheet("color: #9a9a9a;");
@@ -548,6 +554,41 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     find->addWidget(mSearch, 1);
     find->addWidget(mAdd);
     outer->addLayout(find);
+    mChips = new QWidget(this);
+    mChips->setObjectName("aeChips");
+    new QHBoxLayout(mChips);
+    mChips->layout()->setContentsMargins(0, 0, 0, 0);
+    mChips->layout()->setSpacing(3);
+    outer->addWidget(mChips);
+    mHint = new QFrame(this);
+    mHint->setObjectName("multiEditHint");
+    mHint->setStyleSheet(QString("#multiEditHint { background: %1; border-radius: 3px; }").arg(themeColor("altBase").name()));
+    auto* hintRow = new QHBoxLayout(mHint);
+    hintRow->setContentsMargins(6, 3, 6, 3);
+    mHintText = new QLabel(mHint);
+    mHintText->setObjectName("multiEditHintText");
+    mHintText->setWordWrap(true);
+    auto* hintOff = new QLabel("<a href=\"off\">Turn off this hint</a>", mHint);
+    hintOff->setObjectName("multiEditHintOff");
+    connect(hintOff, &QLabel::linkActivated, this, [this] {
+        attrView::setHintEnabled(false);
+        mHint->hide();
+    });
+    hintRow->addWidget(mHintText, 1);
+    hintRow->addWidget(hintOff);
+    mHint->hide();
+    outer->addWidget(mHint);
+    mViewSig = viewSignature();
+    mViewListener = attrView::addListener([this] {
+        const std::string sig = viewSignature();
+        if (sig != mViewSig)
+        {
+            mViewSig = sig;
+            mRebuild = true;
+        }
+        refreshMultiState();
+        scheduleRefresh();
+    });
     connect(mName, &QLineEdit::editingFinished, this, [this] {
         scene::Node* n = Graph::current().node(mNode);
         if (!n || mName->text().isEmpty() || mName->text().toStdString() == n->name())
@@ -598,6 +639,7 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
 AttributeEditor::~AttributeEditor()
 {
     std::erase(gEditors, this);
+    attrView::removeListener(mViewListener);
     dx::removeListener(mIssueListener);
     Graph::current().removeListener(mListener);
     attributeEditor::registry().removeListener(mSectionListener);
@@ -696,9 +738,7 @@ void AttributeEditor::scheduleRefresh()
     // While a drag edits the scene every frame, the fields catch up ten times a second instead of every frame.
     QTimer::singleShot(QGuiApplication::mouseButtons() != Qt::NoButton ? 100 : 0, this, [this] {
         mQueued = false;
-        Graph& g = Graph::current();
-        scene::NodeId lead = g.selection().empty() ? scene::kNoNode : g.selection().back();
-        if (mRebuild || lead != mNode)
+        if (mRebuild || shownNode() != mNode || Graph::current().selection() != mLastSelection)
             rebuild();
         else
             updateValues();
@@ -708,18 +748,73 @@ void AttributeEditor::scheduleRefresh()
 
 void AttributeEditor::set(const std::string& attr, const json& value)
 {
-    scene::Node* n = Graph::current().node(mNode);
+    Graph& g = Graph::current();
+    scene::Node* n = g.node(mNode);
     if (!n)
         return;
+    const std::vector<scene::NodeId> all = holders(attr);
+    const bool many = all.size() > 1 && attrView::multiEditHeld();
     try
     {
-        ops::execute("setAttr", {{"args", {n->path() + "." + attr, value}}}, CallSource::UI);
+        UndoChunk chunk("Set " + attr);
+        for (scene::NodeId id : many ? all : std::vector<scene::NodeId>{mNode})
+            ops::execute("setAttr", {{"args", {g.node(id)->path() + "." + attr, value}}}, CallSource::UI);
     }
     catch (const CommandError& e)
     {
         log::error("{}", e.what());
         updateValues();
     }
+    const std::string name = g.attr(g.plug(n->path() + "." + attr)).name;
+    if (many)
+    {
+        attrView::noteMultiEditUsed();
+        mBadgeCounts[name] = int(all.size());
+        if (auto it = mBadges.find(name); it != mBadges.end())
+        {
+            it->second->setText(QString("\u00d7%1").arg(all.size()));
+            it->second->show();
+        }
+        refreshMultiState();
+    }
+    else if (all.size() > 1 && attrView::hintEnabled())
+        showHint(QString("Changed %1 only. Hold Alt to change all %2.").arg(QString::fromStdString(n->name())).arg(all.size()));
+}
+
+std::vector<scene::NodeId> AttributeEditor::holders(const std::string& attr) const
+{
+    Graph& g = Graph::current();
+    std::vector<scene::NodeId> out;
+    if (mNode != attrView::lead())
+        return {mNode};
+    for (scene::NodeId id : attrView::selectionLeadFirst())
+        if (scene::Node* n = g.node(id))
+            try
+            {
+                g.plug(n->path() + "." + attr);
+                out.push_back(id);
+            }
+            catch (const std::exception&)
+            {
+            }
+    return out;
+}
+
+bool AttributeEditor::mixed(const scene::PlugRef& ref) const
+{
+    if (!attrView::multiEditHeld() || Graph::current().selection().size() < 2)
+        return false;
+    Graph& g = Graph::current();
+    const std::string plug = g.plugName(ref);
+    const std::string attr = plug.substr(plug.find('.') + 1);
+    const std::vector<scene::NodeId> all = holders(attr);
+    if (all.size() < 2)
+        return false;
+    const scene::PlugValue first = g.value(g.plug(g.node(all[0])->path() + "." + attr));
+    for (size_t i = 1; i < all.size(); ++i)
+        if (!(g.value(g.plug(g.node(all[i])->path() + "." + attr)) == first))
+            return true;
+    return false;
 }
 
 void AttributeEditor::addElement(const std::vector<int>& attrs, int element)
@@ -851,8 +946,23 @@ void AttributeEditor::rebuild()
     }
 
     Graph& g = Graph::current();
-    mNode = g.selection().empty() ? scene::kNoNode : g.selection().back();
+    if (g.selection() != mLastSelection)
+    {
+        mLastSelection = g.selection();
+        mBadgeCounts.clear();
+        if (!mPinned)
+            mFocus = scene::kNoNode;
+    }
+    mBadges.clear();
+    mNode = shownNode();
+    if (!mNavigating && mNode != scene::kNoNode && (mHistoryAt < 0 || mHistory[size_t(mHistoryAt)] != mNode))
+    {
+        mHistory.resize(size_t(mHistoryAt + 1));
+        mHistory.push_back(mNode);
+        mHistoryAt = int(mHistory.size()) - 1;
+    }
     scene::Node* n = g.node(mNode);
+    rebuildHeader();
     mName->setText(n ? QString::fromStdString(n->name()) : QString());
     mName->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     mName->setEnabled(n != nullptr);
@@ -966,13 +1076,18 @@ void AttributeEditor::rebuild()
                     v = std::min(*v, *def.maxValue);
                 set(target, def.type == PlugType::Int ? json(int64_t(std::llround(*v))) : json(*v));
             });
-            mUpdaters.push_back([e, ref, component] {
+            mUpdaters.push_back([e, ref, component, owner = this] {
                 // Only typing holds a value back; a field focused by a middle-drag still follows it.
                 if (e->hasFocus() && e->isModified())
                     return;
                 scene::Node* node = Graph::current().node(ref.node);
                 if (!node)
                     return;
+                if (owner->mixed(ref))
+                {
+                    e->setText("--");
+                    return;
+                }
                 const scene::PlugValue& v = Graph::current().value(ref);
                 double d = 0.0;
                 if (auto* v3 = std::get_if<glm::dvec3>(&v))
@@ -981,7 +1096,7 @@ void AttributeEditor::rebuild()
                     d = *f;
                 else if (auto* i = std::get_if<int64_t>(&v))
                     d = double(*i);
-                e->setText(fmt(d));
+                e->setText(attrView::formatNumber(d));
             });
             return e;
         };
@@ -1017,9 +1132,12 @@ void AttributeEditor::rebuild()
             auto* cb = new QCheckBox;
             cb->setEnabled(!readOnly);
             connect(cb, &QCheckBox::clicked, this, [this, attr](bool on) { set(attr, on); });
-            mUpdaters.push_back([cb, ref] {
+            mUpdaters.push_back([cb, ref, owner = this] {
                 QSignalBlocker block(cb);
-                cb->setChecked(std::get<bool>(Graph::current().value(ref)));
+                if (owner->mixed(ref))
+                    cb->setCheckState(Qt::PartiallyChecked);
+                else
+                    cb->setChecked(std::get<bool>(Graph::current().value(ref)));
             });
             field = cb;
             break;
@@ -1031,9 +1149,10 @@ void AttributeEditor::rebuild()
                 combo->addItem(QString::fromStdString(e));
             combo->setEnabled(!readOnly);
             connect(combo, &QComboBox::activated, this, [this, attr](int i) { set(attr, int64_t(i)); });
-            mUpdaters.push_back([combo, ref] {
+            mUpdaters.push_back([combo, ref, owner = this] {
                 QSignalBlocker block(combo);
-                combo->setCurrentIndex(int(std::get<int64_t>(Graph::current().value(ref))));
+                combo->setPlaceholderText("--");
+                combo->setCurrentIndex(owner->mixed(ref) ? -1 : int(std::get<int64_t>(Graph::current().value(ref))));
             });
             field = combo;
             break;
@@ -1173,7 +1292,7 @@ void AttributeEditor::rebuild()
             field->setToolTip(QString::fromStdString(def.doc));
             field = row;
         }
-        auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
+        auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : attrView::label(def));
         label->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(label, &QWidget::customContextMenuRequested, this,
                 [this, label, attr, ref, keyable = bool(def.flags & scene::AttrKeyable), user = bool(def.flags & scene::AttrUser)](const QPoint& at) {
@@ -1261,6 +1380,33 @@ void AttributeEditor::rebuild()
                 else
                     dropHeading(mimeText(d, kHeadingMime), category);
             };
+            field = row;
+        }
+        if (element < 0)
+        {
+            auto* row = new QWidget;
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->setSpacing(3);
+            h->addWidget(field, 1);
+            auto* badge = new QLabel(row);
+            badge->setObjectName("multiBadge");
+            const QColor accent = themeColor("accent");
+            badge->setStyleSheet(QString("QLabel { color: %1; background: rgba(%2, %3, %4, 51); border-radius: 6px; padding: 0 4px; "
+                                         "font-size: 10px; font-weight: 600; }")
+                                     .arg(accent.name())
+                                     .arg(accent.red())
+                                     .arg(accent.green())
+                                     .arg(accent.blue()));
+            badge->setProperty("lilaRawColors", true);
+            if (auto it = mBadgeCounts.find(def.name); it != mBadgeCounts.end())
+                badge->setText(QString("\u00d7%1").arg(it->second));
+            else
+                badge->hide();
+            badge->setToolTip("Changed on this many objects");
+            badge->setAccessibleName("Changed on several objects");
+            mBadges[def.name] = badge;
+            h->addWidget(badge);
             field = row;
         }
         mSearchRows.push_back({form, label, def});
@@ -1497,6 +1643,16 @@ void AttributeEditor::rebuild()
             {
                 mSections.emplace_back(box, header->text());
                 rememberCollapse(box, n->type().registered().name + ":" + header->text().toStdString());
+                auto* help = new QToolButton(header);
+                help->setObjectName("sectionHelp");
+                help->setIcon(icon("help-circle"));
+                help->setAutoRaise(true);
+                help->setToolTip("Open the docs for " + QString::fromStdString(n->type().registered().name));
+                auto* hl = new QHBoxLayout(header);
+                hl->setContentsMargins(0, 0, 2, 0);
+                hl->addStretch(1);
+                hl->addWidget(help);
+                connect(help, &QToolButton::clicked, this, [page = attrView::helpPageFor(n->type())] { docs::open(page); });
             }
     mBodyLayout->addStretch(1);
     updateValues();
@@ -1508,8 +1664,265 @@ void AttributeEditor::rebuild()
 
 std::vector<scene::NodeId> AttributeEditor::targets() const
 {
-    return mNode == scene::kNoNode ? std::vector<scene::NodeId>{} : std::vector<scene::NodeId>{mNode};
+    if (mNode == scene::kNoNode)
+        return {};
+    if (attrView::multiEditHeld() && mNode == attrView::lead() && Graph::current().selection().size() > 1)
+        return attrView::selectionLeadFirst();
+    return {mNode};
 }
+
+scene::NodeId AttributeEditor::shownNode() const
+{
+    Graph& g = Graph::current();
+    if (mPinned && g.node(mNode))
+        return mNode;
+    if (mFocus != scene::kNoNode && g.node(mFocus))
+        return mFocus;
+    return attrView::lead();
+}
+
+std::string AttributeEditor::viewSignature() const
+{
+    std::string sig = std::string(attrView::nameModeName(attrView::nameMode())) + "|" + attrView::currentView() + "|" +
+                      std::to_string(attrView::precision()) + "|" + (attrView::showNamespaces() ? "ns" : "");
+    for (const attrView::View& v : attrView::views())
+        if (v.name == attrView::currentView())
+            for (const auto& [type, titles] : v.hidden)
+                for (const std::string& t : titles)
+                    sig += "|" + type + "/" + t;
+    return sig;
+}
+
+void AttributeEditor::focusNode(scene::NodeId id)
+{
+    if (!Graph::current().node(id))
+        return;
+    mFocus = id;
+    mPinned = false;
+    mRebuild = true;
+    scheduleRefresh();
+}
+
+void AttributeEditor::rebuildHeader()
+{
+    auto* row = static_cast<QHBoxLayout*>(mChips->layout());
+    while (QLayoutItem* item = row->takeAt(0))
+    {
+        delete item->widget();
+        delete item;
+    }
+    Graph& g = Graph::current();
+    auto tool = [&](const char* name, const char* iconName, const QString& tip) {
+        auto* b = new QToolButton(mChips);
+        b->setObjectName(name);
+        b->setIcon(icon(iconName));
+        b->setAutoRaise(true);
+        b->setToolTip(tip);
+        row->addWidget(b);
+        return b;
+    };
+    QToolButton* back = tool("focusBack", "arrow-left", "Back to the previous object shown");
+    QToolButton* forward = tool("focusForward", "arrow-right", "Forward");
+    // Drop history entries whose nodes are gone.
+    back->setEnabled(mHistoryAt > 0);
+    forward->setEnabled(mHistoryAt >= 0 && mHistoryAt + 1 < int(mHistory.size()));
+    auto step = [this](int delta) {
+        int at = mHistoryAt + delta;
+        while (at >= 0 && at < int(mHistory.size()) && !Graph::current().node(mHistory[size_t(at)]))
+            at += delta;
+        if (at < 0 || at >= int(mHistory.size()))
+            return;
+        mHistoryAt = at;
+        mFocus = mHistory[size_t(at)];
+        mNavigating = true;
+        rebuild();
+        mNavigating = false;
+    };
+    connect(back, &QToolButton::clicked, this, [step] { step(-1); });
+    connect(forward, &QToolButton::clicked, this, [step] { step(1); });
+
+    // The selected objects, lead first; a click makes one the lead without touching the selection.
+    const std::vector<scene::NodeId> sel = attrView::selectionLeadFirst();
+    const QColor accent = themeColor("accent");
+    for (size_t i = 0; i < sel.size() && i < 4; ++i)
+    {
+        const scene::Node* n = g.node(sel[i]);
+        auto* chip = new QToolButton(mChips);
+        chip->setObjectName("selectionChip");
+        chip->setText(QString::fromStdString(n->name()));
+        chip->setToolTip(i == 0 ? "The lead object: edits go here" : "Click to make this the lead object");
+        chip->setCheckable(true);
+        chip->setChecked(sel[i] == mNode);
+        chip->setAutoRaise(true);
+        chip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        if (i == 0)
+            chip->setStyleSheet("QToolButton { font-weight: 600; }");
+        connect(chip, &QToolButton::clicked, this, [this, id = sel[i]] {
+            mFocus = scene::kNoNode;
+            mPinned = false;
+            attrView::setLead(id);
+            mRebuild = true;
+            scheduleRefresh();
+        });
+        row->addWidget(chip);
+    }
+    if (sel.size() > 4)
+    {
+        auto* more = new QLabel(QString("+%1").arg(sel.size() - 4), mChips);
+        more->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
+        row->addWidget(more);
+    }
+    mMultiPill = new QLabel(mChips);
+    mMultiPill->setObjectName("multiEditPill");
+    mMultiPill->setProperty("lilaRawColors", true);
+    mMultiPill->setStyleSheet(QString("QLabel { color: %1; border: 1px solid %1; border-radius: 3px; padding: 1px 6px; }").arg(accent.name()));
+    mMultiPill->hide();
+    row->addWidget(mMultiPill);
+
+    // Related nodes: what feeds the shown one, and the deformers and modifiers it feeds.
+    if (const scene::Node* shown = g.node(mNode))
+    {
+        std::vector<scene::NodeId> related;
+        for (const auto& [dst, src] : g.connections())
+        {
+            scene::NodeId other = scene::kNoNode;
+            if (dst.node == mNode)
+                other = src.node;
+            else if (src.node == mNode)
+                if (const scene::Node* d = g.node(dst.node); d && (d->traits() & (scene::Node::kDeformer | scene::Node::kModifier)))
+                    other = dst.node;
+            const scene::Node* o = g.node(other);
+            if (!o || other == mNode || o->type().isA("animCurve") || o->type().isA("animCurveRQ") ||
+                std::find(related.begin(), related.end(), other) != related.end())
+                continue;
+            related.push_back(other);
+        }
+        (void)shown;
+        if (!related.empty())
+        {
+            auto* sep = new QLabel(QString::fromUtf8("·"), mChips);
+            sep->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
+            row->addWidget(sep);
+        }
+        for (size_t i = 0; i < related.size() && i < 4; ++i)
+        {
+            const scene::Node* o = g.node(related[i]);
+            auto* chip = new QToolButton(mChips);
+            chip->setObjectName("relatedChip");
+            chip->setText(QString::fromStdString(o->name()));
+            chip->setIcon(icon(QString::fromStdString(scene::types::iconFor(o->type(), "box"))));
+            chip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            chip->setToolTip(QString::fromStdString(o->type().registered().name) + ": show it here");
+            chip->setAutoRaise(true);
+            connect(chip, &QToolButton::clicked, this, [this, id = related[i]] { focusNode(id); });
+            row->addWidget(chip);
+        }
+    }
+    row->addStretch(1);
+    QToolButton* pin = tool("aePin", mPinned ? "pinned" : "pin", mPinned ? "Unpin: follow the selection again" : "Pin: keep showing this object");
+    pin->setCheckable(true);
+    pin->setChecked(mPinned);
+    connect(pin, &QToolButton::toggled, this, [this](bool on) {
+        mPinned = on;
+        if (!on)
+            mFocus = scene::kNoNode;
+        mRebuild = true;
+        scheduleRefresh();
+    });
+    QToolButton* show = tool("aeShow", "adjustments", "Show: sections, name mode and saved views");
+    connect(show, &QToolButton::clicked, this, [this, show] { showViewPopover(show); });
+    mChips->setVisible(true);
+    refreshMultiState();
+}
+
+void AttributeEditor::refreshMultiState()
+{
+    if (!mMultiPill)
+        return;
+    const size_t count = Graph::current().selection().size();
+    const bool armed = count > 1 && mNode == attrView::lead() && (attrView::multiEditHeld() || !mBadgeCounts.empty());
+    mMultiPill->setText(QString("Editing %1 objects").arg(count));
+    mMultiPill->setVisible(armed);
+    if (armed)
+        mHint->hide();
+}
+
+void AttributeEditor::showHint(const QString& text)
+{
+    mHintText->setText(text);
+    mHint->show();
+    QTimer::singleShot(5000, mHint, [hint = QPointer<QWidget>(mHint), text, label = QPointer<QLabel>(mHintText)] {
+        if (hint && label && label->text() == text)
+            hint->hide();
+    });
+}
+
+void AttributeEditor::showViewPopover(QWidget* anchor)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    auto* pop = new QFrame(window(), Qt::Popup);
+    pop->setObjectName("aeViewPopover");
+    pop->setAttribute(Qt::WA_DeleteOnClose);
+    pop->setFrameShape(QFrame::StyledPanel);
+    auto* v = new QVBoxLayout(pop);
+    v->setContentsMargins(8, 8, 8, 8);
+    v->addWidget(new QLabel("<b>Names</b>", pop));
+    auto* modes = new QHBoxLayout;
+    auto* group = new QButtonGroup(pop);
+    for (attrView::NameMode m : {attrView::NameMode::Nice, attrView::NameMode::Long, attrView::NameMode::Short})
+    {
+        auto* r = new QRadioButton(m == attrView::NameMode::Nice ? "Nice" : m == attrView::NameMode::Long ? "Long" : "Short", pop);
+        r->setObjectName(QString("nameMode_") + attrView::nameModeName(m));
+        r->setChecked(attrView::nameMode() == m);
+        group->addButton(r);
+        connect(r, &QRadioButton::toggled, pop, [m](bool on) {
+            if (on)
+                attrView::setNameMode(m);
+        });
+        modes->addWidget(r);
+    }
+    v->addLayout(modes);
+    v->addWidget(new QLabel("<b>View</b>", pop));
+    auto* views = new QComboBox(pop);
+    views->setObjectName("aeViews");
+    for (const attrView::View& view : attrView::views())
+        views->addItem(QString::fromStdString(view.name) + (view.source == "studio" ? "  (studio)" : ""), QString::fromStdString(view.name));
+    views->setCurrentIndex(std::max(0, views->findData(QString::fromStdString(attrView::currentView()))));
+    connect(views, &QComboBox::activated, pop, [views](int i) { attrView::setCurrentView(views->itemData(i).toString().toStdString()); });
+    v->addWidget(views);
+    auto* saveRow = new QHBoxLayout;
+    auto* name = new QLineEdit(pop);
+    name->setObjectName("aeViewName");
+    name->setPlaceholderText("Save view as...");
+    auto* studio = new QCheckBox("Studio", pop);
+    studio->setEnabled(!PrefStore::get().studioDirs().empty());
+    connect(name, &QLineEdit::returnPressed, pop, [name, studio, pop] {
+        if (attrView::saveView(name->text().trimmed().toStdString(), studio->isChecked()))
+            pop->close();
+    });
+    saveRow->addWidget(name, 1);
+    saveRow->addWidget(studio);
+    v->addLayout(saveRow);
+    if (n)
+    {
+        v->addWidget(new QLabel("<b>Sections</b>", pop));
+        const std::string type = n->type().registered().name;
+        for (const auto& [box, title] : mSections)
+        {
+            if (title == "Issues")
+                continue;
+            auto* cb = new QCheckBox(title, pop);
+            cb->setObjectName("sectionToggle");
+            cb->setChecked(attrView::sectionShown(type, title));
+            connect(cb, &QCheckBox::toggled, pop, [type, title](bool on) { attrView::setSectionShown(type, title, on); });
+            v->addWidget(cb);
+        }
+    }
+    pop->adjustSize();
+    pop->move(anchor->mapToGlobal(QPoint(anchor->width() - pop->width(), anchor->height())));
+    pop->show();
+}
+
 
 void AttributeEditor::openAdd(QWidget* anchor, std::string category)
 {
@@ -1656,7 +2069,9 @@ void AttributeEditor::applySearch()
     }
     for (const auto& [box, title] : mSections)
     {
-        const bool show = q.isEmpty() || hit.contains(box) || title.contains(q, Qt::CaseInsensitive);
+        const scene::Node* shown = Graph::current().node(mNode);
+        const bool inView = !shown || title == "Issues" || attrView::sectionShown(shown->type().registered().name, title);
+        const bool show = inView && (q.isEmpty() || hit.contains(box) || title.contains(q, Qt::CaseInsensitive));
         box->setVisible(show);
         if (q.isEmpty() || !show)
             continue;
