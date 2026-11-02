@@ -1132,82 +1132,13 @@ void registerPinType()
     types::registerType(std::move(t));
 }
 
-json makePins(const Args& a)
+/** A pin node (what surfacePin makes) or the locator one drives. */
+bool isPinOrLocator(Graph& graph, const Node& n)
 {
-    const char* cmd = "surfacePin";
-    Graph& graph = g();
-    std::vector<std::string> objs = a.objects();
-    if (objs.empty())
-        throw CommandError("surfacePin: give the objects to pin (optional), then the mesh last");
-    Node& mesh = meshNamed(objs.back(), cmd);
-    objs.pop_back();
-    std::string mode = a.get<std::string>("mode");
-    if (mode != "uv" && mode != "nearest")
-        throw CommandError("surfacePin: mode must be uv or nearest");
-    std::string uvSet = a.get<std::string>("uvSet");
-    graph.evaluate();
-    MeshPtr m = mesh.as<MeshPtr>(MeshNode::kOutMesh);
-    if (!m || m->numFaces() == 0)
-        throw CommandError("surfacePin: " + mesh.name() + " has no faces");
-    geo::Mesh world = worldMesh(*m, worldOf(mesh));
-    bool hasUv = !m->cornerAttrs().get<glm::vec2>(uvSet).empty();
-    if (mode == "uv" && !hasUv)
-        throw CommandError(std::format("surfacePin: {} has no uv set {}; use mode nearest", mesh.name(), uvSet));
-
-    std::vector<std::pair<Node*, glm::dvec3>> wanted;
-    for (const std::string& o : objs)
-    {
-        Node& n = nodeNamed(o, cmd);
-        if (!n.type().isA("transform"))
-            throw CommandError("surfacePin: " + n.name() + " is not a transform");
-        if (n.id() == mesh.id())
-            throw CommandError("surfacePin: a mesh can't be pinned to itself");
-        wanted.push_back({&n, positionOf(n)});
-    }
-    if (wanted.empty())
-        wanted.push_back({nullptr, a.has("position") ? vec3Of(a.flags["position"]) : world.bounds().center()});
-
-    json out = json::array();
-    for (auto& [obj, at] : wanted)
-    {
-        deform::SurfacePoint sp;
-        if (!deform::locateNearest(world, at, uvSet, sp))
-            throw CommandError("surfacePin: no surface point found on " + mesh.name());
-        std::string base = a.has("name") ? a.get<std::string>("name") : (obj ? obj->name() : mesh.name()) + "_pin";
-        Node* pin = guarded([&] { return graph.createNode(*types::find("surfacePin"), base + "Node", kNoNode, true); });
-        NodeId pid = pin->id();
-        connectPlug(graph, mesh.id(), "outMesh", pid, "inMesh");
-        connectPlug(graph, mesh.id(), "worldMatrix", pid, "meshMatrix");
-        setPlug(graph, pid, "uvSet", uvSet);
-        if (mode == "uv")
-        {
-            glm::dvec2 uv = sp.uv[0] * sp.bary.x + sp.uv[1] * sp.bary.y + sp.uv[2] * sp.bary.z;
-            if (a.has("uv"))
-            {
-                const json& j = a.flags["uv"];
-                if (!j.is_array() || j.size() != 2)
-                    throw CommandError("surfacePin: uv is [u, v]");
-                uv = {j[0].get<double>(), j[1].get<double>()};
-            }
-            setPlug(graph, pid, "u", uv.x);
-            setPlug(graph, pid, "v", uv.y);
-        }
-        else
-        {
-            auto data = std::make_shared<PinData>();
-            data->point = sp;
-            setPlug(graph, pid, "mode", int64_t(1));
-            setPlug(graph, pid, "binding", DataPtr(std::move(data)));
-        }
-        Node* loc = guarded([&] { return graph.createNode(*types::find("locator"), base, kNoNode, true); });
-        connectPlug(graph, pid, "outTranslate", loc->id(), "translate");
-        connectPlug(graph, pid, "outRotate", loc->id(), "rotate");
-        graph.evaluate();
-        out.push_back(loc->name());
-        if (obj)
-            ops::execute("parentConstraint", {{"args", {loc->path(), obj->path()}}, {"maintainOffset", true}});
-    }
-    return out;
+    if (n.type().name == "pin")
+        return true;
+    auto src = graph.source({n.id(), Transform::kTranslate, -1});
+    return src && graph.node(src->node)->type().name == "pin";
 }
 
 /** A surfacePin node, given it or the locator it drives. */
@@ -1254,6 +1185,15 @@ json bakePins(const Args& a)
     json out = json::array();
     for (const std::string& name : objs)
     {
+        if (isPinOrLocator(graph, nodeNamed(name, cmd)))
+        {
+            json call = {{"args", json::array({name})}};
+            if (a.has("name"))
+                call["name"] = a.flags["name"];
+            for (const json& j : ops::execute("bakePin", call))
+                out.push_back(j);
+            continue;
+        }
         Node& pin = pinNamed(graph, name, cmd);
         auto meshSrc = graph.source({pin.id(), SurfacePinNode::kInMesh, -1});
         MeshPtr m = pin.as<MeshPtr>(SurfacePinNode::kInMesh);
@@ -1768,21 +1708,28 @@ void registerSurfaceCommands()
         .name = "surfacePin",
         .doc = "Pin objects or joints to a mesh's final surface (after its whole stack): each gets a pin locator riding the surface at a "
                "uv (uvPin) or its nearest point (proximityPin) and is parent-constrained to it, keeping its offset. Give the objects "
-               "first and the mesh last; with no objects one pin is made. Returns the pin locators.",
+               "first and the mesh last; with no objects one pin is made. Returns the pin locators. Short for pin with source "
+               "surface, whose other options it leaves at their defaults.",
         .positionalDoc = "objects..., mesh",
         .flags = {{"mode", "", T::String, "uv", "uv | nearest", {"uv", "nearest"}},
                   {"uv", "", T::List, nullptr, "uv mode: [u, v] of the pin. Default: the uv nearest each object."},
                   {"uvSet", "", T::String, "uv0", "The uv set read."},
                   {"position", "", T::Vec3, nullptr, "With no objects: where the pin goes, world space."},
                   {"name", "", T::String, nullptr, "Name for the pin locator."}},
-        .run = [](const Args& a) -> json { return makePins(a); },
+        .run = [](const Args& a) -> json {
+            json call = {{"args", a.positional}, {"source", "surface"}, {"surfaceMode", a.get<std::string>("mode")}, {"uvSet", a.get<std::string>("uvSet")}};
+            for (const char* f : {"uv", "position", "name"})
+                if (a.has(f))
+                    call[f] = a.flags[f];
+            return ops::execute("pin", call);
+        },
     });
 
     ops::registerCommand({
         .name = "bakeSurfacePin",
         .doc = "Bake surface pins to joints for Unreal: each becomes a joint at the pin's current frame, parented to the joint "
                "with the most skin weight under the pin, so it exports as a bone that sockets and attachments use. Give the "
-               "pins or their locators. Returns the joints.",
+               "pins or their locators. Pins made by pin or surfacePin go through bakePin. Returns the joints.",
         .positionalDoc = "pins or pin locators",
         .flags = {{"name", "", T::String, nullptr, "Name for the joint (one pin). Default: <locator>_socket."}},
         .run = [](const Args& a) -> json { return bakePins(a); },

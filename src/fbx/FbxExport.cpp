@@ -123,7 +123,8 @@ bool plainChannels(const scene::Node& n)
     for (int a : {Transform::kRotatePivot, Transform::kScalePivot, Transform::kRotatePivotTranslate, Transform::kScalePivotTranslate})
         if (glm::length(n.as<glm::dvec3>(a)) > 1e-9)
             return false;
-    if (scene::rig::isJoint(n) && (n.as<bool>(scene::Joint::kSegmentScaleCompensate) || n.as<double>(scene::Joint::kIkBlend) != 0.0))
+    if (scene::rig::isJoint(n) && (n.as<bool>(scene::Joint::kSegmentScaleCompensate) || n.as<double>(scene::Joint::kIkBlend) != 0.0 ||
+                                   n.as<double>(scene::Joint::kIkStretch) != 1.0))
         return false;
     return true;
 }
@@ -1752,7 +1753,8 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
     if (!opts.bakeAnimation)
         for (size_t i = 0; i < count; ++i)
             if (!reframed(i) && plainChannels(*graph.node(out.nodes[i].source)) && ownLocal(i) &&
-                !graph.source({out.nodes[i].source, scene::Joint::kIkBlend, -1}))
+                !graph.source({out.nodes[i].source, scene::Joint::kIkBlend, -1}) &&
+                !graph.source({out.nodes[i].source, scene::Joint::kIkStretch, -1}))
                 if ((take.curves[i] = directCurves(graph, out.nodes[i].source, take.start, take.end)))
                     sampled[i] = 0;
 

@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <set>
 
 namespace lila::scene
 {
@@ -91,6 +93,103 @@ std::vector<glm::dmat3> followPositions(const std::vector<glm::dmat4>& world, co
     return out;
 }
 
+glm::dquat quatOf(const glm::dmat3& m) { return glm::normalize(glm::quat_cast(m)); }
+
+bool limited(const ik::Problem& p)
+{
+    return std::any_of(p.limits.begin(), p.limits.end(), [](const ik::JointLimit& l) { return l.limits(); });
+}
+
+/** A local rotation held to the joint's limit, after its stiffness eased it back toward where it started. */
+glm::dmat3 limitLocal(const ik::JointLimit& l, const glm::dmat3& local, const glm::dmat3& start)
+{
+    glm::dquat q = quatOf(local);
+    if (l.stiffness > 0.0)
+        q = glm::slerp(quatOf(start), q, 1.0 - std::clamp(l.stiffness, 0.0, 1.0));
+    if (l.kind != ik::JointLimit::Kind::None)
+        q = l.frame * ik::clampRotate(l, glm::inverse(l.frame) * q * glm::inverse(l.post)) * l.post;
+    return glm::mat3_cast(q);
+}
+
+/** Per joint but the end: the bone's unit direction in the joint's own frame, its length, and its starting local rotation. */
+struct Bones
+{
+    std::vector<glm::dvec3> dir;
+    std::vector<double> len;
+    std::vector<glm::dmat3> start;
+};
+
+Bones bonesOf(const ik::Problem& p)
+{
+    Bones b;
+    glm::dmat3 parent = orthonormal(glm::dmat3(p.parentWorld));
+    for (size_t i = 0; i + 1 < p.world.size(); ++i)
+    {
+        const glm::dmat3 r = orthonormal(glm::dmat3(p.world[i]));
+        const glm::dvec3 d = positionOf(p.world[i + 1]) - positionOf(p.world[i]);
+        const double l = glm::length(d);
+        b.dir.push_back(l > 1e-12 ? glm::transpose(r) * (d / l) : glm::dvec3(1, 0, 0));
+        b.len.push_back(l);
+        b.start.push_back(glm::transpose(parent) * r);
+        parent = r;
+    }
+    return b;
+}
+
+/** Turns each joint from its start toward the next position, held to its limits; pos gets where the joints land. */
+std::vector<glm::dmat3> forwardLimited(const ik::Problem& p, const Bones& b, std::vector<glm::dvec3>& pos)
+{
+    std::vector<glm::dmat3> world(b.len.size());
+    glm::dmat3 parent = orthonormal(glm::dmat3(p.parentWorld));
+    for (size_t i = 0; i < b.len.size(); ++i)
+    {
+        glm::dmat3 r = parent * b.start[i];
+        if (const glm::dvec3 want = pos[i + 1] - pos[i]; glm::length(want) > 1e-12)
+            r = arc(r * b.dir[i], glm::normalize(want)) * r;
+        glm::dmat3 local = glm::transpose(parent) * r;
+        if (i < p.limits.size())
+            local = limitLocal(p.limits[i], local, b.start[i]);
+        world[i] = parent * local;
+        pos[i + 1] = pos[i] + world[i] * b.dir[i] * b.len[i];
+        parent = world[i];
+    }
+    return world;
+}
+
+/**
+ * Refines a free solution (world rotations per joint but the end) under the limits: FABRIK passes whose forward half
+ * turns joints only as far as their limits allow. Keeps the closest pose found.
+ */
+std::vector<glm::dmat3> solveLimited(const ik::Problem& p, const std::vector<glm::dmat3>& free)
+{
+    const Bones b = bonesOf(p);
+    const size_t n = p.world.size();
+    std::vector<glm::dvec3> pos(n);
+    pos[0] = positionOf(p.world[0]);
+    for (size_t i = 0; i + 1 < n; ++i)
+        pos[i + 1] = pos[i] + free[i] * b.dir[i] * b.len[i];
+    std::vector<glm::dmat3> best = forwardLimited(p, b, pos);
+    double bestError = glm::length(pos[n - 1] - p.target);
+    auto safeDir = [](const glm::dvec3& v) { return glm::length(v) > 1e-12 ? glm::normalize(v) : glm::dvec3(1, 0, 0); };
+    for (int it = 0, stalled = 0; it < p.maxIterations && bestError > p.tolerance && stalled < 8; ++it)
+    {
+        pos[n - 1] = p.target;
+        for (size_t i = n - 1; i-- > 0;)
+            pos[i] = pos[i + 1] + safeDir(pos[i] - pos[i + 1]) * b.len[i];
+        pos[0] = positionOf(p.world[0]);
+        std::vector<glm::dmat3> world = forwardLimited(p, b, pos);
+        if (const double e = glm::length(pos[n - 1] - p.target); e < bestError - 1e-12)
+        {
+            best = std::move(world);
+            bestError = e;
+            stalled = 0;
+        }
+        else
+            ++stalled;
+    }
+    return best;
+}
+
 /** Analytic two-bone solve (law of cosines), bending toward the pole; exact whenever the target is in reach. */
 ik::Solution solveTwoBone(const ik::Problem& p)
 {
@@ -106,7 +205,8 @@ ik::Solution solveTwoBone(const ik::Problem& p)
 
     glm::dvec3 dir = toTarget / d;
     glm::dvec3 fkDir = glm::normalize(fkToEnd);
-    glm::dvec3 u = bendDirection(p, p0, dir, p1 - p0);
+    // An elbow on the target line has no bend to keep there; carry the FK chain's own bend over instead.
+    glm::dvec3 u = bendDirection(p, p0, dir, perpendicular(p1 - p0, dir) == glm::dvec3(0.0) ? arc(fkDir, dir) * (p1 - p0) : p1 - p0);
     glm::dvec3 fkU = perpendicular(p1 - p0, fkDir);
     if (fkU == glm::dvec3(0.0))
         // A straight FK chain has no bend plane; take the one that turns the chain least.
@@ -125,7 +225,8 @@ ik::Solution solveTwoBone(const ik::Problem& p)
     glm::dmat3 turn1 = turn0;
     if (glm::length(want) > 1e-12)
         turn1 = arc(glm::normalize(turn0 * (p2 - p1)), glm::normalize(want)) * turn0;
-    return toLocal(p, {turn0 * world[0], turn1 * world[1]});
+    world = {turn0 * world[0], turn1 * world[1]};
+    return toLocal(p, limited(p) ? solveLimited(p, world) : world);
 }
 
 /** Forward And Backward Reaching IK over any number of bones, then swung about the root-end axis toward the pole. */
@@ -151,6 +252,18 @@ ik::Solution solveFabrik(const ik::Problem& p)
             pos[i + 1] = pos[i] + dir * len[i];
     }
     else
+    {
+        // Joints all on the target line would stay there; aim the chain's end at the target first so its bend survives.
+        const glm::dvec3 line = safeDir(p.target - root);
+        bool onLine = true;
+        for (size_t i = 1; i + 1 < n && onLine; ++i)
+            onLine = glm::length((pos[i] - root) - glm::dot(pos[i] - root, line) * line) < 1e-9;
+        if (onLine && n > 2 && glm::length(pos[n - 1] - root) > 1e-12)
+        {
+            const glm::dmat3 aim = arc(glm::normalize(pos[n - 1] - root), line);
+            for (size_t i = 1; i < n; ++i)
+                pos[i] = root + aim * (pos[i] - root);
+        }
         for (int it = 0; it < p.maxIterations && glm::length(pos[n - 1] - p.target) > p.tolerance; ++it)
         {
             pos[n - 1] = p.target;
@@ -160,6 +273,7 @@ ik::Solution solveFabrik(const ik::Problem& p)
             for (size_t i = 0; i + 1 < n; ++i)
                 pos[i + 1] = pos[i] + safeDir(pos[i + 1] - pos[i]) * len[i];
         }
+    }
 
     glm::dvec3 axis = pos[n - 1] - root;
     if (n > 2 && glm::length(axis) > 1e-12 && (p.pole || p.twist != 0.0))
@@ -177,7 +291,8 @@ ik::Solution solveFabrik(const ik::Problem& p)
                 pos[i] = root + swing * (pos[i] - root);
         }
     }
-    return toLocal(p, followPositions(p.world, pos));
+    std::vector<glm::dmat3> world = followPositions(p.world, pos);
+    return toLocal(p, limited(p) ? solveLimited(p, world) : world);
 }
 
 AttrDef vec3Attr(std::string name, std::string shortName, glm::dvec3 def, uint32_t flags, std::string doc)
@@ -215,6 +330,15 @@ NodeType makeHandleType(const NodeType& base)
          .flags = AttrInput | AttrHidden, .doc = "World matrix of the start joint's parent."},
         {.name = "endEffector", .shortName = "ee", .type = PlugType::String, .defaultValue = std::string(), .flags = hiddenStored,
          .doc = "Name of the chain's last joint."},
+        {.name = "softness", .shortName = "sft", .type = PlugType::Float, .defaultValue = 0.0, .flags = keyable,
+         .doc = "Soft IK, cm: over this much of the chain's reach the end eases toward full extension instead of snapping straight.",
+         .minValue = 0.0},
+        {.name = "stretch", .shortName = "str", .type = PlugType::Bool, .defaultValue = false, .flags = keyable,
+         .doc = "Lengthen the bones to reach a handle beyond the chain's length."},
+        {.name = "maxStretch", .shortName = "mxs", .type = PlugType::Float, .defaultValue = 1.5, .flags = keyable,
+         .doc = "The longest the chain stretches, as a multiple of its length.", .minValue = 1.0},
+        {.name = "stretchFactor", .shortName = "sfc", .type = PlugType::Float, .defaultValue = 1.0, .flags = AttrOutput | AttrHidden,
+         .doc = "What the bones' lengths are multiplied by, blended by ikBlend; drives the joints' ikStretch."},
     };
     for (int i = 0; i < IkHandle::kMaxJoints; ++i)
     {
@@ -228,6 +352,14 @@ NodeType makeHandleType(const NodeType& base)
         t.ownAttrs.push_back({.name = "rotateOrder" + n, .type = PlugType::Int, .defaultValue = int64_t(0), .flags = hiddenStored});
         t.ownAttrs.push_back(vec3Attr("restRotate" + n, "", glm::dvec3(0.0), hiddenStored, "Rest rotate, the Euler branch solutions stay near."));
         t.ownAttrs.push_back(vec3Attr("solvedRotate" + n, "", glm::dvec3(0.0), AttrOutput | AttrHidden, "Solved rotate for the joint."));
+        t.ownAttrs.push_back({.name = "limitType" + n, .type = PlugType::Int, .defaultValue = int64_t(0), .flags = hiddenStored,
+                              .doc = "The joint's ikLimit."});
+        t.ownAttrs.push_back(vec3Attr("limitAxis" + n, "", glm::dvec3(0, 0, 1), hiddenStored, "The joint's hinge axis."));
+        t.ownAttrs.push_back({.name = "limitMin" + n, .type = PlugType::Float, .defaultValue = -180.0, .flags = hiddenStored});
+        t.ownAttrs.push_back({.name = "limitMax" + n, .type = PlugType::Float, .defaultValue = 180.0, .flags = hiddenStored});
+        t.ownAttrs.push_back({.name = "limitCone" + n, .type = PlugType::Float, .defaultValue = 180.0, .flags = hiddenStored});
+        t.ownAttrs.push_back({.name = "stiffness" + n, .type = PlugType::Float, .defaultValue = 0.0, .flags = hiddenStored});
+        t.ownAttrs.push_back(vec3Attr("preferredAngle" + n, "", glm::dvec3(0.0), hiddenStored, "The joint's preferredAngle."));
     }
     t.create = [] { return std::make_unique<IkHandle>(); };
     return t;
@@ -267,6 +399,26 @@ glm::dvec3 restPole(Graph& g, const std::vector<NodeId>& chain)
 }
 } // namespace
 
+ik::JointLimit IkHandle::slotLimit(int i) const
+{
+    ik::JointLimit l;
+    l.kind = ik::JointLimit::Kind(std::clamp<int64_t>(as<int64_t>(slotLimitType(i)), 0, 2));
+    l.axis = as<glm::dvec3>(slotLimitAxis(i));
+    l.minAngle = glm::radians(as<double>(slotLimitMin(i)));
+    l.maxAngle = glm::radians(as<double>(slotLimitMax(i)));
+    l.cone = glm::radians(as<double>(slotCone(i)));
+    l.stiffness = std::clamp(as<double>(slotStiffness(i)), 0.0, 1.0);
+    const auto order = RotateOrder(std::clamp<int64_t>(as<int64_t>(slotOrder(i)), 0, 5));
+    if (const glm::dvec3 pref = as<glm::dvec3>(slotPreferred(i)); pref != glm::dvec3(0.0))
+        l.preferred = glm::normalize(glm::quat_cast(glm::dmat3(eulerToMatrix(pref, order))));
+    l.frame = glm::normalize(glm::quat_cast(glm::dmat3(as<glm::dmat4>(slotOrient(i)))));
+    l.post = glm::normalize(glm::quat_cast(glm::dmat3(as<glm::dmat4>(slotAxis(i)))));
+    // The child's translate is in the joint's frame after rotate and rotateAxis.
+    if (const glm::dvec3 child(as<glm::dmat4>(slotLocal(i + 1))[3]); glm::length(child) > 1e-12)
+        l.bone = glm::normalize(glm::dmat3(as<glm::dmat4>(slotAxis(i))) * child);
+    return l;
+}
+
 void IkHandle::compute(const EvalContext& ctx)
 {
     LILA_ZONE();
@@ -288,6 +440,10 @@ void IkHandle::compute(const EvalContext& ctx)
     p.twist = glm::radians(as<double>(kPoleAngle));
     p.tolerance = 1e-9;
     p.maxIterations = 256;
+    p.softness = std::max(0.0, as<double>(kSoftness));
+    p.maxStretch = as<bool>(kStretch) ? std::max(1.0, as<double>(kMaxStretch)) : 1.0;
+    for (int i = 0; i + 1 < count; ++i)
+        p.limits.push_back(slotLimit(i));
 
     std::string id = as<std::string>(kSolver);
     if (id.empty())
@@ -297,7 +453,9 @@ void IkHandle::compute(const EvalContext& ctx)
         solver = ik::findSolver(kFabrik);
     if (!solver)
         return;
-    ik::Solution sol = solver->solve(p);
+    const ik::Result result = ik::solve(*solver, p);
+    const ik::Solution& sol = result.rotation;
+    setOutput(kStretchFactor, 1.0 + (result.stretch - 1.0) * std::clamp(as<double>(kIkBlend), 0.0, 1.0));
 
     for (int i = 0; i + 1 < count && size_t(i) < sol.size(); ++i)
     {
@@ -311,6 +469,129 @@ void IkHandle::compute(const EvalContext& ctx)
 
 namespace ik
 {
+glm::dquat clampRotate(const JointLimit& l, const glm::dquat& rotate)
+{
+    const glm::dquat r = rotate.w < 0.0 ? -rotate : rotate;
+    const glm::dvec3 v(r.x, r.y, r.z);
+    switch (l.kind)
+    {
+    case JointLimit::Kind::Hinge:
+    {
+        const glm::dvec3 a = glm::length(l.axis) > 1e-12 ? glm::normalize(l.axis) : glm::dvec3(0, 0, 1);
+        const double angle = 2.0 * std::atan2(glm::dot(v, a), r.w);
+        return glm::angleAxis(std::clamp(angle, std::min(l.minAngle, l.maxAngle), std::max(l.minAngle, l.maxAngle)), a);
+    }
+    case JointLimit::Kind::Cone:
+    {
+        const glm::dvec3 b = glm::length(l.bone) > 1e-12 ? glm::normalize(l.bone) : glm::dvec3(1, 0, 0);
+        // rotate = swing * twist, the twist about the bone: only the swing moves where the bone points.
+        const double along = glm::dot(v, b);
+        glm::dquat twist(1.0, 0.0, 0.0, 0.0);
+        if (std::abs(along) + std::abs(r.w) > 1e-12)
+            twist = glm::normalize(glm::dquat(r.w, b.x * along, b.y * along, b.z * along));
+        glm::dquat swing = r * glm::conjugate(twist);
+        if (swing.w < 0.0)
+            swing = -swing;
+        const double cone = std::max(l.cone, 0.0);
+        const glm::dvec3 axis(swing.x, swing.y, swing.z);
+        if (2.0 * std::acos(std::clamp(swing.w, -1.0, 1.0)) <= cone || glm::length(axis) < 1e-12)
+            return rotate;
+        return glm::angleAxis(cone, glm::normalize(axis)) * twist;
+    }
+    case JointLimit::Kind::None: break;
+    }
+    return rotate;
+}
+
+Result solve(const Solver& solver, const Problem& in)
+{
+    LILA_ZONE();
+
+    Problem p = in;
+    Result out;
+    const size_t n = p.world.size();
+    if (n < 2)
+        return out;
+
+    // Rebuilt from the locals: preferred angles replace the starting rotations and stretch lengthens translates.
+    std::vector<glm::dmat4> local(n);
+    for (size_t i = 0; i < n; ++i)
+        local[i] = glm::inverse(i == 0 ? p.parentWorld : p.world[i - 1]) * p.world[i];
+    bool rebuild = false;
+    for (size_t i = 0; i + 1 < n && i < p.limits.size(); ++i)
+        if (const JointLimit& l = p.limits[i]; l.preferred)
+        {
+            const glm::dmat3 m(local[i]);
+            const glm::dmat3 rot = orthonormal(m);
+            const glm::dmat3 turned = glm::mat3_cast(l.frame * *l.preferred * l.post) * (glm::transpose(rot) * m);
+            for (int c = 0; c < 3; ++c)
+                local[i][c] = glm::dvec4(turned[c], 0.0);
+            rebuild = true;
+        }
+    auto build = [&] {
+        glm::dmat4 w = p.parentWorld;
+        for (size_t i = 0; i < n; ++i)
+            p.world[i] = w = w * local[i];
+    };
+    if (rebuild)
+        build();
+
+    const glm::dvec3 root = positionOf(p.world[0]);
+    double reach = 0.0;
+    for (size_t i = 0; i + 1 < n; ++i)
+        reach += glm::length(positionOf(p.world[i + 1]) - positionOf(p.world[i]));
+    const double d = glm::length(p.target - root);
+    double soft = std::min(d, reach);
+    if (p.softness > 0.0 && reach > 1e-12)
+    {
+        const double ds = std::min(p.softness, reach), da = reach - ds;
+        soft = d > da ? da + ds * (1.0 - std::exp(-(d - da) / ds)) : d;
+    }
+    if (p.maxStretch > 1.0 && soft > 1e-12 && d > soft)
+    {
+        out.stretch = std::min(d / soft, p.maxStretch);
+        for (size_t i = 1; i < n; ++i)
+            local[i][3] = glm::dvec4(glm::dvec3(local[i][3]) * out.stretch, 1.0);
+        build();
+    }
+    if (p.softness > 0.0 && d > 1e-12)
+        p.target = root + (p.target - root) * (std::min(d, soft * out.stretch) / d);
+    p.softness = 0.0;
+    p.maxStretch = 1.0;
+
+    out.rotation = solver.solve(p);
+    for (size_t i = 0; i < out.rotation.size() && i < p.limits.size(); ++i)
+        if (const JointLimit& l = p.limits[i]; l.kind != JointLimit::Kind::None)
+            out.rotation[i] = glm::normalize(l.frame * clampRotate(l, glm::inverse(l.frame) * out.rotation[i] * glm::inverse(l.post)) * l.post);
+    return out;
+}
+
+JointLimit limitOf(Graph& g, NodeId joint)
+{
+    JointLimit l;
+    const Node& j = *g.node(joint);
+    const auto* xf = static_cast<const Transform*>(&j);
+    l.kind = JointLimit::Kind(std::clamp<int64_t>(j.as<int64_t>(Joint::kLimitType), 0, 2));
+    l.axis = glm::dvec3(0.0);
+    l.axis[int(std::clamp<int64_t>(j.as<int64_t>(Joint::kLimitAxis), 0, 2))] = 1.0;
+    l.minAngle = glm::radians(j.as<double>(Joint::kLimitMin));
+    l.maxAngle = glm::radians(j.as<double>(Joint::kLimitMax));
+    l.cone = glm::radians(j.as<double>(Joint::kConeAngle));
+    l.stiffness = std::clamp(j.as<double>(Joint::kStiffness), 0.0, 1.0);
+    if (const glm::dvec3 pref = j.as<glm::dvec3>(Joint::kPreferredAngle); pref != glm::dvec3(0.0))
+        l.preferred = glm::normalize(glm::quat_cast(glm::dmat3(eulerToMatrix(pref, RotateOrder(j.as<int64_t>(Transform::kRotateOrder))))));
+    l.frame = glm::normalize(glm::quat_cast(glm::dmat3(xf->preRotation())));
+    l.post = glm::normalize(glm::quat_cast(glm::dmat3(xf->rotateAxisMatrix())));
+    for (NodeId c : g.children(joint))
+        if (rig::isJoint(*g.node(c)))
+        {
+            if (const glm::dvec3 t = g.node(c)->as<glm::dvec3>(Transform::kTranslate); glm::length(t) > 1e-12)
+                l.bone = glm::normalize(glm::dmat3(xf->rotateAxisMatrix()) * t);
+            break;
+        }
+    return l;
+}
+
 std::vector<NodeId> chainOf(Graph& g, NodeId handle)
 {
     Node* h = g.node(handle);
@@ -382,6 +663,15 @@ void refresh(Graph& g, NodeId handle)
         g.setValue({handle, IkHandle::slotAxis(k)}, xf->rotateAxisMatrix());
         g.setValue({handle, IkHandle::slotOrder(k)}, j->as<int64_t>(Transform::kRotateOrder));
         g.setValue({handle, IkHandle::slotRest(k)}, j->as<glm::dvec3>(Transform::kRotate));
+        glm::dvec3 axis(0.0);
+        axis[int(std::clamp<int64_t>(j->as<int64_t>(Joint::kLimitAxis), 0, 2))] = 1.0;
+        g.setValue({handle, IkHandle::slotLimitType(k)}, j->as<int64_t>(Joint::kLimitType));
+        g.setValue({handle, IkHandle::slotLimitAxis(k)}, axis);
+        g.setValue({handle, IkHandle::slotLimitMin(k)}, j->as<double>(Joint::kLimitMin));
+        g.setValue({handle, IkHandle::slotLimitMax(k)}, j->as<double>(Joint::kLimitMax));
+        g.setValue({handle, IkHandle::slotCone(k)}, j->as<double>(Joint::kConeAngle));
+        g.setValue({handle, IkHandle::slotStiffness(k)}, j->as<double>(Joint::kStiffness));
+        g.setValue({handle, IkHandle::slotPreferred(k)}, j->as<glm::dvec3>(Joint::kPreferredAngle));
     }
 }
 } // namespace ik
@@ -450,14 +740,88 @@ json createHandle(const Args& a)
         g.connect({id, IkHandle::slotSolved(int(i)), -1}, {chain[i], Joint::kSolvedRotate, -1});
         g.connect({id, IkHandle::kIkBlend, -1}, {chain[i], Joint::kIkBlend, -1});
     }
+    for (size_t i = 1; i < chain.size(); ++i)
+        if (!g.source({chain[i], Joint::kIkStretch, -1}))
+            g.connect({id, IkHandle::kStretchFactor, -1}, {chain[i], Joint::kIkStretch, -1});
     ik::refresh(g, id);
     g.select({id});
     return g.node(id)->path();
 }
 
+json limitCmd(const Args& a)
+{
+    Graph& g = graph();
+    std::vector<NodeId> joints;
+    for (const std::string& name : a.objects())
+        joints.push_back(jointArg(g, name).id());
+    if (joints.empty())
+        for (NodeId id : g.selection())
+            if (rig::isJoint(*g.node(id)))
+                joints.push_back(id);
+    if (joints.empty())
+        throw CommandError("ikLimit: give or select joints");
+    auto pick = [&](const char* flag, std::initializer_list<const char*> names) -> std::optional<int64_t> {
+        if (!a.has(flag))
+            return std::nullopt;
+        const std::string v = a.get<std::string>(flag);
+        int64_t i = 0;
+        for (const char* n : names)
+        {
+            if (v == n)
+                return i;
+            ++i;
+        }
+        throw CommandError("ikLimit: unknown " + std::string(flag) + " '" + v + "'");
+    };
+    const std::optional<int64_t> type = pick("type", {"none", "hinge", "cone"});
+    const std::optional<int64_t> axis = pick("axis", {"x", "y", "z"});
+    json out = json::array();
+    for (NodeId j : joints)
+    {
+        if (type)
+            g.setValue({j, Joint::kLimitType}, *type);
+        if (axis)
+            g.setValue({j, Joint::kLimitAxis}, *axis);
+        for (auto [flag, attr] : {std::pair{"min", int(Joint::kLimitMin)}, std::pair{"max", int(Joint::kLimitMax)},
+                                  std::pair{"cone", int(Joint::kConeAngle)}, std::pair{"stiffness", int(Joint::kStiffness)}})
+            if (a.has(flag))
+                g.setValue({j, attr}, a.get<double>(flag));
+        if (a.has("preferredAngle"))
+            g.setValue({j, Joint::kPreferredAngle}, vec3Of(a.flags["preferredAngle"]));
+        out.push_back(g.node(j)->path());
+    }
+    std::set<NodeId> handles;
+    for (NodeId j : joints)
+        for (NodeId h : ik::handlesOf(g, j))
+            handles.insert(h);
+    for (NodeId h : handles)
+        ik::refresh(g, h);
+    return out;
+}
+
 void registerIkCommandsImpl()
 {
     using T = ArgType;
+    ops::registerCommand({
+        .name = "ikLimit",
+        .doc = "Set how far IK may turn joints (default the selection): a hinge about one axis within min..max degrees, or a "
+               "cone the bone swings within; plus stiffness and the preferred angle. Only the flags given change. The IK "
+               "handles solving the joints pick the limits up at once. Returns the joints.",
+        .positionalDoc = "joints",
+        .flags = {
+            {"type", "t", T::String, nullptr, "none, hinge or cone.", {"none", "hinge", "cone"}},
+            {"axis", "ax", T::String, nullptr, "The hinge's axis in rotate space: x, y or z.", {"x", "y", "z"}},
+            {"min", "mn", T::Float, nullptr, "Smallest hinge rotate, degrees."},
+            {"max", "mx", T::Float, nullptr, "Largest hinge rotate, degrees."},
+            {"cone", "cn", T::Float, nullptr, "How far the bone may swing from rotate zero, degrees."},
+            {"stiffness", "st", T::Float, nullptr, "0 turns freely, toward 1 the joint resists turning.", {}, {}, 0.0, 1.0},
+            {"preferredAngle", "pa", T::Vec3, nullptr, "Rotate IK starts from, degrees; picks the bend of a straight chain."},
+        },
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+            return limitCmd(a);
+        },
+    });
     ops::registerCommand({
         .name = "ikHandle",
         .doc = "Create an IK handle that solves the chain from startJoint down to endEffector (or the first and last "

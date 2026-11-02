@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "scene/AutoPose.h"
+#include "scene/Ik.h"
 #include "scene/Rig.h"
 #include "scene/RigElements.h"
 #include "scene/RigUtil.h"
@@ -296,6 +297,8 @@ Solution solve(const Problem& p)
                 if (double a = glm::length(w); a > kMaxStep)
                     w *= kMaxStep / a;
                 trialRot[i] = glm::normalize(fromRotationVector(glm::transpose(f.frame[i]) * w) * out.rotation[i]);
+                if (p.bones[i].limit.kind != ik::JointLimit::Kind::None)
+                    trialRot[i] = glm::normalize(ik::clampRotate(p.bones[i].limit, trialRot[i]));
             }
             if (moveCol[i] >= 0)
                 trialOff[i] += glm::inverse(f.parent[i]) * (glm::dvec3(x(moveCol[i]), x(moveCol[i] + 1), x(moveCol[i] + 2)) * L);
@@ -386,6 +389,8 @@ Problem problemFor(Graph& g, NodeId root, const PoseOptions& opts, std::vector<N
         Transform::splitLocal(j, b.before, b.after);
         b.rotation = b.reference = glm::normalize(glm::quat_cast(glm::dmat3(static_cast<const Transform&>(j).rotation())));
         b.solve = !drivenElsewhere(g, id);
+        b.limit = ik::limitOf(g, id);
+        b.stiffness = b.limit.stiffness;
         const int self = int(p.bones.size());
         p.bones.push_back(b);
         index.push_back(id);

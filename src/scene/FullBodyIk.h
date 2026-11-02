@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "scene/IkSolver.h"
 #include "scene/Node.h"
 
 #include <glm/glm.hpp>
@@ -46,6 +47,8 @@ struct Bone
     /** Roots only: the solve may also move the bone, by an offset in its parent's space. */
     bool translate = false;
     glm::dvec3 offset{0.0};
+    /** Held on R (its frame and post are unused: R is already the rotate). */
+    ik::JointLimit limit;
 };
 
 /** A pin: where a bone's origin (and optionally its world rotation) has to be. */

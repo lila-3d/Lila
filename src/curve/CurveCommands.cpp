@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "curve/AlongNodes.h"
+#include "curve/CurveControls.h"
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
@@ -986,5 +987,6 @@ void registerCommands()
     registerSketchCommands();
     registerGroomCommands();
     registerTurntableBaseCommand();
+    registerCurveControlCommands();
 }
 } // namespace lila::curve

@@ -70,7 +70,7 @@ foreach(_t lila_curve lila_clipper2)
     target_compile_definitions(${_t} PRIVATE USINGZ CLIPPER2_MAX_DECIMAL_PRECISION=8)
 endforeach()
 
-lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
+lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveControls.cpp CurveControls.h CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
     CableNode.cpp ContourNode.cpp StrapNode.cpp StrapNode.h EnvAttrs.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp
     VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
     SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h

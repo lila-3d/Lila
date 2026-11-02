@@ -19,6 +19,7 @@ lila_module(lila_scene Scene
     Components.cpp
     SelectPaths.cpp
     Constraint.cpp
+    Pin.cpp Pin.h
     Deformers.cpp
     ShapeDeformers.cpp ShapeDeformers.h
     SurfaceDeformers.cpp SurfaceDeformers.h
@@ -85,6 +86,9 @@ lila_module(lila_scene Scene
     Rig.cpp
     RigElements.cpp
     RigElementCommands.cpp
+    UnrealCheck.cpp UnrealCheck.h
+    SplineChain.cpp SplineChain.h SplineChainSolve.h
+    RubberHose.cpp
     SceneCommands.cpp
     SceneData.cpp
     SceneScripts.cpp

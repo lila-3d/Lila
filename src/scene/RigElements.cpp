@@ -8,6 +8,7 @@
 #include "scene/Graph.h"
 #include "scene/Ik.h"
 #include "scene/Rig.h"
+#include "scene/RigUtil.h"
 #include "scene/Transform.h"
 
 #include <algorithm>
@@ -1334,6 +1335,40 @@ NodeId createTwistDriver(Graph& g, NodeId t, const TwistOptions& opts)
 
 // Clean bake ------------------------------------------------------------------------------------------------------
 
+namespace
+{
+bool uniformScale(const glm::dmat4& m)
+{
+    const glm::dvec3 l(glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2])));
+    const double hi = std::max({l.x, l.y, l.z}), lo = std::min({l.x, l.y, l.z});
+    return hi - lo <= 1e-6 * std::max(hi, 1e-12);
+}
+
+/** m without its scale: rotation (right handed) and translation. */
+glm::dmat4 unscaled(const glm::dmat4& m)
+{
+    glm::dmat3 r = rigutil::orthonormal(glm::dmat3(m));
+    if (glm::determinant(r) < 0.0)
+        r[0] = -r[0];
+    glm::dmat4 out(r);
+    out[3] = m[3];
+    return out;
+}
+} // namespace
+
+ExportTrs exportTrs(const glm::dmat4& local, RotateOrder order, const glm::dvec3& nearRotate)
+{
+    ExportTrs out;
+    out.scale = glm::dvec3(glm::length(glm::dvec3(local[0])), glm::length(glm::dvec3(local[1])), glm::length(glm::dvec3(local[2])));
+    const glm::dmat3 rot = rotationOf(local);
+    const bool mirrored = glm::determinant(rot) < 0.0;
+    if (mirrored)
+        out.scale.x = -out.scale.x;
+    out.rotate = eulerNear(mirrored ? glm::dmat3(-rot[0], rot[1], rot[2]) : rot, order, nearRotate);
+    out.translate = glm::dvec3(local[3]);
+    return out;
+}
+
 std::vector<NodeId> bakeToDeformSkeleton(Graph& g, const std::vector<NodeId>& roots, const BakeOptions& opts)
 {
     LILA_ZONE();
@@ -1359,66 +1394,111 @@ std::vector<NodeId> bakeToDeformSkeleton(Graph& g, const std::vector<NodeId>& ro
                 stack.push_back(*it);
         }
     }
-    std::map<NodeId, NodeId> copyOf;
-    std::map<NodeId, NodeId> deformParent; // original -> its nearest deform ancestor (original), or none
-    std::vector<NodeId> bakes, tops;
-    const NodeType& jointType = typeNamed("joint");
+    // Deform joints, parents first, each with its nearest deform ancestor.
+    std::vector<NodeId> bakes;
+    std::map<NodeId, size_t> indexOf;
+    std::vector<int> deformParent;
     for (NodeId id : order)
     {
-        Node& n = *g.node(id);
-        if (!isDeform(n))
+        if (!isDeform(*g.node(id)))
             continue;
         NodeId up = g.parent(id);
-        while (up && !copyOf.contains(up))
+        while (up && !indexOf.contains(up))
             up = g.parent(up);
-        Node* c = g.createNode(jointType, n.name() + opts.suffix, up ? copyOf[up] : kNoNode, false);
+        deformParent.push_back(up ? int(indexOf[up]) : -1);
+        indexOf[id] = bakes.size();
+        bakes.push_back(id);
+    }
+    if (bakes.empty())
+        return {};
+
+    const double fps = opts.fps > 0.0 ? opts.fps : 30.0;
+    const long long frames = std::max<long long>(0, std::llround((opts.end - opts.start) * fps));
+    std::vector<std::vector<glm::dmat4>> worlds(bakes.size());
+    const double was = g.time();
+    for (long long f = 0; f <= frames; ++f)
+    {
+        g.setTime(opts.start + double(f) / fps);
+        g.evaluate();
+        for (size_t i = 0; i < bakes.size(); ++i)
+            worlds[i].push_back(worldOf(g, bakes[i]));
+    }
+    g.setTime(was);
+    g.evaluate();
+
+    // Scale-safe: a joint with deform children and non-uniform scale becomes an unscaled driver, which the children
+    // follow, plus a leaf under it that carries the scale, since Unreal hands a parent's scale down without shear.
+    std::vector<char> split(bakes.size(), 0);
+    if (opts.scaleSafe)
+        for (size_t i = 0; i < bakes.size(); ++i)
+            if (std::find(deformParent.begin(), deformParent.end(), int(i)) != deformParent.end())
+                split[i] = std::any_of(worlds[i].begin(), worlds[i].end(), [](const glm::dmat4& w) { return !uniformScale(w); });
+
+    struct Target
+    {
+        NodeId node = kNoNode;
+        RotateOrder order = RotateOrder::XYZ;
+        std::array<anim::Curve, 9> curves;
+        glm::dvec3 lastRotate{0.0};
+    };
+    std::vector<Target> targets;
+    std::vector<size_t> copyOf(bakes.size()), driverOf(bakes.size());
+    std::vector<NodeId> tops;
+    const NodeType& jointType = typeNamed("joint");
+    auto copy = [&](const Node& n, const std::string& name, NodeId parent) {
+        Node* c = g.createNode(jointType, name, parent, false);
         const NodeId cid = c->id();
         g.setValue({cid, Transform::kRotateOrder}, n.as<int64_t>(Transform::kRotateOrder));
         g.setValue({cid, Transform::kRotationInterpolation}, int64_t(RotationInterpolation::Euler));
         g.setValue({cid, Joint::kRadius}, n.as<double>(Joint::kRadius));
         g.setValue({cid, Joint::kSide}, n.as<int64_t>(Joint::kSide));
-        copyOf[id] = cid;
-        deformParent[id] = up;
-        bakes.push_back(id);
-        if (!up)
+        if (!parent)
             tops.push_back(cid);
+        targets.push_back({.node = cid, .order = RotateOrder(n.as<int64_t>(Transform::kRotateOrder))});
+        return targets.size() - 1;
+    };
+    for (size_t i = 0; i < bakes.size(); ++i)
+    {
+        const Node& n = *g.node(bakes[i]);
+        const int up = deformParent[i];
+        const NodeId parent = up < 0 ? kNoNode : targets[split[size_t(up)] ? driverOf[size_t(up)] : copyOf[size_t(up)]].node;
+        if (split[i])
+        {
+            driverOf[i] = copy(n, n.name() + "_drv" + opts.suffix, parent);
+            copyOf[i] = copy(n, n.name() + opts.suffix, targets[driverOf[i]].node);
+        }
+        else
+            copyOf[i] = copy(n, n.name() + opts.suffix, parent);
     }
-    if (bakes.empty())
-        return tops;
 
-    const double fps = opts.fps > 0.0 ? opts.fps : 30.0;
-    const long long frames = std::max<long long>(0, std::llround((opts.end - opts.start) * fps));
-    std::vector<std::array<anim::Curve, 9>> curves(bakes.size());
-    std::vector<glm::dvec3> lastRotate(bakes.size(), glm::dvec3(0.0));
-    const double was = g.time();
     for (long long f = 0; f <= frames; ++f)
     {
         const double t = opts.start + double(f) / fps;
-        g.setTime(t);
-        g.evaluate();
-        for (size_t i = 0; i < bakes.size(); ++i)
-        {
-            const NodeId src = bakes[i];
-            const NodeId up = deformParent[src];
-            const glm::dmat4 local = (up ? glm::inverse(worldOf(g, up)) : glm::dmat4(1.0)) * worldOf(g, src);
-            glm::dvec3 scale(glm::length(glm::dvec3(local[0])), glm::length(glm::dvec3(local[1])), glm::length(glm::dvec3(local[2])));
-            const glm::dmat3 rot = rotationOf(local);
-            if (glm::determinant(rot) < 0.0)
-                scale.x = -scale.x;
-            const glm::dvec3 r = eulerNear(glm::determinant(rot) < 0.0 ? glm::dmat3(-rot[0], rot[1], rot[2]) : rot,
-                                           RotateOrder(g.node(src)->as<int64_t>(Transform::kRotateOrder)), lastRotate[i]);
-            lastRotate[i] = r;
-            const glm::dvec3 tr(local[3]);
+        auto key = [&](Target& tg, const glm::dmat4& local) {
+            const ExportTrs trs = exportTrs(local, tg.order, tg.lastRotate);
+            tg.lastRotate = trs.rotate;
             for (int k = 0; k < 3; ++k)
             {
-                curves[i][size_t(k)].keys.push_back({.time = t, .value = tr[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
-                curves[i][size_t(3 + k)].keys.push_back({.time = t, .value = r[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
-                curves[i][size_t(6 + k)].keys.push_back({.time = t, .value = scale[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
+                tg.curves[size_t(k)].keys.push_back({.time = t, .value = trs.translate[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
+                tg.curves[size_t(3 + k)].keys.push_back({.time = t, .value = trs.rotate[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
+                tg.curves[size_t(6 + k)].keys.push_back({.time = t, .value = trs.scale[k], .in = anim::Tangent::Linear, .out = anim::Tangent::Linear});
             }
+        };
+        for (size_t i = 0; i < bakes.size(); ++i)
+        {
+            const int up = deformParent[i];
+            const glm::dmat4& w = worlds[i][size_t(f)];
+            const glm::dmat4 parent = up < 0 ? glm::dmat4(1.0) : split[size_t(up)] ? unscaled(worlds[size_t(up)][size_t(f)]) : worlds[size_t(up)][size_t(f)];
+            if (split[i])
+            {
+                const glm::dmat4 driver = unscaled(w);
+                key(targets[driverOf[i]], glm::inverse(parent) * driver);
+                key(targets[copyOf[i]], glm::inverse(driver) * w);
+            }
+            else
+                key(targets[copyOf[i]], glm::inverse(parent) * w);
         }
     }
-    g.setTime(was);
-    g.evaluate();
     // The copy's keys are plain curves, never an active animation layer's.
     std::vector<NodeId> active;
     for (NodeId l : anim::layers(g))
@@ -1428,12 +1508,12 @@ std::vector<NodeId> bakeToDeformSkeleton(Graph& g, const std::vector<NodeId>& ro
             g.setValue({l, a, -1}, false);
         }
     const int attrs[3] = {Transform::kTranslate, Transform::kRotate, Transform::kScale};
-    for (size_t i = 0; i < bakes.size(); ++i)
+    for (const Target& tg : targets)
         for (int a = 0; a < 3; ++a)
             for (int k = 0; k < 3; ++k)
             {
-                const anim::Curve& c = curves[i][size_t(a * 3 + k)];
-                const PlugRef plug{copyOf[bakes[i]], attrs[a], k};
+                const anim::Curve& c = tg.curves[size_t(a * 3 + k)];
+                const PlugRef plug{tg.node, attrs[a], k};
                 const NodeId curve = anim::setKey(g, plug, c.keys.front().time, c.keys.front().value);
                 anim::setCurve(g, curve, c);
             }

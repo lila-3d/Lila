@@ -136,6 +136,10 @@ Frames sample(Graph& g, const SceneSkeleton& s, double start, double end, double
     const long long frames = std::max<long long>(0, std::llround((end - start) * out.fps));
     const double was = g.time();
     out.world.reserve(size_t(frames + 1));
+    std::vector<std::pair<std::string, PlugRef>> intents;
+    for (const anim::AnimatedPlug& ap : anim::animatedPlugs(g, s.top))
+        if (const std::string name = g.attr(ap.plug).name; name.starts_with("plant") && ap.plug.component < 0)
+            intents.push_back({name, ap.plug});
     for (long long f = 0; f <= frames; ++f)
     {
         g.setTime(start + double(f) / out.fps, false);
@@ -145,6 +149,13 @@ Frames sample(Graph& g, const SceneSkeleton& s, double start, double end, double
         for (NodeId id : s.joints)
             w.push_back(g.node(id)->as<glm::dmat4>(Transform::kWorldMatrix));
         out.world.push_back(std::move(w));
+        for (const auto& [name, plug] : intents)
+        {
+            const PlugValue v = g.value(plug);
+            out.channels[name].push_back(std::holds_alternative<double>(v) ? std::get<double>(v)
+                                         : std::holds_alternative<bool>(v) ? double(std::get<bool>(v))
+                                                                           : 0.0);
+        }
     }
     g.setTime(was);
     g.evaluate();
@@ -539,7 +550,7 @@ RunReport run(Graph& g, NodeId r, const RunOptions& opts)
             if (const Chain* c = tgtRig.chain(m.target); c && c->role == Role::Leg)
                 plant = m.plant;
         const semantic::Clip clip = semantic::encode(src.skeleton, srcRig, currentPose(g, src), frames, plant);
-        res = semantic::apply(clip, tgt.skeleton, tgtRig, tgtNow, {.gait = semantic::gaitFromName(opts.gait)});
+        res = semantic::apply(clip, tgt.skeleton, tgtRig, tgtNow, {.gait = semantic::gaitFromName(opts.gait), .secondary = opts.secondary, .armsAsForelegs = opts.armsAsForelegs});
     }
     else
     {

@@ -307,6 +307,21 @@ TEST_CASE("a body-independent clip saves and plays on another body")
     CHECK_THROWS_AS(run("applyRetargetClip", {{"args", {"nope.lilaclip"}}, {"target", "pelvis"}}), CommandError);
 }
 
+TEST_CASE("a keyed plant channel decides where a foot holds")
+{
+    twoBipeds();
+    keyHips();
+    const json added = run("addPlantChannel", {{"args", {"Hips"}}, {"chain", "LeftLeg"}});
+    CHECK(added["attribute"] == "Hips.plantLeftLeg");
+    Graph& g = graph();
+    const PlugRef plug = g.plug("Hips.plantLeftLeg");
+    anim::setKey(g, plug, 0.0, 1.0);
+    anim::setKey(g, plug, 1.0, 1.0);
+    const json rep = run("retarget", {{"source", "Hips"}, {"target", "pelvis"}});
+    INFO(rep.dump());
+    CHECK(rep["plantedFrames"]["LeftLeg"] == 31);
+}
+
 TEST_CASE("an ACCAD clip retargets onto UE5 Manny" * doctest::skip(!std::getenv("LILA_TEST_BVH")))
 {
     const fs::path manny = fs::path(LILA_TEST_DATA_DIR) / "rig" / "SKM_Manny_skeleton.fbx";

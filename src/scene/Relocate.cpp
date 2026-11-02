@@ -1788,6 +1788,7 @@ void registerBuiltins()
              "proxySet", "turntable",
              // Rig elements: control-space or connected values; their outputs follow what they read.
              "ikChain", "reverseFoot", "rigAlign", "twistDriver", "poseDriver", "drivenChannel",
+             "splineChain", "splineJoint", "hoseLimb", "hoseHand",
              // Animation.
              "animCurve", "animCurveTL", "animCurveTA", "animCurveTU", "animCurveRQ", "animLayer", "animBlend", "animBlendLinear",
              "animBlendVector", "animBlendRotation", "animBlendOffsetVector", "animBlendOffsetRotation", "take",
@@ -1804,6 +1805,7 @@ void registerBuiltins()
     for (const char* t : {"constraint", "parentConstraint", "pointConstraint", "orientConstraint", "aimConstraint"})
         registerHandler(t, {.plan = planConstraint});
     registerHandler("surfacePin", {.plan = noEdit});
+    registerWorldAttrs("pin", {.directions = {"upVector"}});
     registerHandler(spaces::kSwitchType, {.plan = planSpaceSwitch});
 
     registerWorldAttrs("skinCluster", {.matrices = {"geomMatrix"}});

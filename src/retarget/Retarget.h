@@ -3,6 +3,7 @@
 #include "core/Export.h"
 #include "retarget/Rig.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -185,6 +186,11 @@ struct Frames
     /** World matrix of every source joint, per frame. */
     std::vector<std::vector<glm::dmat4>> world;
     double fps = 30.0;
+    /**
+     * Animated attributes of the source's top joint, one value per frame, by name. plant<Chain> (plantLeftLeg) at or
+     * above 0.5 says that chain's goal is planted, overriding detection: the animator's intent carries over.
+     */
+    std::map<std::string, std::vector<double>> channels;
 };
 
 struct Result

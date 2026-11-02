@@ -4,8 +4,10 @@
 #include "scene/CenterInMesh.h"
 #include "scene/DominantInfluence.h"
 #include "scene/FullBodyIk.h"
+#include "scene/Pin.h"
 #include "scene/RigElements.h"
 #include "scene/SelectAs.h"
+#include "scene/SplineChain.h"
 #include "scene/RigUtil.h"
 #include "scene/TransformOps.h"
 
@@ -29,6 +31,14 @@ const char* kTypeNames[] = {"none", "root", "hip", "knee", "foot", "toe", "spine
                             "middleFinger", "ringFinger", "pinkyFinger", "extraFinger", "bigToe", "indexToe",
                             "middleToe", "ringToe", "pinkyToe", "footThumb"};
 const char* kDrawStyleNames[] = {"bone", "box", "none"};
+const char* kLimitNames[] = {"none", "hinge", "cone"};
+const char* kAxisNames[] = {"x", "y", "z"};
+
+AttrDef inCategory(AttrDef a, std::string category)
+{
+    a.category = std::move(category);
+    return a;
+}
 
 AttrDef vec3Attr(std::string name, std::string shortName, glm::dvec3 def, uint32_t flags, std::string doc)
 {
@@ -132,6 +142,8 @@ void Joint::compute(const EvalContext&)
         // The parent's scale is undone right after translate, so this joint's own segment keeps its length.
         local = glm::translate(glm::dmat4(1.0), t) * glm::scale(glm::dmat4(1.0), s) * glm::translate(glm::dmat4(1.0), -t) * local;
     }
+    if (const double stretch = as<double>(kIkStretch); stretch != 1.0)
+        local = glm::translate(glm::dmat4(1.0), (stretch - 1.0) * as<glm::dvec3>(kTranslate)) * local;
     setOutput(kMatrix, local);
     setOutput(kWorldMatrix, as<glm::dmat4>(kParentMatrix) * local);
 }
@@ -172,6 +184,28 @@ NodeType Joint::makeType(const NodeType& base)
          .flags = stored, .doc = "Joint a viewport mesh click selects instead of this one (set with the selectAs command)."},
         {.name = "deform", .shortName = "dfm", .type = PlugType::Bool, .defaultValue = true, .flags = stored,
          .doc = "Exported to game engines. Off for IK helpers and rig-only joints: exporters skip them and close the hierarchy over them."},
+        {.name = "ikLimit", .shortName = "ikl", .type = PlugType::Enum, .defaultValue = int64_t(kNoLimit), .flags = stored,
+         .enumNames = {kLimitNames, kLimitNames + 3},
+         .doc = "How IK may turn the joint: freely, about one axis (hinge) or within a cone around its bone. IK handles pick up "
+                "changes through ikLimit or ikHandle -refresh.",
+         .category = "IK"},
+        {.name = "ikLimitAxis", .shortName = "ikax", .type = PlugType::Enum, .defaultValue = int64_t(2), .flags = stored,
+         .enumNames = {kAxisNames, kAxisNames + 3}, .doc = "The hinge's axis, in the joint's rotate space.", .category = "IK"},
+        {.name = "ikLimitMin", .shortName = "ikmn", .type = PlugType::Float, .defaultValue = -180.0, .flags = stored,
+         .doc = "Smallest hinge rotate, degrees.", .minValue = -180.0, .maxValue = 180.0, .category = "IK"},
+        {.name = "ikLimitMax", .shortName = "ikmx", .type = PlugType::Float, .defaultValue = 180.0, .flags = stored,
+         .doc = "Largest hinge rotate, degrees.", .minValue = -180.0, .maxValue = 180.0, .category = "IK"},
+        {.name = "ikConeAngle", .shortName = "ikcn", .type = PlugType::Float, .defaultValue = 90.0, .flags = stored,
+         .doc = "How far the bone may swing from where it points at rotate zero, degrees.", .minValue = 0.0, .maxValue = 180.0,
+         .category = "IK"},
+        {.name = "stiffness", .shortName = "ikst", .type = PlugType::Float, .defaultValue = 0.0, .flags = stored,
+         .doc = "0 turns freely; toward 1 IK turns this joint less and its neighbours more.", .minValue = 0.0, .maxValue = 1.0,
+         .category = "IK"},
+        inCategory(vec3Attr("preferredAngle", "pra", glm::dvec3(0.0), stored,
+                            "Rotate IK starts from, degrees: picks which way a straight chain bends. Zero leaves the chain's own bend."),
+                   "IK"),
+        {.name = "ikStretch", .shortName = "iks", .type = PlugType::Float, .defaultValue = 1.0, .flags = AttrInput | AttrHidden | AttrResetOnDisconnect,
+         .doc = "Multiplies translate; connected from a stretching ikHandle."},
         // Replaces the transform's attr in place (registerType matches by name), so joints default to smooth.
         rotationInterpolationAttr(int64_t(RotationInterpolation::Smooth)),
     };
@@ -601,8 +635,10 @@ void registerRigTypes()
     types::registerType(Joint::makeType(*transform));
     registerSkinTypes();
     registerConstraintTypes();
+    pins::registerTypes();
     registerIkTypes();
     rigel::registerTypes();
+    spline::registerTypes();
     registerEditSkeletonTypes();
 }
 
@@ -613,8 +649,10 @@ void registerRigCommands()
     registerJointCommands();
     registerSkinCommands();
     registerConstraintCommands();
+    pins::registerCommands();
     registerIkCommands();
     rigel::registerCommands();
+    spline::registerCommands();
     fbik::registerCommands();
     registerEditSkeletonCommands();
     registerCenterCommands();

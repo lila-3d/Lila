@@ -267,6 +267,9 @@ Clip encode(const Skeleton& s, const Rig& rig, const Pose& current, const Frames
             t.contact = ch.role == Role::Leg && plant.enabled
                             ? contacts(path, up, dt, plant.speedThreshold / 90.0 * L, plant.heightTolerance / 90.0 * L, plant.minFrames)
                             : std::vector<bool>(n, false);
+            if (const auto intent = frames.channels.find("plant" + ch.name); intent != frames.channels.end() && intent->second.size() == n)
+                for (size_t f = 0; f < n; ++f)
+                    t.contact[f] = intent->second[f] >= 0.5;
             c.limbs.push_back(std::move(t));
         }
         else if (ch.role == Role::Spine || ch.role == Role::Neck || ch.role == Role::Head || ch.role == Role::Tail)
@@ -398,9 +401,21 @@ Result apply(const Clip& clip, const Skeleton& target, const Rig& rig, const Pos
     for (size_t l = 0; l < clip.limbs.size(); ++l)
         if (clip.limbs[l].role == Role::Leg)
             sourceLegs.push_back(l);
+    std::vector<size_t> sourceArms;
+    for (size_t l = 0; l < clip.limbs.size(); ++l)
+        if (clip.limbs[l].role == Role::Arm && clip.limbs[l].index == 0)
+            sourceArms.push_back(l);
     for (size_t k = 0; k < legChains.size(); ++k)
     {
         const Chain& c = *legChains[k];
+        if (opts.armsAsForelegs && c.index == 0 && legChains.size() > sourceLegs.size())
+        {
+            const std::vector<int> j = target.path(target.find(c.start), target.find(c.goal));
+            for (size_t l : sourceArms)
+                if (clip.limbs[l].side == c.side && j.size() >= 2)
+                    drives.push_back({&c, j, l, 0.0, chainLength(target, j, rest), restOffset(j)});
+            continue;
+        }
         if (sourceLegs.empty())
         {
             out.notes.push_back("the clip has no legs to drive " + c.name);
@@ -503,6 +518,35 @@ Result apply(const Clip& clip, const Skeleton& target, const Rig& rig, const Pos
             fr.contact.push_back(w < 0.5 ? tr.contact[a] : tr.contact[b]);
         }
     });
+
+    // Tails, antennae and wings with nothing driving them trail the body, frame after frame.
+    if (opts.secondary > 0.0)
+        for (const Chain& c : rig.chains)
+        {
+            if (c.role != Role::Tail && c.role != Role::Antenna && c.role != Role::Wing)
+                continue;
+            bool shaped = false;
+            for (const ShapeTrack& sh : clip.shapes)
+                shaped = shaped || (sh.role == c.role && sh.side == c.side && sh.index == c.index);
+            const std::vector<int> j = chainJoints(target, c);
+            if (shaped || j.empty())
+                continue;
+            std::vector<glm::dquat> lagged(j.size());
+            for (size_t f = 0; f < n; ++f)
+            {
+                Frame& fr = frames[f];
+                for (size_t k = 0; k < j.size(); ++k)
+                {
+                    const size_t i = size_t(j[k]);
+                    const glm::dquat follow = rotationOf(fr.world[i]);
+                    // Further down the chain lags more, as a tail's tip does.
+                    const double lag = std::min(opts.secondary * double(k + 1) / double(j.size()), 0.95);
+                    lagged[k] = f == 0 ? follow : glm::slerp(follow, lagged[k], lag);
+                    fr.pose.rotation[i] = localRotationFor(target, int(i), parentWorldOf(target, fr.world, int(i)), lagged[k]);
+                    fr.world = worldOf(target, fr.pose);
+                }
+            }
+        }
 
     // Planted feet hold where they touched down.
     if (opts.plant)

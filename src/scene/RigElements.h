@@ -4,6 +4,7 @@
 
 #include "scene/Node.h"
 #include "scene/RigMath.h"
+#include "scene/Transform.h"
 
 #include <array>
 #include <functional>
@@ -170,7 +171,20 @@ struct BakeOptions
     double start = 0.0, end = 0.0; // seconds
     double fps = 30.0;
     std::string suffix = "_bake";
+    /**
+     * A joint with deform children and non-uniform scale is written as an unscaled driver (name_drv plus suffix) that
+     * its children follow, with a leaf under it carrying the scale, so Unreal (which hands a parent's scale to its
+     * children without shear) matches.
+     */
+    bool scaleSafe = true;
 };
+
+/** A local matrix as the translate, rotate (degrees, nearest nearRotate) and scale a bake keys; any shear is lost. */
+struct ExportTrs
+{
+    glm::dvec3 translate{0.0}, rotate{0.0}, scale{1.0};
+};
+LILA_SCENE_API ExportTrs exportTrs(const glm::dmat4& local, RotateOrder order, const glm::dvec3& nearRotate);
 /**
  * A clean copy of the deform joints under the given roots: the same names plus suffix, hierarchy closed over the
  * non-deform joints, keyed every frame with the evaluated world transform of each original (so whatever drives the rig,

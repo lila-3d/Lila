@@ -228,7 +228,8 @@ void MainWindow::buildMenus()
                        "rig.snapToComponentCenter", "#Skin", "rig.bindSkin",
                        "rig.bindSkinHeatmap", "rig.unbindSkin", "rig.goToBindPose", "rig.editSkeleton", "#Weights", "rig.paintWeights", "rig.mirrorSkinWeights",
                        "rig.copySkinWeights", "rig.normalizeWeights", "rig.pruneWeights", "#Constraints", "rig.parentConstraint", "rig.pointConstraint",
-                       "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "#IK", "rig.ikHandle", "#Display", "rig.xrayJoints",
+                       "rig.orientConstraint", "rig.aimConstraint", "rig.removeConstraint", "rig.pin", "rig.bakePin", "#Curve Controls", "curve.controls",
+                       "curve.removeControls", "#IK", "rig.ikHandle", "rig.splineChain", "rig.hoseLimb", "rig.hoseFingers", "#Display", "rig.xrayJoints",
                        "rig.dominantInfluenceSelect"});
     addSubmenu("Rig", "Spaces");
     setupSpacesMenu();

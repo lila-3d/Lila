@@ -470,8 +470,18 @@ void registerRigActions()
         "The last selected object turns to point at the others.");
     add("rig.removeConstraint", "Remove Constraint", [] { command("removeConstraint"); }, "removeConstraint()",
         "Deletes the selected constraints, or those on the selected objects, keeping the current pose.");
+    add("rig.pin", "Pin", [] { command("pin"); }, "pin()",
+        "Pins the selected objects to the last selected curve or mesh: its curve, selected vertex, edge or face, or surface.");
+    add("rig.bakePin", "Bake Pins to Joints", [] { command("bakePin"); }, "bakePin()",
+        "Turns the selected pins or pinned objects into joints for Unreal: sockets where they ride a bone rigidly, else keyed bones.");
     add("rig.ikHandle", "IK Handle", [] { command("ikHandle"); }, "ikHandle()",
         "Solves the chain from the first selected joint to the last with an IK handle at its end.");
+    add("rig.splineChain", "Spline Chain", [] { command("splineChain"); }, "splineChain()",
+        "Lays the joints from the first selected to the last along a curve with controls (or the selected curve).");
+    add("rig.hoseLimb", "Rubber Hose Limb", [] { command("hoseLimb"); }, "hoseLimb()",
+        "Turns the limb from the selected shoulder or hip to the selected wrist or ankle into a rubber hose.");
+    add("rig.hoseFingers", "Rubber Hose Fingers", [] { command("hoseFingers"); }, "hoseFingers()",
+        "Makes the selected finger base joints rubber hose fingers with curl, spread and a hand fist.");
     actions::add({.id = "rig.editSkeleton", .label = "Edit Skeleton", .category = "Rig", .run = [] { command("editSkeleton"); },
                   .doc = "Toggles skeleton editing: the skinned skeleton goes to bind pose so joints can be moved and reoriented "
                          "without deforming the mesh; turning it off rebinds and keeps the animation.",

@@ -9,7 +9,7 @@ def addAnimLayerMembers(*objects: Any, layer: str | None = None, l: str | None =
         layer: Animation layer. Default: the active one. Short form l.
     """
 
-def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, attributeType: str | None = None, parent: str | None = None, numberOfChildren: int | None = None, dataType: str | None = None, multi: bool | None = None, defaultValue: Any | None = None, minValue: float | None = None, maxValue: float | None = None, softMinValue: float | None = None, softMaxValue: float | None = None, enumName: str | None = None, keyable: bool | None = None, hidden: bool | None = None, usedAsColor: bool | None = None, doc: str | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, at: str | None = None, p: str | None = None, nc: int | None = None, dt: str | None = None, m: bool | None = None, dv: Any | None = None, min: float | None = None, max: float | None = None, smn: float | None = None, smx: float | None = None, en: str | None = None, k: bool | None = None, h: bool | None = None, uac: bool | None = None) -> Any:
+def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, attributeType: str | None = None, parent: str | None = None, numberOfChildren: int | None = None, dataType: str | None = None, multi: bool | None = None, defaultValue: Any | None = None, minValue: float | None = None, maxValue: float | None = None, softMinValue: float | None = None, softMaxValue: float | None = None, enumName: str | None = None, keyable: bool | None = None, hidden: bool | None = None, usedAsColor: bool | None = None, usedAsFilename: bool | None = None, category: str | None = None, doc: str | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, at: str | None = None, p: str | None = None, nc: int | None = None, dt: str | None = None, m: bool | None = None, dv: Any | None = None, min: float | None = None, max: float | None = None, smn: float | None = None, smx: float | None = None, en: str | None = None, k: bool | None = None, h: bool | None = None, uac: bool | None = None, uaf: bool | None = None) -> Any:
     """Add an attribute to objects (Maya's addAttr): attributeType for a single value or, with multi, an array of them; dataType for strings and arrays (stringArray, doubleArray, Int32Array, vectorArray). attributeType='compound' groups the attributes then added with parent=; a multi compound gives each element every child, node.targets[2].weight. Compounds nest one level. Saved with the scene. Returns the new plugs.
 
     Args:
@@ -31,6 +31,8 @@ def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = 
         keyable: Show it in the channel box, where it can be keyed. Short form k. Default False.
         hidden: Hide it from editors. Short form h. Default False.
         usedAsColor: A double3 holding a colour: editors show a swatch. Short form uac. Default False.
+        usedAsFilename: A string holding a file path: editors offer a file browser. Short form uaf. Default False.
+        category: A heading the Attribute Editor groups it under.
         doc: What it is for: editors show it as a tooltip.
     """
 
@@ -173,6 +175,14 @@ def addMorphTarget(*objects: Any, live: bool | None = None, name: str | None = N
         objects: morph or mesh, targets...
         live: Keep the targets connected so editing them updates the morphs. Default False.
         name: Export name for a single or empty target. Default: the target mesh's name. Short form n.
+    """
+
+def addPlantChannel(*objects: Any, chain: str | None = None, c: str | None = None) -> Any:
+    """Add a keyable plant<Chain> attribute (0 to 1) to a skeleton's top joint. Keyed at 1, retargeting holds that chain's hand or foot planted there instead of guessing from its speed: key the intent, and every body it goes to keeps it.
+
+    Args:
+        objects: a joint of the source skeleton.
+        chain: The chain: LeftLeg, RightArm, LeftLeg2 ... Short form c.
     """
 
 def addSpace(*objects: Any, space: Any | None = None, maintainOffset: bool | None = None, sp: Any | None = None, mo: bool | None = None) -> Any:
@@ -797,6 +807,17 @@ def bakePiecesToJoints(*objects: Any, start: float | None = None, end: float | N
         bakePiecesToJoints('Wall', start=1, end=72)
     """
 
+def bakePin(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, name: str | None = None, st: float | None = None, et: float | None = None, n: str | None = None) -> Any:
+    """Turn pins into joints for Unreal. A pinned joint gets its pinned channels keyed every frame and lets go of the pins. A pin driving nothing, or a pinned prop, gets a joint under the joint carrying the source (the heaviest skin influence there, or the joint above the curve or mesh): a socket when it holds still relative to that joint over the range, else a bone keyed every frame. A prop's joint sits where the prop is, so it attaches with no offset. Returns the joints.
+
+    Args:
+        objects: pins, pin locators or pinned objects.
+        start: Seconds; default the playback start. Short form st.
+        end: Seconds; default the playback end. Short form et.
+        fps: Frames per second; default the scene's.
+        name: Name for the joint (one pin). Default: <locator or prop>_socket or _bone. Short form n.
+    """
+
 def bakePivot(*objects: Any) -> Any:
     """Turn the objects onto their pivots' axes, counter-rotating their points, so the pivot orientation becomes the object's own and scale works along it. Nothing moves in the world. Instances are made unique.
 
@@ -832,7 +853,7 @@ def bakeStatus(project: str | None = None, *, pj: str | None = None) -> Any:
     """
 
 def bakeSurfacePin(*objects: Any, name: str | None = None) -> Any:
-    """Bake surface pins to joints for Unreal: each becomes a joint at the pin's current frame, parented to the joint with the most skin weight under the pin, so it exports as a bone that sockets and attachments use. Give the pins or their locators. Returns the joints.
+    """Bake surface pins to joints for Unreal: each becomes a joint at the pin's current frame, parented to the joint with the most skin weight under the pin, so it exports as a bone that sockets and attachments use. Give the pins or their locators. Pins made by pin or surfacePin go through bakePin. Returns the joints.
 
     Args:
         objects: pins or pin locators.
@@ -857,7 +878,7 @@ def bakeTension(*objects: Any, start: int | None = None, end: int | None = None,
         uvSet: The uv set the image is laid out by. Default 'uv0'.
     """
 
-def bakeToDeformSkeleton(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, suffix: str | None = None, st: float | None = None, et: float | None = None, sfx: str | None = None) -> Any:
+def bakeToDeformSkeleton(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, suffix: str | None = None, scaleSafe: bool | None = None, st: float | None = None, et: float | None = None, sfx: str | None = None, ss: bool | None = None) -> Any:
     """Make a clean copy of the deform joints (names plus suffix, hierarchy closed over non-deform joints) keyed every frame with the evaluated world transform of each original, so IK, spaces, layers, constraints and physics end up as plain translate, rotate and scale keys, as exporters write them. Returns the copy's top joints.
 
     Args:
@@ -866,6 +887,7 @@ def bakeToDeformSkeleton(*objects: Any, start: float | None = None, end: float |
         end: Seconds; default the playback end. Short form et.
         fps: Frames per second; default the scene's.
         suffix: Added to each copied joint's name. Short form sfx. Default '_bake'.
+        scaleSafe: Where a joint with deform children scales non-uniformly, write it as an unscaled driver (name_drv) its children follow plus a leaf carrying the scale, so Unreal matches. Short form ss. Default True.
     """
 
 def bakeUpToDate(project: str | None = None, *, pj: str | None = None) -> Any:
@@ -1707,18 +1729,21 @@ def createBakeProject(name: str | None = None, target: str | None = None, folder
         folder: Output folder; relative paths are under the workspace, else the scene file's folder. Short form fo.
     """
 
-def createClay(name: str | None = None, position: Sequence[float] | None = None, voxelSize: float | None = None, symmetry: str | None = None, empty: bool | None = None, *, n: str | None = None, p: Sequence[float] | None = None, vs: float | None = None, sy: str | None = None, e: bool | None = None) -> Any:
-    """Create a clay object: a transform holding clay shapes, and a mesh under it that shows them blended by a claySurface. Starts with one sphere unless empty. Returns [object, mesh, surface, firstShape or None].
+def createClay(name: str | None = None, shape: str | None = None, symmetry: str | None = None, position: Sequence[float] | None = None, voxelSize: float | None = None, empty: bool | None = None, *, n: str | None = None, sh: str | None = None, sy: str | None = None, p: Sequence[float] | None = None, vs: float | None = None, e: bool | None = None) -> Any:
+    """Create a clay object: a transform holding clay shapes, and a mesh under it that shows them blended by a claySurface. Starts with one shape unless empty. Returns [object, mesh, surface, firstShape or None].
 
     Args:
         name: Object name; made unique. Short form n. Default 'Clay'.
+        shape: The first shape. Short form sh. One of 'sphere', 'ellipsoid', 'box', 'capsule', 'cylinder', 'cone', 'torus'. Default 'sphere'.
+        symmetry: Mirror across the object's YZ plane. Short form sy. One of 'off', 'x'. Default 'x'.
         position: World position. Short form p.
         voxelSize: Lattice spacing while editing, cm. Short form vs.
-        symmetry: Mirror across the object's YZ plane. Short form sy. One of 'off', 'x'.
         empty: Start with no shapes. Short form e. Default False.
 
     Examples:
-        createClay(name="Dog", symmetry="x")
+        createClay(name="Dog")
+
+        createClay(shape="capsule", symmetry="off")
     """
 
 def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | None = None, n: str | None = None, e: bool | None = None) -> Any:
@@ -1978,6 +2003,24 @@ def curveCenterLine(*objects: Any, normal: Sequence[float] | None = None, tolera
         tolerance: Tessellation of curved input, cm. Default 0.01.
         constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Name of the result curve; made unique. Short form n.
+    """
+
+def curveControls(*objects: Any, count: int | None = None, handles: bool | None = None, mirror: bool | None = None, mirrorAxis: str | None = None, size: float | None = None, name: str | None = None, c: int | None = None, hd: bool | None = None, m: bool | None = None, ma: str | None = None, s: float | None = None, n: str | None = None) -> Any:
+    """Build controls that drive a curve's points: a locator per control point (in an offset group, under a <curve>_controls group beside the curve), optionally tangent handle controls under each Bezier point. The curve follows them live. Returns the controls.
+
+    Args:
+        objects: curves (default: the selected curves).
+        count: Controls per spline: 0 for one per existing point, else the curve is respaced to this many points first. Short form c. Default 0.
+        handles: Bezier curves: a control for each tangent handle, under its point's control. Short form hd. Default False.
+        mirror: Name mirrored pairs of controls _l and _r so pose mirroring swaps them. Short form m. Default False.
+        mirrorAxis: The axis the mirror plane faces. Short form ma. One of 'x', 'y', 'z'. Default 'x'.
+        size: Control draw size, cm; 0 sizes them to the curve. Short form s. Default 0.0.
+        name: Name prefix for the controls; default the curve's name. Short form n.
+
+    Examples:
+        curveControls("Spine", handles=True)
+
+        curveControls("Lip", count=7, mirror=True)
     """
 
 def curveData(*objects: Any, worldSpace: bool | None = None, ws: bool | None = None) -> Any:
@@ -2542,6 +2585,29 @@ def editSkeleton(*objects: Any, on: bool | None = None, preserve: str | None = N
         objects: meshes or joints.
         on: Turn editing on or off; toggles when omitted.
         preserve: What leaving keeps: worldPose or channels. Short form pr. One of 'worldPose', 'channels'. Default 'worldPose'.
+    """
+
+def editSplineChain(*objects: Any, weight: float | None = None, lengthMode: str | None = None, minStretch: float | None = None, maxStretch: float | None = None, volume: float | None = None, slide: float | None = None, twistStart: float | None = None, twistEnd: float | None = None, twistRamp: str | None = None, roll: float | None = None, upMode: str | None = None, upVector: Sequence[float] | None = None, twistSpread: float | None = None, w: float | None = None, lm: str | None = None, mns: float | None = None, mxs: float | None = None, v: float | None = None, sl: float | None = None, ts: float | None = None, te: float | None = None, tr: str | None = None, r: float | None = None, um: str | None = None, upv: Sequence[float] | None = None, tsp: float | None = None) -> Any:
+    """Change spline chains: give the chains, joints in them or their splineJoints. Returns the chains.
+
+    Args:
+        objects: spline chains (default the selection).
+        weight: 0 leaves the joints on their rotate, 1 lays them on the curve. Short form w.
+        lengthMode: keepLength | stretch | squash. Short form lm. One of 'keepLength', 'stretch', 'squash'.
+        minStretch: The shortest the chain gets, as a multiple of its length. Short form mns.
+        maxStretch: The longest the chain gets. Short form mxs.
+        volume: Squash: 1 keeps the volume, 0 the thickness. Short form v.
+        slide: Moves the chain along the curve, cm. Short form sl.
+        twistStart: Twist at the first joint, degrees. Short form ts.
+        twistEnd: Twist at the last joint, degrees. Short form te.
+        twistRamp: linear | easeIn | easeOut | smooth. Short form tr. One of 'linear', 'easeIn', 'easeOut', 'smooth'.
+        roll: Turn of the whole chain about the curve, degrees. Short form r.
+        upMode: curveFrames | upVector | upObjects. Short form um. One of 'curveFrames', 'upVector', 'upObjects'.
+        upVector: Up in the start joint's parent's space. Short form upv.
+        twistSpread: upObjects: share of the end object's twist spread along the chain. Short form tsp.
+
+    Examples:
+        editSplineChain("spine_01_spline", lengthMode="squash", twistEnd=45)
     """
 
 def editTake(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, loop: bool | None = None, folder: str | None = None, s: float | None = None, e: float | None = None, l: bool | None = None, fo: str | None = None) -> Any:
@@ -3678,6 +3744,34 @@ def hide(*objects: Any) -> Any:
         objects: objects.
     """
 
+def hoseFingers(*objects: Any, curlAxis: str | None = None, curlMax: float | None = None, spreadMax: float | None = None, name: str | None = None, ca: str | None = None, cm: float | None = None, sm: float | None = None, n: str | None = None) -> Any:
+    """Make rubber hose fingers: each base joint's finger, down to its tip, curls along an arc. Each finger's hoseLimb has a curl and spread; one hoseHand adds curl, spread and fist to all of them. Returns the hoseHand, then the fingers.
+
+    Args:
+        objects: finger base joints (default the selection).
+        curlAxis: The base joint's axis the finger curls about: x, y, z, -x, -y or -z. Short form ca. Default 'z'.
+        curlMax: Degrees the whole finger curls at curl 1. Short form cm. Default 270.0.
+        spreadMax: Degrees a finger turns sideways at spread 1. Short form sm. Default 20.0.
+        name: Name for the hoseHand; default <hand>_hoseHand. Short form n.
+
+    Examples:
+        hoseFingers("index_01_l", "middle_01_l", "ring_01_l", "pinky_01_l")
+    """
+
+def hoseLimb(*objects: Any, joints: int | None = None, hose: float | None = None, autoArc: float | None = None, name: str | None = None, j: int | None = None, h: float | None = None, aa: float | None = None, n: str | None = None) -> Any:
+    """Make a rubber hose limb from the shoulder or hip to the wrist or ankle. A limb with an elbow or knee between keeps its joints as drivers (no longer deforming) and gets a chain of hose joints that follow it, from jointed (hose 0) to a smooth hose that bows into an arc as the end nears the root (hose 1). Without joints between, the hose spans the two joints. A bend control on the elbow pushes the middle of the hose. Returns the hoseLimb.
+
+    Args:
+        objects: start joint, end joint (default the selection).
+        joints: Hose joints along the limb. Short form j. Default 12.
+        hose: 0 bends at the elbow or knee, 1 is a smooth hose. Short form h. Default 1.0.
+        autoArc: 1 bows into an arc keeping the limb's length as the end nears the root. Short form aa. Default 1.0.
+        name: Name for the hoseLimb; default <start>_hose. Short form n.
+
+    Examples:
+        hoseLimb("upperarm_l", "hand_l", joints=12)
+    """
+
 def ikChain(*objects: Any, startJoint: str | None = None, endJoint: str | None = None, solver: str | None = None, name: str | None = None, poleVector: Sequence[float] | None = None, parent: str | None = None, sj: str | None = None, ej: str | None = None, sol: str | None = None, n: str | None = None, pv: Sequence[float] | None = None, p: str | None = None) -> Any:
     """Make an IK chain from a start joint to an end effector, solved by a base ikHandle. The joints keep their keyed rotate: grabbing the controller solves the chain and writes (keys) the rotations, and a locked key holds the controller until the chain's next key. Returns the chain.
 
@@ -3703,6 +3797,20 @@ def ikHandle(*objects: Any, startJoint: str | None = None, endEffector: str | No
         poleVector: Bend direction from the start joint; defaults to the chain's current bend. Short form pv.
         poleAngle: Roll of the bend plane, degrees. Short form pa.
         refresh: Re-read the rest layout of the given handles' chains. Short form rf. Default False.
+    """
+
+def ikLimit(*objects: Any, type: str | None = None, axis: str | None = None, min: float | None = None, max: float | None = None, cone: float | None = None, stiffness: float | None = None, preferredAngle: Sequence[float] | None = None, t: str | None = None, ax: str | None = None, mn: float | None = None, mx: float | None = None, cn: float | None = None, st: float | None = None, pa: Sequence[float] | None = None) -> Any:
+    """Set how far IK may turn joints (default the selection): a hinge about one axis within min..max degrees, or a cone the bone swings within; plus stiffness and the preferred angle. Only the flags given change. The IK handles solving the joints pick the limits up at once. Returns the joints.
+
+    Args:
+        objects: joints.
+        type: none, hinge or cone. Short form t. One of 'none', 'hinge', 'cone'.
+        axis: The hinge's axis in rotate space: x, y or z. Short form ax. One of 'x', 'y', 'z'.
+        min: Smallest hinge rotate, degrees. Short form mn.
+        max: Largest hinge rotate, degrees. Short form mx.
+        cone: How far the bone may swing from rotate zero, degrees. Short form cn.
+        stiffness: 0 turns freely, toward 1 the joint resists turning. Short form st.
+        preferredAngle: Rotate IK starts from, degrees; picks the bend of a straight chain. Short form pa.
     """
 
 def ikLock(*objects: Any, time: float | None = None, state: bool | None = None, t: float | None = None, s: bool | None = None) -> Any:
@@ -4401,6 +4509,21 @@ def materialPresets(*objects: Any, save: str | None = None, values: Any | None =
         delete: Preset name to delete.
     """
 
+def mathNodes(name: str | None = None, family: str | None = None, namesOnly: bool | None = None, *, n: str | None = None, f: str | None = None, no: bool | None = None) -> Any:
+    """The rig math node library: each function with its family, doc and overloads, every overload's node type and its typed inputs and outputs. Filter by function name, node type or family.
+
+    Args:
+        name: A function name ("lerp") or node type ("addVector"). Short form n.
+        family: Only this family: arithmetic, comparison, range, interpolation, easing, trig, exponential, vector, rotator, quat, matrix, color, select, bitwise or noise. Short form f.
+        namesOnly: Return just the node type names. Short form no. Default False.
+
+    Examples:
+        mathNodes(family='vector', namesOnly=True)
+
+        n = createNode('mapRangeClamped')
+        setAttr(n + '.value', 0.25)
+    """
+
 def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, src: str | None = None, dst: str | None = None, r: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
     """Convert Maya files to Lila scenes: a file to a .lila / .lilaa, or every .ma / .mb in a folder. Each file is opened as its own scene and saved; the scene is left empty afterwards. Returns one entry per file with its destination (or error), skipped features and warnings.
 
@@ -4991,6 +5114,40 @@ def pickerSelect(*objects: Any, items: Sequence[Any] | None = None, page: str | 
         page: Page holding the items; any page by default. Short form p.
         namespace: Namespace to resolve targets in. Short form ns.
         mode: replace, add, remove or toggle. Short form m. One of 'replace', 'add', 'remove', 'toggle'. Default 'replace'.
+    """
+
+def pin(*objects: Any, source: str | None = None, follow: str | None = None, maintainOffset: bool | None = None, weight: float | None = None, shape: str | None = None, rebindByUv: bool | None = None, curveMode: str | None = None, along: float | None = None, upMode: str | None = None, upVector: Sequence[float] | None = None, upObject: str | None = None, aimCurve: str | None = None, roll: float | None = None, index: int | None = None, neighbor: int | None = None, fraction: float | None = None, faceMode: str | None = None, surfaceMode: str | None = None, uv: Sequence[Any] | None = None, uvSet: str | None = None, position: Sequence[float] | None = None, name: str | None = None, src: str | None = None, fo: str | None = None, mo: bool | None = None, w: float | None = None, sh: str | None = None, ruv: bool | None = None, cm: str | None = None, al: float | None = None, um: str | None = None, upv: Sequence[float] | None = None, uo: str | None = None, ac: str | None = None, r: float | None = None, i: int | None = None, nb: int | None = None, fr: float | None = None, fm: str | None = None, sm: str | None = None, n: str | None = None) -> Any:
+    """Pin objects or joints to a curve, a vertex, an edge, a face or a mesh's surface: each gets a pin locator riding the source and is constrained to it. Pinning one object several times blends the pins by weight, like a parent constraint with several targets. Give the objects first and the curve or mesh last; with no objects one pin is made. Returns the pin locators.
+
+    Args:
+        objects: objects..., curve or mesh.
+        source: auto | curve | vertex | edge | face | surface. auto: curve for a curve; for a mesh the selected component kind, else surface. Short form src. One of 'auto', 'curve', 'vertex', 'edge', 'face', 'surface'. Default 'auto'.
+        follow: translate | translateRotate | full. full also scales with the source. Short form fo. One of 'translate', 'translateRotate', 'full'. Default 'translateRotate'.
+        maintainOffset: Keep each object where it is relative to its pin; off snaps it onto the pin. Short form mo. Default True.
+        weight: The pin's share when the object has several. Short form w. Default 1.0.
+        shape: final | rest: ride the deformed mesh or its shape before deformers. Short form sh. One of 'final', 'rest'. Default 'final'.
+        rebindByUv: Find the pin again by uv when the mesh's topology changes. Short form ruv. Default True.
+        curveMode: parameter | length | fraction: how along reads. Short form cm. One of 'parameter', 'length', 'fraction'. Default 'fraction'.
+        along: Where on the curve, in curveMode's units. Default: nearest each object. Short form al.
+        upMode: curveFrames | upVector | upObject | aimCurve: how the frame turns about the curve. Short form um. One of 'curveFrames', 'upVector', 'upObject', 'aimCurve'. Default 'curveFrames'.
+        upVector: Up direction for upMode upVector. Default [0, 1, 0]. Short form upv.
+        upObject: The object up points at (upMode upObject). Short form uo.
+        aimCurve: The curve up aims at (upMode aimCurve). Short form ac.
+        roll: Turn of the frame, degrees: about the curve, or about a mesh's normal. Short form r. Default 0.0.
+        index: The vertex, edge or face id. Default: the selected one, else the nearest each object. Short form i.
+        neighbor: Vertex: the point the frame's x aims at. Default: along the first edge. Short form nb.
+        fraction: Edge: how far along it. Default: nearest each object. Short form fr.
+        faceMode: centre | barycentric: the face's centre or the point on it nearest each object. Short form fm. One of 'centre', 'barycentric'. Default 'centre'.
+        surfaceMode: auto | uv | nearest. auto: uv when the mesh has the uv set. Short form sm. One of 'auto', 'uv', 'nearest'. Default 'auto'.
+        uv: Surface uv mode: [u, v] of the pin. Default: the uv nearest each object.
+        uvSet: The uv set read. Default 'uv0'.
+        position: With no objects: where the pin goes, world space (the nearest point of the source).
+        name: Name for the pin locator. Short form n.
+
+    Examples:
+        pin("Button", "Jacket", source="face", index=12)
+
+        pin("Bead", "Wire", curveMode="fraction", along=0.25)
     """
 
 def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = None, sides: int | None = None, wallThickness: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, autoFillet: bool | None = None, bendRadius: float | None = None, minBendRadius: float | None = None, tessellation: str | None = None, segments: int | None = None, maxAngle: float | None = None, texelDensity: float | None = None, flip: bool | None = None, splitEvery: float | None = None, splitAtBends: bool | None = None, splitAt: str | None = None, partAtStart: bool | None = None, partAtEnd: bool | None = None, segmentMaterials: bool | None = None, coupling: str | None = None, couplingScale: float | None = None, couplingLength: float | None = None, couplingSides: int | None = None, scaleToRadius: bool | None = None, meshAxis: str | None = None, meshScale: float | None = None, fasteners: str | None = None, boltCount: int | None = None, boltCircle: float | None = None, boltPhase: float | None = None, boltSize: float | None = None, corrugationDepth: float | None = None, corrugationPeriod: float | None = None, corrugationRings: int | None = None, preset: str | None = None, points: Sequence[Any] | None = None, splines: Sequence[Any] | None = None, symmetry: str | None = None, fromLoop: bool | None = None, loopMesh: str | None = None, loopFaces: Sequence[Any] | None = None, loopEdges: Sequence[Any] | None = None, attach: bool | None = None, couplingMeshNode: str | None = None, boltMeshNode: str | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
@@ -5914,6 +6071,13 @@ def removeConstraint(*objects: Any) -> Any:
         objects: constraints or objects.
     """
 
+def removeCurveControls(*objects: Any) -> Any:
+    """Delete a curve's controls, keeping the shape they gave it. Returns the curves.
+
+    Args:
+        objects: curves (default: the selected curves).
+    """
+
 def removeDrivenChannel(*objects: Any) -> Any:
     """Delete driven channels; each driven plug keeps the value it has now.
 
@@ -6210,7 +6374,7 @@ def resetTransforms(*objects: Any) -> Any:
         objects: objects.
     """
 
-def retarget(source: str | None = None, target: str | None = None, retargeter: str | None = None, files: Sequence[Any] | None = None, folder: str | None = None, scale: float | None = None, start: float | None = None, end: float | None = None, fps: float | None = None, take: str | None = None, lockChains: bool | None = None, keepSources: bool | None = None, mode: str | None = None, gait: str | None = None, *, s: str | None = None, t: str | None = None, r: str | None = None, f: Sequence[Any] | None = None, fo: str | None = None, sc: float | None = None, st: float | None = None, e: float | None = None, tk: str | None = None, lc: bool | None = None, ks: bool | None = None, m: str | None = None, g: str | None = None) -> Any:
+def retarget(source: str | None = None, target: str | None = None, retargeter: str | None = None, files: Sequence[Any] | None = None, folder: str | None = None, scale: float | None = None, start: float | None = None, end: float | None = None, fps: float | None = None, take: str | None = None, lockChains: bool | None = None, keepSources: bool | None = None, mode: str | None = None, gait: str | None = None, secondary: float | None = None, armsAsForelegs: bool | None = None, *, s: str | None = None, t: str | None = None, r: str | None = None, f: Sequence[Any] | None = None, fo: str | None = None, sc: float | None = None, st: float | None = None, e: float | None = None, tk: str | None = None, lc: bool | None = None, ks: bool | None = None, m: str | None = None, g: str | None = None, sd: float | None = None, af: bool | None = None) -> Any:
     """Retarget animation onto a skeleton and key it into a take. The source is a skeleton in the scene, or .bvh/.fbx files (each imported, retargeted into a take named after the file, then removed). Without a retargeter, one is made with everything automatic: rigs, chain mapping, pose alignment, planted feet. Returns a report per run.
 
     Args:
@@ -6228,6 +6392,8 @@ def retarget(source: str | None = None, target: str | None = None, retargeter: s
         keepSources: Keep imported file skeletons in the scene. Short form ks. Default False.
         mode: fk: chain to chain, for the same kind of body. semantic: body-independent, for a body with other limbs (a biped clip on a dog or a spider). auto: semantic when the leg counts differ. Short form m. One of 'auto', 'fk', 'semantic'. Default 'auto'.
         gait: Semantic mode: the gait the target's legs keep. Short form g. One of 'auto', 'walk', 'trot', 'pace', 'canter', 'gallop', 'tripod', 'tetrapod', 'wave'. Default 'auto'.
+        secondary: Semantic mode: how far tails, antennae and wings the source has no motion for trail the body (0 rigid). Short form sd. Default 0.6.
+        armsAsForelegs: Semantic mode: front legs take the source's arms when the target has more legs. Short form af. Default False.
 
     Examples:
         retarget(source='Hips', target='pelvis')
@@ -7673,6 +7839,28 @@ def spaceLocator(name: str | None = None, position: Sequence[float] | None = Non
         skipSelect: Don't select the new locator. Short form ss. Default False.
     """
 
+def splineChain(*objects: Any, curve: str | None = None, controls: int | None = None, lengthMode: str | None = None, minStretch: float | None = None, maxStretch: float | None = None, upMode: str | None = None, upVector: Sequence[float] | None = None, upStart: str | None = None, upEnd: str | None = None, name: str | None = None, c: str | None = None, ct: int | None = None, lm: str | None = None, mns: float | None = None, mxs: float | None = None, um: str | None = None, upv: Sequence[float] | None = None, ups: str | None = None, upe: str | None = None, n: str | None = None) -> Any:
+    """Lay a run of joints along a curve: the joints from the first given to the last ride the curve by arc length, keeping their length, stretching, or stretching with a volume-keeping squash. Without a curve one is made through the joints with controls on it. Returns the splineChain.
+
+    Args:
+        objects: start joint, end joint, and optionally the curve (default the selection).
+        curve: The curve the joints ride; default a new one through them. Short form c.
+        controls: With no curve: points on the new curve, each with a control; 0 makes a curve of 2 points and no controls. Short form ct. Default 4.
+        lengthMode: keepLength | stretch | squash. Short form lm. One of 'keepLength', 'stretch', 'squash'. Default 'stretch'.
+        minStretch: The shortest the chain gets, as a multiple of its length. Short form mns. Default 0.25.
+        maxStretch: The longest the chain gets, as a multiple of its length. Short form mxs. Default 4.0.
+        upMode: curveFrames | upVector | upObjects. Short form um. One of 'curveFrames', 'upVector', 'upObjects'. Default 'curveFrames'.
+        upVector: Up in the start joint's parent's space; default the start joint's axis most across the curve. Short form upv.
+        upStart: upObjects: the object whose turn the start follows. Short form ups.
+        upEnd: upObjects: the object whose turn the end follows. Short form upe.
+        name: Name for the chain; default <start>_spline. Short form n.
+
+    Examples:
+        splineChain("spine_01", "neck_01", lengthMode="squash")
+
+        splineChain("tail_01", "tail_12", "TailCurve")
+    """
+
 def splitCurves(*objects: Any, cutters: Sequence[Any] | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
     """Split curves at all their mutual intersections (and with cutters), in 3D or as seen along direction. Returns every piece.
 
@@ -7798,7 +7986,7 @@ def surfaceDeform(*objects: Any, mode: str | None = None, maxFaces: int | None =
     """
 
 def surfacePin(*objects: Any, mode: str | None = None, uv: Sequence[Any] | None = None, uvSet: str | None = None, position: Sequence[float] | None = None, name: str | None = None) -> Any:
-    """Pin objects or joints to a mesh's final surface (after its whole stack): each gets a pin locator riding the surface at a uv (uvPin) or its nearest point (proximityPin) and is parent-constrained to it, keeping its offset. Give the objects first and the mesh last; with no objects one pin is made. Returns the pin locators.
+    """Pin objects or joints to a mesh's final surface (after its whole stack): each gets a pin locator riding the surface at a uv (uvPin) or its nearest point (proximityPin) and is parent-constrained to it, keeping its offset. Give the objects first and the mesh last; with no objects one pin is made. Returns the pin locators. Short for pin with source surface, whose other options it leaves at their defaults.
 
     Args:
         objects: objects..., mesh.
@@ -8646,6 +8834,19 @@ def unloadReference(*objects: Any) -> Any:
 
     Args:
         objects: namespace.
+    """
+
+def unrealCheck(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, tolerance: float | None = None, suffix: str | None = None, report: bool | None = None, st: float | None = None, et: float | None = None, tol: float | None = None, sfx: str | None = None, rp: bool | None = None) -> Any:
+    """Evaluate skeletons (default all) as they export, under Unreal's transform rules (scale handed down per axis, no shear), and compare their skins with Lila's deformed meshes every frame of the range. Each joint past the tolerance becomes an error that blocks exporting until the check passes. Returns the worst drift and the mismatched joints.
+
+    Args:
+        objects: a joint of each skeleton.
+        start: Seconds; default the playback start. Short form st.
+        end: Seconds; default the playback end. Short form et.
+        fps: Frames per second; default the scene's.
+        tolerance: cm a skinned point may drift. Short form tol. Default 0.01.
+        suffix: A baked copy's name suffix, to find the skin of its original joints. Short form sfx. Default '_bake'.
+        report: Replace the check's issues with this run's. Short form rp. Default True.
     """
 
 def unrealConnect(project: str | None = None, port: int | None = None, host: str | None = None, timeout: int | None = None, disconnect: bool | None = None, *, p: str | None = None, pt: int | None = None, h: str | None = None, t: int | None = None, d: bool | None = None) -> Any:

@@ -97,6 +97,13 @@ struct ApplyOptions
     Gait gait = Gait::Auto;
     /** Hold planted feet still (from the clip's contacts). */
     bool plant = true;
+    /**
+     * Tails, antennae and wings the clip has no motion for trail the body's turns: 0 keeps them rigid, toward 1 they
+     * lag further behind.
+     */
+    double secondary = 0.6;
+    /** With more legs than the clip, the front pair takes the clip's arms instead of a shifted leg. */
+    bool armsAsForelegs = false;
 };
 
 /**

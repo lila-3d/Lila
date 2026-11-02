@@ -33,7 +33,22 @@ public:
         kIkBlend,
         kSelectAs,
         kDeform,
+        kLimitType,
+        kLimitAxis,
+        kLimitMin,
+        kLimitMax,
+        kConeAngle,
+        kStiffness,
+        kPreferredAngle,
+        kIkStretch,
         kCount
+    };
+
+    enum LimitType : int64_t
+    {
+        kNoLimit,
+        kHinge,
+        kCone,
     };
 
     enum Side : int64_t

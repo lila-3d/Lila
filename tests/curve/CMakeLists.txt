@@ -25,6 +25,7 @@ add_executable(lila_curve_tests
     test_text.cpp
     test_turntable_base.cpp
     test_vehicle_math.cpp
-    test_vehicle_scene.cpp)
+    test_vehicle_scene.cpp
+    test_curve_controls.cpp)
 target_link_libraries(lila_curve_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_curve_tests COMMAND lila_curve_tests)

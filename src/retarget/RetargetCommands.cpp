@@ -316,6 +316,8 @@ RunOptions runOptions(const Args& a)
     o.lockChains = a.get<bool>("lockChains", true);
     o.mode = a.get<std::string>("mode", "auto");
     o.gait = a.get<std::string>("gait", "auto");
+    o.secondary = a.get<double>("secondary", 0.6);
+    o.armsAsForelegs = a.get<bool>("armsAsForelegs", false);
     return o;
 }
 
@@ -456,6 +458,19 @@ json runApplyClip(const Args& a)
     return guarded("applyRetargetClip", [&] { return applySemantic(g, semantic::Clip::fromJson(j), target, o).toJson(); });
 }
 
+json runAddPlant(const Args& a)
+{
+    Graph& g = graph();
+    const NodeId top = topOf(g, positional(a, "addPlantChannel", "a joint of the skeleton"), "addPlantChannel");
+    if (!a.has("chain"))
+        throw CommandError("addPlantChannel: give the chain (LeftLeg, RightArm ...)");
+    const std::string attr = "plant" + a.get<std::string>("chain");
+    if (g.node(top)->type().attrIndex(attr) < 0)
+        ops::execute("addAttr", {{"args", {g.path(top)}}, {"longName", attr}, {"attributeType", "float"}, {"minValue", 0.0}, {"maxValue", 1.0},
+                                 {"keyable", true}});
+    return {{"attribute", g.path(top) + "." + attr}};
+}
+
 json runImportBvh(const Args& a)
 {
     Graph& g = graph();
@@ -593,6 +608,9 @@ void registerCommands()
              {"auto", "fk", "semantic"}},
             {"gait", "g", T::String, "auto", "Semantic mode: the gait the target's legs keep.",
              {"auto", "walk", "trot", "pace", "canter", "gallop", "tripod", "tetrapod", "wave"}},
+            {"secondary", "sd", T::Float, 0.6,
+             "Semantic mode: how far tails, antennae and wings the source has no motion for trail the body (0 rigid).", {}, {}, 0.0, 0.95},
+            {"armsAsForelegs", "af", T::Bool, false, "Semantic mode: front legs take the source's arms when the target has more legs."},
         },
         .run = runRetarget,
         .examples = {"retarget(source='Hips', target='pelvis')", "retarget(target='pelvis', folder='D:/mocap/walks')"},
@@ -625,6 +643,14 @@ void registerCommands()
             {"lockChains", "lc", T::Bool, true, "Key the lock channel of the target's IK chains where feet are planted."},
         },
         .run = runApplyClip,
+    });
+    ops::registerCommand({
+        .name = "addPlantChannel",
+        .doc = "Add a keyable plant<Chain> attribute (0 to 1) to a skeleton's top joint. Keyed at 1, retargeting holds that chain's "
+               "hand or foot planted there instead of guessing from its speed: key the intent, and every body it goes to keeps it.",
+        .positionalDoc = "a joint of the source skeleton",
+        .flags = {{"chain", "c", T::String, nullptr, "The chain: LeftLeg, RightArm, LeftLeg2 ..."}},
+        .run = runAddPlant,
     });
     ops::registerCommand({
         .name = "importBvh",

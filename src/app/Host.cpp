@@ -32,6 +32,7 @@
 #include "curve/CurveNodes.h"
 #include "retopo/RetopoCommands.h"
 #include "retarget/SceneRetarget.h"
+#include "rigmath/MathNodes.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -159,6 +160,7 @@ void startCore()
     curve::registerTypes();
     tex::registerTypes();
     clay::registerTypes();
+    rigmath::registerTypes();
     scene::registerCommands();
     io::registerCommands();
     io::recovery::registerCommands();
@@ -189,6 +191,7 @@ void startCore()
     io::translators::registerBuiltins();
     io::translators::registerCommands();
     retarget::registerCommands();
+    rigmath::registerCommands();
     ui::layouts::registerCommands();
     ui::themes::registerCommands();
     link::registerExporter("fbx", [](const std::vector<scene::NodeId>& nodes, const fs::path& path, std::string* err) {

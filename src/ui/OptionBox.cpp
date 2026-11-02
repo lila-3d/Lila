@@ -551,7 +551,9 @@ void install()
                                {"rig.bindSkin", "skinCluster"}, {"rig.mirrorSkinWeights", "mirrorSkinWeights"},
                                {"rig.copySkinWeights", "copySkinWeights"}, {"rig.pruneWeights", "pruneWeights"},
                                {"rig.parentConstraint", "parentConstraint"}, {"rig.pointConstraint", "pointConstraint"},
-                               {"rig.orientConstraint", "orientConstraint"}, {"rig.aimConstraint", "aimConstraint"}})
+                               {"rig.orientConstraint", "orientConstraint"}, {"rig.aimConstraint", "aimConstraint"}, {"rig.pin", "pin"},
+                               {"rig.bakePin", "bakePin"}, {"rig.splineChain", "splineChain"}, {"rig.hoseLimb", "hoseLimb"},
+                               {"rig.hoseFingers", "hoseFingers"}})
         actions::bindCommand(id, command);
     actions::bindCommand("rig.bindSkinHeatmap", "skinCluster", {{"method", "heatmap"}});
 }

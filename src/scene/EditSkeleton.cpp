@@ -155,7 +155,8 @@ bool parked(int attr)
     case Transform::kRotateAxis:
     case Joint::kJointOrient:
     case Joint::kSolvedRotate:
-    case Joint::kIkBlend: return true;
+    case Joint::kIkBlend:
+    case Joint::kIkStretch: return true;
     default: return false;
     }
 }

@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "curve/AlongNodes.h"
+#include "curve/CurveControls.h"
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
@@ -228,6 +229,8 @@ void CurveShape::compute(const EvalContext& ctx)
 {
     Transform::compute(ctx);
     DataPtr in = as<DataPtr>(kCreate);
+    if (hasControls(*this) && !splinesOf(in).empty())
+        in = makeCurveData(drivenSplines(*this, splinesOf(in)));
     if (const MeshPtr& surface = as<MeshPtr>(kLiveSurface); surface && surface->numFaces() > 0 && !splinesOf(in).empty())
         in = makeCurveData(onLiveSurface(splinesOf(in), surface, as<glm::dmat4>(kLiveSurfaceMatrix), as<glm::dmat4>(kWorldMatrix),
                                          as<double>(kSurfaceOffset)));
@@ -998,6 +1001,7 @@ void registerTypes()
                                "Mirror the curve across the plane facing this axis: the copy follows every edit, and history built from the "
                                "curve (pipes, sweeps) gets both sides."));
     t.ownAttrs.push_back(eAttr("symmetrySpace", {"world", "object"}, 0, "Mirror across the world plane through the origin, or the curve's own through its pivot."));
+    addControlAttrs(t);
     t.create = [] { return std::make_unique<CurveShape>(); };
     types::registerType(std::move(t));
     registerHistoryTypes();

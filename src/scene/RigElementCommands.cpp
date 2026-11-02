@@ -10,6 +10,7 @@
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
 #include "scene/Transform.h"
+#include "scene/UnrealCheck.h"
 
 #include <algorithm>
 
@@ -222,7 +223,7 @@ json bakeCmd(const Args& a)
         throw CommandError("bakeToDeformSkeleton: give a joint of each skeleton to bake");
     const anim::Playback& pb = anim::playback();
     BakeOptions o{.start = a.get<double>("start", pb.minTime), .end = a.get<double>("end", pb.maxTime), .fps = a.get<double>("fps", pb.fps),
-                  .suffix = a.get<std::string>("suffix", "_bake")};
+                  .suffix = a.get<std::string>("suffix", "_bake"), .scaleSafe = a.get<bool>("scaleSafe", true)};
     if (o.end < o.start)
         throw CommandError("bakeToDeformSkeleton: end is before start");
     return names(g, bakeToDeformSkeleton(g, roots, o));
@@ -231,6 +232,7 @@ json bakeCmd(const Args& a)
 
 void registerCommands()
 {
+    uecheck::registerCommands();
     if (ops::find("ikChain"))
         return;
     using T = ArgType;
@@ -467,6 +469,9 @@ void registerCommands()
             {"end", "et", T::Float, nullptr, "Seconds; default the playback end."},
             {"fps", "fps", T::Float, nullptr, "Frames per second; default the scene's.", {}, {}, 1.0},
             {"suffix", "sfx", T::String, "_bake", "Added to each copied joint's name."},
+            {"scaleSafe", "ss", T::Bool, true,
+             "Where a joint with deform children scales non-uniformly, write it as an unscaled driver (name_drv) its children "
+             "follow plus a leaf carrying the scale, so Unreal matches."},
         },
         .run = bakeCmd,
     });

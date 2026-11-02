@@ -94,6 +94,9 @@ struct RunOptions
     std::string mode = "auto";
     /** Semantic mode: the gait the target's legs keep (semantic::gaitFromName). */
     std::string gait = "auto";
+    /** Semantic mode: semantic::ApplyOptions::secondary and armsAsForelegs. */
+    double secondary = 0.6;
+    bool armsAsForelegs = false;
 };
 
 struct LILA_SCENE_API RunReport

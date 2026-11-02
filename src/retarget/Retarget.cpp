@@ -865,7 +865,11 @@ Result Retargeter::clip(const Frames& frames) const
         const Mapped& m = d.mapped[goalAt(0, g).chain];
         const PlantSettings& ps = m.map->plant;
         std::vector<bool> planted(n, false);
-        if (ps.enabled && n > 2)
+        const auto intent = frames.channels.find("plant" + m.sourceChain->name);
+        if (ps.enabled && intent != frames.channels.end() && intent->second.size() == n)
+            for (size_t f = 0; f < n; ++f)
+                planted[f] = intent->second[f] >= 0.5;
+        else if (ps.enabled && n > 2)
         {
             double lowest = 1e300;
             for (size_t f = 0; f < n; ++f)
@@ -886,6 +890,9 @@ Result Retargeter::clip(const Frames& frames) const
                     std::fill(planted.begin() + std::ptrdiff_t(f), planted.begin() + std::ptrdiff_t(e), false);
                 f = e;
             }
+        }
+        if (ps.enabled)
+        {
             for (size_t f = 0; f < n;)
             {
                 if (!planted[f])

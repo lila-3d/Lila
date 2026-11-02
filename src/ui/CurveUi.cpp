@@ -418,6 +418,10 @@ void registerActions()
     cmd("curve.attach", "Attach", "attachCurve", json::object(), "Joins the second selected curve onto the first at their nearest ends.");
     cmd("curve.detach", "Detach", "detachCurve", json::object(), "Splits the curve at the selected points.");
     cmd("curve.reverse", "Reverse Direction", "reverseCurve", json::object(), "Reverses the selected curves' direction.");
+    cmd("curve.controls", "Curve Controls", "curveControls", json::object(),
+        "Builds a control on each point of the selected curves (and on Bezier tangents, if asked) that the curve follows live.");
+    cmd("curve.removeControls", "Remove Curve Controls", "removeCurveControls", json::object(),
+        "Deletes the selected curves' controls, keeping the shape they gave them.");
     cmd("curve.close", "Close", "closeCurve", json::object(), "Closes the selected open curves.");
     cmd("curve.open", "Open", "openCurve", json::object(), "Opens the selected closed curves at their start.");
     cmd("curve.deletePoints", "Delete Points", "deleteCurvePoints", json::object(), "Deletes the selected curve points.");

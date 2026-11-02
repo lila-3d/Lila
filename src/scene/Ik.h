@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "scene/IkSolver.h"
 #include "scene/Transform.h"
 
 #include <vector>
@@ -34,18 +35,32 @@ public:
         kJointCount,
         kChainParentMatrix,
         kEndEffector,
-        kSlots, // kMaxJoints * {local, orient, axis, rotateOrder, restRotate, solvedRotate}
-        kCount = kSlots + kMaxJoints * 6,
+        kSoftness,
+        kStretch,
+        kMaxStretch,
+        kStretchFactor,
+        kSlots, // kMaxJoints * kSlotSize: rest layout, solvedRotate and the joint's IK limits
+        kSlotSize = 13,
+        kCount = kSlots + kMaxJoints * kSlotSize,
     };
 
-    static int slotLocal(int i) { return kSlots + i * 6; }
-    static int slotOrient(int i) { return kSlots + i * 6 + 1; }
-    static int slotAxis(int i) { return kSlots + i * 6 + 2; }
-    static int slotOrder(int i) { return kSlots + i * 6 + 3; }
-    static int slotRest(int i) { return kSlots + i * 6 + 4; }
-    static int slotSolved(int i) { return kSlots + i * 6 + 5; }
+    static int slotLocal(int i) { return kSlots + i * kSlotSize; }
+    static int slotOrient(int i) { return kSlots + i * kSlotSize + 1; }
+    static int slotAxis(int i) { return kSlots + i * kSlotSize + 2; }
+    static int slotOrder(int i) { return kSlots + i * kSlotSize + 3; }
+    static int slotRest(int i) { return kSlots + i * kSlotSize + 4; }
+    static int slotSolved(int i) { return kSlots + i * kSlotSize + 5; }
+    static int slotLimitType(int i) { return kSlots + i * kSlotSize + 6; }
+    static int slotLimitAxis(int i) { return kSlots + i * kSlotSize + 7; }
+    static int slotLimitMin(int i) { return kSlots + i * kSlotSize + 8; }
+    static int slotLimitMax(int i) { return kSlots + i * kSlotSize + 9; }
+    static int slotCone(int i) { return kSlots + i * kSlotSize + 10; }
+    static int slotStiffness(int i) { return kSlots + i * kSlotSize + 11; }
+    static int slotPreferred(int i) { return kSlots + i * kSlotSize + 12; }
 
     void compute(const EvalContext& ctx) override;
+    /** Slot i's joint limit, as copied from the joint by ik::refresh. */
+    ik::JointLimit slotLimit(int i) const;
 };
 
 namespace ik
@@ -54,8 +69,10 @@ namespace ik
 LILA_SCENE_API std::vector<NodeId> chainOf(Graph& g, NodeId handle);
 /** Every ikHandle whose chain includes joint. */
 LILA_SCENE_API std::vector<NodeId> handlesOf(Graph& g, NodeId joint);
-/** Copies the chain's current FK layout into the handle's slots (undoable). The joints' rotate is the rest pose. */
+/** Copies the chain's current FK layout and IK limits into the handle's slots (undoable). The joints' rotate is the rest pose. */
 LILA_SCENE_API void refresh(Graph& g, NodeId handle);
+/** The joint's IK limit attributes as a limit, its bone toward its first child joint. */
+LILA_SCENE_API JointLimit limitOf(Graph& g, NodeId joint);
 } // namespace ik
 
 /** ikHandle type and the built-in solvers (ik2BoneSolver, ikFabrikSolver). Idempotent. */

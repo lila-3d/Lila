@@ -135,3 +135,29 @@ TEST_CASE("a biped walk on an insect moves its legs in two tripods")
         for (const glm::dquat& q : p.rotation)
             CHECK(std::isfinite(q.w));
 }
+
+TEST_CASE("a tail the clip has no motion for trails the body when it turns")
+{
+    Pose dp;
+    const Skeleton dog = build(quadruped(), dp);
+    const Rig rig = characterize(dog, dp);
+    // A clip that only turns the body a quarter turn over a second.
+    Clip c;
+    c.fps = 30.0;
+    c.frames = 31;
+    for (int f = 0; f < c.frames; ++f)
+    {
+        c.velocity.push_back(glm::dvec3(0.0));
+        c.turn.push_back(glm::angleAxis(glm::radians(90.0 * f / 30.0), glm::dvec3(0, 1, 0)));
+        c.height.push_back(0.0);
+        c.tilt.push_back(glm::dquat(1, 0, 0, 0));
+    }
+    const int tail = dog.find("tail2"), pelvis = dog.find("pelvis");
+    auto bodyVsTail = [&](double secondary) {
+        const Result r = apply(c, dog, rig, dp, {.secondary = secondary});
+        const std::vector<glm::dmat4> w = worldOf(dog, r.poses[15]);
+        return glm::degrees(glm::angle(rotationOf(w[size_t(tail)]) * glm::inverse(rotationOf(w[size_t(pelvis)]))));
+    };
+    CHECK(bodyVsTail(0.0) < 1e-6);
+    CHECK(bodyVsTail(0.6) > 1.0);
+}

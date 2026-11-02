@@ -5,6 +5,8 @@ add_executable(lila_rig_tests
     test_constraints.cpp
     test_center.cpp
     test_ik.cpp
+    test_ik_limits.cpp
+    test_unreal_check.cpp
     test_fbik.cpp
     test_edit_skeleton.cpp
     test_ghosts.cpp
@@ -15,7 +17,10 @@ add_executable(lila_rig_tests
     test_select_as.cpp
     test_anim_proxy.cpp
     test_offsets.cpp
-    test_relocate.cpp)
+    test_pins.cpp
+    test_relocate.cpp
+    test_spline_chain.cpp
+    test_rubber_hose.cpp)
 target_link_libraries(lila_rig_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_rig_tests COMMAND lila_rig_tests)
 
