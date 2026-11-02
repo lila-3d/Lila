@@ -253,7 +253,6 @@ int score(const QString& label, const QString& path, const QString& query)
     return label.contains(query, Qt::CaseInsensitive) ? 2 : 1;
 }
 
-/** Also the tab index of each mode in the box. */
 enum class Mode
 {
     Menus,
@@ -371,12 +370,12 @@ public:
         mTabs->setFocusPolicy(Qt::NoFocus);
         mTabs->setDrawBase(false);
         mTabs->setExpanding(false);
-        mTabs->addTab("Menus");
-        mTabs->addTab("Scene");
-        mTabs->addTab("Tear-offs");
+        mTabs->setTabData(mTabs->addTab("Menus"), int(Mode::Menus));
+        mTabs->setTabData(mTabs->addTab("Tear-offs"), int(Mode::TearOffs));
+        mTabs->setTabData(mTabs->addTab("Scene"), int(Mode::Scene));
         connect(mTabs, &QTabBar::currentChanged, this, [this](int i) {
-            if (i >= 0 && i != int(mMode))
-                setMode(Mode(i));
+            if (i >= 0 && modeAt(i) != mMode)
+                setMode(modeAt(i));
         });
         lay->addWidget(mTabs);
         mEdit = new QLineEdit(this);
@@ -437,8 +436,8 @@ public:
     void setApiTarget(ApiTarget target)
     {
         mTarget = std::move(target);
-        if (mTabs->count() <= int(Mode::Api))
-            mTabs->addTab("Scripting API");
+        if (tabOf(Mode::Api) < 0)
+            mTabs->setTabData(mTabs->insertTab(tabOf(Mode::Scene), "Scripting API"), int(Mode::Api));
     }
 
     void start(Mode m)
@@ -453,13 +452,18 @@ public:
     {
         if (mStarted && m == mMode)
             return;
+        auto menuish = [](Mode x) { return x == Mode::Menus || x == Mode::TearOffs; };
+        // Menus and Tear-offs search the same menus, so the query carries across.
+        bool carry = mStarted && menuish(mMode) && menuish(m);
         if (mStarted)
             lastQuery(mMode) = mEdit->text();
+        if (carry)
+            lastQuery(m) = mEdit->text();
         mStarted = true;
         mMode = m;
         {
             QSignalBlocker block(mTabs);
-            mTabs->setCurrentIndex(int(m));
+            mTabs->setCurrentIndex(tabOf(m));
         }
         bool scene = m == Mode::Scene;
         bool api = m == Mode::Api;
@@ -531,7 +535,7 @@ protected:
         }
         if (k->key() == Qt::Key_Tab && k->modifiers() == Qt::ControlModifier)
         {
-            setMode(Mode((int(mMode) + 1) % mTabs->count()));
+            setMode(modeAt((tabOf(mMode) + 1) % mTabs->count()));
             return true;
         }
         int n = mList->topLevelItemCount();
@@ -568,6 +572,16 @@ protected:
     }
 
 private:
+    Mode modeAt(int tab) const { return Mode(mTabs->tabData(tab).toInt()); }
+
+    int tabOf(Mode m) const
+    {
+        for (int i = 0; i < mTabs->count(); ++i)
+            if (modeAt(i) == m)
+                return i;
+        return -1;
+    }
+
     void refill()
     {
         mList->clear();
