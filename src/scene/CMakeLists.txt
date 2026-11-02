@@ -91,6 +91,9 @@ lila_module(lila_scene Scene
     RubberHose.cpp
     SceneCommands.cpp
     AttrCommands.cpp AttrComponents.cpp AttrComponents.h
+    ComponentValues.cpp ComponentValues.h
+    LightingChannels.cpp LightingChannels.h
+    SceneGraphCommands.cpp SceneGraph.h
     SceneData.cpp
     SceneScripts.cpp
     SelectAs.cpp

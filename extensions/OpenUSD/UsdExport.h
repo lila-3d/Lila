@@ -4,6 +4,7 @@
 #include "UsdMaterialX.h"
 
 #include <lila/Graph.h>
+#include <lila/LightingChannels.h>
 
 #include <pxr/usd/usd/stage.h>
 
@@ -59,6 +60,8 @@ struct ExportOptions
     bool lods = true;
     /** Geometry, materials and animation in their own sublayers, referenced from the file as its root layer. */
     bool splitLayers = false;
+    /** Lighting channels as UsdLux light-link collections on the lights, Lila's channel names in custom data. */
+    bool lightingChannels = true;
     /** Time codes per second of the stage; 0 takes the animation's fps. */
     double timeCodesPerSecond = 0.0;
     /** The roots' transforms relative to this node instead of the world. */
@@ -78,6 +81,8 @@ struct ExportResult
     std::vector<std::string> warnings;
     /** Every file written, the root layer first. */
     std::vector<std::string> files;
+    /** The lighting channel data among the exported nodes, written as light links unless lightingChannels was off. */
+    scene::lightingChannels::Usage lightingChannels;
 
     /** inMemory: the stage, the prim each node was written as and the material prim of each slot. */
     pxr::UsdStageRefPtr stage;

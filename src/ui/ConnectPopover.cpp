@@ -5,8 +5,10 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/AttrView.h"
+#include "ui/ComponentSheet.h"
 #include "ui/Icons.h"
 #include "ui/Menus.h"
+#include "ui/RelationshipsPanel.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -274,5 +276,7 @@ void registerAttributeUi()
                   .python = "connectByName('source', 'target')",
                   .icon = "plug-connected"});
     menus::addActions("Edit", {"attributes.connect"});
+    registerRelationshipsPanel();
+    registerComponentSheet();
 }
 } // namespace lila::ui

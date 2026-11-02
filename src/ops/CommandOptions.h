@@ -74,6 +74,8 @@ struct Override
         std::function<json()> values;
     };
     std::vector<Fill> fills;
+    /** Text under a flag's field, worked out each time the box opens (what the flag would act on right now). */
+    std::map<std::string, std::function<std::string()>> notes;
     /** Docs page the option box's help button opens ("curves?id=text"); empty for none. */
     std::string docs;
 };

@@ -5,6 +5,7 @@
 #include "rigmath/MathNodes.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
+#include "scene/Relocate.h"
 
 #include <cctype>
 #include <cmath>
@@ -588,6 +589,7 @@ void registerTypes()
     };
     t.create = [] { return std::make_unique<PythonNode>(); };
     types::registerType(std::move(t));
+    relocate::registerNeutral("pythonExpression");
 }
 
 void registerCommands()

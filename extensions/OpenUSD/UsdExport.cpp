@@ -5,6 +5,7 @@
 
 #include <lila/Anim.h>
 #include <lila/Deformer.h>
+#include <lila/LightingChannels.h>
 #include <lila/Lights.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
@@ -18,6 +19,7 @@
 #include <pxr/base/vt/dictionary.h>
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/zipFile.h>
+#include <pxr/usd/usd/collectionAPI.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/usd/stage.h>
@@ -261,6 +263,7 @@ private:
     void writeCurves(size_t i, const SdfPath& at);
     void writeSkeleton(size_t k);
     void writeSkelRoots();
+    void writeLightLinks();
     void writeTake(const ExportTake* take, bool restForStill);
     void recordCurves(size_t i);
     void writeAnimatedRest();
@@ -1155,6 +1158,54 @@ void Writer::writeSkeleton(size_t k)
 }
 
 /**
+ * Lighting channels as UsdLux light links: each light's lightLink collection includes the mesh prims sharing a channel
+ * with it, or the whole stage (includeRoot) when it lights every one. The channel names go in custom data for Lila.
+ */
+void Writer::writeLightLinks()
+{
+    namespace lc = scene::lightingChannels;
+    std::vector<scene::NodeId> sources;
+    for (const ExportNode& e : snap.nodes)
+        sources.push_back(e.source);
+    res.lightingChannels = lc::usage(g, sources);
+    if (!opts.lightingChannels || res.lightingChannels.empty())
+        return;
+    std::vector<size_t> lights, meshes;
+    for (size_t i = 0; i < snap.nodes.size(); ++i)
+    {
+        const scene::Node* n = g.node(snap.nodes[i].source);
+        if (!n || prims[i].IsEmpty() || lodLevel[i])
+            continue;
+        if (snap.nodes[i].light)
+            lights.push_back(i);
+        else if (meshPrim(i))
+            meshes.push_back(i);
+        if (n->type().attrIndex(lc::kAttr) >= 0)
+        {
+            const std::vector<std::string> channels = lc::of(*n);
+            setLilaData(stage->GetPrimAtPath(prims[i]), "lightingChannels", VtValue(VtStringArray(channels.begin(), channels.end())));
+        }
+    }
+    for (size_t l : lights)
+    {
+        const scene::Node& light = *g.node(snap.nodes[l].source);
+        std::vector<SdfPath> lit;
+        for (size_t m : meshes)
+            if (lc::lights(light, *g.node(snap.nodes[m].source)))
+                lit.push_back(prims[m]);
+        UsdCollectionAPI link = UsdCollectionAPI::Apply(stage->GetPrimAtPath(prims[l]), TfToken("lightLink"));
+        const bool all = lit.size() == meshes.size();
+        link.CreateIncludeRootAttr(VtValue(all));
+        if (!all)
+        {
+            UsdRelationship includes = link.CreateIncludesRel();
+            for (const SdfPath& p : lit)
+                includes.AddTarget(p);
+        }
+    }
+}
+
+/**
  * Each skeleton and the meshes bound to it need a SkelRoot above them all: their closest common Xform, or the file's
  * root prim. Nested ones fold into the outermost.
  */
@@ -1610,6 +1661,7 @@ bool Writer::run(const std::vector<scene::NodeId>& roots)
             }
     });
     writeSkelRoots();
+    inLayer(geoLayer, [&] { writeLightLinks(); });
     if (mats)
         inLayer(matLayer, [&] {
             const SdfPath scopePath = rootPath.AppendChild(TfToken("Materials"));

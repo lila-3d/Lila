@@ -636,7 +636,24 @@ File readAscii(std::string_view text)
                 f.parents.push_back(std::move(p));
             }
         }
-        // rename -uid, relationship, lockNode, dataStructure and the rest carry nothing a conversion needs.
+        else if (cmd == "relationship")
+        {
+            Relationship r;
+            for (size_t i = 1; i < t.size(); ++i)
+            {
+                if (isFlag(t[i]))
+                    continue;
+                if (r.type.empty())
+                    r.type = std::string(t[i].text);
+                else if (r.linker.empty())
+                    r.linker = stripRoot(t[i].text);
+                else
+                    r.plugs.push_back(stripRoot(t[i].text));
+            }
+            if (r.plugs.size() >= 2)
+                f.relationships.push_back(std::move(r));
+        }
+        // rename -uid, lockNode, dataStructure and the rest carry nothing a conversion needs.
     }
     for (Reference& r : f.references)
         r.loaded = !unloaded.contains(r.refNode);

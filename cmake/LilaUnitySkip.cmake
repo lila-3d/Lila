@@ -1,11 +1,16 @@
 set(LILA_UNITY_SKIP
     src/scene/AttrCommands.cpp
     src/scene/AttrComponents.cpp
+    src/scene/LightingChannels.cpp
+    src/scene/SceneGraphCommands.cpp
     src/rigmath/Expressions.cpp
     src/ui/AttrAuthoring.cpp
     src/ui/AttrView.cpp
     src/ui/DrivePopover.cpp
     src/ui/ConnectPopover.cpp
+    src/scene/ComponentValues.cpp
+    src/ui/ComponentSheet.cpp
+    src/ui/RelationshipsPanel.cpp
     extensions/Destruction/RigidWorld.cpp
     extensions/Foliage/TreeUi.cpp
     extensions/Masonry/Commands.cpp
@@ -144,6 +149,7 @@ set(LILA_UNITY_SKIP
     src/ui/SetsUi.cpp
     src/ui/TargetWeldTool.cpp
     src/ui/TexGraphBackend.cpp
+    src/ui/SceneGraphBackend.cpp
     src/ui/TexPipelineUi.cpp
     src/ui/Texture2DView.cpp
     src/ui/TexturePaintTool.cpp

@@ -8,6 +8,7 @@
 #include "core/Progress.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
+#include "scene/LightingChannels.h"
 #include "scene/Rig.h"
 #include "scene/Skin.h"
 #include "scene/UnrealCheck.h"
@@ -333,6 +334,12 @@ void registerCommands()
                 log::warn("exportFbx: {}", w);
             if (snapshot.nodes.empty())
                 throw CommandError("exportFbx: nothing to export");
+            std::vector<NodeId> sources;
+            for (const ExportNode& e : snapshot.nodes)
+                sources.push_back(e.source);
+            if (const scene::lightingChannels::Usage lc = scene::lightingChannels::usage(g, sources); !lc.empty())
+                log::warn("exportFbx: lighting channels {} not written: FBX has no light linking (USD and Unreal placements carry them)",
+                          scene::lightingChannels::summary(lc));
             std::string err;
             bool ok = false;
             {

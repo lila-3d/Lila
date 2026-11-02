@@ -74,6 +74,7 @@ ImportOptions optionsFrom(const Args& a, Graph& g, const char* cmd)
         throw CommandError(std::string(cmd) + ": references must be reference, import or none");
     o.history = a.get<bool>("history", true);
     o.setPlayback = a.get<bool>("setPlayback", true);
+    o.lightingChannels = a.get<bool>("lightingChannels", true);
     return o;
 }
 
@@ -82,6 +83,7 @@ json reportJson(const Graph& g, const ImportResult& r)
     return {{"nodes", names(g, r.nodes)},   {"roots", names(g, r.roots)},     {"joints", names(g, r.joints)},
             {"skinClusters", names(g, r.skins)}, {"morphs", names(g, r.morphs)}, {"cameras", names(g, r.cameras)}, {"imagePlanes", names(g, r.imagePlanes)},
             {"materials", r.materials},     {"displayLayers", r.displayLayers}, {"curves", r.curves},
+            {"lightingChannels", r.lightingChannels},
             {"skipped", r.skipped},         {"warnings", r.warnings},          {"format", r.format},
             {"version", r.version},         {"upAxis", r.upAxis},              {"unitCm", r.unitCm},
             {"fps", r.fps},                 {"references", r.references},      {"converted", r.converted}};
@@ -166,6 +168,8 @@ const std::vector<FlagDef>& importFlags()
          {"reference", "import", "none"}},
         {"history", "", T::Bool, true, "Keep a lone primitive creator (polyCube ...) as a live generator node."},
         {"setPlayback", "", T::Bool, true, "Set the scene fps and playback range from the file."},
+        {"lightingChannels", "lc", T::Bool, true,
+         "Bake light linking (lights linked to or broken from objects) into lighting channels, one per distinct set of objects."},
     };
     return k;
 }

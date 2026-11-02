@@ -62,6 +62,8 @@ struct ImportOptions
     bool history = true;
     /** Set the scene fps and playback range from the file. */
     bool setPlayback = true;
+    /** Bake the lightLinker's light links into lighting channels. */
+    bool lightingChannels = true;
 };
 
 struct ImportResult
@@ -78,6 +80,8 @@ struct ImportResult
     std::vector<scene::NodeId> imagePlanes;
     std::vector<std::string> materials;
     std::vector<std::string> displayLayers;
+    /** Lighting channels made from the file's light links. */
+    std::vector<std::string> lightingChannels;
     /** Lila references created (their namespaces), and .lila files written for referenced files. */
     std::vector<std::string> references;
     std::vector<std::string> converted;

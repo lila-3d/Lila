@@ -15,6 +15,7 @@
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/Light.h"
+#include "scene/LightingChannels.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
 #include "scene/Materials.h"
@@ -1242,4 +1243,62 @@ TEST_CASE("maya import: lights")
         CHECK(sky.kind == lights::Kind::Dome);
         CHECK(sky.intensity == doctest::Approx(0.5));
     }
+}
+
+TEST_CASE("maya import: light linking bakes into lighting channels")
+{
+    // keyShape is broken from boxB; fill lights both through the default links, so only key gets a channel.
+    const std::string text = "//Maya ASCII 2026 scene\n"
+                             "requires maya \"2026\";\n"
+                             "currentUnit -l centimeter -a degree -t film;\n"
+                             "createNode transform -s -n \"top\";\n"
+                             "\tsetAttr \".t\" -type \"double3\" 0 1000.1 0 ;\n"
+                             "\tsetAttr \".r\" -type \"double3\" -90 0 0 ;\n"
+                             "createNode camera -s -n \"topShape\" -p \"top\";\n"
+                             "createNode polyCube -n \"polyCube1\";\n"
+                             "createNode polyCube -n \"polyCube2\";\n"
+                             "createNode transform -n \"boxA\";\n"
+                             "createNode mesh -n \"boxAShape\" -p \"boxA\";\n"
+                             "createNode transform -n \"boxB\";\n"
+                             "createNode mesh -n \"boxBShape\" -p \"boxB\";\n"
+                             "createNode transform -n \"key\";\n"
+                             "createNode pointLight -n \"keyShape\" -p \"key\";\n"
+                             "createNode transform -n \"fill\";\n"
+                             "createNode pointLight -n \"fillShape\" -p \"fill\";\n"
+                             "createNode lightLinker -s -n \"lightLinker1\";\n"
+                             "connectAttr \"polyCube1.out\" \"boxAShape.i\";\n"
+                             "connectAttr \"polyCube2.out\" \"boxBShape.i\";\n"
+                             "connectAttr \"boxAShape.iog\" \":initialShadingGroup.dsm\" -na;\n"
+                             "connectAttr \"boxBShape.iog\" \":initialShadingGroup.dsm\" -na;\n"
+                             "connectAttr \"key.iog\" \":defaultLightSet.dsm\" -na;\n"
+                             "connectAttr \"fill.iog\" \":defaultLightSet.dsm\" -na;\n"
+                             "relationship \"link\" \":lightLinker1\" \":initialShadingGroup.message\" \":defaultLightSet.message\";\n"
+                             "relationship \"ignore\" \":lightLinker1\" \"|boxB|boxBShape.message\" \"|key|keyShape.message\";\n";
+    const maya::File file = maya::readAscii(text);
+    REQUIRE(file.relationships.size() == 2);
+    CHECK(file.relationships[1].type == "ignore");
+    CHECK(file.relationships[1].plugs == std::vector<std::string>{"|boxB|boxBShape.message", "|key|keyShape.message"});
+
+    Graph& g = fresh();
+    maya::ImportResult r = maya::importMaya(g, "linked.ma", file);
+    REQUIRE(r.ok);
+    REQUIRE(r.lightingChannels.size() == 1);
+    namespace lc = scene::lightingChannels;
+    auto lightNode = [&](const char* name) -> const scene::Node& {
+        for (scene::NodeId id : r.lights)
+            if (const scene::Node* n = g.node(id); n && n->path().find(name) != std::string::npos)
+                return *n;
+        FAIL("no light ", name);
+        return *g.node(r.lights.front());
+    };
+    CHECK(lc::lights(lightNode("key"), *node(g, "boxA")));
+    CHECK_FALSE(lc::lights(lightNode("key"), *node(g, "boxB")));
+    CHECK(lc::lights(lightNode("fill"), *node(g, "boxA")));
+    CHECK(lc::lights(lightNode("fill"), *node(g, "boxB")));
+
+    Graph& again = fresh();
+    maya::ImportResult plain = maya::importMaya(again, "linked.ma", file, {.lightingChannels = false});
+    REQUIRE(plain.ok);
+    CHECK(plain.lightingChannels.empty());
+    CHECK(lc::nodesWithChannels(again).empty());
 }

@@ -5,6 +5,7 @@
 #include "render/CubeLut.h"
 #include "render/DisplayOptions.h"
 #include "render/Renderer.h"
+#include "scene/LightingChannels.h"
 #include "scene/Graph.h"
 #include "scene/Light.h"
 #include "scene/NodeBounds.h"
@@ -162,6 +163,7 @@ void applyLights(render::FrameState& s)
                  : l.kind == lights::Kind::Area        ? render::LightDraw::Area
                  : l.kind == lights::Kind::Disc        ? render::LightDraw::Disc
                                                        : render::LightDraw::Point;
+        d.lightingChannels = scene::lightingChannels::mask(*n);
         d.position = glm::vec3(world[3]);
         d.direction = glm::vec3(glm::normalize(-glm::dvec3(world[2])));
         d.right = glm::vec3(glm::normalize(glm::dvec3(world[0])));

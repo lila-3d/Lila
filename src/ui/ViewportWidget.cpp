@@ -1,5 +1,6 @@
 #include "ui/ViewportWidgetDetail.h"
 
+#include "scene/LightingChannels.h"
 #include "scene/Turntable.h"
 #include "scene/ViewState.h"
 #include "ui/CameraBookmarks.h"
@@ -468,6 +469,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
             d.materials = drawMaterials(*shown);
         d.world = glm::mat4(shownWorld(*n));
         d.node = uint64_t(id);
+        d.lightingChannels = scene::lightingChannels::mask(*n);
         if (aids)
             aidMeshes.push_back({shown, shownWorld(*n)});
         if (vertexColors != render::VertexColorMode::Off && shown && !geo::colors::current(*shown).empty())

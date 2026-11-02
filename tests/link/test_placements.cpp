@@ -107,6 +107,64 @@ TEST_CASE("placement plan: one asset per instance root, every member placed in U
     CHECK(run("unrealPlaceInstances", {{"args", {"Bolt"}}, {"dryRun", true}})["groups"].size() == 1);
 }
 
+TEST_CASE("placement plan: lights become light actors and lighting channels Unreal's three")
+{
+    setup();
+    run("newScene");
+    run("polyCube", {{"name", "Crate"}});
+    run("polyCube", {{"name", "Floor"}});
+    run("light", {{"type", "spot"}, {"name", "Lamp"}, {"position", {0, 200, 0}}, {"skipSelect", true}});
+    run("light", {{"type", "dome"}, {"name", "Sky"}, {"skipSelect", true}});
+    run("lightingChannels", {{"args", {"Lamp", "Crate"}}, {"set", {"interior"}}});
+    scene::Graph& g = scene::Graph::current();
+    const std::vector<scene::NodeId> roots = {g.find("Crate")->id(), g.find("Floor")->id(), g.find("Lamp")->id(), g.find("Sky")->id()};
+
+    json plan = placementPlan(g, roots, PlacementOptions{});
+    REQUIRE(plan["lights"].size() == 1);
+    const json& lamp = plan["lights"][0];
+    CHECK(lamp["kind"] == "spot");
+    CHECK(lamp["lightingChannels"] == json::array({false, true, false}));
+    // Unturned, a spot shines down Lila's -Z; forward is that direction in Unreal space.
+    const math::Vector down = math::toUnreal(math::Vector(0.0, 0.0, -1.0));
+    CHECK(lamp["forward"][0].get<double>() == doctest::Approx(down.x));
+    CHECK(lamp["forward"][1].get<double>() == doctest::Approx(down.y));
+    CHECK(lamp["forward"][2].get<double>() == doctest::Approx(down.z));
+    const math::Vector at = math::toUnreal(math::Vector(0.0, 200.0, 0.0));
+    CHECK(lamp["location"][0].get<double>() == doctest::Approx(at.x));
+    CHECK(lamp["location"][2].get<double>() == doctest::Approx(at.z));
+    CHECK(plan["skipped"].size() == 1);
+
+    REQUIRE(plan["groups"].size() == 2);
+    CHECK(plan["groups"][0]["placements"][0]["lightingChannels"] == json::array({false, true, false}));
+    CHECK(plan["groups"][1]["placements"][0]["lightingChannels"] == json::array({true, false, false}));
+    const json& report = plan["lightingChannels"];
+    CHECK(report["channels"] == json::array({"interior"}));
+    CHECK(report["lights"] == json::array({"Lamp"}));
+    CHECK(report["objects"] == json::array({"Crate"}));
+    CHECK(report["unreal"] == json::array({"default", "interior", ""}));
+    CHECK(report["written"] == true);
+    CHECK_FALSE(report.contains("note"));
+
+    // More than three: the fourth and later are dropped and named, and what is left in none goes on channel 0.
+    for (const char* c : {"a", "b", "c"})
+        run("lightingChannel", {{"args", {c}}, {"create", true}});
+    run("lightingChannels", {{"args", {"Floor"}}, {"set", {"a", "b"}}});
+    run("lightingChannels", {{"args", {"Lamp"}}, {"set", {"c"}}});
+    plan = placementPlan(g, roots, PlacementOptions{});
+    CHECK(plan["lightingChannels"]["unreal"] == json::array({"default", "interior", "a"}));
+    CHECK(plan["lightingChannels"]["dropped"] == json::array({"b", "c"}));
+    CHECK(plan["lightingChannels"]["note"].get<std::string>().find("b, c dropped") != std::string::npos);
+    CHECK(plan["lights"][0]["lightingChannels"] == json::array({true, false, false}));
+
+    PlacementOptions off;
+    off.lightingChannels = false;
+    plan = placementPlan(g, roots, off);
+    CHECK_FALSE(plan["groups"][0]["placements"][0].contains("lightingChannels"));
+    CHECK_FALSE(plan["lights"][0].contains("lightingChannels"));
+    CHECK(plan["lightingChannels"]["written"] == false);
+    CHECK(plan["lightingChannels"]["objects"].size() == 2);
+}
+
 TEST_CASE("unrealPlaceInstances exports each source once, imports it and places its members")
 {
     setup();

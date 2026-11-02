@@ -111,6 +111,16 @@ struct Connection
     bool nextAvailable = false;
 };
 
+/**
+ * A `relationship` statement, which is how .ma files store light linking: the type ("link", "ignore", "shadowLink",
+ * ...), the linker node, and the plugs it relates, the objects first and the light (or light set) last.
+ */
+struct Relationship
+{
+    std::string type, linker;
+    std::vector<std::string> plugs;
+};
+
 struct Reference
 {
     std::string path, ns, type;
@@ -134,6 +144,7 @@ struct File
     std::vector<std::string> requires_;
     std::vector<Node> nodes;
     std::vector<Connection> connections;
+    std::vector<Relationship> relationships;
     std::vector<Reference> references;
     std::vector<ParentEdit> parents;
     std::vector<std::string> warnings;

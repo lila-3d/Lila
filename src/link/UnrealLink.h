@@ -203,14 +203,18 @@ struct PlacementOptions
     int threshold = 50;
     /** Give members without a link id (or sharing one with an older node) a new one, undoably. Off, they are keyed by node id. */
     bool assignIds = false;
+    /** Each placement and light carries its Unreal Lighting Channels (lightingChannels::unrealBits). */
+    bool lightingChannels = true;
 };
 
 /**
  * The instance groups of the meshes under `roots`, one asset per instance root:
  * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, placements: [...]}]}, each placement
  * {id, name, location, rotation (quat xyzw), scale, customData: [stable random 0..1], components} in Unreal space, components
- * being the member's attrComponents::unrealPayload; hidden members
- * are left out. Groups and placements are keyed by the nodes'
+ * being the member's attrComponents::unrealPayload, and lightingChannels [bool x3] when o.lightingChannels; hidden members
+ * are left out. Lights under the roots go in plan.lights, one light actor each: {id, name, kind, location, forward, up,
+ * color, intensity, units, ...the light's settings, lightingChannels?}, directions in Unreal space; domes are skipped
+ * (plan.skipped). plan.lightingChannels is lightingChannels::report with the Unreal slots and what was dropped. Groups and placements are keyed by the nodes'
  * linkId, which survives renames and reopening the scene. A group lists its root and every instance of it, wherever
  * they sit. Throws CommandError for an unknown mode.
  */

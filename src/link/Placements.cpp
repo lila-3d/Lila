@@ -14,10 +14,13 @@
 #include "scene/AttrComponents.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
+#include "scene/Light.h"
+#include "scene/LightingChannels.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <format>
 #include <map>
@@ -110,6 +113,58 @@ json placement(scene::Graph& g, scene::NodeId id, const std::string& key)
     return p;
 }
 
+/**
+ * A light actor's settings: position and the directions it shines down (-Z) and holds up (+Y) in Unreal space, so
+ * the actor's X axis points where it shines and a rect light's height runs along its Z.
+ */
+json lightPlacement(scene::Graph& g, scene::NodeId id, const std::string& key)
+{
+    namespace lights = scene::lights;
+    const glm::dmat4 world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
+    auto axis = [&](const glm::dvec4& local) { return vec(math::toUnreal(math::Vector(glm::normalize(glm::dvec3(world * local))))); };
+    const lights::Settings s = lights::worldSettings(*g.node(id));
+    return {{"id", key},
+            {"name", g.node(id)->path()},
+            {"kind", lights::kindName(s.kind)},
+            {"location", vec(math::toUnreal(math::Vector(glm::dvec3(world[3]))))},
+            {"forward", axis({0, 0, -1, 0})},
+            {"up", axis({0, 1, 0, 0})},
+            {"color", vec(s.color)},
+            {"intensity", s.intensity},
+            {"units", std::array{"unitless", "candela", "lumens", "lux", "nits", "watts"}.at(size_t(s.units))},
+            {"useTemperature", s.useTemperature},
+            {"temperature", s.temperature},
+            {"range", s.range},
+            {"innerConeAngle", s.innerConeAngle},
+            {"outerConeAngle", s.outerConeAngle},
+            {"width", s.width},
+            {"height", s.height},
+            {"sourceRadius", s.sourceRadius},
+            {"castShadows", s.castShadows}};
+}
+
+json channelBits(const std::array<bool, 3>& b) { return json::array({b[0], b[1], b[2]}); }
+
+/** Says in the log which lighting channels a send carries, so one nobody meant to send is easy to spot. */
+void logChannels(const json& report)
+{
+    if (report["lights"].empty() && report["objects"].empty())
+        return;
+    std::string list;
+    for (const json& c : report["channels"])
+        list += (list.empty() ? "" : ", ") + c.get<std::string>();
+    log::info("unrealPlaceInstances: lighting channels {} on {} light(s) and {} object(s) {}", list.empty() ? "default" : list,
+              report["lights"].size(), report["objects"].size(), report["written"].get<bool>() ? "sent" : "left out (lightingChannels=False)");
+    if (report.contains("note"))
+        log::warn("unrealPlaceInstances: {}", report["note"].get<std::string>());
+}
+
+bool hasFeature(const char* feature)
+{
+    const json features = Link::get().status().value("features", json::array());
+    return features.is_array() && std::ranges::find(features, json(feature)) != features.end();
+}
+
 /** The node's array copies, keyed "<node key>:<copy>" so Unreal tracks each one. */
 std::vector<json> arrayPlacements(scene::Graph& g, scene::NodeId id, const std::string& key)
 {
@@ -130,8 +185,14 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
         throw CommandError("unrealPlaceInstances: mode is auto, actors, ism or hism, not '" + o.mode + "'");
     g.evaluate();
     // Every mesh under the roots counts with its whole instance group: Unreal drops a group's placements Lila no longer sends.
-    std::vector<scene::NodeId> sources;
+    std::vector<scene::NodeId> sources, lightNodes;
     auto touch = [&](scene::NodeId id) {
+        if (const scene::Node* n = g.node(id); n && n->type().isA("light"))
+        {
+            if (std::ranges::find(lightNodes, id) == lightNodes.end() && scene::effectivelyVisible(g, id))
+                lightNodes.push_back(id);
+            return;
+        }
         if (!placeable(g.node(id)))
             return;
         const scene::NodeId src = scene::instancing::root(g, id);
@@ -148,13 +209,31 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
     while (folder.size() > 1 && folder.back() == '/')
         folder.pop_back();
     LinkKeys keys(g, o.assignIds);
-    json groups = json::array();
+    std::vector<std::vector<scene::NodeId>> placedOf;
+    std::vector<scene::NodeId> carried = lightNodes;
     for (scene::NodeId src : sources)
     {
-        std::vector<scene::NodeId> placed{src};
+        std::vector<scene::NodeId>& placed = placedOf.emplace_back(std::vector<scene::NodeId>{src});
         for (scene::NodeId m : scene::instancing::members(g, src))
             if (m != src && scene::instancing::root(g, m) == src)
                 placed.push_back(m);
+        carried.insert(carried.end(), placed.begin(), placed.end());
+    }
+    namespace lc = scene::lightingChannels;
+    const lc::Usage use = lc::usage(g, carried);
+    const lc::UnrealChannels unreal = lc::unrealChannels(use);
+    std::string note;
+    if (o.lightingChannels && !unreal.dropped.empty())
+    {
+        for (const std::string& d : unreal.dropped)
+            note += (note.empty() ? "" : ", ") + d;
+        note = "Unreal has three lighting channels: " + note + " dropped; lights and objects left in none of the three go on channel 0";
+    }
+    json groups = json::array();
+    for (size_t k = 0; k < sources.size(); ++k)
+    {
+        const scene::NodeId src = sources[k];
+        const std::vector<scene::NodeId>& placed = placedOf[k];
         const scene::Node* n = g.node(src);
         const std::string asset = "SM_" + assetSafe(n->name());
         json list = json::array();
@@ -169,8 +248,12 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
             for (json& copy : arrayPlacements(g, id, key))
                 list.push_back(std::move(copy));
             const json components = scene::attrComponents::unrealPayload(g, id);
-            for (size_t k = first; k < list.size(); ++k)
-                list[k]["components"] = components;
+            for (size_t p = first; p < list.size(); ++p)
+            {
+                list[p]["components"] = components;
+                if (o.lightingChannels)
+                    list[p]["lightingChannels"] = channelBits(lc::unrealBits(*g.node(id), unreal));
+            }
         }
         const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold ? "hism" : "actors";
         groups.push_back({{"key", keys(src)},
@@ -181,7 +264,24 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
                           {"mode", mode},
                           {"placements", std::move(list)}});
     }
-    return {{"groups", std::move(groups)}};
+    json lightList = json::array();
+    json skipped = json::array();
+    for (scene::NodeId id : lightNodes)
+    {
+        if (scene::lights::settings(*g.node(id)).kind == scene::lights::Kind::Dome)
+        {
+            skipped.push_back(g.node(id)->path() + ": dome lights have no Unreal light actor here (use a Sky Light)");
+            continue;
+        }
+        json l = lightPlacement(g, id, keys(id));
+        if (o.lightingChannels)
+            l["lightingChannels"] = channelBits(lc::unrealBits(*g.node(id), unreal));
+        lightList.push_back(std::move(l));
+    }
+    return {{"groups", std::move(groups)},
+            {"lights", std::move(lightList)},
+            {"skipped", std::move(skipped)},
+            {"lightingChannels", lc::report(g, use, o.lightingChannels && !use.empty(), note, &unreal)}};
 }
 
 void registerPlacementCommands()
@@ -192,6 +292,9 @@ void registerPlacementCommands()
         .name = "unrealPlaceInstances",
         .doc = "Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per "
                "member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. "
+               "Lights among them go as light actors (point, spot, directional, rect; discs as square rect lights, domes skipped). "
+               "Lighting channels map onto Unreal's three: default is channel 0, the next two channels the sent nodes use (in "
+               "scene order) 1 and 2; any more are dropped, with a warning naming them, and what is left in none goes on 0. "
                "Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending "
                "a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. "
                "Returns the plan, with each group's import and placement results when wait=True.",
@@ -201,6 +304,9 @@ void registerPlacementCommands()
                    "How members are placed: actors, ism, hism, or auto (actors up to threshold members, then hism).",
                    {"auto", "actors", "ism", "hism"}},
                   {"threshold", "t", T::Int, nullptr, "auto switches to hism above this many members (default the unreal pref /instanceThreshold, 50).", {}, {}, 0.0},
+                  {"lightingChannels", "lc", T::Bool, true,
+                   "Set the actors' and lights' Lighting Channels from Lila's channels. The plan's lightingChannels lists the "
+                   "channels, lights and objects, the Unreal slot of each channel and any dropped."},
                   {"dryRun", "", T::Bool, false, "Return the plan without exporting or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -219,13 +325,15 @@ void registerPlacementCommands()
             o.mode = a.get<std::string>("mode", o.mode);
             o.threshold = a.has("threshold") ? a.get<int>("threshold") : PrefStore::get().value<int>("unreal", "/instanceThreshold", 50);
             o.assignIds = !a.get<bool>("dryRun");
+            o.lightingChannels = a.get<bool>("lightingChannels", true);
             json plan;
             {
                 UndoChunk chunk("Unreal Link Ids");
                 plan = placementPlan(g, roots, o);
             }
-            if (plan["groups"].empty())
-                throw CommandError("unrealPlaceInstances: select meshes to send");
+            if (plan["groups"].empty() && plan["lights"].empty())
+                throw CommandError("unrealPlaceInstances: select meshes or lights to send");
+            logChannels(plan["lightingChannels"]);
             if (a.get<bool>("dryRun"))
                 return plan;
 
@@ -243,6 +351,11 @@ void registerPlacementCommands()
             catch (const std::runtime_error& e)
             {
                 throw CommandError(std::string("not connected to Unreal: ") + e.what());
+            }
+            if (!plan["lights"].empty() && !hasFeature("lights"))
+            {
+                log::warn("unrealPlaceInstances: the LilaLink plugin predates lights; rebuild it from Lila's ue/LilaLink to send them");
+                plan["lights"] = json::array();
             }
 
             auto job = [plan, exporter, dir = cacheDir()]() mutable {
@@ -277,6 +390,11 @@ void registerPlacementCommands()
                                                                        {"placements", grp["placements"]}});
                     grp["placed"] = placed.ok ? placed.result : json{{"error", placed.error}};
                 }
+                if (!plan["lights"].empty())
+                {
+                    RpcResult placed = client->call("placeLights", {{"lights", plan["lights"]}});
+                    plan["lightsPlaced"] = placed.ok ? placed.result : json{{"error", placed.error}};
+                }
                 return plan;
             };
             if (a.get<bool>("wait"))
@@ -299,9 +417,14 @@ void registerPlacementCommands()
                             for (const json& w : grp["placed"].value("warnings", json::array()))
                                 log::warn("Unreal placements of {}: {}", source, w.is_string() ? w.get<std::string>() : w.dump());
                     }
+                    if (const json lit = done.value("lightsPlaced", json()); lit.contains("error"))
+                        log::error("Unreal lights: {}", lit["error"].get<std::string>());
+                    else if (!lit.is_null())
+                        log::info("Unreal: placed {} light(s)", done["lights"].size());
                 });
             });
-            return {{"queued", true}, {"groups", plan["groups"].size()}};
+            return {{"queued", true}, {"groups", plan["groups"].size()}, {"lights", plan["lights"].size()},
+                    {"lightingChannels", plan["lightingChannels"]}};
         },
         .examples = {"unrealPlaceInstances(\"Bolt\", folder=\"/Game/Kit\")", "unrealPlaceInstances(mode=\"hism\", wait=True)"},
     });
@@ -319,11 +442,13 @@ void registerPlacementCommands()
                 if (scene::Node* n = g.find(name))
                     roots.push_back(n->id());
             const json plan = placementPlan(g, roots, PlacementOptions{});
-            json groups = json::array();
+            json groups = json::array(), ids = json::array();
             for (const json& grp : plan["groups"])
                 groups.push_back(grp["key"]);
-            if (groups.empty())
-                throw CommandError("unrealRemovePlacements: select meshes whose placements to remove");
+            for (const json& l : plan["lights"])
+                ids.push_back(l["id"]);
+            if (groups.empty() && ids.empty())
+                throw CommandError("unrealRemovePlacements: select meshes or lights whose placements to remove");
             try
             {
                 Link::get().ensureConnected();
@@ -335,7 +460,7 @@ void registerPlacementCommands()
             std::shared_ptr<RpcClient> client = Link::get().client();
             if (!client)
                 throw CommandError("not connected to Unreal");
-            RpcResult r = client->call("removePlacements", {{"groups", groups}});
+            RpcResult r = client->call("removePlacements", {{"groups", groups}, {"ids", ids}});
             if (!r.ok)
                 throw CommandError("unrealRemovePlacements: " + r.error);
             return r.result;

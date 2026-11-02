@@ -4,6 +4,7 @@
 
 #include <lila/Anim.h>
 #include <lila/Deformer.h>
+#include <lila/LightingChannels.h>
 #include <lila/Lights.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
@@ -14,6 +15,8 @@
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec4f.h>
+#include <pxr/usd/usd/collectionAPI.h>
+#include <pxr/usd/usd/collectionMembershipQuery.h>
 #include <pxr/usd/usd/editContext.h>
 #include <pxr/usd/usd/modelAPI.h>
 #include <pxr/usd/usd/primRange.h>
@@ -24,6 +27,7 @@
 #include <pxr/usd/usdGeom/cone.h>
 #include <pxr/usd/usdGeom/cube.h>
 #include <pxr/usd/usdGeom/cylinder.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/mesh.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/nurbsCurves.h>
@@ -1701,6 +1705,61 @@ std::optional<scene::anim::RotationCurve> storedRotation(const json& j, const st
         rc.reorder(order);
     return rc;
 }
+
+/**
+ * Lighting channels: the names Lila's exporter kept in custom data, else the lights' lightLink collections baked into
+ * channels. A light whose collection holds every built geometry prim (or has none authored) keeps default.
+ */
+void importLightLinks(scene::Graph& g, const UsdStageRefPtr& stage, ImportResult& r)
+{
+    namespace lc = scene::lightingChannels;
+    std::vector<std::pair<NodeId, UsdPrim>> built;
+    for (const auto& [path, id] : r.nodeOf)
+        if (UsdPrim p = stage->GetPrimAtPath(path))
+            built.push_back({id, p});
+    std::set<std::string> kept;
+    for (const auto& [id, p] : built)
+    {
+        const VtDictionary d = lilaData(p);
+        auto it = d.find("lightingChannels");
+        if (it == d.end() || !it->second.IsHolding<VtStringArray>())
+            continue;
+        const VtStringArray& channels = it->second.UncheckedGet<VtStringArray>();
+        lc::set(g, id, std::vector<std::string>(channels.begin(), channels.end()));
+        kept.insert(channels.begin(), channels.end());
+    }
+    if (!kept.empty())
+    {
+        kept.erase(lc::kDefault);
+        r.lightingChannels.assign(kept.begin(), kept.end());
+        return;
+    }
+    std::vector<std::pair<NodeId, SdfPath>> geometry;
+    for (const auto& [id, p] : built)
+        if (p.IsA<UsdGeomGprim>())
+            geometry.push_back({id, p.GetPath()});
+    std::vector<std::pair<NodeId, std::vector<NodeId>>> links;
+    for (const auto& [id, p] : built)
+    {
+        if (!isLuxLight(p))
+            continue;
+        UsdCollectionAPI link(p, TfToken("lightLink"));
+        const UsdAttribute includeRoot = link.GetIncludeRootAttr();
+        const UsdRelationship includes = link.GetIncludesRel(), excludes = link.GetExcludesRel();
+        if (!(includeRoot && includeRoot.HasAuthoredValue()) && !(includes && includes.HasAuthoredTargets()) &&
+            !(excludes && excludes.HasAuthoredTargets()))
+            continue;
+        const UsdCollectionMembershipQuery query = link.ComputeMembershipQuery();
+        std::vector<NodeId> lit;
+        for (const auto& [object, path] : geometry)
+            if (query.IsPathIncluded(path))
+                lit.push_back(object);
+        if (lit.size() != geometry.size())
+            links.push_back({id, std::move(lit)});
+    }
+    if (!links.empty())
+        r.lightingChannels = lc::bakeLinks(g, links);
+}
 } // namespace
 
 void keyPlug(Importer& im, const scene::PlugRef& plug, const std::vector<double>& times, const std::vector<double>& values)
@@ -1963,6 +2022,8 @@ void importStage(scene::Graph& graph, const UsdStageRefPtr& stage, const fs::pat
     }
 
     r.nodeOf = im.nodeOf;
+    if (opts.lightingChannels && !opts.live)
+        importLightLinks(graph, stage, r);
     if (im.materials)
     {
         r.materialSlots = im.materials->slots();

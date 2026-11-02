@@ -3,12 +3,22 @@
 #include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 
+#include "Components/DirectionalLightComponent.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/LocalLightComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/RectLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/PointLight.h"
+#include "Engine/RectLight.h"
+#include "Engine/Scene.h"
+#include "Engine/SpotLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
@@ -24,6 +34,7 @@ namespace
 const TCHAR* GroupPrefix = TEXT("LilaGroup:");
 const TCHAR* NodePrefix = TEXT("LilaNode:");
 const FName InstancedTag(TEXT("LilaInstanced"));
+const FName LightTag(TEXT("LilaLight"));
 
 TSharedPtr<FJsonValue> Obj(const TSharedRef<FJsonObject>& O) { return MakeShared<FJsonValueObject>(O); }
 
@@ -87,6 +98,26 @@ TArray<float> CustomDataOf(const TSharedPtr<FJsonObject>& P)
 		}
 	}
 	return Out;
+}
+
+/** The placement's Lighting Channels 0, 1 and 2, when Lila sent them. */
+TOptional<FLightingChannels> ChannelsOf(const TSharedPtr<FJsonObject>& P)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!P->TryGetArrayField(TEXT("lightingChannels"), Values) || Values->Num() != 3)
+	{
+		return {};
+	}
+	FLightingChannels Channels;
+	Channels.bChannel0 = (*Values)[0]->AsBool();
+	Channels.bChannel1 = (*Values)[1]->AsBool();
+	Channels.bChannel2 = (*Values)[2]->AsBool();
+	return Channels;
+}
+
+bool SameChannels(const FLightingChannels& A, const FLightingChannels& B)
+{
+	return A.bChannel0 == B.bChannel0 && A.bChannel1 == B.bChannel1 && A.bChannel2 == B.bChannel2;
 }
 
 /** location (cm), rotation (quat x y z w) and scale, already in Unreal's axes. */
@@ -224,6 +255,10 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		{
 			Actor->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(K, Custom[K]);
 		}
+		if (const TOptional<FLightingChannels> Channels = ChannelsOf(*P))
+		{
+			Actor->GetStaticMeshComponent()->SetLightingChannels(Channels->bChannel0, Channels->bChannel1, Channels->bChannel2);
+		}
 		ApplyPlacementComponents(Actor, *P, Sink);
 	}
 	for (const TPair<FString, AStaticMeshActor*>& Pair : ByNode)
@@ -232,6 +267,31 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		{
 			World->EditorDestroyActor(Pair.Value, true);
 			++Removed;
+		}
+	}
+}
+
+/** Instances share their component's Lighting Channels: the first placement's, with a warning when others differ. */
+void ApplyInstancedChannels(UInstancedStaticMeshComponent* Component, const TSharedPtr<FJsonObject>& First, const TArray<TSharedPtr<FJsonValue>>& Placements,
+	const FString& Label, FComponentSink& Sink)
+{
+	const TOptional<FLightingChannels> Channels = ChannelsOf(First);
+	if (!Channels)
+	{
+		return;
+	}
+	Component->SetLightingChannels(Channels->bChannel0, Channels->bChannel1, Channels->bChannel2);
+	for (const TSharedPtr<FJsonValue>& V : Placements)
+	{
+		const TSharedPtr<FJsonObject>* P = nullptr;
+		if (V.IsValid() && V->TryGetObject(P))
+		{
+			const TOptional<FLightingChannels> Other = ChannelsOf(*P);
+			if (Other && !SameChannels(*Other, *Channels))
+			{
+				Sink.Warnings.Add(FString::Printf(TEXT("%s: instances share one component, so all take the first member's lighting channels"), *Label));
+				return;
+			}
 		}
 	}
 }
@@ -329,6 +389,7 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	if (!Placements.IsEmpty() && Placements[0].IsValid() && Placements[0]->TryGetObject(First))
 	{
 		ApplyPlacementComponents(Holder, *First, Sink);
+		ApplyInstancedChannels(Component, *First, Placements, Label, Sink);
 	}
 }
 
@@ -405,6 +466,211 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	}
 	Out->SetArrayField(TEXT("warnings"), Warnings);
 	Out->SetArrayField(TEXT("assets"), Assets);
+	return Obj(Out);
+}
+
+double NumberField(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, double Fallback)
+{
+	double V = Fallback;
+	P->TryGetNumberField(Field, V);
+	return V;
+}
+
+bool BoolField(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, bool Fallback)
+{
+	bool V = Fallback;
+	P->TryGetBoolField(Field, V);
+	return V;
+}
+
+UClass* LightClassFor(const FString& Kind)
+{
+	if (Kind == TEXT("spot"))
+	{
+		return ASpotLight::StaticClass();
+	}
+	if (Kind == TEXT("directional"))
+	{
+		return ADirectionalLight::StaticClass();
+	}
+	if (Kind == TEXT("area") || Kind == TEXT("disc"))
+	{
+		return ARectLight::StaticClass();
+	}
+	return APointLight::StaticClass();
+}
+
+/** Lila's light settings on the component: colour, temperature, intensity in its units, falloff, cone, size, shadows. */
+void ApplyLightSettings(ULightComponent* Light, const TSharedPtr<FJsonObject>& P, const FString& Label, TArray<FString>& Warnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::ApplyLightSettings);
+
+	FString Kind, Units = TEXT("unitless");
+	P->TryGetStringField(TEXT("kind"), Kind);
+	P->TryGetStringField(TEXT("units"), Units);
+	const FVector Color = VectorField(P, TEXT("color"), FVector::OneVector);
+	Light->SetLightColor(FLinearColor(Color.X, Color.Y, Color.Z), false);
+	Light->SetUseTemperature(BoolField(P, TEXT("useTemperature"), false));
+	Light->SetTemperature(NumberField(P, TEXT("temperature"), 6500.0));
+	Light->SetCastShadows(BoolField(P, TEXT("castShadows"), true));
+	double Intensity = NumberField(P, TEXT("intensity"), 1.0);
+	if (ULocalLightComponent* Local = Cast<ULocalLightComponent>(Light))
+	{
+		ELightUnits LightUnits = ELightUnits::Unitless;
+		if (Units == TEXT("candela"))
+		{
+			LightUnits = ELightUnits::Candelas;
+		}
+		else if (Units == TEXT("lumens"))
+		{
+			LightUnits = ELightUnits::Lumens;
+		}
+		else if (Units == TEXT("nits"))
+		{
+			LightUnits = ELightUnits::Nits;
+		}
+		else if (Units == TEXT("watts"))
+		{
+			// 683 lm/W, the peak luminous efficacy other apps convert radiant watts with.
+			LightUnits = ELightUnits::Lumens;
+			Intensity *= 683.0;
+		}
+		else if (Units == TEXT("lux"))
+		{
+			Warnings.Add(FString::Printf(TEXT("%s: lux has no meaning on a local light; sent unitless"), *Label));
+		}
+		Local->SetIntensityUnits(LightUnits);
+		if (const double Range = NumberField(P, TEXT("range"), 0.0); Range > 0.0)
+		{
+			Local->SetAttenuationRadius(Range);
+		}
+	}
+	Light->SetIntensity(Intensity);
+	if (UPointLightComponent* Point = Cast<UPointLightComponent>(Light))
+	{
+		Point->SetSourceRadius(NumberField(P, TEXT("sourceRadius"), 0.0));
+	}
+	if (USpotLightComponent* Spot = Cast<USpotLightComponent>(Light))
+	{
+		Spot->SetInnerConeAngle(NumberField(P, TEXT("innerConeAngle"), 0.0));
+		Spot->SetOuterConeAngle(NumberField(P, TEXT("outerConeAngle"), 45.0));
+	}
+	if (URectLightComponent* Rect = Cast<URectLightComponent>(Light))
+	{
+		const double Width = NumberField(P, TEXT("width"), 100.0);
+		Rect->SetSourceWidth(Width);
+		Rect->SetSourceHeight(Kind == TEXT("disc") ? Width : NumberField(P, TEXT("height"), 100.0));
+		if (Kind == TEXT("disc"))
+		{
+			Warnings.Add(FString::Printf(TEXT("%s: Unreal has no disc light; sent as a square rect light"), *Label));
+		}
+	}
+	if (UDirectionalLightComponent* Directional = Cast<UDirectionalLightComponent>(Light))
+	{
+		Directional->SetLightSourceAngle(NumberField(P, TEXT("sourceRadius"), 0.0));
+	}
+	if (const TOptional<FLightingChannels> Channels = ChannelsOf(P))
+	{
+		Light->SetLightingChannels(Channels->bChannel0, Channels->bChannel1, Channels->bChannel2);
+	}
+}
+
+TSharedPtr<FJsonValue> PlaceLights(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceLights);
+
+	const TArray<TSharedPtr<FJsonValue>>* Lights = nullptr;
+	if (!Params->TryGetArrayField(TEXT("lights"), Lights))
+	{
+		OutError = TEXT("placeLights: give lights");
+		return nullptr;
+	}
+	UWorld* World = EditorWorld();
+	if (!World)
+	{
+		OutError = TEXT("placeLights: no level is open");
+		return nullptr;
+	}
+
+	FScopedTransaction Transaction(LOCTEXT("PlaceLights", "Lila: Place Lights"));
+	TMap<FString, ALight*> ByNode;
+	for (AActor* A : TaggedActors(World, LightTag))
+	{
+		if (ALight* L = Cast<ALight>(A))
+		{
+			ByNode.Add(TagValue(L, NodePrefix), L);
+		}
+	}
+	int32 Spawned = 0, Updated = 0;
+	TArray<FString> Warnings;
+	for (const TSharedPtr<FJsonValue>& V : *Lights)
+	{
+		const TSharedPtr<FJsonObject>* P = nullptr;
+		if (!V.IsValid() || !V->TryGetObject(P))
+		{
+			continue;
+		}
+		const FString Id = IdOf(*P);
+		FString Kind, Name = Id;
+		(*P)->TryGetStringField(TEXT("kind"), Kind);
+		(*P)->TryGetStringField(TEXT("name"), Name);
+		UClass* Class = LightClassFor(Kind);
+		// The actor's X axis is where the light shines; Z is Lila's up, along a rect light's height.
+		const FVector Forward = VectorField(*P, TEXT("forward"), FVector::ForwardVector);
+		const FVector Up = VectorField(*P, TEXT("up"), FVector::UpVector);
+		const FTransform Transform(FRotationMatrix::MakeFromXZ(Forward, Up).ToQuat(), VectorField(*P, TEXT("location"), FVector::ZeroVector));
+		ALight*& Actor = ByNode.FindOrAdd(Id);
+		if (Actor && !Actor->IsA(Class))
+		{
+			World->EditorDestroyActor(Actor, true);
+			Actor = nullptr;
+		}
+		if (!Actor)
+		{
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.ObjectFlags |= RF_Transactional;
+			Actor = Cast<ALight>(World->SpawnActor(Class, &Transform, SpawnParams));
+			if (!Actor)
+			{
+				continue;
+			}
+			Actor->Tags.Add(LightTag);
+			Actor->Tags.Add(NodeTag(Id));
+			++Spawned;
+		}
+		else
+		{
+			Actor->Modify();
+			Actor->SetActorTransform(Transform);
+			++Updated;
+		}
+		Actor->SetFolderPath(FName(TEXT("Lila/Lights")));
+		Actor->SetActorLabel(Name);
+		if (ULightComponent* Light = Actor->GetLightComponent())
+		{
+			Light->Modify();
+			ApplyLightSettings(Light, *P, Name, Warnings);
+		}
+	}
+	for (const FString& W : Warnings)
+	{
+		UE_LOG(LogLilaLink, Warning, TEXT("placeLights: %s"), *W);
+	}
+	if (ULevel* Level = World->GetCurrentLevel())
+	{
+		Level->MarkPackageDirty();
+	}
+	UE_LOG(LogLilaLink, Log, TEXT("placeLights: %d spawned, %d updated"), Spawned, Updated);
+
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetNumberField(TEXT("spawned"), Spawned);
+	Out->SetNumberField(TEXT("updated"), Updated);
+	TArray<TSharedPtr<FJsonValue>> WarningValues;
+	for (const FString& W : Warnings)
+	{
+		WarningValues.Add(MakeShared<FJsonValueString>(W));
+	}
+	Out->SetArrayField(TEXT("warnings"), WarningValues);
 	return Obj(Out);
 }
 
@@ -495,6 +761,7 @@ TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>&, FString& O
 void LilaLink::AddPlacementMethods(TMap<FString, FLilaLinkMethod>& Methods)
 {
 	Methods.Add(TEXT("placeInstances"), LilaLink::Sync(&PlaceInstances));
+	Methods.Add(TEXT("placeLights"), LilaLink::Sync(&PlaceLights));
 	Methods.Add(TEXT("removePlacements"), LilaLink::Sync(&RemovePlacements));
 	Methods.Add(TEXT("listPlacements"), LilaLink::Sync(&ListPlacements));
 }

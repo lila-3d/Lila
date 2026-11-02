@@ -10,7 +10,9 @@
 #include "scene/BatchRename.h"
 #include "scene/Camera.h"
 #include "scene/Light.h"
+#include "scene/LightingChannels.h"
 #include "scene/Components.h"
+#include "scene/ComponentValues.h"
 #include "scene/Deformers.h"
 #include "scene/Diagnostics.h"
 #include "scene/Drivers.h"
@@ -37,6 +39,7 @@
 #include "scene/RenderSettings.h"
 #include "scene/Rig.h"
 #include "scene/SceneData.h"
+#include "scene/SceneGraph.h"
 #include "scene/SceneScripts.h"
 #include "scene/Simulation.h"
 #include "scene/Spaces.h"
@@ -215,7 +218,10 @@ void registerCommands()
     spaces::registerCommands();
     anim::registerCommands();
     drivers::registerCommands();
+    lightingChannels::registerCommands();
     attrCommands::registerCommands();
+    componentValues::registerCommands();
+    sceneGraph::registerCommands();
     poses::registerCommands();
     picker::registerCommands();
     ghosts::registerCommands();

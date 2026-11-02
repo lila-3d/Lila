@@ -26,6 +26,7 @@
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/Light.h"
+#include "scene/LightingChannels.h"
 #include "scene/LodGroup.h"
 #include "scene/Instancing.h"
 #include "scene/Materials.h"
@@ -830,6 +831,8 @@ public:
         // After the curves and playback, so planes on animated cameras are placed as the scene opens.
         buildImagePlanes();
         buildDisplayLayers();
+        if (mOpts.lightingChannels && mDepth == 0)
+            buildLightLinks();
         // Last, so the reference keeps the edits everything above made to its nodes.
         unloadDeferredRefs();
         for (const ParentEdit& p : mFile.parents)
@@ -1180,6 +1183,7 @@ private:
     void buildLight(int shape, NodeId lightId)
     {
         namespace lights = scene::lights;
+        mLightNode[shape] = lightId;
         const MNode& n = mIx.node(shape);
         lights::Settings s;
         s.kind = *lightKind(n.type);
@@ -3652,6 +3656,93 @@ private:
     }
 
     /** displayLayer nodes (not defaultLayer) with their members, which Maya wires drawInfo -> drawOverride. */
+    // ---- light linking ----------------------------------------------------------------------------------------
+
+    /** The node a plug ("|grp|boxShape.iog[0]") belongs to. */
+    static std::string plugNode(const std::string& plug) { return plug.substr(0, plug.find('.')); }
+
+    /**
+     * Lila nodes a light-linking name stands for: found by `own` on the node or its children (a light or mesh under its
+     * transform), else the members of the set it names (defaultLightSet, a shading group).
+     */
+    template <class Map>
+    std::vector<NodeId> linkedNodes(const std::string& name, const Map& own, const std::map<std::string, std::vector<std::string>>& members) const
+    {
+        std::vector<NodeId> out;
+        auto add = [&](const std::string& n) {
+            const int i = mIx.resolve(n);
+            if (i < 0)
+                return;
+            if (auto it = own.find(i); it != own.end())
+                return out.push_back(it->second);
+            for (int c : mIx.children[size_t(i)])
+                if (auto it = own.find(c); it != own.end())
+                    out.push_back(it->second);
+        };
+        add(name);
+        if (out.empty())
+            if (auto it = members.find(shortName(name)); it != members.end())
+                for (const std::string& m : it->second)
+                    add(m);
+        return out;
+    }
+
+    /**
+     * The lightLinker's links and ignores as lighting channels. A link pairs a light (or a light set: defaultLightSet holds
+     * the lights that illuminate by default) with an object (or a set: a shading group); an ignore breaks one pair.
+     * Only meshes some link names take part. A light lighting all of them keeps default; a file without links changes nothing.
+     */
+    void buildLightLinks()
+    {
+        std::map<std::string, std::vector<std::string>> members;
+        for (const Connection& c : mFile.connections)
+        {
+            const std::string_view attr = std::string_view(c.dst).substr(std::min(c.dst.size(), c.dst.find('.') + 1));
+            if (attr.starts_with("dsm") || attr.starts_with("dagSetMembers"))
+                members[shortName(plugNode(c.dst))].push_back(plugNode(c.src));
+        }
+        std::map<NodeId, std::set<NodeId>> lit, ignored;
+        std::set<NodeId> known;
+        bool anyLink = false;
+        for (const Relationship& r : mFile.relationships)
+        {
+            if (r.type != "link" && r.type != "ignore")
+                continue;
+            std::vector<std::string> objects(r.plugs.begin(), r.plugs.end() - 1);
+            std::vector<NodeId> lights = linkedNodes(plugNode(r.plugs.back()), mLightNode, members);
+            if (lights.empty() && r.plugs.size() == 2)
+            {
+                lights = linkedNodes(plugNode(r.plugs.front()), mLightNode, members);
+                objects = {r.plugs.back()};
+            }
+            for (const std::string& o : objects)
+                for (NodeId object : linkedNodes(plugNode(o), mShapeNode, members))
+                {
+                    known.insert(object);
+                    for (NodeId light : lights)
+                        (r.type == "link" ? lit : ignored)[light].insert(object);
+                }
+            anyLink = anyLink || r.type == "link";
+        }
+        if (!anyLink || known.empty())
+            return;
+        // With set membership in the file, a light no link names illuminates nothing, as in Maya; without it, leave it be.
+        const bool membership = members.contains("defaultLightSet");
+        std::vector<std::pair<NodeId, std::vector<NodeId>>> links;
+        for (const auto& [shape, light] : mLightNode)
+        {
+            if (!membership && !lit.contains(light) && !ignored.contains(light))
+                continue;
+            std::set<NodeId> on = lit[light];
+            for (NodeId o : ignored[light])
+                on.erase(o);
+            if (on != known)
+                links.push_back({light, {on.begin(), on.end()}});
+        }
+        if (!links.empty())
+            mR.lightingChannels = scene::lightingChannels::bakeLinks(mG, links);
+    }
+
     void buildDisplayLayers()
     {
         namespace dl = scene::displayLayers;
@@ -4260,6 +4351,7 @@ private:
     std::vector<std::pair<NodeId, int>> mPendingInstances; // Lila mesh -> instanced shape, connected after the meshes
     std::unordered_map<int, NodeId> mLocatorShape;
     std::unordered_map<int, NodeId> mCameraNode; // Maya camera shape -> Lila camera node
+    std::map<int, NodeId> mLightNode;            // Maya light shape -> Lila light node, in file order
     std::unordered_map<int, NodeId> mPlaneNode;  // Maya imagePlane shape -> Lila image plane
     std::unordered_map<int, std::vector<Index>> mPointOf;
     std::unordered_map<int, std::string> mMaterial;

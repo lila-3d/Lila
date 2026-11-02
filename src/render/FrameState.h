@@ -175,6 +175,8 @@ struct LightDraw
      * as a tangent, a spot's source radius in cm), and shadow uv per cm across (per cm at 1 cm away for a spot).
      */
     glm::vec4 shadowDepth{0.0f};
+    /** Lighting channel bits (at most 20): it lights only meshes that share one. */
+    uint32_t lightingChannels = 1;
 };
 
 struct FrameState

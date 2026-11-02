@@ -173,6 +173,8 @@ public:
                 else
                     grid->addWidget(w.field, row, 1);
                 ++row;
+                if (QLabel* note = noteFor(flag, body))
+                    grid->addWidget(note, row++, 1);
             }
         }
         grid->setRowStretch(row, 1);
@@ -214,6 +216,31 @@ private:
             actions::run(json(mAction));
         else
             actions::runWithOptions(mCommand, mCall);
+    }
+
+    QLabel* noteFor(const std::string& flag, QWidget* parent) const
+    {
+        const opt::Override* o = opt::findOverride(mCommand);
+        if (!o)
+            return nullptr;
+        auto it = o->notes.find(flag);
+        if (it == o->notes.end() || !it->second)
+            return nullptr;
+        std::string text;
+        try
+        {
+            text = it->second();
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("{}", e.what());
+        }
+        if (text.empty())
+            return nullptr;
+        auto* label = new QLabel(QString::fromStdString(text), parent);
+        label->setWordWrap(true);
+        label->setStyleSheet("color: #9a9a9a;");
+        return label;
     }
 
     /** Stores the fields' values where Apply does, so the menu item, hotkeys and shelf run with them. */

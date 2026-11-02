@@ -10,6 +10,7 @@
 
 #include <lila/Anim.h>
 #include <lila/Command.h>
+#include <lila/LightingChannels.h>
 #include <lila/Log.h>
 
 #include <cmath>
@@ -65,6 +66,7 @@ json importCommand(const Args& a)
     opts.materials = a.get<bool>("materials", true);
     opts.loadPayloads = a.get<bool>("loadPayloads", true);
     opts.take = a.get<std::string>("take", "");
+    opts.lightingChannels = a.get<bool>("lightingChannels", true);
     if (a.has("variants"))
     {
         const json& v = a.flags["variants"];
@@ -125,6 +127,7 @@ json importCommand(const Args& a)
             {"instances", r.instances},
             {"upAxis", r.upAxis},
             {"metersPerUnit", r.metersPerUnit},
+            {"lightingChannels", r.lightingChannels},
             {"skipped", r.skipped},
             {"warnings", r.warnings}};
 }
@@ -186,6 +189,7 @@ json exportCommand(const Args& a)
     opts.worldSpace = a.get<bool>("worldSpace", false);
     opts.lods = a.get<bool>("lods", true);
     opts.splitLayers = a.get<bool>("splitLayers", false);
+    opts.lightingChannels = a.get<bool>("lightingChannels", true);
 
     std::vector<NodeId> ids;
     std::vector<std::string> objs;
@@ -207,8 +211,12 @@ json exportCommand(const Args& a)
         log::warn("exportUsd: {}", w);
     if (!r.ok)
         throw CommandError("exportUsd: " + r.error);
+    const scene::lightingChannels::Usage& lc = r.lightingChannels;
+    if (!lc.empty())
+        log::info("exportUsd: lighting channels {} {}", scene::lightingChannels::summary(lc),
+                  opts.lightingChannels ? "written as light links" : "left out (lightingChannels=False)");
     if (a.get<bool>("report", false))
-        return {{"files", r.files}, {"warnings", r.warnings}};
+        return {{"files", r.files}, {"warnings", r.warnings}, {"lightingChannels", scene::lightingChannels::report(g, lc, opts.lightingChannels && !lc.empty())}};
     return path;
 }
 } // namespace

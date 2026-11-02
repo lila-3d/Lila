@@ -45,7 +45,7 @@ struct MeshPush
     float wireWidth;    // meshWirePS: pixels
     GpuLight* lights; // the frame's fog (as a GpuFrame), then its lights
     uint lightCount;
-    uint lightPad;
+    uint lightPad; // the draw's lighting channel bits; 0 lights it with every light
     float4 extra;   // x: live bevel radius (cm), y: 1 when the bevel pass ran this frame
     float4 eye;     // xyz camera position
     float4 base;    // rgb base color (linear), a: roughness. Background: x blur lod, y saturation, z exposure
@@ -691,7 +691,7 @@ float shadowDistance(GpuLight l, float d, bool sun)
  */
 float shadowFilterRadius(GpuLight l, float2 at, float2 lo, float2 hi, float2 texel, float receiver, float cs, float sn)
 {
-    const bool sun = uint(l.position.w + 0.5) == 2;
+    const bool sun = (uint(l.position.w + 0.5) & 15) == 2;
     const float zR = shadowDistance(l, receiver, sun);
     // A penumbra in cm at the receiver to atlas texels.
     const float toTexels = l.shadowDepth.w * (sun ? 1.0 : 1.0 / zR) * l.shadowRect.z / texel.x;
@@ -779,7 +779,7 @@ float3 applyFog(float3 c, float3 eye, float3 P)
     for (uint k = 0; k < pc.lightCount; ++k)
     {
         GpuLight l = pc.lights[k + 1];
-        if (uint(l.position.w + 0.5) != 2)
+        if ((uint(l.position.w + 0.5) & 15) != 2)
             continue;
         const float g = fr.fogExtra.x;
         float mu = dot(dir, -l.direction.xyz);
@@ -797,7 +797,10 @@ float3 directLights(float3 n, float3 v, Surface s, float3 P, float3 ng)
     for (uint k = 0; k < pc.lightCount; ++k)
     {
         GpuLight l = pc.lights[k + 1];
-        const uint kind = uint(l.position.w + 0.5);
+        const uint packed = uint(l.position.w + 0.5);
+        const uint kind = packed & 15;
+        if (pc.lightPad != 0 && ((packed >> 4) & pc.lightPad) == 0)
+            continue;
         float3 L;
         float atten = 1.0;
         float dist = 1e6;

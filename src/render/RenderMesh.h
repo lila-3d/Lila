@@ -303,5 +303,7 @@ struct MeshDraw
     float wireWidth = 1.0f; // device pixels
     /** The scene node it draws (scene::NodeId), 0 for none: renders key object mattes by it. */
     uint64_t node = 0;
+    /** Lighting channel bits: lights whose bits share none with these leave it unlit. */
+    uint32_t lightingChannels = 1;
 };
 } // namespace lila::render

@@ -312,7 +312,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "metersPerUnit scales everything to cm. Lights, point clouds and anything else Lila has no node for are listed in "
                    "the report's skipped entries (lights and point clouds keep their place as transforms). Returns the new node names, "
                    "or with report=True a dict of nodes, roots, joints, skinClusters, cameras, curves, materials, take, takes, fps, "
-                   "start, end, keyedCurves, instances, upAxis, metersPerUnit, skipped and warnings.",
+                   "start, end, keyedCurves, instances, upAxis, metersPerUnit, lightingChannels, skipped and warnings.",
             .positionalDoc = "path",
             .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
                       {"prim", "", T::String, "", "Import only this prim and what is under it, by its path in the stage (\"/World/Hero\")."},
@@ -329,6 +329,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                       {"take", "", T::String, "", "For files Lila exported with several takes: the take to import (a variant of the root's 'take' set)."},
                       {"purposes", "", T::Any, nullptr,
                        "Prim purposes to import: a list of default, render, proxy and guide, or 'all'. Default and render by default."},
+                      {"lightingChannels", "lc", T::Bool, true,
+                       "Bake UsdLux light-link collections into lighting channels (Lila's own channel names when it wrote the file)."},
                       {"report", "", T::Bool, false, "Return the import report instead of just the names."},
                       {"select", "", T::Bool, true, "Select the imported roots."}},
             .run = [](const Args& a) { return runBackend("importUsd", a); },
@@ -368,7 +370,8 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "variant per take with its own samples and its range kept in the prim's customData; the first take is selected, "
                    "which is what Unreal and other tools play, and importUsd(take=...) picks another. splitLayers=True writes the "
                    "geometry, materials and animation into sublayers (<file>.geometry, .materials and .anim) that the file "
-                   "composes. Returns the path, or with report=True the files written and the warnings.",
+                   "composes. Lighting channels become UsdLux light links (lightingChannels). Returns the path, or with report=True "
+                   "the files written, the warnings and lightingChannels: {channels, lights, objects, written}.",
             .positionalDoc = "path objects...",
             .flags = {{"format", "", T::String, "auto", "auto picks by extension; usda or usdc chooses the encoding of a .usd file.", {"auto", "usda", "usdc"}},
                       {"upAxis", "up", T::String, "z", "File up axis: z (Unreal) or y. Assets land the same way through either, as with FBX.", {"z", "y"}},
@@ -397,8 +400,11 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                       {"worldSpace", "ws", T::Bool, false, "Bake world transforms into the meshes and flatten the hierarchy (current pose, no skins or animation)."},
                       {"lods", "", T::Bool, true, "Write LOD groups as Unreal's LOD variant set; False writes every level as a plain child."},
                       {"splitLayers", "", T::Bool, false, "Geometry, materials and animation in their own sublayers, composed by the file."},
+                      {"lightingChannels", "lc", T::Bool, true,
+                       "Write the lighting channels as UsdLux light links: each light's lightLink collection holds the meshes "
+                       "sharing a channel with it. The report and log list the channels, lights and objects either way."},
                       {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."},
-                      {"report", "", T::Bool, false, "Return {files, warnings} instead of the path."}},
+                      {"report", "", T::Bool, false, "Return {files, warnings, lightingChannels} instead of the path."}},
             .undoable = false,
             .run = [](const Args& a) { return runBackend("exportUsd", a); },
             .examples = {"exportUsd(\"C:/out/hero.usd\", \"Hero\")", "exportUsd(\"C:/out/hero.usdz\", \"Hero\", textures=\"copy\")",

@@ -2247,7 +2247,8 @@ struct Renderer::Impl
         {
             const LightDraw& l = s.lights[i];
             GpuLight g{};
-            g.position = glm::vec4(l.position, float(l.kind));
+            // The kind in the low four bits, the lighting channels above: exact in a float up to 20 channels.
+            g.position = glm::vec4(l.position, float(uint32_t(l.kind) | ((l.lightingChannels & 0xFFFFFu) << 4)));
             g.direction = glm::vec4(glm::normalize(l.direction), l.range);
             g.radiance = glm::vec4(l.radiance, l.radius);
             g.cone = glm::vec4(l.cosOuter, 1.0f / std::max(l.cosInner - l.cosOuter, 1e-4f), l.width, l.height);
@@ -5152,6 +5153,7 @@ struct Renderer::Impl
         p.gamma = s.gamma;
         p.lights = frameLightAddress;
         p.lightCount = frameLightCount;
+        p.lightPad = d.lightingChannels;
         if (mat)
         {
             p.extra = glm::vec4(mat->bevelRadius, frameBevel ? 1.0f : 0.0f, 0.0f, 0.0f);

@@ -64,6 +64,8 @@ struct ImportOptions
     const std::set<pxr::SdfPath>* keepShape = nullptr;
     /** A live stage: variant switches made while building are taken back out of the session layer, leaving no opinion. */
     bool live = false;
+    /** Light-link collections baked into lighting channels (never on a live stage). */
+    bool lightingChannels = true;
 };
 
 struct ImportResult
@@ -90,6 +92,8 @@ struct ImportResult
     std::vector<std::string> takes;
     int keyedCurves = 0;
     int instances = 0;
+    /** Lighting channels the import set on its lights and objects. */
+    std::vector<std::string> lightingChannels;
     /**
      * The node built for each prim, by its link path: its path in the composed stage, or for a prim inside an LOD level
      * the path through that level's variant (/Chair{LOD=LOD1}Mesh), which tells levels with the same names apart.
