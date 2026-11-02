@@ -4,6 +4,7 @@
 #include "io/SceneFile.h"
 #include "link/Exporters.h"
 #include "mcp/McpServer.h"
+#include "ops/StudioRestrictions.h"
 #include "python/Python.h"
 #include "scene/AttrComponents.h"
 #include "stream/ChangeStream.h"
@@ -123,6 +124,30 @@ void bindRegistries(nb::module_& m)
         nb::arg("open_flags"), nb::arg("import_command"), nb::arg("import_flags"), nb::arg("export_command"), nb::arg("export_flags"),
         nb::arg("priority"));
     r.def("unregister_file_translator", [](const std::string& id) { return io::translators::remove(id); });
+
+    r.def(
+        "register_restriction",
+        [](const std::string& owner, const std::string& id, const std::string& label, const std::string& file, const std::string& key,
+           const std::string& doc) {
+            restrictions::Restriction rr{.label = label, .doc = doc, .file = file, .key = key};
+            if (ext::Context* ctx = contextFor(owner))
+            {
+                if (!restrictions::add(*ctx, id, std::move(rr)))
+                    throw nb::value_error(("studio restriction '" + id + "' is taken or invalid").c_str());
+                return;
+            }
+            try
+            {
+                restrictions::add(id, std::move(rr));
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw nb::value_error(e.what());
+            }
+        },
+        nb::arg("owner"), nb::arg("id"), nb::arg("label"), nb::arg("file"), nb::arg("key"), nb::arg("doc"));
+    r.def("unregister_restriction", [](const std::string& id) { return restrictions::registry().remove(id); });
+    r.def("restriction_locked", [](const std::string& id) { return restrictions::locked(id); });
     r.def("file_translators", [] {
         json out = json::array();
         for (const io::translators::FileTranslator* t : io::translators::registry().all())

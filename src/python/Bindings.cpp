@@ -241,6 +241,9 @@ NB_MODULE(_lila, m)
         lila::PrefStore::get().set(file, key, toJson(value), workspace ? lila::PrefScope::Workspace : lila::PrefScope::User);
     }, nb::arg("file"), nb::arg("key"), nb::arg("value"), nb::arg("workspace") = false);
 
+    m.def("pref_locked", [](const std::string& file, const std::string& key) { return lila::PrefStore::get().isLocked(file, key); },
+          nb::arg("file"), nb::arg("key"), "True when a studio folder locks the pref.");
+
     m.def("scene_data", [](const std::string& key, nb::handle fallback) { return toPy(lila::scene::data::get(key, toJson(fallback))); },
           nb::arg("key"), nb::arg("default") = nb::none(), "A value saved in the scene file by set_scene_data.");
 

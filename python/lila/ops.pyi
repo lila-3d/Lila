@@ -3172,6 +3172,9 @@ def fileTranslators(operation: str | None = None) -> Any:
         operation: Only translators that support this: open | import | export. One of 'open', 'import', 'export'.
     """
 
+def fileTypes() -> Any:
+    """The file types Lila can open from Explorer: extension, description, whether it is a scene format, whether it is ticked in the prefs and whether Explorer opens it with Lila now."""
+
 def filletCurve(*objects: Any, mode: str | None = None, radius: float | None = None, perPoint: bool | None = None, exactArcs: bool | None = None, constructionHistory: bool | None = None, replaceOriginal: bool | None = None, name: str | None = None, ch: bool | None = None, rpo: bool | None = None, n: str | None = None) -> Any:
     """Round (arc), cut (chamfer) or blend (g2) the corners of curves. Per point cornerRadius wins over radius. Returns the curves.
 
@@ -6219,6 +6222,15 @@ def refreshClay(*objects: Any) -> Any:
         refreshClay("Dog")
     """
 
+def registerFileTypes(*objects: Any, scenes: bool | None = None, dryRun: bool | None = None) -> Any:
+    """Make Explorer open Lila's scenes (.lila, .lilaa) and the given import formats with this Lila, for the current user. Import formats left out are handed back to what opened them before. Saved in the prefs, so later starts keep it. dryRun returns the registry values instead of writing them.
+
+    Args:
+        objects: [extension...].
+        scenes: Register .lila and .lilaa. Default True.
+        dryRun: Return {key: {name: value}} for HKCU\\Software\\Classes without writing. Default False.
+    """
+
 def relaxMesh(*objects: Any, iterations: int | None = None, strength: float | None = None, target: str | None = None, project: bool | None = None, pinBoundary: bool | None = None, sharpAngle: float | None = None, keepHardEdges: bool | None = None, pinCreases: bool | None = None, pinHard: bool | None = None, pinSeams: bool | None = None) -> Any:
     """Even out point spacing while keeping the form: points slide over the mesh's own starting surface (or a target mesh), points on sharp creases and hard edges slide only along them, and crease corners and cone tips stay. No face is allowed to fold over. Moves only the selected components when there is a component selection. Honours the mesh's symmetry.
 
@@ -8330,6 +8342,14 @@ def strapPreset(*objects: Any, preset: str | None = None) -> Any:
         preset: strap, rope, tape, metalBand or zipTie. One of 'strap', 'rope', 'tape', 'metalBand', 'zipTie'. Default 'strap'.
     """
 
+def studioRestrictions(*objects: Any, lockedOnly: bool | None = None, lo: bool | None = None) -> Any:
+    """The prefs a studio can lock, from Lila and its extensions: id, label, doc, the pref (file and key) a studio folder's "$locked" list names, the owner, whether it is locked now and the value that applies. Any pref can be locked; these are the ones documented for it. With an id, just that one.
+
+    Args:
+        objects: [id].
+        lockedOnly: Only the restrictions a studio folder locks now. Short form lo. Default False.
+    """
+
 def suggestSplitPlanes(*objects: Any, minFaces: int | None = None, mf: int | None = None) -> Any:
     """Planes where the joints a click selects meet on a skinned mesh, fitted to each boundary and facing the child joint. Returns [{origin, normal, radius}] for splitMesh.
 
@@ -9407,6 +9427,9 @@ def unrealUnmap(*objects: Any) -> Any:
     Args:
         objects: nodes.
     """
+
+def unregisterFileTypes() -> Any:
+    """Stop Explorer opening any file type with Lila, for the current user, restoring the previous handlers. Saved in the prefs, so later starts don't register them again."""
 
 def uvAlignToEdge(uvSet: str | None = None, axis: str | None = None) -> Any:
     """Rotate each island with selected edges so their direction lies along U or V: axis=u or v aligns an island side, nearest orients the island by the edge.

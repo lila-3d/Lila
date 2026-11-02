@@ -2,6 +2,8 @@
 
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
+#include "ops/Command.h"
+#include "ops/StudioRestrictions.h"
 
 #include <chrono>
 #include <fstream>
@@ -80,4 +82,40 @@ TEST_CASE("studio prefs are defaults, locked keys win, and an offline share uses
     CHECK_FALSE(p.isLocked("test_studio", "/b/c"));
     p.remove("test_studio", "/a");
     fs::remove_all(moved);
+}
+
+TEST_CASE("studio restrictions: registered prefs list with their lock state, and go with their owner")
+{
+    namespace fs = std::filesystem;
+    PrefStore& p = PrefStore::get();
+    const fs::path studio = fs::temp_directory_path() / "lila_test_studio_restrictions";
+    fs::remove_all(studio);
+    fs::create_directories(studio);
+    std::ofstream(studio / "test_restrict.json") << R"({"bake": {"cloud": false}, "$locked": ["/bake/cloud"]})";
+
+    CHECK_THROWS_AS(restrictions::add("noKey", {"No key", "", "test_restrict", "bake"}), std::invalid_argument);
+    {
+        owners::OwnerScope scope("TestBaker");
+        restrictions::add("testBaker.cloud", {"Cloud baking", "Keeps bakes on this machine.", "test_restrict", "/bake/cloud"});
+    }
+    CHECK(*restrictions::registry().ownerOf("testBaker.cloud") == "TestBaker");
+    CHECK_FALSE(restrictions::locked("testBaker.cloud"));
+    CHECK_FALSE(restrictions::locked("noSuchRestriction"));
+
+    p.setStudioDirs({studio});
+    CHECK(restrictions::locked("testBaker.cloud"));
+    CHECK(restrictions::value("testBaker.cloud") == false);
+    restrictions::registerBuiltins();
+    const json one = ops::execute("studioRestrictions", {{"args", {"testBaker.cloud"}}});
+    CHECK(one["label"] == "Cloud baking");
+    CHECK(one["locked"] == true);
+    const json locked = ops::execute("studioRestrictions", {{"lockedOnly", true}});
+    REQUIRE(locked.size() == 1);
+    CHECK(locked[0]["id"] == "testBaker.cloud");
+    CHECK(ops::execute("studioRestrictions", json::object()).size() > 5);
+
+    CHECK(owners::removeOwned("TestBaker") >= 1);
+    CHECK_FALSE(restrictions::registry().contains("testBaker.cloud"));
+    p.setStudioDirs({});
+    fs::remove_all(studio);
 }

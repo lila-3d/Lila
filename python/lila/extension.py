@@ -161,6 +161,24 @@ def register_file_translator(id, extensions, label="", doc="", open=None, import
         args[0][0], args[0][1], args[1][0], args[1][1], args[2][0], args[2][1], priority)
 
 
+def register_restriction(id, label, key, file="general", doc="", owner=None):
+    """Document a pref of yours as one a studio may lock ("$locked" in a studio folder), so studioRestrictions lists it.
+
+    Any pref can be locked without this; registering gives studio admins its label and what locking it does.
+    """
+    _registries().register_restriction(_owner(owner), id, label, file, key, doc)
+
+
+def unregister_restriction(id):
+    """Returns whether it existed."""
+    return _registries().unregister_restriction(id)
+
+
+def restriction_locked(id):
+    """True when a studio folder locks the restriction's pref."""
+    return _registries().restriction_locked(id)
+
+
 def unregister_file_translator(id):
     """Returns whether it existed."""
     return _registries().unregister_file_translator(id)

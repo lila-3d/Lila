@@ -21,6 +21,7 @@
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
 #include "io/FileTypes.h"
+#include "ops/StudioRestrictions.h"
 #include "io/Examples.h"
 #include "io/Samples.h"
 #include "io/Recovery.h"
@@ -192,6 +193,7 @@ void startCore()
     io::translators::registerBuiltins();
     io::translators::registerCommands();
     io::fileTypes::registerCommands();
+    restrictions::registerBuiltins();
     retarget::registerCommands();
     rigmath::registerCommands();
     ui::layouts::registerCommands();
