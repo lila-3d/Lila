@@ -1,3 +1,4 @@
+#include "ui/ConnectPopover.h"
 #include "ui/MainWindowDetail.h"
 
 namespace lila::ui
@@ -160,6 +161,7 @@ void MainWindow::registerPanels()
     registerBatchRunPanel();
     registerBakerPanel();
     registerTextureGraphUi();
+    registerAttributeUi();
     registerMaterialBrowserUi();
     registerTextureSetPanel();
     registerTexturePipelineUi();

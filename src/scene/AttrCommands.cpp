@@ -388,6 +388,57 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "connectByName",
+        .doc = "Connect every attribute of the source object to the same-named input of each target, where the types fit "
+               "(Maya's Connection Editor 'connect by name'). Returns the target plugs connected.",
+        .positionalDoc = "source targets",
+        .flags = {{"attribute", "at", T::List, nullptr, "Only these attribute names."},
+                  {"force", "f", T::Bool, false, "Replace inputs that are already connected; otherwise they are skipped."}},
+        .run = [](const Args& a) -> json {
+            std::vector<std::string> objs = a.objects();
+            if (objs.size() < 2)
+                throw CommandError("connectByName: expected a source and at least one target");
+            Graph& g = graph();
+            const Node& src = nodeArg(objs[0]);
+            std::vector<std::string> only = a.has("attribute") ? a.get<std::vector<std::string>>("attribute") : std::vector<std::string>{};
+            json out = json::array();
+            for (size_t t = 1; t < objs.size(); ++t)
+            {
+                const Node& dst = nodeArg(objs[t]);
+                if (dst.id() == src.id())
+                    continue;
+                for (size_t i = 0; i < src.type().attrs.size(); ++i)
+                {
+                    const AttrDef& s = src.type().attrs[i];
+                    if ((s.flags & (AttrHidden | AttrArray)) || (!only.empty() && std::find(only.begin(), only.end(), s.name) == only.end()))
+                        continue;
+                    const int d = dst.type().attrIndex(s.name);
+                    if (d < 0)
+                        continue;
+                    const AttrDef& dd = dst.type().attrs[size_t(d)];
+                    if (!(dd.flags & AttrInput) || (dd.flags & (AttrArray | AttrHidden)) || dd.type != s.type || s.type == PlugType::Mesh)
+                        continue;
+                    const PlugRef to{dst.id(), d};
+                    bool taken = g.source(to).has_value();
+                    for (int c = 0; !taken && dd.type == PlugType::Vec3 && c < 3; ++c)
+                        taken = g.source({dst.id(), d, c}).has_value();
+                    if (taken && !a.get<bool>("force"))
+                        continue;
+                    try
+                    {
+                        g.connect({src.id(), int(i)}, to, true);
+                        out.push_back(g.plugName(to));
+                    }
+                    catch (const std::invalid_argument&)
+                    {
+                    }
+                }
+            }
+            return out;
+        },
+    });
+
+    ops::registerCommand({
         .name = "addComponent",
         .doc = "Add a component from the library (listComponents) to objects: its attributes under its heading, and its USD "
                "schema when it names one. Returns the plugs added.",

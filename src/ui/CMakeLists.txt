@@ -27,6 +27,7 @@ lila_module(lila_ui UI
     AttrAuthoring.cpp AttrAuthoring.h
     AttrView.cpp AttrView.h
     DrivePopover.cpp DrivePopover.h
+    ConnectPopover.cpp ConnectPopover.h
     FileDialog.cpp FileDialog.h FilePreview.cpp FilePreview.h FileDrop.cpp FileDrop.h
     CodeEdit.cpp CodeEdit.h FontPicker.cpp FontPicker.h MultilineEdit.cpp MultilineEdit.h
     AutoBevelUi.cpp AutoBevelUi.h

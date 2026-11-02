@@ -4,6 +4,7 @@ set(LILA_UNITY_SKIP
     src/ui/AttrAuthoring.cpp
     src/ui/AttrView.cpp
     src/ui/DrivePopover.cpp
+    src/ui/ConnectPopover.cpp
     extensions/Destruction/RigidWorld.cpp
     extensions/Foliage/TreeUi.cpp
     extensions/Masonry/Commands.cpp
