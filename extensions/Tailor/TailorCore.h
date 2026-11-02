@@ -182,6 +182,12 @@ struct RenderBinding
 /** Binds render points to the sim mesh as it is now (both in the same space). */
 RenderBinding bindRenderMesh(const std::vector<Vec3>& simPositions, const std::vector<std::array<int, 3>>& simTris,
                              const std::vector<Vec3>& renderPoints);
+/**
+ * Binds rigid pieces (buttons, buckles, plates): every connected piece of the render mesh follows the one cloth point
+ * nearest its middle, turning with the cloth there but never bending.
+ */
+RenderBinding bindRigidPieces(const std::vector<Vec3>& simPositions, const std::vector<std::array<int, 3>>& simTris,
+                              const std::vector<Vec3>& renderPoints, const std::vector<std::array<int, 3>>& renderTris);
 /** The render points for the sim mesh's current positions. */
 std::vector<Vec3> deformRenderMesh(const RenderBinding& binding, const std::vector<Vec3>& simPositions,
                                    const std::vector<std::array<int, 3>>& simTris);

@@ -22,6 +22,7 @@
 #include <QCoreApplication>
 
 #include <algorithm>
+#include <map>
 #include <atomic>
 #include <functional>
 #include <mutex>
@@ -600,6 +601,7 @@ enum BindingAttr
     kSimMesh,
     kBoundMesh,
     kBindWarning,
+    kRigid,
 };
 
 /** A render mesh latched to a garment's cloth: bound once against the cloth as it was, then moved with it. */
@@ -619,6 +621,52 @@ public:
             setOutput(kBindWarning, std::string("no render mesh"));
             return;
         }
+        if (bindSim && sim && bindSim->pointCapacity() != sim->pointCapacity() && as<bool>(kRigid))
+        {
+            // Re-meshed since binding: rigid pieces bind again where they sit, each centred back on its cloth point.
+            if (sim->pointCapacity() != mReboundPoints || rest.get() != mRestKey)
+            {
+                std::vector<Vec3> simPts, restPts;
+                std::vector<std::array<int, 3>> restTris;
+                meshTriangles(*sim, simPts, mTris);
+                meshTriangles(*rest, restPts, restTris);
+                RenderBinding again = bindRigidPieces(simPts, mTris, restPts, restTris);
+                std::map<int, std::array<float, 3>> centre;
+                std::map<int, int> count;
+                for (size_t i = 0; i < again.tri.size(); ++i)
+                {
+                    auto& c = centre[again.tri[i]];
+                    for (int k = 0; k < 2; ++k)
+                        c[size_t(k)] += again.local[i][size_t(k)];
+                    ++count[again.tri[i]];
+                }
+                for (size_t i = 0; i < again.tri.size(); ++i)
+                {
+                    const auto& c = centre[again.tri[i]];
+                    const float n = float(count[again.tri[i]]);
+                    again.local[i][0] -= c[0] / n;
+                    again.local[i][1] -= c[1] / n;
+                    if (i < mBinding.local.size() && mBinding.tri.size() == again.tri.size())
+                        again.local[i][2] = mBinding.local[i][2];
+                }
+                mBinding = std::move(again);
+                mReboundPoints = sim->pointCapacity();
+                mSimKey = nullptr;
+                mRestKey = rest.get();
+                mRigid = true;
+            }
+            std::vector<Vec3> now;
+            std::vector<std::array<int, 3>> tris;
+            meshTriangles(*sim, now, tris);
+            const std::vector<Vec3> moved = deformRenderMesh(mBinding, now, mTris);
+            auto out = std::make_shared<geo::Mesh>(*rest);
+            std::span<glm::dvec3> pos = out->positions();
+            for (size_t i = 0; i < moved.size() && i < pos.size(); ++i)
+                pos[i] = glm::dvec3(moved[i][0], moved[i][1], moved[i][2]);
+            setOutput(kBoundMesh, MeshPtr(std::move(out)));
+            setOutput(kBindWarning, std::string());
+            return;
+        }
         if (!bindSim || !sim || bindSim->pointCapacity() != sim->pointCapacity())
         {
             // The garment was re-meshed since binding (a pattern edit): show the render mesh as it was bound.
@@ -626,15 +674,16 @@ public:
             setOutput(kBindWarning, std::string(sim ? "the garment changed shape since binding; bind again" : "no garment connected"));
             return;
         }
-        if (rest.get() != mRestKey || bindSim.get() != mSimKey)
+        if (rest.get() != mRestKey || bindSim.get() != mSimKey || as<bool>(kRigid) != mRigid)
         {
             std::vector<Vec3> simPts, restPts;
             std::vector<std::array<int, 3>> restTris;
             meshTriangles(*bindSim, simPts, mTris);
             meshTriangles(*rest, restPts, restTris);
-            mBinding = bindRenderMesh(simPts, mTris, restPts);
+            mBinding = as<bool>(kRigid) ? bindRigidPieces(simPts, mTris, restPts, restTris) : bindRenderMesh(simPts, mTris, restPts);
             mRestKey = rest.get();
             mSimKey = bindSim.get();
+            mRigid = as<bool>(kRigid);
         }
         std::vector<Vec3> now;
         std::vector<std::array<int, 3>> tris;
@@ -651,6 +700,8 @@ public:
 private:
     const void* mRestKey = nullptr;
     const void* mSimKey = nullptr;
+    bool mRigid = false;
+    geo::Index mReboundPoints = 0;
     RenderBinding mBinding;
     std::vector<std::array<int, 3>> mTris;
 };
@@ -672,6 +723,8 @@ NodeType bindingType()
         {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
          .doc = "The render mesh moved with the cloth."},
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the binding."},
+        {.name = "rigid", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable,
+         .doc = "Each connected piece (a button, a buckle) follows the cloth at its middle without bending."},
     };
     t.create = [] { return std::make_unique<BindingNode>(); };
     return t;

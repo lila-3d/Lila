@@ -172,6 +172,67 @@ RenderBinding bindRenderMesh(const std::vector<Vec3>& simPositions, const std::v
     return b;
 }
 
+RenderBinding bindRigidPieces(const std::vector<Vec3>& simPositions, const std::vector<std::array<int, 3>>& simTris,
+                              const std::vector<Vec3>& renderPoints, const std::vector<std::array<int, 3>>& renderTris)
+{
+    const size_t n = renderPoints.size();
+    std::vector<int> parent(n);
+    for (size_t i = 0; i < n; ++i)
+        parent[i] = int(i);
+    auto root = [&](int i) {
+        while (parent[size_t(i)] != i)
+            i = parent[size_t(i)] = parent[size_t(parent[size_t(i)])];
+        return i;
+    };
+    for (const auto& t : renderTris)
+        for (int k = 1; k < 3; ++k)
+            parent[size_t(root(t[size_t(k)]))] = root(t[0]);
+    std::vector<int> piece(n);
+    std::vector<vec3> sum;
+    std::vector<int> count, index(n, -1);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const int r = root(int(i));
+        if (index[size_t(r)] < 0)
+        {
+            index[size_t(r)] = int(sum.size());
+            sum.push_back(vec3(0.f));
+            count.push_back(0);
+        }
+        piece[i] = index[size_t(r)];
+        sum[size_t(piece[i])] += v3(renderPoints[i]);
+        ++count[size_t(piece[i])];
+    }
+    std::vector<Vec3> middles(sum.size());
+    for (size_t k = 0; k < sum.size(); ++k)
+    {
+        const vec3 c = sum[k] / float(std::max(count[k], 1));
+        middles[k] = {c.x, c.y, c.z};
+    }
+    // Each piece's middle binds as a point would; its points then share that foot and frame.
+    const RenderBinding at = bindRenderMesh(simPositions, simTris, middles);
+    RenderBinding b;
+    b.tri.assign(n, -1);
+    b.bary.assign(n, {1.f, 0.f, 0.f});
+    b.local = renderPoints;
+    if (simTris.empty())
+        return b;
+    const std::vector<vec3> normals = smoothNormals(simPositions, simTris);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const size_t k = size_t(piece[i]);
+        if (at.tri[k] < 0)
+            continue;
+        vec3 foot, tangent, bitangent, normal;
+        footFrame(simPositions, normals, simTris[size_t(at.tri[k])], {at.bary[k][0], at.bary[k][1], at.bary[k][2]}, foot, tangent, bitangent, normal);
+        const vec3 d = v3(renderPoints[i]) - foot;
+        b.tri[i] = at.tri[k];
+        b.bary[i] = at.bary[k];
+        b.local[i] = {glm::dot(d, tangent), glm::dot(d, bitangent), glm::dot(d, normal)};
+    }
+    return b;
+}
+
 std::vector<Vec3> deformRenderMesh(const RenderBinding& b, const std::vector<Vec3>& simPositions,
                                    const std::vector<std::array<int, 3>>& simTris)
 {

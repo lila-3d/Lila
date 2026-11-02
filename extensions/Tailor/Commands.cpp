@@ -1616,6 +1616,254 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "tailorAddTrim",
+        .doc = "Put copies of a trim mesh (a button, a rivet, a buckle, a plate) on a garment's drape at points, each "
+               "standing on the cloth with its +Z out of it and riding the cloth rigidly from then on. The copies make one "
+               "new mesh. Returns [mesh, binding].",
+        .positionalDoc = "garment",
+        .flags = {{"mesh", "m", T::String, json(), "The trim, modelled at the origin with +Z facing out of the cloth."},
+                  {"points", "pts", T::List, json(), "Where, [[x, y, z], ...] world cm, on or near the cloth."},
+                  {"name", "n", T::String, "Trims", "Name of the new mesh."},
+                  {"spin", "sp", T::Float, 0.0, "Turn each copy about its +Z, degrees.", {}, {}, -360.0, 360.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorAddTrim");
+            Node* trim = a.has("mesh") ? g.find(a.get<std::string>("mesh")) : nullptr;
+            if (!trim || !trim->type().isA("mesh"))
+                throw CommandError("tailorAddTrim: give mesh, the trim to place");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorAddTrim");
+            const MeshPtr drape = drapedMesh(g, op, "tailorAddTrim");
+            const PlugValue tv = g.value({trim->id(), MeshNode::kOutMesh});
+            const MeshPtr* tm = std::get_if<MeshPtr>(&tv);
+            if (!tm || !*tm || (*tm)->empty())
+                throw CommandError("tailorAddTrim: " + trim->name() + " has no geometry");
+            const geo::Mesh& d = *drape;
+            std::vector<glm::dvec3> all;
+            std::vector<geo::Index> sizes, idx;
+            const double spin = a.get<double>("spin") * std::numbers::pi / 180.0;
+            for (const glm::dvec3& p : pts)
+            {
+                // The nearest outer cloth face: its foot point and normal frame the copy.
+                const glm::dvec3 q = p * kCmPerM;
+                double best = 1e30;
+                glm::dvec3 foot(0.0), nrm(0.0, 0.0, 1.0), along(1.0, 0.0, 0.0);
+                const std::span<const int32_t> side = d.faceAttrs().get<int32_t>("side");
+                for (geo::Index f = 0; f < d.faceCapacity(); ++f)
+                {
+                    if (!d.faceValid(f) || (!side.empty() && side[f] != int32_t(GarmentSurface::Outer)))
+                        continue;
+                    const std::vector<geo::Index> fp = d.facePoints(f);
+                    if (fp.size() != 3)
+                        continue;
+                    const glm::dvec3 o = d.position(fp[0]), e1 = d.position(fp[1]) - o, e2 = d.position(fp[2]) - o, rel = q - o;
+                    const double d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2), den = d11 * d22 - d12 * d12;
+                    if (den <= 1e-20)
+                        continue;
+                    double v = (d22 * glm::dot(rel, e1) - d12 * glm::dot(rel, e2)) / den, w = (d11 * glm::dot(rel, e2) - d12 * glm::dot(rel, e1)) / den;
+                    v = std::clamp(v, 0.0, 1.0);
+                    w = std::clamp(w, 0.0, 1.0 - v);
+                    const glm::dvec3 at = o + e1 * v + e2 * w;
+                    if (const double dist = glm::length(at - q); dist < best)
+                    {
+                        best = dist;
+                        foot = at;
+                        nrm = glm::normalize(glm::cross(e1, e2));
+                    }
+                }
+                // Keep each copy upright: its +Y towards world up as far as the cloth allows.
+                glm::dvec3 up = glm::dvec3(0.0, 1.0, 0.0) - nrm * nrm.y;
+                if (glm::length(up) < 1e-6)
+                    up = glm::dvec3(0.0, 0.0, 1.0) - nrm * nrm.z;
+                up = glm::normalize(up);
+                along = glm::cross(up, nrm);
+                const glm::dvec3 ax = along * std::cos(spin) + up * std::sin(spin), ay = up * std::cos(spin) - along * std::sin(spin);
+                const geo::Mesh& tmesh = **tm;
+                std::vector<geo::Index> remap(tmesh.pointCapacity(), geo::kInvalid);
+                for (geo::Index pi = 0; pi < tmesh.pointCapacity(); ++pi)
+                {
+                    const glm::dvec3 l = tmesh.position(pi);
+                    remap[pi] = geo::Index(all.size());
+                    all.push_back(foot + ax * l.x + ay * l.y + nrm * l.z);
+                }
+                for (geo::Index f = 0; f < tmesh.faceCapacity(); ++f)
+                {
+                    if (!tmesh.faceValid(f))
+                        continue;
+                    const std::vector<geo::Index> fp = tmesh.facePoints(f);
+                    sizes.push_back(geo::Index(fp.size()));
+                    for (geo::Index v : fp)
+                        idx.push_back(remap[v]);
+                }
+            }
+            auto made = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(all, sizes, idx));
+            std::string name = a.get<std::string>("name");
+            if (!Graph::validName(name))
+                name = "Trims";
+            Node* out = g.createNode(*types::find("mesh"), name, kNoNode, true);
+            // Garment space: place the trims under the same transform as the garment's mesh.
+            g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(made));
+            Node* bind = g.createNode(*types::find(kBindingType), {}, kNoNode, true);
+            g.setValue({bind->id(), plugIndex(*bind, "restMesh")}, MeshPtr(made));
+            g.setValue({bind->id(), plugIndex(*bind, "bindSim")}, drape);
+            g.setValue({bind->id(), plugIndex(*bind, "rigid")}, true);
+            g.connect({op.id(), plugIndex(op, "outMesh")}, {bind->id(), plugIndex(*bind, "simMesh")});
+            g.connect({bind->id(), plugIndex(*bind, "outMesh")}, {out->id(), MeshNode::kInMesh});
+            return json::array({out->path(), bind->path()});
+        },
+        .examples = {"tailorAddTrim('Coat', mesh='Button', points=[[0, 130, 16], [0, 118, 17], [0, 106, 17]])"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorDamage",
+        .doc = "Wear a garment: ragged holes or tears in the cloth at points on its drape, cut into the pattern so the "
+               "cloth drapes around them. Returns how many were cut.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "Where, [[x, y, z], ...] world cm, on or near the cloth."},
+                  {"radius", "r", T::Float, 3.0, "Hole radius or half the tear's length, cm.", {}, {}, 0.3, 100.0},
+                  {"kind", "k", T::String, "hole", "hole or tear.", {"hole", "tear"}},
+                  {"seed", "sd", T::Int, int64_t(1), "Varies the ragged edge."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorDamage");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorDamage");
+            const MeshPtr drape = drapedMesh(g, op, "tailorDamage");
+            Garment gm = readGarment(op);
+            const float r = float(a.get<double>("radius") / kCmPerM);
+            const bool tear = a.get<std::string>("kind") == "tear";
+            uint32_t state = uint32_t(a.get<int64_t>("seed")) * 2654435761u + 1u;
+            auto rnd = [&] {
+                state = state * 1664525u + 1013904223u;
+                return float(state >> 8) / float(1u << 24);
+            };
+            int64_t cut = 0;
+            for (const glm::dvec3& q : pts)
+            {
+                const auto hit = patternPointAt(*drape, q, 2.0 * r);
+                if (!hit || size_t(hit->first) >= gm.panels.size())
+                    continue;
+                Panel& p = gm.panels[size_t(hit->first)];
+                const Vec2 c = hit->second;
+                std::vector<Vec2> loop;
+                const int n = tear ? 16 : 14;
+                const float turn = rnd() * 6.2831853f;
+                for (int k = 0; k < n; ++k)
+                {
+                    const float t = 6.2831853f * float(k) / float(n);
+                    // A tear is a long ragged slit; a hole is a ragged round.
+                    const float rx = tear ? r : r * (0.75f + 0.45f * rnd()), ry = tear ? r * (0.08f + 0.12f * rnd()) : rx;
+                    const float x = rx * std::cos(t), y = ry * std::sin(t);
+                    loop.push_back({c[0] + x * std::cos(turn) - y * std::sin(turn), c[1] + x * std::sin(turn) + y * std::cos(turn)});
+                }
+                // Inside the panel by a cloth edge, or the cut would open the outline.
+                bool inside = true;
+                for (const Vec2& v : loop)
+                {
+                    bool in = false;
+                    const auto& o = p.outline;
+                    for (size_t i = 0, j = o.size() - 1; i < o.size(); j = i++)
+                        if ((o[i][1] > v[1]) != (o[j][1] > v[1]) && v[0] < (o[j][0] - o[i][0]) * (v[1] - o[i][1]) / (o[j][1] - o[i][1]) + o[i][0])
+                            in = !in;
+                    inside = inside && in;
+                }
+                if (!inside)
+                    continue;
+                p.holes.push_back(std::move(loop));
+                ++cut;
+            }
+            if (cut == 0)
+                throw CommandError("tailorDamage: no point fell inside a panel with room for the cut");
+            writeGarment(g, op, gm);
+            return cut;
+        },
+        .examples = {"tailorDamage('Cloak', points=[[5, 90, -20]], radius=4)", "tailorDamage('Cloak', points=[[-10, 60, -22]], kind='tear', radius=8)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorStrap",
+        .doc = "Add a strap to a garment along a path (a belt, a sash, a bandolier): a strip of cloth the path's length, "
+               "its middle pinned along the path so it drapes over the body there. Give points or a curve. Returns the strap "
+               "panel's name.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "The path, [[x, y, z], ...] world cm."},
+                  {"curve", "cv", T::String, json(), "A curve to follow instead of points (its points, world space)."},
+                  {"width", "w", T::Float, 4.0, "Strap width, cm.", {}, {}, 0.5, 100.0},
+                  {"name", "n", T::String, "Strap", "Panel name; made unique."},
+                  {"fabric", "fab", T::String, "Leather", "Fabric preset of the strap.", presetChoices()},
+                  {"closed", "cl", T::Bool, false, "The path closes on itself (a belt round the waist)."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorStrap");
+            std::vector<glm::dvec3> path;
+            const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op));
+            if (a.has("curve"))
+            {
+                const json data = ops::execute("curveData", {{"args", {a.get<std::string>("curve")}}, {"worldSpace", true}});
+                const json splines = data.is_object() ? data.value("splines", json::array()) : data;
+                const json first = splines.is_array() && !splines.empty() ? splines[0] : json::object();
+                const json points = first.contains("points") ? first["points"] : json::array();
+                for (const auto& q : points)
+                    if (q.is_array() && q.size() >= 3)
+                        path.push_back(glm::dvec3(toLocal * glm::dvec4(q[0].get<double>(), q[1].get<double>(), q[2].get<double>(), 1.0)) / kCmPerM);
+            }
+            else
+                path = brushPoints(g, op, a, "tailorStrap");
+            if (a.get<bool>("closed") && path.size() >= 3)
+                path.push_back(path.front());
+            if (path.size() < 2)
+                throw CommandError("tailorStrap: give points or a curve with at least 2 points");
+            std::vector<double> at{0.0};
+            for (size_t i = 1; i < path.size(); ++i)
+                at.push_back(at.back() + glm::length(path[i] - path[i - 1]));
+            const float length = float(at.back()), w = float(a.get<double>("width") / kCmPerM);
+            if (length < 2.f * w)
+                throw CommandError("tailorStrap: the path is shorter than twice the strap's width");
+
+            Garment gm = readGarment(op);
+            Panel p;
+            const std::string base = a.get<std::string>("name");
+            p.name = base;
+            for (int k = 2; std::any_of(gm.panels.begin(), gm.panels.end(), [&](const Panel& o) { return o.name == p.name; }); ++k)
+                p.name = base + std::to_string(k);
+            p.outline = {{0.f, 0.f}, {length, 0.f}, {length, w}, {0.f, w}};
+            p.particleDistance = std::min(gm.panels.empty() ? 0.02f : gm.panels.front().particleDistance, 0.5f * w);
+            // Placed flat along the path's chord, at its start; the pins carry it onto the path as it drapes.
+            const glm::dvec3 chord = glm::normalize(path.back() - path.front() + glm::dvec3(1e-9, 0.0, 0.0));
+            p.origin = {float(path.front().x), float(path.front().y - 0.5 * w), float(path.front().z)};
+            p.right = {float(chord.x), float(chord.y), float(chord.z)};
+            p.up = {0.f, 1.f, 0.f};
+            if (std::abs(chord.y) > 0.9)
+                p.up = {1.f, 0.f, 0.f};
+            const Fabric* f = findFabric(a.get<std::string>("fabric"));
+            int fabric = 0;
+            if (f)
+            {
+                const auto same = std::find_if(gm.fabrics.begin(), gm.fabrics.end(), [&](const Fabric& o) { return o.name == f->name; });
+                fabric = int(same - gm.fabrics.begin());
+                if (same == gm.fabrics.end())
+                    gm.fabrics.push_back(*f);
+            }
+            p.fabric = fabric;
+            const int index = int(gm.panels.size());
+            gm.panels.push_back(std::move(p));
+            // Pins down the strap's middle line, about one per strap width.
+            const int count = std::max(2, int(std::ceil(length / w)));
+            for (int k = 0; k <= count; ++k)
+            {
+                const double s = double(length) * k / count;
+                size_t i = 1;
+                while (i + 1 < at.size() && at[i] < s)
+                    ++i;
+                const double t = at[i] > at[i - 1] ? (s - at[i - 1]) / (at[i] - at[i - 1]) : 0.0;
+                const glm::dvec3 q = glm::mix(path[i - 1], path[i], std::clamp(t, 0.0, 1.0));
+                gm.pins.push_back({index, {float(s), 0.5f * w}, {float(q.x), float(q.y), float(q.z)}});
+            }
+            writeGarment(g, op, gm);
+            return gm.panels[size_t(index)].name;
+        },
+        .examples = {"tailorStrap('Tunic', curve='BeltPath', closed=True, width=5)", "tailorStrap('Tunic', points=[[-15, 140, 14], [15, 95, 15]], width=6, name='Sash')"},
+    });
+
+    ctx.registerCommand({
         .name = "tailorLive",
         .doc = "Keep a garment simulating in real time (on) or stop it where it got to (off). Live garments answer pattern "
                "edits as they happen and can be pulled with the Grab Cloth tool. Returns whether it is live.",

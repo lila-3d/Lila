@@ -248,3 +248,35 @@ TEST_CASE("binding: a thick render mesh follows the cloth")
     }
     CHECK(err < 0.002f);
 }
+
+TEST_CASE("binding: rigid pieces ride the cloth without bending")
+{
+    Garment g;
+    ClothMesh m = hingedPair(7, 9, g, 0.f);
+    // Two small square plates lying on the sheet, a centimetre apart.
+    std::vector<Vec3> render;
+    std::vector<std::array<int, 3>> tris;
+    for (float x0 : {-0.05f, 0.05f})
+    {
+        const int base = int(render.size());
+        for (const auto& [dx, dy] : {std::pair{0.f, 0.f}, {0.04f, 0.f}, {0.04f, 0.04f}, {0.f, 0.04f}})
+            render.push_back({x0 + dx, 0.1f + dy, 0.005f});
+        tris.push_back({base, base + 1, base + 2});
+        tris.push_back({base, base + 2, base + 3});
+    }
+    const RenderBinding b = bindRigidPieces(m.rest3d, m.tris, render, tris);
+    CHECK(b.tri[0] == b.tri[3]);
+    CHECK(b.tri[4] == b.tri[7]);
+
+    // Bend the sheet: each plate's own edges keep their length.
+    std::vector<Vec3> bent = m.rest3d;
+    for (Vec3& p : bent)
+        p[2] += 2.f * p[0] * p[0];
+    const std::vector<Vec3> moved = deformRenderMesh(b, bent, m.tris);
+    for (int k = 0; k < 8; k += 4)
+        for (int e = 0; e < 4; ++e)
+        {
+            const Vec3 &p = moved[size_t(k + e)], &q = moved[size_t(k + (e + 1) % 4)];
+            CHECK(std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) == doctest::Approx(0.04f).epsilon(0.01));
+        }
+}
