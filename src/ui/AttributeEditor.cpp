@@ -1,6 +1,7 @@
 #include "ui/AttributeEditor.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttrView.h"
+#include "ui/ChoiceTips.h"
 #include "ui/DrivePopover.h"
 #include "ui/DocsUi.h"
 #include "core/PrefStore.h"
@@ -1155,6 +1156,7 @@ void AttributeEditor::rebuild()
                 QSignalBlocker block(combo);
                 combo->setPlaceholderText("--");
                 combo->setCurrentIndex(owner->mixed(ref) ? -1 : int(std::get<int64_t>(Graph::current().value(ref))));
+                choiceTips::refresh(combo);
             });
             field = combo;
             break;
@@ -1277,6 +1279,9 @@ void AttributeEditor::rebuild()
         if (!field)
             return false;
         field->setToolTip(QString::fromStdString(def.doc));
+        if (def.type == PlugType::Enum)
+            if (auto* combo = qobject_cast<QComboBox*>(field))
+                choiceTips::apply(combo, choiceTips::forAttr(def));
         if (element >= 0)
         {
             // An element's row ends in a button that removes it.

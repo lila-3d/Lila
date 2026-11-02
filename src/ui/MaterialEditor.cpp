@@ -13,6 +13,7 @@
 #include "scene/MeshNodes.h"
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
+#include "ui/ChoiceTips.h"
 #include "ui/ColorPopup.h"
 #include "ui/LocateFlash.h"
 #include "ui/Deletion.h"
@@ -668,6 +669,7 @@ void MaterialEditor::rebuild()
         const auto& names = n->type().attrs[size_t(attr)].enumNames;
         for (size_t i = 0; i < names.size(); ++i)
             c->addItem(i < size_t(labels.size()) ? labels[qsizetype(i)] : QString::fromStdString(names[i]));
+        choiceTips::apply(c, choiceTips::forAttr(n->type().attrs[size_t(attr)]));
         grid->addWidget(c, row++, 1, 1, 2);
         connect(c, &QComboBox::activated, this, [this, attr](int i) { setAttr(attr, i); });
         mUpdaters.push_back([this, c, attr] {
@@ -675,6 +677,7 @@ void MaterialEditor::rebuild()
             {
                 QSignalBlocker block(c);
                 c->setCurrentIndex(int(m->as<int64_t>(attr)));
+                choiceTips::refresh(c);
             }
         });
     };

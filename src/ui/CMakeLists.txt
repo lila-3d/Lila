@@ -196,7 +196,8 @@ lila_module(lila_ui UI
     PaintSelect.cpp PaintSelect.h
     ViewportTool.cpp ViewportTool.h ViewportToast.cpp ViewportToast.h StepHistory.h SimPreview.cpp SimPreview.h
     ViewportWidget.cpp ViewportWidget.h ViewportWidgetDetail.h ViewportMeshes.cpp ViewportComponents.cpp ViewportViews.cpp ViewportInput.cpp
-    CameraBookmarks.cpp CameraBookmarks.h)
+    CameraBookmarks.cpp CameraBookmarks.h
+    ChoiceTips.cpp ChoiceTips.h)
 
 set_target_properties(lila_ui PROPERTIES AUTOMOC ON)
 target_link_libraries(lila_ui PUBLIC lila_scene lila_io lila_python lila_mcp lila_render lila_editor lila_vcs Qt6::Widgets)

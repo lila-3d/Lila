@@ -2,10 +2,14 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "scene/Plug.h"
 #include "ui/Actions.h"
+#include "ui/ChoiceTips.h"
+#include "ui/FlagFields.h"
 #include "ui/OptionBox.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDialog>
 #include <QMenu>
 #include <QMouseEvent>
@@ -143,4 +147,34 @@ TEST_CASE("Apply in an action's options runs the action itself, and panel button
         if (auto* dlg = qobject_cast<QDialog*>(w); dlg && dlg->isVisible())
             dlg->close();
     QApplication::processEvents();
+}
+
+TEST_CASE("choice fields give each option its own tip, and the closed combo the current one's")
+{
+    if (!ops::find("tipProbe"))
+        ops::registerCommand({.name = "tipProbe",
+                               .doc = "Probe.",
+                               .flags = {{"mode", "", ArgType::String, "slerp", "slerp: constant speed. smooth: cubic.", {"slerp", "smooth"}}},
+                               .undoable = false,
+                               .run = [](const Args&) -> json { return nullptr; }});
+    std::vector<ops::options::Field> fields = ops::options::fields("tipProbe");
+    REQUIRE(fields.size() == 1);
+    QWidget parent;
+    ui::FlagFieldWidgets w = ui::makeFlagField(fields[0], "slerp", [](const json&) {}, &parent);
+    auto* combo = qobject_cast<QComboBox*>(w.field);
+    REQUIRE(combo);
+    CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == "Constant speed.");
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == "Cubic.");
+    CHECK(combo->toolTip() == "Constant speed.");
+    combo->setCurrentIndex(1);
+    CHECK(combo->toolTip() == "Cubic.");
+    w.set("slerp");
+    CHECK(combo->toolTip() == "Constant speed.");
+}
+
+TEST_CASE("an enum attr's choice docs: its own per-name docs first, else what its doc says")
+{
+    scene::AttrDef def{.name = "mode", .type = scene::PlugType::Enum, .defaultValue = int64_t(0), .enumNames = {"euler", "slerp", "smooth"},
+                       .enumDocs = {"", "Arc."}, .doc = "euler (three curves), slerp or smooth (cubic)."};
+    CHECK(ui::choiceTips::forAttr(def) == std::vector<std::string>{"Three curves.", "Arc.", "Cubic."});
 }

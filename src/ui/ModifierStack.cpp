@@ -11,6 +11,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
+#include "ui/ChoiceTips.h"
 #include "ui/LocateFlash.h"
 #include "ui/AttributeEditor.h"
 #include "ui/Deletion.h"
@@ -1318,6 +1319,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
                 QSignalBlocker block(combo);
                 combo->setCurrentIndex(int(std::get<int64_t>(gr.value(ref))));
                 combo->setEnabled(stateOf(gr, ref) != PlugState::Driven);
+                choiceTips::refresh(combo);
             });
             field = combo;
             resetOnMiddleClick(label, ref, field);
@@ -1350,6 +1352,9 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         }
         if (!doc.isEmpty() && field->toolTip().isEmpty())
             field->setToolTip(doc);
+        if (def.type == PlugType::Enum)
+            if (auto* combo = qobject_cast<QComboBox*>(field))
+                choiceTips::apply(combo, choiceTips::forAttr(def));
         form->addRow(label, field);
         ++rows;
         if (n->type().name == "arrayModifier" && def.name == "center")

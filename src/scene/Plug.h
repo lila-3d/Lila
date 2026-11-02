@@ -90,6 +90,8 @@ struct AttrDef
     PlugValue defaultValue = 0.0;
     uint32_t flags = AttrInput | AttrStorable;
     std::vector<std::string> enumNames;      // Enum only
+    /** Enum only: each name's own doc, by index, shown when hovering that choice; a missing one comes from doc. */
+    std::vector<std::string> enumDocs;
     std::array<std::string, 3> childNames;   // Vec3: long names, e.g. translateX
     std::array<std::string, 3> childShort;   // Vec3: tx, ty, tz
     std::string doc;

@@ -88,6 +88,21 @@ TEST_CASE("option box fields come from the command's typed flags and docs")
     CHECK(opt::choicesFromDoc("closest or normal.", "nearest").empty());
 }
 
+TEST_CASE("each choice's doc comes out of a doc describing them all")
+{
+    using V = std::vector<std::string>;
+    CHECK(opt::choiceDocs("slerp: constant speed along the shortest arc. smooth: cubic through the keys.", V{"slerp", "smooth"}) ==
+          V{"Constant speed along the shortest arc.", "Cubic through the keys."});
+    CHECK(opt::choiceDocs("How each end is filled: quads (a grid joined by a ring), fan or ngon.", V{"quads", "fan", "ngon"}) ==
+          V{"A grid joined by a ring.", "", ""});
+    CHECK(opt::choiceDocs("linear steps each copy by offset; radial turns copies about the pivot; grid fills rows.", V{"linear", "radial", "grid"}) ==
+          V{"Linear steps each copy by offset.", "Radial turns copies about the pivot.", "Grid fills rows."});
+    CHECK(opt::choiceDocs("Neutral keeps colours true (the viewport's own); AgX rolls them off.", V{"neutral", "agx"}) ==
+          V{"Neutral keeps colours true (the viewport's own)", "AgX rolls them off."});
+    CHECK(opt::choiceDocs("Mirror across the x, y or z axis.", V{"x", "y", "z"}) == V{"", "", ""});
+    CHECK(opt::choiceDocs("Where the up direction comes from.", V{"scene", "none"}) == V{"", ""});
+}
+
 TEST_CASE("option box values round-trip through prefs and fill in menu calls")
 {
     if (!ops::find("optionsProbe"))

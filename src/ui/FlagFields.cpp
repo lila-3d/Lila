@@ -1,4 +1,5 @@
 #include "ui/FlagFields.h"
+#include "ui/ChoiceTips.h"
 
 #include "ui/FontPicker.h"
 #include "ui/CodeEdit.h"
@@ -201,8 +202,11 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         out.label = l;
         out.field = combo;
         out.set = [combo, select](const json& v) {
-            QSignalBlocker b(combo);
-            select(v);
+            {
+                QSignalBlocker b(combo);
+                select(v);
+            }
+            choiceTips::refresh(combo);
         };
         break;
     }
@@ -286,6 +290,8 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     }
     }
     out.field->setToolTip(tip(f));
+    if (auto* combo = qobject_cast<QComboBox*>(out.field); combo && f.kind == opt::FieldKind::Choice)
+        choiceTips::apply(combo, f.choiceDocs);
     if (out.label && out.label->toolTip().isEmpty())
         out.label->setToolTip(tip(f));
     return out;

@@ -39,6 +39,8 @@ struct Field
     json defaultValue;
     std::vector<std::string> choices;
     std::vector<std::string> choiceLabels; // same size as choices
+    /** Each choice's own doc, same size as choices; empty where neither an override nor the flag's doc gives one. */
+    std::vector<std::string> choiceDocs;
     std::string doc;
     double min = std::numeric_limits<double>::quiet_NaN();
     double max = std::numeric_limits<double>::quiet_NaN();
@@ -59,6 +61,7 @@ struct Override
     std::map<std::string, std::string> labels;
     std::map<std::string, std::string> sections;
     std::map<std::string, std::vector<std::pair<std::string, std::string>>> choices; // flag -> (value, label)
+    std::map<std::string, std::map<std::string, std::string>> choiceDocs;            // flag -> value -> its doc
     struct Range
     {
         double min, max, step;
@@ -91,6 +94,12 @@ LILA_FOUNDATION_API std::string prettyLabel(std::string_view camel);
  * Empty unless every listed value is a single word and the default (when given) is one of them.
  */
 LILA_FOUNDATION_API std::vector<std::string> choicesFromDoc(std::string_view doc, const json& defaultValue = nullptr);
+
+/**
+ * What a doc describing several choices says about each, by index: "slerp: constant speed. smooth: cubic.",
+ * "quads (a grid), fan or ngon", "linear steps each copy; radial turns them". Empty where it says nothing.
+ */
+LILA_FOUNDATION_API std::vector<std::string> choiceDocs(std::string_view doc, const std::vector<std::string>& choices);
 
 /** The field a flag generates, before overrides. */
 LILA_FOUNDATION_API Field fieldFor(const FlagDef& flag);

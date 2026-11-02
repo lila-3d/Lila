@@ -1,6 +1,7 @@
 #include "ui/ChannelBox.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttrView.h"
+#include "ui/ChoiceTips.h"
 #include "ui/DrivePopover.h"
 #include "ui/Tools.h"
 #include <QCheckBox>
@@ -106,6 +107,16 @@ std::vector<std::string> enumChoices(const Graph& g, scene::NodeId owner, int at
                                                                            : std::vector<std::string>();
 }
 
+/** What each of enumChoices means; spaces have no docs. */
+std::vector<std::string> enumChoiceDocs(const Graph& g, scene::NodeId owner, int attrIndex)
+{
+    if (attrIndex == scene::Transform::kSpace && scene::spaces::hasSpaces(g, owner))
+        return {};
+    const scene::Node* n = g.node(owner);
+    return n && attrIndex >= 0 && attrIndex < int(n->type().attrs.size()) ? choiceTips::forAttr(n->type().attrs[size_t(attrIndex)])
+                                                                           : std::vector<std::string>();
+}
+
 /**
  * Enum values edit through a dropdown of their choices, which writes the chosen name back as the cell's text; the
  * cell shows a chevron so it reads as one. Other cells keep the line edit.
@@ -113,7 +124,10 @@ std::vector<std::string> enumChoices(const Graph& g, scene::NodeId owner, int at
 class EnumDelegate : public QStyledItemDelegate
 {
 public:
-    EnumDelegate(std::function<QStringList(int row)> choices, QObject* parent) : QStyledItemDelegate(parent), mChoices(std::move(choices)) {}
+    EnumDelegate(std::function<QStringList(int row)> choices, std::function<std::vector<std::string>(int row)> docs, QObject* parent)
+        : QStyledItemDelegate(parent), mChoices(std::move(choices)), mDocs(std::move(docs))
+    {
+    }
 
     QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index) const override
     {
@@ -122,6 +136,7 @@ public:
             return QStyledItemDelegate::createEditor(parent, option, index);
         auto* combo = new QComboBox(parent);
         combo->addItems(choices);
+        choiceTips::apply(combo, mDocs(index.row()));
         connect(combo, &QComboBox::activated, combo, [this, combo] {
             auto* self = const_cast<EnumDelegate*>(this);
             Q_EMIT self->commitData(combo);
@@ -190,6 +205,7 @@ protected:
 
 private:
     std::function<QStringList(int row)> mChoices;
+    std::function<std::vector<std::string>(int row)> mDocs;
 };
 
 QString formatNumber(double v)
@@ -553,6 +569,11 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                                                 for (const std::string& c : enumChoices(Graph::current(), mRows[r].node ? mRows[r].node : mNode, mRows[r].attrIndex))
                                                     out << QString::fromStdString(c);
                                                 return out;
+                                            },
+                                            [this](int r) {
+                                                if (r < 0 || r >= int(mRows.size()) || mRows[r].header || mRows[r].type != scene::PlugType::Enum)
+                                                    return std::vector<std::string>();
+                                                return enumChoiceDocs(Graph::current(), mRows[r].node ? mRows[r].node : mNode, mRows[r].attrIndex);
                                             },
                                             mTable));
 

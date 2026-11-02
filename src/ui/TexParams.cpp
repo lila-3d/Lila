@@ -2,6 +2,7 @@
 
 #include "ops/CommandOptions.h"
 #include "tex/Types.h"
+#include "ui/ChoiceTips.h"
 #include "ui/CodeEdit.h"
 #include "ui/ColorPopup.h"
 #include "ui/FlagFields.h"
@@ -497,6 +498,7 @@ void addParam(QFormLayout* form, QWidget* parent, const json& p, const SetFn& se
             f.choices.push_back(o.get<std::string>());
             f.choiceLabels.push_back(opt::prettyLabel(o.get<std::string>()));
         }
+        f.choiceDocs = opt::choiceDocs(p.value("doc", ""), f.choices);
         json shown = value;
         if (value.is_number_integer() && size_t(value.get<int64_t>()) < f.choices.size())
             shown = f.choices[size_t(value.get<int64_t>())];
@@ -504,6 +506,8 @@ void addParam(QFormLayout* form, QWidget* parent, const json& p, const SetFn& se
             f.defaultValue = f.choices[size_t(f.defaultValue.get<int64_t>())];
         FlagFieldWidgets w = makeFlagField(f, shown, changed, parent);
         w.field->setToolTip(tip);
+        if (auto* combo = qobject_cast<QComboBox*>(w.field))
+            choiceTips::refresh(combo);
         form->addRow(w.label, w.field);
         return;
     }

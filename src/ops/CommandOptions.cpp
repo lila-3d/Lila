@@ -261,6 +261,82 @@ std::vector<std::string> choicesFromDoc(std::string_view doc, const json& defaul
     return out;
 }
 
+namespace
+{
+bool alnumAt(std::string_view s, size_t i)
+{
+    return i < s.size() && std::isalnum(static_cast<unsigned char>(s[i]));
+}
+
+/** From start to the end of its clause: a sentence's full stop or a semicolon, outside parentheses. */
+std::string clauseFrom(std::string_view doc, size_t start)
+{
+    int depth = 0;
+    size_t i = start;
+    for (; i < doc.size(); ++i)
+    {
+        char c = doc[i];
+        if (c == '(')
+            ++depth;
+        else if (c == ')')
+            depth = std::max(0, depth - 1);
+        else if (depth == 0 && (c == ';' || (c == '.' && (i + 1 == doc.size() || doc[i + 1] == ' '))))
+            break;
+    }
+    return trim(doc.substr(start, i - start));
+}
+
+std::string sentence(std::string s)
+{
+    if (s.empty())
+        return s;
+    s[0] = char(std::toupper(static_cast<unsigned char>(s[0])));
+    if (s.back() != '.' && s.back() != '!' && s.back() != '?' && s.back() != ')')
+        s += '.';
+    return s;
+}
+
+std::string docOfChoice(std::string_view doc, std::string_view lower, const std::string& choice)
+{
+    std::string c(choice);
+    std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+    if (c.empty())
+        return {};
+    for (size_t at = lower.find(c); at != std::string_view::npos; at = lower.find(c, at + 1))
+    {
+        const size_t end = at + c.size();
+        if ((at > 0 && alnumAt(c, 0) && alnumAt(lower, at - 1)) || (alnumAt(c, c.size() - 1) && alnumAt(lower, end)))
+            continue;
+        if (end < doc.size() && doc[end] == ':')
+            if (std::string d = clauseFrom(doc, end + 1); !d.empty())
+                return sentence(d);
+        if (doc.substr(end, 2) == " (")
+        {
+            size_t close = doc.find(')', end + 2);
+            if (close != std::string_view::npos && close > end + 2)
+                return sentence(std::string(doc.substr(end + 2, close - end - 2)));
+        }
+        // A clause that opens with the choice and goes on to describe it: "linear steps each copy by offset".
+        size_t before = doc.find_last_not_of(' ', at == 0 ? std::string_view::npos : at - 1);
+        const bool opens = at == 0 || before == std::string_view::npos || std::string_view(".;:").find(doc[before]) != std::string_view::npos;
+        if (opens && end < doc.size() && doc[end] == ' ' && alnumAt(doc, end + 1))
+            return sentence(clauseFrom(doc, at));
+    }
+    return {};
+}
+} // namespace
+
+std::vector<std::string> choiceDocs(std::string_view doc, const std::vector<std::string>& choices)
+{
+    std::string lower(doc);
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+    std::vector<std::string> out;
+    out.reserve(choices.size());
+    for (const std::string& c : choices)
+        out.push_back(docOfChoice(doc, lower, c));
+    return out;
+}
+
 Field fieldFor(const FlagDef& flag)
 {
     Field f;
@@ -282,6 +358,7 @@ Field fieldFor(const FlagDef& flag)
     }
     for (const std::string& c : f.choices)
         f.choiceLabels.push_back(prettyLabel(c));
+    f.choiceDocs = choiceDocs(flag.doc, f.choices);
     f.min = flag.min.value_or(f.min);
     f.max = flag.max.value_or(f.max);
     json def = flag.defaultValue.is_null() ? json(nullptr) : normalize(f, flag.defaultValue);
@@ -321,9 +398,14 @@ std::vector<Field> fields(std::string_view command, const json& fixed)
                     f.choices.push_back(value);
                     f.choiceLabels.push_back(label);
                 }
+                f.choiceDocs = choiceDocs(flag.doc, f.choices);
                 json d = normalize(f, flag.defaultValue);
                 f.defaultValue = d.is_null() ? kindZero(f) : d;
             }
+            if (auto it = o->choiceDocs.find(flag.name); it != o->choiceDocs.end())
+                for (size_t i = 0; i < f.choices.size(); ++i)
+                    if (auto d = it->second.find(f.choices[i]); d != it->second.end())
+                        f.choiceDocs[i] = d->second;
             if (auto it = o->labels.find(flag.name); it != o->labels.end())
                 f.label = it->second;
             if (auto it = o->sections.find(flag.name); it != o->sections.end())

@@ -1,4 +1,5 @@
 #include "ui/BakerPanelInternal.h"
+#include "ui/ChoiceTips.h"
 
 namespace lila::ui
 {
@@ -772,7 +773,11 @@ void BakerPanel::refreshParams()
         case scene::PlugType::Int: f.kind = opt::FieldKind::Int; break;
         case scene::PlugType::Float: f.kind = opt::FieldKind::Float; break;
         case scene::PlugType::Vec3: f.kind = opt::FieldKind::Vec3; break;
-        case scene::PlugType::Enum: f.kind = opt::FieldKind::Choice; f.choices = d->enumNames; break;
+        case scene::PlugType::Enum:
+            f.kind = opt::FieldKind::Choice;
+            f.choices = d->enumNames;
+            f.choiceDocs = choiceTips::forAttr(*d);
+            break;
         default: break;
         }
         f.defaultValue = fieldValue(*d, d->defaultValue);
