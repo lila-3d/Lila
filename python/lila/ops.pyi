@@ -5306,11 +5306,36 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
         weightedNormals: Add a weighted normals modifier, if the mesh has none, so the n-gons shade flat. Default True.
     """
 
-def polyBridge(divisions: int | None = None) -> Any:
-    """Join selected boundary loops with faces. Several pairs bridge at once; a single border round a slot bridges its two long sides.
+def polyBridge(divisions: int | None = None, curveType: str | None = None, smoothness: float | None = None, tensionSource: float | None = None, tensionTarget: float | None = None, bridgeOffset: int | None = None, directionSource: bool | None = None, directionTarget: bool | None = None, twist: float | None = None, taper: float | None = None, bias: float | None = None, taperCurve: Sequence[Any] | None = None, profileFactor: float | None = None, profileShape: str | None = None, curve: str | None = None, transition: str | None = None, weldEnds: bool | None = None, weldTolerance: float | None = None, relax: int | None = None, smoothingAngle: float | None = None, merge: bool | None = None, mergeFactor: float | None = None, connect: str | None = None, startSource: int | None = None, startTarget: int | None = None, pairs: Sequence[Any] | None = None) -> Any:
+    """Join selected border loops or chains with faces. Several pairs bridge at once; a single border round a slot or sliver bridges its two long sides; borders of different lengths pair by arc length. Selected faces are deleted and the holes bridged.
 
     Args:
-        divisions: Extra rows between the loops. Default 0.
+        divisions: Rows between the borders; -1 picks them from the gap, the faces around it and the open ends. Default -1.
+        curveType: How the rows run between the borders. One of 'linear', 'blend', 'path', 'auto'. Default 'auto'.
+        smoothness: 0 straightens the curve, 1 is the full curve. Default 1.0.
+        tensionSource: Handle length leaving the source border (Blend and Auto). Default 1.0.
+        tensionTarget: Handle length entering the target border (Blend and Auto). Default 1.0.
+        bridgeOffset: Steps the pairing round closed loops. Default 0.
+        directionSource: Read the source border the other way round. Default False.
+        directionTarget: Read the target border the other way round. Default False.
+        twist: Turns the middle rows about the bridge's axis, degrees at the target. Default 0.0.
+        taper: Scale of the middle rows about their centre. Default 1.0.
+        bias: Where the taper peaks, 0 at the source, 1 at the target. Default 0.5.
+        taperCurve: Taper strength along the bridge, values evenly spaced from source to target.
+        profileFactor: Bulge (positive) or pinch (negative) of the middle rows, as a fraction of the gap. Default 0.0.
+        profileShape: Falloff of the profile across the bridge. One of 'smooth', 'sphere', 'root', 'sharp', 'linear', 'inverseSquare', 'constant'. Default 'smooth'.
+        curve: The curve Path follows.
+        transition: How borders of different lengths make up the difference. One of 'quads', 'triangles'. Default 'quads'.
+        weldEnds: Open bridges land their end rows on the border between the two sides' ends. Default True.
+        weldTolerance: How far a row may be from an end border point and still weld, as a fraction of a row. Default 0.35.
+        relax: Smoothing passes over the new points. Default 0.
+        smoothingAngle: New edges sharper than this are hard. Default 30.0.
+        merge: Merge the borders into one instead of bridging. Default False.
+        mergeFactor: Where merged points go: 0 the source, 1 the target. Default 0.5.
+        connect: Pair loops up, or run one bridge through them all in order. One of 'pairs', 'chain', 'chainClosed'. Default 'pairs'.
+        startSource: Source point that pairs with startTarget. Default -1.
+        startTarget: Target point that pairs with startSource. Default -1.
+        pairs: More point pairs to hold: [[source, target], ...].
     """
 
 def polyCapsule(name: str | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, normal: Sequence[float] | None = None, generator: bool | None = None, radius: float | None = None, height: float | None = None, subdivisionsAxis: int | None = None, subdivisionsHeight: int | None = None, subdivisionsCaps: int | None = None, baseAtOrigin: bool | None = None, upAxis: str | None = None, *, n: str | None = None) -> Any:

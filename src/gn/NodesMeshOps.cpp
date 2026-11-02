@@ -595,14 +595,47 @@ void topologyOps()
         "Gives the surface thickness: an inner shell along the point normals, joined at open borders.");
 
     meshOp(
-        "BridgeEdgeLoops", "Bridge Edge Loops", Domain::Edge, {bounded(in("divisions", T::Int, 0, "Extra rows of faces between the loops."), 0, 1000)}, {},
+        "BridgeEdgeLoops", "Bridge Edge Loops", Domain::Edge,
+        {bounded(in("divisions", T::Int, 0, "Extra rows of faces between the loops; -1 picks them from the gap and the open ends."), -1, 1000),
+         bounded(in("smoothness", T::Float, 1.0, "0 straightens the curve, 1 is the full curve."), 0.0, 1.0),
+         in("tensionSource", T::Float, 1.0), in("tensionTarget", T::Float, 1.0),
+         in("offset", T::Int, 0, "Steps the pairing round closed loops."), in("twist", T::Float, 0.0, "Degrees from source to target."),
+         in("taper", T::Float, 1.0, "Scale of the middle rows."), bounded(in("bias", T::Float, 0.5, "Where the taper peaks."), 0.0, 1.0),
+         in("profileFactor", T::Float, 0.0, "Bulge (positive) or pinch of the middle rows."),
+         in("weldEnds", T::Bool, true, "Open bridges land their end rows on the border between the sides' ends."),
+         bounded(in("relax", T::Int, 0, "Smoothing passes over the new points."), 0, 100),
+         in("merge", T::Bool, false, "Merge the loops instead of bridging."), bounded(in("mergeFactor", T::Float, 0.5), 0.0, 1.0)},
+        {prop("curve", {"linear", "blend", "auto"}, "linear", "Linear rows, a blend square to each border, or a fit to the faces around them."),
+         prop("profileShape", {"smooth", "sphere", "root", "sharp", "linear", "inverseSquare", "constant"}, "smooth"),
+         prop("transition", {"quads", "triangles"}, "quads", "How borders of different lengths make up the difference."),
+         prop("connect", {"pairs", "chain", "chainClosed"}, "pairs", "Pairs, or one run through every loop in order.")},
         {fout("bridge", T::Bool, "The new faces.")},
         [](geo::Mesh& m, std::vector<Index>& sel, ExecContext& c) {
             geo::BridgeOptions o;
-            o.divisions = clampInt(c.i("divisions"), 0, 1000);
+            o.divisions = clampInt(c.i("divisions"), -1, 1000);
+            const std::string curve = c.prop("curve"), shape = c.prop("profileShape"), connect = c.prop("connect");
+            o.curve = curve == "auto" ? geo::BridgeCurve::Auto : curve == "blend" ? geo::BridgeCurve::Blend : geo::BridgeCurve::Linear;
+            o.smoothness = std::clamp(c.f("smoothness"), 0.0, 1.0);
+            o.tensionSource = c.f("tensionSource");
+            o.tensionTarget = c.f("tensionTarget");
+            o.offset = int(c.i("offset"));
+            o.twist = c.f("twist");
+            o.taper = c.f("taper");
+            o.bias = std::clamp(c.f("bias"), 0.0, 1.0);
+            o.profileFactor = c.f("profileFactor");
+            const char* shapes[] = {"smooth", "sphere", "root", "sharp", "linear", "inverseSquare", "constant"};
+            for (size_t k = 0; k < std::size(shapes); ++k)
+                if (shape == shapes[k])
+                    o.profileShape = geo::BridgeProfile(k);
+            o.transition = c.prop("transition") == "triangles" ? geo::BridgeTransition::Triangles : geo::BridgeTransition::Quads;
+            o.connect = connect == "chain" ? geo::BridgeConnect::Chain : connect == "chainClosed" ? geo::BridgeConnect::ChainClosed : geo::BridgeConnect::Pairs;
+            o.weldEnds = c.b("weldEnds");
+            o.relax = clampInt(c.i("relax"), 0, 100);
+            o.merge = c.b("merge");
+            o.mergeFactor = std::clamp(c.f("mergeFactor"), 0.0, 1.0);
             markFaces(m, c.anonymous("bridge"), geo::bridgeEdges(m, sel, o));
         },
-        "Joins pairs of open border loops among the selected edges with quads.");
+        "Joins pairs of open border loops among the selected edges with faces; loops of different lengths make up the difference with quads.");
 
     meshOp(
         "MirrorMesh", "Mirror Mesh", Domain::Point,

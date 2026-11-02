@@ -4,6 +4,7 @@ lila_module(lila_geo Scene
     ArrayMesh.cpp
     Attribute.cpp
     BoundingShapes.cpp
+    Bridge.cpp
     MultiBox.cpp
     Bvh.cpp
     ColorSets.cpp

@@ -259,6 +259,30 @@ TEST_CASE("polyInset on every face of a symmetric cube adds rims without duplica
         }
 }
 
+TEST_CASE("polyBevel on faces bevels the border of the selection, not the edges inside it")
+{
+    run("newScene");
+    std::string cyl = run("polyCylinder", {{"radius", 50.0}, {"height", 100.0}, {"subdivisionsAxis", 16}, {"subdivisionsCaps", 3}})[0];
+    const geo::Mesh before = meshOf(cyl);
+    std::vector<uint32_t> top;
+    for (Index f = 0; f < before.faceCapacity(); ++f)
+        if (before.faceValid(f) && before.faceNormal(f).y > 0.99)
+            top.push_back(f);
+    REQUIRE(top.size() > 16);
+    run("selectMode", {{"args", {"face"}}});
+    run("selectComponents", {{"args", {cyl}}, {"faces", top}});
+    run("polyBevel", {{"offset", 3.0}});
+    const geo::Mesh& m = meshOf(cyl);
+    CHECK(m.validate(geo::kValidateDefault | geo::kValidateDegenerate).empty());
+    // One ring of chamfer faces round the rim; the cap's own faces keep their count.
+    CHECK(m.numFaces() == before.numFaces() + 16);
+    int capFaces = 0;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && m.faceNormal(f).y > 0.99)
+            ++capFaces;
+    CHECK(capFaces == int(top.size()));
+}
+
 TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
 {
     scene::lastOp::install();

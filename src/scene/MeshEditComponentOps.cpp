@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "geo/Knife.h"
 #include "geo/LoopTools.h"
@@ -8,6 +9,8 @@
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
+#include "curve/CurveNodes.h"
+#include "curve/Tessellate.h"
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -17,6 +20,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/ObjectSets.h"
+#include "scene/RigUtil.h"
 #include "scene/SoftSelect.h"
 
 #include <format>
@@ -56,6 +60,48 @@ void selectWholeInObjectMode(ComponentMode kind)
     components::setAll(kind == ComponentMode::Vertex ? all : std::map<NodeId, Ids>{}, kind == ComponentMode::Edge ? all : std::map<NodeId, Ids>{},
                        kind == ComponentMode::Face ? all : std::map<NodeId, Ids>{});
     components::setModeUndoable(kind);
+}
+
+/** The named curve's first spline as a polyline in the selected mesh's space, for polyBridge's Path. */
+std::vector<glm::dvec3> bridgePath(const std::string& name)
+{
+    if (name.empty())
+        return {};
+    Graph& g = graph();
+    g.evaluate();
+    Node* c = g.find(name);
+    if (!c)
+        throw CommandError("polyBridge: no curve " + name);
+    const curve::Splines& s = curve::splinesOf(c->value(curve::CurveShape::kWorldSpace));
+    if (s.empty())
+        throw CommandError("polyBridge: " + name + " has no curve");
+    const curve::Polyline pl = curve::tessellate(s.front());
+    glm::dmat4 toLocal(1.0);
+    const auto sel = components::selected(components::mode());
+    if (sel.size() == 1)
+        if (Node* n = g.node(sel.begin()->first))
+            toLocal = glm::inverse(worldOf(*n));
+    std::vector<glm::dvec3> out;
+    for (const glm::dvec3& p : pl.points)
+        out.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));
+    return out;
+}
+
+/** Edges with exactly one of the faces on them: the outline of each region the faces make. */
+Ids regionBorderEdges(const geo::Mesh& m, const Ids& faces)
+{
+    std::set<Index> sel(faces.begin(), faces.end());
+    std::set<Index> out;
+    for (Index f : faces)
+        if (m.faceValid(f))
+            m.forEachFaceCorner(f, [&](Index c) {
+                const Index e = m.cornerEdge(c);
+                int count = 0;
+                m.forEachEdgeCorner(e, [&](Index ec) { count += sel.count(m.cornerFace(ec)) ? 1 : 0; });
+                if (count == 1)
+                    out.insert(e);
+            });
+    return Ids(out.begin(), out.end());
 }
 
 /** polyExtrude duplicate=True: each mesh's selected faces extruded into a new mesh beside it, which ends up selected with its cap. */
@@ -171,7 +217,10 @@ void registerMeshEditComponentCommands()
         .run = [](const Args& a) -> json {
             selectWholeInObjectMode(K::Edge);
             double used = a.get<double>("offset");
-            json out = editSelected("Bevel", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+            // Faces bevel the border of each selected region, not the edges between selected faces (Maya).
+            const bool fromFaces = components::mode() == K::Face;
+            json out = editSelected("Bevel", fromFaces ? K::Face : K::Edge, [&](geo::Mesh& m, const Ids& picked, const geo::SymmetryMap* s) {
+                const Ids sel = fromFaces ? regionBorderEdges(m, withMirror(m, s, picked, K::Face)) : picked;
                 geo::BevelOptions o;
                 o.offset = a.get<double>("offset");
                 o.segments = std::max(1, a.get<int>("segments"));
@@ -417,12 +466,103 @@ void registerMeshEditComponentCommands()
 
     ops::registerCommand({
         .name = "polyBridge",
-        .doc = "Join selected boundary loops with faces. Several pairs bridge at once; a single border round a slot bridges its two long sides.",
-        .flags = {{"divisions", "", T::Int, 0, "Extra rows between the loops.", {}, {}, 0.0}},
+        .doc = "Join selected border loops or chains with faces. Several pairs bridge at once; a single border round a slot or sliver bridges "
+               "its two long sides; borders of different lengths pair by arc length. Selected faces are deleted and the holes bridged.",
+        .flags = {{"divisions", "", T::Int, -1, "Rows between the borders; -1 picks them from the gap, the faces around it and the open ends.", {}, {}, -1.0, 256.0},
+                  {"curveType", "", T::String, "auto", "How the rows run between the borders.", {"linear", "blend", "path", "auto"}},
+                  {"smoothness", "", T::Float, 1.0, "0 straightens the curve, 1 is the full curve.", {}, {}, 0.0, 1.0},
+                  {"tensionSource", "", T::Float, 1.0, "Handle length leaving the source border (Blend and Auto).", {}, {}, 0.0, 4.0},
+                  {"tensionTarget", "", T::Float, 1.0, "Handle length entering the target border (Blend and Auto).", {}, {}, 0.0, 4.0},
+                  {"bridgeOffset", "", T::Int, 0, "Steps the pairing round closed loops."},
+                  {"directionSource", "", T::Bool, false, "Read the source border the other way round."},
+                  {"directionTarget", "", T::Bool, false, "Read the target border the other way round."},
+                  {"twist", "", T::Float, 0.0, "Turns the middle rows about the bridge's axis, degrees at the target."},
+                  {"taper", "", T::Float, 1.0, "Scale of the middle rows about their centre.", {}, {}, 0.0, 10.0},
+                  {"bias", "", T::Float, 0.5, "Where the taper peaks, 0 at the source, 1 at the target.", {}, {}, 0.0, 1.0},
+                  {"taperCurve", "", T::List, nullptr, "Taper strength along the bridge, values evenly spaced from source to target."},
+                  {"profileFactor", "", T::Float, 0.0, "Bulge (positive) or pinch (negative) of the middle rows, as a fraction of the gap.", {}, {}, -2.0, 2.0},
+                  {"profileShape", "", T::String, "smooth", "Falloff of the profile across the bridge.",
+                   {"smooth", "sphere", "root", "sharp", "linear", "inverseSquare", "constant"}},
+                  {"curve", "", T::String, "", "The curve Path follows."},
+                  {"transition", "", T::String, "quads", "How borders of different lengths make up the difference.", {"quads", "triangles"}},
+                  {"weldEnds", "", T::Bool, true, "Open bridges land their end rows on the border between the two sides' ends."},
+                  {"weldTolerance", "", T::Float, 0.35, "How far a row may be from an end border point and still weld, as a fraction of a row.", {}, {}, 0.0, 1.0},
+                  {"relax", "", T::Int, 0, "Smoothing passes over the new points.", {}, {}, 0.0, 50.0},
+                  {"smoothingAngle", "", T::Float, 30.0, "New edges sharper than this are hard.", {}, {}, 0.0, 180.0},
+                  {"merge", "", T::Bool, false, "Merge the borders into one instead of bridging."},
+                  {"mergeFactor", "", T::Float, 0.5, "Where merged points go: 0 the source, 1 the target.", {}, {}, 0.0, 1.0},
+                  {"connect", "", T::String, "pairs", "Pair loops up, or run one bridge through them all in order.", {"pairs", "chain", "chainClosed"}},
+                  {"startSource", "", T::Int, -1, "Source point that pairs with startTarget."},
+                  {"startTarget", "", T::Int, -1, "Target point that pairs with startSource."},
+                  {"pairs", "", T::List, nullptr, "More point pairs to hold: [[source, target], ...]."}},
         .run = [](const Args& a) -> json {
-            return editSelected("Bridge", K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap*) {
-                return faces(geo::bridgeEdges(m, sel, {std::max(0, a.get<int>("divisions"))}));
+            geo::BridgeOptions o;
+            o.divisions = a.get<int>("divisions");
+            const std::string curve = a.get<std::string>("curveType");
+            o.curve = curve == "linear" ? geo::BridgeCurve::Linear
+                      : curve == "blend" ? geo::BridgeCurve::Blend
+                      : curve == "path"  ? geo::BridgeCurve::Path
+                                         : geo::BridgeCurve::Auto;
+            o.smoothness = a.get<double>("smoothness");
+            o.tensionSource = a.get<double>("tensionSource");
+            o.tensionTarget = a.get<double>("tensionTarget");
+            o.offset = a.get<int>("bridgeOffset");
+            o.reverseSource = a.get<bool>("directionSource");
+            o.reverseTarget = a.get<bool>("directionTarget");
+            o.twist = a.get<double>("twist");
+            o.taper = a.get<double>("taper");
+            o.bias = a.get<double>("bias");
+            if (a.has("taperCurve"))
+                for (const json& v : a.flags["taperCurve"])
+                    if (v.is_number())
+                        o.taperCurve.push_back(v.get<double>());
+            o.profileFactor = a.get<double>("profileFactor");
+            const std::string shape = a.get<std::string>("profileShape");
+            const char* shapes[] = {"smooth", "sphere", "root", "sharp", "linear", "inverseSquare", "constant"};
+            for (size_t k = 0; k < std::size(shapes); ++k)
+                if (shape == shapes[k])
+                    o.profileShape = geo::BridgeProfile(k);
+            o.transition = a.get<std::string>("transition") == "triangles" ? geo::BridgeTransition::Triangles : geo::BridgeTransition::Quads;
+            o.weldEnds = a.get<bool>("weldEnds");
+            o.weldTolerance = a.get<double>("weldTolerance");
+            o.relax = std::max(0, a.get<int>("relax"));
+            o.smoothingAngle = a.get<double>("smoothingAngle");
+            o.merge = a.get<bool>("merge");
+            o.mergeFactor = a.get<double>("mergeFactor");
+            const std::string connect = a.get<std::string>("connect");
+            o.connect = connect == "chain"         ? geo::BridgeConnect::Chain
+                        : connect == "chainClosed" ? geo::BridgeConnect::ChainClosed
+                                                   : geo::BridgeConnect::Pairs;
+            if (a.get<int>("startSource") >= 0 && a.get<int>("startTarget") >= 0)
+                o.pairs.push_back({Index(a.get<int>("startSource")), Index(a.get<int>("startTarget"))});
+            if (a.has("pairs"))
+                for (const json& pr : a.flags["pairs"])
+                    if (pr.is_array() && pr.size() == 2 && pr[0].is_number_integer() && pr[1].is_number_integer())
+                        o.pairs.push_back({pr[0].get<Index>(), pr[1].get<Index>()});
+            if (o.curve == geo::BridgeCurve::Path)
+                o.path = bridgePath(a.get<std::string>("curve"));
+
+            geo::BridgeResult total;
+            const bool fromFaces = components::mode() == K::Face;
+            json out = editSelected("Bridge", fromFaces ? K::Face : K::Edge, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
+                const Ids all = withMirror(m, s, sel, fromFaces ? K::Face : K::Edge);
+                geo::BridgeResult r = fromFaces ? geo::bridgeFaces(m, all, o) : geo::bridge(m, all, o);
+                total.rows = std::max(total.rows, r.rows);
+                total.welded += r.welded;
+                total.split += r.split;
+                total.unwelded += r.unwelded;
+                total.triangles += r.triangles;
+                total.pairsBridged += r.pairsBridged;
+                total.warnings.insert(total.warnings.end(), r.warnings.begin(), r.warnings.end());
+                return faces(std::move(r.faces));
             });
+            for (const std::string& w : total.warnings)
+                log::warn("polyBridge: {}", w);
+            if (total.pairsBridged == 0)
+                log::warn("polyBridge: nothing to bridge; select two borders, or one border round a slot");
+            else if (total.unwelded > 0)
+                log::warn("polyBridge: {} end border points fell between rows and stay as corners of the end faces", total.unwelded);
+            return out;
         },
     });
 

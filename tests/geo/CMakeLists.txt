@@ -1,6 +1,7 @@
 add_executable(lila_geo_tests
     main.cpp
     test_bevel.cpp
+    test_bridge.cpp
     test_bounding.cpp
     test_bvh.cpp
     test_cross_section.cpp

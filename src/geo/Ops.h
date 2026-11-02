@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include "geo/Bridge.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
 #include "geo/Triangulate.h"
@@ -196,25 +197,6 @@ LILA_SCENE_API std::vector<Index> collapseEdges(Mesh& mesh, std::span<const Inde
 LILA_SCENE_API std::vector<Index> dissolveEdges(Mesh& mesh, std::span<const Index> edges, bool clean = true);
 /** Removes points by merging the faces around them. Returns the merged faces. */
 LILA_SCENE_API std::vector<Index> dissolvePoints(Mesh& mesh, std::span<const Index> points);
-
-struct BridgeOptions
-{
-    /** Extra rows of faces between the loops. */
-    int divisions = 0;
-};
-
-/** Joins two boundary loops (or open boundary chains) of equal length with quads. Returns the new faces. */
-LILA_SCENE_API std::vector<Index> bridgeEdgeLoops(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
-
-/**
- * Splits a selection of edges into the pairs of border chains to bridge. Edges off the border are ignored. Whole chains
- * pair with their nearest partner of the same length; a chain left over (one loop round a slot, or a U) is cut at its
- * corners and its two longest matching opposite sides pair, leaving the short ends that join them.
- */
-LILA_SCENE_API std::vector<std::vector<Index>> planBridges(const Mesh& mesh, std::span<const Index> edges);
-
-/** Bridges every pair planBridges finds. Returns the new faces. */
-LILA_SCENE_API std::vector<Index> bridgeEdges(Mesh& mesh, std::span<const Index> edges, const BridgeOptions& opts = {});
 
 /** Splits each face into a fan of triangles around a new centre point. Returns the new faces. */
 LILA_SCENE_API std::vector<Index> pokeFaces(Mesh& mesh, std::span<const Index> faces);

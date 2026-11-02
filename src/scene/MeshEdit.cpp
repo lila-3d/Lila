@@ -266,6 +266,29 @@ void registerMeshEditCommands()
         offset.ranges = {{"distance", {0.0, 1e6, 0.01, ""}}};
         offset.labels = {{"absolute", "Distance in cm"}, {"deleteEdge", "Delete Selected Edges"}};
         opt::setOverride("polyOffsetLoop", std::move(offset));
+        opt::Override bridge;
+        bridge.order = {"curveType", "divisions", "smoothness", "tensionSource", "tensionTarget", "curve"};
+        for (const char* f : {"curveType", "divisions", "smoothness", "tensionSource", "tensionTarget", "curve"})
+            bridge.sections[f] = "Shape";
+        for (const char* f : {"twist", "taper", "bias", "profileFactor", "profileShape"})
+            bridge.sections[f] = "Form";
+        for (const char* f : {"bridgeOffset", "directionSource", "directionTarget", "startSource", "startTarget", "connect"})
+            bridge.sections[f] = "Pairing";
+        for (const char* f : {"weldEnds", "weldTolerance", "transition", "relax", "smoothingAngle"})
+            bridge.sections[f] = "Ends and Edges";
+        for (const char* f : {"merge", "mergeFactor"})
+            bridge.sections[f] = "Merge";
+        bridge.choices["curveType"] = {{"auto", "Auto"}, {"blend", "Blend"}, {"linear", "Linear"}, {"path", "Path"}};
+        bridge.choices["connect"] = {{"pairs", "Loop Pairs"}, {"chain", "Open Chain"}, {"chainClosed", "Closed Chain"}};
+        bridge.choices["transition"] = {{"quads", "Quads"}, {"triangles", "Triangles"}};
+        bridge.labels = {{"divisions", "Divisions (-1 Auto)"}, {"curve", "Path Curve"}, {"bridgeOffset", "Bridge Offset"},
+                         {"directionSource", "Reverse Source"}, {"directionTarget", "Reverse Target"}, {"profileFactor", "Profile"},
+                         {"weldEnds", "Weld Open Ends"}};
+        bridge.ranges["twist"] = {-720.0, 720.0, 1.0, " deg"};
+        bridge.ranges["smoothingAngle"] = {0.0, 180.0, 1.0, " deg"};
+        bridge.popupHidden = {"curve", "startSource", "startTarget", "connect", "weldTolerance"};
+        bridge.docs = "bridge";
+        opt::setOverride("polyBridge", std::move(bridge));
     }
     // Recording the last op is what makes these adjustable, in any host and not only once the UI installs it.
     lastOp::install();
