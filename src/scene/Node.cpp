@@ -1,6 +1,7 @@
 #include "scene/Node.h"
 #include "scene/PostProcess.h"
 #include "media/Media.h"
+#include "media/SoundCues.h"
 
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
@@ -247,6 +248,7 @@ void registerBuiltins()
     anim::registerLayerTypes();
     anim::registerTakeTypes();
     media::registerMediaTypes();
+    media::registerSoundCueTypes();
     spaces::registerTypes();
     displayLayers::registerTypes();
     objectSets::registerTypes();

@@ -2,7 +2,7 @@
 # (static, cross-platform deterministic) links into this extension only.
 find_package(Jolt CONFIG REQUIRED)
 lila_add_extension(lila_destruction_extension ID Destruction MANIFEST extension.json UI
-    SOURCES Destruction.cpp Commands.cpp Ui.cpp RigidWorld.cpp Destruction.h PieceTransform.h RigidWorld.h RigidState.h)
+    SOURCES Destruction.cpp Commands.cpp Ui.cpp RigidWorld.cpp Sounds.cpp Destruction.h PieceTransform.h RigidWorld.h RigidState.h)
 target_link_libraries(lila_destruction_extension PRIVATE Jolt::Jolt)
 foreach(_host lila lilabatch)
     if(TARGET ${_host})

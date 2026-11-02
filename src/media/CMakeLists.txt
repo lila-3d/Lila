@@ -1,6 +1,7 @@
 lila_module(lila_media Scene
     Decode.cpp Decode.h
     Media.cpp Media.h
+    SoundCues.cpp SoundCues.h
     AudioEngine.cpp AudioEngine.h)
 
 # FFmpeg is LGPL: linked as DLLs that ship beside lila.exe, built without gpl or nonfree parts (see vcpkg.json).

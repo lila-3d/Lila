@@ -6,6 +6,7 @@
 #include "core/Workspace.h"
 #include "scene/Anim.h"
 #include "media/Media.h"
+#include "media/SoundCues.h"
 #include "scene/AnimLayer.h"
 #include "scene/Take.h"
 #include "scene/BatchRename.h"
@@ -292,6 +293,7 @@ void registerCommands()
     anim::registerLayerCommands();
     anim::registerTakeCommands();
     media::registerMediaCommands();
+    media::registerSoundCueCommands();
     sim::registerCommands();
     sim::registerCommands();
     registerRenderSettingsCommands();

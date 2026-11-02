@@ -365,3 +365,33 @@ TEST_CASE("meshes broken together hit each other; explosions go off on their fra
     CHECK(groundBelow(72, -400, 400) > 0.9);
     CHECK(worldBoundsAt("Destruction", 72).min.y > -1040.0);
 }
+
+TEST_CASE("sound cues hear a destruction's breaks and hits from its cached frames")
+{
+    loadDestruction();
+    run("newScene");
+    run("playbackOptions", {{"minTime", 1.0 / 24.0}, {"maxTime", 1.0}, {"fps", 24.0}});
+    const std::string wall = run("polyCube", {{"name", "Wall"}, {"width", 200.0}, {"height", 100.0}, {"depth", 20.0}})[0];
+    run("move", {{"args", {wall}}, {"to", json::array({0, 50, 0})}});
+    run("breakApart", {{"args", {wall}}, {"material", "concrete"}, {"pieces", 16}, {"impact", json::array({0, 60, 10})}});
+    run("soundCue", {{"name", "cracks"}, {"eventType", "break"}, {"sounds", {"crack.wav"}}, {"objects", wall}, {"minInterval", 0.0}});
+    run("soundCue", {{"name", "thuds"}, {"eventType", "contact"}, {"minStrength", 50.0}, {"sounds", {"thud1.wav", "thud2.wav"}}});
+
+    // Nothing is simulated yet, so nothing fires: cues never step a simulation.
+    CHECK(run("soundCueTriggers").empty());
+    for (int f = 1; f <= 24; ++f)
+    {
+        Graph::current().setTime(f / 24.0);
+        Graph::current().evaluate();
+    }
+    int breaks = 0, hits = 0;
+    for (const json& t : run("soundCueTriggers"))
+    {
+        (t["event"] == "break" ? breaks : hits) += 1;
+        CHECK(t["object"].get<std::string>().find("Wall") != std::string::npos);
+    }
+    const auto csv = std::filesystem::temp_directory_path() / "lila_cue_breaks.csv";
+    const json exported = run("exportBreaks", {{"args", {wall}}, {"path", csv.string()}, {"end", 24}});
+    CHECK(breaks == exported["breaks"].get<int>());
+    CHECK(hits > 0);
+}

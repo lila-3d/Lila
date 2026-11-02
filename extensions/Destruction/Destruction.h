@@ -29,4 +29,6 @@ const Preset& preset(const std::string& material);
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** Breaks and hits as sound cue events (media::eventSources). */
+void registerSounds(lila::ext::Context& ctx);
 } // namespace destruction
