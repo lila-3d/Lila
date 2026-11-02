@@ -59,6 +59,44 @@ template <class E, size_t N> E valueOf(const Names<E> (&table)[N], const std::st
     throw std::invalid_argument(std::string("unknown ") + what + " '" + s + "'");
 }
 
+/** rig limits: marker -> {type, axis, min, max, cone, stiffness, preferredAngle}, with ikLimit's names and units. */
+void validateLimits(const Template& t)
+{
+    if (!t.rig.contains("limits"))
+        return;
+    const json& limits = t.rig["limits"];
+    if (!limits.is_object())
+        throw std::invalid_argument("rig limits should map markers to limits");
+    auto oneOf = [](const json& v, std::initializer_list<const char*> names) {
+        if (!v.is_string())
+            return false;
+        for (const char* n : names)
+            if (v.get<std::string>() == n)
+                return true;
+        return false;
+    };
+    for (const auto& [m, l] : limits.items())
+    {
+        const std::string where = "rig limits of " + m;
+        if (!t.marker(m))
+            throw std::invalid_argument("rig limits names unknown marker " + m);
+        if (!l.is_object())
+            throw std::invalid_argument(where + " should be an object");
+        if (l.contains("type") && !oneOf(l["type"], {"none", "hinge", "cone"}))
+            throw std::invalid_argument(where + ": type should be none, hinge or cone");
+        if (l.contains("axis") && !oneOf(l["axis"], {"x", "y", "z"}))
+            throw std::invalid_argument(where + ": axis should be x, y or z");
+        for (const char* k : {"min", "max", "cone", "stiffness"})
+            if (l.contains(k) && !l[k].is_number())
+                throw std::invalid_argument(where + ": " + k + " should be a number");
+        if (l.contains("preferredAngle"))
+            vecOf(l["preferredAngle"], (where + " preferredAngle").c_str());
+        for (const auto& [k, v] : l.items())
+            if (k != "type" && k != "axis" && k != "min" && k != "max" && k != "cone" && k != "stiffness" && k != "preferredAngle")
+                throw std::invalid_argument(where + ": unknown key " + k);
+    }
+}
+
 std::string lower(std::string s)
 {
     for (char& c : s)
@@ -437,6 +475,17 @@ Template Template::fromJson(const json& j)
                 for (const char* key : {"start", "end", "ball", "toe", "joint", "source"})
                     needMarker(e, key, section);
         }
+    for (const json& c : t.rig.value("ikChains", json::array()))
+        if (c.contains("hose"))
+        {
+            const json& h = c["hose"];
+            if (!h.is_object() || (h.contains("enabled") && !h["enabled"].is_boolean()))
+                throw std::invalid_argument("rig ikChains hose should be {enabled, joints, amount, autoArc}");
+            for (const char* k : {"joints", "amount", "autoArc"})
+                if (h.contains(k) && !h[k].is_number())
+                    throw std::invalid_argument(std::string("rig ikChains hose ") + k + " should be a number");
+        }
+    validateLimits(t);
     if (const json fb = t.rig.value("fullBody", json::object()); fb.contains("stiffness"))
     {
         if (!fb["stiffness"].is_object())

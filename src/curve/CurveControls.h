@@ -2,11 +2,14 @@
 
 #include "core/Export.h"
 #include "curve/Spline.h"
+#include "scene/Plug.h"
 
+#include <utility>
 #include <vector>
 
 namespace lila::scene
 {
+class Graph;
 class Node;
 struct NodeType;
 } // namespace lila::scene
@@ -29,6 +32,16 @@ LILA_SCENE_API bool hasControls(const scene::Node& curve);
  * handles; auto handles of driven points are recomputed from their neighbours.
  */
 LILA_SCENE_API Splines drivenSplines(const scene::Node& curve, Splines s);
+
+/** The controls driving the curve's components, parents before the handle controls under them. */
+LILA_SCENE_API std::vector<scene::NodeId> curveControlNodes(scene::Graph& g, const scene::Node& curve);
+
+/**
+ * Moves the controls of the driven components among moves (component id, object-space position) so each lands where
+ * given, and returns the moves of the components no control drives. Undoable like any transform edit.
+ */
+LILA_SCENE_API std::vector<std::pair<uint32_t, glm::dvec3>> moveDrivenComponents(scene::Graph& g, const scene::Node& curve,
+                                                                                std::vector<std::pair<uint32_t, glm::dvec3>> moves);
 
 void registerCurveControlCommands();
 } // namespace lila::curve

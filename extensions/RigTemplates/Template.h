@@ -101,10 +101,12 @@ struct Template
     /** Default spaces: semantic label or marker name -> ["world", or labels / marker names of other joints]. */
     json spaces = json::object();
     /**
-     * Rig elements a build makes, by marker name: ikChains [{name, start, end, pole (world direction)}], reverseFeet
-     * [{chain, ball, toe, pivots {heel, ball, toe, inner, outer} in the ankle marker's frame}], lookers [{joint, aimAxis,
-     * upAxis, distance, weight}], twists [{joint, source, weight}] and nonDeform [marker names]. fullBody {stiffness
-     * {marker: 0..1}} is read by full-body posing (how much each joint resists turning).
+     * Rig elements a build makes, by marker name: ikChains [{name, start, end, pole (world direction), hose {enabled,
+     * joints, amount, autoArc}}] (hose: the limb builds as a rubber hose, hoseLimb's flags), reverseFeet [{chain, ball,
+     * toe, pivots {heel, ball, toe, inner, outer} in the ankle marker's frame}], lookers [{joint, aimAxis, upAxis, distance,
+     * weight}], twists [{joint, source, weight}], nonDeform [marker names] and limits {marker: {type, axis, min, max, cone,
+     * stiffness, preferredAngle}} (ikLimit's flags, set on the built joints). fullBody {stiffness {marker: 0..1}} is read
+     * by full-body posing (how much each joint resists turning).
      */
     json rig = json::object();
     json source = json::object();  // where the template came from

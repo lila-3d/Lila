@@ -18,6 +18,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshCache.h"
 #include "scene/MeshNodes.h"
+#include "scene/Pin.h"
 #include "scene/Modifiers.h"
 #include "scene/Morphs.h"
 #include "scene/ProxySet.h"
@@ -536,7 +537,7 @@ struct ModelInfo
 };
 
 void writeModel(Record& objects, int64_t id, const std::string& name, const ModelInfo& info,
-                const std::vector<std::pair<std::string, double>>& userProps = {})
+                const std::vector<std::pair<std::string, double>>& userProps = {}, const std::string& socket = {})
 {
     Record& model = objects.add("Model");
     model.i64(id).str(bin::objectName(name, "Model")).str(info.type);
@@ -556,6 +557,8 @@ void writeModel(Record& objects, int64_t id, const std::string& name, const Mode
     p3(props, "Lcl Scaling", "Lcl Scaling", "", "A", info.trs.s);
     for (const auto& [prop, value] : userProps)
         props.addP(prop, "double", "Number", "A+U").f64(value);
+    if (!socket.empty())
+        props.addP("UnrealSocket", "KString", "", "U").str(socket);
     model.add("Shading").boolean(true);
     model.add("Culling").str("CullingOff");
 }
@@ -1178,6 +1181,7 @@ struct Gather
         ExportNode e;
         e.name = n->name();
         e.source = id;
+        e.unrealSocket = scene::pins::socketOf(*n);
         if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
             e.mesh = exportMeshOf(id);
         e.camera = cameraOf(*n);
@@ -1257,6 +1261,7 @@ struct Gather
         ExportNode e;
         e.name = n->name() + suffix;
         e.source = id;
+        e.unrealSocket = scene::pins::socketOf(*n);
         if (n->type().isA("mesh") && !n->type().isA("lattice"))
             e.mesh = exportMeshOf(id);
         const glm::dmat4 w = xf * world(id);
@@ -2182,7 +2187,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
                 userProps.push_back({scene.curveNames[c], take && c < take->namedCurves.size() && !take->namedCurves[c].empty()
                                                               ? take->namedCurves[c].front()
                                                               : 0.0});
-        writeModel(objects, modelIds[i], n.name, mi, userProps);
+        writeModel(objects, modelIds[i], n.name, mi, userProps, n.unrealSocket);
         connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
         if (!isMesh)
         {

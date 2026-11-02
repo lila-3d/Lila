@@ -419,6 +419,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"rig.removeConstraint", "lock-open"},
     {"rig.ikHandle", "vector-triangle"},
     {"rig.xrayJoints", "eye"},
+    {"rig.showIkLimits", "angle"},
     {"rig.dominantInfluenceSelect", "pointer"},
     {"rig.addWorldSpace", "world"},
     {"rig.addSpace", "world-plus"},

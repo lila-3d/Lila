@@ -808,7 +808,7 @@ def bakePiecesToJoints(*objects: Any, start: float | None = None, end: float | N
     """
 
 def bakePin(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, name: str | None = None, st: float | None = None, et: float | None = None, n: str | None = None) -> Any:
-    """Turn pins into joints for Unreal. A pinned joint gets its pinned channels keyed every frame and lets go of the pins. A pin driving nothing, or a pinned prop, gets a joint under the joint carrying the source (the heaviest skin influence there, or the joint above the curve or mesh): a socket when it holds still relative to that joint over the range, else a bone keyed every frame. A prop's joint sits where the prop is, so it attaches with no offset. Returns the joints.
+    """Turn pins into joints for Unreal. A pinned joint gets its pinned channels keyed every frame and lets go of the pins. A pin driving nothing, or a pinned prop, gets a joint under the joint carrying the source (the heaviest skin influence there, or the joint above the curve or mesh): a socket when it holds still relative to that joint over the range, else a bone keyed every frame. A prop's joint sits where the prop is, so it attaches with no offset; the prop records it in unrealSocket, which FBX exports write and the Unreal link turns into a socket on the character's skeletal mesh. Returns the joints.
 
     Args:
         objects: pins, pin locators or pinned objects.
@@ -1337,8 +1337,8 @@ def cage(*objects: Any, coordinates: str | None = None, name: str | None = None)
         name: Name for the deformer.
     """
 
-def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | None = None, gate: bool | None = None, filmGate: bool | None = None, gateMask: bool | None = None, maskOpacity: float | None = None, query: bool | None = None, ff: str | None = None, os: float | None = None, g: bool | None = None, fg: bool | None = None, gm: bool | None = None, mo: float | None = None, q: bool | None = None) -> Any:
-    """Query or set a camera's gate display and film fit. The camera is a view name ('persp', 'top', 'front', ...; default 'persp') or a camera node, which keeps them as its own attributes. filmFit is 'fill', 'horizontal', 'vertical' or 'overscan'. Returns the settings.
+def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | None = None, gate: bool | None = None, filmGate: bool | None = None, gateMask: bool | None = None, maskOpacity: float | None = None, nearClip: float | None = None, query: bool | None = None, ff: str | None = None, os: float | None = None, g: bool | None = None, fg: bool | None = None, gm: bool | None = None, mo: float | None = None, nc: float | None = None, q: bool | None = None) -> Any:
+    """Query or set a camera's gate display, film fit and near clip. The camera is a view name ('persp', 'top', 'front', ...; default 'persp') or a camera node, which keeps them as its own attributes. filmFit is 'fill', 'horizontal', 'vertical' or 'overscan'. Returns the settings.
 
     Args:
         objects: camera.
@@ -1348,6 +1348,7 @@ def cameraSettings(*objects: Any, filmFit: str | None = None, overscan: float | 
         filmGate: Display the film gate. Short form fg.
         gateMask: Darken outside the gate. Short form gm.
         maskOpacity: Gate mask opacity, 0 to 1. Short form mo.
+        nearClip: Near clip plane in cm; 0 is auto, following the distance to the center of interest. A camera node sets its nearClipPlane and has no auto. Short form nc.
         query: Short form q. Default False.
     """
 
@@ -2196,12 +2197,13 @@ def deleteAnimLayer(*objects: Any) -> Any:
         objects: layers.
     """
 
-def deleteAttr(*objects: Any, attribute: str | None = None, at: str | None = None) -> Any:
-    """Delete attributes added with addAttr: deleteAttr('node.attr'), or deleteAttr(objects, attribute=name).
+def deleteAttr(*objects: Any, attribute: str | None = None, category: str | None = None, at: str | None = None) -> Any:
+    """Delete attributes added with addAttr: deleteAttr('node.attr'), deleteAttr(objects, attribute=name), or a whole component with deleteAttr(objects, category=name), which also takes the name out of the object's usdApiSchemas.
 
     Args:
         objects: plugs or objects.
         attribute: The attribute to delete from each object. Short form at.
+        category: Delete every added attribute under this Attribute Editor heading.
     """
 
 def deleteBakeTarget(*objects: Any, scope: str | None = None, sc: str | None = None) -> Any:
@@ -2685,7 +2687,7 @@ def exportDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         tolerance: cm, for curves written as polylines. Short form tol. Default 0.01.
     """
 
-def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, textures: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
+def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, textures: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, unrealCheck: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None, uc: bool | None = None) -> Any:
     """Export the evaluated meshes and transforms to a binary FBX 7.4 file. Objects default to the selection (or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and SOCKET_ empties work in Unreal. kind=skeletal writes joints, skins (bind pose mesh, clusters, BindPose), morph targets (in-betweens as their own targets) with their weight curves, driven channel curveNames as named curves on the root joint, and the animation baked over the range; kind=animation writes only the skeleton and its curves. kind=sequence writes cameras and transforms with their animation and no meshes, for Unreal Sequencer's Import FBX: cameras go out as FBX cameras (focal length aperture mode, film back, clipping, focal length and clipping curves) and arrive as CineCameras. Cameras are written as FBX cameras in every kind. start/end are frames. Returns the path.
 
     Args:
@@ -2710,6 +2712,7 @@ def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None
         textures: Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes (repeat or clamp). Off writes plain named materials. Default False.
         units: File units: cm, m, mm, in or ft. Lengths are scaled to them. Short form u. One of 'cm', 'm', 'mm', 'in', 'ft'. Default 'cm'.
         selectionOnly: Without objects: the selection, or every root when False. Short form sl. Default True.
+        unrealCheck: Skeletal and animation kinds: refuse when a skeleton fails unrealCheck over the range (sampled). False exports anyway. Short form uc. Default True.
     """
 
 def exportFile(*objects: Any, translator: str | None = None, options: Any | None = None) -> Any:
@@ -2721,7 +2724,7 @@ def exportFile(*objects: Any, translator: str | None = None, options: Any | None
         options: {flag: value} passed on to the translator's command.
     """
 
-def exportGltf(*objects: Any, binary: bool | None = None, embedImages: bool | None = None, embedBuffers: bool | None = None, textures: bool | None = None, copyTextures: bool | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, tangents: bool | None = None, normals: bool | None = None, morphNormals: bool | None = None, draco: bool | None = None, dracoPositionBits: int | None = None, dracoNormalBits: int | None = None, dracoUvBits: int | None = None, dracoColorBits: int | None = None, dracoGenericBits: int | None = None, dracoLevel: int | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
+def exportGltf(*objects: Any, binary: bool | None = None, embedImages: bool | None = None, embedBuffers: bool | None = None, textures: bool | None = None, copyTextures: bool | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, tangents: bool | None = None, normals: bool | None = None, morphNormals: bool | None = None, draco: bool | None = None, dracoPositionBits: int | None = None, dracoNormalBits: int | None = None, dracoUvBits: int | None = None, dracoColorBits: int | None = None, dracoGenericBits: int | None = None, dracoLevel: int | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, unrealCheck: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, u: str | None = None, sl: bool | None = None, uc: bool | None = None) -> Any:
     """Export the evaluated meshes, skeletons and cameras to glTF 2.0: binary .glb, or JSON .gltf with a .bin and image files next to it (or everything embedded as data URIs). Objects default to the selection (or the whole scene with selectionOnly=False). Axes become glTF's Y up with the model facing +Z, lengths metres (see units).
 
     Meshes go out triangulated as the viewport splits them, one primitive per material slot, with normals, MikkTSpace tangents, every UV set (flipped to glTF's V-down) and every color set. Skinned meshes go out in their bind pose with JOINTS_n/WEIGHTS_n sets (four influences each, up to maxInfluences) and inverse bind matrices; morph targets with position and normal deltas (sparse where few points move), names in extras.targetNames and their weights. Each take becomes one animation (takes=, or the current animation over start/end): sampled every frame and thinned where interpolation reproduces the samples, translate and scale curves written as their own keys with bakeAnimation=False. Cameras keep their field of view, aspect and clipping.
@@ -2761,6 +2764,7 @@ def exportGltf(*objects: Any, binary: bool | None = None, embedImages: bool | No
         children: Include the descendants of the given objects. Default True.
         units: File units: m (glTF's), cm, mm, in or ft. Lengths are scaled to them. Short form u. One of 'm', 'cm', 'mm', 'in', 'ft'. Default 'm'.
         selectionOnly: Without objects: the selection, or every root when False. Short form sl. Default True.
+        unrealCheck: Skeletal and animation kinds: refuse when a skeleton fails unrealCheck over the range (sampled). False exports anyway. Short form uc. Default True.
     """
 
 def exportMLDeformer(*objects: Any, take: str | None = None, poses: int | None = None, angle: float | None = None, sweep: bool | None = None, seed: int | None = None, folder: str | None = None, contentPath: str | None = None, send: bool | None = None, save: bool | None = None, fo: str | None = None, cp: str | None = None) -> Any:
@@ -3193,8 +3197,8 @@ def freezeTransforms(*objects: Any, translate: bool | None = None, rotate: bool 
         jointOrient: Also line joints' axes up with the world, zeroing their orientation. Default False.
     """
 
-def fullBodyIk(pins: Sequence[Any] | None = None, hold: Sequence[Any] | None = None, root: str | None = None, stiffness: Any | None = None, moveRoot: bool | None = None, key: bool | None = None, autoPose: bool | None = None, *, p: Sequence[Any] | None = None, h: Sequence[Any] | None = None, r: str | None = None, st: Any | None = None, mr: bool | None = None, k: bool | None = None, ap: bool | None = None) -> Any:
-    """Pose a whole skeleton so each pinned joint reaches its target. The motion spreads over the joints between the pins and the hips by stiffness; everything else keeps its pose. Writes the joints' rotate (and the hips' translate) as FK. Returns {'error': the largest pin miss in cm}.
+def fullBodyIk(pins: Sequence[Any] | None = None, hold: Sequence[Any] | None = None, root: str | None = None, stiffness: Any | None = None, moveRoot: bool | None = None, stretch: bool | None = None, maxStretch: Any | None = None, key: bool | None = None, autoPose: bool | None = None, *, p: Sequence[Any] | None = None, h: Sequence[Any] | None = None, r: str | None = None, st: Any | None = None, mr: bool | None = None, str: bool | None = None, mxs: Any | None = None, k: bool | None = None, ap: bool | None = None) -> Any:
+    """Pose a whole skeleton so each pinned joint reaches its target. The motion spreads over the joints between the pins and the hips by stiffness; everything else keeps its pose. Writes the joints' rotate (and the hips' translate, and stretched joints' translate) as FK. Returns {'error': the largest pin miss in cm}.
 
     Args:
         pins: [{'joint': name, 'position': [x, y, z], 'rotation': [x, y, z], 'weight': 1.0}], world space; rotation is XYZ Euler degrees. position and rotation are each optional. Short form p.
@@ -3202,6 +3206,8 @@ def fullBodyIk(pins: Sequence[Any] | None = None, hold: Sequence[Any] | None = N
         root: Top joint of the skeleton to solve; default the first pin's top joint. Short form r.
         stiffness: {joint: 0..1}: how much each joint resists turning, so its neighbours take the motion. Short form st.
         moveRoot: Let the hips move when turning joints is not enough. Short form mr. Default True.
+        stretch: Let bones lengthen when turning can't reach a pin: the joints of IK handles with stretch on, up to their maxStretch, and those in maxStretch. Stretched joints get their translate keyed with key. Short form str. Default False.
+        maxStretch: {joint: multiple >= 1}: how far each joint's bone may lengthen with stretch. Short form mxs.
         key: Key the posed joints. Short form k. Default False.
         autoPose: Let the auto-poser place the unpinned body, as a person would stand to reach the pins (UE5 Manny joint names). Short form ap. Default False.
     """
@@ -3758,18 +3764,29 @@ def hoseFingers(*objects: Any, curlAxis: str | None = None, curlMax: float | Non
         hoseFingers("index_01_l", "middle_01_l", "ring_01_l", "pinky_01_l")
     """
 
-def hoseLimb(*objects: Any, joints: int | None = None, hose: float | None = None, autoArc: float | None = None, name: str | None = None, j: int | None = None, h: float | None = None, aa: float | None = None, n: str | None = None) -> Any:
-    """Make a rubber hose limb from the shoulder or hip to the wrist or ankle. A limb with an elbow or knee between keeps its joints as drivers (no longer deforming) and gets a chain of hose joints that follow it, from jointed (hose 0) to a smooth hose that bows into an arc as the end nears the root (hose 1). Without joints between, the hose spans the two joints. A bend control on the elbow pushes the middle of the hose. Returns the hoseLimb.
+def hoseLimb(*objects: Any, joints: int | None = None, hose: float | None = None, autoArc: float | None = None, reskin: bool | None = None, name: str | None = None, j: int | None = None, h: float | None = None, aa: float | None = None, rs: bool | None = None, n: str | None = None) -> Any:
+    """Make a rubber hose limb from the shoulder or hip to the wrist or ankle. A limb with an elbow or knee between keeps its joints as drivers (no longer deforming) and gets a chain of hose joints that follow it, from jointed (hose 0) to a smooth hose that bows into an arc as the end nears the root (hose 1). Without joints between, the hose spans the two joints. A bend control on the elbow pushes the middle of the hose. The limb joints' skin weights move onto the hose joints (reskin). Returns the hoseLimb.
 
     Args:
         objects: start joint, end joint (default the selection).
         joints: Hose joints along the limb. Short form j. Default 12.
         hose: 0 bends at the elbow or knee, 1 is a smooth hose. Short form h. Default 1.0.
         autoArc: 1 bows into an arc keeping the limb's length as the end nears the root. Short form aa. Default 1.0.
+        reskin: Move the limb joints' skin weights onto the hose joints, as hoseReskin does. Short form rs. Default True.
         name: Name for the hoseLimb; default <start>_hose. Short form n.
 
     Examples:
         hoseLimb("upperarm_l", "hand_l", joints=12)
+    """
+
+def hoseReskin(*objects: Any) -> Any:
+    """Move the skin weights of hose limbs' limb joints onto their hose joints: each point's weight goes to the two hose joints either side of where it sits along the hose, so the skin follows the hose. Run it with the limb in its bind pose, where the skin then deforms exactly as before. Returns how many skinClusters changed.
+
+    Args:
+        objects: hoseLimb nodes (default the selection).
+
+    Examples:
+        hoseReskin("upperarm_l_hose")
     """
 
 def ikChain(*objects: Any, startJoint: str | None = None, endJoint: str | None = None, solver: str | None = None, name: str | None = None, poleVector: Sequence[float] | None = None, parent: str | None = None, sj: str | None = None, ej: str | None = None, sol: str | None = None, n: str | None = None, pv: Sequence[float] | None = None, p: str | None = None) -> Any:
@@ -7861,6 +7878,30 @@ def splineChain(*objects: Any, curve: str | None = None, controls: int | None = 
         splineChain("tail_01", "tail_12", "TailCurve")
     """
 
+def splineDynamics(*objects: Any, mode: str | None = None, drive: str | None = None, stiffness: float | None = None, damping: float | None = None, gravity: float | None = None, radius: float | None = None, colliders: Sequence[Any] | None = None, carrier: str | None = None, carrierInertia: float | None = None, name: str | None = None, m: str | None = None, dr: str | None = None, st: float | None = None, d: float | None = None, g: float | None = None, r: float | None = None, co: Sequence[Any] | None = None, ca: str | None = None, ci: float | None = None, n: str | None = None) -> Any:
+    """Dynamics on spline chains (tails, tentacles, antennae, hose limbs): overlap is stylised, cheap and loops; jolt is a rigid body per segment that collides with the scene. Additive follows the animation with follow-through; full simulates with only the root animated. Record it with recordSimulation: the motion keys the splineJoints' offsets on an additive layer, which bakeToDeformSkeleton carries to plain keys. Returns the simulation nodes.
+
+    Args:
+        objects: spline chains, joints in them, their splineJoints or hoseLimbs (default the selection).
+        mode: overlap | jolt. Short form m. One of 'overlap', 'jolt'. Default 'overlap'.
+        drive: additive: follow-through on the animation. full: simulated from the root. Short form dr. One of 'additive', 'full'. Default 'additive'.
+        stiffness: Pull back to the animation: overlap rotation stiffness, jolt pose match Hz. Short form st.
+        damping: overlap: damping. jolt: damping ratio, 1 settles without bouncing. Short form d.
+        gravity: Share of gravity the chain feels; default 0 additive, 1 full. Short form g.
+        radius: Collision radius of each segment, cm; default from the bone length. Short form r.
+        colliders: jolt: meshes the chain collides with. overlap: overlap colliders (createOverlapCollider). Short form co.
+        carrier: Carried motion: the transform (saddle, seat) the chain simulates relative to. Short form ca.
+        carrierInertia: Share of the carrier's acceleration the chain feels: 1 like the world, 0 carried rigidly. Short form ci. Default 1.0.
+        name: Name of the simulation node. Short form n.
+
+    Examples:
+        splineDynamics("tail_01_spline")
+
+        splineDynamics("tail_01", mode="jolt", colliders=["Ground"])
+
+        splineDynamics("tail_01_spline", carrier="horse_saddle", carrierInertia=0.5)
+    """
+
 def splitCurves(*objects: Any, cutters: Sequence[Any] | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
     """Split curves at all their mutual intersections (and with cutters), in 3D or as seen along direction. Returns every piece.
 
@@ -8837,7 +8878,7 @@ def unloadReference(*objects: Any) -> Any:
     """
 
 def unrealCheck(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, tolerance: float | None = None, suffix: str | None = None, report: bool | None = None, st: float | None = None, et: float | None = None, tol: float | None = None, sfx: str | None = None, rp: bool | None = None) -> Any:
-    """Evaluate skeletons (default all) as they export, under Unreal's transform rules (scale handed down per axis, no shear), and compare their skins with Lila's deformed meshes every frame of the range. Each joint past the tolerance becomes an error that blocks exporting until the check passes. Returns the worst drift and the mismatched joints.
+    """Evaluate skeletons (default all) as they export, under Unreal's transform rules (scale handed down per axis, no shear), and compare their skins with Lila's deformed meshes every frame of the range. Each joint past the tolerance becomes an error on that joint; exportFbx, exportGltf and unrealSync run the same check and refuse while a joint fails. Returns the worst drift and the mismatched joints.
 
     Args:
         objects: a joint of each skeleton.
@@ -9003,11 +9044,12 @@ def unrealStatus(scan: bool | None = None, *, s: bool | None = None) -> Any:
         scan: Also list running editors (port files and default ports). Short form s. Default False.
     """
 
-def unrealSync(*objects: Any) -> Any:
-    """Export and reimport every mapped node now, as saving does, or only the given nodes. Returns how many were queued.
+def unrealSync(*objects: Any, unrealCheck: bool | None = None, uc: bool | None = None) -> Any:
+    """Export and reimport every mapped node now, as saving does, or only the given nodes. Skeletal and animation mappings whose skeleton fails unrealCheck are refused (logged) unless unrealCheck=False. Returns how many were queued.
 
     Args:
         objects: nodes (default every mapping).
+        unrealCheck: Refuse skeletons that fail unrealCheck (sampled over the range). False sends anyway. Short form uc. Default True.
     """
 
 def unrealUnmap(*objects: Any) -> Any:

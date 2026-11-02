@@ -8554,41 +8554,65 @@
 				"end": "foot_l",
 				"name": "leg_l",
 				"pole": [
-					-1.0,
-					0.0,
-					0.0
+					-0.9884,
+					-0.0338,
+					0.1482
 				],
-				"start": "thigh_l"
+				"start": "thigh_l",
+				"hose": {
+					"enabled": false,
+					"joints": 12,
+					"amount": 1.0,
+					"autoArc": 1.0
+				}
 			},
 			{
 				"end": "hand_l",
 				"name": "arm_l",
 				"pole": [
-					1.0,
-					0.0,
-					0.0
+					0.9343,
+					-0.3187,
+					0.1596
 				],
-				"start": "upperarm_l"
+				"start": "upperarm_l",
+				"hose": {
+					"enabled": false,
+					"joints": 12,
+					"amount": 1.0,
+					"autoArc": 1.0
+				}
 			},
 			{
 				"end": "foot_r",
 				"name": "leg_r",
 				"pole": [
-					-1.0,
-					0.0,
-					0.0
+					-0.9884,
+					-0.0338,
+					-0.1482
 				],
-				"start": "thigh_r"
+				"start": "thigh_r",
+				"hose": {
+					"enabled": false,
+					"joints": 12,
+					"amount": 1.0,
+					"autoArc": 1.0
+				}
 			},
 			{
 				"end": "hand_r",
 				"name": "arm_r",
 				"pole": [
-					1.0,
-					0.0,
-					0.0
+					0.9343,
+					-0.3187,
+					-0.1596
 				],
-				"start": "upperarm_r"
+				"start": "upperarm_r",
+				"hose": {
+					"enabled": false,
+					"joints": 12,
+					"amount": 1.0,
+					"autoArc": 1.0
+				}
 			}
 		],
 		"lookers": [
@@ -8818,7 +8842,134 @@
 				"source": "foot_r",
 				"weight": 0.6667
 			}
-		]
+		],
+		"limits": {
+			"spine_01": {
+				"type": "cone",
+				"cone": 15.0,
+				"stiffness": 0.4
+			},
+			"spine_02": {
+				"type": "cone",
+				"cone": 15.0,
+				"stiffness": 0.35
+			},
+			"spine_03": {
+				"type": "cone",
+				"cone": 15.0,
+				"stiffness": 0.3
+			},
+			"spine_04": {
+				"type": "cone",
+				"cone": 15.0,
+				"stiffness": 0.3
+			},
+			"spine_05": {
+				"type": "cone",
+				"cone": 15.0,
+				"stiffness": 0.3
+			},
+			"neck_01": {
+				"type": "cone",
+				"cone": 25.0,
+				"stiffness": 0.5
+			},
+			"neck_02": {
+				"type": "cone",
+				"cone": 25.0,
+				"stiffness": 0.5
+			},
+			"head": {
+				"type": "cone",
+				"cone": 45.0
+			},
+			"thigh_l": {
+				"type": "cone",
+				"cone": 90.0
+			},
+			"calf_l": {
+				"type": "hinge",
+				"axis": "y",
+				"min": -150.0,
+				"max": 5.0,
+				"preferredAngle": [
+					0.0,
+					-10.0,
+					0.0
+				]
+			},
+			"foot_l": {
+				"type": "cone",
+				"cone": 45.0
+			},
+			"clavicle_l": {
+				"type": "cone",
+				"cone": 20.0,
+				"stiffness": 0.7
+			},
+			"upperarm_l": {
+				"type": "cone",
+				"cone": 110.0
+			},
+			"lowerarm_l": {
+				"type": "hinge",
+				"axis": "y",
+				"min": -110.0,
+				"max": 35.0,
+				"preferredAngle": [
+					0.0,
+					-10.0,
+					0.0
+				]
+			},
+			"hand_l": {
+				"type": "cone",
+				"cone": 75.0
+			},
+			"thigh_r": {
+				"type": "cone",
+				"cone": 90.0
+			},
+			"calf_r": {
+				"type": "hinge",
+				"axis": "y",
+				"min": -150.0,
+				"max": 5.0,
+				"preferredAngle": [
+					0.0,
+					-10.0,
+					0.0
+				]
+			},
+			"foot_r": {
+				"type": "cone",
+				"cone": 45.0
+			},
+			"clavicle_r": {
+				"type": "cone",
+				"cone": 20.0,
+				"stiffness": 0.7
+			},
+			"upperarm_r": {
+				"type": "cone",
+				"cone": 110.0
+			},
+			"lowerarm_r": {
+				"type": "hinge",
+				"axis": "y",
+				"min": -110.0,
+				"max": 35.0,
+				"preferredAngle": [
+					0.0,
+					-10.0,
+					0.0
+				]
+			},
+			"hand_r": {
+				"type": "cone",
+				"cone": 75.0
+			}
+		}
 	},
 	"source": {
 		"asset": "/Game/Characters/Mannequins/Meshes/SKM_Manny",

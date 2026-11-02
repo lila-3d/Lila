@@ -30,6 +30,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "Engine/StaticMesh.h"
 #include "Containers/Ticker.h"
 #include "HAL/PlatformTime.h"
@@ -75,6 +76,10 @@ struct FImportRequest
 	/** Curves the skeleton marks as material curves, so a material parameter of the same name follows them. */
 	TArray<FName> MaterialCurves;
 	LilaLink::FMaterialRequest Materials;
+	/** Static: a pinned prop's socket, made on SocketMesh on SocketBone with no offset, so the prop attaches where Lila had it. */
+	FString SocketMesh;
+	FName SocketName;
+	FName SocketBone;
 };
 
 struct FImportOutcome
@@ -184,6 +189,17 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 				Out.MaterialCurves.AddUnique(FName(*Name));
 			}
 		}
+	}
+
+	const TSharedPtr<FJsonObject>* Socket = nullptr;
+	if (Out.Kind == EKind::Static && Options->TryGetObjectField(TEXT("socket"), Socket) && Socket->IsValid())
+	{
+		FString Name, Bone;
+		(*Socket)->TryGetStringField(TEXT("skeletalMesh"), Out.SocketMesh);
+		(*Socket)->TryGetStringField(TEXT("name"), Name);
+		(*Socket)->TryGetStringField(TEXT("bone"), Bone);
+		Out.SocketName = FName(*Name);
+		Out.SocketBone = FName(*(Bone.IsEmpty() ? Name : Bone));
 	}
 
 	FString Normals = TEXT("import");
@@ -754,9 +770,57 @@ void ApplyMaterialCurves(const FImportRequest& Request, FImportOutcome& Outcome)
 	}
 }
 
+/**
+ * The socket a pinned prop attaches to, on its character's skeletal mesh: on the bone Lila baked where the prop sits,
+ * with no offset, so attaching the prop's actor to it places the prop as in Lila.
+ */
+void ApplySocket(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplySocket);
+
+	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *Request.SocketMesh);
+	if (!Mesh)
+	{
+		Outcome.Warnings.Add(FString::Printf(TEXT("No skeletal mesh %s for socket %s yet; send the character, then this prop again"),
+			*Request.SocketMesh, *Request.SocketName.ToString()));
+		return;
+	}
+	if (Mesh->GetRefSkeleton().FindBoneIndex(Request.SocketBone) == INDEX_NONE)
+	{
+		Outcome.Warnings.Add(FString::Printf(TEXT("%s has no bone %s for socket %s"), *Mesh->GetPathName(), *Request.SocketBone.ToString(),
+			*Request.SocketName.ToString()));
+		return;
+	}
+	USkeletalMeshSocket* Socket = Mesh->FindSocket(Request.SocketName);
+	if (Socket && Socket->BoneName == Request.SocketBone && Socket->RelativeLocation.IsNearlyZero() && Socket->RelativeRotation.IsNearlyZero()
+		&& Socket->RelativeScale.Equals(FVector::OneVector))
+	{
+		return;
+	}
+	if (!Socket)
+	{
+		Mesh->Modify();
+		Socket = NewObject<USkeletalMeshSocket>(Mesh);
+		Socket->SocketName = Request.SocketName;
+		Mesh->AddSocket(Socket);
+	}
+	Socket->Modify();
+	Socket->BoneName = Request.SocketBone;
+	Socket->RelativeLocation = FVector::ZeroVector;
+	Socket->RelativeRotation = FRotator::ZeroRotator;
+	Socket->RelativeScale = FVector::OneVector;
+	Socket->GetOuter()->MarkPackageDirty();
+	Outcome.Assets.AddUnique(Socket->GetOuter()->GetPathName());
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
+
+	if (!Request.SocketMesh.IsEmpty() && !Request.SocketName.IsNone() && Outcome.Errors.IsEmpty())
+	{
+		ApplySocket(Request, Outcome);
+	}
 
 	if (!Request.LodScreenSizes.IsEmpty() && !Outcome.Assets.IsEmpty())
 	{

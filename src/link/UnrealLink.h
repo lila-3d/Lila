@@ -189,9 +189,10 @@ LILA_SCENE_API void onSceneSaved();
 
 /**
  * What onSceneSaved does, minus the pref check when `force`, then syncTextureSets. Returns how many mappings and sets were
- * queued. Given nodes, only their mappings go, and no texture sets.
+ * queued. Given nodes, only their mappings go, and no texture sets. Skeletal and animation exports refuse when a skeleton
+ * fails the Unreal check, unless unrealCheck is false.
  */
-LILA_SCENE_API int syncMappings(bool force, const std::vector<std::string>& only = {});
+LILA_SCENE_API int syncMappings(bool force, const std::vector<std::string>& only = {}, bool unrealCheck = true);
 
 /** How unrealPlaceInstances sends instance groups to the open level. */
 struct PlacementOptions

@@ -11,6 +11,7 @@
 #include <lila/Node.h>
 #include <lila/Relocate.h>
 #include <lila/Simulation.h>
+#include <lila/SplineChain.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -275,6 +276,11 @@ public:
         mSeed = uint64_t(integer(*o, "seed"));
         mWeightAttr = attr(*o, "weight");
         mEnabled = flag(*o, "enabled");
+        Node* carrier = named(g, text(*o, "carrier"));
+        mCarrier = carrier ? carrier->id() : kNoNode;
+        mCarrierInertia = num(*o, "carrierInertia");
+        if (mCarrier)
+            mSpace = Space::CharacterRoot;
         const Global global = globalSettings(*o);
         const int substeps = int(std::clamp<int64_t>(integer(*o, "substeps"), 1, 64));
 
@@ -337,6 +343,9 @@ public:
                     e.settings.style.exaggeration *= num(j, "exaggerationScale");
                 }
                 e.delaySteps = int(std::clamp<int64_t>(int64_t(std::llround(std::max(delay, 0.0) * substeps)), 0, 4096));
+                e.aim = flag(chain, "aim");
+                if (i + 1 < count)
+                    e.next = joints[size_t(i) + 1];
                 switch (e.settings.scale.axis)
                 {
                 case StretchAxis::X: e.stretchAxis = {1, 0, 0}; break;
@@ -379,8 +388,17 @@ public:
             h = sim::hashBytes(&e.parent, sizeof e.parent, h);
             h = sim::hashBytes(&e.stretchAxis, sizeof e.stretchAxis, h);
         }
+        for (Entry& e : mEntries)
+            if (auto it = index.find(e.next); e.aim && it != index.end() && mEntries[size_t(it->second)].ancestor == int(&e - mEntries.data()))
+                e.child = it->second;
+        // The carrier's last position and velocity, and how many of them are known yet.
+        mCarrierBase = offset;
+        if (mCarrier)
+            su.layout.push_back({sim::Channel::Ignore, 7});
 
-        if (mSpace == Space::CharacterRoot)
+        if (mCarrier)
+            mRoot = mCarrier;
+        else if (mSpace == Space::CharacterRoot)
         {
             Node* root = named(g, text(*o, "root"));
             mRoot = root ? root->id() : kNoNode;
@@ -407,6 +425,8 @@ public:
         su.reads = {mNode};
         if (mRoot)
             su.reads.push_back(mRoot);
+        if (mCarrier)
+            su.sources.push_back(mCarrier);
         for (const ColliderNode& c : mColliders)
             su.reads.push_back(c.node);
         for (const Entry& e : mEntries)
@@ -454,6 +474,31 @@ public:
             s.write(&state[e.offset]);
             fillHistory(e, state, t.q);
         }
+        if (mCarrier)
+        {
+            double* c = &state[mCarrierBase];
+            const glm::dvec3 p(getMatrix(&in[0])[3]);
+            std::fill(c, c + 7, 0.0);
+            c[0] = p.x, c[1] = p.y, c[2] = p.z;
+            c[6] = 1.0;
+        }
+    }
+
+    /**
+     * The carrier's acceleration, world space, from its positions at the ends of the last steps. The first steps after a
+     * reset, and the step a loop wraps on (where a travelling carrier jumps back), add none.
+     */
+    glm::dvec3 carrierAcceleration(const std::vector<double>& in, std::vector<double>& state, const sim::StepInfo& at) const
+    {
+        double* c = &state[mCarrierBase];
+        const glm::dvec3 p(getMatrix(&in[0])[3]), last(c[0], c[1], c[2]), lastVelocity(c[3], c[4], c[5]);
+        const bool wrap = at.period > 0.0 && at.index == 0;
+        const glm::dvec3 v = wrap ? lastVelocity : (p - last) / at.dt;
+        const glm::dvec3 a = c[6] >= 2.0 && !wrap ? (v - lastVelocity) / at.dt : glm::dvec3(0.0);
+        c[0] = p.x, c[1] = p.y, c[2] = p.z;
+        c[3] = v.x, c[4] = v.y, c[5] = v.z;
+        c[6] = std::min(c[6] + 1.0, 2.0);
+        return a;
     }
 
     void step(const std::vector<double>& in, std::vector<double>& state, const sim::StepInfo& at) override
@@ -461,6 +506,7 @@ public:
         const double weight = in[16];
         const glm::dvec3 wind = windAt(at, -1);
         std::vector<Collider> worldColliders = colliders(in);
+        const glm::dvec3 carried = mCarrier ? carrierAcceleration(in, state, at) * mCarrierInertia : glm::dvec3(0.0);
         for (size_t i = 0; i < mEntries.size(); ++i)
         {
             const Entry& e = mEntries[i];
@@ -482,6 +528,7 @@ public:
             Context ctx;
             ctx.gravity = toFrame * mGravity;
             ctx.force = toFrame * (mWindStrength != 0.0 ? wind + windAt(at, int(i)) : glm::dvec3(0.0));
+            ctx.carried = toFrame * carried;
             ctx.stretchAxis = e.stretchAxis;
             integrate(e.settings, s, t.p, delayed, at.dt, ctx);
             if (e.collide)
@@ -504,35 +551,74 @@ public:
 
     void pose(const std::vector<double>& in, const std::vector<double>& state, std::vector<glm::dmat4>& world) override
     {
-        world.assign(mEntries.size(), glm::dmat4(1.0));
-        std::vector<glm::dmat4> solved(mEntries.size()), authored(mEntries.size());
+        const size_t n = mEntries.size();
+        world.assign(n, glm::dmat4(1.0));
+        std::vector<glm::dmat4> solved(n), authored(n);
+        std::vector<Rigid> frames(n), targets(n);
+        std::vector<Pose> poses(n);
         std::vector<Collider> worldColliders = colliders(in);
         const double weight = in[16];
-        for (size_t i = 0; i < mEntries.size(); ++i)
+        for (size_t i = 0; i < n; ++i)
         {
             const Entry& e = mEntries[i];
-            const glm::dmat4 a = getMatrix(&in[entryBase(i)]);
-            authored[i] = a;
-            const Rigid frame = frameOf(in, i);
-            const Rigid t = target(in, i);
+            authored[i] = getMatrix(&in[entryBase(i)]);
+            frames[i] = frameOf(in, i);
+            targets[i] = target(in, i);
             BoneState s;
             s.read(&state[e.offset]);
             const double alpha = e.settings.style.weight * weight * (1.0 - std::clamp(pin(in, i), 0.0, 1.0));
-            Pose p;
-            p.position = t.p;
-            p.rotation = t.q;
+            poses[i].position = targets[i].p;
+            poses[i].rotation = targets[i].q;
             if (alpha >= kSmall && e.settings.relevant())
-                p = compose(e.settings, s, t.p, s.prevTargetRotation, alpha, e.stretchAxis);
-            glm::dmat4 full = withScale(matrixOf({frame.p + frame.q * p.position, glm::normalize(frame.q * p.rotation)}), scaleOf(a));
+                poses[i] = compose(e.settings, s, targets[i].p, s.prevTargetRotation, alpha, e.stretchAxis);
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
+            const Entry& e = mEntries[i];
+            const Rigid& frame = frames[i];
+            const Pose& p = poses[i];
+            // Aiming joints keep their bone lengths: their place comes from the turn of the joint above.
+            const glm::dvec3 at = e.aim ? targets[i].p : p.position;
+            glm::dmat4 full = withScale(matrixOf({frame.p + frame.q * at, glm::normalize(frame.q * p.rotation)}), scaleOf(authored[i]));
             // The ancestor's deviation is carried rigidly, so a chain hangs together without each joint amplifying the last.
             if (e.ancestor >= 0)
                 full = solved[size_t(e.ancestor)] * glm::inverse(authored[size_t(e.ancestor)]) * full;
-            if (e.collide)
+            if (e.aim && e.child >= 0)
+                full = aimAtChild(full, authored[i], size_t(e.child), frames, targets, poses, authored, worldColliders, e.collide);
+            else if (e.collide && !e.aim)
                 for (const Collider& c : worldColliders)
                     full[3] += glm::dvec4(pushOut(glm::dvec3(full[3]), c, e.radius), 0.0);
             solved[i] = full;
             world[i] = withScale(full, p.stretch);
         }
+    }
+
+    /**
+     * Turns a joint so its bone points where its child would be if it moved by its own positional deviation, kept out of
+     * the colliders: lag and collisions become rotation, and the chain never stretches.
+     */
+    glm::dmat4 aimAtChild(glm::dmat4 full, const glm::dmat4& authoredSelf, size_t child, const std::vector<Rigid>& frames,
+                          const std::vector<Rigid>& targets, const std::vector<Pose>& poses, const std::vector<glm::dmat4>& authored,
+                          const std::vector<Collider>& worldColliders, bool collide) const
+    {
+        const glm::dvec3 local(glm::inverse(authoredSelf) * authored[child][3]);
+        const glm::dvec3 origin(full[3]);
+        const glm::dvec3 from = glm::dvec3(full * glm::dvec4(local, 1.0)) - origin;
+        glm::dvec3 to = from + frames[child].q * (poses[child].position - targets[child].p);
+        if (collide && mEntries[child].collide)
+            for (const Collider& c : worldColliders)
+                to += pushOut(origin + to, c, mEntries[child].radius);
+        const double lf = glm::length(from), lt = glm::length(to);
+        if (lf < 1e-9 || lt < 1e-9)
+            return full;
+        const glm::dvec3 axis = glm::cross(from / lf, to / lt);
+        const double s = glm::length(axis), c = glm::dot(from / lf, to / lt);
+        if (s < 1e-12)
+            return full;
+        const glm::dmat3 turn = glm::mat3_cast(glm::angleAxis(std::atan2(s, c), axis / s));
+        for (int k = 0; k < 3; ++k)
+            full[k] = glm::dvec4(turn * glm::dvec3(full[k]), 0.0);
+        return full;
     }
 
 private:
@@ -549,6 +635,9 @@ private:
         bool collide = true;
         double radius = 1.0;
         size_t offset = 0;
+        bool aim = false;
+        NodeId next = kNoNode; // the next joint of its chain
+        int child = -1;        // aiming: that joint's entry
     };
 
     struct ColliderNode
@@ -661,6 +750,9 @@ private:
     uint64_t mSeed = 1;
     int mWeightAttr = -1;
     bool mEnabled = true;
+    NodeId mCarrier = kNoNode;
+    double mCarrierInertia = 1.0;
+    size_t mCarrierBase = 0;
 };
 
 bool registerTypes(ext::Context& ctx)
@@ -702,6 +794,8 @@ bool registerTypes(ext::Context& ctx)
         limited(number("squashScale", 1.0, "Multiplies every chain's squash and stretch."), 0.0),
         boolean("preview", true, "Draw the simulated chains in the viewport, simulating as the time changes."),
         string(sim::kRecordingsAttr, "Layers recorded from this simulation, muted while it samples its inputs.", hidden),
+        string("carrier", "Carried motion: a transform (saddle, seat) whose space the chains simulate in, overriding space."),
+        limited(number("carrierInertia", 1.0, "Share of the carrier's acceleration the chains feel: 1 like the world, 0 carried rigidly."), 0.0),
     };
 
     NodeType chain{.name = kChainType,
@@ -745,6 +839,8 @@ bool registerTypes(ext::Context& ctx)
         limited(number("delay", 0.0, "Frames each joint's rotation lags its animation, for overlapping action."), 0.0),
         boolean("collide", true, "Keep the joints out of overlap colliders."),
         limited(number("radius", 1.0, "Joint radius for collisions, cm."), 0.0),
+        boolean("aim", false, "Turn each joint toward where its child lags instead of moving the child: the chain keeps its "
+                              "bone lengths, as a tail or tentacle does."),
     };
 
     NodeType joint{.name = kJointType,
@@ -944,12 +1040,78 @@ void registerCommands(ext::Context& ctx)
         },
     });
 }
+/** World-space length of the joints from first to last. */
+double chainLength(Graph& g, const std::vector<NodeId>& joints)
+{
+    double len = 0.0;
+    for (size_t i = 1; i < joints.size(); ++i)
+        len += glm::length(glm::dvec3(g.node(joints[i])->as<glm::dmat4>(attr(*g.node(joints[i]), "worldMatrix"))[3]) -
+                           glm::dvec3(g.node(joints[i - 1])->as<glm::dmat4>(attr(*g.node(joints[i - 1]), "worldMatrix"))[3]));
+    return len;
+}
+
+/**
+ * splineDynamics' overlap mode: an Overlap node of its own, in world space (or the carrier's), with one aiming chain over
+ * the spline chain's joints so lag turns the joints and the chain keeps its length.
+ */
+NodeId attachToSplineChain(Graph& g, NodeId chainNode, const std::vector<NodeId>& joints, const spline::DynamicsOptions& o)
+{
+    // Every enabled overlap collider in the scene counts; naming others is a mistake worth saying.
+    for (NodeId col : o.colliders)
+        if (!g.node(col) || !g.node(col)->type().isA(kColliderType))
+            throw std::invalid_argument("overlap dynamics collide with overlap colliders (createOverlapCollider); " +
+                                        (g.node(col) ? g.node(col)->path() : std::string("a collider")) + " is not one");
+    const std::string base = o.name.empty() ? g.node(chainNode)->name() + "_overlap" : o.name;
+    const NodeId ov = g.createNode(*types::find(kOverlapType), base)->id();
+    auto set = [&](NodeId id, const char* name, PlugValue v) { g.setValue({id, attr(*g.node(id), name), -1}, std::move(v)); };
+    set(ov, "space", int64_t(Space::World));
+    if (o.carrier)
+    {
+        set(ov, "carrier", g.path(o.carrier));
+        set(ov, "carrierInertia", o.carrierInertia);
+    }
+    const double length = std::max(chainLength(g, joints), 1.0);
+    const NodeId c = g.createNode(*types::find(kChainType), g.node(chainNode)->name() + "_dynamics", ov)->id();
+    set(c, "root", g.path(joints.front()));
+    set(c, "end", g.path(joints.back()));
+    set(c, "aim", true);
+    set(c, "maxOffset", length * (o.full ? 1.0 : 0.5));
+    if (o.full)
+    {
+        set(c, "stiffness", o.stiffness.value_or(4.0));
+        set(c, "rotationStiffness", o.stiffness.value_or(4.0));
+        set(c, "damping", o.damping.value_or(3.0));
+        set(c, "rotationDamping", o.damping.value_or(3.0));
+        set(c, "maxAngle", 150.0);
+        set(c, "gravityScale", o.gravity.value_or(1.0));
+    }
+    else
+    {
+        if (o.stiffness)
+        {
+            set(c, "stiffness", *o.stiffness);
+            set(c, "rotationStiffness", *o.stiffness);
+        }
+        if (o.damping)
+        {
+            set(c, "damping", *o.damping);
+            set(c, "rotationDamping", *o.damping);
+        }
+        set(c, "gravityScale", o.gravity.value_or(0.0));
+    }
+    set(c, "radius", o.radius.value_or(std::max(1.0, length / double(joints.size()) * 0.25)));
+    return ov;
+}
 } // namespace
 
 bool registerScene(ext::Context& ctx)
 {
     if (!registerTypes(ctx))
         return false;
+    ctx.add(spline::dynamicsProviders(), "splineDynamics", "overlap",
+            spline::DynamicsProvider{.name = "overlap",
+                                     .doc = "Stylised overlap: cheap, loops seamlessly, collides with overlap colliders.",
+                                     .attach = attachToSplineChain});
     if (!sim::registerSolverType(ctx, {.nodeType = kOverlapType, .create = [](Graph&, NodeId node) -> std::unique_ptr<sim::Solver> {
                                            return std::make_unique<OverlapSolver>(node);
                                        }}))

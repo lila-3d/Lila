@@ -235,6 +235,8 @@ struct ExportNode
     bool lodGroup = false;
     /** Its Unreal screen size per level, written as screen percentage thresholds; empty leaves them to the importer. */
     std::vector<double> lodScreenSizes;
+    /** A pinned prop's joint to attach to (scene/Pin.h), written as the string user property UnrealSocket. */
+    std::string unrealSocket;
 };
 
 /** Sampled (or keyed) animation of the exported nodes over one range. */
@@ -296,6 +298,12 @@ LILA_SCENE_API bool writeFbx(const ExportScene& scene, const fs::path& path, con
  */
 LILA_SCENE_API bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
                      const std::string& kind = "static", bool atOrigin = true, const std::string& take = {}, bool children = true);
+
+/**
+ * Main thread. The Unreal check (scene/UnrealCheck.h) of what a skeletal or animation export of ids writes, over the
+ * export's range; throws CommandError naming the joint Unreal can't match. Other kinds pass.
+ */
+LILA_SCENE_API void unrealCheck(scene::Graph& g, const std::vector<scene::NodeId>& ids, const ExportOptions& opts, const std::string& command);
 
 struct ImportOptions
 {

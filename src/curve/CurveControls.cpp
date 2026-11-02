@@ -7,11 +7,13 @@
 #include "scene/Graph.h"
 #include "scene/RigUtil.h"
 #include "scene/Transform.h"
+#include "scene/TransformOps.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace lila::curve
@@ -353,6 +355,87 @@ Splines drivenSplines(const Node& curve, Splines s)
         if (si < s.size())
             applyDriven(s[si], moves);
     return s;
+}
+
+namespace
+{
+struct DrivenBy
+{
+    NodeId control = kNoNode;
+    int element = -1;
+    int depth = 0;
+};
+
+/** Each driven component's control and controls element. */
+std::map<uint32_t, DrivenBy> drivers(Graph& g, const Node& curve)
+{
+    std::map<uint32_t, DrivenBy> out;
+    const ControlAttrs at = controlAttrs(curve);
+    if (!at.valid())
+        return out;
+    for (const auto& [e, v] : curve.elements(at.matrix))
+    {
+        const int64_t id = curve.elementOr<int64_t>(at.point, e);
+        const std::optional<PlugRef> src = g.source({curve.id(), at.matrix, -1, e});
+        if (id < 0 || !src || !g.node(src->node))
+            continue;
+        int depth = 0;
+        for (NodeId p = g.parent(src->node); p != kNoNode; p = g.parent(p))
+            ++depth;
+        out[uint32_t(id)] = {src->node, e, depth};
+    }
+    return out;
+}
+} // namespace
+
+std::vector<NodeId> curveControlNodes(Graph& g, const Node& curve)
+{
+    std::vector<DrivenBy> all;
+    for (const auto& [id, d] : drivers(g, curve))
+        all.push_back(d);
+    std::ranges::stable_sort(all, [](const DrivenBy& a, const DrivenBy& b) { return a.depth < b.depth; });
+    std::vector<NodeId> out;
+    for (const DrivenBy& d : all)
+        if (std::ranges::find(out, d.control) == out.end())
+            out.push_back(d.control);
+    return out;
+}
+
+std::vector<std::pair<uint32_t, D3>> moveDrivenComponents(Graph& g, const Node& curve, std::vector<std::pair<uint32_t, D3>> moves)
+{
+    LILA_ZONE();
+
+    const std::map<uint32_t, DrivenBy> driven = drivers(g, curve);
+    if (driven.empty())
+        return moves;
+    struct Move
+    {
+        DrivenBy by;
+        D3 world;
+    };
+    std::vector<Move> controlled;
+    std::vector<std::pair<uint32_t, D3>> rest;
+    const glm::dmat4 curveWorld = curve.as<glm::dmat4>(Transform::kWorldMatrix);
+    for (const auto& [id, p] : moves)
+        if (auto it = driven.find(id); it != driven.end())
+            controlled.push_back({it->second, worldPoint(curveWorld, p)});
+        else
+            rest.emplace_back(id, p);
+    // Point controls first: their handle controls ride along, then go the rest of the way to their own targets.
+    std::ranges::stable_sort(controlled, [](const Move& a, const Move& b) { return a.by.depth < b.by.depth; });
+    const ControlAttrs at = controlAttrs(curve);
+    for (const Move& m : controlled)
+    {
+        g.evaluate();
+        const Node* ctl = g.node(m.by.control);
+        if (!ctl)
+            continue;
+        const glm::dmat4 offset = curve.elementOr<glm::dmat4>(at.offset, m.by.element);
+        const D3 now = D3((ctl->as<glm::dmat4>(Transform::kWorldMatrix) * offset)[3]);
+        if (const D3 delta = m.world - now; glm::length(delta) > 1e-12)
+            xformops::moveBy(g, {m.by.control}, delta);
+    }
+    return rest;
 }
 
 void registerCurveControlCommands()

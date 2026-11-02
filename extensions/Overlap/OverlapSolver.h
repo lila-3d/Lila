@@ -185,6 +185,8 @@ struct Context
     glm::dvec3 gravity{0.0};
     glm::dvec3 force{0.0};  // linear acceleration from wind and the like
     glm::dvec3 torque{0.0}; // angular acceleration, radians
+    /** The carrier's acceleration (times its inertia share): felt like the target's own, through the bone's inertia. */
+    glm::dvec3 carried{0.0};
     /** Unit axis in the bone's own space that squash and stretch acts along. */
     glm::dvec3 stretchAxis{1.0, 0.0, 0.0};
 };
@@ -348,7 +350,7 @@ inline void integrate(const BoneSettings& b, BoneState& s, const glm::dvec3& tar
 
     const Response& r = b.response;
     // Dragged by the animation: the pseudo-force opposes the target's acceleration.
-    const glm::dvec3 force = ctx.gravity * r.gravityScale + ctx.force * r.windScale - linearAccel * r.inertia;
+    const glm::dvec3 force = ctx.gravity * r.gravityScale + ctx.force * r.windScale - (linearAccel + ctx.carried) * r.inertia;
     solveSpring(s.offset, s.velocity, force, b.translation.stiffness, b.translation.damping, h);
     clampDeviation(s.offset, s.velocity, std::max(b.translation.maxOffset, 0.0));
 

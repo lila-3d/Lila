@@ -15,6 +15,8 @@
 #include "scene/RigUtil.h"
 #include "scene/Transform.h"
 
+#include <glm/gtc/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -104,6 +106,7 @@ public:
         kRestCurveLength,
         kJointCount,
         kSolution,
+        kDynamics,
     };
 
     void compute(const EvalContext&) override
@@ -299,6 +302,7 @@ void registerTypesImpl()
         attr("restCurveLength", PlugType::Float, 0.0, kHiddenStored, "The curve's length at rest."),
         attr("jointCount", PlugType::Int, int64_t(0), kHiddenStored, "Joints in the chain."),
         attr("solution", PlugType::Data, DataPtr(), AttrOutput | AttrHidden, "The solved joints, read by the splineJoints."),
+        attr("dynamics", PlugType::String, std::string(), kStored, "The simulation splineDynamics set up on the joints, if any."),
     };
 
     NodeType joint{.name = kJointType,
@@ -430,6 +434,103 @@ NodeId splineChainContaining(Graph& g, NodeId joint)
                 return id;
         }
     return kNoNode;
+}
+
+// Dynamics --------------------------------------------------------------------------------------------------------
+
+Registry<DynamicsProvider>& dynamicsProviders()
+{
+    static Registry<DynamicsProvider> r;
+    return r;
+}
+
+NodeId dynamicsOf(Graph& g, NodeId chain)
+{
+    const Node* c = g.node(chain);
+    if (!c || !c->type().isA(kChainType))
+        return kNoNode;
+    const std::string& path = c->as<std::string>(SplineChainNode::kDynamics);
+    try
+    {
+        const Node* n = path.empty() ? nullptr : g.find(path);
+        return n ? n->id() : kNoNode;
+    }
+    catch (const std::exception&)
+    {
+        return kNoNode;
+    }
+}
+
+NodeId addDynamics(Graph& g, NodeId chain, const std::string& mode, const DynamicsOptions& o)
+{
+    const Node* c = g.node(chain);
+    if (!c || !c->type().isA(kChainType))
+        throw std::invalid_argument("dynamics go on a spline chain");
+    const DynamicsProvider* p = dynamicsProviders().find(mode);
+    if (!p)
+    {
+        std::string all;
+        for (const std::string& id : dynamicsProviders().ids())
+            all += (all.empty() ? "" : " | ") + id;
+        throw std::invalid_argument("no '" + mode + "' dynamics; " +
+                                    (all.empty() ? std::string("load the Overlap or Physics Animation extension") : "the modes are " + all));
+    }
+    if (const NodeId d = dynamicsOf(g, chain))
+        throw std::invalid_argument(c->path() + " already has dynamics, " + g.node(d)->path() + "; delete it first");
+    const std::vector<NodeId> joints = splineChainJoints(g, chain);
+    if (joints.size() < 2)
+        throw std::invalid_argument(c->path() + " has lost its joints");
+    if (o.carrier && !(g.node(o.carrier) && g.node(o.carrier)->type().isA("transform")))
+        throw std::invalid_argument("the carrier is not a transform");
+    g.evaluate();
+    const NodeId made = p->attach(g, chain, joints, o);
+    if (!g.node(made))
+        throw std::invalid_argument("the " + mode + " dynamics made nothing");
+    g.setValue({chain, SplineChainNode::kDynamics, -1}, g.node(made)->path());
+    g.evaluate();
+    return made;
+}
+
+NodeId splineJointOf(Graph& g, NodeId joint)
+{
+    const Node* j = g.node(joint);
+    if (!j || !rig::isJoint(*j))
+        return kNoNode;
+    const auto src = g.source({joint, Joint::kIkBlend, -1});
+    const Node* sj = src ? g.node(src->node) : nullptr;
+    return sj && sj->type().isA(kJointType) ? sj->id() : kNoNode;
+}
+
+std::optional<OffsetKey> offsetFor(Graph& g, NodeId joint, const glm::dmat3& local)
+{
+    const NodeId sj = splineJointOf(g, joint);
+    if (!sj)
+        return std::nullopt;
+    const double w = std::clamp(std::get<double>(g.value({joint, Joint::kIkBlend, -1})), 0.0, 1.0);
+    if (w < 1e-6)
+        return std::nullopt;
+    const auto& j = static_cast<const Joint&>(*g.node(joint));
+    const auto order = RotateOrder(std::get<int64_t>(g.value({joint, Transform::kRotateOrder, -1})));
+    const glm::dmat3 want = glm::transpose(glm::dmat3(j.preRotation())) * local * glm::transpose(glm::dmat3(j.rotateAxisMatrix()));
+    glm::dmat3 solved = want;
+    if (w < 1.0)
+    {
+        // Joint::rotation slerps from the FK rotate toward solvedRotate by w; this is the solvedRotate that lands on want.
+        const glm::dquat fk = glm::normalize(glm::quat_cast(glm::dmat3(eulerToMatrix(std::get<D3>(g.value({joint, Transform::kRotate, -1})), order))));
+        glm::dquat d = glm::normalize(glm::inverse(fk) * glm::quat_cast(want));
+        if (d.w < 0.0)
+            d = -d;
+        const D3 v(d.x, d.y, d.z);
+        const double s = glm::length(v);
+        const double angle = 2.0 * std::atan2(s, d.w) / w;
+        const glm::dquat step = s > 1e-12 ? glm::angleAxis(angle, v / s) : glm::dquat(1.0, 0.0, 0.0, 0.0);
+        solved = glm::mat3_cast(glm::normalize(fk * step));
+    }
+    const auto offsetOrder = RotateOrder(std::clamp<int64_t>(std::get<int64_t>(g.value({sj, SplineJointNode::kRotateOrder, -1})), 0, 5));
+    const D3 now = std::get<D3>(g.value({sj, SplineJointNode::kOffset, -1}));
+    const glm::dmat3 solvedNow(eulerToMatrix(std::get<D3>(g.value({joint, Joint::kSolvedRotate, -1})), order));
+    const glm::dmat3 offset = glm::dmat3(eulerToMatrix(now, offsetOrder)) * glm::transpose(solvedNow) * solved;
+    return OffsetKey{{sj, SplineJointNode::kOffset, -1}, eulerNear(offset, offsetOrder, now)};
 }
 
 // Creating --------------------------------------------------------------------------------------------------------
@@ -725,6 +826,8 @@ std::vector<NodeId> chainArgs(Graph& g, const Args& a, const char* cmd)
             if (auto src = g.source({n.id(), SplineJointNode::kSolution, -1}))
                 c = src->node;
         }
+        else if (n.type().isA(kHoseType))
+            c = hoseChain(g, n.id());
         else if (rig::isJoint(n))
             c = splineChainContaining(g, n.id());
         if (c && std::find(out.begin(), out.end(), c) == out.end())
@@ -769,6 +872,33 @@ json editSplineChainCmd(const Args& a)
             g.setValue({c, SplineChainNode::kUpVector, -1}, vec3Of(a.flags["upVector"]));
         out.push_back(g.node(c)->path());
     }
+    return out;
+}
+
+json splineDynamicsCmd(const Args& a)
+{
+    Graph& g = graph();
+    DynamicsOptions o;
+    o.full = a.get<std::string>("drive", "additive") == "full";
+    auto opt = [&](const char* flag, std::optional<double>& into) {
+        if (a.has(flag))
+            into = a.get<double>(flag);
+    };
+    opt("stiffness", o.stiffness);
+    opt("damping", o.damping);
+    opt("gravity", o.gravity);
+    opt("radius", o.radius);
+    if (a.has("carrier"))
+        o.carrier = nodeNamed(a.get<std::string>("carrier"), "splineDynamics").id();
+    o.carrierInertia = a.get<double>("carrierInertia", 1.0);
+    if (a.has("colliders"))
+        for (const json& c : a.flags["colliders"])
+            o.colliders.push_back(nodeNamed(c.get<std::string>(), "splineDynamics").id());
+    o.name = a.get<std::string>("name", "");
+    const std::string mode = a.get<std::string>("mode", "overlap");
+    json out = json::array();
+    for (NodeId c : chainArgs(g, a, "splineDynamics"))
+        out.push_back(g.node(guard("splineDynamics", [&] { return addDynamics(g, c, mode, o); }))->path());
     return out;
 }
 
@@ -845,6 +975,30 @@ void registerCommands()
         },
         .run = editSplineChainCmd,
         .examples = {"editSplineChain(\"spine_01_spline\", lengthMode=\"squash\", twistEnd=45)"},
+    });
+    ops::registerCommand({
+        .name = "splineDynamics",
+        .doc = "Dynamics on spline chains (tails, tentacles, antennae, hose limbs): overlap is stylised, cheap and loops; jolt is a "
+               "rigid body per segment that collides with the scene. Additive follows the animation with follow-through; full "
+               "simulates with only the root animated. Record it with recordSimulation: the motion keys the splineJoints' "
+               "offsets on an additive layer, which bakeToDeformSkeleton carries to plain keys. Returns the simulation nodes.",
+        .positionalDoc = "spline chains, joints in them, their splineJoints or hoseLimbs (default the selection)",
+        .flags = {
+            {"mode", "m", T::String, "overlap", "overlap | jolt.", {"overlap", "jolt"}},
+            {"drive", "dr", T::String, "additive", "additive: follow-through on the animation. full: simulated from the root.", {"additive", "full"}},
+            {"stiffness", "st", T::Float, nullptr, "Pull back to the animation: overlap rotation stiffness, jolt pose match Hz.", {}, {}, 0.0},
+            {"damping", "d", T::Float, nullptr, "overlap: damping. jolt: damping ratio, 1 settles without bouncing.", {}, {}, 0.0},
+            {"gravity", "g", T::Float, nullptr, "Share of gravity the chain feels; default 0 additive, 1 full."},
+            {"radius", "r", T::Float, nullptr, "Collision radius of each segment, cm; default from the bone length.", {}, {}, 0.0},
+            {"colliders", "co", T::List, nullptr, "jolt: meshes the chain collides with. overlap: overlap colliders (createOverlapCollider)."},
+            {"carrier", "ca", T::String, nullptr, "Carried motion: the transform (saddle, seat) the chain simulates relative to."},
+            {"carrierInertia", "ci", T::Float, 1.0, "Share of the carrier's acceleration the chain feels: 1 like the world, 0 carried rigidly.",
+             {}, {}, 0.0},
+            {"name", "n", T::String, nullptr, "Name of the simulation node."},
+        },
+        .run = splineDynamicsCmd,
+        .examples = {"splineDynamics(\"tail_01_spline\")", "splineDynamics(\"tail_01\", mode=\"jolt\", colliders=[\"Ground\"])",
+                     "splineDynamics(\"tail_01_spline\", carrier=\"horse_saddle\", carrierInertia=0.5)"},
     });
     registerOptionBoxes();
     registerHoseCommands();

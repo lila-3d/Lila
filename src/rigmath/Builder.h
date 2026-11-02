@@ -325,4 +325,5 @@ void addVector(Library& lib);
 void addRotation(Library& lib);
 void addMatrix(Library& lib);
 void addMisc(Library& lib);
+void addRamps(Library& lib);
 } // namespace lila::rigmath

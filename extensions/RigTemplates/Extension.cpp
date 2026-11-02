@@ -54,6 +54,24 @@ std::string lower(std::string s)
 
 std::string bare(const std::string& name) { return poses::stripNamespace(name); }
 
+/** "a, b,c" -> {a, b, c}. */
+std::vector<std::string> splitNames(const std::string& s)
+{
+    std::vector<std::string> out;
+    size_t at = 0;
+    while (at <= s.size())
+    {
+        size_t comma = std::min(s.find(',', at), s.size());
+        std::string n = s.substr(at, comma - at);
+        n.erase(0, n.find_first_not_of(' '));
+        n.erase(n.find_last_not_of(' ') + 1);
+        if (!n.empty())
+            out.push_back(n);
+        at = comma + 1;
+    }
+    return out;
+}
+
 json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 glm::dvec3 vecOf(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
 
@@ -353,13 +371,59 @@ void addTemplateSpaces(Graph& g, const Template& t, const std::map<std::string, 
     }
 }
 
+/** Sets the template's IK limits on the built joints through ikLimit, which also refreshes any handle solving them. */
+void applyLimits(Graph& g, const Template& t, const std::map<std::string, NodeId>& made)
+{
+    const json limits = t.rig.value("limits", json::object());
+    for (const auto& [marker, l] : limits.items())
+    {
+        auto it = made.find(marker);
+        if (it == made.end())
+            continue;
+        json call = l;
+        call["args"] = json::array({g.node(it->second)->path()});
+        ops::execute("ikLimit", call);
+    }
+}
+
+/** Whether an ikChains entry builds as a rubber hose under the build's hose mode. */
+bool hosed(const json& chain, const std::string& mode)
+{
+    if (mode == "template")
+        return chain.value("hose", json::object()).value("enabled", false);
+    if (mode == "all" || mode == "none")
+        return mode == "all";
+    const std::string name = chain.value("name", std::string());
+    for (const std::string& n : splitNames(mode))
+        if (n == name)
+            return true;
+    return false;
+}
+
 /**
- * The template's rig elements on the built joints: IK chains with their poles, reverse feet on the sole pivots (or the
- * skinned sole), lookers, twist drivers and deform flags, grouped under <top>_rig. Entries naming joints the build
- * skipped are left out. Returns the elements made.
+ * The limb from start to end as a rubber hose through hoseLimb. Its twist and corrective joints stop deforming with the
+ * limb's own: the hose joints carry the skin from shoulder or hip to wrist or ankle.
+ */
+NodeId buildHose(Graph& g, NodeId start, NodeId end, const json& opts)
+{
+    const json made = ops::execute("hoseLimb", {{"args", {g.node(start)->path(), g.node(end)->path()}},
+                                                {"joints", opts.value("joints", 12)},
+                                                {"hose", opts.value("amount", 1.0)},
+                                                {"autoArc", opts.value("autoArc", 1.0)}});
+    const std::vector<NodeId> below = g.descendants(end);
+    for (NodeId d : g.descendants(start))
+        if (d != end && rig::isJoint(*g.node(d)) && std::find(below.begin(), below.end(), d) == below.end())
+            g.setValue({d, Joint::kDeform, -1}, false);
+    return g.find(made.get<std::string>())->id();
+}
+
+/**
+ * The template's rig elements on the built joints: IK limits, IK chains with their poles, reverse feet on the sole
+ * pivots (or the skinned sole), lookers, twist drivers, rubber hose limbs (hose: see hosed) and deform flags, grouped
+ * under <top>_rig. Entries naming joints the build skipped are left out. Returns the elements made.
  */
 json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const std::map<std::string, NodeId>& made, const std::string& top,
-                      bool skinned)
+                      bool skinned, const std::string& hose)
 {
     namespace rigel = lila::scene::rigel;
     json out = json::array();
@@ -381,6 +445,7 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
         for (const json& n : rig["nonDeform"])
             if (auto it = made.find(n.get<std::string>()); it != made.end())
                 g.setValue({it->second, Joint::kDeform, -1}, false);
+    applyLimits(g, t, made);
     if (!rig.contains("ikChains") && !rig.contains("lookers") && !rig.contains("twists"))
         return out;
     const NodeId group = g.createNode(*types::find("transform"), top.substr(top.rfind('|') + 1) + "_rig")->id();
@@ -471,11 +536,25 @@ json buildTemplateRig(Graph& g, const Template& t, const Solved& solved, const s
             log::warn("buildRigSkeleton: twist driver on {}: {}", g.node(j)->path(), err.what());
         }
     }
+    for (const json& c : rig.value("ikChains", json::array()))
+    {
+        const NodeId s = joint(c, "start"), e = joint(c, "end");
+        if (!s || !e || !hosed(c, hose))
+            continue;
+        try
+        {
+            record(buildHose(g, s, e, c.value("hose", json::object())));
+        }
+        catch (const std::exception& err)
+        {
+            log::warn("buildRigSkeleton: hose limb {}: {}", c.value("name", std::string()), err.what());
+        }
+    }
     return out;
 }
 
 json buildSkeleton(Graph& g, const Source& src, const std::string& prefix, bool includeIk, bool bindSkin, const std::vector<NodeId>& meshes,
-                   bool withSpaces, bool withRig)
+                   bool withSpaces, bool withRig, const std::string& hose)
 {
     const Template& t = src.tmpl;
     Solved solved = solve(t, src.positions);
@@ -524,7 +603,7 @@ json buildSkeleton(Graph& g, const Source& src, const std::string& prefix, bool 
     // After the bind, so the auto rule can prefer bones the skin weights. Redirects set before it are kept.
     if (Node* root = g.find(top))
         rig::applyAutoSelectAs(g, {root->id()});
-    json elements = withRig ? buildTemplateRig(g, t, solved, made, top, bindSkin) : json::array();
+    json elements = withRig ? buildTemplateRig(g, t, solved, made, top, bindSkin, hose) : json::array();
     return {{"root", top}, {"joints", names}, {"skinClusters", skins}, {"rig", elements}};
 }
 
@@ -1095,8 +1174,9 @@ bool registerCommands(ext::Context& ctx)
 
     defs.push_back({.name = "buildRigSkeleton",
                     .doc = "Build joints from a template instance's markers (or a template's defaults): template names, "
-                           "hierarchy and orientations from the template's rules, plus (rig) the template's IK chains, reverse "
-                           "feet, lookers, twist drivers and deform flags, so the skeleton is a working rig in one step. bindSkin "
+                           "hierarchy and orientations from the template's rules, plus (rig) the template's IK limits, IK chains, "
+                           "reverse feet, lookers, twist drivers, deform flags and any rubber hose limbs (hose), so the skeleton is "
+                           "a working rig in one step. bindSkin "
                            "binds the instance's meshes (or the given ones). Returns the root joint, the joints, any "
                            "skinClusters and the rig elements.",
                     .positionalDoc = "instance or template id",
@@ -1105,7 +1185,9 @@ bool registerCommands(ext::Context& ctx)
                               {"includeIk", "ik", T::Bool, true, "Build the template's ik helper joints too."},
                               {"prefix", "p", T::String, "", "Prefix for the joint names."},
                               {"spaces", "sp", T::Bool, true, "Give the joints the template's default spaces (hands in world, chest, head ...)."},
-                              {"rig", "rg", T::Bool, true, "Build the template's rig elements too: IK chains, reverse feet, lookers, twist drivers and deform flags."}},
+                              {"rig", "rg", T::Bool, true, "Build the template's rig elements too: IK limits, IK chains, reverse feet, lookers, twist drivers, hose limbs and deform flags."},
+                              {"hose", "hs", T::String, "template",
+                               "Limbs built as rubber hoses (with rig): template (each limb's own setting), all, none (all jointed), or IK chain names separated by commas (arm_l, leg_r)."}},
                     .run = [](const Args& a) -> json {
                         Graph& g = graph();
                         std::vector<std::string> objs = a.objects();
@@ -1113,8 +1195,18 @@ bool registerCommands(ext::Context& ctx)
                             throw CommandError("buildRigSkeleton: give one instance or template id");
                         Source src = sourceArg(g, objs[0], "buildRigSkeleton");
                         std::vector<NodeId> meshes = a.has("meshes") ? meshesArg(g, a.flags["meshes"], "buildRigSkeleton") : src.meshes;
+                        const std::string hose = a.get<std::string>("hose", "template");
+                        if (hose != "template" && hose != "all" && hose != "none")
+                            for (const std::string& n : splitNames(hose))
+                            {
+                                bool known = false;
+                                for (const json& c : src.tmpl.rig.value("ikChains", json::array()))
+                                    known = known || c.value("name", std::string()) == n;
+                                if (!known)
+                                    throw CommandError("buildRigSkeleton: hose: the template has no IK chain '" + n + "'");
+                            }
                         return buildSkeleton(g, src, a.get<std::string>("prefix"), a.get<bool>("includeIk", true), a.get<bool>("bindSkin"), meshes,
-                                             a.get<bool>("spaces", true), a.get<bool>("rig", true));
+                                             a.get<bool>("spaces", true), a.get<bool>("rig", true), hose);
                     }});
 
     defs.push_back({.name = "orientRigSkeleton",

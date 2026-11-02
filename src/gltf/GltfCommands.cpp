@@ -192,7 +192,9 @@ void registerCommands()
                   {"atOrigin", "", T::Bool, false, "Drop the exported roots' own transforms, keeping their children relative."},
                   {"children", "", T::Bool, true, "Include the descendants of the given objects."},
                   {"units", "u", T::String, "m", "File units: m (glTF's), cm, mm, in or ft. Lengths are scaled to them.", {"m", "cm", "mm", "in", "ft"}},
-                  {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."}},
+                  {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."},
+                  {"unrealCheck", "uc", T::Bool, true,
+                   "Skeletal and animation kinds: refuse when a skeleton fails unrealCheck over the range (sampled). False exports anyway."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -264,6 +266,8 @@ void registerCommands()
                 go.kind = autoKind(g, ids, go.worldSpace);
             else if (!fbx::parseKind(kind, &go.kind))
                 throw CommandError("exportGltf: unknown kind '" + kind + "' (auto, static, skeletal, animation or sequence)");
+            if (a.get<bool>("unrealCheck", true))
+                fbx::unrealCheck(g, ids, go, "exportGltf");
 
             progress::Scope scope("Exporting " + utf8(file.filename()) + "...", 3.0);
             ExportSnapshot snapshot;

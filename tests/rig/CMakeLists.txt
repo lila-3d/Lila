@@ -20,12 +20,15 @@ add_executable(lila_rig_tests
     test_pins.cpp
     test_relocate.cpp
     test_spline_chain.cpp
-    test_rubber_hose.cpp)
+    test_rubber_hose.cpp
+    test_fbik_stretch.cpp
+    test_hose_reskin.cpp
+    test_pin_socket.cpp)
 target_link_libraries(lila_rig_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_rig_tests COMMAND lila_rig_tests)
 
 # Viewport side: joint drawing/picking and the weight paint tool, driven headless (offscreen Qt platform).
-add_executable(lila_rig_ui_tests ui_main.cpp test_rig_ui.cpp test_picker_ui.cpp test_relocate_extensions.cpp)
+add_executable(lila_rig_ui_tests ui_main.cpp test_rig_ui.cpp test_picker_ui.cpp test_relocate_extensions.cpp test_rig_handles.cpp)
 target_link_libraries(lila_rig_ui_tests PRIVATE LilaUI doctest::doctest)
 # relocateScene's classification guard loads every built extension.
 foreach(_ext lila_destruction_extension lila_foliage_extension lila_ground_tiles_extension lila_lights_extension lila_masonry_extension

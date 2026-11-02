@@ -1800,6 +1800,7 @@ void registerBuiltins()
              "subdivisionModifier", "triangulateModifier", "weightedNormalsModifier", "extrudeModifier", "splitRingsModifier", "autoBevelModifier", "morph",
              "morphTarget", "correction", "deltaMush", "smoothDeformer", "tension", "textureDeformer", "noiseDeformer", "meshCache"})
         registerNeutral(t);
+    registerNeutral("gameExportPreset");
 
     // Linked only: nothing stored in world space, but what they link must move together.
     for (const char* t : {"constraint", "parentConstraint", "pointConstraint", "orientConstraint", "aimConstraint"})

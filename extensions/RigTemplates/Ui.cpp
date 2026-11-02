@@ -10,6 +10,7 @@
 #include <lila/UI.h>
 #include <lila/Viewport.h>
 
+#include <QComboBox>
 #include <QGridLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -30,6 +31,7 @@ namespace rigt
 namespace
 {
 std::string gCurrent; // template the panel has selected
+std::string gHose = "template"; // buildRigSkeleton's hose mode, from the panel's Limbs choice
 
 std::string currentTemplate()
 {
@@ -222,6 +224,7 @@ void build()
         bool bound = !p.meshes.empty() || (!p.instance.empty() && !rig::centerMeshes(g, g.find(p.instance)->id()).empty());
         call["bindSkin"] = bound;
     }
+    call["hose"] = gHose;
     run("buildRigSkeleton", call);
 }
 
@@ -285,6 +288,17 @@ QWidget* makePanel(QWidget* parent)
     info->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(list, 1);
     v->addWidget(info);
+    auto* limbs = new QComboBox(w);
+    const std::pair<const char*, const char*> modes[] = {{"Limbs as the Template Says", "template"}, {"Jointed Limbs", "none"}, {"Rubber Hose Limbs", "all"}};
+    for (const auto& [label, mode] : modes)
+    {
+        limbs->addItem(label, QString(mode));
+        if (gHose == mode)
+            limbs->setCurrentIndex(limbs->count() - 1);
+    }
+    limbs->setToolTip("How Build Skeleton makes the arms and legs: jointed elbows and knees, or rubber hoses.");
+    QObject::connect(limbs, &QComboBox::currentIndexChanged, w, [limbs](int) { gHose = limbs->currentData().toString().toStdString(); });
+    v->addWidget(limbs);
     auto* grid = new QGridLayout();
     struct Button
     {

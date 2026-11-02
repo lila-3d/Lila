@@ -12,6 +12,7 @@
 #include "scene/Rig.h"
 #include "scene/RigMath.h"
 #include "scene/RigUtil.h"
+#include "scene/Skin.h"
 #include "scene/Transform.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -19,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 
 namespace lila::scene::spline
 {
@@ -335,6 +337,22 @@ void registerHoseTypes()
         types::registerType(std::move(*t));
 }
 
+NodeId hoseChain(Graph& g, NodeId hose)
+{
+    const Node* h = g.node(hose);
+    if (!h || !h->type().isA(kHoseType))
+        return kNoNode;
+    try
+    {
+        const Node* c = g.find(h->as<std::string>(HoseLimbNode::kChain));
+        return c && c->type().isA(kChainType) ? c->id() : kNoNode;
+    }
+    catch (const std::exception&)
+    {
+        return kNoNode;
+    }
+}
+
 NodeId createHoseLimb(Graph& g, NodeId start, NodeId end, const HoseOptions& opts)
 {
     LILA_ZONE();
@@ -429,7 +447,127 @@ NodeId createHoseLimb(Graph& g, NodeId start, NodeId end, const HoseOptions& opt
     const NodeId chain = createSplineChain(g, hoseJoints.front(), hoseJoints.back(), curveId, co);
     set(HoseLimbNode::kChain, g.node(chain)->path());
     g.evaluate();
+    if (opts.reskin)
+        reskinHoseLimb(g, hid);
     return hid;
+}
+
+namespace
+{
+/** The closest point to p on the polyline through pts: the segment and how far along it. */
+std::pair<size_t, double> closestOnPolyline(const std::vector<D3>& pts, const D3& p)
+{
+    std::pair<size_t, double> best{0, 0.0};
+    double nearest = 1e300;
+    for (size_t k = 0; k + 1 < pts.size(); ++k)
+    {
+        const D3 ab = pts[k + 1] - pts[k];
+        const double len2 = glm::dot(ab, ab);
+        const double f = len2 > 1e-18 ? std::clamp(glm::dot(p - pts[k], ab) / len2, 0.0, 1.0) : 0.0;
+        if (const double d = glm::length(p - (pts[k] + ab * f)); d < nearest)
+            nearest = d, best = {k, f};
+    }
+    return best;
+}
+} // namespace
+
+int reskinHoseLimb(Graph& g, NodeId hose)
+{
+    LILA_ZONE();
+
+    const Node* h = g.node(hose);
+    if (!h || h->type().name != kHoseType || h->as<int64_t>(HoseLimbNode::kMode) != 0)
+        throw std::invalid_argument("not a hose limb");
+    const auto root = g.source({hose, HoseLimbNode::kRootMatrix, -1}), tip = g.source({hose, HoseLimbNode::kEndMatrix, -1});
+    const Node* chainNode = g.find(h->as<std::string>(HoseLimbNode::kChain));
+    if (!root || !tip || !chainNode)
+        throw std::invalid_argument(h->path() + " has lost its limb or its chain");
+    const std::vector<NodeId> limb = jointsDown(g, root->node, tip->node);
+    const std::vector<NodeId> hoseJoints = splineChainJoints(g, chainNode->id());
+    if (limb.empty() || hoseJoints.size() < 2)
+        throw std::invalid_argument(h->path() + " has lost its limb or its chain");
+    g.evaluate();
+
+    std::vector<D3> limbAt;
+    for (NodeId j : limb)
+        limbAt.push_back(posOf(hoseWorld(g, j)));
+    // The limb joint each hose joint lies along, whose skinning it takes on.
+    std::vector<NodeId> alongOf;
+    for (NodeId j : hoseJoints)
+    {
+        const size_t k = closestOnPolyline(limbAt, posOf(hoseWorld(g, j))).first;
+        alongOf.push_back(limb[std::min(k, limb.size() - 1)]);
+    }
+
+    int changed = 0;
+    std::vector<NodeId> skins;
+    for (NodeId id : g.nodes())
+        if (g.node(id)->type().isA("skinCluster"))
+            skins.push_back(id);
+    for (NodeId sc : skins)
+    {
+        std::vector<skin::Influence> infs = skin::influences(g, sc);
+        std::map<NodeId, const skin::Influence*> byJoint;
+        for (const skin::Influence& inf : infs)
+            if (inf.joint != kNoNode)
+                byJoint[inf.joint] = &inf;
+        std::vector<uint32_t> old;
+        for (NodeId j : limb)
+            if (auto it = byJoint.find(j); it != byJoint.end())
+                old.push_back(it->second->index);
+        const MeshPtr input = skin::inputMesh(g, sc);
+        if (old.empty() || !input)
+            continue;
+        auto skinning = [&](const skin::Influence& inf) {
+            return hoseWorld(g, inf.joint) * g.node(inf.link)->as<glm::dmat4>(SkinInfluenceNode::kBindPreMatrix);
+        };
+        std::map<NodeId, glm::dmat4> limbSkinning;
+        for (NodeId j : limb)
+            limbSkinning[j] = byJoint.contains(j) ? skinning(*byJoint[j]) : glm::dmat4(1.0);
+
+        std::vector<uint32_t> ids;
+        std::vector<D3> bindAt;
+        for (size_t k = 0; k < hoseJoints.size(); ++k)
+        {
+            const bool had = byJoint.contains(hoseJoints[k]);
+            ids.push_back(skin::addInfluence(g, sc, hoseJoints[k]));
+            glm::dmat4 bindPre(1.0);
+            for (const skin::Influence& inf : skin::influences(g, sc))
+                if (inf.index == ids.back())
+                {
+                    if (!had)
+                        g.setValue({inf.link, SkinInfluenceNode::kBindPreMatrix, -1},
+                                   glm::inverse(hoseWorld(g, hoseJoints[k])) * limbSkinning[alongOf[k]]);
+                    bindPre = g.node(inf.link)->as<glm::dmat4>(SkinInfluenceNode::kBindPreMatrix);
+                }
+            bindAt.push_back(posOf(glm::inverse(bindPre)));
+        }
+
+        WeightTable t = skin::table(g, sc);
+        const glm::dmat4 geom = g.node(sc)->as<glm::dmat4>(SkinClusterNode::kGeomMatrix);
+        const auto pts = input->positions();
+        bool moved = false;
+        for (size_t p = 0; p < t.points.size() && p < pts.size(); ++p)
+        {
+            float share = 0.0f;
+            for (uint32_t o : old)
+                share += t.get(p, o);
+            if (share <= 0.0f)
+                continue;
+            for (uint32_t o : old)
+                t.set(p, o, 0.0f);
+            const auto [k, f] = closestOnPolyline(bindAt, D3(geom * glm::dvec4(D3(pts[p]), 1.0)));
+            t.set(p, ids[k], t.get(p, ids[k]) + share * float(1.0 - f));
+            t.set(p, ids[k + 1], t.get(p, ids[k + 1]) + share * float(f));
+            moved = true;
+        }
+        if (!moved)
+            continue;
+        skin::setWeights(g, sc, t);
+        ++changed;
+    }
+    g.evaluate();
+    return changed;
 }
 
 std::vector<NodeId> createHoseFingers(Graph& g, const std::vector<NodeId>& bases, const FingerOptions& opts)
@@ -548,10 +686,28 @@ json hoseLimbCmd(const Args& a)
     if (js.size() < 2)
         throw CommandError("hoseLimb: give the shoulder or hip, then the wrist or ankle");
     HoseOptions o{.name = a.get<std::string>("name", ""), .joints = a.get<int>("joints", 12), .hose = a.get<double>("hose", 1.0),
-                  .autoArc = a.get<double>("autoArc", 1.0)};
+                  .autoArc = a.get<double>("autoArc", 1.0), .reskin = a.get<bool>("reskin", true)};
     const NodeId h = hoseGuard("hoseLimb", [&] { return createHoseLimb(g, js.front(), js.back(), o); });
     g.select({h});
     return g.node(h)->path();
+}
+
+json hoseReskinCmd(const Args& a)
+{
+    Graph& g = graph();
+    std::vector<std::string> objs = a.objects();
+    if (objs.empty())
+        for (NodeId id : g.selection())
+            objs.push_back(g.node(id)->path());
+    if (objs.empty())
+        throw CommandError("hoseReskin: give hose limbs");
+    int changed = 0;
+    for (const std::string& o : objs)
+    {
+        const NodeId id = nodeNamed(o, "hoseReskin").id();
+        changed += hoseGuard("hoseReskin", [&] { return reskinHoseLimb(g, id); });
+    }
+    return changed;
 }
 
 json hoseFingersCmd(const Args& a)
@@ -574,9 +730,9 @@ void registerHoseOptionBoxes()
 {
     using ops::options::Override;
     Override l;
-    l.order = {"joints", "hose", "autoArc", "name"};
+    l.order = {"joints", "hose", "autoArc", "reskin", "name"};
     l.hidden = {"name"};
-    l.labels = {{"hose", "Hose Amount"}, {"autoArc", "Auto Arc"}};
+    l.labels = {{"hose", "Hose Amount"}, {"autoArc", "Auto Arc"}, {"reskin", "Move Skin Weights"}};
     l.ranges = {{"joints", {3.0, 32.0, 1.0, ""}}, {"hose", {0.0, 1.0, 0.05, ""}}, {"autoArc", {0.0, 1.0, 0.05, ""}}};
     ops::options::setOverride("hoseLimb", std::move(l));
     Override f;
@@ -598,14 +754,25 @@ void registerHoseCommands()
         .doc = "Make a rubber hose limb from the shoulder or hip to the wrist or ankle. A limb with an elbow or knee between keeps "
                "its joints as drivers (no longer deforming) and gets a chain of hose joints that follow it, from jointed (hose 0) to a "
                "smooth hose that bows into an arc as the end nears the root (hose 1). Without joints between, the hose spans the two "
-               "joints. A bend control on the elbow pushes the middle of the hose. Returns the hoseLimb.",
+               "joints. A bend control on the elbow pushes the middle of the hose. The limb joints' skin weights move onto the hose "
+               "joints (reskin). Returns the hoseLimb.",
         .positionalDoc = "start joint, end joint (default the selection)",
         .flags = {{"joints", "j", T::Int, 12, "Hose joints along the limb.", {}, {}, 3.0, 64.0},
                   {"hose", "h", T::Float, 1.0, "0 bends at the elbow or knee, 1 is a smooth hose.", {}, {}, 0.0, 1.0},
                   {"autoArc", "aa", T::Float, 1.0, "1 bows into an arc keeping the limb's length as the end nears the root.", {}, {}, 0.0, 1.0},
+                  {"reskin", "rs", T::Bool, true, "Move the limb joints' skin weights onto the hose joints, as hoseReskin does."},
                   {"name", "n", T::String, nullptr, "Name for the hoseLimb; default <start>_hose."}},
         .run = hoseLimbCmd,
         .examples = {"hoseLimb(\"upperarm_l\", \"hand_l\", joints=12)"},
+    });
+    ops::registerCommand({
+        .name = "hoseReskin",
+        .doc = "Move the skin weights of hose limbs' limb joints onto their hose joints: each point's weight goes to the two hose "
+               "joints either side of where it sits along the hose, so the skin follows the hose. Run it with the limb in its bind "
+               "pose, where the skin then deforms exactly as before. Returns how many skinClusters changed.",
+        .positionalDoc = "hoseLimb nodes (default the selection)",
+        .run = hoseReskinCmd,
+        .examples = {"hoseReskin(\"upperarm_l_hose\")"},
     });
     ops::registerCommand({
         .name = "hoseFingers",

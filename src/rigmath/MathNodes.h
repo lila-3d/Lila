@@ -28,6 +28,8 @@ class Node;
  *                              wires straight into matrix inputs. Quat inputs read the matrix's normalised rotation.
  *   matrix, transform          Matrix (Lila's column-vector glm layout). Composition follows Unreal: compose(A, B)
  *                              applies A first, then B.
+ *   curve                      String of anim curve keys as JSON (AnimCurve.h's keysToJson, or [[in, out, "tangent"], ...]);
+ *                              a vector or colour ramp holds three such lists, or one shared by all three channels.
  * Rotations are on Lila's own local axes: makeRotFromX aims the rotation's X axis, getAxes returns its X, Y, Z.
  */
 namespace lila::rigmath
@@ -43,6 +45,7 @@ enum class Kind : uint8_t
     Matrix,
     Color,
     Choice, // an Enum plug
+    Curve,  // a ramp's keys: a String plug of anim curve key JSON
 };
 
 LILA_SCENE_API const char* kindName(Kind k);

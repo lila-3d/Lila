@@ -60,6 +60,12 @@ struct Drive
     std::vector<PinDrive> pins;
     std::vector<glm::dmat4> colliders;
     std::vector<double> fieldMagnitudes;
+    /** cm/s^2 every simulated body is accelerated by: the share of a carrier's acceleration it is carried along with. */
+    glm::dvec3 carried{0.0};
+    /** cm/s: pose match springs damp the bodies' velocity relative to this (a carrier's), not to the world. */
+    glm::dvec3 frameVelocity{0.0};
+    /** cm the carrier moves over this step: pose match targets are taken back by it, so they ride with the bodies. */
+    glm::dvec3 frameShift{0.0};
     double seconds = 0.0;
     double period = 0.0;
 };

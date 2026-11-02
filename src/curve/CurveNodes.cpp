@@ -919,9 +919,13 @@ void registerProvider()
         .points = [](Graph& g, NodeId id) { return componentPositions(shapeSplines(g, id)); },
         .setPoints =
             [](Graph& g, NodeId id, const std::vector<std::pair<uint32_t, glm::dvec3>>& moves) {
+                // A point a control drives would snap back to it, so its control moves instead.
+                const auto free = hasControls(*g.node(id)) ? moveDrivenComponents(g, *g.node(id), moves) : moves;
+                if (free.empty())
+                    return;
                 PlugRef plug = curveEditPlug(g, id);
                 Splines s = splinesOf(g.storedValue(plug));
-                g.setValue(plug, makeCurveData(sketchMoved(*g.node(id), s, moves)));
+                g.setValue(plug, makeCurveData(sketchMoved(*g.node(id), s, free)));
             },
         .editPlug = curveEditPlug,
         .frames = [](Graph& g, NodeId id, const components::Ids& ids) { return componentFrames(shapeSplines(g, id), ids); },

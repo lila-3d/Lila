@@ -350,15 +350,17 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "unrealSync",
-        .doc = "Export and reimport every mapped node now, as saving does, or only the given nodes. Returns how many were queued.",
+        .doc = "Export and reimport every mapped node now, as saving does, or only the given nodes. Skeletal and animation "
+               "mappings whose skeleton fails unrealCheck are refused (logged) unless unrealCheck=False. Returns how many were queued.",
         .positionalDoc = "nodes (default every mapping)",
+        .flags = {{"unrealCheck", "uc", T::Bool, true, "Refuse skeletons that fail unrealCheck (sampled over the range). False sends anyway."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<std::string> only;
             for (const json& n : a.positional)
                 if (n.is_string())
                     only.push_back(n.get<std::string>());
-            return syncMappings(true, only);
+            return syncMappings(true, only, a.get<bool>("unrealCheck", true));
         },
     });
 

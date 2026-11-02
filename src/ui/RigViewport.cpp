@@ -11,6 +11,7 @@
 #include "ui/AnimProxyUi.h"
 #include "ui/CursorBadges.h"
 #include "ui/DominantInfluenceUi.h"
+#include "ui/RigHandles.h"
 #include "ui/SpacesUi.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
@@ -507,6 +508,7 @@ void registerRigViewport()
     viewportHooks::addDrawer(drawIkHandles);
     viewportHooks::addPicker(pickIkHandles);
     registerRigActions();
+    rigHandles::registerRigHandles();
     registerDominantInfluenceUi();
     registerAnimProxyUi();
     registerSpacesUi();

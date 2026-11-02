@@ -18,7 +18,11 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
+#include "scene/Pin.h"
+#include "scene/Rig.h"
+#include "scene/Skin.h"
 #include "scene/Take.h"
+#include "scene/UnrealCheck.h"
 #include "scene/ViewState.h"
 #include "seq/MeshSequence.h"
 
@@ -209,6 +213,62 @@ void syncSequence(RpcClient& client, const json& m, const std::vector<fs::path>&
         else
             log::info("Unreal: removed {} frame(s) of {} past the end of the range: {}", surplus.size(), node, surplus.dump());
     });
+}
+
+scene::NodeId topJointOf(scene::Graph& g, scene::NodeId j)
+{
+    while (g.parent(j) && scene::rig::isJoint(*g.node(g.parent(j))))
+        j = g.parent(j);
+    return j;
+}
+
+/** Whether a skeletal export of node writes the skeleton topped by top: its joints are under node or skin a mesh there. */
+bool exportsSkeleton(scene::Graph& g, scene::NodeId node, scene::NodeId top)
+{
+    std::vector<scene::NodeId> all{node};
+    for (scene::NodeId d : g.descendants(node))
+        all.push_back(d);
+    for (scene::NodeId id : all)
+    {
+        if (scene::rig::isJoint(*g.node(id)) && topJointOf(g, id) == top)
+            return true;
+        if (const scene::NodeId sc = scene::skin::find(g, id); sc != scene::kNoNode)
+            for (const scene::skin::Influence& inf : scene::skin::influences(g, sc))
+                if (inf.joint != scene::kNoNode && topJointOf(g, inf.joint) == top)
+                    return true;
+    }
+    return false;
+}
+
+/**
+ * A pinned prop's socket for its import: the joint bakePin made for it and the skeletal mapping that sends that joint's
+ * skeleton, whose mesh gets the socket. Null when the prop has none or no mapping sends the skeleton.
+ */
+json socketParams(scene::Graph& g, const scene::Node& prop, const json& list)
+{
+    const std::string joint = scene::pins::socketOf(prop);
+    if (joint.empty())
+        return nullptr;
+    scene::NodeId found = scene::kNoNode;
+    for (scene::NodeId id : g.findAll(joint))
+        if (scene::rig::isJoint(*g.node(id)))
+            found = id;
+    if (!found)
+    {
+        log::warn("Unreal sync: {} attaches to {}, which is gone", prop.path(), joint);
+        return nullptr;
+    }
+    const scene::NodeId top = topJointOf(g, found);
+    for (const json& m : list)
+    {
+        if (!m.is_object() || m.value("kind", std::string()) != "skeletal" || m.value("contentPath", std::string()).empty())
+            continue;
+        if (scene::Node* n = mappedNode(m.value("node", std::string())); n && exportsSkeleton(g, n->id(), top))
+            return {{"name", joint}, {"bone", joint}, {"skeletalMesh", m["contentPath"]}};
+    }
+    log::warn("Unreal sync: {} attaches to {}, but no skeletal mapping sends its skeleton; map the character to make the socket",
+              prop.path(), joint);
+    return nullptr;
 }
 } // namespace
 
@@ -529,6 +589,8 @@ json importParams(const fs::path& file, const json& mapping, const json& materia
         if (mapping.contains(key) && !mapping[key].is_null() && !(mapping[key].is_string() && mapping[key].get<std::string>().empty()))
             options[key] = mapping[key];
     const std::string kind = mapping.value("kind", std::string("static"));
+    if (kind == "static" && mapping.contains("socket") && mapping["socket"].is_object())
+        options["socket"] = mapping["socket"];
     if ((kind == "skeletal" || kind == "animation") && !options.contains("facing"))
         options["facing"] = PrefStore::get().value<std::string>(kPrefFile, "/facing", "x");
     json params = {{"file", file.generic_string()},
@@ -799,7 +861,7 @@ void onSceneSaved()
     syncMappings(false);
 }
 
-int syncMappings(bool force, const std::vector<std::string>& only)
+int syncMappings(bool force, const std::vector<std::string>& only, bool unrealCheck)
 {
     LILA_ZONE();
 
@@ -809,6 +871,7 @@ int syncMappings(bool force, const std::vector<std::string>& only)
     std::shared_ptr<scene::viewState::FinalScope> forOutput(new scene::viewState::FinalScope,
                                                             [](scene::viewState::FinalScope* f) { mainq::post([f] { delete f; }); });
     json list = mappings();
+    const json all = list;
     if (!only.empty())
     {
         std::vector<scene::Node*> wanted;
@@ -960,6 +1023,9 @@ int syncMappings(bool force, const std::vector<std::string>& only)
         }
         json mapping = m;
         addMaterialCurves(graph, mapping, kind);
+        if (kind == "static")
+            if (json socket = socketParams(graph, *n, all); !socket.is_null())
+                mapping["socket"] = socket;
         // FBX carries the levels but not their screen sizes, so the plugin sets them on the mesh after the import.
         if (std::vector<double> sizes = scene::lod::exportScreenSizes(graph, nodes); !sizes.empty() && !mapping.contains("lodScreenSizes"))
             mapping["lodScreenSizes"] = sizes;
@@ -971,7 +1037,7 @@ int syncMappings(bool force, const std::vector<std::string>& only)
         return withTextureSets(0);
 
     int count = static_cast<int>(jobs.size());
-    Link::get().post([jobs = std::move(jobs), dir, forOutput] {
+    Link::get().post([jobs = std::move(jobs), dir, forOutput, unrealCheck] {
         LILA_ZONE_N("Unreal sync job");
 
         Link::get().ensureConnected();
@@ -985,6 +1051,9 @@ int syncMappings(bool force, const std::vector<std::string>& only)
         for (const Job& job : jobs)
         {
             std::string node = job.mapping.value("node", std::string());
+            std::optional<scene::uecheck::SkipScope> unchecked;
+            if (!unrealCheck)
+                unchecked.emplace();
             if (!job.spline.is_null())
             {
                 scope.setStatus("Unreal: sending spline " + node);

@@ -1,5 +1,5 @@
 # The Rig Templates extension loaded from its staged package next to lila.exe, driven through its commands.
-add_executable(lila_rig_templates_tests main.cpp test_rig_templates.cpp)
+add_executable(lila_rig_templates_tests main.cpp test_rig_templates.cpp test_rig_template_limits.cpp)
 target_link_libraries(lila_rig_templates_tests PRIVATE LilaUI doctest::doctest)
 add_dependencies(lila_rig_templates_tests lila_rig_templates_extension)
 target_compile_definitions(lila_rig_templates_tests PRIVATE

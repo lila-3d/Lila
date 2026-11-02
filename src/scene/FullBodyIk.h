@@ -49,6 +49,11 @@ struct Bone
     glm::dvec3 offset{0.0};
     /** Held on R (its frame and post are unused: R is already the rotate). */
     ik::JointLimit limit;
+    /**
+     * How far the bone may lengthen, as a multiple of its offset from the parent (the translation in before); 1 never
+     * stretches. Bones only stretch when turning alone leaves a pin out of reach.
+     */
+    double maxStretch = 1.0;
 };
 
 /** A pin: where a bone's origin (and optionally its world rotation) has to be. */
@@ -85,13 +90,16 @@ struct Solution
     std::vector<glm::dquat> rotation;
     /** The translating roots' offsets; zero elsewhere. */
     std::vector<glm::dvec3> offset;
+    /** What each bone's offset from its parent is multiplied by; 1 where nothing stretched. */
+    std::vector<double> stretch;
     /** The largest pin position error left, cm. */
     double error = 0.0;
     int iterations = 0;
 };
 
-/** World matrices of the bones for the rotations and offsets given. */
-LILA_SCENE_API std::vector<glm::dmat4> forward(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset);
+/** World matrices of the bones for the rotations, offsets and stretches given (empty stretch: none). */
+LILA_SCENE_API std::vector<glm::dmat4> forward(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset,
+                                               const std::vector<double>& stretch = {});
 
 /** Solves p (damped least squares over every bone at once). Pure: safe on any thread. */
 LILA_SCENE_API Solution solve(const Problem& p);
@@ -113,6 +121,13 @@ struct PoseOptions
     bool moveRoot = true;
     /** Overrides Bone::stiffness per joint; unset joints use 0. */
     std::vector<std::pair<NodeId, double>> stiffness;
+    /**
+     * Lets bones lengthen to reach pins turning cannot: the joints after the start of an IK handle with stretch on, up to
+     * its maxStretch, and the joints in maxStretch. Stretched joints get their translate multiplied.
+     */
+    bool stretch = false;
+    /** Overrides Bone::maxStretch per joint when stretch is on. */
+    std::vector<std::pair<NodeId, double>> maxStretch;
     /** Keys the joints' rotate (and the root's translate) after posing. */
     bool key = false;
     /**
@@ -130,8 +145,8 @@ struct PoseOptions
 LILA_SCENE_API Problem problemFor(Graph& g, NodeId root, const PoseOptions& opts, std::vector<NodeId>& index);
 
 /**
- * Poses the skeleton under root so each pin reaches its target, writing the joints' rotate (and the root's translate)
- * undoably. Returns the largest pin error left, cm. Throws std::invalid_argument.
+ * Poses the skeleton under root so each pin reaches its target, writing the joints' rotate (and the root's translate,
+ * and stretched joints' translate) undoably. Returns the largest pin error left, cm. Throws std::invalid_argument.
  */
 LILA_SCENE_API double pose(Graph& g, NodeId root, const PoseOptions& opts);
 

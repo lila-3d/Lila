@@ -21,7 +21,7 @@ using json = nlohmann::json;
 using scene::AttrDef;
 using scene::PlugType;
 
-const char* kKindNames[] = {"Bool", "Int", "Float", "Vector", "Rotator", "Quat", "Matrix", "Color", "Choice"};
+const char* kKindNames[] = {"Bool", "Int", "Float", "Vector", "Rotator", "Quat", "Matrix", "Color", "Choice", "Curve"};
 
 struct Built
 {
@@ -37,6 +37,7 @@ Built build()
     addRotation(lib);
     addMatrix(lib);
     addMisc(lib);
+    addRamps(lib);
     Built b;
     b.fns.assign(std::make_move_iterator(lib.fns.begin()), std::make_move_iterator(lib.fns.end()));
     for (Function& f : b.fns)
@@ -98,7 +99,9 @@ AttrDef attrFor(const Pin& p, bool output)
     if (a.type == PlugType::Vec3)
         for (int k = 0; k < 3; ++k)
             a.childNames[size_t(k)] = p.name + (p.kind == Kind::Color ? "RGB"[k] : "XYZ"[k]);
-    if (p.kind == Kind::Quat)
+    if (p.kind == Kind::Curve)
+        a.doc = "Keys as anim curve JSON, or [[in, out, \"tangent\"], ...]; a vector or colour ramp takes three lists, or one for all.";
+    else if (p.kind == Kind::Quat)
         a.doc = "A quat, as a rotation matrix.";
     else if (p.kind == Kind::Rotator)
         a.doc = "Euler degrees in rotateOrder.";
@@ -172,6 +175,7 @@ scene::PlugType plugTypeOf(Kind k)
     case Kind::Quat:
     case Kind::Matrix: return PlugType::Matrix;
     case Kind::Choice: return PlugType::Enum;
+    case Kind::Curve: return PlugType::String;
     }
     return PlugType::Float;
 }

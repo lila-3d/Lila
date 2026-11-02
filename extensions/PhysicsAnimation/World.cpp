@@ -239,6 +239,8 @@ struct World::Impl
     JPH::PhysicsSystem system;
     std::vector<JPH::BodyID> bodies, colliders;
     JPH::BodyID ground;
+    /** m/s: the velocity spring damping is measured against (a carrier's), so riding along costs no drag. */
+    glm::dvec3 frameVelocity{0.0};
     std::vector<JPH::Ref<JPH::SwingTwistConstraint>> joints;
     int grabBody = -1;
     glm::dvec3 grabLocal{0.0}, grabTarget{0.0};
@@ -266,7 +268,7 @@ struct World::Impl
         const double k = springGain(frequency, damping, dt, c);
         if (targetCm)
         {
-            const glm::dvec3 x = fromJ(body.GetPosition()), v = fromJ(body.GetLinearVelocity());
+            const glm::dvec3 x = fromJ(body.GetPosition()), v = fromJ(body.GetLinearVelocity()) - frameVelocity;
             const glm::dvec3 a = k * (*targetCm * kM - x) - c * v;
             const double mass = 1.0 / std::max(double(mp->GetInverseMass()), 1e-12);
             bi().AddForce(bodies[i], toJ(a * mass), JPH::EActivation::Activate);
@@ -438,6 +440,7 @@ void World::step(const Drive& drive, double dt)
     Impl& w = *mImpl;
     JPH::BodyInterface& bi = w.bi();
     const float fdt = float(dt);
+    w.frameVelocity = drive.frameVelocity * kM;
     for (size_t c = 0; c < w.colliders.size() && c < drive.colliders.size(); ++c)
     {
         const glm::dmat4 m = rigid(drive.colliders[c]);
@@ -477,7 +480,11 @@ void World::step(const Drive& drive, double dt)
         }
         // World space matching, and the local kind's stand-in on a body with no parent to be local to.
         if (poseMatch && (b.space != PoseSpace::Local || b.parent < 0))
-            w.spring(i, &targetPos, &targetRot, stiffness, damping, dt);
+        {
+            // In a carrier's space the target is where it sits relative to the carrier at the step's start.
+            const glm::dvec3 relative = targetPos - drive.frameShift;
+            w.spring(i, &relative, &targetRot, stiffness, damping, dt);
+        }
     }
 
     for (size_t p = 0; p < rig.pins.size() && p < drive.pins.size(); ++p)
@@ -519,6 +526,9 @@ void World::step(const Drive& drive, double dt)
                 w.accelerate(i, a);
             }
         }
+    if (!w.options.live && drive.carried != glm::dvec3(0.0))
+        for (size_t i = 0; i < w.bodies.size(); ++i)
+            w.accelerate(i, drive.carried * kM);
 
     if (w.grabBody >= 0 && size_t(w.grabBody) < w.bodies.size())
     {

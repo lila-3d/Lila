@@ -1239,6 +1239,18 @@ NodeId bakeJoint(Graph& g, NodeId joint, const Range& r)
     return joint;
 }
 
+/** Puts the joint a prop attaches to on the prop, for exporters (kSocketAttr). */
+void recordSocket(Graph& g, NodeId prop, const std::string& joint)
+{
+    int attr = g.node(prop)->type().attrIndex(kSocketAttr);
+    if (attr < 0)
+        attr = g.addAttr(prop, {.name = kSocketAttr,
+                                .type = PlugType::String,
+                                .defaultValue = std::string(),
+                                .doc = "The joint this prop attaches to in Unreal, with no offset (bakePin)."});
+    g.setValue({prop, attr, -1}, joint);
+}
+
 json bakePins(const Args& a)
 {
     Graph& g = graph();
@@ -1319,6 +1331,7 @@ json bakePins(const Args& a)
         if (!heaviest)
             throw CommandError("bakePin: " + g.node(obj)->name() + " is not pinned");
         const NodeId j = bakeFollower(g, carrierOf(g, *heaviest), g.node(obj)->name(), name, r, [&] { return worldOf(*g.node(obj)); });
+        recordSocket(g, obj, g.node(j)->name());
         out.push_back(g.node(j)->path());
     }
     g.evaluate();
@@ -1341,6 +1354,15 @@ void registerOptionBox()
     ops::options::setOverride("pin", std::move(o));
 }
 } // namespace
+
+std::string socketOf(const Node& n)
+{
+    const int attr = n.type().attrIndex(kSocketAttr);
+    if (attr < 0)
+        return {};
+    const auto* joint = std::get_if<std::string>(&n.value(attr));
+    return joint ? *joint : std::string();
+}
 
 void registerTypes()
 {
@@ -1398,8 +1420,9 @@ void registerCommands()
         .doc = "Turn pins into joints for Unreal. A pinned joint gets its pinned channels keyed every frame and lets go of the pins. "
                "A pin driving nothing, or a pinned prop, gets a joint under the joint carrying the source (the heaviest skin "
                "influence there, or the joint above the curve or mesh): a socket when it holds still relative to that joint over "
-               "the range, else a bone keyed every frame. A prop's joint sits where the prop is, so it attaches with no offset. "
-               "Returns the joints.",
+               "the range, else a bone keyed every frame. A prop's joint sits where the prop is, so it attaches with no offset; the "
+               "prop records it in unrealSocket, which FBX exports write and the Unreal link turns into a socket on the character's "
+               "skeletal mesh. Returns the joints.",
         .positionalDoc = "pins, pin locators or pinned objects",
         .flags = {{"start", "st", T::Float, nullptr, "Seconds; default the playback start."},
                   {"end", "et", T::Float, nullptr, "Seconds; default the playback end."},

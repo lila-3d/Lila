@@ -6,6 +6,7 @@
 #include "core/Log.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "curve/CurveControls.h"
 #include "scene/CenterInMesh.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -719,6 +720,10 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
             s.plug = scene::modifiers::editPlug(g, id);
             s.values[0] = g.storedValue(s.plug);
             d.saved.push_back(s);
+            // A curve point its control drives moves the control instead, so the drag restores the controls too.
+            if (const scene::Node* n = g.node(id); n->type().isA("curve") && curve::hasControls(*n))
+                for (NodeId c : curve::curveControlNodes(g, *n))
+                    d.savedChildren.push_back(saveTransform(g, c));
         }
     }
     else if (!d.componentPivot)

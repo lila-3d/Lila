@@ -5,6 +5,7 @@ lila_module(lila_rigmath Scene
     MathMisc.cpp
     MathNodes.cpp
     MathNodes.h
+    MathRamp.cpp
     MathRotation.cpp
     MathScalar.cpp
     MathVector.cpp)

@@ -157,6 +157,57 @@ std::vector<glm::dmat3> forwardLimited(const ik::Problem& p, const Bones& b, std
 }
 
 /**
+ * Cyclic coordinate descent from a limited pose: each joint, end to root, turns the end toward the target as far as its
+ * limit allows (a stiff joint less). Reaches where FABRIK's shortest arcs stall, such as a hinged knee whose hip has to
+ * swing the hinge's plane onto the target.
+ */
+std::vector<glm::dmat3> refineLimited(const ik::Problem& p, const Bones& b, const std::vector<glm::dmat3>& world)
+{
+    const size_t m = b.len.size();
+    const glm::dmat3 root = orthonormal(glm::dmat3(p.parentWorld));
+    std::vector<glm::dmat3> local(m), w(m);
+    for (size_t i = 0; i < m; ++i)
+        local[i] = glm::transpose(i == 0 ? root : world[i - 1]) * world[i];
+    std::vector<glm::dvec3> pos(m + 1);
+    auto pose = [&] {
+        glm::dmat3 parent = root;
+        pos[0] = positionOf(p.world[0]);
+        for (size_t i = 0; i < m; ++i)
+        {
+            w[i] = parent * local[i];
+            pos[i + 1] = pos[i] + w[i] * b.dir[i] * b.len[i];
+            parent = w[i];
+        }
+        return glm::length(pos[m] - p.target);
+    };
+    double bestError = pose();
+    std::vector<glm::dmat3> best = w;
+    for (int it = 0; it < 256 && bestError > 1e-9; ++it)
+    {
+        for (size_t i = m; i-- > 0;)
+        {
+            pose();
+            const glm::dvec3 toEnd = pos[m] - pos[i], toTarget = p.target - pos[i];
+            if (glm::length(toEnd) < 1e-12 || glm::length(toTarget) < 1e-12)
+                continue;
+            glm::dquat turn = quatOf(arc(glm::normalize(toEnd), glm::normalize(toTarget)));
+            const ik::JointLimit* l = i < p.limits.size() ? &p.limits[i] : nullptr;
+            if (l && l->stiffness > 0.0)
+                turn = glm::slerp(glm::dquat(1.0, 0.0, 0.0, 0.0), turn, 1.0 - std::clamp(l->stiffness, 0.0, 1.0));
+            glm::dquat q = quatOf(glm::transpose(i == 0 ? root : w[i - 1]) * glm::mat3_cast(turn) * w[i]);
+            if (l && l->kind != ik::JointLimit::Kind::None)
+                q = l->frame * ik::clampRotate(*l, glm::inverse(l->frame) * q * glm::inverse(l->post)) * l->post;
+            local[i] = glm::mat3_cast(q);
+        }
+        const double e = pose();        if (e >= bestError - 1e-15)
+            break;
+        bestError = e;
+        best = w;
+    }
+    return best;
+}
+
+/**
  * Refines a free solution (world rotations per joint but the end) under the limits: FABRIK passes whose forward half
  * turns joints only as far as their limits allow. Keeps the closest pose found.
  */
@@ -187,7 +238,7 @@ std::vector<glm::dmat3> solveLimited(const ik::Problem& p, const std::vector<glm
         else
             ++stalled;
     }
-    return best;
+    return bestError > p.tolerance ? refineLimited(p, b, best) : best;
 }
 
 /** Analytic two-bone solve (law of cosines), bending toward the pole; exact whenever the target is in reach. */

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <format>
 #include <map>
 #include <set>
 
@@ -173,6 +174,15 @@ std::vector<SkinData> skinsFor(Graph& g, const Skeleton& s, const std::string& s
     return out;
 }
 
+bool sameMatrices(const std::vector<glm::dmat4>& a, const std::vector<glm::dmat4>& b)
+{
+    for (size_t i = 0; i < a.size(); ++i)
+        for (int c = 0; c < 4; ++c)
+            if (glm::length(glm::dvec3(a[i][c] - b[i][c])) > 1e-9 * std::max(1.0, glm::length(glm::dvec3(a[i][c]))))
+                return false;
+    return true;
+}
+
 /** The nearest deform ancestor scaling non-uniformly under Unreal's rules. */
 NodeId scaledAncestor(const Skeleton& s, const std::vector<UeTransform>& ue, size_t i)
 {
@@ -190,7 +200,14 @@ Report check(Graph& g, const Options& opts)
     Report r;
     const double fps = opts.fps > 0.0 ? opts.fps : 30.0;
     const long long frames = std::max<long long>(0, std::llround((opts.end - opts.start) * fps));
-    r.frames = int(frames + 1);
+    std::vector<long long> sampled;
+    if (opts.maxFrames > 1 && frames + 1 > opts.maxFrames)
+        for (int k = 0; k < opts.maxFrames; ++k)
+            sampled.push_back(std::llround(double(k) * double(frames) / double(opts.maxFrames - 1)));
+    else
+        for (long long f = 0; f <= frames; ++f)
+            sampled.push_back(f);
+    r.frames = int(sampled.size());
     std::map<NodeId, Mismatch> worst;
     auto note = [&](NodeId joint, double error, double time, NodeId scaled) {
         r.worst = std::max(r.worst, error);
@@ -213,7 +230,7 @@ Report check(Graph& g, const Options& opts)
                 if (at >= 0)
                     skinned[size_t(at)] = 1;
 
-        for (long long f = 0; f <= frames; ++f)
+        for (long long f : sampled)
         {
             const double t = opts.start + double(f) / fps;
             g.setTime(t);
@@ -231,6 +248,8 @@ Report check(Graph& g, const Options& opts)
                     ue[i] = compose(ue[i], ue[size_t(up)]);
                 unreal[i] = toMatrix(ue[i]);
             }
+            if (opts.skipMatchingFrames && sameMatrices(lila, unreal))
+                continue;
 
             // Joints nothing is skinned to: their axes out to the bone's length.
             for (size_t i = 0; i < s.joints.size(); ++i)
@@ -300,29 +319,138 @@ Report check(Graph& g, const Options& opts)
     return r;
 }
 
-void reportIssues(Graph& g, const Report& r)
+namespace
+{
+NodeId topJoint(Graph& g, NodeId j)
+{
+    while (g.parent(j) && rig::isJoint(*g.node(g.parent(j))))
+        j = g.parent(j);
+    return j;
+}
+
+std::string messageOf(Graph& g, const Mismatch& m)
 {
     const double fps = anim::playback().fps > 0.0 ? anim::playback().fps : 30.0;
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.3g cm at frame %g", m.error, std::round(m.time * fps));
+    std::string msg = std::string("Unreal can't match this joint: its skin is off by up to ") + buf;
+    if (m.scaledAncestor != kNoNode)
+        msg += ". It inherits the non-uniform scale of " + g.node(m.scaledAncestor)->path() +
+               " under a rotation, a shear Unreal has no way to hold; bake with scaleSafe, or keep that scale on joints with no deform children";
+    return msg;
+}
+
+thread_local int tSkip = 0;
+} // namespace
+
+void reportIssues(Graph& g, const Report& r)
+{
     for (const Mismatch& m : r.mismatches)
     {
-        NodeId top = m.joint;
-        while (g.parent(top) && rig::isJoint(*g.node(g.parent(top))))
-            top = g.parent(top);
         diagnostics::Issue i;
         i.source = kValidator;
         i.severity = diagnostics::Severity::Error;
         i.target = g.node(m.joint)->path();
-        char buf[64];
-        std::snprintf(buf, sizeof buf, "%.3g cm at frame %g", m.error, std::round(m.time * fps));
-        i.message = std::string("Unreal can't match this joint: its skin is off by up to ") + buf;
-        if (m.scaledAncestor != kNoNode)
-            i.message += ". It inherits the non-uniform scale of " + g.node(m.scaledAncestor)->path() +
-                         " under a rotation, a shear Unreal has no way to hold; bake with scaleSafe, or keep that scale on joints with no deform children";
-        i.blocks = {"exportFbx", "exportGltf", "unrealSync"};
-        i.fix = "bakeToDeformSkeleton(\"" + g.node(top)->path() + "\", scaleSafe=True)";
+        i.message = messageOf(g, m);
+        i.fix = "bakeToDeformSkeleton(\"" + g.node(topJoint(g, m.joint))->path() + "\", scaleSafe=True)";
         diagnostics::report(std::move(i));
     }
 }
+
+bool mayShear(Graph& g, const std::vector<NodeId>& roots)
+{
+    auto scaleMayShear = [&](NodeId id) {
+        for (int k = -1; k < 3; ++k)
+            if (g.source({id, Transform::kScale, k}))
+                return true;
+        return !uniform(g.node(id)->as<glm::dvec3>(Transform::kScale));
+    };
+    for (const Skeleton& s : skeletonsOf(g, roots))
+    {
+        const NodeId top = topJoint(g, s.joints.front());
+        for (NodeId up = g.parent(top); up; up = g.parent(up))
+            if (dynamic_cast<const Transform*>(g.node(up)) && scaleMayShear(up))
+                return true;
+        // Every joint that carries a deform joint, deform or not: its scale reaches the joints below.
+        std::set<NodeId> carriers;
+        for (size_t i = 0; i < s.joints.size(); ++i)
+            for (NodeId up = g.parent(s.joints[i]); up && rig::isJoint(*g.node(up)); up = g.parent(up))
+                if (!carriers.insert(up).second)
+                    break;
+        for (NodeId j : carriers)
+            if (scaleMayShear(j))
+                return true;
+    }
+    return false;
+}
+
+ExportCheck checkExport(Graph& g, const std::vector<NodeId>& nodes, bool children, double start, double end, double fps,
+                        const std::string& command)
+{
+    LILA_ZONE();
+
+    ExportCheck out;
+    if (skipping())
+        return out;
+    std::vector<NodeId> roots;
+    auto add = [&](NodeId id) {
+        const Node* n = g.node(id);
+        if (!n)
+            return;
+        if (rig::isJoint(*n))
+            roots.push_back(id);
+        else if (const NodeId sc = skin::find(g, id); sc != kNoNode)
+            for (const skin::Influence& inf : skin::influences(g, sc))
+                if (inf.joint != kNoNode)
+                    roots.push_back(inf.joint);
+    };
+    for (NodeId id : nodes)
+    {
+        add(id);
+        if (children)
+            for (NodeId d : g.descendants(id))
+                add(d);
+    }
+    if (roots.empty())
+        return out;
+
+    const std::vector<Skeleton> skeletons = skeletonsOf(g, roots);
+    auto clearChecked = [&] {
+        for (const Skeleton& s : skeletons)
+            for (NodeId j : s.joints)
+                diagnostics::clear(kValidator, j);
+    };
+    if (!mayShear(g, roots))
+    {
+        clearChecked();
+        return out;
+    }
+
+    const anim::Playback& pb = anim::playback();
+    Options o{.roots = roots,
+              .start = std::isnan(start) ? pb.minTime : start,
+              .end = std::isnan(end) ? pb.maxTime : end,
+              .fps = fps > 0.0 ? fps : pb.fps,
+              .maxFrames = kExportFrames,
+              .skipMatchingFrames = true};
+    o.end = std::max(o.end, o.start);
+    out.evaluated = true;
+    out.report = check(g, o);
+    clearChecked();
+    reportIssues(g, out.report);
+    if (out.report.mismatches.empty())
+        return out;
+    const Mismatch& worst = out.report.mismatches.front();
+    out.error = command + ": " + g.node(worst.joint)->path() + ": " + messageOf(g, worst);
+    if (const size_t more = out.report.mismatches.size() - 1)
+        out.error += std::format(" ({} more {} the Unreal check, listed as issues)", more, more == 1 ? "joint fails" : "joints fail");
+    out.error += ". Pass unrealCheck=False to export anyway.";
+    return out;
+}
+
+SkipScope::SkipScope() { ++tSkip; }
+SkipScope::~SkipScope() { --tSkip; }
+bool skipping() { return tSkip > 0; }
 
 namespace
 {
@@ -353,7 +481,8 @@ void registerCommands()
         .name = "unrealCheck",
         .doc = "Evaluate skeletons (default all) as they export, under Unreal's transform rules (scale handed down per axis, "
                "no shear), and compare their skins with Lila's deformed meshes every frame of the range. Each joint past the "
-               "tolerance becomes an error that blocks exporting until the check passes. Returns the worst drift and the "
+               "tolerance becomes an error on that joint; exportFbx, exportGltf and unrealSync run the same check and refuse "
+               "while a joint fails. Returns the worst drift and the "
                "mismatched joints.",
         .positionalDoc = "a joint of each skeleton",
         .flags = {

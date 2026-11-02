@@ -3,6 +3,7 @@
 
 #include "ops/Command.h"
 #include "core/MainQueue.h"
+#include "curve/CurveNodes.h"
 #include "extensions/ExtensionManager.h"
 #include "fbx/Fbx.h"
 #include "io/SceneFile.h"
@@ -29,6 +30,8 @@ int main(int argc, char** argv)
     lila::scene::types::registerBuiltins();
     lila::scene::registerRigTypes();
     lila::scene::registerCommands();
+    lila::curve::registerTypes();
+    lila::curve::registerCommands();
     lila::io::registerCommands();
     lila::fbx::registerCommands();
     lila::extensions::registerCommands();

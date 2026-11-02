@@ -73,7 +73,10 @@ struct Frames
     std::vector<glm::dmat3> parent;
 };
 
-Frames framesOf(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset)
+/** The offset from the parent that stretch multiplies. */
+glm::dvec3 segmentOf(const Bone& b) { return glm::dvec3(b.before[3]); }
+
+Frames framesOf(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset, const std::vector<double>& stretch)
 {
     const size_t n = p.bones.size();
     Frames f{std::vector<glm::dmat4>(n), std::vector<glm::dvec3>(n), std::vector<glm::dmat3>(n), std::vector<glm::dmat3>(n)};
@@ -81,7 +84,8 @@ Frames framesOf(const Problem& p, const std::vector<glm::dquat>& rotation, const
     {
         const Bone& b = p.bones[i];
         const glm::dmat4& parent = b.parent < 0 ? b.parentWorld : f.world[size_t(b.parent)];
-        const glm::dmat4 base = parent * glm::translate(glm::dmat4(1.0), offset[i]) * b.before;
+        const glm::dvec3 lengthen = i < stretch.size() ? (stretch[i] - 1.0) * segmentOf(b) : glm::dvec3(0.0);
+        const glm::dmat4 base = parent * glm::translate(glm::dmat4(1.0), offset[i] + lengthen) * b.before;
         f.world[i] = base * glm::dmat4(glm::mat3_cast(rotation[i])) * b.after;
         f.pivot[i] = glm::dvec3(base[3]);
         f.frame[i] = orthonormal(glm::dmat3(base));
@@ -121,25 +125,21 @@ void put(Eigen::MatrixXd& m, Eigen::Index row, Eigen::Index col, const glm::dmat
 }
 } // namespace
 
-std::vector<glm::dmat4> forward(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset)
+std::vector<glm::dmat4> forward(const Problem& p, const std::vector<glm::dquat>& rotation, const std::vector<glm::dvec3>& offset,
+                                const std::vector<double>& stretch)
 {
-    return framesOf(p, rotation, offset).world;
+    return framesOf(p, rotation, offset, stretch).world;
 }
 
-Solution solve(const Problem& p)
+namespace
 {
-    LILA_ZONE();
-
+/** One damped least squares run from out; with stretching, the stretchy bones' lengths are unknowns too. */
+Solution solveFrom(const Problem& p, Solution out, bool stretching)
+{
     const size_t n = p.bones.size();
-    Solution out{std::vector<glm::dquat>(n), std::vector<glm::dvec3>(n, glm::dvec3(0.0))};
-    for (size_t i = 0; i < n; ++i)
-    {
-        out.rotation[i] = p.bones[i].rotation;
-        out.offset[i] = p.bones[i].offset;
-    }
 
-    // Columns: three per turning bone, three more per moving bone.
-    std::vector<Eigen::Index> rotCol(n, -1), moveCol(n, -1);
+    // Columns: three per turning bone, three more per moving bone, one per stretching bone.
+    std::vector<Eigen::Index> rotCol(n, -1), moveCol(n, -1), stretchCol(n, -1);
     Eigen::Index cols = 0;
     for (size_t i = 0; i < n; ++i)
     {
@@ -147,6 +147,8 @@ Solution solve(const Problem& p)
             rotCol[i] = std::exchange(cols, cols + 3);
         if (p.bones[i].translate)
             moveCol[i] = std::exchange(cols, cols + 3);
+        if (stretching && p.bones[i].maxStretch > 1.0 && glm::length(segmentOf(p.bones[i])) > 1e-9)
+            stretchCol[i] = std::exchange(cols, cols + 1);
     }
     std::vector<std::vector<size_t>> chains;
     Eigen::Index rows = 0;
@@ -169,7 +171,7 @@ Solution solve(const Problem& p)
         return worst;
     };
 
-    Frames f = framesOf(p, out.rotation, out.offset);
+    Frames f = framesOf(p, out.rotation, out.offset, out.stretch);
     out.error = pinError(f);
     if (cols == 0 || rows == 0)
         return out;
@@ -187,7 +189,10 @@ Solution solve(const Problem& p)
     auto moveAway = [&](const Frames& fr, const std::vector<glm::dvec3>& off, size_t i) {
         return fr.parent[i] * (off[i] - p.bones[i].offset) / L;
     };
-    auto cost = [&](const Frames& fr, const std::vector<glm::dquat>& rot, const std::vector<glm::dvec3>& off, bool pulling) {
+    // A stretch's residual is how much longer the bone got, in lengthScale units.
+    auto stretchUnit = [&](size_t i) { return glm::length(segmentOf(p.bones[i])) / L; };
+    auto cost = [&](const Frames& fr, const std::vector<glm::dquat>& rot, const std::vector<glm::dvec3>& off, const std::vector<double>& str,
+                    bool pulling) {
         double c = 0.0;
         for (const Effector& e : p.effectors)
         {
@@ -207,6 +212,8 @@ Solution solve(const Problem& p)
                     c += pull * pull * glm::length2(turnAway(fr, rot, i));
                 if (moveCol[i] >= 0)
                     c += pull * pull * glm::length2(moveAway(fr, off, i));
+                if (stretchCol[i] >= 0)
+                    c += pull * pull * std::pow((str[i] - 1.0) * stretchUnit(i), 2.0);
             }
         return c;
     };
@@ -215,10 +222,11 @@ Solution solve(const Problem& p)
     Eigen::VectorXd r(rows), g(cols);
     std::vector<glm::dquat> trialRot(n);
     std::vector<glm::dvec3> trialOff(n);
+    std::vector<double> trialStr(n, 1.0);
     // Levenberg-Marquardt: the damping grows while steps overshoot and shrinks while they land.
     double mu = 1e-3;
     bool pulling = p.iterations > 0;
-    double current = cost(f, out.rotation, out.offset, pulling);
+    double current = cost(f, out.rotation, out.offset, out.stretch, pulling);
     const int total = std::max(p.iterations, 0) + std::max(p.finishIterations, 0);
     for (int it = 0; it < total; ++it)
     {
@@ -226,7 +234,7 @@ Solution solve(const Problem& p)
         {
             pulling = false;
             mu = 1e-3;
-            current = cost(f, out.rotation, out.offset, false);
+            current = cost(f, out.rotation, out.offset, out.stretch, false);
         }
         if (!pulling && out.error <= p.tolerance)
             break;
@@ -254,6 +262,12 @@ Solution solve(const Problem& p)
                         put(J, row, rotCol[b], -skew(at - f.pivot[b]) * (e.weight / L));
                     if (moveCol[b] >= 0)
                         put(J, row, moveCol[b], glm::dmat3(e.weight));
+                    if (stretchCol[b] >= 0)
+                    {
+                        const glm::dvec3 d = f.parent[b] * segmentOf(p.bones[b]) * (e.weight / L);
+                        for (int a = 0; a < 3; ++a)
+                            J(row + a, stretchCol[b]) = d[a];
+                    }
                 }
                 row += 3;
             }
@@ -282,6 +296,21 @@ Solution solve(const Problem& p)
                         H(c + a, c + a) += pull * pull + damp;
                         g(c + a) -= pull * pull * d[a];
                     }
+            if (const Eigen::Index c = stretchCol[i]; c >= 0)
+            {
+                const double k2 = std::pow(stretchUnit(i), 2.0);
+                H(c, c) += (pull * pull + damp) * k2;
+                g(c) -= pull * pull * k2 * (out.stretch[i] - 1.0);
+                // A stretch held at a bound it is pushed against sits this step out; clamping its step afterwards
+                // would spoil the rest of the step.
+                if ((out.stretch[i] >= p.bones[i].maxStretch - 1e-12 && g(c) > 0.0) || (out.stretch[i] <= 1.0 + 1e-12 && g(c) < 0.0))
+                {
+                    H.row(c).setZero();
+                    H.col(c).setZero();
+                    H(c, c) = 1.0;
+                    g(c) = 0.0;
+                }
+            }
         }
 
         const Eigen::VectorXd x = H.ldlt().solve(g);
@@ -302,15 +331,19 @@ Solution solve(const Problem& p)
             }
             if (moveCol[i] >= 0)
                 trialOff[i] += glm::inverse(f.parent[i]) * (glm::dvec3(x(moveCol[i]), x(moveCol[i] + 1), x(moveCol[i] + 2)) * L);
+            trialStr[i] = out.stretch[i];
+            if (stretchCol[i] >= 0)
+                trialStr[i] = std::clamp(out.stretch[i] + std::clamp(x(stretchCol[i]), -kMaxStep, kMaxStep), 1.0, p.bones[i].maxStretch);
         }
-        Frames trial = framesOf(p, trialRot, trialOff);
-        const double next = cost(trial, trialRot, trialOff, pulling);
+        Frames trial = framesOf(p, trialRot, trialOff, trialStr);
+        const double next = cost(trial, trialRot, trialOff, trialStr, pulling);
         out.iterations = it + 1;
         if (next < current)
         {
             const bool settled = current - next < 1e-12 * std::max(current, 1e-30);
             std::swap(out.rotation, trialRot);
             std::swap(out.offset, trialOff);
+            std::swap(out.stretch, trialStr);
             f = std::move(trial);
             out.error = pinError(f);
             current = next;
@@ -324,6 +357,31 @@ Solution solve(const Problem& p)
                 break;
             it = std::max(it, p.iterations - 1);
         }
+    }
+    return out;
+}
+} // namespace
+
+Solution solve(const Problem& p)
+{
+    LILA_ZONE();
+
+    const size_t n = p.bones.size();
+    Solution start{std::vector<glm::dquat>(n), std::vector<glm::dvec3>(n, glm::dvec3(0.0)), std::vector<double>(n, 1.0)};
+    for (size_t i = 0; i < n; ++i)
+    {
+        start.rotation[i] = p.bones[i].rotation;
+        start.offset[i] = p.bones[i].offset;
+    }
+    Solution out = solveFrom(p, start, false);
+    // Bones lengthen only for the reach turning could not give, so a solve within reach never stretches.
+    const bool stretchy = std::ranges::any_of(p.bones, [](const Bone& b) { return b.maxStretch > 1.0; });
+    if (stretchy && out.error > p.tolerance)
+    {
+        Solution longer = solveFrom(p, out, true);
+        longer.iterations += out.iterations;
+        if (longer.error < out.error)
+            return longer;
     }
     return out;
 }
@@ -403,6 +461,25 @@ Problem problemFor(Graph& g, NodeId root, const PoseOptions& opts, std::vector<N
     for (const auto& [joint, s] : opts.stiffness)
         if (auto it = std::find(index.begin(), index.end(), joint); it != index.end())
             p.bones[size_t(it - index.begin())].stiffness = s;
+    if (opts.stretch)
+    {
+        auto setStretch = [&](NodeId joint, double most) {
+            if (auto it = std::find(index.begin(), index.end(), joint); it != index.end())
+                p.bones[size_t(it - index.begin())].maxStretch = std::max(1.0, most);
+        };
+        for (NodeId h : g.nodes())
+        {
+            const Node& handle = *g.node(h);
+            if (!handle.type().isA("ikHandle") || !handle.as<bool>(IkHandle::kStretch))
+                continue;
+            // Stretch lengthens the bones after the chain's start, as the handle's own solve does.
+            const std::vector<NodeId> chain = ik::chainOf(g, h);
+            for (size_t k = 1; k < chain.size(); ++k)
+                setStretch(chain[k], handle.as<double>(IkHandle::kMaxStretch));
+        }
+        for (const auto& [joint, most] : opts.maxStretch)
+            setStretch(joint, most);
+    }
     if (opts.moveRoot)
         if (int hips = hipsOf(g, p, index); hips >= 0)
             p.bones[size_t(hips)].translate = true;
@@ -494,9 +571,11 @@ double pose(Graph& g, NodeId root, const PoseOptions& opts)
                 plugs.push_back(j.path() + ".rotate");
             }
         }
-        if (b.translate && glm::length(s.offset[i]) > 1e-9)
+        const double stretch = i < s.stretch.size() ? s.stretch[i] : 1.0;
+        const glm::dvec3 move = (b.translate ? s.offset[i] : glm::dvec3(0.0)) + (stretch - 1.0) * glm::dvec3(b.before[3]);
+        if (glm::length(move) > 1e-9)
         {
-            g.setValue({index[i], Transform::kTranslate}, j.as<glm::dvec3>(Transform::kTranslate) + s.offset[i]);
+            g.setValue({index[i], Transform::kTranslate}, j.as<glm::dvec3>(Transform::kTranslate) + move);
             plugs.push_back(j.path() + ".translate");
         }
     }
@@ -564,6 +643,10 @@ json run(const Args& a)
     if (a.has("stiffness"))
         for (const auto& [name, value] : a.flags["stiffness"].items())
             opts.stiffness.push_back({jointId(name), value.get<double>()});
+    opts.stretch = a.get<bool>("stretch", false);
+    if (a.has("maxStretch"))
+        for (const auto& [name, value] : a.flags["maxStretch"].items())
+            opts.maxStretch.push_back({jointId(name), value.get<double>()});
 
     const NodeId root = a.has("root") ? jointId(a.get<std::string>("root")) : topJoint(g, opts.pins.front().joint);
     const double error = guarded([&] { return pose(g, root, opts); });
@@ -580,7 +663,7 @@ void registerCommands()
         .name = "fullBodyIk",
         .doc = "Pose a whole skeleton so each pinned joint reaches its target. The motion spreads over the joints between "
                "the pins and the hips by stiffness; everything else keeps its pose. Writes the joints' rotate (and the "
-               "hips' translate) as FK. Returns {'error': the largest pin miss in cm}.",
+               "hips' translate, and stretched joints' translate) as FK. Returns {'error': the largest pin miss in cm}.",
         .flags = {
             {"pins", "p", T::List, nullptr,
              "[{'joint': name, 'position': [x, y, z], 'rotation': [x, y, z], 'weight': 1.0}], world space; rotation is "
@@ -589,6 +672,10 @@ void registerCommands()
             {"root", "r", T::String, nullptr, "Top joint of the skeleton to solve; default the first pin's top joint."},
             {"stiffness", "st", T::Any, nullptr, "{joint: 0..1}: how much each joint resists turning, so its neighbours take the motion."},
             {"moveRoot", "mr", T::Bool, true, "Let the hips move when turning joints is not enough."},
+            {"stretch", "str", T::Bool, false,
+             "Let bones lengthen when turning can't reach a pin: the joints of IK handles with stretch on, up to their maxStretch, "
+             "and those in maxStretch. Stretched joints get their translate keyed with key."},
+            {"maxStretch", "mxs", T::Any, nullptr, "{joint: multiple >= 1}: how far each joint's bone may lengthen with stretch."},
             {"key", "k", T::Bool, false, "Key the posed joints."},
             {"autoPose", "ap", T::Bool, false,
              "Let the auto-poser place the unpinned body, as a person would stand to reach the pins (UE5 Manny joint names)."},

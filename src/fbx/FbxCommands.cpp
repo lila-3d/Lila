@@ -10,6 +10,7 @@
 #include "scene/Graph.h"
 #include "scene/Rig.h"
 #include "scene/Skin.h"
+#include "scene/UnrealCheck.h"
 
 #include <chrono>
 #include <charconv>
@@ -74,6 +75,19 @@ ExportKind autoKind(Graph& g, const std::vector<NodeId>& ids, bool children)
 }
 } // namespace
 
+void unrealCheck(Graph& g, const std::vector<NodeId>& ids, const ExportOptions& opts, const std::string& command)
+{
+    if (opts.kind != ExportKind::Skeletal && opts.kind != ExportKind::Animation)
+        return;
+    // Without animation the file holds the pose at the current time only.
+    const bool range = opts.animation || opts.kind == ExportKind::Animation;
+    const double now = g.time();
+    const scene::uecheck::ExportCheck c = scene::uecheck::checkExport(g, ids, opts.children, range ? opts.start : now, range ? opts.end : now,
+                                                                       0.0, command);
+    if (!c.error.empty())
+        throw CommandError(c.error);
+}
+
 bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& path, const std::string& profile, std::string* error,
                      const std::string& kind, bool atOrigin, const std::string& take, bool children)
 {
@@ -98,17 +112,33 @@ bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& pa
         opts.takes = {take};
 
     progress::Scope scope("Exporting " + path.filename().string(), 3.0);
+    // Read here: a SkipScope lives on the calling thread, not on the main thread that gathers.
+    const bool check = !scene::uecheck::skipping();
+    auto gather = [nodes, opts, check] {
+        if (check)
+            unrealCheck(Graph::current(), nodes, opts, "Unreal export");
+        return gatherExport(Graph::current(), nodes, opts);
+    };
     ExportScene snapshot;
     if (mainq::isMainThread())
-        snapshot = gatherExport(Graph::current(), nodes, opts);
+        try
+        {
+            snapshot = gather();
+        }
+        catch (const std::exception& e)
+        {
+            if (error)
+                *error = e.what();
+            return false;
+        }
     else
     {
         auto promise = std::make_shared<std::promise<ExportScene>>();
         std::future<ExportScene> result = promise->get_future();
-        mainq::post([promise, nodes, opts] {
+        mainq::post([promise, gather] {
             try
             {
-                promise->set_value(gatherExport(Graph::current(), nodes, opts));
+                promise->set_value(gather());
             }
             catch (...)
             {
@@ -228,7 +258,9 @@ void registerCommands()
                    "Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes "
                    "(repeat or clamp). Off writes plain named materials."},
                   {"units", "u", T::String, "cm", "File units: cm, m, mm, in or ft. Lengths are scaled to them.", {"cm", "m", "mm", "in", "ft"}},
-                  {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."}},
+                  {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."},
+                  {"unrealCheck", "uc", T::Bool, true,
+                   "Skeletal and animation kinds: refuse when a skeleton fails unrealCheck over the range (sampled). False exports anyway."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (a.positional.empty() || !a.positional[0].is_string())
@@ -287,6 +319,9 @@ void registerCommands()
                 opts.kind = autoKind(g, ids, opts.children);
             else if (!parseKind(kind, &opts.kind))
                 throw CommandError("exportFbx: unknown kind '" + kind + "' (auto, static, skeletal, animation or sequence)");
+
+            if (a.get<bool>("unrealCheck", true))
+                unrealCheck(g, ids, opts, "exportFbx");
 
             progress::Scope scope("Exporting " + utf8Path(path).filename().string() + "...", 3.0);
             ExportScene snapshot;

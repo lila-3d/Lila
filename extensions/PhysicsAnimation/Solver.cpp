@@ -12,6 +12,7 @@
 #include <lila/Relocate.h>
 #include <lila/Rig.h>
 #include <lila/Simulation.h>
+#include <lila/SplineChain.h>
 #include <lila/Transform.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -194,6 +195,9 @@ public:
         mRig = std::move(rig);
         mEnabled = flag(s, "enabled");
         mSubsteps = int(std::clamp<int64_t>(integer(s, "substeps"), 1, 64));
+        Node* carrier = named(g, text(s, "carrier"));
+        mCarrier = carrier && carrier->type().isA("transform") ? carrier->id() : kNoNode;
+        mCarrierInertia = num(s, "carrierInertia");
 
         sim::Setup su;
         su.startFrame = integer(s, "startFrame");
@@ -212,6 +216,12 @@ public:
         for (const BodyDef& b : mRig.bodies)
             mJoints += b.parent >= 0;
         su.layout.push_back({C::Ignore, uint32_t(1 + mJoints * constraintWords())});
+        // The carrier's last position and velocity, and how many of them are known yet.
+        if (mCarrier)
+        {
+            su.layout.push_back({C::Ignore, 7});
+            su.sources.push_back(mCarrier);
+        }
         for (const PinDef& p : mRig.pins)
             su.sources.push_back(p.node);
         for (const ColliderDef& c : mRig.colliders)
@@ -222,6 +232,8 @@ public:
         su.reads.insert(su.reads.end(), su.sources.begin(), su.sources.end());
         uint64_t h = mRig.hash;
         h = sim::hashBytes(&mEnabled, sizeof mEnabled, h);
+        h = sim::hashBytes(&mCarrier, sizeof mCarrier, h);
+        h = sim::hashBytes(&mCarrierInertia, sizeof mCarrierInertia, h);
         const uint64_t words = constraintWords();
         su.paramsHash = sim::hashBytes(&words, sizeof words, h);
         return su;
@@ -251,6 +263,8 @@ public:
             putMatrix(in, world(c.mesh));
         for (const FieldDef& f : mRig.fields)
             in.push_back(value(f.node, f.magnitudeAttr, 0.0));
+        if (mCarrier)
+            putMatrix(in, world(mCarrier));
     }
 
     void reset(const std::vector<double>& in, std::vector<double>& state) override
@@ -260,6 +274,13 @@ public:
             writeBody(&state[i * kBodyDoubles], stateAt(getMatrix(&in[i * 18])));
         for (size_t c = 0; c < mRig.colliders.size(); ++c)
             writeCollider(&state[colliderBase() + c * kColliderDoubles], stateAt(getMatrix(&in[colliderInput(c)])));
+        if (mCarrier)
+        {
+            const glm::dvec3 p(getMatrix(&in[carrierInput()])[3]);
+            double* c = &state[carrierBase()];
+            c[0] = p.x, c[1] = p.y, c[2] = p.z;
+            c[6] = 1.0;
+        }
         mWorld.reset();
     }
 
@@ -288,6 +309,15 @@ public:
             d.fieldMagnitudes.push_back(in[fields + f]);
         d.seconds = at.seconds;
         d.period = at.period;
+        // The world already gives the whole carrier's inertia; the share not felt is the share carried along.
+        if (mCarrier)
+        {
+            // The velocity the step starts from, as the bodies' velocities are when the springs damp them.
+            const double* c = &state[carrierBase()];
+            d.frameVelocity = glm::dvec3(c[3], c[4], c[5]);
+            d.carried = carrierAcceleration(in, state, at) * (1.0 - mCarrierInertia);
+            d.frameShift = glm::dvec3(c[3], c[4], c[5]) * at.dt;
+        }
         mWorld->step(d, at.dt);
 
         for (size_t i = 0; i < mRig.bodies.size(); ++i)
@@ -331,6 +361,25 @@ private:
     size_t colliderBase() const { return mRig.bodies.size() * kBodyDoubles; }
     size_t constraintBase() const { return colliderBase() + mRig.colliders.size() * kColliderDoubles; }
     size_t colliderInput(size_t c) const { return mRig.bodies.size() * 18 + mRig.pins.size() * 17 + c * 16; }
+    size_t carrierInput() const { return colliderInput(mRig.colliders.size()) + mRig.fields.size(); }
+    size_t carrierBase() const { return constraintBase() + 1 + mJoints * constraintWords(); }
+
+    /**
+     * The carrier's acceleration, cm/s^2, from its positions at the ends of the last steps. The first steps after a reset,
+     * and the step a loop wraps on (where a travelling carrier jumps back), add none.
+     */
+    glm::dvec3 carrierAcceleration(const std::vector<double>& in, std::vector<double>& state, const sim::StepInfo& at) const
+    {
+        double* c = &state[carrierBase()];
+        const glm::dvec3 p(getMatrix(&in[carrierInput()])[3]), last(c[0], c[1], c[2]), lastVelocity(c[3], c[4], c[5]);
+        const bool wrap = at.period > 0.0 && at.index == 0;
+        const glm::dvec3 v = wrap ? lastVelocity : (p - last) / at.dt;
+        const glm::dvec3 a = c[6] >= 2.0 && !wrap ? (v - lastVelocity) / at.dt : glm::dvec3(0.0);
+        c[0] = p.x, c[1] = p.y, c[2] = p.z;
+        c[3] = v.x, c[4] = v.y, c[5] = v.z;
+        c[6] = std::min(c[6] + 1.0, 2.0);
+        return a;
+    }
 
     void rebuild(const std::vector<double>& state, double dt)
     {
@@ -360,6 +409,8 @@ private:
     size_t mJoints = 0;
     int mSubsteps = 1;
     bool mEnabled = true;
+    NodeId mCarrier = kNoNode;
+    double mCarrierInertia = 1.0;
 };
 
 bool registerTypes(ext::Context& ctx)
@@ -389,6 +440,8 @@ bool registerTypes(ext::Context& ctx)
         limited(whole("stepped", 1, "Hold each simulated pose this many frames: 2 animates on twos."), 1.0, 12.0),
         boolean("preview", true, "Draw the simulated bodies in the viewport, simulating as the time changes."),
         string(sim::kRecordingsAttr, "Layers recorded from this simulation, muted while it samples its inputs.", AttrHidden),
+        string("carrier", "Carried motion: a transform (saddle, seat) the ragdoll rides; its acceleration is felt by carrierInertia."),
+        limited(number("carrierInertia", 1.0, "Share of the carrier's acceleration the bodies feel: 1 like the world, 0 carried rigidly."), 0.0),
     };
 
     NodeType marker{.name = kMarkerType,
@@ -1194,6 +1247,57 @@ void registerCommands(ext::Context& ctx)
         },
     });
 }
+/**
+ * splineDynamics' jolt mode: a solver of its own with a body per segment of the chain, jointed to the next, its first
+ * jointed to a kinematic body on the chain's parent so the chain hangs from the animation. Additive pulls every body
+ * toward its animated pose with soft springs; full leaves them free inside their limits.
+ */
+NodeId attachToSplineChain(Graph& g, NodeId chain, const std::vector<NodeId>& joints, const spline::DynamicsOptions& o)
+{
+    for (NodeId m : o.colliders)
+        if (!g.node(m) || !g.node(m)->type().isA("mesh"))
+            throw std::invalid_argument("jolt dynamics collide with meshes; " + (g.node(m) ? g.node(m)->path() : std::string("a collider")) +
+                                        " is not one");
+    for (NodeId j : joints)
+        if (NodeId m = markerFor(g, j))
+            throw std::invalid_argument(g.node(j)->path() + " already has a physics marker, " + g.node(m)->path());
+    const std::string base = o.name.empty() ? g.node(chain)->name() + "_physics" : o.name;
+    const NodeId solver = g.createNode(*types::find(kSolverType), base)->id();
+    setAttr(g, solver, "gravity", glm::dvec3(0.0, -980.0, 0.0) * o.gravity.value_or(o.full ? 1.0 : 0.0));
+    setAttr(g, solver, "ground", false);
+    if (o.carrier)
+    {
+        setAttr(g, solver, "carrier", g.path(o.carrier));
+        setAttr(g, solver, "carrierInertia", o.carrierInertia);
+    }
+    const std::pair<int64_t, int64_t> range{0, 0};
+    if (const NodeId parent = g.parent(joints.front()); parent && g.node(parent)->type().isA("transform"))
+    {
+        const NodeId m = makeMarker(g, solver, parent, Behaviour::Kinematic, ShapeKind::Sphere, std::nullopt, false, false, range);
+        setAttr(g, m, "radius", 1.0);
+        setAttr(g, m, "collisionGroup", int64_t(-1));
+    }
+    const Behaviour behaviour = o.full ? Behaviour::Simulated : Behaviour::PoseMatch;
+    for (size_t i = 0; i < joints.size(); ++i)
+    {
+        const bool anchored = i == 0 && !g.parent(joints.front());
+        const NodeId m = makeMarker(g, solver, joints[i], anchored ? Behaviour::Kinematic : behaviour, ShapeKind::Capsule, std::nullopt, true,
+                                    false, range);
+        setAttr(g, m, "poseStiffness", o.stiffness.value_or(5.0));
+        setAttr(g, m, "poseDamping", o.damping.value_or(0.4));
+        setAttr(g, m, "limitTwist", o.full ? 60.0 : 30.0);
+        setAttr(g, m, "limitSwing1", o.full ? 90.0 : 60.0);
+        setAttr(g, m, "limitSwing2", o.full ? 90.0 : 60.0);
+        if (o.radius)
+            setAttr(g, m, "radius", *o.radius);
+    }
+    for (NodeId mesh : o.colliders)
+    {
+        Node* c = g.createNode(*types::find(kColliderType), g.node(mesh)->name() + "_collider", solver);
+        setAttr(g, c->id(), "mesh", g.path(mesh));
+    }
+    return solver;
+}
 } // namespace
 
 bool registerScene(ext::Context& ctx)
@@ -1201,6 +1305,10 @@ bool registerScene(ext::Context& ctx)
     initJolt();
     if (!registerTypes(ctx))
         return false;
+    ctx.add(spline::dynamicsProviders(), "splineDynamics", "jolt",
+            spline::DynamicsProvider{.name = "jolt",
+                                     .doc = "Rigid bodies per segment (Jolt): collides with meshes, pulled to the animation by soft springs.",
+                                     .attach = attachToSplineChain});
     if (!sim::registerSolverType(ctx, {.nodeType = kSolverType, .create = [](Graph&, NodeId node) -> std::unique_ptr<sim::Solver> {
                                            return std::make_unique<PhysicsSolver>(node);
                                        }}))

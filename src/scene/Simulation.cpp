@@ -10,6 +10,7 @@
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
 #include "scene/RotationCurve.h"
+#include "scene/SplineChain.h"
 #include "scene/Take.h"
 #include "scene/Transform.h"
 
@@ -745,6 +746,14 @@ struct Channels
     glm::dvec3 translate{0.0}, rotate{0.0}, scale{1.0};
 };
 
+glm::dmat3 rotationOnly(const glm::dmat4& m)
+{
+    glm::dmat3 r(m);
+    for (int i = 0; i < 3; ++i)
+        r[i] /= std::max(glm::length(r[i]), 1e-300);
+    return r;
+}
+
 /** The channel values that pose a transform at world, given its parent's world: translate, rotate and scale, no pivots. */
 Channels channelsFor(const Node& n, const glm::dmat4& parentWorld, const glm::dmat4& world, const glm::dvec3& rotateNear)
 {
@@ -851,6 +860,11 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
         outputIndex[outputs[i]] = i;
     std::vector<std::vector<Channels>> want(frames.size(), std::vector<Channels>(chosen.size()));
     std::vector<std::array<bool, 3>> moves(chosen.size(), {false, false, false});
+    // Joints a spline chain lays out are turned through their splineJoint's offset: their own rotate is overridden.
+    std::vector<PlugRef> redirect(chosen.size(), PlugRef{kNoNode, -1, -1});
+    for (size_t c = 0; c < chosen.size(); ++c)
+        if (const NodeId sj = spline::splineJointOf(g, outputs[chosen[c]]))
+            redirect[c] = {sj, g.node(sj)->type().attrIndex("offset"), -1};
     const double savedTime = g.time();
     {
         SampleScope scope(g, node, s.setup);
@@ -874,6 +888,18 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
                             parentWorld = frames[f]->world[up->second] * glm::inverse(g.node(a)->as<glm::dmat4>(Transform::kWorldMatrix)) * parentWorld;
                             break;
                         }
+                if (redirect[c].node)
+                {
+                    const glm::dvec3 offsetNow = std::get<glm::dvec3>(g.value(redirect[c]));
+                    const glm::dmat3 local = glm::transpose(rotationOnly(parentWorld)) * rotationOnly(frames[f]->world[i]);
+                    Channels ch;
+                    ch.rotate = offsetNow;
+                    if (auto k = spline::offsetFor(g, outputs[i], local))
+                        ch.rotate = k->value;
+                    want[f][c] = ch;
+                    moves[c][1] = moves[c][1] || glm::length(ch.rotate - offsetNow) > 1e-9;
+                    continue;
+                }
                 const glm::dvec3 now = n.as<glm::dvec3>(Transform::kRotate);
                 Channels ch = channelsFor(n, parentWorld, frames[f]->world[i], now);
                 want[f][c] = ch;
@@ -929,6 +955,13 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
         {
             const NodeId id = outputs[chosen[c]];
             const Channels& ch = want[f][c];
+            if (redirect[c].node)
+            {
+                if (o.rotate && moves[c][1])
+                    for (int k = 0; k < 3; ++k)
+                        anim::setKey(g, {redirect[c].node, redirect[c].attr, k}, t, ch.rotate[k], tangent, tangent);
+                continue;
+            }
             for (int k = 0; k < 3; ++k)
             {
                 if (o.translate && moves[c][0])
@@ -947,7 +980,10 @@ NodeId record(Graph& g, NodeId node, const RecordOptions& o)
     for (size_t c = 0; c < chosen.size(); ++c)
         for (int attr : {int(Transform::kTranslate), int(Transform::kRotate), int(Transform::kScale)})
         {
-            const NodeId blend = anim::blendFor(g, {outputs[chosen[c]], attr, -1}, layer);
+            if (redirect[c].node && attr != int(Transform::kRotate))
+                continue;
+            const PlugRef plug = redirect[c].node ? redirect[c] : PlugRef{outputs[chosen[c]], attr, -1};
+            const NodeId blend = anim::blendFor(g, plug, layer);
             if (!blend)
                 continue;
             if (auto whole = g.source({blend, anim::BlendNode::kInputB, -1}))
