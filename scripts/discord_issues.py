@@ -4,6 +4,7 @@
     python scripts/discord_issues.py --solve POST_ID [--note "Fixed in abc123"]
     python scripts/discord_issues.py --unsolve POST_ID
     python scripts/discord_issues.py --retag POST_ID Bug
+    python scripts/discord_issues.py --reply POST_ID "Which menu was open?"
 
 Reads the bot token from LILA_DISCORD_TOKEN and the channel from --channel or LILA_DISCORD_ISSUES_CHANNEL.
 The bot needs View Channels and Read Message History, plus the Message Content intent.
@@ -137,8 +138,25 @@ def set_solved(api, post_id, solved, solved_name, pending_name, note):
     # Archived posts reject edits, so reopen first.
     api.request("PATCH", f"/channels/{post_id}", {"archived": False, "applied_tags": tags})
     if note:
-        api.request("POST", f"/channels/{post_id}/messages", {"content": note})
+        post_message(api, post, note)
     print(f"{'solved' if solved else 'unsolved'}: {post['name']}")
+
+
+def post_message(api, post, text):
+    """Posts text in the post's thread, mentioning its author so Discord notifies them."""
+    author = post.get("owner_id")
+    content = f"<@{author}> {text}" if author else text
+    api.request("POST", f"/channels/{post['id']}/messages", {"content": content, "allowed_mentions": {"users": [author] if author else []}})
+
+
+def reply(api, post_id, text):
+    """Posts text in the post's thread, leaving its tags alone."""
+    post = api.get(f"/channels/{post_id}")
+    # Archived posts reject messages, so reopen first.
+    if post.get("thread_metadata", {}).get("archived"):
+        api.request("PATCH", f"/channels/{post_id}", {"archived": False})
+    post_message(api, post, text)
+    print(f"replied: {post['name']}")
 
 
 def created_at(snowflake):
@@ -168,7 +186,8 @@ def main():
     parser.add_argument("--retag", nargs=2, metavar=("POST_ID", "TAG"), help="replace a post's category tag (Bug, Request, ...), keeping Pending/Solved")
     parser.add_argument("--solve", metavar="POST_ID", help="add the solved tag to a post")
     parser.add_argument("--unsolve", metavar="POST_ID", help="remove the solved tag from a post")
-    parser.add_argument("--note", help="with --solve/--unsolve, also reply in the post with this text")
+    parser.add_argument("--reply", nargs=2, metavar=("POST_ID", "TEXT"), help="reply in a post, mentioning its author, without changing its tags")
+    parser.add_argument("--note", help="with --solve/--unsolve, also reply in the post with this text, mentioning its author")
     parser.add_argument("--solved-tag", default="Solved", help="name of the forum tag that marks a post solved")
     parser.add_argument("--pending-tag", default="Pending", help="tag given to open posts that are neither pending nor solved")
     parser.add_argument("--no-pending", action="store_true", help="don't tag new posts as pending while dumping")
@@ -181,6 +200,11 @@ def main():
     if args.retag:
         retag(api, args.retag[0], args.retag[1], (args.solved_tag, args.pending_tag))
         return
+    if args.reply:
+        reply(api, args.reply[0], args.reply[1])
+        return
+    if args.solve and not args.note:
+        sys.exit("--solve needs --note: tell the reporter the outcome")
     if args.solve or args.unsolve:
         set_solved(api, args.solve or args.unsolve, bool(args.solve), args.solved_tag, args.pending_tag, args.note)
         return
