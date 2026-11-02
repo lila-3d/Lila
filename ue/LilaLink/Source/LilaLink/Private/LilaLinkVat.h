@@ -14,7 +14,9 @@ namespace LilaLink
  * no sRGB, never streamed; half float EXR as half, float EXR and 16-bit PNG as RGBA32F, 8-bit PNG as RGBA8) and a
  * material instance of a generated VAT material (or materialParent) assigned to every slot. The instance sets
  * PositionTexture, NormalTexture, RotationTexture, HDR, BoundsMin, BoundsMax, FrameCount, RowsPerFrame, TextureHeight,
- * FrameRate and Absolute, each only when the parent has it. Reimporting updates all of them in place.
+ * FrameRate and Absolute, each only when the parent has it. Reimporting updates all of them in place. The generated
+ * material, M_LilaVAT_UV<n> (or _NoNormals), calls MF_LilaVAT_UV<n> (or _NoNormals), which any material can call to play
+ * the bake (outputs WorldPositionOffset and, with normals, a world-space Normal); its inputs default to those parameters.
  *
  * A rigid bake (meta mode "rigid") takes its rotation texture from "rotations" or from the metadata's files.rotations
  * beside the position texture, and its parent is M_LilaVatRigid_UV<n>, built on the material function

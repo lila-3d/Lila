@@ -1,6 +1,7 @@
 #include "LilaLinkVat.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMethods.h"
 #include "LilaLinkSettings.h"
 
@@ -43,6 +44,7 @@
 #include "Materials/MaterialExpressionSubtract.h"
 #include "Materials/MaterialExpressionDivide.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
+#include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionTransform.h"
@@ -414,153 +416,7 @@ UTexture2D* ImportDataTexture(const FString& File, const FString& PackagePath, c
 	return Texture;
 }
 
-/**
- * The shared VAT material. Frame = floor(AutoPlay ? Time * FrameRate * PlayRate (wrapped or clamped by Loop) : Frame);
- * the UV channel's V moves down Frame * RowsPerFrame / TextureHeight rows, the position texel decodes as
- * HDR ? texel : lerp(BoundsMin, BoundsMax, texel) into a local offset (Absolute subtracts the vertex's own position), and
- * World Position Offset is that offset in world space. The normal texel goes to the pixel shader through a vertex
- * interpolator as a world-space normal.
- */
-void BuildVatMaterial(UMaterial* Material, int32 UvChannel, UTexture* Positions, UTexture* Normals)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::BuildVatMaterial);
-
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-	int32 Row = 0;
-	auto Make = [&](TSubclassOf<UMaterialExpression> Class, int32 X = -600) {
-		return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, (Row++) * 120);
-	};
-	auto Scalar = [&](const TCHAR* Name, float Value, const TCHAR* Group) {
-		auto* E = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -1400));
-		E->ParameterName = Name;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		return E;
-	};
-	auto Vector = [&](const TCHAR* Name, const FLinearColor& Value, const TCHAR* Group) {
-		auto* E = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -1400));
-		E->ParameterName = Name;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		return E;
-	};
-	auto Binary = [&](TSubclassOf<UMaterialExpression> Class, UMaterialExpression* A, int32 AOut, UMaterialExpression* B, int32 BOut) {
-		UMaterialExpression* E = Make(Class);
-		// Every binary math node here keeps its inputs as A then B.
-		TArrayView<FExpressionInput*> Inputs = E->GetInputsView();
-		Inputs[0]->Connect(AOut, A);
-		if (B)
-		{
-			Inputs[1]->Connect(BOut, B);
-		}
-		return E;
-	};
-	auto Sample = [&](const TCHAR* Name, UTexture* Texture, UMaterialExpression* Uv) {
-		auto* E = Cast<UMaterialExpressionTextureSampleParameter2D>(Make(UMaterialExpressionTextureSampleParameter2D::StaticClass(), -300));
-		E->ParameterName = Name;
-		E->Group = TEXT("Vertex Animation");
-		E->Texture = Texture;
-		E->SamplerType = MaterialExpressionUtils::GetSamplerTypeForTexture(Texture);
-		E->SamplerSource = SSM_FromTextureAsset;
-		// Sampled in the vertex shader, which has no derivatives.
-		E->MipValueMode = TMVM_MipLevel;
-		E->ConstMipValue = 0;
-		E->Coordinates.Connect(0, Uv);
-		return E;
-	};
-
-	const TCHAR* Playback = TEXT("Playback");
-	const TCHAR* Layout = TEXT("Vertex Animation");
-	UMaterialExpression* FrameRate = Scalar(TEXT("FrameRate"), 30.0f, Playback);
-	UMaterialExpression* PlayRate = Scalar(TEXT("PlayRate"), 1.0f, Playback);
-	UMaterialExpression* AutoPlay = Scalar(TEXT("AutoPlay"), 1.0f, Playback);
-	UMaterialExpression* Loop = Scalar(TEXT("Loop"), 1.0f, Playback);
-	UMaterialExpression* ManualFrame = Scalar(TEXT("Frame"), 0.0f, Playback);
-	UMaterialExpression* FrameCount = Scalar(TEXT("FrameCount"), 1.0f, Layout);
-	UMaterialExpression* RowsPerFrame = Scalar(TEXT("RowsPerFrame"), 1.0f, Layout);
-	UMaterialExpression* TextureHeight = Scalar(TEXT("TextureHeight"), 1.0f, Layout);
-	UMaterialExpression* Absolute = Scalar(TEXT("Absolute"), 0.0f, Layout);
-	UMaterialExpression* Hdr = Scalar(TEXT("HDR"), 1.0f, Layout);
-	UMaterialExpression* BoundsMin = Vector(TEXT("BoundsMin"), FLinearColor(0, 0, 0, 0), Layout);
-	UMaterialExpression* BoundsMax = Vector(TEXT("BoundsMax"), FLinearColor(1, 1, 1, 0), Layout);
-
-	UMaterialExpression* Time = Make(UMaterialExpressionTime::StaticClass());
-	UMaterialExpression* Played = Binary(UMaterialExpressionMultiply::StaticClass(), Binary(UMaterialExpressionMultiply::StaticClass(), Time, 0, FrameRate, 0), 0, PlayRate, 0);
-	UMaterialExpression* LastFrame = Binary(UMaterialExpressionSubtract::StaticClass(), FrameCount, 0, nullptr, 0);
-	Cast<UMaterialExpressionSubtract>(LastFrame)->ConstB = 1.0f;
-	UMaterialExpression* Wrapped = Binary(UMaterialExpressionFmod::StaticClass(), Played, 0, FrameCount, 0);
-	UMaterialExpression* Held = Binary(UMaterialExpressionMin::StaticClass(), Played, 0, LastFrame, 0);
-	auto* LoopLerp = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass()));
-	LoopLerp->A.Connect(0, Held);
-	LoopLerp->B.Connect(0, Wrapped);
-	LoopLerp->Alpha.Connect(0, Loop);
-	auto* AutoLerp = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass()));
-	AutoLerp->A.Connect(0, ManualFrame);
-	AutoLerp->B.Connect(0, LoopLerp);
-	AutoLerp->Alpha.Connect(0, AutoPlay);
-	auto* Floor = Cast<UMaterialExpressionFloor>(Make(UMaterialExpressionFloor::StaticClass()));
-	Floor->Input.Connect(0, AutoLerp);
-	UMaterialExpression* NotBelow = Binary(UMaterialExpressionMax::StaticClass(), Floor, 0, nullptr, 0);
-	Cast<UMaterialExpressionMax>(NotBelow)->ConstB = 0.0f;
-	UMaterialExpression* Frame = Binary(UMaterialExpressionMin::StaticClass(), NotBelow, 0, LastFrame, 0);
-
-	UMaterialExpression* Rows = Binary(UMaterialExpressionMultiply::StaticClass(), Frame, 0, RowsPerFrame, 0);
-	UMaterialExpression* VOffset = Binary(UMaterialExpressionDivide::StaticClass(), Rows, 0, TextureHeight, 0);
-	auto* Zero = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass()));
-	Zero->R = 0.0f;
-	UMaterialExpression* Shift = Binary(UMaterialExpressionAppendVector::StaticClass(), Zero, 0, VOffset, 0);
-	auto* TexCoord = Cast<UMaterialExpressionTextureCoordinate>(Make(UMaterialExpressionTextureCoordinate::StaticClass()));
-	TexCoord->CoordinateIndex = UvChannel;
-	UMaterialExpression* Uv = Binary(UMaterialExpressionAdd::StaticClass(), TexCoord, 0, Shift, 0);
-
-	UMaterialExpression* PosTexel = Sample(TEXT("PositionTexture"), Positions, Uv);
-	auto* Unnormalised = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass()));
-	Unnormalised->A.Connect(0, BoundsMin);
-	Unnormalised->B.Connect(0, BoundsMax);
-	Unnormalised->Alpha.Connect(0, PosTexel);
-	auto* Value = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass()));
-	Value->A.Connect(0, Unnormalised);
-	Value->B.Connect(0, PosTexel);
-	Value->Alpha.Connect(0, Hdr);
-	auto* Local = Cast<UMaterialExpressionLocalPosition>(Make(UMaterialExpressionLocalPosition::StaticClass()));
-	Local->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
-	UMaterialExpression* RestPart = Binary(UMaterialExpressionMultiply::StaticClass(), Local, 0, Absolute, 0);
-	UMaterialExpression* Offset = Binary(UMaterialExpressionSubtract::StaticClass(), Value, 0, RestPart, 0);
-	auto* OffsetWorld = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass()));
-	OffsetWorld->TransformSourceType = TRANSFORMSOURCE_Local;
-	OffsetWorld->TransformType = TRANSFORM_World;
-	OffsetWorld->Input.Connect(0, Offset);
-	UMaterialEditingLibrary::ConnectMaterialProperty(OffsetWorld, TEXT(""), MP_WorldPositionOffset);
-
-	Material->bTangentSpaceNormal = Normals == nullptr;
-	if (Normals)
-	{
-		UMaterialExpression* NrmTexel = Sample(TEXT("NormalTexture"), Normals, Uv);
-		UMaterialExpression* Doubled = Binary(UMaterialExpressionMultiply::StaticClass(), NrmTexel, 0, nullptr, 0);
-		Cast<UMaterialExpressionMultiply>(Doubled)->ConstB = 2.0f;
-		UMaterialExpression* Unpacked = Binary(UMaterialExpressionSubtract::StaticClass(), Doubled, 0, nullptr, 0);
-		Cast<UMaterialExpressionSubtract>(Unpacked)->ConstB = 1.0f;
-		auto* NormalWorld = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass()));
-		NormalWorld->TransformSourceType = TRANSFORMSOURCE_Local;
-		NormalWorld->TransformType = TRANSFORM_World;
-		NormalWorld->Input.Connect(0, Unpacked);
-		auto* ToPixel = Cast<UMaterialExpressionVertexInterpolator>(Make(UMaterialExpressionVertexInterpolator::StaticClass()));
-		ToPixel->Input.Connect(0, NormalWorld);
-		UMaterialEditingLibrary::ConnectMaterialProperty(ToPixel, TEXT(""), MP_Normal);
-	}
-
-	UMaterialEditingLibrary::ConnectMaterialProperty(Vector(TEXT("BaseColor"), FLinearColor(0.5f, 0.5f, 0.5f), TEXT("Surface")), TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Roughness"), 0.55f, TEXT("Surface")), TEXT(""), MP_Roughness);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Metallic"), 0.0f, TEXT("Surface")), TEXT(""), MP_Metallic);
-
-	Material->SetMaterialUsage(MATUSAGE_InstancedStaticMeshes);
-	Material->SetMaterialUsage(MATUSAGE_NiagaraMeshParticles);
-	Material->PostEditChange();
-	Material->MarkPackageDirty();
-	UMaterialEditingLibrary::RecompileMaterial(Material);
-}
-
-/** Expressions placed in a material or a material function, laid out in columns like BuildVatMaterial's. */
+/** Expressions placed in a material or a material function, laid out in columns. */
 struct FVatGraph
 {
 	UMaterial* Material = nullptr;
@@ -686,6 +542,121 @@ struct FVatGraph
 		E->A.Connect(0, In);
 	}
 };
+
+/**
+ * MF_LilaVAT_UV<n>: plays a vertex VAT bake. Frame = floor(AutoPlay ? Time * FrameRate * PlayRate (wrapped or clamped by
+ * Loop) : Frame); UVs (UV channel n unless connected) move down Frame * RowsPerFrame / TextureHeight rows, the position
+ * texel decodes as HDR ? texel : lerp(BoundsMin, BoundsMax, texel) into a local offset (Absolute subtracts the vertex's
+ * own position), and the WorldPositionOffset output is that offset in world space. With normals, the Normal output is
+ * the normal texel in world space, carried to the pixel shader by a vertex interpolator. Every input but UVs defaults to
+ * the parameter of its name.
+ */
+void BuildVatFunction(UMaterialFunction* Function, int32 UvChannel, UTexture* Positions, UTexture* Normals)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::BuildVatFunction);
+
+	LilaLink::FFunctionGraph In(Function, TEXT("Lila Vertex Animation Texture: plays a baked animation, a position per vertex per frame."));
+	FVatGraph G;
+	G.Function = Function;
+	const TCHAR* Playback = TEXT("Playback");
+	const TCHAR* Layout = TEXT("Vertex Animation");
+	UMaterialExpression* FrameRate = In.ScalarInput(TEXT("FrameRate"), 30.0f, Playback, TEXT("Frames per second of the bake."));
+	UMaterialExpression* PlayRate = In.ScalarInput(TEXT("PlayRate"), 1.0f, Playback, TEXT("Speed multiplier."));
+	UMaterialExpression* AutoPlay = In.ScalarInput(TEXT("AutoPlay"), 1.0f, Playback, TEXT("1 plays with time, 0 holds Frame."));
+	UMaterialExpression* Loop = In.ScalarInput(TEXT("Loop"), 1.0f, Playback, TEXT("1 wraps at the end, 0 holds the last frame."));
+	UMaterialExpression* ManualFrame = In.ScalarInput(TEXT("Frame"), 0.0f, Playback, TEXT("The frame shown when AutoPlay is 0."));
+	UMaterialExpression* FrameCount = In.ScalarInput(TEXT("FrameCount"), 1.0f, Layout, TEXT("Frames in the bake."));
+	UMaterialExpression* RowsPerFrame = In.ScalarInput(TEXT("RowsPerFrame"), 1.0f, Layout, TEXT("Texture rows each frame takes."));
+	UMaterialExpression* TextureHeight = In.ScalarInput(TEXT("TextureHeight"), 1.0f, Layout, TEXT("The data textures' height in texels."));
+	UMaterialExpression* Absolute = In.ScalarInput(TEXT("Absolute"), 0.0f, Layout, TEXT("1 when the bake stores positions, 0 for offsets."));
+	UMaterialExpression* Hdr = In.ScalarInput(TEXT("HDR"), 1.0f, Layout, TEXT("1 for EXR values, 0 for PNG texels normalised by the bounds."));
+	UMaterialExpression* BoundsMin = In.VectorInput(TEXT("BoundsMin"), FLinearColor(0, 0, 0, 0), Layout, TEXT("PNG bakes: the value a texel of 0 stands for."));
+	UMaterialExpression* BoundsMax = In.VectorInput(TEXT("BoundsMax"), FLinearColor(1, 1, 1, 0), Layout, TEXT("PNG bakes: the value a texel of 1 stands for."));
+	auto TypeOf = [](UTexture* Texture) { return Texture ? MaterialExpressionUtils::GetSamplerTypeForTexture(Texture) : SAMPLERTYPE_LinearColor; };
+	UMaterialExpression* PositionTexture = In.TextureInput(TEXT("PositionTexture"), Positions, TypeOf(Positions), Layout, TEXT("The bake's position texture."));
+	UMaterialExpression* NormalTexture = Normals
+		? In.TextureInput(TEXT("NormalTexture"), Normals, TypeOf(Normals), Layout, TEXT("The bake's normal texture."))
+		: nullptr;
+	auto* Channel = G.New<UMaterialExpressionTextureCoordinate>(-1500);
+	Channel->CoordinateIndex = UvChannel;
+	UMaterialExpression* TexCoord = In.Input(TEXT("UVs"), FunctionInput_Vector2, Channel, TEXT("The bake's addressing UVs; the UV channel it was baked to when unconnected."));
+
+	UMaterialExpression* Time = G.Make(UMaterialExpressionTime::StaticClass());
+	UMaterialExpression* Played = G.Binary(UMaterialExpressionMultiply::StaticClass(), G.Binary(UMaterialExpressionMultiply::StaticClass(), Time, 0, FrameRate, 0), 0, PlayRate, 0);
+	UMaterialExpression* LastFrame = G.Binary(UMaterialExpressionSubtract::StaticClass(), FrameCount, 0, nullptr, 0);
+	Cast<UMaterialExpressionSubtract>(LastFrame)->ConstB = 1.0f;
+	UMaterialExpression* Wrapped = G.Binary(UMaterialExpressionFmod::StaticClass(), Played, 0, FrameCount, 0);
+	UMaterialExpression* Held = G.Binary(UMaterialExpressionMin::StaticClass(), Played, 0, LastFrame, 0);
+	auto* Floor = G.New<UMaterialExpressionFloor>();
+	Floor->Input.Connect(0, G.Lerp(ManualFrame, G.Lerp(Held, Wrapped, Loop), AutoPlay));
+	UMaterialExpression* NotBelow = G.Binary(UMaterialExpressionMax::StaticClass(), Floor, 0, nullptr, 0);
+	Cast<UMaterialExpressionMax>(NotBelow)->ConstB = 0.0f;
+	UMaterialExpression* Frame = G.Binary(UMaterialExpressionMin::StaticClass(), NotBelow, 0, LastFrame, 0);
+
+	UMaterialExpression* Rows = G.Binary(UMaterialExpressionMultiply::StaticClass(), Frame, 0, RowsPerFrame, 0);
+	UMaterialExpression* VOffset = G.Binary(UMaterialExpressionDivide::StaticClass(), Rows, 0, TextureHeight, 0);
+	auto* Zero = G.New<UMaterialExpressionConstant>();
+	Zero->R = 0.0f;
+	UMaterialExpression* Shift = G.Binary(UMaterialExpressionAppendVector::StaticClass(), Zero, 0, VOffset, 0);
+	UMaterialExpression* Uv = G.Binary(UMaterialExpressionAdd::StaticClass(), TexCoord, 0, Shift, 0);
+	auto Sample = [&](UMaterialExpression* Texture, UTexture* Default) {
+		auto* E = G.New<UMaterialExpressionTextureSample>(-300);
+		E->TextureObject.Connect(0, Texture);
+		E->SamplerType = TypeOf(Default);
+		E->SamplerSource = SSM_FromTextureAsset;
+		// Sampled in the vertex shader, which has no derivatives.
+		E->MipValueMode = TMVM_MipLevel;
+		E->ConstMipValue = 0;
+		E->Coordinates.Connect(0, Uv);
+		return E;
+	};
+
+	UMaterialExpression* PosTexel = Sample(PositionTexture, Positions);
+	UMaterialExpression* Value = G.Lerp(G.Lerp(BoundsMin, BoundsMax, PosTexel), PosTexel, Hdr);
+	auto* Local = G.New<UMaterialExpressionLocalPosition>();
+	Local->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
+	UMaterialExpression* RestPart = G.Binary(UMaterialExpressionMultiply::StaticClass(), Local, 0, Absolute, 0);
+	UMaterialExpression* Offset = G.Binary(UMaterialExpressionSubtract::StaticClass(), Value, 0, RestPart, 0);
+	In.Output(G.Transform(Offset, TRANSFORMSOURCE_Local, TRANSFORM_World), TEXT("WorldPositionOffset"), TEXT("World Position Offset."));
+
+	if (NormalTexture)
+	{
+		UMaterialExpression* Doubled = G.Binary(UMaterialExpressionMultiply::StaticClass(), Sample(NormalTexture, Normals), 0, nullptr, 0);
+		Cast<UMaterialExpressionMultiply>(Doubled)->ConstB = 2.0f;
+		UMaterialExpression* Unpacked = G.Binary(UMaterialExpressionSubtract::StaticClass(), Doubled, 0, nullptr, 0);
+		Cast<UMaterialExpressionSubtract>(Unpacked)->ConstB = 1.0f;
+		In.Output(G.Interpolate(G.Transform(Unpacked, TRANSFORMSOURCE_Local, TRANSFORM_World)), TEXT("Normal"),
+			TEXT("The baked normal, world space: connect to Normal with Tangent Space Normal off."));
+	}
+	In.Finish();
+}
+
+/** M_LilaVAT_UV<n>[_NoNormals]: MF_LilaVAT_UV<n>[_NoNormals] with BaseColor, Roughness and Metallic parameters. */
+void BuildVatMaterial(UMaterial* Material, UMaterialFunction* Function, bool bNormals, TArray<FString>& OutErrors)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::BuildVatMaterial);
+
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	FVatGraph G;
+	G.Material = Material;
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	const bool bWired = bNormals ? LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}, {TEXT("Normal"), MP_Normal}})
+								 : LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}});
+	if (!bWired)
+	{
+		OutErrors.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
+	}
+	Material->bTangentSpaceNormal = !bNormals;
+	UMaterialEditingLibrary::ConnectMaterialProperty(G.Vector(TEXT("BaseColor"), FLinearColor(0.5f, 0.5f, 0.5f), TEXT("Surface")), TEXT(""), MP_BaseColor);
+	UMaterialEditingLibrary::ConnectMaterialProperty(G.Scalar(TEXT("Roughness"), 0.55f, TEXT("Surface")), TEXT(""), MP_Roughness);
+	UMaterialEditingLibrary::ConnectMaterialProperty(G.Scalar(TEXT("Metallic"), 0.0f, TEXT("Surface")), TEXT(""), MP_Metallic);
+
+	Material->SetMaterialUsage(MATUSAGE_InstancedStaticMeshes);
+	Material->SetMaterialUsage(MATUSAGE_NiagaraMeshParticles);
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+	UMaterialEditingLibrary::RecompileMaterial(Material);
+}
 
 const TCHAR* const RigidWpoOutput = TEXT("WorldPositionOffset");
 const TCHAR* const RigidNormalOutput = TEXT("Normal");
@@ -897,7 +868,10 @@ UMaterialInterface* RigidMaterial(const FVatRequest& R, const FVatMeta& Meta, UT
 	return Material;
 }
 
-/** materialParent when given, else the generated material for this UV channel and normal choice, or the rigid one (built once, kept after). */
+/**
+ * materialParent when given, else the generated material for this UV channel and normal choice, on its function, or the
+ * rigid one. Each function and material is built when missing and kept after (rebuildMaterial rebuilds both).
+ */
 UMaterialInterface* ParentMaterial(const FVatRequest& R, const FVatMeta& Meta, UTexture* Positions, UTexture* Normals, UTexture* Rotations,
 	TArray<FString>& OutCreated, TArray<FString>& OutErrors)
 {
@@ -917,7 +891,21 @@ UMaterialInterface* ParentMaterial(const FVatRequest& R, const FVatMeta& Meta, U
 	{
 		return RigidMaterial(R, Meta, Positions, Rotations, OutCreated, OutErrors);
 	}
-	const FString Name = FString::Printf(TEXT("M_LilaVAT_UV%d%s"), Meta.UvChannel, Normals ? TEXT("") : TEXT("_NoNormals"));
+	const FString Suffix = FString::Printf(TEXT("UV%d%s"), Meta.UvChannel, Normals ? TEXT("") : TEXT("_NoNormals"));
+	const FString FunctionName = TEXT("MF_LilaVAT_") + Suffix;
+	const FString Name = TEXT("M_LilaVAT_") + Suffix;
+	bool bFunctionCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(R.MaterialFolder, FunctionName, bFunctionCreated);
+	if (!Function)
+	{
+		OutErrors.Add(FString::Printf(TEXT("Could not create %s in %s"), *FunctionName, *R.MaterialFolder));
+		return nullptr;
+	}
+	if (bFunctionCreated || R.bRebuildMaterial)
+	{
+		BuildVatFunction(Function, Meta.UvChannel, Positions, Normals);
+		OutCreated.AddUnique(Function->GetPathName());
+	}
 	UMaterial* Material = FindAssetAt<UMaterial>(R.MaterialFolder, Name);
 	if (Material && !R.bRebuildMaterial)
 	{
@@ -933,7 +921,7 @@ UMaterialInterface* ParentMaterial(const FVatRequest& R, const FVatMeta& Meta, U
 			return nullptr;
 		}
 	}
-	BuildVatMaterial(Material, Meta.UvChannel, Positions, Normals);
+	BuildVatMaterial(Material, Function, Normals != nullptr, OutErrors);
 	OutCreated.AddUnique(Material->GetPathName());
 	return Material;
 }
