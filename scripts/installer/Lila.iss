@@ -31,9 +31,27 @@ CloseApplications=yes
 RestartApplications=no
 ; Lila checks for this and waits instead of starting on half-replaced files.
 SetupMutex=LilaSetup
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Registry]
+; The values Lila's own file type code (src/io/FileTypes.cpp) writes, so the app and the uninstaller agree on what is Lila's.
+Root: HKA; Subkey: "Software\Classes\Lila.lila"; ValueType: string; ValueName: ""; ValueData: "Lila scene"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Lila.lila"; ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "Lila scene"
+Root: HKA; Subkey: "Software\Classes\Lila.lila\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\lila.exe,0"
+Root: HKA; Subkey: "Software\Classes\Lila.lila\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\lila.exe"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.lila"; ValueType: string; ValueName: ""; ValueData: "Lila.lila"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.lila\OpenWithProgids"; ValueType: string; ValueName: "Lila.lila"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\Lila.lilaa"; ValueType: string; ValueName: ""; ValueData: "Lila text scene"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Lila.lilaa"; ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "Lila text scene"
+Root: HKA; Subkey: "Software\Classes\Lila.lilaa\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\lila.exe,0"
+Root: HKA; Subkey: "Software\Classes\Lila.lilaa\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\lila.exe"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.lilaa"; ValueType: string; ValueName: ""; ValueData: "Lila.lilaa"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.lilaa\OpenWithProgids"; ValueType: string; ValueName: "Lila.lilaa"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\Applications\lila.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Lila"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Applications\lila.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\lila.exe"" ""%1"""
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -51,6 +69,10 @@ Name: "{autodesktop}\Lila"; Filename: "{app}\lila.exe"; Tasks: desktopicon
 [Run]
 Filename: "{app}\lila.exe"; Description: "{cm:LaunchProgram,Lila}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\lila.exe"; Flags: nowait; Check: RelaunchRequested
+
+[UninstallRun]
+; Hands back the import formats ticked in Preferences, which only Lila knows about.
+Filename: "{app}\lila.exe"; Parameters: "--batch -c ""unregisterFileTypes()"""; Flags: runhidden waituntilterminated; RunOnceId: "LilaFileTypes"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python-runtime"

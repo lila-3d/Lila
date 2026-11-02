@@ -6,12 +6,14 @@
 #include "core/Profile.h"
 #include "core/ImageIO.h"
 #include "core/Paths.h"
+#include "core/PrefStore.h"
 #include "core/Version.h"
 
 #include "core/CrashHandler.h"
 #include "core/Events.h"
 #include "core/MainQueue.h"
 #include "extensions/ExtensionManager.h"
+#include "io/FileTypes.h"
 #include "io/Recovery.h"
 #include "io/SceneFile.h"
 #include "core/Workspace.h"
@@ -298,6 +300,11 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
                 python::run(opts.command, "<command>");
         });
         QTimer::singleShot(3000, &window, [] { docs::startAutoUpdate(); });
+        QTimer::singleShot(2000, &window, [] { io::fileTypes::applyPrefs(); });
+        PrefStore::get().onChanged([](const std::string& file) {
+            if (file == "general")
+                io::fileTypes::applyPrefs();
+        });
         updater::startAutoCheck(&window);
         rc = app.exec();
         // Tearing the window down resizes and hides viewports, and a swapchain rebuilt for one of those crashes some drivers.

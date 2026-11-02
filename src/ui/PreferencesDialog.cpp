@@ -6,6 +6,7 @@
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/TextMatch.h"
+#include "io/FileTypes.h"
 #include "scene/Anim.h"
 #include "scene/Ghosts.h"
 #include "scene/Naming.h"
@@ -584,6 +585,37 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         choice(general, "Save format", "/scene/defaultFormat", {{"Binary (.lila)", "binary"}, {"Text (.lilaa)", "ascii"}}, "binary");
         number(general, "Autosave every (seconds)", "/autosave/intervalSeconds", 30.0, 5.0, 3600.0, 5.0, 0);
         number(general, "Keep recovered scenes (days, 0 = forever)", "/recovery/keepDays", 30.0, 0.0, 3650.0, 1.0, 0);
+        section(general, "File types");
+        toggle(general, "Open .lila and .lilaa with Lila", io::fileTypes::kScenesPref, io::fileTypes::scenesByDefault(paths::executableDir()));
+        {
+            auto* grid = new QWidget;
+            auto* layout = new QGridLayout(grid);
+            layout->setContentsMargins(0, 0, 0, 0);
+            int at = 0;
+            for (const io::fileTypes::Format& f : io::fileTypes::formats())
+            {
+                if (f.scene)
+                    continue;
+                auto* c = new QCheckBox(QString::fromStdString(f.ext));
+                c->setToolTip(QString::fromStdString(f.description));
+                const json ticked = PrefStore::get().value("general", io::fileTypes::kImportsPref, json::array());
+                c->setChecked(ticked.is_array() && std::ranges::find(ticked, json(f.ext)) != ticked.end());
+                QObject::connect(c, &QCheckBox::toggled, c, [ext = f.ext](bool on) {
+                    const json was = PrefStore::get().value("general", io::fileTypes::kImportsPref, json::array());
+                    json list = json::array();
+                    for (const json& e : was.is_array() ? was : json::array())
+                        if (e != ext)
+                            list.push_back(e);
+                    if (on)
+                        list.push_back(ext);
+                    PrefStore::get().set("general", io::fileTypes::kImportsPref, std::move(list));
+                });
+                layout->addWidget(c, at / 5, at % 5);
+                ++at;
+            }
+            grid->setToolTip("Ticked formats open with Lila on double-click. Unticking hands them back.");
+            addRow(general, "Open with Lila", grid, io::fileTypes::kImportsPref, json::array());
+        }
         section(general, "Undo");
         toggle(general, "Infinite undo", "/undo/infinite", true);
         number(general, "Steps (when not infinite)", "/undo/steps", 500.0, 1.0, 100000.0, 50.0, 0);

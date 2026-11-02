@@ -3,6 +3,7 @@ add_executable(lila_tests
     test_graph.cpp
     test_prefs.cpp
     test_formats.cpp
+    test_file_types.cpp
     test_scene_version.cpp
     test_references.cpp
     test_meshes.cpp

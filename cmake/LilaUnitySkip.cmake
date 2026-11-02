@@ -1,4 +1,5 @@
 set(LILA_UNITY_SKIP
+    src/io/FileTypes.cpp
     src/scene/AttrCommands.cpp
     src/scene/AttrComponents.cpp
     src/scene/LightingChannels.cpp

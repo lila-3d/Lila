@@ -12,6 +12,9 @@ target_link_libraries(lilabatch PRIVATE LilaScene)
 # Loaded at run time for the capture commands when it is there; lilabatch runs without it.
 add_dependencies(lilabatch LilaUI)
 add_dependencies(lila lilabatch)
+# Opt-in for source builds: cmake --build build --target register_file_types (unregister_file_types to undo).
+add_custom_target(register_file_types COMMAND lilabatch -c "registerFileTypes()" DEPENDS lila VERBATIM)
+add_custom_target(unregister_file_types COMMAND lilabatch -c "unregisterFileTypes()" VERBATIM)
 foreach(exe lila lilabatch)
     target_include_directories(${exe} PRIVATE ${LILA_BUILD_INFO_DIR})
     add_dependencies(${exe} lila_version)
