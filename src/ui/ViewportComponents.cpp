@@ -324,6 +324,8 @@ void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)
         !prefs.value<bool>("general", viewportDisplay::kSymmetryEdgesObjectMode, true))
         return;
     scene::Graph& g = scene::Graph::current();
+    if (g.selection().size() != 1)
+        return;
     s.symmetryLineWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().symmetryEdge, devicePixelRatioF());
     for (scene::NodeId id : g.selection())
     {
@@ -418,6 +420,8 @@ void ViewportWidget::drawComponents(render::FrameState& s)
     s.selectedEdgeWidth = viewportDisplay::hairlineWidth(thickness.edgeSelected, devicePixelRatioF());
     s.symmetryLineWidth = viewportDisplay::hairlineWidth(thickness.symmetryEdge, devicePixelRatioF());
     const bool showSymmetry = PrefStore::get().value<bool>("general", viewportDisplay::kSymmetryEdges, true);
+    // The plane's edges only mark a lone mesh; across several they read as clutter.
+    const bool showSymmetryPlane = showSymmetry && live.size() == 1;
     for (scene::NodeId id : live)
     {
         scene::Node* n = g.node(id);
@@ -484,10 +488,13 @@ void ViewportWidget::drawComponents(render::FrameState& s)
         }
         if (showSymmetry)
         {
-            for (uint32_t e : symmetryPlaneEdges(*n, mesh))
-                if (vis->edge(e) && !(mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
-                    edgeLines(e, s.symmetryLines, kSymmetryRed);
-            radialPlaneLines(*n, m, world, s.lines);
+            if (showSymmetryPlane)
+            {
+                for (uint32_t e : symmetryPlaneEdges(*n, mesh))
+                    if (vis->edge(e) && !(mode == ComponentMode::Edge && std::ranges::binary_search(selEdges, e)))
+                        edgeLines(e, s.symmetryLines, kSymmetryRed);
+                radialPlaneLines(*n, m, world, s.lines);
+            }
             // Radial symmetry's mismatch: the points without a full orbit, marked where they are.
             if (const geo::SymmetryMap* sym = viewSymmetry(*n, mesh); sym && sym->isRadial())
             {
