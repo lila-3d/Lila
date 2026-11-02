@@ -12,6 +12,10 @@
         "Hydra",
         "Viewport renderer extensions"
       ]
+    },
+    {
+      "name": "RD",
+      "role": "Testing and feedback"
     }
   ],
   "testers": []
