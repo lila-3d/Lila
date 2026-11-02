@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QStackedWidget>
 #include <QTimer>
@@ -179,15 +180,14 @@ NotesPanel::NotesPanel(QWidget* parent) : QWidget(parent)
     mStack->addWidget(todo);
     v->addWidget(mStack, 1);
 
-    deletion::claim(mList, [this] {
-        const QList<QListWidgetItem*> sel = mList->selectedItems();
-        if (sel.isEmpty())
-            return;
-        mFilling = true;
-        for (QListWidgetItem* it : sel)
-            delete it;
-        mFilling = false;
-        commitItems();
+    deletion::claim(mList, [this] { deleteSelected(); });
+    mList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        if (QListWidgetItem* it = mList->itemAt(at); it && !it->isSelected())
+            mList->setCurrentItem(it);
+        QMenu menu;
+        fillItemMenu(&menu);
+        menu.exec(mList->viewport()->mapToGlobal(at));
     });
 
     auto* typing = new QTimer(this);
@@ -483,6 +483,83 @@ void NotesPanel::clearDone()
     (*page)["items"] = std::move(kept);
     store("Clear Done Items");
     showPage(mCurrent);
+}
+
+void NotesPanel::fillItemMenu(QMenu* menu)
+{
+    std::vector<int> rows;
+    bool allDone = true, anyDone = false;
+    for (int r = 0; r < mList->count(); ++r)
+    {
+        const bool done = mList->item(r)->checkState() == Qt::Checked;
+        anyDone |= done;
+        if (mList->item(r)->isSelected())
+        {
+            rows.push_back(r);
+            allDone &= done;
+        }
+    }
+    const bool any = !rows.empty();
+    menu->addAction(icon("check"), any && allDone ? "Mark Not Done" : "Mark Done", this, [this, undo = any && allDone] {
+        setSelectedDone(!undo);
+    })->setEnabled(any);
+    menu->addAction(icon("pencil"), "Rename", this, [this] {
+        if (QListWidgetItem* it = mList->currentItem(); it && it->isSelected())
+            mList->editItem(it);
+    })->setEnabled(rows.size() == 1);
+    menu->addSeparator();
+    menu->addAction(icon("arrow-up"), "Move Up", this, [this] { moveSelected(-1); })->setEnabled(any && rows.front() > 0);
+    menu->addAction(icon("arrow-down"), "Move Down", this, [this] { moveSelected(1); })->setEnabled(any && rows.back() < mList->count() - 1);
+    menu->addSeparator();
+    menu->addAction(icon("copy"), "Copy", this, [this] { copyItems(); })->setEnabled(any);
+    menu->addAction(icon("trash"), "Delete", this, [this] { deleteSelected(); })->setEnabled(any);
+    menu->addSeparator();
+    menu->addAction(icon("clear-all"), "Clear Completed", this, [this] { clearDone(); })->setEnabled(anyDone);
+}
+
+void NotesPanel::deleteSelected()
+{
+    const QList<QListWidgetItem*> sel = mList->selectedItems();
+    if (sel.isEmpty())
+        return;
+    mFilling = true;
+    for (QListWidgetItem* it : sel)
+        delete it;
+    mFilling = false;
+    commitItems();
+}
+
+void NotesPanel::setSelectedDone(bool done)
+{
+    mFilling = true;
+    for (QListWidgetItem* it : mList->selectedItems())
+    {
+        it->setCheckState(done ? Qt::Checked : Qt::Unchecked);
+        styleTodoItem(it, done);
+    }
+    mFilling = false;
+    commitItems();
+}
+
+void NotesPanel::moveSelected(int step)
+{
+    std::vector<int> rows;
+    for (int r = 0; r < mList->count(); ++r)
+        if (mList->item(r)->isSelected())
+            rows.push_back(r);
+    if (rows.empty() || rows.front() + step < 0 || rows.back() + step >= mList->count())
+        return;
+    if (step > 0)
+        std::reverse(rows.begin(), rows.end());
+    mFilling = true;
+    for (int r : rows)
+    {
+        QListWidgetItem* it = mList->takeItem(r);
+        mList->insertItem(r + step, it);
+        it->setSelected(true);
+    }
+    mFilling = false;
+    commitItems();
 }
 
 void registerNotesPanel()

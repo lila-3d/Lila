@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QToolButton>
 
@@ -95,6 +96,79 @@ TEST_CASE("notes panel: notes and todo lists save to scene data and undo")
 
     button(panel, "Delete this note or list")->click();
     CHECK(pages().size() == 1);
+    scene::data::clear();
+    UndoStack::get().clear();
+}
+
+TEST_CASE("notes panel: the todo items' right-click menu ticks, moves, deletes and clears, each undoable")
+{
+    scene::data::clear();
+    UndoStack::get().clear();
+    ui::NotesPanel panel;
+    panel.show();
+    button(panel, "New todo list")->click();
+    QLineEdit* entry = nullptr;
+    for (QLineEdit* e : panel.findChildren<QLineEdit*>())
+        if (e->placeholderText().startsWith("Add an item"))
+            entry = e;
+    REQUIRE(entry);
+    QGuiApplication::clipboard()->setText("a\nb\nc");
+    QKeyEvent paste(QEvent::KeyPress, Qt::Key_V, Qt::ControlModifier);
+    QApplication::sendEvent(entry, &paste);
+    auto* list = panel.findChild<QListWidget*>();
+    REQUIRE(list->count() == 3);
+    auto items = [] {
+        std::string out;
+        const json all = pages();
+        for (const json& i : all[0]["items"])
+            out += i["text"].get<std::string>() + (i["done"].get<bool>() ? "*" : "");
+        return out;
+    };
+    auto run = [&](const QString& text) {
+        QMenu menu;
+        panel.fillItemMenu(&menu);
+        for (QAction* a : menu.actions())
+            if (a->text() == text)
+            {
+                REQUIRE(a->isEnabled());
+                a->trigger();
+                return;
+            }
+        FAIL("no menu action " << text.toStdString());
+    };
+    auto enabled = [&](const QString& text) {
+        QMenu menu;
+        panel.fillItemMenu(&menu);
+        for (QAction* a : menu.actions())
+            if (a->text() == text)
+                return a->isEnabled();
+        return false;
+    };
+
+    list->clearSelection();
+    CHECK_FALSE(enabled("Delete"));
+    CHECK_FALSE(enabled("Clear Completed"));
+    list->item(0)->setSelected(true);
+    CHECK_FALSE(enabled("Move Up"));
+    run("Mark Done");
+    CHECK(items() == "a*bc");
+    CHECK(enabled("Mark Not Done"));
+    run("Move Down");
+    CHECK(items() == "ba*c");
+    CHECK(list->item(1)->isSelected());
+    UndoStack::get().undo();
+    QApplication::processEvents();
+    CHECK(items() == "a*bc");
+
+    list->clearSelection();
+    list->item(2)->setSelected(true);
+    run("Delete");
+    CHECK(items() == "a*b");
+    run("Clear Completed");
+    CHECK(items() == "b");
+    UndoStack::get().undo();
+    QApplication::processEvents();
+    CHECK(items() == "a*b");
     scene::data::clear();
     UndoStack::get().clear();
 }

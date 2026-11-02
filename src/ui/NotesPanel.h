@@ -13,6 +13,7 @@
 class QComboBox;
 class QLineEdit;
 class QListWidget;
+class QMenu;
 class QPlainTextEdit;
 class QStackedWidget;
 class QToolButton;
@@ -31,6 +32,9 @@ public:
     explicit NotesPanel(QWidget* parent = nullptr);
     ~NotesPanel() override;
 
+    /** The todo list's right-click menu, acting on the selected items. */
+    void fillItemMenu(QMenu* menu);
+
 private:
     void scheduleRefresh();
     void refresh();
@@ -46,6 +50,10 @@ private:
     /** The selected items to the clipboard, one per line, ticked ones as "[x] ". */
     void copyItems();
     void clearDone();
+    void deleteSelected();
+    void setSelectedDone(bool done);
+    /** Moves the selected items one row up (-1) or down (1), keeping them selected. */
+    void moveSelected(int step);
     /** Writes pages to the scene as one undo step; amend folds it into the previous step when that was this edit too. */
     void store(const std::string& label, bool amend = false);
     nlohmann::json* current();
