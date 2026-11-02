@@ -146,6 +146,15 @@ TEST_CASE("extract, connect and selection helpers")
     run("selectComponents", {{"args", {plane}}, {"faces", {json::array({0, 15})}}});
     run("shrinkSelection");
     CHECK(selectedCount(plane, "faces") == 4);
+    std::string other = run("polyPlane", {{"width", 100.0}, {"depth", 100.0}})[0];
+    run("selectComponents", {{"args", {plane}}, {"faces", {0}}});
+    run("selectComponents", {{"args", {other}}, {"faces", {0}}, {"add", true}});
+    run("shrinkSelection");
+    CHECK(selectedCount(plane, "faces") == 0);
+    CHECK(selectedCount(other, "faces") == 0);
+    run("undo");
+    CHECK(selectedCount(plane, "faces") == 1);
+    CHECK(selectedCount(other, "faces") == 1);
     run("selectComponents", {{"args", {plane}}, {"faces", {json::array({0, 15})}}});
     run("selectBorder");
     CHECK(run("selectMode") == "edge");

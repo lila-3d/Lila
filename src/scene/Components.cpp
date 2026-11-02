@@ -813,7 +813,9 @@ void registerCommands()
             if (k == ComponentMode::Object)
                 return nullptr;
             UndoChunk chunk("Shrink Selection");
-            for (auto [node, ids] : selected(k))
+            // A copy: removing a mesh's last component erases its entry from the live selection.
+            const std::map<NodeId, Ids> sel = selected(k);
+            for (const auto& [node, ids] : sel)
             {
                 MeshPtr m = meshOf(node);
                 if (!m)
