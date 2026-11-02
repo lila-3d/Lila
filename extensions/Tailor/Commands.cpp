@@ -11,11 +11,15 @@
 #include <lila/Diagnostics.h>
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/Log.h>
 #include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Transform.h>
+#include <lila/Uv.h>
 
 #include <algorithm>
+#include <functional>
+#include <map>
 #include <cmath>
 #include <numbers>
 #include <optional>
@@ -405,6 +409,146 @@ std::optional<std::pair<int, Vec2>> patternPointAt(const geo::Mesh& m, const glm
         best = dist;
         const glm::vec2 uv = fabric[c[0]] * float(1.0 - v - w) + fabric[c[1]] * float(v) + fabric[c[2]] * float(w);
         out = std::pair{int(panel[f]), Vec2{uv.x, uv.y}};
+    }
+    return out;
+}
+
+/**
+ * A drawn outline flattened the way the body curves under it: the body faces inside the outline (as unrolled) are
+ * unwrapped with little stretch, the outline is read off them, then turned and moved onto the unrolled outline it
+ * replaces. Empty when the body under it can't be cut out.
+ */
+std::vector<Vec2> flattenOnBody(const std::vector<Vec3>& bodyPts, const std::vector<std::array<int, 3>>& bodyTris,
+                                const std::vector<glm::dvec3>& outline, const std::vector<Vec2>& unrolled,
+                                const std::function<Vec2(const glm::dvec3&)>& unroll)
+{
+    const size_t n = outline.size();
+    auto inside = [&](const Vec2& q) {
+        bool in = false;
+        for (size_t i = 0, j = n - 1; i < n; j = i++)
+            if ((unrolled[i][1] > q[1]) != (unrolled[j][1] > q[1]) &&
+                q[0] < (unrolled[j][0] - unrolled[i][0]) * (q[1] - unrolled[i][1]) / (unrolled[j][1] - unrolled[i][1]) + unrolled[i][0])
+                in = !in;
+        return in;
+    };
+    auto pos = [&](int v) { return glm::dvec3(bodyPts[size_t(v)][0], bodyPts[size_t(v)][1], bodyPts[size_t(v)][2]); };
+    std::vector<char> in(bodyTris.size(), 0);
+    int seed = -1;
+    double seedD = 1e30;
+    for (size_t t = 0; t < bodyTris.size(); ++t)
+    {
+        const glm::dvec3 c = (pos(bodyTris[t][0]) + pos(bodyTris[t][1]) + pos(bodyTris[t][2])) / 3.0;
+        if (!inside(unroll(c)))
+            continue;
+        in[t] = 1;
+        // The patch is the piece of body under the drawn points, not an arm that unrolls to the same place behind it.
+        if (const double d = glm::length(c - outline[0]); d < seedD)
+            seedD = d, seed = int(t);
+    }
+    if (seed < 0)
+        return {};
+    std::map<std::pair<int, int>, std::vector<int>> byEdge;
+    for (size_t t = 0; t < bodyTris.size(); ++t)
+        if (in[t])
+            for (int k = 0; k < 3; ++k)
+                byEdge[std::minmax(bodyTris[t][size_t(k)], bodyTris[t][size_t((k + 1) % 3)])].push_back(int(t));
+    std::vector<int> patch{seed}, stack{seed};
+    std::vector<char> seen(bodyTris.size(), 0);
+    seen[size_t(seed)] = 1;
+    while (!stack.empty())
+    {
+        const int t = stack.back();
+        stack.pop_back();
+        for (int k = 0; k < 3; ++k)
+            for (int o : byEdge[std::minmax(bodyTris[size_t(t)][size_t(k)], bodyTris[size_t(t)][size_t((k + 1) % 3)])])
+                if (!seen[size_t(o)])
+                {
+                    seen[size_t(o)] = 1;
+                    patch.push_back(o);
+                    stack.push_back(o);
+                }
+    }
+    if (patch.size() < 4)
+        return {};
+
+    std::map<int, geo::Index> local;
+    std::vector<glm::dvec3> pts;
+    std::vector<geo::Index> sizes(patch.size(), 3), idx;
+    for (int t : patch)
+        for (int v : bodyTris[size_t(t)])
+        {
+            auto [it, fresh] = local.emplace(v, geo::Index(pts.size()));
+            if (fresh)
+                pts.push_back(pos(v));
+            idx.push_back(it->second);
+        }
+    const geo::Mesh mesh = geo::Mesh::fromPolygons(pts, sizes, idx);
+    std::vector<uv::Chart> charts = uv::buildCharts(mesh);
+    if (charts.size() != 1 || charts[0].euler() != 1)
+        return {};
+    uv::Chart& chart = charts[0];
+    if (!uv::lscm(chart, false))
+        return {};
+    uv::slim(chart, 30, false);
+    uv::matchSurfaceArea(chart);
+    std::vector<glm::dvec2> pointUv(pts.size());
+    for (size_t v = 0; v < chart.vertexPoint.size(); ++v)
+        pointUv[chart.vertexPoint[v]] = chart.uv[v];
+
+    // Each drawn point takes the flat position of the closest point on the patch.
+    std::vector<glm::dvec2> flat(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        double best = 1e30;
+        for (size_t t = 0; t < patch.size(); ++t)
+        {
+            const geo::Index ia = idx[3 * t], ib = idx[3 * t + 1], ic = idx[3 * t + 2];
+            const glm::dvec3 a = pts[ia], e1 = pts[ib] - a, e2 = pts[ic] - a, ap = outline[i] - a;
+            const double d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2), den = d11 * d22 - d12 * d12;
+            if (den <= 1e-20)
+                continue;
+            double v = (d22 * glm::dot(ap, e1) - d12 * glm::dot(ap, e2)) / den, w = (d11 * glm::dot(ap, e2) - d12 * glm::dot(ap, e1)) / den;
+            v = std::clamp(v, 0.0, 1.0);
+            w = std::clamp(w, 0.0, 1.0 - v);
+            if (const double d = glm::length(a + e1 * v + e2 * w - outline[i]); d < best)
+            {
+                best = d;
+                flat[i] = pointUv[ia] * (1.0 - v - w) + pointUv[ib] * v + pointUv[ic] * w;
+            }
+        }
+    }
+
+    // Fit onto the unrolled outline: same winding, then the rotation and shift that best overlay it.
+    auto area = [](const auto& poly, auto x, auto y) {
+        double s = 0.0;
+        for (size_t i = 0; i < poly.size(); ++i)
+            s += double(x(poly[i])) * double(y(poly[(i + 1) % poly.size()])) - double(x(poly[(i + 1) % poly.size()])) * double(y(poly[i]));
+        return s;
+    };
+    const double flatArea = area(flat, [](const glm::dvec2& p) { return p.x; }, [](const glm::dvec2& p) { return p.y; });
+    const double unrolledArea = area(unrolled, [](const Vec2& p) { return p[0]; }, [](const Vec2& p) { return p[1]; });
+    if (flatArea * unrolledArea < 0.0)
+        for (glm::dvec2& p : flat)
+            p.x = -p.x;
+    glm::dvec2 cf(0.0), cu(0.0);
+    for (size_t i = 0; i < n; ++i)
+    {
+        cf += flat[i] / double(n);
+        cu += glm::dvec2(unrolled[i][0], unrolled[i][1]) / double(n);
+    }
+    double dotSum = 0.0, crossSum = 0.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const glm::dvec2 f = flat[i] - cf, u = glm::dvec2(unrolled[i][0], unrolled[i][1]) - cu;
+        dotSum += f.x * u.x + f.y * u.y;
+        crossSum += f.x * u.y - f.y * u.x;
+    }
+    const double ang = std::atan2(crossSum, dotSum), c = std::cos(ang), s = std::sin(ang);
+    std::vector<Vec2> out(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const glm::dvec2 f = flat[i] - cf;
+        out[i] = {float(cu.x + c * f.x - s * f.y), float(cu.y + s * f.x + c * f.y)};
     }
     return out;
 }
@@ -1415,7 +1559,9 @@ void registerCommands(ext::Context& ctx)
                   {"particleDistance", "pd", T::Float, 2.0, "Cloth edge length of a new garment, cm.", {}, {}, 0.1, 50.0},
                   {"simulate", "sim", T::Bool, true, "Drape a new garment."},
                   {"frames", "fr", T::Int, int64_t(90), "Solver frames for a new garment.", {}, {}, 0.0, 10000.0},
-                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."}},
+                  {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."},
+                  {"flatten", "fl", T::Bool, true, "Flatten the panel as the body curves under it (lengths true on the body); off unrolls it round the body's axis."},
+                  {"sew", "sw", T::Bool, true, "Sew the new panels to edges of the garment's panels that meet them."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<glm::dvec3> pts;
@@ -1444,6 +1590,40 @@ void registerCommands(ext::Context& ctx)
             }
             else
                 collider = colliderArg(g, a);
+
+            if (collider && a.get<bool>("flatten"))
+            {
+                // The outline lies on the body: points drawn off it go to the nearest point of its surface.
+                g.evaluate();
+                const PlugValue bv = g.value({collider->id(), MeshNode::kOutMesh});
+                const PlugValue bw = g.value({collider->id(), Transform::kWorldMatrix});
+                if (const MeshPtr* bm = std::get_if<MeshPtr>(&bv); bm && *bm && std::get_if<glm::dmat4>(&bw))
+                {
+                    std::vector<Vec3> bp;
+                    std::vector<std::array<int, 3>> bt;
+                    colliderTriangles(**bm, std::get<glm::dmat4>(bw), bp, bt);
+                    auto at = [&](int v) { return glm::dvec3(bp[size_t(v)][0], bp[size_t(v)][1], bp[size_t(v)][2]); };
+                    for (glm::dvec3& p : pts)
+                    {
+                        double best = 1e30;
+                        glm::dvec3 foot = p;
+                        for (const auto& t : bt)
+                        {
+                            const glm::dvec3 o = at(t[0]), e1 = at(t[1]) - o, e2 = at(t[2]) - o, rel = p - o;
+                            const double d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2), den = d11 * d22 - d12 * d12;
+                            if (den <= 1e-20)
+                                continue;
+                            double v = (d22 * glm::dot(rel, e1) - d12 * glm::dot(rel, e2)) / den, w = (d11 * glm::dot(rel, e2) - d12 * glm::dot(rel, e1)) / den;
+                            v = std::clamp(v, 0.0, 1.0);
+                            w = std::clamp(w, 0.0, 1.0 - v);
+                            const glm::dvec3 q = o + e1 * v + e2 * w;
+                            if (const double d = glm::length(q - p); d < best)
+                                best = d, foot = q;
+                        }
+                        p = foot;
+                    }
+                }
+            }
 
             // The body's vertical axis: its feet centre, else the outline's own centre.
             glm::dvec2 axis(0.0);
@@ -1478,14 +1658,58 @@ void registerCommands(ext::Context& ctx)
             for (double t : theta)
                 centre += t / double(theta.size());
 
+            double placeRadius = radius;
+            std::vector<Vec2> shape(pts.size());
+            for (size_t i = 0; i < pts.size(); ++i)
+                shape[i] = {float((theta[i] - centre) * radius), float(pts[i].y)};
+            if (a.get<bool>("flatten") && collider)
+            {
+                g.evaluate();
+                const PlugValue bv = g.value({collider->id(), MeshNode::kOutMesh});
+                const PlugValue bw = g.value({collider->id(), Transform::kWorldMatrix});
+                if (const MeshPtr* bm = std::get_if<MeshPtr>(&bv); bm && *bm && std::get_if<glm::dmat4>(&bw))
+                {
+                    std::vector<Vec3> bodyPts;
+                    std::vector<std::array<int, 3>> bodyTris;
+                    colliderTriangles(**bm, std::get<glm::dmat4>(bw), bodyPts, bodyTris);
+                    const double c0 = centre;
+                    auto unroll = [&](const glm::dvec3& q) {
+                        double t = std::atan2(q.x - axis.x, q.z - axis.y);
+                        while (t - c0 > std::numbers::pi)
+                            t -= 2.0 * std::numbers::pi;
+                        while (t - c0 < -std::numbers::pi)
+                            t += 2.0 * std::numbers::pi;
+                        return Vec2{float((t - c0) * radius), float(q.y)};
+                    };
+                    std::vector<Vec2> flat = flattenOnBody(bodyPts, bodyTris, pts, shape, unroll);
+                    if (flat.size() == shape.size())
+                    {
+                        // True lengths run shorter than the unroll at the clearance radius; place on the radius they fit.
+                        double fx = 0.0, ux = 0.0, num = 0.0, den = 0.0;
+                        for (size_t i = 0; i < flat.size(); ++i)
+                            fx += flat[i][0] / double(flat.size()), ux += shape[i][0] / double(flat.size());
+                        for (size_t i = 0; i < flat.size(); ++i)
+                        {
+                            num += (flat[i][0] - fx) * (shape[i][0] - ux);
+                            den += (shape[i][0] - ux) * (shape[i][0] - ux);
+                        }
+                        if (den > 1e-12 && num > 0.0)
+                            placeRadius = std::min(radius, radius * num / den + a.get<double>("clearance") / kCmPerM);
+                        shape = std::move(flat);
+                    }
+                    else
+                        log::warn("tailorDrawPanel: couldn't cut the body out under the outline; unrolled it instead");
+                }
+            }
+            const size_t firstNew = op ? readGarment(*op).panels.size() : 0;
             Garment gm = op ? readGarment(*op) : Garment{};
             auto makePanel = [&](const std::string& base, double side) {
                 Panel p;
                 p.name = base;
                 for (int k = 2; std::any_of(gm.panels.begin(), gm.panels.end(), [&](const Panel& o) { return o.name == p.name; }); ++k)
                     p.name = base + " " + std::to_string(k);
-                for (size_t i = 0; i < pts.size(); ++i)
-                    p.outline.push_back({float(side * (theta[i] - centre) * radius), float(pts[i].y)});
+                for (const Vec2& q : shape)
+                    p.outline.push_back({float(side) * q[0], q[1]});
                 double area = 0.0;
                 for (size_t i = 0; i < p.outline.size(); ++i)
                 {
@@ -1495,11 +1719,11 @@ void registerCommands(ext::Context& ctx)
                 if (area < 0.0)
                     std::reverse(p.outline.begin(), p.outline.end());
                 // Pattern x runs around the body at this radius, y is height; see Panel's placement convention.
-                const double c = side * centre;
-                p.origin = {float(axis.x + radius * std::sin(c)), 0.f, float(axis.y + radius * std::cos(c))};
+                const double c = centre;
+                p.origin = {float(axis.x + placeRadius * std::sin(c)), 0.f, float(axis.y + placeRadius * std::cos(c))};
                 p.right = {float(std::cos(c)), 0.f, float(-std::sin(c))};
                 p.up = {0.f, 1.f, 0.f};
-                p.wrapRadius = float(radius);
+                p.wrapRadius = float(placeRadius);
                 p.layer = int(a.get<int64_t>("layer"));
                 gm.panels.push_back(std::move(p));
                 return gm.panels.back().name;
@@ -1510,11 +1734,13 @@ void registerCommands(ext::Context& ctx)
             if (a.get<bool>("mirror"))
             {
                 // Mirror across x = axis: the angle flips sign.
-                for (double& t : theta)
-                    t = -t;
                 centre = -centre;
-                names.push_back(makePanel(base + " R", 1.0));
+                names.push_back(makePanel(base + " R", -1.0));
             }
+            if (a.get<bool>("sew"))
+                for (Seam& s : suggestSeams(gm, float(2.0 * a.get<double>("clearance") / kCmPerM + 0.03)))
+                    if (size_t(s.a.front().panel) >= firstNew || size_t(s.b.front().panel) >= firstNew)
+                        gm.seams.push_back(std::move(s));
             if (op)
             {
                 writeGarment(g, *op, gm);
