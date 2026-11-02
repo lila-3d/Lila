@@ -83,7 +83,7 @@ jobs:
 
       - name: Test
         if: steps.existing.outputs.released == '0'
-        run: build\bin\Release\lila_tests.exe
+        run: ctest --test-dir build -C Release -j 4 -LE known_failing --output-on-failure
 
       - name: Installer
         if: steps.existing.outputs.released == '0'

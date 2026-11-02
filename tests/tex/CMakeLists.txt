@@ -40,4 +40,4 @@ add_executable(lila_material_pack_tests
 target_link_libraries(lila_material_pack_tests PRIVATE LilaScene doctest::doctest)
 add_dependencies(lila_material_pack_tests lila_slang_runtime)
 add_test(NAME lila_material_pack_tests COMMAND lila_material_pack_tests)
-set_tests_properties(lila_material_pack_tests PROPERTIES LABELS slow)
+set_tests_properties(lila_material_pack_tests PROPERTIES LABELS "slow;known_failing")

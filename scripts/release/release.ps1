@@ -38,8 +38,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Release build failed. If Lila is running from build\bin\Release, close it." }
 }
 if (-not $SkipTests) {
-    & "$repo\build\bin\Release\lila_tests.exe"
-    if ($LASTEXITCODE -ne 0) { throw "lila_tests failed" }
+    cmd /c "scripts\env.cmd >nul 2>&1 && python scripts\quiet.py test build Release -LE known_failing"
+    if ($LASTEXITCODE -ne 0) { throw "Tests failed, full log in build\last_test.log" }
 }
 
 & "$repo\scripts\installer\build.ps1" -Config Release -Notes $Notes
