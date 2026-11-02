@@ -3,6 +3,7 @@
     python scripts/discord_issues.py [--channel ID] [--out DIR] [--since YYYY-MM-DD] [--no-attachments] [--unsolved]
     python scripts/discord_issues.py --solve POST_ID [--note "Fixed in abc123"]
     python scripts/discord_issues.py --unsolve POST_ID
+    python scripts/discord_issues.py --retag POST_ID Bug
 
 Reads the bot token from LILA_DISCORD_TOKEN and the channel from --channel or LILA_DISCORD_ISSUES_CHANNEL.
 The bot needs View Channels and Read Message History, plus the Message Content intent.
@@ -105,6 +106,21 @@ def find_tag(forum, name):
     return next((t["id"] for t in forum.get("available_tags", []) if t["name"].lower() == name.lower()), None)
 
 
+def retag(api, post_id, category, status_names):
+    """Replaces a post's category tags (everything but the status tags) with one category."""
+    post = api.get(f"/channels/{post_id}")
+    forum = api.get(f"/channels/{post['parent_id']}")
+    new_tag = find_tag(forum, category)
+    if not new_tag:
+        names = ", ".join(t["name"] for t in forum.get("available_tags", []))
+        sys.exit(f"#{forum['name']} has no '{category}' tag; it has: {names}")
+    status = {find_tag(forum, n) for n in status_names} - {None}
+    tags = [t for t in post.get("applied_tags", []) if t in status] + [new_tag]
+    # Archived posts reject edits, so reopen first.
+    api.request("PATCH", f"/channels/{post_id}", {"archived": False, "applied_tags": tags})
+    print(f"{category}: {post['name']}")
+
+
 def set_solved(api, post_id, solved, solved_name, pending_name, note):
     """Swaps a post between the solved and pending tags, optionally replying with a note."""
     post = api.get(f"/channels/{post_id}")
@@ -149,6 +165,7 @@ def main():
     parser.add_argument("--since", help="only posts created on or after this date (YYYY-MM-DD)")
     parser.add_argument("--no-attachments", action="store_true", help="link attachments instead of downloading them")
     parser.add_argument("--unsolved", action="store_true", help="skip posts carrying the solved tag")
+    parser.add_argument("--retag", nargs=2, metavar=("POST_ID", "TAG"), help="replace a post's category tag (Bug, Request, ...), keeping Pending/Solved")
     parser.add_argument("--solve", metavar="POST_ID", help="add the solved tag to a post")
     parser.add_argument("--unsolve", metavar="POST_ID", help="remove the solved tag from a post")
     parser.add_argument("--note", help="with --solve/--unsolve, also reply in the post with this text")
@@ -161,6 +178,9 @@ def main():
     if not token:
         sys.exit("LILA_DISCORD_TOKEN is not set")
     api = Discord(token)
+    if args.retag:
+        retag(api, args.retag[0], args.retag[1], (args.solved_tag, args.pending_tag))
+        return
     if args.solve or args.unsolve:
         set_solved(api, args.solve or args.unsolve, bool(args.solve), args.solved_tag, args.pending_tag, args.note)
         return
