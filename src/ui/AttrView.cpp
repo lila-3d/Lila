@@ -297,6 +297,38 @@ void setSyncGraphEditor(bool on)
     notify();
 }
 
+double scrubSpeed() { return std::clamp(PrefStore::get().value(kFile, "/scrub/speed", 1.0), 0.01, 100.0); }
+
+void setScrubSpeed(double s)
+{
+    PrefStore::get().set(kFile, "/scrub/speed", std::clamp(s, 0.01, 100.0));
+    notify();
+}
+
+bool hyperbolicScrub() { return PrefStore::get().value(kFile, "/scrub/hyperbolic", false); }
+
+void setHyperbolicScrub(bool on)
+{
+    PrefStore::get().set(kFile, "/scrub/hyperbolic", on);
+    notify();
+}
+
+std::string viewportScrub() { return PrefStore::get().value<std::string>(kFile, "/scrub/viewport", "always"); }
+
+void setViewportScrub(const std::string& mode)
+{
+    PrefStore::get().set(kFile, "/scrub/viewport", mode == "select" || mode == "off" ? mode : std::string("always"));
+    notify();
+}
+
+double scrubStep(double base, int dx)
+{
+    double step = base * scrubSpeed();
+    if (hyperbolicScrub())
+        step *= 1.0 + std::abs(dx) * 0.25;
+    return step;
+}
+
 int addListener(std::function<void()> fn)
 {
     const int id = state().next++;

@@ -6,6 +6,7 @@
 #include "ui/ValueReset.h"
 
 #include <QElapsedTimer>
+#include <QPoint>
 #include <QWidget>
 
 #include <map>
@@ -107,6 +108,12 @@ private:
     void noteEdit(const Row& row);
     /** Opens what drives the row: the Graph Editor for keys, the source node for anything else. */
     void jumpToSource(int row);
+    /** A plug dragged onto a channel: connectAttr, or a driven key with Alt held. */
+    void dropPlug(const std::string& source, const std::string& target);
+    /** Scrub speed, hyperbolic, viewport middle drag, decimals, namespaces and the hint. */
+    void showSettings(QWidget* anchor);
+    int mDragRow = -1;
+    QPoint mDragFrom;
     /** Flips a boolean channel on every selected node, and every other highlighted boolean channel to match. */
     void toggleBool(int row);
     void beginScrub(QPoint pos);

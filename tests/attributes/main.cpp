@@ -4,6 +4,7 @@
 #include "core/MainQueue.h"
 #include "io/SceneFile.h"
 #include "ops/Command.h"
+#include "rigmath/MathNodes.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "ui/Theme.h"
@@ -41,6 +42,7 @@ int main(int argc, char** argv)
     lila::mainq::init();
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
+    lila::rigmath::registerTypes();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     doctest::Context ctx(argc, argv);

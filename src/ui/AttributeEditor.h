@@ -119,6 +119,8 @@ private:
     void headingMenu(const std::string& category, QWidget* on, QPoint at);
     /** Drops attr (dragged from a row) before another added attr, or under a heading when before is empty. */
     void dropAttr(const std::string& attr, const std::string& before, const std::string& category);
+    /** A plug dropped on a row: connectAttr, or a driven key with Alt held. */
+    void dropPlug(const std::string& source, const std::string& target);
     /** Moves every attr under a heading in front of another heading's first. */
     void dropHeading(const std::string& category, const std::string& before);
     /** Shows only rows the search matches; sections with none collapse away. */

@@ -3,6 +3,7 @@ set(LILA_UNITY_SKIP
     src/scene/AttrComponents.cpp
     src/ui/AttrAuthoring.cpp
     src/ui/AttrView.cpp
+    src/ui/DrivePopover.cpp
     extensions/Destruction/RigidWorld.cpp
     extensions/Foliage/TreeUi.cpp
     extensions/Masonry/Commands.cpp

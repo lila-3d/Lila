@@ -70,6 +70,17 @@ LILA_UI_API void setHighlightedChannels(std::vector<scene::PlugRef> plugs);
 LILA_UI_API bool syncGraphEditor();
 LILA_UI_API void setSyncGraphEditor(bool on);
 
+/** Channel Box scrubbing: a speed multiplier, hyperbolic (faster drags go further), and when a middle drag in a viewport
+ * scrubs the highlighted channels: "always", "select" (only with the Select tool, never over a manipulator) or "off". */
+LILA_UI_API double scrubSpeed();
+LILA_UI_API void setScrubSpeed(double s);
+LILA_UI_API bool hyperbolicScrub();
+LILA_UI_API void setHyperbolicScrub(bool on);
+LILA_UI_API std::string viewportScrub();
+LILA_UI_API void setViewportScrub(const std::string& mode);
+/** A scrub step for a drag of dx pixels at base step size, with the speed and hyperbolic settings applied. */
+LILA_UI_API double scrubStep(double base, int dx);
+
 /** Called after any setting here or the lead changes. Returns an id for removeListener. */
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);

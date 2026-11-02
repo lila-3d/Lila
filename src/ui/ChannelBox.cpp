@@ -1,6 +1,15 @@
 #include "ui/ChannelBox.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttrView.h"
+#include "ui/DrivePopover.h"
+#include "ui/Tools.h"
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QDrag>
+#include <QFormLayout>
+#include <QMimeData>
+#include <QSpinBox>
 #include "ui/Panels.h"
 #include "ui/Icons.h"
 #include "scene/RotationCurve.h"
@@ -216,6 +225,7 @@ struct CopiedValue
     json value;
 };
 std::vector<CopiedValue> gCopied;
+constexpr const char* kCbPlugMime = "application/x-lila-plug";
 QString gCopiedText; // what the copy put on the clipboard; a different clipboard means someone else copied since
 
 /** A value held inside the attr's hard limits. */
@@ -286,6 +296,9 @@ namespace channelSlider
 {
 bool begin(QPoint globalPos)
 {
+    const std::string when = attrView::viewportScrub();
+    if (when == "off" || (when == "select" && tools::current() != Tool::Select))
+        return false;
     for (ChannelBox* box : gBoxes)
     {
         if (!box->isVisible())
@@ -413,6 +426,13 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mSync->setToolTip("Sync Graph Editor: it shows only the highlighted channels");
     connect(mSync, &QToolButton::toggled, this, [](bool on) { attrView::setSyncGraphEditor(on); });
     filterRow->addWidget(mSync);
+    auto* settings = new QToolButton(this);
+    settings->setObjectName("cbSettings");
+    settings->setIcon(icon("settings"));
+    settings->setAutoRaise(true);
+    settings->setToolTip("Scrubbing and display: speed, hyperbolic, viewport middle drag, precision, namespaces");
+    connect(settings, &QToolButton::clicked, this, [this, settings] { showSettings(settings); });
+    filterRow->addWidget(settings);
     layout->addLayout(filterRow);
     mChipRow = new QWidget(this);
     auto* chips = new QHBoxLayout(mChipRow);
@@ -486,6 +506,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed | QAbstractItemView::AnyKeyPressed);
     mTable->setProperty("numericEntry", true);
     mTable->viewport()->installEventFilter(this);
+    mTable->viewport()->setAcceptDrops(true);
     mTable->installEventFilter(this);
     layout->addWidget(mTable, 1);
     connect(mTable, &QTableWidget::itemSelectionChanged, this, [this] {
@@ -716,6 +737,8 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                 }
             });
         menu.addSeparator();
+        if (plugs.size() == 1)
+            menu.addAction(icon("link"), "Drive...", [this, p = plugs[0].get<std::string>()] { drivePopover::show(p, mTable); });
         if (plugs.size() == 1)
             menu.addAction("Set as Driver", [p = plugs[0].get<std::string>()] {
                 gDriverPlug = p;
@@ -1020,6 +1043,82 @@ void ChannelBox::noteEdit(const Row& row)
         if (hint && label && label->text() == text)
             hint->hide();
     });
+}
+
+void ChannelBox::dropPlug(const std::string& source, const std::string& target)
+{
+    if (source.empty() || source == target)
+        return;
+    try
+    {
+        if (QGuiApplication::keyboardModifiers() & Qt::AltModifier)
+        {
+            attrView::noteMultiEditUsed();
+            Graph& g = Graph::current();
+            const double d = currentNumber(g, g.plug(source)), v = currentNumber(g, g.plug(target));
+            ops::execute("driveChannel", {{"args", {target}}, {"driver", source}, {"keys", json::array({json::array({d, v}), json::array({d + 1.0, v + 1.0})})},
+                                          {"force", true}},
+                         CallSource::UI);
+        }
+        else
+            ops::execute("connectAttr", {{"args", {source, target}}, {"force", true}}, CallSource::UI);
+    }
+    catch (const std::exception& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+void ChannelBox::showSettings(QWidget* anchor)
+{
+    auto* pop = new QFrame(window(), Qt::Popup);
+    pop->setObjectName("cbSettingsPopover");
+    pop->setAttribute(Qt::WA_DeleteOnClose);
+    pop->setFrameShape(QFrame::StyledPanel);
+    auto* f = new QFormLayout(pop);
+    f->setContentsMargins(8, 8, 8, 8);
+    auto* speed = new QDoubleSpinBox(pop);
+    speed->setObjectName("cbScrubSpeed");
+    speed->setRange(0.01, 100.0);
+    speed->setDecimals(2);
+    speed->setSingleStep(0.25);
+    speed->setValue(attrView::scrubSpeed());
+    connect(speed, &QDoubleSpinBox::valueChanged, pop, [](double v) { attrView::setScrubSpeed(v); });
+    f->addRow("Scrub speed", speed);
+    auto* hyper = new QCheckBox("Faster drags go further", pop);
+    hyper->setObjectName("cbHyperbolic");
+    hyper->setChecked(attrView::hyperbolicScrub());
+    connect(hyper, &QCheckBox::toggled, pop, [](bool on) { attrView::setHyperbolicScrub(on); });
+    f->addRow("Hyperbolic", hyper);
+    auto* viewport = new QComboBox(pop);
+    viewport->setObjectName("cbViewportScrub");
+    viewport->addItem("Always", "always");
+    viewport->addItem("Select tool only", "select");
+    viewport->addItem("Off", "off");
+    viewport->setCurrentIndex(std::max(0, viewport->findData(QString::fromStdString(attrView::viewportScrub()))));
+    viewport->setToolTip("When a middle drag in a viewport scrubs the highlighted channels");
+    connect(viewport, &QComboBox::activated, pop, [viewport](int i) { attrView::setViewportScrub(viewport->itemData(i).toString().toStdString()); });
+    f->addRow("Viewport middle drag", viewport);
+    auto* places = new QSpinBox(pop);
+    places->setObjectName("cbPrecision");
+    places->setRange(0, 10);
+    places->setValue(attrView::precision());
+    places->setToolTip("Decimal places, shared with the Attribute Editor");
+    connect(places, &QSpinBox::valueChanged, pop, [](int v) { attrView::setPrecision(v); });
+    f->addRow("Decimals", places);
+    auto* ns = new QCheckBox("Show namespaces", pop);
+    ns->setObjectName("cbNamespaces");
+    ns->setChecked(attrView::showNamespaces());
+    connect(ns, &QCheckBox::toggled, pop, [](bool on) { attrView::setShowNamespaces(on); });
+    f->addRow(QString(), ns);
+    auto* hint = new QCheckBox("Hint after lead-only edits", pop);
+    hint->setObjectName("cbHintPref");
+    hint->setChecked(attrView::hintEnabled());
+    connect(hint, &QCheckBox::toggled, pop, [](bool on) { attrView::setHintEnabled(on); });
+    f->addRow(QString(), hint);
+    pop->adjustSize();
+    pop->move(anchor->mapToGlobal(QPoint(anchor->width() - pop->width(), anchor->height())));
+    pop->show();
 }
 
 void ChannelBox::jumpToSource(int row)
@@ -1376,7 +1475,43 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
             }
         }
         break;
+    case QEvent::DragEnter:
+    case QEvent::DragMove:
+    case QEvent::Drop:
+    {
+        auto* d = static_cast<QDropEvent*>(e);
+        if (!d->mimeData()->hasFormat(kCbPlugMime))
+            return false;
+        const QModelIndex idx = mTable->indexAt(d->position().toPoint());
+        const bool ok = idx.isValid() && idx.row() < int(mRows.size()) && !mRows[idx.row()].header;
+        if (!ok)
+        {
+            d->ignore();
+            return true;
+        }
+        d->acceptProposedAction();
+        if (e->type() == QEvent::Drop)
+        {
+            const Row& row = mRows[size_t(idx.row())];
+            scene::Node* owner = Graph::current().node(row.node ? row.node : mNode);
+            if (owner)
+                dropPlug(QString::fromUtf8(d->mimeData()->data(kCbPlugMime)).toStdString(), owner->path() + "." + row.attr);
+        }
+        return true;
+    }
     case QEvent::MouseButtonPress:
+        mDragRow = -1;
+        if (me->button() == Qt::LeftButton && me->modifiers() == Qt::NoModifier)
+        {
+            // A press on an already highlighted name can drag that channel onto another to connect it.
+            const QModelIndex idx = mTable->indexAt(me->position().toPoint());
+            if (idx.isValid() && idx.column() == 0 && idx.row() < int(mRows.size()) && !mRows[idx.row()].header && mTable->item(idx.row(), 0)->isSelected() &&
+                me->position().x() >= 16)
+            {
+                mDragRow = idx.row();
+                mDragFrom = me->position().toPoint();
+            }
+        }
         if (me->button() == Qt::LeftButton && me->position().x() < 16)
         {
             QModelIndex idx = mTable->indexAt(me->position().toPoint());
@@ -1427,6 +1562,21 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
         }
         break;
     case QEvent::MouseMove:
+        if (mDragRow >= 0 && (me->buttons() & Qt::LeftButton) && (me->position().toPoint() - mDragFrom).manhattanLength() >= QApplication::startDragDistance())
+        {
+            const Row& row = mRows[size_t(mDragRow)];
+            mDragRow = -1;
+            if (scene::Node* owner = Graph::current().node(row.node ? row.node : mNode))
+            {
+                auto* data = new QMimeData;
+                data->setData(kCbPlugMime, QByteArray::fromStdString(owner->path() + "." + row.attr));
+                data->setText(QString::fromStdString(owner->path() + "." + row.attr));
+                auto* drag = new QDrag(mTable);
+                drag->setMimeData(data);
+                drag->exec(Qt::LinkAction | Qt::CopyAction);
+                return true;
+            }
+        }
         if (mMidClick.down())
             mMidClick.move(me->globalPosition().toPoint().x(), me->globalPosition().toPoint().y());
         if (mScrub)
@@ -1509,7 +1659,7 @@ void ChannelBox::scrub(QPoint pos, Qt::KeyboardModifiers mods)
         s.chunk = true;
         s.moved = true;
     }
-    double step = (mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1;
+    double step = attrView::scrubStep((mods & Qt::ControlModifier) ? 0.01 : (mods & Qt::ShiftModifier) ? 1.0 : 0.1, dx);
     s.accum += dx * step;
     // Stops where every channel has hit a limit, so dragging back moves them straight away.
     double lo = HUGE_VAL, hi = -HUGE_VAL;

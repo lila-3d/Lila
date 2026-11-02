@@ -1,6 +1,7 @@
 #include "ui/AttributeEditor.h"
 #include "ui/AttrAuthoring.h"
 #include "ui/AttrView.h"
+#include "ui/DrivePopover.h"
 #include "ui/DocsUi.h"
 #include "core/PrefStore.h"
 #include "scene/AttrComponents.h"
@@ -108,6 +109,7 @@ private:
 
 constexpr const char* kAttrMime = "application/x-lila-attr";
 constexpr const char* kHeadingMime = "application/x-lila-heading";
+constexpr const char* kPlugMime = "application/x-lila-plug";
 
 /** Drag, drop, double-click and hover hooks on one widget, for the editor's rows and headings. */
 class RowGestures final : public QObject
@@ -1295,7 +1297,7 @@ void AttributeEditor::rebuild()
         auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : attrView::label(def));
         label->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(label, &QWidget::customContextMenuRequested, this,
-                [this, label, attr, ref, keyable = bool(def.flags & scene::AttrKeyable), user = bool(def.flags & scene::AttrUser)](const QPoint& at) {
+                [this, label, attr, ref, def, element, readOnly, keyable = bool(def.flags & scene::AttrKeyable), user = bool(def.flags & scene::AttrUser)](const QPoint& at) {
             QMenu menu;
             addCopyActions(&menu, QString::fromStdString(attr), [this, ref] {
                 return Graph::current().node(mNode) ? scene::toJson(Graph::current().value(ref)) : json();
@@ -1306,6 +1308,11 @@ void AttributeEditor::rebuild()
                 menu.addAction(icon("pencil"), "Edit Attribute...", [this, attr, label] { openEdit(attr, label); });
                 menu.addAction("Delete Attribute", [this, attr] { runOnNode("deleteAttr", {{"attribute", attr}}); });
             }
+            if (!readOnly && element < 0 && def.type != PlugType::String && def.type != PlugType::Mesh && def.type != PlugType::Data)
+                menu.addAction(icon("link"), "Drive...", [this, attr, label] {
+                    if (scene::Node* node = Graph::current().node(mNode))
+                        drivePopover::show(node->path() + "." + attr, label);
+                });
             if (keyable)
             {
                 menu.addSeparator();
@@ -1382,6 +1389,17 @@ void AttributeEditor::rebuild()
             };
             field = row;
         }
+        if (element < 0 && !readOnly && (def.flags & scene::AttrInput))
+        {
+            // A plug dragged from the Channel Box connects here; with Alt it becomes a driven key.
+            auto* plugDrop = new RowGestures(label);
+            label->setAcceptDrops(true);
+            plugDrop->accepts = [](const QMimeData* d) { return d->hasFormat(kPlugMime); };
+            plugDrop->dropped = [this, attr](const QMimeData* d) {
+                if (scene::Node* node = Graph::current().node(mNode))
+                    dropPlug(mimeText(d, kPlugMime), node->path() + "." + attr);
+            };
+        }
         if (element < 0)
         {
             auto* row = new QWidget;
@@ -1389,6 +1407,18 @@ void AttributeEditor::rebuild()
             h->setContentsMargins(0, 0, 0, 0);
             h->setSpacing(3);
             h->addWidget(field, 1);
+            // What drives it, inline: a link that shows the source here.
+            std::optional<scene::PlugRef> src = g.source(ref);
+            for (int c = 0; !src && def.type == PlugType::Vec3 && c < 3; ++c)
+                src = g.source({ref.node, ref.attr, c, -1});
+            if (const scene::Node* from = src ? g.node(src->node) : nullptr; from && !from->type().isA("animCurve") && !from->type().isA("animCurveRQ"))
+            {
+                auto* link = new QLabel(QString("<a href=\"x\">\u2190 %1</a>").arg(QString::fromStdString(g.plugName(*src)).toHtmlEscaped()), row);
+                link->setObjectName("aeSourceLink");
+                link->setToolTip("Driven by this plug: click to show its node here");
+                connect(link, &QLabel::linkActivated, this, [this, id = src->node] { focusNode(id); });
+                h->addWidget(link);
+            }
             auto* badge = new QLabel(row);
             badge->setObjectName("multiBadge");
             const QColor accent = themeColor("accent");
@@ -1625,6 +1655,30 @@ void AttributeEditor::rebuild()
             form->addRow(QString(), add);
             mBodyLayout->addWidget(section("Extra Attributes", content));
         }
+        else
+            delete content;
+    }
+    {
+        // Drives: what this object's plugs feed, each a link to the node it drives.
+        auto* content = new QWidget;
+        QFormLayout* form = newForm(content);
+        int added = 0;
+        for (const auto& [dst, src] : g.connections())
+        {
+            if (src.node != id || dst.node == id)
+                continue;
+            const scene::Node* to = g.node(dst.node);
+            if (!to || to->type().isA("animCurve") || to->type().isA("animCurveRQ"))
+                continue;
+            const std::string from = g.plugName(src);
+            auto* link = new QLabel(QString("<a href=\"x\">\u2192 %1</a>").arg(QString::fromStdString(g.plugName(dst)).toHtmlEscaped()));
+            link->setObjectName("aeDrivesLink");
+            connect(link, &QLabel::linkActivated, this, [this, nodeId = dst.node] { focusNode(nodeId); });
+            form->addRow(QString::fromStdString(from.substr(from.find('.') + 1)), link);
+            ++added;
+        }
+        if (added)
+            mBodyLayout->addWidget(section("Drives", content));
         else
             delete content;
     }
@@ -1938,6 +1992,21 @@ void AttributeEditor::openEdit(const std::string& attr, QWidget* anchor)
 
 namespace
 {
+double valueOfPlug(Graph& g, const std::string& plug)
+{
+    const scene::PlugRef p = g.plug(plug);
+    const scene::PlugValue v = g.value(p);
+    if (auto* d = std::get_if<double>(&v))
+        return *d;
+    if (auto* i = std::get_if<int64_t>(&v))
+        return double(*i);
+    if (auto* b = std::get_if<bool>(&v))
+        return *b ? 1.0 : 0.0;
+    if (auto* v3 = std::get_if<glm::dvec3>(&v))
+        return (*v3)[std::max(0, p.component)];
+    return 0.0;
+}
+
 json aeRunLogged(const char* command, const json& call)
 {
     try
@@ -2054,6 +2123,29 @@ void AttributeEditor::dropHeading(const std::string& category, const std::string
     UndoChunk chunk("Move Component");
     for (const std::string& a : moving)
         aeRunLogged("reorderAttr", {{"args", {n->path() + "." + a}}, {"before", first}});
+}
+
+void AttributeEditor::dropPlug(const std::string& source, const std::string& target)
+{
+    if (source.empty() || source == target)
+        return;
+    if (QGuiApplication::keyboardModifiers() & Qt::AltModifier)
+    {
+        attrView::noteMultiEditUsed();
+        Graph& g = Graph::current();
+        try
+        {
+            const double d = valueOfPlug(g, source), v = valueOfPlug(g, target);
+            aeRunLogged("driveChannel", {{"args", {target}}, {"driver", source}, {"keys", json::array({json::array({d, v}), json::array({d + 1.0, v + 1.0})})},
+                                        {"force", true}});
+        }
+        catch (const std::exception& e)
+        {
+            log::error("{}", e.what());
+        }
+        return;
+    }
+    aeRunLogged("connectAttr", {{"args", {source, target}}, {"force", true}});
 }
 
 void AttributeEditor::applySearch()
