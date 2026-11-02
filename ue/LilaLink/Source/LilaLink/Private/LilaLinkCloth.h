@@ -13,8 +13,9 @@ namespace LilaLink
 void AddClothMethods(TMap<FString, FLilaLinkMethod>& Methods);
 
 /**
- * createClothAsset {contentPath, vertices2D [[u, v], ...] (pattern, cm), triangles2D, vertices3D [[x, y, z], ...] (the drape,
- * cm), triangles3D (the same triangles over the welded drape), pattern [panel per triangle], maxDistance [cm per 3D vertex],
+ * createClothAsset {contentPath, vertices2D [[u, v], ...] (pattern, cm), vertices3D [[x, y, z], ...] (each 2D point on the
+ * drape, cm), triangles, pattern [panel per triangle], stitches [[a, b], ...] (2D points sewn together), maxDistance [cm per
+ * 3D point],
  * skeletalMesh?, material?, config {density, edgeStiffness, bendStiffness, damping, friction, collisionThickness}, save?}:
  * a Chaos Cloth Asset built from the garment's own sewing pattern, the panels as sim patterns and the seams where their
  * points weld in 3D, bound to the root bone, with a MaxDistance weight map and property. Replies {asset, simVertices, patterns}.

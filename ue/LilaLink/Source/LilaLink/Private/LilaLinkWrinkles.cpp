@@ -17,8 +17,6 @@
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionConstant2Vector.h"
 #include "Materials/MaterialExpressionConstant3Vector.h"
-#include "Materials/MaterialExpressionDivide.h"
-#include "Materials/MaterialExpressionDotProduct.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
@@ -162,17 +160,16 @@ void BuildFunction(UMaterialFunction* Function, UTexture* WrinkleU, UTexture* Wr
 	auto* Detail = G.New<UMaterialExpressionNormalize>();
 	Detail->VectorInput.Connect(0, G.Binary<UMaterialExpressionAdd>(G.Binary<UMaterialExpressionAdd>(Flat, DeltaU), DeltaV));
 
-	// Reoriented normal mapping: t = base + (0,0,1), u = detail * (-1,-1,1), out = t (t.u) / t.z - u.
-	UMaterialExpression* T = G.Binary<UMaterialExpressionAdd>(Normal, Flat);
-	UMaterialExpression* U = G.Binary<UMaterialExpressionMultiply>(Detail, G.Vec3(FLinearColor(-1.f, -1.f, 1.f)));
-	auto* TZ = G.New<UMaterialExpressionComponentMask>();
-	TZ->Input.Connect(0, T);
-	TZ->B = true;
-	UMaterialExpression* Dot = G.Binary<UMaterialExpressionDotProduct>(T, U);
-	UMaterialExpression* Scaled = G.Binary<UMaterialExpressionDivide>(G.Binary<UMaterialExpressionMultiply>(T, Dot), TZ);
-	auto* Out = G.New<UMaterialExpressionNormalize>();
-	Out->VectorInput.Connect(0, G.Binary<UMaterialExpressionSubtract>(Scaled, U));
-	G.Output(Out, TEXT("Normal"), 0, TEXT("Your normal with the folds blended on, tangent space."));
+	// Unreal's own angle-corrected blend puts the folds onto the normal.
+	auto* Blend = G.New<UMaterialExpressionMaterialFunctionCall>(-100);
+	Blend->SetMaterialFunction(LoadObject<UMaterialFunctionInterface>(
+		nullptr, TEXT("/Engine/Functions/Engine_MaterialFunctions02/Utility/BlendAngleCorrectedNormals.BlendAngleCorrectedNormals")));
+	for (FFunctionExpressionInput& In : Blend->FunctionInputs)
+		if (In.ExpressionInput && In.ExpressionInput->InputName == TEXT("BaseNormal"))
+			In.Input.Connect(0, Normal);
+		else if (In.ExpressionInput && In.ExpressionInput->InputName == TEXT("AdditionalNormal"))
+			In.Input.Connect(0, Detail);
+	G.Output(Blend, TEXT("Normal"), 0, TEXT("Your normal with the folds blended on, tangent space."));
 
 	auto* Folds = G.New<UMaterialExpressionClamp>();
 	Folds->Input.Connect(0, G.Binary<UMaterialExpressionAdd>(AmountU, AmountV));

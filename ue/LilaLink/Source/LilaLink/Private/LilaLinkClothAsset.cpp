@@ -82,18 +82,26 @@ void CreateClothAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCall
 
 	const FString ContentPath = Params->GetStringField(TEXT("contentPath"));
 	const TArray<FVector3f> Points2D = ReadPoints(Params, TEXT("vertices2D"));
-	const TArray<FIntVector3> Tris2D = ReadTriangles(Params, TEXT("triangles2D"));
 	const TArray<FVector3f> Points3D = ReadPoints(Params, TEXT("vertices3D"));
-	const TArray<FIntVector3> Tris3D = ReadTriangles(Params, TEXT("triangles3D"));
+	const TArray<FIntVector3> Tris = ReadTriangles(Params, TEXT("triangles"));
 	const TArray<float> Pattern = ReadFloats(Params, TEXT("pattern"));
 	const TArray<float> MaxDistance = ReadFloats(Params, TEXT("maxDistance"));
-	if (Tris2D.Num() == 0 || Tris2D.Num() != Tris3D.Num() || Pattern.Num() != Tris2D.Num())
+	TArray<FIntVector2> Stitches;
+	const TArray<TSharedPtr<FJsonValue>>* StitchList = nullptr;
+	if (Params->TryGetArrayField(TEXT("stitches"), StitchList))
+		for (const TSharedPtr<FJsonValue>& V : *StitchList)
+		{
+			const TArray<TSharedPtr<FJsonValue>>& P = V->AsArray();
+			if (P.Num() == 2)
+				Stitches.Emplace(int32(P[0]->AsNumber()), int32(P[1]->AsNumber()));
+		}
+	if (Tris.Num() == 0 || Points2D.Num() != Points3D.Num() || Pattern.Num() != Tris.Num())
 	{
-		Call->Reply(nullptr, TEXT("createClothAsset: the 2D and 3D triangles and the pattern per triangle must match"));
+		Call->Reply(nullptr, TEXT("createClothAsset: give a 3D point per 2D point and a pattern per triangle"));
 		return;
 	}
 
-	// The flat pattern and the drape as two meshes with the same triangles; a polygroup layer says which panel each is.
+	// The flat pattern and the drape as two meshes point for point; a polygroup layer says which panel each triangle is.
 	FDynamicMesh3 Mesh2D, Mesh3D;
 	Mesh2D.EnableAttributes();
 	Mesh2D.Attributes()->SetNumPolygroupLayers(1);
@@ -101,10 +109,10 @@ void CreateClothAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCall
 		Mesh2D.AppendVertex(FVector3d(P));
 	for (const FVector3f& P : Points3D)
 		Mesh3D.AppendVertex(FVector3d(P));
-	for (int32 T = 0; T < Tris2D.Num(); ++T)
+	for (int32 T = 0; T < Tris.Num(); ++T)
 	{
-		const int32 A = Mesh2D.AppendTriangle(Tris2D[T].X, Tris2D[T].Y, Tris2D[T].Z);
-		const int32 B = Mesh3D.AppendTriangle(Tris3D[T].X, Tris3D[T].Y, Tris3D[T].Z);
+		const int32 A = Mesh2D.AppendTriangle(Tris[T].X, Tris[T].Y, Tris[T].Z);
+		const int32 B = Mesh3D.AppendTriangle(Tris[T].X, Tris[T].Y, Tris[T].Z);
 		if (A < 0 || B < 0)
 		{
 			Call->Reply(nullptr, FString::Printf(TEXT("createClothAsset: triangle %d isn't manifold"), T));
@@ -119,6 +127,13 @@ void CreateClothAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCall
 	Cloth.DefineSchema();
 	TMap<int, int32> VertexMap;
 	FClothGeometryTools::BuildSimMeshFromDynamicMeshes(Collection, Mesh2D, Mesh3D, 0, false, false, false, VertexMap);
+	// The seams: each stitch joins two panels' points that sit together on the drape.
+	TArray<FIntVector2> ClothStitches;
+	for (const FIntVector2& S : Stitches)
+		if (const int32 *A = VertexMap.Find(S.X), *B = VertexMap.Find(S.Y); A && B)
+			ClothStitches.Emplace(*A, *B);
+	if (ClothStitches.Num())
+		Cloth.AddGetSeam().Initialize(ClothStitches);
 
 	FString MeshPath;
 	if (Params->TryGetStringField(TEXT("skeletalMesh"), MeshPath) && !MeshPath.IsEmpty())
@@ -200,6 +215,8 @@ void CreateClothAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCall
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetStringField(TEXT("asset"), Asset->GetPathName());
 	Result->SetNumberField(TEXT("simVertices"), Cloth.GetNumSimVertices3D());
+	Result->SetNumberField(TEXT("patternVertices"), Cloth.GetNumSimVertices2D());
+	Result->SetNumberField(TEXT("seams"), Cloth.GetNumSeams());
 	Result->SetNumberField(TEXT("patterns"), Cloth.GetNumSimPatterns());
 	Call->Reply(MakeShared<FJsonValueObject>(Result));
 }

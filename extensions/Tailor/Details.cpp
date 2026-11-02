@@ -319,7 +319,10 @@ int addCollar(Garment& g, const std::vector<SeamSide>& neckline, float height, b
     c.fabric = first.fabric;
     c.layer = first.layer;
     c.particleDistance = std::min(first.particleDistance, 0.3f * height);
-    c.wrapRadius = radius + 0.005f;
+    // Closed, the neckline draws in to a ring as long as itself, so the collar starts as that ring round the neck.
+    const auto [lp, lv] = sewnTo(g, neckline.back().panel, neckline.back().to);
+    const bool closed = lp == neckline.front().panel && lv == neckline.front().from;
+    c.wrapRadius = (closed ? length / 6.2831853f : radius) + 0.005f;
     c.origin = {centre[0] + c.wrapRadius * std::sin(th), centre[1], centre[2] + c.wrapRadius * std::cos(th)};
     c.right = {std::cos(th), 0.f, -std::sin(th)};
     c.up = {0.f, 1.f, 0.f};
@@ -344,9 +347,7 @@ int addCollar(Garment& g, const std::vector<SeamSide>& neckline, float height, b
     neck.reversed = dist(a1, b3) < dist(a1, b1);
     g.seams.push_back(neck);
 
-    // A neckline that goes all the way round closes the collar into a ring.
-    const auto [lp, lv] = sewnTo(g, neckline.back().panel, neckline.back().to);
-    if (lp == neckline.front().panel && lv == neckline.front().from)
+    if (closed)
     {
         Seam ends;
         ends.a = {{index, 1, 2}};

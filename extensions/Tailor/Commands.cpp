@@ -866,8 +866,8 @@ json sendClothAsset(Graph& g, Node& op, link::RpcClient& client, const std::stri
     const std::span<const float> dist = m.pointAttrs().get<float>("clothMaxDistance");
     if (panel.empty() || fabric.empty())
         throw CommandError("tailorSendToUnreal: the drape carries no pattern");
-    json v2 = json::array(), t2 = json::array(), v3 = json::array(), t3 = json::array(), pattern = json::array(), maxDist = json::array();
-    std::map<geo::Index, int> point3;
+    json v2 = json::array(), v3 = json::array(), tris = json::array(), pattern = json::array(), maxDist = json::array(), stitches = json::array();
+    std::map<geo::Index, std::vector<int>> onPoint;
     std::map<std::tuple<int, int64_t, int64_t>, int> point2;
     for (geo::Index f = 0; f < m.faceCapacity(); ++f)
     {
@@ -876,34 +876,35 @@ json sendClothAsset(Graph& g, Node& op, link::RpcClient& client, const std::stri
         const std::vector<geo::Index> c = m.faceCorners(f);
         if (c.size() != 3)
             continue;
-        json a2 = json::array(), a3 = json::array();
+        json tri = json::array();
         for (geo::Index corner : c)
         {
+            // A point per panel and pattern position, with where the drape has it: welded seams split back into each
+            // panel's own points, stitched together below.
             const geo::Index p = m.cornerPoint(corner);
-            const auto [it3, new3] = point3.emplace(p, int(point3.size()));
-            if (new3)
-            {
-                const math::Vector u = math::toUnreal(math::Vector(glm::dvec3(world * glm::dvec4(m.position(p), 1.0))));
-                v3.push_back({u.x, u.y, u.z});
-                maxDist.push_back(p < dist.size() ? double(dist[p]) : 0.0);
-            }
-            a3.push_back(it3->second);
-            // A 2D point per panel and pattern position: welded seams split back into their panels' own points.
             const glm::vec2 uv = fabric[corner];
             const auto key = std::make_tuple(int(panel[f]), int64_t(std::llround(uv.x * 1e5)), int64_t(std::llround(uv.y * 1e5)));
             const auto [it2, new2] = point2.emplace(key, int(point2.size()));
             if (new2)
+            {
                 v2.push_back({double(uv.x) * kCmPerM, double(uv.y) * kCmPerM});
-            a2.push_back(it2->second);
+                const math::Vector u = math::toUnreal(math::Vector(glm::dvec3(world * glm::dvec4(m.position(p), 1.0))));
+                v3.push_back({u.x, u.y, u.z});
+                maxDist.push_back(p < dist.size() ? double(dist[p]) : 0.0);
+                onPoint[p].push_back(it2->second);
+            }
+            tri.push_back(it2->second);
         }
-        t2.push_back(a2);
-        t3.push_back(a3);
+        tris.push_back(tri);
         pattern.push_back(panel[f]);
     }
+    for (const auto& [p, list] : onPoint)
+        for (size_t k = 1; k < list.size(); ++k)
+            stitches.push_back({list[0], list[k]});
     const Garment gm = readGarment(op);
     const Fabric& fab = gm.fabrics.empty() ? *findFabric("Cotton") : gm.fabrics.front();
-    json params = {{"contentPath", path}, {"vertices2D", v2}, {"triangles2D", t2}, {"vertices3D", v3}, {"triangles3D", t3},
-                   {"pattern", pattern}, {"maxDistance", maxDist}, {"config", chaosConfig(fab)}, {"save", a.get<bool>("save")}};
+    json params = {{"contentPath", path}, {"vertices2D", v2}, {"vertices3D", v3}, {"triangles", tris}, {"pattern", pattern},
+                   {"stitches", stitches}, {"maxDistance", maxDist}, {"config", chaosConfig(fab)}, {"save", a.get<bool>("save")}};
     if (a.has("skeletalMesh"))
         params["skeletalMesh"] = a.get<std::string>("skeletalMesh");
     if (a.has("material"))
