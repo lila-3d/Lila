@@ -90,6 +90,7 @@ lila_module(lila_scene Scene
     SplineChain.cpp SplineChain.h SplineChainSolve.h
     RubberHose.cpp
     SceneCommands.cpp
+    AttrCommands.cpp AttrComponents.cpp AttrComponents.h
     SceneData.cpp
     SceneScripts.cpp
     SelectAs.cpp

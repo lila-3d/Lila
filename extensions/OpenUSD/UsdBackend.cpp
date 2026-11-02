@@ -6,6 +6,7 @@
 #include "UsdImport.h"
 #include "UsdMaterialX.h"
 #include "UsdStage.h"
+#include "UsdAttributes.h"
 
 #include <lila/Anim.h>
 #include <lila/Command.h>
@@ -266,6 +267,8 @@ USD_BACKEND_EXPORT int lilaUsdRun(const char* command, const Args* args, json* r
             *result = usd::importMaterialX(*args);
         else if (name == "exportMaterialX")
             *result = usd::exportMaterialX(*args);
+        else if (name == "usdComponentSchemas")
+            *result = usd::componentSchemaList();
         else if (!usd::stage::run(name, *args, *result))
             throw CommandError("OpenUSD: no command " + std::string(name));
         return 0;

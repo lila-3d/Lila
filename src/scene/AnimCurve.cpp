@@ -299,6 +299,8 @@ json Curve::keysToJson() const
             j["ow"] = k.outWeight;
         if (!k.interpolator.empty())
             j["interp"] = k.interpolator;
+        if (k.breakdown)
+            j["bd"] = true;
         out.push_back(std::move(j));
     }
     return out;
@@ -322,6 +324,7 @@ std::vector<Key> Curve::keysFromJson(const json& j)
             k.in = tangentFromName(e["i"].get<std::string>());
         if (e.contains("o"))
             k.out = tangentFromName(e["o"].get<std::string>());
+        k.breakdown = e.value("bd", false);
         k.inAngle = e.value("ia", 0.0);
         k.outAngle = e.value("oa", 0.0);
         k.inWeight = e.value("iw", 1.0);
@@ -354,7 +357,7 @@ void CurveNode::compute(const EvalContext& ctx)
     mCached.post = Infinity(std::clamp<int64_t>(as<int64_t>(kPostInfinity), 0, 4));
     mCached.weighted = as<bool>(kWeighted);
     mCached.loop = as<bool>(kLoop);
-    setOutput(kOutput, mCached.evaluate(ctx.time));
+    setOutput(kOutput, mCached.evaluate(as<bool>(kMute) ? as<double>(kMuteTime) : ctx.time));
 }
 
 bool isCurve(const Node& n)
@@ -438,6 +441,10 @@ void registerTypes()
          .doc = "Value at the current time."},
         {.name = "loop", .shortName = "lp", .type = PlugType::Bool, .defaultValue = false,
          .doc = "The last key mirrors the first key's value and tangents, and the curve cycles after it."},
+        {.name = "mute", .shortName = "mu", .type = PlugType::Bool, .defaultValue = false,
+         .doc = "Hold the value at muteTime instead of playing the curve (the Channel Box's Mute)."},
+        {.name = "muteTime", .shortName = "mut", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Seconds: the time a muted curve holds."},
     };
     const NodeType& b = types::registerType(std::move(base));
     for (const char* name : {"animCurveTL", "animCurveTA", "animCurveTU"})

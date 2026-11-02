@@ -1441,9 +1441,14 @@ void Graph::copyElements(NodeId from, NodeId to, int attr, bool shareSources)
 
 void Graph::shiftAttrRefs(NodeId id, int from, int delta)
 {
+    remapAttrRefs(id, [&](int attr) { return attr >= from ? attr + delta : attr; });
+}
+
+void Graph::remapAttrRefs(NodeId id, const std::function<int(int)>& map)
+{
     auto moved = [&](PlugRef p) {
-        if (p.node == id && p.attr >= from)
-            p.attr += delta;
+        if (p.node == id)
+            p.attr = map(p.attr);
         return p;
     };
     std::map<PlugRef, PlugRef> inputs;
@@ -1546,6 +1551,205 @@ void Graph::deleteAttr(const PlugRef& p)
     const int index = p.attr;
     AttrState s = removeAttrRaw(id, index);
     recordUndo([this, id, index, s] { insertAttrRaw(id, index, s); }, [this, id, index] { removeAttrRaw(id, index); });
+}
+
+namespace
+{
+bool holds(PlugType type, const PlugValue& v)
+{
+    switch (type)
+    {
+    case PlugType::Bool: return std::holds_alternative<bool>(v);
+    case PlugType::Int:
+    case PlugType::Enum: return std::holds_alternative<int64_t>(v);
+    case PlugType::Float: return std::holds_alternative<double>(v);
+    case PlugType::Vec3: return std::holds_alternative<glm::dvec3>(v);
+    case PlugType::Matrix: return std::holds_alternative<glm::dmat4>(v);
+    case PlugType::String: return std::holds_alternative<std::string>(v);
+    case PlugType::Mesh: return std::holds_alternative<MeshPtr>(v);
+    case PlugType::Data: return std::holds_alternative<DataPtr>(v);
+    }
+    return false;
+}
+
+/** v as def's type: through JSON where that reads, else by its first number, else def's default. */
+PlugValue convertValue(const PlugValue& v, const AttrDef& def)
+{
+    if (holds(def.type, v))
+        return v;
+    json j = toJson(v);
+    double number = 0.0;
+    bool numeric = true;
+    if (auto* s = std::get_if<std::string>(&v))
+    {
+        char* end = nullptr;
+        number = std::strtod(s->c_str(), &end);
+        numeric = end != s->c_str();
+    }
+    else if (j.is_array() && !j.empty() && j[0].is_number())
+        number = j[0].get<double>();
+    else if (j.is_number() || j.is_boolean())
+        number = j.is_boolean() ? double(j.get<bool>()) : j.get<double>();
+    else
+        numeric = false;
+    if (def.type == PlugType::String)
+    {
+        auto text = [](double d) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "%g", d);
+            return std::string(buf);
+        };
+        if (auto* v3 = std::get_if<glm::dvec3>(&v))
+            return text(v3->x) + " " + text(v3->y) + " " + text(v3->z);
+        if (auto* b = std::get_if<bool>(&v))
+            return std::string(*b ? "true" : "false");
+        if (numeric)
+            return text(number);
+    }
+    std::vector<json> tries;
+    if (numeric)
+    {
+        tries.push_back(def.type == PlugType::Int || def.type == PlugType::Enum ? json(int64_t(std::llround(number))) : json(number));
+        if (def.type == PlugType::Vec3)
+            tries.push_back(json::array({number, number, number}));
+    }
+    tries.push_back(j);
+    for (const json& t : tries)
+        try
+        {
+            PlugValue out = fromJson(def, t);
+            if (auto* e = std::get_if<int64_t>(&out); e && def.type == PlugType::Enum && (*e < 0 || *e >= int64_t(def.enumNames.size())))
+                continue;
+            return out;
+        }
+        catch (const std::exception&)
+        {
+        }
+    return def.defaultValue;
+}
+} // namespace
+
+void Graph::replaceAttrRaw(NodeId id, int index, const AttrState& s)
+{
+    Node* n = node(id);
+    n->mOwnType->attrs[size_t(index)] = s.def;
+    n->mValues[size_t(index)] = s.value;
+    if (!n->mElements.empty() || !s.elements.empty())
+    {
+        n->mElements.resize(std::max(n->mElements.size(), size_t(index) + 1));
+        n->mElements[size_t(index)] = s.elements;
+    }
+    if (!n->mLocks.empty() || s.lock)
+    {
+        n->mLocks.resize(std::max(n->mLocks.size(), size_t(index) + 1));
+        n->mLocks[size_t(index)] = s.lock;
+    }
+    markDirty(id);
+    changed(Change::Attrs, id);
+}
+
+void Graph::editAttr(const PlugRef& p, AttrDef def)
+{
+    Node* n = node(p.node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    const AttrDef old = n->type().attrs[size_t(p.attr)];
+    if (!(old.flags & AttrUser))
+        throw std::invalid_argument(plugName({p.node, p.attr}) + " belongs to the node's type; only attributes added with addAttr can be edited");
+    const size_t dot = def.name.find('.');
+    if (!validName(def.name.substr(0, dot)) || (dot != std::string::npos && !validName(def.name.substr(dot + 1))))
+        throw std::invalid_argument("invalid attribute name '" + def.name + "'");
+    const NodeType& t = n->type();
+    for (const std::string& want : {def.name, def.shortName})
+    {
+        if (want.empty())
+            continue;
+        if (int at = t.attrIndex(want); at >= 0 && at != p.attr)
+            throw std::invalid_argument("'" + n->name() + "' already has an attribute '" + want + "'");
+        for (size_t i = 0; i < t.attrs.size(); ++i)
+            if (int(i) != p.attr && t.attrs[i].type == PlugType::Vec3 &&
+                (std::find(t.attrs[i].childNames.begin(), t.attrs[i].childNames.end(), want) != t.attrs[i].childNames.end() ||
+                 std::find(t.attrs[i].childShort.begin(), t.attrs[i].childShort.end(), want) != t.attrs[i].childShort.end()))
+                throw std::invalid_argument("'" + n->name() + "' already has an attribute '" + want + "'");
+    }
+    def.flags |= AttrUser | AttrInput | AttrStorable;
+    if (def.type == PlugType::Vec3 && (def.childNames[0].empty() || (old.type == PlugType::Vec3 && def.childNames == old.childNames &&
+                                                                     old.childNames[0] == old.name + "X")))
+        for (int c = 0; c < 3; ++c)
+            def.childNames[size_t(c)] = def.name + "XYZ"[c];
+    if (def.type != PlugType::Vec3)
+        def.childNames = {};
+    if (!holds(def.type, def.defaultValue))
+        def.defaultValue = convertValue(def.defaultValue, AttrDef{.type = def.type, .defaultValue = defaultFor(def.type), .enumNames = def.enumNames});
+    const bool retyped = def.type != old.type || (def.flags & AttrArray) != (old.flags & AttrArray);
+    if (retyped)
+    {
+        std::vector<PlugRef> touching;
+        for (const auto& [dst, src] : mInputs)
+            if ((dst.node == p.node && dst.attr == p.attr) || (src.node == p.node && src.attr == p.attr))
+                touching.push_back(dst);
+        for (const PlugRef& dst : touching)
+            disconnect(dst);
+    }
+    const int index = p.attr;
+    const NodeId id = p.node;
+    AttrState before{old, n->mValues[size_t(index)], n->elements(index), n->lockMask(index)};
+    AttrState after{def, convertValue(before.value, def), {}, retyped ? uint8_t(0) : before.lock};
+    if (def.flags & AttrArray)
+    {
+        if (old.flags & AttrArray)
+            for (const auto& [i, v] : before.elements)
+                after.elements.emplace_back(i, convertValue(v, def));
+        after.value = def.defaultValue;
+    }
+    else if (old.flags & AttrArray)
+        after.value = before.elements.empty() ? def.defaultValue : convertValue(before.elements.front().second, def);
+    replaceAttrRaw(id, index, after);
+    recordUndo([this, id, index, before] { replaceAttrRaw(id, index, before); }, [this, id, index, after] { replaceAttrRaw(id, index, after); });
+}
+
+void Graph::moveAttrRaw(NodeId id, int from, int to)
+{
+    Node* n = node(id);
+    auto rotate = [&](auto& v) {
+        if (v.empty())
+            return;
+        v.resize(std::max(v.size(), n->mOwnType->attrs.size()));
+        if (from < to)
+            std::rotate(v.begin() + from, v.begin() + from + 1, v.begin() + to + 1);
+        else
+            std::rotate(v.begin() + to, v.begin() + from, v.begin() + from + 1);
+    };
+    rotate(n->mValues);
+    rotate(n->mElements);
+    rotate(n->mLocks);
+    rotate(n->mOwnType->attrs);
+    remapAttrRefs(id, [&](int a) {
+        if (a == from)
+            return to;
+        if (from < to && a > from && a <= to)
+            return a - 1;
+        if (to < from && a >= to && a < from)
+            return a + 1;
+        return a;
+    });
+    markDirty(id);
+    changed(Change::Attrs, id);
+}
+
+void Graph::moveAttr(NodeId id, int from, int to)
+{
+    Node* n = node(id);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    const auto& attrs = n->type().attrs;
+    for (int i : {from, to})
+        if (i < 0 || size_t(i) >= attrs.size() || !(attrs[size_t(i)].flags & AttrUser))
+            throw std::invalid_argument("only attributes added with addAttr can be reordered, among themselves");
+    if (from == to)
+        return;
+    moveAttrRaw(id, from, to);
+    recordUndo([this, id, from, to] { moveAttrRaw(id, to, from); }, [this, id, from, to] { moveAttrRaw(id, from, to); });
 }
 
 std::vector<PlugRef> Graph::destinations(const PlugRef& src) const

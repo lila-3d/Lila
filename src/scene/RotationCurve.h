@@ -43,6 +43,7 @@ struct RotKey
     glm::dvec3 outVelocity{0.0};
     double inWeight = 1.0; // handle length relative to a third of the segment; only on weighted curves
     double outWeight = 1.0;
+    bool breakdown = false;
 
     bool operator==(const RotKey&) const = default;
 };
@@ -124,6 +125,8 @@ public:
         kRotateOrder,
         kInterpolation,
         kOutput,
+        kMute,
+        kMuteTime,
         kCount
     };
 

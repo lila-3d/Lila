@@ -268,6 +268,37 @@ void notify()
     for (auto& [id, fn] : listeners)
         fn();
 }
+/** Marks or clears breakdown on a scalar or rotation curve's keys in [t0, t1]. Returns how many changed. */
+int setBreakdown(Graph& g, NodeId curve, double t0, double t1, bool on)
+{
+    const Node* n = g.node(curve);
+    if (!n)
+        return 0;
+    int changed = 0;
+    auto mark = [&](auto& keys) {
+        for (auto& k : keys)
+            if (k.time >= t0 - kTimeEps && k.time <= t1 + kTimeEps && k.breakdown != on)
+            {
+                k.breakdown = on;
+                ++changed;
+            }
+    };
+    if (isRotationCurve(*n))
+    {
+        RotationCurve rc = rotationCurveOf(*n);
+        mark(rc.keys);
+        if (changed)
+            setRotationCurve(g, curve, rc);
+    }
+    else if (isCurve(*n))
+    {
+        Curve c = curveOf(*n);
+        mark(c.keys);
+        if (changed)
+            setCurve(g, curve, c);
+    }
+    return changed;
+}
 } // namespace
 
 json Playback::toJson() const
@@ -619,10 +650,12 @@ void registerCommands()
             {"value", "v", T::Float, nullptr, "Value. Default: the channel's current value."},
             {"inTangentType", "itt", T::String, nullptr, "auto | spline | linear | flat | step | clamped"},
             {"outTangentType", "ott", T::String, nullptr, "auto | spline | linear | flat | step | clamped"},
+            {"breakdown", "bd", T::Bool, false, "Set breakdown keys."},
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             double time = a.get<double>("time", g.time());
+            std::vector<NodeId> keyed;
             std::optional<Tangent> in, out;
             if (a.has("inTangentType"))
                 in = tangentArg(a, "inTangentType");
@@ -651,7 +684,7 @@ void registerCommands()
                             e[o.plug.component] = a.get<double>("value");
                         ++count;
                     }
-                guarded([&] { return setRotationKey(g, whole, time, e, in, out); });
+                keyed.push_back(guarded([&] { return setRotationKey(g, whole, time, e, in, out); }));
             }
             for (const Target& t : ts)
             {
@@ -667,6 +700,7 @@ void registerCommands()
                     if (out)
                         rc.keys[i].out = *out;
                     setRotationCurve(g, t.curve, rc);
+                    keyed.push_back(t.curve);
                     ++count;
                     continue;
                 }
@@ -680,6 +714,7 @@ void registerCommands()
                     if (out)
                         cv.keys[i].out = *out;
                     setCurve(g, t.curve, cv);
+                    keyed.push_back(t.curve);
                     ++count;
                     continue;
                 }
@@ -690,9 +725,84 @@ void registerCommands()
                     v = curveValueAt(*g.node(t.curve), t.plug.component, time);
                 else
                     v = currentValue(g, t.plug);
-                guarded([&] { return setKey(g, t.plug, time, v, in, out); });
+                keyed.push_back(guarded([&] { return setKey(g, t.plug, time, v, in, out); }));
                 ++count;
             }
+            if (a.get<bool>("breakdown"))
+                for (NodeId c : keyed)
+                    setBreakdown(g, c, time, time, true);
+            return count;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "mute",
+        .doc = "Mute animated channels: each holds its value at the current time until unmuted (disable=True), keys kept. "
+               "query=True returns whether the first is muted.",
+        .positionalDoc = "objects",
+        .flags = {attrFlag,
+                  {"disable", "d", T::Bool, false, "Unmute."},
+                  {"query", "q", T::Bool, false, "Return whether the first channel is muted."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            std::vector<NodeId> curves;
+            for (const Target& t : targets(g, a, true))
+                if (t.curve && std::find(curves.begin(), curves.end(), t.curve) == curves.end())
+                    curves.push_back(t.curve);
+            if (a.get<bool>("query"))
+                return !curves.empty() && g.node(curves[0])->as<bool>(CurveNode::kMute);
+            const bool on = !a.get<bool>("disable");
+            int count = 0;
+            for (NodeId c : curves)
+            {
+                // Scalar and rotation curves number mute and muteTime alike.
+                const int mute = g.node(c)->type().attrIndex("mute"), at = g.node(c)->type().attrIndex("muteTime");
+                if (mute < 0 || g.node(c)->as<bool>(mute) == on)
+                    continue;
+                if (on)
+                    g.setValue({c, at}, g.time());
+                g.setValue({c, mute}, on);
+                ++count;
+            }
+            return count;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "breakdown",
+        .doc = "Turn keys into breakdowns (or back, with value=False) on channels, at a time or in a range; all keys by default. "
+               "query=True lists the breakdown times of the first channel. Returns how many keys changed.",
+        .positionalDoc = "objects",
+        .flags = {attrFlag, timeFlag,
+                  {"value", "v", T::Bool, true, "True makes breakdowns, False plain keys."},
+                  {"query", "q", T::Bool, false, "Return the first channel's breakdown key times."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            auto [t0, t1] = timeRange(a);
+            std::vector<NodeId> curves;
+            for (const Target& t : targets(g, a, true))
+                if (t.curve && std::find(curves.begin(), curves.end(), t.curve) == curves.end())
+                    curves.push_back(t.curve);
+            if (a.get<bool>("query"))
+            {
+                json out = json::array();
+                if (curves.empty())
+                    return out;
+                const Node& n = *g.node(curves[0]);
+                auto list = [&](const auto& keys) {
+                    for (const auto& k : keys)
+                        if (k.breakdown)
+                            out.push_back(k.time);
+                };
+                if (isRotationCurve(n))
+                    list(rotationCurveOf(n).keys);
+                else
+                    list(curveOf(n).keys);
+                return out;
+            }
+            int count = 0;
+            for (NodeId c : curves)
+                count += setBreakdown(g, c, t0, t1, a.get<bool>("value"));
             return count;
         },
     });

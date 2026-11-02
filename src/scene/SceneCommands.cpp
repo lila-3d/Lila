@@ -15,6 +15,7 @@
 #include "scene/Diagnostics.h"
 #include "scene/Drivers.h"
 #include "scene/ArrayGroup.h"
+#include "scene/AttrComponents.h"
 #include "scene/Duplicate.h"
 #include "scene/Instancing.h"
 #include "scene/DisplayLayers.h"
@@ -214,6 +215,7 @@ void registerCommands()
     spaces::registerCommands();
     anim::registerCommands();
     drivers::registerCommands();
+    attrCommands::registerCommands();
     poses::registerCommands();
     picker::registerCommands();
     ghosts::registerCommands();

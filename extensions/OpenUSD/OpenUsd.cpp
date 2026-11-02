@@ -5,6 +5,7 @@
 #include "OpenUsd.h"
 #include "UsdBackend.h"
 
+#include <lila/AttrComponents.h>
 #include <lila/Command.h>
 #include <lila/Diagnostics.h>
 #include <lila/Events.h>
@@ -253,6 +254,31 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                 static auto find = reinterpret_cast<usd::BackendNodeForPrim>(usd::backendSymbol("lilaUsdNodeForPrim"));
                 return find ? scene::NodeId(find(std::string(path).c_str())) : scene::kNoNode;
             }));
+    // USD's API schemas in the Add popover. Listing them loads OpenUSDCore, so it waits for the first time Add opens.
+    scene::attrComponents::addSource(ctx, "usd.schemas", [] {
+        static std::vector<scene::attrComponents::Component> list = [] {
+            std::vector<scene::attrComponents::Component> out;
+            try
+            {
+                for (const nlohmann::json& s : usd::runBackend("usdComponentSchemas", Args{}))
+                {
+                    scene::attrComponents::Component c;
+                    c.name = c.usdSchema = s.at("name").get<std::string>();
+                    c.source = "usd";
+                    c.doc = s.value("doc", "");
+                    for (const nlohmann::json& a : s.value("attrs", nlohmann::json::array()))
+                        c.attrs.push_back(scene::attrDefFromJson(a));
+                    out.push_back(std::move(c));
+                }
+            }
+            catch (const std::exception& e)
+            {
+                log::warn("OpenUSD: no schema list for components: {}", e.what());
+            }
+            return out;
+        }();
+        return list;
+    });
     if (!ctx.registerCommand({
             .name = "importUsd",
             .doc = "Import a USD file (.usd, .usda, .usdc or .usdz) into the scene. The stage is opened and composed first, so "

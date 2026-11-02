@@ -11,6 +11,7 @@
 #include <pxr/usd/sdf/listOp.h>
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdf/timeCode.h>
+#include <pxr/usd/usd/apiSchemaBase.h>
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/primDefinition.h>
 #include <pxr/usd/usd/schemaRegistry.h>
@@ -317,6 +318,47 @@ TfTokenVector componentSchemas(const TfTokenVector& applied)
     return out;
 }
 
+nlohmann::json componentSchemaList()
+{
+    nlohmann::json out = nlohmann::json::array();
+    std::set<TfType> types;
+    TfType::Find<UsdAPISchemaBase>().GetAllDerivedTypes(&types);
+    std::vector<std::pair<std::string, TfType>> named;
+    for (const TfType& t : types)
+        if (UsdSchemaRegistry::GetSchemaKind(t) == UsdSchemaKind::SingleApplyAPI)
+            if (const TfToken name = UsdSchemaRegistry::GetSchemaTypeName(t); !name.IsEmpty() && !lilaSchema(name))
+                named.emplace_back(name.GetString(), t);
+    std::sort(named.begin(), named.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [name, type] : named)
+    {
+        const UsdPrimDefinition* def = UsdSchemaRegistry::GetInstance().FindAppliedAPIPrimDefinition(TfToken(name));
+        if (!def)
+            continue;
+        nlohmann::json attrs = nlohmann::json::array();
+        for (const TfToken& n : def->GetPropertyNames())
+        {
+            const UsdPrimDefinition::Attribute ad = def->GetAttributeDefinition(n);
+            if (!ad)
+                continue;
+            VtTokenArray allowed;
+            ad.GetMetadata(SdfFieldKeys->AllowedTokens, &allowed);
+            std::optional<AttrDef> a = attrDefFor(n.GetString(), ad.GetTypeName(), allowed);
+            if (!a)
+                continue;
+            VtValue fallback;
+            if (ad.GetFallbackValue(&fallback))
+                if (std::optional<std::vector<PlugValue>> v = plugValues(fallback, *a); v && v->size() == 1 && !(a->flags & scene::AttrArray))
+                    a->defaultValue = v->front();
+            a->doc = ad.GetDocumentation();
+            if (std::string nice; ad.GetMetadata(SdfFieldKeys->DisplayName, &nice))
+                a->niceName = nice;
+            attrs.push_back(scene::attrDefToJson(*a));
+        }
+        out.push_back({{"name", name}, {"doc", def->GetDocumentation()}, {"attrs", std::move(attrs)}});
+    }
+    return out;
+}
+
 UsdPrimDefinition::Attribute schemaAttribute(const TfToken& applied, const TfToken& name)
 {
     const auto [def, instance] = definitionOf(applied);
@@ -568,7 +610,7 @@ void exportComponents(const scene::Graph& g, scene::NodeId id, const UsdPrim& pr
     {
         const AttrDef& def = attrs[size_t(i)];
         // A compound's children ("group.child") have no USD name.
-        if (!(def.flags & scene::AttrUser) || def.name == kSchemasAttr || def.name.find('.') != std::string::npos)
+        if (!(def.flags & scene::AttrUser) || def.name == kSchemasAttr || def.name == "lilaComponentExport" || def.name.find('.') != std::string::npos)
             continue;
         const TfToken name(def.name);
         UsdPrimDefinition::Attribute schemaDef;

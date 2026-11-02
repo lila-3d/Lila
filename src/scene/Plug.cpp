@@ -223,6 +223,8 @@ json attrDefToJson(const AttrDef& d)
         j["unique"] = true;
     if (d.flags & AttrFile)
         j["file"] = true;
+    if (d.flags & AttrChannelBox)
+        j["channelBox"] = true;
     if (d.defaultValue != defaultFor(d.type))
         j["default"] = toJson(d.defaultValue);
     if (!d.enumNames.empty())
@@ -261,6 +263,8 @@ AttrDef attrDefFromJson(const json& j)
         d.flags |= AttrUnique;
     if (j.value("file", false))
         d.flags |= AttrFile;
+    if (j.value("channelBox", false))
+        d.flags |= AttrChannelBox;
     d.enumNames = j.value("enum", std::vector<std::string>{});
     if (j.contains("children"))
         d.childNames = j["children"].get<std::array<std::string, 3>>();

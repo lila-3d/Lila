@@ -56,6 +56,12 @@ std::vector<scene::PlugValue> nodeValues(const scene::Node& n, int attr);
  */
 void importComponents(scene::Graph& g, scene::NodeId id, const pxr::UsdPrim& prim, pxr::UsdTimeCode t, std::vector<std::string>& skipped);
 
+/**
+ * Every single-apply API schema this USD knows that Lila keeps as a component (not one of its own features), as
+ * [{name, doc, attrs: [attrDefToJson]}] with each attribute's fallback as its default: the Add popover's USD list.
+ */
+nlohmann::json componentSchemaList();
+
 /** A node's components onto its prim: the schemas applied, then every addAttr attribute written. */
 void exportComponents(const scene::Graph& g, scene::NodeId id, const pxr::UsdPrim& prim);
 

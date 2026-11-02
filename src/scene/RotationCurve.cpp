@@ -455,6 +455,8 @@ json RotationCurve::keysToJson() const
             j["iw"] = k.inWeight;
         if (k.outWeight != 1.0)
             j["ow"] = k.outWeight;
+        if (k.breakdown)
+            j["bd"] = true;
         out.push_back(std::move(j));
     }
     return out;
@@ -506,6 +508,7 @@ std::vector<RotKey> RotationCurve::keysFromJson(const json& j, RotateOrder order
             k.out = tangentFromName(e["o"].get<std::string>());
         k.inWeight = e.value("iw", 1.0);
         k.outWeight = e.value("ow", 1.0);
+        k.breakdown = e.value("bd", false);
         out.push_back(k);
     }
     std::stable_sort(out.begin(), out.end(), [](const RotKey& a, const RotKey& b) { return a.time < b.time; });
@@ -536,7 +539,7 @@ void RotationCurveNode::compute(const EvalContext& ctx)
     mCached.weighted = as<bool>(kWeighted);
     mCached.interp = RotInterp(std::clamp<int64_t>(as<int64_t>(kInterpolation), 0, 1));
     mCached.loop = as<bool>(kLoop);
-    setOutput(kOutput, mCached.evaluate(ctx.time));
+    setOutput(kOutput, mCached.evaluate(as<bool>(kMute) ? as<double>(kMuteTime) : ctx.time));
 }
 
 bool isRotationCurve(const Node& n)
@@ -864,6 +867,10 @@ void registerRotationCurveType()
          .enumNames = {std::begin(kInterpNames), std::end(kInterpNames)},
          .doc = "slerp: constant speed along the shortest arc between keys. smooth: cubic through the keys, honouring tangents."},
         output,
+        {.name = "mute", .shortName = "mu", .type = PlugType::Bool, .defaultValue = false,
+         .doc = "Hold the value at muteTime instead of playing the curve (the Channel Box's Mute)."},
+        {.name = "muteTime", .shortName = "mut", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrHidden,
+         .doc = "Seconds: the time a muted curve holds."},
     };
     t.create = [] { return std::make_unique<RotationCurveNode>(); };
     types::registerType(std::move(t));

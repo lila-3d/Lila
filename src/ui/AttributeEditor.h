@@ -17,8 +17,10 @@
 #include <utility>
 #include <vector>
 
+class QFormLayout;
 class QLabel;
 class QLineEdit;
+class QToolButton;
 class QScrollArea;
 class QVBoxLayout;
 
@@ -94,9 +96,34 @@ private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     /** The node's issues above its sections, each one a link to where it points. */
     QWidget* issueList();
+    /** The nodes edits go to: the shown one. */
+    std::vector<scene::NodeId> targets() const;
+    void openAdd(QWidget* anchor, std::string category = {});
+    void openEdit(const std::string& attr, QWidget* anchor);
+    /** A component heading's menu: add here, save as a component, Unreal export, remove. */
+    void headingMenu(const std::string& category, QWidget* on, QPoint at);
+    /** Drops attr (dragged from a row) before another added attr, or under a heading when before is empty. */
+    void dropAttr(const std::string& attr, const std::string& before, const std::string& category);
+    /** Moves every attr under a heading in front of another heading's first. */
+    void dropHeading(const std::string& category, const std::string& before);
+    /** Shows only rows the search matches; sections with none collapse away. */
+    void applySearch();
+    /** The header's collapse state kept per node type and section in prefs. */
+    void rememberCollapse(QWidget* section, const std::string& key);
 
 
     QLineEdit* mName = nullptr;
+    QLineEdit* mSearch = nullptr;
+    QToolButton* mAdd = nullptr;
+    struct SearchRow
+    {
+        QFormLayout* form;
+        QWidget* label;
+        scene::AttrDef def;
+    };
+    std::vector<SearchRow> mSearchRows;
+    /** Every section box with its title, for the search. */
+    std::vector<std::pair<QWidget*, QString>> mSections;
     QLabel* mType = nullptr;
     QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;

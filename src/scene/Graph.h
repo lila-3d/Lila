@@ -189,6 +189,14 @@ public:
     int addAttr(NodeId node, AttrDef def);
     /** Removes a user attr with its connections and value. Later user attrs move down one index. */
     void deleteAttr(const PlugRef& attr);
+    /**
+     * Replaces a user attr's definition: name, type, hints, flags. Connections, keys and drivers stay on it (they hold its
+     * index, not its name) unless the type changes, which drops them; the value converts to the new type where it can and
+     * takes the new default where it can't. Throws std::invalid_argument for a name taken by another attr. Undoable.
+     */
+    void editAttr(const PlugRef& attr, AttrDef def);
+    /** Moves a user attr to index `to`, another user attr's place, shifting the ones between. Undoable. */
+    void moveAttr(NodeId node, int from, int to);
 
     // Evaluation
     void evaluate();
@@ -320,6 +328,10 @@ private:
     AttrState removeAttrRaw(NodeId id, int index);
     /** Moves every connection and held plug on id's attrs from `from` up by delta. */
     void shiftAttrRefs(NodeId id, int from, int delta);
+    /** Every connection and held plug on id's attrs renumbered by map(old index). */
+    void remapAttrRefs(NodeId id, const std::function<int(int)>& map);
+    void replaceAttrRaw(NodeId id, int index, const AttrState& state);
+    void moveAttrRaw(NodeId id, int from, int to);
     void disconnectRaw(const PlugRef& dst);
     void selectRaw(std::vector<NodeId> ids);
     void holdRaw(const PlugRef& dst, const PlugValue& v);

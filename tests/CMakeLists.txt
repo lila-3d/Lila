@@ -19,6 +19,7 @@ add_executable(lila_tests
     test_instancing.cpp
     test_duplicate.cpp
     test_user_attrs.cpp
+    test_attr_authoring.cpp
     test_array_group.cpp
     test_docs.cpp
     test_dds.cpp
@@ -158,6 +159,7 @@ add_subdirectory(stagehand)
 add_subdirectory(settlement)
 add_subdirectory(groundtiles)
 add_subdirectory(terrain)
+add_subdirectory(attributes)
 if(LILA_USD)
     add_subdirectory(usd)
 endif()

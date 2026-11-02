@@ -158,3 +158,25 @@ TEST_CASE("usd components: removing a schema a stronger layer applies warns that
         found = found || has(w.get<std::string>(), "applies HealthAPI, which is stronger than the edit layer");
     CHECK(found);
 }
+
+TEST_CASE("Components: USD API schemas are offered by Add with their fallbacks; Lila's own schemas are not")
+{
+    run("newScene");
+    json listed = run("listComponents", {{"source", "usd"}});
+    json health;
+    for (const json& c : listed)
+    {
+        CHECK(c["name"] != "MaterialBindingAPI");
+        if (c["name"] == "HealthAPI")
+            health = c;
+    }
+    REQUIRE(health.is_object());
+    CHECK(health["doc"] == "Hit points for a game object.");
+    CHECK(health["usdSchema"] == "HealthAPI");
+    run("spaceLocator", {{"name", "Npc"}});
+    json added = run("addComponent", {{"args", {"Npc"}}, {"name", "HealthAPI"}});
+    CHECK(added.size() == 4);
+    CHECK(run("getAttr", {{"args", {"Npc.health:max"}}}).get<double>() == doctest::Approx(100.0));
+    CHECK(defOf("Npc", "health:max").category == "HealthAPI");
+    CHECK(schemasOf("Npc") == std::vector<std::string>{"HealthAPI"});
+}

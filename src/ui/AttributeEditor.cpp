@@ -1,4 +1,7 @@
 #include "ui/AttributeEditor.h"
+#include "ui/AttrAuthoring.h"
+#include "core/PrefStore.h"
+#include "scene/AttrComponents.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -25,6 +28,9 @@
 #include "ui/FileDialog.h"
 
 #include <QGuiApplication>
+#include <QApplication>
+#include <QDrag>
+#include <QMimeData>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
@@ -95,6 +101,93 @@ protected:
 private:
     QPixmap mMark;
 };
+
+constexpr const char* kAttrMime = "application/x-lila-attr";
+constexpr const char* kHeadingMime = "application/x-lila-heading";
+
+/** Drag, drop, double-click and hover hooks on one widget, for the editor's rows and headings. */
+class RowGestures final : public QObject
+{
+public:
+    explicit RowGestures(QWidget* on) : QObject(on) { on->installEventFilter(this); }
+
+    std::function<void()> doubleClicked;
+    /** Starts a drag of this mime type and text from a press and move; empty for none. */
+    QString dragMime, dragText;
+    std::function<bool(const QMimeData*)> accepts;
+    std::function<void(const QMimeData*)> dropped;
+    /** Shown only while the pointer is over the widget. */
+    std::vector<QWidget*> reveal;
+
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override
+    {
+        auto* w = static_cast<QWidget*>(o);
+        switch (e->type())
+        {
+        case QEvent::Enter:
+        case QEvent::Leave:
+            for (QWidget* r : reveal)
+                r->setVisible(e->type() == QEvent::Enter);
+            break;
+        case QEvent::MouseButtonDblClick:
+            if (doubleClicked && static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton)
+            {
+                doubleClicked();
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonPress:
+            mPress = static_cast<QMouseEvent*>(e)->pos();
+            mPressed = static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton && !dragMime.isEmpty();
+            break;
+        case QEvent::MouseMove:
+            if (mPressed && (static_cast<QMouseEvent*>(e)->pos() - mPress).manhattanLength() >= QApplication::startDragDistance())
+            {
+                mPressed = false;
+                auto* data = new QMimeData;
+                data->setData(dragMime, dragText.toUtf8());
+                auto* drag = new QDrag(w);
+                drag->setMimeData(data);
+                drag->setPixmap(w->grab());
+                drag->exec(Qt::MoveAction);
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonRelease: mPressed = false; break;
+        case QEvent::DragEnter:
+        case QEvent::DragMove:
+        {
+            auto* d = static_cast<QDropEvent*>(e);
+            if (accepts && accepts(d->mimeData()))
+            {
+                d->acceptProposedAction();
+                return true;
+            }
+            break;
+        }
+        case QEvent::Drop:
+        {
+            auto* d = static_cast<QDropEvent*>(e);
+            if (accepts && dropped && accepts(d->mimeData()))
+            {
+                d->acceptProposedAction();
+                dropped(d->mimeData());
+                return true;
+            }
+            break;
+        }
+        default: break;
+        }
+        return false;
+    }
+
+private:
+    QPoint mPress;
+    bool mPressed = false;
+};
+
+std::string mimeText(const QMimeData* d, const char* format) { return QString::fromUtf8(d->data(format)).toStdString(); }
 
 /** Marks a label or section header with the worst of the issues and lists them all in its tooltip. */
 void markIssues(QWidget* w, const std::vector<const dx::Issue*>& list)
@@ -439,6 +532,22 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     top->addWidget(mName, 1);
     top->addWidget(mType);
     outer->addLayout(top);
+    auto* find = new QHBoxLayout;
+    mSearch = new QLineEdit(this);
+    mSearch->setObjectName("attrSearch");
+    mSearch->setPlaceholderText("Search attributes");
+    mSearch->setClearButtonEnabled(true);
+    mSearch->addAction(icon("search"), QLineEdit::LeadingPosition);
+    connect(mSearch, &QLineEdit::textChanged, this, [this] { applySearch(); });
+    mAdd = new QToolButton(this);
+    mAdd->setObjectName("attrAdd");
+    mAdd->setIcon(icon("plus"));
+    mAdd->setAutoRaise(true);
+    mAdd->setToolTip("Add an attribute or component");
+    connect(mAdd, &QToolButton::clicked, this, [this] { openAdd(mAdd); });
+    find->addWidget(mSearch, 1);
+    find->addWidget(mAdd);
+    outer->addLayout(find);
     connect(mName, &QLineEdit::editingFinished, this, [this] {
         scene::Node* n = Graph::current().node(mNode);
         if (!n || mName->text().isEmpty() || mName->text().toStdString() == n->name())
@@ -751,6 +860,9 @@ void AttributeEditor::rebuild()
     mType->setToolTip(n ? QString::fromStdString(n->type().doc) : QString());
     mAttrWidgets.clear();
     mComponentWidgets.clear();
+    mSearchRows.clear();
+    mSections.clear();
+    mAdd->setEnabled(n != nullptr);
     const std::vector<const dx::Issue*> nodeIssues = dx::issuesOf(mNode);
     mHadIssues = !nodeIssues.empty();
     if (!n)
@@ -1072,6 +1184,7 @@ void AttributeEditor::rebuild()
             if (user)
             {
                 menu.addSeparator();
+                menu.addAction(icon("pencil"), "Edit Attribute...", [this, attr, label] { openEdit(attr, label); });
                 menu.addAction("Delete Attribute", [this, attr] { runOnNode("deleteAttr", {{"attribute", attr}}); });
             }
             if (keyable)
@@ -1109,6 +1222,48 @@ void AttributeEditor::rebuild()
         markIssues(label, rowIssues);
         mAttrWidgets.emplace(attr, label);
         mAttrWidgets.emplace(def.name, label);
+        if ((def.flags & scene::AttrUser) && element < 0)
+        {
+            // Added attributes: a pencil to edit and a grip to drag, shown while the row is hovered.
+            auto* row = new QWidget;
+            auto* h = new QHBoxLayout(row);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->setSpacing(2);
+            h->addWidget(field, 1);
+            auto* pencil = new QToolButton(row);
+            pencil->setObjectName("editAttr");
+            pencil->setIcon(icon("pencil"));
+            pencil->setAutoRaise(true);
+            pencil->setToolTip("Edit this attribute");
+            auto* grip = new QLabel(row);
+            grip->setPixmap(icon("grip-vertical").pixmap(14, 14));
+            grip->setToolTip("Drag onto another attribute or heading to move it");
+            grip->setCursor(Qt::OpenHandCursor);
+            h->addWidget(pencil);
+            h->addWidget(grip);
+            pencil->hide();
+            grip->hide();
+            connect(pencil, &QToolButton::clicked, this, [this, attr, pencil] { openEdit(attr, pencil); });
+            auto* hover = new RowGestures(row);
+            hover->reveal = {pencil, grip};
+            auto* drag = new RowGestures(grip);
+            drag->dragMime = kAttrMime;
+            drag->dragText = QString::fromStdString(attr);
+            auto* drop = new RowGestures(label);
+            label->setAcceptDrops(true);
+            drop->doubleClicked = [this, attr, label] { openEdit(attr, label); };
+            drop->accepts = [attr](const QMimeData* d) {
+                return (d->hasFormat(kAttrMime) && mimeText(d, kAttrMime) != attr) || d->hasFormat(kHeadingMime);
+            };
+            drop->dropped = [this, attr, category = def.category](const QMimeData* d) {
+                if (d->hasFormat(kAttrMime))
+                    dropAttr(mimeText(d, kAttrMime), attr, category);
+                else
+                    dropHeading(mimeText(d, kHeadingMime), category);
+            };
+            field = row;
+        }
+        mSearchRows.push_back({form, label, def});
         form->addRow(label, field);
         return true;
     };
@@ -1177,7 +1332,7 @@ void AttributeEditor::rebuild()
         form->setSpacing(3);
         return form;
     };
-    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) {
+    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) -> QLabel* {
         auto* l = new QLabel(QString::fromStdString(title));
         l->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
         markIssues(l, componentIssues({}, title, QString::fromStdString(title)));
@@ -1185,12 +1340,19 @@ void AttributeEditor::rebuild()
         if (!remove)
         {
             form->addRow(l);
-            return;
+            return l;
         }
         auto* row = new QWidget;
         auto* h = new QHBoxLayout(row);
         h->setContentsMargins(0, 0, 0, 0);
         h->addWidget(l, 1);
+        auto* plus = new QToolButton;
+        plus->setObjectName("headingAdd");
+        plus->setIcon(icon("plus"));
+        plus->setAutoRaise(true);
+        plus->setToolTip(QString::fromStdString("Add an attribute under " + title));
+        connect(plus, &QToolButton::clicked, this, [this, plus, title] { openAdd(plus, title); });
+        h->addWidget(plus);
         auto* x = new QToolButton;
         x->setIcon(icon("x"));
         x->setAutoRaise(true);
@@ -1198,6 +1360,7 @@ void AttributeEditor::rebuild()
         connect(x, &QToolButton::clicked, this, std::move(remove));
         h->addWidget(x);
         form->addRow(row);
+        return l;
     };
 
     // Attrs with a category show together under its heading in a Parameters section, in attr order.
@@ -1281,14 +1444,41 @@ void AttributeEditor::rebuild()
                     continue;
                 if (!headed)
                 {
-                    subHeading(form, c, [this, c] { removeCategory(c); });
+                    QLabel* heading = subHeading(form, c, [this, c] { removeCategory(c); });
+                    heading->setObjectName("componentHeading");
+                    heading->setContextMenuPolicy(Qt::CustomContextMenu);
+                    connect(heading, &QWidget::customContextMenuRequested, this, [this, heading, c](const QPoint& at) { headingMenu(c, heading, at); });
+                    heading->setAcceptDrops(true);
+                    heading->setCursor(Qt::OpenHandCursor);
+                    auto* gestures = new RowGestures(heading);
+                    gestures->dragMime = kHeadingMime;
+                    gestures->dragText = QString::fromStdString(c);
+                    gestures->accepts = [c](const QMimeData* d) {
+                        return d->hasFormat(kAttrMime) || (d->hasFormat(kHeadingMime) && mimeText(d, kHeadingMime) != c);
+                    };
+                    gestures->dropped = [this, c](const QMimeData* d) {
+                        if (d->hasFormat(kAttrMime))
+                            dropAttr(mimeText(d, kAttrMime), {}, c);
+                        else
+                            dropHeading(mimeText(d, kHeadingMime), c);
+                    };
                     headed = true;
                 }
                 added += addAttrRows(form, def);
             }
         }
         if (added)
+        {
+            auto* add = new QToolButton;
+            add->setObjectName("extraAdd");
+            add->setIcon(icon("plus"));
+            add->setText("Add Attribute");
+            add->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+            add->setAutoRaise(true);
+            connect(add, &QToolButton::clicked, this, [this, add] { openAdd(add); });
+            form->addRow(QString(), add);
             mBodyLayout->addWidget(section("Extra Attributes", content));
+        }
         else
             delete content;
     }
@@ -1301,11 +1491,203 @@ void AttributeEditor::rebuild()
                 noteComponent(extra->title, box);
                 mBodyLayout->addWidget(box);
             }
+    for (int i = 0; i < mBodyLayout->count(); ++i)
+        if (QWidget* box = mBodyLayout->itemAt(i)->widget())
+            if (auto* header = box->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly))
+            {
+                mSections.emplace_back(box, header->text());
+                rememberCollapse(box, n->type().registered().name + ":" + header->text().toStdString());
+            }
     mBodyLayout->addStretch(1);
     updateValues();
     fitLabels();
+    applySearch();
     if (gPendingReveal && reveal(gPendingReveal))
         gPendingReveal = 0;
+}
+
+std::vector<scene::NodeId> AttributeEditor::targets() const
+{
+    return mNode == scene::kNoNode ? std::vector<scene::NodeId>{} : std::vector<scene::NodeId>{mNode};
+}
+
+void AttributeEditor::openAdd(QWidget* anchor, std::string category)
+{
+    if (mNode != scene::kNoNode)
+        attrAuthoring::showAdd(targets(), anchor, std::move(category));
+}
+
+void AttributeEditor::openEdit(const std::string& attr, QWidget* anchor)
+{
+    if (mNode != scene::kNoNode)
+        attrAuthoring::showEdit(targets(), attr, anchor);
+}
+
+namespace
+{
+json aeRunLogged(const char* command, const json& call)
+{
+    try
+    {
+        return ops::execute(command, call, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+        return json();
+    }
+}
+} // namespace
+
+void AttributeEditor::headingMenu(const std::string& category, QWidget* on, QPoint at)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n)
+        return;
+    const std::string path = n->path();
+    QMenu menu;
+    menu.addAction(icon("plus"), "Add Attribute Here...", [this, on, category] { openAdd(on, category); });
+    menu.addSeparator();
+    auto save = [path, category](bool studio) {
+        json file = aeRunLogged("saveComponent", {{"args", {path}}, {"category", category}, {"studio", studio}});
+        if (file.is_string())
+            log::info("Saved component {} to {}", category, file.get<std::string>());
+    };
+    menu.addAction(icon("device-floppy"), "Save as Component", [save] { save(false); });
+    QAction* studio = menu.addAction("Save to Studio Library", [save] { save(true); });
+    studio->setEnabled(!PrefStore::get().studioDirs().empty());
+    QMenu* unreal = menu.addMenu("Unreal Export");
+    const json current = aeRunLogged("componentExport", {{"args", {path}}, {"component", category}, {"query", true}});
+    const std::string mode = current.is_object() ? current.value("mode", "assetUserData") : "assetUserData";
+    for (auto [id, label] : {std::pair{"assetUserData", "Asset User Data"}, {"actorTags", "Actor Tags"}, {"component", "Actor Component..."},
+                             {"dataAsset", "Data Asset..."}, {"custom", "Custom Exporter..."}, {"none", "Don't Export"}})
+    {
+        QAction* a = unreal->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(mode == id);
+        const std::string modeId = id;
+        connect(a, &QAction::triggered, this, [path, category, modeId, on, current] {
+            json call = {{"args", {path}}, {"component", category}, {"mode", modeId}};
+            if (modeId != "component" && modeId != "dataAsset" && modeId != "custom")
+            {
+                aeRunLogged("componentExport", call);
+                return;
+            }
+            // The class or exporter name, typed in place.
+            auto* box = new QLineEdit(on->window());
+            box->setWindowFlags(Qt::Popup);
+            box->setAttribute(Qt::WA_DeleteOnClose);
+            box->setMinimumWidth(320);
+            box->setPlaceholderText(modeId == "custom" ? "Exporter name" : "/Script/Module.ClassName or /Game/Path/Class");
+            box->setText(QString::fromStdString(current.is_object() ? current.value("class", "") : ""));
+            box->move(on->mapToGlobal(QPoint(0, on->height())));
+            QObject::connect(box, &QLineEdit::returnPressed, box, [box, call]() mutable {
+                call["unrealClass"] = box->text().trimmed().toStdString();
+                aeRunLogged("componentExport", call);
+                box->close();
+            });
+            box->show();
+            box->setFocus();
+        });
+    }
+    menu.addSeparator();
+    menu.addAction(icon("x"), "Remove Component", [this, category] { removeCategory(category); });
+    menu.exec(on->mapToGlobal(at));
+}
+
+void AttributeEditor::dropAttr(const std::string& attr, const std::string& before, const std::string& category)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n || attr == before)
+        return;
+    const int from = n->type().attrIndex(attr);
+    if (from < 0)
+        return;
+    UndoChunk chunk("Move Attribute");
+    const std::string plug = n->path() + "." + attr;
+    if (n->type().attrs[size_t(from)].category != category)
+        aeRunLogged("editAttr", {{"args", {plug}}, {"category", category}});
+    if (!before.empty())
+    {
+        aeRunLogged("reorderAttr", {{"args", {plug}}, {"before", before}});
+        return;
+    }
+    // Under a heading: after its last attribute.
+    std::string last;
+    for (const scene::AttrDef& d : n->type().attrs)
+        if ((d.flags & scene::AttrUser) && d.category == category && d.name != attr)
+            last = d.name;
+    if (!last.empty())
+        aeRunLogged("reorderAttr", {{"args", {plug}}, {"after", last}});
+}
+
+void AttributeEditor::dropHeading(const std::string& category, const std::string& before)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n || category == before)
+        return;
+    std::vector<std::string> moving;
+    std::string first;
+    for (const scene::AttrDef& d : n->type().attrs)
+        if (d.flags & scene::AttrUser)
+        {
+            if (d.category == category)
+                moving.push_back(d.name);
+            else if (d.category == before && first.empty())
+                first = d.name;
+        }
+    if (moving.empty() || first.empty())
+        return;
+    UndoChunk chunk("Move Component");
+    for (const std::string& a : moving)
+        aeRunLogged("reorderAttr", {{"args", {n->path() + "." + a}}, {"before", first}});
+}
+
+void AttributeEditor::applySearch()
+{
+    const QString q = mSearch->text().trimmed();
+    std::set<QWidget*> hit;
+    for (const SearchRow& r : mSearchRows)
+    {
+        const bool show = attrAuthoring::matches(r.def, q);
+        r.form->setRowVisible(r.label, show);
+        if (show && r.form->parentWidget())
+            hit.insert(r.form->parentWidget()->parentWidget());
+    }
+    for (const auto& [box, title] : mSections)
+    {
+        const bool show = q.isEmpty() || hit.contains(box) || title.contains(q, Qt::CaseInsensitive);
+        box->setVisible(show);
+        if (q.isEmpty() || !show)
+            continue;
+        // Searching opens the sections it finds rows in, without remembering them open.
+        if (auto* header = box->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly))
+        {
+            QSignalBlocker block(header);
+            header->setChecked(true);
+            header->setArrowType(Qt::DownArrow);
+            if (QLayoutItem* item = box->layout()->itemAt(1); item && item->widget())
+                item->widget()->setVisible(true);
+        }
+    }
+}
+
+void AttributeEditor::rememberCollapse(QWidget* section, const std::string& key)
+{
+    auto* header = section->findChild<QToolButton*>(QString(), Qt::FindDirectChildrenOnly);
+    if (!header)
+        return;
+    std::string safe = key;
+    for (char& c : safe)
+        if (c == '/' || c == '~')
+            c = '_';
+    const std::string pointer = "/collapsed/" + safe;
+    if (PrefStore::get().value("attributeEditor", pointer, false))
+        header->setChecked(false);
+    connect(header, &QToolButton::toggled, this, [this, pointer](bool on) {
+        if (mSearch->text().trimmed().isEmpty())
+            PrefStore::get().set("attributeEditor", pointer, !on);
+    });
 }
 
 void AttributeEditor::fitLabels()

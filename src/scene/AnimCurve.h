@@ -47,6 +47,8 @@ struct Key
     double outWeight = 1.0;
     /** A registered Interpolator (AnimInterpolator.h) for the segment after this key; empty uses the tangents. */
     std::string interpolator;
+    /** A breakdown key (Maya's): editors mark it apart from the others. */
+    bool breakdown = false;
 
     bool operator==(const Key&) const = default;
 };
@@ -108,6 +110,8 @@ public:
         kWeighted,
         kOutput,
         kLoop,
+        kMute,
+        kMuteTime,
         kCount
     };
 
