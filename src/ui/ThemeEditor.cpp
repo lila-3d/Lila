@@ -2,13 +2,13 @@
 
 #include "core/PrefStore.h"
 #include "ops/Command.h"
+#include "ui/ColorPopup.h"
 #include "ui/Icons.h"
 #include "ui/ThemeModel.h"
 #include "ui/FileDialog.h"
 
 #include <QApplication>
 #include <QClipboard>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -202,17 +202,14 @@ private:
         if (!before)
             return;
         themes::Rgba c = before->color(id);
-        QColorDialog dlg(QColor(c.r, c.g, c.b, c.a), this);
-        dlg.setOption(QColorDialog::ShowAlphaChannel, c.a != 255);
         // Live preview: the theme is saved as the picker moves, and put back on cancel.
-        connect(&dlg, &QColorDialog::currentColorChanged, this, [&](const QColor& q) {
+        const QColor q = colorPopup::getColor(QColor(c.r, c.g, c.b, c.a), nullptr, QString::fromStdString(id), c.a != 255, [&](const QColor& live) {
             themes::Theme t = *before;
-            t.colors[id] = {uint8_t(q.red()), uint8_t(q.green()), uint8_t(q.blue()), uint8_t(q.alpha())};
+            t.colors[id] = {uint8_t(live.red()), uint8_t(live.green()), uint8_t(live.blue()), uint8_t(live.alpha())};
             themes::save(t);
         });
-        if (dlg.exec() == QDialog::Accepted)
+        if (q.isValid())
         {
-            QColor q = dlg.selectedColor();
             themes::save(*before);
             run("setThemeColor", {{"args", {name()}},
                                   {"token", id},

@@ -3,6 +3,7 @@
 #include "ops/CommandOptions.h"
 #include "tex/Types.h"
 #include "ui/CodeEdit.h"
+#include "ui/ColorPopup.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
 #include "ui/ImagePicker.h"
@@ -10,7 +11,6 @@
 #include "ui/Theme.h"
 
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -116,14 +116,18 @@ QWidget* colorSwatch(QWidget* parent, const json& value, std::function<void(cons
     QObject::connect(b, &QToolButton::clicked, b, [b, rgba, paint, changed] {
         QColor init = display(*rgba);
         init.setAlphaF((*rgba)[3]);
-        QColor c = QColorDialog::getColor(init, b, "Color", QColorDialog::ShowAlphaChannel);
+        QColor c = colorPopup::getColor(init, b, "Color", true);
         if (!c.isValid())
             return;
         *rgba = {toLinear(float(c.redF())), toLinear(float(c.greenF())), toLinear(float(c.blueF())), float(c.alphaF())};
         paint();
         changed(jsonOf(*rgba));
     });
-    return b;
+    return colorPopup::withEyedropper(b, [rgba, paint, changed](const glm::dvec3& c) {
+        *rgba = {float(c.x), float(c.y), float(c.z), (*rgba)[3]};
+        paint();
+        changed(jsonOf(*rgba));
+    });
 }
 
 struct Stop
@@ -279,7 +283,7 @@ protected:
         Rgba& c = mStops[size_t(hit)].color;
         QColor init = display(c);
         init.setAlphaF(c[3]);
-        QColor picked = QColorDialog::getColor(init, this, "Stop Color", QColorDialog::ShowAlphaChannel);
+        QColor picked = colorPopup::getColor(init, this, "Stop Color", true);
         if (!picked.isValid())
             return;
         c = {toLinear(float(picked.redF())), toLinear(float(picked.greenF())), toLinear(float(picked.blueF())), float(picked.alphaF())};

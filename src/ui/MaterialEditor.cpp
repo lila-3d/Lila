@@ -13,6 +13,7 @@
 #include "scene/MeshNodes.h"
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
+#include "ui/ColorPopup.h"
 #include "ui/LocateFlash.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
@@ -31,7 +32,6 @@
 #include <QDropEvent>
 #include <QFileInfo>
 #include <QMimeData>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDockWidget>
 #include <QGridLayout>
@@ -554,14 +554,14 @@ void MaterialEditor::rebuild()
         auto* b = new QToolButton(mBody);
         b->setIconSize(QSize(36, 18));
         resettable(l, attr, b);
-        grid->addWidget(b, row++, 1, 1, 2, Qt::AlignLeft);
-        connect(b, &QToolButton::clicked, this, [this, attr] {
+        grid->addWidget(colorPopup::withEyedropper(b, [this, attr](const glm::dvec3& c) { setAttr(attr, json::array({c.x, c.y, c.z})); }), row++,
+                        1, 1, 2, Qt::AlignLeft);
+        connect(b, &QToolButton::clicked, this, [this, b, attr, text] {
             scene::Node* m = current();
             if (!m)
                 return;
             const scene::NodeId id = m->id();
             const glm::dvec3 start = m->as<glm::dvec3>(attr);
-            auto linear = [](const QColor& c) { return glm::dvec3(toLinear(float(c.redF())), toLinear(float(c.greenF())), toLinear(float(c.blueF()))); };
             // Preview without undo while the picker moves; OK commits once, as one undo step, Cancel puts the start back.
             auto preview = [id, attr](const glm::dvec3& v) {
                 scene::Graph& g = scene::Graph::current();
@@ -571,18 +571,14 @@ void MaterialEditor::rebuild()
                 g.setValue({id, attr, -1}, v);
                 UndoStack::get().setEnabled(true);
             };
-            QColorDialog dlg(displayColor(start), this);
-            dlg.setWindowTitle("Color");
-            dlg.setOption(QColorDialog::DontUseNativeDialog);
-            connect(&dlg, &QColorDialog::currentColorChanged, this, [preview, linear](const QColor& c) {
-                if (c.isValid())
-                    preview(linear(c));
-            });
-            const bool ok = dlg.exec() == QDialog::Accepted;
+            colorPopup::Options o;
+            o.value.color = start;
+            o.title = text;
+            o.changed = [preview](const colorPopup::Value& v) { preview(v.color); };
+            const std::optional<colorPopup::Value> picked = colorPopup::exec(colorPopup::placeFor(b), std::move(o));
             preview(start);
-            QColor c = dlg.selectedColor();
-            if (ok && c.isValid() && current() && current()->id() == id && c.rgb() != displayColor(start).rgb())
-                setAttr(attr, json::array({linear(c).x, linear(c).y, linear(c).z}));
+            if (picked && current() && current()->id() == id && picked->color != start)
+                setAttr(attr, json::array({picked->color.x, picked->color.y, picked->color.z}));
         });
         mUpdaters.push_back([this, b, attr] {
             if (scene::Node* m = current())

@@ -7,6 +7,7 @@
 #include "scene/DisplayLayers.h"
 #include "scene/Graph.h"
 #include "ui/Actions.h"
+#include "ui/ColorPopup.h"
 #include "ui/Deletion.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -14,7 +15,7 @@
 #include "ui/Theme.h"
 #include "ui/ViewportDisplay.h"
 
-#include <QColorDialog>
+#include <QCursor>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMenu>
@@ -376,7 +377,6 @@ void DisplayLayersPanel::pickColor(const std::string& layer)
     const scene::NodeId id = n->id();
     const glm::dvec3 start = n->as<glm::dvec3>(scene::DisplayLayer::kColor);
     const bool startUsed = n->as<bool>(scene::DisplayLayer::kUseColor);
-    auto linear = [](const QColor& c) { return glm::dvec3(toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF())); };
     // Preview without undo while the picker moves; OK commits once, as one undo step, Cancel puts the start back.
     auto preview = [id](const glm::dvec3& color, bool used) {
         scene::Graph& g = scene::Graph::current();
@@ -387,19 +387,14 @@ void DisplayLayersPanel::pickColor(const std::string& layer)
         g.setValue({id, scene::DisplayLayer::kUseColor, -1}, used);
         UndoStack::get().setEnabled(true);
     };
-    QColorDialog dlg(QColor::fromRgbF(toSrgb(start.x), toSrgb(start.y), toSrgb(start.z)), this);
-    dlg.setWindowTitle("Layer Color");
-    dlg.setOption(QColorDialog::DontUseNativeDialog);
-    connect(&dlg, &QColorDialog::currentColorChanged, this, [preview, linear](const QColor& c) {
-        if (c.isValid())
-            preview(linear(c), true);
-    });
-    const bool ok = dlg.exec() == QDialog::Accepted;
+    colorPopup::Options o;
+    o.value.color = start;
+    o.title = QString::fromStdString(layer);
+    o.changed = [preview](const colorPopup::Value& v) { preview(v.color, true); };
+    const std::optional<colorPopup::Value> picked = colorPopup::exec(QCursor::pos() + QPoint(12, 12), std::move(o));
     preview(start, startUsed);
-    if (!ok || !dlg.selectedColor().isValid())
-        return;
-    const QColor c = dlg.selectedColor();
-    run("displayLayer", {{"args", {layer}}, {"color", {toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF())}}});
+    if (picked && picked->color != start)
+        run("displayLayer", {{"args", {layer}}, {"color", {picked->color.x, picked->color.y, picked->color.z}}});
 }
 
 void DisplayLayersPanel::contextMenu(const QPoint& at)

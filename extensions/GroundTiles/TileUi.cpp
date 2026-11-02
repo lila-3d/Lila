@@ -14,7 +14,6 @@
 #include <lila/UI.h>
 
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -854,7 +853,7 @@ private:
     void editIdColour(int64_t id)
     {
         const glm::dvec3 c = idColour(id, mPrefs["Palette"]);
-        const QColor chosen = QColorDialog::getColor(QColor::fromRgbF(float(c.r), float(c.g), float(c.b)), this, "Object ID " + QString::number(id));
+        const QColor chosen = ui::colorPopup::getColor(QColor::fromRgbF(float(c.r), float(c.g), float(c.b)), this, "Object ID " + QString::number(id));
         if (!chosen.isValid())
             return;
         run("groundTileSetIdColour", {{"args", {id}}, {"colour", {chosen.redF(), chosen.greenF(), chosen.blueF()}}}, false);

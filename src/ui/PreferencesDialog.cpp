@@ -12,6 +12,7 @@
 #include "scene/ComponentPick.h"
 #include "scene/Transform.h"
 #include "stream/ChangeStream.h"
+#include "ui/ColorPopup.h"
 #include "ui/CommandPreview.h"
 #include "ui/Icons.h"
 #include "ui/Issues.h"
@@ -37,7 +38,6 @@
 #include "ui/FileDialog.h"
 
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDoubleSpinBox>
@@ -454,7 +454,7 @@ void color(Page& p, const char* label, const std::string& key, const std::string
     };
     show(current().name());
     QObject::connect(b, &QToolButton::clicked, b, [b, show, current, file, key] {
-        QColor c = QColorDialog::getColor(current(), b, "Choose Color");
+        QColor c = colorPopup::getColor(current(), b, "Choose Color");
         if (!c.isValid())
             return;
         PrefStore::get().set(file, key, c.name().toStdString());
@@ -465,7 +465,12 @@ void color(Page& p, const char* label, const std::string& key, const std::string
         PrefStore::get().set(file, key, fallback);
         show(QString::fromStdString(fallback));
     }, QString::fromStdString(fallback), b);
-    addRow(p, name, b, key, fallback);
+    QWidget* field = colorPopup::withEyedropper(b, [show, file, key](const glm::dvec3& c) {
+        const QString hex = colorMath::display(c).name();
+        PrefStore::get().set(file, key, hex.toStdString());
+        show(hex);
+    });
+    addRow(p, name, field, key, fallback);
 }
 
 void text(Page& p, const char* label, const char* key, const std::string& fallback, bool fileButton = false)

@@ -9,6 +9,7 @@
 #include "scene/Picker.h"
 #include "scene/Poses.h"
 #include "ui/Actions.h"
+#include "ui/ColorPopup.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
@@ -17,7 +18,6 @@
 
 #include <QActionGroup>
 #include <QApplication>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -523,7 +523,7 @@ public:
         if (mCanvas->editSelection.empty() || !doc)
             return;
         const pk::Item* first = doc->item(*mCanvas->editSelection.begin());
-        QColor c = QColorDialog::getColor(itemColor(first ? first->color : std::string()), this, "Item Colour");
+        QColor c = colorPopup::getColor(itemColor(first ? first->color : std::string()), this, "Item Colour");
         if (c.isValid())
             patchSelected({{"color", c.name().toStdString()}});
     }

@@ -10,6 +10,7 @@
 #include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 #include "scene/Light.h"
+#include "ui/ColorPopup.h"
 #include "ui/Deletion.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
@@ -25,7 +26,6 @@
 
 #include <QGuiApplication>
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -333,8 +333,6 @@ double toSrgb(double c)
     c = std::clamp(c, 0.0, 1.0);
     return c <= 0.0031308 ? c * 12.92 : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055;
 }
-
-double toLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
 
 std::vector<attributeEditor::Section*> extraSections()
 {
@@ -679,6 +677,7 @@ QWidget* AttributeEditor::colorSwatch(const scene::AttrDef& def, scene::NodeId i
     b->setMinimumWidth(36);
     b->setEnabled(!readOnly);
     std::string attr = def.name;
+    const QString title = def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName);
     auto current = [id, index] {
         const scene::PlugValue& v = Graph::current().value({id, index});
         auto* c = std::get_if<glm::dvec3>(&v);
@@ -689,13 +688,46 @@ QWidget* AttributeEditor::colorSwatch(const scene::AttrDef& def, scene::NodeId i
         QColor q = QColor::fromRgbF(float(toSrgb(c.x)), float(toSrgb(c.y)), float(toSrgb(c.z)));
         b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141414; }").arg(q.name()));
     });
-    connect(b, &QToolButton::clicked, this, [this, b, attr, current] {
-        glm::dvec3 c = current();
-        QColor q = QColorDialog::getColor(QColor::fromRgbF(float(toSrgb(c.x)), float(toSrgb(c.y)), float(toSrgb(c.z))), b, "Color");
-        if (q.isValid())
-            set(attr, json::array({toLinear(q.redF()), toLinear(q.greenF()), toLinear(q.blueF())}));
+    connect(b, &QToolButton::clicked, this, [b, attr, title, id, index, current] {
+        const scene::Node* n = Graph::current().node(id);
+        if (!n)
+            return;
+        const glm::dvec3 start = current();
+        const std::string plug = n->path() + "." + attr;
+        // Previews with undo off; closing restores the start and sets the result once, as one undo step.
+        auto preview = [id, index](const glm::dvec3& c) {
+            Graph& g = Graph::current();
+            if (!g.node(id))
+                return;
+            UndoStack& u = UndoStack::get();
+            const bool was = u.enabled();
+            u.setEnabled(false);
+            g.setValue({id, index}, c);
+            u.setEnabled(was);
+        };
+        colorPopup::Options o;
+        o.value.color = start;
+        o.title = title;
+        o.changed = [preview](const colorPopup::Value& v) { preview(v.color); };
+        o.closed = [preview, start, plug](const colorPopup::Value& v, bool accepted) {
+            preview(start);
+            if (!accepted || v.color == start)
+                return;
+            try
+            {
+                ops::execute("setAttr", {{"args", {plug, json::array({v.color.x, v.color.y, v.color.z})}}}, CallSource::UI);
+            }
+            catch (const CommandError& e)
+            {
+                log::error("{}", e.what());
+            }
+        };
+        colorPopup::show(colorPopup::placeFor(b), std::move(o));
     });
-    return b;
+    b->setMaximumWidth(48);
+    if (readOnly)
+        return b;
+    return colorPopup::withEyedropper(b, [this, attr](const glm::dvec3& c) { set(attr, json::array({c.x, c.y, c.z})); });
 }
 
 void AttributeEditor::rebuild()
@@ -862,8 +894,7 @@ void AttributeEditor::rebuild()
             if ((def.flags & scene::AttrColor) && element < 0)
             {
                 QWidget* swatch = colorSwatch(def, id, index, readOnly);
-                swatch->setMaximumWidth(48);
-                widest += 48 + h->spacing();
+                widest += swatch->sizeHint().width() + h->spacing();
                 h->addWidget(swatch);
             }
             field->setMaximumWidth(widest);

@@ -1,5 +1,6 @@
 #include "ui/NodeEditor.h"
 
+#include "ui/ColorPopup.h"
 #include "ui/NodeCanvas.h"
 #include "ui/Hotkeys.h"
 #include "ui/PreferencesDialog.h"
@@ -27,7 +28,6 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -256,14 +256,18 @@ QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json
     paint();
     QObject::connect(b, &QToolButton::clicked, b, [b, rgba, paint, set] {
         QColor init = QColor::fromRgbF(float(toSrgb((*rgba)[0])), float(toSrgb((*rgba)[1])), float(toSrgb((*rgba)[2])), float((*rgba)[3]));
-        QColor c = QColorDialog::getColor(init, b, "Color", QColorDialog::ShowAlphaChannel);
+        QColor c = colorPopup::getColor(init, b, "Color", true);
         if (!c.isValid())
             return;
         *rgba = {toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF()), c.alphaF()};
         paint();
         set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
     });
-    return b;
+    return colorPopup::withEyedropper(b, [rgba, paint, set](const glm::dvec3& c) {
+        *rgba = {c.x, c.y, c.z, (*rgba)[3]};
+        paint();
+        set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
+    });
 }
 
 /** A string's editor named by a decl's editor ("multiline", "code", "font"); null for a one-line box. */

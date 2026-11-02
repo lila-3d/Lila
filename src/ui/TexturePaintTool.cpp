@@ -21,6 +21,7 @@
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/ColorPopup.h"
 #include "ui/TexLive.h"
 #include "ui/TextureSetPanel.h"
 #include "ui/ViewInfo.h"
@@ -30,7 +31,6 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -42,6 +42,7 @@
 #include <QMainWindow>
 #include <QPointer>
 #include <QPushButton>
+#include <QToolButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTimer>
@@ -298,17 +299,24 @@ public:
                 swatch->setFixedSize(44, 20);
                 swatch->setToolTip("Pick the colour this channel paints");
                 row->addWidget(swatch);
-                mSwatch.push_back(swatch);
-                mValue.push_back(nullptr);
-                connect(swatch, &QPushButton::clicked, this, [this, i] {
-                    ChannelValue& cv = settings().channels[i];
-                    const QColor start = QColor::fromRgbF(toDisplay(cv.value.r), toDisplay(cv.value.g), toDisplay(cv.value.b));
-                    const QColor picked = QColorDialog::getColor(start, this, QString("%1 Colour").arg(cv.label));
-                    if (!picked.isValid())
-                        return;
-                    cv.value = {fromDisplay(float(picked.redF())), fromDisplay(float(picked.greenF())), fromDisplay(float(picked.blueF()))};
+                row->addWidget(colorPopup::eyedropperButton(this, [this, i](const glm::dvec3& c) {
+                    const glm::dvec3 s = colorMath::toSrgb(glm::clamp(c, 0.0, 1.0));
+                    settings().channels[i].value = {fromDisplay(float(s.x)), fromDisplay(float(s.y)), fromDisplay(float(s.z))};
                     sync();
                     changed();
+                }));
+                mSwatch.push_back(swatch);
+                mValue.push_back(nullptr);
+                connect(swatch, &QPushButton::clicked, this, [this, i, swatch] {
+                    ChannelValue& cv = settings().channels[i];
+                    const QColor start = QColor::fromRgbF(toDisplay(cv.value.r), toDisplay(cv.value.g), toDisplay(cv.value.b));
+                    auto apply = [this, i](const QColor& picked) {
+                        settings().channels[i].value = {fromDisplay(float(picked.redF())), fromDisplay(float(picked.greenF())), fromDisplay(float(picked.blueF()))};
+                        sync();
+                        changed();
+                    };
+                    if (const QColor picked = colorPopup::getColor(start, swatch, QString("%1 Colour").arg(cv.label), false, apply); picked.isValid())
+                        apply(picked);
                 });
             }
             else

@@ -10,6 +10,7 @@
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
 #include "vcolor/Paint.h"
+#include "ui/ColorPopup.h"
 #include "ui/ReferenceOverlay.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
@@ -25,7 +26,6 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDockWidget>
@@ -405,7 +405,10 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mColor = new QToolButton(paintBox);
     mColor->setMinimumWidth(60);
     mColor->setToolTip("The color the Paint brush, and shape brushes with Paint while sculpting, lay down");
-    pform->addRow("Color", mColor);
+    auto* colorRow = new QHBoxLayout;
+    colorRow->setSpacing(2);
+    colorRow->addWidget(mColor);
+    pform->addRow("Color", colorRow);
     mPaint = new QCheckBox("Paint while sculpting", paintBox);
     mPaint->setToolTip("Shape brushes also paint the color wherever they move the surface");
     setCheckDefault(mPaint, SculptSettings{}.paint);
@@ -476,13 +479,18 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
         changed();
     });
     connect(mColor, &QToolButton::clicked, this, [this, changed] {
-        QColor c = QColorDialog::getColor(swatchColor(sculptSettings().color), this, "Polypaint Color");
-        if (!c.isValid())
-            return;
-        const glm::vec4 lin = vcolor::srgbToLinear(glm::vec4(float(c.redF()), float(c.greenF()), float(c.blueF()), 1.0f));
-        sculptSettings().color = glm::vec3(lin);
-        changed();
+        auto apply = [changed](const QColor& c) {
+            sculptSettings().color = glm::vec3(vcolor::srgbToLinear(glm::vec4(float(c.redF()), float(c.greenF()), float(c.blueF()), 1.0f)));
+            changed();
+        };
+        if (QColor c = colorPopup::getColor(swatchColor(sculptSettings().color), mColor, "Polypaint Color", false, apply); c.isValid())
+            apply(c);
     });
+    colorRow->addWidget(colorPopup::eyedropperButton(paintBox, [changed](const glm::dvec3& c) {
+        sculptSettings().color = glm::vec3(c);
+        changed();
+    }));
+    colorRow->addStretch(1);
     connect(mMode, &QComboBox::currentIndexChanged, this, [this, changed](int) {
         sculptSettings().proxyMode = mMode->currentData().toString().toStdString();
         changed();

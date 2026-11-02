@@ -14,3 +14,4 @@
 #include "lila/Panels.h"
 #include "lila/PreferencePages.h"
 #include "lila/Shelves.h"
+#include "ui/ColorPopup.h"

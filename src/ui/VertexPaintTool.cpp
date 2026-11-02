@@ -16,6 +16,7 @@
 #include "scene/Modifiers.h"
 #include "scene/SoftSelect.h"
 #include "ui/Actions.h"
+#include "ui/ColorPopup.h"
 #include "ui/FlowLayout.h"
 #include "ui/PaintColor.h"
 #include "ui/Icons.h"
@@ -28,7 +29,6 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -716,12 +716,14 @@ private:
 
     void editColor(bool primary)
     {
-        glm::vec4& c = primary ? settings().color : settings().secondary;
-        QColor picked = QColorDialog::getColor(swatchColor(c), this, primary ? "Primary Color" : "Secondary Color", QColorDialog::ShowAlphaChannel);
-        if (!picked.isValid())
-            return;
-        c = vcolor::srgbToLinear(glm::vec4(float(picked.redF()), float(picked.greenF()), float(picked.blueF()), float(picked.alphaF())));
-        changed();
+        auto apply = [this, primary](const QColor& picked) {
+            glm::vec4& c = primary ? settings().color : settings().secondary;
+            c = vcolor::srgbToLinear(glm::vec4(float(picked.redF()), float(picked.greenF()), float(picked.blueF()), float(picked.alphaF())));
+            changed();
+        };
+        const glm::vec4 c = primary ? settings().color : settings().secondary;
+        if (QColor picked = colorPopup::getColor(swatchColor(c), this, primary ? "Primary Color" : "Secondary Color", true, apply); picked.isValid())
+            apply(picked);
     }
 
     void rebuildSwatches()
