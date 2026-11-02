@@ -1205,7 +1205,7 @@ void FloatingShelf::build()
     connect(help, &QToolButton::clicked, this, [this] {
         QMessageBox::information(this, "Floating Shelf",
                                  "`: open or close the floating shelf. Hold `, then release over a button to run it.\n"
-                                 "Hold F1 for the hotkey cheat sheet.\n\n"
+                                 "Hold F1 for the hotkey cheat sheet, or tap it to search hotkeys.\n\n"
                                  "Click a button to run it. Drag a button to reorder it, or onto another shelf.\n"
                                  "Right-click a button to edit it, change its icon or delete it.\n"
                                  "+ adds a button. Ctrl+Shift+click a menu item to add it to this shelf.\n"

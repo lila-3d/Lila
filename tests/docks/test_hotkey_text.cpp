@@ -4,8 +4,10 @@
 #include "ui/HotkeyBindings.h"
 #include "core/PrefStore.h"
 #include "ui/Hotkeys.h"
+#include "ui/HotkeyCheatSheet.h"
 
 #include <QApplication>
+#include <QLineEdit>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QWidget>
@@ -207,4 +209,37 @@ TEST_CASE("a disabled action is skipped by run and reported by isEnabled")
     CHECK(runs == 1);
     CHECK(actions::isEnabled(nlohmann::json{{"command", "anything"}}));
     actions::setEnabledWhen("test.gated", nullptr);
+}
+
+TEST_CASE("the cheat sheet filters by action, key and category, sorted with Other last")
+{
+    actions::add({.id = "window.resetLayout", .label = "Reset Layout", .category = "Windows", .run = [] {}, .doc = "Test stand-in."});
+    QWidget host;
+    host.resize(1400, 900);
+    HotkeyCheatSheet sheet(&host, nullptr);
+    const int all = sheet.shownRows();
+    REQUIRE(all > 1);
+    QStringList categories = sheet.shownCategories();
+    if (categories.contains("Other"))
+        CHECK(categories.back() == "Other");
+    categories.removeAll("Other");
+    QStringList sorted = categories;
+    sorted.sort();
+    CHECK(categories == sorted);
+
+    sheet.filter()->setText("f10");
+    CHECK(sheet.shownRows() == 1);
+    sheet.filter()->setText("reset layout");
+    CHECK(sheet.shownRows() >= 1);
+    CHECK(sheet.shownRows() < all);
+    sheet.filter()->setText("windows");
+    CHECK(sheet.shownCategories().contains("Windows"));
+    sheet.filter()->setText("zzqx nothing");
+    CHECK(sheet.shownRows() == 0);
+    CHECK(sheet.shownCategories().isEmpty());
+    sheet.filter()->clear();
+    CHECK(sheet.shownRows() == all);
+    CHECK_FALSE(sheet.pinned());
+    sheet.pin();
+    CHECK(sheet.pinned());
 }

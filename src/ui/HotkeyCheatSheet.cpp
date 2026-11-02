@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCursor>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QPainter>
 #include <QPainterPath>
@@ -22,6 +23,11 @@ namespace lila::ui
 namespace
 {
 QPointer<HotkeyCheatSheet> gSheet;
+
+/** A release sooner than this after the press is a tap, which leaves the sheet open. */
+constexpr qint64 kTapMs = 300;
+constexpr double kTitleHeight = 30;
+constexpr double kFilterHeight = 26;
 
 /** The main window that owns w, so tool windows (the floating shelf, floating panels) never host the sheet. */
 QWidget* mainWindowOf(QWidget* w)
@@ -56,7 +62,11 @@ HotkeyCheatSheet* HotkeyCheatSheet::active()
 void HotkeyCheatSheet::open()
 {
     if (gSheet)
+    {
+        if (gSheet->mPinned)
+            dismiss();
         return;
+    }
     QWidget* host = hostWindow();
     if (!host)
         return;
@@ -66,21 +76,48 @@ void HotkeyCheatSheet::open()
     achievementRules::cheatSheetShown();
 }
 
+void HotkeyCheatSheet::released()
+{
+    if (!gSheet || gSheet->mPinned)
+        return;
+    if (gSheet->mOpened.elapsed() < kTapMs)
+        gSheet->pin();
+    else
+        dismiss();
+}
+
 void HotkeyCheatSheet::dismiss()
 {
-    if (gSheet)
-        gSheet->deleteLater();
+    if (!gSheet)
+        return;
+    if (gSheet->mPinned && gSheet->mFocus)
+    {
+        gSheet->mFocus->window()->activateWindow();
+        gSheet->mFocus->setFocus();
+    }
+    gSheet->deleteLater();
     gSheet = nullptr;
 }
 
 HotkeyCheatSheet::HotkeyCheatSheet(QWidget* host, QWidget* focus)
     : QWidget(host, Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint | Qt::WindowDoesNotAcceptFocus |
-                        Qt::WindowTransparentForInput)
+                        Qt::WindowTransparentForInput),
+      mFocus(focus)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TransparentForMouseEvents);
     setFocusPolicy(Qt::NoFocus);
+    mOpened.start();
+
+    mFilter = new QLineEdit(this);
+    mFilter->setPlaceholderText("Filter: action, key or category");
+    mFilter->setClearButtonEnabled(true);
+    mFilter->setFocusPolicy(Qt::ClickFocus);
+    connect(mFilter, &QLineEdit::textChanged, this, [this] {
+        applyFilter();
+        update();
+    });
     if (host)
         setGeometry(QRect(host->mapToGlobal(QPoint(0, 0)), host->size()));
 
@@ -89,7 +126,7 @@ HotkeyCheatSheet::HotkeyCheatSheet(QWidget* host, QWidget* focus)
     QStringList chainText;
     for (const std::string& c : chain)
         chainText << QString::fromStdString(c);
-    mTitle = "Hotkeys   " + chainText.join(QString::fromUtf8("  ›  "));
+    mTitle = "Hotkeys   " + chainText.join(QString("  ") + QChar(0x203A) + "  ");
 
     std::map<QString, std::vector<std::pair<QKeyCombination, Row>>> byCategory;
     for (const hotkeys::Binding* b : hotkeys::active(snap, focus))
@@ -115,7 +152,7 @@ HotkeyCheatSheet::HotkeyCheatSheet(QWidget* host, QWidget* focus)
     }
     for (auto& [title, rows] : byCategory)
     {
-        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.label < b.second.label; });
+        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.label.compare(b.second.label, Qt::CaseInsensitive) < 0; });
         Group g{title, {}};
         for (auto& [chord, row] : rows)
             g.rows.push_back(row);
@@ -123,23 +160,101 @@ HotkeyCheatSheet::HotkeyCheatSheet(QWidget* host, QWidget* focus)
     }
     // "Other" reads best last.
     std::stable_partition(mGroups.begin(), mGroups.end(), [](const Group& g) { return g.title != "Other"; });
+    applyFilter();
 }
 
-bool HotkeyCheatSheet::eventFilter(QObject*, QEvent* e)
+void HotkeyCheatSheet::pin()
+{
+    mPinned = true;
+    // A held sheet lets clicks through to the window under it; a pinned one takes input for its filter.
+    const bool shown = isVisible();
+    setWindowFlags(windowFlags() & ~(Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput));
+    setAttribute(Qt::WA_TransparentForMouseEvents, false);
+    setAttribute(Qt::WA_ShowWithoutActivating, false);
+    if (shown)
+        show();
+    raise();
+    activateWindow();
+    mFilter->setFocus();
+    update();
+}
+
+int HotkeyCheatSheet::shownRows() const
+{
+    int n = 0;
+    for (const Group& g : mShown)
+        n += int(g.rows.size());
+    return n;
+}
+
+QStringList HotkeyCheatSheet::shownCategories() const
+{
+    QStringList out;
+    for (const Group& g : mShown)
+        out << g.title;
+    return out;
+}
+
+void HotkeyCheatSheet::applyFilter()
+{
+    const QStringList words = mFilter->text().split(' ', Qt::SkipEmptyParts);
+    mShown.clear();
+    for (const Group& g : mGroups)
+    {
+        Group shown{g.title, {}};
+        for (const Row& r : g.rows)
+        {
+            const QString hay = g.title + ' ' + r.label + ' ' + r.key + ' ' + r.context;
+            if (std::all_of(words.begin(), words.end(), [&](const QString& w) { return hay.contains(w, Qt::CaseInsensitive); }))
+                shown.rows.push_back(r);
+        }
+        if (!shown.rows.empty())
+            mShown.push_back(std::move(shown));
+    }
+}
+
+QRectF HotkeyCheatSheet::panelRect() const
+{
+    return QRectF(rect()).adjusted(28, 28, -28, -28);
+}
+
+void HotkeyCheatSheet::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    const QRectF content = panelRect().adjusted(28, 22, -28, -22);
+    mFilter->setGeometry(QRectF(content.left(), content.top() + kTitleHeight, std::min(360.0, content.width()), kFilterHeight).toRect());
+}
+
+bool HotkeyCheatSheet::eventFilter(QObject* obj, QEvent* e)
 {
     switch (e->type())
     {
     case QEvent::MouseButtonPress:
-    case QEvent::ApplicationDeactivate:
+        if (mPinned)
+            if (auto* w = qobject_cast<QWidget*>(obj); w && (w == mFilter || mFilter->isAncestorOf(w) ||
+                                                         (w == this && panelRect().contains(static_cast<QMouseEvent*>(e)->position()))))
+                return false;
         dismiss();
         break;
+    case QEvent::ApplicationDeactivate: dismiss(); break;
     case QEvent::KeyPress:
-        // The held F1 autorepeats; any other key dismisses.
-        if (!static_cast<QKeyEvent*>(e)->isAutoRepeat())
+    {
+        auto* k = static_cast<QKeyEvent*>(e);
+        if (!mPinned)
+        {
+            // The held F1 autorepeats; any other key dismisses.
+            if (!k->isAutoRepeat())
+                dismiss();
+            break;
+        }
+        if (k->key() == Qt::Key_Escape || (k->key() == Qt::Key_F1 && k->modifiers() == Qt::NoModifier && !k->isAutoRepeat()))
+        {
             dismiss();
+            return true;
+        }
         break;
-    default:
-        break;
+    }
+    default: break;
     }
     return false;
 }
@@ -149,7 +264,7 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    QRectF panel = QRectF(rect()).adjusted(28, 28, -28, -28);
+    QRectF panel = panelRect();
     p.setPen(QPen(themeShade(90, 220), 1));
     p.setBrush(themeShade(14, 222));
     p.drawRoundedRect(panel, 8, 8);
@@ -165,8 +280,19 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     hintFont.setPixelSize(12);
     p.setFont(hintFont);
     p.setPen(themeShade(130));
-    p.drawText(content, Qt::AlignRight | Qt::AlignTop, "release F1 to close");
-    content.setTop(content.top() + 38);
+    p.drawText(content, Qt::AlignRight | Qt::AlignTop, mPinned ? "F1 or Esc to close" : "release F1 to close, tap to search");
+    content.setTop(content.top() + kTitleHeight + kFilterHeight + 16);
+
+    if (mShown.empty())
+    {
+        QFont empty = font();
+        empty.setPixelSize(14);
+        p.setFont(empty);
+        p.setPen(themeShade(140));
+        p.drawText(content.adjusted(0, 40, 0, 0), Qt::AlignHCenter | Qt::AlignTop,
+                   mGroups.empty() ? QString("No hotkeys here") : QString("No hotkeys match \"%1\"").arg(mFilter->text()));
+        return;
+    }
 
     int columns = content.width() > 1150 ? 3 : 2;
     double colGap = 32;
@@ -174,7 +300,7 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
 
     // Shrink the line height until the tallest column fits.
     int totalRows = 0;
-    for (const Group& g : mGroups)
+    for (const Group& g : mShown)
         totalRows += int(g.rows.size()) + 2;
     double line = 22;
     std::vector<std::vector<const Group*>> cols;
@@ -184,7 +310,7 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
         double target = totalRows * line / columns;
         int col = 0;
         double used = 0, tallest = 0;
-        for (const Group& g : mGroups)
+        for (const Group& g : mShown)
         {
             double h = (g.rows.size() + 2) * line;
             if (used > 0 && used + h > target + line * 2 && col + 1 < columns)
@@ -209,12 +335,15 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     header.setBold(true);
     header.setCapitalization(QFont::AllUppercase);
     header.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
+    QFont count = label;
+    count.setPixelSize(int(line * 0.55));
     QFontMetricsF monoFm(mono);
     double keyWidth = 0;
-    for (const Group& g : mGroups)
+    for (const Group& g : mShown)
         for (const Row& r : g.rows)
             keyWidth = std::max(keyWidth, monoFm.horizontalAdvance(r.key) + 14);
     keyWidth = std::min(keyWidth, colWidth * 0.45);
+    const QColor accent = themeColor("accent");
 
     for (int c = 0; c < columns; ++c)
     {
@@ -222,12 +351,19 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
         double y = content.top();
         for (const Group* g : cols[c])
         {
+            QRectF band(x, y, colWidth, line);
+            p.setPen(Qt::NoPen);
+            p.setBrush(themeShade(34, 235));
+            p.drawRoundedRect(band, 3, 3);
+            p.setBrush(accent);
+            p.drawRoundedRect(QRectF(band.left(), band.top() + 3, 3, band.height() - 6), 1.5, 1.5);
             p.setFont(header);
-            p.setPen(themeShade(150));
-            p.drawText(QRectF(x, y, colWidth, line), Qt::AlignLeft | Qt::AlignVCenter, g->title);
-            p.setPen(QPen(themeShade(70), 1));
-            p.drawLine(QPointF(x, y + line - 2), QPointF(x + colWidth, y + line - 2));
-            y += line + 2;
+            p.setPen(themeShade(225));
+            p.drawText(band.adjusted(10, 0, -8, 0), Qt::AlignLeft | Qt::AlignVCenter, g->title);
+            p.setFont(count);
+            p.setPen(themeShade(140));
+            p.drawText(band.adjusted(10, 0, -8, 0), Qt::AlignRight | Qt::AlignVCenter, QString::number(g->rows.size()));
+            y += line + 4;
             for (const Row& r : g->rows)
             {
                 QRectF keyRect(x + keyWidth - monoFm.horizontalAdvance(r.key) - 12, y + 2, monoFm.horizontalAdvance(r.key) + 10, line - 4);

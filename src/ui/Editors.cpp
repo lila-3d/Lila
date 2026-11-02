@@ -65,8 +65,8 @@ void registerEditorActions()
                   },
                   nullptr, "Edit marking menu slots, labels and targets"});
     actions::add({"help.hotkeyCheatSheet", "Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::open(); }, nullptr,
-                  "Show the hotkeys live in the focused panel"});
-    actions::add({"help.hotkeyCheatSheetClose", "Close Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::dismiss(); },
+                  "Show the hotkeys live in the focused panel: hold to peek, tap to keep it open and filter"});
+    actions::add({"help.hotkeyCheatSheetClose", "Close Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::released(); },
                   nullptr, "Hide the hotkey cheat sheet"});
     installMenuHotkeyHook();
 }
