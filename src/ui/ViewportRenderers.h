@@ -191,6 +191,13 @@ LILA_UI_API int activePanel();
 LILA_UI_API bool apply(int panel, Request r, render::FrameState& s);
 /** Runs on the main thread after a frame for panel is delivered, so the viewport redraws. */
 LILA_UI_API void setRedraw(int panel, std::function<void()> fn);
+/** The viewport reports its display's refresh rate, in Hz. */
+LILA_UI_API void setRefreshRate(int panel, std::function<double()> fn);
+/**
+ * Seconds between refreshes of the display showing panel (1/60 when unknown). A renderer whose frame is not yet final
+ * draws again this long after the last one. Main thread only.
+ */
+LILA_UI_API double refreshInterval(int panel);
 /** The viewport closed: ends its session and forgets it. */
 LILA_UI_API void release(int panel);
 

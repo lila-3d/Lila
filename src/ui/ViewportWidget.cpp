@@ -44,6 +44,7 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     static int panels = 0;
     mHudPanel = panels++;
     viewportRenderers::setRedraw(mHudPanel, [this] { requestFrame(); });
+    viewportRenderers::setRefreshRate(mHudPanel, [this] { return screen() ? screen()->refreshRate() : 0.0; });
 
     mCamera.zUp = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
 

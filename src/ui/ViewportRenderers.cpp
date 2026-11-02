@@ -36,6 +36,7 @@ struct View
     uint64_t serial = 0;
     std::optional<Request> last;
     std::function<void()> redraw;
+    std::function<double()> refreshHz;
 };
 
 std::map<int, View>& views()
@@ -431,6 +432,15 @@ bool apply(int panel, Request r, render::FrameState& s)
 }
 
 void setRedraw(int panel, std::function<void()> fn) { views()[panel].redraw = std::move(fn); }
+
+void setRefreshRate(int panel, std::function<double()> fn) { views()[panel].refreshHz = std::move(fn); }
+
+double refreshInterval(int panel)
+{
+    auto it = views().find(panel);
+    const double hz = it != views().end() && it->second.refreshHz ? it->second.refreshHz() : 0.0;
+    return 1.0 / (hz > 1.0 ? hz : 60.0);
+}
 
 void release(int panel)
 {

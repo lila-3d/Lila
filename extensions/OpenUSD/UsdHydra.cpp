@@ -647,12 +647,13 @@ private:
         });
     }
 
-    /** Progressive delegates: draw again a moment later, until they converge or a newer request comes. */
+    /** Progressive delegates: draw again a display refresh later, until they converge or a newer request comes. */
     void refineLater(uint64_t serial)
     {
         std::weak_ptr<bool> alive = mAlive;
-        std::thread([alive, serial, this] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        const auto wait = std::chrono::duration<double>(vr::refreshInterval(mPanel));
+        std::thread([alive, serial, wait, this] {
+            std::this_thread::sleep_for(wait);
             mainq::post([alive, serial, this] {
                 if (const auto a = alive.lock(); a && *a && mLast.serial == serial)
                 {

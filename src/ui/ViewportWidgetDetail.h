@@ -66,6 +66,7 @@
 #include <QDragEnterEvent>
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QScreen>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QApplication>
