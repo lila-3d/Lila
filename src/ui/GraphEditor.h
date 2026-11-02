@@ -36,6 +36,8 @@ protected:
     void focusInEvent(QFocusEvent* e) override;
 
 private:
+    /** The Channel Box sync listener (attrView). */
+    int mSyncListener = 0;
     friend class CurveView;
 
     void scheduleRebuild();

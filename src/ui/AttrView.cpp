@@ -26,6 +26,7 @@ struct State
     bool forced = false;
     bool held = false;
     bool used = false;
+    std::vector<scene::PlugRef> highlighted;
     std::map<int, std::function<void()>> listeners;
     int next = 1;
 };
@@ -271,6 +272,29 @@ QString formatNumber(double v)
     while (s.contains('.') && (s.endsWith('0') || s.endsWith('.')))
         s.chop(1);
     return s;
+}
+
+const std::vector<scene::PlugRef>& highlightedChannels()
+{
+    static std::vector<scene::PlugRef> none;
+    return state().highlighted.empty() ? none : state().highlighted;
+}
+
+void setHighlightedChannels(std::vector<scene::PlugRef> plugs)
+{
+    if (plugs == state().highlighted)
+        return;
+    state().highlighted = std::move(plugs);
+    if (syncGraphEditor())
+        notify();
+}
+
+bool syncGraphEditor() { return PrefStore::get().value(kFile, "/syncGraphEditor", false); }
+
+void setSyncGraphEditor(bool on)
+{
+    PrefStore::get().set(kFile, "/syncGraphEditor", on);
+    notify();
 }
 
 int addListener(std::function<void()> fn)

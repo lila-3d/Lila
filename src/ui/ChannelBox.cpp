@@ -1,4 +1,15 @@
 #include "ui/ChannelBox.h"
+#include "ui/AttrAuthoring.h"
+#include "ui/AttrView.h"
+#include "ui/Panels.h"
+#include "ui/Icons.h"
+#include "scene/RotationCurve.h"
+#include <QFrame>
+#include <QLabel>
+#include <QListWidget>
+#include <QPainter>
+#include <QPointer>
+#include <QToolButton>
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -317,6 +328,40 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(4);
 
+    setProperty("lilaMultiEditPanel", true);
+    attrView::installKeyWatch();
+    mStrip = new QListWidget(this);
+    mStrip->setObjectName("cbObjects");
+    mStrip->setFlow(QListView::LeftToRight);
+    mStrip->setWrapping(false);
+    mStrip->setDragDropMode(QAbstractItemView::InternalMove);
+    mStrip->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    mStrip->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    mStrip->setFixedHeight(mStrip->fontMetrics().height() + 12);
+    mStrip->setSpacing(2);
+    mStrip->setToolTip("The selection in order: click to make one the lead, drag to reorder");
+    layout->addWidget(mStrip);
+    connect(mStrip, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        attrView::setLead(scene::NodeId(item->data(Qt::UserRole).toULongLong()));
+        scheduleRefresh();
+    });
+    connect(mStrip->model(), &QAbstractItemModel::rowsMoved, this, [this] {
+        json order = json::array();
+        Graph& g = Graph::current();
+        for (int i = 0; i < mStrip->count(); ++i)
+            if (scene::Node* n = g.node(scene::NodeId(mStrip->item(i)->data(Qt::UserRole).toULongLong())))
+                order.push_back(n->path());
+        QTimer::singleShot(0, this, [order] {
+            try
+            {
+                ops::execute("select", {{"args", order}}, CallSource::UI);
+            }
+            catch (const CommandError& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+    });
     mName = new QLineEdit(this);
     mName->setPlaceholderText("Nothing selected");
     mName->setFocusPolicy(Qt::ClickFocus);
@@ -339,6 +384,94 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
         }
     });
 
+    // Filter text and chips, the shared name mode and Graph Editor sync.
+    auto* filterRow = new QHBoxLayout;
+    filterRow->setSpacing(2);
+    mFilter = new QLineEdit(this);
+    mFilter->setObjectName("cbFilter");
+    mFilter->setPlaceholderText("Filter channels");
+    mFilter->setClearButtonEnabled(true);
+    connect(mFilter, &QLineEdit::textChanged, this, [this] { scheduleRefresh(); });
+    filterRow->addWidget(mFilter, 1);
+    mNameMode = new QToolButton(this);
+    mNameMode->setObjectName("cbNameMode");
+    mNameMode->setAutoRaise(true);
+    mNameMode->setToolTip("Names: nice, long or short (shared with the Attribute Editor)");
+    connect(mNameMode, &QToolButton::clicked, this, [] {
+        const attrView::NameMode m = attrView::nameMode();
+        attrView::setNameMode(m == attrView::NameMode::Nice ? attrView::NameMode::Long
+                              : m == attrView::NameMode::Long ? attrView::NameMode::Short
+                                                              : attrView::NameMode::Nice);
+    });
+    filterRow->addWidget(mNameMode);
+    mSync = new QToolButton(this);
+    mSync->setObjectName("cbSyncGraph");
+    mSync->setIcon(icon("chart-line"));
+    mSync->setAutoRaise(true);
+    mSync->setCheckable(true);
+    mSync->setChecked(attrView::syncGraphEditor());
+    mSync->setToolTip("Sync Graph Editor: it shows only the highlighted channels");
+    connect(mSync, &QToolButton::toggled, this, [](bool on) { attrView::setSyncGraphEditor(on); });
+    filterRow->addWidget(mSync);
+    layout->addLayout(filterRow);
+    mChipRow = new QWidget(this);
+    auto* chips = new QHBoxLayout(mChipRow);
+    chips->setContentsMargins(0, 0, 0, 0);
+    chips->setSpacing(2);
+    for (const char* chip : {"Keyed", "Driven", "Connected", "User", "Locked", "TRS", "Type"})
+    {
+        auto* b = new QToolButton(mChipRow);
+        b->setObjectName(QString("cbChip_") + chip);
+        b->setText(chip);
+        b->setAutoRaise(true);
+        b->setToolTip(QString("Click: only %1 channels. Again: all but those. Again: off.")
+                          .arg(std::string_view(chip) == "Type" ? "the lead's own type's" : QString(chip).toLower()));
+        mChips[chip] = 0;
+        connect(b, &QToolButton::clicked, this, [this, b, name = std::string(chip)] {
+            int& s = mChips[name];
+            s = (s + 1) % 3;
+            b->setText(QString(s == 2 ? "not " : "") + QString::fromStdString(name));
+            QFont f = b->font();
+            f.setBold(s != 0);
+            b->setFont(f);
+            scheduleRefresh();
+        });
+        chips->addWidget(b);
+    }
+    chips->addStretch(1);
+    layout->addWidget(mChipRow);
+    mHint = new QFrame(this);
+    mHint->setObjectName("cbHint");
+    mHint->setStyleSheet(QString("#cbHint { background: %1; border-radius: 3px; }").arg(themeColor("altBase").name()));
+    auto* hintRow = new QHBoxLayout(mHint);
+    hintRow->setContentsMargins(6, 3, 6, 3);
+    mHintText = new QLabel(mHint);
+    mHintText->setObjectName("cbHintText");
+    mHintText->setWordWrap(true);
+    auto* hintOff = new QLabel("<a href=\"off\">Turn off this hint</a>", mHint);
+    connect(hintOff, &QLabel::linkActivated, this, [this] {
+        attrView::setHintEnabled(false);
+        mHint->hide();
+    });
+    hintRow->addWidget(mHintText, 1);
+    hintRow->addWidget(hintOff);
+    mHint->hide();
+    layout->addWidget(mHint);
+    auto showMode = [this] { mNameMode->setText(attrView::nameMode() == attrView::NameMode::Nice ? "Nice"
+                                                : attrView::nameMode() == attrView::NameMode::Long ? "Long" : "Short"); };
+    showMode();
+    mViewListener = attrView::addListener([this, showMode, mode = attrView::nameMode(), places = attrView::precision()]() mutable {
+        showMode();
+        // A name mode change relabels every row; the Alt key and the lead only need values.
+        if (mode != attrView::nameMode() || places != attrView::precision())
+        {
+            mode = attrView::nameMode();
+            places = attrView::precision();
+            mRows.clear();
+        }
+        scheduleRefresh();
+    });
+
     mTable = new QTableWidget(0, 2, this);
     // The rows are the scene selection's channels, so Delete removes the selection as in Maya.
     deletion::claimScene(this);
@@ -355,6 +488,15 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mTable->viewport()->installEventFilter(this);
     mTable->installEventFilter(this);
     layout->addWidget(mTable, 1);
+    connect(mTable, &QTableWidget::itemSelectionChanged, this, [this] {
+        std::vector<scene::PlugRef> plugs;
+        for (int r : highlightedRows())
+        {
+            const Row& row = mRows[size_t(r)];
+            plugs.push_back({row.node ? row.node : mNode, row.attrIndex, row.component, row.element});
+        }
+        attrView::setHighlightedChannels(plugs);
+    });
     connect(mTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* item) {
         if (!mUpdating)
             commitCell(item);
@@ -396,8 +538,9 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             if (item->column() != 0 || item->row() >= int(mRows.size()) || mRows[item->row()].header)
                 continue;
             const Row& row = mRows[item->row()];
-            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->path()} : targets())
-                plugs.push_back(name + "." + row.attr);
+            for (const std::string& name : row.node ? std::vector<std::string>{g.node(row.node)->path()} : allTargets())
+                if (hasPlug(g, name + "." + row.attr))
+                    plugs.push_back(name + "." + row.attr);
         }
         auto runEach = [plugs](const char* label, auto fn) {
             UndoChunk chunk(label);
@@ -413,11 +556,81 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                 }
             }
         };
+        bool anyKeyed = false, anyDriven = false, anyLocked = false, anyUnlocked = false, anyMuted = false;
+        std::vector<scene::NodeId> sources;
+        for (const json& p : plugs)
+        {
+            scene::NodeId src = scene::kNoNode;
+            const uint32_t st = stateOf(g.plug(p.get<std::string>()), &src);
+            anyKeyed |= (st & kKeyed) != 0;
+            anyMuted |= (st & kMuted) != 0;
+            anyDriven |= (st & (kKeyed | kDrivenKey | kExpression | kConnected | kConstraint)) != 0;
+            (st & kLocked ? anyLocked : anyUnlocked) = true;
+            if (src != scene::kNoNode && !(st & kKeyed) && std::find(sources.begin(), sources.end(), src) == sources.end())
+                sources.push_back(src);
+        }
         QMenu menu(this);
+        menu.addAction("Key Selected", [runEach] {
+            runEach("Key Selected", [](const std::string& p) { ops::execute("setKeyframe", {{"args", {p}}}, CallSource::UI); });
+        });
+        menu.addAction("Breakdown Selected", [runEach] {
+            runEach("Breakdown Selected", [](const std::string& p) {
+                ops::execute("setKeyframe", {{"args", {p}}, {"breakdown", true}}, CallSource::UI);
+            });
+        });
+        if (anyKeyed)
+            menu.addAction(anyMuted ? "Unmute Selected" : "Mute Selected", [runEach, anyMuted] {
+                runEach("Mute", [anyMuted](const std::string& p) { ops::execute("mute", {{"args", {p}}, {"disable", anyMuted}}, CallSource::UI); });
+            });
+        menu.addAction("Key All", [objects = allTargets()] {
+            try
+            {
+                ops::execute("setKeyframe", {{"args", objects}}, CallSource::UI);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+        menu.addAction("Mute All", [objects = allTargets()] {
+            try
+            {
+                ops::execute("mute", {{"args", objects}}, CallSource::UI);
+            }
+            catch (const std::exception& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+        menu.addSeparator();
+        menu.addAction("Copy Selected Values", [this] { copyValues(); });
+        if (!QApplication::clipboard()->text().trimmed().isEmpty())
+            menu.addAction("Paste Values", [this] { pasteValues(); });
+        std::vector<std::string> layers;
+        for (scene::NodeId id : g.nodes())
+            if (const scene::Node* l = g.node(id); l && l->type().isA("animLayer"))
+                layers.push_back(l->path());
+        if (!layers.empty())
+        {
+            QMenu* add = menu.addMenu("Add to Anim Layer");
+            for (const std::string& layer : layers)
+                add->addAction(QString::fromStdString(layer), [plugs, layer] {
+                    try
+                    {
+                        ops::execute("addAnimLayerMembers", {{"args", plugs}, {"layer", layer}}, CallSource::UI);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        log::error("{}", e.what());
+                    }
+                });
+        }
+        menu.addSeparator();
+
         QMenu* freeze = menu.addMenu("Freeze");
         for (auto [label, t, r, s] : {std::tuple{"Translate", true, false, false}, std::tuple{"Rotate", false, true, false},
                                       std::tuple{"Scale", false, false, true}, std::tuple{"All", true, true, true}})
-            freeze->addAction(label, [objects = targets(), t, r, s] {
+            freeze->addAction(label, [objects = allTargets(), t, r, s] {
                 try
                 {
                     ops::execute("freezeTransforms", {{"args", objects}, {"translate", t}, {"rotate", r}, {"scale", s}}, CallSource::UI);
@@ -427,16 +640,10 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                     log::error("{}", e.what());
                 }
             });
-        menu.addSeparator();
-        menu.addAction("Copy Selected Values", [this] { copyValues(); });
-        QAction* paste = menu.addAction("Paste Values", [this] { pasteValues(); });
-        paste->setEnabled(!QApplication::clipboard()->text().trimmed().isEmpty());
-        menu.addSeparator();
         menu.addAction("Reset to Default", [this] { resetRows(highlightedRows()); });
-        menu.addAction("Key Selected", [runEach] {
-            runEach("Key Selected", [](const std::string& p) { ops::execute("setKeyframe", {{"args", {p}}}, CallSource::UI); });
-        });
-        menu.addAction("Break Connections", [runEach] {
+        QMenu* more = &menu;
+        if (anyDriven)
+            more->addAction("Break Connections", [runEach] {
             runEach("Break Connections", [](const std::string& p) {
                 Graph& g = Graph::current();
                 scene::PlugRef ref = g.plug(p);
@@ -447,14 +654,55 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
                     ops::execute("disconnectAttr", {{"args", {p}}}, CallSource::UI);
             });
         });
-        menu.addAction("Delete Keys", [runEach] {
-            runEach("Delete Keys", [](const std::string& p) { ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
-        });
+        if (anyKeyed)
+            menu.addAction("Delete Keys", [runEach] {
+                runEach("Delete Keys", [](const std::string& p) { ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
+            });
+        if (sources.size() == 1)
+            menu.addAction("Select Source", [path = g.node(sources.front())->path()] {
+                try
+                {
+                    ops::execute("select", {{"args", {path}}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
         json added = json::array();
         for (const json& p : plugs)
             if (const scene::PlugRef ref = g.plug(p.get<std::string>()); ref.valid() && ref.component < 0 &&
                                                                               (g.node(ref.node)->type().attrs[size_t(ref.attr)].flags & scene::AttrUser))
                 added.push_back(p);
+        if (added.size() == 1)
+        {
+            const scene::PlugRef ref = g.plug(added[0].get<std::string>());
+            const std::string attr = g.attr(ref).name;
+            menu.addAction(icon("pencil"), "Edit Attribute...", [this, node = ref.node, attr] { attrAuthoring::showEdit({node}, attr, mTable); });
+        }
+        if (!added.empty())
+        {
+            menu.addAction("Hide Selected", [added] {
+                try
+                {
+                    ops::execute("editAttr", {{"args", added}, {"keyable", false}, {"channelBox", false}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
+            menu.addAction("Make Nonkeyable", [added] {
+                try
+                {
+                    ops::execute("editAttr", {{"args", added}, {"keyable", false}, {"channelBox", true}}, CallSource::UI);
+                }
+                catch (const CommandError& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
+        }
         if (!added.empty())
             menu.addAction("Delete Attributes", [added] {
                 UndoChunk chunk("Delete Attributes");
@@ -486,7 +734,8 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
             });
         menu.addSeparator();
         for (bool lock : {true, false})
-            menu.addAction(lock ? "Lock Selected" : "Unlock Selected", [runEach, lock] {
+            if (lock ? anyUnlocked : anyLocked)
+                menu.addAction(lock ? "Lock Selected" : "Unlock Selected", [runEach, lock] {
                 runEach(lock ? "Lock Selected" : "Unlock Selected", [lock](const std::string& p) {
                     ops::execute("setAttr", {{"args", {p}}, {"lock", lock}}, CallSource::UI);
                 });
@@ -521,6 +770,7 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 
 ChannelBox::~ChannelBox()
 {
+    attrView::removeListener(mViewListener);
     if (mScrub)
         endScrub(false);
     if (gSliderBox == this)
@@ -543,13 +793,257 @@ void ChannelBox::scheduleRefresh()
 
 std::vector<std::string> ChannelBox::targets() const
 {
+    if (attrView::multiEditHeld())
+        return allTargets();
+    scene::Node* n = Graph::current().node(mNode);
+    return n ? std::vector<std::string>{n->path()} : std::vector<std::string>{};
+}
+
+std::vector<std::string> ChannelBox::allTargets() const
+{
     std::vector<std::string> out;
     Graph& g = Graph::current();
-    for (scene::NodeId id : g.selection())
+    for (scene::NodeId id : attrView::selectionLeadFirst())
         if (scene::Node* n = g.node(id))
             out.push_back(n->path());
     return out;
 }
+
+namespace
+{
+/** Maya's channel colours, so the meaning carries over: data colour, not chrome. */
+QColor cbStateColor(uint32_t state)
+{
+    using CB = ChannelBox;
+    if (state & CB::kMuted)
+        return QColor(154, 123, 82);
+    if (state & CB::kBreakdown)
+        return QColor(91, 180, 107);
+    if (state & CB::kKeyed)
+        return QColor(205, 91, 91);
+    if (state & CB::kDrivenKey)
+        return QColor(91, 143, 214);
+    if (state & CB::kExpression)
+        return QColor(167, 123, 214);
+    if (state & CB::kConstraint)
+        return QColor(107, 176, 200);
+    if (state & CB::kConnected)
+        return QColor(214, 194, 91);
+    if (state & CB::kLocked)
+        return QColor(138, 138, 138);
+    return {};
+}
+} // namespace
+
+static QIcon cbStateIcon(uint32_t state)
+{
+    const QColor c = cbStateColor(state);
+    if (!c.isValid())
+        return {};
+    static std::map<uint32_t, QIcon> cache;
+    const uint32_t key = c.rgb() ^ (state & ChannelBox::kKeyNow ? 0x1000000u : 0u);
+    if (auto it = cache.find(key); it != cache.end())
+        return it->second;
+    QPixmap pm(8, 16);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    // A full stripe on a key at this frame, a thinner one between keys.
+    p.fillRect(QRect(0, 1, (state & ChannelBox::kKeyNow) || !(state & ChannelBox::kKeyed) ? 4 : 2, 14), c);
+    return cache[key] = QIcon(pm);
+}
+
+static QString cbStateText(uint32_t state, scene::NodeId source)
+{
+    using CB = ChannelBox;
+    Graph& g = Graph::current();
+    const scene::Node* src = g.node(source);
+    const QString from = src ? QString::fromStdString(src->path()) : QString();
+    QStringList parts;
+    if (state & CB::kKeyed)
+        parts << ((state & CB::kBreakdown) ? "Breakdown at this frame" : (state & CB::kKeyNow) ? "Key at this frame" : "Keyed") +
+                     QString(" (%1); click for the Graph Editor").arg(from);
+    if (state & CB::kMuted)
+        parts << "Muted";
+    if (state & CB::kDrivenKey)
+        parts << "Driven key: " + from;
+    if (state & CB::kExpression)
+        parts << "Expression: " + from;
+    if (state & CB::kConstraint)
+        parts << "Constraint: " + from;
+    if (state & CB::kConnected)
+        parts << "Connected from " + from;
+    if (!(state & CB::kKeyed) && src)
+        parts.back() += "; click to select it";
+    if (state & CB::kLocked)
+        parts << "Locked";
+    return parts.join("\n");
+}
+
+uint32_t ChannelBox::stateOf(scene::PlugRef ref, scene::NodeId* source)
+{
+    Graph& g = Graph::current();
+    uint32_t s = 0;
+    if (source)
+        *source = scene::kNoNode;
+    if (!ref.valid() || !g.node(ref.node))
+        return 0;
+    if (g.isLocked(ref))
+        s |= kLocked;
+    if (const scene::NodeId curve = scene::anim::curveFor(g, ref))
+    {
+        s |= kKeyed;
+        if (source)
+            *source = curve;
+        const scene::Node& c = *g.node(curve);
+        if (scene::anim::hasKeyAt(c, g.time()))
+            s |= kKeyNow;
+        if (const int mute = c.type().attrIndex("mute"); mute >= 0 && c.as<bool>(mute))
+            s |= kMuted;
+        auto breakdownNow = [&](const auto& keys) {
+            for (const auto& k : keys)
+                if (std::abs(k.time - g.time()) < 1e-6 && k.breakdown)
+                    return true;
+            return false;
+        };
+        if ((s & kKeyNow) && (scene::anim::isRotationCurve(c) ? breakdownNow(scene::anim::rotationCurveOf(c).keys)
+                                                              : breakdownNow(scene::anim::curveOf(c).keys)))
+            s |= kBreakdown;
+        return s;
+    }
+    std::optional<scene::PlugRef> src = g.source(ref);
+    if (!src && ref.component >= 0)
+        src = g.source({ref.node, ref.attr, -1, ref.element});
+    if (!src)
+        return s;
+    const scene::Node* from = g.node(src->node);
+    if (source)
+        *source = src->node;
+    const std::string& type = from->type().registered().name;
+    if (from->type().isA("drivenChannel"))
+        s |= kDrivenKey;
+    else if (from->type().attrIndex("lilaExpression") >= 0 || type.find("xpression") != std::string::npos)
+        s |= kExpression;
+    else if (type.find("onstraint") != std::string::npos)
+        s |= kConstraint;
+    else
+        s |= kConnected;
+    return s;
+}
+
+bool ChannelBox::passesFilter(const Row& row, scene::NodeId lead) const
+{
+    if (row.header)
+        return true;
+    Graph& g = Graph::current();
+    const scene::NodeId owner = row.node ? row.node : lead;
+    const scene::Node* n = g.node(owner);
+    if (!n)
+        return false;
+    const scene::AttrDef& def = n->type().attrs[size_t(row.attrIndex)];
+    if (const QString q = mFilter ? mFilter->text().trimmed() : QString(); !q.isEmpty())
+    {
+        const QString label = row.label.empty() ? attrView::label(def, row.component) : QString::fromStdString(row.label);
+        const std::string& shortName = row.component >= 0 && def.type == scene::PlugType::Vec3 ? def.childShort[size_t(row.component)] : def.shortName;
+        if (!label.contains(q, Qt::CaseInsensitive) && !QString::fromStdString(row.attr).contains(q, Qt::CaseInsensitive) &&
+            !QString::fromStdString(shortName).contains(q, Qt::CaseInsensitive))
+            return false;
+    }
+    const uint32_t s = stateOf({owner, row.attrIndex, row.component, row.element});
+    bool own = false;
+    for (const scene::AttrDef& d : n->type().registered().ownAttrs)
+        own |= d.name == def.name;
+    const std::map<std::string, bool> has = {
+        {"Keyed", (s & kKeyed) != 0},
+        {"Driven", (s & (kDrivenKey | kExpression | kConstraint)) != 0},
+        {"Connected", (s & (kConnected | kDrivenKey | kExpression | kConstraint | kKeyed)) != 0},
+        {"User", (def.flags & scene::AttrUser) != 0},
+        {"Locked", (s & kLocked) != 0},
+        {"TRS", def.name == "translate" || def.name == "rotate" || def.name == "scale"},
+        {"Type", own},
+    };
+    for (const auto& [chip, state] : mChips)
+        if (state != 0 && has.at(chip) != (state == 1))
+            return false;
+    return true;
+}
+
+void ChannelBox::refreshStrip()
+{
+    Graph& g = Graph::current();
+    const auto& sel = g.selection();
+    std::vector<scene::NodeId> shown;
+    for (int i = 0; i < mStrip->count(); ++i)
+        shown.push_back(scene::NodeId(mStrip->item(i)->data(Qt::UserRole).toULongLong()));
+    const scene::NodeId lead = attrView::lead();
+    if (shown != sel)
+    {
+        QSignalBlocker block(mStrip);
+        mStrip->clear();
+        for (scene::NodeId id : sel)
+            if (const scene::Node* n = g.node(id))
+            {
+                auto* item = new QListWidgetItem(QString::fromStdString(attrView::showNamespaces() ? n->path() : n->name()), mStrip);
+                item->setData(Qt::UserRole, qulonglong(id));
+            }
+    }
+    for (int i = 0; i < mStrip->count(); ++i)
+    {
+        QListWidgetItem* item = mStrip->item(i);
+        QFont f = item->font();
+        f.setBold(scene::NodeId(item->data(Qt::UserRole).toULongLong()) == lead);
+        item->setFont(f);
+        item->setToolTip(f.bold() ? "The lead object: edits go here (Alt edits all)" : "Click to make this the lead");
+    }
+    mStrip->setVisible(sel.size() > 1);
+}
+
+void ChannelBox::noteEdit(const Row& row)
+{
+    if (attrView::multiEditHeld())
+    {
+        attrView::noteMultiEditUsed();
+        return;
+    }
+    Graph& g = Graph::current();
+    if (row.node || g.selection().size() < 2 || !attrView::hintEnabled())
+        return;
+    int holders = 0;
+    for (const std::string& path : allTargets())
+        holders += hasPlug(g, path + "." + row.attr) ? 1 : 0;
+    const scene::Node* n = g.node(mNode);
+    if (holders < 2 || !n)
+        return;
+    const QString text = QString("Changed %1 only. Hold Alt to change all %2.").arg(QString::fromStdString(n->name())).arg(holders);
+    mHintText->setText(text);
+    mHint->show();
+    QTimer::singleShot(5000, mHint, [hint = QPointer<QWidget>(mHint), label = QPointer<QLabel>(mHintText), text] {
+        if (hint && label && label->text() == text)
+            hint->hide();
+    });
+}
+
+void ChannelBox::jumpToSource(int row)
+{
+    const Row& r = mRows[size_t(row)];
+    const scene::NodeId owner = r.node ? r.node : mNode;
+    scene::NodeId source = scene::kNoNode;
+    const uint32_t s = stateOf({owner, r.attrIndex, r.component, r.element}, &source);
+    if (s & kKeyed)
+    {
+        panels::show("graphEditor");
+        return;
+    }
+    if (const scene::Node* src = Graph::current().node(source))
+        try
+        {
+            ops::execute("select", {{"args", {src->path()}}}, CallSource::UI);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+        }
+}
+
 
 std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
 {
@@ -620,8 +1114,9 @@ void ChannelBox::refresh()
         return;
     Graph& g = Graph::current();
     g.evaluate();
-    scene::NodeId lead = g.selection().empty() ? scene::kNoNode : g.selection().back();
+    scene::NodeId lead = attrView::lead();
     scene::Node* n = g.node(lead);
+    refreshStrip();
 
     mUpdating = true;
     mNode = lead;
@@ -629,7 +1124,25 @@ void ChannelBox::refresh()
     mName->setToolTip(n ? QString::fromStdString(n->fullPath()) : QString());
     mName->setEnabled(n != nullptr);
 
-    std::vector<Row> rows = buildRows(lead);
+    std::vector<Row> rows;
+    {
+        // Filtered, keeping an INPUTS heading only when a row under it stays.
+        std::vector<Row> all = buildRows(lead);
+        for (size_t i = 0; i < all.size(); ++i)
+        {
+            if (all[i].header)
+            {
+                size_t j = i + 1;
+                while (j < all.size() && !all[j].header && !passesFilter(all[j], lead))
+                    ++j;
+                if (j < all.size() && !all[j].header)
+                    rows.push_back(all[i]);
+                continue;
+            }
+            if (passesFilter(all[i], lead))
+                rows.push_back(all[i]);
+        }
+    }
     bool sameLayout = rows.size() == mRows.size() &&
                       std::equal(rows.begin(), rows.end(), mRows.begin(), [](const Row& a, const Row& b) {
                           return a.attr == b.attr && a.node == b.node && a.header == b.header && a.component == b.component && a.label == b.label &&
@@ -667,8 +1180,8 @@ void ChannelBox::refresh()
             }
             scene::Node* owner = g.node(row.node ? row.node : lead);
             const scene::AttrDef& def = owner->type().attrs[row.attrIndex];
-            QString shown = row.label.empty() ? niceName(row.attr) : QString::fromStdString(row.label);
-            if (row.label.empty() && !def.niceName.empty())
+            QString shown = row.label.empty() ? attrView::label(def, row.component) : QString::fromStdString(row.label);
+            if (row.label.empty() && !def.niceName.empty() && attrView::nameMode() == attrView::NameMode::Nice)
             {
                 const char* axes = (def.flags & scene::AttrColor) ? "RGB" : "XYZ";
                 shown = QString::fromStdString(def.niceName) + (row.component >= 0 && row.component < 3 ? QString(" ") + axes[row.component] : QString());
@@ -707,7 +1220,7 @@ void ChannelBox::refresh()
             text = idx >= 0 && idx < int64_t(names.size()) ? QString::fromStdString(names[size_t(idx)]) : QString::number(idx);
         }
         else
-            text = formatNumber(numericOf(v, row.component));
+            text = attrView::formatNumber(numericOf(v, row.component));
         QTableWidgetItem* item = mTable->item(r, 1);
         item->setText(text);
         // Keyed channels get a gray tint, brighter on a key; other driven channels read as locked.
@@ -726,6 +1239,20 @@ void ChannelBox::refresh()
         item->setFont(f);
         item->setFlags(driven || locked ? (Qt::ItemIsEnabled | Qt::ItemIsSelectable)
                                         : (Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable));
+        scene::NodeId source = scene::kNoNode;
+        const uint32_t state = stateOf(ref, &source);
+        QTableWidgetItem* nameItem = mTable->item(r, 0);
+        nameItem->setData(Qt::UserRole, int(state));
+        nameItem->setIcon(cbStateIcon(state));
+        QString tip = nameItem->data(Qt::UserRole + 1).toString();
+        if (tip.isEmpty())
+        {
+            tip = nameItem->toolTip();
+            nameItem->setData(Qt::UserRole + 1, tip);
+        }
+        if (const QString what = cbStateText(state, source); !what.isEmpty())
+            tip = what + "\n" + tip;
+        nameItem->setToolTip(tip);
     }
     mUpdating = false;
 }
@@ -742,10 +1269,13 @@ void ChannelBox::commitCell(QTableWidgetItem* item)
     if (std::find(rows.begin(), rows.end(), item->row()) == rows.end())
         rows = {item->row()};
     QString text = item->text();
-    UndoChunk chunk("Set Channels");
-    for (int r : rows)
-        if (!mRows[r].header)
-            apply(mRows[r], text);
+    {
+        UndoChunk chunk("Set Channels");
+        for (int r : rows)
+            if (!mRows[r].header)
+                apply(mRows[r], text);
+    }
+    noteEdit(mRows[item->row()]);
     scheduleRefresh();
 }
 
@@ -763,9 +1293,12 @@ void ChannelBox::toggleBool(int row)
         rows.push_back(row);
     // Every channel takes the opposite of the clicked one, like Maya, rather than each flipping on its own.
     const QString text = cell->text() == "on" ? "off" : "on";
-    UndoChunk chunk("Toggle Channels");
-    for (int r : rows)
-        apply(mRows[r], text);
+    {
+        UndoChunk chunk("Toggle Channels");
+        for (int r : rows)
+            apply(mRows[r], text);
+    }
+    noteEdit(mRows[row]);
     scheduleRefresh();
 }
 
@@ -844,6 +1377,16 @@ bool ChannelBox::eventFilter(QObject* obj, QEvent* e)
         }
         break;
     case QEvent::MouseButtonPress:
+        if (me->button() == Qt::LeftButton && me->position().x() < 16)
+        {
+            QModelIndex idx = mTable->indexAt(me->position().toPoint());
+            if (idx.isValid() && idx.column() == 0 && idx.row() < int(mRows.size()) && !mRows[idx.row()].header &&
+                (mTable->item(idx.row(), 0)->data(Qt::UserRole).toInt() & ~int(kLocked)))
+            {
+                jumpToSource(idx.row());
+                return true;
+            }
+        }
         if (me->button() == Qt::RightButton && !mScrub)
         {
             Q_EMIT mTable->customContextMenuRequested(me->position().toPoint());

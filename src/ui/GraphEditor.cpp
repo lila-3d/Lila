@@ -1,4 +1,5 @@
 #include "ui/GraphEditor.h"
+#include "ui/AttrView.h"
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
@@ -1148,6 +1149,7 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
     split->setSizes({170, 600});
     layout->addWidget(split, 1);
     connect(mChannels, &QTreeWidget::itemSelectionChanged, this, [this] { applyVisibility(); });
+    mSyncListener = attrView::addListener([this] { applyVisibility(); });
 
     mListener = Graph::current().addListener([this](scene::Change c, NodeId id) {
         if (c == scene::Change::Value)
@@ -1170,6 +1172,7 @@ GraphEditor::GraphEditor(QWidget* parent) : QWidget(parent)
 
 GraphEditor::~GraphEditor()
 {
+    attrView::removeListener(mSyncListener);
     Graph::current().removeListener(mListener);
     if (current() == this)
         current() = nullptr;
@@ -1323,8 +1326,12 @@ void GraphEditor::applyVisibility()
         for (int c = 0; c < item->childCount(); ++c)
             picked.push_back(item->child(c)->data(0, Qt::UserRole).toInt());
     }
+    // Synced to the Channel Box: its highlighted channels, unless channels are picked here.
+    const std::vector<scene::PlugRef>& synced = attrView::highlightedChannels();
+    const bool sync = picked.empty() && attrView::syncGraphEditor() && !synced.empty();
     for (int i = 0; i < int(mView->channels.size()); ++i)
-        mView->channels[i].shown = picked.empty() || std::find(picked.begin(), picked.end(), i) != picked.end();
+        mView->channels[i].shown = sync ? std::find(synced.begin(), synced.end(), mView->channels[i].plug) != synced.end()
+                                        : picked.empty() || std::find(picked.begin(), picked.end(), i) != picked.end();
     mView->dropMissing();
     refreshKeyFields();
     mView->update();

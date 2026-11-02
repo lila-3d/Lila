@@ -8,9 +8,14 @@
 #include <QElapsedTimer>
 #include <QWidget>
 
+#include <map>
 #include <optional>
+#include <string>
 
+class QLabel;
 class QLineEdit;
+class QListWidget;
+class QToolButton;
 class QTableWidget;
 class QTableWidgetItem;
 class QTimer;
@@ -30,7 +35,9 @@ LILA_UI_API bool active();
 } // namespace channelSlider
 
 /**
- * Maya's channel box: the keyable channels of the lead selected node, edited for every selected node at once.
+ * Maya's channel box: the keyable channels of the lead selected node, edited on the lead, or with Alt held on every
+ * selected node that has the channel. A filter field and chips narrow the rows; a stripe on each name shows what drives
+ * it (key, breakdown, driven key, expression, connection, constraint, mute, lock), and a click on it jumps there.
  * Values accept expressions (`+=5`, `*=2`, `=10`). Left drag over channel names selects a range (Ctrl toggles, Shift
  * extends); middle drag anywhere scrubs the highlighted channels (Ctrl slow, Shift fast); the whole drag is one undo step. A middle click on a channel name
  * resets it (and every highlighted channel with it) to its default.
@@ -70,7 +77,36 @@ private:
     void commitCell(QTableWidgetItem* item);
     /** Applies a value (or expression) to every selected node that has the channel. */
     void apply(const Row& row, const QString& text);
+    /** The objects value edits go to: the lead, or every selected one while Alt is held. */
     std::vector<std::string> targets() const;
+    /** Every selected object, lead first: menu actions (key, lock, freeze) act on all of them. */
+    std::vector<std::string> allTargets() const;
+
+public:
+    /** What drives or marks a channel, as bits; also what the filter chips test. */
+    enum State : uint32_t
+    {
+        kKeyed = 1,
+        kKeyNow = 2,
+        kBreakdown = 4,
+        kDrivenKey = 8,
+        kExpression = 16,
+        kConnected = 32,
+        kConstraint = 64,
+        kMuted = 128,
+        kLocked = 256,
+    };
+    /** The state of a plug and, when something drives it, that source's node. */
+    static uint32_t stateOf(scene::PlugRef plug, scene::NodeId* source = nullptr);
+
+private:
+    /** Whether a row passes the filter text and chips. */
+    bool passesFilter(const Row& row, scene::NodeId lead) const;
+    void refreshStrip();
+    /** After a lead-only edit with several objects selected: "Changed X only. Hold Alt to change all N." */
+    void noteEdit(const Row& row);
+    /** Opens what drives the row: the Graph Editor for keys, the source node for anything else. */
+    void jumpToSource(int row);
     /** Flips a boolean channel on every selected node, and every other highlighted boolean channel to match. */
     void toggleBool(int row);
     void beginScrub(QPoint pos);
@@ -96,6 +132,16 @@ private:
     friend void channelSlider::end();
 
     QLineEdit* mName = nullptr;
+    QLineEdit* mFilter = nullptr;
+    /** Filter chips by name: 0 off, 1 only channels with it, 2 only channels without it. */
+    std::map<std::string, int> mChips;
+    QWidget* mChipRow = nullptr;
+    QListWidget* mStrip = nullptr;
+    QToolButton* mNameMode = nullptr;
+    QToolButton* mSync = nullptr;
+    QWidget* mHint = nullptr;
+    QLabel* mHintText = nullptr;
+    int mViewListener = 0;
     QTableWidget* mTable = nullptr;
     std::vector<Row> mRows;
     scene::NodeId mNode = scene::kNoNode;

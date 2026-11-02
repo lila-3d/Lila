@@ -64,6 +64,12 @@ LILA_UI_API void setShowNamespaces(bool on);
 /** A number as the panels show it: precision places, trailing zeros dropped. */
 LILA_UI_API QString formatNumber(double v);
 
+/** The Channel Box's highlighted channels, and whether the Graph Editor shows only those. */
+LILA_UI_API const std::vector<scene::PlugRef>& highlightedChannels();
+LILA_UI_API void setHighlightedChannels(std::vector<scene::PlugRef> plugs);
+LILA_UI_API bool syncGraphEditor();
+LILA_UI_API void setSyncGraphEditor(bool on);
+
 /** Called after any setting here or the lead changes. Returns an id for removeListener. */
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
