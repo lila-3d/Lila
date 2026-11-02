@@ -51,6 +51,17 @@
     "zlib",
     "draco",
     {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale"
+      ]
+    },
+    "miniaudio",
+    {
       "name": "tracy",
       "default-features": false,
       "features": [

@@ -1,5 +1,7 @@
 set(LILA_UNITY_SKIP
     src/io/FileTypes.cpp
+    src/media/AudioEngine.cpp
+    src/media/Decode.cpp
     src/scene/AttrCommands.cpp
     src/ui/WeightPaintTool.cpp
     src/scene/AttrComponents.cpp

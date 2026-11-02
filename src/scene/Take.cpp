@@ -356,6 +356,10 @@ NodeId duplicateTake(Graph& g, NodeId take, const std::string& name)
     if (g.node(copy)->as<bool>(TakeNode::kActive))
         g.setValue({copy, TakeNode::kActive}, false);
     setParked(g, copy, parked);
+    // The copy is another version of the same clip, so it plays against the same sound and footage.
+    for (const PlugRef& e : g.elements({take, TakeNode::kMedia, -1}))
+        if (auto media = g.source(e))
+            g.connect(*media, {copy, TakeNode::kMedia, -1});
     return copy;
 }
 
@@ -485,6 +489,8 @@ void registerTakeTypes()
          .doc = "While inactive: [[destination plug, source plug], ...] of its animation."},
         {.name = "folder", .type = PlugType::String, .defaultValue = std::string(), .flags = stored,
          .doc = "Folder path the take is filed under in take lists, '/' separated; empty for the top level."},
+        {.name = "media", .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrArray | AttrHidden,
+         .doc = "The take's own audio nodes and reference image planes, connected from their media outputs (see bindMedia)."},
     };
     t.create = [] { return std::make_unique<TakeNode>(); };
     types::registerType(std::move(t));
@@ -509,6 +515,15 @@ std::string onlyArg(const Args& a, const char* cmd)
     return a.positional[0].get<std::string>();
 }
 
+json mediaNames(Graph& g, NodeId t)
+{
+    json out = json::array();
+    for (const PlugRef& e : g.elements({t, TakeNode::kMedia, -1}))
+        if (auto src = g.source(e))
+            out.push_back(g.node(src->node)->path());
+    return out;
+}
+
 json takeJson(Graph& g, NodeId t)
 {
     Node& n = *g.node(t);
@@ -520,7 +535,8 @@ json takeJson(Graph& g, NodeId t)
             {"loop", n.as<bool>(TakeNode::kLoop)},
             {"active", n.as<bool>(TakeNode::kActive)},
             {"folder", n.as<std::string>(TakeNode::kFolder)},
-            {"channels", takeConnections(g, t).size()}};
+            {"channels", takeConnections(g, t).size()},
+            {"media", mediaNames(g, t)}};
 }
 
 template <class F> auto guarded(F&& f)

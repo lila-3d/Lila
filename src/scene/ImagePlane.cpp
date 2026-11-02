@@ -46,7 +46,8 @@ std::vector<AttrDef> imagePlaneAttrs()
     std::vector<AttrDef> a(size_t(int(ImagePlane::kCount) - int(Transform::kCount)));
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Transform::kCount)]; };
     at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored | AttrFile | AttrImage,
-                                  .doc = "Image file (PNG, JPG, TGA, HDR, BMP). Relative paths resolve from the workspace root, then the scene folder."};
+                                  .doc = "Image file (PNG, JPG, TGA, HDR, BMP) or video (MP4, MOV, MKV, WEBM, AVI). Relative paths resolve from the "
+                                         "workspace root, then the scene folder."};
     at(ImagePlane::kUseFrameExtension) =
         boolAttr("useFrameExtension", false, "Image sequence: the file name's frame number follows the time slider.");
     at(ImagePlane::kFrameOffset) = {.name = "frameOffset", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kStored,
@@ -73,6 +74,12 @@ std::vector<AttrDef> imagePlaneAttrs()
     at(ImagePlane::kPlacement) =
         enumAttr("placement", kPlacementNames, 0, "Draw behind all geometry, depth tested in the scene, or in front of everything.");
     at(ImagePlane::kLocked) = boolAttr("locked", false, "Reference mode: the plane can't be picked in the viewport, only from the outliner.");
+    at(ImagePlane::kStartFrame) = {.name = "startFrame", .type = PlugType::Float, .defaultValue = 0.0, .flags = kStored,
+                                   .doc = "Video: the frame its first picture shows on; counted from the take's start while it belongs to takes."};
+    at(ImagePlane::kFps) = floatAttr("fps", 0.0, "Video: frames per second to play it at; 0 uses the file's own rate.", 0.0);
+    at(ImagePlane::kFps).flags = kStored;
+    at(ImagePlane::kMedia) = {.name = "media", .type = PlugType::Bool, .defaultValue = false, .flags = AttrOutput | AttrHidden,
+                              .doc = "Connected to the media of the takes it belongs to."};
     return a;
 }
 
@@ -309,7 +316,9 @@ void registerImagePlaneCommands()
         {"showInAllViews", "sia", T::Bool, nullptr, "Show an attached plane in every view, not only through its camera."},
         {"skipSelect", "ss", T::Bool, false, "Don't select the new plane."},
         {"useFrameExtension", "ufe", T::Bool, nullptr, "Image sequence following the time slider."},
-        {"frameOffset", "fo", T::Int, nullptr, "Added to the current frame for the sequence file."},
+        {"frameOffset", "fo", T::Int, nullptr, "Added to the current frame for the sequence file or video frame."},
+        {"startFrame", "sf", T::Float, nullptr, "Video: the frame its first picture shows on."},
+        {"fps", "fps", T::Float, nullptr, "Video: playback rate; 0 for the file's own.", {}, {}, 0.0},
         {"fit", "fi", T::String, nullptr, "How the image fills its frame.", kFitNames},
         {"width", "w", T::Float, nullptr, "Frame width, cm.", {}, {}, 0.0},
         {"height", "h", T::Float, nullptr, "Frame height, cm (with maintainRatio off).", {}, {}, 0.0},

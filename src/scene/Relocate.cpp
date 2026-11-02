@@ -1792,6 +1792,8 @@ void registerBuiltins()
              // Animation.
              "animCurve", "animCurveTL", "animCurveTA", "animCurveTU", "animCurveRQ", "animLayer", "animBlend", "animBlendLinear",
              "animBlendVector", "animBlendRotation", "animBlendOffsetVector", "animBlendOffsetRotation", "take",
+             // Sound: timing and files only.
+             "audio",
              // Scene organisation, shading and baking.
              "displayLayer", "objectSet", "material", "postProcess", "textureSet", "bakeGroup", "bakeProject", "gnGroup",
              // Mesh sources and object-space modifiers and deformers.

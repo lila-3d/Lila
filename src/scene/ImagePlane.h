@@ -10,8 +10,9 @@
 namespace lila::scene
 {
 /**
- * Maya's imagePlane: a reference picture (a still or an image sequence) drawn as a textured quad, for modelling from
- * photos and blueprints. It is a transform, so it lists, hides, saves and undoes like any object.
+ * Maya's imagePlane: a reference picture (a still, an image sequence or a video) drawn as a textured quad, for modelling
+ * from photos and blueprints and animating to reference footage. It is a transform, so it lists, hides, saves and undoes
+ * like any object.
  *
  * A free plane (camera empty) uses its world matrix: the image lies in the local XY plane facing +Z. A plane attached
  * to a camera (a view name: persp, front, top, right, ..., or a camera node) ignores its own matrix. On a perspective camera it rides
@@ -42,6 +43,9 @@ public:
         kDisplayColor,
         kPlacement,
         kLocked,
+        kStartFrame,
+        kFps,
+        kMedia,
         kCount
     };
 };

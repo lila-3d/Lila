@@ -38,6 +38,7 @@ public:
         kOrder,
         kParked,
         kFolder,
+        kMedia,
     };
 };
 

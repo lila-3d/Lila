@@ -5,6 +5,7 @@
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
 #include "scene/Anim.h"
+#include "media/Media.h"
 #include "scene/AnimLayer.h"
 #include "scene/Take.h"
 #include "scene/BatchRename.h"
@@ -290,6 +291,7 @@ void registerCommands()
     ghosts::registerCommands();
     anim::registerLayerCommands();
     anim::registerTakeCommands();
+    media::registerMediaCommands();
     sim::registerCommands();
     sim::registerCommands();
     registerRenderSettingsCommands();

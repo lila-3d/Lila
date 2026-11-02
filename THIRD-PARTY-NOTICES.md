@@ -9,8 +9,11 @@ Lila includes or links the following third-party components. Each is licensed un
 | Qt 6 (Core, Gui, Widgets, Svg, Network, Xml, Sql, PrintSupport, OpenGL, OpenGLWidgets, UiTools) | LGPL-3.0 | The Qt Company Ltd. and other contributors | https://www.qt.io |
 | PySide6 | LGPL-3.0 | The Qt Company Ltd. | https://www.qt.io/qt-for-python |
 | Eigen | MPL-2.0 | Eigen contributors | https://eigen.tuxfamily.org |
+| FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample) | LGPL-2.1-or-later | The FFmpeg developers | https://ffmpeg.org |
 
 Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and PySide6 libraries shipped with Lila with your own builds of the same versions. Their source code is available from https://download.qt.io. Eigen is used unmodified; its source is available from https://gitlab.com/libeigen/eigen.
+
+FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swresample DLLs beside the executable) and unmodified, built without its GPL and nonfree parts. You may replace those DLLs with your own builds of a compatible version. The corresponding source code is available from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, and on request from Lila's maintainers for three years from the date you received this release.
 
 ## Permissive
 
@@ -31,6 +34,7 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | volk | MIT | Arseny Kapoulkine | https://github.com/zeux/volk |
 | meshoptimizer | MIT | Arseny Kapoulkine | https://github.com/zeux/meshoptimizer |
 | Jolt Physics | MIT | Jorrit Rouwe | https://github.com/jrouwe/JoltPhysics |
+| miniaudio | MIT-0 OR Unlicense | David Reid | https://github.com/mackron/miniaudio |
 | GLM | MIT | G-Truc Creation | https://github.com/g-truc/glm |
 | nlohmann/json | MIT | Niels Lohmann | https://github.com/nlohmann/json |
 | cpp-httplib | MIT | yhirose | https://github.com/yhirose/cpp-httplib |
