@@ -134,7 +134,8 @@ def run_coverage():
     if os.path.exists(xml_path):
         os.remove(xml_path)
     subprocess.run([OPENCPPCOVERAGE, "--quiet", *inputs, "--export_type", f"html:{COVERAGE_DIR}\\html",
-                    "--export_type", f"cobertura:{xml_path}"], capture_output=True, creationflags=NO_WINDOW)
+                    "--export_type", f"cobertura:{xml_path}"], cwd=COVERAGE_DIR, capture_output=True,
+                   creationflags=NO_WINDOW)
     if not os.path.exists(xml_path):
         return ["coverage FAILED: no report written"] + problems
     totals = coverage_by_area(xml_path)
