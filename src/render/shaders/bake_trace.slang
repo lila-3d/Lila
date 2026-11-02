@@ -10,11 +10,41 @@ struct TraceHit
     bool front;
 };
 
+// The link row the current sample's rays use (useLinks), or kNoHit for none.
+static uint gLinkRow = kNoHit;
+
+static const uint kRayProjection = 0;
+static const uint kRayOcclusion = 1;
+
+void useLinks(uint low, uint kind)
+{
+    gLinkRow = (pc.flags & kFlagLinks) != 0 && low != kNoHit ? low * 2 + kind : kNoHit;
+}
+
+bool linkSkips(uint high)
+{
+    if (gLinkRow == kNoHit)
+        return false;
+    uint g = high + pc.highBase;
+    return ((pc.links[gLinkRow * pc.linkWords + (g >> 5)] >> (g & 31)) & 1u) != 0;
+}
+
 #if defined(TRACE_HW)
 
 #define TRACE_ENTRY [require(spvRayQueryKHR)]
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure tlas;
+
+// Fills hit from a finished query's committed triangle; a macro since each RayQuery flag set is its own type.
+#define COMMITTED_HIT(q, hit)                                                                 \
+    if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT)                                        \
+        return false;                                                                         \
+    hit.t = q.CommittedRayT();                                                                \
+    hit.high = q.CommittedInstanceID();                                                       \
+    hit.triangle = pc.instanceBase[q.CommittedInstanceIndex()] + q.CommittedPrimitiveIndex(); \
+    hit.bary = q.CommittedTriangleBarycentrics();                                             \
+    hit.front = q.CommittedTriangleFrontFace();                                               \
+    return true;
 
 bool traceClosest(float3 o, float3 d, float tMax, bool cullBack, inout TraceHit hit)
 {
@@ -23,19 +53,25 @@ bool traceClosest(float3 o, float3 d, float tMax, bool cullBack, inout TraceHit 
     r.Direction = d;
     r.TMin = 0.0;
     r.TMax = tMax;
+    uint flags = cullBack ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : RAY_FLAG_NONE;
+    if (gLinkRow != kNoHit)
+    {
+        // Linked highs are skipped as candidates; committing shortens the ray, so later ones are only nearer.
+        RayQuery<RAY_FLAG_FORCE_NON_OPAQUE> lq;
+        lq.TraceRayInline(tlas, flags, 0xff, r);
+        while (lq.Proceed())
+        {
+            if (lq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE && !linkSkips(lq.CandidateInstanceID()))
+                lq.CommitNonOpaqueTriangleHit();
+        }
+        COMMITTED_HIT(lq, hit)
+    }
     RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-    q.TraceRayInline(tlas, cullBack ? RAY_FLAG_CULL_BACK_FACING_TRIANGLES : RAY_FLAG_NONE, 0xff, r);
+    q.TraceRayInline(tlas, flags, 0xff, r);
     while (q.Proceed())
     {
     }
-    if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
-        return false;
-    hit.t = q.CommittedRayT();
-    hit.high = q.CommittedInstanceID();
-    hit.triangle = pc.instanceBase[q.CommittedInstanceIndex()] + q.CommittedPrimitiveIndex();
-    hit.bary = q.CommittedTriangleBarycentrics();
-    hit.front = q.CommittedTriangleFrontFace();
-    return true;
+    COMMITTED_HIT(q, hit)
 }
 
 bool traceAny(float3 o, float3 d, float tMax)
@@ -45,6 +81,20 @@ bool traceAny(float3 o, float3 d, float tMax)
     r.Direction = d;
     r.TMin = 0.0;
     r.TMax = tMax;
+    if (gLinkRow != kNoHit)
+    {
+        RayQuery<RAY_FLAG_FORCE_NON_OPAQUE> lq;
+        lq.TraceRayInline(tlas, RAY_FLAG_NONE, 0xff, r);
+        while (lq.Proceed())
+        {
+            if (lq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE && !linkSkips(lq.CandidateInstanceID()))
+            {
+                lq.CommitNonOpaqueTriangleHit();
+                lq.Abort();
+            }
+        }
+        return lq.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+    }
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
     q.TraceRayInline(tlas, RAY_FLAG_NONE, 0xff, r);
     while (q.Proceed())
@@ -244,7 +294,8 @@ bool traceClosest(float3 o, float3 d, float tMax, bool cullBack, inout TraceHit 
     float best = tMax;
     bool found = false;
     for (uint i = 0; i < pc.highCount; ++i)
-        found = traceHigh(pc.highList[i], r, cullBack, false, best, hit) || found;
+        if (!linkSkips(pc.highList[i]))
+            found = traceHigh(pc.highList[i], r, cullBack, false, best, hit) || found;
     return found;
 }
 
@@ -255,7 +306,7 @@ bool traceAny(float3 o, float3 d, float tMax)
     for (uint i = 0; i < pc.highCount; ++i)
     {
         float best = tMax;
-        if (traceHigh(pc.highList[i], r, false, true, best, unused))
+        if (!linkSkips(pc.highList[i]) && traceHigh(pc.highList[i], r, false, true, best, unused))
             return true;
     }
     return false;
@@ -301,6 +352,7 @@ void projectCS(uint3 id: SV_DispatchThreadID)
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
     bool present = s.lowTriangle != kNoHit;
+    useLinks(s.low, kRayProjection);
     HitRecord r;
     r.position = float3(0.0);
     r.high = kNoHit;

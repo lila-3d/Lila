@@ -7,6 +7,7 @@
 #include "bake/BakePipeline.h"
 #include "bake/CageEstimate.h"
 #include "bake/Maps.h"
+#include "bake/Naming.h"
 #include "bake/Targets.h"
 #include "core/Events.h"
 #include "core/Log.h"
@@ -326,6 +327,10 @@ void registerCommands()
                   {"ignoreBackfaces", "ib", T::Bool, nullptr, "Rays only hit high faces facing them."},
                   {"aoScope", "as", T::String, nullptr, "AO occluders: self, group or all.", {"self", "group", "all"}},
                   {"skew", "sk", T::Float, nullptr, "0 to 1: tilts rays from the smooth normals toward each low face's normal.", {}, {}, 0.0, 1.0},
+                  {"unlinks", "ul", T::Any, nullptr,
+                   "Replace the unlinks: [{\"lows\": [...] (empty: every low), \"meshes\": [...], \"occlusion\": True, \"projection\": False}]. "
+                   "The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a self high by its low's "
+                   "name); projection=True also bakes nothing from them onto the lows."},
                   {"addHighFile", "ahf", T::List, nullptr, "Add highs streamed from files at bake time (.fbx, .obj, .abc), never loaded into the scene."},
                   {"removeHighFile", "rhf", T::List, nullptr, "Remove file highs."},
                   {"fileObject", "fob", T::String, nullptr, "With addHighFile: only the file's meshes whose name contains this."},
@@ -430,6 +435,31 @@ void registerCommands()
                 s.skew = std::clamp(a.get<double>("skew"), 0.0, 1.0);
             if (a.has("aoScope"))
                 s.aoScope = a.get<std::string>("aoScope");
+            if (a.has("unlinks"))
+            {
+                const json& list = a.flags["unlinks"];
+                if (!list.is_array() && !list.is_null())
+                    throw CommandError("bakeGroup: unlinks is a list of {lows, meshes, occlusion, projection}");
+                s.unlinks.clear();
+                for (const json& j : list.is_array() ? list : json::array())
+                {
+                    Unlink u;
+                    try
+                    {
+                        u = Unlink::fromJson(j);
+                    }
+                    catch (const std::invalid_argument& e)
+                    {
+                        throw CommandError(std::string("bakeGroup: ") + e.what());
+                    }
+                    for (std::string& l : u.lows)
+                        l = meshPath(g, l, "bakeGroup");
+                    for (std::string& m : u.meshes)
+                        m = meshPath(g, m, "bakeGroup");
+                    if (!u.meshes.empty())
+                        s.unlinks.push_back(std::move(u));
+                }
+            }
             setGroupSettings(g, grp->id(), s);
             return groupInfo(g, *grp);
         },
@@ -539,12 +569,63 @@ void registerCommands()
                   {"width", "w", T::Int, nullptr, "Width in texels.", {}, {}, 1.0},
                   {"height", "h", T::Int, nullptr, "Height in texels.", {}, {}, 1.0},
                   {"supersampling", "ss", T::Int, nullptr, "Samples per texel: 1, 4, 16 or 64.", {}, {}, 1.0, 64.0},
-                  {"padding", "pad", T::Int, nullptr, "Texels of dilation past island borders; -1 fills the texture.", {}, {}, -1.0}},
+                  {"padding", "pad", T::Int, nullptr, "Texels of dilation past island borders; -1 fills the texture.", {}, {}, -1.0},
+                  {"material", "mat", T::String, nullptr,
+                   "Set resolution, width, height, supersampling, padding, bits and format for this texture set ({material}) only; "
+                   "the name needs {material}."},
+                  {"clear", "clr", T::Bool, false, "With material: drop that texture set's own settings (all of them, or only the flags given)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& project = projectArg(a, "setBakeOutput", true);
             ProjectSettings s = projectSettings(project);
             json o = s.output.toJson();
+            if (a.has("material"))
+            {
+                const std::string mat = a.get<std::string>("material");
+                if (mat.empty())
+                    throw CommandError("setBakeOutput: name the material");
+                json over = o.contains("materials") && o["materials"].contains(mat) ? o["materials"][mat] : json::object();
+                const bool clear = a.get<bool>("clear");
+                bool any = false;
+                for (const char* k : kMaterialOutputKeys)
+                    if (a.has(k))
+                    {
+                        any = true;
+                        if (clear)
+                            over.erase(k);
+                        else
+                            over[k] = a.flags[k];
+                    }
+                if (a.has("resolution"))
+                {
+                    any = true;
+                    if (clear)
+                        over.erase("width"), over.erase("height");
+                    else
+                        over["width"] = over["height"] = a.flags["resolution"];
+                }
+                if (clear && !any)
+                    over = json::object();
+                if (over.empty())
+                {
+                    if (o.contains("materials"))
+                        o["materials"].erase(mat);
+                }
+                else
+                    o["materials"][mat] = over;
+                try
+                {
+                    s.output = OutputSettings::fromJson(o);
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    throw CommandError(std::string("setBakeOutput: ") + e.what());
+                }
+                if (!s.output.materials.empty() && !hasToken(s.output.name, "material"))
+                    log::warn("setBakeOutput: per-material settings need {{material}} in the file name; they are ignored until it has it");
+                setProjectSettings(g, project.id(), s);
+                return s.output.toJson();
+            }
             for (const char* k : {"folder", "name", "format", "bits", "width", "height", "supersampling", "padding", "dither", "compression",
                                   "compressionLevel", "udimNaming", "sidecar"})
                 if (a.has(k))

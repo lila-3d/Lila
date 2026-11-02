@@ -196,13 +196,11 @@ std::vector<LintIssue> lintIssues(const json& r)
         LintIssue li{.group = str(i, {"group"}),
                      .mesh = str(i, {"mesh", "node", "low", "high"}),
                      .message = str(i, {"message", "text", "what", "detail"}),
-                     .severity = str(i, {"severity", "level"})};
+                     .severity = str(i, {"severity", "level"}),
+                     .check = str(i, {"check", "code", "kind"}),
+                     .data = i.value("data", json::object())};
         if (li.message.empty())
-            li.message = str(i, {"code", "check", "kind"});
-        if (li.message.empty())
-            li.message = i.dump();
-        if (std::string code = str(i, {"code", "check"}); !code.empty() && code != li.message)
-            li.message = code + ": " + li.message;
+            li.message = li.check.empty() ? i.dump() : li.check;
         out.push_back(li);
     }
     return out;
@@ -372,8 +370,7 @@ void BakerPanel::onBakeEvent(const bake::BakeEvent& e)
         ++mThumbGeneration;
         mThumbs->clear();
         mThumbJobs = 0;
-        mSummary->setText("Baking...");
-        mSummaryBox->show();
+        showStatus("Baking");
         updateButtons();
         break;
     case bake::BakeEvent::Kind::Texture: addThumbnail(e.data, mThumbGeneration); break;
@@ -381,8 +378,10 @@ void BakerPanel::onBakeEvent(const bake::BakeEvent& e)
         mRunningBackend.clear();
         if (e.data.contains("error"))
         {
-            mSummary->setText(e.data.value("cancelled", false) ? QString("Bake cancelled.") : "Bake failed: " + qs(e.data.value("error", std::string())));
-            mSummaryBox->show();
+            if (e.data.value("cancelled", false))
+                showStatus("Cancelled");
+            else
+                showStatus("Failed", qs(e.data.value("error", std::string())), true);
         }
         else
             showResult(e.data);
@@ -400,6 +399,7 @@ void BakerPanel::addThumbnail(const json& o, uint64_t generation)
     auto* item = new QListWidgetItem(icon("photo"), QString("%1\n%2").arg(qs(o.value("map", std::string()))).arg(qs(std::filesystem::path(file).filename().string())),
                                      mThumbs);
     item->setData(kFileRole, qs(file));
+    item->setData(kOutputRole, qs(o.dump()));
     item->setToolTip(QString("%1\n%2 x %3, %4 bit %5, UDIM %6")
                          .arg(qs(file))
                          .arg(o.value("width", 0))
@@ -554,33 +554,77 @@ void BakerPanel::showResult(const json& result)
     const json stats = result.value("stats", json::object());
     const double samples = stats.value("samples", 0.0);
     const bool dryRun = result.value("dryRun", false);
-    const QString to = mResultFolder.isEmpty() ? QString()
-                                               : QString(" to <a href=\"%1\">%2</a>")
-                                                     .arg(QUrl::fromLocalFile(mResultFolder).toString().toHtmlEscaped(), mResultFolder.toHtmlEscaped());
-    QStringList lines;
-    if (dryRun)
-        lines << QString("Planned %1 files%2 (dry run).").arg(result.value("outputs", json::array()).size()).arg(to);
-    else
-        lines << QString("%1 files in %2 s%3. %4 samples, %5% missed, %6 backfaces.")
-                     .arg(result.value("outputs", json::array()).size())
-                     .arg(result.value("seconds", 0.0), 0, 'f', 2)
-                     .arg(to)
-                     .arg(samples, 0, 'f', 0)
-                     .arg(samples > 0.0 ? 100.0 * stats.value("misses", 0.0) / samples : 0.0, 0, 'f', 2)
-                     .arg(stats.value("backfaces", 0));
+    const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);
+    mSummary->clear();
+    auto add = [&](QTreeWidgetItem* parent, const QString& name, const QString& value, const char* iconName = nullptr, const QString& tip = {}) {
+        auto* it = parent ? new QTreeWidgetItem(parent, {name, value}) : new QTreeWidgetItem(mSummary, {name, value});
+        if (iconName)
+            it->setIcon(0, icon(iconName));
+        it->setForeground(1, dim);
+        if (!tip.isEmpty())
+        {
+            it->setToolTip(0, tip);
+            it->setToolTip(1, tip);
+        }
+        return it;
+    };
+    add(nullptr, dryRun ? "Planned" : "Files", QString::number(result.value("outputs", json::array()).size()), "photo");
+    if (!dryRun)
+    {
+        add(nullptr, "Time", QString("%1 s").arg(result.value("seconds", 0.0), 0, 'f', 2), "clock");
+        const double missed = samples > 0.0 ? 100.0 * stats.value("misses", 0.0) / samples : 0.0;
+        add(nullptr, "Missed", QString("%1%").arg(missed, 0, 'f', 2), missed > 1.0 ? "alert-triangle" : "target",
+            QString("%1 of %2 rays; %3 hit backfaces").arg(stats.value("misses", 0.0), 0, 'f', 0).arg(samples, 0, 'f', 0).arg(stats.value("backfaces", 0)));
+    }
+    if (!mResultFolder.isEmpty())
+    {
+        QTreeWidgetItem* f = add(nullptr, "Folder", mResultFolder, "folder", "Double-click to open");
+        f->setData(0, kFileRole, mResultFolder);
+        if (const json m = result.value("manifest", json()); m.is_string())
+            f->setToolTip(1, "Manifest: " + qs(m.get<std::string>()));
+    }
     if (scene::Node* p = findNode(mProject); !dryRun && p && bake::isProject(*p) && bake::projectSettings(*p).autoAssign)
         if (const json a = bake::autoAssigned(p->id()); a.is_object())
-            lines << (a.contains("error") ? "Assigning to the materials failed: " + qs(a.value("error", std::string())).toHtmlEscaped()
-                                          : QString("Assigned %1 maps to the lows' materials.").arg(a.value("assigned", json::array()).size()));
+        {
+            if (a.contains("error"))
+                add(nullptr, "Assigned", "failed", "alert-triangle", qs(a.value("error", std::string())));
+            else
+                add(nullptr, "Assigned", QString("%1 maps").arg(a.value("assigned", json::array()).size()), "link");
+        }
+    QTreeWidgetItem* misses = nullptr;
     for (const json& g : stats.value("groups", json::array()))
         if (const double s = g.value("samples", 0.0); s > 0.0 && g.value("misses", 0.0) / s > 0.01)
-            lines << QString("%1: %2% of rays missed; raise its frontal/rear distance or cage offset.")
-                         .arg(qs(g.value("group", std::string())).toHtmlEscaped())
-                         .arg(100.0 * g.value("misses", 0.0) / s, 0, 'f', 1);
+        {
+            if (!misses)
+                misses = add(nullptr, "Rays missing the high", QString(), "alert-triangle", "Raise Frontal or Rear, or Estimate the cage");
+            add(misses, qs(g.value("group", std::string())), QString("%1%").arg(100.0 * g.value("misses", 0.0) / s, 0, 'f', 1), "box");
+        }
+    if (misses)
+        misses->setExpanded(true);
+    int lint = 0;
+    QTreeWidgetItem* other = nullptr;
     for (const json& w : result.value("warnings", json::array()))
-        if (w.is_string())
-            lines << qs(w.get<std::string>()).toHtmlEscaped();
-    mSummary->setText("<html>" + lines.join("<br>") + "</html>");
+    {
+        if (!w.is_string())
+            continue;
+        const QString text = qs(w.get<std::string>());
+        if (text.startsWith("lint "))
+        {
+            ++lint;
+            continue;
+        }
+        if (!other)
+            other = add(nullptr, "Warnings", QString(), "alert-triangle");
+        const int colon = text.indexOf(": ");
+        add(other, colon > 0 ? text.left(colon) : text, colon > 0 ? text.mid(colon + 2) : QString(), nullptr, text);
+    }
+    if (other)
+    {
+        other->setText(1, QString::number(other->childCount()));
+        other->setExpanded(true);
+    }
+    if (lint)
+        add(nullptr, "Issues", QString::number(lint), "alert-triangle", "Listed under each group in the groups tree");
     mSummaryBox->show();
     if (result.contains("lint") && result["lint"].is_object() && result["lint"] != mLint)
     {
@@ -610,8 +654,42 @@ void BakerPanel::showResult(const json& result)
         }
         addThumbnail(o, mThumbGeneration);
     }
-    if (const json m = result.value("manifest", json()); m.is_string())
-        mSummary->setToolTip("Manifest: " + qs(m.get<std::string>()));
+}
+
+void BakerPanel::showStatus(const QString& text, const QString& detail, bool error)
+{
+    mSummary->clear();
+    auto* it = new QTreeWidgetItem(mSummary, {text, detail});
+    it->setIcon(0, icon(error ? "alert-triangle" : "loader"));
+    it->setToolTip(1, detail);
+    mSummaryBox->show();
+}
+
+void BakerPanel::assignResult()
+{
+    if (mProject.empty())
+        return;
+    json r;
+    try
+    {
+        r = ops::execute("bakeAssign", {{"project", mProject}}, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        viewportToast::showActive(QString::fromStdString(e.what()), 4000, viewportToast::Kind::Error);
+        return;
+    }
+    // One toast per material: which channels it took.
+    std::map<std::string, QStringList> byMaterial;
+    for (const json& a : r.value("assigned", json::array()))
+        byMaterial[a.value("material", std::string())] << qs(a.value("channel", std::string()));
+    for (const auto& [material, channels] : byMaterial)
+        viewportToast::showActive(QString("%1: %2").arg(qs(material), channels.join(", ")), 3500);
+    const size_t skipped = r.value("skipped", json::array()).size();
+    if (byMaterial.empty())
+        viewportToast::showActive("Nothing assigned: no map has a material input", 4000, viewportToast::Kind::Error);
+    else if (skipped)
+        viewportToast::showActive(QString("%1 maps have no material input").arg(skipped), 3500);
 }
 
 QString BakerPanel::outputFolder() const
@@ -750,6 +828,12 @@ void BakerPanel::groupMenu(const QPoint& at)
     }
     if (kind == kCageItem && !node.empty())
         menu.addAction("Use Auto Cage", this, [this, g] { run("bakeGroup", {{"args", {g}}, {"cage", ""}}, false); });
+    if (kind == kLowItem && !node.empty())
+    {
+        menu.addSeparator();
+        menu.addAction(icon("link-off"), "Selected Don't Occlude This Low", this, [this, g, node] { unlinkSelected(g, node, false); });
+        menu.addAction("Selected Don't Occlude or Project onto This Low", this, [this, g, node] { unlinkSelected(g, node, true); });
+    }
     if (kind == kLowItem || kind == kHighItem)
     {
         menu.addSeparator();
@@ -761,11 +845,63 @@ void BakerPanel::groupMenu(const QPoint& at)
     }
     if (kind == kLintItem)
     {
-        const QString text = it->text(0);
+        const QString text = it->toolTip(0).isEmpty() ? it->text(0) : it->toolTip(0);
         menu.addAction(icon("copy"), "Copy Message", this, [text] { QApplication::clipboard()->setText(text); });
     }
     menu.exec(mGroups->viewport()->mapToGlobal(at));
 }
+
+namespace
+{
+/**
+ * Textures dropped on a mesh in a view (files, or Results thumbnails) go into the material on the face under the cursor,
+ * each in the channel its map or file name says (assignTexture).
+ */
+bool dropTexture(const QMimeData& mime, const viewportHooks::DropTarget& t, bool commit)
+{
+    json items = json::array();
+    if (mime.hasFormat(kOutputsMime))
+        items = json::parse(mime.data(kOutputsMime).toStdString(), nullptr, false);
+    else if (mime.hasUrls())
+    {
+        static const QStringList kImages = {"png", "exr", "tga", "tif", "tiff", "psd", "jpg", "jpeg", "bmp", "hdr", "dds"};
+        for (const QUrl& u : mime.urls())
+            if (u.isLocalFile() && kImages.contains(QFileInfo(u.toLocalFile()).suffix().toLower()))
+                items.push_back({{"file", ss(u.toLocalFile())}});
+    }
+    if (!items.is_array() || items.empty())
+        return false;
+    scene::Node* n = t.node != scene::kNoNode ? graph().node(t.node) : nullptr;
+    if (!n || !n->type().isA("mesh"))
+        return false;
+    if (!commit)
+        return true;
+    UndoChunk chunk("Assign Textures");
+    for (const json& it : items)
+    {
+        json call = {{"args", {it.value("file", std::string())}}, {"mesh", n->path()}, {"face", t.face == UINT32_MAX ? -1 : int64_t(t.face)}};
+        if (const std::string map = it.value("map", std::string()); !map.empty())
+            call["map"] = map;
+        if (it.contains("normalFormat"))
+            call["normalFormat"] = it["normalFormat"];
+        const QString file = QFileInfo(qs(it.value("file", std::string()))).fileName();
+        try
+        {
+            const json r = ops::execute("assignTexture", call, CallSource::UI);
+            for (const json& a : r.value("assigned", json::array()))
+                viewportToast::showActive(QString("%1 → %2 %3").arg(file, qs(a.value("material", std::string())), qs(a.value("channel", std::string()))), 3000);
+            for (const json& s : r.value("skipped", json::array()))
+                viewportToast::showActive(QString("%1 not assigned: %2").arg(file, qs(s.value("reason", std::string()))), 4000, viewportToast::Kind::Error);
+        }
+        catch (const CommandError& e)
+        {
+            log::warn("{}", e.what());
+            viewportToast::showActive(QString("%1 not assigned: no channel in its name").arg(file), 4000, viewportToast::Kind::Error);
+        }
+    }
+    return true;
+}
+} // namespace
 
 void registerBakerPanel()
 {
@@ -779,6 +915,7 @@ void registerBakerPanel()
                  .icon = "texture",
                  .open = false,
                  .toggleAction = "window.baker"});
+    viewportHooks::setDropHandler("bakeTexture", dropTexture);
 
     actions::add({.id = "bake.forTarget",
                   .label = "Bake for Target",

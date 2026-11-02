@@ -7,6 +7,7 @@
 #include "bake/Cage.h"
 #include "bake/Maps.h"
 #include "core/Profile.h"
+#include "geo/Bvh.h"
 #include "geo/Mesh.h"
 #include "geo/Triangulate.h"
 #include "ops/Command.h"
@@ -81,9 +82,10 @@ struct Need
 class Walker
 {
 public:
-    Walker(const Tracer& tracer, size_t group, float cap, float eps) : mTracer(tracer), mGroup(group), mCap(cap), mEps(eps) {}
+    Walker(const Tracer& tracer, size_t group) : mTracer(tracer), mGroup(group) {}
 
-    Need at(const glm::vec3& p, const glm::vec3& dir) const
+    /** cap bounds the walk: far layers of the same mesh would otherwise read as material the low starts inside. */
+    Need at(uint32_t low, const glm::vec3& p, const glm::vec3& dir, float mCap, float mEps) const
     {
         Need n;
         // Exits pair off with the entries before them: an unpaired exit leaves material the walk started in.
@@ -93,7 +95,7 @@ public:
         for (int k = 0; k < 16 && travelled < mCap; ++k)
         {
             TraceHit h;
-            if (!mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, o, dir, mCap - travelled, h))
+            if (!mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, o, dir, mCap - travelled, h))
                 break;
             n.anyHit = true;
             travelled += h.distance;
@@ -110,7 +112,7 @@ public:
             o = p + dir * travelled;
         }
         TraceHit h;
-        if (mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, p, -dir, mCap, h))
+        if (mTracer.closestHit(mGroup, OccluderScope::Group, kNoHit, low, RayKind::Projection, p, -dir, mCap, h))
         {
             n.anyHit = true;
             if (!h.backface)
@@ -122,8 +124,6 @@ public:
 private:
     const Tracer& mTracer;
     size_t mGroup;
-    float mCap;
-    float mEps;
 };
 
 /** Every triangle's interpolated push must reach need. */
@@ -143,6 +143,13 @@ struct LowState
     std::vector<Constraint> constraints;
     /** World push per point slot. */
     std::vector<float> push;
+    /** Most push per point slot: just short of another low in front of it. */
+    std::vector<float> clear;
+    /** From this low's own bounds diagonal: the gap kept to the high, the walk's reach, its step past a hit, sample spacing. */
+    float margin = 0.0f;
+    float cap = 0.0f;
+    float eps = 0.0f;
+    float spacing = 1.0f;
 };
 
 /** The smallest per-point push (from push as it stands) meeting every constraint, by repeated projection. */
@@ -190,6 +197,16 @@ void solve(LowState& s, float floor)
             for (geo::Index q : p)
                 x[q] = std::max(x[q], c.need);
     }
+}
+
+/** How much of the gap to another low in front a cage may cross. */
+constexpr float kClearanceShare = 0.9f;
+
+/** Holds every point to its clearance. */
+void clampToClearance(LowState& s)
+{
+    for (size_t p = 0; p < s.push.size(); ++p)
+        s.push[p] = std::min(s.push[p], s.clear[p]);
 }
 
 /** Raises points below their neighbours' mean halfway toward it: a smoother shell that never pulls under a need. */
@@ -289,7 +306,8 @@ json CageEstimate::toJson() const
     return {{"frontal", frontal}, {"rear", rear}, {"cageOffset", cageOffset}, {"after", after.toJson()}, {"iterations", iterations}, {"unreachable", unreachable}};
 }
 
-CageCoverage cageCoverage(const LowInput& low, const CageParams& cage, size_t group, const Backend& backend, int resolution, std::vector<TexelSample>* missed)
+CageCoverage cageCoverage(const LowInput& low, uint32_t lowIndex, const CageParams& cage, size_t group, const Backend& backend, int resolution,
+                          std::vector<TexelSample>* missed)
 {
     LILA_ZONE();
 
@@ -309,6 +327,8 @@ CageCoverage cageCoverage(const LowInput& low, const CageParams& cage, size_t gr
             raster.band(udim, b, cage, s);
             if (s.empty())
                 return;
+            for (TexelSample& t : s)
+                t.low = lowIndex;
             std::vector<HitRecord> hits(s.size());
             backend.traceProjection(group, s, hits);
             backend.endBand(s);
@@ -355,7 +375,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
     const float skew = float(settings.skew);
 
     std::vector<LowState> states(lows.size());
-    glm::vec3 lo(std::numeric_limits<float>::max()), hi(-std::numeric_limits<float>::max());
+    float margin = 0.0f;
     for (size_t i = 0; i < lows.size(); ++i)
     {
         LowState& s = states[i];
@@ -363,39 +383,80 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         s.input = lowFromMesh(*lows[i].mesh, lows[i].world, lows[i].name);
         s.cornerPoint = soupCornerPoints(*lows[i].mesh, lows[i].world);
         s.push.assign(lows[i].mesh->pointCapacity(), 0.0f);
-        if (s.input.soup.triangleCount())
-        {
-            lo = glm::min(lo, s.input.soup.boundsMin);
-            hi = glm::max(hi, s.input.soup.boundsMax);
-        }
+        s.clear.assign(lows[i].mesh->pointCapacity(), std::numeric_limits<float>::max());
+        if (!s.input.soup.triangleCount())
+            continue;
+        // Samples on a barycentric grid about diag / 128 apart (2 to 8 steps per triangle side).
+        const float diag = std::max(glm::length(s.input.soup.boundsMax - s.input.soup.boundsMin), 1e-4f);
+        s.margin = float(options.margin) * diag;
+        s.cap = 0.25f * diag;
+        s.eps = 1e-5f * diag;
+        s.spacing = diag / 128.0f;
+        margin = std::max(margin, s.margin);
     }
-    if (lo.x > hi.x)
+    if (std::ranges::none_of(states, [](const LowState& s) { return s.input.soup.triangleCount() > 0; }))
         throw std::runtime_error("cage estimate: the lows have no faces");
-    const float diag = glm::length(hi - lo);
-    const float margin = float(options.margin) * diag;
-    const Walker walk(*tracer, group, 0.25f * diag, 1e-5f * diag);
+    const Walker walk(*tracer, group);
 
-    // Samples on a barycentric grid about diag / 128 apart (2 to 8 steps per triangle side).
-    const float spacing = diag / 128.0f;
+    // The other lows, for clearance: rays go into each one's own space, where t stays the world distance.
+    struct Other
+    {
+        geo::MeshBvh bvh;
+        glm::dmat4 toLocal;
+    };
+    std::vector<std::unique_ptr<Other>> others(lows.size());
+    if (options.clearance && lows.size() > 1)
+        tbb::parallel_for(size_t(0), lows.size(), [&](size_t i) {
+            if (lows[i].mesh && states[i].input.soup.triangleCount())
+                others[i] = std::make_unique<Other>(Other{geo::MeshBvh(*lows[i].mesh), glm::inverse(lows[i].world)});
+        });
+    auto gapAhead = [&](size_t self, const glm::vec3& p, const glm::vec3& dir, float reach) {
+        double best = reach;
+        for (size_t j = 0; j < others.size(); ++j)
+        {
+            if (j == self || !others[j])
+                continue;
+            const glm::dvec3 o(others[j]->toLocal * glm::dvec4(glm::dvec3(p), 1.0));
+            const glm::dvec3 d(others[j]->toLocal * glm::dvec4(glm::dvec3(dir), 0.0));
+            geo::BvhHit h;
+            if (others[j]->bvh.raycast(o, d, h, best))
+                best = std::min(best, h.t);
+        }
+        return float(best);
+    };
+
     std::vector<float> inward;
     std::mutex inMutex;
     for (LowState& s : states)
     {
         const LowInput& li = s.input;
+        const uint32_t lowIndex = uint32_t(&s - states.data());
         const size_t tris = li.soup.triangleCount();
         std::vector<std::vector<Constraint>> perTri(tris);
+        // Per corner: the most push before the cage reaches halfway to another low.
+        std::vector<float> cornerClear(tris * 3, std::numeric_limits<float>::max());
+        const bool clearance = options.clearance && others.size() > 1;
         tbb::parallel_for(size_t(0), tris, [&](size_t t) {
             const glm::vec3* p = &li.soup.positions[t * 3];
             const float longest = std::max({glm::length(p[1] - p[0]), glm::length(p[2] - p[1]), glm::length(p[0] - p[2])});
-            const int n = std::clamp(int(std::ceil(longest / spacing)), 2, 8);
+            const int n = std::clamp(int(std::ceil(longest / s.spacing)), 2, 8);
             std::vector<float> in;
             for (int a = 0; a <= n; ++a)
                 for (int b = 0; a + b <= n; ++b)
                 {
                     const glm::dvec3 w(double(n - a - b) / n, double(a) / n, double(b) / n);
                     const glm::vec3 P = mix3(p, w);
-                    const Need need = walk.at(P, cageDirection(li, t, w, skew));
-                    perTri[t].push_back({uint32_t(t), glm::vec3(w), need.outward + margin});
+                    const glm::vec3 dir = cageDirection(li, t, w, skew);
+                    const Need need = walk.at(lowIndex, P, dir, s.cap, s.eps);
+                    perTri[t].push_back({uint32_t(t), glm::vec3(w), need.outward + s.margin});
+                    if (clearance)
+                    {
+                        const int k = w.x >= w.y && w.x >= w.z ? 0 : w.y >= w.z ? 1 : 2;
+                        // Meshes that touch or cross can't be kept apart; only a real gap holds the cage back.
+                        const float gap = gapAhead(lowIndex, P, dir, s.cap);
+                        if (gap < s.cap && kClearanceShare * gap > s.margin)
+                            cornerClear[t * 3 + size_t(k)] = std::min(cornerClear[t * 3 + size_t(k)], kClearanceShare * gap);
+                    }
                     if (need.outward <= 0.0f && need.inward >= 0.0f)
                         in.push_back(need.inward);
                 }
@@ -407,6 +468,8 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         });
         for (auto& c : perTri)
             s.constraints.insert(s.constraints.end(), c.begin(), c.end());
+        for (size_t c = 0; c < cornerClear.size(); ++c)
+            s.clear[s.cornerPoint[c]] = std::min(s.clear[s.cornerPoint[c]], cornerClear[c]);
     }
 
     // Lone needs far above the rest (a stray high piece) are clamped; coverage passes put back any that were real.
@@ -414,13 +477,14 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
     for (const LowState& s : states)
         for (const Constraint& c : s.constraints)
             all.push_back(c.need);
-    const float clampAt = std::max(2.0f * percentile(all, 0.995), margin * 2.0f);
+    const float clampAt = 2.0f * percentile(all, 0.995);
     for (LowState& s : states)
     {
         for (Constraint& c : s.constraints)
-            c.need = std::min(c.need, clampAt);
-        solve(s, margin);
+            c.need = std::min(c.need, std::max(clampAt, s.margin * 2.0f));
+        solve(s, s.margin);
         smoothUp(s);
+        clampToClearance(s);
     }
     est.rear = std::max(2.0 * margin, double(percentile(inward, 0.999)) * 1.1 + margin);
 
@@ -455,7 +519,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         const CageParams cp{float(est.frontal), float(est.rear), float(est.cageOffset), skew};
         for (size_t i = 0; i < states.size(); ++i)
         {
-            const CageCoverage c = cageCoverage(states[i].input, cp, group, backend, options.resolution, missed ? &(*missed)[i] : nullptr);
+            const CageCoverage c = cageCoverage(states[i].input, uint32_t(i), cp, group, backend, options.resolution, missed ? &(*missed)[i] : nullptr);
             total.samples += c.samples;
             total.misses += c.misses;
             total.backfaces += c.backfaces;
@@ -481,7 +545,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                 const size_t t = m.lowTriangle;
                 const glm::dvec3 w = sampleBary(li, m);
                 const glm::vec3 P = mix3(&li.soup.positions[t * 3], w);
-                const Need need = walk.at(P, cageDirection(li, t, w, skew));
+                const Need need = walk.at(uint32_t(i), P, cageDirection(li, t, w, skew), s.cap, s.eps);
                 const geo::Index* cp = &s.cornerPoint[t * 3];
                 const float push = s.push[cp[0]] * float(w.x) + s.push[cp[1]] * float(w.y) + s.push[cp[2]] * float(w.z);
                 if (!need.anyHit)
@@ -490,16 +554,16 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                     continue;
                 }
                 // A ray that met a back face started inside the high: push past it. A plain miss fell short of the high below.
-                float want = need.outward + margin;
+                float want = need.outward + s.margin;
                 if (m.sub)
-                    want = std::max(want, push * 1.25f + margin);
+                    want = std::max(want, push * 1.25f + s.margin);
                 if (want > push)
                 {
                     s.constraints.push_back({uint32_t(t), glm::vec3(w), want});
                     added = true;
                 }
                 if (!m.sub && need.inward > rear)
-                    rear = need.inward * 1.1f + margin;
+                    rear = need.inward * 1.1f + s.margin;
             }
         }
         est.unreachable = unreachable;
@@ -507,7 +571,10 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
             break;
         est.rear = rear;
         for (LowState& s : states)
-            solve(s, margin);
+        {
+            solve(s, s.margin);
+            clampToClearance(s);
+        }
         fit();
         for (auto& m : missed)
             m.clear();
@@ -532,7 +599,7 @@ CageCoverage groupCoverage(scene::Graph& g, scene::NodeId group, int resolution)
     CageCoverage total;
     for (const LowInput& low : gi.lows)
     {
-        const CageCoverage c = cageCoverage(low, cp, 0, *p->backend, resolution);
+        const CageCoverage c = cageCoverage(low, uint32_t(&low - gi.lows.data()), cp, 0, *p->backend, resolution);
         total.samples += c.samples;
         total.misses += c.misses;
         total.backfaces += c.backfaces;
@@ -554,7 +621,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
         const CageParams cp{gi.frontal, gi.rear, float(s.cageOffset), float(s.skew)};
         for (const LowInput& low : gi.lows)
         {
-            const CageCoverage c = cageCoverage(low, cp, 0, *p->backend, options.resolution);
+            const CageCoverage c = cageCoverage(low, uint32_t(&low - gi.lows.data()), cp, 0, *p->backend, options.resolution);
             before.samples += c.samples;
             before.misses += c.misses;
             before.backfaces += c.backfaces;
@@ -643,7 +710,7 @@ void registerCageCommands()
         .positionalDoc = "group (or its low; default the selection)",
         .flags = {{"resolution", "res", T::Int, 512, "Texels per side of the coverage check.", {}, {}, 16.0, 8192.0},
                   {"iterations", "it", T::Int, 4, "Coverage passes that may grow the cage.", {}, {}, 0.0, 32.0},
-                  {"margin", "mg", T::Float, 0.004, "Gap kept between cage and high, as a fraction of the lows' bounds diagonal.", {}, {}, 0.0, 1.0},
+                  {"margin", "mg", T::Float, 0.004, "Gap kept between cage and high, as a fraction of each low's bounds diagonal.", {}, {}, 0.0, 1.0},
                   {"apply", "ap", T::Bool, true, "Write the result; False only reports it."}},
         .run = [groupOf](const Args& a) -> json {
             scene::Node& grp = groupOf(a, "bakeEstimateCage");

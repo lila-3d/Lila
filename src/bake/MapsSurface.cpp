@@ -316,7 +316,7 @@ void thicknessKernel(const MapContext& ctx, std::span<const TexelSample> samples
         {
             const glm::vec3 d = coneDirection(inward, rayPoint(k, rays, seed), half);
             TraceHit th;
-            sum += ctx.tracer->closestHit(ctx.groupIndex, scope, h.high, o, d, dist, th) ? double(th.distance + eps) : double(dist);
+            sum += ctx.tracer->closestHit(ctx.groupIndex, scope, h.high, samples[i].low, RayKind::Occlusion, o, d, dist, th) ? double(th.distance + eps) : double(dist);
         }
         const float t = float(sum / double(rays));
         out[i] = glm::vec4(t, t, t, 1.0f);
@@ -394,7 +394,7 @@ void bentNormalKernel(const MapContext& ctx, std::span<const TexelSample> sample
             for (uint32_t k = 0; k < rays; ++k)
             {
                 const glm::vec3 d = coneDirection(n, rayPoint(k, rays, seed), 1.57079632679f);
-                if (!ctx.tracer->occluded(ctx.groupIndex, scope, h.high, o, d, dist))
+                if (!ctx.tracer->occluded(ctx.groupIndex, scope, h.high, s.low, o, d, dist))
                     sum += d;
             }
             n = unit(sum, n);
@@ -445,7 +445,7 @@ void roundedNormalKernel(const MapContext& ctx, std::span<const TexelSample> sam
                     const glm::vec3 dir = -axis * side;
                     const glm::vec3 o = p + disc + axis * (side * radius);
                     TraceHit th;
-                    if (!ctx.tracer->closestHit(ctx.groupIndex, scope, h.high, o, dir, 2.0f * radius, th) || th.backface)
+                    if (!ctx.tracer->closestHit(ctx.groupIndex, scope, h.high, s.low, RayKind::Occlusion, o, dir, 2.0f * radius, th) || th.backface)
                         continue;
                     if (glm::length(o + dir * th.distance - p) > radius || glm::length(th.normal) < 0.5f)
                         continue;

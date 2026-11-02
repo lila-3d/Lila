@@ -96,7 +96,7 @@ void CpuBackend::traceProjection(size_t group, std::span<const TexelSample> samp
         size_t bestHigh = SIZE_MAX;
         for (size_t h = 0; h < bvhs.size(); ++h)
         {
-            if (!bvhs[h])
+            if (!bvhs[h] || skips(gi, s.low, gi.highBase + uint32_t(h), RayKind::Projection))
                 continue;
             geo::BvhHit hit;
             if (bvhs[h]->raycast(o, d, hit, s.rayLength, backfaces) && hit.t < best.t)
@@ -108,10 +108,11 @@ void CpuBackend::traceProjection(size_t group, std::span<const TexelSample> samp
         if (bestHigh == SIZE_MAX)
         {
             if (!backfaces)
-                for (const auto& b : bvhs)
+                for (size_t h = 0; h < bvhs.size(); ++h)
                 {
+                    const auto& b = bvhs[h];
                     geo::BvhHit hit;
-                    if (b && b->raycast(o, d, hit, s.rayLength, true))
+                    if (b && !skips(gi, s.low, gi.highBase + uint32_t(h), RayKind::Projection) && b->raycast(o, d, hit, s.rayLength, true))
                     {
                         r.flags = kHitBackface;
                         break;
@@ -142,13 +143,16 @@ void CpuBackend::traceProjection(size_t group, std::span<const TexelSample> samp
     }
 }
 
-bool CpuBackend::closestHit(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
-                            TraceHit& out) const
+bool CpuBackend::closestHit(size_t group, OccluderScope scope, uint32_t high, uint32_t low, RayKind kind, const glm::vec3& origin,
+                            const glm::vec3& dir, float tMax, TraceHit& out) const
 {
     const glm::dvec3 o(origin), d(dir);
     geo::BvhHit best;
     size_t bestGroup = 0, bestHigh = SIZE_MAX;
+    const GroupInputs& gi = mInputs->groups[group];
     auto test = [&](size_t g, size_t h) {
+        if (skips(gi, low, mInputs->groups[g].highBase + uint32_t(h), kind))
+            return;
         const auto& b = mBvh[g][h];
         geo::BvhHit hit;
         if (b && b->raycast(o, d, hit, double(tMax), true) && hit.t < best.t)
@@ -181,12 +185,14 @@ bool CpuBackend::closestHit(size_t group, OccluderScope scope, uint32_t high, co
     return true;
 }
 
-bool CpuBackend::occluded(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const
+bool CpuBackend::occluded(size_t group, OccluderScope scope, uint32_t high, uint32_t low, const glm::vec3& origin, const glm::vec3& dir,
+                          float tMax) const
 {
     const glm::dvec3 o(origin), d(dir);
-    auto any = [&](const std::vector<std::unique_ptr<geo::MeshBvh>>& list) {
-        for (const auto& b : list)
-            if (b && b->occluded(o, d, tMax))
+    const GroupInputs& gi = mInputs->groups[group];
+    auto any = [&](size_t g) {
+        for (size_t h = 0; h < mBvh[g].size(); ++h)
+            if (const auto& b = mBvh[g][h]; b && !skips(gi, low, mInputs->groups[g].highBase + uint32_t(h), RayKind::Occlusion) && b->occluded(o, d, tMax))
                 return true;
         return false;
     };
@@ -194,10 +200,10 @@ bool CpuBackend::occluded(size_t group, OccluderScope scope, uint32_t high, cons
     {
     case OccluderScope::Self:
         return high < mBvh[group].size() && mBvh[group][high] && mBvh[group][high]->occluded(o, d, tMax);
-    case OccluderScope::Group: return any(mBvh[group]);
+    case OccluderScope::Group: return any(group);
     case OccluderScope::All:
-        for (const auto& list : mBvh)
-            if (any(list))
+        for (size_t g = 0; g < mBvh.size(); ++g)
+            if (any(g))
                 return true;
         return false;
     }

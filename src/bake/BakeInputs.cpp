@@ -253,6 +253,7 @@ LowInput lowFromMesh(const geo::Mesh& mesh, const glm::dmat4& world, std::string
     low.cageSkew.resize(n * 3, 0.0f);
     low.islands.resize(n);
     low.faces.resize(n);
+    low.points.resize(n * 3);
     if (useCage)
         low.cagePositions.resize(n * 3);
     const auto order = cornerOrder(x.mirrored);
@@ -262,6 +263,7 @@ LowInput lowFromMesh(const geo::Mesh& mesh, const glm::dmat4& world, std::string
             const geo::Index c = tris.corners[t * 3 + size_t(order[size_t(k)])];
             const geo::Index p = mesh.cornerPoint(c);
             const size_t o = t * 3 + size_t(k);
+            low.points[o] = uint32_t(p);
             if (!tangents.empty())
             {
                 const glm::vec4 tg = tangents[c];
@@ -508,6 +510,8 @@ BakeInputs buildInputs(scene::Graph& g, scene::NodeId project, const std::vector
                     j.cachedHigh = std::move(cached);
                     cacheHits += j.cachedHigh ? 1 : 0;
                     gi.highs.emplace_back();
+                    gi.highNodes.push_back(h.self ? gi.settings.lows[k] : !h.file.empty() ? h.file : names[k]);
+                    gi.highSelfLow.push_back(h.self ? int32_t(k) : -1);
                     jobs.push_back(std::move(j));
                 }
                 for (const std::string& w : stack.warnings())
@@ -593,6 +597,54 @@ BakeInputs buildInputs(scene::Graph& g, scene::NodeId project, const std::vector
         in.highMax = anyHigh ? glm::max(in.highMax, gi.highMax) : gi.highMax;
         anyHigh = true;
     }
+    buildLinks(in);
     return in;
+}
+
+void buildLinks(BakeInputs& in)
+{
+    uint32_t total = 0;
+    for (GroupInputs& gi : in.groups)
+    {
+        gi.highBase = total;
+        total += uint32_t(gi.highs.size());
+        gi.links.clear();
+        gi.linkWords = 0;
+    }
+    const uint32_t words = (total + 31) / 32;
+    for (GroupInputs& gi : in.groups)
+    {
+        const size_t lows = gi.lows.size();
+        auto set = [&](size_t low, RayKind kind, uint32_t high) {
+            if (gi.links.empty())
+            {
+                gi.linkWords = words;
+                gi.links.assign(lows * 2 * words, 0u);
+            }
+            gi.links[(low * 2 + size_t(kind)) * words + high / 32] |= 1u << (high % 32);
+        };
+        // A self high is its own low's: the other lows never project from it (they would bake each other's surfaces).
+        for (size_t h = 0; h < gi.highSelfLow.size(); ++h)
+            if (const int32_t own = gi.highSelfLow[h]; own >= 0 && lows > 1)
+                for (size_t l = 0; l < lows; ++l)
+                    if (l != size_t(own))
+                        set(l, RayKind::Projection, gi.highBase + uint32_t(h));
+        for (const Unlink& u : gi.settings.unlinks)
+            for (size_t l = 0; l < lows && l < gi.settings.lows.size(); ++l)
+            {
+                if (!u.lows.empty() && std::ranges::find(u.lows, gi.settings.lows[l]) == u.lows.end())
+                    continue;
+                for (const GroupInputs& other : in.groups)
+                    for (size_t h = 0; h < other.highNodes.size(); ++h)
+                    {
+                        if (std::ranges::find(u.meshes, other.highNodes[h]) == u.meshes.end())
+                            continue;
+                        if (u.occlusion)
+                            set(l, RayKind::Occlusion, other.highBase + uint32_t(h));
+                        if (u.projection && &other == &gi)
+                            set(l, RayKind::Projection, other.highBase + uint32_t(h));
+                    }
+            }
+    }
 }
 } // namespace lila::bake

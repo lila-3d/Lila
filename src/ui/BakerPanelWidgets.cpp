@@ -78,6 +78,107 @@ QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& ti
     return b;
 }
 
+/**
+ * Results thumbnails drag out with the middle button (the left one selects), as their files plus the bake outputs, so a
+ * drop on a mesh knows each one's map.
+ */
+class ThumbList : public QListWidget
+{
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::MiddleButton)
+            return QListWidget::mousePressEvent(e);
+        mPressed = itemAt(e->position().toPoint());
+        mPressAt = e->position().toPoint();
+    }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!(e->buttons() & Qt::MiddleButton) || !mPressed)
+            return QListWidget::mouseMoveEvent(e);
+        if ((e->position().toPoint() - mPressAt).manhattanLength() < QApplication::startDragDistance())
+            return;
+        QList<QListWidgetItem*> items = mPressed->isSelected() ? selectedItems() : QList<QListWidgetItem*>{mPressed};
+        mPressed = nullptr;
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mimeData(items));
+        drag->setPixmap(items.front()->icon().pixmap(iconSize() / 2));
+        drag->exec(Qt::CopyAction);
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        if (e->button() == Qt::MiddleButton)
+            mPressed = nullptr;
+        QListWidget::mouseReleaseEvent(e);
+    }
+    QStringList mimeTypes() const override { return {"text/uri-list", kOutputsMime}; }
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override
+    {
+        auto* m = new QMimeData;
+        QList<QUrl> urls;
+        json outputs = json::array();
+        for (const QListWidgetItem* it : items)
+        {
+            urls << QUrl::fromLocalFile(it->data(kFileRole).toString());
+            outputs.push_back(json::parse(it->data(kOutputRole).toString().toStdString(), nullptr, false));
+        }
+        m->setUrls(urls);
+        m->setData(kOutputsMime, QByteArray::fromStdString(outputs.dump()));
+        return m;
+    }
+
+private:
+    QListWidgetItem* mPressed = nullptr;
+    QPoint mPressAt;
+};
+
+/** An issue row's edges or faces, selected on its mesh (ids of its outMesh). */
+void selectIssueComponents(QTreeWidgetItem* it)
+{
+    const QString stored = it->data(0, kComponentsRole).toString();
+    const std::string node = ss(it->data(0, kNodeRole).toString());
+    scene::Node* n = stored.isEmpty() || node.empty() ? nullptr : findNode(node);
+    if (!n || !n->type().isA("mesh"))
+        return;
+    const json c = json::parse(stored.toStdString(), nullptr, false);
+    json call = {{"args", {n->path()}}};
+    if (c.contains("edgePoints"))
+    {
+        scene::MeshPtr m;
+        try
+        {
+            m = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+        }
+        catch (const std::exception&)
+        {
+        }
+        if (!m)
+            return;
+        json edges = json::array();
+        for (const json& pr : c["edgePoints"])
+        {
+            const geo::Index a = pr[0].get<geo::Index>(), b = pr[1].get<geo::Index>();
+            if (a >= m->pointCapacity() || b >= m->pointCapacity() || !m->pointValid(a))
+                continue;
+            m->forEachPointEdge(a, [&](geo::Index e) {
+                if (m->edgeOtherPoint(e, a) == b)
+                    edges.push_back(e);
+            });
+        }
+        call["edges"] = std::move(edges);
+    }
+    else if (c.contains("faces"))
+        call["faces"] = c["faces"];
+    else
+        return;
+    UndoChunk chunk("Select Issue");
+    runUi("select", {{"args", {n->path()}}});
+    runUi("selectComponents", call);
+}
+
 QDoubleSpinBox* distanceSpin(QWidget* parent, const QString& tip)
 {
     auto* s = new QDoubleSpinBox(parent);
@@ -88,6 +189,7 @@ QDoubleSpinBox* distanceSpin(QWidget* parent, const QString& tip)
     s->setSpecialValueText("Auto");
     s->setKeyboardTracking(false);
     s->setToolTip(tip);
+    setSpinDefault(s, 0.0);
     return s;
 }
 } // namespace
@@ -355,6 +457,7 @@ QWidget* BakerPanel::buildGroups()
     });
     bar->addWidget(mArrange);
     bar->addStretch(1);
+    bar->addWidget(docs::helpButton("baking", w));
     QToolButton* remove = toolButton(w, "trash", "Remove the selected rows: groups, or meshes from their group");
     remove->setObjectName("bakerRemoveRows");
     connect(remove, &QToolButton::clicked, this, &BakerPanel::removeSelectedRows);
@@ -376,6 +479,16 @@ QWidget* BakerPanel::buildGroups()
                         "onto Cage as its cage, onto empty space for a new group");
     mGroups->header()->setStretchLastSection(true);
     mGroups->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    // Rebuilds run with updates off; only the user's folding is remembered.
+    auto toggleFold = [this](QTreeWidgetItem* it) {
+        const QString key = it->data(0, kFoldKeyRole).toString();
+        if (key.isEmpty() || !mGroups->updatesEnabled())
+            return;
+        if (!mLintToggled.removeOne(key))
+            mLintToggled << key;
+    };
+    connect(mGroups, &QTreeWidget::itemExpanded, this, toggleFold);
+    connect(mGroups, &QTreeWidget::itemCollapsed, this, toggleFold);
     Hotkeys::passThrough(mGroups);
     mGroups->setProperty("hotkeyContext", "baker");
     deletion::claim(mGroups, [this] { removeSelectedRows(); });
@@ -386,6 +499,7 @@ QWidget* BakerPanel::buildGroups()
             refreshDetails();
         updateButtons();
     });
+    connect(mGroups, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* it, int) { selectIssueComponents(it); });
     connect(mGroups, &QTreeWidget::itemDoubleClicked, this, [](QTreeWidgetItem* it, int) {
         const std::string n = ss(it->data(0, kNodeRole).toString());
         if (!n.empty())
@@ -431,6 +545,7 @@ QWidget* BakerPanel::buildGroupDetails()
     mCageOffset->setPrefix("x ");
     mCageOffset->setKeyboardTracking(false);
     mCageOffset->setToolTip("Scales the auto cage's push; a painted bakeOffset point attribute scales it per point");
+    setSpinDefault(mCageOffset, 1.0);
     connect(mCageOffset, &QDoubleSpinBox::valueChanged, this, [edit](double x) { edit("cageOffset", x); });
     form->addRow("Cage Offset", mCageOffset);
 
@@ -465,6 +580,18 @@ QWidget* BakerPanel::buildGroupDetails()
                                      .arg(r["before"].value("missRate", 0.0) * 100.0, 0, 'f', 2)
                                      .arg(r["after"].value("missRate", 0.0) * 100.0, 0, 'f', 2));
     });
+    QToolButton* resetPaint = toolButton(mCageRow, "eraser", "Reset the painted cage offsets and skew on the group's lows", "Reset");
+    resetPaint->setObjectName("bakerResetCagePaint");
+    connect(resetPaint, &QToolButton::clicked, this, [this] {
+        scene::Node* n = findNode(currentGroup());
+        if (!n || !bake::isGroup(*n) || bake::groupSettings(*n).lows.empty())
+            return;
+        const std::vector<std::string> lows = bake::groupSettings(*n).lows;
+        UndoChunk chunk("Reset Bake Cage Paint");
+        for (const char* attr : {"offset", "skew"})
+            runUi("bakePaint", {{"args", lows}, {"attr", attr}, {"reset", true}});
+        mCageStatus->clear();
+    });
     mLivePreview = toolButton(mCageRow, "live-view", "Live preview: rebake a low resolution preview on the lows as the cage changes; nothing is written", "Live");
     mLivePreview->setObjectName("bakerLivePreview");
     mLivePreview->setCheckable(true);
@@ -473,6 +600,7 @@ QWidget* BakerPanel::buildGroupDetails()
     cageRow->addWidget(mShowCage);
     cageRow->addWidget(paint);
     cageRow->addWidget(estimate);
+    cageRow->addWidget(resetPaint);
     cageRow->addWidget(mLivePreview);
     cageRow->addStretch(1);
     form->addRow("Cage", mCageRow);
@@ -483,13 +611,83 @@ QWidget* BakerPanel::buildGroupDetails()
     mAoScope->addItem("Group", "group");
     mAoScope->addItem("Self", "self");
     mAoScope->addItem("All Groups", "all");
+    setComboDefault(mAoScope, mAoScope->findData(qs(bake::GroupSettings{}.aoScope)));
     mAoScope->setToolTip("Which highs occlude AO rays: this group's (so overlapping groups never shadow each other), only the hit high, or every group's");
     connect(mAoScope, &QComboBox::currentIndexChanged, this, [this](int) {
         if (!mUpdating && !currentGroup().empty())
             run("bakeGroup", {{"args", {currentGroup()}}, {"aoScope", ss(mAoScope->currentData().toString())}}, false);
     });
     form->addRow("AO Occluders", mAoScope);
+
+    auto* unlinkBox = new QWidget(mDetails);
+    auto* uv = new QVBoxLayout(unlinkBox);
+    uv->setContentsMargins(0, 0, 0, 0);
+    uv->setSpacing(1);
+    mUnlinks = new QTreeWidget(unlinkBox);
+    mUnlinks->setObjectName("bakerUnlinks");
+    mUnlinks->setMaximumHeight(170);
+    mUnlinks->setUniformRowHeights(true);
+    mUnlinks->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    mUnlinks->setHeaderLabels({"Low", "Skip Projection"});
+    mUnlinks->headerItem()->setToolTip(0, "Meshes under a low don't occlude it");
+    mUnlinks->headerItem()->setToolTip(1, "They don't project onto it either");
+    mUnlinks->header()->setStretchLastSection(false);
+    mUnlinks->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    mUnlinks->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    connect(mUnlinks, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
+        scene::Node* n = findNode(currentGroup());
+        const int row = mUnlinks->indexOfTopLevelItem(item);
+        if (mUpdating || column != 1 || row < 0 || !n || !bake::isGroup(*n))
+            return;
+        std::vector<bake::Unlink> all = bake::groupSettings(*n).unlinks;
+        if (row >= int(all.size()))
+            return;
+        all[size_t(row)].projection = item->checkState(1) == Qt::Checked;
+        setUnlinks(currentGroup(), all);
+    });
+    connect(mUnlinks, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
+        if (!mUpdating && !mUnlinksCollapsed.contains(item->text(0)))
+            mUnlinksCollapsed << item->text(0);
+    });
+    connect(mUnlinks, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
+        if (!mUpdating)
+            mUnlinksCollapsed.removeAll(item->text(0));
+    });
+    uv->addWidget(mUnlinks);
+    auto* ub = new QHBoxLayout;
+    ub->setSpacing(1);
+    QToolButton* unlinkAdd = toolButton(unlinkBox, "link-off",
+                                        "The selected meshes stop occluding the current Low row, or every low when a group row is "
+                                        "current. Shift+click: they also stop projecting onto it.",
+                                        "Unlink Selected");
+    connect(unlinkAdd, &QToolButton::clicked, this, [this] {
+        QTreeWidgetItem* it = mGroups->currentItem();
+        const std::string low = it && it->data(0, kKindRole).toInt() == kLowItem ? ss(it->data(0, kNodeRole).toString()) : std::string();
+        unlinkSelected(currentGroup(), low, QApplication::keyboardModifiers() & Qt::ShiftModifier);
+    });
+    ub->addWidget(unlinkAdd);
+    QToolButton* unlinkRemove = toolButton(unlinkBox, "trash", "Remove the selected meshes, or every mesh of a selected low row");
+    connect(unlinkRemove, &QToolButton::clicked, this, [this] { removeSelectedUnlinks(); });
+    ub->addWidget(unlinkRemove);
+    ub->addStretch(1);
+    uv->addLayout(ub);
+    mUnlinks->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mUnlinks, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        QTreeWidgetItem* item = mUnlinks->itemAt(at);
+        if (!item)
+            return;
+        if (!item->isSelected())
+        {
+            mUnlinks->clearSelection();
+            item->setSelected(true);
+        }
+        QMenu menu(this);
+        menu.addAction(icon("trash"), "Remove", this, [this] { removeSelectedUnlinks(); });
+        menu.exec(mUnlinks->viewport()->mapToGlobal(at));
+    });
+    form->addRow("Unlinked", unlinkBox);
     mBackfaces = new QCheckBox("Ignore backfaces", mDetails);
+    setCheckDefault(mBackfaces, bake::GroupSettings{}.ignoreBackfaces);
     mBackfaces->setToolTip("Rays only hit high faces facing them");
     connect(mBackfaces, &QCheckBox::toggled, this, [this](bool on) {
         if (!mUpdating && !currentGroup().empty())
@@ -497,6 +695,7 @@ QWidget* BakerPanel::buildGroupDetails()
     });
     form->addRow(QString(), mBackfaces);
     mSelf = new QCheckBox("Self as high", mDetails);
+    setCheckDefault(mSelf, false);
     mSelf->setToolTip("Bake the lows onto themselves through a bake-only modifier stack (e.g. Smooth x2): no high mesh needed");
     connect(mSelf, &QCheckBox::toggled, this, [this](bool on) {
         if (!mUpdating && !currentGroup().empty())
@@ -680,8 +879,12 @@ QWidget* BakerPanel::buildOutput()
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     auto set = [this](const char* flag, json value) {
-        if (!mUpdating)
-            run("setBakeOutput", {{flag, std::move(value)}});
+        if (mUpdating)
+            return;
+        json call = {{flag, std::move(value)}};
+        if (const std::string ts = mTextureSet ? ss(mTextureSet->currentData().toString()) : std::string(); !ts.empty())
+            call["material"] = ts;
+        run("setBakeOutput", call);
     };
 
     auto* folderRow = new QHBoxLayout;
@@ -737,12 +940,45 @@ QWidget* BakerPanel::buildOutput()
     tokens->setMenu(tokMenu);
     nameRow->addWidget(tokens);
     form->addRow("Name", nameRow);
-    mPreview = new QLabel(w);
+    mPreview = new QTreeWidget(w);
     mPreview->setObjectName("bakerPreview");
-    mPreview->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    mPreview->setWordWrap(true);
-    mPreview->setToolTip("The file names this template gives for the first group");
-    form->addRow(QString(), mPreview);
+    mPreview->setHeaderLabels({"File", "Size", "Format"});
+    mPreview->setUniformRowHeights(true);
+    mPreview->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    mPreview->setMaximumHeight(180);
+    mPreview->header()->setStretchLastSection(false);
+    mPreview->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    mPreview->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    mPreview->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    auto openSet = [this](QTreeWidgetItem* it, bool open) {
+        if (!mPreview->updatesEnabled() || it->parent())
+            return;
+        const QString set = it->data(0, Qt::UserRole).toString();
+        mPreviewOpen.removeAll(set);
+        if (open)
+            mPreviewOpen << set;
+    };
+    connect(mPreview, &QTreeWidget::itemExpanded, this, [openSet](QTreeWidgetItem* it) { openSet(it, true); });
+    connect(mPreview, &QTreeWidget::itemCollapsed, this, [openSet](QTreeWidgetItem* it) { openSet(it, false); });
+    form->addRow("Files", mPreview);
+
+    auto* setRow = new QHBoxLayout;
+    mTextureSet = new QComboBox(w);
+    mTextureSet->setObjectName("bakerTextureSet");
+    mTextureSet->setToolTip("Which texture set the settings below are for: every set, or one material ({material}) with its own "
+                            "format, bits, resolution, supersampling and padding. Needs {material} in the name.");
+    connect(mTextureSet, &QComboBox::currentIndexChanged, this, [this](int) {
+        if (!mUpdating)
+            refreshOutput();
+    });
+    setRow->addWidget(mTextureSet, 1);
+    mTextureSetReset = toolButton(w, "arrow-back-up", "Use the project's settings for this texture set again");
+    connect(mTextureSetReset, &QToolButton::clicked, this, [this] {
+        if (const std::string ts = ss(mTextureSet->currentData().toString()); !ts.empty())
+            run("setBakeOutput", {{"material", ts}, {"clear", true}});
+    });
+    setRow->addWidget(mTextureSetReset);
+    form->addRow("Texture Set", setRow);
 
     mFormat = new QComboBox(w);
     mFormat->addItem("PNG", "png");
@@ -750,6 +986,8 @@ QWidget* BakerPanel::buildOutput()
     mFormat->addItem("TGA", "tga");
     mFormat->addItem("TIFF", "tif");
     mFormat->addItem("PSD (layered)", "psd");
+    const bake::OutputSettings defaults;
+    setComboDefault(mFormat, mFormat->findData(qs(defaults.format)));
     connect(mFormat, &QComboBox::currentIndexChanged, this, [this, set](int) {
         set("format", ss(mFormat->currentData().toString()));
         updatePreview();
@@ -759,6 +997,7 @@ QWidget* BakerPanel::buildOutput()
     mBits->addItem("8 bit", 8);
     mBits->addItem("16 bit", 16);
     mBits->addItem("32 bit float", 32);
+    setComboDefault(mBits, mBits->findData(defaults.bits));
     mBits->setToolTip("PNG and PSD take 8 or 16, TIFF 8, 16 or 32 float, EXR 16 (half) or 32 float; TGA is always 8");
     connect(mBits, &QComboBox::currentIndexChanged, this, [this, set](int) { set("bits", mBits->currentData().toInt()); });
     form->addRow("Bits", mBits);
@@ -766,7 +1005,8 @@ QWidget* BakerPanel::buildOutput()
     mResolution->setObjectName("bakerResolution");
     for (int r : {256, 512, 1024, 2048, 4096, 8192})
         mResolution->addItem(QString("%1 x %1").arg(r), r);
-    connect(mResolution, &QComboBox::activated, this, [this, set](int) {
+    setComboDefault(mResolution, mResolution->findData(defaults.width));
+    connect(mResolution, &QComboBox::currentIndexChanged, this, [this, set](int) {
         if (const int r = mResolution->currentData().toInt(); r > 0)
             set("resolution", r);
     });
@@ -775,6 +1015,7 @@ QWidget* BakerPanel::buildOutput()
     for (int s : {1, 4, 16, 64})
         mSupersampling->addItem(s == 1 ? QString("1 (off)") : QString("%1 (%2 x %2)").arg(s).arg(int(std::sqrt(s))), s);
     mSupersampling->setToolTip("Samples per texel");
+    setComboDefault(mSupersampling, mSupersampling->findData(defaults.supersampling));
     connect(mSupersampling, &QComboBox::currentIndexChanged, this, [this, set](int) { set("supersampling", mSupersampling->currentData().toInt()); });
     form->addRow("Supersampling", mSupersampling);
     mPadding = new QSpinBox(w);
@@ -783,6 +1024,7 @@ QWidget* BakerPanel::buildOutput()
     mPadding->setSpecialValueText("Fill");
     mPadding->setKeyboardTracking(false);
     mPadding->setToolTip("Texels of dilation past island borders; Fill floods the whole texture");
+    setSpinDefault(mPadding, defaults.padding);
     connect(mPadding, &QSpinBox::valueChanged, this, [set](int x) { set("padding", x); });
     form->addRow("Padding", mPadding);
 
@@ -796,11 +1038,13 @@ QWidget* BakerPanel::buildOutput()
     mAutoAssign->setObjectName("bakerAutoAssign");
     mAutoAssign->setToolTip("Every bake wires its textures into the materials of the lows it was baked for (bakeAssign)");
     connect(mAutoAssign, &QCheckBox::toggled, this, pipeline("autoAssign"));
+    setCheckDefault(mAutoAssign, bake::ProjectSettings{}.autoAssign);
     form->addRow(QString(), mAutoAssign);
     mRebakeOnSave = new QCheckBox("Rebake on save", w);
     mRebakeOnSave->setObjectName("bakerRebakeOnSave");
     mRebakeOnSave->setToolTip("Saving the scene rebakes this project when its meshes or settings changed since the last bake");
     connect(mRebakeOnSave, &QCheckBox::toggled, this, pipeline("rebakeOnSave"));
+    setCheckDefault(mRebakeOnSave, false);
     form->addRow(QString(), mRebakeOnSave);
     return w;
 }
@@ -817,29 +1061,38 @@ QWidget* BakerPanel::buildResults()
     auto* row = new QHBoxLayout(mSummaryBox);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(2);
-    auto* scroll = new QScrollArea(mSummaryBox);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    mSummary = new QLabel("No bake yet this session.", scroll);
+    mSummary = new QTreeWidget(mSummaryBox);
     mSummary->setObjectName("bakerSummary");
-    mSummary->setWordWrap(true);
-    mSummary->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    mSummary->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::LinksAccessibleByMouse);
-    connect(mSummary, &QLabel::linkActivated, this, [](const QString& link) { QDesktopServices::openUrl(QUrl(link)); });
-    scroll->setWidget(mSummary);
-    row->addWidget(scroll, 1);
+    mSummary->setHeaderHidden(true);
+    mSummary->setColumnCount(2);
+    mSummary->setUniformRowHeights(true);
+    mSummary->header()->setStretchLastSection(true);
+    mSummary->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    connect(mSummary, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
+        if (const QString file = it->data(0, kFileRole).toString(); !file.isEmpty())
+            openFolder(file);
+    });
+    row->addWidget(mSummary, 1);
+    auto* buttons = new QVBoxLayout;
+    buttons->setSpacing(1);
+    auto* assign = toolButton(mSummaryBox, "link", "Assign the maps to the lows' materials", "Assign");
+    assign->setObjectName("bakerAssign");
+    connect(assign, &QToolButton::clicked, this, [this] { assignResult(); });
+    buttons->addWidget(assign);
+    row->addLayout(buttons);
     auto* openOutput = toolButton(mSummaryBox, "folder", "Open the output folder");
     openOutput->setObjectName("bakerOpenFolder");
     connect(openOutput, &QToolButton::clicked, this, [this] { openFolder(outputFolder()); });
-    row->addWidget(openOutput, 0, Qt::AlignTop);
+    buttons->addWidget(openOutput);
     auto* clear = toolButton(mSummaryBox, "x", "Clear the bake messages");
     clear->setObjectName("bakerClearSummary");
     connect(clear, &QToolButton::clicked, this, [this] {
         mSummary->clear();
         mSummaryBox->hide();
     });
-    row->addWidget(clear, 0, Qt::AlignTop);
-    mThumbs = new QListWidget(split);
+    buttons->addWidget(clear);
+    buttons->addStretch(1);
+    mThumbs = new ThumbList(split);
     mThumbs->setObjectName("bakerThumbs");
     mThumbs->setViewMode(QListView::IconMode);
     mThumbs->setIconSize(QSize(128, 128));

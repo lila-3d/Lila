@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <set>
 
 using namespace lila;
@@ -529,6 +530,7 @@ TEST_CASE("error map: misses, back faces, surfaces beyond the rays and degenerat
     const bake::MapSettings ms{.map = "error"};
     const bake::MapContext ctx{ms, in, g, 0, nullptr, 32, 32, nullptr};
     bake::TexelSample s{};
+    s.low = 0;
     s.normal[1] = 1.0f;
     bake::HitRecord h{};
     h.flags = bake::kHitValid;
@@ -590,4 +592,105 @@ TEST_CASE("Painter and Unreal targets bake every map they name")
         INFO(name);
         CHECK(skipped.empty());
     }
+}
+
+TEST_CASE("links: a self high projects only onto its own low; unlinked meshes stop occluding")
+{
+    newScene();
+    const fs::path dir = tempDir("links");
+    // A floor and a smaller lid 0.5 cm above it, both baking onto themselves with rays starting 2 cm out.
+    const std::string floor = addMesh("floor", plane(1));
+    const std::string lid = addMesh("lid", lifted(plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 50.0), 0.5));
+    const std::string p = project(dir, 16, 1, "exr");
+    ops::execute("bakeGroup", {{"args", {"pair"}}, {"project", p}, {"lows", {floor, lid}}, {"self", true}, {"frontal", 2.0}, {"rear", 2.0}});
+    setMap(p, "height", {{"range", 1.0}});
+    json r = ops::execute("bake", {{"project", p}, {"maps", {"height"}}, {"backend", "cpu"}});
+    // The floor's centre sits under the lid; it still finds itself, not the lid.
+    for (const json& o : r["outputs"])
+        if (o["meshes"][0] == floor)
+            CHECK(texel(readImage(o), 8, 8).r == doctest::Approx(0.5f).epsilon(0.01));
+
+    // AO on the floor under a separate 5 cm high lid, then with the lid unlinked from the floor's occlusion.
+    newScene();
+    const std::string f2 = addMesh("floor", plane(1));
+    const std::string roof = addMesh("roof", lifted(plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 80.0), 5.0));
+    const std::string p2 = project(dir / "ao", 16, 1, "exr");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p2}, {"lows", {f2}}, {"self", true}, {"addHigh", {roof}}, {"frontal", 2.0}, {"rear", 2.0}});
+    auto ao = [&] {
+        const json out = ops::execute("bake", {{"project", p2}, {"maps", {"ao"}}, {"backend", "cpu"}});
+        return texel(readImage(outputFor(out, "ao")), 8, 8).r;
+    };
+    const float covered = ao();
+    CHECK(covered < 0.5f);
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"unlinks", json::array({json{{"lows", {f2}}, {"meshes", {roof}}}})}});
+    CHECK(ops::execute("bakeGroup", {{"args", {"g"}}})["unlinks"].size() == 1);
+    CHECK(ao() == doctest::Approx(1.0f).epsilon(0.01));
+}
+
+TEST_CASE("material slots of one low with overlapping UVs each fill their own texture")
+{
+    newScene();
+    const fs::path dir = tempDir("matoverlap");
+    // Four quads, two per material, every quad's UVs covering the whole tile: each texture set overlaps the other.
+    geo::Mesh m = plane(2);
+    auto uvs = m.cornerAttrs().get<glm::vec2>("uv0");
+    const std::vector<glm::vec2> before(uvs.begin(), uvs.end());
+    for (geo::Index c = 0; c < uvs.size(); ++c)
+    {
+        glm::vec2 centre(0.0f);
+        const std::vector<geo::Index> corners = m.faceCorners(m.cornerFace(c));
+        for (geo::Index k : corners)
+            centre += before[k];
+        centre /= float(corners.size());
+        uvs[c] = before[c] * 2.0f - glm::floor(centre * 2.0f);
+    }
+    scene::materials::assign(m, "M_A", {0, 1});
+    scene::materials::assign(m, "M_B", {2, 3});
+    const std::string low = addMesh("both_low", std::move(m));
+    const std::string p = project(dir, 16, 1, "png", "{material}_{map}");
+    // No padding, so a texel the other set took stays background black instead of being filled from its neighbours;
+    // the ID map's material colours are never black.
+    ops::execute("setBakeOutput", {{"project", p}, {"padding", 0}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"frontal", 1.0}, {"rear", 1.0}});
+    const json r = ops::execute("bake", {{"project", p}, {"maps", {"id"}}, {"backend", "cpu"}});
+    REQUIRE(r["outputs"].size() == 2);
+    for (const json& o : r["outputs"])
+    {
+        const image::Image img = readImage(o);
+        size_t blank = 0;
+        for (size_t i = 0; i + 3 < img.rgba.size(); i += 4)
+            if (img.rgba[i] + img.rgba[i + 1] + img.rgba[i + 2] < 0.01f)
+                ++blank;
+        CHECK(blank == 0);
+    }
+}
+
+TEST_CASE("per-material output: each texture set bakes at its own resolution in one bake")
+{
+    newScene();
+    const fs::path dir = tempDir("permat");
+    geo::Mesh a = plane(1);
+    scene::materials::assign(a, "M_A", {});
+    geo::Mesh b = plane(1);
+    scene::materials::assign(b, "M_B", {});
+    const std::string lowA = addMesh("a_low", std::move(a));
+    const std::string lowB = addMesh("b_low", lifted(std::move(b), 50.0));
+    const std::string p = project(dir, 16, 1, "png", "{material}_{map}");
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {lowA, lowB}}, {"self", true}, {"frontal", 1.0}, {"rear", 1.0}});
+    const json out = ops::execute("setBakeOutput", {{"project", p}, {"material", "M_B"}, {"resolution", 32}, {"supersampling", 4}});
+    CHECK(out["materials"]["M_B"]["width"] == 32);
+    const json r = ops::execute("bake", {{"project", p}, {"maps", {"normal", "ao"}}, {"backend", "cpu"}});
+    std::map<std::string, int> width;
+    for (const json& o : r["outputs"])
+        width[fs::path(o["file"].get<std::string>()).stem().string()] = o["width"].get<int>();
+    CHECK(width == std::map<std::string, int>{{"M_A_normal", 16}, {"M_A_ao", 16}, {"M_B_normal", 32}, {"M_B_ao", 32}});
+    CHECK(readImage(outputFor(r, "normal")).width == width[fs::path(outputFor(r, "normal")["file"].get<std::string>()).stem().string()]);
+    CHECK(fs::exists(fs::path(r["manifest"].get<std::string>())));
+    CHECK(r["stats"]["groups"].size() == 1);
+
+    // Clearing the override bakes both at the project's resolution again.
+    ops::execute("setBakeOutput", {{"project", p}, {"material", "M_B"}, {"clear", true}});
+    const json r2 = ops::execute("bake", {{"project", p}, {"maps", {"normal"}}, {"backend", "cpu"}});
+    for (const json& o : r2["outputs"])
+        CHECK(o["width"] == 16);
 }

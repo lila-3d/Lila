@@ -146,6 +146,8 @@ static const uint kFlagScopeSelf = 16;
 static const uint kFlagResident = 32;
 static const uint kFlagNormalMaps = 64;
 static const uint kFlagObjectSpace = 128;
+// links holds the highs each low's rays skip (GroupInputs::links).
+static const uint kFlagLinks = 256;
 
 // Mirrors GpuBakePush in src/render/Baker.cpp.
 struct BakePush
@@ -178,6 +180,9 @@ struct BakePush
     uint mode;
     uint pad0;
     TextureRef* normalMaps; // the high's own normal map per material slot (from materialBase), with kFlagNormalMaps
+    uint* links;            // with kFlagLinks: linkWords words per low and ray kind, bits over every group's highs
+    uint linkWords;
+    uint highBase;          // added to a traced high's index to number it among every group's
 };
 
 #if !defined(BAKE_OWN_PUSH)

@@ -15,6 +15,7 @@
 namespace lila::bake
 {
 struct BakeEvent;
+struct Unlink;
 }
 
 class QCheckBox;
@@ -61,6 +62,8 @@ public:
     void refresh();
     /** Shows a bake result (the bake command's return): stats, warnings and thumbnails, loaded off the main thread. */
     void showResult(const nlohmann::json& result);
+    /** Wires the last bake's maps into the lows' materials (bakeAssign) and toasts what went where. */
+    void assignResult();
     /** Thumbnails still loading. */
     bool thumbnailsPending() const { return mThumbJobs > 0; }
     /** Where the shown result's textures went, else where the project's would go; empty with no project. */
@@ -93,11 +96,18 @@ private:
     void refreshDetails();
     void refreshMaps();
     void refreshMapSettings();
+    /** The selected meshes stop occluding (and, with projection, projecting onto) low, or every low of the group when empty. */
+    void unlinkSelected(const std::string& group, const std::string& low, bool projection);
+    void setUnlinks(const std::string& group, const std::vector<bake::Unlink>& unlinks);
+    /** Selected mesh rows leave their unlink; a selected low row drops its whole unlink. */
+    void removeSelectedUnlinks();
     /** R G B A rows for a channel pack map: each a source map and its channel (or luminance/max), or a constant. */
     void addPackChannels(const std::string& map, const nlohmann::json& channels);
     void refreshOutput();
     void updatePreview();
     void updateButtons();
+    /** One status row in place of the result rows: Baking, Cancelled, Failed. */
+    void showStatus(const QString& text, const QString& detail = {}, bool error = false);
     void scheduleLint();
     /** full also loads the highs for the range and cage checks. */
     void runLint(bool full);
@@ -157,6 +167,8 @@ private:
     QToolButton* mLintButton = nullptr;
 
     QTreeWidget* mGroups = nullptr;
+    /** Issue rows of the groups tree folded or unfolded against their default (a check open, its meshes folded), by key. */
+    QStringList mLintToggled;
     QWidget* mDetails = nullptr;
     QDoubleSpinBox* mFrontal = nullptr;
     QDoubleSpinBox* mRear = nullptr;
@@ -168,6 +180,9 @@ private:
     std::string mCageGroup;
     QCheckBox* mBackfaces = nullptr;
     QComboBox* mAoScope = nullptr;
+    QTreeWidget* mUnlinks = nullptr;
+    /** Low rows of the unlinks tree folded by the user, by their text. */
+    QStringList mUnlinksCollapsed;
     QCheckBox* mSelf = nullptr;
     QWidget* mStackBox = nullptr;
     QLabel* mStackTitle = nullptr;
@@ -191,14 +206,21 @@ private:
     QCheckBox* mAutoAssign = nullptr;
     QCheckBox* mRebakeOnSave = nullptr;
     QLineEdit* mName = nullptr;
-    QLabel* mPreview = nullptr;
+    /** The files the name template gives: a row per texture set, its files under it. */
+    QTreeWidget* mPreview = nullptr;
+    /** Texture sets unfolded in the preview. */
+    QStringList mPreviewOpen;
+    /** The texture set the format, bits, resolution, supersampling and padding rows edit; "" is the project's. */
+    QComboBox* mTextureSet = nullptr;
+    QToolButton* mTextureSetReset = nullptr;
     QComboBox* mFormat = nullptr;
     QComboBox* mBits = nullptr;
     QComboBox* mResolution = nullptr;
     QComboBox* mSupersampling = nullptr;
     QSpinBox* mPadding = nullptr;
 
-    QLabel* mSummary = nullptr;
+    /** The shown result as rows: files, time, misses, folder, assignment, then warnings by kind. */
+    QTreeWidget* mSummary = nullptr;
     /** The summary and its clear button, above the thumbnails in a splitter. */
     QWidget* mSummaryBox = nullptr;
     QListWidget* mThumbs = nullptr;

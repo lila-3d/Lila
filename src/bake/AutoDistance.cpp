@@ -41,6 +41,7 @@ struct LowPoint
     glm::vec3 dir;
     /** cageOffset x bakeOffset here: frontal is scaled by it. */
     float scale;
+    uint32_t low = kNoHit;
 };
 
 std::vector<LowPoint> lowSamples(const GroupInputs& gi)
@@ -79,6 +80,7 @@ std::vector<LowPoint> lowSamples(const GroupInputs& gi)
         const size_t c = t * 3;
         auto mix = [&](const auto* v) { return v[c] * w.x + v[c + 1] * w.y + v[c + 2] * w.z; };
         LowPoint s;
+        s.low = uint32_t(low - gi.lows.data());
         s.p = mix(low->soup.positions.data());
         if (low->cagePositions.size() == low->soup.positions.size())
         {
@@ -133,8 +135,10 @@ void rayNeeds(const GroupInputs& gi, size_t group, const Backend& backend, float
         {
             const float t = cap / float(1 << (kWindows - 1 - k));
             samples.push_back(ray(s.p - s.dir * t, s.dir, t));
+            samples.back().low = s.low;
         }
         samples.push_back(ray(s.p, s.dir, cap));
+        samples.back().low = s.low;
     }
     std::vector<HitRecord> hits(samples.size());
     backend.traceProjection(group, samples, hits);

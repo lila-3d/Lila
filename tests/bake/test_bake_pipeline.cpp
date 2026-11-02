@@ -366,6 +366,32 @@ TEST_CASE("rebake on save runs off the main thread, restarts when a save changes
     bake::setRebakeAsync(false);
 }
 
+TEST_CASE("assignTexture wires a file into the material on a face by its name, and undoes")
+{
+    CHECK(bake::mapFromFileName("T_Rock_N.png") == "normal");
+    CHECK(bake::mapFromFileName("M_Outfit_ao.png") == "ao");
+    CHECK(bake::mapFromFileName("T_Rock_BaseColor.1001.png") == "baseColor");
+    CHECK(bake::mapFromFileName("T_Rock_CRM.png") == "orm");
+    CHECK(bake::mapFromFileName("notes.png").empty());
+
+    newScene();
+    const std::string mesh = addMesh("rock", plane(1));
+    UndoStack::get().clear();
+    const json r = ops::execute("assignTexture", {{"args", {"C:/tex/T_Rock_N.png"}}, {"mesh", mesh}, {"face", 0}});
+    CHECK(r["created"] == json::array({"M_rock"}));
+    REQUIRE(r["assigned"].size() == 1);
+    CHECK(r["assigned"][0]["channel"] == "normal");
+    scene::Node* mat = scene::materials::find(graph(), "M_rock");
+    REQUIRE(mat);
+    CHECK(!mat->as<std::string>(scene::material::kNormalMap).empty());
+
+    ops::execute("assignTexture", {{"args", {"C:/tex/rock_ao.png"}}, {"mesh", mesh}});
+    CHECK(!mat->as<std::string>(scene::material::kAmbientOcclusionMap).empty());
+    UndoStack::get().undo();
+    CHECK(mat->as<std::string>(scene::material::kAmbientOcclusionMap).empty());
+    CHECK_THROWS(ops::execute("assignTexture", {{"args", {"C:/tex/notes.png"}}, {"mesh", mesh}}));
+}
+
 TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 {
     newScene();

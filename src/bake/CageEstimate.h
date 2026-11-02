@@ -49,10 +49,10 @@ struct LILA_SCENE_API CageCoverage
 };
 
 /**
- * Traces one low's raster (one sample per texel at resolution x resolution) against a prepared backend's group as a
+ * Traces one low's raster (lowIndex its place in the group, for its links) (one sample per texel at resolution x resolution) against a prepared backend's group as a
  * bake would with these cage parameters. missed, when given, receives the samples that missed.
  */
-LILA_SCENE_API CageCoverage cageCoverage(const LowInput& low, const CageParams& cage, size_t group, const Backend& backend, int resolution,
+LILA_SCENE_API CageCoverage cageCoverage(const LowInput& low, uint32_t lowIndex, const CageParams& cage, size_t group, const Backend& backend, int resolution,
                                          std::vector<TexelSample>* missed = nullptr);
 
 struct CageEstimateOptions
@@ -63,6 +63,8 @@ struct CageEstimateOptions
     int iterations = 4;
     /** Kept between the cage and the high, as a fraction of the lows' bounds diagonal. */
     double margin = 0.004;
+    /** Each low's cage stops just short of the group's other lows in front of it, so it never pokes through a mesh lying on it. */
+    bool clearance = true;
 };
 
 /** A low the estimate shapes: its mesh as the bake exports it, in world space by world. */

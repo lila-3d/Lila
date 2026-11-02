@@ -8,6 +8,70 @@ namespace
 {
 namespace opt = ops::options;
 
+/** A lint check as the groups tree shows it: a short title, what to do about it, and one issue's number in a few words. */
+struct LintCheckView
+{
+    QString title;
+    QString fix;
+};
+
+LintCheckView lintCheckView(const std::string& check)
+{
+    static const std::map<std::string, LintCheckView, std::less<>> views = {
+        {"hardEdges", {"Hard edges off UV seams", "The normal map can't hide their shading split: split the UVs there or soften the edges."}},
+        {"uvMissing", {"Missing UVs", "Texels without UV area get nothing: unwrap the mesh or fix the zero-area triangles."}},
+        {"mirroredTangents", {"Mirrored or folded UVs", "Mirrored UVs decode inverted when the tangent sign disagrees; folded islands bake twice."}},
+        {"uvOverlap", {"Overlapping UVs", "Overlapping islands writing one texture overwrite each other: offset or separate them."}},
+        {"texelDensity", {"Texel density outliers", "Islands far from the project's median density look sharper or blurrier than the rest."}},
+        {"highRange", {"Rays missing the high", "Move the high onto the low or raise the Frontal and Rear distances (or Estimate the cage)."}},
+        {"cageContainment", {"High outside the cage", "Rays start inside the high there: raise Frontal or Rear, or Estimate the cage."}},
+        {"triangulation", {"Non-planar faces", "They bake on Lila's triangle split: export triangulated so the game splits them the same way."}},
+        {"cageTopology", {"Cage doesn't match", "The editable cage isn't used until it matches its low; the auto cage bakes instead."}},
+    };
+    if (auto it = views.find(check); it != views.end())
+        return it->second;
+    return {qs(check), QString()};
+}
+
+/** What clicking an issue row selects, as kComponentsRole holds it; empty when the check names no components. */
+QString lintComponents(const LintIssue& li)
+{
+    json c = json::object();
+    if (li.data.contains("edgePoints") && !li.data["edgePoints"].empty())
+        c["edgePoints"] = li.data["edgePoints"];
+    for (const char* k : {"faceIds", "faces"})
+        if (li.data.contains(k) && li.data[k].is_array() && !li.data[k].empty())
+        {
+            c["faces"] = li.data[k];
+            break;
+        }
+    return c.empty() ? QString() : qs(c.dump());
+}
+
+QString lintMetric(const LintIssue& li)
+{
+    const json& d = li.data;
+    auto num = [&](const char* k) { return d.contains(k) && d[k].is_number() ? d[k].get<double>() : -1.0; };
+    auto n = [&](const char* k, const char* unit) { return QString("%1 %2").arg(qlonglong(num(k))).arg(unit); };
+    if (li.check == "hardEdges" && num("count") >= 0)
+        return n("count", "edges");
+    if (li.check == "uvMissing")
+        return num("count") >= 0 ? n("count", "zero-area tris") : QString("no uv0");
+    if (li.check == "mirroredTangents")
+        return num("islands") >= 0 ? n("islands", "folded islands") : n("count", "tris");
+    if (li.check == "uvOverlap" && d.contains("other") && d["other"].is_string())
+        return "with " + qs(shortName(d["other"].get<std::string>()));
+    if (li.check == "texelDensity" && num("median") > 0)
+        return QString("%1 islands, %2 vs %3 median").arg(qlonglong(num("islands"))).arg(num("max"), 0, 'g', 4).arg(num("median"), 0, 'g', 4);
+    if (li.check == "highRange" && num("rays") > 0)
+        return QString("%1% missed").arg(100.0 * num("missed") / num("rays"), 0, 'f', 1);
+    if (li.check == "cageContainment" && num("sampled") > 0)
+        return QString("%1 cm beyond").arg(num("maxBeyond"), 0, 'f', 2);
+    if (li.check == "triangulation" && num("faces") >= 0)
+        return QString("%1 faces, up to %2\u00b0").arg(qlonglong(num("faces"))).arg(num("maxFold"), 0, 'f', 0);
+    return QString();
+}
+
 /** A bake's backendMode as the badge shows it: RT (ray query), GPU (compute traversal) or CPU. */
 QString modeBadge(const std::string& mode) { return mode == "rt" ? "RT" : mode == "compute" ? "GPU" : "CPU"; }
 
@@ -192,6 +256,36 @@ opt::Field field(std::string flag, std::string label, opt::FieldKind kind, json 
 }
 
 /** The low's first material slot, for the {material} token in the preview. */
+/** The {material} names the project's lows give (a mesh with no materials goes by its name), plus any with own settings. */
+std::vector<std::string> textureSets(const scene::Node& project)
+{
+    std::set<std::string> out;
+    for (const auto& [name, v] : bake::projectSettings(project).output.materials)
+        out.insert(name);
+    scene::Graph& g = graph();
+    for (scene::NodeId id : bake::groupsOf(g, project.id()))
+        for (const std::string& low : bake::groupSettings(*g.node(id)).lows)
+        {
+            scene::Node* n = findNode(low);
+            if (!n || !n->type().isA("mesh"))
+                continue;
+            try
+            {
+                const scene::MeshPtr m = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
+                if (!m)
+                    continue;
+                const auto usage = scene::materials::slotUsage(*m);
+                for (const auto& [slot, faces] : usage)
+                    if (faces > 0)
+                        out.insert(slot == scene::materials::kDefaultSlot && usage.size() == 1 ? shortName(low) : slot);
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+    return {out.begin(), out.end()};
+}
+
 std::string firstMaterial(const std::string& mesh)
 {
     scene::Node* n = findNode(mesh);
@@ -338,6 +432,54 @@ void BakerPanel::refreshGroups()
             restore = it;
         return it;
     };
+    // Issues -> one row per check (title and how many) -> one row per mesh with its number; the full message and the fix are tooltips.
+    std::vector<LintIssue> issues = lintIssues(mLint);
+    auto fold = [this](QTreeWidgetItem* it, const QString& key, bool open) {
+        it->setData(0, kFoldKeyRole, key);
+        it->setExpanded(open != mLintToggled.contains(key));
+    };
+    auto addIssues = [&](QTreeWidgetItem* parent, const std::string& group, const std::vector<LintIssue>& list) {
+        if (list.empty())
+            return;
+        std::vector<std::pair<std::string, std::vector<const LintIssue*>>> byCheck;
+        for (const LintIssue& li : list)
+        {
+            auto it = std::ranges::find_if(byCheck, [&](const auto& c) { return c.first == li.check; });
+            (it == byCheck.end() ? byCheck.emplace_back(li.check, std::vector<const LintIssue*>{}).second : it->second).push_back(&li);
+        }
+        QTreeWidgetItem* folder = parent ? child(parent, kLintItem, group, "Issues", QString::number(list.size()), "alert-triangle")
+                                         : new QTreeWidgetItem(mGroups, {"Issues", QString::number(list.size())});
+        if (!parent)
+        {
+            folder->setData(0, kKindRole, kLintItem);
+            folder->setIcon(0, icon("alert-triangle"));
+            folder->setForeground(1, dim);
+        }
+        for (const auto& [check, rows] : byCheck)
+        {
+            const LintCheckView view = lintCheckView(check);
+            const QString summary = rows.size() == 1 ? lintMetric(*rows.front()) : QString("%1 meshes").arg(rows.size());
+            QTreeWidgetItem* c = child(folder, kLintItem, group, view.title, summary, nullptr, rows.size() == 1 ? rows.front()->mesh : std::string());
+            c->setToolTip(0, view.fix.isEmpty() ? qs(rows.front()->message) : view.fix);
+            if (rows.size() == 1)
+            {
+                c->setToolTip(0, qs(shortName(rows.front()->mesh)) + ": " + qs(rows.front()->message) + "\n\n" + view.fix);
+                c->setData(0, kComponentsRole, lintComponents(*rows.front()));
+                continue;
+            }
+            for (const LintIssue* li : rows)
+            {
+                const QString metric = lintMetric(*li);
+                QTreeWidgetItem* m = child(c, kLintItem, group, li->mesh.empty() ? QString("(group)") : qs(shortName(li->mesh)),
+                                           metric.isEmpty() ? qs(li->message) : metric, "box", li->mesh);
+                m->setToolTip(0, qs(li->message));
+                m->setToolTip(1, qs(li->message));
+                m->setData(0, kComponentsRole, lintComponents(*li));
+            }
+            fold(c, qs(group) + "|" + qs(check), false);
+        }
+        fold(folder, qs(group) + "|", true);
+    };
     for (scene::NodeId id : bake::groupsOf(g, project->id()))
     {
         scene::Node* grp = g.node(id);
@@ -371,36 +513,21 @@ void BakerPanel::refreshGroups()
         }
         child(item, kCageItem, path, "Cage", s.cage.empty() ? QString("auto, offset x%1").arg(s.cageOffset) : qs(shortName(s.cage)), "box", s.cage);
 
-        for (const LintIssue& li : lintIssues(mLint))
-        {
-            const bool mine = li.group == path || li.group == grp->name() || (!li.mesh.empty() && (std::ranges::find(s.lows, li.mesh) != s.lows.end() ||
-                                                                                                   std::ranges::any_of(s.highs, [&](const bake::HighEntry& h) { return h.node == li.mesh; })));
-            if (!mine)
-                continue;
-            QTreeWidgetItem* r = child(item, kLintItem, path, qs(li.message), qs(li.severity), "alert-triangle", li.mesh);
-            r->setToolTip(0, qs(li.message));
-        }
+        std::vector<LintIssue> mine;
+        for (LintIssue& li : issues)
+            if (!li.message.empty() &&
+                (li.group == path || li.group == grp->name() ||
+                 (!li.mesh.empty() && (std::ranges::find(s.lows, li.mesh) != s.lows.end() ||
+                                       std::ranges::any_of(s.highs, [&](const bake::HighEntry& h) { return h.node == li.mesh; })))))
+                mine.push_back(std::exchange(li, {}));
+        addIssues(item, path, mine);
         item->setExpanded(true);
         lows->setExpanded(true);
         highs->setExpanded(true);
     }
     // Issues no group claims sit at the top level.
-    for (const LintIssue& li : lintIssues(mLint))
-    {
-        bool claimed = false;
-        for (int i = 0; i < mGroups->topLevelItemCount() && !claimed; ++i)
-            for (int c = 0; c < mGroups->topLevelItem(i)->childCount() && !claimed; ++c)
-                if (QTreeWidgetItem* r = mGroups->topLevelItem(i)->child(c); r->data(0, kKindRole).toInt() == kLintItem && r->text(0) == qs(li.message))
-                    claimed = true;
-        if (!claimed)
-        {
-            auto* r = new QTreeWidgetItem(mGroups, {qs(li.message), qs(li.severity)});
-            r->setData(0, kKindRole, kLintItem);
-            r->setData(0, kNodeRole, qs(li.mesh));
-            r->setIcon(0, icon("alert-triangle"));
-            r->setToolTip(0, qs(li.message));
-        }
-    }
+    std::erase_if(issues, [](const LintIssue& li) { return li.message.empty(); });
+    addIssues(nullptr, std::string(), issues);
     if (restore)
         mGroups->setCurrentItem(restore);
     else if (mGroups->topLevelItemCount() > 0 && mGroups->topLevelItem(0)->data(0, kKindRole).toInt() == kGroupItem)
@@ -484,7 +611,8 @@ void BakerPanel::refreshDetails()
     mCageGroup = g;
     mCageRow->setEnabled(has);
     for (QWidget* w : {static_cast<QWidget*>(mFrontal), static_cast<QWidget*>(mRear), static_cast<QWidget*>(mCageOffset),
-                       static_cast<QWidget*>(mAoScope), static_cast<QWidget*>(mBackfaces), static_cast<QWidget*>(mSelf)})
+                       static_cast<QWidget*>(mAoScope), static_cast<QWidget*>(mBackfaces), static_cast<QWidget*>(mSelf),
+                       static_cast<QWidget*>(mUnlinks->parentWidget())})
         w->setEnabled(has);
     mStackBox->setVisible(has);
     if (has)
@@ -513,6 +641,25 @@ void BakerPanel::refreshDetails()
         mShowCage->setChecked(bakeCage::shown(n->id()));
         mLivePreview->setChecked(bakeCage::livePreview());
         mAoScope->setCurrentIndex(std::max(0, mAoScope->findData(qs(s.aoScope))));
+        mUnlinks->clear();
+        for (const bake::Unlink& u : s.unlinks)
+        {
+            QStringList lows;
+            for (const std::string& l : u.lows)
+                lows << qs(shortName(l));
+            auto* row = new QTreeWidgetItem(mUnlinks, {lows.isEmpty() ? QString("All lows") : lows.join(", ")});
+            row->setIcon(0, icon("arrow-down"));
+            row->setToolTip(0, lows.isEmpty() ? QString("Every low in the group") : lows.join('\n'));
+            row->setFlags(row->flags() | Qt::ItemIsUserCheckable);
+            row->setCheckState(1, u.projection ? Qt::Checked : Qt::Unchecked);
+            for (const std::string& m : u.meshes)
+            {
+                auto* mesh = new QTreeWidgetItem(row, {qs(shortName(m))});
+                mesh->setIcon(0, icon("box"));
+                mesh->setToolTip(0, qs(m));
+            }
+            row->setExpanded(!mUnlinksCollapsed.contains(row->text(0)));
+        }
         mBackfaces->setChecked(s.ignoreBackfaces);
         mSelf->setChecked(std::ranges::any_of(s.highs, [](const bake::HighEntry& h) { return h.self; }));
 
@@ -799,6 +946,58 @@ void BakerPanel::refreshMapSettings()
     mMapForm->addRow("Options", raw);
 }
 
+void BakerPanel::setUnlinks(const std::string& group, const std::vector<bake::Unlink>& unlinks)
+{
+    json list = json::array();
+    for (const bake::Unlink& u : unlinks)
+        list.push_back(u.toJson());
+    run("bakeGroup", {{"args", {group}}, {"unlinks", list}}, false);
+}
+
+void BakerPanel::unlinkSelected(const std::string& group, const std::string& low, bool projection)
+{
+    scene::Node* n = findNode(group);
+    const std::vector<std::string> meshes = selectedMeshes();
+    if (!n || !bake::isGroup(*n) || meshes.empty())
+    {
+        log::warn("Unlink: pick a bake group (or one of its Low rows) and select the meshes to unlink");
+        return;
+    }
+    std::vector<bake::Unlink> all = bake::groupSettings(*n).unlinks;
+    const std::vector<std::string> lows = low.empty() ? std::vector<std::string>{} : std::vector<std::string>{low};
+    auto same = std::ranges::find_if(all, [&](const bake::Unlink& u) { return u.lows == lows && u.projection == projection; });
+    if (same == all.end())
+        all.push_back({.lows = lows, .meshes = meshes, .projection = projection});
+    else
+        for (const std::string& m : meshes)
+            if (std::ranges::find(same->meshes, m) == same->meshes.end())
+                same->meshes.push_back(m);
+    setUnlinks(group, all);
+}
+
+void BakerPanel::removeSelectedUnlinks()
+{
+    scene::Node* n = findNode(currentGroup());
+    if (!n || !bake::isGroup(*n))
+        return;
+    std::vector<bake::Unlink> keep;
+    const std::vector<bake::Unlink> all = bake::groupSettings(*n).unlinks;
+    for (int i = 0; i < int(all.size()); ++i)
+    {
+        QTreeWidgetItem* row = mUnlinks->topLevelItem(i);
+        if (row && row->isSelected())
+            continue;
+        bake::Unlink u = all[size_t(i)];
+        if (row)
+            for (int m = int(u.meshes.size()) - 1; m >= 0; --m)
+                if (QTreeWidgetItem* mesh = row->child(m); mesh && mesh->isSelected())
+                    u.meshes.erase(u.meshes.begin() + m);
+        if (!u.meshes.empty())
+            keep.push_back(std::move(u));
+    }
+    setUnlinks(currentGroup(), keep);
+}
+
 void BakerPanel::addPackChannels(const std::string& map, const json& channels)
 {
     static const char* const kChannelNames[] = {"R", "G", "B", "A", "Luminance", "Max"};
@@ -841,6 +1040,7 @@ void BakerPanel::addPackChannels(const std::string& map, const json& channels)
         auto* constant = new QDoubleSpinBox(row);
         constant->setRange(0.0, 1.0);
         constant->setSingleStep(0.05);
+        setSpinDefault(constant, c == 3 ? 1.0 : 0.0);
         auto* invert = new QCheckBox("Invert", row);
 
         const bool isConstant = entry.contains("constant") || !entry.contains("map");
@@ -907,7 +1107,22 @@ void BakerPanel::refreshOutput()
     }
     const bool was = std::exchange(mUpdating, true);
     const bake::ProjectSettings ps = bake::projectSettings(*p);
-    const bake::OutputSettings& o = ps.output;
+    const bake::OutputSettings& project = ps.output;
+    {
+        const QString current = mTextureSet->currentData().toString();
+        mTextureSet->clear();
+        mTextureSet->addItem("Every texture set", QString());
+        for (const std::string& ts : textureSets(*p))
+            mTextureSet->addItem(qs(ts) + (project.materials.contains(ts) ? QString(" (own settings)") : QString()), qs(ts));
+        mTextureSet->setCurrentIndex(std::max(0, mTextureSet->findData(current)));
+        const bool perSet = bake::hasToken(project.name, "material");
+        mTextureSet->setEnabled(perSet || mTextureSet->currentIndex() > 0);
+        if (!perSet)
+            mTextureSet->setCurrentIndex(0);
+    }
+    const std::string set = ss(mTextureSet->currentData().toString());
+    mTextureSetReset->setEnabled(!set.empty() && project.materials.contains(set));
+    const bake::OutputSettings o = set.empty() ? project : project.forMaterial(set);
     if (!mFolder->hasFocus())
         mFolder->setText(qs(o.folder));
     mFolderResolved->setText(qs(bake::resolveFolder(ss(mFolder->text())).generic_string()));
@@ -964,33 +1179,62 @@ void BakerPanel::updatePreview()
         break;
     }
     const std::string tmpl = ss(mName->text());
-    QStringList names;
-    int enabled = 0;
-    for (const bake::MapSettings& m : s.maps)
-    {
-        if (!m.enabled)
-            continue;
-        ++enabled;
-        if (names.size() >= 3)
-            continue;
-        const bake::MapDef* def = bake::findMap(m.map);
-        t.map = !m.suffix.empty() ? m.suffix : def ? def->suffix : m.map;
-        t.ext = m.format.empty() ? s.output.format : m.format;
-        names << qs(bake::expandName(tmpl, t));
-    }
-    QString text = names.join("\n");
-    if (enabled > names.size())
-        text += QString("\n... %1 more").arg(enabled - names.size());
+    const QColor dim = palette().color(QPalette::Disabled, QPalette::Text);
+    mPreview->setUpdatesEnabled(false);
+    mPreview->clear();
+    auto warn = [&](const QString& text, const QString& tip) {
+        auto* w = new QTreeWidgetItem(mPreview, {text});
+        w->setIcon(0, icon("alert-triangle"));
+        w->setToolTip(0, tip);
+        w->setFirstColumnSpanned(true);
+    };
     if (const std::vector<std::string> unknown = bake::unknownTokens(tmpl); !unknown.empty())
     {
         QStringList u;
         for (const std::string& x : unknown)
             u << "{" + qs(x) + "}";
-        text += "\nUnknown tokens kept as written: " + u.join(" ");
+        warn("Unknown " + u.join(" "), "Kept as written");
     }
     if (!bake::hasToken(tmpl, "group") && !bake::hasToken(tmpl, "mesh") && !bake::hasToken(tmpl, "material") && bake::groupsOf(g, p->id()).size() > 1)
-        text += "\nEvery group writes into the same files (no {group}, {mesh} or {material})";
-    mPreview->setText(text);
+        warn("Groups share files", "Add {group}, {mesh} or {material} to the name");
+
+    const bool perSet = bake::hasToken(tmpl, "material");
+    std::vector<std::string> sets = perSet ? textureSets(*p) : std::vector<std::string>{};
+    if (sets.empty())
+        sets.push_back(t.material);
+    auto sizeText = [](int w, int h) { return w == h ? QString::number(w) : QString("%1 x %2").arg(w).arg(h); };
+    auto formatText = [](int bits, const std::string& format) { return QString("%1-bit %2").arg(bits).arg(qs(format).toUpper()); };
+    for (const std::string& set : sets)
+    {
+        const bake::OutputSettings os = s.output.forMaterial(set);
+        t.material = set;
+        t.width = os.width;
+        t.height = os.height;
+        auto* row = new QTreeWidgetItem(mPreview, {perSet ? qs(set) : QString("All texture sets"), sizeText(os.width, os.height), formatText(os.bits, os.format)});
+        row->setIcon(0, icon("color-swatch"));
+        row->setData(0, Qt::UserRole, qs(set));
+        if (s.output.materials.contains(set))
+            row->setToolTip(0, "Own output settings");
+        int files = 0;
+        for (const bake::MapSettings& m : s.maps)
+        {
+            if (!m.enabled)
+                continue;
+            const bake::MapDef* def = bake::findMap(m.map);
+            t.map = !m.suffix.empty() ? m.suffix : def ? def->suffix : m.map;
+            t.ext = m.format.empty() ? os.format : m.format;
+            const QString name = qs(bake::expandName(tmpl, t));
+            auto* f = new QTreeWidgetItem(row, {name, sizeText(os.width, os.height), formatText(m.bits ? m.bits : os.bits, t.ext)});
+            f->setIcon(0, icon("photo"));
+            f->setToolTip(0, mFolderResolved->text().isEmpty() ? name : mFolderResolved->text() + "/" + name);
+            f->setForeground(1, dim);
+            f->setForeground(2, dim);
+            ++files;
+        }
+        row->setText(0, row->text(0) + QString("  (%1)").arg(files));
+        row->setExpanded(sets.size() == 1 || mPreviewOpen.contains(qs(set)));
+    }
+    mPreview->setUpdatesEnabled(true);
 }
 
 void BakerPanel::updateButtons()

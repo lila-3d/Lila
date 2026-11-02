@@ -341,6 +341,65 @@ void LayoutController::ensureDocks(const json& docks)
     }
 }
 
+void LayoutController::applyColumns(const json& columns)
+{
+    // Each dock brings its whole tab group, hidden tabs included, so the group's other panels open where they belong.
+    auto group = [this](QDockWidget* d) {
+        QList<QDockWidget*> g{d};
+        g += mWindow->tabifiedDockWidgets(d);
+        return g;
+    };
+    std::vector<std::vector<QList<QDockWidget*>>> placed;
+    Qt::DockWidgetArea area = Qt::NoDockWidgetArea;
+    for (const json& column : columns)
+    {
+        std::vector<QList<QDockWidget*>> stack;
+        for (const json& n : column)
+        {
+            QDockWidget* d = n.is_string() ? dock(QString::fromStdString(n.get<std::string>())) : nullptr;
+            if (!d || d->isFloating() || mWindow->dockWidgetArea(d) == Qt::NoDockWidgetArea)
+                continue;
+            if (area == Qt::NoDockWidgetArea)
+                area = mWindow->dockWidgetArea(d);
+            stack.push_back(group(d));
+        }
+        if (!stack.empty())
+            placed.push_back(std::move(stack));
+    }
+    // Shown again straight away: Qt places hidden docks unreliably, and the moves below carry shown ones.
+    std::map<QDockWidget*, bool> shown;
+    for (const auto& stack : placed)
+        for (const QList<QDockWidget*>& g : stack)
+            for (QDockWidget* d : g)
+            {
+                shown[d] = !d->isHidden();
+                mWindow->removeDockWidget(d);
+                d->show();
+            }
+    QDockWidget* previous = nullptr;
+    for (const auto& stack : placed)
+    {
+        QDockWidget* top = nullptr;
+        for (const QList<QDockWidget*>& g : stack)
+        {
+            QDockWidget* head = g.front();
+            // Later columns split from the one before, so a dock stacked under one stays inside its column.
+            if (!top && !previous)
+                mWindow->addDockWidget(area, head, Qt::Horizontal);
+            else if (!top)
+                mWindow->splitDockWidget(previous, head, Qt::Horizontal);
+            else
+                mWindow->splitDockWidget(top, head, Qt::Vertical);
+            top = top ? top : head;
+            for (QDockWidget* t : g.mid(1))
+                mWindow->tabifyDockWidget(head, t);
+        }
+        previous = top;
+    }
+    for (auto& [d, on] : shown)
+        d->setVisible(on);
+}
+
 void LayoutController::applyPreset(const json& preset)
 {
     mReset();
@@ -362,6 +421,7 @@ void LayoutController::applyPreset(const json& preset)
         mWindow->addDockWidget(area, d, Qt::Vertical);
         d->show();
     }
+    applyColumns(preset.value("columns", json::array()));
     // A dock just shown has no tab until the dock layout updates, so raising it now would be a no-op.
     json raise = preset.value("raise", json::array());
     QTimer::singleShot(0, mWindow, [this, raise] {

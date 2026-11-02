@@ -192,6 +192,51 @@ TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pair
     }
 }
 
+TEST_CASE("bakeEstimateCage: a low's cage stops short of another low lying on it")
+{
+    newScene();
+    // A skirt and a ribbon 5 cm above its middle, both inside a high box whose top is 20 cm up: both push out past 15 cm,
+    // but the skirt under the ribbon has to stop short of it.
+    geo::PlaneOptions skirtO;
+    skirtO.subdivX = skirtO.subdivZ = 10;
+    const std::string skirt = addMesh("skirt_low", geo::makePlane(skirtO));
+    geo::PlaneOptions ribbonO;
+    ribbonO.width = ribbonO.depth = 30.0;
+    ribbonO.subdivX = ribbonO.subdivZ = 3;
+    geo::Mesh ribbonMesh = geo::makePlane(ribbonO);
+    for (geo::Index q = 0; q < ribbonMesh.pointCapacity(); ++q)
+        if (ribbonMesh.pointValid(q))
+            ribbonMesh.setPosition(q, ribbonMesh.position(q) + glm::dvec3(0.0, 5.0, 0.0));
+    const std::string ribbon = addMesh("ribbon_low", std::move(ribbonMesh));
+    geo::CubeOptions boxO;
+    boxO.width = boxO.depth = 140.0;
+    boxO.height = 40.0;
+    const std::string box = addMesh("box_high", geo::makeCube(boxO));
+    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("clearance").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {skirt, ribbon}}, {"highs", {box}}});
+
+    const json r = ops::execute("bakeEstimateCage", {{"args", {"g"}}, {"resolution", 128}});
+    const double frontal = r["frontal"].get<double>();
+    const geo::Mesh& m = *baseMesh(skirt);
+    const auto offsets = m.pointAttrs().get<float>(bake::kOffsetAttr);
+    double under = 0.0, open = std::numeric_limits<double>::max();
+    for (geo::Index q = 0; q < m.pointCapacity(); ++q)
+    {
+        if (!m.pointValid(q))
+            continue;
+        const glm::dvec3 at = m.position(q);
+        const double push = double(offsets[q]) * frontal;
+        if (std::abs(at.x) < 14.0 && std::abs(at.z) < 14.0)
+            under = std::max(under, push);
+        else if (std::abs(at.x) > 25.0 || std::abs(at.z) > 25.0)
+            open = std::min(open, push);
+    }
+    MESSAGE("skirt push under the ribbon " << under << " cm, away from it " << open << " cm");
+    CHECK(under < 5.0);
+    CHECK(open > 15.0);
+}
+
 TEST_CASE("cage previews bake in memory off the main thread and write nothing")
 {
     newScene();

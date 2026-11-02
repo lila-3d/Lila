@@ -85,6 +85,7 @@ enum PushFlags : uint32_t
     kFlagResident = 32,
     kFlagNormalMaps = 64,
     kFlagObjectSpace = 128,
+    kFlagLinks = 256,
 };
 
 /** Mirrors BakePush in shaders/bake_common.slang. */
@@ -118,8 +119,12 @@ struct GpuBakePush
     uint32_t mode = 0;
     uint32_t pad0 = 0;
     uint64_t normalMaps = 0;
+    uint64_t links = 0;
+    uint32_t linkWords = 0;
+    uint32_t highBase = 0;
 };
-static_assert(offsetof(GpuBakePush, params) == 128 && offsetof(GpuBakePush, normalMaps) == 208, "matches BakePush in bake_common.slang");
+static_assert(offsetof(GpuBakePush, params) == 128 && offsetof(GpuBakePush, normalMaps) == 208 && offsetof(GpuBakePush, links) == 216,
+              "matches BakePush in bake_common.slang");
 
 /** Mirrors RasterPush in shaders/bake_raster.slang. */
 struct GpuRasterPush
@@ -364,14 +369,15 @@ public:
     std::unique_ptr<bake::ResidentBake> beginResident(const bake::BakeInputs& inputs, const std::vector<bake::ResidentMap>& maps,
                                                       const bake::OutputSettings& output) override;
 
-    bool occluded(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const override
+    bool occluded(size_t group, bake::OccluderScope scope, uint32_t high, uint32_t low, const glm::vec3& origin, const glm::vec3& dir,
+                  float tMax) const override
     {
-        return cpu().occluded(group, scope, high, origin, dir, tMax);
+        return cpu().occluded(group, scope, high, low, origin, dir, tMax);
     }
-    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
-                    bake::TraceHit& hit) const override
+    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, uint32_t low, bake::RayKind kind, const glm::vec3& origin,
+                    const glm::vec3& dir, float tMax, bake::TraceHit& hit) const override
     {
-        return cpu().closestHit(group, scope, high, origin, dir, tMax, hit);
+        return cpu().closestHit(group, scope, high, low, kind, origin, dir, tMax, hit);
     }
 
 private:
@@ -454,6 +460,10 @@ private:
     std::vector<Tlas> mGroupTlas;
     /** Per group: [first table entry of each low][packed island colour of each low triangle]. */
     std::vector<GpuBuffer> mIslands;
+    /** Per group: its GroupInputs::links, empty when it has none. */
+    std::vector<GpuBuffer> mLinks;
+    /** Points p at group g's links; all numbers the traced highs over every group (scope all). */
+    void useLinks(GpuBakePush& p, size_t g, bool all) const;
     GpuBuffer mHighInfo;
     /** What mHighInfo holds, to rewrite when buffers are added to highs. */
     std::vector<GpuHighInfo> mHighInfoHost;

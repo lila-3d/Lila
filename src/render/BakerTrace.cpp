@@ -213,6 +213,7 @@ void GpuBackend::traceProjection(size_t group, std::span<const TexelSample> samp
         p.highList = mIota.address;
         p.highCount = uint32_t(mGroupHighs[group]);
         p.flags = mInputs->groups[group].settings.ignoreBackfaces ? kFlagCullBack : 0u;
+        useLinks(p, group, false);
         const VkPipeline pipe = mHardware ? mProjectHw : mProjectSw;
         const VkPipelineLayout layout = mHardware ? mLayoutHw : mLayoutSw;
         if (mHardware)
@@ -380,6 +381,8 @@ void GpuBackend::shade(const bake::MapDef& def, const bake::MapContext& ctx, std
             });
             set = &mAll.set;
         }
+        // The group's TLAS and table number highs within the group; the all TLAS and table number them across groups.
+        useLinks(p, g, mHardware ? set == &mAll.set : p.highs == mHighInfo.address);
         runSliced(
             n, *rate, cost, nullptr,
             [&](VkCommandBuffer cmd, uint32_t first, uint32_t count) {

@@ -56,13 +56,18 @@ class LILA_SCENE_API Tracer
 {
 public:
     virtual ~Tracer() = default;
-    /** True if anything in scope lies within tMax along origin + t * dir (dir unit). high is the hit's high, for Self. */
-    virtual bool occluded(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const = 0;
     /**
-     * The nearest surface in scope within tMax, front or back facing. The default bisects occluded() (no normal), so a
-     * backend only overrides it to be faster or to report normals.
+     * True if anything in scope lies within tMax along origin + t * dir (dir unit). high is the hit's high, for Self; low
+     * (the sample's, or kNoHit) skips the highs its group's links unlink from it for occlusion.
      */
-    virtual bool closestHit(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
+    virtual bool occluded(size_t group, OccluderScope scope, uint32_t high, uint32_t low, const glm::vec3& origin, const glm::vec3& dir,
+                          float tMax) const = 0;
+    /**
+     * The nearest surface in scope within tMax, front or back facing, skipping what the low's links say for kind. The
+     * default bisects occluded() (no normal, occlusion links only), so a backend overrides it to be faster, report normals
+     * or honour projection links.
+     */
+    virtual bool closestHit(size_t group, OccluderScope scope, uint32_t high, uint32_t low, RayKind kind, const glm::vec3& origin, const glm::vec3& dir, float tMax,
                             TraceHit& hit) const;
 };
 

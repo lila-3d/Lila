@@ -4,6 +4,7 @@
 #include <tbb/parallel_for.h>
 
 #include "bake/Arrange.h"
+#include "bake/Bake.h"
 #include "bake/BakeNodes.h"
 #include "bake/BakePipeline.h"
 #include "bake/Cage.h"
@@ -22,6 +23,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 
+#include <QCoreApplication>
 #include <QPointer>
 #include <QTimer>
 
@@ -733,6 +735,14 @@ void registerBakeCageView()
     });
     viewportHooks::setMaterialHook("lila.bakeCagePreview", previewMaterials);
     viewportHooks::setHideHook("lila.bakeCagePaint", [](NodeId id) { return state().paintHighs.contains(id); });
+    bake::addBakeListener([](const bake::BakeEvent& e) {
+        if (e.kind != bake::BakeEvent::Kind::Started)
+            return;
+        QTimer::singleShot(0, qApp, [] {
+            for (NodeId gid : std::set<NodeId>(state().shown))
+                setShown(gid, false);
+        });
+    });
 
     actions::add({.id = "bake.showCage",
                   .label = "Show Bake Cage",

@@ -63,6 +63,8 @@ struct GroupData final : scene::Data
     GroupSettings settings;
     /** Parallel to settings.lows and settings.highs (self and file highs leave theirs empty). */
     std::vector<Ref> lows, highs;
+    /** Per unlink: its lows' refs, then its meshes'. */
+    std::vector<std::pair<std::vector<Ref>, std::vector<Ref>>> unlinks;
     Ref cage, project;
 
     const char* kind() const override { return kGroupKind; }
@@ -150,6 +152,27 @@ GroupSettings resolved(const scene::Graph& g, const std::string& ns, const Group
     }
     if (!s.cage.empty() && !name(d.cage, s.cage))
         s.cage.clear();
+    auto names = [&](const std::vector<std::string>& in, const std::vector<Ref>* refs) {
+        std::vector<std::string> out;
+        for (size_t i = 0; i < in.size(); ++i)
+        {
+            std::string n = in[i];
+            if (refs && i < refs->size() && !name((*refs)[i], n))
+                continue;
+            out.push_back(std::move(n));
+        }
+        return out;
+    };
+    s.unlinks.clear();
+    for (size_t i = 0; i < d.settings.unlinks.size(); ++i)
+    {
+        Unlink u = d.settings.unlinks[i];
+        const bool has = i < d.unlinks.size();
+        u.lows = names(u.lows, has ? &d.unlinks[i].first : nullptr);
+        u.meshes = names(u.meshes, has ? &d.unlinks[i].second : nullptr);
+        if (!u.meshes.empty())
+            s.unlinks.push_back(std::move(u));
+    }
     return s;
 }
 
@@ -187,6 +210,14 @@ std::shared_ptr<GroupData> unbound(const GroupSettings& s, const std::string& pr
     for (const HighEntry& h : s.highs)
         d->highs.push_back(Ref{.name = h.self || !h.file.empty() ? std::string() : h.node});
     d->cage.name = s.cage;
+    for (const Unlink& u : s.unlinks)
+    {
+        auto& refs = d->unlinks.emplace_back();
+        for (const std::string& l : u.lows)
+            refs.first.push_back(Ref{.name = l});
+        for (const std::string& m : u.meshes)
+            refs.second.push_back(Ref{.name = m});
+    }
     d->project.name = project;
     return d;
 }
@@ -328,6 +359,14 @@ void setGroupSettings(scene::Graph& g, scene::NodeId group, const GroupSettings&
         d->highs.push_back(h.self || !h.file.empty() ? Ref{} : refFor(g, ns, h.node));
     if (!s.cage.empty())
         d->cage = refFor(g, ns, s.cage);
+    for (const Unlink& u : s.unlinks)
+    {
+        auto& refs = d->unlinks.emplace_back();
+        for (const std::string& l : u.lows)
+            refs.first.push_back(refFor(g, ns, l));
+        for (const std::string& m : u.meshes)
+            refs.second.push_back(refFor(g, ns, m));
+    }
     if (const GroupData* old = groupData(*n))
         d->project = old->project;
     else

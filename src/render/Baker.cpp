@@ -153,6 +153,9 @@ void GpuBackend::releaseScene()
     for (GpuBuffer& b : mIslands)
         destroy(vk, b);
     mIslands.clear();
+    for (GpuBuffer& b : mLinks)
+        destroy(vk, b);
+    mLinks.clear();
     destroy(vk, mHighInfo);
     destroy(vk, mIota);
     {
@@ -410,6 +413,16 @@ Tlas GpuBackend::buildTlas(VulkanContext& vk, const std::vector<std::pair<uint32
     return t;
 }
 
+void GpuBackend::useLinks(GpuBakePush& p, size_t g, bool all) const
+{
+    if (g >= mLinks.size() || !mLinks[g].address)
+        return;
+    p.flags |= kFlagLinks;
+    p.links = mLinks[g].address;
+    p.linkWords = mInputs->groups[g].linkWords;
+    p.highBase = all ? 0u : uint32_t(mGroupBase[g]);
+}
+
 const Tlas& GpuBackend::allTlas(VulkanContext& vk) const
 {
     if (!mAllBuilt)
@@ -601,6 +614,8 @@ void GpuBackend::prepare(const bake::BakeInputs& in)
         mIota = hostBuffer(vk, iota.data(), iota.size() * sizeof(uint32_t));
         for (const auto& t : islands)
             mIslands.push_back(hostBuffer(vk, t.data(), t.size() * sizeof(uint32_t)));
+        for (const bake::GroupInputs& gi : in.groups)
+            mLinks.push_back(gi.links.empty() ? GpuBuffer{} : hostBuffer(vk, gi.links.data(), gi.links.size() * sizeof(uint32_t)));
         if (!mHardware)
             return;
         if (!mPool)

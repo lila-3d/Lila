@@ -506,9 +506,11 @@ void GpuResident::scope(Kernel& k, size_t g, const std::string& name, VkPipeline
         k.push.highs = b.mHighInfo.address;
         k.push.highCount = uint32_t(b.mHighs.size());
     }
+    const bool global = s == bake::OccluderScope::All || (b.mHardware && !b.mGroupTlas[g].as);
+    b.useLinks(k.push, g, global);
     if (!b.mHardware)
         return;
-    if (s == bake::OccluderScope::All || !b.mGroupTlas[g].as)
+    if (global)
     {
         b.runTask([&](VulkanContext& vk) {
             b.initDevice(vk);

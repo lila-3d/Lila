@@ -364,6 +364,55 @@ TEST_CASE("GPU bake matches the CPU: isolated groups, AO scopes and backfaces")
     }
 }
 
+TEST_CASE("GPU bake matches the CPU: self highs per low and unlinked occluders, group and all scopes")
+{
+    if (gpuBackends().empty())
+        return;
+    newScene();
+    const fs::path dir = tempDir("links");
+    // A floor and a lid 0.5 cm over it, each baking onto itself; a roof and a second group's low above, all unlinked from the floor.
+    const std::string floor = addMesh("floor", plane(1, {0.0f, 0.0f}, {0.5f, 1.0f}));
+    const std::string lid = addMesh("lid", moved(plane(1, {0.5f, 0.0f}, {1.0f, 1.0f}), {0.0, 0.5, 0.0}));
+    const std::string roof = addMesh("roof", moved(plane(2), {0.0, 5.0, 0.0}));
+    const std::string other = addMesh("other", moved(plane(1), {0.0, 4.0, 0.0}));
+    const std::string p = project(dir, 32, 1);
+    ops::execute("bakeGroup", {{"args", {"pair"}}, {"project", p}, {"lows", {floor, lid}}, {"self", true}, {"addHigh", {roof}},
+                               {"frontal", 2.0}, {"rear", 2.0},
+                               {"unlinks", json::array({json{{"lows", {floor}}, {"meshes", {roof, other, lid}}}})}});
+    ops::execute("bakeGroup", {{"args", {"far"}}, {"project", p}, {"lows", {other}}, {"self", true}, {"frontal", 0.2}, {"rear", 0.2}});
+    for (const char* scope : {"group", "all"})
+    {
+        INFO("scope " << scope);
+        ops::execute("setBakeMap", {{"args", {"ao"}}, {"project", p}, {"options", {{"rays", 16}, {"distance", 50.0}, {"scope", scope}}}});
+        // Each group writes its own files: key the images by file name so neither group's replaces the other's.
+        auto bakeAll = [&](const std::string& be) {
+            Baked b;
+            b.result = ops::execute("bake", {{"project", p}, {"maps", {"height", "ao"}}, {"backend", be}});
+            for (const json& o : b.result["outputs"])
+                b.maps[fs::path(o["file"].get<std::string>()).stem().string()] = image::read(fs::path(o["file"].get<std::string>()));
+            return b;
+        };
+        const Baked cpu = bakeAll("cpu");
+        REQUIRE(cpu.maps.size() == 4);
+        // The floor (u < 0.5) is open to the sky through the unlinked roof; the lid (u > 0.5) stays under it.
+        const image::Image& ao = cpu.maps.at("pair_ao");
+        CHECK(texel(ao, size_t(16 * 32 + 8)).r > 0.95f);
+        CHECK(texel(ao, size_t(16 * 32 + 24)).r < 0.8f);
+        // The floor bakes itself, not the lid 0.5 cm above it.
+        CHECK(texel(cpu.maps.at("pair_height"), size_t(16 * 32 + 8)).r == doctest::Approx(0.5f).epsilon(0.02));
+        for (const std::string& be : gpuBackends())
+        {
+            INFO("backend " << be);
+            const Baked gpu = bakeAll(be);
+            for (const char* grp : {"pair", "far"})
+            {
+                compare(cpu, gpu, std::string(grp) + "_height", 1e-4f, 2e-3f, 0.0);
+                compare(cpu, gpu, std::string(grp) + "_ao", 0.02f, 0.1f, 0.01);
+            }
+        }
+    }
+}
+
 TEST_CASE("GPU dilation fills the same texels as the CPU and copies values exactly")
 {
     if (gpuBackends().empty())

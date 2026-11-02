@@ -43,7 +43,8 @@ struct CageParams
 class LILA_SCENE_API TexelRaster
 {
 public:
-    TexelRaster(const LowInput& low, const RasterSettings& settings);
+    /** material >= 0 rasters only that material slot's triangles, so overlapping UVs of other texture sets don't claim its texels. */
+    TexelRaster(const LowInput& low, const RasterSettings& settings, int material = -1);
 
     /** UDIM numbers with at least one triangle, ascending. */
     const std::vector<int>& udims() const { return mUdims; }

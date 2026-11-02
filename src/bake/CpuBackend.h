@@ -28,14 +28,15 @@ public:
     void traceProjection(size_t group, std::span<const TexelSample> samples, std::span<HitRecord> hits) const override;
     const Tracer* tracer() const override { return this; }
 
-    bool occluded(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const override;
+    bool occluded(size_t group, OccluderScope scope, uint32_t high, uint32_t low, const glm::vec3& origin, const glm::vec3& dir,
+                  float tMax) const override;
 
     /** A high's BVH after prepare, null for an empty high. */
     const geo::MeshBvh* bvh(size_t group, size_t high) const { return mBvh[group][high].get(); }
     /** The soup triangle of each of that BVH's triangles. */
     const std::vector<uint32_t>& soupTriangles(size_t group, size_t high) const { return mSoupTri[group][high]; }
-    bool closestHit(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
-                    TraceHit& hit) const override;
+    bool closestHit(size_t group, OccluderScope scope, uint32_t high, uint32_t low, RayKind kind, const glm::vec3& origin,
+                    const glm::vec3& dir, float tMax, TraceHit& hit) const override;
 
 private:
     const BakeInputs* mInputs = nullptr;

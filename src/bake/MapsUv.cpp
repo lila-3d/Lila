@@ -156,8 +156,8 @@ void errorKernel(const MapContext& ctx, std::span<const TexelSample> samples, st
             {
                 const glm::vec3 o = v3(s.origin), d = v3(s.direction);
                 TraceHit th;
-                if (ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Group, kNoHit, o, d, beyond, th) ||
-                    ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Group, kNoHit, o, -d, beyond, th))
+                if (ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Group, kNoHit, s.low, RayKind::Projection, o, d, beyond, th) ||
+                    ctx.tracer->closestHit(ctx.groupIndex, OccluderScope::Group, kNoHit, s.low, RayKind::Projection, o, -d, beyond, th))
                     out[i] = kErrBeyond;
             }
         }

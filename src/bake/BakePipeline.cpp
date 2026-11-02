@@ -4,6 +4,7 @@
 #include "bake/Bake.h"
 #include "bake/BakeCache.h"
 #include "bake/BakeNodes.h"
+#include "bake/Maps.h"
 #include "bake/Naming.h"
 #include "core/Events.h"
 #include "core/Log.h"
@@ -14,6 +15,7 @@
 #include "geo/Mesh.h"
 #include "io/SceneFile.h"
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshData.h"
@@ -281,6 +283,24 @@ std::string materialChannel(std::string_view map)
     };
     auto it = table.find(map);
     return it == table.end() ? std::string() : it->second;
+}
+
+std::string mapFromFileName(std::string_view fileName)
+{
+    std::string stem(paths::fromUtf8(std::string(fileName)).stem().string());
+    // A UDIM or frame number after the map token, as in T_Rock_N.1001.
+    if (const size_t dot = stem.find('.'); dot != std::string::npos)
+        stem.resize(dot);
+    const size_t cut = stem.find_last_of("_- ");
+    const std::string token = cut == std::string::npos ? stem : stem.substr(cut + 1);
+    auto lower = [](std::string s) {
+        std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        return s;
+    };
+    for (const MapDef* d : allMaps())
+        if (!materialChannel(d->id).empty() && (lower(d->id) == lower(token) || (!d->suffix.empty() && lower(d->suffix) == lower(token))))
+            return d->id;
+    return scene::materials::guessTextureChannel(std::string(fileName));
 }
 
 json assignOutputs(Graph& g, const json& result, bool create, const json& channels)
@@ -701,6 +721,51 @@ void registerPipelineCommands()
             if (!r.is_object() || r.value("outputs", json::array()).empty())
                 throw CommandError("bakeAssign: " + project.name() + " has no bake to assign; bake it first");
             return assignOutputs(g, r, a.get<bool>("create", true), a.has("channels") ? a.flags["channels"] : json::object());
+        },
+    });
+
+    ops::registerCommand({
+        .name = "assignTexture",
+        .doc = "Wire a texture file into the material on a mesh's face (or its only material): the channel comes from map= or "
+               "the file's name (T_Rock_N.png, M_Outfit_ao.png, ..._BaseColor.png). A slot with no material gets one. Returns "
+               "{assigned, created, skipped}.",
+        .positionalDoc = "file",
+        .flags = {{"mesh", "m", T::String, nullptr, "The mesh."},
+                  {"face", "f", T::Int, -1, "A face of the mesh (outMesh id) whose material takes it; -1 for the mesh's first."},
+                  {"map", "mp", T::String, nullptr, "A bake map id (normal, ao, orm, ...) or material channel, instead of the name's."},
+                  {"normalFormat", "nf", T::String, "directx", "For a normal map: directx or opengl.", {"directx", "opengl"}}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            if (a.positional.empty() || !a.positional[0].is_string())
+                throw CommandError("assignTexture: give a texture file");
+            const std::string file = a.positional[0].get<std::string>();
+            Node* n = findNode(g, a.get<std::string>("mesh", ""));
+            if (!n || !n->type().isA("mesh"))
+                throw CommandError("assignTexture: mesh= must name a mesh");
+            const std::string map = a.has("map") ? a.get<std::string>("map") : mapFromFileName(file);
+            if (map.empty())
+                throw CommandError("assignTexture: can't tell the channel from " + paths::fromUtf8(file).filename().string() + "; give map=");
+            const scene::MeshPtr mesh = std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+            std::string slot = scene::materials::kDefaultSlot;
+            if (mesh)
+            {
+                const auto ids = mesh->faceAttrs().get<int32_t>(geo::attr::kMaterial);
+                const int64_t face = a.get<int64_t>("face", -1);
+                if (face >= 0 && size_t(face) < ids.size())
+                    slot = scene::materials::slotName(*mesh, ids[size_t(face)]);
+                else if (const auto usage = scene::materials::slotUsage(*mesh); !usage.empty())
+                    slot = usage.front().first;
+            }
+            json channels = json::object();
+            if (materialChannel(map).empty())
+                channels[map] = map;
+            const json result = {{"outputs", json::array({{{"file", file},
+                                                           {"map", map},
+                                                           {"materials", {slot}},
+                                                           {"meshes", {n->path()}},
+                                                           {"normalFormat", a.get<std::string>("normalFormat", "directx")}}})}};
+            UndoChunk chunk("Assign Texture");
+            return assignOutputs(g, result, true, channels);
         },
     });
 

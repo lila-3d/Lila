@@ -55,11 +55,13 @@ fs::path pathFor(const std::string& name, Origin origin)
 }
 
 json preset(std::vector<std::string> open, std::vector<std::string> raise, json size = json::object(), std::vector<std::string> bottom = {},
-            std::string shelf = {})
+            std::string shelf = {}, json columns = json::array())
 {
     json p{{"open", open}, {"raise", raise}, {"size", std::move(size)}};
     if (!bottom.empty())
         p["bottom"] = bottom;
+    if (!columns.empty())
+        p["columns"] = std::move(columns);
     json layout{{"version", 1}, {"preset", std::move(p)}, {"viewport", {{"quad", false}, {"camera", "persp"}}}};
     if (!shelf.empty())
         layout["shelf"] = {{"current", std::move(shelf)}};
@@ -78,8 +80,9 @@ const std::vector<std::pair<std::string, json>>& presets()
                          {"levelToolkit"}, {{"levelToolkit", {{"width", "fit"}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
         {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
-        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
-                          {"baker", "channelBox"}, {{"baker", {{"width", 0.3}}}})},
+        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "channelBox", "attributeEditor"},
+                          {"baker", "channelBox"}, {{"baker", {{"width", 0.21}}}}, {}, {},
+                          json::array({{"baker"}, {"channelBox"}}))},
         {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "scriptOutput",
                             "timeSlider"},
                            {"channelBox"})},

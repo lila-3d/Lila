@@ -43,7 +43,7 @@ glm::vec3 skewed(const glm::vec3& n, const glm::vec3* tri, float skew)
 }
 } // namespace
 
-TexelRaster::TexelRaster(const LowInput& low, const RasterSettings& settings) : mLow(low), mSettings(settings)
+TexelRaster::TexelRaster(const LowInput& low, const RasterSettings& settings, int material) : mLow(low), mSettings(settings)
 {
     LILA_ZONE();
 
@@ -61,6 +61,8 @@ TexelRaster::TexelRaster(const LowInput& low, const RasterSettings& settings) : 
     mTriUdim.assign(s.triangleCount(), 0);
     for (uint32_t t = 0; t < s.triangleCount(); ++t)
     {
+        if (material >= 0 && s.materials[t] != uint32_t(material))
+            continue;
         const glm::vec2* uv = &s.uvs[size_t(t) * 3];
         const glm::vec2 c = (uv[0] + uv[1] + uv[2]) / 3.0f;
         const int tu = int(std::floor(c.x)), tv = int(std::floor(c.y));

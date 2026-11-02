@@ -36,10 +36,31 @@ std::vector<std::string> strings(const json& j, const char* key)
 
 json OutputSettings::toJson() const
 {
-    return {{"folder", folder}, {"name", name},     {"format", format},               {"bits", bits},
-            {"width", width},   {"height", height}, {"supersampling", supersampling}, {"padding", padding},
-            {"dither", dither}, {"compression", compression}, {"compressionLevel", compressionLevel}, {"udimNaming", udimNaming},
-            {"sidecar", sidecar}};
+    json j = {{"folder", folder}, {"name", name},     {"format", format},               {"bits", bits},
+              {"width", width},   {"height", height}, {"supersampling", supersampling}, {"padding", padding},
+              {"dither", dither}, {"compression", compression}, {"compressionLevel", compressionLevel}, {"udimNaming", udimNaming},
+              {"sidecar", sidecar}};
+    if (!materials.empty())
+    {
+        j["materials"] = json::object();
+        for (const auto& [name, v] : materials)
+            j["materials"][name] = v;
+    }
+    return j;
+}
+
+OutputSettings OutputSettings::forMaterial(std::string_view material) const
+{
+    OutputSettings o = *this;
+    o.materials.clear();
+    const auto it = materials.find(material);
+    if (it == materials.end())
+        return o;
+    json j = o.toJson();
+    for (const char* k : kMaterialOutputKeys)
+        if (it->second.contains(k))
+            j[k] = it->second[k];
+    return fromJson(j);
 }
 
 OutputSettings OutputSettings::fromJson(const json& j)
@@ -66,6 +87,18 @@ OutputSettings OutputSettings::fromJson(const json& j)
     read(j, "compressionLevel", o.compressionLevel);
     read(j, "udimNaming", o.udimNaming);
     read(j, "sidecar", o.sidecar);
+    if (j.contains("materials") && j["materials"].is_object())
+        for (const auto& [name, v] : j["materials"].items())
+        {
+            if (!v.is_object())
+                throw std::invalid_argument("materials." + name + " must be an object");
+            json kept = json::object();
+            for (const char* k : kMaterialOutputKeys)
+                if (v.contains(k))
+                    kept[k] = v[k];
+            if (!kept.empty())
+                o.materials[name] = kept;
+        }
     if (o.format == "tiff")
         o.format = "tif";
     if (o.format != "png" && o.format != "exr" && o.format != "tga" && o.format != "tif" && o.format != "psd")
@@ -84,6 +117,15 @@ OutputSettings OutputSettings::fromJson(const json& j)
         throw std::invalid_argument("supersampling must be 1, 4, 16 or 64");
     if (o.padding < -1)
         throw std::invalid_argument("padding must be -1 (fill) or more");
+    for (const auto& [name, v] : o.materials)
+        try
+        {
+            o.forMaterial(name);
+        }
+        catch (const std::invalid_argument& e)
+        {
+            throw std::invalid_argument("material " + name + ": " + e.what());
+        }
     return o;
 }
 
@@ -159,16 +201,37 @@ HighEntry HighEntry::fromJson(const json& j)
     return h;
 }
 
+json Unlink::toJson() const { return {{"lows", lows}, {"meshes", meshes}, {"occlusion", occlusion}, {"projection", projection}}; }
+
+Unlink Unlink::fromJson(const json& j)
+{
+    Unlink u;
+    if (!j.is_object())
+        throw std::invalid_argument("an unlink is an object: {lows, meshes, occlusion, projection}");
+    u.lows = strings(j, "lows");
+    u.meshes = strings(j, "meshes");
+    read(j, "occlusion", u.occlusion);
+    read(j, "projection", u.projection);
+    return u;
+}
+
 json GroupSettings::toJson() const
 {
     json hs = json::array();
     for (const HighEntry& h : highs)
         hs.push_back(h.toJson());
-    return {{"version", kSettingsVersion}, {"lows", lows},
-            {"highs", hs},                 {"cage", cage},
-            {"frontal", frontal},          {"rear", rear},
-            {"cageOffset", cageOffset},    {"ignoreBackfaces", ignoreBackfaces},
-            {"aoScope", aoScope},          {"skew", skew}};
+    json j = {{"version", kSettingsVersion}, {"lows", lows},
+              {"highs", hs},                 {"cage", cage},
+              {"frontal", frontal},          {"rear", rear},
+              {"cageOffset", cageOffset},    {"ignoreBackfaces", ignoreBackfaces},
+              {"aoScope", aoScope},          {"skew", skew}};
+    if (!unlinks.empty())
+    {
+        j["unlinks"] = json::array();
+        for (const Unlink& u : unlinks)
+            j["unlinks"].push_back(u.toJson());
+    }
+    return j;
 }
 
 GroupSettings GroupSettings::fromJson(const json& j)
@@ -187,6 +250,9 @@ GroupSettings GroupSettings::fromJson(const json& j)
     read(j, "ignoreBackfaces", g.ignoreBackfaces);
     read(j, "aoScope", g.aoScope);
     read(j, "skew", g.skew);
+    if (j.contains("unlinks") && j["unlinks"].is_array())
+        for (const json& u : j["unlinks"])
+            g.unlinks.push_back(Unlink::fromJson(u));
     if (g.aoScope != "self" && g.aoScope != "group" && g.aoScope != "all")
         throw std::invalid_argument("aoScope must be self, group or all");
     if (g.frontal < 0.0 || g.rear < 0.0 || g.cageOffset < 0.0)

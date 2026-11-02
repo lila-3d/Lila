@@ -19,11 +19,15 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace lila::bake
 {
 namespace
 {
+/** Component ids an issue lists for selecting them; the count it reports has no cap. */
+constexpr size_t kMaxComponents = 100000;
+
 bool wanted(const LintOptions& o, const char* check) { return o.checks.empty() || std::ranges::find(o.checks, check) != o.checks.end(); }
 
 std::string shortName(const std::string& path)
@@ -64,6 +68,7 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
     auto seam = [&](size_t c0, size_t c1) { return glm::any(glm::greaterThan(glm::abs(s.uvs[c0] - s.uvs[c1]), glm::vec2(1e-5f))); };
     size_t count = 0;
     json where = json::array();
+    json edgePoints = json::array();
     for (const auto& [k, sides] : edges)
     {
         if (sides.size() != 2)
@@ -73,6 +78,8 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
         if (!(split(a0, a1) || split(b0, b1)) || seam(a0, a1) || seam(b0, b1))
             continue;
         ++count;
+        if (a0 < low.points.size() && b0 < low.points.size() && edgePoints.size() < kMaxComponents)
+            edgePoints.push_back({low.points[a0], low.points[b0]});
         if (where.size() < 8)
         {
             const glm::vec3 m = (s.positions[a0] + s.positions[b0]) * 0.5f;
@@ -82,7 +89,7 @@ void hardEdges(const GroupInputs& gi, const LowInput& low, LintReport& r)
     if (count)
         r.issues.push_back({"hardEdges", "warning", gi.name, s.name,
                             std::to_string(count) + " hard edge(s) are not UV seams; the normal map can't hide their shading split (split the UVs there or soften them)",
-                            {{"count", count}, {"positions", where}}});
+                            {{"count", count}, {"positions", where}, {"edgePoints", edgePoints}}});
 }
 
 void uvMissing(const GroupInputs& gi, const LowInput& low, LintReport& r)
@@ -94,12 +101,17 @@ void uvMissing(const GroupInputs& gi, const LowInput& low, LintReport& r)
         return;
     }
     size_t degenerate = 0;
+    std::set<uint32_t> faces;
     for (size_t t = 0; t < s.triangleCount(); ++t)
         if (std::abs(uvArea(&s.uvs[t * 3])) < 1e-12 && area3(&s.positions[t * 3]) > 1e-10)
+        {
             ++degenerate;
+            if (t < low.faces.size() && faces.size() < kMaxComponents)
+                faces.insert(low.faces[t]);
+        }
     if (degenerate)
         r.issues.push_back({"uvMissing", "warning", gi.name, s.name, std::to_string(degenerate) + " triangle(s) have no UV area and get no texels",
-                            {{"count", degenerate}}});
+                            {{"count", degenerate}, {"faces", faces}}});
 }
 
 void mirroredTangents(const GroupInputs& gi, const LowInput& low, LintReport& r)
@@ -108,6 +120,7 @@ void mirroredTangents(const GroupInputs& gi, const LowInput& low, LintReport& r)
     if (s.uvs.empty() || low.tangents.size() != s.positions.size())
         return;
     size_t mismatched = 0, mirrored = 0;
+    std::set<uint32_t> faces;
     // Per island: triangles wound each way, to find islands folding over themselves.
     std::vector<std::array<size_t, 2>> winding(low.islandCount);
     for (size_t t = 0; t < s.triangleCount(); ++t)
@@ -123,13 +136,15 @@ void mirroredTangents(const GroupInputs& gi, const LowInput& low, LintReport& r)
             if ((low.tangents[t * 3 + size_t(k)].w < 0.0f) != flipped)
             {
                 ++mismatched;
+                if (t < low.faces.size() && faces.size() < kMaxComponents)
+                    faces.insert(low.faces[t]);
                 break;
             }
     }
     if (mismatched)
         r.issues.push_back({"mirroredTangents", "warning", gi.name, s.name,
                             std::to_string(mismatched) + " triangle(s) have a tangent sign that disagrees with their UV winding; mirrored UVs will decode inverted",
-                            {{"count", mismatched}, {"mirroredTriangles", mirrored}}});
+                            {{"count", mismatched}, {"mirroredTriangles", mirrored}, {"faces", faces}}});
     size_t folded = 0;
     for (const auto& w : winding)
         if (w[0] && w[1])
@@ -340,6 +355,7 @@ void highRange(const BakeInputs& in, const Backend& backend, const LintOptions& 
                 smp.tangent[3] = 1.0f;
                 smp.rayLength = length;
                 smp.lowTriangle = uint32_t(t);
+                smp.low = uint32_t(&low - gi.lows.data());
                 samples.push_back(smp);
             }
             std::vector<HitRecord> hits(samples.size());
@@ -508,6 +524,7 @@ void triangulation(scene::Graph& g, const GroupInputs& gi, LintReport& r)
         const geo::Triangulation tris = geo::triangulate(*m);
         size_t folded = 0;
         double worst = 0.0;
+        json faces = json::array();
         for (geo::Index f = 0; f < m->faceCapacity(); ++f)
         {
             if (!m->faceValid(f) || m->faceCorners(f).size() <= 3 || f >= tris.faceFirst.size() || tris.faceFirst[f] == geo::kInvalid)
@@ -532,6 +549,8 @@ void triangulation(scene::Graph& g, const GroupInputs& gi, LintReport& r)
             {
                 ++folded;
                 worst = std::max(worst, fold);
+                if (faces.size() < kMaxComponents)
+                    faces.push_back(f);
             }
         }
         if (folded)
@@ -541,7 +560,7 @@ void triangulation(scene::Graph& g, const GroupInputs& gi, LintReport& r)
                           "%zu non-planar face(s) (folding up to %.1f deg) bake on Lila's triangle split; export triangulated (the game exporter's default) "
                           "or triangulate them so the target shades the same triangles",
                           folded, worst);
-            r.issues.push_back({"triangulation", "warning", gi.name, n->path(), buf, {{"faces", folded}, {"maxFold", worst}}});
+            r.issues.push_back({"triangulation", "warning", gi.name, n->path(), buf, {{"faces", folded}, {"maxFold", worst}, {"faceIds", faces}}});
         }
     }
 }

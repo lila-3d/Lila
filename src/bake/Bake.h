@@ -123,6 +123,13 @@ struct BakeOptions
      * Called on the baking thread, one texture at a time.
      */
     std::function<void(const TextureBuffer&)> keepTexture;
+    /**
+     * Set by runBake for each pass of a bake split by OutputSettings::materials: bake only the texture sets named in
+     * materials (all but them with excludeMaterials), at the settings given, and write no manifest.
+     */
+    bool materialPass = false;
+    std::vector<std::string> materials;
+    bool excludeMaterials = false;
 };
 
 /** The graph-free core: bakes prepared inputs with a backend. Throws progress::Cancelled or std::runtime_error. */

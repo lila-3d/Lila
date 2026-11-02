@@ -48,16 +48,16 @@ struct HighNormalMaps
     std::vector<std::vector<std::vector<NormalMapSlot>>> slots;
 };
 
-bool Tracer::closestHit(size_t group, OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
+bool Tracer::closestHit(size_t group, OccluderScope scope, uint32_t high, uint32_t low, RayKind, const glm::vec3& origin, const glm::vec3& dir, float tMax,
                         TraceHit& hit) const
 {
-    if (!occluded(group, scope, high, origin, dir, tMax))
+    if (!occluded(group, scope, high, low, origin, dir, tMax))
         return false;
     float lo = 0.0f, hi = tMax;
     for (int i = 0; i < 20; ++i)
     {
         const float mid = 0.5f * (lo + hi);
-        (occluded(group, scope, high, origin, dir, mid) ? hi : lo) = mid;
+        (occluded(group, scope, high, low, origin, dir, mid) ? hi : lo) = mid;
     }
     hit = TraceHit{.distance = hi};
     return true;

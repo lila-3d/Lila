@@ -53,6 +53,8 @@ private:
     QDockWidget* dock(const QString& name) const;
     void ensureDocks(const nlohmann::json& docks);
     void applyPreset(const nlohmann::json& preset);
+    /** Rebuilds the listed columns at the outer edge of their dock area, left to right, each stacked top to bottom. */
+    void applyColumns(const nlohmann::json& columns);
     std::string currentShelf() const;
 
     QMainWindow* mWindow;

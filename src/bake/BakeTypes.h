@@ -6,7 +6,9 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 /**
@@ -59,11 +61,22 @@ struct LILA_SCENE_API OutputSettings
     int supersampling = 4;
     /** Texels to dilate past island borders; -1 fills the whole texture. */
     int padding = 16;
+    /**
+     * Per texture set ({material}: the material slot, or the mesh for a mesh without materials): overrides of width,
+     * height, supersampling, padding, bits and format. Needs {material} in the name, so each set writes its own files.
+     */
+    std::map<std::string, json, std::less<>> materials;
+
+    /** These settings with the material's overrides applied (and no per-material table). */
+    OutputSettings forMaterial(std::string_view material) const;
 
     json toJson() const;
     /** Missing keys keep their defaults. Throws std::invalid_argument on a bad value. */
     static OutputSettings fromJson(const json& j);
 };
+
+/** The keys a per-material output override may set. */
+inline constexpr const char* kMaterialOutputKeys[] = {"width", "height", "supersampling", "padding", "bits", "format"};
 
 /** One map a project bakes. */
 struct LILA_SCENE_API MapSettings
@@ -112,6 +125,22 @@ struct LILA_SCENE_API HighEntry
     static HighEntry fromJson(const json& j);
 };
 
+/** Meshes kept out of some of a group's lows' rays. A high or occluder matches by its node, a self high by its low. */
+struct LILA_SCENE_API Unlink
+{
+    /** The lows it applies to; empty is every low of the group. */
+    std::vector<std::string> lows;
+    /** The meshes those lows' rays ignore. */
+    std::vector<std::string> meshes;
+    /** Secondary rays (AO, thickness, bent normals, rounded edges) pass through them. */
+    bool occlusion = true;
+    /** Projection rays pass through them: they bake nothing onto these lows. */
+    bool projection = false;
+
+    json toJson() const;
+    static Unlink fromJson(const json& j);
+};
+
 /** One bake group: lows that receive maps, the highs they are projected from, and the projection settings. */
 struct LILA_SCENE_API GroupSettings
 {
@@ -137,6 +166,7 @@ struct LILA_SCENE_API GroupSettings
     bool ignoreBackfaces = true;
     /** Occluders for AO: self (the high that was hit), group (this group's highs) or all (every group's). */
     std::string aoScope = "group";
+    std::vector<Unlink> unlinks;
 
     json toJson() const;
     static GroupSettings fromJson(const json& j);
@@ -167,6 +197,14 @@ struct LILA_SCENE_API ProjectSettings
 
 inline constexpr uint32_t kNoHit = 0xffffffffu;
 
+/** Which of a low's rays a link applies to (GroupInputs::links). */
+enum class RayKind : uint32_t
+{
+    Projection = 0,
+    /** Secondary rays: AO, thickness, bent normals, rounded edges. */
+    Occlusion = 1,
+};
+
 enum HitFlags : uint32_t
 {
     kHitValid = 1,
@@ -195,7 +233,8 @@ struct alignas(16) TexelSample
     uint32_t sub;
     float uv[2];
     uint32_t tile;
-    uint32_t low;
+    /** Index of the low in its group; kNoHit applies no per-low links. */
+    uint32_t low = 0xffffffffu;
 };
 static_assert(sizeof(TexelSample) == 96);
 

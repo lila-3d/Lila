@@ -645,14 +645,15 @@ public:
         mProjection.traceProjection(group, samples, hits);
     }
     const bake::Tracer* tracer() const override { return this; }
-    bool occluded(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax) const override
+    bool occluded(size_t group, bake::OccluderScope scope, uint32_t high, uint32_t low, const glm::vec3& origin, const glm::vec3& dir,
+                  float tMax) const override
     {
-        return cpu().occluded(group, scope, high, origin, dir, tMax);
+        return cpu().occluded(group, scope, high, low, origin, dir, tMax);
     }
-    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, const glm::vec3& origin, const glm::vec3& dir, float tMax,
-                    bake::TraceHit& hit) const override
+    bool closestHit(size_t group, bake::OccluderScope scope, uint32_t high, uint32_t low, bake::RayKind kind, const glm::vec3& origin,
+                    const glm::vec3& dir, float tMax, bake::TraceHit& hit) const override
     {
-        return cpu().closestHit(group, scope, high, origin, dir, tMax, hit);
+        return cpu().closestHit(group, scope, high, low, kind, origin, dir, tMax, hit);
     }
 
 private:

@@ -337,15 +337,95 @@ fs::path resolveFolder(const std::string& folder)
     return p.lexically_normal();
 }
 
+namespace
+{
+void writeManifest(BakeResult& result, const BakeInputs& in, const ProjectSettings& ps, const BakeOptions& opt)
+{
+    if (opt.dryRun || opt.keepTexture || result.outputs.empty())
+        return;
+    result.manifest = opt.folder / paths::fromUtf8(fileSafe(in.project) + "_bake.json");
+    json m = result.toJson();
+    m["project"] = in.project;
+    m["target"] = ps.target;
+    m["settings"] = ps.toJson();
+    m["inputHash"] = opt.inputHash;
+    std::ofstream f(result.manifest);
+    f << m.dump(2);
+}
+
+/** The texture set name {material} gives a low's material slot: a mesh with only the fallback slot goes by the mesh. */
+std::string textureSet(const LowInput& low, const std::string& material)
+{
+    return material == scene::materials::kDefaultSlot && low.soup.materialNames.size() == 1 ? shortName(low.soup.name) : material;
+}
+
+/** One pass per distinct per-material output (then one for every other texture set), merged into one result. */
+BakeResult runMaterialPasses(const BakeInputs& in, const ProjectSettings& ps, const BakeOptions& opt, Backend& backend)
+{
+    const auto started = std::chrono::steady_clock::now();
+    std::map<std::string, std::vector<std::string>> passes;
+    std::vector<std::string> overridden;
+    for (const auto& [name, v] : ps.output.materials)
+    {
+        passes[ps.output.forMaterial(name).toJson().dump()].push_back(name);
+        overridden.push_back(name);
+    }
+    BakeResult result;
+    result.dryRun = opt.dryRun;
+    auto run = [&](const OutputSettings& os, const std::vector<std::string>& materials, bool exclude) {
+        ProjectSettings p = ps;
+        p.output = os;
+        BakeOptions o = opt;
+        o.materialPass = true;
+        o.materials = materials;
+        o.excludeMaterials = exclude;
+        BakeResult r = runBake(in, p, o, backend);
+        result.outputs.insert(result.outputs.end(), r.outputs.begin(), r.outputs.end());
+        for (const std::string& w : r.warnings)
+            if (std::ranges::find(result.warnings, w) == result.warnings.end())
+                result.warnings.push_back(w);
+        for (const GroupStats& gs : r.groups)
+        {
+            auto it = std::ranges::find(result.groups, gs.group, &GroupStats::group);
+            if (it == result.groups.end())
+            {
+                result.groups.push_back(gs);
+                continue;
+            }
+            it->samples += gs.samples;
+            it->hits += gs.hits;
+            it->misses += gs.misses;
+            it->backfaces += gs.backfaces;
+        }
+        for (const auto& [k, v] : r.timings.items())
+            if (v.is_number())
+                result.timings[k] = result.timings.value(k, 0.0) + v.get<double>();
+        result.backend = r.backend;
+        result.backendMode = r.backendMode;
+    };
+    for (const auto& [key, materials] : passes)
+        run(ps.output.forMaterial(materials.front()), materials, false);
+    run(ps.output.forMaterial({}), overridden, true);
+    result.inputHash = opt.inputHash;
+    result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    writeManifest(result, in, ps, opt);
+    return result;
+}
+} // namespace
+
 BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOptions& opt, Backend& backend)
 {
     LILA_ZONE();
 
+    if (!opt.materialPass && !opt.keepTexture && !ps.output.materials.empty() && hasToken(ps.output.name, "material"))
+        return runMaterialPasses(in, ps, opt, backend);
     const auto started = std::chrono::steady_clock::now();
     registerBuiltinMaps();
     BakeResult result;
     result.dryRun = opt.dryRun;
     result.warnings = in.warnings;
+    if (!opt.materialPass && !opt.keepTexture && !ps.output.materials.empty())
+        result.warnings.push_back("per-material output settings need {material} in the file name; baked every texture set at the project's");
     const OutputSettings& os = ps.output;
     for (const std::string& t : unknownTokens(os.name))
         result.warnings.push_back("unknown token {" + t + "} in the output name is kept as written");
@@ -386,6 +466,8 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
         size_t low;
         std::unique_ptr<TexelRaster> raster;
         bool forceUdim = false;
+        /** The material slot this job rasters, -1 for all of a single-slot low. */
+        int material = -1;
     };
     std::vector<LowJob> lowJobs;
     for (size_t g = 0; g < in.groups.size(); ++g)
@@ -397,12 +479,32 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
                 result.warnings.push_back(low.soup.name + " has no uv0; skipped");
                 continue;
             }
-            LowJob j{g, l, std::make_unique<TexelRaster>(low, rs)};
-            if (j.raster->skippedTriangles())
-                result.warnings.push_back(low.soup.name + ": " + std::to_string(j.raster->skippedTriangles()) +
+            // One raster per material slot: each slot writes its own texture set, so UVs overlapping across slots must
+            // not take each other's texels.
+            std::vector<int> slots{-1};
+            if (low.soup.materialNames.size() > 1)
+            {
+                slots.clear();
+                std::vector<uint8_t> present(low.soup.materialNames.size(), 0);
+                for (uint32_t m : low.soup.materials)
+                    if (m < present.size())
+                        present[m] = 1;
+                for (size_t m = 0; m < present.size(); ++m)
+                    if (present[m])
+                        slots.push_back(int(m));
+            }
+            uint32_t skipped = 0;
+            for (int slot : slots)
+            {
+                LowJob j{g, l, std::make_unique<TexelRaster>(low, rs, slot)};
+                j.material = slot;
+                skipped += j.raster->skippedTriangles();
+                j.forceUdim = j.raster->udims().size() > 1 && !hasToken(os.name, "udim");
+                lowJobs.push_back(std::move(j));
+            }
+            if (skipped)
+                result.warnings.push_back(low.soup.name + ": " + std::to_string(skipped) +
                                           " triangle(s) outside UDIM tiles 1001-1999 or without UV area were skipped");
-            j.forceUdim = j.raster->udims().size() > 1 && !hasToken(os.name, "udim");
-            lowJobs.push_back(std::move(j));
         }
 
     std::map<std::string, std::unique_ptr<TextureBuffer>> textures;
@@ -422,7 +524,7 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
         t.group = gi.name;
         t.mesh = shortName(low.soup.name);
         // A mesh without materials has only the fallback slot; its texture set is better named after the mesh.
-        t.material = material == scene::materials::kDefaultSlot && low.soup.materialNames.size() == 1 ? t.mesh : material;
+        t.material = textureSet(low, material);
         t.map = m.settings.suffix.empty() ? m.def->suffix : m.settings.suffix;
         const std::string format = m.settings.format.empty() ? os.format : m.settings.format;
         t.ext = formatExt(format);
@@ -478,6 +580,11 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             for (uint32_t t = 0; t < low.soup.triangleCount(); ++t)
                 if (j.raster->triangleUdims()[t] == udims[u] && low.soup.materials[t] < used.size())
                     used[low.soup.materials[t]] = 1;
+            if (opt.materialPass)
+                for (size_t mat = 0; mat < used.size(); ++mat)
+                    if (used[mat] && (std::ranges::find(opt.materials, textureSet(low, low.soup.materialNames[mat])) != opt.materials.end()) ==
+                                         opt.excludeMaterials)
+                        used[mat] = 0;
             lookup[k][u].resize(maps.size());
             for (size_t m = 0; m < maps.size(); ++m)
             {
@@ -524,7 +631,7 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
             bandMaps = std::ranges::any_of(maps, [](const PlannedMap& m) { return m.def->pack.is_null(); });
             rs.bandRows = std::max(1, backend.bandRows(os.width, os.supersampling));
             for (LowJob& j : lowJobs)
-                j.raster = std::make_unique<TexelRaster>(in.groups[j.group].lows[j.low], rs);
+                j.raster = std::make_unique<TexelRaster>(in.groups[j.group].lows[j.low], rs, j.material);
         }
     }
 
@@ -1022,17 +1129,8 @@ BakeResult runBake(const BakeInputs& in, const ProjectSettings& ps, const BakeOp
     result.inputHash = opt.inputHash;
     result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
 
-    if (!opt.dryRun && !opt.keepTexture && !result.outputs.empty())
-    {
-        result.manifest = opt.folder / paths::fromUtf8(fileSafe(in.project) + "_bake.json");
-        json m = result.toJson();
-        m["project"] = in.project;
-        m["target"] = ps.target;
-        m["settings"] = ps.toJson();
-        m["inputHash"] = opt.inputHash;
-        std::ofstream f(result.manifest);
-        f << m.dump(2);
-    }
+    if (!opt.materialPass)
+        writeManifest(result, in, ps, opt);
     return result;
 }
 

@@ -430,6 +430,7 @@ bake::ResidentStats GpuResident::bakeTile(const bake::ResidentTile& tile)
         pp.highCount = traceable ? uint32_t(b.mGroupHighs[g]) : 0u;
         pp.flags = kFlagResident | (cullBack ? kFlagCullBack : 0u);
         pp.stats = mStats.address;
+        b.useLinks(pp, g, false);
         const bool hw = b.mHardware && traceable;
         if (hw)
             pp.instanceBase = b.mGroupTlas[g].instanceBase.address;

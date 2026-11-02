@@ -142,6 +142,8 @@ protected:
     void dragMoveEvent(QDragMoveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
     void dragLeaveEvent(QDragLeaveEvent* e) override;
+
+public:
     /** What a drag at px is over, for the drop handlers. */
     viewportHooks::DropTarget dropTarget(QPointF px);
 

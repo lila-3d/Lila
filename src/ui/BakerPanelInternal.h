@@ -26,6 +26,10 @@
 #include "scene/Modifiers.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
+#include "ui/DocsUi.h"
+#include "ui/SpinScrub.h"
+#include "ui/ViewportHooks.h"
+#include "ui/ViewportToast.h"
 #include "ui/FlagFields.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
@@ -56,6 +60,8 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMimeData>
+#include <QMouseEvent>
+#include <QDrag>
 #include <QPainter>
 #include <QPointer>
 #include <QProcess>
@@ -99,6 +105,14 @@ constexpr int kGroupRole = Qt::UserRole + 1;
 constexpr int kNodeRole = Qt::UserRole + 2;
 constexpr int kFileRole = Qt::UserRole + 3;
 constexpr int kPresetRole = Qt::UserRole + 4;
+/** An issue row's key in BakerPanel::mLintToggled. */
+constexpr int kFoldKeyRole = Qt::UserRole + 5;
+/** An issue row's components as JSON: {edgePoints: [[a, b], ...]} or {faces: [...]}, on the mesh in kNodeRole. */
+constexpr int kComponentsRole = Qt::UserRole + 6;
+/** A Results thumbnail's bake output (the bake result's entry) as JSON. */
+constexpr int kOutputRole = Qt::UserRole + 7;
+/** Drag payload of Results thumbnails: a JSON array of their bake outputs. */
+inline constexpr const char* kOutputsMime = "application/x-lila-bake-outputs";
 
 QString qs(const std::string& s);
 std::string ss(const QString& s);
@@ -133,6 +147,8 @@ struct LintIssue
     std::string mesh;
     std::string message;
     std::string severity;
+    std::string check;
+    json data;
 };
 
 /** bakeLint's result in whatever shape: a list, or {issues|warnings|findings: [...]}, of strings or objects. */

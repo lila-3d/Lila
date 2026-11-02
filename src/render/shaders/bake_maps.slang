@@ -232,6 +232,7 @@ void aoCS(uint3 id: SV_DispatchThreadID)
         return;
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
+    useLinks(s.low, kRayOcclusion);
     if (absent(s))
         return;
     HitRecord h = pc.hits[i];
@@ -272,6 +273,7 @@ void thicknessCS(uint3 id: SV_DispatchThreadID)
         return;
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
+    useLinks(s.low, kRayOcclusion);
     if (absent(s))
         return;
     HitRecord h = pc.hits[i];
@@ -310,6 +312,7 @@ void bentCS(uint3 id: SV_DispatchThreadID)
         return;
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
+    useLinks(s.low, kRayOcclusion);
     if (absent(s))
         return;
     HitRecord h = pc.hits[i];
@@ -341,6 +344,7 @@ void roundedCS(uint3 id: SV_DispatchThreadID)
         return;
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
+    useLinks(s.low, kRayOcclusion);
     if (absent(s))
         return;
     HitRecord h = pc.hits[i];
@@ -405,6 +409,7 @@ void errorCS(uint3 id: SV_DispatchThreadID)
         return;
     uint i = pc.first + id.x;
     TexelSample s = pc.samples[i];
+    useLinks(s.low, kRayProjection);
     if (absent(s))
         return;
     HitRecord h = pc.hits[i];

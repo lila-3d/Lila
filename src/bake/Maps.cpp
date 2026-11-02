@@ -291,7 +291,7 @@ void aoKernel(const MapContext& ctx, std::span<const TexelSample> samples, std::
             // Cosine-weighted hemisphere.
             const float r = std::sqrt(u), phi = 6.28318530718f * v;
             const glm::vec3 d = unit(t * (r * std::cos(phi)) + b * (r * std::sin(phi)) + n * std::sqrt(std::max(0.0f, 1.0f - u)));
-            if (ctx.tracer->occluded(ctx.groupIndex, scope, h.high, o, d, dist))
+            if (ctx.tracer->occluded(ctx.groupIndex, scope, h.high, samples[i].low, o, d, dist))
                 ++blocked;
         }
         const float ao = 1.0f - float(blocked) / float(rays);

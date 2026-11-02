@@ -419,6 +419,7 @@ void registerGroupCommands()
                   {"center", "ce", T::Vec3, nullptr, "World-space brush centre; points within radius get a smooth falloff."},
                   {"radius", "r", T::Float, nullptr, "World-space brush radius, cm.", {}, {}, 0.0},
                   {"flood", "fl", T::Bool, false, "Apply to every point (or the selected components)."},
+                  {"reset", "rs", T::Bool, false, "Set every point back to unpainted (offset 1, skew 0), whatever is selected."},
                   {"symmetry", "sy", T::String, "none", "Mirror across x, y or z (object space).", {"none", "x", "y", "z"}}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -447,7 +448,9 @@ void registerGroupCommands()
                 PointPaint paint(base, *attr);
                 paint.setSymmetry(axisArg(a));
                 const float value = float(a.get<double>("value", 1.0)), strength = float(a.get<double>("strength", 1.0));
-                if (a.get<bool>("flood"))
+                if (a.get<bool>("reset"))
+                    paint.flood(PaintOp::Set, attr->unpainted, 1.0f, {});
+                else if (a.get<bool>("flood"))
                 {
                     std::vector<geo::Index> mask;
                     if (scene::components::mode() != scene::ComponentMode::Object)

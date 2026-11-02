@@ -52,6 +52,12 @@ LILA_SCENE_API std::string materialChannel(std::string_view map);
 LILA_SCENE_API json assignOutputs(scene::Graph& g, const json& result, bool create = true, const json& channels = json::object());
 
 /**
+ * The bake map id (normal, ao, orm, ...) or, failing that, the material channel a texture file's name says it holds:
+ * its last name token against the maps' ids and suffixes, then scene::materials::guessTextureChannel. "" when neither.
+ */
+LILA_SCENE_API std::string mapFromFileName(std::string_view fileName);
+
+/**
  * What bakeAssign returned when a project's last bake auto-assigned (autoAssign on: every successful, non-dry-run bake
  * assigns as its own command once it lands, on the main thread); null when none has.
  */

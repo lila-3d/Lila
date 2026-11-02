@@ -306,7 +306,7 @@ public:
         if (e->type() == QEvent::DragEnter || e->type() == QEvent::DragMove)
         {
             auto* d = static_cast<QDragMoveEvent*>(e);
-            if (droppedImages(d->mimeData()).empty())
+            if (droppedImages(d->mimeData()).empty() || (e->type() == QEvent::DragMove && hookTakes(d)))
                 return QObject::eventFilter(obj, e);
             d->acceptProposedAction();
             return true;
@@ -315,7 +315,7 @@ public:
         {
             auto* d = static_cast<QDropEvent*>(e);
             std::vector<std::string> files = droppedImages(d->mimeData());
-            if (files.empty())
+            if (files.empty() || hookTakes(d))
                 return QObject::eventFilter(obj, e);
             d->acceptProposedAction();
             mView->setFocus(Qt::OtherFocusReason);
@@ -332,6 +332,12 @@ public:
     }
 
 private:
+    /** A drop handler wants the images where the cursor is (a texture onto a mesh); Alt still drops an overlay. */
+    bool hookTakes(const QDropEvent* d) const
+    {
+        return !(d->modifiers() & Qt::AltModifier) && d->mimeData() && viewportHooks::handleDrop(*d->mimeData(), mView->dropTarget(d->position()), false);
+    }
+
     ViewportWidget* mView;
 };
 } // namespace

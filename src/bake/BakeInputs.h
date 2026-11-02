@@ -67,6 +67,8 @@ struct LowInput
     std::vector<glm::vec3> cagePositions;
     /** Source polygon per triangle (triangles of one polygon share it). */
     std::vector<uint32_t> faces;
+    /** Source point per corner. */
+    std::vector<uint32_t> points;
     /** UV island per triangle, numbered from 0 in face order. */
     std::vector<uint32_t> islands;
     uint32_t islandCount = 0;
@@ -96,7 +98,27 @@ struct GroupInputs
     bool measured = false;
     glm::vec3 highMin{0.0f};
     glm::vec3 highMax{0.0f};
+    /** Per high: the node it came from (the low's path for self, the file for file highs), and its low when self, else -1. */
+    std::vector<std::string> highNodes;
+    std::vector<int32_t> highSelfLow;
+    /** Index of this group's first high among every group's highs (the order a backend numbers them, scope all). */
+    uint32_t highBase = 0;
+    /**
+     * Highs each low's rays skip, as bits over every group's highs: linkWords words per low and RayKind, low-major. Empty
+     * when nothing is skipped. Self highs skip the other lows' projection; unlinks add the rest (buildLinks).
+     */
+    std::vector<uint32_t> links;
+    uint32_t linkWords = 0;
 };
+
+/** Whether the low's rays of this kind pass through the high (numbered over every group's highs). */
+inline bool skips(const GroupInputs& gi, uint32_t low, uint32_t globalHigh, RayKind kind)
+{
+    if (gi.links.empty() || low == 0xffffffffu)
+        return false;
+    const size_t word = (size_t(low) * 2 + size_t(kind)) * gi.linkWords + globalHigh / 32;
+    return word < gi.links.size() && (gi.links[word] >> (globalHigh % 32) & 1u) != 0;
+}
 
 /** A material's inputs as the bake saw them (scene/Materials.h conventions: linear colours, sRGB colour maps). */
 struct MaterialInput
@@ -176,4 +198,7 @@ LILA_SCENE_API json modifierPreset(std::string_view name);
  * the per-mesh conversions run in parallel. Throws std::runtime_error for a group naming a missing mesh.
  */
 LILA_SCENE_API BakeInputs buildInputs(scene::Graph& g, scene::NodeId project, const std::vector<scene::NodeId>& groups, bool withHighs = true);
+
+/** Fills every group's highBase and links from its self highs and unlinks (buildInputs calls it). */
+LILA_SCENE_API void buildLinks(BakeInputs& in);
 } // namespace lila::bake

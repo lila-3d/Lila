@@ -21,6 +21,8 @@
 #include "ui/Outliner.h"
 #include "ui/Panels.h"
 
+#include "scene/Materials.h"
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -260,7 +262,14 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
         auto* name = child<QLineEdit>(&panel, "bakerName");
         name->setText("T_{mesh}_{map}");
         Q_EMIT name->textEdited(name->text());
-        CHECK(child<QLabel>(&panel, "bakerPreview")->text().contains("T_crate_low_normal.png"));
+        {
+            auto* preview = child<QTreeWidget>(&panel, "bakerPreview");
+            bool listed = false;
+            for (int r = 0; r < preview->topLevelItemCount(); ++r)
+                for (int c = 0; c < preview->topLevelItem(r)->childCount(); ++c)
+                    listed |= preview->topLevelItem(r)->child(c)->text(0) == "T_crate_low_normal.png";
+            CHECK(listed);
+        }
         Q_EMIT name->editingFinished();
         pump();
         CHECK(bake::projectSettings(*scene::Graph::current().find(panel.project())).output.name == "T_{mesh}_{map}");
@@ -281,9 +290,16 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
         child<QToolButton>(&panel, "bakerBake")->click();
         QElapsedTimer t;
         t.start();
+        auto summaryRow = [&](const QString& name) -> QTreeWidgetItem* {
+            auto* tree = child<QTreeWidget>(&panel, "bakerSummary");
+            for (int r = 0; r < tree->topLevelItemCount(); ++r)
+                if (tree->topLevelItem(r)->text(0) == name)
+                    return tree->topLevelItem(r);
+            return nullptr;
+        };
         do
             pump();
-        while ((bake::bakeRunning() || panel.thumbnailsPending() || !child<QLabel>(&panel, "bakerSummary")->text().contains("files in")) &&
+        while ((bake::bakeRunning() || panel.thumbnailsPending() || !summaryRow("Time")) &&
                t.elapsed() < 20000);
         auto* thumbs = child<QListWidget>(&panel, "bakerThumbs");
         REQUIRE(thumbs->count() >= 3);
@@ -294,8 +310,17 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
                 sawNormal = true;
         CHECK(sawNormal);
         CHECK_FALSE(thumbs->item(0)->icon().isNull());
-        CHECK(child<QLabel>(&panel, "bakerSummary")->text().contains("files in"));
-        CHECK(child<QLabel>(&panel, "bakerSummary")->text().contains(QString::fromStdString(dir.generic_string())));
+        REQUIRE(summaryRow("Files"));
+        CHECK(summaryRow("Files")->text(1).toInt() >= 3);
+        REQUIRE(summaryRow("Folder"));
+        CHECK(summaryRow("Folder")->text(1) == QString::fromStdString(dir.generic_string()));
+
+        // Assign wires the maps that have a material input into the low's own new material.
+        child<QToolButton>(&panel, "bakerAssign")->click();
+        pump();
+        scene::Node* own = scene::materials::find(scene::Graph::current(), "M_crate_low");
+        REQUIRE(own);
+        CHECK(!own->as<std::string>(scene::material::kNormalMap).empty());
         CHECK(panel.outputFolder() == QString::fromStdString(dir.generic_string()));
 
         // The thumbnails' menu acts on the selection: paths and names copy one per line.
@@ -341,10 +366,12 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
         pump();
         QTreeWidgetItem* groupRow = findRow(groups, QString::fromStdString(grp->name()));
         REQUIRE(groupRow);
+        // Issues -> one row per check -> its meshes.
         bool found = false;
         for (int c = 0; c < groupRow->childCount(); ++c)
-            if (groupRow->child(c)->data(0, Qt::UserRole).toInt() == 7 && groupRow->child(c)->text(0).startsWith("highRange"))
-                found = true;
+            if (QTreeWidgetItem* issues = groupRow->child(c); issues->data(0, Qt::UserRole).toInt() == 7 && issues->text(0) == "Issues")
+                for (int k = 0; k < issues->childCount(); ++k)
+                    found |= issues->child(k)->text(0) == "Rays missing the high";
         CHECK(found);
     }
 }
