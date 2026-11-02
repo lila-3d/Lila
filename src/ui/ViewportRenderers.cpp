@@ -374,6 +374,12 @@ std::vector<Setting> settings(int panel)
     return it == views().end() || !it->second.session ? std::vector<Setting>{} : it->second.session->settings();
 }
 
+nlohmann::json stats(int panel)
+{
+    auto it = views().find(panel);
+    return it == views().end() || !it->second.session ? nlohmann::json() : it->second.session->stats();
+}
+
 int addListener(std::function<void(int panel)> fn)
 {
     static int next = 0;

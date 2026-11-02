@@ -137,6 +137,8 @@ public:
     virtual std::vector<Setting> settings() const { return {}; }
     /** Main thread: changes one; false for a key it doesn't know or a value it refuses. A render call follows. */
     virtual bool setSetting(const std::string& /*key*/, const nlohmann::json& /*value*/) { return false; }
+    /** Main thread: timings and counters for viewportStats, as a JSON object of any keys the renderer likes. */
+    virtual nlohmann::json stats() const { return nlohmann::json::object(); }
 };
 
 struct Renderer
@@ -173,6 +175,8 @@ LILA_UI_API nlohmann::json savedSettings(std::string_view renderer);
 LILA_UI_API bool setSetting(int panel, const std::string& key, const nlohmann::json& value);
 /** The settings of panel's session; empty for Lila's own renderer. */
 LILA_UI_API std::vector<Setting> settings(int panel);
+/** What the external renderer drawing panel reports from Session::stats; null when Lila draws it. */
+LILA_UI_API nlohmann::json stats(int panel);
 /** Called on the main thread when a viewport picks another renderer. */
 LILA_UI_API int addListener(std::function<void(int panel)> fn);
 LILA_UI_API void removeListener(int id);

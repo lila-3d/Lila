@@ -467,6 +467,15 @@ public:
         return out;
     }
 
+    nlohmann::json stats() const override
+    {
+        nlohmann::json delegate = nlohmann::json::object();
+        for (const auto& [key, value] : mDelegate->GetRenderStats())
+            if (nlohmann::json j = toJson(value); !j.is_null())
+                delegate[key] = std::move(j);
+        return {{"frames", mFrames}, {"executeMs", mExecuteMs}, {"converged", mTasks->IsConverged()}, {"delegate", std::move(delegate)}};
+    }
+
     bool setSetting(const std::string& key, const nlohmann::json& value) override
     {
         finishLast();
@@ -606,7 +615,10 @@ private:
             mHgi->StartFrame();
         {
             LILA_ZONE_N("Hydra Execute");
+            const auto start = std::chrono::steady_clock::now();
             mEngine.Execute(mIndex.get(), &tasks);
+            mExecuteMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            ++mFrames;
         }
         if (r.deliver)
             deliver(r, proj);
@@ -935,6 +947,8 @@ private:
     std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);
     vr::Request mLast;
     std::chrono::steady_clock::time_point mRequested;
+    uint64_t mFrames = 0;
+    double mExecuteMs = 0.0;
 
     bool mSynced = false;
     uint64_t mSyncedRevision = 0;

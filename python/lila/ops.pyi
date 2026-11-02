@@ -9897,7 +9897,7 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
     """
 
 def viewportStats() -> Any:
-    """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included."""
+    """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls, renderer}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included. When an external renderer such as a Hydra delegate draws the view, rendererStats holds what it reports."""
 
 def viewportToast(*objects: Any, all: bool | None = None, duration: float | None = None, error: bool | None = None, a: bool | None = None, d: float | None = None, e: bool | None = None) -> Any:
     """Pop up a short message in the bottom-right corner of the active viewport; it fades out after duration. Showing the same text again restarts it instead of adding another.
