@@ -13,6 +13,19 @@ namespace lila::ui
 {
 using namespace mainWindowDetail;
 
+namespace
+{
+/** A scene from a newer Lila still opens; the toast says what saving it here risks. The log has the details. */
+void toastIfNewer()
+{
+    const io::SceneOrigin& o = io::openedOrigin();
+    if (o.age != io::SceneOrigin::Age::Newer)
+        return;
+    viewportToast::showActive(QString("Saved by newer Lila %1. Saving here can lose data.").arg(QString::fromStdString(o.version)), 8000,
+                              viewportToast::Kind::Error);
+}
+} // namespace
+
 bool MainWindow::confirmDiscard()
 {
     if (!io::modified())
@@ -108,6 +121,7 @@ bool MainWindow::openScene(const std::filesystem::path& given)
         addRecentFile(path);
         refreshSourceStatus();
         mViewports->frameUnlessRestored();
+        toastIfNewer();
         return true;
     }
     catch (const CommandCancelled& e)

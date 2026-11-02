@@ -60,6 +60,31 @@ LILA_SCENE_API void fillMeshes(nlohmann::json& doc, std::vector<DeferredMesh>& m
 LILA_SCENE_API void deserialize(const nlohmann::json& doc, const std::filesystem::path& sceneDir = {}, double ownBytes = 0.0);
 
 /**
+ * The scene format, written as "lila". Raised only when the document changes in a way older Lilas would misread; new
+ * node types and attributes don't need it, they are what the writer version tells apart.
+ */
+LILA_SCENE_API int formatVersion();
+
+/** Which Lila wrote a scene document, against this one. */
+struct SceneOrigin
+{
+    enum class Age
+    {
+        Same,
+        Older, // opens as is; saving writes it in the current format
+        Newer, // opens best effort; saving here can drop what the newer Lila added
+    };
+    Age age = Age::Same;
+    int format = 0;
+    std::string version; // "major.minor.patch"; empty in files from before writers were recorded
+    std::string build;
+};
+/** Compares doc's format and writer version with `running` (this Lila's version when empty). */
+LILA_SCENE_API SceneOrigin sceneOrigin(const nlohmann::json& doc, std::string_view running = {});
+/** Who wrote the scene last opened (load, loadVersion); Same after a new scene or a save. */
+LILA_SCENE_API const SceneOrigin& openedOrigin();
+
+/**
  * A part of the scene document owned by a layer above the scene, such as the viewports' look-through cameras. It is
  * written as "ui"/key from save() (null leaves it out) and handed to load() after a scene opens, null when the file has
  * none. Sections nobody registered are kept and written back, so batch mode saves them unchanged.

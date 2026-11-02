@@ -27,6 +27,8 @@
 #include "scene/SceneScripts.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <format>
 #include <future>
 #include <map>
@@ -68,6 +70,7 @@ struct State
     std::optional<uint64_t> autosavedStateId; // undo state the last autosave wrote, while no untracked edit followed
     json cleanUi = json::object(); // UI sections as of the last save/open/new, so moving a camera back undoes the change
     bool uiDirty = false;
+    SceneOrigin origin;
 
     int listener = 0;
     std::string title;
@@ -157,6 +160,7 @@ void ensureListener()
         if (c == scene::Change::Cleared)
         {
             setCurrentPath({});
+            state().origin = {};
             state().ui = json::object();
             refs::clear();
             scene::renderSettings().fromJson({});
@@ -418,10 +422,8 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
 {
     LILA_ZONE();
 
-    if (!doc.is_object() || !doc.contains("lila"))
+    if (!doc.is_object() || !doc.contains("lila") || !doc["lila"].is_number_integer())
         throw std::runtime_error("not a Lila scene");
-    if (doc["lila"].get<int>() > kVersion)
-        throw std::runtime_error("scene was saved by a newer Lila (format " + doc["lila"].dump() + ")");
 
     Graph& g = Graph::current();
     State& s = state();
@@ -494,6 +496,68 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
         log::warn("{}", w);
 }
 
+namespace
+{
+/** major.minor.patch as numbers; anything after the patch ("-dev", "+sha") is ignored. */
+std::array<int, 3> versionParts(std::string_view v)
+{
+    std::array<int, 3> parts{};
+    size_t at = 0;
+    for (int& p : parts)
+    {
+        size_t end = at;
+        while (end < v.size() && v[end] >= '0' && v[end] <= '9')
+            ++end;
+        std::from_chars(v.data() + at, v.data() + end, p);
+        if (end >= v.size() || v[end] != '.')
+            break;
+        at = end + 1;
+    }
+    return parts;
+}
+
+/** Logs who wrote a scene being opened when it isn't this Lila's version. */
+SceneOrigin noteOrigin(const json& doc, const std::string& name)
+{
+    const SceneOrigin o = sceneOrigin(doc);
+    const std::string by = o.version.empty() ? "an earlier Lila" : "Lila " + o.version;
+    if (o.age == SceneOrigin::Age::Newer)
+        log::warn("{} was saved by {} (format {}), newer than this Lila {} (format {}). It opens as far as this version "
+                  "understands it; saving it here can drop what the newer version added.",
+                  name, by, o.format, version::number(), kVersion);
+    else if (o.age == SceneOrigin::Age::Older)
+        log::info("{} was saved by {}; saving updates it to Lila {}", name, by, version::number());
+    return o;
+}
+} // namespace
+
+int formatVersion()
+{
+    return kVersion;
+}
+
+SceneOrigin sceneOrigin(const json& doc, std::string_view running)
+{
+    SceneOrigin o;
+    o.format = doc.is_object() ? doc.value("lila", 0) : 0;
+    if (const json* w = doc.is_object() && doc.contains("writer") ? &doc["writer"] : nullptr; w && w->is_object())
+    {
+        o.version = w->value("version", "");
+        o.build = w->value("build", "");
+    }
+    const std::array<int, 3> mine = versionParts(running.empty() ? std::string_view(version::number()) : running);
+    if (o.format > kVersion || (!o.version.empty() && versionParts(o.version) > mine))
+        o.age = SceneOrigin::Age::Newer;
+    else if (o.format < kVersion || o.version.empty() || versionParts(o.version) < mine)
+        o.age = SceneOrigin::Age::Older;
+    return o;
+}
+
+const SceneOrigin& openedOrigin()
+{
+    return state().origin;
+}
+
 void registerUiSection(const std::string& key, std::function<json()> save, std::function<void(const json&)> load)
 {
     state().uiSections[key] = {std::move(save), std::move(load)};
@@ -563,6 +627,7 @@ void save(const fs::path& path)
         });
     });
     setCurrentPath(path);
+    state().origin = {};
     markClean();
     log::info("saved {}", path.string());
     for (auto& fn : state().savedCallbacks)
@@ -586,6 +651,7 @@ void load(const fs::path& path)
     scope.checkCancel();
     for (const std::string& w : warnings)
         log::warn("{}: {}", name, w);
+    const SceneOrigin origin = noteOrigin(doc, name);
     {
         std::error_code ec;
         const auto size = fs::file_size(path, ec);
@@ -595,6 +661,7 @@ void load(const fs::path& path)
         std::thread([d = std::move(doc)] {}).detach();
     }
     setCurrentPath(path);
+    state().origin = origin;
     markClean();
     if (!Workspace::get().isOpen())
         if (auto ws = Workspace::detect(path))
@@ -743,6 +810,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
     scope.checkCancel();
     for (const std::string& w : warnings)
         log::warn("{}: {}", file.filename().string(), w);
+    const SceneOrigin origin = noteOrigin(doc, file.filename().string());
     {
         std::error_code ec;
         const auto size = fs::file_size(file, ec);
@@ -750,6 +818,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
         deserialize(doc, scene.empty() ? file.parent_path() : scene.parent_path(), ec ? 0.0 : double(size));
     }
     setCurrentPath(keepPath ? scene : fs::path());
+    state().origin = origin;
     if (!keepPath)
     {
         state().title = title;
