@@ -321,6 +321,13 @@ void ViewportWidget::syncCameraSettings()
     mCamera.filmFit = c.filmFit;
     mCamera.overscan = c.overscan;
     mCamera.gateAspect = c.resolutionGate ? std::optional<double>(r.deviceAspect()) : std::nullopt;
+    if (mLookThrough == scene::kNoNode)
+    {
+        mCamera.autoNear = c.nearClip <= 0.0;
+        mCamera.nearClip = c.nearClip > 0.0 ? c.nearClip : Camera{}.nearClip;
+    }
+    else
+        mCamera.autoNear = false;
 }
 
 void ViewportWidget::drawSoftSelectRadius(OverlayPainter& p)

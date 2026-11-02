@@ -402,7 +402,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         req.width = px.width();
         req.height = px.height();
         req.view = viewInfo();
-        req.nearClip = mCamera.nearClip;
+        req.nearClip = mCamera.nearPlane();
         req.farClip = mCamera.farClip.value_or(mCamera.ortho ? mCamera.distance * 2.0 + 1e5 : 0.0);
         req.time = g.time();
         req.exposure = s.exposure;

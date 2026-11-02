@@ -53,10 +53,16 @@ std::optional<glm::dvec2> Camera::gateExtents() const
     return scene::fitGate(filmExtents(), *gateAspect, filmFit);
 }
 
+double Camera::nearPlane() const
+{
+    // A thousandth of the way to the center of interest: close work on small props never clips, and reversed-Z keeps depth precise.
+    return autoNear && !ortho ? std::clamp(distance * 0.001, 1e-4, 10.0) : nearClip;
+}
+
 glm::dmat4 Camera::proj(double aspect) const
 {
     double farD = farClip.value_or(ortho ? distance * 2.0 + 1e5 : 0.0);
-    return scene::camera::projection(viewExtents(aspect), ortho, nearClip, farD);
+    return scene::camera::projection(viewExtents(aspect), ortho, nearPlane(), farD);
 }
 
 void Camera::tumble(double dxDeg, double dyDeg)

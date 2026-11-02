@@ -358,3 +358,35 @@ TEST_CASE("moving a saved view marks the scene modified until it moves back")
     CHECK_FALSE(io::modified());
     io::unregisterUiSection("testView");
 }
+
+TEST_CASE("near clip: auto on the built-in views, manual override, camera nodes always manual")
+{
+    Node& cam = newCamera();
+    CHECK(renderSettings().camera("persp").nearClip == 0.0);
+
+    ui::Camera view;
+    view.autoNear = true;
+    view.distance = 2.0;
+    CHECK(view.nearPlane() == doctest::Approx(0.002));
+    view.distance = 120.0;
+    CHECK(view.nearPlane() == doctest::Approx(0.12));
+    view.ortho = true;
+    CHECK(view.nearPlane() == view.nearClip);
+    view.ortho = false;
+    view.autoNear = false;
+    view.nearClip = 0.5;
+    CHECK(view.nearPlane() == 0.5);
+    CHECK(ndc(view.proj(1.5), {0, 0, -0.5}).z == doctest::Approx(1.0));
+
+    run("cameraSettings", {{"args", {"persp"}}, {"nearClip", 0.25}});
+    CHECK(renderSettings().camera("persp").nearClip == doctest::Approx(0.25));
+    run("cameraSettings", {{"args", {"persp"}}, {"nearClip", 0.0}});
+    CHECK(renderSettings().camera("persp").nearClip == 0.0);
+    run("cameraSettings", {{"args", {"persp"}}, {"nearClip", -1.0}});
+    CHECK(renderSettings().camera("persp").nearClip == 0.0);
+
+    run("cameraSettings", {{"args", {cam.name()}}, {"nearClip", 0.03}});
+    CHECK(cam.as<double>(Camera::kNearClipPlane) == doctest::Approx(0.03));
+    CHECK(renderSettings().camera(cam.name()).nearClip == doctest::Approx(0.03));
+    CHECK_THROWS_AS(run("cameraSettings", {{"args", {cam.name()}}, {"nearClip", 0.0}}), CommandError);
+}

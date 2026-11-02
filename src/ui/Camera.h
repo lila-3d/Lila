@@ -28,6 +28,8 @@ struct LILA_UI_API Camera
     double horizontalAperture = 36.0; // mm, matches Maya's default film back
     double verticalAperture = 24.0;   // mm
     double nearClip = 0.1;
+    /** Perspective near clip follows the distance to the center of interest instead of nearClip. */
+    bool autoNear = false;
     bool zUp = false;
 
     /** Orthographic views (top/front/side) look along a fixed axis; `orthoWidth` is the visible width in cm. */
@@ -49,6 +51,8 @@ struct LILA_UI_API Camera
     glm::dmat3 rotation{1.0};
     std::optional<double> farClip;
 
+    /** The near clip the projection uses: nearClip, or the automatic one. */
+    double nearPlane() const;
     glm::dvec3 up() const { return zUp ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0); }
     /** Up vector of the view itself (differs from world up in top/bottom views). */
     glm::dvec3 viewUp() const { return free ? rotation[1] : ortho ? orthoUp : up(); }

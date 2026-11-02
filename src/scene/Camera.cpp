@@ -192,6 +192,7 @@ CameraSettings settings(const Node& cam)
     c.filmGate = cam.as<bool>(Camera::kDisplayFilmGate);
     c.gateMask = cam.as<bool>(Camera::kDisplayGateMask);
     c.gateMaskOpacity = std::clamp(cam.as<double>(Camera::kDisplayGateMaskOpacity), 0.0, 1.0);
+    c.nearClip = cam.as<double>(Camera::kNearClipPlane);
     return c;
 }
 
@@ -207,6 +208,8 @@ void setSettings(Graph& g, NodeId cam, const CameraSettings& c)
     set(Camera::kDisplayFilmGate, c.filmGate);
     set(Camera::kDisplayGateMask, c.gateMask);
     set(Camera::kDisplayGateMaskOpacity, c.gateMaskOpacity);
+    if (c.nearClip > 0.0)
+        set(Camera::kNearClipPlane, c.nearClip);
 }
 
 void migrateNamedSettings(Graph& g, RenderSettings& r)

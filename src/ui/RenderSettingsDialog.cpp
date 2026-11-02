@@ -108,6 +108,16 @@ RenderSettingsDialog::RenderSettingsDialog(QWidget* parent) : QDialog(parent)
     mMaskOpacity->setKeyboardTracking(false);
     setSpinDefault(mMaskOpacity, camDefaults.gateMaskOpacity);
     cf->addRow("Mask opacity", mMaskOpacity);
+    mNearClip = new QDoubleSpinBox(cam);
+    mNearClip->setRange(0.0, 1e6);
+    mNearClip->setDecimals(4);
+    mNearClip->setSingleStep(0.01);
+    mNearClip->setSuffix(" cm");
+    mNearClip->setSpecialValueText("Auto");
+    mNearClip->setKeyboardTracking(false);
+    mNearClip->setToolTip("Closer than this is cut away. Auto follows the distance to the center of interest.");
+    setSpinDefault(mNearClip, camDefaults.nearClip);
+    cf->addRow("Near clip", mNearClip);
     v->addWidget(cam);
 
     auto* bottom = new QHBoxLayout;
@@ -135,6 +145,7 @@ RenderSettingsDialog::RenderSettingsDialog(QWidget* parent) : QDialog(parent)
     connect(mFilmGate, &QCheckBox::toggled, this, [camFlag](bool on) { camFlag("filmGate", on); });
     connect(mMask, &QCheckBox::toggled, this, [camFlag](bool on) { camFlag("gateMask", on); });
     connect(mMaskOpacity, &QDoubleSpinBox::valueChanged, this, [camFlag](double o) { camFlag("maskOpacity", o); });
+    connect(mNearClip, &QDoubleSpinBox::valueChanged, this, [camFlag](double n) { camFlag("nearClip", n); });
 
     mListener = scene::addRenderSettingsListener([this] { refresh(); });
     refresh();
@@ -154,7 +165,7 @@ void RenderSettingsDialog::refresh()
 {
     const scene::RenderSettings& r = scene::renderSettings();
     QSignalBlocker b0(mPreset), b1(mWidth), b2(mHeight), b3(mDeviceAspect), b4(mFilmFit), b5(mOverscan), b6(mGate),
-        b7(mFilmGate), b8(mMask), b9(mMaskOpacity);
+        b7(mFilmGate), b8(mMask), b9(mMaskOpacity), b10(mNearClip);
     int preset = 0;
     const auto& ps = scene::resolutionPresets();
     for (size_t i = 0; i < ps.size(); ++i)
@@ -174,6 +185,11 @@ void RenderSettingsDialog::refresh()
     mMask->setChecked(c.gateMask);
     mMaskOpacity->setValue(c.gateMaskOpacity);
     mMaskOpacity->setEnabled(c.gateMask);
+    const bool node = !scene::isViewName(camera());
+    // Camera nodes have no auto: their nearClipPlane is always a distance.
+    mNearClip->setMinimum(node ? 0.0001 : 0.0);
+    mNearClip->setSpecialValueText(node ? "" : "Auto");
+    mNearClip->setValue(c.nearClip);
 }
 
 void RenderSettingsDialog::open(QWidget* parent, const std::string& camera)

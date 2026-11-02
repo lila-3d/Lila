@@ -112,7 +112,7 @@ void MainWindow::createCameraFromView()
             set("horizontalFilmAperture", c.horizontalAperture / 25.4);
             set("verticalFilmAperture", c.verticalAperture / 25.4);
             set("filmFit", int(c.filmFit));
-            set("nearClipPlane", c.nearClip);
+            set("nearClipPlane", c.nearPlane());
             if (c.ortho)
             {
                 set("orthographic", true);

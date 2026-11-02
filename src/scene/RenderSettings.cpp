@@ -62,7 +62,8 @@ std::optional<FilmFit> parseFilmFit(const std::string& s)
 json CameraSettings::toJson() const
 {
     return {{"filmFit", filmFitName(filmFit)}, {"overscan", overscan},     {"resolutionGate", resolutionGate},
-            {"filmGate", filmGate},             {"gateMask", gateMask},     {"gateMaskOpacity", gateMaskOpacity}};
+            {"filmGate", filmGate},             {"gateMask", gateMask},     {"gateMaskOpacity", gateMaskOpacity},
+            {"nearClip", nearClip}};
 }
 
 void CameraSettings::fromJson(const json& j)
@@ -76,6 +77,7 @@ void CameraSettings::fromJson(const json& j)
     filmGate = j.value("filmGate", filmGate);
     gateMask = j.value("gateMask", gateMask);
     gateMaskOpacity = std::clamp(j.value("gateMaskOpacity", gateMaskOpacity), 0.0, 1.0);
+    nearClip = std::max(j.value("nearClip", nearClip), 0.0);
 }
 
 bool isViewName(const std::string& name)
@@ -227,7 +229,7 @@ void registerRenderSettingsCommands()
 
     ops::registerCommand({
         .name = "cameraSettings",
-        .doc = "Query or set a camera's gate display and film fit. The camera is a view name ('persp', 'top', 'front', "
+        .doc = "Query or set a camera's gate display, film fit and near clip. The camera is a view name ('persp', 'top', 'front', "
                "...; default 'persp') or a camera node, which keeps them as its own attributes. filmFit is 'fill', 'horizontal', 'vertical' or 'overscan'. Returns the settings.",
         .positionalDoc = "camera",
         .flags = {
@@ -237,6 +239,7 @@ void registerRenderSettingsCommands()
             {"filmGate", "fg", T::Bool, nullptr, "Display the film gate."},
             {"gateMask", "gm", T::Bool, nullptr, "Darken outside the gate."},
             {"maskOpacity", "mo", T::Float, nullptr, "Gate mask opacity, 0 to 1.", {}, {}, 0.0, 1.0},
+            {"nearClip", "nc", T::Float, nullptr, "Near clip plane in cm; 0 is auto, following the distance to the center of interest. A camera node sets its nearClipPlane and has no auto.", {}, {}, 0.0, 1e6},
             {"query", "q", T::Bool, false, ""},
         },
         .undoable = false,
@@ -267,7 +270,16 @@ void registerRenderSettingsCommands()
             c.gateMask = a.get<bool>("gateMask", c.gateMask);
             if (a.has("maskOpacity"))
                 c.gateMaskOpacity = std::clamp(a.get<double>("maskOpacity"), 0.0, 1.0);
-            if (Node* n = isViewName(name) ? nullptr : Graph::current().find(name); n && n->type().isA("camera"))
+            Node* n = isViewName(name) ? nullptr : Graph::current().find(name);
+            const bool node = n && n->type().isA("camera");
+            if (a.has("nearClip"))
+            {
+                const double nearClip = a.get<double>("nearClip");
+                if (!(nearClip >= 0.0) || (node && nearClip <= 0.0))
+                    throw CommandError(node ? "cameraSettings: a camera node's nearClip must be positive" : "cameraSettings: nearClip must be 0 (auto) or positive");
+                c.nearClip = nearClip;
+            }
+            if (node)
             {
                 // Gate display is view state, so it stays off the undo stack like the views' own settings.
                 UndoStack& u = UndoStack::get();

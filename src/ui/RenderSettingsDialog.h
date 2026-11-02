@@ -46,5 +46,6 @@ private:
     QCheckBox* mFilmGate = nullptr;
     QCheckBox* mMask = nullptr;
     QDoubleSpinBox* mMaskOpacity = nullptr;
+    QDoubleSpinBox* mNearClip = nullptr;
 };
 } // namespace lila::ui

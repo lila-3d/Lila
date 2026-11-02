@@ -40,6 +40,8 @@ struct LILA_SCENE_API CameraSettings
     bool filmGate = false;
     bool gateMask = true;
     double gateMaskOpacity = 0.7;
+    /** cm; 0 follows the distance to the center of interest (built-in perspective views only; camera nodes are always manual). */
+    double nearClip = 0.0;
 
     json toJson() const;
     void fromJson(const json& j);
