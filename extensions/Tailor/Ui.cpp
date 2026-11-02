@@ -9,9 +9,11 @@
 #include <lila/Extension.h>
 #include <lila/FileDialog.h>
 #include <lila/Graph.h>
+#include <lila/Layouts.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
 #include <lila/Node.h>
+#include <lila/Shelves.h>
 #include <lila/ViewportTool.h>
 
 #include <QHeaderView>
@@ -152,14 +154,31 @@ void registerUi(ext::Context& ctx)
                        .doc = "Set the selected garment's panels back to active.", .python = "tailorFreeze('Garment', state='active')",
                        .command = "tailorFreeze", .call = {{"state", "active"}}});
 
+    for (const auto& [id, label, tool, doc, icon] :
+         {std::tuple{"tailor.pin", "Pin Cloth", "tailor.pin", "Paint on the selected garment to pin the cloth where it hangs; Shift unpins.", "pinned"},
+          {"tailor.fold", "Fold Cloth", "tailor.fold", "Draw a fold line on the selected garment; Shift folds the other way.", "fold"},
+          {"tailor.shrink", "Shrink Cloth", "tailor.shrink", "Paint on the selected garment to shrink its cloth; Shift stretches it.", "arrows-minimize"},
+          {"tailor.steam", "Steam Cloth", "tailor.steam", "Drag over the selected garment, live, to smooth it out.", "ironing-steam"}})
+        actions::add(ctx, {.id = id, .label = label, .category = "Tailor", .run = [tool] { viewportTools::activate(tool); }, .doc = doc, .icon = icon});
+    actions::add(ctx, {.id = "tailor.autoSew", .label = "Auto-Sew", .category = "Tailor",
+                       .doc = "Sew the selected garment's unsewn edges that meet where the panels are placed.", .python = "tailorAutoSew('Garment')",
+                       .command = "tailorAutoSew", .call = nlohmann::json::object(), .icon = "needle-thread"});
+    actions::add(ctx, {.id = "tailor.check", .label = "Check Pattern", .category = "Tailor",
+                       .doc = "List what a pattern maker would flag on the selected garment, with what to change.", .python = "tailorCheck('Garment')",
+                       .command = "tailorCheck", .call = nlohmann::json::object(), .icon = "checklist"});
+    actions::add(ctx, {.id = "tailor.clearBrush", .label = "Clear Brushes", .category = "Tailor",
+                       .doc = "Remove the pins, folds and shrink painted on the selected garment.", .python = "tailorClearBrush('Garment')",
+                       .command = "tailorClearBrush", .call = nlohmann::json::object()});
+
     registerPatternEditor(ctx);
     registerGrabTool(ctx);
     registerAnimation(ctx);
     menus::addMenu(ctx, {.id = "Tailor", .title = "Tailor", .before = "Rig", .sets = {"Modeling", "Animation"}});
     int sep = 0;
     for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
-                          "tailor.sew", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab", "",
-                          "tailor.freeze", "tailor.unfreeze", "", "tailor.bake"})
+                          "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
+                          "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "",
+                          "tailor.bake", "layout.apply.Tailor"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("tailor.menu.") + a, .menu = "Tailor", .action = a});
@@ -168,5 +187,31 @@ void registerUi(ext::Context& ctx)
     }
 
     attributeEditor::addSection(ctx, kGarmentType, "Panels and Seams", [](scene::NodeId id) { return garmentSection(id); });
+
+    nlohmann::json items = nlohmann::json::array();
+    for (auto [label, icon, target] : {std::tuple{"Body", "man", "tailor.mannequin"},
+                                       {"Block", "shirt", "tailor.createBlock"},
+                                       {"Draw", "pencil", "tailor.drawPanel"},
+                                       {"Pattern", "layout-board-split", "window.tailorPatternEditor"},
+                                       {"Auto-Sew", "needle-thread", "tailor.autoSew"},
+                                       {"Check", "checklist", "tailor.check"},
+                                       {"Drape", "player-play", "tailor.simulate"},
+                                       {"Live", "bolt", "tailor.live"},
+                                       {"Grab", "hand-grab", "tailor.grab"},
+                                       {"Pin", "pinned", "tailor.pin"},
+                                       {"Fold", "fold", "tailor.fold"},
+                                       {"Shrink", "arrows-minimize", "tailor.shrink"},
+                                       {"Steam", "ironing-steam", "tailor.steam"},
+                                       {"Bake", "package-export", "tailor.bake"}})
+        items.push_back({{"label", label}, {"icon", icon}, {"target", target}});
+    shelves::add(ctx, {"Tailor", std::move(items)});
+    layouts::add(ctx, "Tailor",
+                 {{"version", 1},
+                  {"preset",
+                   {{"open", {"shelf", "outliner", "undoHistory", "channelBox", "attributeEditor", "tailorPatternEditor", "timeSlider"}},
+                    {"raise", {"tailorPatternEditor"}},
+                    {"size", {{"tailorPatternEditor", {{"width", 0.42}}}}}}},
+                  {"viewport", {{"quad", false}, {"camera", "persp"}}},
+                  {"shelf", {{"current", "Tailor"}}}});
 }
 } // namespace tailor

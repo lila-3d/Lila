@@ -9,6 +9,7 @@
 #include <lila/Extension.h>
 #include <lila/Graph.h>
 #include <lila/Log.h>
+#include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Panels.h>
 
@@ -141,6 +142,7 @@ public:
         layoutPanels();
         if (changed)
             fit();
+        syncFromComponents();
         if (onIssues)
         {
             json issues = json::array();
@@ -260,7 +262,10 @@ protected:
             mDragStart = mG.panels[size_t(h.panel)].outline[size_t(h.vertex)];
         }
         else if (mMode == Mode::Edit && h.panel >= 0 && h.vertex < 0 && h.edge < 0)
+        {
             mSelected = h.panel;
+            selectPanelFaces(h.panel);
+        }
         else if (mMode == Mode::Sew && h.edge >= 0)
         {
             if (!mSewFrom)
@@ -456,6 +461,79 @@ private:
     {
         const QPointF o = mOffset[size_t(panel)];
         return {(s.x() - mPan.x()) / mScale - o.x(), (mPan.y() - s.y()) / mScale - o.y()};
+    }
+
+    /** The mesh the garment feeds, whose faces carry their panel. */
+    const scene::Node* garmentMesh() const
+    {
+        scene::Graph& g = scene::Graph::current();
+        const scene::Node* n = g.node(mGarment);
+        if (!n)
+            return nullptr;
+        for (const scene::PlugRef& d : g.destinations({mGarment, n->type().attrIndex("outMesh")}))
+            if (const scene::Node* m = g.node(d.node); m && m->type().isA("mesh"))
+                return m;
+        return nullptr;
+    }
+
+    /** Selects the faces of a panel on the garment's mesh, so the 3D view shows the piece picked here. */
+    void selectPanelFaces(int panel)
+    {
+        const scene::Node* mesh = garmentMesh();
+        if (!mesh)
+            return;
+        scene::Graph& g = scene::Graph::current();
+        const scene::PlugValue v = g.value({mesh->id(), scene::MeshNode::kOutMesh});
+        const MeshPtr* m = std::get_if<MeshPtr>(&v);
+        if (!m || !*m)
+            return;
+        const std::span<const int32_t> owner = (*m)->faceAttrs().get<int32_t>("panel");
+        json faces = json::array();
+        for (geo::Index f = 0; f < (*m)->faceCapacity() && f < owner.size(); ++f)
+            if ((*m)->faceValid(f) && owner[f] == panel)
+                faces.push_back(f);
+        if (faces.empty())
+            return;
+        mSyncing = true;
+        run("selectMode", {{"args", {"face"}}});
+        run("selectComponents", {{"args", {mesh->path()}}, {"faces", faces}});
+        mSyncing = false;
+    }
+
+    /** The panel most of the garment mesh's selected faces belong to becomes the one shown selected here. */
+    void syncFromComponents()
+    {
+        const scene::Node* mesh = garmentMesh();
+        if (mSyncing || !mesh)
+            return;
+        json sel;
+        try
+        {
+            sel = ops::execute("componentSelection", json::object());
+        }
+        catch (const std::exception&)
+        {
+            return;
+        }
+        const json faces = sel.is_object() && sel.contains(mesh->path()) ? sel[mesh->path()].value("faces", json::array()) : json::array();
+        if (faces.empty())
+            return;
+        scene::Graph& g = scene::Graph::current();
+        const scene::PlugValue v = g.value({mesh->id(), scene::MeshNode::kOutMesh});
+        const MeshPtr* m = std::get_if<MeshPtr>(&v);
+        if (!m || !*m)
+            return;
+        const std::span<const int32_t> owner = (*m)->faceAttrs().get<int32_t>("panel");
+        std::map<int, int> votes;
+        for (const json& f : faces)
+            if (f.is_number_integer() && f.get<size_t>() < owner.size())
+                ++votes[owner[f.get<size_t>()]];
+        int best = -1, most = 0;
+        for (const auto& [panel, count] : votes)
+            if (count > most)
+                best = panel, most = count;
+        if (best >= 0 && size_t(best) < mG.panels.size())
+            mSelected = best;
     }
 
     /** Panels side by side, in a row per layer, each at its own pattern origin. */
@@ -802,6 +880,7 @@ private:
     Vec2 mDragStart{0.f, 0.f};
     std::optional<Hit> mSewFrom;
     std::vector<PenPoint> mPen;
+    bool mSyncing = false;
     int mSelected = -1;
     int mHighlightSeam = -1;
 };
@@ -904,7 +983,6 @@ void registerPatternEditor(ext::Context& ctx)
                       .create = makePatternEditor,
                       .icon = "shirt",
                       .open = false,
-                      .floatFirst = true,
                       .docs = "tailor"});
 }
 } // namespace tailor
