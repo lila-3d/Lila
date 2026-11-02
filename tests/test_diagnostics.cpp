@@ -132,3 +132,20 @@ TEST_CASE("diagnostics: validators own what they report and replace it on each r
     ops::unregisterCommand("testCheckCrate");
     run("clearIssues");
 }
+
+TEST_CASE("diagnostics: selectIssue selects the issue's object and lists its select")
+{
+    const std::string crate = makeCrate();
+    scene::Graph& g = scene::Graph::current();
+    g.select({});
+    const json id = run("reportIssue", {{"args", {crate}}, {"m", "Holes"}, {"select", "select('crate')"}});
+    CHECK(issue(id).select == "select('crate')");
+    const json listed = run("listIssues");
+    REQUIRE(listed.size() == 1);
+    CHECK(listed[0]["select"] == "select('crate')");
+    run("selectIssue", {{"args", {id}}});
+    REQUIRE(g.selection().size() == 1);
+    CHECK(g.selection()[0] == g.find(crate)->id());
+    CHECK_THROWS_AS(run("selectIssue", {{"args", {999999}}}), CommandError);
+    run("clearIssues");
+}

@@ -34,7 +34,7 @@ Store& store()
 /** The names the gate never stops, so a blocking issue can always be cleared. */
 bool ownCommand(std::string_view name)
 {
-    for (const char* c : {"reportIssue", "clearIssues", "listIssues", "fixIssue", "validate", "addValidator", "removeValidator"})
+    for (const char* c : {"reportIssue", "clearIssues", "listIssues", "fixIssue", "selectIssue", "validate", "addValidator", "removeValidator"})
         if (name == c)
             return true;
     return false;
@@ -173,6 +173,8 @@ json toJson(const Issue& i)
         j["blocks"] = i.blocks;
     if (!i.fix.empty())
         j["fix"] = i.fix;
+    if (!i.select.empty())
+        j["select"] = i.select;
     return j;
 }
 
@@ -458,6 +460,7 @@ void registerCommands()
             {"source", "src", T::String, nullptr, "Who reports it, so it can clear its own. Defaults to the validator running, else \"user\"."},
             {"blocks", "b", T::List, nullptr, "Commands it refuses to let run until it is cleared.", {}, "reportIssue(\"crate\", m=\"No collision\", severity=\"error\", blocks=[\"exportFbx\"])"},
             {"fix", "fx", T::String, nullptr, "Python that fixes it, run by fixIssue and the Fix button."},
+            {"select", "sel", T::String, nullptr, "Python that selects the components it is about, run by selectIssue and clicking the issue."},
         },
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -473,6 +476,7 @@ void registerCommands()
             i.source = a.get<std::string>("source");
             i.blocks = stringList(a.flags.value("blocks", json()));
             i.fix = a.get<std::string>("fix");
+            i.select = a.get<std::string>("select");
             return report(std::move(i));
         },
         .examples = {"reportIssue(\"/World/crate.health:max\", m=\"Max health must be above 0\", severity=\"error\")",
@@ -508,7 +512,7 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "listIssues",
-        .doc = "The current issues, as dicts {id, source, severity, target, object, component, attribute, message, resolved, blocks, fix}.",
+        .doc = "The current issues, as dicts {id, source, severity, target, object, component, attribute, message, resolved, blocks, fix, select}.",
         .positionalDoc = "objects",
         .flags = {
             {"source", "src", T::String, nullptr, "Only this reporter's."},
@@ -573,6 +577,32 @@ void registerCommands()
                 fixed.push_back(id);
             }
             return fixed;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "selectIssue",
+        .doc = "Selects an issue's object, then runs its select Python (when it has one and the session has Python) to pick the "
+               "components it is about. Returns whether the components were picked.",
+        .positionalDoc = "id",
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() != 1)
+                throw CommandError("selectIssue takes one id");
+            const json& v = a.positional[0];
+            const uint64_t id = v.is_number() ? v.get<uint64_t>() : std::stoull(v.get<std::string>());
+            const Issue* i = find(id);
+            if (!i)
+                throw CommandError("no issue " + std::to_string(id));
+            Graph& g = Graph::current();
+            if (!g.node(i->node))
+                return false;
+            g.select({i->node});
+            if (i->select.empty() || !python::initialized())
+                return false;
+            const std::string select = i->select;
+            if (!python::run(select, "<select " + std::to_string(id) + ">").ok)
+                throw CommandError("the selection for issue " + std::to_string(id) + " failed; see the log");
+            return true;
         },
     });
 

@@ -54,6 +54,8 @@ struct Issue
     std::vector<std::string> blocks;
     /** Python run by fixIssue. */
     std::string fix;
+    /** Python run by selectIssue after it selects the object: picks the components the issue is about. */
+    std::string select;
 
     bool blocking() const { return !blocks.empty(); }
 };
@@ -102,6 +104,6 @@ LILA_SCENE_API void validate(const std::vector<std::string>& names = {});
 /** Blocking issues that stop the command, in report order. */
 LILA_SCENE_API std::vector<const Issue*> blockers(std::string_view command);
 
-/** reportIssue, clearIssues, listIssues, fixIssue, validate, addValidator, removeValidator; installs the command gate. */
+/** reportIssue, clearIssues, listIssues, fixIssue, selectIssue, validate, addValidator, removeValidator; installs the command gate. */
 LILA_SCENE_API void registerCommands();
 } // namespace lila::scene::diagnostics

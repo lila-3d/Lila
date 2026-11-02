@@ -118,7 +118,7 @@ public:
     ~ValidationPanel() override { dx::removeListener(mListener); }
 
 private:
-    /** Selects the issue's object and shows its component or attribute in the Attribute Editor. */
+    /** Selects the issue's object (and its components, when it says which) and shows its component or attribute in the Attribute Editor. */
     static void reveal(uint64_t id)
     {
         const dx::Issue* i = dx::find(id);
@@ -126,7 +126,7 @@ private:
         if (!i || !g.node(i->node))
             return;
         attributeEditor::revealIssue(id);
-        run("select", {{"args", {g.fullPath(i->node)}}});
+        run("selectIssue", {{"args", {id}}});
     }
 
     void schedule()
