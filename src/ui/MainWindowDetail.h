@@ -43,6 +43,7 @@
 #include "ui/DisplayLayersPanel.h"
 #include "ui/AnimLayersPanel.h"
 #include "ui/OffsetsPanel.h"
+#include "ui/RetargetUi.h"
 #include "ui/RenamePanel.h"
 #include "ui/DisplayAids.h"
 #include "ui/LodDisplay.h"

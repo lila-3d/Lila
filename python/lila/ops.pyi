@@ -242,6 +242,17 @@ def aimConstraint(*objects: Any, maintainOffset: bool | None = None, weight: flo
         skip: Axes left alone. Short form sk.
     """
 
+def alignRetargetPose(*objects: Any, align: bool | None = None, captureSource: bool | None = None, captureTarget: bool | None = None, reset: bool | None = None, a: bool | None = None, cs: bool | None = None, ct: bool | None = None, rs: bool | None = None) -> Any:
+    """Set a retargeter's retarget poses: align the target's chains to point where the source's do, or capture either skeleton's current pose.
+
+    Args:
+        objects: the retargeter.
+        align: Align the target to the source. Short form a. Default True.
+        captureSource: The source's current pose becomes its retarget pose for this pair. Short form cs. Default False.
+        captureTarget: The target's current pose becomes its retarget pose for this pair. Short form ct. Default False.
+        reset: Drop this pair's poses, back to each rig's own. Short form rs. Default False.
+    """
+
 def angleMeasure(*objects: Any, points: Sequence[Any] | None = None, parents: Sequence[Any] | None = None, attach: bool | None = None, name: str | None = None, skipSelect: bool | None = None, pts: Sequence[Any] | None = None, pa: Sequence[Any] | None = None, at: bool | None = None, n: str | None = None, ss: bool | None = None) -> Any:
     """Live angle at a vertex. points is [arm1, vertex, arm2], each an object name or [x, y, z]; with none given, uses three selected objects (the second is the vertex) or vertices (the one joined to both others by edges, else the corner opposite the longest side). Returns the measure node.
 
@@ -347,6 +358,18 @@ def applyPose(*objects: Any, character: str | None = None, tier: str | None = No
         aliases: Extra names per pose node: {poseName: [name, ...]}. Short form al.
         namespace: Preferred namespace; defaults to the character's. Short form ns.
         onlySelected: Only the selected nodes, not the whole character. Short form os. Default False.
+    """
+
+def applyRetargetClip(*objects: Any, target: str | None = None, gait: str | None = None, take: str | None = None, start: float | None = None, lockChains: bool | None = None, t: str | None = None, g: str | None = None, tk: str | None = None, st: float | None = None, lc: bool | None = None) -> Any:
+    """Play a body-independent clip (saveRetargetClip) on a skeleton: its legs keep the gait, scaled to their length. Keys a take named after the file.
+
+    Args:
+        objects: the .lilaclip file.
+        target: A joint of the target skeleton. Short form t.
+        gait: The gait the target's legs keep. Short form g. One of 'auto', 'walk', 'trot', 'pace', 'canter', 'gallop', 'tripod', 'tetrapod', 'wave'. Default 'auto'.
+        take: Take to key into; default the file's name. Short form tk.
+        start: Time of the first frame, seconds; default 0. Short form st.
+        lockChains: Key the lock channel of the target's IK chains where feet are planted. Short form lc. Default True.
     """
 
 def arap(*objects: Any, handles: Sequence[Any] | None = None, points: Sequence[Any] | None = None, anchors: Sequence[Any] | None = None, name: str | None = None, iterations: int | None = None) -> Any:
@@ -1408,6 +1431,17 @@ def changeStream(enable: bool | None = None, port: int | None = None, allowRemot
         changeStream(enable=False)
     """
 
+def characterize(*objects: Any, name: str | None = None, n: str | None = None) -> Any:
+    """Find what each part of a skeleton is for retargeting, as it is posed now: the pelvis, and chains (spine, neck, head, arms, legs, toes, fingers, tails, wings) with their side and number. Works from joint names (UE, Mixamo, Maya, BVH and others) and from shape, on any number of legs. Makes or replaces the skeleton's retargetRig node; the current pose becomes its retarget pose. Returns the chains and anything doubtful under 'notes'.
+
+    Args:
+        objects: a joint of the skeleton.
+        name: Name of a new retargetRig node. Short form n.
+
+    Examples:
+        characterize('pelvis')
+    """
+
 def circle(center: Sequence[float] | None = None, normal: Sequence[float] | None = None, radius: float | None = None, name: str | None = None, *, c: Sequence[float] | None = None, nr: Sequence[float] | None = None, r: float | None = None, n: str | None = None) -> Any:
     """Create an exact circle (a rational NURBS). Returns its name.
 
@@ -2457,6 +2491,48 @@ def editPicker(*objects: Any, page: str | None = None, rename: str | None = None
         align: left, right, top, bottom, hcenter or vcenter. Short form al. One of 'left', 'right', 'top', 'bottom', 'hcenter', 'vcenter'.
         distribute: horizontal or vertical. Short form di. One of 'horizontal', 'vertical'.
         snapGrid: Snap the items' positions and sizes to this grid. Short form sg.
+    """
+
+def editRetargetRig(*objects: Any, query: bool | None = None, definition: Any | None = None, chain: Any | None = None, removeChain: str | None = None, pelvis: str | None = None, ground: float | None = None, capturePose: bool | None = None, q: bool | None = None, d: Any | None = None, c: Any | None = None, rc: str | None = None, p: str | None = None, g: float | None = None, cp: bool | None = None) -> Any:
+    """Edit or query a skeleton's retarget rig: its chains, pelvis, ground height and retarget pose.
+
+    Args:
+        objects: the retargetRig node, or a joint of its skeleton.
+        query: Return the whole rig, retarget pose included. Short form q. Default False.
+        definition: Replace the rig with this JSON (as query returns it). Short form d.
+        chain: Add a chain or change one by name: {'name', 'role' (spine, neck, head, jaw, clavicle, arm, leg, toe, finger, tail, wing, antenna, root, other), 'side' (center, left, right), 'index', 'start', 'end', 'goal'}. Short form c.
+        removeChain: Chain to remove. Short form rc.
+        pelvis: The retarget root joint. Short form p.
+        ground: Height of the floor along up, cm. Short form g.
+        capturePose: The skeleton's current pose becomes the retarget pose. Short form cp. Default False.
+
+    Examples:
+        editRetargetRig('pelvis', chain={'name': 'Tail', 'role': 'tail', 'start': 'tail_01', 'end': 'tail_08'})
+    """
+
+def editRetargeter(*objects: Any, query: bool | None = None, settings: Any | None = None, autoMap: bool | None = None, chain: Any | None = None, root: Any | None = None, warp: Any | None = None, pins: Sequence[Any] | None = None, contacts: Sequence[Any] | None = None, curves: Sequence[Any] | None = None, scale: float | None = None, enableRoot: bool | None = None, enableFk: bool | None = None, enableIk: bool | None = None, copyCurves: bool | None = None, fullBody: bool | None = None, q: bool | None = None, s: Any | None = None, am: bool | None = None, c: Any | None = None, r: Any | None = None, w: Any | None = None, pn: Sequence[Any] | None = None, ct: Sequence[Any] | None = None, cv: Sequence[Any] | None = None, sc: float | None = None, er: bool | None = None, ef: bool | None = None, ei: bool | None = None, cc: bool | None = None, fb: bool | None = None) -> Any:
+    """Edit or query a retargeter's settings, which mirror Unreal's IK Retargeter. Objects are merged into what is there (set a key to null to reset it). Returns the settings.
+
+    Args:
+        objects: the retargeter.
+        query: Return the settings. Short form q. Default False.
+        settings: Replace every setting with this JSON. Short form s.
+        autoMap: Map the chains again from the rigs. Short form am. Default False.
+        chain: One chain: {'target': name, 'source': name or '', 'fk': {'enabled', 'rotation' (interpolated, oneToOne, oneToOneReversed, matchChain, none), 'rotationAlpha', 'translation' (none, globallyScaled, absolute, stretchUniform, stretchNonUniform), 'translationAlpha', 'poleMatching', 'poleMaintainOffset', 'poleOffset'}, 'ik': {'enabled', 'blendToSource', 'blendToSourceWeights', 'staticOffset', 'staticLocalOffset', 'staticRotationOffset', 'scaleVertical', 'extension', 'affectedByWarping'}, 'plant': {'enabled', 'speedThreshold', 'heightTolerance', 'blendFrames', 'minFrames'}}. Short form c.
+        root: {'enabled', 'rotationAlpha', 'translationAlpha', 'blendToSource', 'blendToSourceWeights', 'scaleHorizontal', 'scaleVertical', 'translationOffset', 'rotationOffset', 'affectIkHorizontal', 'affectIkVertical'}. Short form r.
+        warp: Stride warping: {'enabled', 'useVelocity', 'warpForwards', 'sidewaysOffset'}. Short form w.
+        pins: Bones copying another's transform: [{'bone', 'to', 'translate', 'rotate', 'maintainOffset'}]. Short form pn.
+        contacts: Hands held on the body: [{'effector': chain with IK, 'body': chain, 'bodyParam': 0..1 along it, 'distance': cm}]. Short form ct.
+        curves: Animated attributes copied renamed: [{'source', 'target'}]. Short form cv.
+        scale: Target size over source size; 0 measures it from the legs. Short form sc.
+        enableRoot: Run the root (pelvis) pass. Short form er.
+        enableFk: Run the FK pass. Short form ef.
+        enableIk: Run the IK pass. Short form ei.
+        copyCurves: Copy the top joint's other animated attributes by name. Short form cc.
+        fullBody: Where a limb can't reach, solve the whole body with every goal pinned, the pelvis free. Short form fb.
+
+    Examples:
+        editRetargeter('Hips_to_root', chain={'target': 'LeftLeg', 'ik': {'extension': 0.98}})
     """
 
 def editSkeleton(*objects: Any, on: bool | None = None, preserve: str | None = None, pr: str | None = None) -> Any:
@@ -3705,6 +3781,17 @@ def importAlembic(*objects: Any, profile: str | None = None, scale: float | None
         setPlayback: Set the playback range to the caches' samples. Default True.
         report: Return the import report instead of just the names. Default False.
         select: Select the new meshes. Default True.
+    """
+
+def importBvh(*objects: Any, scale: float | None = None, parent: str | None = None, setPlayback: bool | None = None, endSites: bool | None = None, sc: float | None = None, p: str | None = None, sp: bool | None = None, es: bool | None = None) -> Any:
+    """Import a BVH motion capture file as joints keyed every frame.
+
+    Args:
+        objects: the .bvh file.
+        scale: Multiplies offsets and positions (BVH has no units). Short form sc. Default 1.0.
+        parent: Parent the skeleton under this node. Short form p.
+        setPlayback: Set the scene fps and range from the file. Short form sp. Default True.
+        endSites: Make end sites as non-deform joints. Short form es. Default True.
     """
 
 def importDeformerWeights(*objects: Any, file: str | None = None, byId: bool | None = None, layer: int | None = None, mesh: str | None = None, f: str | None = None) -> Any:
@@ -6123,6 +6210,44 @@ def resetTransforms(*objects: Any) -> Any:
         objects: objects.
     """
 
+def retarget(source: str | None = None, target: str | None = None, retargeter: str | None = None, files: Sequence[Any] | None = None, folder: str | None = None, scale: float | None = None, start: float | None = None, end: float | None = None, fps: float | None = None, take: str | None = None, lockChains: bool | None = None, keepSources: bool | None = None, mode: str | None = None, gait: str | None = None, *, s: str | None = None, t: str | None = None, r: str | None = None, f: Sequence[Any] | None = None, fo: str | None = None, sc: float | None = None, st: float | None = None, e: float | None = None, tk: str | None = None, lc: bool | None = None, ks: bool | None = None, m: str | None = None, g: str | None = None) -> Any:
+    """Retarget animation onto a skeleton and key it into a take. The source is a skeleton in the scene, or .bvh/.fbx files (each imported, retargeted into a take named after the file, then removed). Without a retargeter, one is made with everything automatic: rigs, chain mapping, pose alignment, planted feet. Returns a report per run.
+
+    Args:
+        source: A joint of the source skeleton. Short form s.
+        target: A joint of the target skeleton. Short form t.
+        retargeter: Use this retargeter's settings (for files: as the template every file gets). Short form r.
+        files: Animation files (.bvh, .fbx) to retarget, one take each. Short form f.
+        folder: Retarget every .bvh and .fbx in the folder. Short form fo.
+        scale: Scale for imported files (BVH has no units). Short form sc. Default 1.0.
+        start: Start, seconds; default the source's first key. Short form st.
+        end: End, seconds; default the source's last key. Short form e.
+        fps: Frames per second keyed; default the scene's (a file's own for files).
+        take: Take to key into, replaced if it exists; default the source's active take, else <source>_retarget. '' keys the target's current animation. Short form tk.
+        lockChains: Key the lock channel of the target's IK chains where feet are planted. Short form lc. Default True.
+        keepSources: Keep imported file skeletons in the scene. Short form ks. Default False.
+        mode: fk: chain to chain, for the same kind of body. semantic: body-independent, for a body with other limbs (a biped clip on a dog or a spider). auto: semantic when the leg counts differ. Short form m. One of 'auto', 'fk', 'semantic'. Default 'auto'.
+        gait: Semantic mode: the gait the target's legs keep. Short form g. One of 'auto', 'walk', 'trot', 'pace', 'canter', 'gallop', 'tripod', 'tetrapod', 'wave'. Default 'auto'.
+
+    Examples:
+        retarget(source='Hips', target='pelvis')
+
+        retarget(target='pelvis', folder='D:/mocap/walks')
+    """
+
+def retargeter(source: str | None = None, target: str | None = None, name: str | None = None, align: bool | None = None, *, s: str | None = None, t: str | None = None, n: str | None = None, a: bool | None = None) -> Any:
+    """Make a retargeter from one skeleton to another: characterises either when it has no rig yet, maps chains by name, else role, side and number, and aligns the target's retarget pose to the source's.
+
+    Args:
+        source: A joint of the source skeleton. Short form s.
+        target: A joint of the target skeleton. Short form t.
+        name: Name of the retargeter node. Short form n.
+        align: Align the target's retarget pose to the source's. Short form a. Default True.
+
+    Examples:
+        retargeter(source='Hips', target='pelvis')
+    """
+
 def retopoConstruct(mesh: str | None = None, kind: str | None = None, spec: Any | None = None, id: int | None = None, edgeLength: float | None = None, settle: int | None = None, weld: float | None = None, timeout: float | None = None, reference: str | None = None, create: bool | None = None) -> Any:
     """Topology: make a live construct (patch, strip, stroke, bridge, sweep, cylinder or auto region) on the retopo mesh, or change one by id: its faces are regenerated from the new spec and settled on the reference. A construct whose faces were edited by hand since is frozen instead (left as plain geometry). Returns {mesh, id, faces, variants, sideCounts, frozen}.
 
@@ -6416,6 +6541,17 @@ def savePose(*objects: Any, tier: str | None = None, character: str | None = Non
         channels: Only these channels: translate, rotate, scale or attr names. Short form c.
         tags: Search tags. Short form tg.
         thumbnail: Capture a thumbnail from the viewport (GUI only). Short form th. Default True.
+    """
+
+def saveRetargetClip(*objects: Any, source: str | None = None, start: float | None = None, end: float | None = None, fps: float | None = None, s: str | None = None, st: float | None = None, e: float | None = None) -> Any:
+    """Save a skeleton's animation as a body-independent clip (.lilaclip): body motion in leg lengths, limb goals, spine and tail bends and foot contacts. applyRetargetClip plays it on any body, whatever its limbs.
+
+    Args:
+        objects: the file to write.
+        source: A joint of the source skeleton. Short form s.
+        start: Start, seconds; default the first key. Short form st.
+        end: End, seconds; default the last key. Short form e.
+        fps: Samples per second; default the scene's.
     """
 
 def saveScene(*objects: Any, ifModified: bool | None = None, im: bool | None = None) -> Any:

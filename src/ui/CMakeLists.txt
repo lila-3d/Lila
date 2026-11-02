@@ -38,6 +38,7 @@ lila_module(lila_ui UI
     AnimLayersPanel.cpp AnimLayersPanel.h
     OffsetsPanel.cpp OffsetsPanel.h
     RenamePanel.cpp RenamePanel.h
+    RetargetUi.cpp RetargetUi.h
     BatchRunPanel.cpp BatchRunPanel.h
     BakerPanel.cpp BakerPanelWidgets.cpp BakerPanelRefresh.cpp BakerPanelMcp.cpp BakerPanel.h BakerPanelInternal.h
     BakeCageView.cpp BakeCageView.h
@@ -195,6 +196,7 @@ target_link_libraries(lila_ui PUBLIC lila_uv_cmds)
 target_link_libraries(lila_ui PUBLIC lila_gn)
 target_link_libraries(lila_ui PUBLIC lila_tex)
 target_link_libraries(lila_ui PUBLIC lila_retopo_cmds)
+target_link_libraries(lila_ui PUBLIC lila_retarget)
 target_link_libraries(lila_ui PUBLIC lila_sculpt_cmds)
 target_link_libraries(lila_ui PUBLIC lila_vcolor)
 target_link_libraries(lila_ui PRIVATE Python::Python Qt6::Svg)

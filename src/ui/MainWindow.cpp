@@ -154,6 +154,7 @@ void MainWindow::registerPanels()
     registerAnimLayersPanel();
     issues::registerUi();
     registerOffsetsPanel();
+    registerRetargetUi();
     registerNotesPanel();
     registerRenamePanel();
     registerBatchRunPanel();

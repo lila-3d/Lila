@@ -329,6 +329,7 @@ void MainWindow::buildMenus()
     addGhostingMenu("Animation");
     menus::addActions("Animation", {"window.poseLibrary", "pose.mirror", "window.controlPicker", "picker.editMode"});
     menus::addActions("Animation", {"#Offsets", "anim.createOffset", "anim.bakeOffset", "anim.deleteOffset", "window.offsets"});
+    menus::addActions("Animation", {"#Retarget", "anim.retarget", "anim.characterize", "window.retargeter"});
 
     menu("Render", "Render", Area::MenuBar, syncChecks);
     menus::addActions("Render", {"#Render", "render.frame", "render.sequence", "render.turntable", "window.renderOutput", "window.renderSettings", "#Look",
