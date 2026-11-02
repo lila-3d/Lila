@@ -95,7 +95,7 @@ TEST_CASE("cues: soundCue nodes read events from the registered sources")
                                                out.pop_back();
                                            return out;
                                        }});
-    CHECK(cueRun("soundCue", {{"name", "cracks"}, {"eventType", "break"}, {"minStrength", 10.0}, {"fullStrength", 40.0}, {"objects", "crate"},
+    CHECK(cueRun("soundCue", {{"name", "cracks"}, {"eventType", "break"}, {"minStrength", 10.0}, {"fullStrength", 40.0}, {"targets", "crate"},
                            {"sounds", {"sfx/crack1.wav", "sfx/crack2.wav"}}}) == "cracks");
     json fired = cueRun("soundCueTriggers", {{"start", 0.0}, {"end", 60.0}});
     REQUIRE(fired.size() == 3);
@@ -105,7 +105,7 @@ TEST_CASE("cues: soundCue nodes read events from the registered sources")
 
     // A set names its members.
     cueRun("createSet", {{"args", {"crate"}}, {"name", "debris"}});
-    cueRun("soundCue", {{"args", {"cracks"}}, {"objects", "debris"}});
+    cueRun("soundCue", {{"args", {"cracks"}}, {"targets", "debris"}});
     CHECK(cueRun("soundCueTriggers", {{"start", 0.0}, {"end", 60.0}}).size() == 3);
 
     cueRun("soundCue", {{"args", {"cracks"}}, {"mute", true}});

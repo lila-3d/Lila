@@ -181,7 +181,7 @@ Cue cueOf(Graph& g, NodeId id)
     c.types = type == 1 ? 0b01 : type == 2 ? 0b10 : 0b11;
     c.minStrength = n.as<double>(SoundCueNode::kMinStrength);
     c.fullStrength = n.as<double>(SoundCueNode::kFullStrength);
-    for (const std::string& name : splitWords(n.as<std::string>(SoundCueNode::kObjects)))
+    for (const std::string& name : splitWords(n.as<std::string>(SoundCueNode::kTargets)))
     {
         Node* o = g.find(name);
         if (o && scene::objectSets::isSet(*o))
@@ -234,7 +234,7 @@ void registerSoundCueTypes()
          .doc = "Events it answers: any, contact (pieces hitting) or break (links giving way)."},
         num("minStrength", 0.0, "Weaker events are silent: a break's impulse in N s, a contact's speed change in cm/s.", 0.0),
         num("fullStrength", 1000.0, "Events this strong or stronger play at full volume.", 0.0),
-        {.name = "objects", .type = PlugType::String, .defaultValue = std::string(), .flags = kCueStored,
+        {.name = "targets", .type = PlugType::String, .defaultValue = std::string(), .flags = kCueStored,
          .doc = "Nodes or object sets whose events it answers, space separated; empty for all."},
         {.name = "sounds", .type = PlugType::String, .defaultValue = std::string(), .flags = kCueStored | scene::AttrMultiline,
          .doc = "Sound files, one per line; each event picks one at random."},
@@ -256,12 +256,12 @@ void registerSoundCueCommands()
     ops::registerCommand({
         .name = "soundCue",
         .doc = "Create a sound cue, or edit the one named: sounds fired by simulation events (contact, break) above a "
-               "strength, for the objects given. Returns its name.",
+               "strength, for the targets given. Returns its name.",
         .positionalDoc = "soundCue to edit (omit to create one)",
         .flags = {{"eventType", "et", T::String, nullptr, "any, contact or break.", kEventTypeNames},
                   {"minStrength", "min", T::Float, nullptr, "Weaker events are silent (break: N s; contact: cm/s).", {}, {}, 0.0},
                   {"fullStrength", "full", T::Float, nullptr, "Strength that plays at full volume.", {}, {}, 0.0},
-                  {"objects", "obj", T::String, nullptr, "Nodes or object sets, space separated; empty for all."},
+                  {"targets", "tg", T::String, nullptr, "Nodes or object sets, space separated; empty for all."},
                   {"sounds", "snd", T::List, nullptr, "Sound files; one is picked per event."},
                   {"volume", "v", T::Float, nullptr, "Loudest volume.", {}, {}, 0.0, 4.0},
                   {"minVolume", "mv", T::Float, nullptr, "Quietest volume, as a fraction of volume.", {}, {}, 0.0, 1.0},
@@ -298,8 +298,8 @@ void registerSoundCueCommands()
             setNum("volume", SoundCueNode::kVolume);
             setNum("minVolume", SoundCueNode::kMinVolume);
             setNum("minInterval", SoundCueNode::kMinInterval);
-            if (a.has("objects"))
-                g.setValue({id, SoundCueNode::kObjects}, a.get<std::string>("objects"));
+            if (a.has("targets"))
+                g.setValue({id, SoundCueNode::kTargets}, a.get<std::string>("targets"));
             if (a.has("sounds"))
             {
                 std::vector<std::string> files;
@@ -314,7 +314,7 @@ void registerSoundCueCommands()
                 g.setValue({id, SoundCueNode::kMute}, a.get<bool>("mute"));
             return g.node(id)->path();
         },
-        .examples = {"soundCue(eventType='break', minStrength=50, sounds=['sfx/crack1.wav', 'sfx/crack2.wav'], objects='wall')"},
+        .examples = {"soundCue(eventType='break', minStrength=50, sounds=['sfx/crack1.wav', 'sfx/crack2.wav'], targets='wall')"},
     });
 
     ops::registerCommand({

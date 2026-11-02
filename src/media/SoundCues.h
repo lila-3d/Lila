@@ -101,7 +101,7 @@ public:
         kEventType,
         kMinStrength,
         kFullStrength,
-        kObjects,
+        kTargets,
         kSounds,
         kVolume,
         kMinVolume,

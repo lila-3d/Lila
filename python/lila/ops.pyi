@@ -8239,15 +8239,15 @@ def softSelectField(*objects: Any) -> Any:
         objects: field.
     """
 
-def soundCue(*objects: Any, eventType: str | None = None, minStrength: float | None = None, fullStrength: float | None = None, objects: str | None = None, sounds: Sequence[Any] | None = None, volume: float | None = None, minVolume: float | None = None, minInterval: float | None = None, seed: int | None = None, mute: bool | None = None, name: str | None = None, et: str | None = None, min: float | None = None, full: float | None = None, obj: str | None = None, snd: Sequence[Any] | None = None, v: float | None = None, mv: float | None = None, mi: float | None = None, sd: int | None = None, m: bool | None = None, n: str | None = None) -> Any:
-    """Create a sound cue, or edit the one named: sounds fired by simulation events (contact, break) above a strength, for the objects given. Returns its name.
+def soundCue(*objects: Any, eventType: str | None = None, minStrength: float | None = None, fullStrength: float | None = None, targets: str | None = None, sounds: Sequence[Any] | None = None, volume: float | None = None, minVolume: float | None = None, minInterval: float | None = None, seed: int | None = None, mute: bool | None = None, name: str | None = None, et: str | None = None, min: float | None = None, full: float | None = None, tg: str | None = None, snd: Sequence[Any] | None = None, v: float | None = None, mv: float | None = None, mi: float | None = None, sd: int | None = None, m: bool | None = None, n: str | None = None) -> Any:
+    """Create a sound cue, or edit the one named: sounds fired by simulation events (contact, break) above a strength, for the targets given. Returns its name.
 
     Args:
         objects: soundCue to edit (omit to create one).
         eventType: any, contact or break. Short form et. One of 'any', 'contact', 'break'.
         minStrength: Weaker events are silent (break: N s; contact: cm/s). Short form min.
         fullStrength: Strength that plays at full volume. Short form full.
-        objects: Nodes or object sets, space separated; empty for all. Short form obj.
+        targets: Nodes or object sets, space separated; empty for all. Short form tg.
         sounds: Sound files; one is picked per event. Short form snd.
         volume: Loudest volume. Short form v.
         minVolume: Quietest volume, as a fraction of volume. Short form mv.
@@ -8257,7 +8257,7 @@ def soundCue(*objects: Any, eventType: str | None = None, minStrength: float | N
         name: Name; made unique. Short form n.
 
     Examples:
-        soundCue(eventType='break', minStrength=50, sounds=['sfx/crack1.wav', 'sfx/crack2.wav'], objects='wall')
+        soundCue(eventType='break', minStrength=50, sounds=['sfx/crack1.wav', 'sfx/crack2.wav'], targets='wall')
     """
 
 def soundCueTriggers(start: float | None = None, end: float | None = None, *, s: float | None = None, e: float | None = None) -> Any:

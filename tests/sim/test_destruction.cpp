@@ -374,7 +374,7 @@ TEST_CASE("sound cues hear a destruction's breaks and hits from its cached frame
     const std::string wall = run("polyCube", {{"name", "Wall"}, {"width", 200.0}, {"height", 100.0}, {"depth", 20.0}})[0];
     run("move", {{"args", {wall}}, {"to", json::array({0, 50, 0})}});
     run("breakApart", {{"args", {wall}}, {"material", "concrete"}, {"pieces", 16}, {"impact", json::array({0, 60, 10})}});
-    run("soundCue", {{"name", "cracks"}, {"eventType", "break"}, {"sounds", {"crack.wav"}}, {"objects", wall}, {"minInterval", 0.0}});
+    run("soundCue", {{"name", "cracks"}, {"eventType", "break"}, {"sounds", {"crack.wav"}}, {"targets", wall}, {"minInterval", 0.0}});
     run("soundCue", {{"name", "thuds"}, {"eventType", "contact"}, {"minStrength", 50.0}, {"sounds", {"thud1.wav", "thud2.wav"}}});
 
     // Nothing is simulated yet, so nothing fires: cues never step a simulation.
