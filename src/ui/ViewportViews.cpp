@@ -1,5 +1,6 @@
 #include "ui/ViewportWidgetDetail.h"
 #include "ui/ViewportToast.h"
+#include "ui/Hotkeys.h"
 #include "scene/SoftSelect.h"
 #include "scene/Turntable.h"
 
@@ -452,6 +453,8 @@ void ViewportWidget::toggleIsolate()
         scene::Graph& g = scene::Graph::current();
         g.evaluate();
         mIsolation = scene::isolation::fromSelection(g);
+        const QString key = Hotkeys::get().keyFor("viewport.isolate");
+        viewportToast::show(key.isEmpty() ? QString("Isolate Select on") : QString("Isolate Select on: %1 to show all").arg(key), this, 3000);
     }
     setIsolation(std::move(mIsolation));
 }
