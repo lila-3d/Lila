@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 /** Shape deformer math: Kelvinlets, cage coordinates beyond mean value, and the simple deformers (shear, cast, smooth, noise, tension). */
@@ -145,4 +146,12 @@ LILA_SCENE_API glm::dvec3 fractalNoise3(const glm::dvec3& p, uint32_t seed, int 
 
 /** Per point: mean of (length / rest length - 1) over its edges. Positive stretched, negative compressed, 0 at rest. */
 LILA_SCENE_API std::vector<float> tension(const geo::Mesh& topology, std::span<const glm::dvec3> rest, std::span<const glm::dvec3> deformed);
+
+/**
+ * Per point: strain along the uv set's U and V directions (length along that direction / rest length - 1), from each
+ * face's deformation gradient, averaged over the faces round the point by area. Negative is compression: folds run
+ * across the compressed direction. Zeros without the uv set.
+ */
+LILA_SCENE_API std::vector<glm::vec2> directionalStrain(const geo::Mesh& topology, std::span<const glm::dvec3> rest,
+                                                        std::span<const glm::dvec3> deformed, std::string_view uvSet);
 } // namespace lila::deform

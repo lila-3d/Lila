@@ -200,6 +200,46 @@ void writeFitMap(const GarmentSurface& s, geo::Mesh& mesh)
     }
 }
 
+/**
+ * Strain along the pattern's two axes as the drape has it: point attribute strainUV (length along the axis over its
+ * pattern length, minus 1) and colour set "wrinkle", compression along U in red and along V in green, full at 25%. uv0
+ * keeps the pattern's axes (panels only turn by half turns), so wrinkle maps tiled in uv0 fold across the right way.
+ */
+void writeWrinkleMask(const GarmentSurface& s, geo::Mesh& mesh)
+{
+    std::vector<glm::dvec2> sum(s.points.size(), glm::dvec2(0.0));
+    std::vector<double> weight(s.points.size(), 0.0);
+    for (size_t f = 0; f < s.tris.size(); ++f)
+    {
+        if (s.triSide[f] != GarmentSurface::Outer)
+            continue;
+        const auto& t = s.tris[f];
+        const auto& uv = s.fabricUv[f];
+        const glm::dvec2 d1(uv[1][0] - uv[0][0], uv[1][1] - uv[0][1]), d2(uv[2][0] - uv[0][0], uv[2][1] - uv[0][1]);
+        const double det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-12)
+            continue;
+        auto p = [&](int i) { return glm::dvec3(s.points[size_t(t[size_t(i)])][0], s.points[size_t(t[size_t(i)])][1], s.points[size_t(t[size_t(i)])][2]); };
+        const glm::dvec3 e1 = p(1) - p(0), e2 = p(2) - p(0);
+        const glm::dvec2 strain(glm::length((e1 * d2.y - e2 * d1.y) / det) - 1.0, glm::length((e2 * d1.x - e1 * d2.x) / det) - 1.0);
+        const double area = 0.5 * std::abs(det);
+        for (int v : t)
+        {
+            sum[size_t(v)] += strain * area;
+            weight[size_t(v)] += area;
+        }
+    }
+    std::span<glm::vec2> strain = mesh.pointAttrs().getOrAdd<glm::vec2>("strainUV");
+    std::vector<glm::vec4> mask(mesh.pointCapacity(), glm::vec4(0.f, 0.f, 0.f, 1.f));
+    for (size_t i = 0; i < strain.size() && i < sum.size(); ++i)
+    {
+        strain[i] = weight[i] > 0.0 ? glm::vec2(sum[i] / weight[i]) : glm::vec2(0.f);
+        mask[i] = {std::clamp(-strain[i].x * 4.f, 0.f, 1.f), std::clamp(-strain[i].y * 4.f, 0.f, 1.f), 0.f, 1.f};
+    }
+    geo::colors::add(mesh, "wrinkle", glm::vec4(0.f, 0.f, 0.f, 1.f));
+    geo::colors::setFromPoints(mesh, "wrinkle", mask);
+}
+
 MeshPtr surfaceToMesh(const GarmentSurface& s)
 {
     std::vector<glm::dvec3> pts(s.points.size());
@@ -331,6 +371,7 @@ private:
         o.thickness = float(std::max(0.0, as<double>(kThickness)) / kCmPerM);
         const GarmentSurface surface = garmentSurface(cm, positions, mPackedUv, o);
         MeshPtr mesh = surfaceToMesh(surface);
+        writeWrinkleMask(surface, const_cast<geo::Mesh&>(*mesh));
         if (as<bool>(kFitMap))
             writeFitMap(surface, const_cast<geo::Mesh&>(*mesh));
         return mesh;
@@ -849,7 +890,10 @@ json garmentToJson(const Garment& g)
             pj["body"] = {{"tri", p.bodyTri}, {"bary", p.bodyBary}, {"local", vec3Json(p.bodyLocal)}, {"tris", p.bodyTris}};
         pins.push_back(std::move(pj));
     }
-    return {{"version", 1}, {"panels", panels}, {"seams", seams}, {"fabrics", fabrics}, {"pins", pins}};
+    json tacks = json::array();
+    for (const Tack& t : g.tacks)
+        tacks.push_back({t.panelA, t.atA[0], t.atA[1], t.panelB, t.atB[0], t.atB[1]});
+    return {{"version", 1}, {"panels", panels}, {"seams", seams}, {"fabrics", fabrics}, {"pins", pins}, {"tacks", tacks}};
 }
 
 Garment garmentFromJson(const json& j)
@@ -921,6 +965,13 @@ Garment garmentFromJson(const json& j)
         if (p.panel >= 0 && p.panel < int(g.panels.size()))
             g.pins.push_back(p);
     }
+    for (const json& t : j.value("tacks", json::array()))
+        if (t.is_array() && t.size() == 6)
+        {
+            const Tack k{t[0].get<int>(), {t[1].get<float>(), t[2].get<float>()}, t[3].get<int>(), {t[4].get<float>(), t[5].get<float>()}};
+            if (k.panelA >= 0 && k.panelB >= 0 && k.panelA < int(g.panels.size()) && k.panelB < int(g.panels.size()))
+                g.tacks.push_back(k);
+        }
     for (Panel& p : g.panels)
     {
         p.fabric = std::clamp(p.fabric, 0, int(g.fabrics.size()) - 1);

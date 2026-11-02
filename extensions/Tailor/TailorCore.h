@@ -130,12 +130,22 @@ struct GarmentPin
     int bodyTris = 0;
 };
 
+/** Two pattern points held together like a seam's pair: a pocket's edge on its host, a belt loop's ends, a cord in its channel. */
+struct Tack
+{
+    int panelA = -1;
+    Vec2 atA{0.f, 0.f};
+    int panelB = -1;
+    Vec2 atB{0.f, 0.f};
+};
+
 struct Garment
 {
     std::vector<Panel> panels;
     std::vector<Seam> seams;
     std::vector<Fabric> fabrics{Fabric{}};
     std::vector<GarmentPin> pins;
+    std::vector<Tack> tacks;
 };
 
 /** Triangle mesh built from a garment, the solver's input. */
@@ -148,7 +158,7 @@ struct ClothMesh
     std::vector<int> vertPanel;
     std::vector<std::array<int, 2>> seamPairs; // vertices to be sewn together
     std::vector<float> seamRestLength;     // usually 0
-    std::vector<int> seamOfPair;           // Garment::seams index of each pair, in sewing order along the seam
+    std::vector<int> seamOfPair;           // Garment::seams index of each pair, in sewing order along the seam; -1 for a tack
     std::vector<std::array<int, 2>> creaseEdges; // internal-line edges (keep sharp rest angle)
     std::vector<float> creaseAngles;             // per crease edge: its line's fold angle, NaN for the placed angle
 };

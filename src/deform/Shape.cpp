@@ -926,6 +926,64 @@ glm::dvec3 fractalNoise3(const glm::dvec3& p, uint32_t seed, int octaves)
 
 // ------------------------------------------------------------------------------------------------ tension
 
+std::vector<glm::vec2> directionalStrain(const geo::Mesh& topology, std::span<const glm::dvec3> rest, std::span<const glm::dvec3> deformed,
+                                         std::string_view uvSet)
+{
+    const size_t n = std::min(rest.size(), deformed.size());
+    std::vector<glm::vec2> out(n, glm::vec2(0.f));
+    const std::span<const glm::vec2> uv = topology.cornerAttrs().get<glm::vec2>(uvSet);
+    if (uv.empty())
+        return out;
+    std::vector<glm::dvec2> sum(n, glm::dvec2(0.0));
+    std::vector<double> weight(n, 0.0);
+    for (geo::Index f = 0; f < topology.faceCapacity(); ++f)
+    {
+        if (!topology.faceValid(f))
+            continue;
+        const std::vector<geo::Index> c = topology.faceCorners(f);
+        for (size_t k = 1; k + 1 < c.size(); ++k)
+        {
+            const geo::Index ca[3] = {c[0], c[k], c[k + 1]};
+            geo::Index p[3];
+            bool ok = true;
+            for (int i = 0; i < 3; ++i)
+            {
+                p[i] = topology.cornerPoint(ca[i]);
+                ok = ok && p[i] < n;
+            }
+            if (!ok)
+                continue;
+            const glm::dvec2 du1 = glm::dvec2(uv[ca[1]] - uv[ca[0]]), du2 = glm::dvec2(uv[ca[2]] - uv[ca[0]]);
+            const double det = du1.x * du2.y - du2.x * du1.y;
+            if (std::abs(det) < 1e-14)
+                continue;
+            // The 3D directions uv's U and V run along, at rest and now: columns of each shape's gradient against uv.
+            auto gradient = [&](std::span<const glm::dvec3> x, glm::dvec3& gu, glm::dvec3& gv) {
+                const glm::dvec3 e1 = x[p[1]] - x[p[0]], e2 = x[p[2]] - x[p[0]];
+                gu = (e1 * du2.y - e2 * du1.y) / det;
+                gv = (e2 * du1.x - e1 * du2.x) / det;
+            };
+            glm::dvec3 ru, rv, du, dv;
+            gradient(rest, ru, rv);
+            gradient(deformed, du, dv);
+            const double lu = glm::length(ru), lv = glm::length(rv);
+            if (lu < 1e-12 || lv < 1e-12)
+                continue;
+            const glm::dvec2 s(glm::length(du) / lu - 1.0, glm::length(dv) / lv - 1.0);
+            const double area = 0.5 * glm::length(glm::cross(rest[p[1]] - rest[p[0]], rest[p[2]] - rest[p[0]]));
+            for (geo::Index q : p)
+            {
+                sum[q] += s * area;
+                weight[q] += area;
+            }
+        }
+    }
+    for (size_t q = 0; q < n; ++q)
+        if (weight[q] > 0.0)
+            out[q] = glm::vec2(sum[q] / weight[q]);
+    return out;
+}
+
 std::vector<float> tension(const geo::Mesh& topology, std::span<const glm::dvec3> rest, std::span<const glm::dvec3> deformed)
 {
     const size_t n = std::min(rest.size(), deformed.size());

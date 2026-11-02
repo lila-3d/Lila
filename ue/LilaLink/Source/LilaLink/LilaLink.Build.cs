@@ -42,6 +42,10 @@ public class LilaLink : ModuleRules
 			"ClothingSystemRuntimeInterface",
 			"ClothingSystemEditorInterface",
 			"ChaosCloth",
+			"ChaosClothAsset",
+			"ChaosClothAssetEngine",
+			"Chaos",
+			"GeometryCore",
 		});
 
 		// Header-only use: the module is looked up at runtime, so a project without Python still loads.

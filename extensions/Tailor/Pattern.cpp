@@ -233,14 +233,6 @@ std::vector<char> corners(const std::vector<Vec2>& o)
     return c;
 }
 
-struct Edge
-{
-    SeamSide side;
-    float length = 0.f;
-    std::array<Vec3, 5> at{};
-    Vec3 out{}; // the outline's outward direction at the middle, placed in 3D
-};
-
 Vec3 sub(const Vec3& a, const Vec3& b) { return {a[0] - b[0], a[1] - b[1], a[2] - b[2]}; }
 float dot(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 float norm(const Vec3& a) { return std::sqrt(dot(a, a)); }
@@ -307,6 +299,15 @@ int removePanels(Garment& g, std::vector<int> panels)
                 side.panel = shifted(side.panel);
     for (Panel& p : g.panels)
         p.twin = p.twin < 0 || removed(p.twin) ? -1 : shifted(p.twin);
+    std::erase_if(g.pins, [&](const GarmentPin& p) { return removed(p.panel); });
+    for (GarmentPin& p : g.pins)
+        p.panel = shifted(p.panel);
+    std::erase_if(g.tacks, [&](const Tack& t) { return removed(t.panelA) || removed(t.panelB); });
+    for (Tack& t : g.tacks)
+    {
+        t.panelA = shifted(t.panelA);
+        t.panelB = shifted(t.panelB);
+    }
     for (auto it = panels.rbegin(); it != panels.rend(); ++it)
         if (validPanel(g, *it))
             g.panels.erase(g.panels.begin() + *it);
@@ -482,10 +483,10 @@ void gradePattern(Garment& g, float width, float length)
     }
 }
 
-std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
+std::vector<OpenEdge> openEdges(const Garment& g)
 {
     const std::vector<std::vector<char>> sewn = sewnEdges(g);
-    std::vector<Edge> edges;
+    std::vector<OpenEdge> edges;
     for (size_t pi = 0; pi < g.panels.size(); ++pi)
     {
         const Panel& p = g.panels[pi];
@@ -508,7 +509,7 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
             const int i = (start + k) % n;
             if ((k == n || breaks(i)) && from >= 0)
             {
-                Edge e;
+                OpenEdge e;
                 e.side = {int(pi), from, i};
                 e.length = outlineRunLength(o, from, i);
                 for (int s = 0; s < 5; ++s)
@@ -551,6 +552,12 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
         }
     }
 
+    return edges;
+}
+
+std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
+{
+    const std::vector<OpenEdge> edges = openEdges(g);
     struct Match
     {
         int a, b;
@@ -558,7 +565,7 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
         float gap;
     };
     std::vector<Match> matches;
-    auto gap = [](const Edge& a, const Edge& b, bool reversed) {
+    auto gap = [](const OpenEdge& a, const OpenEdge& b, bool reversed) {
         float sum = 0.f;
         for (int s = 0; s < 5; ++s)
         {
@@ -570,7 +577,7 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
     for (size_t i = 0; i < edges.size(); ++i)
         for (size_t j = i + 1; j < edges.size(); ++j)
         {
-            const Edge &a = edges[i], &b = edges[j];
+            const OpenEdge &a = edges[i], &b = edges[j];
             if (std::max(a.length, b.length) > 1.15f * std::min(a.length, b.length))
                 continue;
             const float forward = gap(a, b, false), backward = gap(a, b, true);
@@ -612,7 +619,7 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
     for (size_t i = 0; i < edges.size(); ++i)
         for (size_t j = i + 1; j < edges.size(); ++j)
         {
-            const Edge &a = edges[i], &b = edges[j];
+            const OpenEdge &a = edges[i], &b = edges[j];
             if (used[i] || used[j] || a.out[1] < 0.5f || b.out[1] < 0.5f)
                 continue;
             if (std::max(a.length, b.length) > 1.15f * std::min(a.length, b.length))

@@ -32,7 +32,7 @@ void ApplyClothing(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRef
 	for (int32 i = Existing.Num() - 1; i >= 0; --i)
 		if (Existing[i] && Existing[i]->GetName() == Name)
 		{
-			Existing[i]->UnbindFromSkeletalMesh(Mesh);
+			Existing[i]->UnbindFromSkeletalMesh(Mesh, Lod, Section);
 			Existing.RemoveAt(i);
 		}
 

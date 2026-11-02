@@ -371,6 +371,8 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddSequenceMethods(Methods);
 	LilaLink::AddVatMethods(Methods);
 	LilaLink::AddClothMethods(Methods);
+	LilaLink::AddClothAssetMethods(Methods);
+	LilaLink::AddWrinkleMethods(Methods);
 	LilaLink::AddImposterMethods(Methods);
 	LilaLink::AddTextureMethods(Methods);
 	LilaLink::AddMLDeformerMethods(Methods);

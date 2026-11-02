@@ -5,6 +5,7 @@
 
 #include "TailorCore.h"
 
+#include <utility>
 #include <vector>
 
 namespace tailor
@@ -46,6 +47,18 @@ int mirrorPanel(Garment& g, int panel, float planeX, bool link);
  */
 void gradePattern(Garment& g, float width, float length);
 
+/** An unsewn stretch of outline from corner to corner, as the panel is placed: five points along it and its outward direction. */
+struct OpenEdge
+{
+    SeamSide side;
+    float length = 0.f;
+    std::array<Vec3, 5> at{};
+    Vec3 out{};
+};
+
+/** Every unsewn outline edge of the active and frozen panels. */
+std::vector<OpenEdge> openEdges(const Garment& g);
+
 /**
  * Seams a pattern maker would sew next: unsewn outline edges (corner to corner) on placed panels whose lengths match
  * within 15% and that face each other within maxGap. Each edge is used once, closest pairs first. Given the body, edges
@@ -56,5 +69,37 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body =
 
 /** A seam split at its notches when both ends carry the same number, so notch meets notch. Otherwise the seam itself. */
 std::vector<Seam> splitSeamAtNotches(const Garment& g, const Seam& seam);
+
+// Details: pieces laid on a host panel and held by tacks, collars sewn to a neckline, cords held along a path.
+
+/** Places piece so its pattern origin sits on host's pattern point `at`, lifted `lift` metres off it, following host's wrap. */
+void placeOnPanel(const Panel& host, const Vec2& at, float lift, Panel& piece);
+/** A patch pocket on host with its lower left corner at `at` (host pattern, metres), tacked round all but its mouth;
+ *  with flap, a flap tacked above it hanging over the mouth. Returns the pocket panel. */
+int addPocket(Garment& g, int host, const Vec2& at, float width, float height, bool flap);
+/** count belt loops across host at pattern height y, each width wide spanning height, tacked at both ends. */
+std::vector<int> addBeltLoops(Garment& g, int host, float y, int count, float width, float height);
+/** The open edges round the top of the garment, opening upwards, chained through the seams between them: its neckline. */
+std::vector<SeamSide> findNeckline(const Garment& g);
+/** A collar strip as long as the neckline, sewn to it; closed into a ring when the neckline goes all the way round.
+ *  fold presses a shirt collar's fall down over its stand. Returns the collar panel. */
+int addCollar(Garment& g, const std::vector<SeamSide>& neckline, float height, bool fold);
+/** A drawstring along a channel of outline: a cord tacked along it, gather times the channel's length so it draws the
+ *  channel in, with tails hanging past both ends. Returns the cord panel. */
+int addDrawstring(Garment& g, const std::vector<SeamSide>& channel, float tail, float gather, float width);
+/** Zigzag lacing between two edges: eyelets inset from each, a lace tacked through them in turn, tails at the top.
+ *  eyelets gets the eyelet points (panel, pattern point) in lacing order. Returns the lace panel. */
+int addLacing(Garment& g, const std::vector<SeamSide>& sideA, const std::vector<SeamSide>& sideB, int pairs, float inset, float tail,
+              float width, std::vector<std::pair<int, Vec2>>* eyelets = nullptr);
+/** Opens a seam past `closed` (0 to 1 along side a): the rest of it unsewn, as a zip opened to its slider. */
+bool openSeam(Garment& g, int seam, float closed);
+
+/**
+ * Wrinkle relief for a fabric: a tile-metre square of it, border pinned flat and drawn in by `compress` along U (axis 0)
+ * or V (axis 1), simulated until it buckles. Returns size x size heights (metres, rows along V), tiling at the border.
+ */
+std::vector<float> bakeWrinkleHeight(const Fabric& fabric, int axis, float compress, int size, float tile, uint32_t seed = 1);
+/** RGBA tangent-space normals (DirectX green) from a tiling height field over a tile-metre square. */
+std::vector<float> heightToNormals(const std::vector<float>& height, int size, float tile);
 
 } // namespace tailor

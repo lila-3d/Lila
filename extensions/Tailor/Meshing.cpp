@@ -1173,6 +1173,26 @@ ClothMesh buildClothMesh(const Garment& g)
                     mesh.seamRestLength.push_back(0.f);
                     mesh.seamOfPair.push_back(plan.seam);
                 }
+
+    // Tacks hold the vertices nearest their two pattern points together.
+    auto nearest = [&](int panel, const Vec2& at) {
+        int best = -1;
+        double bestD = 1e30;
+        for (size_t v = 0; v < mesh.uv.size(); ++v)
+            if (mesh.vertPanel[v] == panel)
+                if (const double d = dist(toP2(mesh.uv[v]), toP2(at)); d < bestD)
+                    bestD = d, best = int(v);
+        return best;
+    };
+    for (const Tack& t : g.tacks)
+    {
+        const int va = nearest(t.panelA, t.atA), vb = nearest(t.panelB, t.atB);
+        if (va < 0 || vb < 0 || va == vb || !seen.insert(std::minmax(va, vb)).second)
+            continue;
+        mesh.seamPairs.push_back({va, vb});
+        mesh.seamRestLength.push_back(0.f);
+        mesh.seamOfPair.push_back(-1);
+    }
     return mesh;
 }
 

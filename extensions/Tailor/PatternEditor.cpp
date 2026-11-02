@@ -856,6 +856,16 @@ private:
                 });
         }
         menu.addAction("Mirror Panel (Linked)", [this, name] { run("tailorMirrorPanel", {{"args", {mPath}}, {"panel", name}}); });
+        {
+            const QPointF at = toPattern(e->position(), h.panel);
+            menu.addAction("Add Pocket Here", [this, name, at] {
+                run("tailorAddPocket", {{"args", {mPath}}, {"panel", name}, {"position", {cm(at.x()) - 7.0, cm(at.y()) - 8.0}}});
+            });
+            menu.addAction("Add Belt Loops Here", [this, name, at] {
+                run("tailorAddBeltLoops", {{"args", {mPath}}, {"panel", name}, {"height", cm(at.y())}});
+            });
+        }
+        menu.addAction("Add Collar", [this] { run("tailorAddCollar", {{"args", {mPath}}}); });
         if (mG.panels[size_t(h.panel)].twin >= 0)
             menu.addAction("Unlink Mirror", [this, name] { run("tailorUnlinkPanel", {{"args", {mPath}}, {"panel", name}}); });
         menu.addAction("Rotate Grain 90", [this, name, g = mG.panels[size_t(h.panel)].grainAngle] {

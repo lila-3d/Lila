@@ -646,6 +646,25 @@ public:
             }
             std::span<float> layer = out->pointAttrs().getOrAdd<float>("tension");
             std::copy(t.begin(), t.begin() + std::min(t.size(), layer.size()), layer.begin());
+            // Strain along U and V, for wrinkles that fold across whichever way the surface is squeezed.
+            if (!in->cornerAttrs().get<glm::vec2>(geo::attr::uvName(0)).empty())
+            {
+                const std::vector<glm::vec2> s = deform::directionalStrain(*in, rest.points, in->positions(), geo::attr::uvName(0));
+                std::span<glm::vec2> strain = out->pointAttrs().getOrAdd<glm::vec2>("strainUV");
+                std::vector<glm::vec4> wrinkle(s.size());
+                for (size_t p = 0; p < s.size() && p < strain.size(); ++p)
+                {
+                    const double w = envelope * (p < weight.size() ? double(weight[p]) : 1.0);
+                    strain[p] = s[p] * float(w);
+                    wrinkle[p] = glm::vec4(float(std::clamp(-strain[p].x * scale, 0.0, 1.0)), float(std::clamp(-strain[p].y * scale, 0.0, 1.0)),
+                                           0.0f, 1.0f);
+                }
+                if (const std::string& wset = as<std::string>(attr("wrinkleColorSet")); !wset.empty())
+                {
+                    geo::colors::add(*out, wset, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                    geo::colors::setFromPoints(*out, wset, wrinkle);
+                }
+            }
             const std::string& set = as<std::string>(attr("colorSet"));
             if (!set.empty())
             {
@@ -1517,7 +1536,11 @@ void registerShapeTypes()
                       "Measures stretch and compression against the shape at binding, without moving points: writes a 'tension' "
                       "point attribute (positive stretched) and a colour set (red stretch, green compression) for wrinkle masks.",
                       {keyable("scale", PlugType::Float, 4.0, "Colour gain: strain times scale is full colour.", 0.0),
-                       stored("colorSet", PlugType::String, std::string("tension"), "Colour set written; empty writes none."), restAttr(),
+                       stored("colorSet", PlugType::String, std::string("tension"), "Colour set written; empty writes none."),
+                       stored("wrinkleColorSet", PlugType::String, std::string("wrinkle"),
+                              "Colour set of compression along uv0's U (red) and V (green), 0 to 1 at scale, for wrinkle maps; "
+                              "empty writes none."),
+                       restAttr(),
                        stored("stretchCurve", PlugType::String, std::string(),
                               "Unreal material curve that carries outStretch in skeletal and animation exports; empty for none."),
                        stored("compressCurve", PlugType::String, std::string(),

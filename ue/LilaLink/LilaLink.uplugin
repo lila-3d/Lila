@@ -38,6 +38,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "ChaosClothAsset",
+			"Enabled": true
+		},
+		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true,
 			"Optional": true

@@ -443,3 +443,35 @@ TEST_CASE("harmonic coordinates partition unity, are positive and symmetric in a
     for (size_t v = 0; v < nv; ++v)
         CHECK(w[(pts.size() - 1) * nv + v] == doctest::Approx(1.0 / double(nv)).epsilon(0.05));
 }
+
+TEST_CASE("directional strain along uv")
+{
+    // makePlane lays U along X and V along Z.
+    geo::Mesh sheet = geo::makePlane({.width = 100.0, .depth = 100.0, .subdivX = 10, .subdivZ = 10});
+    const std::vector<glm::dvec3> rest(sheet.positions().begin(), sheet.positions().end());
+    for (const glm::vec2& s : directionalStrain(sheet, rest, rest, "uv0"))
+        CHECK(glm::length(s) == doctest::Approx(0.0).epsilon(1e-6));
+
+    // Squeezed 20% along X: compression along U only.
+    std::vector<glm::dvec3> squeezed = rest;
+    for (glm::dvec3& p : squeezed)
+        p.x *= 0.8;
+    const std::vector<glm::vec2> s = directionalStrain(sheet, rest, squeezed, "uv0");
+    for (const glm::vec2& v : s)
+    {
+        CHECK(std::abs(v.x) == doctest::Approx(0.2).epsilon(1e-4));
+        CHECK(v.x < 0.f);
+        CHECK(v.y == doctest::Approx(0.0).epsilon(1e-4));
+    }
+
+    // Grown uniformly: the same stretch both ways.
+    std::vector<glm::dvec3> grown = rest;
+    for (glm::dvec3& p : grown)
+        p *= 1.1;
+    for (const glm::vec2& v : directionalStrain(sheet, rest, grown, "uv0"))
+    {
+        CHECK(v.x == doctest::Approx(0.1).epsilon(1e-4));
+        CHECK(v.y == doctest::Approx(0.1).epsilon(1e-4));
+    }
+    CHECK(directionalStrain(sheet, rest, grown, "noSuchSet")[0].x == 0.f);
+}
