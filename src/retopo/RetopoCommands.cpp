@@ -128,7 +128,7 @@ void selectIssues(Graph& g, const std::vector<scene::NodeId>& meshes, std::map<s
         mode = ComponentMode::Vertex;
     scene::components::setAll(std::move(sets[0]), std::move(sets[1]), std::move(sets[2]));
     if (total[0] + total[1] + total[2] > 0)
-        scene::components::setMode(mode);
+        scene::components::setModeUndoable(mode);
 }
 
 json metricsJson(const QualityMetrics& q)

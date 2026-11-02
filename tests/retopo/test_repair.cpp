@@ -274,6 +274,12 @@ TEST_CASE("commands: meshRepair select mode selects issues in their component mo
     ops::execute("meshRepair", {{"args", {"pent"}}, {"mode", "select"}, {"ngons", true}});
     CHECK(scene::components::mode() == scene::ComponentMode::Face);
     CHECK(scene::components::selected(pentId, scene::ComponentMode::Face).size() == 1);
+    // Undo goes back to the mode the previous selection was made in.
+    UndoStack::get().undo();
+    CHECK(scene::components::mode() == scene::ComponentMode::Vertex);
+    CHECK(scene::components::selected(bowId, scene::ComponentMode::Vertex) == scene::components::Ids{0});
+    UndoStack::get().redo();
+    CHECK(scene::components::mode() == scene::ComponentMode::Face);
 
     CHECK_THROWS_AS(ops::execute("meshRepair", {{"args", {"pent"}}, {"mode", "bogus"}}), CommandError);
 
