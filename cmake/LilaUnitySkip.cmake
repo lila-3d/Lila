@@ -1,6 +1,7 @@
 set(LILA_UNITY_SKIP
     src/scene/AttrCommands.cpp
     src/scene/AttrComponents.cpp
+    src/rigmath/Expressions.cpp
     src/ui/AttrAuthoring.cpp
     src/ui/AttrView.cpp
     src/ui/DrivePopover.cpp

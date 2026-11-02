@@ -14,7 +14,7 @@ lila_module(lila_python Scene
     RegistryBindings.cpp
     Python.cpp)
 
-target_link_libraries(lila_python PUBLIC lila_scene lila_math lila_debug lila_vcolor lila_stream PRIVATE nanobind-static Python::Python)
+target_link_libraries(lila_python PUBLIC lila_scene lila_math lila_debug lila_vcolor lila_stream PRIVATE lila_rigmath nanobind-static Python::Python)
 nanobind_compile_options(lila_python)
 nanobind_link_options(lila_python)
 

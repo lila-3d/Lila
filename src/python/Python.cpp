@@ -5,6 +5,7 @@
 #include "core/Paths.h"
 #include "core/Profile.h"
 #include "ops/Undo.h"
+#include "rigmath/Expressions.h"
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -50,6 +51,59 @@ UiHooks& uiHooks()
 Gil::Gil() : mState(int(PyGILState_Ensure())) {}
 Gil::~Gil() { PyGILState_Release(PyGILState_STATE(mState)); }
 
+namespace
+{
+/** Runs pythonExpression nodes: their code evaluated with v0, v1 ... bound and math's names in scope. */
+void installExpressionEvaluator()
+{
+    scene::expressions::setPythonEvaluator([](const std::string& code, const std::vector<double>& values, std::string* error) -> std::optional<double> {
+        if (!gInitialized)
+            return std::nullopt;
+        Gil gil;
+        PyObject* globals = PyDict_New();
+        PyDict_SetItemString(globals, "__builtins__", PyEval_GetBuiltins());
+        if (PyObject* math = PyImport_ImportModule("math"))
+        {
+            PyDict_Update(globals, PyModule_GetDict(math));
+            Py_DECREF(math);
+        }
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            PyObject* v = PyFloat_FromDouble(values[i]);
+            PyDict_SetItemString(globals, ("v" + std::to_string(i)).c_str(), v);
+            Py_DECREF(v);
+        }
+        std::optional<double> out;
+        PyObject* result = PyRun_String(code.c_str(), Py_eval_input, globals, globals);
+        if (result)
+        {
+            const double d = PyFloat_AsDouble(result);
+            if (!PyErr_Occurred())
+                out = d;
+            Py_DECREF(result);
+        }
+        if (PyErr_Occurred())
+        {
+            PyObject *type = nullptr, *value = nullptr, *trace = nullptr;
+            PyErr_Fetch(&type, &value, &trace);
+            if (value && error)
+                if (PyObject* text = PyObject_Str(value))
+                {
+                    if (const char* s = PyUnicode_AsUTF8(text))
+                        *error = s;
+                    Py_DECREF(text);
+                }
+            Py_XDECREF(type);
+            Py_XDECREF(value);
+            Py_XDECREF(trace);
+            PyErr_Clear();
+        }
+        Py_DECREF(globals);
+        return out;
+    });
+}
+} // namespace
+
 bool init(const std::vector<std::string>& argv)
 {
     LILA_ZONE();
@@ -89,6 +143,7 @@ bool init(const std::vector<std::string>& argv)
         return false;
     }
     gInitialized = true;
+    installExpressionEvaluator();
     crash::setContext("app", "python", Py_GetVersion());
     if (std::filesystem::path tracebacks = crash::pythonTracebackFile(); !tracebacks.empty())
     {

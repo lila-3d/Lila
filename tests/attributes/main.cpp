@@ -45,6 +45,7 @@ int main(int argc, char** argv)
     lila::rigmath::registerTypes();
     lila::scene::registerCommands();
     lila::io::registerCommands();
+    lila::rigmath::registerCommands();
     doctest::Context ctx(argc, argv);
     return ctx.run();
 }

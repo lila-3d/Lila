@@ -86,6 +86,24 @@ TEST_CASE("Drive popover: connect from a searched plug, break, driven key from c
     }
 }
 
+TEST_CASE("Drive popover: an expression compiles to nodes and the Channel Box marks the channel")
+{
+    dCmd("newScene");
+    dCmd("spaceLocator", {{"name", "Ctrl"}});
+    dCmd("spaceLocator", {{"name", "Box"}});
+    {
+        ui::DrivePopover pop("Box.tx");
+        pop.findChild<QLineEdit*>("driveExpression")->setText("= Ctrl.ty * 2 + 1");
+        CHECK(pop.applyExpression());
+    }
+    dCmd("setAttr", {{"args", {"Ctrl.ty", 3.0}}});
+    CHECK(dCmd("getAttr", {{"args", {"Box.tx"}}}).get<double>() == doctest::Approx(7.0));
+    CHECK((ui::ChannelBox::stateOf(Graph::current().plug("Box.tx")) & ui::ChannelBox::kExpression));
+    ui::DrivePopover bad("Box.tz");
+    bad.findChild<QLineEdit*>("driveExpression")->setText("Ctrl.ty +");
+    CHECK_FALSE(bad.applyExpression());
+}
+
 TEST_CASE("Attribute Editor shows what drives a row and what the object drives")
 {
     dCmd("newScene");

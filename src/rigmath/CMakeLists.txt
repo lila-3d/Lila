@@ -1,6 +1,8 @@
 lila_module(lila_rigmath Scene
     Builder.h
     Easing.h
+    Expressions.cpp
+    Expressions.h
     MathMatrix.cpp
     MathMisc.cpp
     MathNodes.cpp

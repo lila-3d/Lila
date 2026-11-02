@@ -1,4 +1,5 @@
 #include "rigmath/MathNodes.h"
+#include "rigmath/Expressions.h"
 
 #include "rigmath/Builder.h"
 
@@ -196,6 +197,7 @@ const Function* functionFor(std::string_view nodeType)
 
 void registerTypes()
 {
+    scene::expressions::registerTypes();
     for (const Function& f : functions())
         for (const Overload& o : f.overloads)
         {
@@ -233,6 +235,7 @@ void registerTypes()
 
 void registerCommands()
 {
+    scene::expressions::registerCommands();
     using T = ArgType;
     ops::registerCommand({
         .name = "mathNodes",
