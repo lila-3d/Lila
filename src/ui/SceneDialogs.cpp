@@ -11,6 +11,8 @@
 #include "io/SceneHistory.h"
 #include "ui/SampleScenes.h"
 #include "ui/AchievementRules.h"
+#include "ui/Credits.h"
+#include "ui/CreditsDialog.h"
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 #include "ui/Icons.h"
@@ -837,6 +839,34 @@ QFrame* makeSupportCard(QWidget* parent)
     return card;
 }
 
+/**
+ * "Made possible by" with every Eternal and Mythic supporter and one Legendary, the next one each showing; a click opens
+ * the credits. Null while there is no one to name.
+ */
+QLabel* makeMadePossibleBy(QWidget* dialog)
+{
+    const int rotation = PrefStore::get().value<int>("general", kCreditsRotationPref, 0);
+    const std::vector<std::string> names = credits::madePossibleBy(credits::current(), rotation);
+    if (names.empty())
+        return nullptr;
+    PrefStore::get().set("general", kCreditsRotationPref, rotation + 1);
+    QStringList list;
+    for (const std::string& n : names)
+        list << QString::fromStdString(n).toHtmlEscaped();
+    QString joined = list.size() > 1 ? list.mid(0, list.size() - 1).join(", ") + " and " + list.last() : list.first();
+    // The whole line is one anchor so it clicks through to the credits like a link, without a link's colour.
+    auto* label = new QLabel(QString("<a href=\"credits\" style=\"color: %1; text-decoration: none;\">Made possible by "
+                                     "<span style=\"color: %2; font-weight: 600;\">%3</span></a>")
+                                 .arg(themeColor("dimText").name(), themeColor("brightText").name(), joined), dialog);
+    label->setObjectName("newsMeta");
+    label->setToolTip("Open the credits");
+    QObject::connect(label, &QLabel::linkActivated, dialog, [dialog] {
+        QWidget* owner = dialog->parentWidget();
+        showCredits(owner ? owner : dialog);
+    });
+    return label;
+}
+
 QLabel* makeHeading(QWidget* parent, const QString& text)
 {
     auto* heading = new QLabel(text, parent);
@@ -1004,7 +1034,12 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
                 self->showNews(items);
         });
         layout->addSpacing(10);
-        layout->addWidget(show);
+        auto* bottom = new QHBoxLayout;
+        bottom->addWidget(show);
+        bottom->addStretch(1);
+        if (QLabel* thanks = makeMadePossibleBy(this))
+            bottom->addWidget(thanks);
+        layout->addLayout(bottom);
     }
     else
     {

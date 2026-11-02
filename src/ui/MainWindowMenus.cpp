@@ -1,4 +1,6 @@
 #include "ui/MainWindowDetail.h"
+#include "ui/Credits.h"
+#include "ui/CreditsDialog.h"
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 #include "ui/MenuSets.h"
@@ -354,7 +356,7 @@ void MainWindow::buildMenus()
     menu("Help", "Help");
     menus::addActions("Help", {"help.docs"});
     addSubmenu("Help", "Docs Topics", [](QMenu* m) { docs::attachTopicsMenu(m); });
-    menus::addActions("Help", {"help.updateDocs", "", "window.searchMenus", "window.searchScene", "window.searchTearOffs", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.supportBundle", "help.perfTrace", "help.telemetry", "help.checkUpdates", "help.hotkeyCheatSheet", "help.about"});
+    menus::addActions("Help", {"help.updateDocs", "", "window.searchMenus", "window.searchScene", "window.searchTearOffs", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.supportBundle", "help.perfTrace", "help.telemetry", "help.checkUpdates", "help.hotkeyCheatSheet", "", "help.credits", "help.about"});
 
     buildPanelMenus();
 
@@ -655,8 +657,29 @@ void MainWindow::showAbout()
     row->addWidget(logo);
     row->addLayout(text, 1);
 
+    std::vector<std::string> named;
+    for (const credits::Supporter& s : credits::current().supporters)
+        if (s.tier >= credits::Tier::Mythic)
+            named.push_back(s.name);
+    if (!named.empty())
+    {
+        QStringList list;
+        for (const std::string& n : named)
+            list << QString::fromStdString(n).toHtmlEscaped();
+        auto* thanks = new QLabel(QString("<p>Made possible by <b>%1</b>.</p>").arg(list.join(", ")));
+        thanks->setWordWrap(true);
+        thanks->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        text->insertWidget(text->count() - 1, thanks);
+    }
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QPushButton* creditsButton = buttons->addButton("Credits", QDialogButtonBox::ActionRole);
+    // The About box is modal, so it closes before the credits open.
+    connect(creditsButton, &QPushButton::clicked, &dlg, [this, &dlg] {
+        dlg.accept();
+        QTimer::singleShot(0, this, [this] { showCredits(this); });
+    });
     auto* layout = new QVBoxLayout(&dlg);
     layout->addLayout(row);
     layout->addWidget(buttons);

@@ -1,5 +1,8 @@
 // Receives Lila's telemetry batches, adds the country, drops the sender's IP, and forwards them to PostHog.
 // The PostHog project token is the POSTHOG_KEY secret (wrangler secret put POSTHOG_KEY).
+// Also serves the credits (creditsService.js).
+
+import { handleCredits, nightly } from "./creditsService.js";
 
 const POSTHOG_BATCH = "https://eu.i.posthog.com/batch/";
 const EVENTS = new Set(["session_start", "session_end", "onboarding"]);
@@ -8,7 +11,9 @@ const MAX_EVENTS = 500;
 
 export default {
   async fetch(request, env) {
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/e")
+    if (new URL(request.url).pathname !== "/e")
+      return (await handleCredits(request, env)) || new Response("not found", { status: 404 });
+    if (request.method !== "POST")
       return new Response("not found", { status: 404 });
     const body = await request.text();
     if (body.length > MAX_BYTES)
@@ -45,5 +50,10 @@ export default {
       body: JSON.stringify({ api_key: env.POSTHOG_KEY, batch: events }),
     });
     return new Response(forwarded.ok ? "ok" : "upstream error", { status: forwarded.ok ? 200 : 502 });
+  },
+
+  async scheduled(event, env, ctx) {
+    if (env.CREDITS_DB)
+      ctx.waitUntil(nightly(env));
   },
 };

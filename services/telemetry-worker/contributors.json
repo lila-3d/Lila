@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Jack Knobel",
+    "role": "Testing and feedback",
+    "areas": [
+      "OpenUSD",
+      "Hydra",
+      "Viewport renderer extensions"
+    ]
+  }
+]

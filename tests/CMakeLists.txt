@@ -47,6 +47,7 @@ add_executable(lila_tests
     test_layouts.cpp
     test_themes.cpp
     test_telemetry.cpp
+    test_credits.cpp
     test_toolkit.cpp
     test_modeling_defaults.cpp
     test_symmetry.cpp
@@ -99,6 +100,12 @@ target_link_libraries(lila_tests PRIVATE miniz::miniz)
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)
+# The telemetry Worker's credits rules; needs Node 22.5+ for node:sqlite.
+find_program(LILA_NODE node)
+if(LILA_NODE)
+    add_test(NAME lila_worker_tests COMMAND ${LILA_NODE} --test test/credits.test.js
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/services/telemetry-worker)
+endif()
 
 if(WIN32)
     # Real crashes of a helper process, checked through the watchdog's report; kept out of lila_tests for speed.

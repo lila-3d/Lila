@@ -4,7 +4,7 @@ A release is a GitHub release `v<version>` with two files: `Lila-<version>-Setup
 
 ## Release (the usual way)
 
-1. Bump `project(Lila VERSION x.y.z)` in `CMakeLists.txt` and commit.
+1. Bump `project(Lila VERSION x.y.z)` in `CMakeLists.txt`, run `python scripts\update_credits_snapshot.py` to refresh the bundled credits, and commit.
 2. Push the commit, then tag it and push the tag:
    ```
    git tag v0.2.0

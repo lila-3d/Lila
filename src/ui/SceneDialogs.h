@@ -64,6 +64,8 @@ private:
 };
 
 inline constexpr const char* kShowWelcomePref = "/startup/showWelcome";
+/** Which Legendary supporter the welcome screen names next. */
+inline constexpr const char* kCreditsRotationPref = "/startup/creditsRotation";
 /** The recent scenes on their own at startup, when the welcome dialog is off. */
 inline constexpr const char* kShowRecentPref = "/startup/showDialog";
 

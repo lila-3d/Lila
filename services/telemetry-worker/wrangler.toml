@@ -2,3 +2,14 @@ name = "lila-telemetry"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+
+# Credits: nightly GitHub Sponsors poll, link checks and republish.
+[triggers]
+crons = ["0 15 * * *"]
+
+# Credits stay off (503) until this is uncommented: `wrangler d1 create lila-credits`, paste its id,
+# `wrangler d1 execute lila-credits --remote --file=schema.sql`, then deploy.
+# [[d1_databases]]
+# binding = "CREDITS_DB"
+# database_name = "lila-credits"
+# database_id = ""
