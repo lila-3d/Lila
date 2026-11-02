@@ -265,3 +265,91 @@ TEST_CASE("cloth brushes: pins hold, shrink spots gather, folds hold their angle
         off = std::max(off, std::abs(q[2]));
     CHECK(off > 0.05f);
 }
+
+TEST_CASE("pins attached to the body ride it as it moves")
+{
+    Garment g;
+    g.panels = {rect("Sheet", 0.4f, 0.4f, {-0.2f, 1.f, 0.1f})};
+    // A body: one quad just behind the sheet's top edge.
+    std::vector<Vec3> body{{-0.3f, 1.3f, 0.08f}, {0.3f, 1.3f, 0.08f}, {0.3f, 1.5f, 0.08f}, {-0.3f, 1.5f, 0.08f}};
+    const std::vector<std::array<int, 3>> tris{{0, 1, 2}, {0, 2, 3}};
+    g.pins = {{0, {0.2f, 0.4f}, {0.f, 1.4f, 0.1f}}};
+    attachPins(g, body, tris);
+    REQUIRE(g.pins[0].bodyTri >= 0);
+    CHECK(g.pins[0].bodyTris == 2);
+
+    const ClothMesh m = buildClothMesh(g);
+    // Where it stands, the pin aims at its own target.
+    const std::vector<Pin> still = resolvePins(m, g, &body, &tris);
+    REQUIRE(still.size() == 1);
+    CHECK(still[0].target[0] == doctest::Approx(0.f).epsilon(1e-4));
+    CHECK(still[0].target[2] == doctest::Approx(0.1f));
+
+    // The body steps 30 cm to the side and turns a quarter turn about its vertical: the pin goes with it.
+    std::vector<Vec3> moved = body;
+    for (Vec3& p : moved)
+        p = {p[2] + 0.3f, p[1], -p[0]};
+    const std::vector<Pin> carried = resolvePins(m, g, &moved, &tris);
+    REQUIRE(carried.size() == 1);
+    CHECK(carried[0].target[0] == doctest::Approx(0.1f + 0.3f).epsilon(0.01));
+    CHECK(carried[0].target[1] == doctest::Approx(1.4f).epsilon(0.01));
+    CHECK(carried[0].target[2] == doctest::Approx(0.f).epsilon(0.01));
+
+    // A different body (another triangle count) leaves the pin where it was painted.
+    const std::vector<std::array<int, 3>> one{{0, 1, 2}};
+    CHECK(resolvePins(m, g, &moved, &one)[0].target[0] == doctest::Approx(0.f).epsilon(1e-4));
+}
+
+TEST_CASE("auto-sew with the body sews shoulders, not hems, necklines or armholes")
+{
+    const Body b;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(b, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.2f);
+    Garment tee;
+    REQUIRE(buildBlock("tee", tee, nullptr, b, {{"sleeveLength", 0.f}}));
+    auto key = [](const Seam& s) { return std::tuple(s.a[0].panel, s.a[0].from, s.a[0].to, s.b[0].panel, s.b[0].from, s.b[0].to); };
+    std::set<std::tuple<int, int, int, int, int, int>> built;
+    for (const Seam& s : tee.seams)
+        built.insert(key(s));
+    Garment bare = tee;
+    bare.seams.clear();
+    const std::vector<Seam> found = suggestSeams(bare, 0.08f, &sdf);
+    CHECK(found.size() == 4);
+    for (const Seam& s : found)
+        CHECK(built.count(key(s)) == 1);
+}
+
+TEST_CASE("auto-sew with the body only proposes seams the blocks have")
+{
+    const Body b;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(b, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.2f);
+    auto key = [](const Seam& s) { return std::tuple(s.a[0].panel, s.a[0].from, s.a[0].to, s.b[0].panel, s.b[0].from, s.b[0].to); };
+    // Not the poncho: its sides hang open facing each other, and auto-sew closes them as it would any facing pair.
+    for (const char* id : {"tee", "tunic", "robe", "skirt", "cloak", "tabard", "shirt", "raglanTee"})
+    {
+        CAPTURE(id);
+        Garment g;
+        REQUIRE(buildBlock(id, g, nullptr, b));
+        std::set<std::tuple<int, int, int, int, int, int>> built;
+        for (const Seam& s : g.seams)
+            if (s.a.size() == 1 && s.b.size() == 1)
+            {
+                built.insert(key(s));
+                Seam r = s;
+                std::swap(r.a, r.b);
+                built.insert(key(r));
+            }
+        Garment bare = g;
+        bare.seams.clear();
+        int wrong = 0;
+        for (const Seam& s : suggestSeams(bare, 0.08f, &sdf))
+            wrong += built.count(key(s)) ? 0 : 1;
+        CHECK(wrong == 0);
+    }
+}
+

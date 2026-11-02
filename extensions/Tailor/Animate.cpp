@@ -92,7 +92,8 @@ public:
         solver.reset(mInputs.cloth, mInputs.garment, mInputs.settings);
         if (sdf.nx > 0)
             solver.setColliders({&sdf});
-        solver.setPins(resolvePins(mInputs.cloth, mInputs.garment));
+        const std::vector<Vec3> body = bodyPoints(inputs);
+        solver.setPins(resolvePins(mInputs.cloth, mInputs.garment, &body, &mTris));
         for (int64_t k = 0; k < mInputs.frames; ++k)
             solver.step();
         write(solver, state);
@@ -114,7 +115,6 @@ public:
             s.dt = float(at.dt);
             mSolver = std::make_unique<ClothSolver>();
             mSolver->reset(from, mInputs.garment, s);
-            mSolver->setPins(resolvePins(mInputs.cloth, mInputs.garment));
             std::vector<Vec3>& v = mSolver->velocitiesMutable();
             for (size_t i = 0; i < n && i < v.size(); ++i)
                 v[i] = {float(state[3 * (n + i)]), float(state[3 * (n + i) + 1]), float(state[3 * (n + i) + 2])};
@@ -122,6 +122,8 @@ public:
         mSdf = bodySdf(inputs);
         if (mSdf.nx > 0)
             mSolver->setColliders({&mSdf});
+        const std::vector<Vec3> body = bodyPoints(inputs);
+        mSolver->setPins(resolvePins(mInputs.cloth, mInputs.garment, &body, &mTris));
         mSolver->step();
         write(*mSolver, state);
         mLastHash = sim::hashDoubles(state);
@@ -130,6 +132,14 @@ public:
     void pose(const std::vector<double>&, const std::vector<double>&, std::vector<glm::dmat4>&) override {}
 
 private:
+    static std::vector<Vec3> bodyPoints(const std::vector<double>& inputs)
+    {
+        std::vector<Vec3> pts(inputs.size() / 3);
+        for (size_t i = 0; i < pts.size(); ++i)
+            pts[i] = {float(inputs[3 * i]), float(inputs[3 * i + 1]), float(inputs[3 * i + 2])};
+        return pts;
+    }
+
     Sdf bodySdf(const std::vector<double>& inputs) const
     {
         std::vector<Vec3> pts(inputs.size() / 3);

@@ -47,10 +47,12 @@ int mirrorPanel(Garment& g, int panel, float planeX, bool link);
 void gradePattern(Garment& g, float width, float length);
 
 /**
- * Seams a pattern maker would sew next: unsewn outline edges (corner to corner) on placed panels whose 3D positions lie
- * within maxGap of each other and whose lengths match within 15%. Each edge is used once, closest pairs first.
+ * Seams a pattern maker would sew next: unsewn outline edges (corner to corner) on placed panels whose lengths match
+ * within 15% and that face each other within maxGap. Each edge is used once, closest pairs first. Given the body, edges
+ * that both open upwards with the body under the line between them (a shoulder, a hood's crown) sew too, up to 45 cm
+ * apart; hems, necklines and armholes stay open.
  */
-std::vector<Seam> suggestSeams(const Garment& g, float maxGap);
+std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body = nullptr);
 
 /** A seam split at its notches when both ends carry the same number, so notch meets notch. Otherwise the seam itself. */
 std::vector<Seam> splitSeamAtNotches(const Garment& g, const Seam& seam);

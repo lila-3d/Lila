@@ -482,7 +482,7 @@ void gradePattern(Garment& g, float width, float length)
     }
 }
 
-std::vector<Seam> suggestSeams(const Garment& g, float maxGap)
+std::vector<Seam> suggestSeams(const Garment& g, float maxGap, const Sdf* body)
 {
     const std::vector<std::vector<char>> sewn = sewnEdges(g);
     std::vector<Edge> edges;
@@ -596,14 +596,119 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap)
         s.reversed = m.reversed;
         out.push_back(s);
     }
+    if (!body)
+        return out;
+
+    // Over the body: both edges open upwards and the straight lines between them clear the body with the body just under.
+    auto outside = [&](const Vec3& p) { return body->sample(p) > -0.005f; };
+    auto over = [&](const Vec3& p) {
+        for (int k = 1; k <= 15; ++k)
+            if (body->sample({p[0], p[1] - 0.01f * float(k), p[2]}) < 0.f)
+                return true;
+        return false;
+    };
+    constexpr float kOverGap = 0.45f;
+    std::vector<Match> arches;
+    for (size_t i = 0; i < edges.size(); ++i)
+        for (size_t j = i + 1; j < edges.size(); ++j)
+        {
+            const Edge &a = edges[i], &b = edges[j];
+            if (used[i] || used[j] || a.out[1] < 0.5f || b.out[1] < 0.5f)
+                continue;
+            if (std::max(a.length, b.length) > 1.15f * std::min(a.length, b.length))
+                continue;
+            const float forward = gap(a, b, false), backward = gap(a, b, true);
+            const bool reversed = backward < forward;
+            const float d = std::min(forward, backward);
+            if (d > kOverGap)
+                continue;
+            bool ok = true;
+            for (int s = 0; s < 5 && ok; ++s)
+            {
+                const Vec3 &p = a.at[size_t(s)], &q = b.at[size_t(reversed ? 4 - s : s)];
+                for (int k = 1; k < 8 && ok; ++k)
+                {
+                    const float t = float(k) / 8.f;
+                    ok = outside({p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t});
+                }
+                const Vec3 mid{0.5f * (p[0] + q[0]), 0.5f * (p[1] + q[1]), 0.5f * (p[2] + q[2])};
+                ok = ok && over(mid);
+            }
+            if (ok)
+                arches.push_back({int(i), int(j), reversed, d});
+        }
+    std::sort(arches.begin(), arches.end(), [](const Match& x, const Match& y) { return x.gap < y.gap; });
+    for (const Match& m : arches)
+    {
+        if (used[size_t(m.a)] || used[size_t(m.b)])
+            continue;
+        used[size_t(m.a)] = used[size_t(m.b)] = 1;
+        Seam s;
+        s.a = {edges[size_t(m.a)].side};
+        s.b = {edges[size_t(m.b)].side};
+        s.reversed = m.reversed;
+        out.push_back(s);
+    }
     return out;
 }
 
-std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g)
+void attachPins(Garment& g, const std::vector<Vec3>& bodyPoints, const std::vector<std::array<int, 3>>& bodyTris)
 {
-    std::vector<Pin> out;
-    for (const GarmentPin& gp : g.pins)
+    std::vector<Vec3> targets;
+    std::vector<size_t> which;
+    for (size_t k = 0; k < g.pins.size(); ++k)
+        if (g.pins[k].bodyTri < 0 || g.pins[k].bodyTris != int(bodyTris.size()))
+        {
+            targets.push_back(g.pins[k].target);
+            which.push_back(k);
+        }
+    if (targets.empty() || bodyTris.empty())
+        return;
+    const RenderBinding b = bindRenderMesh(bodyPoints, bodyTris, targets);
+    for (size_t i = 0; i < which.size(); ++i)
     {
+        GarmentPin& p = g.pins[which[i]];
+        p.bodyTri = b.tri[i];
+        p.bodyBary = b.bary[i];
+        p.bodyLocal = b.local[i];
+        p.bodyTris = int(bodyTris.size());
+    }
+}
+
+std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g, const std::vector<Vec3>* bodyPoints,
+                             const std::vector<std::array<int, 3>>* bodyTris)
+{
+    // Where the body carries the attached pins now.
+    std::vector<Vec3> carried(g.pins.size());
+    std::vector<char> moved(g.pins.size(), 0);
+    if (bodyPoints && bodyTris && !bodyTris->empty())
+    {
+        RenderBinding b;
+        std::vector<size_t> which;
+        for (size_t k = 0; k < g.pins.size(); ++k)
+        {
+            const GarmentPin& p = g.pins[k];
+            if (p.bodyTri < 0 || p.bodyTris != int(bodyTris->size()) || size_t(p.bodyTri) >= bodyTris->size())
+                continue;
+            b.tri.push_back(p.bodyTri);
+            b.bary.push_back(p.bodyBary);
+            b.local.push_back(p.bodyLocal);
+            which.push_back(k);
+        }
+        if (!which.empty())
+        {
+            const std::vector<Vec3> at = deformRenderMesh(b, *bodyPoints, *bodyTris);
+            for (size_t i = 0; i < which.size(); ++i)
+            {
+                carried[which[i]] = at[i];
+                moved[which[i]] = 1;
+            }
+        }
+    }
+    std::vector<Pin> out;
+    for (size_t k = 0; k < g.pins.size(); ++k)
+    {
+        const GarmentPin& gp = g.pins[k];
         int best = -1;
         float bestD = 1e30f;
         for (size_t v = 0; v < mesh.uv.size() && v < mesh.vertPanel.size(); ++v)
@@ -614,7 +719,7 @@ std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g)
                     best = int(v);
                 }
         if (best >= 0 && std::none_of(out.begin(), out.end(), [&](const Pin& p) { return p.vertex == best; }))
-            out.push_back({best, gp.target});
+            out.push_back({best, moved[k] ? carried[k] : gp.target});
     }
     return out;
 }

@@ -114,12 +114,20 @@ inline float shrinkAt(const Panel& p, const Vec2& at)
     return scale;
 }
 
-/** A pattern point held where it was painted: panel, pattern position (metres) and target (garment space, metres). */
+/**
+ * A pattern point held where it was painted: panel, pattern position (metres) and target (garment space, metres).
+ * Attached to the body, the target rides the body triangle under it, offset kept, so the pin follows the body as it
+ * moves; bodyTris is the body's triangle count then, and a body with another count leaves the pin where it was.
+ */
 struct GarmentPin
 {
     int panel = -1;
     Vec2 at{0.f, 0.f};
     Vec3 target{0.f, 0.f, 0.f};
+    int bodyTri = -1;
+    std::array<float, 3> bodyBary{1.f, 0.f, 0.f};
+    Vec3 bodyLocal{0.f, 0.f, 0.f};
+    int bodyTris = 0;
 };
 
 struct Garment
@@ -229,8 +237,15 @@ struct Pin
     Vec3 target{};
 };
 
-/** The garment's pins on the meshed cloth: each at the vertex of its panel nearest its pattern point. */
-std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g);
+/**
+ * The garment's pins on the meshed cloth: each at the vertex of its panel nearest its pattern point. Given the body as
+ * it stands now, attached pins aim where the body has carried them.
+ */
+std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g, const std::vector<Vec3>* bodyPoints = nullptr,
+                             const std::vector<std::array<int, 3>>* bodyTris = nullptr);
+
+/** Attaches every unattached pin to the body triangle nearest its target (body as it stands, garment space metres). */
+void attachPins(Garment& g, const std::vector<Vec3>& bodyPoints, const std::vector<std::array<int, 3>>& bodyTris);
 
 class ClothSolver
 {

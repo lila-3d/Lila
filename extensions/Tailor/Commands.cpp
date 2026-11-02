@@ -376,6 +376,24 @@ MeshPtr drapedMesh(Graph& g, const Node& op, const char* cmd)
     return *mesh;
 }
 
+/** Attaches the garment's new pins to its collider as the collider stands now. */
+void attachToCollider(Graph& g, const Node& op, Garment& gm)
+{
+    const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")});
+    const Node* body = src ? g.node(src->node) : nullptr;
+    if (!body)
+        return;
+    const PlugValue bv = g.value({body->id(), MeshNode::kOutMesh});
+    const PlugValue bw = g.value({body->id(), Transform::kWorldMatrix});
+    const MeshPtr* bm = std::get_if<MeshPtr>(&bv);
+    if (!bm || !*bm || !std::get_if<glm::dmat4>(&bw))
+        return;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    colliderTriangles(**bm, std::get<glm::dmat4>(bw), pts, tris);
+    attachPins(gm, pts, tris);
+}
+
 /** Where a point (metres) lies on the drape's outer side: panel and pattern point, when within reach (metres). */
 std::optional<std::pair<int, Vec2>> patternPointAt(const geo::Mesh& m, const glm::dvec3& at, double reach)
 {
@@ -1299,9 +1317,10 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "tailorAutoSew",
-        .doc = "Sew the unsewn edges that meet: outline edges (corner to corner) whose placed 3D positions lie within maxGap "
-               "of each other and whose lengths match within 15%, closest first. Returns the seams as {a, b, reversed} in "
-               "tailorSew's panel:from:to form, each with its index when applied.",
+        .doc = "Sew the unsewn edges that meet: outline edges (corner to corner) whose lengths match within 15% and that face "
+               "each other within maxGap as placed, closest first; with a collider, also edges that both open upwards over the "
+               "body (shoulders, a hood's crown). Hems, necklines and armholes stay open. Returns the seams as {a, b, reversed} "
+               "in tailorSew's panel:from:to form, each with its index when applied.",
         .positionalDoc = "garment",
         .flags = {{"maxGap", "mg", T::Float, 8.0, "Furthest apart two edges may be placed, on average, cm.", {}, {}, 0.1, 100.0},
                   {"apply", "ap", T::Bool, true, "Sew them; off only lists them."}},
@@ -1309,7 +1328,22 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorAutoSew");
             Garment gm = readGarment(op);
-            const std::vector<Seam> found = suggestSeams(gm, float(a.get<double>("maxGap") / kCmPerM));
+            // The body lets edges arching over it (shoulders) sew as well as edges facing each other.
+            Sdf body;
+            if (const std::optional<PlugRef> src = g.source({op.id(), plugIndex(op, "colliderMesh")}))
+                if (const Node* collider = g.node(src->node))
+                {
+                    const PlugValue bv = g.value({collider->id(), MeshNode::kOutMesh});
+                    const PlugValue bw = g.value({collider->id(), Transform::kWorldMatrix});
+                    if (const MeshPtr* bm = std::get_if<MeshPtr>(&bv); bm && *bm && std::get_if<glm::dmat4>(&bw))
+                    {
+                        std::vector<Vec3> pts;
+                        std::vector<std::array<int, 3>> tris;
+                        colliderTriangles(**bm, std::get<glm::dmat4>(bw), pts, tris);
+                        body = sdfFromMesh(pts, tris, 0.01f, 0.2f);
+                    }
+                }
+            const std::vector<Seam> found = suggestSeams(gm, float(a.get<double>("maxGap") / kCmPerM), body.nx > 0 ? &body : nullptr);
             auto text = [&](const std::vector<SeamSide>& sides) {
                 std::string out;
                 for (const SeamSide& s : sides)
@@ -1337,7 +1371,7 @@ void registerCommands(ext::Context& ctx)
     ctx.registerCommand({
         .name = "tailorPin",
         .doc = "Pin the cloth near points on a garment's drape where it hangs now, or unpin it (remove=True). Pins hold in "
-               "every drape, live or not, and follow pattern edits. Returns the garment's pin count.",
+               "every drape, live or not, follow pattern edits and ride the body as it moves. Returns the garment's pin count.",
         .positionalDoc = "garment",
         .flags = {{"points", "pts", T::List, json(), "Brush points [[x, y, z], ...], world cm."},
                   {"radius", "r", T::Float, 3.0, "Brush radius, cm.", {}, {}, 0.1, 100.0},
@@ -1375,6 +1409,7 @@ void registerCommands(ext::Context& ctx)
                         gm.pins.push_back({panel[f], {fabric[c].x, fabric[c].y}, {float(q.x), float(q.y), float(q.z)}});
                     }
                 }
+                attachToCollider(g, op, gm);
             }
             writeGarment(g, op, gm);
             return int64_t(gm.pins.size());
@@ -1857,6 +1892,7 @@ void registerCommands(ext::Context& ctx)
                 const glm::dvec3 q = glm::mix(path[i - 1], path[i], std::clamp(t, 0.0, 1.0));
                 gm.pins.push_back({index, {float(s), 0.5f * w}, {float(q.x), float(q.y), float(q.z)}});
             }
+            attachToCollider(g, op, gm);
             writeGarment(g, op, gm);
             return gm.panels[size_t(index)].name;
         },

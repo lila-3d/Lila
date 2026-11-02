@@ -470,11 +470,15 @@ private:
     {
         Sdf sdf;
         std::vector<const Sdf*> colliders;
+        std::vector<Vec3> bodyPts;
+        std::vector<std::array<int, 3>> bodyTris;
         if (collider && !collider->empty())
         {
-            sdf = colliderSdf(*collider, colliderWorld);
+            colliderTriangles(*collider, colliderWorld, bodyPts, bodyTris);
+            sdf = sdfFromMesh(bodyPts, bodyTris, 0.01f, 0.05f);
             colliders.push_back(&sdf);
         }
+        const std::vector<Pin> pins = resolvePins(cm, g, &bodyPts, &bodyTris);
         auto tick = [&](int64_t k, const std::vector<Vec3>& positions) {
             if (publish && (k + 1) % kPublishEvery == 0 && k + 1 < frames)
                 publish(positions);
@@ -493,7 +497,7 @@ private:
             std::string err;
             solver.setColliders(colliders);
             bool ok = solver.reset(cm, g, settings, &err);
-            solver.setPins(resolvePins(cm, g));
+            solver.setPins(pins);
             for (int64_t k = 0; ok && k < frames; ++k)
             {
                 beginFrame();
@@ -509,7 +513,7 @@ private:
         ClothSolver solver;
         solver.reset(cm, g, settings);
         solver.setColliders(colliders);
-        solver.setPins(resolvePins(cm, g));
+        solver.setPins(pins);
         for (int64_t k = 0; k < frames; ++k)
         {
             beginFrame();
@@ -839,7 +843,12 @@ json garmentToJson(const Garment& g)
         fabrics.push_back(fabricJson(f));
     json pins = json::array();
     for (const GarmentPin& p : g.pins)
-        pins.push_back({{"panel", p.panel}, {"at", {p.at[0], p.at[1]}}, {"target", vec3Json(p.target)}});
+    {
+        json pj = {{"panel", p.panel}, {"at", {p.at[0], p.at[1]}}, {"target", vec3Json(p.target)}};
+        if (p.bodyTri >= 0)
+            pj["body"] = {{"tri", p.bodyTri}, {"bary", p.bodyBary}, {"local", vec3Json(p.bodyLocal)}, {"tris", p.bodyTris}};
+        pins.push_back(std::move(pj));
+    }
     return {{"version", 1}, {"panels", panels}, {"seams", seams}, {"fabrics", fabrics}, {"pins", pins}};
 }
 
@@ -901,6 +910,14 @@ Garment garmentFromJson(const json& j)
         GarmentPin p{pj.value("panel", -1), {at[0].get<float>(), at[1].get<float>()}, {0.f, 0.f, 0.f}};
         if (pj.contains("target"))
             p.target = jsonVec3(pj["target"]);
+        if (const json body = pj.value("body", json()); body.is_object())
+        {
+            p.bodyTri = body.value("tri", -1);
+            p.bodyBary = body.value("bary", std::array<float, 3>{1.f, 0.f, 0.f});
+            if (body.contains("local"))
+                p.bodyLocal = jsonVec3(body["local"]);
+            p.bodyTris = body.value("tris", 0);
+        }
         if (p.panel >= 0 && p.panel < int(g.panels.size()))
             g.pins.push_back(p);
     }
