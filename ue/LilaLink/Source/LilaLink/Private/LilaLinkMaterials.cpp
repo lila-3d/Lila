@@ -1,6 +1,7 @@
 #include "LilaLinkMaterials.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
 
 #include "AssetImportTask.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -20,6 +21,7 @@
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionLinearInterpolate.h"
 #include "Materials/MaterialExpressionLocalPosition.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionSkyAtmosphereLightDirection.h"
@@ -29,6 +31,7 @@
 #include "Materials/MaterialExpressionTransform.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/PackageName.h"
@@ -463,18 +466,131 @@ c += RimColor * rim * RimStrength * (0.3 + 0.7 * lit);
 return c;
 )");
 
+const TCHAR* const WhiteSquarePath = TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture");
+
+UMaterialExpressionCustom* StylisedCustom(LilaLink::FFunctionGraph& G, const TCHAR* Description, const TCHAR* Code,
+	std::initializer_list<TPair<const TCHAR*, UMaterialExpression*>> Inputs)
+{
+	auto* E = G.New<UMaterialExpressionCustom>(-300);
+	E->Description = Description;
+	E->Code = Code;
+	E->OutputType = CMOT_Float3;
+	E->Inputs.Reset();
+	for (const TPair<const TCHAR*, UMaterialExpression*>& In : Inputs)
+	{
+		E->Inputs.AddDefaulted_GetRef().InputName = In.Key;
+	}
+	for (const TPair<const TCHAR*, UMaterialExpression*>& In : Inputs)
+	{
+		UMaterialEditingLibrary::ConnectMaterialExpressions(In.Value, TEXT(""), E, In.Key);
+	}
+	return E;
+}
+
+/** The inputs both stylised functions share: BaseColor, Normal, LightDirection and FallbackLightDirection. */
+struct FStylisedInputs
+{
+	UMaterialExpression* Base = nullptr;
+	UMaterialExpression* Normal = nullptr;
+	UMaterialExpression* Light = nullptr;
+	UMaterialExpression* Fallback = nullptr;
+};
+
+FStylisedInputs StylisedInputs(LilaLink::FFunctionGraph& G)
+{
+	// BaseColor's default: the constant, or the map when the instance turns UseBaseColorMap on (Lila's map replaces the constant).
+	auto* BaseMap = G.New<UMaterialExpressionTextureSampleParameter2D>(-1900);
+	BaseMap->ParameterName = TEXT("BaseColorMap");
+	BaseMap->Texture = LoadObject<UTexture>(nullptr, WhiteSquarePath);
+	auto* BaseValue = G.New<UMaterialExpressionVectorParameter>(-1900);
+	BaseValue->ParameterName = TEXT("BaseColor");
+	BaseValue->DefaultValue = FLinearColor(0.5f, 0.5f, 0.5f);
+	auto* UseMap = G.New<UMaterialExpressionScalarParameter>(-1900);
+	UseMap->ParameterName = TEXT("UseBaseColorMap");
+	UseMap->DefaultValue = 0.0f;
+	auto* BaseLerp = G.New<UMaterialExpressionLinearInterpolate>(-1500);
+	UMaterialEditingLibrary::ConnectMaterialExpressions(BaseValue, TEXT(""), BaseLerp, TEXT("A"));
+	UMaterialEditingLibrary::ConnectMaterialExpressions(BaseMap, TEXT("RGB"), BaseLerp, TEXT("B"));
+	UMaterialEditingLibrary::ConnectMaterialExpressions(UseMap, TEXT(""), BaseLerp, TEXT("Alpha"));
+
+	auto* Light = G.New<UMaterialExpressionSkyAtmosphereLightDirection>(-1500);
+	Light->LightIndex = 0;
+	FStylisedInputs Out;
+	Out.Base = G.Input(TEXT("BaseColor"), FunctionInput_Vector3, BaseLerp,
+		TEXT("The surface colour. Unconnected: BaseColor, or BaseColorMap when UseBaseColorMap is 1."));
+	Out.Normal = G.Input(TEXT("Normal"), FunctionInput_Vector3, G.New<UMaterialExpressionVertexNormalWS>(-1500),
+		TEXT("World-space normal; the vertex normal when unconnected."));
+	Out.Light = G.Input(TEXT("LightDirection"), FunctionInput_Vector3, Light,
+		TEXT("World-space direction to the light; the sky atmosphere's sun when unconnected."));
+	Out.Fallback = G.VectorInput(TEXT("FallbackLightDirection"), FLinearColor(0.3f, 0.3f, 0.9f), TEXT(""),
+		TEXT("Used when LightDirection is zero, as it is with no sky atmosphere light."));
+	return Out;
+}
+
+/** MF_LilaToon: Lila's toon shade (ToonCode) as one colour output, for Emissive Color on an Unlit material. */
+void BuildToonFunction(UMaterialFunction* Function)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::BuildToonFunction);
+
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Toon: stepped light, tinted shadow, an outer band, a hard highlight and a rim."));
+	const FStylisedInputs In = StylisedInputs(G);
+	auto* Toon = StylisedCustom(G, TEXT("Lila Toon"), ToonCode,
+		{{TEXT("Base"), In.Base}, {TEXT("Normal"), In.Normal}, {TEXT("CameraVec"), G.New<UMaterialExpressionCameraVectorWS>(-900)},
+			{TEXT("LightDir"), In.Light}, {TEXT("FallbackLight"), In.Fallback},
+			{TEXT("ShadowColor"), G.VectorInput(TEXT("ToonShadowColor"), FLinearColor(0.35f, 0.38f, 0.55f), TEXT(""), TEXT("Colour of the shadowed side."))},
+			{TEXT("LightTint"), G.VectorInput(TEXT("ToonLightTint"), FLinearColor(1.0f, 0.97f, 0.92f), TEXT(""), TEXT("Colour of the lit side."))},
+			{TEXT("OuterColor"), G.VectorInput(TEXT("ToonOuterColor"), FLinearColor(0.2f, 0.2f, 0.35f), TEXT(""), TEXT("Colour of the outer shadow band."))},
+			{TEXT("RimColor"), G.VectorInput(TEXT("RimColor"), FLinearColor::White, TEXT(""), TEXT("Colour of the rim light."))},
+			{TEXT("Threshold"), G.ScalarInput(TEXT("ToonThreshold"), 0.0f, TEXT(""), TEXT("Where light turns to shadow, as N dot L."))},
+			{TEXT("Softness"), G.ScalarInput(TEXT("ToonSoftness"), 0.08f, TEXT(""), TEXT("Width of the light to shadow step."))},
+			{TEXT("OuterOffset"), G.ScalarInput(TEXT("ToonOuterOffset"), 0.45f, TEXT(""), TEXT("How far past the threshold the outer band starts; 0 turns it off."))},
+			{TEXT("RimWidth"), G.ScalarInput(TEXT("RimWidth"), 0.3f, TEXT(""), TEXT("Width of the rim, 0 to 1."))},
+			{TEXT("RimStrength"), G.ScalarInput(TEXT("RimStrength"), 0.4f, TEXT(""), TEXT("Brightness of the rim."))},
+			{TEXT("Roughness"), G.ScalarInput(TEXT("Roughness"), 0.5f, TEXT(""), TEXT("Size of the highlight: rougher is larger and dimmer."))},
+			{TEXT("Specular"), G.ScalarInput(TEXT("Specular"), 0.5f, TEXT(""), TEXT("Brightness of the highlight."))}});
+	G.Output(Toon, TEXT("Color"), TEXT("The shaded colour: connect to Emissive Color on an Unlit material."));
+	G.Finish();
+}
+
+/** MF_LilaToon in the masters folder, built when missing and then left to artists. */
+UMaterialFunction* ToonFunction(TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::ToonFunction);
+
+	const FString Name = TEXT("MF_LilaToon");
+	bool bCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(MastersFolder, Name, bCreated);
+	if (!Function)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not create material function %s in %s"), *Name, MastersFolder));
+		return nullptr;
+	}
+	if (bCreated)
+	{
+		BuildToonFunction(Function);
+		OutCreated.AddUnique(Function->GetPathName());
+	}
+	return Function;
+}
+
 /**
- * Builds (once) the master material of a stylised model as a graph of parameters feeding Custom nodes. Strokes is the
- * Painterly stroke sheet's default (a linear texture); without one the engine's white square stands in.
+ * Builds (once) the master material of a stylised model. M_LilaToon is Unlit with MF_LilaToon's colour as emissive (the
+ * function built once too); M_LilaPainterly is a graph of parameters feeding Custom nodes. Strokes is the Painterly stroke
+ * sheet's default (a linear texture); without one the engine's white square stands in.
  */
 UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedMaster);
 
+	UMaterialFunction* Function = bToon ? ToonFunction(OutCreated, OutWarnings) : nullptr;
 	const FString Name = bToon ? TEXT("M_LilaToon") : TEXT("M_LilaPainterly");
 	if (UMaterial* Existing = Cast<UMaterial>(MaterialAt(MastersFolder, Name)))
 	{
 		return Existing;
+	}
+	if (bToon && !Function)
+	{
+		return nullptr;
 	}
 	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
 	UMaterial* Material = Cast<UMaterial>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, MastersFolder, UMaterial::StaticClass(), Factory));
@@ -484,6 +600,19 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 		return nullptr;
 	}
 	OutCreated.AddUnique(Material->GetPathName());
+
+	if (bToon)
+	{
+		Material->SetShadingModel(MSM_Unlit);
+		UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+		if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("Color"), MP_EmissiveColor}}))
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Name));
+		}
+		Material->PostEditChange();
+		Material->MarkPackageDirty();
+		return Material;
+	}
 
 	int32 Row = 0;
 	auto NextY = [&Row] { return (Row++) * 140; };
@@ -520,7 +649,7 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 	// Base colour: the constant, or the map when the instance turns UseBaseColorMap on (Lila's map replaces the constant).
 	auto* BaseMap = Cast<UMaterialExpressionTextureSampleParameter2D>(Make(UMaterialExpressionTextureSampleParameter2D::StaticClass(), -900));
 	BaseMap->ParameterName = TEXT("BaseColorMap");
-	BaseMap->Texture = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+	BaseMap->Texture = LoadObject<UTexture>(nullptr, WhiteSquarePath);
 	auto* BaseLerp = Cast<UMaterialExpressionLinearInterpolate>(Make(UMaterialExpressionLinearInterpolate::StaticClass(), -600));
 	Connect(Vector(TEXT("BaseColor"), FLinearColor(0.5f, 0.5f, 0.5f)), BaseLerp, TEXT("A"));
 	UMaterialEditingLibrary::ConnectMaterialExpressions(BaseMap, TEXT("RGB"), BaseLerp, TEXT("B"));
@@ -531,98 +660,70 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 	Light->LightIndex = 0;
 	UMaterialExpression* Fallback = Vector(TEXT("FallbackLightDirection"), FLinearColor(0.3f, 0.3f, 0.9f));
 
-	if (bToon)
-	{
-		Material->SetShadingModel(MSM_Unlit);
-		auto* Toon = Custom(TEXT("Lila Toon"), ToonCode,
-			{TEXT("Base"), TEXT("Normal"), TEXT("CameraVec"), TEXT("LightDir"), TEXT("FallbackLight"), TEXT("ShadowColor"), TEXT("LightTint"),
-				TEXT("OuterColor"), TEXT("RimColor"), TEXT("Threshold"), TEXT("Softness"), TEXT("OuterOffset"), TEXT("RimWidth"),
-				TEXT("RimStrength"), TEXT("Roughness"), TEXT("Specular")});
-		Connect(BaseLerp, Toon, TEXT("Base"));
-		Connect(Normal, Toon, TEXT("Normal"));
-		Connect(Make(UMaterialExpressionCameraVectorWS::StaticClass(), -900), Toon, TEXT("CameraVec"));
-		Connect(Light, Toon, TEXT("LightDir"));
-		Connect(Fallback, Toon, TEXT("FallbackLight"));
-		Connect(Vector(TEXT("ToonShadowColor"), FLinearColor(0.35f, 0.38f, 0.55f)), Toon, TEXT("ShadowColor"));
-		Connect(Vector(TEXT("ToonLightTint"), FLinearColor(1.0f, 0.97f, 0.92f)), Toon, TEXT("LightTint"));
-		Connect(Vector(TEXT("ToonOuterColor"), FLinearColor(0.2f, 0.2f, 0.35f)), Toon, TEXT("OuterColor"));
-		Connect(Vector(TEXT("RimColor"), FLinearColor::White), Toon, TEXT("RimColor"));
-		Connect(Scalar(TEXT("ToonThreshold"), 0.0f), Toon, TEXT("Threshold"));
-		Connect(Scalar(TEXT("ToonSoftness"), 0.08f), Toon, TEXT("Softness"));
-		Connect(Scalar(TEXT("ToonOuterOffset"), 0.45f), Toon, TEXT("OuterOffset"));
-		Connect(Scalar(TEXT("RimWidth"), 0.3f), Toon, TEXT("RimWidth"));
-		Connect(Scalar(TEXT("RimStrength"), 0.4f), Toon, TEXT("RimStrength"));
-		Connect(Scalar(TEXT("Roughness"), 0.5f), Toon, TEXT("Roughness"));
-		Connect(Scalar(TEXT("Specular"), 0.5f), Toon, TEXT("Specular"));
-		UMaterialEditingLibrary::ConnectMaterialProperty(Toon, TEXT(""), MP_EmissiveColor);
-	}
-	else
-	{
-		// The stroke normal is computed in object space and handed over in world space.
-		Material->bTangentSpaceNormal = false;
-		auto* StrokeMap = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -900));
-		StrokeMap->ParameterName = TEXT("StrokeMap");
-		StrokeMap->Texture = Strokes ? Strokes : LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
-		StrokeMap->SamplerType = Strokes ? SAMPLERTYPE_LinearColor : SAMPLERTYPE_Color;
-		auto* LocalPos = Make(UMaterialExpressionLocalPosition::StaticClass(), -900);
-		auto* ToLocal = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -600));
-		ToLocal->TransformSourceType = TRANSFORMSOURCE_World;
-		ToLocal->TransformType = TRANSFORM_Local;
-		Connect(Normal, ToLocal, TEXT(""));
-		auto* Time = Make(UMaterialExpressionTime::StaticClass(), -900);
-		UMaterialExpression* Strength = Scalar(TEXT("PainterlyStrength"), 1.0f);
-		UMaterialExpression* Scale = Scalar(TEXT("StrokeScale"), 20.0f);
-		UMaterialExpression* Ratio = Scalar(TEXT("StrokeLayerRatio"), 2.7f);
-		UMaterialExpression* Boil = Scalar(TEXT("Boil"), 0.0f);
-		UMaterialExpression* BoilFps = Scalar(TEXT("BoilFps"), 10.0f);
+	// The stroke normal is computed in object space and handed over in world space.
+	Material->bTangentSpaceNormal = false;
+	auto* StrokeMap = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -900));
+	StrokeMap->ParameterName = TEXT("StrokeMap");
+	StrokeMap->Texture = Strokes ? Strokes : LoadObject<UTexture>(nullptr, WhiteSquarePath);
+	StrokeMap->SamplerType = Strokes ? SAMPLERTYPE_LinearColor : SAMPLERTYPE_Color;
+	auto* LocalPos = Make(UMaterialExpressionLocalPosition::StaticClass(), -900);
+	auto* ToLocal = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -600));
+	ToLocal->TransformSourceType = TRANSFORMSOURCE_World;
+	ToLocal->TransformType = TRANSFORM_Local;
+	Connect(Normal, ToLocal, TEXT(""));
+	auto* Time = Make(UMaterialExpressionTime::StaticClass(), -900);
+	UMaterialExpression* Strength = Scalar(TEXT("PainterlyStrength"), 1.0f);
+	UMaterialExpression* Scale = Scalar(TEXT("StrokeScale"), 20.0f);
+	UMaterialExpression* Ratio = Scalar(TEXT("StrokeLayerRatio"), 2.7f);
+	UMaterialExpression* Boil = Scalar(TEXT("Boil"), 0.0f);
+	UMaterialExpression* BoilFps = Scalar(TEXT("BoilFps"), 10.0f);
 
-		auto* Bent = Custom(TEXT("Lila Painterly Normal"), PainterlyNormalCode,
-			{TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"), TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Strength"), TEXT("StrokeNormal"),
-				TEXT("Boil"), TEXT("BoilFps"), TEXT("Time")});
-		Connect(StrokeMap, Bent, TEXT("Strokes"));
-		Connect(LocalPos, Bent, TEXT("LocalPos"));
-		Connect(ToLocal, Bent, TEXT("LocalNormal"));
-		Connect(Scale, Bent, TEXT("StrokeScale"));
-		Connect(Ratio, Bent, TEXT("Ratio"));
-		Connect(Strength, Bent, TEXT("Strength"));
-		Connect(Scalar(TEXT("StrokeNormal"), 0.6f), Bent, TEXT("StrokeNormal"));
-		Connect(Boil, Bent, TEXT("Boil"));
-		Connect(BoilFps, Bent, TEXT("BoilFps"));
-		Connect(Time, Bent, TEXT("Time"));
-		auto* ToWorld = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -100));
-		ToWorld->TransformSourceType = TRANSFORMSOURCE_Local;
-		ToWorld->TransformType = TRANSFORM_World;
-		Connect(Bent, ToWorld, TEXT(""));
-		UMaterialEditingLibrary::ConnectMaterialProperty(ToWorld, TEXT(""), MP_Normal);
+	auto* Bent = Custom(TEXT("Lila Painterly Normal"), PainterlyNormalCode,
+		{TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"), TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Strength"), TEXT("StrokeNormal"),
+			TEXT("Boil"), TEXT("BoilFps"), TEXT("Time")});
+	Connect(StrokeMap, Bent, TEXT("Strokes"));
+	Connect(LocalPos, Bent, TEXT("LocalPos"));
+	Connect(ToLocal, Bent, TEXT("LocalNormal"));
+	Connect(Scale, Bent, TEXT("StrokeScale"));
+	Connect(Ratio, Bent, TEXT("Ratio"));
+	Connect(Strength, Bent, TEXT("Strength"));
+	Connect(Scalar(TEXT("StrokeNormal"), 0.6f), Bent, TEXT("StrokeNormal"));
+	Connect(Boil, Bent, TEXT("Boil"));
+	Connect(BoilFps, Bent, TEXT("BoilFps"));
+	Connect(Time, Bent, TEXT("Time"));
+	auto* ToWorld = Cast<UMaterialExpressionTransform>(Make(UMaterialExpressionTransform::StaticClass(), -100));
+	ToWorld->TransformSourceType = TRANSFORMSOURCE_Local;
+	ToWorld->TransformType = TRANSFORM_World;
+	Connect(Bent, ToWorld, TEXT(""));
+	UMaterialEditingLibrary::ConnectMaterialProperty(ToWorld, TEXT(""), MP_Normal);
 
-		auto* Color = Custom(TEXT("Lila Painterly Palette"), PainterlyColorCode,
-			{TEXT("Base"), TEXT("Normal"), TEXT("LightDir"), TEXT("FallbackLight"), TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"),
-				TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Boil"), TEXT("BoilFps"), TEXT("Time"), TEXT("Shadow"), TEXT("Light"), TEXT("Accent"),
-				TEXT("Count"), TEXT("Contrast"), TEXT("Spread"), TEXT("Strength")});
-		Connect(BaseLerp, Color, TEXT("Base"));
-		Connect(Normal, Color, TEXT("Normal"));
-		Connect(Light, Color, TEXT("LightDir"));
-		Connect(Fallback, Color, TEXT("FallbackLight"));
-		Connect(StrokeMap, Color, TEXT("Strokes"));
-		Connect(LocalPos, Color, TEXT("LocalPos"));
-		Connect(ToLocal, Color, TEXT("LocalNormal"));
-		Connect(Scale, Color, TEXT("StrokeScale"));
-		Connect(Ratio, Color, TEXT("Ratio"));
-		Connect(Boil, Color, TEXT("Boil"));
-		Connect(BoilFps, Color, TEXT("BoilFps"));
-		Connect(Time, Color, TEXT("Time"));
-		Connect(Vector(TEXT("PaletteShadow"), FLinearColor(0.10f, 0.12f, 0.25f)), Color, TEXT("Shadow"));
-		Connect(Vector(TEXT("PaletteLight"), FLinearColor(0.95f, 0.80f, 0.55f)), Color, TEXT("Light"));
-		Connect(Vector(TEXT("PaletteAccent"), FLinearColor(0.60f, 0.30f, 0.35f)), Color, TEXT("Accent"));
-		Connect(Scalar(TEXT("PaletteCount"), 3.0f), Color, TEXT("Count"));
-		Connect(Scalar(TEXT("PaletteContrast"), 0.5f), Color, TEXT("Contrast"));
-		Connect(Scalar(TEXT("PaletteSpread"), 0.35f), Color, TEXT("Spread"));
-		Connect(Strength, Color, TEXT("Strength"));
-		UMaterialEditingLibrary::ConnectMaterialProperty(Color, TEXT(""), MP_BaseColor);
-		UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Metallic"), 0.0f), TEXT(""), MP_Metallic);
-		UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Roughness"), 0.5f), TEXT(""), MP_Roughness);
-		UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Specular"), 0.5f), TEXT(""), MP_Specular);
-	}
+	auto* Color = Custom(TEXT("Lila Painterly Palette"), PainterlyColorCode,
+		{TEXT("Base"), TEXT("Normal"), TEXT("LightDir"), TEXT("FallbackLight"), TEXT("Strokes"), TEXT("LocalPos"), TEXT("LocalNormal"),
+			TEXT("StrokeScale"), TEXT("Ratio"), TEXT("Boil"), TEXT("BoilFps"), TEXT("Time"), TEXT("Shadow"), TEXT("Light"), TEXT("Accent"),
+			TEXT("Count"), TEXT("Contrast"), TEXT("Spread"), TEXT("Strength")});
+	Connect(BaseLerp, Color, TEXT("Base"));
+	Connect(Normal, Color, TEXT("Normal"));
+	Connect(Light, Color, TEXT("LightDir"));
+	Connect(Fallback, Color, TEXT("FallbackLight"));
+	Connect(StrokeMap, Color, TEXT("Strokes"));
+	Connect(LocalPos, Color, TEXT("LocalPos"));
+	Connect(ToLocal, Color, TEXT("LocalNormal"));
+	Connect(Scale, Color, TEXT("StrokeScale"));
+	Connect(Ratio, Color, TEXT("Ratio"));
+	Connect(Boil, Color, TEXT("Boil"));
+	Connect(BoilFps, Color, TEXT("BoilFps"));
+	Connect(Time, Color, TEXT("Time"));
+	Connect(Vector(TEXT("PaletteShadow"), FLinearColor(0.10f, 0.12f, 0.25f)), Color, TEXT("Shadow"));
+	Connect(Vector(TEXT("PaletteLight"), FLinearColor(0.95f, 0.80f, 0.55f)), Color, TEXT("Light"));
+	Connect(Vector(TEXT("PaletteAccent"), FLinearColor(0.60f, 0.30f, 0.35f)), Color, TEXT("Accent"));
+	Connect(Scalar(TEXT("PaletteCount"), 3.0f), Color, TEXT("Count"));
+	Connect(Scalar(TEXT("PaletteContrast"), 0.5f), Color, TEXT("Contrast"));
+	Connect(Scalar(TEXT("PaletteSpread"), 0.35f), Color, TEXT("Spread"));
+	Connect(Strength, Color, TEXT("Strength"));
+	UMaterialEditingLibrary::ConnectMaterialProperty(Color, TEXT(""), MP_BaseColor);
+	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Metallic"), 0.0f), TEXT(""), MP_Metallic);
+	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Roughness"), 0.5f), TEXT(""), MP_Roughness);
+	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Specular"), 0.5f), TEXT(""), MP_Specular);
 
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
