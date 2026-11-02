@@ -456,8 +456,7 @@ void BuildImposterMaterial(UMaterial* Material, UMaterialFunction* Function, TAr
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::BuildImposterMaterial);
 
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Function);
 	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}, {TEXT("BaseColor"), MP_BaseColor},
 			{TEXT("Opacity"), MP_OpacityMask}, {TEXT("Normal"), MP_Normal}}))
 	{
@@ -481,41 +480,26 @@ void BuildImposterMaterial(UMaterial* Material, UMaterialFunction* Function, TAr
 	UMaterialEditingLibrary::RecompileMaterial(Material);
 }
 
-/** MF_LilaImposter and M_LilaImposter on it: each built when missing, both rebuilt with rebuildMaterial, otherwise kept. */
+/** MF_LilaImposter and M_LilaImposter on it, both built when either is missing or rebuildMaterial is set. */
 UMaterialInterface* ImposterMaterial(const FImposterRequest& R, UTexture* BaseColor, UTexture* Normal, TArray<FString>& OutAssets, TArray<FString>& OutErrors)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::ImposterMaterial);
 
-	bool bFunctionCreated = false;
-	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(R.MaterialFolder, FunctionName, bFunctionCreated);
-	if (!Function)
+	FString Error;
+	const LilaLink::FMaterialPair Pair = LilaLink::FindOrCreateMaterialPair(R.MaterialFolder, FunctionName, MaterialName, Error);
+	if (!Pair.Material)
 	{
-		OutErrors.Add(FString::Printf(TEXT("Could not create %s in %s"), FunctionName, *R.MaterialFolder));
+		OutErrors.Add(Error);
 		return nullptr;
 	}
-	if (bFunctionCreated || R.bRebuildMaterial)
+	if (Pair.bCreated || R.bRebuildMaterial)
 	{
-		BuildImposterFunction(Function, BaseColor, Normal);
-		OutAssets.AddUnique(Function->GetPathName());
+		BuildImposterFunction(Pair.Function, BaseColor, Normal);
+		BuildImposterMaterial(Pair.Material, Pair.Function, OutErrors);
+		OutAssets.AddUnique(Pair.Function->GetPathName());
+		OutAssets.AddUnique(Pair.Material->GetPathName());
 	}
-	UMaterial* Material = FindAssetAt<UMaterial>(R.MaterialFolder, MaterialName);
-	if (Material && !R.bRebuildMaterial)
-	{
-		return Material;
-	}
-	if (!Material)
-	{
-		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
-		Material = Cast<UMaterial>(FAssetToolsModule::GetModule().Get().CreateAsset(MaterialName, R.MaterialFolder, UMaterial::StaticClass(), Factory));
-		if (!Material)
-		{
-			OutErrors.Add(FString::Printf(TEXT("Could not create %s in %s"), MaterialName, *R.MaterialFolder));
-			return nullptr;
-		}
-	}
-	BuildImposterMaterial(Material, Function, OutErrors);
-	OutAssets.AddUnique(Material->GetPathName());
-	return Material;
+	return Pair.Material;
 }
 
 UMaterialInstanceConstant* MakeInstance(const FImposterRequest& R, UMaterialInterface* Parent, TArray<FString>& OutAssets, TArray<FString>& OutErrors)

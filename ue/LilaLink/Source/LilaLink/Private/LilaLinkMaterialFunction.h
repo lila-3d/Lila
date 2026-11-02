@@ -14,11 +14,20 @@ class UTexture;
 
 namespace LilaLink
 {
-/** The material function at Folder/Name, created when missing (bOutCreated); null when it can't be made. */
-UMaterialFunction* FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated);
+/** A generated material function and the material built on it. */
+struct FMaterialPair
+{
+	UMaterialFunction* Function = nullptr;
+	UMaterial* Material = nullptr;
+	/** Either was just created, so both need building. */
+	bool bCreated = false;
+};
 
-/** The material function at Folder/Name, or null. */
-UMaterialFunction* FindMaterialFunction(const FString& Folder, const FString& Name);
+/**
+ * Folder/FunctionName and Folder/MaterialName, each created when missing; both null, with OutError, when either can't be
+ * made. The caller builds both when bCreated or when asked to rebuild, never one alone.
+ */
+FMaterialPair FindOrCreateMaterialPair(const FString& Folder, const FString& FunctionName, const FString& MaterialName, FString& OutError);
 
 /**
  * A material function's graph, cleared and rebuilt down columns. Its parameter inputs default to a parameter of the same
@@ -51,8 +60,8 @@ struct FFunctionGraph
 	void Finish();
 };
 
-/** A call of Function placed in Material. */
-UMaterialExpressionMaterialFunctionCall* CallFunction(UMaterial* Material, UMaterialFunctionInterface* Function, int32 X = -400, int32 Y = 0);
+/** Clears Material's graph and places a call of Function in it. */
+UMaterialExpressionMaterialFunctionCall* ResetToFunctionCall(UMaterial* Material, UMaterialFunctionInterface* Function);
 
 /** Wires the call's named outputs to the material's properties; false when any output is missing. */
 bool ConnectFunctionOutputs(UMaterialExpressionMaterialFunctionCall* Call, std::initializer_list<TPair<const TCHAR*, EMaterialProperty>> Outputs);

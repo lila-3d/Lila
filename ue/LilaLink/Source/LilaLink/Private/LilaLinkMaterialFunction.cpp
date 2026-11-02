@@ -2,6 +2,7 @@
 
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetToolsModule.h"
+#include "Factories/MaterialFactoryNew.h"
 #include "Factories/MaterialFunctionFactoryNew.h"
 #include "IAssetTools.h"
 #include "MaterialEditingLibrary.h"
@@ -15,25 +16,34 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "UObject/Package.h"
 
-UMaterialFunction* LilaLink::FindMaterialFunction(const FString& Folder, const FString& Name)
+namespace
+{
+template <class T> T* FindOrCreate(const FString& Folder, const FString& Name, UFactory* Factory, bool& bOutCreated)
 {
 	const FAssetData Data = IAssetRegistry::GetChecked().GetAssetByObjectPath(FSoftObjectPath(Folder / Name + TEXT(".") + Name));
-	return Data.IsValid() ? Cast<UMaterialFunction>(Data.GetAsset()) : nullptr;
-}
-
-UMaterialFunction* LilaLink::FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterialFunction::FindOrCreateMaterialFunction);
-
-	bOutCreated = false;
-	if (UMaterialFunction* Existing = FindMaterialFunction(Folder, Name))
+	if (T* Existing = Data.IsValid() ? Cast<T>(Data.GetAsset()) : nullptr)
 	{
 		return Existing;
 	}
-	UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>(GetTransientPackage());
-	UMaterialFunction* Function = Cast<UMaterialFunction>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, Folder, UMaterialFunction::StaticClass(), Factory));
-	bOutCreated = Function != nullptr;
-	return Function;
+	bOutCreated = true;
+	return Cast<T>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, Folder, T::StaticClass(), Factory));
+}
+} // namespace
+
+LilaLink::FMaterialPair LilaLink::FindOrCreateMaterialPair(const FString& Folder, const FString& FunctionName, const FString& MaterialName,
+	FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterialFunction::FindOrCreateMaterialPair);
+
+	FMaterialPair Pair;
+	Pair.Function = FindOrCreate<UMaterialFunction>(Folder, FunctionName, NewObject<UMaterialFunctionFactoryNew>(GetTransientPackage()), Pair.bCreated);
+	Pair.Material = FindOrCreate<UMaterial>(Folder, MaterialName, NewObject<UMaterialFactoryNew>(GetTransientPackage()), Pair.bCreated);
+	if (!Pair.Function || !Pair.Material)
+	{
+		OutError = FString::Printf(TEXT("Could not create %s and %s in %s"), *FunctionName, *MaterialName, *Folder);
+		Pair = {};
+	}
+	return Pair;
 }
 
 LilaLink::FFunctionGraph::FFunctionGraph(UMaterialFunction* InFunction, const TCHAR* Description)
@@ -114,10 +124,12 @@ void LilaLink::FFunctionGraph::Finish()
 	UMaterialEditingLibrary::UpdateMaterialFunction(Function);
 }
 
-UMaterialExpressionMaterialFunctionCall* LilaLink::CallFunction(UMaterial* Material, UMaterialFunctionInterface* Function, int32 X, int32 Y)
+UMaterialExpressionMaterialFunctionCall* LilaLink::ResetToFunctionCall(UMaterial* Material, UMaterialFunctionInterface* Function)
 {
+	Material->Modify();
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
 	auto* Call = Cast<UMaterialExpressionMaterialFunctionCall>(
-		UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionMaterialFunctionCall::StaticClass(), X, Y));
+		UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionMaterialFunctionCall::StaticClass(), -400, 0));
 	Call->SetMaterialFunction(Function);
 	return Call;
 }

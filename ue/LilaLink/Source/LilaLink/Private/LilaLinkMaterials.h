@@ -25,6 +25,8 @@ struct FMaterialRequest
 	bool bImportTextures = true;
 	/** On reimport, keep a material assigned in Unreal to a slot that still exists. */
 	bool bKeep = true;
+	/** Rebuild the generated stylised masters and their functions. */
+	bool bRebuildMaterial = false;
 	FString AssetFolder;
 	/** Searched first, and where created materials and textures go. */
 	FString MaterialFolder;
@@ -54,11 +56,11 @@ void ApplyMaterials(const FMaterialRequest& Request, const TArray<FString>& Impo
 	TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots);
 
 /**
- * The Painterly ("painterly") or Toon ("toon") master material, built on first use; null with a warning for anything else.
- * Each calls its material function in the masters folder, MF_LilaPainterly (outputs BaseColor and a world-space Normal) or
- * MF_LilaToon (output Color, for Emissive Color on an Unlit material), for users' own materials.
+ * The Painterly ("painterly") or Toon ("toon") master material, built on first use or when bRebuild; null with a warning for
+ * anything else. Each calls its material function in the masters folder, MF_LilaPainterly (outputs BaseColor and a
+ * world-space Normal) or MF_LilaToon (output Color, for Emissive Color on an Unlit material), for users' own materials.
  */
-UMaterialInterface* StylisedParent(const FString& Model, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
+UMaterialInterface* StylisedParent(const FString& Model, bool bRebuild, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
 
 /**
  * Sets a stylised master's parameters on an instance from Lila's material values (In: shadingModel, baseColor, palette...,

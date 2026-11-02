@@ -19,8 +19,8 @@ namespace LilaLink
  * the bake (outputs WorldPositionOffset and, with normals, a world-space Normal); its inputs default to those parameters.
  *
  * A rigid bake (meta mode "rigid") takes its rotation texture from "rotations" or from the metadata's files.rotations
- * beside the position texture, and its parent is M_LilaVatRigid_UV<n>, built on the material function
- * MF_LilaVatRigid_UV<n> that any other material can call to play the same bake (outputs WorldPositionOffset, Normal,
+ * beside the position texture, and its parent is M_LilaVATRigid_UV<n>, built on the material function
+ * MF_LilaVATRigid_UV<n> that any other material can call to play the same bake (outputs WorldPositionOffset, Normal,
  * Tangent, Rotation), with an Interpolate static switch for blending between frames.
  */
 void AddVatMethods(TMap<FString, FLilaLinkMethod>& Methods);

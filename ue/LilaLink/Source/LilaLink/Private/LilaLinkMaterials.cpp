@@ -603,71 +603,43 @@ void BuildPainterlyFunction(UMaterialFunction* Function, UTexture* Strokes)
 	G.Finish();
 }
 
-/** MF_LilaToon or MF_LilaPainterly in the masters folder, built when missing and then left to artists. */
-UMaterialFunction* StylisedFunction(bool bToon, UTexture* Strokes, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedFunction);
-
-	const FString Name = bToon ? TEXT("MF_LilaToon") : TEXT("MF_LilaPainterly");
-	bool bCreated = false;
-	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(MastersFolder, Name, bCreated);
-	if (!Function)
-	{
-		OutWarnings.Add(FString::Printf(TEXT("Could not create material function %s in %s"), *Name, MastersFolder));
-		return nullptr;
-	}
-	if (bCreated)
-	{
-		if (bToon)
-		{
-			BuildToonFunction(Function);
-		}
-		else
-		{
-			BuildPainterlyFunction(Function, Strokes);
-		}
-		OutCreated.AddUnique(Function->GetPathName());
-	}
-	return Function;
-}
-
 /**
- * Builds (once) the master material of a stylised model on its function (built once too): M_LilaToon is Unlit with the
- * toon colour as emissive, M_LilaPainterly takes the painted base colour and world-space normal and adds Metallic,
- * Roughness and Specular parameters.
+ * The master material of a stylised model on its function, in the masters folder: M_LilaToon is Unlit with MF_LilaToon's
+ * colour as emissive, M_LilaPainterly takes MF_LilaPainterly's base colour and world-space normal and adds Metallic,
+ * Roughness and Specular parameters. Both are built when either is missing or bRebuild is set. Strokes is the Painterly
+ * stroke sheet's default.
  */
-UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, bool bRebuild, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedMaster);
 
-	UMaterialFunction* Function = StylisedFunction(bToon, Strokes, OutCreated, OutWarnings);
-	const FString Name = bToon ? TEXT("M_LilaToon") : TEXT("M_LilaPainterly");
-	if (UMaterial* Existing = Cast<UMaterial>(MaterialAt(MastersFolder, Name)))
+	FString Error;
+	const LilaLink::FMaterialPair Pair = bToon ? LilaLink::FindOrCreateMaterialPair(MastersFolder, TEXT("MF_LilaToon"), TEXT("M_LilaToon"), Error)
+											   : LilaLink::FindOrCreateMaterialPair(MastersFolder, TEXT("MF_LilaPainterly"), TEXT("M_LilaPainterly"), Error);
+	if (!Pair.Material)
 	{
-		return Existing;
-	}
-	if (!Function)
-	{
+		OutWarnings.Add(Error);
 		return nullptr;
 	}
-	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
-	UMaterial* Material = Cast<UMaterial>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, MastersFolder, UMaterial::StaticClass(), Factory));
-	if (!Material)
+	if (!Pair.bCreated && !bRebuild)
 	{
-		OutWarnings.Add(FString::Printf(TEXT("Could not create master material %s in %s"), *Name, MastersFolder));
-		return nullptr;
+		return Pair.Material;
 	}
+	UMaterial* Material = Pair.Material;
+	OutCreated.AddUnique(Pair.Function->GetPathName());
 	OutCreated.AddUnique(Material->GetPathName());
-
-	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
 	bool bWired = false;
 	if (bToon)
 	{
+		BuildToonFunction(Pair.Function);
+		UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Pair.Function);
 		Material->SetShadingModel(MSM_Unlit);
 		bWired = LilaLink::ConnectFunctionOutputs(Call, {{TEXT("Color"), MP_EmissiveColor}});
 	}
 	else
 	{
+		BuildPainterlyFunction(Pair.Function, Strokes);
+		UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Pair.Function);
 		Material->bTangentSpaceNormal = false;
 		bWired = LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Normal"), MP_Normal}});
 		int32 Row = 0;
@@ -684,7 +656,7 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 	}
 	if (!bWired)
 	{
-		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Name));
+		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Pair.Function->GetName(), *Material->GetName()));
 	}
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
@@ -692,6 +664,7 @@ UMaterial* StylisedMaster(bool bToon, UTexture* Strokes, TArray<FString>& OutCre
 }
 
 /**
+
  * A stylised master's parameters on an instance from Lila's material values. bImportBaseMap also imports and sets the material's
  * base colour map into TextureFolder (texture sets set their own).
  */
@@ -774,7 +747,7 @@ UMaterialInterface* CreateStylisedInstance(const FString& Name, const FMaterialR
 		return nullptr;
 	}
 	UTexture* Strokes = R.bImportTextures ? StylisedStrokes(bToon, In, OutCreated, OutWarnings) : nullptr;
-	UMaterial* Master = StylisedMaster(bToon, Strokes, OutCreated, OutWarnings);
+	UMaterial* Master = StylisedMaster(bToon, Strokes, R.bRebuildMaterial, OutCreated, OutWarnings);
 	if (!Master)
 	{
 		return nullptr;
@@ -901,6 +874,7 @@ bool LilaLink::ParseMaterialRequest(const TSharedPtr<FJsonObject>& Params, const
 	Options->TryGetBoolField(TEXT("importMaterials"), Out.bCreate);
 	Options->TryGetBoolField(TEXT("importTextures"), Out.bImportTextures);
 	Options->TryGetBoolField(TEXT("keepMaterials"), Out.bKeep);
+	Options->TryGetBoolField(TEXT("rebuildMaterial"), Out.bRebuildMaterial);
 
 	FString Folder;
 	Options->TryGetStringField(TEXT("materialFolder"), Folder);
@@ -984,7 +958,7 @@ void LilaLink::ApplyMaterials(const FMaterialRequest& Request, const TArray<FStr
 	}
 }
 
-UMaterialInterface* LilaLink::StylisedParent(const FString& Model, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+UMaterialInterface* LilaLink::StylisedParent(const FString& Model, bool bRebuild, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedParent);
 
@@ -994,7 +968,7 @@ UMaterialInterface* LilaLink::StylisedParent(const FString& Model, TArray<FStrin
 		OutWarnings.Add(FString::Printf(TEXT("No stylised master for shading model '%s'"), *Model));
 		return nullptr;
 	}
-	return StylisedMaster(bToon, nullptr, OutCreated, OutWarnings);
+	return StylisedMaster(bToon, nullptr, bRebuild, OutCreated, OutWarnings);
 }
 
 const TCHAR* LilaLink::MastersFolderPath() { return MastersFolder; }

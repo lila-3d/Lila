@@ -25,6 +25,6 @@ namespace LilaLink
  */
 void AddTrimMethods(TMap<FString, FLilaLinkMethod>& Methods);
 
-/** Builds MF_LilaTrim and M_LilaTrim on it when missing, or rebuilds both when bRegenerate. Null with OutWarnings on failure. */
+/** Builds MF_LilaTrim and M_LilaTrim on it when either is missing or bRegenerate. Null with OutWarnings on failure. */
 UMaterial* TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVersion, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
 } // namespace LilaLink

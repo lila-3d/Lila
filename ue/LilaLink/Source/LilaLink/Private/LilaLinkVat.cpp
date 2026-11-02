@@ -636,10 +636,9 @@ void BuildVatMaterial(UMaterial* Material, UMaterialFunction* Function, bool bNo
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::BuildVatMaterial);
 
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Function);
 	FVatGraph G;
 	G.Material = Material;
-	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
 	const bool bWired = bNormals ? LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}, {TEXT("Normal"), MP_Normal}})
 								 : LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}});
 	if (!bWired)
@@ -801,18 +800,15 @@ void BuildRigidFunction(UMaterialFunction* Function, const FVatMeta& Meta, UText
 	UMaterialEditingLibrary::UpdateMaterialFunction(Function);
 }
 
-/** M_LilaVatRigid: the rigid function's position and world-space normal, plus the vertex VAT material's surface parameters. */
+/** M_LilaVATRigid_UV<n>: the rigid function's position and world-space normal, plus the vertex VAT material's surface parameters. */
 void BuildRigidMaterial(UMaterial* Material, UMaterialFunction* Function, TArray<FString>& OutErrors)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::BuildRigidMaterial);
 
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Function);
 	FVatGraph G;
 	G.Material = Material;
-	auto* Call = G.New<UMaterialExpressionMaterialFunctionCall>(-400);
-	Call->SetMaterialFunction(Function);
-	if (!UMaterialEditingLibrary::ConnectMaterialProperty(Call, RigidWpoOutput, MP_WorldPositionOffset) ||
-		!UMaterialEditingLibrary::ConnectMaterialProperty(Call, RigidNormalOutput, MP_Normal))
+	if (!LilaLink::ConnectFunctionOutputs(Call, {{RigidWpoOutput, MP_WorldPositionOffset}, {RigidNormalOutput, MP_Normal}}))
 	{
 		OutErrors.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
 	}
@@ -828,49 +824,9 @@ void BuildRigidMaterial(UMaterial* Material, UMaterialFunction* Function, TArray
 	UMaterialEditingLibrary::RecompileMaterial(Material);
 }
 
-/** The generated rigid function and material for this bake's UV channels, built once and kept after (rebuildMaterial rebuilds both). */
-UMaterialInterface* RigidMaterial(const FVatRequest& R, const FVatMeta& Meta, UTexture* Positions, UTexture* Rotations, TArray<FString>& OutCreated,
-	TArray<FString>& OutErrors)
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkVat::RigidMaterial);
-
-	const FString Suffix = Meta.PivotChannelXY == Meta.UvChannel + 1 && Meta.PivotChannelZ == Meta.UvChannel + 2
-		? FString::Printf(TEXT("UV%d"), Meta.UvChannel)
-		: FString::Printf(TEXT("UV%d_%d_%d"), Meta.UvChannel, Meta.PivotChannelXY, Meta.PivotChannelZ);
-	const FString FunctionName = TEXT("MF_LilaVatRigid_") + Suffix;
-	const FString MaterialName = TEXT("M_LilaVatRigid_") + Suffix;
-	UMaterialFunction* Function = FindAssetAt<UMaterialFunction>(R.MaterialFolder, FunctionName);
-	UMaterial* Material = FindAssetAt<UMaterial>(R.MaterialFolder, MaterialName);
-	if (Function && Material && !R.bRebuildMaterial)
-	{
-		return Material;
-	}
-	IAssetTools& Tools = FAssetToolsModule::GetModule().Get();
-	if (!Function)
-	{
-		UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>(GetTransientPackage());
-		Function = Cast<UMaterialFunction>(Tools.CreateAsset(FunctionName, R.MaterialFolder, UMaterialFunction::StaticClass(), Factory));
-	}
-	if (!Material)
-	{
-		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
-		Material = Cast<UMaterial>(Tools.CreateAsset(MaterialName, R.MaterialFolder, UMaterial::StaticClass(), Factory));
-	}
-	if (!Function || !Material)
-	{
-		OutErrors.Add(FString::Printf(TEXT("Could not create %s and %s in %s"), *FunctionName, *MaterialName, *R.MaterialFolder));
-		return nullptr;
-	}
-	BuildRigidFunction(Function, Meta, Positions, Rotations);
-	BuildRigidMaterial(Material, Function, OutErrors);
-	OutCreated.AddUnique(Function->GetPathName());
-	OutCreated.AddUnique(Material->GetPathName());
-	return Material;
-}
-
 /**
- * materialParent when given, else the generated material for this UV channel and normal choice, on its function, or the
- * rigid one. Each function and material is built when missing and kept after (rebuildMaterial rebuilds both).
+ * materialParent when given, else the generated material for this bake on its function: M_LilaVAT_UV<n> (or _NoNormals) for
+ * a vertex bake, M_LilaVATRigid_<channels> for a rigid one. Both are built when either is missing or rebuildMaterial is set.
  */
 UMaterialInterface* ParentMaterial(const FVatRequest& R, const FVatMeta& Meta, UTexture* Positions, UTexture* Normals, UTexture* Rotations,
 	TArray<FString>& OutCreated, TArray<FString>& OutErrors)
@@ -887,43 +843,42 @@ UMaterialInterface* ParentMaterial(const FVatRequest& R, const FVatMeta& Meta, U
 		OutErrors.Add(FString::Printf(TEXT("No material at %s"), *R.MaterialParent));
 		return nullptr;
 	}
+	FString Kind, Suffix;
 	if (Meta.bRigid)
 	{
-		return RigidMaterial(R, Meta, Positions, Rotations, OutCreated, OutErrors);
+		Kind = TEXT("VATRigid_");
+		Suffix = Meta.PivotChannelXY == Meta.UvChannel + 1 && Meta.PivotChannelZ == Meta.UvChannel + 2
+			? FString::Printf(TEXT("UV%d"), Meta.UvChannel)
+			: FString::Printf(TEXT("UV%d_%d_%d"), Meta.UvChannel, Meta.PivotChannelXY, Meta.PivotChannelZ);
 	}
-	const FString Suffix = FString::Printf(TEXT("UV%d%s"), Meta.UvChannel, Normals ? TEXT("") : TEXT("_NoNormals"));
-	const FString FunctionName = TEXT("MF_LilaVAT_") + Suffix;
-	const FString Name = TEXT("M_LilaVAT_") + Suffix;
-	bool bFunctionCreated = false;
-	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(R.MaterialFolder, FunctionName, bFunctionCreated);
-	if (!Function)
+	else
 	{
-		OutErrors.Add(FString::Printf(TEXT("Could not create %s in %s"), *FunctionName, *R.MaterialFolder));
+		Kind = TEXT("VAT_");
+		Suffix = FString::Printf(TEXT("UV%d%s"), Meta.UvChannel, Normals ? TEXT("") : TEXT("_NoNormals"));
+	}
+	FString Error;
+	const LilaLink::FMaterialPair Pair = LilaLink::FindOrCreateMaterialPair(R.MaterialFolder, TEXT("MF_Lila") + Kind + Suffix, TEXT("M_Lila") + Kind + Suffix, Error);
+	if (!Pair.Material)
+	{
+		OutErrors.Add(Error);
 		return nullptr;
 	}
-	if (bFunctionCreated || R.bRebuildMaterial)
+	if (Pair.bCreated || R.bRebuildMaterial)
 	{
-		BuildVatFunction(Function, Meta.UvChannel, Positions, Normals);
-		OutCreated.AddUnique(Function->GetPathName());
-	}
-	UMaterial* Material = FindAssetAt<UMaterial>(R.MaterialFolder, Name);
-	if (Material && !R.bRebuildMaterial)
-	{
-		return Material;
-	}
-	if (!Material)
-	{
-		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
-		Material = Cast<UMaterial>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, R.MaterialFolder, UMaterial::StaticClass(), Factory));
-		if (!Material)
+		if (Meta.bRigid)
 		{
-			OutErrors.Add(FString::Printf(TEXT("Could not create material %s in %s"), *Name, *R.MaterialFolder));
-			return nullptr;
+			BuildRigidFunction(Pair.Function, Meta, Positions, Rotations);
+			BuildRigidMaterial(Pair.Material, Pair.Function, OutErrors);
 		}
+		else
+		{
+			BuildVatFunction(Pair.Function, Meta.UvChannel, Positions, Normals);
+			BuildVatMaterial(Pair.Material, Pair.Function, Normals != nullptr, OutErrors);
+		}
+		OutCreated.AddUnique(Pair.Function->GetPathName());
+		OutCreated.AddUnique(Pair.Material->GetPathName());
 	}
-	BuildVatMaterial(Material, Function, Normals != nullptr, OutErrors);
-	OutCreated.AddUnique(Material->GetPathName());
-	return Material;
+	return Pair.Material;
 }
 
 UMaterialInstanceConstant* MakeInstance(const FVatRequest& R, UMaterialInterface* Parent, TArray<FString>& OutCreated, TArray<FString>& OutErrors)

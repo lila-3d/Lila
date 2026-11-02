@@ -34,7 +34,7 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 3;
+constexpr int32 MasterVersion = 2;
 const TCHAR* MasterName = TEXT("M_LilaTrim");
 const TCHAR* FunctionName = TEXT("MF_LilaTrim");
 const TCHAR* VersionTag = TEXT("Lila Trim v");
@@ -131,32 +131,14 @@ UTexture* NeutralTexture(const TCHAR* Name, uint8 Level, TextureCompressionSetti
 	return Texture;
 }
 
-/** The version a master's graph was built at, from its Custom nodes' description, in it or in a function it calls; 0 when none says. */
-int32 VersionOf(UMaterial* Material)
+/** The version a master's function was built at, from its Custom nodes' description; 0 when none says. */
+int32 VersionOf(const UMaterialFunction* Function)
 {
-	auto Tagged = [](TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions) {
-		for (UMaterialExpression* E : Expressions)
-		{
-			if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
-			{
-				return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
-			}
-		}
-		return 0;
-	};
-	if (const int32 Version = Tagged(Material->GetExpressions()))
+	for (UMaterialExpression* E : Function->GetExpressions())
 	{
-		return Version;
-	}
-	for (UMaterialExpression* E : Material->GetExpressions())
-	{
-		const UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(E);
-		if (const UMaterialFunction* Function = Call ? Cast<UMaterialFunction>(Call->MaterialFunction) : nullptr)
+		if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
 		{
-			if (const int32 Version = Tagged(Function->GetExpressions()))
-			{
-				return Version;
-			}
+			return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
 		}
 	}
 	return 0;
@@ -335,7 +317,7 @@ void BuildMaster(UMaterial* Material, UMaterialFunction* Function, TArray<FStrin
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildMaster);
 
-	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Function);
 	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Roughness"), MP_Roughness}, {TEXT("Metallic"), MP_Metallic},
 			{TEXT("AmbientOcclusion"), MP_AmbientOcclusion}, {TEXT("Normal"), MP_Normal}}))
 	{
@@ -537,47 +519,28 @@ UMaterial* LilaLink::TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVer
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::TrimMaster);
 
 	const FString Folder = LilaLink::MastersFolderPath();
-	bool bFunctionCreated = false;
-	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(Folder, FunctionName, bFunctionCreated);
-	if (!Function)
+	FString Error;
+	const LilaLink::FMaterialPair Pair = LilaLink::FindOrCreateMaterialPair(Folder, FunctionName, MasterName, Error);
+	if (!Pair.Material)
 	{
-		OutWarnings.Add(FString::Printf(TEXT("Could not create %s in %s"), FunctionName, *Folder));
+		OutWarnings.Add(Error);
 		return nullptr;
 	}
-	if (bFunctionCreated || bRegenerate)
+	bOutBuilt = Pair.bCreated || bRegenerate;
+	if (bOutBuilt)
 	{
-		BuildFunction(Function, OutCreated);
-		OutCreated.AddUnique(Function->GetPathName());
+		BuildFunction(Pair.Function, OutCreated);
+		BuildMaster(Pair.Material, Pair.Function, OutWarnings);
+		OutCreated.AddUnique(Pair.Function->GetPathName());
+		OutCreated.AddUnique(Pair.Material->GetPathName());
 	}
-	UMaterial* Material = AssetAt<UMaterial>(Folder, MasterName);
-	bOutBuilt = false;
-	if (!Material)
-	{
-		UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>(GetTransientPackage());
-		Material = Cast<UMaterial>(FAssetToolsModule::GetModule().Get().CreateAsset(MasterName, Folder, UMaterial::StaticClass(), Factory));
-		if (!Material)
-		{
-			OutWarnings.Add(FString::Printf(TEXT("Could not create %s in %s"), MasterName, *Folder));
-			return nullptr;
-		}
-		OutCreated.AddUnique(Material->GetPathName());
-		BuildMaster(Material, Function, OutWarnings);
-		bOutBuilt = true;
-	}
-	else if (bRegenerate)
-	{
-		Material->Modify();
-		UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-		BuildMaster(Material, Function, OutWarnings);
-		bOutBuilt = true;
-	}
-	OutVersion = VersionOf(Material);
+	OutVersion = VersionOf(Pair.Function);
 	if (OutVersion < MasterVersion)
 	{
 		OutWarnings.Add(FString::Printf(TEXT("%s is version %d, older than this plugin's %d; it is kept as edited (regenerate rebuilds it)"),
 			MasterName, OutVersion, MasterVersion));
 	}
-	return Material;
+	return Pair.Material;
 }
 
 void LilaLink::AddTrimMethods(TMap<FString, FLilaLinkMethod>& Methods)

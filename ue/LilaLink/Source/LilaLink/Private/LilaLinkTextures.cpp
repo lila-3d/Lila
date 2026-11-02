@@ -408,10 +408,12 @@ void ImportTextures(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRe
 	FString MaterialFolder = Folder;
 	Params->TryGetStringField(TEXT("materialFolder"), MaterialFolder);
 	bool bSave = false;
+	bool bRebuildMaterial = false;
 	const TSharedPtr<FJsonObject>* Options = nullptr;
 	if (Params->TryGetObjectField(TEXT("options"), Options))
 	{
 		(*Options)->TryGetBoolField(TEXT("save"), bSave);
+		(*Options)->TryGetBoolField(TEXT("rebuildMaterial"), bRebuildMaterial);
 	}
 
 	TArray<FString> Assets, Warnings, Errors;
@@ -429,9 +431,9 @@ void ImportTextures(const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRe
 	{
 		FString ParentPath;
 		Params->TryGetStringField(TEXT("materialParent"), ParentPath);
-		// "lila:painterly" and "lila:toon" are LilaLink's own stylised masters, built on first use.
+		// "lila:painterly" and "lila:toon" are LilaLink's own stylised masters, built on first use or with rebuildMaterial.
 		UMaterialInterface* Parent = ParentPath.IsEmpty() ? nullptr
-			: ParentPath.StartsWith(TEXT("lila:")) ? LilaLink::StylisedParent(ParentPath.RightChop(5), Assets, Warnings)
+			: ParentPath.StartsWith(TEXT("lila:")) ? LilaLink::StylisedParent(ParentPath.RightChop(5), bRebuildMaterial, Assets, Warnings)
 			: Cast<UMaterialInterface>(FSoftObjectPath(ParentPath.Contains(TEXT(".")) ? ParentPath : ParentPath + TEXT(".") + FPackageName::GetShortName(ParentPath)).TryLoad());
 		TArray<FInstanceRequest> Instances;
 		ParseInstances(Params, Instances);
