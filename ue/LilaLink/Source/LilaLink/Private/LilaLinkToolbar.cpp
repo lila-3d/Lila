@@ -126,8 +126,8 @@ TSharedRef<SWidget> BuildMenu()
 	Menu.AddMenuEntry(LOCTEXT("TrimMaster", "Generate Trim Master Material"),
 		LOCTEXT("TrimMasterTip",
 			"Builds M_LilaTrim, the master Lila's trim sheets use: baked sheet maps turned into worn edges, cavity dirt, a tiling detail layer and "
-			"a vertex colour blend, with Detail, VertexBlend and Parallax as static switches. Rebuilds the graph in place when it exists, "
-			"discarding edits to it; instances keep their values."),
+			"a vertex colour blend, with Detail, VertexBlend and Parallax as static switches. The logic is in MF_LilaTrim, which your own "
+			"materials can call. Rebuilds both in place when they exist, discarding edits to them; instances keep their values."),
 		AppIcon(TEXT("ClassIcon.Material")), Action(&LilaLinkActions::GenerateTrimMaster));
 	Menu.EndSection();
 

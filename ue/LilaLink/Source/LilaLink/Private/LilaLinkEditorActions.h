@@ -30,6 +30,6 @@ void SetUpSelectedTexturesForUniqueUVs();
 /** Address Wrap on the selected textures, and the normal map texture group on normal maps. */
 void SetUpSelectedTexturesForTiling();
 
-/** Builds M_LilaTrim, the trim sheet master, in the masters folder; rebuilds its graph in place when it already exists. */
+/** Builds M_LilaTrim, the trim sheet master, on MF_LilaTrim in the masters folder; rebuilds both in place when they already exist. */
 void GenerateTrimMaster();
 } // namespace LilaLinkActions

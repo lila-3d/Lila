@@ -1,6 +1,7 @@
 #include "LilaLinkTrim.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMaterials.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -24,6 +25,8 @@
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionVertexColor.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "UObject/Package.h"
@@ -31,8 +34,9 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 2;
+constexpr int32 MasterVersion = 3;
 const TCHAR* MasterName = TEXT("M_LilaTrim");
+const TCHAR* FunctionName = TEXT("MF_LilaTrim");
 const TCHAR* VersionTag = TEXT("Lila Trim v");
 
 TSharedPtr<FJsonValue> Obj(const TSharedRef<FJsonObject>& O) { return MakeShared<FJsonValueObject>(O); }
@@ -127,57 +131,66 @@ UTexture* NeutralTexture(const TCHAR* Name, uint8 Level, TextureCompressionSetti
 	return Texture;
 }
 
+/** The version a master's graph was built at, from its Custom nodes' description, in it or in a function it calls; 0 when none says. */
 int32 VersionOf(UMaterial* Material)
 {
+	auto Tagged = [](TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions) {
+		for (UMaterialExpression* E : Expressions)
+		{
+			if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
+			{
+				return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
+			}
+		}
+		return 0;
+	};
+	if (const int32 Version = Tagged(Material->GetExpressions()))
+	{
+		return Version;
+	}
 	for (UMaterialExpression* E : Material->GetExpressions())
 	{
-		if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(VersionTag))
+		const UMaterialExpressionMaterialFunctionCall* Call = Cast<UMaterialExpressionMaterialFunctionCall>(E);
+		if (const UMaterialFunction* Function = Call ? Cast<UMaterialFunction>(Call->MaterialFunction) : nullptr)
 		{
-			return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(VersionTag)));
+			if (const int32 Version = Tagged(Function->GetExpressions()))
+			{
+				return Version;
+			}
 		}
 	}
 	return 0;
 }
 
-void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
+/**
+ * MF_LilaTrim: the sheet's baked maps through UVs (uv0 unless connected) turned into paint, outputs BaseColor, Roughness,
+ * Metallic, AmbientOcclusion and tangent-space Normal. Every parameter input defaults to the parameter of its name; the
+ * UseDetail, UseVertexBlend, UseParallax and UsePaintedMaps static switches stay parameters inside the function.
+ */
+void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildMaster);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildFunction);
 
-	int32 Row = 0;
-	auto NextY = [&Row] { return (Row++) * 120; };
-	auto Make = [&](UClass* Class, int32 X) { return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, NextY()); };
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Trim: a trim sheet's baked maps turned into worn edges, cavity dirt, a tiling detail layer and a vertex blend."));
 	TMap<FString, UMaterialExpression*> Inputs;
-	auto Scalar = [&](const TCHAR* Param, float Value, const TCHAR* Group) {
-		auto* E = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -1400));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		Inputs.Add(Param, E);
+	auto Scalar = [&](const TCHAR* Param, float Value, const TCHAR* Group, const TCHAR* Description) {
+		Inputs.Add(Param, G.ScalarInput(Param, Value, Group, Description));
 	};
-	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value, const TCHAR* Group) {
-		auto* E = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -1400));
-		E->ParameterName = Param;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		Inputs.Add(Param, E);
+	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value, const TCHAR* Group, const TCHAR* Description) {
+		Inputs.Add(Param, G.VectorInput(Param, Value, Group, Description));
 	};
-	auto Texture = [&](const TCHAR* Param, UTexture* Default, EMaterialSamplerType Type, const TCHAR* Group) {
-		auto* E = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -1400));
-		E->ParameterName = Param;
-		E->Texture = Default;
-		E->SamplerType = Type;
-		E->Group = Group;
-		Inputs.Add(Param, E);
+	auto Texture = [&](const TCHAR* Param, UTexture* Default, EMaterialSamplerType Type, const TCHAR* Group, const TCHAR* Description) {
+		Inputs.Add(Param, G.TextureInput(Param, Default, Type, Group, Description));
 	};
 	// A static switch between 1 and 0: an instance that leaves it off folds the branch it gates out of the shader.
 	auto Switch = [&](const TCHAR* Param, bool bDefault, const TCHAR* Group) {
-		auto* S = Cast<UMaterialExpressionStaticSwitchParameter>(Make(UMaterialExpressionStaticSwitchParameter::StaticClass(), -1200));
+		auto* S = G.New<UMaterialExpressionStaticSwitchParameter>(-1200);
 		S->ParameterName = Param;
 		S->DefaultValue = bDefault;
 		S->Group = Group;
-		auto* On = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass(), -1400));
+		auto* On = G.New<UMaterialExpressionConstant>(-1400);
 		On->R = 1.0f;
-		auto* Off = Cast<UMaterialExpressionConstant>(Make(UMaterialExpressionConstant::StaticClass(), -1400));
+		auto* Off = G.New<UMaterialExpressionConstant>(-1400);
 		Off->R = 0.0f;
 		UMaterialEditingLibrary::ConnectMaterialExpressions(On, TEXT(""), S, TEXT("True"));
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Off, TEXT(""), S, TEXT("False"));
@@ -185,53 +198,53 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		return S;
 	};
 
-	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
 	UTexture* Flat = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineMaterials/FlatNormal.FlatNormal"));
 	UTexture* Grey = NeutralTexture(TEXT("T_LilaTrimNeutral"), 128, TC_Masks, OutCreated);
 	UTexture* WhiteMask = NeutralTexture(TEXT("T_LilaTrimWhite"), 255, TC_Masks, OutCreated);
 	UTexture* Height = NeutralTexture(TEXT("T_LilaTrimHeight"), 128, TC_Grayscale, OutCreated);
-	Texture(TEXT("SheetNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Sheet"));
-	Texture(TEXT("SheetAOMap"), WhiteMask, SAMPLERTYPE_Masks, TEXT("Sheet"));
-	Texture(TEXT("SheetCurvatureMap"), Grey, SAMPLERTYPE_Masks, TEXT("Sheet"));
-	Texture(TEXT("SheetCavityMap"), WhiteMask, SAMPLERTYPE_Masks, TEXT("Sheet"));
-	Texture(TEXT("SheetHeightMap"), Height, SAMPLERTYPE_LinearGrayscale, TEXT("Sheet"));
-	Texture(TEXT("DetailBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Detail"));
-	Texture(TEXT("DetailNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Detail"));
-	Texture(TEXT("DetailORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Detail"));
-	Texture(TEXT("SheetBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Painted"));
-	Texture(TEXT("SheetORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Painted"));
+	Texture(TEXT("SheetNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Sheet"), TEXT("The sheet's baked normal."));
+	Texture(TEXT("SheetAOMap"), WhiteMask, SAMPLERTYPE_Masks, TEXT("Sheet"), TEXT("The sheet's baked ambient occlusion."));
+	Texture(TEXT("SheetCurvatureMap"), Grey, SAMPLERTYPE_Masks, TEXT("Sheet"), TEXT("The sheet's baked curvature, 0.5 flat."));
+	Texture(TEXT("SheetCavityMap"), WhiteMask, SAMPLERTYPE_Masks, TEXT("Sheet"), TEXT("The sheet's baked cavity."));
+	Texture(TEXT("SheetHeightMap"), Height, SAMPLERTYPE_LinearGrayscale, TEXT("Sheet"), TEXT("The sheet's baked height, for parallax."));
+	Texture(TEXT("DetailBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Detail"), TEXT("Tiling detail colour, 0.5 neutral."));
+	Texture(TEXT("DetailNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Detail"), TEXT("Tiling detail normal."));
+	Texture(TEXT("DetailORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Detail"), TEXT("Tiling detail ORM; roughness in G, 0.5 neutral."));
+	Texture(TEXT("SheetBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Painted"), TEXT("The sheet's painted base colour, with UsePaintedMaps."));
+	Texture(TEXT("SheetORMMap"), Grey, SAMPLERTYPE_Masks, TEXT("Painted"), TEXT("The sheet's painted ORM, with UsePaintedMaps."));
 
-	Scalar(TEXT("SheetWidthCm"), 400.0f, TEXT("Sheet"));
-	Scalar(TEXT("SheetHeightCm"), 400.0f, TEXT("Sheet"));
-	Scalar(TEXT("AOStrength"), 1.0f, TEXT("Sheet"));
-	Vector(TEXT("Tint"), FLinearColor(0.35f, 0.37f, 0.4f), TEXT("Paint"));
-	Scalar(TEXT("BaseRoughness"), 0.55f, TEXT("Paint"));
-	Scalar(TEXT("Metallic"), 0.0f, TEXT("Paint"));
-	Vector(TEXT("EdgeTint"), FLinearColor(0.62f, 0.6f, 0.58f), TEXT("Edges"));
-	Scalar(TEXT("EdgeWear"), 1.0f, TEXT("Edges"));
-	Scalar(TEXT("EdgeThreshold"), 0.05f, TEXT("Edges"));
-	Scalar(TEXT("EdgeSoftness"), 0.15f, TEXT("Edges"));
-	Scalar(TEXT("EdgeRoughness"), 0.3f, TEXT("Edges"));
-	Scalar(TEXT("EdgeMetallic"), 1.0f, TEXT("Edges"));
-	Vector(TEXT("DirtColor"), FLinearColor(0.45f, 0.4f, 0.33f), TEXT("Dirt"));
-	Scalar(TEXT("CavityStrength"), 0.5f, TEXT("Dirt"));
-	Scalar(TEXT("DirtRoughness"), 0.2f, TEXT("Dirt"));
-	Scalar(TEXT("DetailScaleCm"), 100.0f, TEXT("Detail"));
-	Scalar(TEXT("DetailStrength"), 0.5f, TEXT("Detail"));
-	Scalar(TEXT("DetailNormalStrength"), 1.0f, TEXT("Detail"));
-	Vector(TEXT("SecondaryTint"), FLinearColor(0.3f, 0.25f, 0.2f), TEXT("Vertex Blend"));
-	Scalar(TEXT("SecondaryRoughness"), 0.85f, TEXT("Vertex Blend"));
-	Scalar(TEXT("VertexBlend"), 1.0f, TEXT("Vertex Blend"));
-	Scalar(TEXT("ParallaxHeight"), 0.02f, TEXT("Parallax"));
+	Scalar(TEXT("SheetWidthCm"), 400.0f, TEXT("Sheet"), TEXT("The sheet's width in the world, cm."));
+	Scalar(TEXT("SheetHeightCm"), 400.0f, TEXT("Sheet"), TEXT("The sheet's height in the world, cm."));
+	Scalar(TEXT("AOStrength"), 1.0f, TEXT("Sheet"), TEXT("How much of the baked AO shows."));
+	Vector(TEXT("Tint"), FLinearColor(0.35f, 0.37f, 0.4f), TEXT("Paint"), TEXT("Paint colour."));
+	Scalar(TEXT("BaseRoughness"), 0.55f, TEXT("Paint"), TEXT("Paint roughness."));
+	Scalar(TEXT("Metallic"), 0.0f, TEXT("Paint"), TEXT("Paint metallic."));
+	Vector(TEXT("EdgeTint"), FLinearColor(0.62f, 0.6f, 0.58f), TEXT("Edges"), TEXT("Colour of worn edges."));
+	Scalar(TEXT("EdgeWear"), 1.0f, TEXT("Edges"), TEXT("Amount of edge wear."));
+	Scalar(TEXT("EdgeThreshold"), 0.05f, TEXT("Edges"), TEXT("Curvature above flat where wear starts."));
+	Scalar(TEXT("EdgeSoftness"), 0.15f, TEXT("Edges"), TEXT("Fade of the wear."));
+	Scalar(TEXT("EdgeRoughness"), 0.3f, TEXT("Edges"), TEXT("Roughness of worn edges."));
+	Scalar(TEXT("EdgeMetallic"), 1.0f, TEXT("Edges"), TEXT("Metallic of worn edges."));
+	Vector(TEXT("DirtColor"), FLinearColor(0.45f, 0.4f, 0.33f), TEXT("Dirt"), TEXT("Multiplied in where dirt gathers."));
+	Scalar(TEXT("CavityStrength"), 0.5f, TEXT("Dirt"), TEXT("Dirt amount in cavities."));
+	Scalar(TEXT("DirtRoughness"), 0.2f, TEXT("Dirt"), TEXT("Roughness added by dirt."));
+	Scalar(TEXT("DetailScaleCm"), 100.0f, TEXT("Detail"), TEXT("World size of one detail tile, cm."));
+	Scalar(TEXT("DetailStrength"), 0.5f, TEXT("Detail"), TEXT("How much of the detail colour and roughness shows."));
+	Scalar(TEXT("DetailNormalStrength"), 1.0f, TEXT("Detail"), TEXT("Scales the detail normal."));
+	Vector(TEXT("SecondaryTint"), FLinearColor(0.3f, 0.25f, 0.2f), TEXT("Vertex Blend"), TEXT("Colour blended in by vertex colour red."));
+	Scalar(TEXT("SecondaryRoughness"), 0.85f, TEXT("Vertex Blend"), TEXT("Roughness blended in by vertex colour red."));
+	Scalar(TEXT("VertexBlend"), 1.0f, TEXT("Vertex Blend"), TEXT("Scales vertex colour red."));
+	Scalar(TEXT("ParallaxHeight"), 0.02f, TEXT("Parallax"), TEXT("Parallax depth in UV units."));
 	Switch(TEXT("UseDetail"), false, TEXT("Detail"));
 	Switch(TEXT("UseVertexBlend"), false, TEXT("Vertex Blend"));
-	Inputs.Add(TEXT("VColor"), Make(UMaterialExpressionVertexColor::StaticClass(), -1400));
+	Inputs.Add(TEXT("VColor"), G.Make(UMaterialExpressionVertexColor::StaticClass(), -1400));
 
 	// The sheet uv: uv0, or offset along the tangent-space view by the baked height when parallax is on (Unreal's bump offset).
 	{
-		auto* UV0 = Cast<UMaterialExpressionTextureCoordinate>(Make(UMaterialExpressionTextureCoordinate::StaticClass(), -1600));
+		auto* UV0 = G.New<UMaterialExpressionTextureCoordinate>(-1700);
 		UV0->CoordinateIndex = 0;
-		auto* Offset = Cast<UMaterialExpressionCustom>(Make(UMaterialExpressionCustom::StaticClass(), -1500));
+		UMaterialExpression* Uvs = G.Input(TEXT("UVs"), FunctionInput_Vector2, UV0, TEXT("The sheet UVs; UV channel 0 when unconnected."));
+		auto* Offset = G.New<UMaterialExpressionCustom>(-1500);
 		Offset->Description = TEXT("Sheet parallax");
 		Offset->Code = TEXT("float h = Texture2DSample(SheetHeightMap, SheetHeightMapSampler, UV).r;\n"
 							"float3 v = mul(Parameters.TangentToWorld, Parameters.CameraVector);\n"
@@ -243,14 +256,14 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 			Offset->Inputs.AddDefaulted_GetRef().InputName = Name;
 		}
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Inputs[TEXT("SheetHeightMap")], TEXT(""), Offset, TEXT("SheetHeightMap"));
-		UMaterialEditingLibrary::ConnectMaterialExpressions(UV0, TEXT(""), Offset, TEXT("UV"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Uvs, TEXT(""), Offset, TEXT("UV"));
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Inputs[TEXT("ParallaxHeight")], TEXT(""), Offset, TEXT("ParallaxHeight"));
-		auto* Pick = Cast<UMaterialExpressionStaticSwitchParameter>(Make(UMaterialExpressionStaticSwitchParameter::StaticClass(), -1300));
+		auto* Pick = G.New<UMaterialExpressionStaticSwitchParameter>(-1300);
 		Pick->ParameterName = TEXT("UseParallax");
 		Pick->DefaultValue = false;
 		Pick->Group = TEXT("Parallax");
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Offset, TEXT(""), Pick, TEXT("True"));
-		UMaterialEditingLibrary::ConnectMaterialExpressions(UV0, TEXT(""), Pick, TEXT("False"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Uvs, TEXT(""), Pick, TEXT("False"));
 		Inputs.Add(TEXT("SheetUV"), Pick);
 	}
 
@@ -263,7 +276,7 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		return All;
 	};
 	auto CustomOf = [&](const FString& Description, const FString& Code, ECustomMaterialOutputType Type, const TArray<const TCHAR*>& Names) {
-		auto* E = Cast<UMaterialExpressionCustom>(Make(UMaterialExpressionCustom::StaticClass(), -400));
+		auto* E = G.New<UMaterialExpressionCustom>(-400);
 		E->Description = Description;
 		E->Code = Code;
 		E->OutputType = Type;
@@ -297,7 +310,7 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 	// UsePaintedMaps: the sheet's texture set from Lila (base colour and ORM) stands in for the procedural paint.
 	auto Painted = [&](UMaterialExpression* Procedural, const TCHAR* Map, const TCHAR* Code, ECustomMaterialOutputType Type) -> UMaterialExpression* {
 		auto* Sample = CustomOf(Version + TEXT(" painted"), Code, Type, {TEXT("SheetUV"), Map});
-		auto* Pick = Cast<UMaterialExpressionStaticSwitchParameter>(Make(UMaterialExpressionStaticSwitchParameter::StaticClass(), -200));
+		auto* Pick = G.New<UMaterialExpressionStaticSwitchParameter>(-200);
 		Pick->ParameterName = TEXT("UsePaintedMaps");
 		Pick->DefaultValue = false;
 		Pick->Group = TEXT("Painted");
@@ -305,20 +318,29 @@ void BuildMaster(UMaterial* Material, TArray<FString>& OutCreated)
 		UMaterialEditingLibrary::ConnectMaterialExpressions(Procedural, TEXT(""), Pick, TEXT("False"));
 		return Pick;
 	};
-	UMaterialEditingLibrary::ConnectMaterialProperty(
-		Painted(Color, TEXT("SheetBaseColorMap"), TEXT("return Texture2DSample(SheetBaseColorMap, SheetBaseColorMapSampler, SheetUV).rgb;"), CMOT_Float3),
-		TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(
-		Painted(Roughness, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).g;"), CMOT_Float1), TEXT(""),
-		MP_Roughness);
-	UMaterialEditingLibrary::ConnectMaterialProperty(
-		Painted(Metallic, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).b;"), CMOT_Float1), TEXT(""),
-		MP_Metallic);
-	UMaterialEditingLibrary::ConnectMaterialProperty(
-		Painted(Occlusion, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).r;"), CMOT_Float1), TEXT(""),
-		MP_AmbientOcclusion);
-	UMaterialEditingLibrary::ConnectMaterialProperty(Normal, TEXT(""), MP_Normal);
+	G.Output(Painted(Color, TEXT("SheetBaseColorMap"), TEXT("return Texture2DSample(SheetBaseColorMap, SheetBaseColorMapSampler, SheetUV).rgb;"), CMOT_Float3),
+		TEXT("BaseColor"), TEXT("Base colour."));
+	G.Output(Painted(Roughness, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).g;"), CMOT_Float1),
+		TEXT("Roughness"), TEXT("Roughness."));
+	G.Output(Painted(Metallic, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).b;"), CMOT_Float1),
+		TEXT("Metallic"), TEXT("Metallic."));
+	G.Output(Painted(Occlusion, TEXT("SheetORMMap"), TEXT("return Texture2DSample(SheetORMMap, SheetORMMapSampler, SheetUV).r;"), CMOT_Float1),
+		TEXT("AmbientOcclusion"), TEXT("Ambient occlusion."));
+	G.Output(Normal, TEXT("Normal"), TEXT("Tangent-space normal."));
+	G.Finish();
+}
 
+/** M_LilaTrim: MF_LilaTrim's five outputs on the material's pins. */
+void BuildMaster(UMaterial* Material, UMaterialFunction* Function, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildMaster);
+
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Roughness"), MP_Roughness}, {TEXT("Metallic"), MP_Metallic},
+			{TEXT("AmbientOcclusion"), MP_AmbientOcclusion}, {TEXT("Normal"), MP_Normal}}))
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
+	}
 	Material->bUsedWithInstancedStaticMeshes = true;
 	Material->bUsedWithNanite = true;
 	Material->PostEditChange();
@@ -515,6 +537,18 @@ UMaterial* LilaLink::TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVer
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::TrimMaster);
 
 	const FString Folder = LilaLink::MastersFolderPath();
+	bool bFunctionCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(Folder, FunctionName, bFunctionCreated);
+	if (!Function)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not create %s in %s"), FunctionName, *Folder));
+		return nullptr;
+	}
+	if (bFunctionCreated || bRegenerate)
+	{
+		BuildFunction(Function, OutCreated);
+		OutCreated.AddUnique(Function->GetPathName());
+	}
 	UMaterial* Material = AssetAt<UMaterial>(Folder, MasterName);
 	bOutBuilt = false;
 	if (!Material)
@@ -527,14 +561,14 @@ UMaterial* LilaLink::TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVer
 			return nullptr;
 		}
 		OutCreated.AddUnique(Material->GetPathName());
-		BuildMaster(Material, OutCreated);
+		BuildMaster(Material, Function, OutWarnings);
 		bOutBuilt = true;
 	}
 	else if (bRegenerate)
 	{
 		Material->Modify();
 		UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-		BuildMaster(Material, OutCreated);
+		BuildMaster(Material, Function, OutWarnings);
 		bOutBuilt = true;
 	}
 	OutVersion = VersionOf(Material);
