@@ -74,5 +74,5 @@ lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp
     CableNode.cpp ContourNode.cpp StrapNode.cpp StrapNode.h EnvAttrs.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp
     VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
     SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h
-    PlanarNodes.cpp PlanarNodes.h)
+    PlanarNodes.cpp PlanarNodes.h TurntableBase.cpp TurntableBase.h)
 target_link_libraries(lila_curve_scene PUBLIC lila_curve lila_scene lila_brush lila_io)

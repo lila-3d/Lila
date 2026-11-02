@@ -8,6 +8,7 @@
 #include "curve/GroomNode.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
+#include "curve/TurntableBase.h"
 #include "curve/VehicleNodes.h"
 #include "curve/SketchNode.h"
 #include "curve/StrapNode.h"
@@ -984,5 +985,6 @@ void registerCommands()
     registerVehicleCommands();
     registerSketchCommands();
     registerGroomCommands();
+    registerTurntableBaseCommand();
 }
 } // namespace lila::curve

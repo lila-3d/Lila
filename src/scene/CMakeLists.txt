@@ -105,6 +105,7 @@ lila_module(lila_scene Scene
     Transform.cpp
     TransformCommands.cpp
     TransformOps.cpp
+    Turntable.cpp Turntable.h
     ViewState.cpp ViewState.h)
 
 find_package(Eigen3 CONFIG REQUIRED)

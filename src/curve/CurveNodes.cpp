@@ -20,6 +20,7 @@
 #include "scene/Components.h"
 #include "scene/ConformTargets.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 
 #include <glm/gtc/constants.hpp>
 
@@ -651,6 +652,14 @@ PlugValue revolveRun(const Node& n)
     geo::Mesh out;
     for (const Spline& s : in(n, "profile"))
         out.append(revolve(tessellate(s, tess), o));
+    if (const std::string& slot = n.as<std::string>(n.type().attrIndex("material")); !slot.empty())
+    {
+        std::vector<uint32_t> faces;
+        for (geo::Index fi = 0; fi < out.faceCapacity(); ++fi)
+            if (out.faceValid(fi))
+                faces.push_back(fi);
+        materials::assign(out, slot, faces);
+    }
     return meshValue(std::move(out));
 }
 
@@ -821,7 +830,9 @@ void registerHistoryTypes()
     std::vector<AttrDef> rev = {dataIn("profile", "Profile curves, world space."), vAttr("axisOrigin", D3(0.0), "A point on the axis."),
                                 vAttr("axis", D3(0, 1, 0), "Axis direction."), fAttr("startSweep", 0.0, "Start angle, degrees."),
                                 fAttr("endSweep", 360.0, "End angle, degrees."), iAttr("sections", 16, "Segments around the axis.", 1),
-                                bAttr("caps", true, "Close the ends of a partial sweep of a closed profile."), bAttr("flip", false, "Flip the faces.")};
+                                bAttr("caps", true, "Close the ends of a partial sweep of a closed profile."), bAttr("flip", false, "Flip the faces."),
+                                AttrDef{.name = "material", .type = PlugType::String, .defaultValue = std::string(), .flags = kIn,
+                                        .doc = "The material every face uses, by name; empty is the default."}};
     for (AttrDef& a : tessAttrs(1))
         rev.push_back(a);
     rev.push_back(meshOut());

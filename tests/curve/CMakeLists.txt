@@ -23,6 +23,7 @@ add_executable(lila_curve_tests
     test_strap.cpp
     test_svg.cpp
     test_text.cpp
+    test_turntable_base.cpp
     test_vehicle_math.cpp
     test_vehicle_scene.cpp)
 target_link_libraries(lila_curve_tests PRIVATE LilaScene doctest::doctest)

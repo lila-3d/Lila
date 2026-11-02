@@ -116,6 +116,7 @@ lila_module(lila_ui UI
     RigViewport.cpp RigViewport.h WeightPaintTool.cpp WeightPaintTool.h
     SpacesUi.cpp SpacesUi.h
     InstancingUi.cpp InstancingUi.h
+    TurntableUi.cpp TurntableUi.h
     UnrealMappingUi.cpp UnrealMappingUi.h
     DeformUi.cpp DeformUi.h
     DeformHandles.cpp DeformHandles.h

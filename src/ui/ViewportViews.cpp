@@ -1,6 +1,7 @@
 #include "ui/ViewportWidgetDetail.h"
 #include "ui/ViewportToast.h"
 #include "scene/SoftSelect.h"
+#include "scene/Turntable.h"
 
 #include <QVariantAnimation>
 
@@ -838,6 +839,9 @@ void ViewportWidget::frameSelection(bool all)
         lo = glm::dvec3(-50.0);
         hi = glm::dvec3(50.0);
     }
+    // Something on a turntable is framed for its whole turn, so it never leaves the view while it spins.
+    else if (scene::turntable::sweepBounds(g, ids, lo, hi))
+        group = false;
     // Maya frames a group from further out than a single mesh.
     double radius = glm::length(hi - lo) * 0.5 * (group ? 2.0 : 1.0) / zoom;
     mCamera.frame((lo + hi) * 0.5, radius, aspect());

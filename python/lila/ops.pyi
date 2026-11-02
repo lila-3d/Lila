@@ -5327,7 +5327,7 @@ def polyInsetRegion(distance: float | None = None, depth: float | None = None, p
     """
 
 def polyKnife(mesh: str | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, through: bool | None = None, eye: Sequence[float] | None = None, direction: Sequence[float] | None = None, loopEdge: int | None = None, fraction: float | None = None, deleteEdge: int | None = None, select: bool | None = None) -> Any:
-    """Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's symmetry. Returns the new edges.
+    """Knife / multi-cut: cut a mesh along a path of points, splitting the faces between them and the edges the path crosses. Between two points the cut follows the surface under the straight screen line joining them (seen from eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's symmetry. A single point on an edge inserts a vertex there. Returns the new edges.
 
     Args:
         mesh: Mesh to cut; default: the selected or hilited mesh.
@@ -5641,6 +5641,13 @@ def pruneWeights(*objects: Any, threshold: float | None = None, vertices: Sequen
         objects: mesh.
         threshold: Smallest weight kept. Short form t. Default 0.01.
         vertices: Point ids; defaults to the selected vertices, else all. Short form v.
+    """
+
+def putOnTurntable(*objects: Any) -> Any:
+    """Put objects (the selection by default) on a turntable: the selected turntable, or the one other selected objects are on, else a new one under them. Returns the turntable's name.
+
+    Args:
+        objects: objects.
     """
 
 def quadRemesh(*objects: Any, targetFaces: int | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, pureQuads: bool | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
@@ -6027,7 +6034,7 @@ def renderSequence(camera: str | None = None, width: int | None = None, height: 
         step: Frames between renders (1 by default). Short form by.
     """
 
-def renderTurntable(camera: str | None = None, width: int | None = None, height: int | None = None, scale: float | None = None, samples: int | None = None, motionBlur: bool | None = None, transparent: bool | None = None, renderPass: str | None = None, path: str | None = None, video: str | None = None, codec: str | None = None, quality: float | None = None, frames: int | None = None, turns: float | None = None, spin: str | None = None, pitch: float | None = None, yaw: float | None = None, *, c: str | None = None, w: int | None = None, h: int | None = None, s: int | None = None, mb: bool | None = None, tr: bool | None = None, rp: str | None = None, p: str | None = None, v: str | None = None, q: float | None = None, fr: int | None = None) -> Any:
+def renderTurntable(camera: str | None = None, width: int | None = None, height: int | None = None, scale: float | None = None, samples: int | None = None, motionBlur: bool | None = None, transparent: bool | None = None, renderPass: str | None = None, path: str | None = None, video: str | None = None, codec: str | None = None, quality: float | None = None, frames: int | None = None, turns: float | None = None, spin: str | None = None, turntable: str | None = None, pitch: float | None = None, yaw: float | None = None, *, c: str | None = None, w: int | None = None, h: int | None = None, s: int | None = None, mb: bool | None = None, tr: bool | None = None, rp: str | None = None, p: str | None = None, v: str | None = None, q: float | None = None, fr: int | None = None, tt: str | None = None) -> Any:
     """Render a loop turning around the selection (or everything shown), framed to fit, into images, an .mp4, or both. The last frame stops one step short of the first, so the video loops. Returns {frames, path, video}.
 
     Args:
@@ -6045,7 +6052,8 @@ def renderTurntable(camera: str | None = None, width: int | None = None, height:
         quality: Video quality, 0 to 1 (0.6 by default). Short form q.
         frames: Frames for the whole turn. Short form fr. Default 120.
         turns: Turns over the frames. Default 1.0.
-        spin: object (the model turns in fixed light), camera (the camera circles, the light stays), or lights. One of 'object', 'camera', 'lights'. Default 'object'.
+        spin: object (the model turns in fixed light), camera (the camera circles, the light stays), lights, or turntable (a turntable node turns its members through the view's own camera). One of 'object', 'camera', 'lights', 'turntable'. Default 'object'.
+        turntable: With spin=turntable: the turntable; the selected one or the first by default. Short form tt.
         pitch: Camera elevation, degrees (negative looks down). Default -15.0.
         yaw: Starting angle around the up axis, degrees. Default 35.0.
     """
@@ -6267,7 +6275,7 @@ def reverseFoot(*objects: Any, ankle: str | None = None, ball: str | None = None
         parent: Node to put the element under, such as a character. Short form p.
     """
 
-def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequence[float] | None = None, startSweep: float | None = None, endSweep: float | None = None, sections: int | None = None, caps: bool | None = None, flip: bool | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequence[float] | None = None, startSweep: float | None = None, endSweep: float | None = None, sections: int | None = None, caps: bool | None = None, flip: bool | None = None, material: float | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Revolve profile curves around an axis into a quad mesh with live history. Returns [mesh, curveRevolve].
 
     Args:
@@ -6279,6 +6287,7 @@ def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequ
         sections: Segments around the axis.
         caps: Close the ends of a partial sweep of a closed profile.
         flip: Flip the faces.
+        material: The material every face uses, by name; empty is the default.
         tessellation: How curves become points: fixed segments per span, adaptive to the error and angle, or game (straight spans one segment, curved ones by angle, corners exact). One of 'fixed', 'adaptive', 'game'.
         segments: Segments per curved span (fixed).
         chordError: Largest gap from the true curve, cm (adaptive).
@@ -7724,6 +7733,13 @@ def symmetryRebuild(*objects: Any, axis: str | None = None, side: str | None = N
         tolerance: Weld or match distance, cm (0: scaled to the mesh). Default 0.0.
     """
 
+def takeOffTurntable(*objects: Any) -> Any:
+    """Take objects (the selection by default) off their turntables; they go back to where they stand unturned. A turntable left empty is deleted. Returns the objects taken off.
+
+    Args:
+        objects: objects.
+    """
+
 def tension(*objects: Any, scale: float | None = None, colorSet: str | None = None, name: str | None = None) -> Any:
     """Add a tension deformer: measures stretch and compression against the current shape, as a 'tension' point attribute and a colour set, for wrinkle maps. Returns the deformers.
 
@@ -8338,6 +8354,102 @@ def trimCurve(*objects: Any, point: Sequence[float] | None = None, parameter: fl
         cutters: Curves to trim against; default every other visible curve.
         tolerance: Curves closer than this meet, cm. Short form tol. Default 0.01.
         direction: Intersect as seen along this direction (the view), for curves that only cross on screen. Short form dir.
+    """
+
+def turntable(*objects: Any, secondsPerTurn: float | None = None, direction: str | None = None, ease: float | None = None, restAngle: float | None = None, stepAngle: float | None = None, lightsFollow: bool | None = None, holdWhileEditing: bool | None = None, resumeAfter: float | None = None, includeInRenders: bool | None = None, pivot: Sequence[float] | None = None, name: str | None = None, edit: str | None = None, query: str | None = None, add: Sequence[Any] | None = None, remove: Sequence[Any] | None = None, spt: float | None = None, dir: str | None = None, ra: float | None = None, sa: float | None = None, lf: bool | None = None, hwe: bool | None = None, rsa: float | None = None, iir: bool | None = None, pv: Sequence[float] | None = None, n: str | None = None, e: str | None = None, q: str | None = None, a: Sequence[Any] | None = None, rm: Sequence[Any] | None = None) -> Any:
+    """Make a turntable for objects (the selection by default), or change or query one. Members turn about the pivot while the camera stays still; the turn is view-only, so exports never see it. Returns the turntable's name, or with query its state.
+
+    Args:
+        objects: objects.
+        secondsPerTurn: How long one full turn takes. Short form spt.
+        direction: Spin direction seen from above. Short form dir. One of 'counterClockwise', 'clockwise'.
+        ease: Seconds to reach speed or rest.
+        restAngle: The angle Front returns to, degrees. Short form ra.
+        stepAngle: Degrees between stops. Short form sa.
+        lightsFollow: Turn the scene's lights and environment with it. Short form lf.
+        holdWhileEditing: Stop while a member is edited. Short form hwe.
+        resumeAfter: Seconds of quiet before a held spin resumes; 0 never. Short form rsa.
+        includeInRenders: Renders show the turn. Short form iir.
+        pivot: World pivot; by default the centre of the members' footprint on the ground. Short form pv.
+        name: Name of a new turntable; made unique. Short form n.
+        edit: Change this turntable instead of making one. Short form e.
+        query: Return this turntable's members, live state and settings. Short form q.
+        add: With edit: objects to put on it. Short form a.
+        remove: With edit: objects to take off it. Short form rm.
+
+    Examples:
+        turntable("statue", secondsPerTurn=30)
+
+        turntable(edit="turntable1", add=["plinth"], lightsFollow=True)
+
+        turntable(query="turntable1")
+    """
+
+def turntableBake(*objects: Any, start: float | None = None, end: float | None = None, turns: float | None = None, name: str | None = None, s: float | None = None, en: float | None = None, tu: float | None = None, n: str | None = None) -> Any:
+    """Bake a turntable into real animation for export: a new transform at the pivot keyed through turns= full turns from start= to end= (frames, the playback range by default), with the members parented under it. The members leave the turntable. Returns the new transform.
+
+    Args:
+        objects: turntable.
+        start: First frame; the playback range's start by default. Short form s.
+        end: Last frame; the playback range's end by default. Short form en.
+        turns: Full turns over the range. Short form tu. Default 1.0.
+        name: Name of the new transform; made unique. Short form n. Default 'turntableSpin'.
+    """
+
+def turntableBase(*objects: Any, style: str | None = None, margin: float | None = None, height: float | None = None, bevel: float | None = None, segments: int | None = None, fixedBase: bool | None = None, material: str | None = None, st: str | None = None, m: float | None = None, h: float | None = None, bv: float | None = None, sg: int | None = None, fb: bool | None = None, mat: str | None = None) -> Any:
+    """Build a turntable base under objects (the selection, or a selected turntable's members) from a revolved profile curve, live: edit the hidden profile curve or the revolve to reshape it. Puts the objects on a turntable if they aren't on one, and the base on it with them. Run on a base, or on a turntable that has one, it rebuilds that base. Returns [group, mesh, curve, revolve].
+
+    Args:
+        objects: objects.
+        style: plinth (bevelled disc), stepped (two tiers), record (thin plate, lip, grooves), pedestal (column on a foot), lazySusan (a turning top on a fixed foot). Short form st. One of 'plinth', 'stepped', 'record', 'pedestal', 'lazySusan'. Default 'stepped'.
+        margin: Radius beyond the objects' footprint, as a fraction of it. Short form m. Default 0.15.
+        height: Thickness, as a fraction of the objects' height. Short form h. Default 0.06.
+        bevel: Edge rounding, as a fraction of the thickness. Short form bv. Default 0.3.
+        segments: Divisions around. Short form sg. Default 64.
+        fixedBase: lazySusan: the foot stays still while the top turns. Short form fb. Default True.
+        material: The default material, or a preset. Short form mat. One of 'default', 'matteBlack', 'satin', 'rubber', 'brushedMetal', 'wood', 'marble'. Default 'default'.
+
+    Examples:
+        turntableBase("statue", style="stepped", material="marble")
+
+        turntableBase("turntable1", style="lazySusan")
+    """
+
+def turntablePlay(*objects: Any, pause: bool | None = None, toggle: bool | None = None, speed: float | None = None, p: bool | None = None, tg: bool | None = None, sp: float | None = None) -> Any:
+    """Spin a turntable (the selected one, the one the selection is on, else the last used), easing in; pause=True eases it to rest, toggle=True flips it. Not undoable, like a camera move. Returns whether it spins.
+
+    Args:
+        objects: turntable.
+        pause: Ease to rest instead. Short form p. Default False.
+        toggle: Spin when resting, rest when spinning. Short form tg. Default False.
+        speed: Multiply the speed by this while it spins (1 is secondsPerTurn). Short form sp.
+
+    Examples:
+        turntablePlay()
+
+        turntablePlay(toggle=True)
+
+        turntablePlay("turntable1", pause=True)
+    """
+
+def turntableTurn(*objects: Any, by: float | None = None, to: float | None = None, step: int | None = None, front: bool | None = None, pitch: float | None = None, ease: bool | None = None, b: float | None = None, t: float | None = None, st: int | None = None, f: bool | None = None, pi: float | None = None) -> Any:
+    """Turn a turntable (the selected one, the one the selection is on, else the last used): by= degrees, to= an angle, step= stops (stepAngle apart, negative goes back), or front=True back to restAngle. Eases unless ease=False. Not undoable. Returns the angle it is heading for.
+
+    Args:
+        objects: turntable.
+        by: Degrees to turn by. Short form b.
+        to: Angle to turn to, degrees. Short form t.
+        step: Stops to step, negative backwards. Short form st.
+        front: Back to restAngle with no tilt, and pause. Short form f. Default False.
+        pitch: Tilt toward the camera (negative away), degrees, about the active view's horizontal axis through the middle of what it turns. Short form pi.
+        ease: Ease there; False jumps. Default True.
+
+    Examples:
+        turntableTurn(step=1)
+
+        turntableTurn(to=180)
+
+        turntableTurn(front=True)
     """
 
 def twistDriver(*objects: Any, source: str | None = None, weight: float | None = None, src: str | None = None, w: float | None = None) -> Any:

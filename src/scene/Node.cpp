@@ -12,6 +12,7 @@
 #include "scene/Drivers.h"
 #include "scene/DisplayLayers.h"
 #include "scene/ObjectSets.h"
+#include "scene/Turntable.h"
 #include "scene/Graph.h"
 #include "scene/ImagePlane.h"
 #include "scene/ArrayGroup.h"
@@ -247,6 +248,7 @@ void registerBuiltins()
     spaces::registerTypes();
     displayLayers::registerTypes();
     objectSets::registerTypes();
+    turntable::registerTypes();
 }
 } // namespace types
 } // namespace lila::scene

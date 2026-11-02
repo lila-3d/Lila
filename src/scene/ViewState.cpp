@@ -15,6 +15,7 @@ namespace
 struct State
 {
     std::atomic<int> finalDepth = 0;
+    std::atomic<int> exportDepth = 0;
     std::mutex cameraMutex;
     ActiveCamera camera;
     std::vector<std::function<void()>> listeners;
@@ -48,12 +49,14 @@ bool evaluatesForOutput(std::string_view name)
     return name.starts_with("export") || name.ends_with("Export");
 }
 
+bool isRender(std::string_view name) { return name == "render" || name == "renderSequence" || name == "renderTurntable"; }
+
 void onExecute(const ExecuteEvent& e)
 {
     if (!evaluatesForOutput(e.name))
         return;
     if (!e.done)
-        st().commandScope.emplace();
+        st().commandScope.emplace(!isRender(e.name));
     else
         st().commandScope.reset();
 }
@@ -61,15 +64,19 @@ void onExecute(const ExecuteEvent& e)
 
 bool isViewport() { return st().finalDepth == 0; }
 
-FinalScope::FinalScope()
+bool isExport() { return st().exportDepth > 0; }
+
+FinalScope::FinalScope(bool exporting) : mExporting(exporting)
 {
-    if (st().finalDepth++ == 0)
+    const bool exportStarts = exporting && st().exportDepth++ == 0;
+    if (st().finalDepth++ == 0 || exportStarts)
         notify();
 }
 
 FinalScope::~FinalScope()
 {
-    if (--st().finalDepth == 0)
+    const bool exportEnds = mExporting && --st().exportDepth == 0;
+    if (--st().finalDepth == 0 || exportEnds)
         notify();
 }
 

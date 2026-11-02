@@ -1,5 +1,6 @@
 #include "ui/ViewportWidgetDetail.h"
 
+#include "scene/Turntable.h"
 #include "scene/ViewState.h"
 #include "ui/CameraBookmarks.h"
 
@@ -366,7 +367,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     {
         const PrefStore& p = PrefStore::get();
         s.envPath = environments::resolve(p.value<std::string>("general", "/viewport/env/path", ""));
-        s.envRotation = p.value<float>("general", "/viewport/env/rotation", 0.0f);
+        s.envRotation = p.value<float>("general", "/viewport/env/rotation", 0.0f) + float(scene::turntable::environmentTurn(scene::Graph::current()));
         s.envIntensity = environments::intensity();
         s.envBackground = p.value<bool>("general", "/viewport/env/background", true);
         s.envBlur = p.value<float>("general", "/viewport/env/blur", 0.6f);

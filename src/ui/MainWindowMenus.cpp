@@ -104,12 +104,15 @@ void MainWindow::buildMenus()
                                  "#Snapping", "snapSurface.set", "snapSurface.clear", "snapSurface.toggle", "snapSurface.alignToNormal"});
     addSubmenu("Modify", "Scene Origin");
     menus::addActions("Modify/Scene Origin", {"modify.relocateScene", "modify.setDisplayOrigin", "modify.clearDisplayOrigin"});
+    addSubmenu("Modify", "Turntable");
+    menus::addActions("Modify/Turntable", {"turntable.putOn", "turntable.takeOff", "", "turntable.spin", "turntable.stepBack", "turntable.stepNext",
+                                           "turntable.front", "", "turntable.controls", "turntable.ring", "turntable.pitch", "create.turntableBase"});
 
     menu("Create", "Create");
     addSubmenu("Create", "Polygon Primitives");
     menus::addActions("Create/Polygon Primitives", {"create.cube", "create.sphere", "create.cylinder", "create.capsule", "create.cone", "create.plane", "create.torus",
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
-    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup"});
+    menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.turntableBase"});
     addSubmenu("Create", "Reference Images");
     menus::addActions("Create/Reference Images", {"create.imagePlane", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
                                                    "referenceOverlay.toggle", "referenceOverlay.next", ""});

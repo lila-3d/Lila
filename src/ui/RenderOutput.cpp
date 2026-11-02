@@ -15,6 +15,7 @@
 #include "scene/NodeBounds.h"
 #include "scene/RenderSettings.h"
 #include "scene/Transform.h"
+#include "scene/Turntable.h"
 #include "ui/Camera.h"
 #include "ui/TextureCache.h"
 #include "ui/ViewportWidget.h"
@@ -418,6 +419,59 @@ json writeSequence(const Sequence& seq, const std::function<std::pair<Frame, int
     }
     return json{{"frames", seq.count}, {"path", written}, {"video", seq.video}};
 }
+
+/**
+ * renderTurntable with spin=turntable: the turntable node turns its members (and the lights, with lightsFollow) one loop
+ * through the view's own camera, as a presenter framed it. Its live state is put back afterwards.
+ */
+json renderTurntableNode(const Args& a, Options o, const Sequence& seq, int frames, double turns, double seconds)
+{
+    namespace tt = scene::turntable;
+    scene::Graph& g = scene::Graph::current();
+    tt::Turntable* t = nullptr;
+    if (a.has("turntable"))
+    {
+        scene::Node* n = g.find(a.get<std::string>("turntable"));
+        t = n ? tt::get(g, n->id()) : nullptr;
+        if (!t)
+            throw CommandError("renderTurntable: no turntable called '" + a.get<std::string>("turntable") + "'");
+    }
+    for (scene::NodeId id : g.selection())
+        if (!t)
+            if (scene::NodeId on = tt::get(g, id) ? id : tt::turntableOf(g, id); on != scene::kNoNode)
+                t = tt::get(g, on);
+    if (!t && !tt::all(g).empty())
+        t = tt::all(g).front();
+    if (!t)
+        throw CommandError("renderTurntable: spin=turntable needs a turntable; put the model on one first");
+    if (!t->as<bool>(tt::Turntable::kIncludeInRenders))
+        throw CommandError("renderTurntable: " + t->path() + " has includeInRenders off");
+    o.orbit = false;
+    const double angle0 = t->angle;
+    const bool playing = t->playing;
+    const scene::NodeId id = t->id();
+    t->playing = false;
+    struct Restore
+    {
+        scene::Graph& g;
+        scene::NodeId id;
+        double angle;
+        bool playing;
+        ~Restore()
+        {
+            if (tt::Turntable* t = tt::get(g, id))
+            {
+                tt::setAngle(g, id, angle);
+                t->playing = playing;
+            }
+        }
+    } restore{g, id, angle0, playing};
+    const double sign = tt::cruiseSpeed(*t) < 0.0 ? -1.0 : 1.0;
+    return writeSequence(seq, [&](int i) {
+        tt::setAngle(g, id, angle0 + sign * 360.0 * turns * double(i) / double(frames));
+        return std::pair{render(o, seconds), i};
+    });
+}
 } // namespace
 
 void registerCommands()
@@ -531,8 +585,11 @@ void registerCommands()
     tt.push_back({"quality", "q", T::Float, nullptr, "Video quality, 0 to 1 (0.6 by default).", {}, {}, 0.0, 1.0});
     tt.push_back({"frames", "fr", T::Int, 120, "Frames for the whole turn.", {}, {}, 2.0, 10000.0});
     tt.push_back({"turns", "", T::Float, 1.0, "Turns over the frames.", {}, {}, 0.01, 100.0});
-    tt.push_back({"spin", "", T::String, "object", "object (the model turns in fixed light), camera (the camera circles, the light stays), or lights.",
-                  {"object", "camera", "lights"}});
+    tt.push_back({"spin", "", T::String, "object",
+                  "object (the model turns in fixed light), camera (the camera circles, the light stays), lights, or turntable (a "
+                  "turntable node turns its members through the view's own camera).",
+                  {"object", "camera", "lights", "turntable"}});
+    tt.push_back({"turntable", "tt", T::String, nullptr, "With spin=turntable: the turntable; the selected one or the first by default."});
     tt.push_back({"pitch", "", T::Float, -15.0, "Camera elevation, degrees (negative looks down).", {}, {}, -89.0, 89.0});
     tt.push_back({"yaw", "", T::Float, 35.0, "Starting angle around the up axis, degrees.", {}, {}, -360.0, 360.0});
     ops::registerCommand({
@@ -571,6 +628,8 @@ void registerCommands()
             seq.count = frames;
             seq.transparent = o.transparent;
             const double now = scene::Graph::current().time();
+            if (spin == "turntable")
+                return renderTurntableNode(a, o, seq, frames, turns, now);
             return writeSequence(seq, [&](int i) {
                 const double angle = 360.0 * turns * double(i) / double(frames);
                 Options f = o;

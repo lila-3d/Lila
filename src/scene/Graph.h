@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lila::scene
 {
@@ -209,6 +210,13 @@ public:
      * simulations sample their inputs, without recomputing meshes nothing reads.
      */
     void evaluateUpstream(const std::vector<NodeId>& nodes);
+    /**
+     * View-only turns (turntables): each node's parentMatrix is premultiplied by its matrix as it evaluates, so it and
+     * everything under it draws, picks and edits turned. Not undoable, not saved. Nodes whose turn changes are dirtied.
+     * Main thread, outside evaluate().
+     */
+    void setDisplayTurns(std::unordered_map<NodeId, glm::dmat4> turns);
+    const std::unordered_map<NodeId, glm::dmat4>& displayTurns() const { return mDisplayTurns; }
     /** Marks a node for recompute on the next evaluate(), like an input change would. */
     void touch(NodeId id) { markDirty(id); }
     /**
@@ -365,5 +373,7 @@ private:
     uint64_t mEvaluationPass = 0;
     struct PlaybackCache;
     std::unique_ptr<PlaybackCache> mPlayback;
+    std::unordered_map<NodeId, glm::dmat4> mDisplayTurns;
+    std::unordered_set<NodeId> mTurned; // the turned nodes and their descendants, kept out of the playback cache
 };
 } // namespace lila::scene

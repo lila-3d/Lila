@@ -28,6 +28,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/ObjectSets.h"
+#include "scene/Turntable.h"
 #include "scene/Picker.h"
 #include "scene/Poses.h"
 #include "scene/PostProcess.h"
@@ -208,6 +209,7 @@ void registerCommands()
     textureFolders::registerCommands();
     displayLayers::registerCommands();
     objectSets::registerCommands();
+    turntable::registerCommands();
     relocate::registerCommands();
 
     loadNamingPolicy();

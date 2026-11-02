@@ -1785,7 +1785,7 @@ void registerBuiltins()
     for (const char* t : {
              // Transforms and shapes: values relative to the parent, geometry in object space.
              "transform", "locator", "joint", "mesh", "lattice", "camera", "light", "imagePlane", "lodGroup", "array", "curve", "field",
-             "proxySet",
+             "proxySet", "turntable",
              // Rig elements: control-space or connected values; their outputs follow what they read.
              "ikChain", "reverseFoot", "rigAlign", "twistDriver", "poseDriver", "drivenChannel",
              // Animation.

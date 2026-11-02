@@ -53,6 +53,7 @@
 #include "ui/AutoBevelUi.h"
 #include "ui/SplitRingsUi.h"
 #include "ui/InstancingUi.h"
+#include "ui/TurntableUi.h"
 #include "ui/UnrealMappingUi.h"
 #include "ui/SmartJoinUi.h"
 #include "ui/DebugDrawUi.h"
@@ -254,6 +255,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     registerAutoBevelUi();
     registerSplitRingsUi();
     registerInstancingUi();
+    registerTurntableUi();
     registerUnrealMappingUi();
     registerSmartJoinUi();
     registerMeasureUi();

@@ -349,6 +349,8 @@ void Graph::clear()
     mOutgoingDst.clear();
     mSelection.clear();
     mHeld.clear();
+    mDisplayTurns.clear();
+    mTurned.clear();
     mCtx = {};
     UndoStack::get().clear();
     changed(Change::Cleared, kNoNode);
@@ -1585,6 +1587,35 @@ void Graph::markDirty(NodeId id)
     mVersion.fetch_add(1, std::memory_order_relaxed);
 }
 
+void Graph::setDisplayTurns(std::unordered_map<NodeId, glm::dmat4> turns)
+{
+    bool rootsChanged = turns.size() != mDisplayTurns.size();
+    for (const auto& [id, m] : mDisplayTurns)
+        if (auto it = turns.find(id); it == turns.end())
+        {
+            rootsChanged = true;
+            markDirty(id);
+        }
+        else if (it->second != m)
+            markDirty(id);
+    for (const auto& [id, m] : turns)
+        if (!mDisplayTurns.contains(id))
+        {
+            rootsChanged = true;
+            markDirty(id);
+        }
+    mDisplayTurns = std::move(turns);
+    if (!rootsChanged)
+        return;
+    mTurned.clear();
+    for (const auto& [id, m] : mDisplayTurns)
+    {
+        mTurned.insert(id);
+        for (NodeId d : descendants(id))
+            mTurned.insert(d);
+    }
+}
+
 void Graph::setTime(double seconds, bool notify)
 {
     if (mCtx.time == seconds)
@@ -1741,8 +1772,9 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
     while (!level.empty())
     {
         auto pull = [&](Node* n) {
-            const uint8_t upstream = cache ? upstreamPlayback(*n, pass) : 0;
-            if (cache && upstream == 0 && restoreCached(*n))
+            const bool cacheNode = cache && !mTurned.contains(n->id());
+            const uint8_t upstream = cacheNode ? upstreamPlayback(*n, pass) : 0;
+            if (cacheNode && upstream == 0 && restoreCached(*n))
             {
                 n->mPlayback = 0;
                 n->mDirty = false;
@@ -1802,9 +1834,12 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
             if (n->type().dag)
                 if (const glm::dmat4* frame = spaces::activeFrame(*n))
                     n->mValues[Transform::kParentMatrix] = *frame;
+            if (!mDisplayTurns.empty() && n->type().dag)
+                if (auto turn = mDisplayTurns.find(n->id()); turn != mDisplayTurns.end())
+                    n->mValues[Transform::kParentMatrix] = turn->second * n->as<glm::dmat4>(Transform::kParentMatrix);
             n->compute(mCtx);
             // Computed from a placeholder upstream means a placeholder too.
-            if (cache)
+            if (cacheNode)
                 n->mPlayback = upstream < 2 && keepCached(*n) ? 1 : 2;
             n->mDirty = false;
             n->mEvaluatedPass = pass;

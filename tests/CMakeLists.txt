@@ -65,6 +65,7 @@ add_executable(lila_tests
     test_visibility.cpp
     test_display_layers.cpp
     test_object_sets.cpp
+    test_turntable.cpp
     test_create_select.cpp
     test_primitive_axis.cpp
     test_camera.cpp

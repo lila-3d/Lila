@@ -79,6 +79,7 @@
       "Ctrl+T": "window.searchMenus",
       "Ctrl+F": "window.searchScene",
       "Shift+T": "window.searchTearOffs",
+      "Alt+Shift+T": "turntable.spin",
       "Shift+G": "adjustLastOp.show",
       "G": "edit.repeatLast",
       "M": "window.materialEditor",
@@ -87,6 +88,9 @@
     "viewport": {
       "F": "viewport.frameSelected",
       "Alt+F": "viewport.frameUnderCursor",
+      "Alt+Shift+Left": "turntable.stepBack",
+      "Alt+Shift+Right": "turntable.stepNext",
+      "Alt+Shift+Home": "turntable.front",
       "Ctrl+1": "viewport.isolate",
       "A": "viewport.frameAll",
       "F8": "select.objectMode",

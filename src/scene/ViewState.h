@@ -24,15 +24,21 @@ struct ActiveCamera
 
 /** False while an export, a send to Unreal or a render evaluates the scene; true otherwise. */
 LILA_SCENE_API bool isViewport();
+/** True while an export or a send to Unreal evaluates the scene: what leaves Lila. Renders are final but not exports. */
+LILA_SCENE_API bool isExport();
 
 /** While alive the scene evaluates for an export or a render, so isViewport() reads false. Nests. Main thread only. */
 class LILA_SCENE_API FinalScope
 {
 public:
-    FinalScope();
+    /** exporting false: a render, which shows the scene as the viewport does apart from view-only aids. */
+    explicit FinalScope(bool exporting = true);
     ~FinalScope();
     FinalScope(const FinalScope&) = delete;
     FinalScope& operator=(const FinalScope&) = delete;
+
+private:
+    bool mExporting = true;
 };
 
 LILA_SCENE_API ActiveCamera activeCamera();
