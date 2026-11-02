@@ -4,6 +4,8 @@
 #include "uv/Chart.h"
 #include "uv/Uv.h"
 
+#include <limits>
+
 namespace lila::ui
 {
 using namespace viewportDetail;
@@ -479,12 +481,17 @@ void ViewportWidget::drawComponents(render::FrameState& s)
             {
                 const ViewInfo view = viewInfo();
                 const glm::dvec3 right(view.view[0][0], view.view[1][0], view.view[2][0]), up(view.view[0][1], view.view[1][1], view.view[2][1]);
+                const glm::dvec3 fwd = -glm::dvec3(view.view[0][2], view.view[1][2], view.view[2][2]);
+                const double atUnit = view.unitsPerPixel(view.eye + fwd);
                 for (geo::Index p : sym->unmatchedPoints(m))
                 {
                     if (!vis->point(p))
                         continue;
                     const glm::dvec3 c(wp(p));
-                    const double half = 0.5 * thickness.vertexSelected * view.unitsPerPixel(c);
+                    const double depth = glm::dot(c - view.eye, fwd);
+                    if (depth <= 0.0)
+                        continue;
+                    const double half = 0.5 * thickness.vertexSelected * atUnit * (view.ortho ? 1.0 : depth);
                     const glm::dvec3 r = right * half, u = up * half;
                     const glm::vec3 a(c - r - u), b(c + r - u), cc(c + r + u), d(c - r + u);
                     for (const glm::vec3& v : {a, b, cc, a, cc, d})
@@ -800,17 +807,31 @@ void ViewportWidget::drawPreselect(render::FrameState& s)
         for (const glm::dvec3& v : {a, b, c, a, c, d})
             s.tris3d.push_back({glm::vec3(v), col});
     };
-    // Screen-constant width, facing the camera.
+    // Scaled by depth from one unit ahead, not measured at the point: a hovered face can reach behind the camera.
+    const double atUnit = view.unitsPerPixel(view.eye + fwd);
+    const double nearDepth = view.ortho ? -std::numeric_limits<double>::infinity() : view.proj[3][2] / (view.proj[2][2] + 1.0);
+    auto depthOf = [&](const glm::dvec3& p) { return glm::dot(p - view.eye, fwd); };
+    auto unitsAt = [&](const glm::dvec3& p) { return atUnit * (view.ortho ? 1.0 : depthOf(p)); };
+    // Screen-constant width, facing the camera, cut at the near plane.
     auto ribbon = [&](glm::dvec3 p0, glm::dvec3 p1, double halfPx, const glm::vec4& col) {
+        const double d0 = depthOf(p0), d1 = depthOf(p1);
+        if (d0 < nearDepth && d1 < nearDepth)
+            return;
+        if (d0 < nearDepth)
+            p0 = glm::mix(p0, p1, (nearDepth - d0) / (d1 - d0));
+        else if (d1 < nearDepth)
+            p1 = glm::mix(p1, p0, (nearDepth - d1) / (d0 - d1));
         glm::dvec3 side = glm::cross(p1 - p0, fwd);
         if (glm::length(side) < 1e-12)
             return;
         side = glm::normalize(side);
-        glm::dvec3 s0 = side * (halfPx * view.unitsPerPixel(p0)), s1 = side * (halfPx * view.unitsPerPixel(p1));
+        glm::dvec3 s0 = side * (halfPx * unitsAt(p0)), s1 = side * (halfPx * unitsAt(p1));
         quad(p0 - s0, p1 - s1, p1 + s1, p0 + s0, col);
     };
     auto square = [&](glm::dvec3 c, double halfPx, const glm::vec4& col) {
-        double half = halfPx * view.unitsPerPixel(c);
+        if (depthOf(c) < nearDepth)
+            return;
+        double half = halfPx * unitsAt(c);
         glm::dvec3 r = right * half, u = up * half;
         quad(c - r - u, c + r - u, c + r + u, c - r + u, col);
     };
