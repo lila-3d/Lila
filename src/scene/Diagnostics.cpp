@@ -152,11 +152,21 @@ bool iequals(std::string_view a, std::string_view b)
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y)); });
 }
 
+/** The target with its object part following the node through renames and reparenting. */
+std::string currentTarget(const Issue& i, const Graph& g)
+{
+    const Node* n = g.node(i.node);
+    if (!n || !i.target.starts_with(i.object))
+        return i.target;
+    const bool path = i.object.find_first_of("|/") != std::string::npos;
+    return (path ? g.fullPath(i.node) : n->name()) + i.target.substr(i.object.size());
+}
+
 json toJson(const Issue& i)
 {
     Graph& g = Graph::current();
     json j = {{"id", i.id},           {"source", i.source},   {"severity", severityName(i.severity)},
-              {"target", i.target},   {"object", g.node(i.node) ? g.fullPath(i.node) : i.object},
+              {"target", currentTarget(i, g)},   {"object", g.node(i.node) ? g.fullPath(i.node) : i.object},
               {"component", i.component}, {"attribute", i.attr}, {"message", i.message},
               {"resolved", i.node != kNoNode || i.object.empty()}};
     if (!i.blocks.empty())
@@ -426,7 +436,7 @@ void registerCommands()
         std::string msg = std::string(name) + " is blocked by " + std::to_string(stop.size()) + (stop.size() == 1 ? " issue" : " issues") + ":";
         const size_t shown = std::min<size_t>(stop.size(), 5);
         for (size_t k = 0; k < shown; ++k)
-            msg += "\n  " + std::string(severityName(stop[k]->severity)) + " " + (stop[k]->target.empty() ? "scene" : stop[k]->target) + ": " +
+            msg += "\n  " + std::string(severityName(stop[k]->severity)) + " " + (stop[k]->target.empty() ? "scene" : currentTarget(*stop[k], Graph::current())) + ": " +
                    stop[k]->message + " (" + stop[k]->source + ")";
         if (stop.size() > shown)
             msg += "\n  ...";

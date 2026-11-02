@@ -73,6 +73,10 @@ TEST_CASE("diagnostics: issues attach to nodes, attributes and components")
     CHECK(run("listIssues", {{"severity", "error"}}).size() == 2);
     CHECK(run("clearIssues", {{"severity", "warning"}}).get<int>() == 2);
     CHECK(dx::issuesOf(id).size() == 2);
+
+    run("rename", {{"args", {crate, "Renamed"}}});
+    for (const json& i : run("listIssues"))
+        CHECK(i["target"].get<std::string>().starts_with("Renamed"));
 }
 
 TEST_CASE("diagnostics: unresolved objects attach when their node appears, and detach when it goes")
