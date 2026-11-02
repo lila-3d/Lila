@@ -189,3 +189,22 @@ TEST_CASE("spaces have no fixed limit")
     io::deserialize(doc);
     CHECK(io::serialize() == doc);
 }
+
+TEST_CASE("deleteAttr category: a component's attributes go together, with its name out of usdApiSchemas, in one undo")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "Crate"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "usdApiSchemas"}, {"dataType", "stringArray"}});
+    run("setAttr", {{"args", {"Crate.usdApiSchemas", json::array({"HealthAPI", "LootAPI"})}}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "health:max"}, {"category", "HealthAPI"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "health:team"}, {"dataType", "string"}, {"category", "HealthAPI"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "loot:table"}, {"dataType", "string"}, {"category", "LootAPI"}});
+
+    run("deleteAttr", {{"args", {"Crate"}}, {"category", "HealthAPI"}});
+    CHECK(run("listAttr", {{"args", {"Crate"}}, {"userDefined", true}}) == json::array({"usdApiSchemas", "loot:table"}));
+    CHECK(getAttr("Crate.usdApiSchemas") == json::array({"LootAPI"}));
+
+    run("undo");
+    CHECK(run("listAttr", {{"args", {"Crate"}}, {"userDefined", true}}) == json::array({"usdApiSchemas", "health:max", "health:team", "loot:table"}));
+    CHECK(getAttr("Crate.usdApiSchemas") == json::array({"HealthAPI", "LootAPI"}));
+}

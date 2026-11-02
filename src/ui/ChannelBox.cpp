@@ -450,6 +450,23 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
         menu.addAction("Delete Keys", [runEach] {
             runEach("Delete Keys", [](const std::string& p) { ops::execute("cutKey", {{"args", {p}}, {"clear", true}}, CallSource::UI); });
         });
+        json added = json::array();
+        for (const json& p : plugs)
+            if (const scene::PlugRef ref = g.plug(p.get<std::string>()); ref.valid() && ref.component < 0 &&
+                                                                              (g.node(ref.node)->type().attrs[size_t(ref.attr)].flags & scene::AttrUser))
+                added.push_back(p);
+        if (!added.empty())
+            menu.addAction("Delete Attributes", [added] {
+                UndoChunk chunk("Delete Attributes");
+                try
+                {
+                    ops::execute("deleteAttr", {{"args", added}}, CallSource::UI);
+                }
+                catch (const std::exception& e)
+                {
+                    log::error("{}", e.what());
+                }
+            });
         menu.addSeparator();
         if (plugs.size() == 1)
             menu.addAction("Set as Driver", [p = plugs[0].get<std::string>()] {

@@ -84,6 +84,10 @@ private:
     void addElement(const std::vector<int>& attrs, int element);
     /** Removes the element attr names (attr[3], or group[3].child for the whole group[3]). */
     void removeElement(const std::string& attr);
+    /** Runs the command on the shown node, its path as the first argument; errors go to the log. */
+    void runOnNode(const char* command, scene::json call);
+    /** Deletes the added attributes under one heading of Extra Attributes: a component. */
+    void removeCategory(const std::string& category);
     QWidget* colorSwatch(const scene::AttrDef& def, scene::NodeId id, int index, bool readOnly);
     /** Narrows each form's label column, down to its labels' elided minimum, before its fields drop below their minimum. */
     void fitLabels();

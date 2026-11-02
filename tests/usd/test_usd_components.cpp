@@ -135,3 +135,26 @@ TEST_CASE("usd components: live stage edits write changed, added and removed com
     run("saveScene", {{"args", {(dir / "scene.lila").generic_string()}}});
     CHECK(has(edits(), "delete apiSchemas = [\"HealthAPI\"]"));
 }
+
+TEST_CASE("usd components: removing a schema a stronger layer applies warns that it doesn't show")
+{
+    UpAxisScope axis(math::UpAxis::Z);
+    fresh();
+    const fs::path dir = tempDir() / "components_stronger";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    std::ofstream(dir / "sub.usda") << "#usda 1.0\n";
+    std::ofstream(dir / "root.usda") << "#usda 1.0\n(\n    defaultPrim = \"World\"\n    upAxis = \"Z\"\n    subLayers = [@./sub.usda@]\n)\n\n"
+                                        "def Xform \"World\"\n{\n    def Xform \"Crate\" (\n        prepend apiSchemas = [\"HealthAPI\"]\n    )\n    {\n    }\n}\n";
+    const std::string stage = run("usdStageOpen", {{"args", {(dir / "root.usda").generic_string()}}, {"report", true}})["stage"];
+    run("setAttr", {{"args", {stage + ".editLayer", (dir / "sub.usda").generic_string()}}});
+    REQUIRE(run("usdStageInfo", {{"args", {stage}}})["editLayer"]["mode"] == "sublayer");
+    run("deleteAttr", {{"args", {"Crate"}}, {"category", "HealthAPI"}});
+    run("saveScene", {{"args", {(dir / "scene.lila").generic_string()}}});
+    const json i = run("usdStageInfo", {{"args", {stage}}, {"edits", true}});
+    INFO(i.dump());
+    bool found = false;
+    for (const json& w : i["warnings"])
+        found = found || has(w.get<std::string>(), "applies HealthAPI, which is stronger than the edit layer");
+    CHECK(found);
+}

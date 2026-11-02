@@ -60,6 +60,24 @@ Node& nodeNamed(const std::string& name)
     return *n;
 }
 
+/** Every added attribute under the category, and the category's name out of usdApiSchemas (USD components). */
+void deleteCategory(NodeId id, const std::string& category)
+{
+    const Node* n = graph().node(id);
+    for (int i = int(n->type().attrs.size()) - 1; i >= 0; --i)
+        if (const AttrDef& d = n->type().attrs[size_t(i)]; (d.flags & AttrUser) && d.category == category)
+            graph().deleteAttr({id, i});
+    const int list = n->type().attrIndex("usdApiSchemas");
+    if (list < 0 || n->type().attrs[size_t(list)].type != PlugType::String || !(n->type().attrs[size_t(list)].flags & AttrArray))
+        return;
+    std::vector<PlugValue> kept;
+    for (const auto& [index, v] : n->elements(list))
+        if (std::get<std::string>(v) != category)
+            kept.push_back(v);
+    if (kept.size() != n->elements(list).size())
+        graph().setElements({id, list, -1}, kept);
+}
+
 std::vector<NodeId> idsOf(const std::vector<std::string>& names)
 {
     std::vector<NodeId> ids;
@@ -700,10 +718,19 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "deleteAttr",
-        .doc = "Delete attributes added with addAttr: deleteAttr('node.attr'), or deleteAttr(objects, attribute=name).",
+        .doc = "Delete attributes added with addAttr: deleteAttr('node.attr'), deleteAttr(objects, attribute=name), or a whole "
+               "component with deleteAttr(objects, category=name), which also takes the name out of the object's usdApiSchemas.",
         .positionalDoc = "plugs or objects",
-        .flags = {{"attribute", "at", T::String, nullptr, "The attribute to delete from each object."}},
+        .flags = {{"attribute", "at", T::String, nullptr, "The attribute to delete from each object."},
+                  {"category", "", T::String, nullptr, "Delete every added attribute under this Attribute Editor heading."}},
         .run = [](const Args& a) -> json {
+            if (a.has("category"))
+            {
+                const std::string category = a.get<std::string>("category");
+                for (const std::string& o : a.objects())
+                    deleteCategory(nodeNamed(o).id(), category);
+                return nullptr;
+            }
             std::vector<std::string> paths;
             if (a.has("attribute"))
                 for (const std::string& o : a.objects())

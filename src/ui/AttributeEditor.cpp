@@ -635,6 +635,24 @@ void AttributeEditor::addElement(const std::vector<int>& attrs, int element)
     }
 }
 
+void AttributeEditor::runOnNode(const char* command, json call)
+{
+    scene::Node* n = Graph::current().node(mNode);
+    if (!n)
+        return;
+    call["args"] = {n->path()};
+    try
+    {
+        ops::execute(command, call, CallSource::UI);
+    }
+    catch (const CommandError& e)
+    {
+        log::error("{}", e.what());
+    }
+}
+
+void AttributeEditor::removeCategory(const std::string& category) { runOnNode("deleteAttr", {{"category", category}}); }
+
 void AttributeEditor::removeElement(const std::string& attr)
 {
     scene::Node* n = Graph::current().node(mNode);
@@ -1014,11 +1032,17 @@ void AttributeEditor::rebuild()
         }
         auto* label = new AttrRowLabel(!labelText.isEmpty() ? labelText : def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
         label->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(label, &QWidget::customContextMenuRequested, this, [this, label, attr, ref, keyable = bool(def.flags & scene::AttrKeyable)](const QPoint& at) {
+        connect(label, &QWidget::customContextMenuRequested, this,
+                [this, label, attr, ref, keyable = bool(def.flags & scene::AttrKeyable), user = bool(def.flags & scene::AttrUser)](const QPoint& at) {
             QMenu menu;
             addCopyActions(&menu, QString::fromStdString(attr), [this, ref] {
                 return Graph::current().node(mNode) ? scene::toJson(Graph::current().value(ref)) : json();
             });
+            if (user)
+            {
+                menu.addSeparator();
+                menu.addAction("Delete Attribute", [this, attr] { runOnNode("deleteAttr", {{"attribute", attr}}); });
+            }
             if (keyable)
             {
                 menu.addSeparator();
@@ -1122,12 +1146,27 @@ void AttributeEditor::rebuild()
         form->setSpacing(3);
         return form;
     };
-    auto subHeading = [&](QFormLayout* form, const std::string& title) {
+    auto subHeading = [&](QFormLayout* form, const std::string& title, std::function<void()> remove = {}) {
         auto* l = new QLabel(QString::fromStdString(title));
         l->setStyleSheet("color: #c8c8c8; font-weight: 600; padding-top: 4px; border-bottom: 1px solid #474747;");
         markIssues(l, componentIssues({}, title, QString::fromStdString(title)));
         noteComponent(title, l);
-        form->addRow(l);
+        if (!remove)
+        {
+            form->addRow(l);
+            return;
+        }
+        auto* row = new QWidget;
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        h->addWidget(l, 1);
+        auto* x = new QToolButton;
+        x->setIcon(icon("x"));
+        x->setAutoRaise(true);
+        x->setToolTip(QString::fromStdString("Remove " + title + " and its attributes"));
+        connect(x, &QToolButton::clicked, this, std::move(remove));
+        h->addWidget(x);
+        form->addRow(row);
     };
 
     // Attrs with a category show together under its heading in a Parameters section, in attr order.
@@ -1211,7 +1250,7 @@ void AttributeEditor::rebuild()
                     continue;
                 if (!headed)
                 {
-                    subHeading(form, c);
+                    subHeading(form, c, [this, c] { removeCategory(c); });
                     headed = true;
                 }
                 added += addAttrRows(form, def);

@@ -1756,6 +1756,36 @@ struct Author
             components(e, p);
     }
 
+    /** Warns about component schemas a layer stronger than the edit layer applies or removes against Lila's edit. */
+    void schemasOverridden(const UsdPrim& cp, const SdfPath& p, const TfTokenVector& want, const TfTokenVector& have)
+    {
+        const SdfLayerHandleVector layers = s.stage->GetLayerStack(true);
+        const auto rank = [&](const SdfLayerHandle& l) { return size_t(std::find(layers.begin(), layers.end(), l) - layers.begin()); };
+        const size_t edit = rank(L);
+        if (edit == layers.size())
+            return;
+        for (const SdfPrimSpecHandle& spec : cp.GetPrimStack())
+        {
+            if (rank(spec->GetLayer()) >= edit)
+                continue;
+            const VtValue v = spec->GetInfo(UsdTokens->apiSchemas);
+            if (!v.IsHolding<SdfTokenListOp>())
+                continue;
+            const SdfTokenListOp& op = v.UncheckedGet<SdfTokenListOp>();
+            TfTokenVector adds = op.GetExplicitItems();
+            for (const TfTokenVector* items : {&op.GetPrependedItems(), &op.GetAppendedItems(), &op.GetAddedItems()})
+                adds.insert(adds.end(), items->begin(), items->end());
+            auto in = [](const TfTokenVector& v, const TfToken& t) { return std::find(v.begin(), v.end(), t) != v.end(); };
+            const std::string layer = spec->GetLayer()->GetDisplayName();
+            for (const TfToken& t : have)
+                if (!in(want, t) && in(adds, t))
+                    warn.push_back(std::format("{}: {} applies {}, which is stronger than the edit layer, so removing it doesn't show", p.GetString(), layer, t.GetString()));
+            for (const TfToken& t : want)
+                if (in(op.GetDeletedItems(), t) || (op.IsExplicit() && !in(adds, t)))
+                    warn.push_back(std::format("{}: {} removes {}, which is stronger than the edit layer, so adding it doesn't show", p.GetString(), layer, t.GetString()));
+        }
+    }
+
     /**
      * Component schemas and attributes: the written ones over the stage's, a stage attribute of another type written as
      * that type, and the stage's components Lila no longer has removed (schemas) or blocked (attributes).
@@ -1792,6 +1822,8 @@ struct Author
             op.SetDeletedItems(del);
             L->SetField(p, UsdTokens->apiSchemas, VtValue(op));
         }
+        if (cp)
+            schemasOverridden(cp, p, want, have);
 
         const std::set<std::string> mine = componentAttributes(es);
         for (const std::string& name : mine)
