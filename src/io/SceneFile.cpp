@@ -473,6 +473,12 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
     {
         UndoStack::get().setEnabled(true);
         s.loading = false;
+        // An aborted load leaves an empty scene, never part of one.
+        if (progress::cancelRequested())
+        {
+            g.clear();
+            UndoStack::get().clear();
+        }
         throw;
     }
     UndoStack::get().setEnabled(true);
@@ -578,7 +584,6 @@ void load(const fs::path& path)
         progress::runOnWorker([&] { doc = readSceneFile(path, &warnings); });
     }
     scope.checkCancel();
-    scope.setCancellable(false);
     for (const std::string& w : warnings)
         log::warn("{}: {}", name, w);
     {
@@ -727,7 +732,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
 {
     LILA_ZONE();
 
-    progress::Scope scope(loadingVerb() + "...", 10.0);
+    progress::Scope scope(loadingVerb() + "...", 10.0, progress::Cancellable);
     scope.setStatus(file.filename().string());
     std::vector<std::string> warnings;
     json doc;
@@ -735,6 +740,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
         progress::Scope read("Reading " + file.filename().string(), 0.0, progress::None, 3.0);
         progress::runOnWorker([&] { doc = readSceneFile(file, &warnings); });
     }
+    scope.checkCancel();
     for (const std::string& w : warnings)
         log::warn("{}: {}", file.filename().string(), w);
     {

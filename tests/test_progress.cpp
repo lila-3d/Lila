@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "ops/Undo.h"
 #include "core/MainQueue.h"
 #include "core/Progress.h"
 #include "io/SceneFile.h"
@@ -12,6 +13,7 @@
 #include <thread>
 
 using namespace lila;
+using scene::Graph;
 using json = nlohmann::json;
 
 namespace
@@ -301,4 +303,74 @@ TEST_CASE("scene load: cancelling while the file is read leaves the scene alone"
     CHECK_THROWS(run("openScene", {{"args", {path}}, {"force", true}}));
     progress::setPump(nullptr);
     CHECK(io::serialize()["nodes"] == before["nodes"]);
+}
+
+TEST_CASE("progress: the cancel token follows this thread's scopes")
+{
+    CHECK_FALSE(progress::cancelRequested());
+    const uint64_t before = progress::cancelledCount();
+    {
+        progress::Scope root("Importing token.fbx", 2.0, progress::Cancellable);
+        progress::Scope inner("Building", 1.0);
+        CHECK_FALSE(progress::cancelRequested());
+        CHECK_NOTHROW(progress::checkCancel());
+        progress::cancel(find(progress::snapshot(), "Importing token.fbx")->id);
+        CHECK(progress::cancelRequested());
+        CHECK_THROWS_AS(progress::checkCancel(), progress::Cancelled);
+        bool seenOnWorker = false;
+        std::thread([&, parent = progress::current()] {
+            progress::Adopt adopt(parent);
+            seenOnWorker = progress::cancelRequested();
+        }).join();
+        CHECK(seenOnWorker);
+    }
+    CHECK_FALSE(progress::cancelRequested());
+    CHECK(progress::cancelledCount() == before + 1);
+}
+
+TEST_CASE("commands: an undoable command aborted midway leaves nothing behind")
+{
+    ops::registerCommand({
+        .name = "testAbortedImport",
+        .doc = "Builds a cube, then is cancelled as an import would be.",
+        .run = [](const Args&) -> json {
+            progress::Scope root("Importing half.fbx", 2.0, progress::Cancellable);
+            ops::execute("polyCube", {{"name", "Half"}});
+            progress::cancel(find(progress::snapshot(), "Importing half.fbx")->id);
+            progress::checkCancel();
+            return nullptr;
+        },
+    });
+    run("newScene");
+    run("polyCube", {{"name", "Kept"}});
+    const size_t undos = UndoStack::get().undoCount();
+    CHECK_THROWS_AS(run("testAbortedImport"), CommandCancelled);
+    CHECK(Graph::current().find("Kept"));
+    CHECK_FALSE(Graph::current().find("Half"));
+    CHECK(UndoStack::get().undoCount() == undos);
+}
+
+TEST_CASE("scene load: aborting while the scene is built leaves an empty scene")
+{
+    run("newScene");
+    const json empty = io::serialize()["nodes"];
+    for (int i = 0; i < 20; ++i)
+        run("polyCube", {{"name", "Box" + std::to_string(i)}});
+    std::string path = tempPath("abort_build.lila");
+    run("saveScene", {{"args", {path}}});
+    run("newScene");
+    run("polyCube", {{"name", "Keep"}});
+
+    // Cancels once the file's nodes start to appear.
+    progress::setPump([] {
+        if (!Graph::current().find("Box0"))
+            return;
+        for (const progress::Snapshot& s : progress::snapshot())
+            if (s.cancellable)
+                progress::cancel(s.id);
+    }, 0);
+    CHECK_THROWS_AS(run("openScene", {{"args", {path}}, {"force", true}}), CommandCancelled);
+    progress::setPump(nullptr);
+    CHECK(io::serialize()["nodes"] == empty);
+    CHECK(io::currentPath().empty());
 }

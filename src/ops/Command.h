@@ -22,6 +22,12 @@ struct CommandError : std::runtime_error
     using std::runtime_error::runtime_error;
 };
 
+/** What execute throws for a command the user aborted from the progress card ("importFbx: cancelled"). */
+struct CommandCancelled : CommandError
+{
+    using CommandError::CommandError;
+};
+
 enum class ArgType : uint8_t
 {
     Bool,

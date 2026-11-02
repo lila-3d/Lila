@@ -343,16 +343,19 @@ void Importer::run()
         std::set<const uint8_t*> placed;
         buildCollection(master, layerCollection, opts.parent, placed, 0);
     }
+    progress::checkCancel();
     g.evaluate();
     {
         progress::Scope rig("Rigging", 1.0);
         buildSkins();
         buildMorphs();
     }
+    progress::checkCancel();
     {
         progress::Scope mods("Modifiers", 1.0);
         buildModifiers();
     }
+    progress::checkCancel();
     applyPoses();
     applyObjectConstraints();
     if (opts.animation)
@@ -360,6 +363,7 @@ void Importer::run()
         progress::Scope anim("Animation", 1.0);
         importAnimation();
     }
+    progress::checkCancel();
     evaluateWithBlender();
     if (opts.setPlayback)
     {
@@ -406,6 +410,7 @@ void Importer::buildCollection(const View& collection, const View& layerCollecti
 
     for (const View& entry : collection.list("gobject", "CollectionObject"))
     {
+        progress::checkCancel();
         const View object = entry.deref("ob");
         // Children come in under their parent, wherever their collection is.
         if (object && !(object.deref("parent") && inLayer.count(object.deref("parent").data())))

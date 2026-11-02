@@ -788,6 +788,7 @@ public:
             // DAG roots, in file order.
             for (int i : roots)
             {
+                progress::checkCancel();
                 createDag(i, mOpts.parent);
                 nodes.step();
             }
@@ -796,6 +797,7 @@ public:
             progress::Scope meshes("Building meshes", 0.0, progress::None, refs ? 2.0 : 7.0);
             finishMeshes();
         }
+        progress::checkCancel();
         connectInstances();
 
         mG.evaluate();
@@ -808,6 +810,7 @@ public:
             progress::Scope weights("Skin weights", double(skins.size()), progress::None, refs ? 0.5 : 1.0);
             for (int i : skins)
             {
+                progress::checkCancel();
                 buildSkin(i);
                 weights.step();
             }
@@ -818,8 +821,10 @@ public:
             connectMorphInputs();
         }
         connectInverseScales();
+        progress::checkCancel();
         if (refs)
             importReferences(6.5);
+        progress::checkCancel();
         if (mOpts.animation)
         {
             progress::Scope curves("Animation curves", 0.0, progress::None, 0.5);
@@ -2225,11 +2230,14 @@ private:
         std::atomic<size_t> built{0};
         progress::runOnWorker([&] {
             tbb::parallel_for(size_t(0), count, [&](size_t i) {
+                if (scope.cancelled())
+                    return;
                 evaluateMesh(mPending[i]);
                 scope.step();
                 scope.setStatus(std::format("Building meshes {}/{}", ++built, count));
             });
         });
+        scope.checkCancel();
         for (PendingMesh& p : mPending)
         {
             mHandled.insert(p.log.handled.begin(), p.log.handled.end());

@@ -4,6 +4,7 @@
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/Profile.h"
+#include "core/Progress.h"
 
 #include <algorithm>
 #include <cassert>
@@ -213,12 +214,24 @@ json execute(std::string_view name, const json& call, CallSource source)
     json result;
     ++gExecuteDepth;
     gRunning.push_back(&args);
+    const uint64_t cancelsBefore = progress::cancelledCount();
     try
     {
         if (def->undoable)
         {
             UndoChunk chunk(def->name);
-            result = def->run(args);
+            const size_t mark = UndoStack::get().openEdits();
+            try
+            {
+                result = def->run(args);
+            }
+            catch (...)
+            {
+                // An aborted import or conversion leaves nothing half-built behind.
+                if (progress::cancelledCount() != cancelsBefore || progress::cancelRequested())
+                    UndoStack::get().rollbackTo(mark);
+                throw;
+            }
         }
         else
         {
@@ -231,6 +244,8 @@ json execute(std::string_view name, const json& call, CallSource source)
         --gExecuteDepth;
         if (top && !executeListeners().empty())
             notifyExecute({name, call, source, true, false});
+        if (progress::cancelledCount() != cancelsBefore)
+            throw CommandCancelled(std::string(name) + ": cancelled");
         throw;
     }
     gRunning.pop_back();

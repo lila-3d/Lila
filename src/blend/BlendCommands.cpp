@@ -126,7 +126,6 @@ std::unique_ptr<File> readWithProgress(const fs::path& path, const char* cmd, pr
     }
     if (root.cancelled())
         throw CommandError(std::string(cmd) + ": cancelled");
-    root.setCancellable(false);
     return f;
 }
 
@@ -147,9 +146,13 @@ ImportResult openAsScene(const File& file, const ImportOptions& opts)
     catch (...)
     {
         UndoStack::get().setEnabled(true);
+        if (progress::cancelRequested())
+            g.clear();
         throw;
     }
     UndoStack::get().setEnabled(true);
+    if (progress::cancelRequested())
+        g.clear();
     UndoStack::get().clear();
     return r;
 }

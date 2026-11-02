@@ -38,6 +38,7 @@ std::mutex gMutex;
 std::vector<std::shared_ptr<Node>> gRoots;
 std::atomic<uint64_t> gNextId{1};
 thread_local Node* tCurrent = nullptr;
+thread_local uint64_t tCancelledClosed = 0;
 
 std::atomic<bool> gListening{false};
 std::function<void()> gPump;
@@ -191,6 +192,8 @@ Scope::~Scope()
             std::erase(gRoots, mNode);
     }
     tCurrent = mPrevCurrent;
+    if (root && n.cancelled.load(std::memory_order_relaxed))
+        ++tCancelledClosed;
     if (n.parent)
         n.parent->done.fetch_add(n.span, std::memory_order_relaxed);
     if (!gListening.load(std::memory_order_relaxed))
@@ -291,6 +294,22 @@ double fraction(const Scope& root)
 {
     std::scoped_lock lock(gMutex);
     return fractionOf(*root.mNode);
+}
+
+bool cancelRequested()
+{
+    return tCurrent && tCurrent->root->cancelled.load(std::memory_order_relaxed);
+}
+
+void checkCancel()
+{
+    if (cancelRequested())
+        throw Cancelled();
+}
+
+uint64_t cancelledCount()
+{
+    return tCancelledClosed;
 }
 
 void cancel(uint64_t id)

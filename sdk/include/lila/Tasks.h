@@ -34,6 +34,12 @@ namespace lila::tasks
 {
 using progress::Cancelled;
 using progress::Scope;
+/**
+ * The cancel token for converters and long commands: open a Scope with progress::Cancellable around the work, poll
+ * checkCancel() between items. When it throws, an undoable command's edits are rolled back.
+ */
+using progress::cancelRequested;
+using progress::checkCancel;
 
 /** True on the thread that owns the scene and the UI. */
 inline bool isMainThread()

@@ -110,6 +110,11 @@ bool MainWindow::openScene(const std::filesystem::path& given)
         mViewports->frameUnlessRestored();
         return true;
     }
+    catch (const CommandCancelled& e)
+    {
+        log::info("{}", e.what());
+        return false;
+    }
     catch (const CommandError& e)
     {
         QMessageBox::warning(this, "Open failed", e.what());
@@ -134,6 +139,10 @@ void MainWindow::reloadScene()
         io::translators::run(io::translators::Op::Open, path, json::object(), CallSource::UI);
         refreshSourceStatus();
         mViewports->frameUnlessRestored();
+    }
+    catch (const CommandCancelled& e)
+    {
+        log::info("{}", e.what());
     }
     catch (const CommandError& e)
     {

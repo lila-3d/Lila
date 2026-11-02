@@ -97,10 +97,7 @@ void logReport(const char* cmd, const fs::path& path, const ImportResult& r)
         log::warn("{}: {}: {}", cmd, path.filename().string(), w);
 }
 
-/**
- * Reads and parses a Maya file off the main thread: the slow part, and the only one that can be cancelled without
- * touching the scene. Throws CommandError; on success the root's Cancel button goes away.
- */
+/** Reads and parses a Maya file off the main thread. Throws CommandError, "cancelled" when the root was cancelled. */
 File readWithProgress(const fs::path& path, const char* cmd, progress::Scope& root)
 {
     File f;
@@ -119,7 +116,6 @@ File readWithProgress(const fs::path& path, const char* cmd, progress::Scope& ro
     }
     if (root.cancelled())
         throw CommandError(std::string(cmd) + ": cancelled");
-    root.setCancellable(false);
     return f;
 }
 
@@ -145,9 +141,13 @@ ImportResult openAsScene(const fs::path& path, const File& file, const ImportOpt
     catch (...)
     {
         UndoStack::get().setEnabled(true);
+        if (progress::cancelRequested())
+            g.clear();
         throw;
     }
     UndoStack::get().setEnabled(true);
+    if (progress::cancelRequested())
+        g.clear();
     UndoStack::get().clear();
     return r;
 }

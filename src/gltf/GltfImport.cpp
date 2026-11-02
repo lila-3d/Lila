@@ -763,7 +763,10 @@ void Importer::instances(const cgltf_node* gn, NodeId id, const MeshPtr& mesh)
 void Importer::create(const cgltf_node* gn, NodeId parent)
 {
     if (build)
+    {
         build->step();
+        build->checkCancel();
+    }
     std::shared_ptr<BuiltMesh> built;
     if (gn->mesh)
     {
@@ -1437,7 +1440,7 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
     LILA_ZONE();
 
     ImportResult r;
-    progress::Scope scope("Importing " + utf8(path.filename()), 10.0);
+    progress::Scope scope("Importing " + utf8(path.filename()), 10.0, progress::Cancellable);
     std::string fileBytes;
     if (!readFile(path, fileBytes))
     {
@@ -1461,6 +1464,7 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
         progress::Scope read("Reading " + utf8(path.filename()), 0.0, progress::None, 3.0);
         progress::runOnWorker([&] { res = cgltf_load_buffers(&options, data.get(), pathUtf8.c_str()); });
     }
+    scope.checkCancel();
     if (res != cgltf_result_success)
     {
         r.error = std::string("can't load the file's buffers: ") + resultText(res);
@@ -1526,6 +1530,7 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
             im.create(n, opts.parent);
         im.build = nullptr;
     }
+    scope.checkCancel();
     im.buildSkins();
     im.buildMorphs();
     if (opts.animation)

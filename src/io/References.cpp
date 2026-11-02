@@ -300,6 +300,10 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
                             g.setValue({n->id(), idx, -1}, scene::fromJson(n->type().attrs[idx], value));
                 }
             }
+            catch (const progress::Cancelled&)
+            {
+                throw;
+            }
             catch (const std::exception& e)
             {
                 warnings.push_back("nested reference " + p.string() + ": " + e.what());
@@ -326,6 +330,7 @@ std::vector<NodeId> instantiate(const json& doc, const std::string& ns, uint32_t
     for (const json& jn : member(doc, "nodes", kNoArray))
     {
         scope.step();
+        progress::checkCancel();
         std::string type = jn.value("type", "");
         std::string name = jn.value("name", "");
         const scene::NodeType* t = scene::types::find(type);
@@ -826,6 +831,10 @@ void deserialize(const json& records, const fs::path& sceneDir, std::vector<std:
         try
         {
             load(gRefs.back(), warnings);
+        }
+        catch (const progress::Cancelled&)
+        {
+            throw;
         }
         catch (const std::exception& e)
         {

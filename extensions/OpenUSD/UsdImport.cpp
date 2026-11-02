@@ -10,6 +10,7 @@
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
 #include <lila/Rig.h>
+#include <lila/Tasks.h>
 
 #include <pxr/base/gf/vec2d.h>
 #include <pxr/base/gf/vec2f.h>
@@ -1373,6 +1374,7 @@ struct Builder
 
     void build(const UsdPrim& prim, NodeId parent)
     {
+        tasks::checkCancel();
         if (isShading(prim) || prim.IsA<UsdSkelAnimation>() || prim.IsA<UsdSkelBlendShape>() || prim.IsA<UsdGeomSubset>())
             return;
         if (onlyShading(prim))
@@ -1882,6 +1884,7 @@ ImportResult importUsd(scene::Graph& graph, const fs::path& path, const ImportOp
     LILA_ZONE();
 
     ImportResult r;
+    tasks::Scope scope("Importing " + utf8(path.filename()), 0.0, progress::Cancellable);
     UsdStageRefPtr stage;
     std::vector<std::string> opening;
     {

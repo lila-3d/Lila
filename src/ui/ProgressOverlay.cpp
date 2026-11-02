@@ -67,14 +67,15 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_ShowWithoutActivating);
         setCursor(Qt::BusyCursor);
-        mCancel = new QPushButton("Cancel", this);
-        mCancel->setCursor(Qt::ArrowCursor);
-        mCancel->hide();
+        mCancel = makeButton("Abort");
+        mKeepGoing = makeButton("Continue");
         connect(mCancel, &QPushButton::clicked, this, [this] {
-            progress::cancel(mState.id);
-            mCancel->setEnabled(false);
-            mCancel->setText("Cancelling...");
+            if (mConfirming)
+                abort();
+            else
+                setConfirming(true);
         });
+        connect(mKeepGoing, &QPushButton::clicked, this, [this] { setConfirming(false); });
         mClock.start();
     }
 
@@ -82,24 +83,43 @@ public:
     {
         if (s.id != mState.id)
         {
+            mConfirming = false;
             mCancel->setEnabled(true);
-            mCancel->setText("Cancel");
+            mCancel->setText("Abort");
         }
         mState = s;
         mCancel->setVisible(s.cancellable && !s.cancelled);
+        mKeepGoing->setVisible(mConfirming && cancellable());
+        placeButtons();
         update();
     }
 
     uint64_t id() const { return mState.id; }
     bool cancellable() const { return mState.cancellable && !mState.cancelled; }
+    bool confirming() const { return mConfirming; }
+
+    /** The first click (or Esc) asks; the Abort button then confirms. */
+    void setConfirming(bool on)
+    {
+        mConfirming = on && cancellable();
+        mKeepGoing->setVisible(mConfirming);
+        placeButtons();
+        update();
+    }
+
+    void abort()
+    {
+        progress::cancel(mState.id);
+        mConfirming = false;
+        mKeepGoing->hide();
+        mCancel->setEnabled(false);
+        mCancel->setText("Aborting...");
+        placeButtons();
+        update();
+    }
 
 protected:
-    void resizeEvent(QResizeEvent*) override
-    {
-        const QRect c = cardRect();
-        mCancel->adjustSize();
-        mCancel->move(c.right() - 16 - mCancel->width(), c.bottom() - 12 - mCancel->height());
-    }
+    void resizeEvent(QResizeEvent*) override { placeButtons(); }
 
     void paintEvent(QPaintEvent*) override
     {
@@ -137,12 +157,33 @@ protected:
         if (!percent.isEmpty())
             p.drawText(QRect(statusRect.right(), statusRect.top(), percentWidth, statusRect.height()), Qt::AlignRight | Qt::AlignVCenter, percent);
 
-        p.setPen(kFaint);
         const QRect elapsedRect(int(bar.left()), c.bottom() - 12 - mCancel->sizeHint().height(), 200, mCancel->sizeHint().height());
-        p.drawText(elapsedRect, Qt::AlignLeft | Qt::AlignVCenter, QString::fromStdString(progress::formatElapsed(mState.elapsed)));
+        p.setPen(mConfirming ? kTitle : kFaint);
+        p.drawText(elapsedRect, Qt::AlignLeft | Qt::AlignVCenter,
+                   mConfirming ? QStringLiteral("Abort? Nothing is kept.") : QString::fromStdString(progress::formatElapsed(mState.elapsed)));
     }
 
 private:
+    /** Never takes focus, so Space or Enter meant for the app can't press it. */
+    QPushButton* makeButton(const QString& text)
+    {
+        auto* b = new QPushButton(text, this);
+        b->setCursor(Qt::ArrowCursor);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setAutoDefault(false);
+        b->hide();
+        return b;
+    }
+
+    void placeButtons()
+    {
+        const QRect c = cardRect();
+        mCancel->adjustSize();
+        mCancel->move(c.right() - 16 - mCancel->width(), c.bottom() - 12 - mCancel->height());
+        mKeepGoing->adjustSize();
+        mKeepGoing->move(mCancel->x() - 8 - mKeepGoing->width(), mCancel->y());
+    }
+
     QRect cardRect() const
     {
         return QRect((width() - kCardWidth) / 2, (height() - kCardHeight) / 2, kCardWidth, kCardHeight);
@@ -150,6 +191,8 @@ private:
 
     progress::Snapshot mState;
     QPushButton* mCancel = nullptr;
+    QPushButton* mKeepGoing = nullptr;
+    bool mConfirming = false;
     QElapsedTimer mClock;
 };
 
@@ -225,8 +268,8 @@ protected:
             }
             return false;
         case QEvent::KeyPress:
-            if (static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape && mCard->cancellable())
-                progress::cancel(mCard->id());
+            if (auto* k = static_cast<QKeyEvent*>(e); k->key() == Qt::Key_Escape && !k->isAutoRepeat() && mCard->cancellable())
+                mCard->setConfirming(!mCard->confirming());
             [[fallthrough]];
         case QEvent::KeyRelease:
         case QEvent::ShortcutOverride:

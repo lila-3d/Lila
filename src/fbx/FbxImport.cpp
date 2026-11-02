@@ -824,17 +824,21 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     ufbx_load_opts lo{};
     lo.load_external_files = false;
     lo.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_PRESERVE;
+    lo.progress_cb.fn = [](void*, const ufbx_progress*) {
+        return progress::cancelRequested() ? UFBX_PROGRESS_CANCEL : UFBX_PROGRESS_CONTINUE;
+    };
     TbbPool pool;
     pool.use(lo);
     ufbx_error err{};
     std::u8string u8 = path.u8string();
-    progress::Scope scope("Importing " + path.filename().string(), 10.0);
+    progress::Scope scope("Importing " + path.filename().string(), 10.0, progress::Cancellable);
     Graph::Batch batch(graph);
     std::unique_ptr<ufbx_scene, SceneDeleter> fbx;
     {
         progress::Scope read("Reading " + path.filename().string(), 0.0, progress::None, 3.0);
         progress::runOnWorker([&] { fbx.reset(ufbx_load_file_len(reinterpret_cast<const char*>(u8.data()), u8.size(), &lo, &err)); });
     }
+    scope.checkCancel();
     if (!fbx)
     {
         r.error = std::string(err.description.data, err.description.length);
@@ -878,6 +882,7 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
     progress::Scope build("Building " + path.filename().string(), double(fbx->nodes.count), progress::None, 7.0);
     auto create = [&](auto&& self, const ufbx_node* fn, NodeId parent) -> void {
         build.step();
+        build.checkCancel();
         const std::string fbxName = toString(fn->name);
         const bool isMesh = fn->mesh && fn->mesh->num_faces > 0;
         const bool isJoint = jointType && !isMesh && (fn->bone || bones.count(fn));

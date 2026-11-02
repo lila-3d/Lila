@@ -27,7 +27,10 @@ enum Flags : uint32_t
     None = 0,
     /** Background work: never shown as a modal overlay, only as a small indicator. */
     Silent = 1,
-    /** Cancelling is safe: the operation leaves the scene as it was. */
+    /**
+     * Offers Abort: the operation polls checkCancel() and, when it throws, leaves the scene as it was (or, for one that
+     * replaced the scene, empty). Commands roll back an undoable command's edits when it fails after a cancel.
+     */
     Cancellable = 2,
 };
 
@@ -107,6 +110,16 @@ LILA_FOUNDATION_API std::vector<Snapshot> snapshot();
 
 /** The overall fraction of one root's tree, for tests: (done + child fraction * child span) / total at each level. */
 LILA_FOUNDATION_API double fraction(const Scope& root);
+
+/**
+ * The cancellation token converters poll: true once the root of this thread's innermost scope was cancelled (workers
+ * under runOnWorker or Adopt see their caller's root). False outside any scope.
+ */
+LILA_FOUNDATION_API bool cancelRequested();
+/** Throws Cancelled when cancelRequested(). */
+LILA_FOUNDATION_API void checkCancel();
+/** Cancelled roots closed on this thread so far: a failure that moved it came from a cancel. */
+LILA_FOUNDATION_API uint64_t cancelledCount();
 
 /** Cancels the root with this id (from a Snapshot). */
 LILA_FOUNDATION_API void cancel(uint64_t id);

@@ -269,6 +269,11 @@ inline bool runTranslator(io::translators::Op op, const QString& file, const std
         io::translators::run(op, std::filesystem::path(file.toStdWString()), json::object(), CallSource::UI, translator);
         return true;
     }
+    catch (const CommandCancelled& e)
+    {
+        log::info("{}", e.what());
+        return false;
+    }
     catch (const CommandError& e)
     {
         log::error("{}", e.what());

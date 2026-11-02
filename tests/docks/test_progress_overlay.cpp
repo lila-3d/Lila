@@ -42,6 +42,21 @@ QWidget* card(QMainWindow& win)
 
 void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 
+QPushButton* cardButton(QMainWindow& win, const char* text)
+{
+    if (QWidget* c = card(win))
+        for (QPushButton* b : c->findChildren<QPushButton*>())
+            if (b->text() == text && b->isVisible())
+                return b;
+    return nullptr;
+}
+
+void pressKey(QWidget* target, Qt::Key key)
+{
+    QKeyEvent e(QEvent::KeyPress, key, Qt::NoModifier);
+    QApplication::sendEvent(target, &e);
+}
+
 void setup()
 {
     static bool done = false;
@@ -96,8 +111,25 @@ TEST_CASE("progress overlay: shown after 300 ms, pumps with input blocked, gone 
         QApplication::sendEvent(&win, &close);
         CHECK_FALSE(close.isAccepted());
 
-        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-        QApplication::sendEvent(button, &escape);
+        // Abort asks first, from the button or Esc; Esc again or Continue backs out. Nothing takes the keyboard.
+        QPushButton* abort = cardButton(win, "Abort");
+        REQUIRE(abort);
+        CHECK(abort->focusPolicy() == Qt::NoFocus);
+        CHECK_FALSE(cardButton(win, "Continue"));
+        pressKey(button, Qt::Key_Escape);
+        REQUIRE(cardButton(win, "Continue"));
+        CHECK(cardButton(win, "Continue")->focusPolicy() == Qt::NoFocus);
+        pressKey(button, Qt::Key_Escape);
+        CHECK_FALSE(cardButton(win, "Continue"));
+        abort->click();
+        pressKey(button, Qt::Key_Space);
+        pressKey(button, Qt::Key_Return);
+        CHECK_FALSE(root.cancelled());
+        cardButton(win, "Continue")->click();
+        CHECK_FALSE(cardButton(win, "Continue"));
+        CHECK_FALSE(root.cancelled());
+        abort->click();
+        abort->click();
         CHECK(root.cancelled());
     }
     CHECK_FALSE(card(win));
