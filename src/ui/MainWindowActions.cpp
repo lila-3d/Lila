@@ -1,6 +1,7 @@
 #include "ui/MainWindowDetail.h"
 #include "ui/CameraBookmarks.h"
 #include "ui/CreditsDialog.h"
+#include "ui/LicensesDialog.h"
 #include "ui/RenderOutputDialog.h"
 #include "ui/PerfTrace.h"
 #include "ui/ReferenceOverlay.h"
@@ -353,6 +354,8 @@ void MainWindow::registerActions()
                       scheduleLayoutSave();
                   }, nullptr, "Hides every docked panel so the viewports fill the window; again to bring them back."});
     actions::add({"help.about", "About Lila", "Help", [this] { showAbout(); }, nullptr, "Version and copyright."});
+    actions::add({"help.licenses", "Licenses", "Help", [this] { showLicenses(this); }, nullptr,
+                  "The third-party components in Lila and their licenses."});
     actions::add({"help.credits", "Credits", "Help", [this] { showCredits(this); }, nullptr,
                   "The sponsors, supporters, contributors and testers behind Lila."});
     actions::add({"help.prefsFolder", "Open Prefs Folder", "Help", [] {

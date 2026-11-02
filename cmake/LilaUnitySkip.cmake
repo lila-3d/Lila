@@ -1,6 +1,7 @@
 set(LILA_UNITY_SKIP
     src/io/FileTypes.cpp
     src/scene/AttrCommands.cpp
+    src/ui/WeightPaintTool.cpp
     src/scene/AttrComponents.cpp
     src/scene/LightingChannels.cpp
     src/scene/SceneGraphCommands.cpp
