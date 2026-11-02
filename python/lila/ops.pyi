@@ -4445,7 +4445,7 @@ def listExtensions(loaded: bool | None = None, searchPaths: bool | None = None) 
     """
 
 def listIssues(*objects: Any, source: str | None = None, severity: str | None = None, blocking: str | None = None, hierarchy: bool | None = None, src: str | None = None, sv: str | None = None, bl: str | None = None, hi: bool | None = None) -> Any:
-    """The current issues, as dicts {id, source, severity, target, object, component, attribute, message, resolved, blocks, fix}.
+    """The current issues, as dicts {id, source, severity, target, object, component, attribute, message, resolved, blocks, fix, select}.
 
     Args:
         objects: objects.
@@ -6571,7 +6571,7 @@ def reorderDisplayLayer(*objects: Any, index: int | None = None, i: int | None =
         index: Row it moves to. Short form i. Default 0.
     """
 
-def reportIssue(*objects: Any, message: str | None = None, severity: str | None = None, source: str | None = None, blocks: Sequence[Any] | None = None, fix: str | None = None, m: str | None = None, sv: str | None = None, src: str | None = None, b: Sequence[Any] | None = None, fx: str | None = None) -> Any:
+def reportIssue(*objects: Any, message: str | None = None, severity: str | None = None, source: str | None = None, blocks: Sequence[Any] | None = None, fix: str | None = None, select: str | None = None, m: str | None = None, sv: str | None = None, src: str | None = None, b: Sequence[Any] | None = None, fx: str | None = None, sel: str | None = None) -> Any:
     """Attaches info, a warning or an error to an object, one of its components or an attribute.
 
     The target is "<object>[.<component>[:<attribute>]]": a Lila path or a USD prim path, then an attribute ("crate.translateX") or a component (a node type, attribute category, Attribute Editor section or attribute namespace) with an optional attribute in it. No target attaches it to the scene. The outliner badges the object, the Attribute Editor marks the component and attribute. Issues are not saved with the scene; validators report them again when they run.
@@ -6583,6 +6583,7 @@ def reportIssue(*objects: Any, message: str | None = None, severity: str | None 
         source: Who reports it, so it can clear its own. Defaults to the validator running, else "user". Short form src.
         blocks: Commands it refuses to let run until it is cleared. Short form b. Example: `reportIssue("crate", m="No collision", severity="error", blocks=["exportFbx"])`
         fix: Python that fixes it, run by fixIssue and the Fix button. Short form fx.
+        select: Python that selects the components it is about, run by selectIssue and clicking the issue. Short form sel.
 
     Examples:
         reportIssue("/World/crate.health:max", m="Max health must be above 0", severity="error")
@@ -7441,6 +7442,13 @@ def selectInstances(*objects: Any, add: bool | None = None) -> Any:
     Args:
         objects: meshes.
         add: Add to the selection instead of replacing it. Default False.
+    """
+
+def selectIssue(*objects: Any) -> Any:
+    """Selects an issue's object, then runs its select Python (when it has one and the session has Python) to pick the components it is about. Returns whether the components were picked.
+
+    Args:
+        objects: id.
     """
 
 def selectLoop(ring: bool | None = None) -> Any:
