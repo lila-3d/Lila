@@ -7,6 +7,7 @@
 #include "core/PrefStore.h"
 #include "core/Workspace.h"
 #include "io/SceneFile.h"
+#include "media/Decode.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 
@@ -762,7 +763,7 @@ bool isImageFile(const std::string& path)
     static const char* const kSuffixes[] = {".png", ".jpg", ".jpeg", ".tga", ".hdr", ".bmp", ".tif", ".tiff", ".webp", ".exr"};
     std::string ext = paths::toUtf8(paths::fromUtf8(path).extension());
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return std::ranges::any_of(kSuffixes, [&](const char* s) { return ext == s; });
+    return std::ranges::any_of(kSuffixes, [&](const char* s) { return ext == s; }) || media::isVideoFile(path);
 }
 
 void saveFile(const Set& set, const std::filesystem::path& file)

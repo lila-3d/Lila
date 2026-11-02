@@ -5,8 +5,10 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
+#include "media/Decode.h"
 #include "ops/Command.h"
 #include "render/FrameState.h"
+#include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/Camera.h"
 #include "ui/CursorBadges.h"
@@ -18,7 +20,9 @@
 #include "ui/Overlay.h"
 #include "ui/ReferenceSet.h"
 #include "ui/ReferenceWindow.h"
+#include "ui/Animation.h"
 #include "ui/TextureCache.h"
+#include "ui/VideoTextures.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
@@ -140,9 +144,22 @@ double holdDelayMs()
     return 180.0;
 }
 
+/** A reference's texture: the file, or the frame its video shows at the scene time. */
+render::TexturePtr textureOf(const std::string& file)
+{
+    if (media::isVideoFile(file))
+        return videoTextures::texture(file, videoTextures::referenceFrame(file, scene::Graph::current().time()));
+    return textures::get(file, true);
+}
+
 QSize pixelSizeOf(const refs::Image& img)
 {
     const std::string file = refs::fileOf(img);
+    if (media::isVideoFile(file))
+    {
+        const media::VideoInfo* info = videoTextures::info(file);
+        return info ? QSize(info->width, info->height) : QSize();
+    }
     render::TexturePtr t = textures::get(file, true);
     if (t && t->width > 0 && t->height > 0)
         return {int(t->width), int(t->height)};
@@ -564,7 +581,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view)
         const refs::Image* img = set.image(o->image);
         if (!img)
             continue;
-        render::TexturePtr tex = textures::get(refs::fileOf(*img), true);
+        render::TexturePtr tex = textureOf(refs::fileOf(*img));
         if (!tex || tex->width <= 0 || tex->height <= 0)
             continue;
         const double fade = refs::boundFade(*o, forward);
@@ -1484,7 +1501,7 @@ void registerActions()
                           QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
                           const fileDialog::ContextScope scope("referenceImages", "Images");
                           QStringList files = fileDialog::getOpenFileNames(QApplication::activeWindow(), "Add Reference Overlay", start,
-                                                                           "Images (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.webp)");
+                                                                           "Images and Videos (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.webp *.mp4 *.mov *.mkv *.webm *.avi *.m4v)");
                           std::vector<std::string> paths;
                           for (const QString& f : files)
                               paths.push_back(f.toStdString());
@@ -1723,6 +1740,19 @@ void install(std::function<ViewportWidget*()> activeView)
     state().textureListener = textures::addListener([] {
         if (!refs::current().overlays.empty())
             redraw();
+    });
+    videoTextures::addListener([] {
+        if (!refs::current().overlays.empty())
+            redraw();
+    });
+    onTimeChanged(qApp, [] {
+        const refs::Set& set = refs::current();
+        for (const refs::Overlay& o : set.overlays)
+            if (const refs::Image* img = set.image(o.image); img && o.visible && media::isVideoFile(refs::fileOf(*img)))
+            {
+                redraw();
+                return;
+            }
     });
     refs::addListener(redraw);
     refs::addListener(outliner::refreshRowSources);

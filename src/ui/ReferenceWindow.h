@@ -58,6 +58,7 @@ private:
     std::string mWindow;
     int mListener = 0;
     int mTextureListener = 0;
+    int mVideoListener = 0;
     bool mRebuilding = false;
     class TabBar* mTabs = nullptr;
     class ImageView* mView = nullptr;

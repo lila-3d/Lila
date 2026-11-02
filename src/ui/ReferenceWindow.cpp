@@ -3,6 +3,8 @@
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Workspace.h"
+#include "media/Decode.h"
+#include "scene/Graph.h"
 #include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/FileDialog.h"
@@ -11,7 +13,9 @@
 #include "ui/Panels.h"
 #include "ui/ReferenceOverlay.h"
 #include "ui/ReferenceSet.h"
+#include "ui/Animation.h"
 #include "ui/TextureCache.h"
+#include "ui/VideoTextures.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -51,7 +55,8 @@ namespace lila::ui::references
 {
 namespace
 {
-const char* const kImageFilter = "Images (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.webp);;All Files (*)";
+const char* const kImageFilter =
+    "Images and Videos (*.png *.jpg *.jpeg *.tga *.hdr *.exr *.bmp *.tif *.tiff *.webp *.mp4 *.mov *.mkv *.webm *.avi *.m4v);;All Files (*)";
 constexpr const char* kPanelPrefix = "referenceImages";
 
 json runCommand(const char* name, const json& call)
@@ -69,6 +74,8 @@ json runCommand(const char* name, const json& call)
 
 QImage loadImage(const std::string& file)
 {
+    if (media::isVideoFile(file))
+        return videoTextures::image(file, videoTextures::referenceFrame(file, scene::Graph::current().time()));
     QImageReader reader(QString::fromStdString(file));
     reader.setAutoTransform(true);
     QImage img = reader.read();
@@ -171,11 +178,14 @@ QImage displayImage(const Image& img)
 {
     Cached& c = cache()[img.id];
     const std::string file = fileOf(img);
-    if (c.file != file || c.raw.isNull())
+    // A video's raw picture changes with the scene time; a new frame redoes the grading.
+    if (c.file != file || c.raw.isNull() || media::isVideoFile(file))
     {
-        c.raw = loadImage(file);
+        QImage raw = loadImage(file);
+        if (c.file != file || raw.cacheKey() != c.raw.cacheKey())
+            c.key.clear();
+        c.raw = std::move(raw);
         c.file = file;
-        c.key.clear();
     }
     if (c.raw.isNull())
         return {};
@@ -715,6 +725,14 @@ ReferenceWindow::ReferenceWindow(std::string windowId, QWidget* parent) : QWidge
         if (mView->isVisible() && !currentImage().empty())
             mView->setImage(current().image(currentImage()));
     });
+    auto refreshVideo = [this] {
+        if (!mView->isVisible() || currentImage().empty())
+            return;
+        if (const Image* img = current().image(currentImage()); img && media::isVideoFile(fileOf(*img)))
+            mView->setImage(img);
+    };
+    mVideoListener = videoTextures::addListener(refreshVideo);
+    onTimeChanged(this, refreshVideo);
     rebuild();
 }
 
@@ -722,6 +740,7 @@ ReferenceWindow::~ReferenceWindow()
 {
     removeListener(mListener);
     textures::removeListener(mTextureListener);
+    videoTextures::removeListener(mVideoListener);
 }
 
 QTabBar* ReferenceWindow::tabBar() const

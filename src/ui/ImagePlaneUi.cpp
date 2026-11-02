@@ -6,6 +6,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "core/Workspace.h"
+#include "media/Media.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/Camera.h"
@@ -16,6 +17,7 @@
 #include "ui/Animation.h"
 #include "ui/Camera.h"
 #include "ui/TextureCache.h"
+#include "ui/VideoTextures.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportWidget.h"
@@ -46,7 +48,8 @@ namespace ip = scene::imagePlane;
 using scene::ImagePlane;
 
 constexpr const char* kHiddenKey = "/viewport/imagePlanes/hidden";
-const char* const kImageFilter = "Images (*.png *.jpg *.jpeg *.tga *.hdr *.bmp *.tif *.tiff *.webp);;All Files (*)";
+const char* const kImageFilter = "Images and Videos (*.png *.jpg *.jpeg *.tga *.hdr *.bmp *.tif *.tiff *.webp *.mp4 *.mov *.mkv *.webm *.avi *.m4v);;"
+                                  "All Files (*)";
 const glm::vec4 kSelectedColor(0.95f, 0.95f, 0.95f, 1.0f);
 
 std::function<ViewportWidget*()>& activeView()
@@ -79,13 +82,35 @@ bool zUp()
     return PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
 }
 
-/** The picture a plane shows now: its file, or the current frame of its sequence. */
+/** The frame of a video plane at a scene time, from its start frame, fps override and frame offset. */
+int64_t videoFrameOf(const scene::Node& n, const std::string& file, double time)
+{
+    const media::VideoInfo* info = videoTextures::info(file);
+    if (!info)
+        return 0;
+    scene::Graph& g = scene::Graph::current();
+    media::VideoTiming t;
+    t.start = media::startSeconds(g, n.id(), n.as<double>(ImagePlane::kStartFrame));
+    t.fps = n.as<double>(ImagePlane::kFps);
+    t.offset = n.as<int64_t>(ImagePlane::kFrameOffset);
+    return media::videoFrame(t, info->fps, time);
+}
+
+/** The picture a plane shows now: its file, the current frame of its sequence, or its video's frame. */
 render::TexturePtr imageFor(const scene::Node& n, double time)
 {
     const std::string& stored = n.as<std::string>(ImagePlane::kImageName);
     if (stored.empty())
         return nullptr;
     std::string file = resolve(stored);
+    if (media::isVideoFile(file))
+    {
+        render::TexturePtr t = videoTextures::texture(file, videoFrameOf(n, file, time));
+        static std::set<std::string> warnedVideo;
+        if (!t && !videoTextures::error(file).empty() && warnedVideo.insert(file).second)
+            log::warn("imagePlane {}: {}", n.path(), videoTextures::error(file));
+        return t;
+    }
     bool sequence = n.as<bool>(ImagePlane::kUseFrameExtension);
     if (sequence)
         file = ip::frameFile(file, std::llround(scene::anim::frameOf(time)) + n.as<int64_t>(ImagePlane::kFrameOffset));
@@ -161,7 +186,7 @@ std::vector<Placed> placedIn(const ViewInfo& view)
     for (const scene::Node* n : scene::sceneIndex::ofType(g, "imagePlane"))
     {
         const scene::NodeId id = n->id();
-        if (!scene::effectivelyVisible(g, id))
+        if (!scene::effectivelyVisible(g, id) || !media::isLive(g, id))
             continue;
         std::string camera = ip::cameraName(n->as<std::string>(ImagePlane::kCamera));
         std::optional<ip::CameraFrame> frame;
@@ -287,7 +312,7 @@ void create(const std::string& file, const std::string& camera)
 
 std::vector<std::string> droppedImages(const QMimeData* mime)
 {
-    static const QStringList kSuffixes = {"png", "jpg", "jpeg", "tga", "hdr", "bmp", "tif", "tiff", "webp"};
+    static const QStringList kSuffixes = {"png", "jpg", "jpeg", "tga", "hdr", "bmp", "tif", "tiff", "webp", "mp4", "mov", "mkv", "webm", "avi", "m4v"};
     std::vector<std::string> out;
     if (!mime || !mime->hasUrls())
         return out;
@@ -414,9 +439,10 @@ void install(std::function<ViewportWidget*()> active)
     activeView() = std::move(active);
     viewportHooks::addDrawer(draw);
     viewportHooks::addPicker(pick);
+    videoTextures::addListener([] { viewportTools::requestRedraw(); });
     onTimeChanged(qApp, [] {
         for (const scene::Node* n : scene::sceneIndex::ofType(scene::Graph::current(), "imagePlane"))
-            if (n->as<bool>(ImagePlane::kUseFrameExtension))
+            if (n->as<bool>(ImagePlane::kUseFrameExtension) || media::isVideoFile(n->as<std::string>(ImagePlane::kImageName)))
             {
                 viewportTools::requestRedraw();
                 return;

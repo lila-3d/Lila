@@ -171,7 +171,7 @@ LILA_UI_API void removeListener(int id);
 LILA_UI_API std::string fileOf(const Image& img);
 /** Reads the file into img.data / img.ext. False with a log message when it can't be read. */
 LILA_UI_API bool embed(Image& img);
-/** Image files a set accepts. */
+/** Image and video files a set accepts. */
 LILA_UI_API bool isImageFile(const std::string& path);
 
 /** Writes the set to a .lilaref file. Throws std::runtime_error. */

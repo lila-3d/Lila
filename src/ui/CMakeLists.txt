@@ -70,6 +70,7 @@ lila_module(lila_ui UI
     Hotbox.cpp Hotbox.h HotboxZone.h HotkeyChord.h
     Icons.cpp Icons.h
     ImagePlaneUi.cpp ImagePlaneUi.h
+    VideoTextures.cpp VideoTextures.h
     LicensesDialog.cpp LicensesDialog.h
     PaintColor.cpp PaintColor.h
     ReferenceSet.cpp ReferenceSet.h ReferenceWindow.cpp ReferenceWindow.h ReferenceOverlay.cpp ReferenceOverlay.h
