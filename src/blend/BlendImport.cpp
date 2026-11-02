@@ -302,9 +302,9 @@ void Importer::run()
         if (const std::vector<View> lcs = layers.front().list("layer_collections", "LayerCollection"); !lcs.empty())
             layerCollection = lcs.front();
         // Objects hidden in the view layer (the outliner's eye) keep the flag on their base, not the object.
-        for (const View& base : layers.front().list("object_bases", "Base"))
-            if (base.i("flag") & (1 << 8))
-                hiddenInLayer.insert(base.deref("object").data());
+        for (const View& layerBase : layers.front().list("object_bases", "Base"))
+            if (layerBase.i("flag") & (1 << 8))
+                hiddenInLayer.insert(layerBase.deref("object").data());
     }
 
     for (const View& o : file.ids("OB"))

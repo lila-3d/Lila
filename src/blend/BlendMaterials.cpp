@@ -617,8 +617,8 @@ std::string Importer::material(const View& ma)
     if (!notes.empty())
     {
         std::string list;
-        for (const std::string& n : notes)
-            list += (list.empty() ? "" : "; ") + n;
+        for (const std::string& note : notes)
+            list += (list.empty() ? "" : "; ") + note;
         r.warnings.push_back(std::format("material '{}': approximated; not converted: {}", ma.idName(), list));
     }
     return slot;

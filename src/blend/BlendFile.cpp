@@ -113,9 +113,9 @@ std::vector<uint8_t> gunzip(const std::vector<uint8_t>& in)
 }
 } // namespace
 
-const Field* Struct::field(std::string_view name) const
+const Field* Struct::field(std::string_view fieldName) const
 {
-    auto it = byName.find(std::string(name));
+    auto it = byName.find(std::string(fieldName));
     return it == byName.end() ? nullptr : &fields[it->second];
 }
 

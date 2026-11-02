@@ -451,9 +451,9 @@ void Importer::evaluateWithBlender()
             }
         // The UV map the materials read goes first, as on meshes read from the file.
         if (const std::string want = preferredUv(m->materialNames()); !want.empty())
-            if (auto at = std::find(uvNames.begin(), uvNames.end(), want); at != uvNames.end() && at != uvNames.begin())
+            if (auto found = std::find(uvNames.begin(), uvNames.end(), want); found != uvNames.end() && found != uvNames.begin())
             {
-                const size_t k = size_t(at - uvNames.begin());
+                const size_t k = size_t(found - uvNames.begin());
                 std::rotate(uvLayers.begin(), uvLayers.begin() + std::ptrdiff_t(k), uvLayers.begin() + std::ptrdiff_t(k) + 1);
                 std::rotate(uvNames.begin(), uvNames.begin() + std::ptrdiff_t(k), uvNames.begin() + std::ptrdiff_t(k) + 1);
             }
