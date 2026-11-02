@@ -655,12 +655,15 @@ void FileDialog::Impl::build(const QString& caption)
     auto* nameRow = new QHBoxLayout;
     nameRow->addWidget(new QLabel(mode == Mode::Directory ? "Folder" : "File name"));
     name = new QLineEdit;
-    nameRow->addWidget(name, 1);
+    nameRow->addWidget(name, 3);
     types = new QComboBox;
     types->addItems(filters);
     types->setVisible(mode != Mode::Directory);
+    // Filter strings like "All supported (...)" run to hundreds of characters; size by a fixed length instead.
+    types->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    types->setMinimumContentsLength(24);
     types->setMinimumWidth(180);
-    nameRow->addWidget(types);
+    nameRow->addWidget(types, 2);
     root->addLayout(nameRow);
 
     status = new QLabel;
