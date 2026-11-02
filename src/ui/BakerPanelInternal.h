@@ -120,6 +120,7 @@ QString backendBadge(const std::string& name);
 
 /** Groups of the project that hold a selected mesh (as low, high or cage), plus selected bakeGroup nodes. */
 std::vector<std::string> groupsForSelection(const std::string& project);
+/** The selected meshes and every mesh under a selected node; only the selected meshes while Shift is held. */
 std::vector<std::string> selectedMeshes();
 
 /** One group per selected mesh, each baking onto itself; one undo step. */

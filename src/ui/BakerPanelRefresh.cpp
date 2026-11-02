@@ -288,7 +288,7 @@ void BakerPanel::refreshTargets()
         const bool preset = !bake::isBuiltinTarget(t);
         mTargets->addItem(qs(t.label.empty() ? t.name : t.label), qs(t.name));
         mTargets->setItemData(mTargets->count() - 1, preset, kPresetRole);
-        const QString where = preset ? QString("Preset, applied when picked (%1)").arg(qs(t.file.generic_string())) : QString();
+        const QString where = preset ? QString("Saved preset (%1)").arg(qs(t.file.generic_string())) : QString();
         mTargets->setItemData(mTargets->count() - 1, t.doc.empty() ? where : where.isEmpty() ? qs(t.doc) : qs(t.doc) + "\n" + where, Qt::ToolTipRole);
     }
     int at = mTargets->findData(qs(mTarget));

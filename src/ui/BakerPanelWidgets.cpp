@@ -168,20 +168,19 @@ QWidget* BakerPanel::buildToolbar()
 
     mTargets = new QComboBox(w);
     mTargets->setObjectName("bakerTargets");
-    mTargets->setToolTip("Target profile: the maps, conventions and file names a downstream tool expects");
+    mTargets->setToolTip("Target profile: the maps, conventions and file names a downstream tool expects. Picking one applies them to the project.");
     connect(mTargets, &QComboBox::currentIndexChanged, this, [this](int) {
         if (mUpdating)
             return;
         mTarget = ss(mTargets->currentData().toString());
         PrefStore::get().set(kPrefs, "/target", mTarget);
-        if (mTargets->currentData(kPresetRole).toBool())
-            if (const json r = run("applyBakeTarget", {{"args", {mTarget}}}, !mProject.empty()); r.is_object())
-            {
-                if (const std::string be = r.value("backend", std::string()); !be.empty())
-                    PrefStore::get().set(kPrefs, "/backend", be);
-                if (mProject.empty())
-                    refreshProjects();
-            }
+        if (const json r = run("applyBakeTarget", {{"args", {mTarget}}}, !mProject.empty()); r.is_object())
+        {
+            if (const std::string be = r.value("backend", std::string()); !be.empty())
+                PrefStore::get().set(kPrefs, "/backend", be);
+            if (mProject.empty())
+                refreshProjects();
+        }
         updateButtons();
     });
     top->addWidget(mTargets, 1);
@@ -310,7 +309,7 @@ QWidget* BakerPanel::buildGroups()
 
     auto* bar = new QHBoxLayout;
     bar->setSpacing(1);
-    QToolButton* add = toolButton(w, "plus", "New group: the selected meshes become its lows");
+    QToolButton* add = toolButton(w, "plus", "New group: the selected meshes and the meshes under them become its lows. Shift+click uses only the selected meshes.");
     connect(add, &QToolButton::clicked, this, [this] {
         json call = json::object();
         if (const std::vector<std::string> m = selectedMeshes(); !m.empty())
@@ -318,17 +317,27 @@ QWidget* BakerPanel::buildGroups()
         run("bakeGroup", call);
     });
     bar->addWidget(add);
-    QToolButton* low = toolButton(w, "arrow-down", "Add the selected meshes to the current group as lows", "Low");
-    connect(low, &QToolButton::clicked, this, [this] {
-        if (const std::string g = currentGroup(); !g.empty() && !selectedMeshes().empty())
-            run("bakeGroup", {{"args", {g}}, {"addLow", selectedMeshes()}});
-    });
+    // No current group: bakeGroup without a name creates one.
+    auto addSelected = [this](const char* flag) {
+        const std::vector<std::string> meshes = selectedMeshes();
+        if (meshes.empty())
+            return;
+        json call = {{flag, meshes}};
+        if (const std::string g = currentGroup(); !g.empty())
+            call["args"] = {g};
+        run("bakeGroup", call);
+    };
+    QToolButton* low = toolButton(w, "arrow-down",
+                                  "Add the selected meshes and the meshes under them to the current group (a new one if none) as "
+                                  "lows. Shift+click adds only the selected meshes.",
+                                  "Low");
+    connect(low, &QToolButton::clicked, this, [addSelected] { addSelected("addLow"); });
     bar->addWidget(low);
-    QToolButton* high = toolButton(w, "arrow-up", "Add the selected meshes to the current group as highs", "High");
-    connect(high, &QToolButton::clicked, this, [this] {
-        if (const std::string g = currentGroup(); !g.empty() && !selectedMeshes().empty())
-            run("bakeGroup", {{"args", {g}}, {"addHigh", selectedMeshes()}});
-    });
+    QToolButton* high = toolButton(w, "arrow-up",
+                                   "Add the selected meshes and the meshes under them to the current group (a new one if none) as "
+                                   "highs. Shift+click adds only the selected meshes.",
+                                   "High");
+    connect(high, &QToolButton::clicked, this, [addSelected] { addSelected("addHigh"); });
     bar->addWidget(high);
     QToolButton* autoGroup = toolButton(w, "wand", "Auto-group by name: _low/_high, _lo/_hi, _LP/_HP (the selection, else every mesh)", "Auto");
     autoGroup->setObjectName("bakerAutoGroup");

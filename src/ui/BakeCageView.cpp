@@ -505,9 +505,16 @@ double frontalOf(scene::Graph& g, NodeId gid, const bake::GroupSettings& s)
         return pv->stats.frontal;
     if (scene::Node* grp = g.node(gid); grp && gpuPreview())
         if (scene::Node* p = bake::groupProject(g, *grp))
-            for (const json& gs : render::liveMapsStatus(p->id(), render::kCagePreviewSet)["last"].value("groups", json::array()))
-                if (gs.value("group", std::string()) == grp->name() && gs.value("measured", false) && gs.value("frontal", 0.0) > 0.0)
-                    return gs["frontal"].get<double>();
+        {
+            // No live session yet has no "last"; json::value throws on anything but an object.
+            const json status = render::liveMapsStatus(p->id(), render::kCagePreviewSet);
+            const json* last = status.contains("last") && status["last"].is_object() ? &status["last"] : nullptr;
+            const json* groups = last && last->contains("groups") && (*last)["groups"].is_array() ? &(*last)["groups"] : nullptr;
+            for (const json& gs : groups ? *groups : json::array())
+                if (gs.is_object() && gs.value("group", std::string()) == grp->name() && gs.value("measured", false))
+                    if (const auto fr = gs.find("frontal"); fr != gs.end() && fr->is_number() && fr->get<double>() > 0.0)
+                        return fr->get<double>();
+        }
     return bake::groupFrontal(g, s);
 }
 

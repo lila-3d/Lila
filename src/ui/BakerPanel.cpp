@@ -122,9 +122,18 @@ std::vector<std::string> selectedMeshes()
 {
     std::vector<std::string> out;
     scene::Graph& g = graph();
-    for (scene::NodeId id : g.selection())
-        if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
+    auto add = [&](scene::NodeId id) {
+        if (scene::Node* n = g.node(id); n && n->type().isA("mesh") && std::ranges::find(out, n->path()) == out.end())
             out.push_back(n->path());
+    };
+    const bool onlySelected = QApplication::keyboardModifiers() & Qt::ShiftModifier;
+    for (scene::NodeId id : g.selection())
+    {
+        add(id);
+        if (!onlySelected)
+            for (scene::NodeId d : g.descendants(id))
+                add(d);
+    }
     return out;
 }
 
@@ -741,6 +750,15 @@ void BakerPanel::groupMenu(const QPoint& at)
     }
     if (kind == kCageItem && !node.empty())
         menu.addAction("Use Auto Cage", this, [this, g] { run("bakeGroup", {{"args", {g}}, {"cage", ""}}, false); });
+    if (kind == kLowItem || kind == kHighItem)
+    {
+        menu.addSeparator();
+        menu.addAction(icon("trash"), "Remove from Group", this, [this, it] {
+            if (!it->isSelected())
+                mGroups->setCurrentItem(it, 0, QItemSelectionModel::ClearAndSelect);
+            removeSelectedRows();
+        });
+    }
     if (kind == kLintItem)
     {
         const QString text = it->text(0);
