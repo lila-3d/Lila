@@ -34,7 +34,7 @@ void reset()
 TEST_CASE("clay commands: create, add, cut, group, refresh, undo")
 {
     reset();
-    const json made = run("createClay", {{"name", "Blob"}});
+    const json made = run("createClay", {{"name", "Blob"}, {"symmetry", "off"}});
     const std::string object = made[0], mesh = made[1];
     scene::MeshPtr start = outMesh(mesh);
     REQUIRE(start);
@@ -59,6 +59,19 @@ TEST_CASE("clay commands: create, add, cut, group, refresh, undo")
     CHECK(width(*outMesh(mesh)) == doctest::Approx(cut).epsilon(0.02));
 
     CHECK(run("refreshClay", {{"args", {arm}}}).size() == 1);
+}
+
+TEST_CASE("clay commands: createClay mirrors by default and starts with the shape asked for")
+{
+    reset();
+    const json made = run("createClay", {{"shape", "capsule"}});
+    scene::Graph& g = scene::Graph::current();
+    const scene::Node* surface = g.find(made[2].get<std::string>());
+    REQUIRE(surface);
+    CHECK(surface->as<int64_t>(surface->type().attrIndex("symmetry")) == 1);
+    const scene::Node* first = g.find(made[3].get<std::string>());
+    REQUIRE(first);
+    CHECK(first->as<int64_t>(first->type().attrIndex("shape")) == 3);
 }
 
 TEST_CASE("clay commands: symmetry, a bad voxel size warns, convert bakes a plain mesh")

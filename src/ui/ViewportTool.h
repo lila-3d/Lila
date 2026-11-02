@@ -64,6 +64,19 @@ LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const 
 /** Draws the queued tool messages, moved down past any of the occupied HUD rects they would cover. */
 LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
 
+/** A key and what it does, for drawKeyList. */
+struct KeyHint
+{
+    QString keys;
+    QString what;
+};
+/** Height drawKeyList gives the hints. */
+LILA_UI_API double keyListHeight(size_t rows);
+/** The width of the widest key, for laying the list out. */
+LILA_UI_API double keyListWidth(const std::vector<KeyHint>& hints);
+/** Keys in the accent colour with what they do beside them, one per line, ending just above bottomLeft. */
+LILA_UI_API void drawKeyList(OverlayPainter& p, QPointF bottomLeft, const std::vector<KeyHint>& hints, float alpha = 1.0f);
+
 namespace viewportTools
 {
 /**

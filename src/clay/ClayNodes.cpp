@@ -521,11 +521,12 @@ void registerCommands()
     ops::registerCommand({
         .name = "createClay",
         .doc = "Create a clay object: a transform holding clay shapes, and a mesh under it that shows them blended by a "
-               "claySurface. Starts with one sphere unless empty. Returns [object, mesh, surface, firstShape or None].",
+               "claySurface. Starts with one shape unless empty. Returns [object, mesh, surface, firstShape or None].",
         .flags = {{"name", "n", T::String, "Clay", "Object name; made unique."},
+                  {"shape", "sh", T::String, "sphere", "The first shape.", kShapes},
+                  {"symmetry", "sy", T::String, "x", "Mirror across the object's YZ plane.", {"off", "x"}},
                   {"position", "p", T::Vec3, nullptr, "World position."},
                   {"voxelSize", "vs", T::Float, nullptr, "Lattice spacing while editing, cm.", {}, {}, 0.01},
-                  {"symmetry", "sy", T::String, nullptr, "Mirror across the object's YZ plane.", {"off", "x"}},
                   {"empty", "e", T::Bool, false, "Start with no shapes."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -539,11 +540,12 @@ void registerCommands()
                 g.setValue({object->id(), Transform::kTranslate, -1}, vecFlag(a, "position"));
             json first = nullptr;
             if (!a.get<bool>("empty", false))
-                first = addPrimitive(g, *object, Args{});
+                first = addPrimitive(g, *object, Args{.flags = {{"shape", a.get<std::string>("shape", "sphere")}}});
             g.select({object->id()});
             return json::array({object->path(), mesh->path(), surface->path(), first});
         },
-        .examples = {"createClay(name=\"Dog\", symmetry=\"x\")"},
+        .adjustable = true,
+        .examples = {"createClay(name=\"Dog\")", "createClay(shape=\"capsule\", symmetry=\"off\")"},
     });
 
     ops::registerCommand({

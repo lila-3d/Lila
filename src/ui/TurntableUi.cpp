@@ -267,28 +267,14 @@ QString turntableKeyOr(const char* action, const char* fallback)
 /** The turntable keys, listed above the controls. */
 void drawTurntableKeys(OverlayPainter& p, QPointF bottomLeft, float alpha)
 {
-    const std::pair<QString, QString> rows[] = {
+    drawKeyList(p, bottomLeft, {
         {turntableKeyOr("turntable.spin", "Alt+Shift+T"), "Spin or pause"},
         {"Alt+Shift + drag", pref(kPitchPref, true) ? "Turn by hand; up and down tilts" : "Turn by hand"},
         {"Alt+Shift+Ctrl + drag", "Turn, snapping to the stops"},
         {"Alt+Shift + wheel", "Faster or slower"},
         {turntableKeyOr("turntable.stepBack", "Alt+Shift+Left") + " / " + turntableKeyOr("turntable.stepNext", "Alt+Shift+Right"), "Previous or next stop"},
         {turntableKeyOr("turntable.front", "Alt+Shift+Home"), "Back to the front, level, paused"},
-    };
-    double keyWidth = 0.0;
-    for (const auto& [k, what] : rows)
-        keyWidth = std::max(keyWidth, double(OverlayPainter::textWidth(k)));
-    const double line = 17.0;
-    double y = bottomLeft.y() - line * double(std::size(rows)) + 4.0;
-    const glm::vec4 key(0.3f, 0.75f, 1.0f, alpha), white(0.95f, 0.95f, 0.95f, alpha);
-    p.setShadow(true);
-    for (const auto& [k, what] : rows)
-    {
-        p.text(QPointF(bottomLeft.x(), y), k, key);
-        p.text(QPointF(bottomLeft.x() + keyWidth + 12.0, y), what, white);
-        y += line;
-    }
-    p.setShadow(false);
+    }, alpha);
 }
 
 void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInfo& view)

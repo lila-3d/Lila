@@ -72,6 +72,44 @@ void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vecto
     }
     gMessages.clear();
 }
+
+namespace
+{
+constexpr double kKeyLine = 17.0, kKeyGap = 12.0;
+
+double widestKey(const std::vector<KeyHint>& hints)
+{
+    double w = 0.0;
+    for (const KeyHint& h : hints)
+        w = std::max(w, double(OverlayPainter::textWidth(h.keys)));
+    return w;
+}
+} // namespace
+
+double keyListHeight(size_t rows) { return kKeyLine * double(rows); }
+
+double keyListWidth(const std::vector<KeyHint>& hints)
+{
+    double what = 0.0;
+    for (const KeyHint& h : hints)
+        what = std::max(what, double(OverlayPainter::textWidth(h.what)));
+    return widestKey(hints) + kKeyGap + what;
+}
+
+void drawKeyList(OverlayPainter& p, QPointF bottomLeft, const std::vector<KeyHint>& hints, float alpha)
+{
+    const double keyWidth = widestKey(hints);
+    double y = bottomLeft.y() - keyListHeight(hints.size()) + 4.0;
+    const glm::vec4 key(0.3f, 0.75f, 1.0f, alpha), white(0.95f, 0.95f, 0.95f, alpha);
+    p.setShadow(true);
+    for (const KeyHint& h : hints)
+    {
+        p.text(QPointF(bottomLeft.x(), y), h.keys, key);
+        p.text(QPointF(bottomLeft.x() + keyWidth + kKeyGap, y), h.what, white);
+        y += kKeyLine;
+    }
+    p.setShadow(false);
+}
 } // namespace lila::ui
 
 namespace lila::ui::viewportTools
