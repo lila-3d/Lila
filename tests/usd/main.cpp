@@ -35,7 +35,10 @@ int main(int argc, char** argv)
     std::filesystem::create_directories(dir);
 #ifdef _WIN32
     _putenv_s("LILA_CONFIG_DIR", (dir / "config").string().c_str());
+    // The codeless schemas test_usd_components applies; USD reads its plugin path once, before any stage opens.
+    _putenv_s("PXR_PLUGINPATH_NAME", (std::filesystem::path(LILA_TEST_USD_FIXTURES) / "schemas").string().c_str());
 #else
+    setenv("PXR_PLUGINPATH_NAME", (std::filesystem::path(LILA_TEST_USD_FIXTURES) / "schemas").string().c_str(), 1);
     setenv("LILA_CONFIG_DIR", (dir / "config").string().c_str(), 1);
 #endif
     lila::mainq::init();

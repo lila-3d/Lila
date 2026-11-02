@@ -1,0 +1,23 @@
+#usda 1.0
+(
+    defaultPrim = "World"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "World"
+{
+    def Xform "Crate" (
+        prepend apiSchemas = ["HealthAPI"]
+    )
+    {
+        float health:max = 50
+        token health:team = "blue"
+        custom string studio:assetId = "CR_001"
+        custom double3 studio:offset = (1, 2, 3)
+    }
+
+    def Xform "Barrel"
+    {
+    }
+}

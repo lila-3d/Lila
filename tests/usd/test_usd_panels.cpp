@@ -226,9 +226,9 @@ TEST_CASE("usd stage panels: the stage and prim sections show the stage and edit
     CHECK(labelled(*panel, "/World/Lamp"));
     // Unauthored schema properties holding nothing are left out.
     CHECK_FALSE(row<QLineEdit>(*panel, "proxyPrim"));
-    QLineEdit* asset = row<QLineEdit>(*panel, "studio:assetId");
-    REQUIRE(asset);
-    CHECK(asset->text() == "\"LA_001\"");
+    // Custom properties are the object's own attributes, under Extra Attributes.
+    CHECK_FALSE(row<QLineEdit>(*panel, "studio:assetId"));
+    CHECK(node("Lamp").as<std::string>(node("Lamp").type().attrIndex("studio:assetId")) == "LA_001");
     QLineEdit* translate = row<QLineEdit>(*panel, "xformOp:translate");
     REQUIRE(translate);
     CHECK(translate->text() == "(0, 20, 0)");
@@ -250,9 +250,6 @@ TEST_CASE("usd stage panels: the stage and prim sections show the stage and edit
     delete opinions;
 
     // Editing a field runs usdStageSetProperty.
-    asset->setText("LA_002");
-    Q_EMIT asset->editingFinished();
-    CHECK(asset->text() == "\"LA_002\"");
     translate->setText("(4, 5, 6)");
     Q_EMIT translate->editingFinished();
     CHECK(near(node("Lamp").as<glm::dvec3>(Transform::kTranslate), {4, 5, 6}, 1e-9));

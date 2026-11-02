@@ -1198,9 +1198,25 @@ void AttributeEditor::rebuild()
         auto* content = new QWidget;
         QFormLayout* form = newForm(content);
         int added = 0;
+        std::vector<std::string> categories{""};
         for (const scene::AttrDef& def : n->type().attrs)
-            if (def.flags & scene::AttrUser)
+            if ((def.flags & scene::AttrUser) && std::find(categories.begin(), categories.end(), def.category) == categories.end())
+                categories.push_back(def.category);
+        for (const std::string& c : categories)
+        {
+            bool headed = c.empty();
+            for (const scene::AttrDef& def : n->type().attrs)
+            {
+                if (!(def.flags & scene::AttrUser) || def.category != c)
+                    continue;
+                if (!headed)
+                {
+                    subHeading(form, c);
+                    headed = true;
+                }
                 added += addAttrRows(form, def);
+            }
+        }
         if (added)
             mBodyLayout->addWidget(section("Extra Attributes", content));
         else

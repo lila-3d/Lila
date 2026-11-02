@@ -320,11 +320,15 @@ QWidget* primPanel(NodeId id)
     v->addLayout(top);
 
     auto* form = new QFormLayout;
+    const scene::Node* n = scene::Graph::current().node(id);
     for (const json& p : info["properties"])
     {
         const std::string name = p["name"].get<std::string>(), type = p.value("type", std::string());
         // Schema properties nobody authored and that hold nothing would only be empty rows.
         if (type == "rel" ? p["targets"].empty() : p["value"].is_null() && !p.value("authored", false))
+            continue;
+        // Components are the object's own attributes, shown under Extra Attributes.
+        if (const int a = n ? n->type().attrIndex(name) : -1; a >= 0 && (n->type().attrs[size_t(a)].flags & scene::AttrUser))
             continue;
         auto* edit = new QLineEdit(w);
         std::string value;

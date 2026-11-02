@@ -592,6 +592,8 @@ void registerCommands()
             {"keyable", "k", T::Bool, false, "Show it in the channel box, where it can be keyed."},
             {"hidden", "h", T::Bool, false, "Hide it from editors."},
             {"usedAsColor", "uac", T::Bool, false, "A double3 holding a colour: editors show a swatch."},
+            {"usedAsFilename", "uaf", T::Bool, false, "A string holding a file path: editors offer a file browser."},
+            {"category", "", T::String, nullptr, "A heading the Attribute Editor groups it under."},
             {"doc", "", T::String, nullptr, "What it is for: editors show it as a tooltip."},
         },
         .run = [](const Args& a) -> json {
@@ -668,6 +670,9 @@ void registerCommands()
                 def.flags |= AttrHidden;
             if (a.get<bool>("usedAsColor"))
                 def.flags |= AttrColor;
+            if (a.get<bool>("usedAsFilename"))
+                def.flags |= AttrFile;
+            def.category = a.get<std::string>("category", "");
             const std::string group = a.get<std::string>("parent", "");
             json out = json::array();
             for (const std::string& o : objs)

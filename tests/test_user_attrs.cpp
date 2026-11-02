@@ -23,8 +23,9 @@ TEST_CASE("addAttr: values and arrays on one node, undoable, saved with the scen
     run("addAttr", {{"args", {"Prop"}}, {"longName", "tags"}, {"dataType", "stringArray"}});
     run("addAttr", {{"args", {"Prop"}}, {"longName", "samples"}, {"dataType", "doubleArray"}});
     run("addAttr", {{"args", {"Prop"}}, {"longName", "mode"}, {"attributeType", "enum"}, {"enumName", "off:soft:hard"}});
+    run("addAttr", {{"args", {"Prop"}}, {"longName", "health:icon"}, {"dataType", "string"}, {"usedAsFilename", true}, {"category", "HealthAPI"}});
     CHECK(getAttr("Prop.mass").get<double>() == doctest::Approx(2.5));
-    CHECK(run("listAttr", {{"args", {"Prop"}}, {"userDefined", true}}) == json::array({"mass", "tags", "samples", "mode"}));
+    CHECK(run("listAttr", {{"args", {"Prop"}}, {"userDefined", true}}) == json::array({"mass", "tags", "samples", "mode", "health:icon"}));
     CHECK_FALSE(run("objExists", {{"args", {"Other.mass"}}}).get<bool>());
     CHECK_THROWS(getAttr("Other.mass"));
 
@@ -59,6 +60,10 @@ TEST_CASE("addAttr: values and arrays on one node, undoable, saved with the scen
     CHECK(getAttr("Prop.tags") == json::array({"metal", "heavy"}));
     CHECK(run("getAttr", {{"args", {"Prop.samples"}}, {"multiIndices", true}}) == json::array({1, 4}));
     CHECK(io::serialize() == doc);
+    const Node* prop = Graph::current().find("Prop");
+    const AttrDef& icon = prop->type().attrs[size_t(prop->type().attrIndex("health:icon"))];
+    CHECK(icon.category == "HealthAPI");
+    CHECK((icon.flags & AttrFile) != 0);
 
     // Duplicates carry user attrs and array values.
     std::string copy = run("duplicate", {{"args", {"Prop"}}})[0];

@@ -264,7 +264,9 @@ TEST_CASE("usd fixture: cameras, hidden and guide prims, holes, creases, primvar
     CHECK(graph().find("Key")->type().isA("light"));
     CHECK(listed(r["skipped"], "purpose guide"));
     CHECK(listed(r["skipped"], "model kind on 1 prim"));
-    CHECK(listed(r["skipped"], "/World.userProperties:weight"));
+    CHECK(!listed(r["skipped"], "/World.userProperties:weight"));
+    CHECK(node("World").as<double>(node("World").type().attrIndex("userProperties:weight")) == doctest::Approx(3.0));
+    CHECK(listed(r["skipped"], "/World.userProperties:uv (float2)"));
     CHECK(!graph().find("Guides"));
     CHECK(!node("Hidden").as<bool>(Transform::kVisibility));
 

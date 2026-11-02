@@ -11,7 +11,7 @@ else()
     set(_usd_pkg ${CMAKE_BINARY_DIR}/$<CONFIG>/extensions/OpenUSD.lilaext)
 endif()
 set(_usd_core_sources UsdBackend.cpp UsdCommon.cpp UsdHydra.cpp UsdHydraInterop.cpp UsdHydraScene.cpp UsdImport.cpp UsdImportSkel.cpp UsdExport.cpp
-    UsdMaterials.cpp UsdMaterialX.cpp UsdMaterialXDoc.cpp UsdStage.cpp UsdBackend.h UsdCommon.h UsdHydraScene.h UsdImport.h UsdExport.h
+    UsdMaterials.cpp UsdMaterialX.cpp UsdMaterialXDoc.cpp UsdStage.cpp UsdAttributes.cpp UsdAttributes.h UsdBackend.h UsdCommon.h UsdHydraScene.h UsdImport.h UsdExport.h
     UsdMaterials.h UsdMaterialX.h UsdStage.h)
 # pxr's Python bindings (the pxr_boost python target), when the USD build has them: lila.usd hands scripts the live
 # stages through them.

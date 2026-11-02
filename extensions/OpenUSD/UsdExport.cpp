@@ -1,5 +1,6 @@
 #include "UsdExport.h"
 
+#include "UsdAttributes.h"
 #include "UsdMaterials.h"
 
 #include <lila/Anim.h>
@@ -1061,6 +1062,7 @@ void Writer::writeNode(size_t i)
             UsdGeomImageable(prim).CreateVisibilityAttr().Set(UsdGeomTokens->invisible);
         if (e.camera)
             writeCamera(i, prim);
+        exportComponents(g, e.source, prim);
     });
     for (size_t k = 0; k < skels.size(); ++k)
         if (skels[k].anchor == int(i))

@@ -221,6 +221,8 @@ json attrDefToJson(const AttrDef& d)
         j["color"] = true;
     if (d.flags & AttrUnique)
         j["unique"] = true;
+    if (d.flags & AttrFile)
+        j["file"] = true;
     if (d.defaultValue != defaultFor(d.type))
         j["default"] = toJson(d.defaultValue);
     if (!d.enumNames.empty())
@@ -234,6 +236,8 @@ json attrDefToJson(const AttrDef& d)
         j["niceName"] = d.niceName;
     if (!d.doc.empty())
         j["doc"] = d.doc;
+    if (!d.category.empty())
+        j["category"] = d.category;
     return j;
 }
 
@@ -255,6 +259,8 @@ AttrDef attrDefFromJson(const json& j)
         d.flags |= AttrColor;
     if (j.value("unique", false))
         d.flags |= AttrUnique;
+    if (j.value("file", false))
+        d.flags |= AttrFile;
     d.enumNames = j.value("enum", std::vector<std::string>{});
     if (j.contains("children"))
         d.childNames = j["children"].get<std::array<std::string, 3>>();
@@ -265,6 +271,7 @@ AttrDef attrDefFromJson(const json& j)
             *v = j[key].get<double>();
     d.niceName = j.value("niceName", "");
     d.doc = j.value("doc", "");
+    d.category = j.value("category", "");
     return d;
 }
 

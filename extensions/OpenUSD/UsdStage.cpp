@@ -1,5 +1,6 @@
 #include "UsdStage.h"
 
+#include "UsdAttributes.h"
 #include "UsdBackend.h"
 #include "UsdCommon.h"
 #include "UsdExport.h"
@@ -46,7 +47,9 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/pointBased.h>
 #include <pxr/usd/usdGeom/pointInstancer.h>
+#include <pxr/usd/usdGeom/primvar.h>
 #include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/xformOp.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
 #include <pxr/usd/usdSkel/animation.h>
@@ -672,9 +675,11 @@ uint64_t hashTree(const SdfLayerHandle& layer, const SdfPath& root, bool customD
     return h.h;
 }
 
-/** Which group a prim property is written with, or empty for one Lila never writes. */
-std::string groupOf(const std::string& name)
+/** Which group a prim property is written with, or empty for one Lila never writes. components: the prim's component attributes. */
+std::string groupOf(const std::string& name, const std::set<std::string>& components)
 {
+    if (components.count(name))
+        return "attrs";
     if (name == "xformOpOrder" || name.starts_with("xformOp:"))
         return "xform";
     if (name == "visibility")
@@ -706,6 +711,9 @@ Groups hashPrim(const SdfLayerHandle& layer, const SdfPath& path)
     if (!spec)
         return out;
     std::map<std::string, Hasher> hs;
+    const std::set<std::string> components = componentAttributes(spec);
+    for (const TfToken& api : specComponentSchemas(spec))
+        hs["attrs"].str("apiSchemas:" + api.GetString());
     auto props = [&](const SdfPrimSpecHandle& p, const std::string& prefix, bool subset) {
         std::vector<std::pair<std::string, SdfPath>> list;
         for (const SdfPropertySpecHandle& prop : p->GetProperties())
@@ -713,7 +721,7 @@ Groups hashPrim(const SdfLayerHandle& layer, const SdfPath& path)
         std::sort(list.begin(), list.end());
         for (const auto& [name, propPath] : list)
         {
-            const std::string group = subset ? (name.starts_with("material:binding") ? "binding" : "shape") : groupOf(name);
+            const std::string group = subset ? (name.starts_with("material:binding") ? "binding" : "shape") : groupOf(name, components);
             if (group.empty())
                 continue;
             Hasher& h = hs[group];
@@ -1427,8 +1435,9 @@ struct Author
         if (!es)
             return;
         over(p);
+        const std::set<std::string> components = componentAttributes(es);
         for (const SdfPropertySpecHandle& prop : es->GetProperties())
-            if (groupOf(prop->GetName()) == group)
+            if (groupOf(prop->GetName(), components) == group)
             {
                 SdfCopySpec(now.layer, prop->GetPath(), L, p.AppendProperty(TfToken(prop->GetName())));
                 written.insert(p.AppendProperty(TfToken(prop->GetName())));
@@ -1743,6 +1752,96 @@ struct Author
             skin(e, p);
         else if (group == "blendShapes")
             blendShapes(e, p);
+        else if (group == "attrs")
+            components(e, p);
+    }
+
+    /**
+     * Component schemas and attributes: the written ones over the stage's, a stage attribute of another type written as
+     * that type, and the stage's components Lila no longer has removed (schemas) or blocked (attributes).
+     */
+    void components(const SdfPath& e, const SdfPath& p)
+    {
+        const SdfPrimSpecHandle es = now.layer->GetPrimAtPath(e);
+        if (!es)
+            return;
+        const UsdPrim cp = s.stage->GetPrimAtPath(stagePath(p));
+        const TfTokenVector want = specComponentSchemas(es);
+        const TfTokenVector have = cp ? componentSchemas(cp.GetAppliedSchemas()) : TfTokenVector();
+        auto in = [](const TfTokenVector& v, const TfToken& t) { return std::find(v.begin(), v.end(), t) != v.end(); };
+        over(p);
+        SdfTokenListOp op;
+        if (VtValue v = L->GetField(p, UsdTokens->apiSchemas); v.IsHolding<SdfTokenListOp>())
+            op = v.UncheckedGet<SdfTokenListOp>();
+        TfTokenVector pre = op.GetPrependedItems(), del = op.GetDeletedItems();
+        for (const TfToken& t : want)
+            if (!in(have, t) && !in(pre, t))
+                pre.push_back(t);
+        for (const TfToken& t : have)
+            if (!in(want, t))
+            {
+                std::erase(pre, t);
+                if (!in(del, t))
+                    del.push_back(t);
+            }
+        for (const TfToken& t : want)
+            std::erase(del, t);
+        if (pre != op.GetPrependedItems() || del != op.GetDeletedItems())
+        {
+            op.SetPrependedItems(pre);
+            op.SetDeletedItems(del);
+            L->SetField(p, UsdTokens->apiSchemas, VtValue(op));
+        }
+
+        const std::set<std::string> mine = componentAttributes(es);
+        for (const std::string& name : mine)
+        {
+            const SdfAttributeSpecHandle from = now.layer->GetAttributeAtPath(e.AppendProperty(TfToken(name)));
+            if (!from)
+                continue;
+            const SdfPath to = p.AppendProperty(TfToken(name));
+            const UsdAttribute there = cp ? cp.GetAttribute(TfToken(name)) : UsdAttribute();
+            if (there && there.GetTypeName() == from->GetTypeName() && !L->GetAttributeAtPath(to))
+            {
+                VtValue cur;
+                if (there.Get(&cur) && cur == from->GetDefaultValue())
+                    continue;
+            }
+            written.insert(to);
+            if (!there || there.GetTypeName() == from->GetTypeName())
+            {
+                SdfCopySpec(now.layer, from->GetPath(), L, to);
+                continue;
+            }
+            const std::optional<scene::AttrDef> def = attrDefFor(name, from->GetTypeName(), from->GetAllowedTokens());
+            const std::optional<std::vector<scene::PlugValue>> values = def ? plugValues(from->GetDefaultValue(), *def) : std::nullopt;
+            const VtValue v = values ? usdValue(*values, *def, there.GetTypeName()) : VtValue();
+            if (v.IsEmpty())
+            {
+                warn.push_back(std::format("{}: Lila's value can't be written as the stage's {}", to.GetString(), there.GetTypeName().GetAsToken().GetString()));
+                continue;
+            }
+            SdfAttributeSpecHandle spec = attrSpec(p, name, there.GetTypeName(), there.GetVariability());
+            spec->SetDefaultValue(v);
+            L->EraseField(spec->GetPath(), SdfFieldKeys->TimeSamples);
+        }
+        if (!cp)
+            return;
+        const std::set<TfToken> haveNames = schemaAttributeNames(have);
+        for (const UsdAttribute& a : cp.GetAuthoredAttributes())
+        {
+            const std::string name = a.GetName().GetString();
+            if (mine.count(name) || UsdGeomPrimvar::IsPrimvar(a) || UsdGeomXformOp::IsXformOp(a) || !a.HasAuthoredValue())
+                continue;
+            if (!haveNames.count(a.GetName()) && cp.GetPrimDefinition().GetAttributeDefinition(a.GetName()))
+                continue;
+            if (!attrDefFor(name, a.GetTypeName(), {}))
+                continue;
+            SdfAttributeSpecHandle spec = attrSpec(p, name, a.GetTypeName(), a.GetVariability());
+            spec->SetDefaultValue(VtValue(SdfValueBlock()));
+            L->EraseField(spec->GetPath(), SdfFieldKeys->TimeSamples);
+            written.insert(spec->GetPath());
+        }
     }
 
     void uniformTokens(const SdfPath& p, const std::string& name, const VtTokenArray& v)

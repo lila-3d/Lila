@@ -1,5 +1,7 @@
 #include "UsdImport.h"
 
+#include "UsdAttributes.h"
+
 #include <lila/Anim.h>
 #include <lila/Deformer.h>
 #include <lila/Lights.h>
@@ -1009,6 +1011,7 @@ struct Builder
                 im.g.rename(id, name);
             }
         }
+        importComponents(im.g, id, prim, im.restTime, unkeptAttrs);
         im.r.nodes.push_back(id);
         if (parent == im.opts.parent)
             im.r.roots.push_back(id);
@@ -1036,7 +1039,7 @@ struct Builder
         const scene::Node* n = im.g.node(id);
         if (!n)
             return kNoNode;
-        if (&n->type() != &type)
+        if (&n->type().registered() != &type)
         {
             replaced = id;
             return kNoNode;
@@ -1128,33 +1131,25 @@ struct Builder
             im.r.warnings.push_back(std::format("{}: animated visibility kept at its first value", prim.GetPath().GetString()));
     }
 
-    /** Model kinds and custom attributes, which Lila has nowhere to keep: counted for the report. */
+    /** Model kinds, which Lila has nowhere to keep, and attributes of a type no Lila attribute holds: for the report. */
     int kinds = 0;
-    std::vector<std::string> customAttrs;
-    size_t customCount = 0;
+    std::vector<std::string> unkeptAttrs;
     void noteUnkept(const UsdPrim& prim)
     {
         TfToken kind;
         if (!lilaFlag(prim, "wrapper") && UsdModelAPI(prim).GetKind(&kind) && !kind.IsEmpty())
             ++kinds;
-        for (const UsdAttribute& a : prim.GetAuthoredAttributes())
-            if (a.IsCustom() && !UsdGeomPrimvar::IsPrimvar(a) && !UsdGeomXformOp::IsXformOp(a))
-            {
-                if (customAttrs.size() < 5)
-                    customAttrs.push_back(a.GetPath().GetString());
-                ++customCount;
-            }
     }
     void reportUnkept()
     {
         if (kinds)
             im.r.skipped.push_back(std::format("model kind on {} prim(s); Lila has no model hierarchy", kinds));
-        if (customCount)
+        if (!unkeptAttrs.empty())
         {
             std::string list;
-            for (const std::string& a : customAttrs)
-                list += (list.empty() ? "" : ", ") + a;
-            im.r.skipped.push_back(std::format("{} custom attribute(s): {}{}", customCount, list, customCount > customAttrs.size() ? ", ..." : ""));
+            for (size_t k = 0; k < unkeptAttrs.size() && k < 5; ++k)
+                list += (list.empty() ? "" : ", ") + unkeptAttrs[k];
+            im.r.skipped.push_back(std::format("attributes Lila has no attribute type for ({}): {}{}", unkeptAttrs.size(), list, unkeptAttrs.size() > 5 ? ", ..." : ""));
         }
     }
 
