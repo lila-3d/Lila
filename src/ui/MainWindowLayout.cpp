@@ -252,6 +252,8 @@ void MainWindow::closeEvent(QCloseEvent* e)
         return;
     }
     saveLayout();
+    // Hiding the window resizes its viewports, and a swapchain rebuilt for a closing window crashes some drivers.
+    render::Renderer::get().removeAllViewports();
     QMainWindow::closeEvent(e);
 }
 
