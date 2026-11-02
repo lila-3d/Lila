@@ -410,6 +410,7 @@ QLabel* heading(QWidget* parent, const QString& text)
 NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(parent)
 {
     registerGnGraphBackend();
+    registerSceneGraphBackend();
     mBackend = graphBackends::find(backend);
     if (!mBackend)
         mBackend = graphBackends::find(kGeometryNodesBackend);
@@ -435,6 +436,8 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
     mExecuteListener = ops::addExecuteListener([this](const ExecuteEvent& e) {
         if (e.done && (e.name == "unrealMap" || e.name.starts_with("export")))
             QTimer::singleShot(0, this, [this] { refreshSendButton(); });
+        if (e.done && (e.name == "undo" || e.name == "redo") && mBackend->rebuildsOnUndo())
+            scheduleRefresh();
     });
 
     mRefresh = new QTimer(this);
@@ -469,6 +472,8 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
                 followSelection();
                 refreshSendButton();
             });
+            if (mBackend->rebuildsOn(c, nullptr))
+                scheduleRefresh();
             return;
         }
         if (c == scene::Change::Reset)
@@ -483,6 +488,12 @@ NodeEditor::NodeEditor(QWidget* parent, const std::string& backend) : QWidget(pa
             scheduleRefresh();
             return;
         }
+        if (c == scene::Change::Value || c == scene::Change::Connection || c == scene::Change::Attrs || c == scene::Change::Reparented)
+            if (mBackend->rebuildsOn(c, g.node(id)))
+            {
+                scheduleRefresh(gFieldEdits == 0);
+                return;
+            }
         if (c == scene::Change::Value)
             if (scene::Node* n = g.node(id))
             {
@@ -1645,6 +1656,8 @@ void NodeEditor::rebuildSidePanel()
                 h->addWidget(ed, 1);
             }
             auto* expose = new QToolButton(row);
+            if (!mBackend->supports("ExposeInput"))
+                expose->hide();
             expose->setText("Expose");
             expose->setToolTip("Make this a group input: a keyable attr on the " + mBackend->ownerNoun());
             QObject::connect(expose, &QToolButton::clicked, expose, [backend = mBackend, group, nodeName, id] { runVerb(*backend, "ExposeInput", args({group, nodeName + "." + id})); });
@@ -1878,6 +1891,7 @@ void registerNodeEditorActions()
                         b.toggle("One grey for every wire in a grey theme", kPrefGreyWires, false);
                     }});
     registerGnGraphBackend();
+    registerSceneGraphBackend();
     actions::add({.id = "window.nodeEditor", .label = "Node Editor", .category = "Windows",
                   .run = [] {
                       for (NodeEditor* e : editors())

@@ -27,6 +27,7 @@ namespace lila::scene
 {
 class Graph;
 class Node;
+enum class Change : uint8_t;
 } // namespace lila::scene
 
 namespace lila::ui
@@ -91,6 +92,13 @@ public:
     };
     /** What the selection leads to: the editor opens its group and edits that owner's values. Empty for none. */
     virtual Owner followSelection(scene::Graph& g) const;
+    /**
+     * Whether a scene change rebuilds the canvas, for a backend whose groups show the scene's own nodes (a value change on
+     * a group node always does). n is the node changed; null for a selection change.
+     */
+    virtual bool rebuildsOn(scene::Change /*change*/, const scene::Node* /*n*/) const { return false; }
+    /** Whether undo and redo rebuild the canvas, for a backend keeping view state (positions, flags) outside its group nodes. */
+    virtual bool rebuildsOnUndo() const { return false; }
     /** The group the node at path runs, empty when it isn't an owner. */
     virtual std::string groupOfOwner(scene::Graph& g, const std::string& path) const;
     /** "modifier": what an owner is called in the side panel. */
@@ -214,4 +222,9 @@ LILA_UI_API void registerGnGraphBackend();
 inline constexpr const char* kTextureGraphBackend = "tex";
 /** Registers the texture-graph backend (kTextureGraphBackend). */
 LILA_UI_API void registerTexGraphBackend();
+
+/** The backend showing the scene's own dependency graph: views of real nodes and plugs around the selection. */
+inline constexpr const char* kSceneGraphBackend = "scene";
+/** Registers the scene backend (kSceneGraphBackend). */
+LILA_UI_API void registerSceneGraphBackend();
 } // namespace lila::ui
