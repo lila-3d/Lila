@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 
@@ -152,6 +153,8 @@ const std::vector<Info>& all()
         {Aid::EdgeIds, "edgeIds", "Edge IDs", "The index of each edge facing the camera.", false},
         {Aid::FaceIds, "faceIds", "Face IDs", "The index of each face facing the camera.", false},
         {Aid::UvIds, "uvIds", "UV IDs", "The index of each shared UV, beside the vertex it sits on.", false},
+        {Aid::EdgeCenters, "edgeCenters", "Edge Centers", "A dot at the midpoint of each edge facing the camera.", false},
+        {Aid::FaceCenters, "faceCenters", "Face Centers", "A dot at the center of each face facing the camera.", false},
         {Aid::HardEdges, "hardEdges", "Hard Edges", "Highlights the edges that split shading.", false},
         {Aid::SoftEdges, "softEdges", "Soft Edges", "Highlights the edges shading runs smoothly across.", false},
         {Aid::BorderEdges, "borderEdges", "Border Edges", "Highlights edges with a face on one side only.", false},
@@ -246,7 +249,7 @@ void fillMenu(QMenu* menu, ViewportWidget* view)
     rows("Lighting", {Aid::TwoSidedLighting, Aid::BackfaceTint});
     rows("Normals", {Aid::FaceNormals, Aid::VertexNormals, Aid::Tangents});
     menu->addAction(normalLengthRow(menu));
-    rows("Components", {Aid::BoundingBoxes, Aid::VertexIds, Aid::EdgeIds, Aid::FaceIds, Aid::UvIds});
+    rows("Components", {Aid::BoundingBoxes, Aid::VertexIds, Aid::EdgeIds, Aid::FaceIds, Aid::UvIds, Aid::EdgeCenters, Aid::FaceCenters});
     rows("Edges", {Aid::HardEdges, Aid::SoftEdges, Aid::BorderEdges, Aid::NonManifold});
 }
 
@@ -420,6 +423,7 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
     const size_t stride = strideFor(want, kMaxSegments);
 
     Nearest<Label> nearest(kMaxLabels);
+    Nearest<Label> centers(kMaxCenters);
     std::vector<QPointF> nonManifoldPoints;
     auto box = [&](const geo::Bounds& b, const glm::mat4& world) {
         if (!b.valid())
@@ -472,8 +476,44 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
                 nearest.offer(d, {*px + nudge, id, kind});
         };
 
-        if (is(Aid::FaceNormals) || is(Aid::FaceIds) || is(Aid::EdgeIds) || is(Aid::UvIds))
+        if (is(Aid::FaceNormals) || is(Aid::FaceIds) || is(Aid::EdgeIds) || is(Aid::UvIds) || is(Aid::EdgeCenters) || is(Aid::FaceCenters))
             c.buildFaces(mesh);
+        // An edge faces the camera when any of its faces does; their mean normal stands in for that.
+        auto edgeNormal = [&](Index e) {
+            glm::vec3 n(0.0f);
+            mesh.forEachEdgeCorner(e, [&](Index corner) { n += c.faceNormal[c.faceSlot[mesh.cornerFace(corner)]]; });
+            return dir(n);
+        };
+        auto edgeMid = [&](Index e) { return (glm::vec3(mesh.position(mesh.edgePoint(e, 0))) + glm::vec3(mesh.position(mesh.edgePoint(e, 1)))) * 0.5f; };
+        auto dot = [&](const glm::vec3& local, const glm::vec3& worldNormal, uint8_t kind) {
+            glm::vec3 w = at(local);
+            float d = depthOf(w);
+            if (!centers.wants(d) || !facing(w, worldNormal))
+                return;
+            if (std::optional<QPointF> px = screen(local))
+                centers.offer(d, {*px, 0, kind});
+        };
+        if (is(Aid::FaceCenters))
+            for (size_t i = 0; i < c.faces.size(); ++i)
+                dot(c.faceCenter[i], dir(c.faceNormal[i]), 2);
+        if (is(Aid::EdgeCenters))
+            for (Index e = 0; e < mesh.edgeCapacity(); ++e)
+                if (mesh.edgeValid(e) && mesh.edgeCorner(e) != kInvalid)
+                {
+                    // Silhouette edges show too: the dot takes the normal of whichever face turns most toward the camera.
+                    const glm::vec3 mid = edgeMid(e), w = at(mid);
+                    glm::vec3 best(0.0f);
+                    float bestDot = std::numeric_limits<float>::max();
+                    mesh.forEachEdgeCorner(e, [&](Index corner) {
+                        const glm::vec3 n = dir(c.faceNormal[c.faceSlot[mesh.cornerFace(corner)]]);
+                        if (const float d = glm::dot(n, view.ortho ? forward : w - eye); d < bestDot)
+                        {
+                            bestDot = d;
+                            best = n;
+                        }
+                    });
+                    dot(mid, best, 1);
+                }
         if (is(Aid::FaceNormals))
         {
             const glm::vec4 color = linear(pal.faceNormal);
@@ -549,15 +589,8 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
                 offer(c.faceCenter[i], dir(c.faceNormal[i]), c.faces[i], 2);
         if (is(Aid::EdgeIds))
             for (Index e = 0; e < mesh.edgeCapacity(); ++e)
-            {
-                if (!mesh.edgeValid(e) || mesh.edgeCorner(e) == kInvalid)
-                    continue;
-                // An edge faces the camera when any of its faces does; their mean normal stands in for that.
-                glm::vec3 n(0.0f);
-                mesh.forEachEdgeCorner(e, [&](Index corner) { n += c.faceNormal[c.faceSlot[mesh.cornerFace(corner)]]; });
-                glm::vec3 mid = (glm::vec3(mesh.position(mesh.edgePoint(e, 0))) + glm::vec3(mesh.position(mesh.edgePoint(e, 1)))) * 0.5f;
-                offer(mid, dir(n), e, 1);
-            }
+                if (mesh.edgeValid(e) && mesh.edgeCorner(e) != kInvalid)
+                    offer(edgeMid(e), edgeNormal(e), e, 1);
         if (is(Aid::UvIds))
         {
             std::vector<Index> perCorner;
@@ -581,6 +614,8 @@ void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, int pa
         for (QPointF px : nonManifoldPoints)
             p.disc(px, 4.0f, color, 12);
     }
+    for (const Label& l : centers.take())
+        p.disc(l.at, 3.0f, glm::vec4(l.kind == 1 ? pal.edgeId : pal.faceId, 1.0f), 8);
     std::vector<Label> shown = nearest.take();
     if (shown.empty())
         return;

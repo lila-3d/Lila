@@ -769,6 +769,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(viewport, "Marquee selects edges and faces it touches (off: only those whose centre it covers)", "/select/marqueeTouch", true);
         toggle(viewport, "Camera-based selection (component marquees skip what is hidden behind surfaces)", "/select/cameraBased", false);
         toggle(viewport, "Backface culling selection (skip components on faces turned away)", "/select/backfaceCulling", false);
+        toggle(viewport, "Click selects edges by their center", scene::componentPick::kEdgesByCenter, false);
+        toggle(viewport, "Click selects faces by their center", scene::componentPick::kFacesByCenter, false);
         section(viewport, "Panel Bars");
         toggle(viewport, "Show the bottom bar (highlight, selection masks, symmetry, snapping)", vd::kBottomBar, true);
         toggle(viewport, "Hide toolbar items the scene has no use for (X-Ray Joints with no joints)", vd::kHideUnusedItems, true);

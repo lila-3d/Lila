@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -49,6 +50,18 @@ struct Candidate
  */
 LILA_SCENE_API std::vector<Candidate> nearby(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, const Screen& screen,
                               glm::dvec2 cursor, double maxPx);
+
+/** "general" prefs: whether a click picks edges or faces by their center point instead of their line or area. */
+inline constexpr const char* kEdgesByCenter = "/select/byCenter/edges";
+inline constexpr const char* kFacesByCenter = "/select/byCenter/faces";
+LILA_SCENE_API const char* selectByCenterKey(ComponentMode mode);
+LILA_SCENE_API bool selectByCenter(ComponentMode mode);
+/** How close, in pixels, the cursor must be to a center for a click to take its edge or face. */
+LILA_SCENE_API double centerRadius();
+
+/** Edges or faces of the mesh whose center, centerOf(id) in world space, is closer than maxPx to the cursor, nearest first. */
+LILA_SCENE_API std::vector<Candidate> nearbyCenters(const geo::Mesh& mesh, ComponentMode mode, const std::function<glm::dvec3(uint32_t)>& centerOf,
+                                                   const Screen& screen, glm::dvec2 cursor, double maxPx);
 
 /** The world point that must be unoccluded for a candidate to count: the vertex, or the edge's midpoint. */
 LILA_SCENE_API glm::dvec3 anchor(const geo::Mesh& mesh, const glm::dmat4& world, ComponentMode mode, uint32_t id);

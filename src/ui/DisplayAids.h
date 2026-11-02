@@ -51,6 +51,8 @@ enum class Aid : uint8_t
     EdgeIds,
     FaceIds,
     UvIds,
+    EdgeCenters,
+    FaceCenters,
     HardEdges,
     SoftEdges,
     BorderEdges,
@@ -83,6 +85,8 @@ LILA_UI_API double normalLength();
 
 /** Most id labels a view draws at once, nearest the camera first. */
 inline constexpr size_t kMaxLabels = 1500;
+/** Most edge and face center dots a view draws at once, nearest the camera first. */
+inline constexpr size_t kMaxCenters = 20000;
 /** Most normal, tangent and edge highlight segments a view draws at once; larger meshes draw every n-th. */
 inline constexpr size_t kMaxSegments = 400000;
 

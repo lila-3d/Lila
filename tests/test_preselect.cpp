@@ -93,6 +93,41 @@ TEST_CASE("preselect: edges by distance to the projected segment")
     CHECK(mid.y == doctest::Approx(0.0));
 }
 
+TEST_CASE("preselect: edges and faces by their center")
+{
+    geo::Mesh m = quad();
+    auto centerOf = [&](ComponentMode mode) {
+        return [&m, mode](uint32_t id) { return mode == ComponentMode::Face ? m.faceCentroid(id) : cp::anchor(m, glm::dmat4(1.0), mode, id); };
+    };
+    // On edge 0-1's line but far from its midpoint (75,50): the line picks it, the center doesn't.
+    CHECK(cp::nearbyCenters(m, ComponentMode::Edge, centerOf(ComponentMode::Edge), screen(), {55, 51}, cp::centerRadius()).empty());
+    auto e = cp::nearbyCenters(m, ComponentMode::Edge, centerOf(ComponentMode::Edge), screen(), {73, 53}, cp::centerRadius());
+    REQUIRE(e.size() == 1);
+    CHECK(e[0].id == edgeBetween(m, 0, 1));
+
+    // Inside the face but away from its center (75,75).
+    CHECK(cp::nearbyCenters(m, ComponentMode::Face, centerOf(ComponentMode::Face), screen(), {55, 55}, cp::centerRadius()).empty());
+    auto f = cp::nearbyCenters(m, ComponentMode::Face, centerOf(ComponentMode::Face), screen(), {76, 72}, cp::centerRadius());
+    REQUIRE(f.size() == 1);
+    CHECK(f[0].id == 0);
+    CHECK(f[0].px == doctest::Approx(std::sqrt(10.0)));
+
+    CHECK(cp::nearbyCenters(m, ComponentMode::Vertex, centerOf(ComponentMode::Vertex), screen(), {50, 50}, 100.0).empty());
+}
+
+TEST_CASE("preselect: select by center is set per kind")
+{
+    PrefStore& prefs = PrefStore::get();
+    prefs.set("general", cp::kEdgesByCenter, false);
+    prefs.set("general", cp::kFacesByCenter, false);
+    CHECK_FALSE(cp::selectByCenter(ComponentMode::Edge));
+    prefs.set("general", cp::kFacesByCenter, true);
+    CHECK(cp::selectByCenter(ComponentMode::Face));
+    CHECK_FALSE(cp::selectByCenter(ComponentMode::Edge));
+    CHECK_FALSE(cp::selectByCenter(ComponentMode::Vertex));
+    prefs.set("general", cp::kFacesByCenter, false);
+}
+
 TEST_CASE("preselect: edges and faces reaching behind the camera are cut at the near plane")
 {
     // Camera at the origin looking down -z, 90 degree view, near plane at 0.1.

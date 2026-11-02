@@ -137,7 +137,8 @@ void MainWindow::buildMenus()
     menus::addActions("Select", {"#Mode", "select.objectMode", "select.vertexMode", "select.edgeMode", "select.faceMode", "#Components", "select.allComponents",
                           "select.grow", "select.loop", "select.ring", "select.symmetrize", "select.toggleSymmetric", "#Hierarchy", "select.hierarchy", "select.pickWalkUp", "select.pickWalkDown",
                           "select.pickWalkLeft", "select.pickWalkRight", "#Convert", "select.toVertices", "select.toEdges", "select.toFaces",
-                          "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling"});
+                          "select.containedFaces", "#Tools", "select.paintTool", "select.toggleLasso", "select.toggleCameraBased", "select.toggleBackfaceCulling",
+                          "select.edgesByCenter", "select.facesByCenter"});
 
     menu("Mesh", "Mesh", Area::MenuBar, {}, "", modelingLevel);
     menus::addActions("Mesh", {"#Combine", "mesh.combine", "mesh.smartJoin", "mesh.separate", "mesh.splitMeshTool", "mesh.extract", "mesh.duplicateFaces", "mesh.boundingMesh", "mesh.multiBoxBounds",

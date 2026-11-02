@@ -71,7 +71,8 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
         return (a + glm::mix(a, b, (depthOf(a) - nearDepth) / (depthOf(a) - depthOf(b)))) * 0.5;
     };
     const bool cull = paintSelect::backfaceCulling();
-    double bestPx = cp::radius(mode);
+    const bool byCenter = cp::selectByCenter(mode);
+    double bestPx = byCenter ? cp::centerRadius() : cp::radius(mode);
     double bestRay = 1e300;
     for (scene::NodeId id : live)
     {
@@ -81,6 +82,20 @@ scene::componentPick::Hover ViewportWidget::componentAt(QPointF a)
             continue;
         glm::dmat4 world = shownWorld(*n);
         const ComponentShape shape(*n, *mesh, mesh, world);
+        if (byCenter)
+        {
+            auto centerOf = [&](uint32_t c) { return mode == ComponentMode::Edge ? edgeAnchor(shape, c) : shape.faceCentre(c); };
+            auto vis = isolate::visibility(&mIsolation, id, mesh);
+            for (const cp::Candidate& c : cp::nearbyCenters(*mesh, mode, centerOf, screen, {a.x(), a.y()}, bestPx))
+                if (vis->shows(mode, c.id) && (!cull || paintSelect::frontFacing(*mesh, world, mode, c.id, view)) && visible(centerOf(c.id)))
+                {
+                    bestPx = c.px;
+                    best.node = id;
+                    best.id = c.id;
+                    break;
+                }
+            continue;
+        }
         if (mode == ComponentMode::Face)
         {
             const scene::MeshPtr& target = shape.smooth ? shape.smooth->mesh : mesh;

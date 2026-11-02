@@ -713,6 +713,19 @@ void registerBuiltins()
                   },
                   .doc = "Clicks and marquees skip components on faces turned away from the camera.",
                   .python = "lila.prefs.set(\"general\", \"/select/backfaceCulling\", not lila.prefs.get(\"general\", \"/select/backfaceCulling\", False))"});
+    for (auto [id, label, mode, doc] : {
+             std::tuple{"select.edgesByCenter", "Select Edges by Center", scene::ComponentMode::Edge, "A click picks the edge whose midpoint is nearest, not the line under the cursor."},
+             {"select.facesByCenter", "Select Faces by Center", scene::ComponentMode::Face, "A click picks the face whose center is nearest, not the face under the cursor."},
+         })
+    {
+        const std::string key = scene::componentPick::selectByCenterKey(mode);
+        actions::add({.id = id, .label = label, .category = "Select", .run = [key] {
+                          bool on = PrefStore::get().value<bool>("general", key, false);
+                          PrefStore::get().set("general", key, !on);
+                      },
+                      .doc = doc,
+                      .python = "lila.prefs.set(\"general\", \"" + key + "\", not lila.prefs.get(\"general\", \"" + key + "\", False))"});
+    }
     cmd("select.containedFaces", "To Contained Faces", "Select", "selectContainedFaces", json::object(),
         "Selects the faces enclosed by the selected edges, flood filled up to them and the mesh borders.");
 

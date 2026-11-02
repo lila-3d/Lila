@@ -140,6 +140,42 @@ std::vector<Candidate> nearby(const geo::Mesh& m, const glm::dmat4& world, Compo
     return all;
 }
 
+const char* selectByCenterKey(ComponentMode mode)
+{
+    return mode == ComponentMode::Face ? kFacesByCenter : kEdgesByCenter;
+}
+
+bool selectByCenter(ComponentMode mode)
+{
+    return (mode == ComponentMode::Edge || mode == ComponentMode::Face) && PrefStore::get().value<bool>("general", selectByCenterKey(mode), false);
+}
+
+double centerRadius()
+{
+    return 12.0;
+}
+
+std::vector<Candidate> nearbyCenters(const geo::Mesh& m, ComponentMode mode, const std::function<glm::dvec3(uint32_t)>& centerOf, const Screen& screen,
+                                     glm::dvec2 cursor, double maxPx)
+{
+    LILA_ZONE();
+
+    if (mode != ComponentMode::Edge && mode != ComponentMode::Face)
+        return {};
+    const geo::Index count = mode == ComponentMode::Edge ? m.edgeCapacity() : m.faceCapacity();
+    std::vector<Candidate> all;
+    for (geo::Index i = 0; i < count; ++i)
+    {
+        if (mode == ComponentMode::Edge ? !m.edgeValid(i) : !m.faceValid(i))
+            continue;
+        if (std::optional<glm::dvec2> s = screen.project(centerOf(i)))
+            if (const double d = glm::length(*s - cursor); d < maxPx)
+                all.push_back({d, i});
+    }
+    std::sort(all.begin(), all.end());
+    return all;
+}
+
 glm::dvec3 anchor(const geo::Mesh& m, const glm::dmat4& world, ComponentMode mode, uint32_t id)
 {
     auto worldOf = [&](geo::Index p) { return glm::dvec3(world * glm::dvec4(m.position(p), 1.0)); };

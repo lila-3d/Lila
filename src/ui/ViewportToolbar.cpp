@@ -218,6 +218,8 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
         {"select.toggleCameraBased", "/select/cameraBased", false},
         {"select.toggleBackfaceCulling", "/select/backfaceCulling", false},
         {"select.toggleLasso", "/select/lasso", false},
+        {"select.edgesByCenter", scene::componentPick::kEdgesByCenter, false},
+        {"select.facesByCenter", scene::componentPick::kFacesByCenter, false},
     };
     for (const Toggle& t : toggles)
         if (id == t.id)
