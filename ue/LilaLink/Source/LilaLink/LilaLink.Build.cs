@@ -38,6 +38,10 @@ public class LilaLink : ModuleRules
 			"ToolMenus",
 			"DesktopPlatform",
 			"Settings",
+			"ClothingSystemRuntimeCommon",
+			"ClothingSystemRuntimeInterface",
+			"ClothingSystemEditorInterface",
+			"ChaosCloth",
 		});
 
 		// Header-only use: the module is looked up at runtime, so a project without Python still loads.

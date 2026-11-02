@@ -34,6 +34,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "ChaosCloth",
+			"Enabled": true
+		},
+		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true,
 			"Optional": true

@@ -15,6 +15,7 @@
 #include <lila/Mesh.h>
 #include <lila/Node.h>
 #include <lila/Transform.h>
+#include <lila/UnrealLink.h>
 #include <lila/Uv.h>
 
 #include <algorithm>
@@ -1525,6 +1526,93 @@ void registerCommands(ext::Context& ctx)
             return removed;
         },
         .examples = {"tailorClearBrush('Cloak', kind='pins')"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorSendToUnreal",
+        .doc = "Ship a garment to Unreal as a skeletal mesh with Chaos Cloth on it: bakes it (skinned like its collider, "
+               "which must be skinned), imports it over the link to contentPath, then builds its clothing data with max "
+               "distance painted from how far the cloth hangs off the body, and the fabric's mass, stiffness, damping and "
+               "friction. Returns {mesh, asset, clothing}.",
+        .positionalDoc = "garment",
+        .flags = {{"contentPath", "cp", T::String, json(), "The skeletal mesh asset, like /Game/Characters/Hero/SK_Hero_Cloak."},
+                  {"skeleton", "sk", T::String, json(), "Skeleton asset to reuse, like /Game/Characters/Hero/SK_Hero_Skeleton."},
+                  {"retopo", "rt", T::Int, int64_t(0), "Quad remesh the game mesh to about this many faces first; 0 keeps the cloth triangles.",
+                   {}, {}, 0.0, 200000.0},
+                  {"maxInfluences", "mi", T::Int, int64_t(4), "Skin influences per point.", {}, {}, 1.0, 16.0},
+                  {"save", "sv", T::Bool, true, "Save the Unreal assets afterwards."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorSendToUnreal");
+            if (!a.has("contentPath"))
+                throw CommandError("tailorSendToUnreal: give contentPath, like /Game/Characters/Hero/SK_Hero_Cloak");
+            std::shared_ptr<link::RpcClient> client = link::Link::get().client();
+            if (!client)
+                throw CommandError("tailorSendToUnreal: not connected to Unreal; run unrealConnect first");
+            const std::string path = a.get<std::string>("contentPath");
+            std::string name = path.substr(path.find_last_of('/') + 1);
+            if (!Graph::validName(name))
+                name = "Garment_baked";
+
+            const json baked = ops::execute("tailorBake", {{"args", {op.path()}},
+                                                           {"name", name},
+                                                           {"retopo", a.get<int64_t>("retopo")},
+                                                           {"maxInfluences", a.get<int64_t>("maxInfluences")}});
+            if (!baked.value("skinned", false))
+                throw CommandError("tailorSendToUnreal: " + op.name() + "'s collider isn't skinned, so the garment can't go to Unreal as a skeletal mesh");
+            Node* mesh = g.find(baked.value("mesh", std::string()));
+            if (!mesh)
+                throw CommandError("tailorSendToUnreal: the bake left no mesh");
+
+            const std::filesystem::path file = link::cacheDir() / "tailor" / (name + ".fbx");
+            std::filesystem::create_directories(file.parent_path());
+            ops::execute("exportFbx", {{"args", {file.string(), mesh->path()}}, {"kind", "skeletal"}, {"animation", false},
+                                       {"maxInfluences", a.get<int64_t>("maxInfluences")}});
+            json mapping = {{"contentPath", path}, {"kind", "skeletal"}};
+            if (a.has("skeleton"))
+                mapping["skeleton"] = a.get<std::string>("skeleton");
+            if (a.get<bool>("save"))
+                mapping["save"] = true;
+            const link::RpcResult imported = client->call("importAsset", link::importParams(file, mapping), link::importCallOptions());
+            if (!imported.ok)
+                throw CommandError("tailorSendToUnreal: importing into Unreal failed: " + imported.error);
+            std::string asset = path;
+            if (const json made = imported.result.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
+                asset = made[0].get<std::string>();
+
+            // Max distance per point in Unreal's space; Unreal matches its own cloth vertices to the nearest.
+            g.evaluate();
+            json samples = json::array();
+            const PlugValue mv = g.value({mesh->id(), MeshNode::kOutMesh});
+            const PlugValue mw = g.value({mesh->id(), Transform::kWorldMatrix});
+            if (const MeshPtr* m = std::get_if<MeshPtr>(&mv); m && *m && std::get_if<glm::dmat4>(&mw))
+            {
+                const glm::dmat4 world = std::get<glm::dmat4>(mw);
+                const std::span<const float> dist = (*m)->pointAttrs().get<float>("clothMaxDistance");
+                for (geo::Index p = 0; p < (*m)->pointCapacity() && p < dist.size(); ++p)
+                {
+                    const math::Vector u = math::toUnreal(math::Vector(glm::dvec3(world * glm::dvec4((*m)->position(p), 1.0))));
+                    samples.push_back({u.x, u.y, u.z, dist[p]});
+                }
+            }
+            const Garment gm = readGarment(op);
+            const Fabric& f = gm.fabrics.empty() ? *findFabric("Cotton") : gm.fabrics.front();
+            // Chaos takes stiffness as 0 to 1 weights; Tailor's cotton (4000 N/m, 2e-5 N m) lands near the middle.
+            const json config = {{"density", f.density},
+                                  {"edgeStiffness", std::clamp(0.5 * (f.stretchWarp + f.stretchWeft) / 7000.0, 0.05, 1.0)},
+                                  {"bendStiffness", std::clamp(0.5 * (f.bendWarp + f.bendWeft) / 4e-5, 0.01, 1.0)},
+                                  {"damping", f.damping},
+                                  {"friction", f.friction},
+                                  {"collisionThickness", std::max(0.2, f.thickness * kCmPerM + 0.5)}};
+            const link::RpcResult cloth = client->call("applyClothing",
+                                                       {{"mesh", asset}, {"name", name + "_Cloth"}, {"maxDistance", samples}, {"config", config},
+                                                        {"save", a.get<bool>("save")}},
+                                                       link::importCallOptions());
+            if (!cloth.ok)
+                throw CommandError("tailorSendToUnreal: the mesh is in Unreal at " + asset + " but its clothing failed: " + cloth.error);
+            return {{"mesh", mesh->path()}, {"asset", asset}, {"clothing", cloth.result}};
+        },
+        .examples = {"tailorSendToUnreal('Cloak', contentPath='/Game/Characters/Hero/SK_Hero_Cloak', skeleton='/Game/Characters/Hero/SK_Hero_Skeleton')"},
     });
 
     ctx.registerCommand({

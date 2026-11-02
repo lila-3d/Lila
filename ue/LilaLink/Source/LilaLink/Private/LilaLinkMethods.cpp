@@ -11,6 +11,7 @@
 #include "LilaLinkTextures.h"
 #include "LilaLinkTrim.h"
 #include "LilaLinkVat.h"
+#include "LilaLinkCloth.h"
 
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -369,6 +370,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	Methods.Add(TEXT("runPython"), LilaLink::Sync(&RunPython));
 	LilaLink::AddSequenceMethods(Methods);
 	LilaLink::AddVatMethods(Methods);
+	LilaLink::AddClothMethods(Methods);
 	LilaLink::AddImposterMethods(Methods);
 	LilaLink::AddTextureMethods(Methods);
 	LilaLink::AddMLDeformerMethods(Methods);
