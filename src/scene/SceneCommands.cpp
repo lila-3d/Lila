@@ -166,6 +166,69 @@ json create(const std::string& type, const Args& a)
         graph().select({n->id()});
     return n->path();
 }
+
+/** The transforms among ids, the ones pickWalk steps between. */
+std::vector<NodeId> walkable(const Graph& g, const std::vector<NodeId>& ids)
+{
+    std::vector<NodeId> out;
+    for (NodeId id : ids)
+        if (const Node* n = g.node(id); n && n->type().isA("transform"))
+            out.push_back(id);
+    return out;
+}
+
+/** A deleted object's place in the hierarchy, so a pickWalk right after the delete can walk on from it. */
+struct WalkGhost
+{
+    NodeId id = kNoNode;
+    NodeId parent = kNoNode;
+    std::vector<NodeId> siblings; // walkable, itself included, in order
+};
+
+struct WalkGhosts
+{
+    const Graph* graph = nullptr;
+    uint64_t selectionSerial = 0;
+    std::vector<WalkGhost> ghosts;
+};
+
+WalkGhosts& walkGhosts()
+{
+    static WalkGhosts state;
+    return state;
+}
+
+/** The remembered deleted objects while nothing has been selected since and they are still gone; empty otherwise. */
+const std::vector<WalkGhost>* liveWalkGhosts(const Graph& g)
+{
+    const WalkGhosts& w = walkGhosts();
+    if (w.ghosts.empty() || w.graph != &g || w.selectionSerial != g.selectionSerial() || !g.selection().empty())
+        return nullptr;
+    for (const WalkGhost& ghost : w.ghosts)
+        if (g.node(ghost.id))
+            return nullptr;
+    return &w.ghosts;
+}
+
+/** Where pickWalk goes from a deleted object: its nearest surviving sibling that way, or its parent; kNoNode for nowhere. */
+NodeId walkFromGhost(const Graph& g, const WalkGhost& ghost, const std::string& dir)
+{
+    if (dir == "up")
+        return ghost.parent != kNoNode && g.node(ghost.parent) ? ghost.parent : kNoNode;
+    if (dir != "left" && dir != "right")
+        return kNoNode;
+    auto at = std::find(ghost.siblings.begin(), ghost.siblings.end(), ghost.id);
+    if (at == ghost.siblings.end())
+        return kNoNode;
+    const size_t n = ghost.siblings.size(), from = size_t(at - ghost.siblings.begin());
+    for (size_t step = 1; step < n; ++step)
+    {
+        const NodeId sib = ghost.siblings[dir == "right" ? (from + step) % n : (from + n - step) % n];
+        if (g.node(sib) && g.parent(sib) == ghost.parent)
+            return sib;
+    }
+    return kNoNode;
+}
 } // namespace
 
 void loadNamingPolicy()
@@ -389,8 +452,18 @@ void registerCommands()
                         throw CommandError("delete: '" + graph().path(d) +
                                            "' comes from a reference; remove or unload the reference instead");
             }
+            Graph& g = graph();
+            std::vector<WalkGhost> ghosts;
             for (NodeId id : ids)
-                graph().deleteNode(id);
+                if (g.isSelected(id))
+                {
+                    const NodeId parent = g.parent(id);
+                    ghosts.push_back({id, parent, walkable(g, parent == kNoNode ? g.roots() : g.children(parent))});
+                }
+            for (NodeId id : ids)
+                g.deleteNode(id);
+            if (g.selection().empty())
+                walkGhosts() = {&g, g.selectionSerial(), std::move(ghosts)};
             return nullptr;
         },
     });
@@ -910,19 +983,24 @@ void registerCommands()
     ops::registerCommand({
         .name = "pickWalk",
         .doc = "Walk the selection through the hierarchy like the arrow keys: up to the parent, down to the first child, "
-               "left/right to the previous/next sibling (wrapping).",
+               "left/right to the previous/next sibling (wrapping). Right after a delete, with nothing selected since, it walks from "
+               "where the deleted objects were.",
         .flags = {{"direction", "", T::String, "down", "up, down, left or right."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             std::string dir = a.get<std::string>("direction");
-            auto walkable = [&](const std::vector<NodeId>& ids) {
-                std::vector<NodeId> out;
-                for (NodeId id : ids)
-                    if (const Node* n = g.node(id); n && n->type().isA("transform"))
-                        out.push_back(id);
-                return out;
-            };
+            if (dir != "up" && dir != "down" && dir != "left" && dir != "right")
+                throw CommandError("pickWalk: direction must be up, down, left or right");
             std::vector<NodeId> next;
+            if (const std::vector<WalkGhost>* ghosts = liveWalkGhosts(g))
+            {
+                for (const WalkGhost& ghost : *ghosts)
+                    if (NodeId to = walkFromGhost(g, ghost, dir); to != kNoNode && std::find(next.begin(), next.end(), to) == next.end())
+                        next.push_back(to);
+                if (!next.empty())
+                    g.select(next);
+                return nullptr;
+            }
             for (NodeId id : g.selection())
             {
                 NodeId to = id;
@@ -930,13 +1008,13 @@ void registerCommands()
                     to = g.parent(id) != kNoNode ? g.parent(id) : id;
                 else if (dir == "down")
                 {
-                    std::vector<NodeId> kids = walkable(g.children(id));
+                    std::vector<NodeId> kids = walkable(g, g.children(id));
                     to = kids.empty() ? id : kids.front();
                 }
-                else if (dir == "left" || dir == "right")
+                else
                 {
                     NodeId parent = g.parent(id);
-                    std::vector<NodeId> sibs = walkable(parent == kNoNode ? g.roots() : g.children(parent));
+                    std::vector<NodeId> sibs = walkable(g, parent == kNoNode ? g.roots() : g.children(parent));
                     auto it = std::find(sibs.begin(), sibs.end(), id);
                     if (it != sibs.end() && sibs.size() > 1)
                     {
@@ -944,8 +1022,6 @@ void registerCommands()
                         to = sibs[dir == "right" ? (i + 1) % sibs.size() : (i + sibs.size() - 1) % sibs.size()];
                     }
                 }
-                else
-                    throw CommandError("pickWalk: direction must be up, down, left or right");
                 if (std::find(next.begin(), next.end(), to) == next.end())
                     next.push_back(to);
             }

@@ -159,3 +159,50 @@ TEST_CASE("smoothPreview on a group reaches every mesh below it")
     for (const json& mesh : meshes)
         CHECK(run("getAttr", {{"args", {mesh.get<std::string>() + ".smoothPreview"}}}).get<int>() == 2);
 }
+
+TEST_CASE("pickWalk after a delete walks on from the deleted object's place")
+{
+    run("newScene");
+    std::string a = run("polyCube", {{"name", "a"}})[0], b = run("polyCube", {{"name", "b"}})[0], c = run("polyCube", {{"name", "c"}})[0];
+    std::string grp = run("group", {{"args", {a, b, c}}});
+    const json kids = run("listRelatives", {{"args", {grp}}});
+    REQUIRE(kids.size() == 3);
+    auto selection = [] { return run("ls", {{"selection", true}}); };
+
+    run("select", {{"args", {kids[1]}}});
+    run("delete");
+    run("pickWalk", {{"direction", "right"}});
+    CHECK(selection() == json::array({kids[2]}));
+    run("delete");
+    run("pickWalk", {{"direction", "right"}});
+    CHECK(selection() == json::array({kids[0]}));
+
+    run("undo");
+    run("undo");
+    run("undo");
+    run("undo");
+    REQUIRE(run("listRelatives", {{"args", {grp}}}).size() == 3);
+    run("select", {{"args", {kids[1]}}});
+    run("delete");
+    run("pickWalk", {{"direction", "left"}});
+    CHECK(selection() == json::array({kids[0]}));
+    run("undo");
+    run("undo");
+
+    // Once the delete is undone, the walk goes from the selection as always.
+    run("select", {{"args", {kids[1]}}});
+    run("delete");
+    run("undo");
+    REQUIRE(run("listRelatives", {{"args", {grp}}}).size() == 3);
+    const json afterUndo = selection();
+    run("pickWalk", {{"direction", "right"}});
+    CHECK(selection() == (afterUndo.empty() ? json::array() : json::array({kids[2]})));
+
+    // Selecting anything after the delete drops the remembered place.
+    run("select", {{"args", {kids[1]}}});
+    run("delete");
+    run("select", {{"args", {kids[0]}}});
+    run("select", {{"clear", true}});
+    run("pickWalk", {{"direction", "right"}});
+    CHECK(selection().empty());
+}

@@ -5282,7 +5282,7 @@ def patchFill(*objects: Any, spansU: int | None = None, spansV: int | None = Non
     """
 
 def pickWalk(direction: str | None = None) -> Any:
-    """Walk the selection through the hierarchy like the arrow keys: up to the parent, down to the first child, left/right to the previous/next sibling (wrapping).
+    """Walk the selection through the hierarchy like the arrow keys: up to the parent, down to the first child, left/right to the previous/next sibling (wrapping). Right after a delete, with nothing selected since, it walks from where the deleted objects were.
 
     Args:
         direction: up, down, left or right. Default 'down'.

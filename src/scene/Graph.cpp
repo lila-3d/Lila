@@ -355,6 +355,7 @@ void Graph::clear()
     mInputs.clear();
     mOutgoingDst.clear();
     mSelection.clear();
+    ++mSelectionSerial;
     mHeld.clear();
     mDisplayTurns.clear();
     mTurned.clear();
@@ -495,7 +496,8 @@ std::unique_ptr<Node> Graph::detach(NodeId id, size_t* indexOut)
     std::unique_ptr<Node> n = std::move(it->second);
     mNodes.erase(it);
     eraseName(n->mName, id);
-    std::erase(mSelection, id);
+    if (std::erase(mSelection, id))
+        ++mSelectionSerial;
     if (auto rel = mRel.find(id); rel != mRel.end())
     {
         auto& sib = siblings(rel->second.parent);
@@ -2081,6 +2083,7 @@ void Graph::evaluateDirty(const std::vector<NodeId>* only)
 void Graph::selectRaw(std::vector<NodeId> ids)
 {
     mSelection = std::move(ids);
+    ++mSelectionSerial;
     mVersion.fetch_add(1, std::memory_order_relaxed);
     changed(Change::Selection, kNoNode);
 }

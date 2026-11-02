@@ -266,6 +266,8 @@ public:
     const std::vector<NodeId>& selection() const { return mSelection; }
     void select(const std::vector<NodeId>& ids, SelectMode mode = SelectMode::Replace);
     bool isSelected(NodeId id) const;
+    /** Bumped whenever the selection changes, including when a deleted node leaves it. */
+    uint64_t selectionSerial() const { return mSelectionSerial; }
 
     using Listener = std::function<void(Change, NodeId)>;
     /**
@@ -368,6 +370,7 @@ private:
     std::map<PlugRef, PlugRef> mInputs; // dst -> src
     std::unordered_map<NodeId, std::vector<PlugRef>> mOutgoingDst; // src node -> dst plugs it drives
     std::vector<NodeId> mSelection;
+    uint64_t mSelectionSerial = 0;
     std::set<PlugRef> mHeld; // driven plugs keeping a user-set value
     DrivenSetHook mDrivenSet;
     DrivenVecSetHook mDrivenVecSet;
