@@ -9,12 +9,14 @@ Registered as the LilaNightly scheduled task by scripts\\nightly_task.ps1. Runs 
 
 import argparse
 import datetime
+import json
 import os
 import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR = "build-night"
@@ -75,24 +77,66 @@ def coverage_by_area(xml_path):
     return totals
 
 
+COVERAGE_FILTERS = [
+    "--sources", "\\src\\", "--sources", "\\extensions\\",
+    "--excluded_sources", "vcpkg", "--excluded_sources", "\\_work\\", "--excluded_sources", "\\tests\\",
+    "--excluded_sources", "Windows Kits", "--excluded_sources", "Microsoft Visual Studio",
+    "--excluded_sources", "minkernel", "--excluded_sources", "\\_deps\\",
+]
+SUITE_TIMEOUT = 900
+
+
+def coverage_tests():
+    """The suites to measure, as ctest knows them: name, command, working dir, environment."""
+    _, output = shell(f"ctest --test-dir {COVERAGE_BUILD_DIR} -C {CONFIG} -LE known_failing --show-only=json-v1")
+    tests = []
+    for test in json.loads(output[output.index("{"):])["tests"]:
+        props = {p["name"]: p["value"] for p in test.get("properties", [])}
+        env = dict(os.environ)
+        for entry in props.get("ENVIRONMENT", []):
+            key, _, value = entry.partition("=")
+            env[key] = value
+        tests.append((test["name"], test["command"], props.get("WORKING_DIRECTORY", REPO), env))
+    return tests
+
+
+def cover_suite(test):
+    """Runs one suite under its own OpenCppCoverage. A suite stuck under the debugger can't be killed on its own,
+    so on timeout the whole tree goes and only this suite's result is lost."""
+    name, command, cwd, env = test
+    out = os.path.join(COVERAGE_DIR, "suites", name + ".cov")
+    args = [OPENCPPCOVERAGE, "--quiet", "--cover_children", "--continue_after_cpp_exception", *COVERAGE_FILTERS,
+            "--export_type", f"binary:{out}", "--", *command]
+    process = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=NO_WINDOW)
+    try:
+        process.wait(SUITE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, creationflags=NO_WINDOW)
+        return name, "timed out"
+    return name, None if os.path.exists(out) else "no result"
+
+
 def run_coverage():
-    os.makedirs(COVERAGE_DIR, exist_ok=True)
+    os.makedirs(os.path.join(COVERAGE_DIR, "suites"), exist_ok=True)
     xml_path = os.path.join(COVERAGE_DIR, "coverage.xml")
     code, output = shell(f"python scripts\\quiet.py build {COVERAGE_BUILD_DIR} {CONFIG}")
     if code != 0:
         return [f"coverage FAILED: {COVERAGE_BUILD_DIR} build failed", output.strip()]
-    jobs = max(1, (os.cpu_count() or 2) // 2)
-    command = (f'"{OPENCPPCOVERAGE}" --quiet --cover_children --continue_after_cpp_exception'
-               r' --sources \src\ --sources \extensions\ --excluded_sources vcpkg --excluded_sources \_work\ '
-               r' --excluded_sources \tests\ --excluded_sources "Windows Kits" --excluded_sources "Microsoft Visual Studio"'
-               r' --excluded_sources minkernel --excluded_sources \_deps\ '
-               f' --export_type html:{COVERAGE_DIR}\\html --export_type cobertura:{xml_path}'
-               f' -- ctest --test-dir {COVERAGE_BUILD_DIR} -C {CONFIG} -j {jobs} --timeout 900 -LE known_failing')
-    _, output = shell(command)
-    with open(os.path.join(COVERAGE_DIR, "ctest.log"), "w", encoding="utf-8") as log:
-        log.write(output)
+    for stale in os.listdir(os.path.join(COVERAGE_DIR, "suites")):
+        os.remove(os.path.join(COVERAGE_DIR, "suites", stale))
+    jobs = max(1, (os.cpu_count() or 2) // 4)
+    with ThreadPoolExecutor(jobs) as pool:
+        problems = [f"  {name}: {why}" for name, why in pool.map(cover_suite, coverage_tests()) if why]
+    inputs = []
+    for cov in sorted(os.listdir(os.path.join(COVERAGE_DIR, "suites"))):
+        inputs += ["--input_coverage", os.path.join(COVERAGE_DIR, "suites", cov)]
+    if os.path.exists(xml_path):
+        os.remove(xml_path)
+    subprocess.run([OPENCPPCOVERAGE, "--quiet", *inputs, "--export_type", f"html:{COVERAGE_DIR}\\html",
+                    "--export_type", f"cobertura:{xml_path}"], capture_output=True, creationflags=NO_WINDOW)
     if not os.path.exists(xml_path):
-        return ["coverage FAILED: no report written"]
+        return ["coverage FAILED: no report written"] + problems
     totals = coverage_by_area(xml_path)
     covered = sum(c for c, _ in totals.values())
     total = sum(t for _, t in totals.values())
@@ -102,9 +146,11 @@ def run_coverage():
         lines.insert(1, "  WARNING: LilaScene missing, its PDB doesn't match the DLL; rebuild with nothing running from build-coverage")
     for area, (c, t) in sorted(totals.items(), key=lambda item: item[1][0] / max(item[1][1], 1)):
         lines.append(f"  {100 * c / max(t, 1):5.1f}%  {t:7d}  {area}")
+    if problems:
+        lines[1:1] = ["  suites missing from the report:"] + problems
     with open(os.path.join(COVERAGE_DIR, "summary.txt"), "w", encoding="utf-8") as summary:
         summary.write("\n".join(lines) + "\n")
-    return lines[:1] + ["  lowest areas first:"] + lines[1:]
+    return lines
 
 
 def main():
