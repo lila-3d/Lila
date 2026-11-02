@@ -38,6 +38,9 @@ __all__ = [
     "unregister_mcp_tool",
     "register_link_exporter",
     "unregister_link_exporter",
+    "register_unreal_component_exporter",
+    "unregister_unreal_component_exporter",
+    "unreal_component_exporters",
     "register_scene_ui_section",
     "unregister_scene_ui_section",
 ]
@@ -193,6 +196,22 @@ def register_link_exporter(format, fn, owner=None):
 
 def unregister_link_exporter(format):
     _registries().unregister_link_exporter(format)
+
+
+def register_unreal_component_exporter(name, doc="", owner=None):
+    """List a component exporter by name, so a component's Unreal export can pick custom with it. The exporter itself
+    runs in the Unreal editor: a C++ ILilaComponentExporter or a lila_link_components.register Python function there."""
+    _registries().register_unreal_component_exporter(_owner(owner), name, doc)
+
+
+def unregister_unreal_component_exporter(name):
+    """Returns whether it existed."""
+    return _registries().unregister_unreal_component_exporter(name)
+
+
+def unreal_component_exporters():
+    """The listed component exporters, {name: description}, including those the connected Unreal editor has."""
+    return json.loads(_registries().unreal_component_exporters())
 
 
 def register_scene_ui_section(key, save, load, owner=None):

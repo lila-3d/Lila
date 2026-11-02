@@ -12,6 +12,7 @@
 #include "link/SplineSend.h"
 #include "link/TextureSetSend.h"
 #include "ops/Undo.h"
+#include "scene/AttrComponents.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
@@ -41,6 +42,7 @@ constexpr const char* kPrefFile = "unreal";
 /** Hidden user attr holding a node's mapping as JSON. */
 constexpr const char* kMappingAttr = "unrealMapping";
 constexpr int kHelloTimeoutMs = 3000;
+constexpr const char* kExporterOwner = "lila.unreal";
 constexpr int kImportTimeoutMs = 10 * 60 * 1000;
 constexpr int kImportIdleTimeoutMs = 60 * 1000;
 
@@ -146,6 +148,16 @@ void reportImport(const std::string& what, const RpcResult& r)
         log::error("Unreal: {}: {}", what, e.is_string() ? e.get<std::string>() : e.dump());
     if (errors.empty())
         log::info("Unreal: {} -> {}", what, res.value("assets", json::array()).dump());
+}
+
+/** The editor's component exporters, from hello, replace the ones the last editor listed. */
+void listUnrealExporters(const json& names)
+{
+    Registry<std::string>& r = scene::attrComponents::unrealExporters();
+    r.removeOwned(kExporterOwner);
+    for (const json& name : names.is_array() ? names : json::array())
+        if (name.is_string() && !r.contains(name.get<std::string>()))
+            r.add(name.get<std::string>(), "Registered in the Unreal editor", kExporterOwner);
 }
 
 /** One frame of a meshSequence mapping: a static mesh import at <folder>/<base>_<index>. */
@@ -599,6 +611,8 @@ json importParams(const fs::path& file, const json& mapping, const json& materia
                    {"options", options}};
     if (materials.is_array())
         params["materials"] = materials;
+    if (mapping.contains("components") && mapping["components"].is_array())
+        params["components"] = mapping["components"];
     return params;
 }
 
@@ -748,6 +762,7 @@ json Link::connect(const ConnectOptions& opts)
             mClient = client;
             mHello = h;
         }
+        mainq::post([exporters = h.value("componentExporters", json::array())] { listUnrealExporters(exporters); });
         log::info("Connected to Unreal {} ({}) on port {}", h.value("project", std::string()),
                   h.contains("engine") ? h["engine"].value("string", std::string()) : std::string(), port);
         return h;
@@ -1029,6 +1044,8 @@ int syncMappings(bool force, const std::vector<std::string>& only, bool unrealCh
         // FBX carries the levels but not their screen sizes, so the plugin sets them on the mesh after the import.
         if (std::vector<double> sizes = scene::lod::exportScreenSizes(graph, nodes); !sizes.empty() && !mapping.contains("lodScreenSizes"))
             mapping["lodScreenSizes"] = sizes;
+        // Sent even when empty, so the plugin clears components the object no longer has.
+        mapping["components"] = scene::attrComponents::unrealPayload(graph, n->id());
         jobs.push_back({mapping, materials, nodes, dir / (nodeFileStem(node) + ".fbx"), exporter ? exporter : findExporter("fbx")});
     }
     if (skipped > 0)

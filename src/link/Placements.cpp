@@ -11,6 +11,7 @@
 #include "math/Transform.h"
 #include "math/Unreal.h"
 #include "scene/ArrayGroup.h"
+#include "scene/AttrComponents.h"
 #include "scene/Graph.h"
 #include "scene/Instancing.h"
 #include "scene/MeshNodes.h"
@@ -163,9 +164,13 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
             if (!scene::effectivelyVisible(g, id))
                 continue;
             const std::string key = keys(id);
+            const size_t first = list.size();
             list.push_back(placement(g, id, key));
             for (json& copy : arrayPlacements(g, id, key))
                 list.push_back(std::move(copy));
+            const json components = scene::attrComponents::unrealPayload(g, id);
+            for (size_t k = first; k < list.size(); ++k)
+                list[k]["components"] = components;
         }
         const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold ? "hism" : "actors";
         groups.push_back({{"key", keys(src)},
@@ -290,6 +295,9 @@ void registerPlacementCommands()
                             log::error("Unreal import of {}: {}", source, grp["import"]["error"].get<std::string>());
                         else
                             log::info("Unreal: placed {} member(s) of {} as {}", grp["placements"].size(), source, grp["mode"].get<std::string>());
+                        if (grp.contains("placed"))
+                            for (const json& w : grp["placed"].value("warnings", json::array()))
+                                log::warn("Unreal placements of {}: {}", source, w.is_string() ? w.get<std::string>() : w.dump());
                     }
                 });
             });

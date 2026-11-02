@@ -46,7 +46,11 @@ public class LilaLink : ModuleRules
 			"ChaosClothAssetEngine",
 			"Chaos",
 			"GeometryCore",
+			"LilaLinkRuntime",
 		});
+
+		// Editor modules that register component exporters include LilaComponentExporter.h, which uses FJsonObject.
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "Json" });
 
 		// Header-only use: the module is looked up at runtime, so a project without Python still loads.
 		PrivateIncludePathModuleNames.Add("PythonScriptPlugin");

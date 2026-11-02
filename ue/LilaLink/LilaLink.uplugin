@@ -6,9 +6,14 @@
 	"Description": "Lets the Lila DCC import and reimport assets into this project over a localhost JSON-RPC socket.",
 	"Category": "Editor",
 	"CreatedBy": "Lila",
-	"CanContainContent": false,
+	"CanContainContent": true,
 	"EnabledByDefault": true,
 	"Modules": [
+		{
+			"Name": "LilaLinkRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
 		{
 			"Name": "LilaLink",
 			"Type": "Editor",

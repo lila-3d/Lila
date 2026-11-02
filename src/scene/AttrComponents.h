@@ -91,8 +91,21 @@ LILA_SCENE_API std::vector<std::string> apply(Graph& g, NodeId node, const Compo
 LILA_SCENE_API json exportSettings(const Node& n);
 LILA_SCENE_API void setExportSettings(Graph& g, NodeId node, const std::string& component, UnrealMode mode, const std::string& unrealClass);
 
-/** The registered component exporters' names, for Custom (filled by the Unreal link and extensions). */
+/**
+ * The object's components as LilaLink sends them: [{name, mode, class?, attrs: {attr: value}}], in the order their
+ * first attr appears, uncategorised added attrs as the component "". Components exported as none are left out; hidden
+ * attrs and usdApiSchemas are not data. Values are JSON: numbers, bools, strings, [x, y, z], an enum's label, a list
+ * for an array attr. Empty when the object has no added attrs.
+ */
+LILA_SCENE_API json unrealPayload(Graph& g, NodeId node);
+
+/**
+ * The component exporters Custom can name, by name, each holding its description: the ones the connected Unreal
+ * editor lists (owner "lila.unreal") and those extensions register.
+ */
 LILA_SCENE_API Registry<std::string>& unrealExporters();
+/** For extensions: owned by ctx and removed when it unloads. False when the name is taken. */
+LILA_SCENE_API bool addUnrealExporter(ext::Context& ctx, const std::string& name, std::string doc = {});
 } // namespace attrComponents
 
 namespace attrCommands

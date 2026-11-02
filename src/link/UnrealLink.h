@@ -68,6 +68,7 @@ LILA_SCENE_API void adoptWorkspaceMappings();
  * importAsset params for a file and a mapping (or the flags of an unrealImport call shaped the same way). An array
  * `materials` (from materialParams, even empty) goes along as params.materials: it tells the plugin to match the slots
  * to Unreal materials by name and never make one for the "Default" slot. Without it Interchange handles the materials.
+ * A mapping `components` array (attrComponents::unrealPayload, empty to clear them) goes along as params.components.
  */
 LILA_SCENE_API json importParams(const fs::path& file, const json& mapping, const json& materials = json());
 
@@ -207,7 +208,8 @@ struct PlacementOptions
 /**
  * The instance groups of the meshes under `roots`, one asset per instance root:
  * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, placements: [...]}]}, each placement
- * {id, name, location, rotation (quat xyzw), scale, customData: [stable random 0..1]} in Unreal space; hidden members
+ * {id, name, location, rotation (quat xyzw), scale, customData: [stable random 0..1], components} in Unreal space, components
+ * being the member's attrComponents::unrealPayload; hidden members
  * are left out. Groups and placements are keyed by the nodes'
  * linkId, which survives renames and reopening the scene. A group lists its root and every instance of it, wherever
  * they sit. Throws CommandError for an unknown mode.

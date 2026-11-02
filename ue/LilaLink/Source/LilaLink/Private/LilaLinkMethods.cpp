@@ -1,5 +1,6 @@
 #include "LilaLinkMethods.h"
 
+#include "LilaComponentExporter.h"
 #include "LilaLinkLog.h"
 #include "LilaLinkMLDeformer.h"
 #include "LilaLinkMasonry.h"
@@ -109,7 +110,13 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")),
-		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters"))});
+		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters")), Str(TEXT("components"))});
+	TArray<TSharedPtr<FJsonValue>> Exporters;
+	for (const FString& Name : LilaLink::ComponentExporterNames())
+	{
+		Exporters.Add(Str(Name));
+	}
+	Out->SetArrayField(TEXT("componentExporters"), Exporters);
 	Out->SetBoolField(TEXT("python"), IPythonScriptPlugin::Get() != nullptr && IPythonScriptPlugin::Get()->IsPythonAvailable());
 	return Obj(Out);
 }

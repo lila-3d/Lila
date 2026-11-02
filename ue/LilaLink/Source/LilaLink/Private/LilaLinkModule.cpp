@@ -1,3 +1,4 @@
+#include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 #include "LilaLinkMethods.h"
 #include "LilaLinkServer.h"
@@ -36,6 +37,7 @@ public:
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkModule::StartupModule);
 
+		LilaLink::RegisterExampleExporter();
 		// Cooks and other commandlets never tick the core ticker, so requests would wait forever.
 		if (IsRunningCommandlet())
 		{
@@ -57,6 +59,7 @@ public:
 		TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkModule::ShutdownModule);
 
 		LilaLinkToolbar::Unregister();
+		LilaLink::UnregisterExampleExporter();
 		if (UObjectInitialized() && SettingsHandle.IsValid())
 		{
 			GetMutableDefault<ULilaLinkSettings>()->OnSettingChanged().Remove(SettingsHandle);

@@ -5,6 +5,7 @@
 #include "link/Exporters.h"
 #include "mcp/McpServer.h"
 #include "python/Python.h"
+#include "scene/AttrComponents.h"
 #include "stream/ChangeStream.h"
 
 #include <nanobind/nanobind.h>
@@ -83,7 +84,7 @@ namespace lila::python
 {
 /**
  * _lila.registries: the scene-side registries lila/extension.py wraps (file translators, MCP tools, link exporters,
- * scene ui sections), and the change stream lila/stream.py wraps. Values cross as JSON text. With an owner (a loaded or loading extension) a registration is that
+ * Unreal component exporters, scene ui sections), and the change stream lila/stream.py wraps. Values cross as JSON text. With an owner (a loaded or loading extension) a registration is that
  * extension's and goes when it unloads.
  */
 void bindRegistries(nb::module_& m)
@@ -177,6 +178,34 @@ void bindRegistries(nb::module_& m)
         },
         nb::arg("owner"), nb::arg("format"), nb::arg("fn"));
     r.def("unregister_link_exporter", [](const std::string& format) { link::unregisterExporter(format); });
+
+    r.def(
+        "register_unreal_component_exporter",
+        [](const std::string& owner, const std::string& name, const std::string& doc) {
+            if (ext::Context* ctx = contextFor(owner))
+            {
+                if (!scene::attrComponents::addUnrealExporter(*ctx, name, doc))
+                    throw nb::value_error(("Unreal component exporter '" + name + "' is already registered").c_str());
+                return;
+            }
+            try
+            {
+                scene::attrComponents::unrealExporters().add(name, doc);
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw nb::value_error(e.what());
+            }
+        },
+        nb::arg("owner"), nb::arg("name"), nb::arg("doc"));
+    r.def("unregister_unreal_component_exporter", [](const std::string& name) { return scene::attrComponents::unrealExporters().remove(name); });
+    r.def("unreal_component_exporters", [] {
+        json out = json::object();
+        Registry<std::string>& reg = scene::attrComponents::unrealExporters();
+        for (const std::string& id : reg.idsInOrder())
+            out[id] = *reg.find(id);
+        return out.dump();
+    });
 
     r.def(
         "register_scene_ui_section",

@@ -8,6 +8,7 @@
 #include "scene/Node.h"
 
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -77,6 +78,32 @@ int stringArrayAttr(const Node& n, const char* name)
         return -1;
     const AttrDef& d = n.type().attrs[size_t(i)];
     return d.type == PlugType::String && (d.flags & AttrArray) ? i : -1;
+}
+
+/** One value as unrealPayload sends it; null for meshes and data, which are not component values. */
+json payloadValue(const AttrDef& d, const PlugValue& v)
+{
+    if (const int64_t* e = std::get_if<int64_t>(&v); e && d.type == PlugType::Enum)
+        return *e >= 0 && *e < int64_t(d.enumNames.size()) ? json(d.enumNames[size_t(*e)]) : json(*e);
+    return std::visit(
+        [](const auto& x) -> json {
+            using T = std::decay_t<decltype(x)>;
+            if constexpr (std::is_same_v<T, glm::dvec3>)
+                return json::array({x.x, x.y, x.z});
+            else if constexpr (std::is_same_v<T, glm::dmat4>)
+            {
+                json m = json::array();
+                for (int c = 0; c < 4; ++c)
+                    for (int r = 0; r < 4; ++r)
+                        m.push_back(x[c][r]);
+                return m;
+            }
+            else if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, int64_t> || std::is_same_v<T, double> || std::is_same_v<T, std::string>)
+                return json(x);
+            else
+                return json();
+        },
+        v);
 }
 } // namespace
 
@@ -329,9 +356,77 @@ std::vector<std::string> apply(Graph& g, NodeId node, const Component& c)
     return added;
 }
 
+json unrealPayload(Graph& g, NodeId node)
+{
+    Node* n = g.node(node);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    const json settings = exportSettings(*n);
+    json out = json::array();
+    std::vector<std::string> order;
+    std::map<std::string, json> attrsOf;
+    const std::vector<AttrDef>& defs = n->type().attrs;
+    for (size_t i = 0; i < defs.size(); ++i)
+    {
+        const AttrDef& d = defs[i];
+        if (!(d.flags & AttrUser) || (d.flags & AttrHidden) || d.name == kSchemasAttr || d.name == kExportAttr)
+            continue;
+        json value;
+        if (d.flags & AttrArray)
+        {
+            value = json::array();
+            for (const auto& [index, v] : n->elements(int(i)))
+                if (json e = payloadValue(d, v); !e.is_null())
+                    value.push_back(std::move(e));
+        }
+        else
+            value = payloadValue(d, g.value({node, int(i), -1}));
+        if (value.is_null())
+            continue;
+        if (!attrsOf.contains(d.category))
+            order.push_back(d.category);
+        attrsOf[d.category][d.name] = std::move(value);
+    }
+    for (const std::string& name : order)
+    {
+        UnrealMode mode = UnrealMode::AssetUserData;
+        std::string cls;
+        if (settings.contains(name) && settings[name].is_object())
+        {
+            try
+            {
+                mode = unrealModeNamed(settings[name].value("mode", "assetUserData"));
+            }
+            catch (const std::invalid_argument& e)
+            {
+                log::warn("{}: component {}: {}", n->name(), name, e.what());
+            }
+            cls = settings[name].value("class", "");
+        }
+        if (mode == UnrealMode::None)
+            continue;
+        json c = {{"name", name}, {"mode", unrealModeName(mode)}, {"attrs", std::move(attrsOf[name])}};
+        if (!cls.empty())
+            c["class"] = cls;
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
 Registry<std::string>& unrealExporters()
 {
     static Registry<std::string> r;
     return r;
+}
+
+bool addUnrealExporter(ext::Context& ctx, const std::string& name, std::string doc)
+{
+    if (unrealExporters().contains(name))
+    {
+        log::error("extension {}: Unreal component exporter '{}' is already registered", ctx.owner(), name);
+        return false;
+    }
+    ctx.add(unrealExporters(), "unrealComponentExporter", name, std::move(doc));
+    return true;
 }
 } // namespace lila::scene::attrComponents

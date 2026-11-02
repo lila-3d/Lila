@@ -1,5 +1,6 @@
 #include "LilaLinkPlacements.h"
 
+#include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
@@ -144,9 +145,26 @@ FString ShortGroupName(const FString& Group)
 	return Group.FindLastChar(TEXT('|'), Bar) ? Group.RightChop(Bar + 1) : Group;
 }
 
+/** Where placed actors' attribute components go: data assets beside the mesh, warnings and assets made back to Lila. */
+struct FComponentSink
+{
+	FString Folder;
+	TArray<FString> Warnings;
+	TArray<FString> Assets;
+};
+
+void ApplyPlacementComponents(AActor* Actor, const TSharedPtr<FJsonObject>& Placement, FComponentSink& Sink)
+{
+	TArray<LilaLink::FLilaComponent> Components;
+	if (LilaLink::ParseComponents(Placement, Components))
+	{
+		LilaLink::ApplyComponentsToActor(Actor, Components, Sink.Folder, Sink.Warnings, Sink.Assets);
+	}
+}
+
 /** An actor per placement, matched to the existing ones by node id. */
 void PlaceActors(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing,
-	int32& Spawned, int32& Updated, int32& Removed)
+	int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceActors);
 
@@ -206,6 +224,7 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		{
 			Actor->GetStaticMeshComponent()->SetCustomPrimitiveDataFloat(K, Custom[K]);
 		}
+		ApplyPlacementComponents(Actor, *P, Sink);
 	}
 	for (const TPair<FString, AStaticMeshActor*>& Pair : ByNode)
 	{
@@ -217,9 +236,12 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 	}
 }
 
-/** One holder actor whose (H)ISM component carries every placement as an instance, rebuilt in order each time. */
+/**
+ * One holder actor whose (H)ISM component carries every placement as an instance, rebuilt in order each time. Instances
+ * can't hold components, so the holder takes the first placement's.
+ */
 void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bHierarchical, const TArray<TSharedPtr<FJsonValue>>& Placements,
-	TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed)
+	TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceInstanced);
 
@@ -303,6 +325,11 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	Updated += FMath::Min(Before, Count);
 	Spawned += FMath::Max(0, Count - Before);
 	Removed += FMath::Max(0, Before - Count);
+	const TSharedPtr<FJsonObject>* First = nullptr;
+	if (!Placements.IsEmpty() && Placements[0].IsValid() && Placements[0]->TryGetObject(First))
+	{
+		ApplyPlacementComponents(Holder, *First, Sink);
+	}
 }
 
 TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FString& OutError)
@@ -341,14 +368,20 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 
 	FScopedTransaction Transaction(LOCTEXT("PlaceInstances", "Lila: Place Instances"));
 	int32 Spawned = 0, Updated = 0, Removed = 0;
+	FComponentSink Sink;
+	Sink.Folder = FPackageName::GetLongPackagePath(Mesh->GetPackage()->GetName());
 	TArray<AActor*> Existing = TaggedActors(World, GroupTag(Group));
 	if (Mode == TEXT("actors"))
 	{
-		PlaceActors(World, Group, Label, Mesh, *Placements, Existing, Spawned, Updated, Removed);
+		PlaceActors(World, Group, Label, Mesh, *Placements, Existing, Spawned, Updated, Removed, Sink);
 	}
 	else
 	{
-		PlaceInstanced(World, Group, Label, Mesh, Mode == TEXT("hism"), *Placements, Existing, Spawned, Updated, Removed);
+		PlaceInstanced(World, Group, Label, Mesh, Mode == TEXT("hism"), *Placements, Existing, Spawned, Updated, Removed, Sink);
+	}
+	for (const FString& W : Sink.Warnings)
+	{
+		UE_LOG(LogLilaLink, Warning, TEXT("placeInstances %s: %s"), *Label, *W);
 	}
 	if (ULevel* Level = World->GetCurrentLevel())
 	{
@@ -361,6 +394,17 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	Out->SetNumberField(TEXT("updated"), Updated);
 	Out->SetNumberField(TEXT("removed"), Removed);
 	Out->SetStringField(TEXT("mode"), Mode);
+	TArray<TSharedPtr<FJsonValue>> Warnings, Assets;
+	for (const FString& W : Sink.Warnings)
+	{
+		Warnings.Add(MakeShared<FJsonValueString>(W));
+	}
+	for (const FString& A : Sink.Assets)
+	{
+		Assets.Add(MakeShared<FJsonValueString>(A));
+	}
+	Out->SetArrayField(TEXT("warnings"), Warnings);
+	Out->SetArrayField(TEXT("assets"), Assets);
 	return Obj(Out);
 }
 

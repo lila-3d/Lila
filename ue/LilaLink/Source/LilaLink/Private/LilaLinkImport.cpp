@@ -1,5 +1,6 @@
 #include "LilaLinkMethods.h"
 
+#include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 #include "LilaLinkMaterials.h"
 #include "LilaLinkSettings.h"
@@ -80,6 +81,8 @@ struct FImportRequest
 	FString SocketMesh;
 	FName SocketName;
 	FName SocketBone;
+	/** The object's attribute components; unset when Lila sent none, so the asset's are left as they are. */
+	TOptional<TArray<LilaLink::FLilaComponent>> Components;
 };
 
 struct FImportOutcome
@@ -209,6 +212,12 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	FString Existing = TEXT("reimport");
 	Options->TryGetStringField(TEXT("existing"), Existing);
 	Out.bReplace = Existing == TEXT("replace");
+
+	TArray<LilaLink::FLilaComponent> Components;
+	if (LilaLink::ParseComponents(Params, Components))
+	{
+		Out.Components = MoveTemp(Components);
+	}
 
 	if (!LilaLink::ParseMaterialRequest(Params, Options, Out.PackagePath, Out.Materials, OutError))
 	{
@@ -813,6 +822,46 @@ void ApplySocket(const FImportRequest& Request, FImportOutcome& Outcome)
 	Outcome.Assets.AddUnique(Socket->GetOuter()->GetPathName());
 }
 
+/** The asset the import was asked for: the one at its content path, else the first mesh or animation it made. */
+UObject* RequestedAsset(const FImportRequest& Request, const FImportOutcome& Outcome)
+{
+	if (UObject* Asset = FindObject<UObject>(nullptr, *ObjectPathOf(Request)))
+	{
+		return Asset;
+	}
+	for (const FString& Path : Outcome.Assets)
+	{
+		UObject* Asset = FindObject<UObject>(nullptr, *Path);
+		if (Cast<UStaticMesh>(Asset) || Cast<USkeletalMesh>(Asset) || Cast<UAnimSequence>(Asset))
+		{
+			return Asset;
+		}
+	}
+	return nullptr;
+}
+
+void ApplyComponents(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyComponents);
+
+	UObject* Asset = RequestedAsset(Request, Outcome);
+	if (!Asset)
+	{
+		if (!Request.Components->IsEmpty())
+		{
+			Outcome.Warnings.Add(TEXT("No imported asset to hold the attribute components"));
+		}
+		return;
+	}
+	TArray<FString> Created;
+	LilaLink::ApplyComponentsToAsset(Asset, Request.Components.GetValue(), Request.PackagePath, Outcome.Warnings, Created);
+	Asset->MarkPackageDirty();
+	for (const FString& C : Created)
+	{
+		Outcome.Assets.AddUnique(C);
+	}
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
@@ -841,6 +890,11 @@ void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const 
 		{
 			Outcome.Assets.AddUnique(C);
 		}
+	}
+
+	if (Request.Components.IsSet() && Outcome.Errors.IsEmpty())
+	{
+		ApplyComponents(Request, Outcome);
 	}
 
 	for (const FString& W : Outcome.Warnings)
