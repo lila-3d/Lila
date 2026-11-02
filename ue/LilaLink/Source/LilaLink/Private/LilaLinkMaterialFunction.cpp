@@ -1,0 +1,133 @@
+#include "LilaLinkMaterialFunction.h"
+
+#include "AssetRegistry/IAssetRegistry.h"
+#include "AssetToolsModule.h"
+#include "Factories/MaterialFunctionFactoryNew.h"
+#include "IAssetTools.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialFunction.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "UObject/Package.h"
+
+UMaterialFunction* LilaLink::FindMaterialFunction(const FString& Folder, const FString& Name)
+{
+	const FAssetData Data = IAssetRegistry::GetChecked().GetAssetByObjectPath(FSoftObjectPath(Folder / Name + TEXT(".") + Name));
+	return Data.IsValid() ? Cast<UMaterialFunction>(Data.GetAsset()) : nullptr;
+}
+
+UMaterialFunction* LilaLink::FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterialFunction::FindOrCreateMaterialFunction);
+
+	bOutCreated = false;
+	if (UMaterialFunction* Existing = FindMaterialFunction(Folder, Name))
+	{
+		return Existing;
+	}
+	UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>(GetTransientPackage());
+	UMaterialFunction* Function = Cast<UMaterialFunction>(FAssetToolsModule::GetModule().Get().CreateAsset(Name, Folder, UMaterialFunction::StaticClass(), Factory));
+	bOutCreated = Function != nullptr;
+	return Function;
+}
+
+LilaLink::FFunctionGraph::FFunctionGraph(UMaterialFunction* InFunction, const TCHAR* Description)
+	: Function(InFunction)
+{
+	Function->Modify();
+	UMaterialEditingLibrary::DeleteAllMaterialExpressionsInFunction(Function);
+	Function->Description = Description;
+	Function->bExposeToLibrary = true;
+}
+
+UMaterialExpression* LilaLink::FFunctionGraph::Make(TSubclassOf<UMaterialExpression> Class, int32 X)
+{
+	return UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Function, Class, X, (Row++) * 120);
+}
+
+UMaterialExpressionFunctionInput* LilaLink::FFunctionGraph::Input(const TCHAR* Name, EFunctionInputType Type, UMaterialExpression* Default,
+	const TCHAR* Description, int32 DefaultOutput)
+{
+	auto* E = New<UMaterialExpressionFunctionInput>(-1100);
+	E->InputName = Name;
+	E->InputType = Type;
+	E->SortPriority = InputPriority++;
+	E->Description = Description;
+	if (Default)
+	{
+		E->Preview.Connect(DefaultOutput, Default);
+		E->bUsePreviewValueAsDefault = true;
+	}
+	return E;
+}
+
+UMaterialExpressionFunctionInput* LilaLink::FFunctionGraph::ScalarInput(const TCHAR* Name, float Value, const TCHAR* Group, const TCHAR* Description)
+{
+	auto* P = New<UMaterialExpressionScalarParameter>(-1500);
+	P->ParameterName = Name;
+	P->DefaultValue = Value;
+	P->Group = Group;
+	return Input(Name, FunctionInput_Scalar, P, Description);
+}
+
+UMaterialExpressionFunctionInput* LilaLink::FFunctionGraph::VectorInput(const TCHAR* Name, const FLinearColor& Value, const TCHAR* Group,
+	const TCHAR* Description)
+{
+	auto* P = New<UMaterialExpressionVectorParameter>(-1500);
+	P->ParameterName = Name;
+	P->DefaultValue = Value;
+	P->Group = Group;
+	return Input(Name, FunctionInput_Vector3, P, Description);
+}
+
+UMaterialExpressionFunctionInput* LilaLink::FFunctionGraph::TextureInput(const TCHAR* Name, UTexture* Value, EMaterialSamplerType Type,
+	const TCHAR* Group, const TCHAR* Description)
+{
+	auto* P = New<UMaterialExpressionTextureObjectParameter>(-1500);
+	P->ParameterName = Name;
+	P->Texture = Value;
+	P->SamplerType = Type;
+	P->Group = Group;
+	return Input(Name, FunctionInput_Texture2D, P, Description);
+}
+
+void LilaLink::FFunctionGraph::Output(UMaterialExpression* From, const TCHAR* Name, const TCHAR* Description, int32 FromOutput)
+{
+	auto* E = New<UMaterialExpressionFunctionOutput>(400);
+	E->OutputName = Name;
+	E->SortPriority = OutputPriority++;
+	E->Description = Description;
+	E->A.Connect(FromOutput, From);
+}
+
+void LilaLink::FFunctionGraph::Finish()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterialFunction::Finish);
+
+	Function->PostEditChange();
+	Function->MarkPackageDirty();
+	UMaterialEditingLibrary::UpdateMaterialFunction(Function);
+}
+
+UMaterialExpressionMaterialFunctionCall* LilaLink::CallFunction(UMaterial* Material, UMaterialFunctionInterface* Function, int32 X, int32 Y)
+{
+	auto* Call = Cast<UMaterialExpressionMaterialFunctionCall>(
+		UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionMaterialFunctionCall::StaticClass(), X, Y));
+	Call->SetMaterialFunction(Function);
+	return Call;
+}
+
+bool LilaLink::ConnectFunctionOutputs(UMaterialExpressionMaterialFunctionCall* Call, std::initializer_list<TPair<const TCHAR*, EMaterialProperty>> Outputs)
+{
+	bool bAll = true;
+	for (const TPair<const TCHAR*, EMaterialProperty>& Out : Outputs)
+	{
+		bAll &= UMaterialEditingLibrary::ConnectMaterialProperty(Call, Out.Key, Out.Value);
+	}
+	return bAll;
+}

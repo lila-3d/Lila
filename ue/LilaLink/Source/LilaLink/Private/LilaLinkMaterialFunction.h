@@ -1,0 +1,59 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/EngineTypes.h"
+#include "Materials/MaterialExpressionFunctionInput.h"
+#include "SceneTypes.h"
+
+class UMaterial;
+class UMaterialExpression;
+class UMaterialExpressionMaterialFunctionCall;
+class UMaterialFunction;
+class UMaterialFunctionInterface;
+class UTexture;
+
+namespace LilaLink
+{
+/** The material function at Folder/Name, created when missing (bOutCreated); null when it can't be made. */
+UMaterialFunction* FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated);
+
+/** The material function at Folder/Name, or null. */
+UMaterialFunction* FindMaterialFunction(const FString& Folder, const FString& Name);
+
+/**
+ * A material function's graph, cleared and rebuilt down columns. Its parameter inputs default to a parameter of the same
+ * name, so a material that calls the function and leaves a pin empty still has that parameter for its instances to set,
+ * and Lila's instances drive a user's own material the same way they drive the generated one.
+ */
+struct FFunctionGraph
+{
+	FFunctionGraph(UMaterialFunction* InFunction, const TCHAR* Description);
+
+	UMaterialFunction* Function = nullptr;
+	int32 Row = 0;
+	int32 InputPriority = 0;
+	int32 OutputPriority = 0;
+
+	UMaterialExpression* Make(TSubclassOf<UMaterialExpression> Class, int32 X = -600);
+	template <class T> T* New(int32 X = -600) { return Cast<T>(Make(T::StaticClass(), X)); }
+
+	/** An input whose value is Default (any expression in the function) when the caller leaves it empty. */
+	UMaterialExpressionFunctionInput* Input(const TCHAR* Name, EFunctionInputType Type, UMaterialExpression* Default, const TCHAR* Description,
+		int32 DefaultOutput = 0);
+	UMaterialExpressionFunctionInput* ScalarInput(const TCHAR* Name, float Value, const TCHAR* Group, const TCHAR* Description);
+	/** Vector3 from a vector parameter's RGB. */
+	UMaterialExpressionFunctionInput* VectorInput(const TCHAR* Name, const FLinearColor& Value, const TCHAR* Group, const TCHAR* Description);
+	UMaterialExpressionFunctionInput* TextureInput(const TCHAR* Name, UTexture* Value, EMaterialSamplerType Type, const TCHAR* Group,
+		const TCHAR* Description);
+	void Output(UMaterialExpression* From, const TCHAR* Name, const TCHAR* Description, int32 FromOutput = 0);
+
+	/** Marks the function changed and recompiles the materials that call it. */
+	void Finish();
+};
+
+/** A call of Function placed in Material. */
+UMaterialExpressionMaterialFunctionCall* CallFunction(UMaterial* Material, UMaterialFunctionInterface* Function, int32 X = -400, int32 Y = 0);
+
+/** Wires the call's named outputs to the material's properties; false when any output is missing. */
+bool ConnectFunctionOutputs(UMaterialExpressionMaterialFunctionCall* Call, std::initializer_list<TPair<const TCHAR*, EMaterialProperty>> Outputs);
+} // namespace LilaLink

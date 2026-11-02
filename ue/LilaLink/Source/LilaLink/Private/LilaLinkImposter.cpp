@@ -1,6 +1,7 @@
 #include "LilaLinkImposter.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
 #include "LilaLinkMethods.h"
 #include "LilaLinkSettings.h"
 
@@ -25,6 +26,7 @@
 #include "Materials/MaterialExpressionComponentMask.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionLocalPosition.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
@@ -33,6 +35,7 @@
 #include "Materials/MaterialExpressionUtils.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
 #include "Materials/MaterialExpressionWorldPosition.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Materials/MaterialParameters.h"
 #include "Misc/FileHelper.h"
@@ -49,6 +52,7 @@ namespace
 {
 const TCHAR* const DefaultMaterialFolder = TEXT("/Game/LilaLink/Imposter");
 const TCHAR* const MaterialName = TEXT("M_LilaImposter");
+const TCHAR* const FunctionName = TEXT("MF_LilaImposter");
 
 struct FImposterRequest
 {
@@ -350,85 +354,57 @@ LocalNormal = N / max(length(N), 1e-4);
 return float4(Sum.rgb / max(Sum.a, 1e-4), Sum.a);
 )");
 
-/** Expressions placed down a column of the material graph. */
-struct FImposterGraph
+UMaterialExpression* Mask(LilaLink::FFunctionGraph& G, UMaterialExpression* Input, int32 OutputIndex, bool bR, bool bG, bool bB, bool bA)
 {
-	UMaterial* Material = nullptr;
-	int32 Row = 0;
+	auto* E = G.New<UMaterialExpressionComponentMask>();
+	E->Input.Connect(OutputIndex, Input);
+	E->R = bR;
+	E->G = bG;
+	E->B = bB;
+	E->A = bA;
+	return E;
+}
 
-	template <class T> T* New(int32 X = -600)
+UMaterialExpression* Custom(LilaLink::FFunctionGraph& G, const TCHAR* Description, ECustomMaterialOutputType Type, const FString& Code,
+	TArrayView<const TPair<const TCHAR*, UMaterialExpression*>> Inputs, TArrayView<const FCustomOutput> Extra = {})
+{
+	auto* E = G.New<UMaterialExpressionCustom>(-900);
+	E->Description = Description;
+	E->OutputType = Type;
+	E->Code = Code;
+	E->Inputs.Reset();
+	for (const TPair<const TCHAR*, UMaterialExpression*>& In : Inputs)
 	{
-		return Cast<T>(UMaterialEditingLibrary::CreateMaterialExpression(Material, T::StaticClass(), X, (Row++) * 120));
+		FCustomInput& Added = E->Inputs.AddDefaulted_GetRef();
+		Added.InputName = In.Key;
+		Added.Input.Connect(0, In.Value);
 	}
-
-	UMaterialExpression* Scalar(const TCHAR* Name, float Value, const TCHAR* Group)
-	{
-		auto* E = New<UMaterialExpressionScalarParameter>(-1400);
-		E->ParameterName = Name;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		return E;
-	}
-
-	UMaterialExpression* Vector(const TCHAR* Name, const FLinearColor& Value, const TCHAR* Group)
-	{
-		auto* E = New<UMaterialExpressionVectorParameter>(-1400);
-		E->ParameterName = Name;
-		E->DefaultValue = Value;
-		E->Group = Group;
-		return E;
-	}
-
-	UMaterialExpression* Mask(UMaterialExpression* Input, int32 OutputIndex, bool R, bool G, bool B, bool A)
-	{
-		auto* E = New<UMaterialExpressionComponentMask>();
-		E->Input.Connect(OutputIndex, Input);
-		E->R = R;
-		E->G = G;
-		E->B = B;
-		E->A = A;
-		return E;
-	}
-
-	UMaterialExpression* Custom(const TCHAR* Description, ECustomMaterialOutputType Type, const FString& Code, TArrayView<const TPair<const TCHAR*, UMaterialExpression*>> Inputs,
-							   TArrayView<const FCustomOutput> Extra = {})
-	{
-		auto* E = New<UMaterialExpressionCustom>(-900);
-		E->Description = Description;
-		E->OutputType = Type;
-		E->Code = Code;
-		E->Inputs.Reset();
-		for (const TPair<const TCHAR*, UMaterialExpression*>& In : Inputs)
-		{
-			FCustomInput& Added = E->Inputs.AddDefaulted_GetRef();
-			Added.InputName = In.Key;
-			Added.Input.Connect(0, In.Value);
-		}
-		E->AdditionalOutputs = TArray<FCustomOutput>(Extra);
-		E->RebuildOutputs();
-		return E;
-	}
-};
+	E->AdditionalOutputs = TArray<FCustomOutput>(Extra);
+	E->RebuildOutputs();
+	return E;
+}
 
 /**
- * M_LilaImposter: in the vertex shader World Position Offset turns the card (its corners by UV0) to face the camera; the
- * pixel shader blends base colour, coverage and normal from the three nearest baked views (BlendHlsl). The normal atlas is
- * in the mesh's space. Masked and two sided.
+ * MF_LilaImposter: the WorldPositionOffset output turns the card (its corners by UV0) to face the camera; BaseColor, Opacity
+ * and Normal blend the three nearest baked views (BlendHlsl). Normal is world space, so the calling material turns Tangent
+ * Space Normal off. Every input defaults to the parameter of its name.
  */
-void BuildImposterMaterial(UMaterial* Material, UTexture* BaseColor, UTexture* Normal)
+void BuildImposterFunction(UMaterialFunction* Function, UTexture* BaseColor, UTexture* Normal)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::BuildImposterMaterial);
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::BuildImposterFunction);
 
-	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
-	FImposterGraph G;
-	G.Material = Material;
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila imposter: turns the card to the camera and blends the three nearest baked views."));
 	const TCHAR* Layout = TEXT("Imposter");
 	const TCHAR* Surface = TEXT("Surface");
-	UMaterialExpression* Frames = G.Scalar(TEXT("Frames"), 12.0f, Layout);
-	UMaterialExpression* Hemi = G.Scalar(TEXT("Hemi"), 1.0f, Layout);
-	UMaterialExpression* Centre = G.Mask(G.Vector(TEXT("Centre"), FLinearColor(0, 0, 0, 0), Layout), 0, true, true, true, false);
-	UMaterialExpression* Radius = G.Scalar(TEXT("Radius"), 50.0f, Layout);
-	UMaterialExpression* Parallax = G.Scalar(TEXT("Parallax"), 1.0f, Layout);
+	UMaterialExpression* Frames = G.ScalarInput(TEXT("Frames"), 12.0f, Layout, TEXT("Views along each side of the atlas."));
+	UMaterialExpression* Hemi = G.ScalarInput(TEXT("Hemi"), 1.0f, Layout, TEXT("1 for a hemi-octahedral bake (upper views only), 0 for octahedral."));
+	UMaterialExpression* Centre = G.VectorInput(TEXT("Centre"), FLinearColor(0, 0, 0, 0), Layout, TEXT("The card's centre in the mesh's space."));
+	UMaterialExpression* Radius = G.ScalarInput(TEXT("Radius"), 50.0f, Layout, TEXT("Half the card's width in the mesh's space."));
+	UMaterialExpression* Parallax = G.ScalarInput(TEXT("Parallax"), 1.0f, Layout, TEXT("Scales the parallax step from the baked depth."));
+	UMaterialExpression* BaseAtlas = G.TextureInput(TEXT("BaseColor"), BaseColor, MaterialExpressionUtils::GetSamplerTypeForTexture(BaseColor), Surface,
+		TEXT("Base colour atlas, coverage in alpha."));
+	UMaterialExpression* NormalAtlas = G.TextureInput(TEXT("Normal"), Normal, MaterialExpressionUtils::GetSamplerTypeForTexture(Normal), Surface,
+		TEXT("Normal atlas in the mesh's space, depth in alpha."));
 
 	auto* CameraWorld = G.New<UMaterialExpressionCameraPositionWS>();
 	auto* Camera = G.New<UMaterialExpressionTransformPosition>();
@@ -441,26 +417,18 @@ void BuildImposterMaterial(UMaterial* Material, UTexture* BaseColor, UTexture* N
 	Local->IncludedOffsets = EPositionIncludedOffsets::ExcludeOffsets;
 
 	const TPair<const TCHAR*, UMaterialExpression*> CardInputs[] = {{TEXT("Cam"), Camera}, {TEXT("Centre"), Centre}, {TEXT("Radius"), Radius}, {TEXT("Uv"), Uv}, {TEXT("Local"), Local}};
-	UMaterialExpression* Card = G.Custom(TEXT("Imposter card"), CMOT_Float3, CardHlsl, CardInputs);
+	UMaterialExpression* Card = Custom(G, TEXT("Imposter card"), CMOT_Float3, CardHlsl, CardInputs);
 	auto* CardWorld = G.New<UMaterialExpressionTransform>();
 	CardWorld->TransformSourceType = TRANSFORMSOURCE_Local;
 	CardWorld->TransformType = TRANSFORM_World;
 	CardWorld->Input.Connect(0, Card);
-	UMaterialEditingLibrary::ConnectMaterialProperty(CardWorld, TEXT(""), MP_WorldPositionOffset);
+	G.Output(CardWorld, TEXT("WorldPositionOffset"), TEXT("Turns the card to the camera."));
 
 	auto* PixelWorld = G.New<UMaterialExpressionWorldPosition>();
 	auto* Pixel = G.New<UMaterialExpressionTransformPosition>();
 	Pixel->TransformSourceType = TRANSFORMPOSSOURCE_World;
 	Pixel->TransformType = TRANSFORMPOSSOURCE_Local;
 	Pixel->Input.Connect(0, PixelWorld);
-	auto Atlas = [&](const TCHAR* Name, UTexture* Texture) {
-		auto* E = G.New<UMaterialExpressionTextureObjectParameter>(-1400);
-		E->ParameterName = Name;
-		E->Group = Surface;
-		E->Texture = Texture;
-		E->SamplerType = MaterialExpressionUtils::GetSamplerTypeForTexture(Texture);
-		return E;
-	};
 	const TPair<const TCHAR*, UMaterialExpression*> BlendInputs[] = {
 		{TEXT("Cam"), Camera},
 		{TEXT("P"), Pixel},
@@ -469,20 +437,40 @@ void BuildImposterMaterial(UMaterial* Material, UTexture* BaseColor, UTexture* N
 		{TEXT("Frames"), Frames},
 		{TEXT("Hemi"), Hemi},
 		{TEXT("Parallax"), Parallax},
-		{TEXT("BaseColor"), Atlas(TEXT("BaseColor"), BaseColor)},
-		{TEXT("Normal"), Atlas(TEXT("Normal"), Normal)}};
+		{TEXT("BaseColor"), BaseAtlas},
+		{TEXT("Normal"), NormalAtlas}};
 	const FCustomOutput BlendOutputs[] = {{TEXT("LocalNormal"), CMOT_Float3}};
-	UMaterialExpression* Blend = G.Custom(TEXT("Imposter views"), CMOT_Float4, BlendHlsl, BlendInputs, BlendOutputs);
-	UMaterialEditingLibrary::ConnectMaterialProperty(G.Mask(Blend, 0, true, true, true, false), TEXT(""), MP_BaseColor);
-	UMaterialEditingLibrary::ConnectMaterialProperty(G.Mask(Blend, 0, false, false, false, true), TEXT(""), MP_OpacityMask);
+	UMaterialExpression* Blend = Custom(G, TEXT("Imposter views"), CMOT_Float4, BlendHlsl, BlendInputs, BlendOutputs);
+	G.Output(Mask(G, Blend, 0, true, true, true, false), TEXT("BaseColor"), TEXT("The blended views' base colour."));
+	G.Output(Mask(G, Blend, 0, false, false, false, true), TEXT("Opacity"), TEXT("Coverage: connect to Opacity Mask."));
 	auto* NormalWorld = G.New<UMaterialExpressionTransform>();
 	NormalWorld->TransformSourceType = TRANSFORMSOURCE_Local;
 	NormalWorld->TransformType = TRANSFORM_World;
 	NormalWorld->Input.Connect(1, Blend);
-	UMaterialEditingLibrary::ConnectMaterialProperty(NormalWorld, TEXT(""), MP_Normal);
+	G.Output(NormalWorld, TEXT("Normal"), TEXT("World space: connect to Normal with Tangent Space Normal off."));
+	G.Finish();
+}
+
+/** M_LilaImposter: MF_LilaImposter on a masked, two sided surface with a Roughness parameter. */
+void BuildImposterMaterial(UMaterial* Material, UMaterialFunction* Function, TArray<FString>& OutErrors)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::BuildImposterMaterial);
+
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::CallFunction(Material, Function);
+	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("WorldPositionOffset"), MP_WorldPositionOffset}, {TEXT("BaseColor"), MP_BaseColor},
+			{TEXT("Opacity"), MP_OpacityMask}, {TEXT("Normal"), MP_Normal}}))
+	{
+		OutErrors.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
+	}
 	Material->bTangentSpaceNormal = false;
 
-	UMaterialEditingLibrary::ConnectMaterialProperty(G.Scalar(TEXT("Roughness"), 0.7f, Surface), TEXT(""), MP_Roughness);
+	auto* Roughness = Cast<UMaterialExpressionScalarParameter>(
+		UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionScalarParameter::StaticClass(), -700, 240));
+	Roughness->ParameterName = TEXT("Roughness");
+	Roughness->DefaultValue = 0.7f;
+	Roughness->Group = TEXT("Surface");
+	UMaterialEditingLibrary::ConnectMaterialProperty(Roughness, TEXT(""), MP_Roughness);
 	Material->NumCustomizedUVs = 0;
 	Material->BlendMode = BLEND_Masked;
 	Material->TwoSided = true;
@@ -493,10 +481,23 @@ void BuildImposterMaterial(UMaterial* Material, UTexture* BaseColor, UTexture* N
 	UMaterialEditingLibrary::RecompileMaterial(Material);
 }
 
+/** MF_LilaImposter and M_LilaImposter on it: each built when missing, both rebuilt with rebuildMaterial, otherwise kept. */
 UMaterialInterface* ImposterMaterial(const FImposterRequest& R, UTexture* BaseColor, UTexture* Normal, TArray<FString>& OutAssets, TArray<FString>& OutErrors)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImposter::ImposterMaterial);
 
+	bool bFunctionCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(R.MaterialFolder, FunctionName, bFunctionCreated);
+	if (!Function)
+	{
+		OutErrors.Add(FString::Printf(TEXT("Could not create %s in %s"), FunctionName, *R.MaterialFolder));
+		return nullptr;
+	}
+	if (bFunctionCreated || R.bRebuildMaterial)
+	{
+		BuildImposterFunction(Function, BaseColor, Normal);
+		OutAssets.AddUnique(Function->GetPathName());
+	}
 	UMaterial* Material = FindAssetAt<UMaterial>(R.MaterialFolder, MaterialName);
 	if (Material && !R.bRebuildMaterial)
 	{
@@ -512,7 +513,7 @@ UMaterialInterface* ImposterMaterial(const FImposterRequest& R, UTexture* BaseCo
 			return nullptr;
 		}
 	}
-	BuildImposterMaterial(Material, BaseColor, Normal);
+	BuildImposterMaterial(Material, Function, OutErrors);
 	OutAssets.AddUnique(Material->GetPathName());
 	return Material;
 }
