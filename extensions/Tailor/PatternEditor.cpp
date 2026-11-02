@@ -80,7 +80,9 @@ public:
     enum class Mode
     {
         Edit,
-        Sew
+        Sew,
+        Pen,
+        Notch
     };
 
     explicit PatternView(QWidget* parent) : QWidget(parent)
@@ -107,6 +109,8 @@ public:
     {
         mMode = m;
         mSewFrom.reset();
+        mPen.clear();
+        setCursor(m == Mode::Pen ? Qt::CrossCursor : Qt::ArrowCursor);
         update();
     }
 
@@ -182,6 +186,12 @@ public:
             run("tailorAddPanel", {{"args", {mPath}}});
     }
 
+    void autoSew()
+    {
+        if (!mPath.empty())
+            run("tailorAutoSew", {{"args", {mPath}}});
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override
     {
@@ -200,6 +210,7 @@ protected:
         for (size_t k = 0; k < mG.panels.size(); ++k)
             drawPanel(p, int(k));
         drawHover(p);
+        drawPen(p);
     }
 
     void wheelEvent(QWheelEvent* e) override
@@ -226,7 +237,23 @@ protected:
         }
         if (e->button() != Qt::LeftButton)
             return;
+        if (mMode == Mode::Pen)
+        {
+            if (mPen.size() >= 3 && std::hypot(e->position().x() - toScreenCanvas(mPen.front().at).x(),
+                                               e->position().y() - toScreenCanvas(mPen.front().at).y()) < kPick)
+                closePen();
+            else
+                mPen.push_back({toCanvas(e->position()), std::nullopt});
+            update();
+            return;
+        }
         const Hit h = hit(e->position());
+        if (mMode == Mode::Notch && (h.edge >= 0 || h.vertex >= 0))
+        {
+            const QPointF w = toPattern(e->position(), h.panel);
+            run("tailorAddNotch", {{"args", {mPath}}, {"panel", mG.panels[size_t(h.panel)].name}, {"position", {cm(w.x()), cm(w.y())}}});
+            return;
+        }
         if (mMode == Mode::Edit && h.vertex >= 0)
         {
             mDrag = h;
@@ -257,10 +284,23 @@ protected:
             update();
             return;
         }
+        if (mMode == Mode::Pen && !mPen.empty() && (e->buttons() & Qt::LeftButton))
+        {
+            // Dragging out a point pulls a curve handle through it.
+            mPen.back().handle = toCanvas(e->position());
+            update();
+            return;
+        }
         if (mDrag.vertex >= 0)
         {
             const QPointF w = toPattern(e->position(), mDrag.panel);
-            mG.panels[size_t(mDrag.panel)].outline[size_t(mDrag.vertex)] = {float(w.x()), float(w.y())};
+            Panel& pn = mG.panels[size_t(mDrag.panel)];
+            pn.outline[size_t(mDrag.vertex)] = {float(w.x()), float(w.y())};
+            if (pn.twin >= 0 && size_t(pn.twin) < mG.panels.size() && mG.panels[size_t(pn.twin)].outline.size() == pn.outline.size())
+            {
+                const size_t n = pn.outline.size();
+                mG.panels[size_t(pn.twin)].outline[(n - size_t(mDrag.vertex)) % n] = {-float(w.x()), float(w.y())};
+            }
             update();
             return;
         }
@@ -286,6 +326,11 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent* e) override
     {
+        if (mMode == Mode::Pen)
+        {
+            closePen();
+            return;
+        }
         const Hit h = hit(e->position());
         if (mMode != Mode::Edit || h.edge < 0 || h.vertex >= 0)
             return;
@@ -302,9 +347,12 @@ protected:
             fit();
         else if ((e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) && mHover.vertex >= 0)
             run("tailorDeletePoint", {{"args", {mPath}}, {"panel", mG.panels[size_t(mHover.panel)].name}, {"index", mHover.vertex}});
+        else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && mMode == Mode::Pen)
+            closePen();
         else if (e->key() == Qt::Key_Escape)
         {
             mSewFrom.reset();
+            mPen.clear();
             update();
         }
         else
@@ -326,7 +374,77 @@ private:
         int panel = -1;
         int vertex = -1;
         int edge = -1; // from vertex edge to edge + 1
+        double t = 0.0; // along the edge
     };
+
+    /** A pen point, with the curve handle dragged out of it. */
+    struct PenPoint
+    {
+        QPointF at;
+        std::optional<QPointF> handle;
+    };
+
+    QPointF toCanvas(const QPointF& s) const { return {(s.x() - mPan.x()) / mScale, (mPan.y() - s.y()) / mScale}; }
+    QPointF toScreenCanvas(const QPointF& c) const { return {mPan.x() + mScale * c.x(), mPan.y() - mScale * c.y()}; }
+
+    /** The pen's outline in canvas metres, curves sampled: a smooth point's handle leaves forward and mirrors back. */
+    std::vector<QPointF> penOutline(bool closed) const
+    {
+        std::vector<QPointF> out;
+        const size_t n = mPen.size();
+        for (size_t i = 0; i < n; ++i)
+        {
+            out.push_back(mPen[i].at);
+            if (i + 1 == n && !closed)
+                break;
+            const PenPoint &a = mPen[i], &b = mPen[(i + 1) % n];
+            if (!a.handle && !b.handle)
+                continue;
+            const QPointF c1 = a.handle ? *a.handle : a.at, c2 = b.handle ? 2.0 * b.at - *b.handle : b.at;
+            for (int k = 1; k < 12; ++k)
+            {
+                const double t = k / 12.0, u = 1.0 - t;
+                out.push_back(u * u * u * a.at + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * b.at);
+            }
+        }
+        return out;
+    }
+
+    void closePen()
+    {
+        // A double-click lands its second press on the last point.
+        if (mPen.size() >= 2)
+        {
+            const QPointF d = toScreenCanvas(mPen.back().at) - toScreenCanvas(mPen[mPen.size() - 2].at);
+            if (std::hypot(d.x(), d.y()) < kPick)
+                mPen.pop_back();
+        }
+        if (mPen.size() >= 3 && !mPath.empty())
+        {
+            json outline = json::array();
+            for (const QPointF& v : penOutline(true))
+                outline.push_back({cm(v.x()), cm(v.y())});
+            run("tailorAddPanel", {{"args", {mPath}}, {"name", "Panel"}, {"outline", outline}});
+        }
+        mPen.clear();
+        update();
+    }
+
+    void drawPen(QPainter& p) const
+    {
+        if (mPen.empty())
+            return;
+        const std::vector<QPointF> pts = penOutline(false);
+        p.setPen(QPen(QColor(255, 255, 255), 1.5));
+        for (size_t i = 0; i + 1 < pts.size(); ++i)
+            p.drawLine(toScreenCanvas(pts[i]), toScreenCanvas(pts[i + 1]));
+        p.setPen(QPen(QColor(255, 255, 255), 1.0, Qt::DashLine));
+        p.drawLine(toScreenCanvas(pts.back()), mLast);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(255, 220, 120));
+        for (const PenPoint& v : mPen)
+            p.drawEllipse(toScreenCanvas(v.at), 3.5, 3.5);
+    }
 
     QPointF toScreen(const Vec2& v, int panel) const
     {
@@ -411,11 +529,14 @@ private:
         {
             const auto& o = mG.panels[k].outline;
             for (size_t i = 0; i < o.size(); ++i)
-                if (const double d = segDist(s, toScreen(o[i], int(k)), toScreen(o[(i + 1) % o.size()], int(k))); d < bestD)
+            {
+                double t = 0.0;
+                if (const double d = segDist(s, toScreen(o[i], int(k)), toScreen(o[(i + 1) % o.size()], int(k)), &t); d < bestD)
                 {
                     bestD = d;
-                    best = {int(k), -1, int(i)};
+                    best = {int(k), -1, int(i), t};
                 }
+            }
         }
         if (best.edge >= 0)
             return best;
@@ -501,6 +622,23 @@ private:
         p.setBrush(QColor(220, 220, 220));
         for (const Vec2& v : pn.outline)
             p.drawRect(QRectF(toScreen(v, k) - QPointF(2.5, 2.5), QSizeF(5, 5)));
+        // Notches: a tick into the panel, square to the outline.
+        p.setPen(QPen(QColor(255, 170, 60), 2.0));
+        const size_t n = pn.outline.size();
+        for (int v : pn.notches)
+        {
+            if (v < 0 || size_t(v) >= n)
+                continue;
+            const QPointF at = toScreen(pn.outline[size_t(v)], k);
+            const QPointF prev = toScreen(pn.outline[(size_t(v) + n - 1) % n], k), next = toScreen(pn.outline[(size_t(v) + 1) % n], k);
+            QPointF along = next - prev;
+            const double l = std::hypot(along.x(), along.y());
+            if (l < 1e-6)
+                continue;
+            along /= l;
+            // Screen y points down, so the inside of a counter-clockwise outline is on the right of travel.
+            p.drawLine(at, at + QPointF(-along.y(), along.x()) * 9.0);
+        }
 
         Vec2 c{0.f, 0.f};
         for (const Vec2& v : pn.outline)
@@ -516,7 +654,10 @@ private:
         p.drawLine(a + dir * len, a + dir * (len - 7) + side * 4);
         p.drawLine(a + dir * len, a + dir * (len - 7) - side * 4);
         p.setPen(QColor(230, 230, 230));
-        p.drawText(a + QPointF(6, -6), QString::fromStdString(pn.name));
+        QString label = QString::fromStdString(pn.name);
+        if (pn.twin >= 0 && size_t(pn.twin) < mG.panels.size())
+            label += QString("  (mirrors %1)").arg(QString::fromStdString(mG.panels[size_t(pn.twin)].name));
+        p.drawText(a + QPointF(6, -6), label);
     }
 
     void drawSeam(QPainter& p, size_t s) const
@@ -621,10 +762,24 @@ private:
         if (h.edge >= 0)
             for (int s : seamsOn(h.panel, h.edge))
                 menu.addAction(QString("Unsew Seam %1").arg(s), [this, s] { run("tailorUnsew", {{"args", {mPath}}, {"seam", {s}}}); });
+        if (h.edge >= 0)
+            menu.addAction("Add Dart Here", [this, name, edge = h.edge, t = h.t] {
+                run("tailorAddDart", {{"args", {mPath}}, {"panel", name}, {"edge", edge}, {"at", t}});
+            });
         if (h.vertex >= 0)
+        {
             menu.addAction("Delete Point", [this, name, v = h.vertex] {
                 run("tailorDeletePoint", {{"args", {mPath}}, {"panel", name}, {"index", v}});
             });
+            const auto& notches = mG.panels[size_t(h.panel)].notches;
+            if (std::find(notches.begin(), notches.end(), h.vertex) != notches.end())
+                menu.addAction("Remove Notch", [this, name, v = h.vertex] {
+                    run("tailorRemoveNotch", {{"args", {mPath}}, {"panel", name}, {"index", v}});
+                });
+        }
+        menu.addAction("Mirror Panel (Linked)", [this, name] { run("tailorMirrorPanel", {{"args", {mPath}}, {"panel", name}}); });
+        if (mG.panels[size_t(h.panel)].twin >= 0)
+            menu.addAction("Unlink Mirror", [this, name] { run("tailorUnlinkPanel", {{"args", {mPath}}, {"panel", name}}); });
         menu.addAction("Rotate Grain 90", [this, name, g = mG.panels[size_t(h.panel)].grainAngle] {
             run("tailorEditPanel", {{"args", {mPath}}, {"panel", name}, {"grainAngle", (g + 1.5707963) * 180.0 / 3.14159265}});
         });
@@ -646,6 +801,7 @@ private:
     Hit mHover, mDrag;
     Vec2 mDragStart{0.f, 0.f};
     std::optional<Hit> mSewFrom;
+    std::vector<PenPoint> mPen;
     int mSelected = -1;
     int mHighlightSeam = -1;
 };
@@ -670,8 +826,12 @@ QWidget* makePatternEditor(QWidget* parent)
     };
     QToolButton* edit = button("Edit", "Drag points; double-click an edge to add a point; Delete removes the hovered point.", true);
     QToolButton* sew = button("Sew", "Click one edge, then another, to sew them; hold Shift on the second to sew them the same way round.", true);
+    QToolButton* pen = button("Pen", "Click to place outline points, drag to curve through them; click the first point, double-click or "
+                                     "press Enter to close the new panel. Esc cancels.", true);
+    QToolButton* notch = button("Notch", "Click an edge to mark a notch. Seams with as many notches on each side sew notch to notch.", true);
     edit->setChecked(true);
     QToolButton* add = button("Add Panel", "Add a 40 x 60 cm panel in front of the garment.", false);
+    QToolButton* autoSew = button("Auto-Sew", "Sew the unsewn edges that meet where the panels are placed, with lengths that match.", false);
     QToolButton* fit = button("Fit", "Frame every panel (F).", false);
     auto* title = new QLabel(w);
     bar->addSpacing(12);
@@ -716,7 +876,10 @@ QWidget* makePatternEditor(QWidget* parent)
 
     QObject::connect(edit, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Edit); });
     QObject::connect(sew, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Sew); });
+    QObject::connect(pen, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Pen); });
+    QObject::connect(notch, &QToolButton::clicked, view, [view] { view->setMode(PatternView::Mode::Notch); });
     QObject::connect(add, &QToolButton::clicked, view, [view] { view->addPanel(); });
+    QObject::connect(autoSew, &QToolButton::clicked, view, [view] { view->autoSew(); });
     QObject::connect(fit, &QToolButton::clicked, view, [view] { view->fit(); });
     view->onTitle = [title](const QString& t) { title->setText(t); };
 

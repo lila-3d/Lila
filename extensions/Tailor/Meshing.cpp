@@ -1,3 +1,4 @@
+#include "Pattern.h"
 #include "TailorCore.h"
 
 #include <algorithm>
@@ -1031,6 +1032,8 @@ Vec3 placePoint(const Panel& p, const P2& q)
 
 } // namespace
 
+Vec3 placePatternPoint(const Panel& p, const Vec2& at) { return placePoint(p, toP2(at)); }
+
 ClothMesh buildClothMesh(const Garment& g)
 {
     ClothMesh mesh;
@@ -1049,7 +1052,11 @@ ClothMesh buildClothMesh(const Garment& g)
     std::vector<Claims> claims(np);
     std::vector<SeamPlan> plans;
     int slotCount = 0;
-    for (const Seam& seam : g.seams)
+    std::vector<std::pair<Seam, int>> seams;
+    for (size_t si = 0; si < g.seams.size(); ++si)
+        for (Seam& part : splitSeamAtNotches(g, g.seams[si]))
+            seams.emplace_back(std::move(part), int(si));
+    for (const auto& [seam, seamIndex] : seams)
     {
         Chain ca, cb;
         if (!buildChain(seam.a, g, outlines, usable, ca) || !buildChain(seam.b, g, outlines, usable, cb))
@@ -1100,7 +1107,7 @@ ClothMesh buildClothMesh(const Garment& g)
             }
         };
         SeamPlan plan;
-        plan.seam = int(&seam - g.seams.data());
+        plan.seam = seamIndex;
         for (double f : samples)
         {
             plan.a.emplace_back();

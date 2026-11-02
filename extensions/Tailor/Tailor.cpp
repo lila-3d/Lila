@@ -766,7 +766,9 @@ json garmentToJson(const Garment& g)
                           {"origin", vec3Json(p.origin)},
                           {"right", vec3Json(p.right)},
                           {"up", vec3Json(p.up)},
-                          {"wrapRadius", p.wrapRadius}});
+                          {"wrapRadius", p.wrapRadius},
+                          {"notches", p.notches},
+                          {"twin", p.twin}});
     }
     json seams = json::array();
     for (const Seam& s : g.seams)
@@ -802,6 +804,8 @@ Garment garmentFromJson(const json& j)
         if (pj.contains("up"))
             p.up = jsonVec3(pj["up"]);
         p.wrapRadius = pj.value("wrapRadius", p.wrapRadius);
+        p.notches = pj.value("notches", std::vector<int>{});
+        p.twin = pj.value("twin", -1);
         g.panels.push_back(std::move(p));
     }
     for (const json& sj : j.value("seams", json::array()))
@@ -821,7 +825,11 @@ Garment garmentFromJson(const json& j)
             g.fabrics.push_back(jsonFabric(fj));
     }
     for (Panel& p : g.panels)
+    {
         p.fabric = std::clamp(p.fabric, 0, int(g.fabrics.size()) - 1);
+        if (p.twin >= int(g.panels.size()))
+            p.twin = -1;
+    }
     return g;
 }
 

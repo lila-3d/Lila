@@ -65,6 +65,9 @@ struct Panel
     Vec3 right{1.f, 0.f, 0.f};
     Vec3 up{0.f, 1.f, 0.f};
     float wrapRadius = 0.f;
+
+    std::vector<int> notches; // outline point indices; seams with the same number of notches on both sides match them
+    int twin = -1;            // a mirrored panel whose outline follows every edit to this one
 };
 
 /** A run of outline from vertex index `from` to `to` (inclusive, walking forward, wrapping) on a panel. */
@@ -146,6 +149,9 @@ RenderBinding bindRenderMesh(const std::vector<Vec3>& simPositions, const std::v
 /** The render points for the sim mesh's current positions. */
 std::vector<Vec3> deformRenderMesh(const RenderBinding& binding, const std::vector<Vec3>& simPositions,
                                    const std::vector<std::array<int, 3>>& simTris);
+
+/** Where a pattern-space point of a panel lands in 3D as the panel is placed (before any drape). */
+Vec3 placePatternPoint(const Panel& p, const Vec2& at);
 
 /** Mesh every active/frozen panel at its particle distance, place it in 3D and resample seams to matching vertex pairs. */
 ClothMesh buildClothMesh(const Garment& g);
