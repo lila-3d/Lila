@@ -26,6 +26,7 @@ constexpr uint32_t kGroup = 64;
 constexpr uint32_t kMaxColliders = 4;
 constexpr uint32_t kMaxVt = 16; // must match cloth_vbd.slang
 constexpr uint32_t kMaxTv = 32;
+constexpr uint32_t kMaxEe = 16;
 constexpr uint32_t kMovable = 1;
 constexpr uint32_t kSeam = 0;
 constexpr uint32_t kStrain = 1;
@@ -89,6 +90,12 @@ enum Buf
     BGrid2,
     BGrid3,
     BFlat,  // per vertex: pattern position and panel, to skip contacts within one stretch of fabric
+    BEdges,
+    BEdgeHead, // edge hash by midpoint cell
+    BEdgeNext,
+    BEeCount,
+    BEe,     // per vertex: the edge-edge contacts it is in
+    BEeSide,
     BSpare, // keeps gravity 16-byte aligned
     BufCount
 };
@@ -102,11 +109,12 @@ struct GpuScene
     float h, lambdaDecay, stiffnessDecay, beta;
     float kMax, thickness, queryRadius, cellSize;
     float boundFraction, frictionSlip, drag, seamKeep;
-    float closedGap, floorY, pad1, pad2;
+    float closedGap, floorY, maxHalfEdge;
+    uint32_t nEdges;
     float gravity[4];
 };
-static_assert(BufCount == 40);
-static_assert(offsetof(GpuScene, gravity) == 416 && sizeof(GpuScene) == 432);
+static_assert(BufCount == 46);
+static_assert(offsetof(GpuScene, gravity) == 464 && sizeof(GpuScene) == 480);
 
 struct ClothPush
 {
@@ -115,8 +123,8 @@ struct ClothPush
 };
 static_assert(sizeof(ClothPush) == 24);
 
-/** state[]: the clamp flag, then 4 VkDispatchIndirectCommand for re-detection from word 4. */
-constexpr uint32_t kStateWords = 4 + 4 * 3;
+/** state[]: the clamp flag, then 6 VkDispatchIndirectCommand for re-detection from word 4. */
+constexpr uint32_t kStateWords = 4 + 6 * 3;
 
 enum Kernel
 {
@@ -134,11 +142,14 @@ enum Kernel
     KHashInsert,
     KHashQuery,
     KContactFinalize,
+    KEdgeInsert,
+    KEdgeQuery,
     KernelCount
 };
 constexpr const char* kEntries[KernelCount] = {"advanceSeamsCS", "beginStepCS", "beginLinksCS",   "initGuessCS", "solveCS",
                                                "commitCS",       "dualLinksCS", "dualPinsCS",     "endStepCS",   "redetectArgsCS",
-                                               "hashClearCS",    "hashInsertCS", "hashQueryCS",   "contactFinalizeCS"};
+                                               "hashClearCS",    "hashInsertCS", "hashQueryCS",   "contactFinalizeCS",
+                                               "edgeInsertCS",   "edgeQueryCS"};
 
 float bitsToFloat(uint32_t u)
 {
@@ -200,6 +211,8 @@ struct Topology
     std::vector<GpuLink> links;
     std::vector<uint32_t> triOff, triAdj, hingeOff, hingeAdj, linkOff, linkAdj, weld;
     std::vector<uint32_t> colour, colourOff;
+    std::vector<std::array<uint32_t, 2>> edges;
+    float maxHalfEdge = 0.f;
     float queryRadius = 0.01f;
     float cellSize = 0.02f;
 };
@@ -268,6 +281,14 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
                 const Vec2& u = mesh.uv[size_t(tri[size_t(k)])];
                 rcn[size_t(k)] = {(u[0] * wx + u[1] * wy) * fab.shrinkWarp, (-u[0] * wy + u[1] * wx) * fab.shrinkWeft};
             }
+            if (p && !p->shrinkSpots.empty())
+            {
+                const Vec2 c{(mesh.uv[size_t(tri[0])][0] + mesh.uv[size_t(tri[1])][0] + mesh.uv[size_t(tri[2])][0]) / 3.f,
+                             (mesh.uv[size_t(tri[0])][1] + mesh.uv[size_t(tri[1])][1] + mesh.uv[size_t(tri[2])][1]) / 3.f};
+                const float sc = shrinkAt(*p, c);
+                for (auto& corner : rcn)
+                    corner = {corner[0] * sc, corner[1] * sc};
+            }
         }
         else
         {
@@ -328,10 +349,14 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
             edges.push_back({(uint64_t(std::min(a, b)) << 32) | uint64_t(std::max(a, b)), f, k});
         }
     std::sort(edges.begin(), edges.end(), [](const EdgeRec& l, const EdgeRec& r) { return l.key != r.key ? l.key < r.key : l.tri < r.tri; });
-    std::vector<uint64_t> creases;
-    for (const auto& ce : mesh.creaseEdges)
-        creases.push_back((uint64_t(std::min(ce[0], ce[1])) << 32) | uint64_t(std::max(ce[0], ce[1])));
-    std::sort(creases.begin(), creases.end());
+    std::vector<std::pair<uint64_t, float>> creases;
+    for (size_t k = 0; k < mesh.creaseEdges.size(); ++k)
+    {
+        const auto& ce = mesh.creaseEdges[k];
+        creases.emplace_back((uint64_t(std::min(ce[0], ce[1])) << 32) | uint64_t(std::max(ce[0], ce[1])),
+                             k < mesh.creaseAngles.size() ? mesh.creaseAngles[k] : std::nanf(""));
+    }
+    std::sort(creases.begin(), creases.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
 
     const float h2 = h * h;
     auto addLink = [&](int a, int b, uint32_t kind, float limit, float rest, bool closed) {
@@ -364,6 +389,8 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
         const float restLen = std::sqrt(rex * rex + rey * rey);
         edgeSum += d3Len(d3Sub(toD(mesh.rest3d[size_t(a)]), toD(mesh.rest3d[size_t(b)])));
         ++edgeCount;
+        t.edges.push_back({uint32_t(a), uint32_t(b)});
+        t.maxHalfEdge = std::max(t.maxHalfEdge, 0.5f * (1.f + std::max(f1.strainLimit, 0.1f)) * restLen);
 
         if (end - e == 2 && restLen > 1e-9f)
         {
@@ -385,8 +412,14 @@ Topology buildTopology(const ClothMesh& mesh, const Garment& g, const SolverSett
             if (areas > 1e-14f)
             {
                 hg.p[1] = 6.f * kBend * restLen * restLen / areas;
-                const bool crease = std::binary_search(creases.begin(), creases.end(), r1.key);
-                if (crease || !hasUv)
+                const auto c = std::lower_bound(creases.begin(), creases.end(), r1.key, [](const auto& l, uint64_t k) { return l.first < k; });
+                const bool crease = c != creases.end() && c->first == r1.key;
+                if (crease && std::isfinite(c->second))
+                {
+                    hg.p[0] = c->second;
+                    hg.p[1] *= tune.foldStiffening;
+                }
+                else if (crease || !hasUv)
                     hg.p[0] = dihedralAngle(mesh.rest3d[hg.v[0]], mesh.rest3d[hg.v[1]], mesh.rest3d[hg.v[2]], mesh.rest3d[hg.v[3]]);
                 const uint32_t hi = uint32_t(t.hinges.size());
                 t.hinges.push_back(hg);
@@ -652,6 +685,13 @@ struct ClothGpu::Impl
             body[i] = {topo.vextra[i][1], 0.f};
         upload(r, BBody, body);
         upload(r, BFlat, topo.flat);
+        const size_t ne = std::max<size_t>(topo.edges.size(), 1);
+        upload(r, BEdges, topo.edges.empty() ? nullptr : topo.edges.data(), ne * 8);
+        upload(r, BEdgeHead, nullptr, size_t(hashSize) * 4);
+        upload(r, BEdgeNext, nullptr, ne * 4);
+        upload(r, BEeCount, nullptr, size_t(n) * 4);
+        upload(r, BEe, nullptr, size_t(n) * kMaxEe * 8);
+        upload(r, BEeSide, nullptr, size_t(n) * kMaxEe * 16);
         upload(r, BSpare, nullptr, 16);
         r.buffer(kSceneBuffer, sizeof(GpuScene));
     }
@@ -698,6 +738,8 @@ struct ClothGpu::Impl
         g.drag = 1.f / (1.f + tune.airDrag * h);
         g.seamKeep = 1.f - std::clamp(settings.seamCloseRate, 0.f, 1.f);
         g.closedGap = tune.closedGap;
+        g.maxHalfEdge = topo.maxHalfEdge;
+        g.nEdges = uint32_t(topo.edges.size());
         g.floorY = settings.floorY;
         for (int k = 0; k < 3; ++k)
             g.gravity[k] = settings.gravity[size_t(k)];
@@ -747,7 +789,9 @@ struct ClothGpu::Impl
     {
         dispatch(r, scene, KHashClear, 0, hashSize);
         dispatch(r, scene, KHashInsert, 0, topo.n);
+        dispatch(r, scene, KEdgeInsert, 0, uint32_t(topo.edges.size()));
         dispatch(r, scene, KHashQuery, 0, uint32_t(topo.tris.size()));
+        dispatch(r, scene, KEdgeQuery, 0, uint32_t(topo.edges.size()));
         dispatch(r, scene, KContactFinalize, 0, topo.n);
     }
 
@@ -757,7 +801,8 @@ struct ClothGpu::Impl
         const bool self = settings.selfCollision;
         const int iterations = std::max(1, settings.iterations);
         // Indirect dispatches take no chunking; past their limit re-detection waits for the next substep.
-        const bool indirect = std::max({hashSize, n, nt}) <= kMaxIndirectItems;
+        const uint32_t ne = uint32_t(topo.edges.size());
+        const bool indirect = std::max({hashSize, n, nt, ne}) <= kMaxIndirectItems;
 
         dispatch(r, scene, KAdvanceSeams, 0, nl);
         for (int sub = 0; sub < std::max(1, settings.substeps); ++sub)
@@ -782,7 +827,9 @@ struct ClothGpu::Impl
                     dispatch(r, scene, KRedetectArgs, 0, 1);
                     dispatchIndirect(r, scene, KHashClear, hashSize, 0);
                     dispatchIndirect(r, scene, KHashInsert, n, 1);
+                    dispatchIndirect(r, scene, KEdgeInsert, ne, 4);
                     dispatchIndirect(r, scene, KHashQuery, nt, 2);
+                    dispatchIndirect(r, scene, KEdgeQuery, ne, 5);
                     dispatchIndirect(r, scene, KContactFinalize, n, 3);
                 }
             }

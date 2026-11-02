@@ -711,6 +711,7 @@ struct PanelMesh
     std::vector<P2> verts;
     std::vector<std::array<int, 3>> tris;
     std::vector<std::array<int, 2>> creases;
+    std::vector<float> creaseAngles;
     std::vector<std::pair<int, int>> slotVerts; // seam slot, local vertex
 };
 
@@ -754,8 +755,10 @@ PanelMesh meshPanel(const Panel& panel, const ArcPoly& outline, std::vector<Loop
 
     // Internal lines leaving the panel or crossing a hole are dropped; ends near the outline snap onto it.
     std::vector<std::vector<P2>> lines;
-    for (const auto& line : panel.internalLines)
+    std::vector<float> lineAngle;
+    for (size_t li = 0; li < panel.internalLines.size(); ++li)
     {
+        const auto& line = panel.internalLines[li];
         if (line.size() < 2)
             continue;
         const ArcPoly lp(line, false);
@@ -784,7 +787,10 @@ PanelMesh meshPanel(const Panel& panel, const ArcPoly& outline, std::vector<Loop
             ok = inDomain(pts[k]);
         }
         if (ok)
+        {
             lines.push_back(std::move(pts));
+            lineAngle.push_back(li < panel.lineAngles.size() ? panel.lineAngles[li] : std::nanf(""));
+        }
     }
 
     P2 lo = outerPts[0], hi = outerPts[0];
@@ -851,9 +857,14 @@ PanelMesh meshPanel(const Panel& panel, const ArcPoly& outline, std::vector<Loop
     for (const auto& idx : holeIdx)
         constrainLoop(idx);
     std::vector<std::array<int, 2>> creaseIdx;
-    for (const auto& idx : lineIdx)
+    std::vector<float> creaseAngle;
+    for (size_t li = 0; li < lineIdx.size(); ++li)
+    {
+        const auto& idx = lineIdx[li];
         for (size_t k = 0; k + 1 < idx.size(); ++k)
             cdt.constrain(idx[k], idx[k + 1], &creaseIdx);
+        creaseAngle.resize(creaseIdx.size(), li < lineAngle.size() ? lineAngle[li] : std::nanf(""));
+    }
 
     cdt.delaunay();
     cdt.smooth(movable, 3, h);
@@ -879,9 +890,12 @@ PanelMesh meshPanel(const Panel& panel, const ArcPoly& outline, std::vector<Loop
         }
     for (const auto& t : kept)
         pm.tris.push_back({local[t[0]], local[t[1]], local[t[2]]});
-    for (const auto& e : creaseIdx)
-        if (local[e[0]] >= 0 && local[e[1]] >= 0)
+    for (size_t k = 0; k < creaseIdx.size(); ++k)
+        if (const auto& e = creaseIdx[k]; local[e[0]] >= 0 && local[e[1]] >= 0)
+        {
             pm.creases.push_back({local[e[0]], local[e[1]]});
+            pm.creaseAngles.push_back(k < creaseAngle.size() ? creaseAngle[k] : std::nanf(""));
+        }
     for (size_t k = 0; k < outer.size(); ++k)
     {
         const int v = outerIdx[k];
@@ -1137,8 +1151,11 @@ ClothMesh buildClothMesh(const Garment& g)
             mesh.tris.push_back({base + t[0], base + t[1], base + t[2]});
             mesh.triPanel.push_back(p);
         }
-        for (const auto& e : pm.creases)
-            mesh.creaseEdges.push_back({base + e[0], base + e[1]});
+        for (size_t k = 0; k < pm.creases.size(); ++k)
+        {
+            mesh.creaseEdges.push_back({base + pm.creases[k][0], base + pm.creases[k][1]});
+            mesh.creaseAngles.push_back(pm.creaseAngles[k]);
+        }
         for (const auto& [slot, v] : pm.slotVerts)
             slotVertex[slot] = base + v;
     }

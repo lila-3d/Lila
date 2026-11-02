@@ -215,3 +215,53 @@ TEST_CASE("auto-sew closes edges that face each other, not hems side by side")
     CHECK(l.from == 1);
     CHECK(l.to == 2);
 }
+
+TEST_CASE("cloth brushes: pins hold, shrink spots gather, folds hold their angle")
+{
+    Garment g;
+    Panel sheet = rect("Sheet", 0.4f, 0.4f, {-0.2f, 1.f, 0.f});
+    g.panels = {sheet};
+
+    // A pin resolves to the vertex nearest its pattern point and holds it while the rest falls.
+    g.pins = {{0, {0.2f, 0.4f}, {0.f, 1.4f, 0.f}}};
+    ClothMesh m = buildClothMesh(g);
+    const std::vector<Pin> pins = resolvePins(m, g);
+    REQUIRE(pins.size() == 1);
+    CHECK(dist(m.uv[size_t(pins[0].vertex)], {0.2f, 0.4f}) < 0.015f);
+    ClothSolver solver;
+    solver.reset(m, g, SolverSettings{});
+    solver.setPins(pins);
+    for (int f = 0; f < 30; ++f)
+        solver.step();
+    const Vec3& held = solver.positions()[size_t(pins[0].vertex)];
+    CHECK(std::hypot(held[0], held[1] - 1.4f, held[2]) < 0.01f);
+
+    // A shrink spot scales the rest shape most at its middle and not at all past its radius.
+    Panel& p = g.panels[0];
+    p.shrinkSpots = {{{0.2f, 0.2f}, 0.1f, 0.8f}};
+    CHECK(shrinkAt(p, {0.2f, 0.2f}) == doctest::Approx(0.8f));
+    CHECK(shrinkAt(p, {0.35f, 0.2f}) == doctest::Approx(1.f));
+    CHECK(shrinkAt(p, {0.25f, 0.2f}) > 0.8f);
+
+    // A fold line keeps its angle: the two halves of a pinned-free sheet fold up off the flat.
+    Garment fold;
+    fold.panels = {rect("Sheet", 0.4f, 0.4f, {-0.2f, 1.f, 0.f})};
+    fold.panels[0].internalLines = {{{0.2f, 0.f}, {0.2f, 0.4f}}};
+    fold.panels[0].lineAngles = {1.5707963f};
+    const ClothMesh fm = buildClothMesh(fold);
+    REQUIRE(fm.creaseAngles.size() == fm.creaseEdges.size());
+    REQUIRE_FALSE(fm.creaseEdges.empty());
+    for (float a : fm.creaseAngles)
+        CHECK(a == doctest::Approx(1.5707963f));
+    SolverSettings zeroG;
+    zeroG.gravity = {0.f, 0.f, 0.f};
+    ClothSolver fs;
+    fs.reset(fm, fold, zeroG);
+    for (int f = 0; f < 120; ++f)
+        fs.step();
+    // The free corners lift out of the sheet's plane as the crease closes towards 90 degrees.
+    float off = 0.f;
+    for (const Vec3& q : fs.positions())
+        off = std::max(off, std::abs(q[2]));
+    CHECK(off > 0.05f);
+}

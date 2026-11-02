@@ -38,12 +38,47 @@ constexpr float kContactStiffness = 1e4f;
 constexpr float kAirDrag = 0.2f;       // 1/s
 constexpr float kFrictionSlip = 1e-5f; // tangential slip in metres still treated as sticking
 constexpr float kClosedGap = 1e-4f;
+constexpr float kFoldStiffening = 8.f; // a painted fold holds its angle against the fabric's own bending
 constexpr int kRedetectEvery = 3;     // iterations between contact re-detections while vertices hit their bounds
 constexpr float kDampingScale = 0.01f; // fabric damping 0.01 becomes a 1e-4 s stiffness-proportional (Rayleigh) term
 
 vec3 toVec(const Vec3& v) { return {v[0], v[1], v[2]}; }
 Vec3 toArr(const vec3& v) { return {v.x, v.y, v.z}; }
 mat3 outer(const vec3& a, const vec3& b) { return glm::outerProduct(a, b); }
+
+/** Closest points of segments p1-q1 and p2-q2 (Ericson): parameters s and t along each. */
+void closestOnSegments(const vec3& p1, const vec3& q1, const vec3& p2, const vec3& q2, float& s, float& t)
+{
+    const vec3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    const float a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
+    s = t = 0.f;
+    if (a <= 1e-20f && e <= 1e-20f)
+        return;
+    if (a <= 1e-20f)
+    {
+        t = std::clamp(f / e, 0.f, 1.f);
+        return;
+    }
+    const float c = glm::dot(d1, r);
+    if (e <= 1e-20f)
+    {
+        s = std::clamp(-c / a, 0.f, 1.f);
+        return;
+    }
+    const float b = glm::dot(d1, d2), denom = a * e - b * b;
+    s = denom > 1e-20f ? std::clamp((b * f - c * e) / denom, 0.f, 1.f) : 0.f;
+    t = (b * s + f) / e;
+    if (t < 0.f)
+    {
+        t = 0.f;
+        s = std::clamp(-c / a, 0.f, 1.f);
+    }
+    else if (t > 1.f)
+    {
+        t = 1.f;
+        s = std::clamp((b - c) / a, 0.f, 1.f);
+    }
+}
 
 /** Closest point to p on triangle abc (Ericson), with its barycentric weights. */
 vec3 closestOnTriangle(const vec3& p, const vec3& a, const vec3& b, const vec3& c, vec3& bary)
@@ -184,6 +219,15 @@ struct PinState
     vec3 lambda{0.f};
 };
 
+/** Edge-edge pair within the query radius, crossing away from their ends. `side` is the way e1 lay from e2 when found. */
+struct EdgeContact
+{
+    int e1 = -1;
+    int e2 = -1;
+    glm::vec3 side{0.f};
+    float dist = 0.f;
+};
+
 /** Vertex-triangle pair within the query radius. `side` keeps the vertex on the side of the triangle it was found on. */
 struct Contact
 {
@@ -290,6 +334,13 @@ struct ClothSolver::Impl
     std::vector<std::vector<int>> asVertex, asTriangle;
     std::vector<std::pair<uint64_t, int>> cells;
     vbd::CellTable cellTable;
+    std::vector<std::array<int, 2>> meshEdges;
+    float maxHalfEdge = 0.f;
+    std::vector<vbd::EdgeContact> edgeContacts;
+    std::vector<std::vector<vbd::EdgeContact>> perEdge;
+    std::vector<std::vector<int>> asEdge;
+    std::vector<std::pair<uint64_t, int>> edgeCells;
+    vbd::CellTable edgeTable;
     std::vector<float> bound, nearV, nearT;
 
     std::vector<vec3> x, v, xStart, xDetect, y, xNew;
@@ -305,6 +356,8 @@ struct ClothSolver::Impl
     bool bodyContact(int i, const vec3& p, const std::vector<const Sdf*>& colliders, float& pen, vec3& nrm) const;
     vec3 solveVertex(int i, const std::vector<Pin>& pins, const std::vector<const Sdf*>& colliders) const;
     bool contactGap(const vbd::Contact& c, float& pen, vec3& normal, vec3& bary) const;
+    bool edgeGap(const vbd::EdgeContact& c, float& pen, vec3& normal, float& sa, float& tb) const;
+    void detectEdges(float R);
 
     float contactStiffness(int i) const { return vbd::kContactStiffness + 1e3f * mass[i] / (h * h); }
     float selfRadius(int i) const { return s.collisionThickness + thickness[i]; }
@@ -396,6 +449,14 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
                 const vec2 u(mesh.uv[tri[k]][0], mesh.uv[tri[k]][1]);
                 rc[k] = {glm::dot(u, warp) * f.shrinkWarp, glm::dot(u, weft) * f.shrinkWeft};
             }
+            if (p && !p->shrinkSpots.empty())
+            {
+                const Vec2 c{(mesh.uv[tri[0]][0] + mesh.uv[tri[1]][0] + mesh.uv[tri[2]][0]) / 3.f,
+                             (mesh.uv[tri[0]][1] + mesh.uv[tri[1]][1] + mesh.uv[tri[2]][1]) / 3.f};
+                const float sc = shrinkAt(*p, c);
+                for (vec2& corner : rc)
+                    corner *= sc;
+            }
         }
         else
         {
@@ -457,13 +518,19 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
     std::sort(edges.begin(), edges.end(), [](const EdgeRec& l, const EdgeRec& r) {
         return l.key != r.key ? l.key < r.key : l.tri < r.tri;
     });
-    std::vector<uint64_t> creases;
-    for (const auto& ce : mesh.creaseEdges)
-        creases.push_back((uint64_t(std::min(ce[0], ce[1])) << 32) | uint64_t(std::max(ce[0], ce[1])));
-    std::sort(creases.begin(), creases.end());
+    std::vector<std::pair<uint64_t, float>> creases;
+    for (size_t k = 0; k < mesh.creaseEdges.size(); ++k)
+    {
+        const auto& ce = mesh.creaseEdges[k];
+        creases.emplace_back((uint64_t(std::min(ce[0], ce[1])) << 32) | uint64_t(std::max(ce[0], ce[1])),
+                             k < mesh.creaseAngles.size() ? mesh.creaseAngles[k] : std::nanf(""));
+    }
+    std::sort(creases.begin(), creases.end(), [](const auto& l, const auto& r) { return l.first < r.first; });
 
     hinges.clear();
     links.clear();
+    meshEdges.clear();
+    maxHalfEdge = 0.f;
     double edgeSum = 0.0;
     size_t edgeCount = 0;
     for (size_t e = 0; e < edges.size();)
@@ -479,6 +546,8 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
         const float restLen = glm::length(restEdge);
         edgeSum += glm::length(toVec(mesh.rest3d[a]) - toVec(mesh.rest3d[b]));
         ++edgeCount;
+        meshEdges.push_back({a, b});
+        maxHalfEdge = std::max(maxHalfEdge, 0.5f * (1.f + std::max(f1.strainLimit, 0.1f)) * restLen);
 
         if (end - e == 2 && restLen > 1e-9f)
         {
@@ -501,8 +570,14 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
             if (areas > 1e-14f)
             {
                 hg.stiffness = 6.f * kBend * restLen * restLen / areas;
-                const bool crease = std::binary_search(creases.begin(), creases.end(), r1.key);
-                if (crease || !hasUv)
+                const auto c = std::lower_bound(creases.begin(), creases.end(), r1.key, [](const auto& l, uint64_t k) { return l.first < k; });
+                const bool crease = c != creases.end() && c->first == r1.key;
+                if (crease && std::isfinite(c->second))
+                {
+                    hg.restAngle = c->second;
+                    hg.stiffness *= kFoldStiffening;
+                }
+                else if (crease || !hasUv)
                     dihedral(toVec(mesh.rest3d[hg.v[0]]), toVec(mesh.rest3d[hg.v[1]]), toVec(mesh.rest3d[hg.v[2]]),
                              toVec(mesh.rest3d[hg.v[3]]), hg.restAngle, nullptr);
                 hinges.push_back(hg);
@@ -676,6 +751,8 @@ void ClothSolver::Impl::build(const ClothMesh& mesh, const Garment& g)
     asVertex.assign(n, {});
     asTriangle.assign(n, {});
     perTri.assign(nt, {});
+    perEdge.assign(meshEdges.size(), {});
+    asEdge.assign(n, {});
     xStart.assign(n, vec3(0.f));
     xDetect.assign(n, vec3(0.f));
     y.assign(n, vec3(0.f));
@@ -752,6 +829,117 @@ bool ClothSolver::Impl::contactGap(const vbd::Contact& c, float& pen, vec3& norm
     return pen > 0.f;
 }
 
+bool ClothSolver::Impl::edgeGap(const vbd::EdgeContact& c, float& pen, vec3& normal, float& sa, float& tb) const
+{
+    const auto &e1 = meshEdges[c.e1], &e2 = meshEdges[c.e2];
+    vbd::closestOnSegments(x[e1[0]], x[e1[1]], x[e2[0]], x[e2[1]], sa, tb);
+    const vec3 d = glm::mix(x[e1[0]], x[e1[1]], sa) - glm::mix(x[e2[0]], x[e2[1]], tb);
+    const float len = glm::length(d), along = glm::dot(d, c.side);
+    float dist;
+    if (along > 0.f && len > 1e-7f)
+    {
+        normal = d / len;
+        dist = len;
+    }
+    else
+    {
+        // Crossed since detection: push back the way they came.
+        normal = c.side;
+        dist = along;
+    }
+    pen = selfRadius(e1[0]) - dist;
+    return pen > 0.f;
+}
+
+void ClothSolver::Impl::detectEdges(float R)
+{
+    using namespace vbd;
+    const float inv = 1.f / cellSize;
+    auto cellOf = [&](float c) { return int(std::floor(c * inv)); };
+    const int ne = int(meshEdges.size());
+    edgeCells.clear();
+    for (int e = 0; e < ne; ++e)
+    {
+        const auto& ed = meshEdges[e];
+        if (!collidable[ed[0]] || !collidable[ed[1]])
+            continue;
+        const vec3 m = 0.5f * (x[ed[0]] + x[ed[1]]);
+        edgeCells.emplace_back(cellKey(cellOf(m.x), cellOf(m.y), cellOf(m.z)), e);
+    }
+    std::sort(edgeCells.begin(), edgeCells.end());
+    edgeTable.build(edgeCells);
+    // Another edge within R has its middle within R plus half its length.
+    const float reach = R + maxHalfEdge;
+    tbb::parallel_for(tbb::blocked_range<int>(0, ne, 64), [&](const tbb::blocked_range<int>& range) {
+        for (int e1 = range.begin(); e1 != range.end(); ++e1)
+        {
+            std::vector<EdgeContact>& found = perEdge[e1];
+            found.clear();
+            const auto& ea = meshEdges[e1];
+            if (!collidable[ea[0]] || !collidable[ea[1]])
+                continue;
+            const vec3 a0 = x[ea[0]], a1 = x[ea[1]];
+            const vec3 lo = glm::min(a0, a1) - vec3(reach), hi = glm::max(a0, a1) + vec3(reach);
+            const int wa = weld[ea[0]], wb = weld[ea[1]];
+            const bool aMoves = movable[ea[0]] || movable[ea[1]];
+            for (int cz = cellOf(lo.z); cz <= cellOf(hi.z); ++cz)
+                for (int cy = cellOf(lo.y); cy <= cellOf(hi.y); ++cy)
+                    for (int cx = cellOf(lo.x); cx <= cellOf(hi.x); ++cx)
+                    {
+                        const CellTable::Slot* slot = edgeTable.find(cellKey(cx, cy, cz));
+                        if (!slot)
+                            continue;
+                        for (int k = slot->begin; k < slot->end; ++k)
+                        {
+                            const int e2 = edgeCells[k].second;
+                            if (e2 <= e1)
+                                continue;
+                            const auto& eb = meshEdges[e2];
+                            const int wc = weld[eb[0]], wd = weld[eb[1]];
+                            if (wa == wc || wa == wd || wb == wc || wb == wd || (!aMoves && !movable[eb[0]] && !movable[eb[1]]))
+                                continue;
+                            const std::vector<int>&ra = nearRing[wa], &rb = nearRing[wb];
+                            if (std::binary_search(ra.begin(), ra.end(), wc) || std::binary_search(ra.begin(), ra.end(), wd) ||
+                                std::binary_search(rb.begin(), rb.end(), wc) || std::binary_search(rb.begin(), rb.end(), wd))
+                                continue;
+                            float sa, tb;
+                            if (!restFlat.empty() && vPanel[ea[0]] == vPanel[ea[1]] && vPanel[ea[0]] == vPanel[eb[0]] &&
+                                vPanel[ea[0]] == vPanel[eb[1]])
+                            {
+                                // Edges close together in the flat pattern lie in one stretch of fabric.
+                                closestOnSegments(restFlat[ea[0]], restFlat[ea[1]], restFlat[eb[0]], restFlat[eb[1]], sa, tb);
+                                if (glm::length(glm::mix(restFlat[ea[0]], restFlat[ea[1]], sa) - glm::mix(restFlat[eb[0]], restFlat[eb[1]], tb)) < 2.f * R)
+                                    continue;
+                            }
+                            closestOnSegments(a0, a1, x[eb[0]], x[eb[1]], sa, tb);
+                            // Near an end, the end's vertex-triangle contacts already hold it.
+                            if (sa < 0.02f || sa > 0.98f || tb < 0.02f || tb > 0.98f)
+                                continue;
+                            const vec3 d = glm::mix(a0, a1, sa) - glm::mix(x[eb[0]], x[eb[1]], tb);
+                            const float dist = glm::length(d);
+                            if (dist >= R || dist < 1e-9f)
+                                continue;
+                            found.push_back({e1, e2, d / dist, dist});
+                        }
+                    }
+        }
+    });
+    edgeContacts.clear();
+    for (auto& l : asEdge)
+        l.clear();
+    for (int e = 0; e < ne; ++e)
+        for (const EdgeContact& c : perEdge[e])
+        {
+            const int idx = int(edgeContacts.size());
+            edgeContacts.push_back(c);
+            for (const int vi : {meshEdges[c.e1][0], meshEdges[c.e1][1], meshEdges[c.e2][0], meshEdges[c.e2][1]})
+            {
+                asEdge[vi].push_back(idx);
+                nearV[vi] = std::min(nearV[vi], c.dist);
+            }
+        }
+}
+
 void ClothSolver::Impl::detect()
 {
     using namespace vbd;
@@ -761,6 +949,9 @@ void ClothSolver::Impl::detect()
         l.clear();
     for (auto& l : asTriangle)
         l.clear();
+    for (auto& l : asEdge)
+        l.clear();
+    edgeContacts.clear();
     if (!s.selfCollision)
     {
         // Without contacts to bound them, steps still stay a few query radii long so stiff constraints can't fling points.
@@ -850,6 +1041,7 @@ void ClothSolver::Impl::detect()
             nearV[c.v] = std::min(nearV[c.v], c.dist);
             nearT[t] = std::min(nearT[t], c.dist);
         }
+    detectEdges(R);
     for (int i = 0; i < n; ++i)
     {
         float d = nearV[i];
@@ -969,6 +1161,18 @@ glm::vec3 ClothSolver::Impl::solveVertex(int i, const std::vector<Pin>& pins,
         const float kc = contactStiffness(c.v);
         f += kc * pen * nrm;
         H += kc * outer(nrm, nrm);
+    }
+    for (int ci : asEdge[i])
+    {
+        const EdgeContact& c = edgeContacts[ci];
+        float sa, tb;
+        if (!edgeGap(c, pen, nrm, sa, tb))
+            continue;
+        const auto &e1 = meshEdges[c.e1], &e2 = meshEdges[c.e2];
+        const float w = i == e1[0] ? 1.f - sa : i == e1[1] ? sa : i == e2[0] ? tb - 1.f : -tb;
+        const float kc = contactStiffness(e1[0]);
+        f += kc * pen * w * nrm;
+        H += kc * w * w * outer(nrm, nrm);
     }
     for (int ci : asTriangle[i])
     {

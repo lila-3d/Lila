@@ -492,6 +492,7 @@ private:
             std::string err;
             solver.setColliders(colliders);
             bool ok = solver.reset(cm, g, settings, &err);
+            solver.setPins(resolvePins(cm, g));
             for (int64_t k = 0; ok && k < frames; ++k)
             {
                 beginFrame();
@@ -507,6 +508,7 @@ private:
         ClothSolver solver;
         solver.reset(cm, g, settings);
         solver.setColliders(colliders);
+        solver.setPins(resolvePins(cm, g));
         for (int64_t k = 0; k < frames; ++k)
         {
             beginFrame();
@@ -749,11 +751,15 @@ json garmentToJson(const Garment& g)
     json panels = json::array();
     for (const Panel& p : g.panels)
     {
-        json holes = json::array(), lines = json::array();
+        json holes = json::array(), lines = json::array(), angles = json::array(), spots = json::array();
         for (const auto& h : p.holes)
             holes.push_back(polyJson(h));
         for (const auto& l : p.internalLines)
             lines.push_back(polyJson(l));
+        for (float a : p.lineAngles)
+            angles.push_back(std::isfinite(a) ? json(a) : json());
+        for (const ShrinkSpot& s : p.shrinkSpots)
+            spots.push_back({{"at", {s.at[0], s.at[1]}}, {"radius", s.radius}, {"scale", s.scale}});
         panels.push_back({{"name", p.name},
                           {"outline", polyJson(p.outline)},
                           {"holes", holes},
@@ -767,6 +773,8 @@ json garmentToJson(const Garment& g)
                           {"right", vec3Json(p.right)},
                           {"up", vec3Json(p.up)},
                           {"wrapRadius", p.wrapRadius},
+                          {"lineAngles", angles},
+                          {"shrinkSpots", spots},
                           {"notches", p.notches},
                           {"twin", p.twin}});
     }
@@ -776,7 +784,10 @@ json garmentToJson(const Garment& g)
     json fabrics = json::array();
     for (const Fabric& f : g.fabrics)
         fabrics.push_back(fabricJson(f));
-    return {{"version", 1}, {"panels", panels}, {"seams", seams}, {"fabrics", fabrics}};
+    json pins = json::array();
+    for (const GarmentPin& p : g.pins)
+        pins.push_back({{"panel", p.panel}, {"at", {p.at[0], p.at[1]}}, {"target", vec3Json(p.target)}});
+    return {{"version", 1}, {"panels", panels}, {"seams", seams}, {"fabrics", fabrics}, {"pins", pins}};
 }
 
 Garment garmentFromJson(const json& j)
@@ -805,6 +816,13 @@ Garment garmentFromJson(const json& j)
             p.up = jsonVec3(pj["up"]);
         p.wrapRadius = pj.value("wrapRadius", p.wrapRadius);
         p.notches = pj.value("notches", std::vector<int>{});
+        for (const json& a : pj.value("lineAngles", json::array()))
+            p.lineAngles.push_back(a.is_number() ? a.get<float>() : std::nanf(""));
+        for (const json& s : pj.value("shrinkSpots", json::array()))
+        {
+            const json at = s.value("at", json::array({0.0, 0.0}));
+            p.shrinkSpots.push_back({{at[0].get<float>(), at[1].get<float>()}, s.value("radius", 0.05f), s.value("scale", 1.f)});
+        }
         p.twin = pj.value("twin", -1);
         g.panels.push_back(std::move(p));
     }
@@ -823,6 +841,15 @@ Garment garmentFromJson(const json& j)
         g.fabrics.clear();
         for (const json& fj : j["fabrics"])
             g.fabrics.push_back(jsonFabric(fj));
+    }
+    for (const json& pj : j.value("pins", json::array()))
+    {
+        const json at = pj.value("at", json::array({0.0, 0.0}));
+        GarmentPin p{pj.value("panel", -1), {at[0].get<float>(), at[1].get<float>()}, {0.f, 0.f, 0.f}};
+        if (pj.contains("target"))
+            p.target = jsonVec3(pj["target"]);
+        if (p.panel >= 0 && p.panel < int(g.panels.size()))
+            g.pins.push_back(p);
     }
     for (Panel& p : g.panels)
     {

@@ -92,6 +92,7 @@ public:
         solver.reset(mInputs.cloth, mInputs.garment, mInputs.settings);
         if (sdf.nx > 0)
             solver.setColliders({&sdf});
+        solver.setPins(resolvePins(mInputs.cloth, mInputs.garment));
         for (int64_t k = 0; k < mInputs.frames; ++k)
             solver.step();
         write(solver, state);
@@ -113,6 +114,7 @@ public:
             s.dt = float(at.dt);
             mSolver = std::make_unique<ClothSolver>();
             mSolver->reset(from, mInputs.garment, s);
+            mSolver->setPins(resolvePins(mInputs.cloth, mInputs.garment));
             std::vector<Vec3>& v = mSolver->velocitiesMutable();
             for (size_t i = 0; i < n && i < v.size(); ++i)
                 v[i] = {float(state[3 * (n + i)]), float(state[3 * (n + i) + 1]), float(state[3 * (n + i) + 2])};

@@ -77,6 +77,8 @@ public:
     /** Pins vertex to target (metres) until release(). */
     void grab(int vertex, const Vec3& target);
     void release();
+    /** Steams the cloth around center (metres) on the next step: smooths it out and stills it. */
+    void relax(const Vec3& center, float radius);
 
 private:
     void run(lila::scene::NodeId garment, const Garment& g, const Sdf& collider, bool useGpu);
@@ -87,6 +89,7 @@ private:
     mutable std::mutex mMutex;
     std::vector<Vec3> mLatest;
     std::optional<Pin> mGrab;
+    std::optional<std::pair<Vec3, float>> mRelax;
     std::atomic<bool> mStop{false};
     std::atomic<bool> mRefreshQueued{false};
     std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);

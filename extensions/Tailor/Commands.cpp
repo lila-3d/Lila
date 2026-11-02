@@ -289,6 +289,126 @@ void writeMaxDistance(Graph& g, const Node& collider, geo::Mesh& garment)
 }
 
 /** Checks a garment against its collider's measurements and posts the findings as diagnostics on its mesh. */
+/**
+ * Bakes maps from the drape (high) onto the game mesh (low) through a bake project of their own. The high is hidden and
+ * coloured by panel, so the id map tells the panels apart. Returns the bake's result.
+ */
+json bakeDrapeMaps(Graph& g, const std::string& high, const std::string& low, const std::string& name, const json& maps, int64_t size,
+                   const std::string& folder)
+{
+    Node* h = g.find(high);
+    if (!h)
+        throw CommandError("tailorBake: the drape to bake from is gone");
+    g.evaluate();
+    const PlugValue hv = g.value({h->id(), MeshNode::kOutMesh});
+    if (const MeshPtr* hm = std::get_if<MeshPtr>(&hv); hm && *hm)
+    {
+        auto coloured = std::make_shared<geo::Mesh>(**hm);
+        const std::span<const int32_t> panel = coloured->faceAttrs().get<int32_t>("panel");
+        std::span<glm::vec4> colour = coloured->pointAttrs().getOrAdd<glm::vec4>(geo::attr::kColor);
+        if (!panel.empty())
+            for (geo::Index f = 0; f < coloured->faceCapacity(); ++f)
+            {
+                if (!coloured->faceValid(f) || size_t(f) >= panel.size())
+                    continue;
+                // Golden-ratio hues: neighbouring panel indices get far-apart colours.
+                const float hue = float(std::fmod(0.07 + 0.618034 * double(panel[size_t(f)]), 1.0)) * 6.f;
+                const glm::vec3 rgb = glm::clamp(glm::abs(glm::mod(hue + glm::vec3(0.f, 4.f, 2.f), 6.f) - 3.f) - 1.f, 0.f, 1.f);
+                const glm::vec3 c = 0.9f * glm::mix(glm::vec3(1.f), rgb, 0.7f);
+                for (geo::Index p : coloured->facePoints(f))
+                    colour[size_t(p)] = {c, 1.f};
+            }
+        g.setValue({h->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(coloured)));
+    }
+    g.setValue({h->id(), plugIndex(*h, "visibility")}, false);
+    const json project = ops::execute("createBakeProject", {{"name", name + "_maps"}, {"folder", folder}});
+    ops::execute("setBakeOutput", {{"project", project}, {"resolution", size}, {"name", "T_{mesh}_{map}"}});
+    ops::execute("bakeGroup", {{"args", {name + "_group"}}, {"project", project}, {"lows", {low}}, {"highs", {high}}});
+    for (const json& m : maps)
+        if (m.is_string())
+            ops::execute("setBakeMap", {{"args", {m}}, {"project", project}, {"enabled", true}});
+    if (std::find(maps.begin(), maps.end(), json("id")) != maps.end())
+        ops::execute("setBakeMap", {{"args", {"id"}}, {"project", project}, {"options", {{"source", "vertexColor"}}}});
+    return ops::execute("bake", {{"project", project}, {"maps", maps}});
+}
+
+/** The world matrix of the first mesh a garment feeds, which places its points. */
+glm::dmat4 garmentWorld(Graph& g, const Node& op)
+{
+    for (const PlugRef& d : g.destinations({op.id(), plugIndex(op, "outMesh")}))
+        if (const Node* mesh = g.node(d.node))
+            if (const PlugValue v = g.value({mesh->id(), Transform::kWorldMatrix}); const auto* m = std::get_if<glm::dmat4>(&v))
+                return *m;
+    return glm::dmat4(1.0);
+}
+
+/** [[x, y, z], ...] world cm to garment space metres. */
+std::vector<glm::dvec3> brushPoints(Graph& g, const Node& op, const Args& a, const char* cmd)
+{
+    const json list = a.flags.value("points", json::array());
+    const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op));
+    std::vector<glm::dvec3> out;
+    if (list.is_array())
+        for (const json& p : list)
+            if (p.is_array() && p.size() == 3 && p[0].is_number() && p[1].is_number() && p[2].is_number())
+                out.push_back(glm::dvec3(toLocal * glm::dvec4(p[0].get<double>(), p[1].get<double>(), p[2].get<double>(), 1.0)) / kCmPerM);
+    if (out.empty())
+        throw CommandError(std::string(cmd) + ": give points, [[x, y, z], ...] in world cm");
+    return out;
+}
+
+/** The garment's draped surface as evaluated now, garment space cm. */
+MeshPtr drapedMesh(Graph& g, const Node& op, const char* cmd)
+{
+    {
+        DrapeNow now;
+        g.evaluate();
+    }
+    const PlugValue v = g.value({op.id(), plugIndex(op, "outMesh")});
+    const MeshPtr* mesh = std::get_if<MeshPtr>(&v);
+    if (!mesh || !*mesh || (*mesh)->empty())
+        throw CommandError(std::string(cmd) + ": " + op.name() + " has no drape");
+    return *mesh;
+}
+
+/** Where a point (metres) lies on the drape's outer side: panel and pattern point, when within reach (metres). */
+std::optional<std::pair<int, Vec2>> patternPointAt(const geo::Mesh& m, const glm::dvec3& at, double reach)
+{
+    const std::span<const int32_t> panel = m.faceAttrs().get<int32_t>("panel");
+    const std::span<const int32_t> side = m.faceAttrs().get<int32_t>("side");
+    const std::span<const glm::vec2> fabric = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(1));
+    if (panel.empty() || fabric.empty())
+        return std::nullopt;
+    const glm::dvec3 p = at * kCmPerM;
+    double best = reach * kCmPerM;
+    std::optional<std::pair<int, Vec2>> out;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f) || (!side.empty() && side[f] != int32_t(GarmentSurface::Outer)))
+            continue;
+        const std::vector<geo::Index> c = m.faceCorners(f);
+        if (c.size() != 3)
+            continue;
+        const glm::dvec3 a = m.position(m.cornerPoint(c[0])), b = m.position(m.cornerPoint(c[1])), d = m.position(m.cornerPoint(c[2]));
+        // Closest point by projecting onto the plane and clamping into the triangle's barycentric range.
+        const glm::dvec3 e1 = b - a, e2 = d - a, ap = p - a;
+        const double d11 = glm::dot(e1, e1), d12 = glm::dot(e1, e2), d22 = glm::dot(e2, e2);
+        const double den = d11 * d22 - d12 * d12;
+        if (den <= 1e-20)
+            continue;
+        double v = (d22 * glm::dot(ap, e1) - d12 * glm::dot(ap, e2)) / den, w = (d11 * glm::dot(ap, e2) - d12 * glm::dot(ap, e1)) / den;
+        v = std::clamp(v, 0.0, 1.0);
+        w = std::clamp(w, 0.0, 1.0 - v);
+        const double dist = glm::length(a + e1 * v + e2 * w - p);
+        if (dist >= best)
+            continue;
+        best = dist;
+        const glm::vec2 uv = fabric[c[0]] * float(1.0 - v - w) + fabric[c[1]] * float(v) + fabric[c[2]] * float(w);
+        out = std::pair{int(panel[f]), Vec2{uv.x, uv.y}};
+    }
+    return out;
+}
+
 json checkGarment(Graph& g, Node& op)
 {
     const Garment gm = readGarment(op);
@@ -595,7 +715,12 @@ void registerCommands(ext::Context& ctx)
                   {"maxInfluences", "mi", T::Int, int64_t(4), "Influences per point.", {}, {}, 1.0, 16.0},
                   {"retopo", "rt", T::Int, int64_t(0), "Quad remesh to about this many faces, seams kept as edge loops; 0 keeps the cloth triangles.",
                    {}, {}, 0.0, 200000.0},
-                  {"lods", "lod", T::Int, int64_t(0), "Extra levels of detail to generate in a LOD group.", {}, {}, 0.0, 7.0}},
+                  {"lods", "lod", T::Int, int64_t(0), "Extra levels of detail to generate in a LOD group.", {}, {}, 0.0, 7.0},
+                  {"maps", "mp", T::List, json::array(),
+                   "Texture maps to bake from the drape onto the game mesh (ids from bakeMaps: normal, ao, curvature, id, ...). id "
+                   "colours each panel. The drape is kept, hidden, as the bake's high."},
+                  {"mapSize", "ms", T::Int, int64_t(2048), "Map width and height, texels.", {}, {}, 16.0, 16384.0},
+                  {"mapFolder", "mf", T::String, "textures", "Where the maps go; relative paths are under the workspace."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorBake");
@@ -621,8 +746,11 @@ void registerCommands(ext::Context& ctx)
             if (!Graph::validName(name))
                 name = "Garment_baked";
             const bool remesh = a.get<int64_t>("retopo") > 0;
+            const json maps = a.flags.value("maps", json::array());
+            const bool bakeMaps = maps.is_array() && !maps.empty();
             Node* baked = g.createNode(*types::find("mesh"), remesh ? name + "_drape" : name, kNoNode, true);
             g.setValue({baked->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(**mesh)));
+            std::string high;
             if (const int64_t faces = a.get<int64_t>("retopo"); faces > 0)
             {
                 const std::string drape = baked->path();
@@ -630,11 +758,19 @@ void registerCommands(ext::Context& ctx)
                                                            {"targetFaces", faces},
                                                            {"guidePoints", guides},
                                                            {"timeout", 120.0},
-                                                           {"keepSource", false},
+                                                           {"keepSource", bakeMaps},
                                                            {"name", name}});
                 baked = g.find(r.value("name", drape));
                 if (!baked)
                     throw CommandError("tailorBake: the remesh left no mesh");
+                if (bakeMaps)
+                    high = drape;
+            }
+            else if (bakeMaps)
+            {
+                Node* h = g.createNode(*types::find("mesh"), name + "_drape", kNoNode, true);
+                g.setValue({h->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(**mesh)));
+                high = h->path();
             }
             if (collider)
             {
@@ -670,6 +806,8 @@ void registerCommands(ext::Context& ctx)
                     result["skinned"] = true;
                 }
             }
+            if (bakeMaps)
+                result["maps"] = bakeDrapeMaps(g, high, baked->path(), name, maps, a.get<int64_t>("mapSize"), a.get<std::string>("mapFolder"));
             if (const int64_t lods = a.get<int64_t>("lods"); lods > 0)
             {
                 result["lodGroup"] = ops::execute("lodGroup", {{"args", {baked->path()}}, {"generate", lods}});
@@ -1049,6 +1187,200 @@ void registerCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"tailorAutoSew('Garment')", "tailorAutoSew('Garment', maxGap=12, apply=False)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorPin",
+        .doc = "Pin the cloth near points on a garment's drape where it hangs now, or unpin it (remove=True). Pins hold in "
+               "every drape, live or not, and follow pattern edits. Returns the garment's pin count.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "Brush points [[x, y, z], ...], world cm."},
+                  {"radius", "r", T::Float, 3.0, "Brush radius, cm.", {}, {}, 0.1, 100.0},
+                  {"remove", "rm", T::Bool, false, "Unpin instead."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorPin");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorPin");
+            const double r = a.get<double>("radius") / kCmPerM;
+            Garment gm = readGarment(op);
+            auto near = [&](const glm::dvec3& q) {
+                return std::any_of(pts.begin(), pts.end(), [&](const glm::dvec3& p) { return glm::length(p - q) < r; });
+            };
+            if (a.get<bool>("remove"))
+                std::erase_if(gm.pins, [&](const GarmentPin& p) { return near(glm::dvec3(p.target[0], p.target[1], p.target[2])); });
+            else
+            {
+                const MeshPtr mesh = drapedMesh(g, op, "tailorPin");
+                const geo::Mesh& m = *mesh;
+                const std::span<const int32_t> panel = m.faceAttrs().get<int32_t>("panel");
+                const std::span<const int32_t> side = m.faceAttrs().get<int32_t>("side");
+                const std::span<const glm::vec2> fabric = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(1));
+                std::vector<char> done(m.pointCapacity(), 0);
+                for (geo::Index f = 0; f < m.faceCapacity() && !panel.empty() && !fabric.empty(); ++f)
+                {
+                    if (!m.faceValid(f) || (!side.empty() && side[f] != int32_t(GarmentSurface::Outer)))
+                        continue;
+                    for (geo::Index c : m.faceCorners(f))
+                    {
+                        const geo::Index p = m.cornerPoint(c);
+                        const glm::dvec3 q = m.position(p) / kCmPerM;
+                        if (done[p] || !near(q))
+                            continue;
+                        done[p] = 1;
+                        gm.pins.push_back({panel[f], {fabric[c].x, fabric[c].y}, {float(q.x), float(q.y), float(q.z)}});
+                    }
+                }
+            }
+            writeGarment(g, op, gm);
+            return int64_t(gm.pins.size());
+        },
+        .examples = {"tailorPin('Cloak', points=[[0, 150, -12]], radius=4)", "tailorPin('Cloak', points=[[0, 150, -12]], remove=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorFold",
+        .doc = "Press a fold along a stroke on a garment's drape: the stroke becomes a fold line on each panel it crosses, "
+               "held at the angle. Returns the number of fold lines added.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "The stroke [[x, y, z], ...], world cm, on or near the cloth."},
+                  {"angle", "a", T::Float, 90.0, "Fold angle, degrees; negative folds the other way.", {}, {}, -179.0, 179.0},
+                  {"reach", "rc", T::Float, 5.0, "How far a stroke point may lie off the cloth, cm.", {}, {}, 0.1, 100.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorFold");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorFold");
+            const MeshPtr mesh = drapedMesh(g, op, "tailorFold");
+            Garment gm = readGarment(op);
+            const float angle = float(a.get<double>("angle") * std::numbers::pi / 180.0);
+            int added = 0;
+            std::vector<Vec2> run;
+            int runPanel = -1;
+            auto flush = [&] {
+                if (run.size() >= 2 && runPanel >= 0 && size_t(runPanel) < gm.panels.size())
+                {
+                    Panel& p = gm.panels[size_t(runPanel)];
+                    p.lineAngles.resize(p.internalLines.size(), std::nanf(""));
+                    p.internalLines.push_back(run);
+                    p.lineAngles.push_back(angle);
+                    ++added;
+                }
+                run.clear();
+            };
+            for (const glm::dvec3& q : pts)
+            {
+                const auto hit = patternPointAt(*mesh, q, a.get<double>("reach") / kCmPerM);
+                if (!hit || hit->first != runPanel)
+                {
+                    flush();
+                    runPanel = hit ? hit->first : -1;
+                }
+                if (hit)
+                    run.push_back(hit->second);
+            }
+            flush();
+            if (added == 0)
+                throw CommandError("tailorFold: the stroke doesn't run along any panel");
+            writeGarment(g, op, gm);
+            return int64_t(added);
+        },
+        .examples = {"tailorFold('Tunic', points=[[-10, 120, 14], [10, 120, 14]], angle=120)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorShrink",
+        .doc = "Shrink (scale below 1) or stretch (above 1) the cloth's rest shape around points on a garment's drape, "
+               "fading out to the radius: gathers, puckers and eased fullness. Returns the garment's shrink spot count.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "Brush points [[x, y, z], ...], world cm."},
+                  {"radius", "r", T::Float, 5.0, "Brush radius, cm.", {}, {}, 0.1, 100.0},
+                  {"scale", "s", T::Float, 0.9, "Rest scale at the middle of each dab.", {}, {}, 0.3, 2.0}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorShrink");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorShrink");
+            const MeshPtr mesh = drapedMesh(g, op, "tailorShrink");
+            Garment gm = readGarment(op);
+            const float r = float(a.get<double>("radius") / kCmPerM), scale = float(a.get<double>("scale"));
+            size_t total = 0;
+            for (const glm::dvec3& q : pts)
+                if (const auto hit = patternPointAt(*mesh, q, r); hit && size_t(hit->first) < gm.panels.size())
+                {
+                    auto& spots = gm.panels[size_t(hit->first)].shrinkSpots;
+                    // Dabbing the same place again compounds the spot there instead of stacking another.
+                    const auto same = std::find_if(spots.begin(), spots.end(), [&](const ShrinkSpot& s) {
+                        return std::hypot(s.at[0] - hit->second[0], s.at[1] - hit->second[1]) < 0.3f * r && std::abs(s.radius - r) < 0.2f * r;
+                    });
+                    if (same != spots.end())
+                        same->scale = std::clamp(same->scale * scale, 0.3f, 2.f);
+                    else
+                        spots.push_back({hit->second, r, scale});
+                }
+            for (const Panel& p : gm.panels)
+                total += p.shrinkSpots.size();
+            writeGarment(g, op, gm);
+            return int64_t(total);
+        },
+        .examples = {"tailorShrink('Tunic', points=[[0, 100, 15]], radius=6, scale=0.85)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorRelax",
+        .doc = "Steam a live garment around points: the cloth there smooths out and comes to rest, then settles again. "
+               "Returns whether the garment is live.",
+        .positionalDoc = "garment",
+        .flags = {{"points", "pts", T::List, json(), "Brush points [[x, y, z], ...], world cm."},
+                  {"radius", "r", T::Float, 6.0, "Brush radius, cm.", {}, {}, 0.1, 100.0}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorRelax");
+            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorRelax");
+            const auto live = liveDrape(op.id());
+            if (!live)
+                return false;
+            for (const glm::dvec3& q : pts)
+                live->relax({float(q.x), float(q.y), float(q.z)}, float(a.get<double>("radius") / kCmPerM));
+            return true;
+        },
+        .examples = {"tailorRelax('Cloak', points=[[0, 120, -15]])"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorClearBrush",
+        .doc = "Remove what the cloth brushes painted on a garment: pins, folds, shrink or all. Returns how many were removed.",
+        .positionalDoc = "garment",
+        .flags = {{"kind", "k", T::String, "all", "What to clear.", {"pins", "folds", "shrink", "all"}}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorClearBrush");
+            Garment gm = readGarment(op);
+            const std::string kind = a.get<std::string>("kind");
+            int64_t removed = 0;
+            if (kind == "pins" || kind == "all")
+            {
+                removed += int64_t(gm.pins.size());
+                gm.pins.clear();
+            }
+            for (Panel& p : gm.panels)
+            {
+                if (kind == "shrink" || kind == "all")
+                {
+                    removed += int64_t(p.shrinkSpots.size());
+                    p.shrinkSpots.clear();
+                }
+                if (kind == "folds" || kind == "all")
+                    for (size_t k = std::min(p.lineAngles.size(), p.internalLines.size()); k-- > 0;)
+                        if (std::isfinite(p.lineAngles[k]))
+                        {
+                            p.internalLines.erase(p.internalLines.begin() + std::ptrdiff_t(k));
+                            p.lineAngles.erase(p.lineAngles.begin() + std::ptrdiff_t(k));
+                            ++removed;
+                        }
+            }
+            writeGarment(g, op, gm);
+            return removed;
+        },
+        .examples = {"tailorClearBrush('Cloak', kind='pins')"},
     });
 
     ctx.registerCommand({

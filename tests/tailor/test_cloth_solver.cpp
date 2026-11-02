@@ -273,3 +273,29 @@ TEST_CASE("cloth rests on the floor")
     CHECK(lowest > 0.1f - 0.002f);
     CHECK(lowest < 0.12f);
 }
+
+TEST_CASE("crossing edges collide where no vertex meets a triangle")
+{
+    // Two ribbons a centimetre wide, crossed: their points all lie well away from the other ribbon, so only their edges meet.
+    ClothMesh mesh;
+    clothGrid(mesh, 0, 12, 2, 1.1f, 0.01f, {-0.55f, 0.f, -0.005f}, {1.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
+    const int b = clothGrid(mesh, 1, 12, 2, 1.1f, 0.01f, {-0.005f, 0.03f, -0.55f}, {0.f, 0.f, 1.f}, {1.f, 0.f, 0.f});
+    Garment g;
+    g.panels.resize(2);
+    std::vector<Pin> pins;
+    for (int i = 0; i < b; ++i)
+        pins.push_back({i, mesh.rest3d[size_t(i)]});
+    ClothSolver solver;
+    solver.reset(mesh, g, SolverSettings{});
+    solver.setPins(pins);
+    for (int frame = 0; frame < 60; ++frame)
+        solver.step();
+    REQUIRE(allFinite(solver.positions()));
+    // Ribbon B hangs over A: its points either side of the crossing stay up by it.
+    float lowest = 1.f;
+    for (size_t i = size_t(b); i < mesh.rest3d.size(); ++i)
+        if (std::abs(solver.positions()[i][2]) < 0.06f)
+            lowest = std::min(lowest, solver.positions()[i][1]);
+    CHECK(lowest > -0.15f);
+    CHECK(lowest < 0.02f);
+}

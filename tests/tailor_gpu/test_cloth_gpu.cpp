@@ -208,3 +208,53 @@ TEST_CASE("gpu: a folded seam folds like on the CPU")
         sum += dist(cpu.positions()[i], gs.positions()[i]);
     CHECK(sum / float(m.rest3d.size()) < 0.01f);
 }
+
+TEST_CASE("gpu: crossing edges collide where no vertex meets a triangle")
+{
+    if (!gpu())
+        return;
+    // Two crossed ribbons a centimetre wide, every point well away from the other ribbon: only their edges can meet.
+    ClothMesh m;
+    auto ribbon = [&](int panel, const Vec3& origin, const Vec3& along, const Vec3& across) {
+        const int base = int(m.rest3d.size());
+        for (int j = 0; j < 2; ++j)
+            for (int i = 0; i < 12; ++i)
+            {
+                const float u = 1.1f * float(i) / 11.f, v = 0.01f * float(j);
+                m.uv.push_back({u, v});
+                m.rest3d.push_back({origin[0] + along[0] * u + across[0] * v, origin[1] + along[1] * u + across[1] * v,
+                                    origin[2] + along[2] * u + across[2] * v});
+                m.vertPanel.push_back(panel);
+            }
+        for (int i = 0; i < 11; ++i)
+        {
+            m.tris.push_back({base + i, base + i + 1, base + 12 + i + 1});
+            m.tris.push_back({base + i, base + 12 + i + 1, base + 12 + i});
+            m.triPanel.push_back(panel);
+            m.triPanel.push_back(panel);
+        }
+        return base;
+    };
+    ribbon(0, {-0.55f, 0.f, -0.005f}, {1.f, 0.f, 0.f}, {0.f, 0.f, 1.f});
+    const int b = ribbon(1, {-0.005f, 0.03f, -0.55f}, {0.f, 0.f, 1.f}, {1.f, 0.f, 0.f});
+    Garment g;
+    g.panels.resize(2);
+    std::vector<Pin> pins;
+    for (int i = 0; i < b; ++i)
+        pins.push_back({i, m.rest3d[size_t(i)]});
+    ClothGpu solver;
+    std::string err;
+    REQUIRE_MESSAGE(solver.reset(m, g, SolverSettings{}, &err), err);
+    solver.setPins(pins);
+    for (int f = 0; f < 60; ++f)
+        REQUIRE_MESSAGE(solver.step(&err), err);
+    float lowest = 1.f;
+    for (size_t i = size_t(b); i < m.rest3d.size(); ++i)
+    {
+        REQUIRE(std::isfinite(solver.positions()[i][0]));
+        if (std::abs(solver.positions()[i][2]) < 0.06f)
+            lowest = std::min(lowest, solver.positions()[i][1]);
+    }
+    CHECK(lowest > -0.15f);
+    CHECK(lowest < 0.02f);
+}

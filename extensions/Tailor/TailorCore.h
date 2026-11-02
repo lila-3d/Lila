@@ -4,6 +4,7 @@
 // so the solver and its tests build without the scene.
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -46,6 +47,14 @@ enum class PanelState : uint8_t
     Strengthened // stiffened while shaping
 };
 
+/** A painted patch of shrink (scale < 1) or stretch (> 1) on a panel's rest shape, fading out to its radius. */
+struct ShrinkSpot
+{
+    Vec2 at{0.f, 0.f}; // pattern space, metres
+    float radius = 0.05f;
+    float scale = 0.9f;
+};
+
 /** A pattern piece: closed 2D outline (counter-clockwise, metres, pattern space) plus internal lines and holes. */
 struct Panel
 {
@@ -66,6 +75,8 @@ struct Panel
     Vec3 up{0.f, 1.f, 0.f};
     float wrapRadius = 0.f;
 
+    std::vector<float> lineAngles; // fold angle per internal line, radians; NaN or missing keeps the placed angle
+    std::vector<ShrinkSpot> shrinkSpots;
     std::vector<int> notches; // outline point indices; seams with the same number of notches on both sides match them
     int twin = -1;            // a mirrored panel whose outline follows every edit to this one
 };
@@ -88,11 +99,35 @@ struct Seam
     float shrink = 1.f;     // rest length scale across the seam
 };
 
+/** Rest-shape scale at a pattern point: every shrink spot over it, each fading smoothly to 1 at its radius. */
+inline float shrinkAt(const Panel& p, const Vec2& at)
+{
+    float scale = 1.f;
+    for (const ShrinkSpot& s : p.shrinkSpots)
+    {
+        const float d = std::hypot(at[0] - s.at[0], at[1] - s.at[1]);
+        if (s.radius <= 0.f || d >= s.radius)
+            continue;
+        const float t = 1.f - d / s.radius, w = t * t * (3.f - 2.f * t);
+        scale *= 1.f + (s.scale - 1.f) * w;
+    }
+    return scale;
+}
+
+/** A pattern point held where it was painted: panel, pattern position (metres) and target (garment space, metres). */
+struct GarmentPin
+{
+    int panel = -1;
+    Vec2 at{0.f, 0.f};
+    Vec3 target{0.f, 0.f, 0.f};
+};
+
 struct Garment
 {
     std::vector<Panel> panels;
     std::vector<Seam> seams;
     std::vector<Fabric> fabrics{Fabric{}};
+    std::vector<GarmentPin> pins;
 };
 
 /** Triangle mesh built from a garment, the solver's input. */
@@ -107,6 +142,7 @@ struct ClothMesh
     std::vector<float> seamRestLength;     // usually 0
     std::vector<int> seamOfPair;           // Garment::seams index of each pair, in sewing order along the seam
     std::vector<std::array<int, 2>> creaseEdges; // internal-line edges (keep sharp rest angle)
+    std::vector<float> creaseAngles;             // per crease edge: its line's fold angle, NaN for the placed angle
 };
 
 /** A bending hinge across a folded seam: edge v[0]-v[1] on one side, wings v[2] and v[3] on either panel. */
@@ -186,6 +222,9 @@ struct Pin
     int vertex = -1;
     Vec3 target{};
 };
+
+/** The garment's pins on the meshed cloth: each at the vertex of its panel nearest its pattern point. */
+std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g);
 
 class ClothSolver
 {

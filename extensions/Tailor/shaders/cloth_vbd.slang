@@ -8,6 +8,7 @@ static const uint kNone = 0xffffffffu;
 static const uint kSideBit = 0x80000000u; // set on a contact's triangle index when the vertex was behind the triangle
 static const uint kMaxVt = 16u;           // triangles near a vertex
 static const uint kMaxTv = 32u;           // contacts a vertex takes part in as a triangle corner
+static const uint kMaxEe = 16u;           // edge-edge contacts a vertex takes part in
 static const uint kSeam = 0u;
 static const uint kMaxColliders = 4u;
 
@@ -74,6 +75,12 @@ struct ClothScene
     float* grid2;
     float* grid3;
     float4* flat;   // pattern position (xy) and panel (z, bits) per vertex
+    uint2* edges;
+    uint* edgeHead; // edge hash by midpoint cell
+    uint* edgeNext;
+    uint* eeCount;
+    uint2* ee;      // per vertex: edge-edge contacts (e1, e2) it is in
+    float4* eeSide; // the way e1 lay from e2 when found
     uint* spare;
 
     uint nVerts, nTris, nHinges, nLinks;
@@ -81,7 +88,8 @@ struct ClothScene
     float h, lambdaDecay, stiffnessDecay, beta;
     float kMax, thickness, queryRadius, cellSize;
     float boundFraction, frictionSlip, drag, seamKeep;
-    float closedGap, floorY, pad1, pad2;
+    float closedGap, floorY, maxHalfEdge;
+    uint nEdges;
     float4 gravity;
 };
 
@@ -433,8 +441,68 @@ bool contactGap(ClothScene* s, uint v, uint tPacked, out float pen, out float3 n
     return pen > 0.0;
 }
 
+/** Closest points of segments p1-q1 and p2-q2 (ClothSolver's closestOnSegments): parameters along each. */
+float2 closestSegments(float3 p1, float3 q1, float3 p2, float3 q2)
+{
+    float3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+    float a = dot(d1, d1), e = dot(d2, d2), f = dot(d2, r);
+    if (a <= 1e-20 && e <= 1e-20)
+        return float2(0.0);
+    if (a <= 1e-20)
+        return float2(0.0, clamp(f / e, 0.0, 1.0));
+    float c = dot(d1, r);
+    if (e <= 1e-20)
+        return float2(clamp(-c / a, 0.0, 1.0), 0.0);
+    float b = dot(d1, d2), denom = a * e - b * b;
+    float s = denom > 1e-20 ? clamp((b * f - c * e) / denom, 0.0, 1.0) : 0.0;
+    float t = (b * s + f) / e;
+    if (t < 0.0)
+        return float2(clamp(-c / a, 0.0, 1.0), 0.0);
+    if (t > 1.0)
+        return float2(clamp((b - c) / a, 0.0, 1.0), 1.0);
+    return float2(s, t);
+}
+
+/** ClothSolver::edgeGap: penetration between two edges, kept apart the way they lay when found. */
+bool edgeGap(ClothScene* s, uint2 pair, float3 side, out float pen, out float3 n, out float2 st)
+{
+    uint2 e1 = s->edges[pair.x], e2 = s->edges[pair.y];
+    float3 a0 = P(s, e1.x), a1 = P(s, e1.y), b0 = P(s, e2.x), b1 = P(s, e2.y);
+    st = closestSegments(a0, a1, b0, b1);
+    float3 d = lerp(a0, a1, st.x) - lerp(b0, b1, st.y);
+    float len = length(d), along = dot(d, side);
+    float dist;
+    if (along > 0.0 && len > 1e-7)
+    {
+        n = d / len;
+        dist = len;
+    }
+    else
+    {
+        n = side;
+        dist = along;
+    }
+    pen = s->thickness + s->vextra[e1.x].x - dist;
+    return pen > 0.0;
+}
+
 void addSelfContacts(ClothScene* s, uint i, inout float3 f, inout float3x3 H)
 {
+    uint nee = s->eeCount[i];
+    for (uint k = 0; k < nee; ++k)
+    {
+        uint2 pr = s->ee[i * kMaxEe + k];
+        float pen;
+        float3 n;
+        float2 st;
+        if (!edgeGap(s, pr, s->eeSide[i * kMaxEe + k].xyz, pen, n, st))
+            continue;
+        uint2 e1 = s->edges[pr.x], e2 = s->edges[pr.y];
+        float w = e1.x == i ? 1.0 - st.x : e1.y == i ? st.x : e2.x == i ? st.y - 1.0 : -st.y;
+        float kc = s->vextra[e1.x].y;
+        f += kc * pen * w * n;
+        H += kc * w * w * outer(n, n);
+    }
     uint nvt = s->vtCount[i];
     for (uint k = 0; k < nvt; ++k)
     {
@@ -688,8 +756,8 @@ void redetectArgsCS(uint3 tid: SV_DispatchThreadID)
     ClothScene* s = pc.scene;
     bool again = s->state[0] != 0;
     s->state[0] = 0;
-    uint counts[4] = { s->hashMask + 1, s->nVerts, s->nTris, s->nVerts };
-    for (uint k = 0; k < 4; ++k)
+    uint counts[6] = { s->hashMask + 1, s->nVerts, s->nTris, s->nVerts, s->nEdges, s->nEdges };
+    for (uint k = 0; k < 6; ++k)
     {
         s->state[4 + k * 3] = again ? (counts[k] + 63) / 64 : 0;
         s->state[5 + k * 3] = 1;
@@ -705,6 +773,7 @@ void hashClearCS(uint3 tid: SV_DispatchThreadID)
     if (tid.x >= pc.count || i > pc.scene->hashMask)
         return;
     pc.scene->cellHead[i] = kNone;
+    pc.scene->edgeHead[i] = kNone;
 }
 
 /** Links every vertex into its cell's list and resets its contact lists at the current positions. */
@@ -720,6 +789,7 @@ void hashInsertCS(uint3 tid: SV_DispatchThreadID)
     s->xDetect[i] = float4(p, 0.0);
     s->vtCount[i] = 0;
     s->tvCount[i] = 0;
+    s->eeCount[i] = 0;
     s->dminV[i] = asuint(s->queryRadius);
     uint prev;
     InterlockedExchange(s->cellHead[hashCell(s, cellOf(s, p))], i, prev);
@@ -798,6 +868,90 @@ void hashQueryCS(uint3 tid: SV_DispatchThreadID)
     s->dminT[t] = asuint(dT);
 }
 
+/** Links every edge into the cell of its middle. */
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void edgeInsertCS(uint3 tid: SV_DispatchThreadID)
+{
+    ClothScene* s = pc.scene;
+    uint e = pc.first + tid.x;
+    if (tid.x >= pc.count || e >= s->nEdges)
+        return;
+    uint2 ed = s->edges[e];
+    uint prev;
+    InterlockedExchange(s->edgeHead[hashCell(s, cellOf(s, 0.5 * (P(s, ed.x) + P(s, ed.y))))], e, prev);
+    s->edgeNext[e] = prev;
+}
+
+/** Per edge: later edges crossing within the query radius, away from both their ends, become contacts of all four vertices. */
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void edgeQueryCS(uint3 tid: SV_DispatchThreadID)
+{
+    ClothScene* s = pc.scene;
+    uint e1 = pc.first + tid.x;
+    if (tid.x >= pc.count || e1 >= s->nEdges)
+        return;
+    float R = s->queryRadius;
+    // Another edge within R has its middle within R plus half its length.
+    float reach = R + s->maxHalfEdge;
+    uint2 ea = s->edges[e1];
+    float3 a0 = P(s, ea.x), a1 = P(s, ea.y);
+    uint wa = s->weld[ea.x], wb = s->weld[ea.y];
+    bool aMoves = movable(s, ea.x) || movable(s, ea.y);
+    float4 fa0 = s->flat[ea.x], fa1 = s->flat[ea.y];
+    int3 lo = cellOf(s, min(a0, a1) - reach);
+    int3 hi = min(cellOf(s, max(a0, a1) + reach), lo + 4);
+    for (int cz = lo.z; cz <= hi.z; ++cz)
+        for (int cy = lo.y; cy <= hi.y; ++cy)
+            for (int cx = lo.x; cx <= hi.x; ++cx)
+            {
+                int3 cell = int3(cx, cy, cz);
+                uint e2 = s->edgeHead[hashCell(s, cell)];
+                for (uint guard = 0; e2 != kNone && guard < 4096; ++guard, e2 = s->edgeNext[e2])
+                {
+                    if (e2 <= e1)
+                        continue;
+                    uint2 eb = s->edges[e2];
+                    float3 b0 = P(s, eb.x), b1 = P(s, eb.y);
+                    if (any(cellOf(s, 0.5 * (b0 + b1)) != cell))
+                        continue;
+                    uint wc = s->weld[eb.x], wd = s->weld[eb.y];
+                    if (wa == wc || wa == wd || wb == wc || wb == wd || (!aMoves && !movable(s, eb.x) && !movable(s, eb.y)))
+                        continue;
+                    float4 fb0 = s->flat[eb.x], fb1 = s->flat[eb.y];
+                    uint panel = asuint(fa0.z);
+                    if (asuint(fa1.z) == panel && asuint(fb0.z) == panel && asuint(fb1.z) == panel)
+                    {
+                        float2 fst = closestSegments(float3(fa0.xy, 0.0), float3(fa1.xy, 0.0), float3(fb0.xy, 0.0), float3(fb1.xy, 0.0));
+                        if (length(lerp(fa0.xy, fa1.xy, fst.x) - lerp(fb0.xy, fb1.xy, fst.y)) < 2.0 * R)
+                            continue;
+                    }
+                    float2 st = closestSegments(a0, a1, b0, b1);
+                    // Near an end, the end's vertex-triangle contacts already hold it.
+                    if (st.x < 0.02 || st.x > 0.98 || st.y < 0.02 || st.y > 0.98)
+                        continue;
+                    float3 d = lerp(a0, a1, st.x) - lerp(b0, b1, st.y);
+                    float dist = length(d);
+                    if (dist >= R || dist < 1e-9)
+                        continue;
+                    uint4 corners = uint4(ea.x, ea.y, eb.x, eb.y);
+                    for (uint k = 0; k < 4; ++k)
+                    {
+                        uint v = corners[k];
+                        InterlockedMin(s->dminV[v], asuint(dist));
+                        uint slot;
+                        InterlockedAdd(s->eeCount[v], 1u, slot);
+                        if (slot < kMaxEe)
+                        {
+                            s->ee[v * kMaxEe + slot] = uint2(e1, e2);
+                            s->eeSide[v * kMaxEe + slot] = float4(d / dist, 0.0);
+                        }
+                    }
+                }
+            }
+}
+
 bool pairLess(uint2 a, uint2 b) { return a.x < b.x || (a.x == b.x && a.y < b.y); }
 
 /**
@@ -821,6 +975,21 @@ void contactFinalizeCS(uint3 tid: SV_DispatchThreadID)
         for (; b > 0 && s->vt[i * kMaxVt + b - 1] > key; --b)
             s->vt[i * kMaxVt + b] = s->vt[i * kMaxVt + b - 1];
         s->vt[i * kMaxVt + b] = key;
+    }
+    uint nee = min(s->eeCount[i], kMaxEe);
+    s->eeCount[i] = nee;
+    for (uint a = 1; a < nee; ++a)
+    {
+        uint2 key = s->ee[i * kMaxEe + a];
+        float4 side = s->eeSide[i * kMaxEe + a];
+        uint b = a;
+        for (; b > 0 && pairLess(key, s->ee[i * kMaxEe + b - 1]); --b)
+        {
+            s->ee[i * kMaxEe + b] = s->ee[i * kMaxEe + b - 1];
+            s->eeSide[i * kMaxEe + b] = s->eeSide[i * kMaxEe + b - 1];
+        }
+        s->ee[i * kMaxEe + b] = key;
+        s->eeSide[i * kMaxEe + b] = side;
     }
     uint ntv = min(s->tvCount[i], kMaxTv);
     s->tvCount[i] = ntv;

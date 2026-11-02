@@ -22,6 +22,7 @@ struct GpuTuning
     float closedGap = 1e-4f;      // a zero-rest seam closes for good below this gap
     float boundFraction = 0.4f;   // VBD conservative bound: share of the distance to the nearest primitive
     float strengthen = 10.f;      // stiffness multiplier on Strengthened panels
+    float foldStiffening = 8.f;   // a painted fold holds its angle against the fabric's own bending (ClothSolver's kFoldStiffening)
     float dampingScale = 0.01f;   // fabric damping to the Rayleigh coefficient, seconds
     int redetectEvery = 3;        // iterations between contact re-detections while vertices hit their bounds
 };

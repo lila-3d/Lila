@@ -599,6 +599,26 @@ std::vector<Seam> suggestSeams(const Garment& g, float maxGap)
     return out;
 }
 
+std::vector<Pin> resolvePins(const ClothMesh& mesh, const Garment& g)
+{
+    std::vector<Pin> out;
+    for (const GarmentPin& gp : g.pins)
+    {
+        int best = -1;
+        float bestD = 1e30f;
+        for (size_t v = 0; v < mesh.uv.size() && v < mesh.vertPanel.size(); ++v)
+            if (mesh.vertPanel[v] == gp.panel)
+                if (const float d = distance2d(mesh.uv[v], gp.at); d < bestD)
+                {
+                    bestD = d;
+                    best = int(v);
+                }
+        if (best >= 0 && std::none_of(out.begin(), out.end(), [&](const Pin& p) { return p.vertex == best; }))
+            out.push_back({best, gp.target});
+    }
+    return out;
+}
+
 std::vector<Seam> splitSeamAtNotches(const Garment& g, const Seam& seam)
 {
     auto split = [&](const std::vector<SeamSide>& sides, std::vector<std::vector<SeamSide>>& groups) {
