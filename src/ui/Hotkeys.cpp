@@ -352,6 +352,13 @@ std::optional<Hotkeys::Binding> Hotkeys::lookup(QKeyEvent* e, QWidget* focus) co
     if (focus)
         if (QString ctx = focus->property("hotkeyPassThrough").toString(); !ctx.isEmpty())
             chain.push_back(ctx.toStdString());
+    // The panel under the cursor answers keys the focused one leaves unbound, so Space over the viewport opens the
+    // hotbox after a click in the channel box or a torn-off menu.
+    if (!textInputFocused(focus))
+        for (QWidget* w = hovered; w; w = w->parentWidget())
+            if (QString ctx = w->property("hotkeyContext").toString(); !ctx.isEmpty() && !w->property("hotkeyHover").toBool())
+                if (std::find(chain.begin(), chain.end(), ctx.toStdString()) == chain.end())
+                    chain.push_back(ctx.toStdString());
     chain.push_back("global");
 
     auto matches = [&](const Chord& chord) { return chordMatches(chord, e); };
