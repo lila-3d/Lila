@@ -87,6 +87,14 @@ def addCollider(*objects: Any, capsuleRadius: float | None = None, capsuleLength
         capsuleLength: Length for transform colliders, along their Y. Default 10.0.
     """
 
+def addComponent(*objects: Any, name: str | None = None, n: str | None = None) -> Any:
+    """Add a component from the library (listComponents) to objects: its attributes under its heading, and its USD schema when it names one. Returns the plugs added.
+
+    Args:
+        objects: objects.
+        name: The component. Short form n.
+    """
+
 def addCorrective(*objects: Any, driver: Any | None = None, name: str | None = None, axis: str | None = None, radius: float | None = None, twistWeight: float | None = None, falloff: str | None = None, keep: bool | None = None, d: Any | None = None, n: str | None = None) -> Any:
     """Turn a sculpt of the posed mesh into a corrective morph target. The fix is taken back through the skin into rest space (pose-space inversion) so it applies before skinning and matches the sculpt at this pose, and a pose driver reading each driver joint against its rest drives the weight: 1 at this pose, 0 at rest. Several drivers multiply (a combination corrective). Give the sculpt then the base (the base can be left out for a sculpt made by sculptCorrective). Returns {target, drivers, residual}.
 
@@ -494,6 +502,17 @@ def assignMaterial(*objects: Any, faces: Sequence[Any] | None = None, f: Sequenc
         faces: Face ids of the one object given. Short form f.
     """
 
+def assignTexture(*objects: Any, mesh: str | None = None, face: int | None = None, map: str | None = None, normalFormat: str | None = None, m: str | None = None, f: int | None = None, mp: str | None = None, nf: str | None = None) -> Any:
+    """Wire a texture file into the material on a mesh's face (or its only material): the channel comes from map= or the file's name (T_Rock_N.png, M_Outfit_ao.png, ..._BaseColor.png). A slot with no material gets one. Returns {assigned, created, skipped}.
+
+    Args:
+        objects: file.
+        mesh: The mesh. Short form m.
+        face: A face of the mesh (outMesh id) whose material takes it; -1 for the mesh's first. Short form f. Default -1.
+        map: A bake map id (normal, ao, orm, ...) or material channel, instead of the name's. Short form mp.
+        normalFormat: For a normal map: directx or opengl. Short form nf. One of 'directx', 'opengl'. Default 'directx'.
+    """
+
 def attachCurve(*objects: Any, blend: bool | None = None, keepOriginal: bool | None = None, bl: bool | None = None, kp: bool | None = None) -> Any:
     """Join the second curve onto the first at their nearest ends (merged when they meet, else by a straight or blended span). The first curve takes the result; the second is deleted unless keepOriginal. Returns the first.
 
@@ -650,7 +669,7 @@ def bakeEstimateCage(*objects: Any, resolution: int | None = None, iterations: i
         objects: group (or its low; default the selection).
         resolution: Texels per side of the coverage check. Short form res. Default 512.
         iterations: Coverage passes that may grow the cage. Short form it. Default 4.
-        margin: Gap kept between cage and high, as a fraction of the lows' bounds diagonal. Short form mg. Default 0.004.
+        margin: Gap kept between cage and high, as a fraction of each low's bounds diagonal. Short form mg. Default 0.004.
         apply: Write the result; False only reports it. Short form ap. Default True.
     """
 
@@ -668,7 +687,7 @@ def bakeForTarget(project: str | None = None, target: str | None = None, optiona
         overrideGroups: Give every existing group the target's group defaults, including settings made on a group by hand. Short form og. Default False.
     """
 
-def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | None = None, highs: Sequence[Any] | None = None, addLow: Sequence[Any] | None = None, removeLow: Sequence[Any] | None = None, addHigh: Sequence[Any] | None = None, removeHigh: Sequence[Any] | None = None, self: bool | None = None, modifiers: Any | None = None, preset: str | None = None, cage: str | None = None, cageOffset: float | None = None, frontal: float | None = None, rear: float | None = None, ignoreBackfaces: bool | None = None, aoScope: str | None = None, skew: float | None = None, addHighFile: Sequence[Any] | None = None, removeHighFile: Sequence[Any] | None = None, fileObject: str | None = None, fileFrame: float | None = None, pj: str | None = None, lo: Sequence[Any] | None = None, hi: Sequence[Any] | None = None, al: Sequence[Any] | None = None, rl: Sequence[Any] | None = None, ah: Sequence[Any] | None = None, rh: Sequence[Any] | None = None, sf: bool | None = None, md: Any | None = None, ps: str | None = None, cg: str | None = None, co: float | None = None, fd: float | None = None, rd: float | None = None, ib: bool | None = None, sk: float | None = None, ahf: Sequence[Any] | None = None, rhf: Sequence[Any] | None = None, fob: str | None = None, ffr: float | None = None) -> Any:
+def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | None = None, highs: Sequence[Any] | None = None, addLow: Sequence[Any] | None = None, removeLow: Sequence[Any] | None = None, addHigh: Sequence[Any] | None = None, removeHigh: Sequence[Any] | None = None, self: bool | None = None, modifiers: Any | None = None, preset: str | None = None, cage: str | None = None, cageOffset: float | None = None, frontal: float | None = None, rear: float | None = None, ignoreBackfaces: bool | None = None, aoScope: str | None = None, skew: float | None = None, unlinks: Any | None = None, addHighFile: Sequence[Any] | None = None, removeHighFile: Sequence[Any] | None = None, fileObject: str | None = None, fileFrame: float | None = None, pj: str | None = None, lo: Sequence[Any] | None = None, hi: Sequence[Any] | None = None, al: Sequence[Any] | None = None, rl: Sequence[Any] | None = None, ah: Sequence[Any] | None = None, rh: Sequence[Any] | None = None, sf: bool | None = None, md: Any | None = None, ps: str | None = None, cg: str | None = None, co: float | None = None, fd: float | None = None, rd: float | None = None, ib: bool | None = None, sk: float | None = None, ul: Any | None = None, ahf: Sequence[Any] | None = None, rhf: Sequence[Any] | None = None, fob: str | None = None, ffr: float | None = None) -> Any:
     """Create or edit a bake group: the lows that receive maps and the highs projected onto them. A group only traces its own highs, so groups overlapping in space never affect each other, and several groups can write into one texture. Each high carries a bake-only modifier stack (modifiers= or preset=, e.g. "Smooth x2") evaluated into the bake's snapshot only: nothing is added to the scene. self=True bakes the lows onto themselves through such a stack. Creates the group (and a project) when the name is new. Returns the group.
 
     Args:
@@ -690,6 +709,7 @@ def bakeGroup(*objects: Any, project: str | None = None, lows: Sequence[Any] | N
         ignoreBackfaces: Rays only hit high faces facing them. Short form ib.
         aoScope: AO occluders: self, group or all. Short form as. One of 'self', 'group', 'all'.
         skew: 0 to 1: tilts rays from the smooth normals toward each low face's normal. Short form sk.
+        unlinks: Replace the unlinks: [{"lows": [...] (empty: every low), "meshes": [...], "occlusion": True, "projection": False}]. The lows' AO and other occlusion rays pass through those meshes (any high or occluder, a self high by its low's name); projection=True also bakes nothing from them onto the lows. Short form ul.
         addHighFile: Add highs streamed from files at bake time (.fbx, .obj, .abc), never loaded into the scene. Short form ahf.
         removeHighFile: Remove file highs. Short form rhf.
         fileObject: With addHighFile: only the file's meshes whose name contains this. Short form fob.
@@ -772,7 +792,7 @@ def bakeOffset(*objects: Any) -> Any:
         objects: offsets.
     """
 
-def bakePaint(*objects: Any, attr: str | None = None, op: str | None = None, value: float | None = None, strength: float | None = None, points: Sequence[Any] | None = None, center: Sequence[float] | None = None, radius: float | None = None, flood: bool | None = None, symmetry: str | None = None, at: str | None = None, o: str | None = None, v: float | None = None, st: float | None = None, pt: Sequence[Any] | None = None, ce: Sequence[float] | None = None, r: float | None = None, fl: bool | None = None, sy: str | None = None) -> Any:
+def bakePaint(*objects: Any, attr: str | None = None, op: str | None = None, value: float | None = None, strength: float | None = None, points: Sequence[Any] | None = None, center: Sequence[float] | None = None, radius: float | None = None, flood: bool | None = None, reset: bool | None = None, symmetry: str | None = None, at: str | None = None, o: str | None = None, v: float | None = None, st: float | None = None, pt: Sequence[Any] | None = None, ce: Sequence[float] | None = None, r: float | None = None, fl: bool | None = None, rs: bool | None = None, sy: str | None = None) -> Any:
     """Paint a low's bake cage attributes: offset (bakeOffset, scales the auto cage push per point, 1 unpainted) or skew (bakeSkew, added to the group's skew, tilts rays toward the face normal). op add, subtract, smooth or set, at points=, within radius of center= (world space), or flood=True everywhere (the component selection in component mode). symmetry mirrors across an axis. One undo step. Returns the attribute's min, max and mean.
 
     Args:
@@ -785,6 +805,7 @@ def bakePaint(*objects: Any, attr: str | None = None, op: str | None = None, val
         center: World-space brush centre; points within radius get a smooth falloff. Short form ce.
         radius: World-space brush radius, cm. Short form r.
         flood: Apply to every point (or the selected components). Short form fl. Default False.
+        reset: Set every point back to unpainted (offset 1, skew 0), whatever is selected. Short form rs. Default False.
         symmetry: Mirror across x, y or z (object space). Short form sy. One of 'none', 'x', 'y', 'z'. Default 'none'.
     """
 
@@ -1245,6 +1266,17 @@ def boundingMesh(*objects: Any, shape: str | None = None, offset: float | None =
         generator: Keep the primitive's generator so its size stays editable. Short form g. Default False.
     """
 
+def breakdown(*objects: Any, attribute: Any | None = None, time: Any | None = None, value: bool | None = None, query: bool | None = None, at: Any | None = None, t: Any | None = None, v: bool | None = None, q: bool | None = None) -> Any:
+    """Turn keys into breakdowns (or back, with value=False) on channels, at a time or in a range; all keys by default. query=True lists the breakdown times of the first channel. Returns how many keys changed.
+
+    Args:
+        objects: objects.
+        attribute: Attribute name or list of names (translate keys all three). Short form at.
+        time: Seconds, or (start, end) with None for an open end. Default: all keys. Short form t.
+        value: True makes breakdowns, False plain keys. Short form v. Default True.
+        query: Return the first channel's breakdown key times. Short form q. Default False.
+    """
+
 def brushPresetDelete(*objects: Any) -> Any:
     """Delete one of your or the project's brush presets.
 
@@ -1550,6 +1582,17 @@ def collision(*objects: Any, colliders: Sequence[Any] | None = None, offset: flo
         name: Name for the deformer.
     """
 
+def componentExport(*objects: Any, component: str | None = None, mode: str | None = None, unrealClass: str | None = None, query: bool | None = None, c: str | None = None, m: str | None = None, uc: str | None = None, q: bool | None = None) -> Any:
+    """How a component on objects reaches Unreal: actorTags, assetUserData (the default), component (an actor component of unrealClass with matching properties), dataAsset (of unrealClass), custom (a registered exporter named by unrealClass) or none. With query=True, returns the setting.
+
+    Args:
+        objects: objects.
+        component: The component (heading). Short form c.
+        mode: none, actorTags, assetUserData, component, dataAsset or custom. Short form m. One of 'none', 'actorTags', 'assetUserData', 'component', 'dataAsset', 'custom'.
+        unrealClass: The UE class (component, dataAsset) or exporter (custom). Short form uc.
+        query: Return {mode, class}. Short form q. Default False.
+    """
+
 def componentInfo(*objects: Any, kind: str | None = None, ids: Sequence[Any] | None = None, space: str | None = None, fields: Sequence[Any] | None = None, k: str | None = None) -> Any:
     """Positions, normals and adjacency of a mesh's components in bulk. Faces: center, normal, area, points, edges, neighbors (faces across each edge). Edges: points, center, length, faces, border. Vertices: position, normal, edges, neighbors (points), faces. World space unless space='object'. ids= picks some (default: the selected ones of that kind, or all).
 
@@ -1568,6 +1611,22 @@ def componentSelection(ordered: bool | None = None) -> Any:
         ordered: True: a flat list [[mesh, kind, id], ...] in the order the components were picked. False: grouped per mesh and kind, ids sorted ascending, pick order lost. Default False.
     """
 
+def componentValues(*objects: Any, vertices: Sequence[Any] | None = None, columns: Sequence[Any] | None = None, v: Sequence[Any] | None = None, c: Sequence[Any] | None = None) -> Any:
+    """Per-vertex values of the selected (or given) components, one column per value: skin weights per influence, position, colour. Returns {rows: [[mesh, id], ...], columns: [{id, label, kind, ...}], values: [[...per column] per row]}; a value is None where the row's mesh has no such column.
+
+    Weight columns carry joint, held (the influence's lockWeights), total (summed over the rows) and links (the skinInfluence nodes, one per mesh). With the weights filter only influences with weight on the rows appear, heaviest first.
+
+    Args:
+        objects: [meshes].
+        vertices: Point ids for every mesh, or [mesh, id] pairs; defaults to the selected components' points. Short form v.
+        columns: Which columns: weights (influences touching the rows), allWeights, position, color, or single ones: a joint, position.x, color.r. Short form c. Default ['weights', 'position'].
+
+    Examples:
+        componentValues(columns=['weights'])
+
+        componentValues('Body', vertices=[0, 1, 2], columns=['spine_01', 'position.y'])
+    """
+
 def conformCurve(*objects: Any, mesh: str | None = None, offset: float | None = None, release: bool | None = None, m: str | None = None, o: float | None = None, r: bool | None = None) -> Any:
     """Keep curves on a mesh surface: their points are placed on it, lifted by offset, whenever the curve or the mesh changes, so moving points slides them along it (Maya's Make Live for curves). release=True lets them go again, back to where they were last moved. Returns the curves.
 
@@ -1584,6 +1643,15 @@ def connectAttr(*objects: Any, force: bool | None = None, f: bool | None = None)
     Args:
         objects: src dst.
         force: Replace an existing input connection. Short form f. Default False.
+    """
+
+def connectByName(*objects: Any, attribute: Sequence[Any] | None = None, force: bool | None = None, at: Sequence[Any] | None = None, f: bool | None = None) -> Any:
+    """Connect every attribute of the source object to the same-named input of each target, where the types fit (Maya's Connection Editor 'connect by name'). Returns the target plugs connected.
+
+    Args:
+        objects: source targets.
+        attribute: Only these attribute names. Short form at.
+        force: Replace inputs that are already connected; otherwise they are skipped. Short form f. Default False.
     """
 
 def connectField(*objects: Any, mode: str | None = None) -> Any:
@@ -1663,6 +1731,17 @@ def convertToInstance(*objects: Any, tolerance: float | None = None, force: bool
         convertToInstance("Bolt")  # every copy of Bolt in the scene
 
         convertToInstance("Bolt2", "Bolt3", "Bolt")
+    """
+
+def copyAttr(*objects: Any, attribute: Sequence[Any] | None = None, category: str | None = None, values: bool | None = None, connections: bool | None = None, at: Sequence[Any] | None = None, v: bool | None = None, ic: bool | None = None) -> Any:
+    """Copy added attributes from the first object to the others: their definitions, values and, with connections=True, their incoming connections. Ones a target already has only take the value. Returns the plugs added.
+
+    Args:
+        objects: source targets.
+        attribute: Only these attributes; all added ones by default. Short form at.
+        category: Only the attributes under this heading (a component).
+        values: Copy the values too. Short form v. Default True.
+        connections: Connect each copy to whatever drives the original. Short form ic. Default False.
     """
 
 def copyDeformerWeights(*objects: Any, byId: bool | None = None) -> Any:
@@ -2214,6 +2293,14 @@ def deleteBakeTarget(*objects: Any, scope: str | None = None, sc: str | None = N
         scope: user or workspace; defaults to the one bakeTargets shows. Short form sc. One of 'user', 'workspace'.
     """
 
+def deleteComponent(name: str | None = None, studio: bool | None = None, *, n: str | None = None, st: bool | None = None) -> Any:
+    """Delete a saved component from your library or the studio's. Objects carrying it keep their attributes.
+
+    Args:
+        name: The component. Short form n.
+        studio: From the studio library. Short form st. Default False.
+    """
+
 def deleteComponents() -> Any:
     """Delete the selected vertices, edges or faces (with whatever depends on them)."""
 
@@ -2457,6 +2544,30 @@ def editAnimLayer(*objects: Any, weight: float | None = None, mute: bool | None 
         lock: No keys or membership changes. Short form lk.
         mode: additive | override. Short form m. One of 'additive', 'override'.
         accumulation: quaternion | euler. Short form acc. One of 'quaternion', 'euler'.
+    """
+
+def editAttr(*objects: Any, longName: str | None = None, shortName: str | None = None, niceName: str | None = None, type: str | None = None, array: bool | None = None, defaultValue: Any | None = None, minValue: Any | None = None, maxValue: Any | None = None, softMinValue: Any | None = None, softMaxValue: Any | None = None, enumName: str | None = None, keyable: bool | None = None, channelBox: bool | None = None, hidden: bool | None = None, doc: str | None = None, category: str | None = None, query: bool | None = None, ln: str | None = None, sn: str | None = None, nn: str | None = None, typ: str | None = None, a: bool | None = None, dv: Any | None = None, min: Any | None = None, max: Any | None = None, smn: Any | None = None, smx: Any | None = None, en: str | None = None, k: bool | None = None, cb: bool | None = None, h: bool | None = None, q: bool | None = None) -> Any:
+    """Change an added attribute: name, label, type (values convert), default, ranges, enum names, keyable, Channel Box, hidden, doc, heading. Changing the type drops its connections. With query=True, returns its settings instead.
+
+    Args:
+        objects: plugs.
+        longName: A new name; connections, keys and drivers stay on it. Short form ln.
+        shortName: A short name. Short form sn.
+        niceName: The label editors show; empty makes one from the name. Short form nn.
+        type: bool, int, float, enum, string, vector, color, matrix, file or text. Short form typ. One of 'bool', 'int', 'float', 'enum', 'string', 'vector', 'color', 'matrix', 'file', 'text'.
+        array: Any number of values, attr[0], attr[1] ... Short form a.
+        defaultValue: The value it resets to. Short form dv.
+        minValue: Lowest value it takes; False removes it. Short form min.
+        maxValue: Highest value it takes; False removes it. Short form max.
+        softMinValue: Slider minimum; False removes it. Short form smn.
+        softMaxValue: Slider maximum; False removes it. Short form smx.
+        enumName: Enum labels in order, 'low:medium:high'. Short form en.
+        keyable: Shown in the Channel Box and keyable. Short form k.
+        channelBox: Shown in the Channel Box although not keyable. Short form cb.
+        hidden: Hidden from editors. Short form h.
+        doc: What it is for: editors show it as a tooltip.
+        category: The heading it shows under (its component); empty for none.
+        query: Return the settings of the first plug. Short form q. Default False.
     """
 
 def editCorrection(*objects: Any, on: bool | None = None) -> Any:
@@ -2917,6 +3028,17 @@ def exportWebViewer(*objects: Any, selection: bool | None = None, title: str | N
 
     Examples:
         lila.ops.exportWebViewer("C:/Portfolio/Ship", title="Ship", author="Jared Taylor")
+    """
+
+def expression(*objects: Any, string: str | None = None, python: bool | None = None, query: bool | None = None, delete: bool | None = None, s: str | None = None, py: bool | None = None, q: bool | None = None, d: bool | None = None) -> Any:
+    """Drive a plug with an expression in Python syntax: expression('box.ty', string='ctrl.ry * 0.5 + clamp(foot.roll, 0, 90)'). Numbers, other plugs by name, + - * / % **, comparisons, and/or/not, `a if c else b` and abs, min, max, clamp, lerp, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, pow, log, sign, fmod, hypot, degrees, radians, wrap and mapRange compile to rig math nodes: as fast as nodes, shown in the node editor. Anything else runs as Python (slower, Lila only). Returns {native, nodes, reason}.
+
+    Args:
+        objects: plug.
+        string: The expression; a leading = is optional. Short form s.
+        python: Run it as Python even when it compiles to nodes. Short form py. Default False.
+        query: Return {text, native, nodes} for the plug's expression, or None. Short form q. Default False.
+        delete: Remove the plug's expression and its nodes. Short form d. Default False.
     """
 
 def extendCurve(*objects: Any, end: str | None = None, point: Sequence[float] | None = None, mode: str | None = None, boundaries: Sequence[Any] | None = None, length: float | None = None, maxLength: float | None = None, tolerance: float | None = None, direction: Sequence[float] | None = None, p: Sequence[float] | None = None, m: str | None = None, l: float | None = None, tol: float | None = None, dir: Sequence[float] | None = None) -> Any:
@@ -4256,6 +4378,26 @@ def lightRig(preset: str | None = None, intensity: float | None = None, name: st
         name: The group's name; made unique. Short form n. Default 'lightRig'.
     """
 
+def lightingChannel(*objects: Any, create: bool | None = None, rename: str | None = None, delete: bool | None = None, c: bool | None = None, rn: str | None = None, d: bool | None = None) -> Any:
+    """Create, rename or delete a lighting channel; with no flag, list the channels.
+
+    Args:
+        objects: [name].
+        create: Add the channel. Short form c. Default False.
+        rename: A new name: every light and object in it follows. Short form rn.
+        delete: Remove it; lights and objects left in no channel go back to default. Short form d. Default False.
+    """
+
+def lightingChannels(*objects: Any, add: Sequence[Any] | None = None, remove: Sequence[Any] | None = None, set: Sequence[Any] | None = None, a: Sequence[Any] | None = None, rm: Sequence[Any] | None = None, s: Sequence[Any] | None = None) -> Any:
+    """The lighting channels of lights and objects: a light lights the objects that share a channel with it (Unreal's Lighting Channels, named and as many as you need). add, remove or set them; with none of those, returns {object: [channels]}. Unknown names are created.
+
+    Args:
+        objects: objects.
+        add: Channels to put the objects in. Short form a.
+        remove: Channels to take them out of. Short form rm.
+        set: Exactly these channels. Short form s.
+    """
+
 def listAnimLayers() -> Any:
     """The layer stack from the bottom: BaseAnimation first, then each layer's settings and members."""
 
@@ -4267,6 +4409,25 @@ def listAttr(*objects: Any, keyable: bool | None = None, locked: bool | None = N
         keyable: Only keyable attributes. Short form k. Default False.
         locked: Only locked plugs; a Vec3 lists each locked component (translateX). Short form l. Default False.
         userDefined: Only attributes added with addAttr. Short form ud. Default False.
+    """
+
+def listComponents(source: str | None = None, *, src: str | None = None) -> Any:
+    """Components Add offers: USD API schemas, extensions' components and saved ones. Each as {name, source, doc, attrs, usdSchema, unreal}.
+
+    Args:
+        source: Only this source: usd, user, studio or an extension. Short form src.
+    """
+
+def listConnections(*objects: Any, source: bool | None = None, destination: bool | None = None, plugs: bool | None = None, connections: bool | None = None, type: str | None = None, s: bool | None = None, d: bool | None = None, p: bool | None = None, c: bool | None = None, t: str | None = None) -> Any:
+    """What objects or plugs are connected to: sources feeding them and destinations they feed. plugs=True names the other plugs; connections=True pairs each with the plug of yours it connects to.
+
+    Args:
+        objects: objects or plugs.
+        source: Include what feeds them. Short form s. Default True.
+        destination: Include what they feed. Short form d. Default True.
+        plugs: Name plugs rather than nodes. Short form p. Default False.
+        connections: Pairs: your plug, then the other end. Short form c. Default False.
+        type: Only other ends of this node type. Short form t.
     """
 
 def listDisplayLayers() -> Any:
@@ -4541,7 +4702,7 @@ def mathNodes(name: str | None = None, family: str | None = None, namesOnly: boo
         setAttr(n + '.value', 0.25)
     """
 
-def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, src: str | None = None, dst: str | None = None, r: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaConvert(*objects: Any, source: str | None = None, destination: str | None = None, format: str | None = None, recursive: bool | None = None, overwrite: bool | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, lightingChannels: bool | None = None, src: str | None = None, dst: str | None = None, r: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None, lc: bool | None = None) -> Any:
     """Convert Maya files to Lila scenes: a file to a .lila / .lilaa, or every .ma / .mb in a folder. Each file is opened as its own scene and saved; the scene is left empty afterwards. Returns one entry per file with its destination (or error), skipped features and warnings.
 
     Args:
@@ -4561,9 +4722,10 @@ def mayaConvert(*objects: Any, source: str | None = None, destination: str | Non
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
         history: Keep a lone primitive creator (polyCube ...) as a live generator node. Default True.
         setPlayback: Set the scene fps and playback range from the file. Default True.
+        lightingChannels: Bake light linking (lights linked to or broken from objects) into lighting channels, one per distinct set of objects. Short form lc. Default True.
     """
 
-def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, lightingChannels: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, ns: str | None = None, anim: bool | None = None, lc: bool | None = None) -> Any:
     """Import a Maya .ma or .mb file into the scene, without Maya: transforms, groups, meshes (uvs, colors, normals, hard edges, creases), primitive history, joints, skinClusters, locators, materials with file textures, animation curves, display layers, namespaces and references. Anything it can't convert is reported (report=True returns the lists) and never fails the import.
 
     Args:
@@ -4579,6 +4741,7 @@ def mayaImport(*objects: Any, path: str | None = None, parent: str | None = None
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
         history: Keep a lone primitive creator (polyCube ...) as a live generator node. Default True.
         setPlayback: Set the scene fps and playback range from the file. Default True.
+        lightingChannels: Bake light linking (lights linked to or broken from objects) into lighting channels, one per distinct set of objects. Short form lc. Default True.
         report: Return the import report instead of just the names. Default False.
         select: Select the imported roots. Default True.
     """
@@ -4591,7 +4754,7 @@ def mayaInfo(*objects: Any, path: str | None = None) -> Any:
         path: The .ma or .mb file (or pass it first).
     """
 
-def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None) -> Any:
+def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, namespace: str | None = None, upAxis: str | None = None, skins: bool | None = None, morphs: bool | None = None, animation: bool | None = None, materials: bool | None = None, references: Any | None = None, history: bool | None = None, setPlayback: bool | None = None, lightingChannels: bool | None = None, f: bool | None = None, ns: str | None = None, anim: bool | None = None, lc: bool | None = None) -> Any:
     """Open a Maya .ma or .mb file as a new, untitled scene (save it to keep it as .lila). Not undoable. Returns the import report.
 
     Args:
@@ -4607,6 +4770,7 @@ def mayaOpen(*objects: Any, path: str | None = None, force: bool | None = None, 
         references: reference: referenced Maya / FBX / OBJ files become Lila references (Maya and FBX ones converted to a .lila beside them) with the scene's reference edits as overrides; import: their nodes as ordinary scene nodes; none: skip them. One of 'reference', 'import', 'none'. Default 'reference'.
         history: Keep a lone primitive creator (polyCube ...) as a live generator node. Default True.
         setPlayback: Set the scene fps and playback range from the file. Default True.
+        lightingChannels: Bake light linking (lights linked to or broken from objects) into lighting channels, one per distinct set of objects. Short form lc. Default True.
     """
 
 def mayaReference(*objects: Any, path: str | None = None, namespace: str | None = None, ns: str | None = None) -> Any:
@@ -4879,6 +5043,16 @@ def multiBoxBounds(*objects: Any, maxBoxes: int | None = None, minFill: float | 
         prefix: Put before the name. Short form p. Default 'UCX_'.
         parent: Parent under the mesh it wraps, keeping it in place. Short form pa. Default True.
         generator: Keep each box's polyCube generator so its size stays editable. Short form g. Default False.
+    """
+
+def mute(*objects: Any, attribute: Any | None = None, disable: bool | None = None, query: bool | None = None, at: Any | None = None, d: bool | None = None, q: bool | None = None) -> Any:
+    """Mute animated channels: each holds its value at the current time until unmuted (disable=True), keys kept. query=True returns whether the first is muted.
+
+    Args:
+        objects: objects.
+        attribute: Attribute name or list of names (translate keys all three). Short form at.
+        disable: Unmute. Short form d. Default False.
+        query: Return whether the first channel is muted. Short form q. Default False.
     """
 
 def namingConvention(*objects: Any, enable: bool | None = None, mode: str | None = None, uniqueNames: bool | None = None, check: bool | None = None, fix: bool | None = None, e: bool | None = None, m: str | None = None, un: bool | None = None, c: bool | None = None, f: bool | None = None) -> Any:
@@ -6229,6 +6403,13 @@ def rename(*objects: Any) -> Any:
         objects: [object] newName.
     """
 
+def renameAttr(*objects: Any) -> Any:
+    """Rename an added attribute. Connections, keys and drivers stay on it. Returns the renamed plug.
+
+    Args:
+        objects: plug newName.
+    """
+
 def renameLayout(*objects: Any, name: str | None = None, to: str | None = None, n: str | None = None) -> Any:
     """Rename a saved layout, keeping where it is saved.
 
@@ -6358,6 +6539,16 @@ def reorderAnimLayer(*objects: Any, index: int | None = None, by: int | None = N
         objects: layer.
         index: New position. Short form i.
         by: Steps up (positive) or down. Short form b.
+    """
+
+def reorderAttr(*objects: Any, before: str | None = None, after: str | None = None, index: int | None = None, b: str | None = None, af: str | None = None, i: int | None = None) -> Any:
+    """Move an added attribute among the object's added attributes: before or after another, or to an index (0 first).
+
+    Args:
+        objects: plug.
+        before: The attribute it moves in front of. Short form b.
+        after: The attribute it moves behind. Short form af.
+        index: Its place among the added attributes, 0 first; -1 last. Short form i.
     """
 
 def reorderDisplayLayer(*objects: Any, index: int | None = None, i: int | None = None) -> Any:
@@ -6705,6 +6896,17 @@ def saveBakeTarget(*objects: Any, project: str | None = None, label: str | None 
         doc: A description shown as its tooltip. Short form d.
     """
 
+def saveComponent(*objects: Any, category: str | None = None, name: str | None = None, studio: bool | None = None, doc: str | None = None, n: str | None = None, st: bool | None = None) -> Any:
+    """Save the attributes under one heading of an object as a reusable component (names, types, defaults, ranges, docs), in your library or the studio's. It then appears in Add. Returns the file.
+
+    Args:
+        objects: object.
+        category: The heading to save.
+        name: The component's name; the heading by default. Short form n.
+        studio: Save to the studio library (the first studio folder). Short form st. Default False.
+        doc: What it is for.
+    """
+
 def saveLayout(*objects: Any, name: str | None = None, workspace: bool | None = None, n: str | None = None, ws: bool | None = None) -> Any:
     """Save the current panel arrangement as a named layout. workspace=True saves it in the open folder's .lila/layouts.
 
@@ -6900,6 +7102,84 @@ def sceneData(*objects: Any, value: Any | None = None, remove: bool | None = Non
         objects: key.
         value: The value to store: any JSON (number, string, list, object). Short form v.
         remove: Delete the key. Short form rm. Default False.
+    """
+
+def sceneGraphAddNode(*objects: Any, position: Sequence[Any] | None = None, name: str | None = None) -> Any:
+    """Create a scene node from the node editor and add it to the selection, so the view shows it. Returns its path.
+
+    Args:
+        objects: view type.
+        position: [x, y] on the canvas.
+        name: Wanted name; made unique.
+    """
+
+def sceneGraphConnect(*objects: Any) -> Any:
+    """Connect plugs from the node editor: sceneGraphConnect(view, 'Ctrl.translateX', 'Box.rotateY') replaces the input's connection. In the Hierarchy view, 'A.@children' to 'B.@parent' parents B under A.
+
+    Args:
+        objects: view from to.
+    """
+
+def sceneGraphDeleteNode(*objects: Any) -> Any:
+    """Delete scene nodes from the node editor, with their connections (and, for objects, their children).
+
+    Args:
+        objects: view nodes...
+    """
+
+def sceneGraphDisconnect(*objects: Any, source: str | None = None) -> Any:
+    """Break the connection into an input from the node editor; on an array input, every element's, or only the ones `source` drives. In the Hierarchy view, 'B.@parent' unparents B. Returns how many connections went.
+
+    Args:
+        objects: view to.
+        source: node.socket of the one link to remove.
+    """
+
+def sceneGraphInfo(*objects: Any, depth: int | None = None, all: bool | None = None) -> Any:
+    """A view of the scene's nodes for the node editor: the nodes with their plugs as sockets and values, the connections between them as links, and each node's canvas position.
+
+    Views: Selection (the selection and what is wired straight into and out of it), Hierarchy (the selection's parents and children), Upstream and Downstream (depth steps from the selection). Views look through anim curves and unit conversions unless all is on.
+
+    Args:
+        objects: view.
+        depth: Steps Upstream and Downstream follow from the selection. Default 2.
+        all: Also show anim curves and unit conversions. Default False.
+
+    Examples:
+        sceneGraphInfo("Upstream", depth=3)
+    """
+
+def sceneGraphMoveNodes(*objects: Any, positions: Any | None = None) -> Any:
+    """Move nodes on the node editor's canvas: sceneGraphMoveNodes(view, positions={'Box': [0, 100]}). Kept per view with the scene.
+
+    Args:
+        objects: view.
+        positions: {node: [x, y]}.
+    """
+
+def sceneGraphNodeTypes(linkType: str | None = None, linkInput: bool | None = None) -> Any:
+    """Node types the node editor's Scene backend adds: the rig math nodes first, then the other utility (non-DAG) types. With linkType, only types that can take a link from (or, with linkInput, give one to) a socket of that type, each with the socket it would use.
+
+    Args:
+        linkType: Socket type of a dragged wire's loose end.
+        linkInput: The drag started at an input, so the node needs a matching output. Default False.
+    """
+
+def sceneGraphSetNodeFlags(*objects: Any, collapsed: bool | None = None, hideUnused: bool | None = None, muted: bool | None = None) -> Any:
+    """Show nodes collapsed, or with every plug (hideUnused=False) rather than only the connected ones. Kept with the scene.
+
+    Args:
+        objects: view nodes...
+        collapsed: Only the header.
+        hideUnused: Only the connected plugs; on for every node until turned off.
+        muted: Accepted for the editor's mute key; scene nodes don't mute.
+    """
+
+def sceneGraphSetValue(*objects: Any) -> Any:
+    """Set an unconnected plug from the node editor: sceneGraphSetValue(view, 'Box.translateX', 2).
+
+    Args:
+        objects: view node.attr value.
     """
 
 def sceneInfo() -> Any:
@@ -7246,7 +7526,7 @@ def setBakeMap(*objects: Any, project: str | None = None, enabled: bool | None =
         remove: Remove the map from the project. Short form rm. Default False.
     """
 
-def setBakeOutput(project: str | None = None, folder: str | None = None, name: str | None = None, format: str | None = None, bits: int | None = None, dither: bool | None = None, compression: str | None = None, compressionLevel: int | None = None, udimNaming: str | None = None, sidecar: bool | None = None, resolution: int | None = None, width: int | None = None, height: int | None = None, supersampling: int | None = None, padding: int | None = None, *, pj: str | None = None, fo: str | None = None, n: str | None = None, f: str | None = None, b: int | None = None, di: bool | None = None, cmp: str | None = None, cl: int | None = None, un: str | None = None, sc: bool | None = None, res: int | None = None, w: int | None = None, h: int | None = None, ss: int | None = None, pad: int | None = None) -> Any:
+def setBakeOutput(project: str | None = None, folder: str | None = None, name: str | None = None, format: str | None = None, bits: int | None = None, dither: bool | None = None, compression: str | None = None, compressionLevel: int | None = None, udimNaming: str | None = None, sidecar: bool | None = None, resolution: int | None = None, width: int | None = None, height: int | None = None, supersampling: int | None = None, padding: int | None = None, material: str | None = None, clear: bool | None = None, *, pj: str | None = None, fo: str | None = None, n: str | None = None, f: str | None = None, b: int | None = None, di: bool | None = None, cmp: str | None = None, cl: int | None = None, un: str | None = None, sc: bool | None = None, res: int | None = None, w: int | None = None, h: int | None = None, ss: int | None = None, pad: int | None = None, mat: str | None = None, clr: bool | None = None) -> Any:
     """Set where and how a bake project writes: folder, file name template (tokens {project} {group} {mesh} {material} {map} {udim} {res} {ext}; several groups share a texture when their names resolve to the same file), format, bit depth, resolution, supersampling and padding. Returns the output settings.
 
     Args:
@@ -7265,6 +7545,8 @@ def setBakeOutput(project: str | None = None, folder: str | None = None, name: s
         height: Height in texels. Short form h.
         supersampling: Samples per texel: 1, 4, 16 or 64. Short form ss.
         padding: Texels of dilation past island borders; -1 fills the texture. Short form pad.
+        material: Set resolution, width, height, supersampling, padding, bits and format for this texture set ({material}) only; the name needs {material}. Short form mat.
+        clear: With material: drop that texture set's own settings (all of them, or only the flags given). Short form clr. Default False.
     """
 
 def setBakeProject(project: str | None = None, rebakeOnSave: bool | None = None, autoAssign: bool | None = None, *, pj: str | None = None, rs: bool | None = None, aa: bool | None = None) -> Any:
@@ -7274,6 +7556,24 @@ def setBakeProject(project: str | None = None, rebakeOnSave: bool | None = None,
         project: The bake project; defaults to the scene's only one. Short form pj.
         rebakeOnSave: Rebake on save when the inputs' hash changed. Short form rs.
         autoAssign: Run bakeAssign after every bake. Short form aa.
+    """
+
+def setComponentValues(*objects: Any, column: str | None = None, columns: Sequence[Any] | None = None, values: Any | None = None, vertices: Sequence[Any] | None = None, normalize: bool | None = None, relative: bool | None = None, col: str | None = None, cols: Sequence[Any] | None = None, val: Any | None = None, v: Sequence[Any] | None = None, nrm: bool | None = None, r: bool | None = None) -> Any:
+    """Set columns of the selected (or given) vertices, as the Component Spreadsheet does: a joint's weight, position.x, color.r. Setting weights rescales the point's other unheld influences so it still sums to 1, unless normalize=False; held (lockWeights) influences can't be set. Returns how many values changed.
+
+    Args:
+        objects: [meshes].
+        column: One column: a joint, position.x/y/z or color.r/g/b/a. Short form col.
+        columns: Several columns; then each vertex's entry in values is a list, one per column. Short form cols.
+        values: One number for all, one per vertex, or per vertex a list per column. Short form val.
+        vertices: Point ids for every mesh, or [mesh, id] pairs; defaults to the selected components' points. Short form v.
+        normalize: Rescale the other unheld influences so each point sums to 1. Short form nrm. Default True.
+        relative: Add the values to what is there. Short form r. Default False.
+
+    Examples:
+        setComponentValues(column='spine_01', values=0.5)
+
+        setComponentValues('Body', vertices=[4, 5], columns=['position.x', 'position.y'], values=[[0, 1], [0, 2]])
     """
 
 def setCorrection(*objects: Any) -> Any:
@@ -7368,7 +7668,7 @@ def setInfinity(*objects: Any, attribute: Any | None = None, preInfinite: str | 
         query: Short form q. Default False.
     """
 
-def setKeyframe(*objects: Any, attribute: Any | None = None, time: float | None = None, value: float | None = None, inTangentType: str | None = None, outTangentType: str | None = None, at: Any | None = None, t: float | None = None, v: float | None = None, itt: str | None = None, ott: str | None = None) -> Any:
+def setKeyframe(*objects: Any, attribute: Any | None = None, time: float | None = None, value: float | None = None, inTangentType: str | None = None, outTangentType: str | None = None, breakdown: bool | None = None, at: Any | None = None, t: float | None = None, v: float | None = None, itt: str | None = None, ott: str | None = None, bd: bool | None = None) -> Any:
     """Key channels at a time. With no objects, keys every keyable channel of the selection at the current time (the S key). Objects may be nodes, plugs ('cube.ty') or curve nodes. Returns the number of keys set.
 
     Args:
@@ -7378,6 +7678,7 @@ def setKeyframe(*objects: Any, attribute: Any | None = None, time: float | None 
         value: Value. Default: the channel's current value. Short form v.
         inTangentType: auto | spline | linear | flat | step | clamped. Short form itt.
         outTangentType: auto | spline | linear | flat | step | clamped. Short form ott.
+        breakdown: Set breakdown keys. Short form bd. Default False.
     """
 
 def setLoopKey(*objects: Any, attribute: Any | None = None, time: float | None = None, snapRange: bool | None = None, at: Any | None = None, t: float | None = None, sr: bool | None = None) -> Any:
@@ -8990,14 +9291,15 @@ def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = 
 def unrealMappings() -> Any:
     """Every node -> Unreal asset mapping in this scene."""
 
-def unrealPlaceInstances(*objects: Any, folder: str | None = None, mode: str | None = None, threshold: int | None = None, dryRun: bool | None = None, wait: bool | None = None, f: str | None = None, m: str | None = None, t: int | None = None, w: bool | None = None) -> Any:
-    """Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. Returns the plan, with each group's import and placement results when wait=True.
+def unrealPlaceInstances(*objects: Any, folder: str | None = None, mode: str | None = None, threshold: int | None = None, lightingChannels: bool | None = None, dryRun: bool | None = None, wait: bool | None = None, f: str | None = None, m: str | None = None, t: int | None = None, lc: bool | None = None, w: bool | None = None) -> Any:
+    """Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. Lights among them go as light actors (point, spot, directional, rect; discs as square rect lights, domes skipped). Lighting channels map onto Unreal's three: default is channel 0, the next two channels the sent nodes use (in scene order) 1 and 2; any more are dropped, with a warning naming them, and what is left in none goes on 0. Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. Returns the plan, with each group's import and placement results when wait=True.
 
     Args:
         objects: objects.
         folder: Content folder the assets go in; each is SM_<source name>. Short form f. Default '/Game/Lila/Instances'.
         mode: How members are placed: actors, ism, hism, or auto (actors up to threshold members, then hism). Short form m. One of 'auto', 'actors', 'ism', 'hism'. Default 'auto'.
         threshold: auto switches to hism above this many members (default the unreal pref /instanceThreshold, 50). Short form t.
+        lightingChannels: Set the actors' and lights' Lighting Channels from Lila's channels. The plan's lightingChannels lists the channels, lights and objects, the Unreal slot of each channel and any dropped. Short form lc. Default True.
         dryRun: Return the plan without exporting or contacting Unreal. Default False.
         wait: Block until Unreal has imported and placed everything. Short form w. Default False.
 
