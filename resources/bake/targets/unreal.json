@@ -1,6 +1,6 @@
 {
   "name": "unreal",
-  "label": "Unreal Engine",
+  "label": "Unreal Engine (ORM)",
   "version": 1,
   "doc": "Unreal conventions: DirectX tangent normals in the MikkTSpace frame Unreal decodes, ORM packed (R occlusion, G roughness, B metallic from the high's material), T_{material}_{suffix} names (M_ prefix dropped), UDIM tiles as .1001.",
   "output": {"name": "T_{[!M_]material}_{map}", "format": "png", "bits": 8},

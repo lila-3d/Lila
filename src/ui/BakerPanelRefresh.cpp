@@ -765,6 +765,11 @@ void BakerPanel::refreshMapSettings()
             f.choices = o.choices;
             option(f, m->options.value(o.key, o.def));
         }
+    if (def && def->pack.is_array())
+    {
+        shown.push_back("channels");
+        addPackChannels(id, m->options.contains("channels") && m->options["channels"].is_array() ? m->options["channels"] : def->pack);
+    }
     for (auto& [key, value] : m->options.items())
     {
         if (std::ranges::find(shown, key) != shown.end())
@@ -792,6 +797,98 @@ void BakerPanel::refreshMapSettings()
             run("setBakeMap", {{"args", {id}}, {"options", v}});
     });
     mMapForm->addRow("Options", raw);
+}
+
+void BakerPanel::addPackChannels(const std::string& map, const json& channels)
+{
+    static const char* const kChannelNames[] = {"R", "G", "B", "A", "Luminance", "Max"};
+    static const char* const kChannelKeys[] = {"r", "g", "b", "a", "luminance", "max"};
+    // Four object entries, so a row edit rewrites the whole layout and keeps keys the rows don't show (options).
+    auto layout = std::make_shared<json>(json::array());
+    for (size_t c = 0; c < 4; ++c)
+    {
+        const json e = c < channels.size() ? channels[c] : json(c == 3 ? 1.0 : 0.0);
+        if (e.is_number())
+            layout->push_back({{"constant", e}});
+        else if (e.is_string())
+            layout->push_back({{"map", e}, {"channel", "r"}});
+        else
+            layout->push_back(e.is_object() ? e : json{{"constant", 0.0}});
+    }
+    auto commit = [this, map, layout] {
+        if (!mUpdating)
+            run("setBakeMap", {{"args", {map}}, {"options", {{"channels", *layout}}}});
+    };
+    std::vector<const bake::MapDef*> sources;
+    for (const bake::MapDef* d : bake::allMaps())
+        if (d->pack.is_null())
+            sources.push_back(d);
+
+    for (size_t c = 0; c < 4; ++c)
+    {
+        json& entry = (*layout)[c];
+        auto* row = new QWidget(mMapSettings);
+        auto* h = new QHBoxLayout(row);
+        h->setContentsMargins(0, 0, 0, 0);
+        auto* source = new QComboBox(row);
+        source->addItem("Constant", QString());
+        for (const bake::MapDef* d : sources)
+            source->addItem(qs(d->label.empty() ? d->id : d->label), qs(d->id));
+        auto* channel = new QComboBox(row);
+        for (const char* n : kChannelNames)
+            channel->addItem(n);
+        channel->setToolTip("The source's channel; Luminance and Max reduce its RGB to one value (Max suits masks)");
+        auto* constant = new QDoubleSpinBox(row);
+        constant->setRange(0.0, 1.0);
+        constant->setSingleStep(0.05);
+        auto* invert = new QCheckBox("Invert", row);
+
+        const bool isConstant = entry.contains("constant") || !entry.contains("map");
+        source->setCurrentIndex(isConstant ? 0 : std::max(0, source->findData(qs(entry.value("map", std::string())))));
+        int ch = 0;
+        if (const auto it = entry.find("channel"); it != entry.end() && it->is_string())
+            ch = int(std::ranges::find(kChannelKeys, it->get<std::string>()) - std::begin(kChannelKeys)) % 6;
+        else if (it != entry.end() && it->is_number_integer())
+            ch = std::clamp(it->get<int>(), 0, 5);
+        channel->setCurrentIndex(ch);
+        constant->setValue(entry.value("constant", 0.0));
+        invert->setChecked(entry.value("invert", false));
+        channel->setVisible(!isConstant);
+        invert->setVisible(!isConstant);
+        constant->setVisible(isConstant);
+
+        h->addWidget(source, 1);
+        h->addWidget(channel);
+        h->addWidget(constant);
+        h->addWidget(invert);
+        mMapForm->addRow(kChannelNames[c], row);
+
+        connect(source, &QComboBox::currentIndexChanged, this, [layout, c, source, channel, constant, commit](int) {
+            json& e = (*layout)[c];
+            const std::string id = ss(source->currentData().toString());
+            if (id.empty())
+                e = {{"constant", constant->value()}};
+            else
+            {
+                e.erase("constant");
+                e["map"] = id;
+                e["channel"] = kChannelKeys[channel->currentIndex()];
+            }
+            commit();
+        });
+        connect(channel, &QComboBox::currentIndexChanged, this, [layout, c, commit](int i) {
+            (*layout)[c]["channel"] = kChannelKeys[i];
+            commit();
+        });
+        connect(constant, &QDoubleSpinBox::editingFinished, this, [layout, c, constant, commit] {
+            (*layout)[c] = {{"constant", constant->value()}};
+            commit();
+        });
+        connect(invert, &QCheckBox::toggled, this, [layout, c, commit](bool on) {
+            (*layout)[c]["invert"] = on;
+            commit();
+        });
+    }
 }
 
 void BakerPanel::refreshOutput()

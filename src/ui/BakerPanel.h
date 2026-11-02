@@ -93,6 +93,8 @@ private:
     void refreshDetails();
     void refreshMaps();
     void refreshMapSettings();
+    /** R G B A rows for a channel pack map: each a source map and its channel (or luminance/max), or a constant. */
+    void addPackChannels(const std::string& map, const nlohmann::json& channels);
     void refreshOutput();
     void updatePreview();
     void updateButtons();

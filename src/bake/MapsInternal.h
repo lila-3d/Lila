@@ -83,12 +83,16 @@ void slopeKernel(const MapContext& ctx, const void* normalMaps, std::span<const 
 std::vector<uint32_t> weldPositions(const std::vector<glm::vec3>& positions, size_t& count);
 
 /** One channel of a pack: a constant, or channel `channel` of map `map` baked with `options`. */
+inline constexpr int kPackLuminance = 4;
+inline constexpr int kPackMax = 5;
+
 struct PackChannel
 {
     std::string map;
     json options = json::object();
     /** options were given (else the project's settings for that map, if any, are used). */
     bool hasOptions = false;
+    /** 0-3 copies R G B or A; kPackLuminance and kPackMax reduce the source's RGB to one value. */
     int channel = 0;
     bool invert = false;
     float constant = 0.0f;

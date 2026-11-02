@@ -439,6 +439,20 @@ TEST_CASE("material transfer: constants, textures, the high's normal map and ORM
     CHECK(std::abs(pk.b - 0.0f) <= tol);
     CHECK(pk.a == doctest::Approx(0.665f).epsilon(0.01));
     CHECK(packed["outputs"][0]["meta"]["channels"].size() == 4);
+
+    setMap(p, "pack", {{"channels", json::array({json{{"map", "baseColor"}, {"channel", "luminance"}}, json{{"map", "baseColor"}, {"channel", "max"}}, 0.0, 1.0})}});
+    const glm::vec4 lum = texel(readImage(ops::execute("bake", {{"project", p}, {"groups", {"a"}}, {"maps", {"pack"}}})["outputs"][0]), 8, 8);
+    CHECK(lum.r == doctest::Approx(0.2126f * bc.r + 0.7152f * bc.g + 0.0722f * bc.b).epsilon(0.01));
+    CHECK(lum.g == doctest::Approx(bc.b).epsilon(0.01));
+
+    // Base colour with the emissive mask in alpha.
+    const json bce = ops::execute("bake", {{"project", p}, {"groups", {"a"}}, {"maps", {"baseColorEmissive"}}});
+    REQUIRE(bce["outputs"].size() == 1);
+    CHECK(bce["outputs"][0]["colorSpace"] == "srgb");
+    const glm::vec4 be = texel(readImage(bce["outputs"][0]), 8, 8);
+    CHECK(glm::vec3(be).r == doctest::Approx(bc.r).epsilon(0.01));
+    CHECK(glm::vec3(be).b == doctest::Approx(bc.b).epsilon(0.01));
+    CHECK(be.a == doctest::Approx(1.0f).epsilon(0.01));
 }
 
 TEST_CASE("UV wireframe skips diagonals; island borders mark seams")

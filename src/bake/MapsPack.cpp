@@ -44,7 +44,17 @@ std::vector<PackChannel> packChannels(const MapSettings& settings, const MapDef&
             continue;
         }
         ch.map = e.value("map", std::string());
-        ch.channel = std::clamp(e.value("channel", 0), 0, 3);
+        if (const auto named = e.find("channel"); named != e.end() && named->is_string())
+        {
+            static constexpr std::pair<std::string_view, int> kNames[] = {{"r", 0}, {"g", 1}, {"b", 2}, {"a", 3}, {"luminance", kPackLuminance}, {"max", kPackMax}};
+            const auto n = std::ranges::find(kNames, named->get<std::string>(), &std::pair<std::string_view, int>::first);
+            if (n == std::end(kNames))
+                warnings.push_back(settings.map + ": channel " + std::to_string(c) + ": source channel must be r, g, b, a, luminance or max");
+            else
+                ch.channel = n->second;
+        }
+        else
+            ch.channel = std::clamp(e.value("channel", 0), 0, kPackMax);
         ch.invert = e.value("invert", false);
         if (e.contains("options") && e["options"].is_object())
         {
@@ -74,7 +84,10 @@ void composePack(TextureBuffer& pack, const std::vector<PackChannel>& channels, 
         }
         for (size_t i = 0; i < n; ++i)
         {
-            const float v = src->value[i][ch.channel];
+            const glm::vec4& t = src->value[i];
+            const float v = ch.channel == kPackLuminance ? glm::dot(glm::vec3(t), glm::vec3(0.2126f, 0.7152f, 0.0722f))
+                            : ch.channel == kPackMax     ? std::max({t.r, t.g, t.b})
+                                                         : t[ch.channel];
             pack.value[i][int(c)] = ch.invert ? 1.0f - v : v;
             pack.covered[i] |= src->covered[i];
         }
@@ -89,7 +102,7 @@ void registerPackMaps()
                  .label = "Channel Pack",
                  .suffix = "packed",
                  .doc = "A texture composed per channel: options channels, four entries R G B A, each a constant number, a map id or "
-                        "{map, channel (0-3), options, invert}. The maps are baked with it at their own settings and copied in "
+                        "{map, channel (0-3, or r g b a luminance max), options, invert}. The maps are baked with it at their own settings and copied in "
                         "after their finalize and padding.",
                  .pack = json::array({json{{"map", "ao"}}, json{{"map", "roughness"}}, json{{"map", "metallic"}}, 1.0})});
     registerMap({.id = "orm",
@@ -98,5 +111,13 @@ void registerPackMaps()
                  .doc = "Unreal's packed ORM: R ambient occlusion, G roughness, B metallic (from the high's material), A 1. options "
                         "channels overrides the layout as for pack (MRO: metallic, roughness, ao).",
                  .pack = json::array({json{{"map", "ao"}}, json{{"map", "roughness"}}, json{{"map", "metallic"}}, 1.0})});
+    registerMap({.id = "baseColorEmissive",
+                 .label = "Base Colour + Emissive",
+                 .suffix = "BCE",
+                 .doc = "sRGB base colour in RGB with an emissive mask in A (the brightest emissive channel). options channels "
+                        "overrides the layout as for pack.",
+                 .linear = false,
+                 .pack = json::array({json{{"map", "baseColor"}, {"channel", 0}}, json{{"map", "baseColor"}, {"channel", 1}},
+                                      json{{"map", "baseColor"}, {"channel", 2}}, json{{"map", "emissive"}, {"channel", "max"}}})});
 }
 } // namespace lila::bake
