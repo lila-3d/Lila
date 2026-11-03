@@ -22,6 +22,13 @@ std::atomic<uint64_t> gSerial{0};
 /** Overlap Jolt leaves alone (its penetration slop is 2 cm), so pieces rejoined at it don't pop apart. */
 constexpr double kRejoinOverlap = 1.5;
 
+/**
+ * Torque counts as the force it takes at this lever, m, so bending a slab breaks it as pulling would. A glued face of side
+ * L resists bending as L/6 of its pull (a rectangular section), so a joint metres wide holds its own pieces up; small
+ * joints keep 10 cm, which is what small props are tuned to.
+ */
+double bendingLever(double areaCm2) { return std::max(0.1, std::sqrt(std::max(areaCm2, 0.0)) * 0.01 / 6.0); }
+
 /** Scenes within this of the node's origin simulate about it; farther ones about their own centre, snapped to it. */
 constexpr double kOriginSnap = 10000.0;
 
@@ -287,8 +294,7 @@ void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
             continue;
         const double limit = l.strength * scale;
         const ph::JointLoad load = scene.jointLoad(w.joints[i]);
-        // Torque counts as the force it takes at a 10 cm lever, so bending a slab breaks it as pulling would.
-        const double impulse = l.type == LinkType::Spring ? load.linear : load.linear + load.angular / 0.1;
+        const double impulse = l.type == LinkType::Spring ? load.linear : load.linear + load.angular / bendingLever(l.area);
         // A link whose strength drops to 0 is cut, even with nothing pulling on it (pieces held still).
         if (limit <= 0.0 || impulse / dt > limit)
         {
@@ -311,6 +317,16 @@ void RigidWorld::advance(const SceneDesc& current, int64_t index, double dt)
             scene.setCollides(l.a, l.b, true);
         }
     }
+}
+
+bool RigidWorld::settled(double speed, double spin) const
+{
+    const Impl& w = *mImpl;
+    for (size_t i = 0; i < w.pieceCount; ++i)
+        if (w.active[i] && !w.scene->asleep(int(i)) &&
+            (glm::length(w.scene->velocity(int(i))) > speed || glm::length(w.scene->angularVelocity(int(i))) > spin))
+            return false;
+    return true;
 }
 
 void RigidWorld::save(std::vector<uint8_t>& out, bool full) const

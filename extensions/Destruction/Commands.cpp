@@ -138,10 +138,8 @@ json buildTogether(const std::vector<Node*>& meshes, const std::vector<Node*>& c
          {"values",
           {{"gravity", v3({0, -981, 0})}, {"ground", true}, {"groundHeight", floor}, {"density", p.density}, {"friction", p.friction},
            {"bounce", p.bounce}, {"blastSpeed", 0.0}}}},
-        {{"name", "Realize"}, {"type", "RealizeInstances"}, {"position", json::array({1150, 0})}},
     });
-    json links = json::array({"GroupInput.startFrame -> Solver.startFrame",
-                              "Solver.pieces -> Realize.geometry", "Realize.geometry -> GroupOutput.geometry"});
+    json links = json::array({"GroupInput.startFrame -> Solver.startFrame", "Solver.pieces -> GroupOutput.geometry"});
     // Each mesh's chain ends in "<node>.pieces" and "<node>.links"; the Join Pieces chain gathers them.
     std::vector<std::pair<std::string, std::string>> ends;
     for (size_t k = 0; k < meshes.size(); ++k)
@@ -222,7 +220,9 @@ json buildOne(Node& mesh, const Args& a)
 {
     const std::string materialName = a.get<std::string>("material", "concrete");
     const Preset& p = preset(materialName);
-    const bool simulate = a.get<bool>("simulate", true);
+    const std::string damage = a.get<std::string>("damage", "none");
+    const bool damaged = damage != "none";
+    const bool simulate = a.get<bool>("simulate", true) && !damaged;
     const bool anchor = a.get<bool>("anchor", true);
 
     const auto out = mesh.as<scene::MeshPtr>(mesh.type().attrIndex("outMesh"));
@@ -250,8 +250,10 @@ json buildOne(Node& mesh, const Args& a)
                                                    : scene::sim::frameOf(scene::anim::playback().minTime);
 
     const std::string group = uniqueGroupName(identifier(mesh.name()) + "_Break");
+    // Chips come off edges and corners, which need more, smaller pieces to read as chips.
+    const int64_t pieceCount = a.get<int64_t>("pieces", damage == "chipped" ? std::max<int64_t>(p.pieces * 2, 60) : p.pieces);
     json inputs = json::array({
-        {{"name", "pieces"}, {"type", "int"}, {"default", a.get<int64_t>("pieces", p.pieces)}, {"min", 1}, {"softMax", 500},
+        {{"name", "pieces"}, {"type", "int"}, {"default", pieceCount}, {"min", 1}, {"softMax", 500},
          {"description", "Roughly how many pieces."}},
         {{"name", "seed"}, {"type", "int"}, {"default", a.get<int64_t>("seed", 1)}, {"description", "Another seed gives another pattern."}},
         {{"name", "impact"}, {"type", "vector"}, {"default", v3(impact)}, {"description", "Where it's hit (the mesh's own space, cm)."}},
@@ -260,12 +262,25 @@ json buildOne(Node& mesh, const Args& a)
          {"description", "How hard it is to break: N per cm2 the pieces share."}},
     });
     json nodes = json::array({
-        {{"name", "Fracture"}, {"type", "Fracture"}, {"props", {{"material", p.material}}}, {"values", {{"impactFocus", p.impactFocus}}}},
-        {{"name", "Realize"}, {"type", "RealizeInstances"}},
+        {{"name", "Fracture"}, {"type", "Fracture"}, {"props", {{"material", p.material}}},
+         {"values", {{"impactFocus", damage == "chipped" || damage == "cracked" ? 0.0 : p.impactFocus}}}},
     });
     json links = json::array({"GroupInput.geometry -> Fracture.mesh", "GroupInput.pieces -> Fracture.pieces", "GroupInput.seed -> Fracture.seed",
                               "GroupInput.impact -> Fracture.impact", "GroupInput.roughness -> Fracture.roughness",
-                              "GroupInput.strength -> Fracture.linkStrength", "Realize.geometry -> GroupOutput.geometry"});
+                              "GroupInput.strength -> Fracture.linkStrength"});
+    // Pieces touching the ground hold on to it, for a simulation or a collapse.
+    auto anchorTo = [&](const std::string& into) {
+        if (anchor && upright)
+        {
+            nodes.push_back({{"name", "Anchor"}, {"type", "AnchorPieces"}, {"values", {{"height", ground}, {"tolerance", 1.0}}}});
+            links.push_back("Fracture.pieces -> Anchor.pieces");
+            links.push_back("Fracture.links -> Anchor.links");
+            links.push_back("GroupInput.strength -> Anchor.strength");
+            links.push_back("Anchor.links -> " + into);
+        }
+        else
+            links.push_back("Fracture.links -> " + into);
+    };
     if (simulate)
     {
         inputs.push_back({{"name", "blast"}, {"type", "float"}, {"default", a.get<double>("blast", p.blast)}, {"min", 0.0}, {"softMax", 5000.0},
@@ -283,23 +298,37 @@ json buildOne(Node& mesh, const Args& a)
         links.push_back("GroupInput.startFrame -> Solver.startFrame");
         links.push_back("GroupInput.startFrame -> Solver.blastFrame");
         links.push_back("Fracture.pieces -> Solver.pieces");
-        links.push_back("Solver.pieces -> Realize.geometry");
-        if (anchor && upright)
+        links.push_back("Solver.pieces -> GroupOutput.geometry");
+        anchorTo("Solver.links");
+    }
+    else if (damaged)
+    {
+        inputs.push_back({{"name", "amount"}, {"type", "float"}, {"default", a.get<double>("amount", 0.3)}, {"min", 0.0}, {"max", 1.0},
+                          {"description", "How much is damaged, 0 to 1."}});
+        json values = {{"gravity", v3(gravity)}, {"ground", upright}, {"groundHeight", ground}, {"density", p.density}};
+        nodes.push_back({{"name", "Damage"}, {"type", "DamagePieces"}, {"props", {{"mode", damage}}}, {"values", values}});
+        links.push_back("Fracture.pieces -> Damage.pieces");
+        links.push_back("GroupInput.amount -> Damage.amount");
+        links.push_back("GroupInput.seed -> Damage.seed");
+        links.push_back("GroupInput.impact -> Damage.impact");
+        links.push_back("Damage.pieces -> GroupOutput.geometry");
+        if (damage == "cracked")
         {
-            nodes.push_back({{"name", "Anchor"}, {"type", "AnchorPieces"}, {"values", {{"height", ground}, {"tolerance", 1.0}}}});
-            links.push_back("Fracture.pieces -> Anchor.pieces");
-            links.push_back("Fracture.links -> Anchor.links");
-            links.push_back("GroupInput.strength -> Anchor.strength");
-            links.push_back("Anchor.links -> Solver.links");
+            inputs.push_back({{"name", "gap"}, {"type", "float"}, {"default", a.get<double>("gap", 0.3)}, {"min", 0.0}, {"softMax", 5.0},
+                              {"description", "Width of the cracks, cm."}});
+            links.push_back("GroupInput.gap -> Damage.gap");
         }
+        if (damage == "collapsed")
+            anchorTo("Damage.links");
         else
-            links.push_back("Fracture.links -> Solver.links");
+            links.push_back("Fracture.links -> Damage.links");
     }
     else
-        links.push_back("Fracture.pieces -> Realize.geometry");
+        links.push_back("Fracture.pieces -> GroupOutput.geometry");
 
+    const std::string what = simulate ? " and simulates it falling." : damaged ? ", " + damage + "." : ".";
     json spec = {{"name", group},
-                 {"description", std::string("Breaks ") + mesh.name() + " apart like " + p.material + (simulate ? " and simulates it falling." : ".")},
+                 {"description", std::string("Breaks ") + mesh.name() + " apart like " + p.material + what},
                  {"inputs", inputs},
                  {"nodes", nodes},
                  {"links", links}};
@@ -511,7 +540,8 @@ void registerCommands(ext::Context& ctx)
                "start frame) show on the modifier and can be keyed. The pieces touching the ground are anchored, so a wall "
                "stands until the impact. Several meshes break together in one simulation (their pieces hit each other) on a new "
                "Destruction mesh, with the originals hidden; add explosions with addExplosion. Colliders are meshes the pieces hit that "
-               "never move or break. Returns the modifiers.",
+               "never move or break. damage makes a damaged prop with no simulation (cracked, missing, chipped or collapsed), for "
+               "level dressing; freezeDestruction then turns any of these into static meshes with collision. Returns the modifiers.",
         .positionalDoc = "meshes (default the selection)",
         .flags = {{"material", "m", AT::String, "concrete", "How it cracks.", {"concrete", "glass", "wood"}},
                   {"impact", "i", AT::Vec3, nullptr, "Where it's hit, world space cm. Default: the centre of the mesh."},
@@ -520,6 +550,13 @@ void registerCommands(ext::Context& ctx)
                   {"blast", "b", AT::Float, nullptr, "How hard the impact hits, cm/s. Default: the material's.", {}, {}, 0.0},
                   {"startFrame", "", AT::Int, nullptr, "Frame it breaks on. Default: the start of the playback range."},
                   {"simulate", "", AT::Bool, true, "Simulate the pieces; False only fractures."},
+                  {"damage", "d", AT::String, "none",
+                   "Damage it without simulating: cracked (standing, cracks showing, some pieces slipped), missing (chunks gone "
+                   "around the impact), chipped (edges and corners knocked off) or collapsed (the part around the impact gives way "
+                   "and what it held falls and settles).",
+                   {"none", "cracked", "missing", "chipped", "collapsed"}},
+                  {"amount", "", AT::Float, 0.3, "With damage: how much is damaged, 0 to 1.", {}, {}, 0.0, 1.0},
+                  {"gap", "", AT::Float, 0.3, "With damage=cracked: width of the cracks, cm.", {}, {}, 0.0},
                   {"anchor", "", AT::Bool, true, "Tie the pieces touching the ground to it."},
                   {"together", "", AT::Bool, true, "Several meshes: one simulation where they hit each other. False breaks each on its own."},
                   {"colliders", "", AT::List, nullptr, "Meshes the pieces hit that never move or break (the ground around a pit, say)."}},
@@ -555,7 +592,8 @@ void registerCommands(ext::Context& ctx)
             return made;
         },
         .examples = {"breakApart('Wall', material='concrete', impact=[0, 120, 15])", "breakApart(material='glass', pieces=60, blast=1500)",
-                     "breakApart(['WallA', 'WallB', 'Ground'])"},
+                     "breakApart(['WallA', 'WallB', 'Ground'])", "breakApart('Pillar', damage='chipped', amount=0.4)",
+                     "breakApart('Wall', damage='collapsed', impact=[0, 80, 10], amount=0.25)"},
     });
 
     ctx.registerCommand({
@@ -681,6 +719,57 @@ void registerCommands(ext::Context& ctx)
             return node;
         },
         .examples = {"collapse('Destruction', part='Ground', start=90, duration=60, direction=[1, 0, 0])"},
+    });
+
+    ctx.registerCommand({
+        .name = "addDebris",
+        .doc = "Throw off small chunks and dust where a destruction breaks: chunks (more for harder breaks) settle on the ground "
+               "and the pieces and join the result as instances of a few shared rock shapes; dust points are on the Debris node's "
+               "dust output for Niagara. Running it again changes the settings. Returns the Debris node.",
+        .positionalDoc = "destruction (default the selection)",
+        .flags = {{"amount", "a", AT::Float, 4.0, "Chunks per break, on average.", {}, {}, 0.0, 1000.0},
+                  {"size", "s", AT::Float, 8.0, "Typical chunk size, cm.", {}, {}, 0.1},
+                  {"spread", "", AT::Float, 300.0, "How fast chunks fly off, cm/s.", {}, {}, 0.0},
+                  {"dust", "", AT::Int, 20, "Dust points per break.", {}, {}, 0.0, 10000.0},
+                  {"settle", "", AT::Bool, true, "Let the chunks come to rest (level dressing); False leaves them flying, with velocity."},
+                  {"seed", "", AT::Int, 1, "Another seed gives another scatter."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            const Setup s = setupOf(g, destructionArg(a, "addDebris"), "addDebris");
+            gn::Group grp = gn::readGroup(*s.groupNode);
+            const gn::GNode* solver = grp.node("Solver");
+            if (!solver)
+                throw CommandError("addDebris: the destruction has no Rigid Body Solver named Solver");
+            if (!grp.node("Debris"))
+            {
+                const std::vector<gn::GLink> out = grp.linksInto("GroupOutput", "geometry");
+                if (out.empty())
+                    throw CommandError("addDebris: nothing reaches the destruction's output");
+                const glm::dvec2 at = solver->position + glm::dvec2(260.0, 220.0);
+                grp.nodes.push_back({"Debris", "DebrisFromEvents", at, json::object()});
+                grp.nodes.push_back({"WithDebris", "JoinGeometry", at + glm::dvec2(260.0, -120.0), json::object()});
+                grp.links.push_back({"Solver", "breaks", "Debris", "events"});
+                grp.links.push_back({"Solver", "pieces", "Debris", "colliders"});
+                std::erase(grp.links, out[0]);
+                grp.links.push_back({out[0].fromNode, out[0].fromSocket, "WithDebris", "geometry"});
+                grp.links.push_back({"Debris", "debris", "WithDebris", "geometry"});
+                grp.links.push_back({"WithDebris", "geometry", "GroupOutput", "geometry"});
+            }
+            const gn::GNode& sv = *grp.node("Solver");
+            gn::GNode& d = *grp.node("Debris");
+            d.values["amount"] = a.get<double>("amount", 4.0);
+            d.values["size"] = a.get<double>("size", 8.0);
+            d.values["spread"] = a.get<double>("spread", 300.0);
+            d.values["dust"] = a.get<int64_t>("dust", 20);
+            d.values["settle"] = a.get<bool>("settle", true);
+            d.values["seed"] = a.get<int64_t>("seed", 1);
+            for (const char* k : {"gravity", "ground", "groundHeight", "density"})
+                if (auto it = sv.values.find(k); it != sv.values.end())
+                    d.values[k] = *it;
+            gn::commitGroup(g, *s.groupNode, std::move(grp));
+            return "Debris";
+        },
+        .examples = {"addDebris('Wall', amount=6, size=5)", "addDebris('Wall', settle=False)"},
     });
 
 

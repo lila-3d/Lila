@@ -14,7 +14,8 @@
  * push and drop things into place and for anything recording a simulation step by step (set dressing now, animation
  * later). Lila works in centimetres and Jolt in metres; everything here is centimetres, kilograms and seconds.
  *
- * Deterministic: the same calls in the same order give the same bytes at any thread count. Main thread only.
+ * Deterministic: the same calls in the same order give the same bytes at any thread count. One scene is used from one
+ * thread at a time; separate scenes may step on separate threads (their steps take turns).
  */
 namespace lila::physics
 {

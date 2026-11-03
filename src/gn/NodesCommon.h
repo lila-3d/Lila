@@ -262,6 +262,7 @@ struct PieceLink
     int a = -1, b = -1;
     glm::dvec3 anchor{0.0};
     double strength = 0.0; // N
+    double area = 0.0;     // cm2 the pieces share, which sets how much bending the link takes
 };
 
 /**

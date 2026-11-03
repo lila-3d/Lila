@@ -3,6 +3,7 @@
 
 #include "Destruction.h"
 #include "PieceTransform.h"
+#include "Pieces.h"
 #include "RigidWorld.h"
 
 #include <RigidScene.h>
@@ -31,7 +32,7 @@ using gn::GeometryPtr;
 using gn::SimInputs;
 using T = gn::SocketType;
 
-constexpr uint64_t kSolverVersion = 2;
+constexpr uint64_t kSolverVersion = 3;
 
 double readFloat(const geo::AttributeSet& set, std::string_view name, size_t i, double fallback)
 {
@@ -107,17 +108,14 @@ Settings readSettings(const SimInputs& in)
     s.guideStiffness = std::max(0.0, in.f("guideStiffness"));
     return s;
 }
+} // namespace
 
-/** The simulation's scene from what reached the node. shapes = false skips the hulls and collider meshes (steps after the first). */
-SceneDesc describe(const SimInputs& in, bool shapes)
+SceneDesc describeGeometry(const GeometryPtr& pieces, const GeometryPtr& links, const GeometryPtr& colliders, const GeometryPtr& blasts,
+                           const Settings& settings, const Material& material, bool shapes)
 {
     SceneDesc d;
-    d.settings = readSettings(in);
-    const double density = std::max(1e-3, in.f("density"));
-    const double friction = std::max(0.0, in.f("friction"));
-    const double bounce = std::clamp(in.f("bounce"), 0.0, 1.0);
-
-    GeometryPtr pieces = in.geometry("pieces");
+    d.settings = settings;
+    const double density = material.density, friction = material.friction, bounce = material.bounce;
     if (pieces->instances)
     {
         const gn::Instances& inst = *pieces->instances;
@@ -159,7 +157,6 @@ SceneDesc describe(const SimInputs& in, bool shapes)
     else if (!pieces->empty())
         throw std::invalid_argument("pieces must be instances: connect Fracture, or Mesh to Pieces for separate parts");
 
-    GeometryPtr links = in.geometry("links");
     if (links->curves)
     {
         const gn::CurveSet& c = *links->curves;
@@ -173,12 +170,12 @@ SceneDesc describe(const SimInputs& in, bool shapes)
             l.b = int(readFloat(c.curveAttrs, "pieceB", k, -1.0));
             l.type = LinkType(std::clamp(int(readFloat(c.curveAttrs, "type", k, 0.0)), 0, 2));
             l.strength = std::max(0.0, readFloat(c.curveAttrs, "strength", k, 1000.0));
+            l.area = std::max(0.0, readFloat(c.curveAttrs, "area", k, 0.0));
             l.anchor = c.curvePoints(k)[0];
             d.links.push_back(l);
         }
     }
 
-    GeometryPtr blasts = in.geometry("blasts");
     for (const std::shared_ptr<const geo::Mesh>& m : {blasts->points, blasts->mesh})
     {
         if (!m)
@@ -190,7 +187,6 @@ SceneDesc describe(const SimInputs& in, bool shapes)
                                     int64_t(std::llround(readFloat(attrs, "frame", p, double(d.settings.startFrame))))});
     }
 
-    GeometryPtr colliders = in.geometry("colliders");
     if (colliders->instances)
     {
         const gn::Instances& inst = *colliders->instances;
@@ -222,6 +218,16 @@ SceneDesc describe(const SimInputs& in, bool shapes)
         d.colliders.push_back(std::move(c));
     }
     return d;
+}
+
+namespace
+{
+/** The simulation's scene from what reached the node. */
+SceneDesc describe(const SimInputs& in, bool shapes)
+{
+    const Material material{std::max(1e-3, in.f("density")), std::max(0.0, in.f("friction")), std::clamp(in.f("bounce"), 0.0, 1.0)};
+    return describeGeometry(in.geometry("pieces"), in.geometry("links"), in.geometry("colliders"), in.geometry("blasts"), readSettings(in), material,
+                            shapes);
 }
 
 class RigidSim final : public gn::NodeSim
@@ -414,7 +420,7 @@ gn::NodeDecl solverDecl()
 bool registerNodes(ext::Context& ctx)
 {
     lila::physics::initJolt();
-    return gn::registerDecl(ctx, solverDecl()) != nullptr;
+    return gn::registerDecl(ctx, solverDecl()) != nullptr && registerDamageNodes(ctx);
 }
 } // namespace destruction
 
@@ -423,6 +429,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     if (!destruction::registerNodes(ctx))
         return 1;
     destruction::registerCommands(ctx);
+    destruction::registerFreeze(ctx);
     destruction::registerUi(ctx);
     destruction::registerSounds(ctx);
     return 0;

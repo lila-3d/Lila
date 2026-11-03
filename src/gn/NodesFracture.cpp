@@ -134,7 +134,7 @@ void registerFractureNode()
                 std::vector<PieceLink> links;
                 links.reserve(r.contacts.size());
                 for (const fr::Contact& k : r.contacts)
-                    links.push_back({k.a, k.b, k.centroid, strength * k.area});
+                    links.push_back({k.a, k.b, k.centroid, strength * k.area, k.area});
                 c.out("links", linkGeometry(links, c.prop("linkType")));
             },
     });

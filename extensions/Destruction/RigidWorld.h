@@ -45,6 +45,8 @@ struct LinkDesc
     LinkType type = LinkType::Glue;
     double strength = 1000.0; // N
     glm::dvec3 anchor{0.0};   // cm
+    /** cm2 the pieces share; 0 when unknown. A wider joint takes more bending before it breaks. */
+    double area = 0.0;
 };
 
 /** A push outward from a point on one frame, fading linearly to nothing at the radius. */
@@ -118,6 +120,8 @@ public:
      * link strengths). index is the step's number since the start, which places the blasts.
      */
     void advance(const SceneDesc& current, int64_t index, double dt);
+    /** Every simulated piece asleep or slower than speed (cm/s) and spin (rad/s). */
+    bool settled(double speed, double spin) const;
     /** The state bytes of where the world is now; without full, no Jolt snapshot (a substep inside a frame). */
     void save(std::vector<uint8_t>& out, bool full = true) const;
 

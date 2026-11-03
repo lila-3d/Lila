@@ -534,7 +534,12 @@ void RigidScene::step(double dt)
         w.addedSinceOptimize = false;
     }
     w.dt = dt;
-    w.system.Update(float(dt), std::max(1, w.settings.collisionSteps), gRuntime.temp.get(), w.jobs);
+    {
+        // The temp allocator and job system are shared by every scene.
+        static std::mutex stepping;
+        std::lock_guard lock(stepping);
+        w.system.Update(float(dt), std::max(1, w.settings.collisionSteps), gRuntime.temp.get(), w.jobs);
+    }
     w.foldTouches();
     ++w.stepCount;
 }

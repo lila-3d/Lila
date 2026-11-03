@@ -35,6 +35,7 @@ struct Link
     glm::dvec3 other{0.0};
     double strength = 0.0;
     int type = 0;
+    double area = 0.0;
 };
 
 /** Two-point curves from piece a's anchor to piece b's (the same point when they touch), with the solver's attributes. */
@@ -51,12 +52,14 @@ CurveSet linkCurves(const std::vector<Link>& links)
     std::span<int32_t> b = c.curveAttrs.getOrAdd<int32_t>("pieceB");
     std::span<int32_t> type = c.curveAttrs.getOrAdd<int32_t>("type");
     std::span<float> strength = c.curveAttrs.getOrAdd<float>("strength");
+    std::span<float> area = c.curveAttrs.getOrAdd<float>("area");
     for (size_t k = 0; k < links.size(); ++k)
     {
         a[k] = links[k].a;
         b[k] = links[k].b;
         type[k] = links[k].type;
         strength[k] = float(links[k].strength);
+        area[k] = float(links[k].area);
     }
     return c;
 }
@@ -166,6 +169,7 @@ void connectPiecesNode()
                         l.b = int(std::max(a, b));
                         l.anchor = l.other = (lo + hi) * 0.5;
                         l.strength = strength * area;
+                        l.area = area;
                         l.type = type;
                         found.push_back(l);
                     }
@@ -241,7 +245,8 @@ void anchorPiecesNode()
                     l.a = int(k);
                     l.b = -1;
                     l.anchor = l.other = glm::dvec3((lo.x + hi.x) * 0.5, b.min.y, (lo.y + hi.y) * 0.5);
-                    l.strength = strength * std::max(size.x * size.y, 1.0);
+                    l.area = std::max(size.x * size.y, 1.0);
+                    l.strength = strength * l.area;
                     l.type = type;
                     links.push_back(l);
                 }
@@ -613,7 +618,7 @@ GeometryPtr linkGeometry(const std::vector<PieceLink>& links, const std::string&
     std::vector<Link> out;
     out.reserve(links.size());
     for (const PieceLink& l : links)
-        out.push_back({l.a, l.b, l.anchor, l.anchor, l.strength, linkTypeIndex(type)});
+        out.push_back({l.a, l.b, l.anchor, l.anchor, l.strength, linkTypeIndex(type), l.area});
     return curveGeometry(linkCurves(out));
 }
 
