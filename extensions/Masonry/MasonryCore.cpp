@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <tuple>
 #include <unordered_map>
@@ -115,6 +116,24 @@ struct Line
             return tops.empty() ? 0.0 : tops.front();
         const auto [k, t] = locate(u);
         return glm::mix(tops[k], tops[k + 1], std::clamp(t, 0.0, 1.0));
+    }
+    /** Distance along the line of the point on it nearest p, in plan. */
+    double closest(const glm::dvec3& p) const
+    {
+        double best = 0.0, bestD = std::numeric_limits<double>::max();
+        for (size_t k = 0; k + 1 < pts.size(); ++k)
+        {
+            const glm::dvec3 a = flat(pts[k]), d = flat(pts[k + 1]) - a;
+            const double len2 = glm::dot(d, d);
+            const double t = len2 > 0.0 ? std::clamp(glm::dot(flat(p) - a, d) / len2, 0.0, 1.0) : 0.0;
+            const double dist = glm::length(flat(p) - (a + d * t));
+            if (dist < bestD)
+            {
+                bestD = dist;
+                best = at[k] + t * (at[k + 1] - at[k]);
+            }
+        }
+        return best;
     }
     glm::dvec3 dirAt(double u) const
     {
@@ -381,6 +400,8 @@ std::vector<Interval> layCourse(const Pattern& pat, double t0, double t1, double
             fillers.push_back({a + joint, a + joint + w, filler});
             fillers.push_back({b - joint - w, b - joint, filler});
         }
+        else if (std::abs(fill - pat[0].width) <= pat[0].width * 0.1)
+            fillers.push_back({a + joint, b - joint, {0.0, pat[0].role, pat[0].depth}});
         else
             fillers.push_back({a + joint, b - joint, filler});
     }
@@ -632,7 +653,8 @@ std::vector<Span> groundSpans(const Line& line, bool level, double y, double h, 
 }
 
 /** Spans less the excluded ranges (sorted or not); a cut end is a jamb. Ranges are tried as given and shifted by +-period for loops. */
-std::vector<Span> subtract(std::vector<Span> spans, const std::vector<std::pair<double, double>>& cuts, double period)
+/** Spans with the cuts taken out. jambs marks the ends a cut makes as an opening's jambs. */
+std::vector<Span> subtract(std::vector<Span> spans, const std::vector<std::pair<double, double>>& cuts, double period, bool jambs = true)
 {
     for (const auto& cut0 : cuts)
         for (double off : {0.0, period, -period})
@@ -649,9 +671,9 @@ std::vector<Span> subtract(std::vector<Span> spans, const std::vector<std::pair<
                     continue;
                 }
                 if (ca > s.a)
-                    next.push_back({s.a, ca, s.jambA, true});
+                    next.push_back({s.a, ca, s.jambA, jambs});
                 if (cb < s.b)
-                    next.push_back({cb, s.b, true, s.jambB});
+                    next.push_back({cb, s.b, jambs, s.jambB});
             }
             spans = std::move(next);
         }
@@ -1043,10 +1065,20 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
             openings.push_back(po);
         }
 
-        const std::vector<double> sides = single ? std::vector<double>{0.0} : std::vector<double>{1.0, -1.0};
+        // The outer face first: its through stones are the inner face's too.
+        const std::vector<double> sides = single ? std::vector<double>{0.0} : (leftIsOuter ? std::vector<double>{1.0, -1.0} : std::vector<double>{-1.0, 1.0});
+        const size_t runStart = laid.course.size();
+        std::map<int, std::vector<std::pair<glm::dvec3, glm::dvec3>>> throughEnds; // by course, each through stone's two ends
         for (double side : sides)
         {
             const Face face = single ? Face::Through : ((side > 0.0) == leftIsOuter ? Face::Outer : Face::Inner);
+            if (face == Face::Inner)
+                for (size_t k = runStart; k < laid.course.size(); ++k)
+                {
+                    const Stone& t = laid.course[k];
+                    if (t.face == Face::Through)
+                        throughEnds[t.course].push_back({t.center - t.frame[0] * (t.size.x * 0.5), t.center + t.frame[0] * (t.size.x * 0.5)});
+                }
             std::map<int64_t, Line> lines; // by thickness in 1/1000 cm, so a battered wall makes one per course
             for (int course = 0; course < K.count; ++course)
             {
@@ -1098,10 +1130,39 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                 }
                 spans = subtract(std::move(spans), cuts, line.cyclic ? total : 0.0);
 
+                // The inner face fits between the outer face's through stones and lays none of its own.
+                const bool throughs = face == Face::Inner && headerDepth >= T - j - 1e-6;
+                if (throughs)
+                {
+                    std::vector<std::pair<double, double>> taken;
+                    for (const auto& [a, b] : throughEnds[course])
+                    {
+                        const double ua = line.closest(a), ub = line.closest(b);
+                        taken.push_back({std::min(ua, ub) - j, std::max(ua, ub) + j});
+                    }
+                    if (!taken.empty() && loop)
+                    {
+                        loop = false;
+                        std::ranges::sort(taken);
+                        shift = taken.front().second;
+                        spans = {{shift, shift + total}};
+                    }
+                    spans = subtract(std::move(spans), taken, line.cyclic ? total : 0.0, false);
+                }
+
                 const bool rough = p.bond == Bond::Ashlar || p.bond == Bond::Rubble || p.bond == Bond::DryStone;
-                const Pattern pat = rough ? roughPattern(p.bond, course, u, stretcherDepth, headerDepth, mixKey(p.seed, uint64_t(wall), ri, uint64_t(side > 0.0), 7),
-                                                         course == K.count - 1)
-                                          : pattern(p.bond, course, u, stretcherDepth, headerDepth);
+                Pattern pat = rough ? roughPattern(p.bond, course, u, stretcherDepth, headerDepth, mixKey(p.seed, uint64_t(wall), ri, uint64_t(side > 0.0), 7),
+                                                   course == K.count - 1)
+                                    : pattern(p.bond, course, u, stretcherDepth, headerDepth);
+                if (throughs)
+                {
+                    pat.lead.clear();
+                    for (Unit& unit : pat.cycle)
+                        if (unit.depth >= T - j - 1e-6)
+                            unit = {unit.width, Role::Stretcher, stretcherDepth};
+                    if (!rough)
+                        pat.cycle = {{u.length, Role::Stretcher, stretcherDepth}};
+                }
                 for (size_t si = 0; si < spans.size(); ++si)
                 {
                     const Span& sp = spans[si];
