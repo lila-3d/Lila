@@ -19,6 +19,8 @@
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <set>
+#include <span>
 #include <array>
 #include <atomic>
 #include <cfloat>
@@ -90,6 +92,33 @@ struct MeshPush
     uint32_t maps[2] = {0xffffffffu, 0xffffffffu}; // base color | normal << 16, ORM | emissive << 16
 };
 static_assert(sizeof(MeshPush) == 256, "matches MeshPush in mesh.slang");
+
+struct GpuMesh;
+
+/** One material section of a shaded batch, its push constants worked out once for as long as the frame draws the same list. */
+struct SectionRecord
+{
+    uint32_t batch = 0; // in DrawBatches::shaded
+    MeshSection section;
+    GpuMesh* mesh = nullptr;
+    MeshPush push;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    bool material = false;    // reads the frame's texture table
+    bool translucent = false; // its material blends
+};
+
+/** What section records depend on besides the draws: frame settings, the texture table and the GPU mesh cache. */
+struct RecordKey
+{
+    glm::vec4 params{0.0f}, env{0.0f}, backTint{0.0f};
+    float gamma = 0.0f, saturation = 0.0f;
+    uint32_t lightCount = 0;
+    bool bevel = false, grey = false, twoSided = false, xray = false, table = false, instances = false, bindless = false, wire = false;
+    uint64_t uploads = 0, evictions = 0;
+    std::vector<uint32_t> textureTable;
+
+    bool operator==(const RecordKey&) const = default;
+};
 
 // Draw-level bits above the material flags, matching mesh.slang.
 constexpr uint32_t kVertexColorShaded = 1u << 11;
@@ -497,6 +526,21 @@ struct Viewport
     int retries = 0;       // redraws in a row after an out-of-date swapchain
     int msaaGeneration = -1; // Impl::msaaGeneration the targets were made for
     FrameState state;
+    /** The last frame's mesh draws and their batches, reused while a new frame draws the same list. Render thread only. */
+    std::vector<MeshDraw> keptMeshes;
+    DrawBatches keptBatches;
+    bool keptShaderWire = false;
+    std::vector<uint32_t> keptDynamic; // indices of the kept draws whose meshes deform
+    std::vector<SectionRecord> keptRecords;
+    /** The kept draws' material maps, each once, in the order the draws first use them, with their placeholders. */
+    std::vector<std::pair<TexturePtr, uint64_t>> keptMaps;
+    std::vector<TexturePtr> keptTextures;
+    bool keptMapsValid = false;
+    std::vector<ContactPush> keptContacts; // without viewProj
+    glm::vec2 keptContactKey{-1.0f};
+    bool keptContactsValid = false;
+    RecordKey keptRecordKey;
+    bool keptRecordsValid = false;
     Renderer::FrameStats timing; // render thread only; copied to stats under the mutex
     Renderer::FrameStats stats;
 
@@ -721,6 +765,13 @@ struct Renderer::Impl
     VkDeviceAddress frameTableAddress = 0;
     /** The frame's mesh draws grouped for instancing, and the address of their instance buffer (0 if it failed). */
     DrawBatches frameBatches;
+    /** The frame's shaded sections, ready to record; the viewport's kept list. */
+    std::vector<SectionRecord> offscreenRecords;
+    std::vector<SectionRecord>* frameRecords = &offscreenRecords;
+    uint64_t meshEvictions = 0;
+    /** The cull mode emitSection last set and on which command buffer; reset whenever a command buffer begins. */
+    VkCommandBuffer cullCmd = VK_NULL_HANDLE;
+    VkCullModeFlags cullMode = 0;
     VkDeviceAddress frameInstanceAddress = 0;
     /** Mesh draw calls and placements recorded this frame, for FrameStats. */
     uint64_t frameMeshDraws = 0, frameMeshInstances = 0;
@@ -1210,6 +1261,7 @@ struct Renderer::Impl
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &bi);
+        cullCmd = VK_NULL_HANDLE;
         barrier(cmd, image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, mips, layers);
         vkCmdCopyBufferToImage(cmd, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(regions.size()), regions.data());
@@ -1472,8 +1524,6 @@ struct Renderer::Impl
      */
     GpuMesh* gpuMesh(const std::shared_ptr<const RenderMesh>& mesh, VkCommandBuffer cmd = VK_NULL_HANDLE, Frame* f = nullptr)
     {
-        LILA_ZONE();
-
         auto upload = [&](const void* data, size_t size, VkBufferUsageFlags usage) {
             return f ? deviceBuffer(cmd, *f, data, size, usage) : createBuffer(data, size, usage);
         };
@@ -1488,6 +1538,7 @@ struct Renderer::Impl
         auto it = meshCache.find(mesh->key);
         if (it == meshCache.end())
         {
+            LILA_ZONE_N("gpuMesh upload");
             GpuMesh g;
             if (mesh->shareVertices)
             {
@@ -1574,6 +1625,7 @@ struct Renderer::Impl
             destroyBuffer(g.edgeIndices);
             compute::destroy(vk, g.edgeMask);
             meshCache.erase(key);
+            ++meshEvictions;
         }
     }
 
@@ -2043,9 +2095,55 @@ struct Renderer::Impl
     }
 
     /** Uploads every map this frame's materials use for the first time, then writes the frame's texture table. Runs before rendering begins. */
-    void prepareTextures(VkCommandBuffer cmd, Frame& f, const FrameState& s)
+    /** The draws' material maps, each once, in first-use order with their placeholders, and the distinct textures among them. */
+    static void collectMaps(const FrameState& s, std::vector<std::pair<TexturePtr, uint64_t>>& maps, std::vector<TexturePtr>& textures)
+    {
+        maps.clear();
+        textures.clear();
+        std::set<std::pair<const void*, uint64_t>> seenMaps;
+        std::unordered_set<const void*> seenTextures;
+        std::unordered_set<const void*> seenLists;
+        auto addTexture = [&](const TexturePtr& t) {
+            if (seenTextures.insert(t.get()).second)
+                textures.push_back(t);
+        };
+        auto addMap = [&](const TexturePtr& t, uint64_t placeholder) {
+            if (t && seenMaps.insert({t.get(), placeholder}).second)
+                maps.emplace_back(t, placeholder);
+        };
+        for (const MeshDraw& d : s.meshes)
+        {
+            if (!(d.flags & DrawShaded) || d.materials.empty() || !seenLists.insert(&d.materials.list()).second)
+                continue;
+            for (const Material& mat : d.materials)
+            {
+                for (const TexturePtr* t : {&mat.baseColorMap, &mat.normalMap, &mat.ormMap, &mat.emissiveMap, &mat.style.strokeMap})
+                    addTexture(*t);
+                addMap(mat.baseColorMap, kWhiteSrgbKey);
+                addMap(mat.normalMap, kFlatNormalKey);
+                addMap(mat.ormMap, kWhiteLinearKey);
+                addMap(mat.emissiveMap, kWhiteSrgbKey);
+                if (mat.style.strokeMap && !mat.style.strokeMap->isUdimSet())
+                    addMap(mat.style.strokeMap, kWhiteLinearKey);
+            }
+        }
+    }
+
+    void prepareTextures(VkCommandBuffer cmd, Frame& f, const FrameState& s, Viewport* v = nullptr)
     {
         LILA_ZONE();
+
+        std::vector<std::pair<TexturePtr, uint64_t>> scratchMaps;
+        std::vector<TexturePtr> scratchTextures;
+        if (v && !v->keptMapsValid)
+        {
+            collectMaps(s, v->keptMaps, v->keptTextures);
+            v->keptMapsValid = true;
+        }
+        else if (!v)
+            collectMaps(s, scratchMaps, scratchTextures);
+        const auto& maps = v ? v->keptMaps : scratchMaps;
+        const auto& unique = v ? v->keptTextures : scratchTextures;
 
         frameUsesVt = false;
         if (bindless)
@@ -2056,19 +2154,13 @@ struct Renderer::Impl
                 f.staging.push_back({b.buffer, b.alloc});
         }
 
-        for (const MeshDraw& d : s.meshes)
-        {
-            if (!(d.flags & DrawShaded))
-                continue;
-            for (const Material& mat : d.materials)
-                for (const TexturePtr* t : {&mat.baseColorMap, &mat.normalMap, &mat.ormMap, &mat.emissiveMap, &mat.style.strokeMap})
-                    prepareTexture(cmd, f, *t, "texture");
-        }
+        for (const TexturePtr& t : unique)
+            prepareTexture(cmd, f, t, "texture");
         for (const ImagePlaneDraw& p : s.imagePlanes)
             prepareTexture(cmd, f, p.image, "image plane");
         prepareTexture(cmd, f, s.externalColor, "viewport renderer image");
         prepareTexture(cmd, f, s.externalDepth, "viewport renderer depth");
-        writeTextureTable(f, s);
+        writeTextureTable(f, s, maps);
     }
 
     /** The bindless slot a texture key samples, its placeholder's when it has none. */
@@ -2128,7 +2220,7 @@ struct Renderer::Impl
     }
 
     /** Builds the table every bindless draw this frame reads its maps through and copies it into the frame's buffer. */
-    void writeTextureTable(Frame& f, const FrameState& s)
+    void writeTextureTable(Frame& f, const FrameState& s, const std::vector<std::pair<TexturePtr, uint64_t>>& maps)
     {
         frameTable.clear();
         frameHandles.clear();
@@ -2136,20 +2228,8 @@ struct Renderer::Impl
         // The virtual texture feedback header, filled in once the frame knows its feedback buffer.
         frameTable.assign(vt::kTableHeaderWords, 0u);
         if (bindless)
-            for (const MeshDraw& d : s.meshes)
-            {
-                if (!(d.flags & DrawShaded))
-                    continue;
-                for (const Material& mat : d.materials)
-                {
-                    tableHandle(mat.baseColorMap, kWhiteSrgbKey);
-                    tableHandle(mat.normalMap, kFlatNormalKey);
-                    tableHandle(mat.ormMap, kWhiteLinearKey);
-                    tableHandle(mat.emissiveMap, kWhiteSrgbKey);
-                    if (mat.style.strokeMap && !mat.style.strokeMap->isUdimSet())
-                        tableHandle(mat.style.strokeMap, kWhiteLinearKey);
-                }
-            }
+            for (const auto& [map, placeholder] : maps)
+                tableHandle(map, placeholder);
         writeStyles(s);
         if (frameTable.size() <= vt::kTableHeaderWords)
             frameTable.push_back(slotOf(kWhiteSrgbKey, kWhiteSrgbKey));
@@ -2174,12 +2254,25 @@ struct Renderer::Impl
         frameTableAddress = f.table.address;
     }
 
-    /** Groups the frame's mesh draws for instancing and writes their placements into the frame's instance buffer. */
-    void writeInstances(Frame& f, const FrameState& s)
+    /**
+     * Groups the frame's mesh draws for instancing and writes their placements into the frame's instance buffer. kept, a
+     * view's batches from its last frame, is reused when reuse says this frame draws the same list, and refreshed otherwise.
+     */
+    void writeInstances(Frame& f, const FrameState& s, DrawBatches* kept = nullptr, bool reuse = false)
     {
         LILA_ZONE();
 
-        frameBatches = batchDraws(s, meshWirePipeline != VK_NULL_HANDLE);
+        if (kept && reuse)
+        {
+            rebind(*kept, s.meshes);
+            frameBatches = *kept;
+        }
+        else
+        {
+            frameBatches = batchDraws(s, meshWirePipeline != VK_NULL_HANDLE);
+            if (kept)
+                *kept = frameBatches;
+        }
         frameInstanceAddress = 0;
         const size_t bytes = std::max<size_t>(frameBatches.instances.size(), 1) * sizeof(GpuInstance);
         if (f.instances.size < bytes)
@@ -2310,19 +2403,9 @@ struct Renderer::Impl
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &scissor);
             VkDescriptorSet boundSet = VK_NULL_HANDLE;
-            for (const DrawBatch& b : frameBatches.shaded)
-            {
-                const MeshDraw& d = *b.draw;
-                GpuMesh* g = gpuMesh(d.mesh);
-                if (!g)
-                    continue;
-                for (const MeshSection& sec : sectionsOf(d, *g))
-                {
-                    const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
-                    if (!mat || !(mat->flags & MatTranslucent))
-                        drawSection(cmd, s, b, *g, sec, viewProj, boundSet);
-                }
-            }
+            for (SectionRecord& r : *frameRecords)
+                if (!r.translucent)
+                    emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
         }
         vkCmdEndRendering(cmd);
         barrier(cmd, shadowAtlas.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage, depthWrite,
@@ -2359,14 +2442,16 @@ struct Renderer::Impl
     }
 
     /** Uploads the meshes this frame draws for the first time into device memory. Runs before rendering begins. */
-    void prepareMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s)
+    /** known: the draws are the last frame's, whose meshes that frame already uploaded. */
+    void prepareMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s, bool known = false)
     {
         LILA_ZONE();
 
         const size_t staged = f.staging.size();
-        for (const MeshDraw& d : s.meshes)
-            if (d.mesh && !meshCache.contains(d.mesh->key))
-                gpuMesh(d.mesh, cmd, &f);
+        if (!known)
+            for (const MeshDraw& d : s.meshes)
+                if (d.mesh && !meshCache.contains(d.mesh->key))
+                    gpuMesh(d.mesh, cmd, &f);
         for (const PointDraw& p : s.points)
             if (p.cloud && !p.cloud->points.empty() && !pointCache.contains(p.cloud->key))
             {
@@ -2383,15 +2468,18 @@ struct Renderer::Impl
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
-    void prepareDynamicMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s)
+    /** dynamic, when given, lists the indices of the draws with dynamic meshes, so the rest needn't be looked at. */
+    void prepareDynamicMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s, const std::vector<uint32_t>* dynamic = nullptr)
     {
         LILA_ZONE();
 
         std::vector<VkBufferCopy> regions;
         std::vector<MeshVertex> data;
         bool first = true;
-        for (const MeshDraw& d : s.meshes)
+        const size_t count = dynamic ? dynamic->size() : s.meshes.size();
+        for (size_t k = 0; k < count; ++k)
         {
+            const MeshDraw& d = s.meshes[dynamic ? (*dynamic)[k] : k];
             if (!d.mesh || !d.mesh->dynamic)
                 continue;
             auto it = meshCache.find(d.mesh->key);
@@ -2935,18 +3023,11 @@ struct Renderer::Impl
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepassPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
+        // The main pass's section records, so the prepass costs a draw call per section and nothing more.
         VkDescriptorSet boundSet = VK_NULL_HANDLE;
-        for (const DrawBatch& b : frameBatches.shaded)
-        {
-            const MeshDraw& d = *b.draw;
-            GpuMesh* g = gpuMesh(d.mesh);
-            for (const MeshSection& sec : sectionsOf(d, *g))
-            {
-                const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
-                if (!mat || !(mat->flags & MatTranslucent))
-                    drawSection(cmd, s, b, *g, sec, viewProj, boundSet);
-            }
-        }
+        for (SectionRecord& r : *frameRecords)
+            if (!r.translucent)
+                emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
         vkCmdEndRendering(cmd);
 
         barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage,
@@ -4044,6 +4125,7 @@ struct Renderer::Impl
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &bi);
+        cullCmd = VK_NULL_HANDLE;
         const auto cpuStart = std::chrono::steady_clock::now();
         if (f.timestamps)
         {
@@ -4055,7 +4137,21 @@ struct Renderer::Impl
         LILA_GPU_SECTION(gpuFrame, "Viewport frame");
         LILA_GPU_SECTION(gpuPass, "Uploads");
         ++frameCounter;
-        prepareTextures(cmd, f, s);
+        const bool shaderWire = meshWirePipeline != VK_NULL_HANDLE;
+        const bool sameMeshes = !v.offscreen && v.keptShaderWire == shaderWire && sameDraws(s.meshes, v.keptMeshes);
+        if (!sameMeshes && !v.offscreen)
+        {
+            LILA_ZONE_N("Keep mesh draws");
+            v.keptMeshes = s.meshes;
+            v.keptShaderWire = shaderWire;
+            v.keptMapsValid = false;
+            v.keptContactsValid = false;
+            v.keptDynamic.clear();
+            for (size_t i = 0; i < s.meshes.size(); ++i)
+                if (s.meshes[i].mesh && s.meshes[i].mesh->dynamic)
+                    v.keptDynamic.push_back(uint32_t(i));
+        }
+        prepareTextures(cmd, f, s, v.offscreen ? nullptr : &v);
         if (frameUsesVt && frameTableAddress && f.feedback.begin(vk, cmd, int(v.extent.width), int(v.extent.height), frameCounter))
         {
             const std::array<uint32_t, vt::kTableHeaderWords> header = f.feedback.header();
@@ -4064,10 +4160,11 @@ struct Renderer::Impl
         }
         else if (f.feedback.active())
             f.feedback.destroy(vk);
-        prepareMeshes(cmd, f, s);
-        prepareDynamicMeshes(cmd, f, s);
-        writeInstances(f, s);
+        prepareMeshes(cmd, f, s, sameMeshes);
+        prepareDynamicMeshes(cmd, f, s, sameMeshes ? &v.keptDynamic : nullptr);
+        writeInstances(f, s, v.offscreen ? nullptr : &v.keptBatches, sameMeshes);
         writeLights(f, s);
+        prepareRecords(v, s, sameMeshes);
         frameMeshDraws = frameMeshInstances = 0;
 
         glm::dmat4 viewProj = s.proj * s.view;
@@ -4294,7 +4391,7 @@ struct Renderer::Impl
             vkCmdDraw(cmd, 3, 1, 0, 0);
         }
 
-        drawContactShadows(cmd, s, vpScene);
+        drawContactShadows(cmd, s, vpScene, v.offscreen ? nullptr : &v);
         drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height);
         if (aoFast)
         {
@@ -5048,7 +5145,7 @@ struct Renderer::Impl
     }
 
     /** A soft blob under each shaded mesh that rests near the ground, fading out as it lifts off. */
-    void drawContactShadows(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj)
+    void drawContactShadows(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, Viewport* v = nullptr)
     {
         LILA_ZONE();
 
@@ -5056,53 +5153,66 @@ struct Renderer::Impl
         int a0 = 0, a1 = s.zUp ? 1 : 2;
         if (!contactPipeline || s.groundShadow <= 0.0f || s.eye[up] <= 0.0)
             return;
-        bool bound = false;
-        for (const MeshDraw& d : s.meshes)
+        // The blobs depend only on the draws: worked out once while the frame draws the same list.
+        std::vector<ContactPush> scratch;
+        std::vector<ContactPush>& blobs = v ? v->keptContacts : scratch;
+        const glm::vec2 key(s.groundShadow, s.zUp ? 1.0f : 0.0f);
+        if (!v || !v->keptContactsValid || v->keptContactKey != key)
         {
-            if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
-                continue;
-            glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
-            auto extend = [&](const glm::mat4& world) {
-                for (int c = 0; c < 8; ++c)
-                {
-                    glm::vec3 corner((c & 1) ? d.mesh->boundsMax.x : d.mesh->boundsMin.x, (c & 2) ? d.mesh->boundsMax.y : d.mesh->boundsMin.y,
-                                     (c & 4) ? d.mesh->boundsMax.z : d.mesh->boundsMin.z);
-                    glm::vec3 w(world * glm::vec4(corner, 1.0f));
-                    lo = glm::min(lo, w);
-                    hi = glm::max(hi, w);
-                }
-            };
-            if (d.instances && !d.instances->empty())
-                for (const glm::mat4& placement : *d.instances)
-                    extend(d.world * placement);
-            else
-                extend(d.world);
-            glm::vec3 half = (hi - lo) * 0.5f;
-            float size = std::max(half[a0], half[a1]);
-            float gap = lo[up];
-            if (size <= 0.0f || hi[up] <= 0.0f)
-                continue;
-            float opacity = s.groundShadow * (1.0f - std::clamp(gap / size, 0.0f, 1.0f));
-            if (opacity <= 0.0f)
-                continue;
-
-            ContactPush p;
-            p.viewProj = viewProj;
-            glm::vec3 center = (lo + hi) * 0.5f;
-            center[up] = 0.0f;
-            p.center = glm::vec4(center, opacity);
-            // The blob reaches past the footprint by a fraction of the object's size so it reads as soft occlusion.
-            glm::vec3 axisA(0.0f), axisB(0.0f);
-            float spread = size * 0.6f;
-            axisA[a0] = half[a0] + spread;
-            axisB[a1] = half[a1] + spread;
-            p.axisA = glm::vec4(axisA, size / (size + spread));
-            p.axisB = glm::vec4(axisB, 0.0f);
-            if (!bound)
+            blobs.clear();
+            for (const MeshDraw& d : s.meshes)
             {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contactPipeline);
-                bound = true;
+                if (!(d.flags & DrawShaded) || !d.mesh || d.mesh->indices.empty())
+                    continue;
+                glm::vec3 lo(FLT_MAX), hi(-FLT_MAX);
+                auto extend = [&](const glm::mat4& world) {
+                    for (int c = 0; c < 8; ++c)
+                    {
+                        glm::vec3 corner((c & 1) ? d.mesh->boundsMax.x : d.mesh->boundsMin.x, (c & 2) ? d.mesh->boundsMax.y : d.mesh->boundsMin.y,
+                                         (c & 4) ? d.mesh->boundsMax.z : d.mesh->boundsMin.z);
+                        glm::vec3 w(world * glm::vec4(corner, 1.0f));
+                        lo = glm::min(lo, w);
+                        hi = glm::max(hi, w);
+                    }
+                };
+                if (d.instances && !d.instances->empty())
+                    for (const glm::mat4& placement : *d.instances)
+                        extend(d.world * placement);
+                else
+                    extend(d.world);
+                glm::vec3 half = (hi - lo) * 0.5f;
+                float size = std::max(half[a0], half[a1]);
+                float gap = lo[up];
+                if (size <= 0.0f || hi[up] <= 0.0f)
+                    continue;
+                float opacity = s.groundShadow * (1.0f - std::clamp(gap / size, 0.0f, 1.0f));
+                if (opacity <= 0.0f)
+                    continue;
+
+                ContactPush& p = blobs.emplace_back();
+                glm::vec3 center = (lo + hi) * 0.5f;
+                center[up] = 0.0f;
+                p.center = glm::vec4(center, opacity);
+                // The blob reaches past the footprint by a fraction of the object's size so it reads as soft occlusion.
+                glm::vec3 axisA(0.0f), axisB(0.0f);
+                float spread = size * 0.6f;
+                axisA[a0] = half[a0] + spread;
+                axisB[a1] = half[a1] + spread;
+                p.axisA = glm::vec4(axisA, size / (size + spread));
+                p.axisB = glm::vec4(axisB, 0.0f);
             }
+            if (v)
+            {
+                v->keptContactsValid = true;
+                v->keptContactKey = key;
+            }
+        }
+        if (blobs.empty())
+            return;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, contactPipeline);
+        for (ContactPush& p : blobs)
+        {
+            p.viewProj = viewProj;
             vkCmdPushConstants(cmd, contactLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
             vkCmdDraw(cmd, 6, 1, 0, 0);
         }
@@ -5125,24 +5235,93 @@ struct Renderer::Impl
     }
 
     /** A draw's material sections, or one section of slot 0 covering the whole mesh. */
-    static std::vector<MeshSection> sectionsOf(const MeshDraw& d, const GpuMesh& g)
+    static std::span<const MeshSection> sectionsOf(const MeshDraw& d, const GpuMesh& g, MeshSection& whole)
     {
-        std::vector<MeshSection> sections = d.mesh->sections;
-        if (sections.empty())
-            sections.push_back({0, 0, g.indexCount});
-        return sections;
+        if (!d.mesh->sections.empty())
+            return d.mesh->sections;
+        whole = {0, 0, g.indexCount};
+        return {&whole, 1};
     }
 
-    /** One material section of a batch's placements, instanced, with whichever mesh pipeline is bound. */
-    void drawSection(VkCommandBuffer cmd, const FrameState& s, const DrawBatch& b, GpuMesh& g, const MeshSection& sec, const glm::mat4& viewProj,
-                     VkDescriptorSet& boundSet)
+    /**
+     * Points frameRecords at the view's section records, rebuilt unless the frame draws the same list under the same
+     * settings as the last; only the per-frame addresses and the eye are refreshed then.
+     */
+    void prepareRecords(Viewport& v, const FrameState& s, bool sameMeshes)
     {
-        if (!frameInstanceAddress || b.count == 0)
+        LILA_ZONE();
+        RecordKey key;
+        const float lighting = s.lighting == FrameState::Lighting::Flat ? 2.0f : s.lighting == FrameState::Lighting::Environment && envLoaded ? 1.0f : 0.0f;
+        key.params = glm::vec4(s.exposure, s.zUp ? 1.0f : 0.0f, 0.0f, lighting);
+        key.env = envParams(s);
+        key.backTint = s.backfaceTint;
+        key.gamma = s.gamma;
+        key.saturation = s.envLightSaturation;
+        key.lightCount = frameLightCount;
+        key.bevel = frameBevel;
+        key.grey = s.greyBaseColor;
+        key.twoSided = s.twoSidedLighting;
+        key.xray = s.xray;
+        key.table = frameTableAddress != 0;
+        key.instances = frameInstanceAddress != 0;
+        key.bindless = bindless;
+        key.wire = meshWirePipeline != VK_NULL_HANDLE;
+        key.uploads = uploadEpoch;
+        key.evictions = meshEvictions;
+        key.textureTable.assign(frameTable.begin() + std::min<size_t>(frameTable.size(), vt::kTableHeaderWords), frameTable.end());
+        std::vector<SectionRecord>& records = v.offscreen ? offscreenRecords : v.keptRecords;
+        frameRecords = &records;
+        if (!v.offscreen && sameMeshes && v.keptRecordsValid && key == v.keptRecordKey)
+        {
+            const glm::vec4 eye(glm::vec3(s.eye), 1.0f);
+            for (SectionRecord& r : records)
+            {
+                r.push.instances = frameInstanceAddress;
+                r.push.lights = frameLightAddress;
+                r.push.eye = eye;
+                if (r.material)
+                    r.push.textureTable = frameTableAddress;
+            }
             return;
+        }
+        records.clear();
+        if (frameInstanceAddress)
+            for (uint32_t bi = 0; bi < frameBatches.shaded.size(); ++bi)
+            {
+                const DrawBatch& b = frameBatches.shaded[bi];
+                if (b.count == 0)
+                    continue;
+                const MeshDraw& d = *b.draw;
+                GpuMesh* g = gpuMesh(d.mesh);
+                if (!g)
+                    continue;
+                for (MeshSection whole; const MeshSection& sec : sectionsOf(d, *g, whole))
+                {
+                    SectionRecord r;
+                    r.batch = bi;
+                    r.section = sec;
+                    r.mesh = g;
+                    r.push = sectionPush(s, b, *g, sec, r.set);
+                    const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
+                    r.material = mat != nullptr;
+                    r.translucent = mat && (mat->flags & MatTranslucent);
+                    if (r.set)
+                        records.push_back(r);
+                }
+            }
+        v.keptRecordKey = std::move(key);
+        v.keptRecordsValid = !v.offscreen;
+    }
+
+    /**
+     * The push constants of one material section of a batch, everything but viewProj, and the descriptor set it samples
+     * through (null when there is none, and nothing draws).
+     */
+    MeshPush sectionPush(const FrameState& s, const DrawBatch& b, const GpuMesh& g, const MeshSection& sec, VkDescriptorSet& set)
+    {
         const MeshDraw& d = *b.draw;
         const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
         MeshPush p;
-        p.viewProj = viewProj;
         p.instances = frameInstanceAddress;
         p.firstInstance = b.first;
         p.eye = glm::vec4(glm::vec3(s.eye), 1.0f);
@@ -5208,31 +5387,43 @@ struct Renderer::Impl
             p.surface.z *= kXrayOpacity;
             p.surface.w *= kXrayOpacity; // masked cutouts stay where they were
         }
-        VkDescriptorSet set = bindless ? bindlessSet : materialSet(mat);
-        if (!set)
-            return;
+        set = bindless ? bindlessSet : materialSet(mat);
+        if (b.wire)
+        {
+            const uint32_t first = std::min(sec.firstIndex, g.indexCount);
+            p.edgeMask = g.edgeMask.address;
+            p.firstTriangle = first / 3;
+            p.wireWidth = std::max(d.wireWidth, 1.0f);
+        }
+        return p;
+    }
+
+    /** Records one section draw of count placements from first with whichever mesh pipeline is bound. */
+    void emitSection(VkCommandBuffer cmd, const FrameState& s, MeshPush& p, VkDescriptorSet set, const GpuMesh& g, const MeshSection& sec,
+                     uint32_t count, const glm::mat4& viewProj, VkDescriptorSet& boundSet)
+    {
+        p.viewProj = viewProj;
         if (set != boundSet)
         {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 1, 1, &set, 0, nullptr);
             boundSet = set;
         }
         // The viewport toggle alone decides, as Maya's does: one-sided materials show their back faces with it off.
-        vkCmdSetCullMode(cmd, s.backfaceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE);
+        const VkCullModeFlags cull = s.backfaceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+        if (cmd != cullCmd || cull != cullMode)
+        {
+            vkCmdSetCullMode(cmd, cull);
+            cullCmd = cmd;
+            cullMode = cull;
+        }
         vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &g.vertices.buffer, &offset);
         vkCmdBindIndexBuffer(cmd, g.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        uint32_t first = std::min(sec.firstIndex, g.indexCount);
-        if (b.wire)
-        {
-            p.edgeMask = g.edgeMask.address;
-            p.firstTriangle = first / 3;
-            p.wireWidth = std::max(d.wireWidth, 1.0f);
-            vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
-        }
-        vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), b.count, first, 0, 0);
+        const uint32_t first = std::min(sec.firstIndex, g.indexCount);
+        vkCmdDrawIndexed(cmd, std::min(sec.indexCount, g.indexCount - first), count, first, 0, 0);
         ++frameMeshDraws;
-        frameMeshInstances += b.count;
+        frameMeshInstances += count;
     }
 
     void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, uint32_t heightPx)
@@ -5247,8 +5438,8 @@ struct Renderer::Impl
 
         struct Pending
         {
-            DrawBatch placement; // one instance of a batch: translucent placements sort individually
-            MeshSection section;
+            SectionRecord* record;
+            uint32_t instance; // translucent placements sort individually
             float distance;
         };
         std::vector<Pending> translucent;
@@ -5259,26 +5450,22 @@ struct Renderer::Impl
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
         };
 
-        for (const DrawBatch& b : frameBatches.shaded)
+        for (SectionRecord& r : *frameRecords)
         {
-            const MeshDraw& d = *b.draw;
-            GpuMesh* g = gpuMesh(d.mesh);
-            use(b.wire && g->edgeMask.address && meshWirePipeline ? meshWirePipeline : meshPipeline);
-            for (const MeshSection& sec : sectionsOf(d, *g))
+            const DrawBatch& b = frameBatches.shaded[r.batch];
+            const bool wire = b.wire && r.mesh->edgeMask.address && meshWirePipeline;
+            if (s.xray || r.translucent)
             {
-                const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
-                if (s.xray || (mat && (mat->flags & MatTranslucent)))
+                const glm::vec4 centre((b.draw->mesh->boundsMin + b.draw->mesh->boundsMax) * 0.5f, 1.0f);
+                for (uint32_t i = 0; i < b.count; ++i)
                 {
-                    const glm::vec4 centre((d.mesh->boundsMin + d.mesh->boundsMax) * 0.5f, 1.0f);
-                    for (uint32_t i = 0; i < b.count; ++i)
-                    {
-                        const glm::vec3 c(frameBatches.instances[b.first + i].world * centre);
-                        translucent.push_back({{b.draw, b.first + i, 1, b.wire}, sec, glm::length(c - glm::vec3(s.eye))});
-                    }
-                    continue;
+                    const glm::vec3 c(frameBatches.instances[b.first + i].world * centre);
+                    translucent.push_back({&r, b.first + i, glm::length(c - glm::vec3(s.eye))});
                 }
-                drawSection(cmd, s, b, *g, sec, viewProj, boundSet);
+                continue;
             }
+            use(wire ? meshWirePipeline : meshPipeline);
+            emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, b.count, viewProj, boundSet);
         }
         // Translucency after everything opaque, far to near, testing depth without writing it.
         if (!translucent.empty() && meshBlendPipeline)
@@ -5286,9 +5473,11 @@ struct Renderer::Impl
             std::ranges::stable_sort(translucent, [](const Pending& a, const Pending& b) { return a.distance > b.distance; });
             for (const Pending& t : translucent)
             {
-                GpuMesh* g = gpuMesh(t.placement.draw->mesh);
-                use(t.placement.wire && g->edgeMask.address && meshWireBlendPipeline ? meshWireBlendPipeline : meshBlendPipeline);
-                drawSection(cmd, s, t.placement, *g, t.section, viewProj, boundSet);
+                SectionRecord& r = *t.record;
+                use(frameBatches.shaded[r.batch].wire && r.mesh->edgeMask.address && meshWireBlendPipeline ? meshWireBlendPipeline : meshBlendPipeline);
+                MeshPush p = r.push;
+                p.firstInstance = t.instance;
+                emitSection(cmd, s, p, r.set, *r.mesh, r.section, 1, viewProj, boundSet);
             }
         }
         evictTextures();

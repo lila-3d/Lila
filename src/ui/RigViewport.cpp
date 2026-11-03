@@ -17,6 +17,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
+#include "scene/SceneIndex.h"
 
 #include <QColor>
 #include <QTimer>
@@ -216,9 +217,10 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         bool ancestor = false;
     };
     std::vector<Styled> styled;
-    for (NodeId id : g.nodes())
+    for (scene::Node* jn : scene::sceneIndex::matching(g, "joint", scene::rig::isJoint))
     {
-        if (!drawn(*g.node(id)))
+        const NodeId id = jn->id();
+        if (!drawn(*jn))
             continue;
         if (highlight && g.isSelected(id))
             styled.push_back({id, 1000, chainColor(0, chainLook)});
@@ -270,9 +272,9 @@ void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     g.evaluate();
     auto& out = PrefStore::get().value<bool>("general", "/rig/xrayJoints", false) ? s.linesXray : s.lines;
     double scale = displayScale();
-    for (NodeId id : g.nodes())
+    for (scene::Node* n : scene::sceneIndex::ofType(g, "ikHandle"))
     {
-        scene::Node* n = g.node(id);
+        const NodeId id = n->id();
         if (!isIkHandle(*n))
             continue;
         const glm::vec4& color = viewportDisplay::highlightSelection() && g.isSelected(id) ? kSelectedColor : kChildOfSelectedColor;

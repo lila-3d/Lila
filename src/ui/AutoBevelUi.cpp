@@ -13,6 +13,7 @@
 #include "ui/NodeLookup.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "scene/SceneIndex.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -51,10 +52,10 @@ void drawBevelEdges(render::FrameState& s, OverlayPainter&, const ViewInfo& view
 
     Graph& g = Graph::current();
     const std::vector<NodeId>& sel = g.selection();
-    for (NodeId id : g.nodes())
+    for (scene::Node* n : scene::sceneIndex::matching(g, "autoBevel", scene::autoBevel::isAutoBevel))
     {
-        scene::Node* n = g.node(id);
-        if (!n || !scene::autoBevel::isAutoBevel(*n) || scene::autoBevel::editing(*n))
+        const NodeId id = n->id();
+        if (scene::autoBevel::editing(*n))
             continue;
         bool picked = std::find(sel.begin(), sel.end(), id) != sel.end();
         if (!picked && !n->as<bool>(n->type().attrIndex("showEdges")))

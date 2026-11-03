@@ -85,6 +85,8 @@ struct Context
     ViewInfo view;
     /** Whether the view draws the node at all (isolate, LOD level, show filters); null shows everything. */
     std::function<bool(scene::NodeId)> shownNode;
+    /** Changes whenever shownNode's answers may have; 0 recounts every frame. */
+    uint64_t shownKey = 0;
     /** The view's isolation, for meshes it shows only some faces of; null when not isolating. */
     const scene::isolation::Set* isolation = nullptr;
     double framesPerSecond = 0.0;

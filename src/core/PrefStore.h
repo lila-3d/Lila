@@ -110,6 +110,8 @@ public:
     ~PrefStore();
 
 private:
+    /** value() without the memo; a discarded json when no layer has the key. Holds the lock. */
+    json valueUncached(std::string_view file, std::string_view key) const;
     struct Impl;
     std::unique_ptr<Impl> m;
 };

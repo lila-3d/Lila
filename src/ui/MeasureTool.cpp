@@ -15,6 +15,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
+#include "scene/SceneIndex.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -337,9 +338,9 @@ void drawMeasures(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
         g.evaluate();
         // Selected last, so it draws over the rest.
         for (int pass = 0; pass < 2; ++pass)
-            for (NodeId id : g.nodes())
+            for (scene::Node* n : scene::sceneIndex::matching(g, "measure", scene::measure::isMeasure))
             {
-                scene::Node* n = g.node(id);
+                const NodeId id = n->id();
                 if (!drawn(*n) || g.isSelected(id) != (pass == 1))
                     continue;
                 Shape s = shapeOf(*n, view);

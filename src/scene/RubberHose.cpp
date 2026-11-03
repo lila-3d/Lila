@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
+#include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "scene/Graph.h"

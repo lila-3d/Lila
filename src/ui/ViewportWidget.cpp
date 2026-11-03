@@ -1,6 +1,7 @@
 #include "ui/ViewportWidgetDetail.h"
 
 #include "scene/LightingChannels.h"
+#include "scene/SceneIndex.h"
 #include "scene/Turntable.h"
 #include "scene/ViewState.h"
 #include "ui/CameraBookmarks.h"
@@ -70,18 +71,31 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     mWheelCommit->setSingleShot(true);
     mWheelCommit->setInterval(500);
     connect(mWheelCommit, &QTimer::timeout, this, [this] { commitCameraEdit(); });
-    mToolListener = tools::addListener([this] { requestFrame(); });
+    // Kept mesh draws are rebuilt after anything but a camera move or a graph edit, which they track per node.
+    mToolListener = tools::addListener([this] {
+        ++mDisplayEpoch;
+        requestFrame();
+    });
     mSnapSurfaceListener = surfaceSnap::addListener([this] { requestFrame(); });
     mComponentListener = scene::components::addListener([this] { requestFrame(); });
     // Display layers hide on playback: starting or stopping changes what is drawn without changing the time.
-    mPlaybackListener = scene::anim::addPlaybackListener([this] { requestFrame(); });
-    mViewportToolListener = viewportTools::addListener([this] { requestFrame(); });
+    mPlaybackListener = scene::anim::addPlaybackListener([this] {
+        ++mDisplayEpoch;
+        requestFrame();
+    });
+    mViewportToolListener = viewportTools::addListener([this] {
+        ++mDisplayEpoch;
+        requestFrame();
+    });
     mGizmoListener = gizmos::addListener([this] {
         syncGizmos();
         updateCursor();
         requestFrame();
     });
-    mArrangeListener = bake::arrange::addListener([this] { requestFrame(); });
+    mArrangeListener = bake::arrange::addListener([this] {
+        ++mDisplayEpoch;
+        requestFrame();
+    });
     mInheritListener = scene::isolation::addInheritListener([this](const std::vector<scene::NodeId>& made, const std::vector<scene::NodeId>& from) {
         if (scene::isolation::inheritInto(mIsolation, made, from))
             setIsolation(std::move(mIsolation));
@@ -93,11 +107,13 @@ ViewportWidget::ViewportWidget(QWidget* parent) : QWidget(parent)
     // Changing the time only dirties the graph; nothing else asks for a frame.
     onTimeChanged(this, [this] { requestFrame(); });
     mRenderSettingsListener = scene::addRenderSettingsListener([this] {
+        ++mDisplayEpoch;
         syncCameraSettings();
         requestFrame();
     });
     syncCameraSettings();
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
+        ++mDisplayEpoch;
         if (file != "general")
             return;
         mCamera.zUp = PrefStore::get().value<std::string>("general", "/scene/upAxis", "y") == "z";
@@ -367,6 +383,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     if (bg.is_array() && bg.size() == 3)
         s.background = {bg[0].get<float>(), bg[1].get<float>(), bg[2].get<float>()};
     {
+        LILA_ZONE_N("buildFrame settings");
         const PrefStore& p = PrefStore::get();
         s.envPath = environments::resolve(p.value<std::string>("general", "/viewport/env/path", ""));
         s.envRotation = p.value<float>("general", "/viewport/env/rotation", 0.0f) + float(scene::turntable::environmentTurn(scene::Graph::current()));
@@ -385,7 +402,10 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         s.aoIntensity = p.value<float>("general", "/viewport/ao/intensity", 1.0f);
         s.aoFast = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "fast";
         s.aoRayTraced = p.value<std::string>("general", "/viewport/ao/mode", "accurate") == "raytraced";
-        viewportDisplay::apply(s);
+        {
+            LILA_ZONE_N("buildFrame display settings");
+            viewportDisplay::apply(s);
+        }
         if (rv)
         {
             if (rv->lens)
@@ -416,112 +436,24 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     std::unordered_set<scene::NodeId> underSelection;
     const bool highlight = !rv && viewportDisplay::highlightSelection();
     if (highlight)
+    {
+        LILA_ZONE_N("buildFrame selection sets");
         for (scene::NodeId id : g.selection())
             for (scene::NodeId d : g.descendants(id))
                 underSelection.insert(d);
-
-    std::string mode = rv ? "shaded" : PrefStore::get().value<std::string>("general", "/viewport/displayMode", "shaded");
-    bool wireOnShaded = !rv && PrefStore::get().value<bool>("general", "/viewport/wireOnShaded", false);
-    bool showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
-    const render::VertexColorMode vertexColors = viewportDisplay::vertexColorMode();
-    const render::ColorChannel colorChannel = viewportDisplay::colorChannel();
-    const glm::vec4 componentWire = componentPalette().wire;
-    const float componentWireWidth = viewportDisplay::hairlineWidth(viewportDisplay::componentThickness().edge, devicePixelRatioF());
-    std::unordered_set<scene::NodeId> hilite;
-    if (!rv && scene::components::mode() != scene::ComponentMode::Object)
-        for (scene::NodeId id : hilited(mIsolation))
-            hilite.insert(id);
-    const bool aids = !rv && displayAids::anyDrawn(mHudPanel);
-    const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
-    std::vector<displayAids::MeshEntry> aidMeshes;
-    const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
-    const viewportDisplay::SelectionOrderColors order = viewportDisplay::selectionOrderColors(g);
-    for (scene::NodeId id : g.nodes())
-    {
-        scene::Node* n = g.node(id);
-        if (!n->type().isA("mesh") || overridden(*n) || !scene::effectivelyVisible(g, id, inherit) || (!rv && !mIsolation.shows(id)) ||
-            !scene::selectionMask::shown(*n) || viewportHooks::hiddenInView(id) || lodHidden.contains(id))
-            continue;
-        int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
-        const scene::MeshPtr& outMesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-        scene::MeshPtr shown = smoothedFor(outMesh, smooth);
-        std::vector<render::Material> hooked;
-        const bool previewed = shown && viewportHooks::hookedMaterials(id, *shown, hooked);
-        bool textured = (showMaterials || previewed) && shown;
-        const bool tangents = textured && (previewed || needsTangents(*shown));
-        // Geometry nodes instances draw each referenced mesh once, instanced, unless something needs the flat mesh's own draw.
-        const auto cageWire = smoothSubdivisions ? nullptr : smoothCageFor(outMesh, smooth);
-        auto part = isolate::masked(&mIsolation, id, shown, smooth, tangents, cageWire.get());
-        gn::InstanceViewPtr instanced;
-        if (smooth == 0 && !previewed && !hilite.contains(id) && !part && !cageWire)
-            instanced = gn::instanceViewFor(g, id);
-        auto rm = instanced ? nullptr : renderMeshFor(shown, tangents, id);
-        if (!rm && !instanced)
-            continue;
-        render::MeshDraw d;
-        if (part)
-            d.mesh = part->mesh;
-        else if (cageWire)
-            d.mesh = cageWireMeshFor(*cageWire, tangents);
-        else
-            d.mesh = std::move(rm);
-        if (previewed)
-            d.materials = std::move(hooked);
-        else if (textured && !instanced)
-            d.materials = drawMaterials(*shown);
-        d.world = glm::mat4(shownWorld(*n));
-        d.node = uint64_t(id);
-        d.lightingChannels = scene::lightingChannels::mask(*n);
-        if (aids)
-            aidMeshes.push_back({shown, shownWorld(*n)});
-        if (vertexColors != render::VertexColorMode::Off && shown && !geo::colors::current(*shown).empty())
-        {
-            d.vertexColors = vertexColors;
-            d.colorChannel = colorChannel;
-        }
-        d.flags = 0;
-        // Lattices are cages to see through, so they only ever draw as wire.
-        const bool wireOnly = n->type().isA("lattice");
-        const scene::displayLayers::Display layer = scene::displayLayers::display(g, id);
-        const bool templated = layer.type == scene::displayLayers::DisplayType::Template;
-        if (mode != "wireframe" && !wireOnly && !templated)
-            d.flags |= render::DrawShaded;
-        if (mode == "wireframe" || wireOnShaded || wireOnly || templated || hilite.contains(id))
-            d.flags |= render::DrawWire;
-        if (templated && mode != "wireframe")
-            d.flags |= render::DrawWireDepth;
-        if (layer.color)
-            d.wireColor = glm::vec4(viewportDisplay::layerTint(glm::vec3(*layer.color)), 1.0f);
-        else if (templated)
-            d.wireColor = kTemplateWireColor;
-        if (!rv && surfaceSnap::isSurface(id))
-        {
-            d.flags |= render::DrawWire;
-            d.wireColor = themeLinear("wireSnapSurface", kSnapSurfaceWireColor);
-        }
-        if (hilite.contains(id))
-        {
-            if (componentWire.a > 0.0f)
-                d.wireColor = componentWire;
-            d.wireWidth = componentWireWidth;
-        }
-        // In component mode the hilited mesh shows a plain wire so the selected components stand out.
-        bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
-        const scene::NodeId arrayed = scene::arrays::arrayAbove(g, id);
-        if (highlight && g.isSelected(id) && !componentMode)
-            d.flags |= order.other(id) ? render::DrawSelected | render::DrawSelectedOther : render::DrawSelected;
-        else if (!rv && mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
-                 (mPreselect.node == id || (arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
-            d.flags |= render::DrawPreselect;
-        else if (underSelection.contains(id) && !componentMode)
-            d.flags |= render::DrawUnderSelected;
-        if (arrayed != scene::kNoNode)
-            d.instances = arrayPlacements(g, id, n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
-        if (instanced)
-            pushInstanceDraws(s, d, *instanced, textured);
-        else
-            s.meshes.push_back(std::move(d));
     }
+
+    const bool aids = !rv && displayAids::anyDrawn(mHudPanel);
+    std::vector<displayAids::MeshEntry> aidMeshes;
+    {
+        // The HUD counts skip the same hidden levels, so they share this frame's set.
+        mLodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
+        size_t key = mLodHidden.size();
+        for (scene::NodeId id : mLodHidden)
+            key += std::hash<scene::NodeId>()(id) * 0x9E3779B97F4A7C15ull;
+        mLodHiddenKey = key;
+    }
+    drawMeshNodes(s, rv, mLodHidden, underSelection, highlight, aids ? &aidMeshes : nullptr);
     // A render is the scene alone: no components, tools, locators, grid or HUD.
     if (rv)
     {
@@ -541,23 +473,29 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     }
     drawGate(painter);
     const ViewInfo view = viewInfo();
+    const scene::sceneIndex::Hierarchy& hierarchy = scene::sceneIndex::hierarchy(g, inherit);
     if (aids)
     {
-        for (scene::NodeId id : g.nodes())
-            if (scene::Node* n = g.node(id); scene::components::pointProvider(*n) && id != mLookThrough && scene::effectivelyVisible(g, id, inherit) &&
-                                             mIsolation.shows(id) && scene::selectionMask::shown(*n))
+        for (scene::Node* n : scene::sceneIndex::matching(g, "pointProvider", [](const scene::Node& n) { return scene::components::pointProvider(n); }))
+            if (const scene::NodeId id = n->id(); id != mLookThrough && hierarchy.visible(id) && mIsolation.shows(id) && scene::selectionMask::shown(*n))
                 aidMeshes.push_back({nullptr, shownWorld(*n), scene::objectBounds(g, id)});
         displayAids::draw(s, painter, view, mHudPanel, aidMeshes, devicePixelRatioF());
     }
     // Locators and extension node types. Highlighted draws last: with an equal-depth test the later line wins, so a
     // selected locator sitting exactly on an unselected one stays visible.
+    const std::vector<scene::Node*>& drawn = scene::sceneIndex::matching(g, "drawOverride" + std::to_string(drawOverrides::version()), [](const scene::Node& n) {
+        const drawOverrides::DrawOverride* o = drawOverrides::forType(n.type());
+        return o && o->draw;
+    });
+    const viewportDisplay::SelectionOrderColors order = viewportDisplay::selectionOrderColors(g);
     for (int pass = 0; pass < 3; ++pass)
-        for (scene::NodeId id : g.nodes())
+    {
+        LILA_ZONE_N("buildFrame draw overrides");
+        for (scene::Node* n : drawn)
         {
-            scene::Node* n = g.node(id);
+            const scene::NodeId id = n->id();
             const drawOverrides::DrawOverride* o = drawOverrides::forType(n->type());
-            if (!o || !o->draw || id == mLookThrough || !scene::effectivelyVisible(g, id, inherit) || !scene::selectionMask::shown(*n) ||
-                !mIsolation.shows(id))
+            if (id == mLookThrough || !hierarchy.visible(id) || !scene::selectionMask::shown(*n) || !mIsolation.shows(id))
                 continue;
             bool hot = mPreselect.mode == scene::ComponentMode::Object && mPreselect.node == id;
             int rank = highlight && g.isSelected(id) ? 2 : hot || underSelection.contains(id) ? 1 : 0;
@@ -573,10 +511,20 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
                                    : layerLineColor(g, id, themeLinear("wireframe", kLocatorColor));
             o->draw(dc);
         }
+    }
     renderPasses::Context passes{.frame = s, .painter = painter, .view = view, .panel = mHudPanel};
     renderPasses::run(renderPasses::Stage::Scene, passes);
-    for (const auto& drawer : viewportHooks::drawers())
-        drawer(s, painter, view);
+    {
+        const std::vector<viewportHooks::Drawer> drawers = viewportHooks::drawers();
+        const std::vector<std::string> drawerIds = LILA_PROFILER_CONNECTED() ? viewportHooks::drawerIds() : std::vector<std::string>();
+        for (size_t i = 0; i < drawers.size(); ++i)
+        {
+            LILA_ZONE_N("buildFrame viewport drawer");
+            if (i < drawerIds.size())
+                LILA_ZONE_TEXT(drawerIds[i].data(), drawerIds[i].size());
+            drawers[i](s, painter, view);
+        }
+    }
     if (ViewportTool* tool = viewportTools::active())
         tool->draw(s, painter, view);
     if (Gizmo* gz = drawnGizmo())

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <unordered_map>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -164,6 +165,8 @@ struct PrefStore::Impl
     fs::path studioCache;
     Clock::time_point studioPolled;
     std::map<int, ChangeFn> listeners;
+    /** value() results by file and key, dropped whenever any document, layer or default changes. */
+    mutable std::unordered_map<std::string, json> memo;
     /** setDefaults, per file, oldest first. */
     std::map<std::string, std::vector<std::pair<std::string, json>>, std::less<>> contributed;
     int nextListener = 1;
@@ -386,6 +389,8 @@ struct PrefStore::Impl
             }
         }
 
+        if (!changed.empty())
+            memo.clear();
         lock.unlock();
         std::sort(changed.begin(), changed.end());
         changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
@@ -484,12 +489,27 @@ void PrefStore::setWorkspaceDir(const fs::path& lilaDir)
         std::unique_lock lock(m->mutex);
         m->writeDirty(lock, true);
         m->layers[Workspace] = Layer{lilaDir, {}};
+        m->memo.clear();
     }
 }
 
 json PrefStore::value(std::string_view file, std::string_view key, const json& fallback) const
 {
     std::scoped_lock lock(m->mutex);
+    std::string memoKey;
+    memoKey.reserve(file.size() + key.size() + 1);
+    memoKey.append(file).push_back('|');
+    memoKey.append(key);
+    if (auto it = m->memo.find(memoKey); it != m->memo.end())
+        return it->second.is_discarded() ? fallback : it->second;
+    json found = valueUncached(file, key);
+    auto& slot = m->memo[std::move(memoKey)];
+    slot = std::move(found);
+    return slot.is_discarded() ? fallback : slot;
+}
+
+json PrefStore::valueUncached(std::string_view file, std::string_view key) const
+{
     auto ptr = pointer(key);
     const bool locked = m->isLocked(file, ptr.to_string());
     for (int li = LayerCount - 1; li >= 0; --li)
@@ -510,7 +530,7 @@ json PrefStore::value(std::string_view file, std::string_view key, const json& f
         if (d.data.contains(ptr))
             return d.data[ptr];
     }
-    return fallback;
+    return json(json::value_t::discarded);
 }
 
 bool PrefStore::isLocked(std::string_view file, std::string_view key) const
@@ -530,6 +550,7 @@ void PrefStore::setStudioDirs(std::vector<fs::path> dirs)
         m->studio.clear();
         for (fs::path& dir : dirs)
             m->studio.push_back(Layer{std::move(dir), {}});
+        m->memo.clear();
     }
     for (const std::string& f : files)
         m->notify(f);
@@ -616,6 +637,7 @@ void PrefStore::setDefaults(std::string_view file, std::string layer, json data)
             it->second = std::move(data);
         else
             list.emplace_back(std::move(layer), std::move(data));
+        m->memo.clear();
     }
     m->notify(std::string(file));
 }
@@ -632,6 +654,7 @@ bool PrefStore::removeDefaults(std::string_view file, std::string_view layer)
             m->contributed.erase(c);
         if (!n)
             return false;
+        m->memo.clear();
     }
     m->notify(std::string(file));
     return true;
@@ -651,6 +674,8 @@ size_t PrefStore::removeDefaultsWithPrefix(std::string_view prefix)
             count += n;
             c = c->second.empty() ? m->contributed.erase(c) : std::next(c);
         }
+        if (count)
+            m->memo.clear();
     }
     for (const std::string& f : files)
         m->notify(f);
@@ -685,6 +710,7 @@ void PrefStore::set(std::string_view file, std::string_view key, json value, Pre
         if (d.data.contains(ptr) && d.data[ptr] == value)
             return;
         d.data[ptr] = std::move(value);
+        m->memo.clear();
         d.dirty = true;
         d.dirtyAt = Clock::now();
     }
@@ -702,6 +728,7 @@ void PrefStore::remove(std::string_view file, std::string_view key, PrefScope sc
         if (!d.data.contains(ptr))
             return;
         d.data[ptr.parent_pointer()].erase(ptr.back());
+        m->memo.clear();
         d.dirty = true;
         d.dirtyAt = Clock::now();
     }
@@ -723,6 +750,7 @@ void PrefStore::setUserDoc(std::string_view file, json data)
         if (d.data == data)
             return;
         d.data = data.is_object() ? std::move(data) : json::object();
+        m->memo.clear();
         d.dirty = true;
         d.dirtyAt = Clock::now();
     }

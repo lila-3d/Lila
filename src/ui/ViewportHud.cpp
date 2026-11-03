@@ -656,7 +656,7 @@ bool draw(OverlayPainter& p, const Context& ctx)
     Stack topLeft{.edge = kTop, .width = ctx.view.width};
     if (on("polyCount"))
     {
-        scene::hud::PolyStats stats = scene::hud::polyStats(g, uv::currentUvSet(), ctx.shownNode, ctx.isolation);
+        scene::hud::PolyStats stats = scene::hud::polyStats(g, uv::currentUvSet(), ctx.shownNode, ctx.isolation, ctx.shownKey);
         pending = stats.pending;
         topLeft.place(polyCountBlock(stats, parts("polyCount")));
     }

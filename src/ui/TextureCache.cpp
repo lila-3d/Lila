@@ -7,7 +7,9 @@
 #include "render/HdrImage.h"
 #include "ui/ViewportTool.h"
 
+#include <QCoreApplication>
 #include <QThreadPool>
+#include <QTimer>
 
 #include <chrono>
 #include <cmath>
@@ -46,6 +48,7 @@ struct Slot
     std::vector<std::string> files;
     std::vector<fs::file_time_type> times;
     Clock::time_point checked = Clock::now();
+    std::function<Result()> work;
 };
 
 struct Cache
@@ -558,10 +561,40 @@ void start(const std::string& key, Slot& s, std::function<Result()> work)
 {
     s.loading = true;
     s.checked = Clock::now();
+    s.work = work;
     QThreadPool::globalInstance()->start([key, work = std::move(work)] {
         Result r = work();
         mainq::post([key, r = std::move(r)]() mutable { finish(key, std::move(r)); });
     });
+}
+
+constexpr std::chrono::milliseconds kRecheck(1500);
+
+/** Restarts a few slots whose files changed on disk, so an image reloads even while only cached materials draw it. */
+void pollFiles()
+{
+    int budget = 16;
+    for (auto& [key, s] : cache().entries)
+    {
+        if (s.loading || !s.work || Clock::now() - s.checked <= kRecheck)
+            continue;
+        s.checked = Clock::now();
+        if (stamps(s.files) != s.times)
+            start(key, s, s.work);
+        if (--budget == 0)
+            return;
+    }
+}
+
+void ensurePolling()
+{
+    static QTimer* timer = nullptr;
+    if (timer || !QCoreApplication::instance())
+        return;
+    timer = new QTimer(QCoreApplication::instance());
+    timer->setInterval(250);
+    QObject::connect(timer, &QTimer::timeout, [] { pollFiles(); });
+    timer->start();
 }
 
 /** The slot for key, started on first use and restarted when one of its files changed on disk. */
@@ -572,11 +605,12 @@ Slot& entry(const std::string& key, std::vector<std::string> files, const std::f
     Slot& s = it->second;
     if (added)
     {
+        ensurePolling();
         s.files = std::move(files);
         start(key, s, work);
         return s;
     }
-    if (!s.loading && Clock::now() - s.checked > std::chrono::milliseconds(1500))
+    if (!s.loading && Clock::now() - s.checked > kRecheck)
     {
         s.checked = Clock::now();
         if (stamps(s.files) != s.times)

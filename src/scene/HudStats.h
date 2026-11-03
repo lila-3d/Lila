@@ -64,7 +64,11 @@ LILA_SCENE_API bool visibleInHierarchy(const Graph& g, NodeId id);
  * further to the meshes a view draws; null shows everything. partial is the view's isolation: of a mesh it isolates by
  * components, only the faces it shows count, with their edges, points and uvs, and only the selected components on
  * them. Instances sharing one mesh count once each.
+ *
+ * Results are reused until the scene, the component selection, the isolation or the settings they read change. A shown
+ * filter is opaque, so a call passing one is reused only with a nonzero shownKey, which the caller changes whenever the
+ * filter's answers may have; calls with different keys keep separate results.
  */
 LILA_SCENE_API PolyStats polyStats(Graph& g, std::string_view uvSet = "uv0", const std::function<bool(NodeId)>& shown = {},
-                                   const isolation::Set* partial = nullptr);
+                                   const isolation::Set* partial = nullptr, uint64_t shownKey = 0);
 } // namespace lila::scene::hud

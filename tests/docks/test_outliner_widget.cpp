@@ -39,6 +39,9 @@ TEST_CASE("outliner rows: icons, hidden dimming, reveal and kept collapse state"
 
     ui::Outliner o;
     QApplication::processEvents();
+    // Rows are styled once they can be seen.
+    o.expandEverything();
+    QApplication::processEvents();
     REQUIRE(ui::actions::find("outliner.revealSelected"));
     QTreeWidgetItem* loc = row(o, "loc");
     REQUIRE(loc);

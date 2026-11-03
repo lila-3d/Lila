@@ -195,7 +195,7 @@ lila_module(lila_ui UI
     VertexPaintTool.cpp VertexPaintTool.h
     PaintSelect.cpp PaintSelect.h
     ViewportTool.cpp ViewportTool.h ViewportToast.cpp ViewportToast.h StepHistory.h SimPreview.cpp SimPreview.h
-    ViewportWidget.cpp ViewportWidget.h ViewportWidgetDetail.h ViewportComponents.cpp ViewportViews.cpp ViewportInput.cpp
+    ViewportWidget.cpp ViewportWidget.h ViewportWidgetDetail.h ViewportMeshes.cpp ViewportComponents.cpp ViewportViews.cpp ViewportInput.cpp
     CameraBookmarks.cpp CameraBookmarks.h)
 
 set_target_properties(lila_ui PROPERTIES AUTOMOC ON)

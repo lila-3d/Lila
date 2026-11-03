@@ -20,6 +20,7 @@
 #include "ui/ViewportTool.h"
 #include "ui/ViewportWidget.h"
 #include "ui/FileDialog.h"
+#include "scene/SceneIndex.h"
 
 #include <QApplication>
 #include <QDragEnterEvent>
@@ -157,10 +158,10 @@ std::vector<Placed> placedIn(const ViewInfo& view)
     if (!shownIn(view.camera))
         return out;
     scene::Graph& g = scene::Graph::current();
-    for (scene::NodeId id : g.nodes())
+    for (const scene::Node* n : scene::sceneIndex::ofType(g, "imagePlane"))
     {
-        const scene::Node* n = g.node(id);
-        if (!n->type().isA("imagePlane") || !scene::effectivelyVisible(g, id))
+        const scene::NodeId id = n->id();
+        if (!scene::effectivelyVisible(g, id))
             continue;
         std::string camera = ip::cameraName(n->as<std::string>(ImagePlane::kCamera));
         std::optional<ip::CameraFrame> frame;
@@ -414,9 +415,8 @@ void install(std::function<ViewportWidget*()> active)
     viewportHooks::addDrawer(draw);
     viewportHooks::addPicker(pick);
     onTimeChanged(qApp, [] {
-        scene::Graph& g = scene::Graph::current();
-        for (scene::NodeId id : g.nodes())
-            if (const scene::Node* n = g.node(id); n->type().isA("imagePlane") && n->as<bool>(ImagePlane::kUseFrameExtension))
+        for (const scene::Node* n : scene::sceneIndex::ofType(scene::Graph::current(), "imagePlane"))
+            if (n->as<bool>(ImagePlane::kUseFrameExtension))
             {
                 viewportTools::requestRedraw();
                 return;

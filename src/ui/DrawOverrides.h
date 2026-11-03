@@ -76,6 +76,8 @@ LILA_UI_API const DrawOverride& add(DrawOverride o);
 /** For extensions: owned by ctx and removed when it unloads. Null, with a log message, if the id is taken. */
 LILA_UI_API const DrawOverride* add(ext::Context& ctx, DrawOverride o);
 LILA_UI_API bool remove(std::string_view id);
+/** Changes whenever an override is added or removed. */
+LILA_UI_API uint64_t version();
 
 /** The override for nodes of type t: the one registered for t or its nearest base type. Null when none. */
 LILA_UI_API const DrawOverride* forType(const scene::NodeType& t);

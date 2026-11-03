@@ -35,6 +35,11 @@ class QVariantAnimation;
 #include <string>
 #include <vector>
 
+namespace lila::ui::displayAids
+{
+struct MeshEntry;
+}
+
 namespace lila::ui
 {
 /** Native child window the render thread presents into. Owns the camera and Maya-style navigation. */
@@ -63,6 +68,11 @@ public:
     };
     /** What this panel shows of the scene through rv's camera, as a render sees it: no grid, wires, selection, tools or HUD. */
     render::FrameState renderFrame(const RenderView& rv);
+    /**
+     * What the view draws and counts now, for tests and agents: the HUD's poly counts, a summary of the mesh draws and,
+     * with pick (widget pixels, a click when both corners match), what a click or marquee there would select.
+     */
+    nlohmann::json inspect(const std::optional<QRectF>& pick);
     void requestFrame();
     void frameSelection(bool all);
     /**
@@ -158,6 +168,13 @@ private:
 
     void submit();
     render::FrameState buildFrame(const RenderView* rv);
+    struct MeshDrawCache;
+    /**
+     * Appends the mesh nodes' draws to s. Each node's draw is kept between frames and rebuilt only once the node
+     * recomputed or a setting it depends on changed, so a frame that only moved the camera re-emits what it had.
+     */
+    void drawMeshNodes(render::FrameState& s, const RenderView* rv, const std::unordered_set<scene::NodeId>& lodHidden,
+                       const std::unordered_set<scene::NodeId>& underSelection, bool highlight, std::vector<displayAids::MeshEntry>* aids);
     /**
      * The gizmo that takes input for the current tool: the one dragging, else the active provider's, else the default
      * provider's when the active one doesn't support the mode. A viewport tool's name is the mode when a gizmo
@@ -330,5 +347,13 @@ private:
     std::vector<float> mBackdropBright; // OverlayPainter::classifyBackdrop state, so overlay colors switch with hysteresis
     std::deque<std::pair<double, uint64_t>> mFrameSamples; // (ms, frames the renderer drew) over the last second, for the HUD
     bool mHudRefreshQueued = false;
+    std::unique_ptr<MeshDrawCache> mMeshDraws;
+    /** Bumped by every redraw request that isn't the camera's: tools, prefs, playback, texture arrivals, extension state. */
+    uint64_t mDisplayEpoch = 1;
+    /** This frame's level-of-detail hiding, shared by the mesh pass and the HUD counts. */
+    std::unordered_set<scene::NodeId> mLodHidden;
+    uint64_t mLodHiddenKey = 0;
+    /** Changes whenever what the HUD's shown filter answers may have, so polyStats can reuse its counts until then. */
+    uint64_t hudShownKey() const;
 };
 } // namespace lila::ui

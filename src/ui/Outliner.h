@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class QMenu;
@@ -61,8 +62,14 @@ private:
     void rebuild();
     /** Expands the parents of the rows and scrolls the first one into view. */
     void reveal(const std::vector<scene::NodeId>& ids, QAbstractItemView::ScrollHint hint = QAbstractItemView::EnsureVisible);
-    /** Updates each row's icon, font and color from its node's type, reference and visibility. */
-    void restyle();
+    /**
+     * Updates the rows' icons, fonts and colors from their nodes' type, reference and visibility. Only rows that can be
+     * seen (every parent expanded) are touched; expanding a row restyles what it shows. With `only`, just those nodes'
+     * rows and the rows under them.
+     */
+    void restyle(const std::unordered_set<scene::NodeId>* only = nullptr);
+    /** Restyles the subtrees of the nodes edited since the last tick, once per event loop tick. */
+    void scheduleRowRestyle(scene::NodeId id);
     void syncSelectionFromScene();
     void pushSelectionToScene();
     void showContextMenu(const QPoint& pos);
@@ -89,6 +96,7 @@ private:
     int mListener = 0;
     bool mQueued = false;
     bool mRestyleQueued = false;
+    std::unordered_set<scene::NodeId> mDirtyRows;
     bool mSyncing = false;
     /** Rows being moved by an MMB drag. */
     std::vector<scene::NodeId> mMoving;

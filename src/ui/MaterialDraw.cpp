@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <unordered_map>
 
 namespace lila::ui
 {
@@ -200,6 +202,101 @@ size_t slotCount(const geo::Mesh& mesh)
 {
     return std::max<size_t>(mesh.materialNames().size(), 1);
 }
+
+bool sameMaps(const std::optional<texLive::Maps>& a, const std::optional<texLive::Maps>& b)
+{
+    if (a.has_value() != b.has_value())
+        return false;
+    return !a || (a->baseColor == b->baseColor && a->normal == b->normal && a->orm == b->orm && a->emissive == b->emissive &&
+                  a->occlusion == b->occlusion && a->roughness == b->roughness && a->metallic == b->metallic && a->ready == b->ready);
+}
+
+/**
+ * One slot name's converted material. Reused while the material node has not recomputed, no texture has arrived and
+ * its texture set's maps are the same; checked again only when the scene, a texture or a redraw request moved the token.
+ */
+struct SlotEntry
+{
+    const scene::Node* node = nullptr;
+    uint64_t pass = 0;
+    uint64_t textures = 0;
+    uint64_t version = 0, redraws = 0;
+    bool timed = false; // boils: follows the scene time
+    double time = 0.0;
+    std::optional<texLive::Maps> live;
+    render::Material material;
+    bool normalMap = false;
+};
+
+struct SlotCache
+{
+    std::unordered_map<std::string, SlotEntry> slots;
+    scene::Graph* graph = nullptr;
+    int graphListener = 0;
+    uint64_t textures = 1; // images that finished loading, which convert() picks up
+    uint64_t redraws = 1;  // texture sets announce new maps this way
+    uint64_t epoch = 1;    // bumped when a known slot's material changes or the slots are dropped
+};
+
+SlotCache& slotCache()
+{
+    static SlotCache c;
+    static const bool listening = [] {
+        textures::addListener([] { ++slotCache().textures; });
+        viewportTools::addListener([] { ++slotCache().redraws; });
+        return true;
+    }();
+    (void)listening;
+    scene::Graph& g = scene::Graph::current();
+    if (c.graph != &g)
+    {
+        if (c.graph)
+            c.graph->removeListener(c.graphListener);
+        c.graph = &g;
+        c.slots.clear();
+        ++c.epoch;
+        // Which node a slot name finds changes only when nodes come, go or change names.
+        c.graphListener = g.addListener(
+            [](scene::Change change, scene::NodeId) {
+                if (change == scene::Change::Created || change == scene::Change::Deleted || change == scene::Change::Renamed ||
+                    change == scene::Change::Cleared || change == scene::Change::Reset)
+                {
+                    slotCache().slots.clear();
+                    ++slotCache().epoch;
+                }
+            },
+            true);
+    }
+    return c;
+}
+
+const SlotEntry& slotEntry(const std::string& slot)
+{
+    SlotCache& c = slotCache();
+    scene::Graph& g = *c.graph;
+    auto [it, added] = c.slots.try_emplace(slot);
+    SlotEntry& e = it->second;
+    if (!added && e.version == g.version() && e.redraws == c.redraws && e.textures == c.textures)
+        return e;
+    if (added)
+        e.node = scene::materials::find(g, slot);
+    std::optional<texLive::Maps> live = e.node ? texLive::mapsFor(e.node->name()) : std::nullopt;
+    if (added || (e.node && e.node->evaluatedPass() != e.pass) || e.textures != c.textures || !sameMaps(live, e.live) || (e.timed && e.time != g.time()))
+    {
+        if (!added)
+            ++c.epoch;
+        e.material = e.node ? convert(*e.node) : render::Material{};
+        e.pass = e.node ? e.node->evaluatedPass() : 0;
+        e.live = std::move(live);
+        e.timed = e.node && e.material.style.model != render::ShadingModel::DefaultLit && e.node->as<bool>(kBoil);
+        e.time = g.time();
+        e.textures = c.textures;
+        e.normalMap = e.node && (!str(*e.node, kNormalMap).empty() || (e.live && e.live->normal));
+    }
+    e.version = g.version();
+    e.redraws = c.redraws;
+    return e;
+}
 } // namespace
 
 bool materialsShown()
@@ -213,27 +310,27 @@ void setMaterialsShown(bool on)
     viewportTools::requestRedraw();
 }
 
+uint64_t materialsEpoch()
+{
+    SlotCache& c = slotCache();
+    for (auto& [slot, e] : c.slots)
+        slotEntry(slot);
+    return c.epoch;
+}
+
 bool needsTangents(const geo::Mesh& mesh)
 {
-    scene::Graph& g = scene::Graph::current();
     for (size_t i = 0; i < slotCount(mesh); ++i)
-        if (scene::Node* n = scene::materials::find(g, scene::materials::slotName(mesh, int32_t(i))))
-            if (!str(*n, kNormalMap).empty())
-                return true;
-            else if (std::optional<texLive::Maps> live = texLive::mapsFor(n->name()); live && live->normal)
-                return true;
+        if (slotEntry(scene::materials::slotName(mesh, int32_t(i))).normalMap)
+            return true;
     return false;
 }
 
 std::vector<render::Material> drawMaterials(const geo::Mesh& mesh)
 {
-    LILA_ZONE();
-
-    scene::Graph& g = scene::Graph::current();
     std::vector<render::Material> out(slotCount(mesh));
     for (size_t i = 0; i < out.size(); ++i)
-        if (scene::Node* n = scene::materials::find(g, scene::materials::slotName(mesh, int32_t(i))))
-            out[i] = convert(*n);
+        out[i] = slotEntry(scene::materials::slotName(mesh, int32_t(i))).material;
     return out;
 }
 } // namespace lila::ui

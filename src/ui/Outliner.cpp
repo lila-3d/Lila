@@ -400,7 +400,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         if (c == scene::Change::Value && n && scene::objectSets::isSet(*n))
             scheduleRebuild();
         else if (c == scene::Change::Value || c == scene::Change::Connection)
-            scheduleRestyle();
+            scheduleRowRestyle(id);
         else if (c == scene::Change::Selection)
             syncSelectionFromScene();
         else
@@ -665,7 +665,28 @@ void Outliner::scheduleRestyle()
     mRestyleQueued = true;
     QTimer::singleShot(0, this, [this] {
         mRestyleQueued = false;
+        mDirtyRows.clear();
         restyle();
+    });
+}
+
+void Outliner::scheduleRowRestyle(scene::NodeId id)
+{
+    if (mRestyleQueued || mQueued)
+        return;
+    // A layer or other node outside the hierarchy can change rows anywhere.
+    if (const scene::Node* n = scene::Graph::current().node(id); !n || !n->type().dag)
+        return scheduleRestyle();
+    const bool first = mDirtyRows.empty();
+    mDirtyRows.insert(id);
+    if (!first)
+        return;
+    QTimer::singleShot(0, this, [this] {
+        if (mDirtyRows.empty())
+            return;
+        std::unordered_set<scene::NodeId> rows = std::move(mDirtyRows);
+        mDirtyRows.clear();
+        restyle(&rows);
     });
 }
 
@@ -832,7 +853,7 @@ void Outliner::showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos)
     menu.exec(globalPos);
 }
 
-void Outliner::restyle()
+void Outliner::restyle(const std::unordered_set<scene::NodeId>* only)
 {
     LILA_ZONE();
 
@@ -853,7 +874,38 @@ void Outliner::restyle()
             if (auto [it, added] = below.try_emplace(p, i.severity); !added)
                 it->second = std::max(it->second, i.severity);
     }
-    for (auto& [id, item] : mItems)
+    // The rows to style: those that can be seen, all of them or under the edited nodes.
+    std::vector<std::pair<scene::NodeId, QTreeWidgetItem*>> rows;
+    std::vector<QTreeWidgetItem*> stack;
+    auto shownChildren = [&](QTreeWidgetItem* item) {
+        if (item->isExpanded())
+            for (int i = 0; i < item->childCount(); ++i)
+                stack.push_back(item->child(i));
+    };
+    auto seen = [](QTreeWidgetItem* item) {
+        for (QTreeWidgetItem* p = item->parent(); p; p = p->parent())
+            if (!p->isExpanded())
+                return false;
+        return true;
+    };
+    if (only)
+    {
+        for (scene::NodeId id : *only)
+            if (auto it = mItems.find(id); it != mItems.end() && seen(it->second))
+                stack.push_back(it->second);
+    }
+    else
+        for (int i = 0; i < topLevelItemCount(); ++i)
+            stack.push_back(topLevelItem(i));
+    while (!stack.empty())
+    {
+        QTreeWidgetItem* item = stack.back();
+        stack.pop_back();
+        if (const scene::NodeId id = item->data(0, kIdRole).toULongLong(); id && mItems.contains(id) && mItems.at(id) == item)
+            rows.emplace_back(id, item);
+        shownChildren(item);
+    }
+    for (auto& [id, item] : rows)
     {
         scene::Node* n = g.node(id);
         if (!n)

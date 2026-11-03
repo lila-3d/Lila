@@ -8,6 +8,7 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/ProxySet.h"
+#include "scene/SceneIndex.h"
 
 #include <algorithm>
 #include <cctype>
@@ -264,11 +265,9 @@ std::unordered_set<NodeId> hidden(Graph& g, const View& view)
     LILA_ZONE();
 
     std::unordered_set<NodeId> out;
-    for (NodeId id : g.nodes())
+    for (const Node* n : sceneIndex::ofType(g, "lodGroup"))
     {
-        const Node* n = g.node(id);
-        if (!n || !isGroup(*n))
-            continue;
+        const NodeId id = n->id();
         const int shown = shownLevel(g, id, view);
         if (shown < 0)
             continue;

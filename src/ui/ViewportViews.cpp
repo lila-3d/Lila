@@ -1,10 +1,14 @@
 #include "ui/ViewportWidgetDetail.h"
 #include "ui/ViewportToast.h"
 #include "ui/Hotkeys.h"
+#include "scene/HudStats.h"
 #include "scene/SoftSelect.h"
 #include "scene/Turntable.h"
 
 #include <QVariantAnimation>
+
+#include <map>
+#include <set>
 
 namespace lila::ui
 {
@@ -490,6 +494,50 @@ render::Renderer::FrameStats ViewportWidget::frameStats() const
     return mId ? render::Renderer::get().stats(mId) : render::Renderer::FrameStats{};
 }
 
+uint64_t ViewportWidget::hudShownKey() const
+{
+    const uint64_t key = ((uint64_t(mHudPanel) + 1) * 0x9E3779B97F4A7C15ull) ^ (mIsolation.version * 0xC2B2AE3D27D4EB4Full) ^
+                         (mLodHiddenKey * 0x165667B19E3779F9ull) ^ (mDisplayEpoch << 20);
+    return key ? key : 1;
+}
+
+nlohmann::json ViewportWidget::inspect(const std::optional<QRectF>& pick)
+{
+    render::FrameState s = buildFrame(nullptr);
+    scene::Graph& g = scene::Graph::current();
+    auto counts = [](const scene::hud::PolyCount& c) {
+        return nlohmann::json{{"verts", c.verts}, {"edges", c.edges}, {"faces", c.faces}, {"tris", c.tris}, {"uvs", c.uvs}};
+    };
+    const scene::hud::PolyStats stats = scene::hud::polyStats(
+        g, uv::currentUvSet(),
+        [this](scene::NodeId id) {
+            const scene::Node* n = scene::Graph::current().node(id);
+            return n && mIsolation.shows(id) && !mLodHidden.contains(id) && scene::selectionMask::shown(*n) && !viewportHooks::hiddenInView(id);
+        },
+        mIsolation.active() ? &mIsolation : nullptr, hudShownKey());
+    nlohmann::json out{{"hud", {{"scene", counts(stats.scene)}, {"objects", counts(stats.objects)}, {"components", counts(stats.components)},
+                                {"uniqueTris", stats.uniqueTris}, {"uniqueObjectTris", stats.uniqueObjectTris}}}};
+    std::map<std::string, int64_t> flags;
+    size_t placements = 0;
+    std::set<uint64_t> nodes;
+    for (const render::MeshDraw& d : s.meshes)
+    {
+        placements += d.instances && !d.instances->empty() ? d.instances->size() : 1;
+        nodes.insert(d.node);
+        for (auto [bit, name] : {std::pair(render::DrawShaded, "shaded"), {render::DrawWire, "wire"}, {render::DrawSelected, "selected"},
+                                 {render::DrawUnderSelected, "underSelected"}, {render::DrawPreselect, "preselect"}, {render::DrawWireDepth, "wireDepth"}})
+            if (d.flags & bit)
+                ++flags[name];
+        if (!d.materials.empty())
+            ++flags["textured"];
+    }
+    out["size"] = {width(), height()};
+    out["draws"] = {{"count", s.meshes.size()}, {"placements", placements}, {"nodes", nodes.size()}, {"flags", flags}};
+    if (pick)
+        out["picked"] = hitTest(pick->topLeft(), pick->bottomRight());
+    return out;
+}
+
 void ViewportWidget::drawHud(OverlayPainter& p)
 {
     double now = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -503,10 +551,11 @@ void ViewportWidget::drawHud(OverlayPainter& p)
     if (mIsolation.active())
         ctx.isolation = &mIsolation;
     // Counts cover what this view draws, so they skip the same nodes the mesh pass does.
-    ctx.shownNode = [this, lodHidden = scene::lod::hidden(scene::Graph::current(), lodDisplay::view(mHudPanel, ctx.view))](scene::NodeId id) {
+    ctx.shownNode = [this](scene::NodeId id) {
         const scene::Node* n = scene::Graph::current().node(id);
-        return n && mIsolation.shows(id) && !lodHidden.contains(id) && scene::selectionMask::shown(*n) && !viewportHooks::hiddenInView(id);
+        return n && mIsolation.shows(id) && !mLodHidden.contains(id) && scene::selectionMask::shown(*n) && !viewportHooks::hiddenInView(id);
     };
+    ctx.shownKey = hudShownKey();
     // Frames the renderer drew, not states submitted: mouse moves submit far more often than the display can show.
     double span = mFrameSamples.back().first - mFrameSamples.front().first;
     ctx.framesPerSecond = span > 100.0 ? double(mFrameSamples.back().second - mFrameSamples.front().second) * 1000.0 / span : 0.0;

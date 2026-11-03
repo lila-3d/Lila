@@ -25,4 +25,10 @@ LILA_UI_API bool needsTangents(const geo::Mesh& mesh);
  * share the slot names. Slots without a node get the neutral default. Maps still loading are left out until they arrive.
  */
 LILA_UI_API std::vector<render::Material> drawMaterials(const geo::Mesh& mesh);
+
+/**
+ * Changes whenever drawMaterials or needsTangents could answer differently for a mesh asked before: a material edited,
+ * a texture arrived, material nodes came or went. Call after evaluating the graph.
+ */
+LILA_UI_API uint64_t materialsEpoch();
 } // namespace lila::ui

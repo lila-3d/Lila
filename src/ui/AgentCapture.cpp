@@ -643,6 +643,30 @@ void registerCommands()
         },
     });
 
+    ops::registerCommand({
+        .name = "viewportInspect",
+        .doc = "What the active viewport draws and counts now: {hud: {scene, objects, components, uniqueTris, uniqueObjectTris}, size: [width, height], draws: "
+               "{count, placements, nodes, flags}, picked}. picked, with pick, is what a click (two equal corners) or marquee there "
+               "would select. For checking the view in tests and scripts.",
+        .flags = {{"pick", "", T::List, nullptr, "Widget pixels: [x, y] for a click, or [x0, y0, x1, y1] for a marquee."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            ViewportWidget* vp = activeViewport();
+            if (!vp)
+                throw CommandError("viewportInspect: no viewport");
+            std::optional<QRectF> pick;
+            if (a.has("pick"))
+            {
+                const json p = a.flags["pick"];
+                if (p.size() != 2 && p.size() != 4)
+                    throw CommandError("viewportInspect: pick takes [x, y] or [x0, y0, x1, y1]");
+                const QPointF from(p[0].get<double>(), p[1].get<double>());
+                pick = QRectF(from, p.size() == 4 ? QPointF(p[2].get<double>(), p[3].get<double>()) : from);
+            }
+            return vp->inspect(pick);
+        },
+    });
+
     std::vector<FlagDef> tflags = optionFlags();
     tflags.push_back({"path", "p", T::String, nullptr, "PNG file to write."});
     tflags.push_back({"count", "c", T::Int, 4, "Views around the up axis, starting at the front.", {}, {}, 1.0, 16.0});

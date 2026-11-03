@@ -8,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -255,6 +256,11 @@ public:
     uint64_t evaluationPass() const { return mEvaluationPass; }
     /** Bumped on every change; the renderer uses it to skip unchanged frames. */
     uint64_t version() const { return mVersion.load(std::memory_order_relaxed); }
+    /**
+     * Changes whenever a node is created or deleted or the graph is cleared, to a value no other graph has had, so caches
+     * keyed on it never mistake one graph for another.
+     */
+    uint64_t structure() const { return mStructure; }
 
     // Selection
     const std::vector<NodeId>& selection() const { return mSelection; }
@@ -381,6 +387,12 @@ private:
     EvalContext mCtx;
     NamingPolicy mNaming;
     std::atomic<uint64_t> mVersion{1};
+    uint64_t mStructure = 0;
+    void restructured();
+    /** nodes() sorted, kept until the next structure change; filled by whichever thread asks first. */
+    mutable std::mutex mSortedMutex;
+    mutable std::vector<NodeId> mSorted;
+    mutable uint64_t mSortedStructure = 0;
     bool mAnyDirty = false;
     uint64_t mEvaluationPass = 0;
     struct PlaybackCache;

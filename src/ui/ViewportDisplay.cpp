@@ -14,6 +14,7 @@
 #include "scene/Relocate.h"
 #include "ui/Environments.h"
 #include "ui/Theme.h"
+#include "scene/SceneIndex.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -121,15 +122,18 @@ void applyLights(render::FrameState& s)
     s.lights.clear();
     const scene::Graph& cg = scene::Graph::current();
     scene::Graph& g = const_cast<scene::Graph&>(cg);
-    geo::Bounds sceneBounds;
-    bool boundsDone = false;
+    // The visible meshes' bounds, for fitting directional shadows; kept until the scene changes.
+    static geo::Bounds sceneBounds;
+    static std::pair<uint64_t, uint64_t> boundsKey{0, 0};
     auto bounds = [&]() -> const geo::Bounds& {
-        if (!boundsDone)
+        if (const std::pair key(g.structure(), scene::sceneIndex::passStamp(g, "mesh")); boundsKey != key)
         {
-            boundsDone = true;
-            for (scene::NodeId id : g.nodes())
-                if (const scene::Node* n = g.node(id); n && n->type().isA("mesh") && scene::effectivelyVisible(g, id, true))
-                    if (geo::Bounds b = scene::worldBounds(g, id); b.valid())
+            boundsKey = key;
+            sceneBounds = {};
+            const scene::sceneIndex::Hierarchy& hierarchy = scene::sceneIndex::hierarchy(g, true);
+            for (const scene::Node* n : scene::sceneIndex::ofType(g, "mesh"))
+                if (hierarchy.visible(n->id()))
+                    if (geo::Bounds b = scene::worldBounds(g, n->id()); b.valid())
                     {
                         sceneBounds.extend(b.min);
                         sceneBounds.extend(b.max);
@@ -140,10 +144,10 @@ void applyLights(render::FrameState& s)
     if (!PrefStore::get().value<bool>("general", kSceneLights, true))
         return;
     bool domeDone = false;
-    for (scene::NodeId id : g.nodes())
+    for (const scene::Node* n : scene::sceneIndex::ofType(g, "light"))
     {
-        const scene::Node* n = g.node(id);
-        if (!n || !n->type().isA("light") || !scene::effectivelyVisible(g, id, true))
+        const scene::NodeId id = n->id();
+        if (!scene::effectivelyVisible(g, id, true))
             continue;
         const lights::Provider* owner = lights::providerFor(*n);
         if (!owner || owner->id != lights::kLilaProvider)

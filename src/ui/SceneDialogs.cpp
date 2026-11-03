@@ -892,7 +892,8 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
                           "QLabel#newsTitle { color: %4; font-size: 11pt; font-weight: 600; }"
                           "QLabel#newsFresh { color: %8; font-weight: 600; }"
                           "QFrame#supportCard { background: %6; border: 1px solid %2; border-radius: 6px; }"
-                          "QLabel#supportLead { color: %5; font-size: 10pt; }")
+                          "QLabel#supportLead { color: %5; font-size: 10pt; }"
+                          "QTreeWidget#startupRecent, QListWidget#welcomeExamples { activate-on-singleclick: 1; }")
                       .arg(themeColor("window").name(), themeColor("border").name(), themeColor("text").name(), themeColor("brightText").name(),
                            themeColor("dimText").name(), themeColor("base").name(), themeColor("hover").name(), themeColor("accent").name()));
 
@@ -1058,7 +1059,7 @@ StartupDialog::StartupDialog(Hooks hooks, bool welcome, QWidget* parent) : QDial
     mList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(mList, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) { showRecentMenu(at); });
 
-    // Queued: opening a scene tears this dialog down, and Qt's double-click handler still uses the list after emitting.
+    // Queued: opening a scene tears this dialog down, and Qt's mouse handler still uses the list after emitting.
     connect(mList, &QTreeWidget::itemActivated, this, [this] { openSelected(mList); }, Qt::QueuedConnection);
     if (mExamples)
     {

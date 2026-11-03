@@ -22,6 +22,7 @@ static_assert(sizeof(GpuInstance) == 80, "matches InstanceData in mesh.slang");
 struct DrawBatch
 {
     const MeshDraw* draw = nullptr; // the first member, which supplies the mesh, materials and per-draw state
+    uint32_t drawIndex = 0;         // draw's index in FrameState::meshes, to point a kept batch list at a new frame's copy
     uint32_t first = 0;             // its first entry in DrawBatches::instances
     uint32_t count = 0;
     bool wire = false; // shaded batch whose placements draw their wire in the mesh shader
@@ -54,4 +55,10 @@ LILA_UI_API glm::vec4 wireColor(const FrameState& s, const MeshDraw& d);
  * entry. Draws with no mesh or no triangles are left out of the shaded batches.
  */
 LILA_UI_API DrawBatches batchDraws(const FrameState& s, bool shaderWire = false);
+
+/** True when two frames' mesh draws are the same list: same meshes, materials, placements and display state, in order. */
+LILA_UI_API bool sameDraws(const std::vector<MeshDraw>& a, const std::vector<MeshDraw>& b);
+
+/** Points a kept batch list at another frame's draws, which sameDraws found equal to the ones it was made from. */
+LILA_UI_API void rebind(DrawBatches& batches, const std::vector<MeshDraw>& draws);
 } // namespace lila::render

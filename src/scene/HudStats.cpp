@@ -2,10 +2,12 @@
 
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/Anim.h"
 #include "scene/ArrayGroup.h"
 #include "scene/Components.h"
 #include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
+#include "scene/SceneIndex.h"
 #include "scene/Transform.h"
 
 #include <tbb/blocked_range.h>
@@ -176,10 +178,30 @@ const PartialEntry& cachedPartial(NodeId id, const MeshPtr& mesh, std::string_vi
     return e;
 }
 
-template <class Map> void dropUnseen(Map& map, const std::unordered_set<NodeId>& seen)
+/** Drops entries of nodes that no longer exist once the scene's nodes have changed. */
+template <class Map> void dropGone(Map& map, const Graph& g)
 {
-    std::erase_if(map, [&](const auto& kv) { return !seen.contains(kv.first); });
+    std::erase_if(map, [&](const auto& kv) { return !g.node(kv.first); });
 }
+
+/** What a polyStats result depends on besides the caller's shown filter. */
+struct StatsKey
+{
+    uint64_t structure = 0, meshes = 0, selection = 0, components = 0, isolationVersion = 0, shownKey = 0;
+    const isolation::Set* partial = nullptr;
+    ComponentMode mode = ComponentMode::Object;
+    std::string uvSet;
+    bool inherit = false;
+    int playing = 0;
+
+    bool operator==(const StatsKey&) const = default;
+};
+
+struct CachedStats
+{
+    StatsKey key;
+    PolyStats stats;
+};
 } // namespace
 
 PolyCount& PolyCount::operator+=(const PolyCount& o)
@@ -227,8 +249,19 @@ PolyCount countMesh(const geo::Mesh& mesh, std::string_view uvSet)
 
 bool visibleInHierarchy(const Graph& g, NodeId id) { return effectivelyVisible(g, id, inheritVisibility()); }
 
-PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(NodeId)>& shown, const isolation::Set* partial)
+PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(NodeId)>& shown, const isolation::Set* partial, uint64_t shownKey)
 {
+    const bool cacheable = !shown || shownKey != 0;
+    uint64_t selection = g.selection().size();
+    for (NodeId id : g.selection())
+        selection = (selection ^ id) * 0x100000001B3ull;
+    // Edits that recompute no mesh (a camera moving) leave the counts as they were.
+    StatsKey key{g.structure(), sceneIndex::passStamp(g, "mesh"), selection, componentGeneration(), partial ? partial->version : 0, shown ? shownKey : 0, partial,
+                 components::mode(), std::string(uvSet), inheritVisibility(), anim::playDirection()};
+    static std::unordered_map<uint64_t, CachedStats> results;
+    if (cacheable)
+        if (auto it = results.find(key.shownKey); it != results.end() && it->second.key == key)
+            return it->second.stats;
     LILA_ZONE();
     PolyStats out;
     std::unordered_set<NodeId> selected;
@@ -239,22 +272,24 @@ PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(N
             selected.insert(d);
     }
     ComponentMode mode = components::mode();
-    std::unordered_set<NodeId> seen;
     std::unordered_set<const geo::Mesh*> counted, countedSelected;
-    for (NodeId id : g.nodes())
+    const sceneIndex::Hierarchy& hierarchy = sceneIndex::hierarchy(g, key.inherit);
+    std::unordered_map<const NodeType*, bool> lattice;
+    for (Node* n : sceneIndex::ofType(g, "mesh"))
     {
-        Node* n = g.node(id);
-        if (!n->type().isA("mesh") || n->type().isA("lattice"))
+        auto [isLattice, added] = lattice.try_emplace(&n->type());
+        if (added)
+            isLattice->second = n->type().isA("lattice");
+        if (isLattice->second)
             continue;
-        // Hidden meshes keep their cache entries: another view, or the next frame, may count them.
-        seen.insert(id);
+        const NodeId id = n->id();
         const MeshPtr& mesh = n->as<MeshPtr>(MeshNode::kOutMesh);
-        if (!mesh || !visibleInHierarchy(g, id) || (shown && !shown(id)))
+        if (!mesh || !hierarchy.visible(id) || (shown && !shown(id)))
             continue;
         const PartialEntry* part = partial && partial->isPartial(id) ? &cachedPartial(id, mesh, uvSet, *partial) : nullptr;
         const PolyCount& c = part ? part->count : cachedCount(id, mesh, uvSet, out.pending);
         // Array copies count as drawn objects; they share the source's mesh, so the unique counts leave them out.
-        const size_t copies = arrays::copiesOf(g, id).size() + 1;
+        const size_t copies = hierarchy.arrayAbove(id) != kNoNode ? arrays::copiesOf(g, id).size() + 1 : 1;
         for (size_t k = 0; k < copies; ++k)
             out.scene += c;
         if (counted.insert(mesh.get()).second)
@@ -271,9 +306,17 @@ PolyStats polyStats(Graph& g, std::string_view uvSet, const std::function<bool(N
         if (const components::Ids& ids = components::selected(id, mode); !ids.empty())
             out.components += part ? countSelected(*mesh, mode, isolation::visibleOnly(part->vis, mode, ids)) : cachedSelected(id, mesh, mode, ids);
     }
-    dropUnseen(gMeshes, seen);
-    dropUnseen(gComponents, seen);
-    dropUnseen(gPartial, seen);
+    // Hidden meshes keep their cache entries: another view, or the next frame, may count them.
+    static uint64_t pruned = 0;
+    if (pruned != g.structure())
+    {
+        pruned = g.structure();
+        dropGone(gMeshes, g);
+        dropGone(gComponents, g);
+        dropGone(gPartial, g);
+    }
+    if (cacheable && !out.pending)
+        results[key.shownKey] = {std::move(key), out};
     return out;
 }
 } // namespace lila::scene::hud

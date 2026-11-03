@@ -20,6 +20,7 @@
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/WeightPaintTool.h"
+#include "scene/SceneIndex.h"
 
 #include <algorithm>
 #include <cmath>
@@ -172,11 +173,9 @@ struct HandleDraw
 std::vector<HandleDraw> handleDraws(Graph& g)
 {
     std::vector<HandleDraw> out;
-    for (NodeId id : g.nodes())
+    for (Node* d : scene::sceneIndex::matching(g, "deformer", scene::deformers::isDeformer))
     {
-        Node* d = g.node(id);
-        if (!d || !scene::deformers::isDeformer(*d))
-            continue;
+        const NodeId id = d->id();
         int hm = d->type().attrIndex("handleMatrix");
         if (hm < 0)
             continue;

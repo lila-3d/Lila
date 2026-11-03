@@ -9918,6 +9918,13 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
         orthographicWidth: Width of an orthographic view, cm. Short form ow.
     """
 
+def viewportInspect(pick: Sequence[Any] | None = None) -> Any:
+    """What the active viewport draws and counts now: {hud: {scene, objects, components, uniqueTris, uniqueObjectTris}, size: [width, height], draws: {count, placements, nodes, flags}, picked}. picked, with pick, is what a click (two equal corners) or marquee there would select. For checking the view in tests and scripts.
+
+    Args:
+        pick: Widget pixels: [x, y] for a click, or [x0, y0, x1, y1] for a marquee.
+    """
+
 def viewportStats() -> Any:
     """The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls, renderer}. frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the view really draws, components and highlights included. When an external renderer such as a Hydra delegate draws the view, rendererStats holds what it reports."""
 

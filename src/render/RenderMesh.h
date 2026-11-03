@@ -254,6 +254,62 @@ struct Material
     float bevelRadius = 0.0f;
 };
 
+/**
+ * A draw's materials, one per slot, shared between copies of the draw: copying one is a reference, and a copy that is
+ * changed gets its own list first. Reads like a std::vector<Material>.
+ */
+class MaterialList
+{
+public:
+    using value_type = Material;
+    using const_iterator = std::vector<Material>::const_iterator;
+    using iterator = std::vector<Material>::iterator;
+
+    MaterialList() = default;
+    MaterialList(std::vector<Material> v) : mList(v.empty() ? nullptr : std::make_shared<std::vector<Material>>(std::move(v))) {}
+    MaterialList& operator=(std::vector<Material> v)
+    {
+        mList = v.empty() ? nullptr : std::make_shared<std::vector<Material>>(std::move(v));
+        return *this;
+    }
+
+    size_t size() const { return mList ? mList->size() : 0; }
+    bool empty() const { return size() == 0; }
+    const Material& operator[](size_t i) const { return (*mList)[i]; }
+    const Material& front() const { return mList->front(); }
+    const_iterator begin() const { return list().begin(); }
+    const_iterator end() const { return list().end(); }
+    const std::vector<Material>& list() const { return mList ? *mList : empty_(); }
+    operator const std::vector<Material>&() const { return list(); }
+    /** True when both are the same shared list (or both empty), so equal without comparing fields. */
+    bool sameList(const MaterialList& o) const { return mList == o.mList; }
+
+    Material& operator[](size_t i) { return own()[i]; }
+    Material& front() { return own().front(); }
+    iterator begin() { return own().begin(); }
+    iterator end() { return own().end(); }
+    void push_back(Material m) { own().push_back(std::move(m)); }
+    void resize(size_t n) { own().resize(n); }
+    void assign(size_t n, const Material& m) { own().assign(n, m); }
+    void clear() { mList.reset(); }
+
+private:
+    static const std::vector<Material>& empty_()
+    {
+        static const std::vector<Material> e;
+        return e;
+    }
+    std::vector<Material>& own()
+    {
+        if (!mList)
+            mList = std::make_shared<std::vector<Material>>();
+        else if (mList.use_count() > 1)
+            mList = std::make_shared<std::vector<Material>>(*mList);
+        return *mList;
+    }
+    std::shared_ptr<std::vector<Material>> mList;
+};
+
 enum MeshDrawFlags : uint32_t
 {
     DrawShaded = 1 << 0,
@@ -295,7 +351,7 @@ struct MeshDraw
     /** Used for every section whose slot has no entry in materials. */
     glm::vec3 baseColor{0.5f};
     float roughness = 0.55f;
-    std::vector<Material> materials; // per slot
+    MaterialList materials; // per slot
     uint32_t flags = DrawShaded;
     VertexColorMode vertexColors = VertexColorMode::Off;
     ColorChannel colorChannel = ColorChannel::Rgb;

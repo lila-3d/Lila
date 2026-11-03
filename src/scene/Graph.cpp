@@ -217,8 +217,14 @@ struct Graph::PlaybackCache
     static int64_t keyOf(double seconds) { return std::llround(seconds * 1e6); }
 };
 
-Graph::Graph() = default;
+Graph::Graph() { restructured(); }
 Graph::~Graph() = default;
+
+void Graph::restructured()
+{
+    static std::atomic<uint64_t> counter{0};
+    mStructure = ++counter;
+}
 
 void Graph::setCachedPlayback(bool on)
 {
@@ -341,6 +347,7 @@ bool Graph::keepCached(Node& n)
 
 void Graph::clear()
 {
+    restructured();
     mNodes.clear();
     mNames.clear();
     mRel.clear();
@@ -463,6 +470,7 @@ std::vector<NodeId>& Graph::siblings(NodeId parent)
 
 void Graph::attach(std::unique_ptr<Node> n, NodeId parent, size_t index)
 {
+    restructured();
     NodeId id = n->id();
     mNames.emplace(n->mName, id);
     n->mGraph = this;
@@ -483,6 +491,7 @@ std::unique_ptr<Node> Graph::detach(NodeId id, size_t* indexOut)
     auto it = mNodes.find(id);
     if (it == mNodes.end())
         return nullptr;
+    restructured();
     std::unique_ptr<Node> n = std::move(it->second);
     mNodes.erase(it);
     eraseName(n->mName, id);
@@ -710,12 +719,17 @@ std::string Graph::path(NodeId id) const
 
 std::vector<NodeId> Graph::nodes() const
 {
-    std::vector<NodeId> out;
-    out.reserve(mNodes.size());
-    for (auto& [id, n] : mNodes)
-        out.push_back(id);
-    std::sort(out.begin(), out.end());
-    return out;
+    std::scoped_lock lock(mSortedMutex);
+    if (mSortedStructure != mStructure)
+    {
+        mSorted.clear();
+        mSorted.reserve(mNodes.size());
+        for (auto& [id, n] : mNodes)
+            mSorted.push_back(id);
+        std::sort(mSorted.begin(), mSorted.end());
+        mSortedStructure = mStructure;
+    }
+    return mSorted;
 }
 
 void Graph::renameRaw(NodeId id, const std::string& name)

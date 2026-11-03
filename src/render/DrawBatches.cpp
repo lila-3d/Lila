@@ -90,6 +90,30 @@ bool sameMaterials(const std::vector<Material>& a, const std::vector<Material>& 
     return true;
 }
 
+bool sameDraws(const std::vector<MeshDraw>& a, const std::vector<MeshDraw>& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        const MeshDraw& x = a[i];
+        const MeshDraw& y = b[i];
+        if (x.mesh != y.mesh || x.instances != y.instances || !x.materials.sameList(y.materials) || x.flags != y.flags ||
+            x.world != y.world || x.baseColor != y.baseColor || x.roughness != y.roughness || x.vertexColors != y.vertexColors ||
+            x.colorChannel != y.colorChannel || x.wireColor != y.wireColor || x.wireWidth != y.wireWidth || x.node != y.node ||
+            x.lightingChannels != y.lightingChannels)
+            return false;
+    }
+    return true;
+}
+
+void rebind(DrawBatches& batches, const std::vector<MeshDraw>& draws)
+{
+    for (std::vector<DrawBatch>* list : {&batches.shaded, &batches.wire})
+        for (DrawBatch& b : *list)
+            b.draw = &draws[b.drawIndex];
+}
+
 bool drawsWire(const MeshDraw& d) { return (d.flags & (DrawWire | DrawSelected | DrawUnderSelected | DrawPreselect)) != 0; }
 
 bool wireInShader(const MeshDraw& d) { return (d.flags & DrawShaded) && drawsWire(d) && d.mesh && !d.mesh->edgeMask.empty(); }
@@ -123,7 +147,7 @@ DrawBatches batchDraws(const FrameState& s, bool shaderWire)
             std::vector<size_t>& candidates = shadedIndex[key];
             size_t batch = SIZE_MAX;
             for (size_t c : candidates)
-                if (sameMaterials(shadedMembers[c].front()->materials, d.materials))
+                if (shadedMembers[c].front()->materials.sameList(d.materials) || sameMaterials(shadedMembers[c].front()->materials, d.materials))
                 {
                     batch = c;
                     break;
@@ -157,7 +181,7 @@ DrawBatches batchDraws(const FrameState& s, bool shaderWire)
 
     for (const auto& members : shadedMembers)
     {
-        DrawBatch b{members.front(), uint32_t(out.instances.size()), 0};
+        DrawBatch b{members.front(), uint32_t(members.front() - s.meshes.data()), uint32_t(out.instances.size()), 0};
         for (const MeshDraw* d : members)
         {
             const bool wire = shaderWire && wireInShader(*d);
@@ -171,7 +195,7 @@ DrawBatches batchDraws(const FrameState& s, bool shaderWire)
     for (auto& members : wireMembers)
     {
         std::ranges::stable_sort(members, [](const MeshDraw* a, const MeshDraw* b) { return wireRank(*a) < wireRank(*b); });
-        DrawBatch b{members.front(), uint32_t(out.instances.size()), 0};
+        DrawBatch b{members.front(), uint32_t(members.front() - s.meshes.data()), uint32_t(out.instances.size()), 0};
         for (const MeshDraw* d : members)
         {
             const glm::vec4 color = wireColor(s, *d);

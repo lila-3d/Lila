@@ -70,8 +70,11 @@ std::map<std::string, const DrawOverride*, std::less<>>& byType()
     return m;
 }
 
+uint64_t gVersion = 1;
+
 void rebuildByType(const Registry<DrawOverride>& r)
 {
+    ++gVersion;
     auto& m = byType();
     m.clear();
     // Ids in order, so of two overrides for one type the first id wins, whatever the registration order.
@@ -116,6 +119,12 @@ const DrawOverride* add(ext::Context& ctx, DrawOverride o)
 }
 
 bool remove(std::string_view id) { return registry().remove(id); }
+
+uint64_t version()
+{
+    registry();
+    return gVersion;
+}
 
 const DrawOverride* forType(const scene::NodeType& t)
 {

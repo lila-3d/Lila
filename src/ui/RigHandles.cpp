@@ -17,6 +17,7 @@
 #include "ui/NodeHandles.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "scene/SceneIndex.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -506,11 +507,13 @@ D3 hoseAnchor(const Node& n)
 std::vector<Item> items(scene::Graph& g)
 {
     std::vector<Item> out;
-    for (NodeId id : g.nodes())
+    const auto rigNode = [](const Node& n) {
+        const std::string& type = n.type().name;
+        return type == scene::spline::kChainType || type == scene::spline::kHoseType || type == scene::spline::kHandType;
+    };
+    for (const Node* n : scene::sceneIndex::matching(g, "rigHandleItems", rigNode))
     {
-        const Node* n = g.node(id);
-        if (!n)
-            continue;
+        const NodeId id = n->id();
         const std::string& type = n->type().name;
         if (type == scene::spline::kChainType)
         {

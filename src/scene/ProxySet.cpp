@@ -14,6 +14,7 @@
 #include "scene/SelectAs.h"
 #include "scene/Skin.h"
 #include "scene/SplitMesh.h"
+#include "scene/SceneIndex.h"
 
 #include <tbb/parallel_for.h>
 
@@ -605,12 +606,9 @@ bool isSet(const Node& n) { return n.type().isA(kTypeName); }
 
 std::vector<NodeId> all(const Graph& g)
 {
-    std::vector<NodeId> ids = g.nodes();
-    std::ranges::sort(ids);
     std::vector<NodeId> out;
-    for (NodeId id : ids)
-        if (isSet(*g.node(id)))
-            out.push_back(id);
+    for (const Node* n : sceneIndex::matching(g, "proxySet", isSet))
+        out.push_back(n->id());
     return out;
 }
 

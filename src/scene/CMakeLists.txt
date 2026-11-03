@@ -41,6 +41,7 @@ lila_module(lila_scene Scene
     Ghosts.cpp
     Graph.cpp
     HudStats.cpp HudStats.h
+    SceneIndex.cpp SceneIndex.h
     Ik.cpp
     Instancing.cpp
     IkSolverRegistry.cpp
