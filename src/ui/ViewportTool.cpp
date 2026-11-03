@@ -20,6 +20,166 @@ struct QueuedMessage
     glm::vec4 color;
 };
 std::vector<QueuedMessage> gMessages;
+std::vector<ToolStatus> gStatuses;
+
+/** The widest each part of a tool's readout has been, by tool then part, so the readout only ever grows. */
+std::map<QString, std::map<QString, double>>& rememberedWidths()
+{
+    static std::map<QString, std::map<QString, double>> widths;
+    return widths;
+}
+
+constexpr double kStatusPadX = 10.0, kStatusPadY = 4.0, kStatusRow = 20.0, kStatusBaseline = 14.0;
+constexpr double kStatusGroupGap = 20.0, kStatusItemGap = 14.0, kStatusPairGap = 5.0;
+constexpr float kStatusBright = 0.95f, kStatusValue = 0.92f, kStatusPrompt = 0.78f, kStatusSubject = 0.62f, kStatusLabel = 0.55f, kStatusOff = 0.38f;
+const glm::vec4 kStatusPlate(0.08f, 0.08f, 0.08f, 0.8f);
+
+glm::vec4 gray(float g) { return {g, g, g, 1.0f}; }
+
+/** One run of text in a readout row, with the gap before it. */
+struct Run
+{
+    QString text;
+    float shade;
+    double gapBefore = 0.0;
+};
+
+/** A slot holds runs that share a remembered width. */
+struct Slot
+{
+    QString key;
+    std::vector<Run> runs;
+    double gapBefore = 0.0;
+    bool dividerBefore = false;
+};
+
+double runsWidth(const std::vector<Run>& runs)
+{
+    double w = 0.0;
+    for (const Run& r : runs)
+        w += r.gapBefore + OverlayPainter::textWidth(r.text);
+    return w;
+}
+
+std::vector<Slot> settingsRow(const ToolStatus& s)
+{
+    std::vector<Slot> row;
+    row.push_back({"tool", {{s.tool, kStatusBright}}});
+    if (!s.subject.isEmpty())
+        row.push_back({"subject", {{s.subject, kStatusSubject}}, kStatusItemGap * 0.6});
+    bool first = true;
+    auto add = [&](QString key, std::vector<Run> runs) {
+        row.push_back({std::move(key), std::move(runs), first ? kStatusGroupGap : kStatusItemGap, first});
+        first = false;
+    };
+    if (!s.mode.isEmpty())
+        add("mode", {{s.mode, kStatusBright}});
+    for (const ToolField& f : s.fields)
+        add("f:" + f.label, {{f.label, kStatusLabel}, {f.value, kStatusValue, kStatusPairGap}});
+    for (const ToolFlag& f : s.flags)
+        add("g:" + f.label, {{f.label, f.on ? kStatusBright : kStatusOff}});
+    return row;
+}
+
+/** The prompt and key hints, wrapped into lines no wider than maxWidth. */
+std::vector<std::vector<Run>> hintLines(const ToolStatus& s, double maxWidth)
+{
+    std::vector<std::vector<Run>> lines(1);
+    double x = 0.0;
+    auto place = [&](std::vector<Run> item) {
+        const double w = runsWidth(item);
+        if (!lines.back().empty() && x + kStatusItemGap + w > maxWidth)
+        {
+            lines.emplace_back();
+            x = 0.0;
+        }
+        if (!lines.back().empty())
+        {
+            item.front().gapBefore = kStatusItemGap;
+            x += kStatusItemGap;
+        }
+        x += w;
+        for (Run& r : item)
+            lines.back().push_back(std::move(r));
+    };
+    if (!s.prompt.isEmpty())
+        place({{s.prompt, kStatusPrompt}});
+    for (const KeyHint& k : s.keys)
+        place({{k.keys, kStatusValue}, {k.what, kStatusLabel, kStatusPairGap}});
+    if (lines.back().empty())
+        lines.pop_back();
+    return lines;
+}
+
+/** Moves r down until it clears every occupied rect. */
+QRectF clearOf(QRectF r, const std::vector<QRectF>& occupied)
+{
+    for (bool moved = true; moved;)
+    {
+        moved = false;
+        for (const QRectF& o : occupied)
+            if (o.intersects(r))
+            {
+                r.moveTop(o.bottom() + 4.0);
+                moved = true;
+            }
+    }
+    return r;
+}
+
+void drawRuns(OverlayPainter& p, double x, double baseline, const std::vector<Run>& runs)
+{
+    for (const Run& r : runs)
+    {
+        x += r.gapBefore;
+        x += p.text(QPointF(x, baseline), r.text, gray(r.shade));
+    }
+}
+
+/** Draws s with its top at or below top; returns the bottom of its plate. */
+double drawStatus(OverlayPainter& p, const ViewInfo& view, const ToolStatus& s, double top, std::vector<QRectF>& occupied)
+{
+    std::map<QString, double>& widths = rememberedWidths()[s.tool];
+    std::vector<Slot> row = settingsRow(s);
+    double rowWidth = 0.0;
+    for (const Slot& slot : row)
+    {
+        double& w = widths[slot.key];
+        w = std::max(w, runsWidth(slot.runs));
+        rowWidth += slot.gapBefore + w;
+    }
+    const double maxInner = std::max(200.0, view.width - 24.0 - 2.0 * kStatusPadX);
+    const std::vector<std::vector<Run>> hints = hintLines(s, std::max(maxInner, rowWidth));
+    double inner = rowWidth;
+    for (const std::vector<Run>& line : hints)
+        inner = std::max(inner, runsWidth(line));
+    double& plateWidth = widths[QString()];
+    plateWidth = std::max(plateWidth, inner + 2.0 * kStatusPadX);
+
+    const double height = kStatusRow * double(1 + hints.size()) + 2.0 * kStatusPadY;
+    QRectF plate(std::max(12.0, (view.width - plateWidth) / 2.0), top, plateWidth, height);
+    plate = clearOf(plate, occupied);
+    p.rect(plate, kStatusPlate);
+
+    double x = plate.left() + kStatusPadX, baseline = plate.top() + kStatusPadY + kStatusBaseline;
+    for (const Slot& slot : row)
+    {
+        x += slot.gapBefore;
+        if (slot.dividerBefore)
+            p.rect(QRectF(x - kStatusGroupGap / 2.0, plate.top() + kStatusPadY + 4.0, 1.0, kStatusRow - 8.0), {1.0f, 1.0f, 1.0f, 0.14f});
+        drawRuns(p, x, baseline, slot.runs);
+        x += widths[slot.key];
+    }
+    if (!hints.empty())
+        p.rect(QRectF(plate.left() + kStatusPadX, plate.top() + kStatusPadY + kStatusRow, plate.width() - 2.0 * kStatusPadX, 1.0), {1.0f, 1.0f, 1.0f, 0.08f});
+    for (const std::vector<Run>& line : hints)
+    {
+        baseline += kStatusRow;
+        drawRuns(p, plate.left() + kStatusPadX, baseline, line);
+    }
+    occupied.push_back(plate);
+    return plate.bottom();
+}
 } // namespace
 
 const QCursor& deleteCursor()
@@ -44,14 +204,21 @@ const QCursor& deleteCursor()
     return cursor;
 }
 
+void drawToolStatus(OverlayPainter&, const ViewInfo&, const ToolStatus& status) { gStatuses.push_back(status); }
+
 void drawToolMessage(OverlayPainter&, const ViewInfo&, const QString& text, const glm::vec4& color)
 {
     gMessages.push_back({text, color});
 }
 
-void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied)
+void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& hud)
 {
-    double y = 24.0;
+    std::vector<QRectF> occupied = hud;
+    double top = 8.0;
+    for (const ToolStatus& s : gStatuses)
+        top = drawStatus(p, view, s, top, occupied) + 4.0;
+    gStatuses.clear();
+    double y = top + 16.0;
     for (const QueuedMessage& m : gMessages)
     {
         const double w = OverlayPainter::textWidth(m.text);

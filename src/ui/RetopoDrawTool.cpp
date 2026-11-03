@@ -1259,11 +1259,15 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
         p.polyline(circle, 1.5f, kTopoBrush, true);
     }
     if (mRefBvh.empty())
-        drawToolMessage(p, view, "Retopo Draw: select a reference mesh first");
+        drawToolStatus(p, view, {.tool = "Retopo Draw", .prompt = "select a reference mesh"});
     else if (here && mTabDown && ctrl && !shift)
-        drawToolMessage(p, view, QString("Extrude to angle: %1\u00b0   (wheel adjusts)").arg(int(std::lround(extrudeAngle()))));
+        drawToolStatus(p, view,
+                       {.tool = "Retopo Draw",
+                        .mode = "extrude to angle",
+                        .fields = {{"angle", QString("%1\u00b0").arg(int(std::lround(extrudeAngle())))}},
+                        .keys = {{"wheel", "angle"}}});
     else if (here && mTabDown && shift && !ctrl)
-        drawToolMessage(p, view, "Extrude edge loop");
+        drawToolStatus(p, view, {.tool = "Retopo Draw", .mode = "extrude edge loop"});
 }
 
 void RetopoDrawTool::drawLineSnap(OverlayPainter& p, const ViewInfo& view) const

@@ -527,9 +527,11 @@ public:
     {
         double r = brushRadius();
         bool objects = scene::components::mode() == ComponentMode::Object;
-        drawToolMessage(p, view, QString("Paint select %1: radius %2 px   Ctrl removes, Shift toggles, B drag or [ ] resizes")
-                                     .arg(objects ? "objects" : scene::components::modeName(scene::components::mode()))
-                                     .arg(int(std::lround(r))));
+        drawToolStatus(p, view,
+                       {.tool = "Paint Select",
+                        .mode = objects ? "objects" : scene::components::modeName(scene::components::mode()),
+                        .fields = {{"radius", QString("%1 px").arg(int(std::lround(r)))}},
+                        .keys = {{"Ctrl", "remove"}, {"Shift", "toggle"}, {"B-drag", "radius"}}});
         if (!mHover)
             return;
         QPointF at = mAdjusting ? mAdjustStart : *mHover;

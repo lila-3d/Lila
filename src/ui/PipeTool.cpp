@@ -356,19 +356,18 @@ public:
             }
         }
         const char* preset = kPipePresets[size_t(mPreset)];
-        drawToolMessage(p, view,
-                        QString("Pipe  next radius %1 cm, %2 sides, %3%4  B-drag/Ctrl+scroll: radius, +/-: sides, P: preset (%5), T: wall, "
-                                "S: on surfaces %6, F: from loop %7, A: attach %8, Y: symmetry %9  Z/Backspace: undo point, Shift+Z: redo point, "
-                                "Enter: build (or pipe the selected curves), Esc: exit")
-                            .arg(mRadius, 0, 'f', 2)
-                            .arg(mSides)
-                            .arg(mWall > 0.0 ? QString("wall %1 cm").arg(mWall, 0, 'f', 2) : QString("solid"))
-                            .arg(mStart ? ", from the selected loop" : "")
-                            .arg(*preset ? preset : "none")
-                            .arg(mSurface ? "on" : "off")
-                            .arg(mFromLoop ? "on" : "off")
-                            .arg(mAttach ? "on" : "off")
-                            .arg(symmetryName(symmetryPref())));
+        drawToolStatus(p, view,
+                       {.tool = "Pipe",
+                        .mode = *preset ? QString(preset) : QString("no preset"),
+                        .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 2)},
+                                   {"sides", QString::number(mSides)},
+                                   {"wall", mWall > 0.0 ? QString("%1 cm").arg(mWall, 0, 'f', 2) : QString("solid")},
+                                   {"symmetry", symmetryName(symmetryPref())}},
+                        .flags = {{"surfaces", mSurface}, {"from loop", mFromLoop}, {"attach", mAttach}},
+                        .prompt = mStart ? QString("from the selected loop") : QString(),
+                        .keys = {{"B-drag", "radius"}, {"+/-", "sides"}, {"P", "preset"}, {"T", "wall"}, {"S", "surfaces"}, {"F", "from loop"},
+                                 {"A", "attach"}, {"Y", "symmetry"}, {"Z", "undo point"}, {"Shift+Z", "redo point"}, {"Enter", "build"},
+                                 {"Esc", "exit"}}});
     }
 
 private:

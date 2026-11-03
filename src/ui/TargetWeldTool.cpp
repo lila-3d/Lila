@@ -146,9 +146,11 @@ public:
         }
         if (valid && mHover && view.camera == mCursorView)
             mark(*mHover, kHotColor);
-        drawToolMessage(p, view,
-                        QString("Target Weld: drag from a %1 onto another to weld it there, Shift: meet halfway, Esc: exit")
-                            .arg(edgeMode() ? "edge" : "vertex"));
+        drawToolStatus(p, view,
+                       {.tool = "Target Weld",
+                        .mode = edgeMode() ? "edge" : "vertex",
+                        .prompt = edgeMode() ? "drag an edge onto another" : "drag a vertex onto another",
+                        .keys = {{"Shift", "meet halfway"}, {"Esc", "exit"}}});
     }
 
 private:

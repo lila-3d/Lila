@@ -182,21 +182,19 @@ public:
                     dot(p, view, *h, 4.0f, kHandle);
                 }
         }
-        QString state;
+        ToolStatus status{.tool = "Blend Curve", .flags = {{"comb", mComb}}};
         if (mPicks.size() < 2)
-            state = mPicks.empty() ? "click a curve end, a point along a curve, or a mesh border edge" : "click the second end";
-        else if (!mError.isEmpty())
-            state = mError;
-        else
-            state = QString("first %1 bulge %2, second %3 bulge %4")
-                        .arg(curve::continuityName(mPicks[0].continuity))
-                        .arg(mPicks[0].bulge, 0, 'f', 2)
-                        .arg(curve::continuityName(mPicks[1].continuity))
-                        .arg(mPicks[1].bulge, 0, 'f', 2);
-        drawToolMessage(p, view,
-                        QString("Blend Curve: %1  drag dots: bulge, 0-3: continuity of the nearer end, F: flip it, C: comb %2, Enter: build, "
-                                "Backspace: undo pick, Esc: %3")
-                            .arg(state, mComb ? "on" : "off", mPicks.empty() ? "exit" : "clear"));
+            status.prompt = mPicks.empty() ? "click a curve end, curve point or border edge" : "click the second end";
+        else if (mError.isEmpty())
+            status.fields = {{"first", curve::continuityName(mPicks[0].continuity)},
+                             {"first bulge", QString::number(mPicks[0].bulge, 'f', 2)},
+                             {"second", curve::continuityName(mPicks[1].continuity)},
+                             {"second bulge", QString::number(mPicks[1].bulge, 'f', 2)}};
+        status.keys = {{"Dot-drag", "bulge"}, {"0-3", "nearer end continuity"}, {"F", "flip"}, {"C", "comb"}, {"Enter", "build"},
+                       {"Backspace", "undo pick"}, {"Esc", mPicks.empty() ? "exit" : "clear"}};
+        drawToolStatus(p, view, status);
+        if (mPicks.size() >= 2 && !mError.isEmpty())
+            drawToolMessage(p, view, mError);
     }
 
 private:

@@ -278,8 +278,13 @@ public:
             dot(p, view, q);
         if (mHover && view.camera == mHoverView)
             dot(p, view, *mHover, 3.0f, kGhost);
-        drawToolMessage(p, view, QString("%1: %2  Enter: finish, click the first point: close, Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %3, %4, Esc: exit")
-                                     .arg(mName, mHelp, mPlacer.lockEnabled() ? "on" : "off", mSurface.status()));
+        ToolStatus status{.tool = mName,
+                          .flags = {{"planar lock", mPlacer.lockEnabled()}},
+                          .prompt = mHelp,
+                          .keys = {{"Enter", "finish"}, {"First point", "close"}, {"Z", "undo point"}, {"Shift+Z", "redo point"}, {"L", "planar lock"}}};
+        mSurface.addStatus(status);
+        status.keys.push_back({"Esc", "exit"});
+        drawToolStatus(p, view, status);
     }
 
 private:
@@ -516,10 +521,14 @@ public:
                 }
             dot(p, view, mSpline.points[i]);
         }
-        drawToolMessage(p, view,
-                        QString("Bezier Pen: click a corner, drag a smooth point, Ctrl breaks the handle  Enter: finish, click the first point: close, "
-                                "Z/Backspace: undo point, Shift+Z: redo point, L: planar lock %1, %2, Esc: exit")
-                            .arg(mPlacer.lockEnabled() ? "on" : "off", mSurface.status()));
+        ToolStatus status{.tool = "Bezier Pen",
+                          .flags = {{"planar lock", mPlacer.lockEnabled()}},
+                          .prompt = "click a corner, drag a smooth point",
+                          .keys = {{"Ctrl", "break handle"}, {"Enter", "finish"}, {"First point", "close"}, {"Z", "undo point"}, {"Shift+Z", "redo point"},
+                                   {"L", "planar lock"}}};
+        mSurface.addStatus(status);
+        status.keys.push_back({"Esc", "exit"});
+        drawToolStatus(p, view, status);
     }
 
 private:
@@ -700,7 +709,10 @@ public:
                 f.linesOnTop.push_back({glm::vec3(mirrored(mStroke[i])), kPreview});
             }
         }
-        drawToolMessage(p, view, QString("Pencil Curve: draw a stroke (end on its start to close), %1, Esc: exit").arg(mSurface.status()));
+        ToolStatus status{.tool = "Pencil Curve", .prompt = "draw a stroke, end on its start to close"};
+        mSurface.addStatus(status);
+        status.keys.push_back({"Esc", "exit"});
+        drawToolStatus(p, view, status);
     }
 
 private:

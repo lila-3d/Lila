@@ -122,9 +122,14 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        const QString text = mBvh ? QString("Drag to knock stones out, Shift to hold them, [ ] radius %1 cm (Esc to finish)").arg(gRadius, 0, 'f', 0)
-                                  : QString("Select a masonry wall or building first (Esc to cancel)");
-        drawToolMessage(p, view, text);
+        if (mBvh)
+            drawToolStatus(p, view,
+                           {.tool = name(),
+                            .fields = {{"radius", QString("%1 cm").arg(gRadius, 0, 'f', 0)}},
+                            .prompt = "drag to knock stones out",
+                            .keys = {{"Shift", "hold"}, {"[ ]", "radius"}, {"Esc", "finish"}}});
+        else
+            drawToolStatus(p, view, {.tool = name(), .prompt = "select a masonry wall or building", .keys = {{"Esc", "cancel"}}});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }

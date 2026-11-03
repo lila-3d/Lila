@@ -61,22 +61,26 @@ const char* modeName(Mode m)
     }
 }
 
-const char* modeHint(Mode m)
+/** What to do in mode m: the prompt, and its keys added to s.keys. */
+QString addModeHint(Mode m, ToolStatus& s)
 {
     switch (m)
     {
     case Mode::Grab:
-        return "drag to carry, Shift lifts";
+        s.keys.push_back({"Shift", "lift"});
+        return "drag to carry";
     case Mode::Push:
-        return "drag a direction and let go to shove";
+        return "drag a direction, let go to shove";
     case Mode::Wiggle:
-        return "hold to jostle under the brush, [ ] size";
+        s.keys.push_back({"[ ]", "size"});
+        return "hold to jostle under the brush";
     case Mode::Drop:
-        return "click to let everything fall, Shift-drag lifts first";
+        s.keys.push_back({"Shift-drag", "lift first"});
+        return "click to let everything fall";
     case Mode::Shake:
         return "click a shelf or table to shake it";
     default:
-        return "";
+        return {};
     }
 }
 
@@ -295,12 +299,21 @@ public:
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
         mView = view;
-        QString text = QString("%1 (1-5, Tab): %2.  Ctrl-click pins.  Enter keeps, Esc reverts.").arg(modeName(mMode), modeHint(mMode));
+        ToolStatus status{.tool = "Push Tool", .mode = modeName(mMode)};
         if (!mSession)
-            text = QString("%1: select what may move, then click.  %2").arg(modeName(mMode), modeHint(mMode));
-        else if (mSession->paused())
-            text += "  Paused (P).";
-        drawToolMessage(p, view, text);
+        {
+            addModeHint(mMode, status);
+            status.prompt = "select what may move, then click";
+        }
+        else
+        {
+            status.flags = {{"paused", mSession->paused()}};
+            status.keys = {{"1-5", "mode"}};
+            status.prompt = addModeHint(mMode, status);
+            for (const KeyHint& k : {KeyHint{"Ctrl-click", "pin"}, KeyHint{"P", "pause"}, KeyHint{"Enter", "keep"}, KeyHint{"Esc", "revert"}})
+                status.keys.push_back(k);
+        }
+        drawToolStatus(p, view, status);
         if (mMode == Mode::Wiggle)
             drawBrush(p, view);
         if (mSession && mSession->held() >= 0)

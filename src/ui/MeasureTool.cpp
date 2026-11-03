@@ -567,7 +567,7 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, QString::fromStdString(hint()));
+        drawToolStatus(p, view, toolStatus());
         p.setShadow(true);
         std::vector<glm::dvec3> pts;
         for (const Snap& s : mPicked)
@@ -629,6 +629,23 @@ private:
             return "Angle tool: click the first arm, the corner, then the second arm; Esc to cancel";
         default:
             return "Radius tool: click 3+ points on the circle, Enter to finish, Backspace to undo a point, Esc to cancel";
+        }
+    }
+
+    ToolStatus toolStatus() const
+    {
+        switch (mKind)
+        {
+        case Kind::Distance:
+            return {.tool = "Distance Tool",
+                    .prompt = "click start and end",
+                    .keys = {{"V", "vertex"}, {"C", "edge"}, {"X", "grid"}, {"Esc", "cancel"}}};
+        case Kind::Angle:
+            return {.tool = "Angle Tool", .prompt = "click arm, corner, then arm", .keys = {{"Esc", "cancel"}}};
+        default:
+            return {.tool = "Radius Tool",
+                    .prompt = "click 3+ points on the circle",
+                    .keys = {{"Enter", "finish"}, {"Backspace", "undo point"}, {"Esc", "cancel"}}};
         }
     }
 

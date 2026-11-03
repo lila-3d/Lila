@@ -336,7 +336,7 @@ public:
     {
         if (!mWorld)
         {
-            drawToolMessage(p, view, "Physics Live: select a ragdoll (a physics solver, marker or joint) first");
+            drawToolStatus(p, view, {.tool = "Physics Live", .prompt = "select a ragdoll solver, marker or joint"});
             return;
         }
         for (size_t i = 0; i < mRig.bodies.size(); ++i)
@@ -346,7 +346,10 @@ public:
             s.linesOnTop.push_back({glm::vec3(glm::dvec3(bodyWorld(size_t(mGrab)) * glm::dvec4(mGrabLocal, 1.0))), kSimColor});
             s.linesOnTop.push_back({glm::vec3(mTarget), kSimColor});
         }
-        drawToolMessage(p, view, "Physics Live: drag the bodies. Enter keys the pose, R resets to the animation, Esc leaves");
+        drawToolStatus(p, view,
+                       {.tool = "Physics Live",
+                        .prompt = "drag the bodies",
+                        .keys = {{"Enter", "key pose"}, {"R", "reset to animation"}, {"Esc", "leave"}}});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(mGrab >= 0 ? Qt::ClosedHandCursor : Qt::OpenHandCursor); }

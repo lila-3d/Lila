@@ -380,7 +380,7 @@ public:
         scene::Graph& g = scene::Graph::current();
         if (!g.node(mMesh) || (mapMode() ? !g.node(mMap.node) : (mSkin == kNoNode || !g.node(mSkin))))
         {
-            drawToolMessage(p, view, "Paint weights: select a skinned mesh or a mesh with deformers");
+            drawToolStatus(p, view, {.tool = "Weight Paint", .prompt = "select a skinned or deformed mesh"});
             return;
         }
         ensureBvh();
@@ -394,7 +394,12 @@ public:
             infName = QString::fromStdString(mMap.label);
         const Qt::KeyboardModifiers mods = mStroking ? mMods : QApplication::keyboardModifiers();
         const Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : weightPaintSettings().mode;
-        drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(mode)]));
+        drawToolStatus(p, view,
+                       {.tool = "Weight Paint",
+                        .subject = QString::fromStdString(g.node(mMesh)->name()),
+                        .mode = kModeNames[int(mode)],
+                        .fields = {{mapMode() ? "map" : "influence", infName}},
+                        .keys = {{"Shift", "smooth"}}});
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> surface;

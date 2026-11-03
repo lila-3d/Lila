@@ -316,7 +316,7 @@ void RetopoPolesTool::build()
     }
 }
 
-std::string RetopoPolesTool::status() const
+ToolStatus RetopoPolesTool::status() const
 {
     int three = 0, five = 0;
     for (const retopo::Pole& p : mPoles)
@@ -324,13 +324,9 @@ std::string RetopoPolesTool::status() const
         three += p.valence == 3;
         five += p.valence == 5;
     }
-    std::string s = "Retopo Poles: " + std::to_string(three) + " three-edge, " + std::to_string(five) + " five-edge, ~" +
-                    std::to_string(targetFaces()) + " faces";
-    if (mJob.valid())
-        s += "   solving...";
-    if (!mError.empty())
-        s += "   " + mError;
-    return s;
+    return {.tool = "Retopo Poles",
+            .fields = {{"three-edge", QString::number(three)}, {"five-edge", QString::number(five)}, {"faces", QString("~%1").arg(targetFaces())}},
+            .flags = {{"solving", mJob.valid()}}};
 }
 
 bool RetopoPolesTool::mousePress(QMouseEvent* e, const ViewInfo& view)
@@ -447,9 +443,13 @@ void RetopoPolesTool::draw(render::FrameState& s, OverlayPainter& p, const ViewI
         }
     }
     if (!mMesh)
-        drawToolMessage(p, view, "Retopo Poles: the mesh is gone");
+        drawToolStatus(p, view, {.tool = "Retopo Poles", .prompt = "the mesh is gone"});
     else
-        drawToolMessage(p, view, QString::fromStdString(status()));
+    {
+        drawToolStatus(p, view, status());
+        if (!mError.empty())
+            drawToolMessage(p, view, QString::fromStdString(mError));
+    }
 }
 
 void registerRetopoPolesActions()

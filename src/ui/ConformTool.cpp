@@ -142,8 +142,11 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, mHover.isEmpty() ? QString("Conform to Object: click the mesh or curve to conform the selection to, Esc: cancel")
-                                                  : QString("Conform to %1").arg(mHover));
+        drawToolStatus(p, view,
+                       {.tool = "Conform to Object",
+                        .subject = mHover,
+                        .prompt = mHover.isEmpty() ? QString("click the mesh or curve to conform to") : QString(),
+                        .keys = {{"Esc", "cancel"}}});
     }
 
 private:
@@ -346,8 +349,10 @@ public:
         for (int i = 0; i < 3; ++i)
             if (const auto t = view.project(axisTip(i)))
                 p.rect(QRectF(t->x() - 5, t->y() - 5, 10, 10), lit(Handle(int(Handle::AxisX) + i)) ? hot : glm::vec4(viewportDisplay::axisColor(i), 1.0f));
-        drawToolMessage(p, view,
-                        "Spherize: drag an arrow or the centre to move, the ring for the radius, an axis square to stretch. Enter: accept, Esc: undo");
+        drawToolStatus(p, view,
+                       {.tool = "Spherize",
+                        .fields = {{"radius", QString("%1 cm").arg(mSphere.radius, 0, 'f', 2)}},
+                        .keys = {{"Arrow-drag", "move"}, {"Ring-drag", "radius"}, {"Square-drag", "stretch"}, {"Enter", "accept"}, {"Esc", "undo"}}});
     }
 
 private:

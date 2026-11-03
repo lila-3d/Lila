@@ -214,20 +214,20 @@ public:
             dot(p, view, a.point);
         if (mHover && view.camera == mHoverView)
             dot(p, view, *mHover, 3.0f, kGhost);
-        QString amountText = mDepth ? QString("sag %1 cm").arg(mSag, 0, 'f', 1) : QString("slack %1%").arg(mSlack * 100.0, 0, 'f', 1);
-        drawToolMessage(p, view,
-                        QString("Cable  %1, %2 per span%3  B-drag/Ctrl+scroll: %4, M: slack/sag, +/-: cables, R: reseed, D: drape %5, "
-                                "P: pipe %6 ([ ]: radius %7 cm), S: on surfaces %8  Z/Backspace: undo point, click the first point: "
-                                "close, Enter: build (or hang from the selected curves), Esc: exit%9")
-                            .arg(amountText)
-                            .arg(mCount)
-                            .arg(mCount > 1 ? QString(", seed %1").arg(mSeed) : QString())
-                            .arg(mDepth ? "sag" : "slack")
-                            .arg(mDrape ? "on" : "off")
-                            .arg(mPipe ? "on" : "off")
-                            .arg(mPipeRadius, 0, 'f', 2)
-                            .arg(mSurface ? "on" : "off")
-                            .arg(warning.empty() ? QString() : QString::fromStdString("  (" + warning + ")")));
+        ToolStatus status{.tool = "Cable"};
+        status.fields.push_back(mDepth ? ToolField{"sag", QString("%1 cm").arg(mSag, 0, 'f', 1)}
+                                       : ToolField{"slack", QString("%1%").arg(mSlack * 100.0, 0, 'f', 1)});
+        status.fields.push_back({"per span", QString::number(mCount)});
+        if (mCount > 1)
+            status.fields.push_back({"seed", QString::number(mSeed)});
+        status.fields.push_back({"pipe radius", QString("%1 cm").arg(mPipeRadius, 0, 'f', 2)});
+        status.flags = {{"drape", mDrape}, {"pipe", mPipe}, {"surfaces", mSurface}};
+        status.keys = {{"B-drag", mDepth ? "sag" : "slack"}, {"M", "slack/sag"}, {"+/-", "cables"}, {"R", "reseed"}, {"D", "drape"},
+                       {"P", "pipe"}, {"[ ]", "pipe radius"}, {"S", "surfaces"}, {"Z", "undo point"}, {"First point", "close"},
+                       {"Enter", "build or hang from selected"}, {"Esc", "exit"}};
+        drawToolStatus(p, view, status);
+        if (!warning.empty())
+            drawToolMessage(p, view, QString::fromStdString("Cable: " + warning));
     }
 
 private:

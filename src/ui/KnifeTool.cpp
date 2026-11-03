@@ -668,10 +668,13 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
             p.disc(*s, hot ? 6.0f : 4.0f, kHotColor, 16);
         }
 
-    QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Ctrl+Alt+click edge: delete, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";
-    help = help.arg(snapStepFraction() * 100.0, 0, 'g', 3);
-    help += QString("   A angle: %1   X through: %2").arg(mAngle ? "on" : "off", mThrough ? "on" : "off");
-    drawToolMessage(p, view, help);
+    drawToolStatus(p, view,
+                   {.tool = "Knife",
+                    .fields = {{"snap", QString("%1%").arg(snapStepFraction() * 100.0, 0, 'g', 3)}},
+                    .flags = {{"angle", mAngle}, {"through", mThrough}},
+                    .prompt = "click to cut",
+                    .keys = {{"Enter", "finish"}, {"Ctrl+click edge", "loop"}, {"Ctrl+Alt+click edge", "delete"}, {"Shift", "snap"},
+                             {"Z", "remove point"}, {"Shift+Z", "restore point"}, {"A", "angle"}, {"X", "through"}, {"Esc", "cancel"}}});
 }
 
 void registerKnifeActions()

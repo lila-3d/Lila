@@ -191,10 +191,11 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view,
-                        QString("Click to drop the %1 on the surface. Shift keeps it upright, B-drag, Ctrl+scroll or [ ] resizes. Esc "
-                                "or right-click cancels.")
-                            .arg(mLabel));
+        drawToolStatus(p, view,
+                       {.tool = "Place",
+                        .mode = mLabel,
+                        .prompt = "click to drop on the surface",
+                        .keys = {{"Shift", "upright"}, {"B-drag", "resize"}, {"Esc", "cancel"}}});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
@@ -397,7 +398,8 @@ public:
     {
         if (!adjustable())
             return end();
-        drawToolMessage(p, view, QString("B-drag, Ctrl+scroll or [ ] resizes the %1. Click anywhere to carry on.").arg(mLabel));
+        drawToolStatus(p, view,
+                       {.tool = "Resize", .mode = mLabel, .prompt = "click anywhere to carry on", .keys = {{"B-drag", "resize"}}});
     }
 
 private:

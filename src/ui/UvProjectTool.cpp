@@ -288,8 +288,7 @@ public:
         else if (hot.kind != HandleKind::None)
             if (auto at = handleScreen(*s, hot, view))
                 p.text(*at + QPointF(14, 4), hint(s->rec.type, hot), kHandleGray);
-        drawToolMessage(p, view, summary(*s));
-        drawToolMessage(p, view, "Drag the handles; Shift scales U/V instead, Ctrl+centre offsets U/V. Enter or Esc to finish.", kDim);
+        drawToolStatus(p, view, status(*s));
     }
 
 private:
@@ -350,32 +349,45 @@ private:
         }
     }
 
-    QString summary(const ProjectionShape& s) const
+    ToolStatus status(const ProjectionShape& s) const
     {
         const uv::ProjectFrame& f = s.fr();
         const lo::Op* op = lo::current();
         auto flag = [&](const char* name, double fallback) {
             return op && op->call.contains(name) && op->call[name].is_number() ? op->call[name].get<double>() : fallback;
         };
-        QString shape;
+        auto num = [](double v, int decimals = 2) { return QString::number(v, 'f', decimals); };
+        auto seam = [&] { return ToolField{"seam", QString("%1°").arg(glm::degrees(f.seamAngle), 0, 'f', 1)}; };
+        ToolStatus st{.tool = "UV Projection"};
         switch (s.rec.type)
         {
-        case Projection::Planar: shape = QString("Planar  %1 x %2").arg(f.width, 0, 'f', 2).arg(f.height, 0, 'f', 2); break;
-        case Projection::Box: shape = QString("Box  %1 x %2 x %3").arg(f.width, 0, 'f', 2).arg(f.height, 0, 'f', 2).arg(f.depth, 0, 'f', 2); break;
-        case Projection::Cylindrical:
-            shape = QString("Cylindrical  r %1  h %2  seam %3°").arg(f.radius, 0, 'f', 2).arg(f.height, 0, 'f', 2).arg(glm::degrees(f.seamAngle), 0, 'f', 1);
+        case Projection::Planar:
+            st.mode = "planar";
+            st.fields = {{"size", QString("%1 x %2").arg(num(f.width), num(f.height))}};
             break;
-        case Projection::Spherical: shape = QString("Spherical  r %1  seam %2°").arg(f.radius, 0, 'f', 2).arg(glm::degrees(f.seamAngle), 0, 'f', 1); break;
+        case Projection::Box:
+            st.mode = "box";
+            st.fields = {{"size", QString("%1 x %2 x %3").arg(num(f.width), num(f.height), num(f.depth))}};
+            break;
+        case Projection::Cylindrical:
+            st.mode = "cylindrical";
+            st.fields = {{"radius", num(f.radius)}, {"height", num(f.height)}, seam()};
+            break;
+        case Projection::Spherical:
+            st.mode = "spherical";
+            st.fields = {{"radius", num(f.radius)}, seam()};
+            break;
         default: break;
         }
-        return QString("%1    U x%2 %3%4    V x%5 %6%7")
-            .arg(shape)
-            .arg(flag("scaleU", 1.0), 0, 'f', 2)
-            .arg(flag("offsetU", 0.0) < 0 ? "" : "+")
-            .arg(flag("offsetU", 0.0), 0, 'f', 2)
-            .arg(flag("scaleV", 1.0), 0, 'f', 2)
-            .arg(flag("offsetV", 0.0) < 0 ? "" : "+")
-            .arg(flag("offsetV", 0.0), 0, 'f', 2);
+        auto scaleOffset = [&](const char* scale, const char* offset) {
+            const double o = flag(offset, 0.0);
+            return QString("x%1 %2%3").arg(num(flag(scale, 1.0)), o < 0 ? "" : "+", num(o));
+        };
+        st.fields.push_back({"U", scaleOffset("scaleU", "offsetU")});
+        st.fields.push_back({"V", scaleOffset("scaleV", "offsetV")});
+        st.prompt = "drag the handles";
+        st.keys = {{"Shift", "scale U/V"}, {"Ctrl+centre", "offset U/V"}, {"Enter", "finish"}};
+        return st;
     }
 
     void drawShape(const ProjectionShape& s, OverlayPainter& p, const ViewInfo& view, const Handle& hot) const

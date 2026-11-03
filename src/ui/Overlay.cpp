@@ -93,6 +93,10 @@ Atlas buildAtlas()
     font.setPixelSize(int(std::round(12.0 * scale)));
     font.setWeight(QFont::Medium);
     font.setHintingPreference(QFont::PreferNoHinting);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    // Equal-width digits, so readouts don't shift as their numbers change.
+    font.setFeature(QFont::Tag("tnum"), 1);
+#endif
     QFontMetricsF fm(font);
 
     std::u32string chars;

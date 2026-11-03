@@ -959,28 +959,35 @@ public:
         const TexturePaintSettings& st = texturePaintState();
         mLastView = view;
         const Target* t = mStroking ? &mTarget : (mOver ? &*mOver : nullptr);
-        QString msg;
+        ToolStatus status{.tool = "Texture Paint"};
         if (st.tool == "project")
         {
             ensureBuffer(view);
-            msg = QString("Projection: paint the buffer, Enter projects%1%2")
-                      .arg(st.transform ? "   transform: drag, Shift rotate, Ctrl scale" : "", st.warp ? "   warp: drag the grid" : "");
+            status.mode = "projection";
+            status.flags = {{"transform", st.transform}, {"warp", st.warp}};
+            status.prompt = st.warp ? "paint the buffer, drag the grid" : "paint the buffer";
+            status.keys = {{"Enter", "project"}};
+            if (st.transform)
+                status.keys.insert(status.keys.end(), {{"drag", "move"}, {"Shift", "rotate"}, {"Ctrl", "scale"}});
             drawBuffer(fs, p, view);
         }
         else if (!t)
-            msg = "Texture paint: hover a mesh whose material has a texture set";
+            status.prompt = "hover a mesh with a texture set";
         else if (t->set == kNoNode)
-            msg = QString("Texture paint: %1's material has no texture set").arg(QString::fromStdString(t->meshPath));
+        {
+            status.subject = QString::fromStdString(t->meshPath);
+            status.prompt = "material has no texture set";
+        }
         else
         {
             auto it = gLayers.find(t->set);
-            msg = QString("Texture paint: %1 / %2   %3")
-                      .arg(QString::fromStdString(t->setName), it != gLayers.end() ? QString::fromStdString(it->second) : QString("new layer"),
-                           QString::fromStdString(st.tool));
+            status.subject = QString::fromStdString(t->setName);
+            status.mode = QString::fromStdString(st.tool);
+            status.fields = {{"layer", it != gLayers.end() ? QString::fromStdString(it->second) : QString("new layer")}};
             if ((st.tool == "clone" || st.tool == "heal") && !mCloneUv)
-                msg += "   Ctrl+Alt+click sets the source";
+                status.keys = {{"Ctrl+Alt+click", "set source"}};
         }
-        drawToolMessage(p, view, msg);
+        drawToolStatus(p, view, status);
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> surface;

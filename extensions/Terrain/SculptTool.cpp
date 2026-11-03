@@ -147,11 +147,15 @@ public:
     {
         if (!mTarget)
         {
-            drawToolMessage(p, view, "Select a terrain");
+            drawToolStatus(p, view, {.tool = name(), .prompt = "select a terrain"});
             return;
         }
         static const char* kOps[] = {"Raise", "Lower", "Smooth", "Flatten", "Noise"};
-        drawToolMessage(p, view, QString("%1  %2 cm  %3").arg(kOps[mBaseOp]).arg(mRadius, 0, 'f', 0).arg(mFinal ? "after erosion" : "before erosion"));
+        drawToolStatus(p, view,
+                       {.tool = name(),
+                        .mode = kOps[mBaseOp],
+                        .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 0)}},
+                        .flags = {{"after erosion", mFinal}}});
         drawKeyList(p, QPointF(12.0, view.height - 12.0),
                     {{"1-5", "Raise, lower, smooth, flatten, noise"}, {"Ctrl", "Invert"}, {"Shift", "Smooth"}, {"[ ]", "Radius"},
                      {"- =", "Strength"}, {"F", "Before or after erosion"}, {"B drag", "Radius"}});

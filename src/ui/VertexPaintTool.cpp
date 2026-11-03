@@ -985,19 +985,23 @@ public:
         scene::Node* n = g.node(mMesh);
         if (!n)
         {
-            drawToolMessage(p, view, "Paint vertex colors: select a mesh");
+            drawToolStatus(p, view, {.tool = "Vertex Paint", .prompt = "select a mesh"});
             return;
         }
         substituteLiveMesh(s, *n);
         const VertexPaintSettings& st = vertexPaintSettings();
         const bool blur = ((mStroking ? mStrokeMods : QApplication::keyboardModifiers()) & Qt::ShiftModifier) != 0;
         const std::string blend = blur ? std::string(vcolor::blendName(vcolor::Blend::Blur)) : st.blend;
-        drawToolMessage(p, view, QString("Vertex paint %1: %2   %3 %4   radius %5 px   strength %6%7")
-                                     .arg(QString::fromStdString(n->path()), QString::fromStdString(mSet.empty() ? "(new set)" : mSet),
-                                          QString::fromStdString(blend), QString::fromStdString(st.channels).toUpper())
-                                     .arg(int(std::lround(st.stroke.radius)))
-                                     .arg(st.stroke.strength, 0, 'f', 2)
-                                     .arg(mSymmetryOn ? "   mirror" : ""));
+        drawToolStatus(p, view,
+                       {.tool = "Vertex Paint",
+                        .subject = QString::fromStdString(n->path()),
+                        .mode = QString::fromStdString(blend),
+                        .fields = {{"set", QString::fromStdString(mSet.empty() ? "(new set)" : mSet)},
+                                   {"channels", QString::fromStdString(st.channels).toUpper()},
+                                   {"radius", QString("%1 px").arg(int(std::lround(st.stroke.radius)))},
+                                   {"strength", QString::number(st.stroke.strength, 'f', 2)}},
+                        .flags = {{"mirror", mSymmetryOn}},
+                        .keys = {{"Shift", "blur"}}});
         if (mGradientDrag)
         {
             auto a = view.project(mGradientFrom), b = view.project(mGradientTo);

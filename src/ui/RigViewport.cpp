@@ -423,7 +423,7 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, "Joint tool: click to place, Enter for a new chain, Esc to finish");
+        drawToolStatus(p, view, {.tool = "Joint", .prompt = "click to place", .keys = {{"Enter", "new chain"}, {"Esc", "finish"}}});
     }
 };
 

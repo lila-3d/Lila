@@ -1696,34 +1696,42 @@ private:
 
     void drawMessage(OverlayPainter& p, const ViewInfo& view, const sketchUi::Display* disp)
     {
-        QString state;
+        ToolStatus status{.tool = "Sketch", .mode = QString(modeName(mMode)).toLower()};
         if (!nodeOk())
-            state = "new sketch on the construction plane";
-        else if (!disp)
-            state = QString::fromStdString(node()->name()) + ": no constraints";
+            status.subject = "new sketch on the construction plane";
         else
         {
-            state = QString::fromStdString(node()->name()) + ": ";
-            if (!disp->ok)
-                state += QString("CONFLICT (%1 constraints)").arg(disp->conflicting.size());
-            else if (disp->status.dof == 0)
-                state += "fully constrained";
+            status.subject = QString::fromStdString(node()->name());
+            if (!disp)
+                status.fields = {{"constraints", "none"}};
+            else if (!disp->ok)
+                status.fields = {{"conflict", QString("%1 constraints").arg(disp->conflicting.size())}};
             else
-                state += QString("%1 degrees of freedom").arg(disp->status.dof);
+                status.fields = {{"freedom", disp->status.dof == 0 ? QString("fully constrained") : QString("%1 dof").arg(disp->status.dof)}};
         }
-        QString help;
+        status.flags = {{"auto constraints", autoConstraints()}};
         switch (mMode)
         {
         case SketchMode::Select:
-            help = "click/Shift+click: select, drag: move with constraints, C H V P Q T E O M Y K N F: constrain, D: dimension, "
-                   "double-click a dimension: type a value, Delete: remove selected glyphs";
+            status.prompt = "click to select, drag to move";
+            status.keys = {{"Shift+click", "add"},
+                           {"C H V P Q T E O M Y K N F", "constrain"},
+                           {"D", "dimension"},
+                           {"double-click dimension", "type value"},
+                           {"Delete", "remove glyphs"}};
             break;
-        case SketchMode::Line: help = "click points, click the first to close, Enter/Esc: finish, Backspace: undo point"; break;
-        case SketchMode::Arc: help = "click start, end, then where it bulges (starting on a line end, it snaps tangent)"; break;
-        case SketchMode::Circle: help = "click the centre, then the radius"; break;
+        case SketchMode::Line:
+            status.prompt = "click points, the first closes";
+            status.keys = {{"Enter", "finish"}, {"Backspace", "undo point"}};
+            break;
+        case SketchMode::Arc:
+            status.prompt = "click start, end, then the bulge";
+            status.keys = {{"from line end", "tangent"}};
+            break;
+        case SketchMode::Circle: status.prompt = "click the centre, then the radius"; break;
         }
-        drawToolMessage(p, view, QString("Sketch %1  [%2]  auto constraints %3 (I, Alt suppresses)  %4  L/A/R/S: mode, Esc: back")
-                                     .arg(state, modeName(mMode), autoConstraints() ? "on" : "off", help));
+        status.keys.insert(status.keys.end(), {{"I", "auto constraints"}, {"Alt", "suppress"}, {"L/A/R/S", "mode"}, {"Esc", "back"}});
+        drawToolStatus(p, view, status);
         if (!mFlash.isEmpty() && mFlashClock.isValid() && mFlashClock.elapsed() < 5000)
             drawToolMessage(p, view, mFlash, conflictInk());
     }

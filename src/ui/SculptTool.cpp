@@ -308,12 +308,13 @@ public:
         scene::Node* n = s ? scene::Graph::current().node(s->node) : nullptr;
         if (!n)
         {
-            drawToolMessage(p, view, "Sculpt: select a mesh and Enter Sculpt");
+            drawToolStatus(p, view, {.tool = "Sculpt", .prompt = "select a mesh and Enter Sculpt"});
             return;
         }
         if (sculptPreviewing())
         {
-            drawToolMessage(p, view, QString("Previewing %1's low poly: Preview Low Poly again to sculpt").arg(QString::fromStdString(n->name())));
+            drawToolStatus(p, view, {.tool = "Sculpt", .subject = QString::fromStdString(n->name()), .mode = "low poly preview",
+                                     .prompt = "Preview Low Poly again to sculpt"});
             return;
         }
         // Shift smooths and Ctrl inverts the next stroke, so the message names the brush that stroke would use.
@@ -328,15 +329,14 @@ public:
         QString name = QString::fromStdString(sculpt::brushId(shown));
         if (shown.brush == sculpt::Brush::Custom && !sculpt::brushRegistry().contains(shown.custom))
             name += " (not loaded)";
-        if (invert)
-            name += " (inverted)";
-        const QString where = s->stack ? QString("%1 level %2/%3").arg(QString::fromStdString(n->name())).arg(s->level).arg(s->stack->top())
-                                       : QString::fromStdString(n->name());
-        drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
-                              .arg(where, name)
-                              .arg(int(std::lround(st.stroke.radius)))
-                              .arg(st.stroke.strength, 0, 'f', 2)
-                              .arg(s->sculpt.symmetric() ? "   symmetry" : ""));
+        ToolStatus status{.tool = "Sculpt", .subject = QString::fromStdString(n->name()), .mode = name};
+        if (s->stack)
+            status.fields.push_back({"level", QString("%1/%2").arg(s->level).arg(s->stack->top())});
+        status.fields.push_back({"radius", QString("%1 px").arg(int(std::lround(st.stroke.radius)))});
+        status.fields.push_back({"strength", QString::number(st.stroke.strength, 'f', 2)});
+        status.flags = {{"invert", invert}, {"symmetry", s->sculpt.symmetric()}};
+        status.keys = {{"Shift", "smooth"}, {"Ctrl", "invert"}, {"B-drag", "radius"}, {"M-drag", "strength"}};
+        drawToolStatus(p, view, status);
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         Hit hit;

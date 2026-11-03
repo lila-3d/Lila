@@ -124,7 +124,8 @@ public:
             for (const curve::Spline& s : mPreview)
                 drawSpline(f, s, kPreview);
         }
-        drawToolMessage(p, view, "Section: drag a line across the meshes to cut them along it (the selected meshes, or all visible), Esc: exit");
+        drawToolStatus(p, view,
+                       {.tool = "Section", .prompt = "drag a line across the selected or visible meshes", .keys = {{"Esc", "exit"}}});
     }
 
 private:

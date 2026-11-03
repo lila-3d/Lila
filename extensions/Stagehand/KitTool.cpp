@@ -118,8 +118,10 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, "Kit Place: drag the selected piece over surfaces; it snaps to compatible snap points (Ctrl: no snap). "
-                                 "Shift stands it along the surface; , and . turn it 15 degrees. Esc cancels.");
+        drawToolStatus(p, view,
+                       {.tool = "Kit Place",
+                        .prompt = "drag the piece over surfaces to snap",
+                        .keys = {{"Ctrl", "no snap"}, {"Shift", "along surface"}, {", .", "turn 15°"}, {"Esc", "cancel"}}});
         if (!mSnapAt)
             return;
         if (auto at = view.project(*mSnapAt))

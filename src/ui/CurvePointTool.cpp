@@ -223,10 +223,13 @@ public:
             }
         if (mHover && !mDragging)
             dot(p, view, mHover->point, 3.0f, kGhost);
-        drawToolMessage(p, view,
-                        curveSelected() ? QString("Curve Point: click a curve to pick a point, Shift+click: add, Ctrl+click: remove, drag: slide, "
-                                                  "Enter or Shift+RMB > Insert Point: insert, Esc: exit")
-                                        : QString("Curve Point: select a curve first, Esc: exit"));
+        if (curveSelected())
+            drawToolStatus(p, view,
+                           {.tool = "Curve Point",
+                            .prompt = "click a curve to pick a point",
+                            .keys = {{"Shift+click", "add"}, {"Ctrl+click", "remove"}, {"Drag", "slide"}, {"Enter", "insert"}, {"Esc", "exit"}}});
+        else
+            drawToolStatus(p, view, {.tool = "Curve Point", .prompt = "select a curve", .keys = {{"Esc", "exit"}}});
     }
 
 private:

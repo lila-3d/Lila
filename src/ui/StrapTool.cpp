@@ -186,13 +186,13 @@ public:
             if (!mPreview.warning.empty())
                 drawToolMessage(p, view, QString::fromStdString("Strap: " + mPreview.warning));
         }
-        drawToolMessage(p, view,
-                        QString("Strap  %1, width %2 cm, bridge %3 cm%4  Drag a slash across what to strap, P: preset, Ctrl+scroll: width, "
-                                "Shift+scroll: bridge, T: taut, Esc: exit")
-                            .arg(kStrapPresetLabels[size_t(mPreset)])
-                            .arg(mWidth, 0, 'f', 2)
-                            .arg(mBridge, 0, 'f', 1)
-                            .arg(mTaut ? ", taut" : ""));
+        drawToolStatus(p, view,
+                       {.tool = "Strap",
+                        .mode = kStrapPresetLabels[size_t(mPreset)],
+                        .fields = {{"width", QString("%1 cm").arg(mWidth, 0, 'f', 2)}, {"bridge", QString("%1 cm").arg(mBridge, 0, 'f', 1)}},
+                        .flags = {{"taut", mTaut}},
+                        .prompt = "drag a slash across what to strap",
+                        .keys = {{"P", "preset"}, {"Ctrl+scroll", "width"}, {"Shift+scroll", "bridge"}, {"T", "taut"}, {"Esc", "exit"}}});
     }
 
 private:

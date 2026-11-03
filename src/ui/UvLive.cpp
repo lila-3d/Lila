@@ -464,15 +464,17 @@ public:
         scene::Node* n = scene::Graph::current().node(mNode);
         if (!n)
         {
-            drawToolMessage(p, view, "UV brush: select a mesh");
+            drawToolStatus(p, view, {.tool = "UV Brush", .prompt = "select a mesh"});
             return;
         }
         std::string_view name = uv::liveBrushName(b.brush);
-        drawToolMessage(p, view, QString("UV brush %1: %2   radius %3 px   strength %4%5   (B drag: size, M drag: strength, Esc: exit)")
-                              .arg(QString::fromStdString(n->name()), QString::fromUtf8(name.data(), qsizetype(name.size())))
-                              .arg(int(std::lround(b.radius)))
-                              .arg(b.strength, 0, 'f', 2)
-                              .arg(liveMode() ? "   live" : ""));
+        drawToolStatus(p, view,
+                       {.tool = "UV Brush",
+                        .subject = QString::fromStdString(n->name()),
+                        .mode = QString::fromUtf8(name.data(), qsizetype(name.size())),
+                        .fields = {{"radius", QString("%1 px").arg(int(std::lround(b.radius)))}, {"strength", QString::number(b.strength, 'f', 2)}},
+                        .flags = {{"live", liveMode()}},
+                        .keys = {{"B-drag", "radius"}, {"M-drag", "strength"}, {"Esc", "exit"}}});
         QPointF at = mAdjusting != Adjust::None ? mAdjustStart : mHover;
         const glm::vec4 rim(0.95f, 0.95f, 0.95f, 1.0f), dim(0.6f, 0.6f, 0.6f, 0.8f);
         Hit h;

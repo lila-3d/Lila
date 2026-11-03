@@ -8,6 +8,7 @@
 #include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
 #include "ui/ViewInfo.h"
+#include "ui/ViewportTool.h"
 #include "ui/ViewportToolMath.h"
 
 #include <QKeyEvent>
@@ -203,11 +204,19 @@ public:
     }
     bool on() const { return mOn; }
     double offset() const { return mOffset; }
-    QString status() const
+    /** Adds the surface and symmetry settings and their keys to a curve tool's readout. */
+    void addStatus(ToolStatus& s) const
     {
-        return QString("S: on surfaces %1, K: keep on surface %2%3, Y: symmetry %4")
-            .arg(mOn ? "on" : "off", mConform ? "on" : "off", mOn ? QString(", Ctrl+scroll: offset %1 cm").arg(mOffset, 0, 'f', 2) : QString(),
-                 symmetryName(symmetryPref()));
+        if (mOn)
+            s.fields.push_back({"offset", QString("%1 cm").arg(mOffset, 0, 'f', 2)});
+        s.fields.push_back({"symmetry", symmetryName(symmetryPref())});
+        s.flags.push_back({"surfaces", mOn});
+        s.flags.push_back({"keep on surface", mConform});
+        s.keys.push_back({"S", "surfaces"});
+        s.keys.push_back({"K", "keep on surface"});
+        if (mOn)
+            s.keys.push_back({"Ctrl+scroll", "offset"});
+        s.keys.push_back({"Y", "symmetry"});
     }
 
 private:

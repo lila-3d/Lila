@@ -124,12 +124,21 @@ public:
             if (mExtending && !mPreview.empty())
                 dot(p, view, mPreview.back(), 4.0f, kGrow);
         }
-        QString mode = mExtending ? QString("Extend (%1): hover near an end, click to extend it to the next curve  M: smooth/line/arc")
-                                        .arg(curve::extendModeName(mExtendMode))
-                                  : QString("Trim: click the highlighted stretch to delete it");
-        if (mHover && mExtending && mPreview.empty())
-            mode += "  (no curve in reach)";
-        drawToolMessage(p, view, QString("%1  E: %2, P: intersect %3, Esc: exit").arg(mode, mExtending ? "trim" : "extend", mProjected ? "as seen" : "in 3D"));
+        ToolStatus status{.tool = "Trim Curve", .mode = mExtending ? "extend" : "trim"};
+        if (mExtending)
+            status.fields.push_back({"shape", QString(curve::extendModeName(mExtendMode))});
+        status.flags = {{"intersect as seen", mProjected}};
+        if (!mExtending)
+            status.prompt = "click a highlighted stretch to delete";
+        else if (mHover && mPreview.empty())
+            status.prompt = "no curve in reach";
+        else
+            status.prompt = "click near an end to extend";
+        status.keys = {{"E", mExtending ? "trim" : "extend"}};
+        if (mExtending)
+            status.keys.push_back({"M", "smooth/line/arc"});
+        status.keys.insert(status.keys.end(), {{"P", "intersect"}, {"Esc", "exit"}});
+        drawToolStatus(p, view, status);
     }
 
 private:

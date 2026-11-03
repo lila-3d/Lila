@@ -415,13 +415,13 @@ public:
             drawPlane(p, view, i);
         if (mDrag == Drag::Line && view.camera == mView)
             p.line(mFrom, mTo, 1.5f, {1.0f, 0.85f, 0.3f, 1.0f});
-        drawToolMessage(p, view,
-                        QString("%1 (%2 pieces, symmetry %3): drag across the mesh to add a plane; drag a plane's rim to move it, "
-                                "Ctrl-drag to turn it, wheel to size it; Delete removes, S suggests at joints, X symmetry, Enter %4, "
-                                "Esc cancels")
-                            .arg(name())
-                            .arg(mPieces.size())
-                            .arg(mSymmetryOn ? "on" : "off", mAnimProxy ? "makes the proxy" : "splits"));
+        drawToolStatus(p, view,
+                       {.tool = name(),
+                        .fields = {{"pieces", QString::number(mPieces.size())}},
+                        .flags = {{"symmetry", mSymmetryOn}},
+                        .prompt = "drag across the mesh to add a plane",
+                        .keys = {{"Rim-drag", "move"}, {"Ctrl-drag", "turn"}, {"Wheel", "size"}, {"Delete", "remove"}, {"S", "suggest at joints"},
+                                 {"X", "symmetry"}, {"Enter", mAnimProxy ? "make proxy" : "split"}, {"Esc", "cancel"}}});
     }
 
 private:

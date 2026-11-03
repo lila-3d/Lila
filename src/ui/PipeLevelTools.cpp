@@ -119,10 +119,11 @@ public:
             dot(p, view, e.point);
         if (mHover && view.camera == mHoverView)
             dot(p, view, *mHover, 3.0f, kGhost);
-        drawToolMessage(p, view,
-                        QString("Pipe Route  radius %1 cm ([ ])  click the start, then the end; it goes round the selected meshes  "
-                                "Backspace: undo point, Esc: exit")
-                            .arg(mRadius, 0, 'f', 2));
+        drawToolStatus(p, view,
+                       {.tool = "Pipe Route",
+                        .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 2)}},
+                        .prompt = mEnds.empty() ? QString("click the start, then the end") : QString("click the end"),
+                        .keys = {{"[ ]", "radius"}, {"Backspace", "undo point"}, {"Esc", "exit"}}});
     }
 
 private:

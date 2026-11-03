@@ -74,7 +74,7 @@ private:
     void addPair(QPointF px, const ViewInfo& view);
     void removePair(int i);
     void build();
-    std::string status() const;
+    ToolStatus status() const;
 
     scene::NodeId mSource = scene::kNoNode;
     scene::MeshPtr mMesh;

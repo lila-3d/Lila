@@ -1225,19 +1225,48 @@ void TopologyTool::drawBrush(OverlayPainter& p, double radius) const
     p.polyline(circle, 1.5f, kTopoBrush, true);
 }
 
-QString TopologyTool::hint() const
+ToolStatus TopologyTool::status() const
 {
     switch (mMode)
     {
-    case TopoMode::Pencil: return "Pencil: drag to draw a guide, Ctrl-drag erases, MMB-drag moves one";
-    case TopoMode::Patch: return "Patch: draw a closed shape, or from border to border; click a border to fill its hole; drag in a patch to pull its poles";
-    case TopoMode::Strip: return "Strip: sketch a path (brush = width); drag knots, wheel scales a knot, Ctrl-wheel twists, double-click toggles a corner";
-    case TopoMode::Stroke: return "Stroke: draw strokes to bridge them; start on a border to extrude from it, or draw along a border to bridge to it";
-    case TopoMode::Cylinder: return "Cylinder: drag a line across a limb for each ring; a line across the cylinder adds a ring; Enter finishes";
-    case TopoMode::Region: return "Auto Region: paint the area (Ctrl erases), double-click inside a hole to mark it, Enter to retopologise";
-    case TopoMode::Handles: return "Handles: drag across faces to place handles, drag one to move, wheel scales, Ctrl-wheel turns, Esc clears";
-    case TopoMode::Relax: return "Relax: drag a vertex and its neighbours follow, drag elsewhere to relax under the brush";
-    default: return {};
+    case TopoMode::Pencil:
+        return {.tool = "Topology", .mode = "pencil", .prompt = "drag to draw a guide", .keys = {{"Ctrl-drag", "erase"}, {"MMB-drag", "move guide"}}};
+    case TopoMode::Patch:
+        return {.tool = "Topology",
+                .mode = "patch",
+                .prompt = "draw a closed shape, or border to border",
+                .keys = {{"click border", "fill hole"}, {"drag in patch", "pull poles"}}};
+    case TopoMode::Strip:
+        return {.tool = "Topology",
+                .mode = "strip",
+                .prompt = "sketch a path, brush sets width",
+                .keys = {{"drag knot", "move"}, {"wheel", "scale knot"}, {"Ctrl-wheel", "twist"}, {"double-click", "toggle corner"}}};
+    case TopoMode::Stroke:
+        return {.tool = "Topology",
+                .mode = "stroke",
+                .prompt = "draw strokes to bridge them",
+                .keys = {{"from border", "extrude"}, {"along border", "bridge to it"}}};
+    case TopoMode::Cylinder:
+        return {.tool = "Topology",
+                .mode = "cylinder",
+                .prompt = "drag across a limb for each ring",
+                .keys = {{"line across", "add ring"}, {"Enter", "finish"}}};
+    case TopoMode::Region:
+        return {.tool = "Topology",
+                .mode = "auto region",
+                .prompt = "paint the area",
+                .keys = {{"Ctrl", "erase"}, {"double-click hole", "mark it"}, {"Enter", "retopologise"}}};
+    case TopoMode::Handles:
+        return {.tool = "Topology",
+                .mode = "handles",
+                .prompt = "drag across faces to place handles",
+                .keys = {{"drag one", "move"}, {"wheel", "scale"}, {"Ctrl-wheel", "turn"}, {"Esc", "clear"}}};
+    case TopoMode::Relax:
+        return {.tool = "Topology",
+                .mode = "relax",
+                .prompt = "drag to relax under the brush",
+                .keys = {{"drag vertex", "neighbours follow"}}};
+    default: return {.tool = "Topology"};
     }
 }
 
@@ -1270,9 +1299,9 @@ void TopologyTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo
                  mDrag == Drag::Paint || (mDrag == Drag::Erase && mMode == TopoMode::Region) || (mDrag == Drag::Stroke && mMode == TopoMode::Strip)))
         drawBrush(p, brushRadius());
     if (mRefBvh.empty())
-        drawToolMessage(p, view, "Topology: select a reference mesh first");
+        drawToolStatus(p, view, {.tool = "Topology", .prompt = "select a reference mesh"});
     else if (here)
-        drawToolMessage(p, view, hint());
+        drawToolStatus(p, view, status());
 }
 
 TopologyTool* activeTopologyTool() { return dynamic_cast<TopologyTool*>(viewportTools::active()); }

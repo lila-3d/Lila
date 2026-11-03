@@ -108,8 +108,9 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        drawToolMessage(p, view, liveGarments().empty() ? "Select a garment, then pick Grab Cloth again to make it live"
-                                                        : "Drag the cloth; it follows while the button is down");
+        drawToolStatus(p, view,
+                       {.tool = name(),
+                        .prompt = liveGarments().empty() ? "select a garment, then pick Grab Cloth again" : "drag the cloth"});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::OpenHandCursor); }
@@ -248,7 +249,7 @@ public:
     {
         if (mSdf.nx == 0)
         {
-            drawToolMessage(p, view, "Select a body mesh or a garment, then pick Draw Panel");
+            drawToolStatus(p, view, {.tool = name(), .prompt = "select a body mesh or a garment, then pick Draw Panel"});
             return;
         }
         std::vector<QPointF> screen;
@@ -266,9 +267,11 @@ public:
         }
         for (const QPointF& s : screen)
             p.disc(s, 3.5f, colour);
-        drawToolMessage(p, view,
-                        QString("Click around the panel on the body; Enter makes it, Backspace undoes a point. Mirror (M): %1")
-                            .arg(mMirror ? "on" : "off"));
+        drawToolStatus(p, view,
+                       {.tool = name(),
+                        .flags = {{"mirror", mMirror}},
+                        .prompt = "click around the panel on the body",
+                        .keys = {{"Enter", "make"}, {"Backspace", "undo point"}, {"M", "mirror"}}});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
@@ -434,7 +437,7 @@ public:
     {
         if (mGarment == kNoNode)
         {
-            drawToolMessage(p, view, QString("Select a garment, then pick %1 again").arg(name()));
+            drawToolStatus(p, view, {.tool = name(), .prompt = QString("select a garment, then pick %1 again").arg(name())});
             return;
         }
         const glm::vec4 colour(0.95f, 0.75f, 0.3f, 1.f);
@@ -450,9 +453,14 @@ public:
         for (int k = 0; k < 40; ++k)
             ring.push_back(mCursor + QPointF(std::cos(k * 0.157079633), std::sin(k * 0.157079633)) * px);
         p.polyline(ring, 1.5f, colour, true);
-        static const char* tips[] = {"Paint to pin the cloth where it hangs; Shift unpins", "Draw a fold line; Shift folds the other way",
-                                     "Paint to shrink the cloth; Shift stretches it", "Drag to steam the live cloth smooth"};
-        drawToolMessage(p, view, QString("%1. Radius %2 cm ([ and ])").arg(tips[int(mKind)]).arg(mRadius, 0, 'f', 1));
+        static const char* prompts[] = {"paint to pin the cloth where it hangs", "draw a fold line", "paint to shrink the cloth",
+                                        "drag to steam the live cloth smooth"};
+        static const char* shifts[] = {"unpin", "fold the other way", "stretch", nullptr};
+        ToolStatus status{.tool = name(), .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 1)}}, .prompt = prompts[int(mKind)]};
+        if (shifts[int(mKind)])
+            status.keys.push_back({"Shift", shifts[int(mKind)]});
+        status.keys.push_back({"[ ]", "radius"});
+        drawToolStatus(p, view, status);
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }

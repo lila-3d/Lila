@@ -440,14 +440,14 @@ public:
         scene::Graph& g = scene::Graph::current();
         if (mMesh == kNoNode || !g.node(mMesh) || !ensurePaint())
         {
-            drawToolMessage(p, view, "Paint bake cage: select a low mesh");
+            drawToolStatus(p, view, {.tool = "Paint Bake", .prompt = "select a low mesh"});
             return;
         }
         addDisplay(s);
         const BakePaintSettings& st = bakePaintSettings();
         geo::BvhHit hit;
         const bool over = raycast(mHover, view, hit);
-        QString under;
+        QString under = "-";
         if (over)
         {
             const auto& tris = mPaint->paint->bvh().triangles();
@@ -455,18 +455,22 @@ public:
             float v = 0.0f;
             for (int k = 0; k < 3; ++k)
                 v += float(hit.bary[k]) * mPaint->paint->values()[m.cornerPoint(tris.corners[size_t(hit.triangle) * 3 + size_t(k)])];
-            under = QString("   under cursor %1").arg(v, 0, 'f', 2);
+            under = QString::number(v, 'f', 2);
         }
+        ToolStatus status{.tool = "Paint Bake",
+                          .subject = QString::fromStdString(g.node(mMesh)->name()),
+                          .mode = kOps[int(opFor(mStroking ? mMods : QApplication::keyboardModifiers()))],
+                          .fields = {{"map", st.attr == bake::kSkewAttr ? "skew" : "offset"},
+                                     {"value", QString::number(st.value)},
+                                     {"under cursor", under}}};
         // An editable cage replaces the auto cage the paint shapes, so painting alone changes nothing the bake uses.
-        QString cage;
         if (scene::Node* grp = groupOfLow(g, mMesh); grp && st.attr != bake::kSkewAttr)
             if (const std::string c = bake::groupSettings(*grp).cage; !c.empty())
-                cage = QString("   (%1 uses cage %2: Bake Into Cage to apply)").arg(QString::fromStdString(grp->name()), QString::fromStdString(c));
-        drawToolMessage(p, view,
-                        QString("Paint bake %1: %2 %3%4%5")
-                            .arg(st.attr == bake::kSkewAttr ? "skew" : "offset", kOps[int(opFor(mStroking ? mMods : QApplication::keyboardModifiers()))])
-                            .arg(st.value)
-                            .arg(under, cage));
+            {
+                status.fields.push_back({"cage", QString::fromStdString(c)});
+                status.prompt = "Bake Into Cage to apply";
+            }
+        drawToolStatus(p, view, status);
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> surface;

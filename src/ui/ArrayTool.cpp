@@ -711,10 +711,21 @@ void ArrayTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& v
             p.label(*at + QPointF(12, -10), label(h), hot ? kHotColor : kIdle);
         }
 
-    const QString how = mPlaced ? "Array: drag the handles, 1 row, 2 ring, 3 grid, +/- copies, click a new centre or drag a new "
-                                  "direction, Enter makes it, Esc cancels"
-                                : "Array: drag a direction for a row, click a centre for a ring, 3 then drag for a grid, Esc cancels";
-    drawToolMessage(p, view, how);
+    if (mPlaced)
+    {
+        static const char* const kModes[] = {"row", "ring", "grid"};
+        drawToolStatus(p, view,
+                       {.tool = "Array",
+                        .mode = kModes[int(mSettings.mode)],
+                        .prompt = "drag the handles",
+                        .keys = {{"1", "row"}, {"2", "ring"}, {"3", "grid"}, {"+/-", "copies"}, {"Click", "new centre"}, {"Drag", "new direction"},
+                                 {"Enter", "make"}, {"Esc", "cancel"}}});
+    }
+    else
+        drawToolStatus(p, view,
+                       {.tool = "Array",
+                        .prompt = "drag a direction or click a centre",
+                        .keys = {{"Drag", "row"}, {"Click", "ring"}, {"3+drag", "grid"}, {"Esc", "cancel"}}});
 }
 
 void registerArrayToolActions()

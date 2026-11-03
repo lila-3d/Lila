@@ -154,14 +154,22 @@ public:
             dot(p, view, *mHover, 3.0f, kGhost);
         if (mDragging)
             p.label(mLastPx + QPointF(18, -14), dragLabel());
-        QString text = mStart ? QString("EZ Curve: click the end point, Esc: cancel")
-                     : adjusting()
-                         ? QString("EZ Curve: drag up/down: bend, sideways: twist, Shift: sag, Ctrl: lift, Shift+scroll: points %1, F: follow surface %2, "
-                                   "O: keep out of meshes %3, Y: symmetry %4, R: reset, Enter: done, click: next curve")
-                               .arg(value("points").get<int>())
-                               .arg(value("follow").get<bool>() ? "on" : "off", value("clearance").get<bool>() ? "on" : "off", symmetryName(symmetryPref()))
-                         : QString("EZ Curve: click the start point, Y: symmetry %1, Esc: exit").arg(symmetryName(symmetryPref()));
-        drawToolMessage(p, view, text);
+        if (mStart)
+            drawToolStatus(p, view, {.tool = "EZ Curve", .prompt = "click the end point", .keys = {{"Esc", "cancel"}}});
+        else if (adjusting())
+            drawToolStatus(p, view,
+                           {.tool = "EZ Curve",
+                            .fields = {{"points", QString::number(value("points").get<int>())}, {"symmetry", symmetryName(symmetryPref())}},
+                            .flags = {{"follow surface", value("follow").get<bool>()}, {"keep out of meshes", value("clearance").get<bool>()}},
+                            .keys = {{"Drag up/down", "bend"}, {"Drag sideways", "twist"}, {"Shift", "sag"}, {"Ctrl", "lift"}, {"Shift+scroll", "points"},
+                                     {"F", "follow surface"}, {"O", "keep out of meshes"}, {"Y", "symmetry"}, {"R", "reset"}, {"Enter", "done"},
+                                     {"Click", "next curve"}}});
+        else
+            drawToolStatus(p, view,
+                           {.tool = "EZ Curve",
+                            .fields = {{"symmetry", symmetryName(symmetryPref())}},
+                            .prompt = "click the start point",
+                            .keys = {{"Y", "symmetry"}, {"Esc", "exit"}}});
     }
 
 private:

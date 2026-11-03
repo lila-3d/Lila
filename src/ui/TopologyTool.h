@@ -195,7 +195,7 @@ private:
     void drawSurfacePolyline(OverlayPainter& p, const ViewInfo& view, const std::vector<glm::dvec3>& pts, bool closed, float width,
                              const glm::vec4& color, float dash = 0.0f) const;
     void drawBrush(OverlayPainter& p, double radius) const;
-    QString hint() const;
+    ToolStatus status() const;
 
     TopoMode mMode;
     scene::NodeId mReference = scene::kNoNode;

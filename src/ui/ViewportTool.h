@@ -61,17 +61,52 @@ public:
 /** An X: the cursor while a modifier click deletes what is under it. */
 LILA_UI_API const QCursor& deleteCursor();
 
-/** A tool's status or hint line, centred along the top of the view. Queued and drawn by flushToolMessages once the HUD is placed. */
-LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
-/** Draws the queued tool messages, moved down past any of the occupied HUD rects they would cover. */
-LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
-
-/** A key and what it does, for drawKeyList. */
+/** A key and what it does, for drawKeyList and ToolStatus. */
 struct KeyHint
 {
     QString keys;
     QString what;
 };
+
+/** A named value in a ToolStatus: "radius" "175 px". */
+struct ToolField
+{
+    QString label;
+    QString value;
+};
+
+/** A toggle in a ToolStatus, always shown so the line keeps its shape: lit when on, dim when off. */
+struct ToolFlag
+{
+    QString label;
+    bool on = false;
+};
+
+/**
+ * A tool's readout along the top of the view: what the tool is working on and with, then how to drive it. Each part
+ * keeps the widest width it has shown for this tool, so the readout holds still while values change.
+ */
+struct ToolStatus
+{
+    /** The tool's name, e.g. "Sculpt". Also what the remembered widths are kept under. */
+    QString tool;
+    /** What it works on, usually a node name. */
+    QString subject;
+    /** The brush or mode, shown first among the settings. */
+    QString mode;
+    std::vector<ToolField> fields;
+    std::vector<ToolFlag> flags;
+    /** What to do next, in a few words: "select a mesh", "click the start, then the end". */
+    QString prompt;
+    std::vector<KeyHint> keys;
+};
+
+/** Queues a tool's readout for flushToolMessages. */
+LILA_UI_API void drawToolStatus(OverlayPainter& p, const ViewInfo& view, const ToolStatus& status);
+/** A one-off line under the tool readout, for warnings and notices. Queued and drawn by flushToolMessages once the HUD is placed. */
+LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
+/** Draws the queued readouts and messages, moved down past any of the occupied HUD rects they would cover. */
+LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
 /** Height drawKeyList gives the hints. */
 LILA_UI_API double keyListHeight(size_t rows);
 /** The width of the widest key, for laying the list out. */

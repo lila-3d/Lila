@@ -255,14 +255,18 @@ public:
         const groom::Brush b = mStroking ? mBrush : (mods & Qt::ShiftModifier) ? groom::Brush::Smooth : st.brush;
         const bool invert = mStroking ? mInvert : (mods & Qt::ControlModifier) != 0;
         QString surface = n ? QString::fromStdString(curve::groomSurfaceOf(*n)) : QString();
-        drawToolMessage(p, view,
-                        QString("Sculpt Curves %1: %2%3   radius %4   strength %5   surface: %6   1-0: brush, Shift: smooth, Ctrl: invert, "
-                                "B-drag/Ctrl+scroll: radius, M-drag/Shift+scroll: strength, Esc: exit")
-                            .arg(n ? QString::fromStdString(n->name()) : QString("(select a curve)"), brushLabel(b), invert ? " (inverted)" : "")
-                            .arg(st.stroke.radiusUnit == brush::RadiusUnit::Screen ? QString("%1 px").arg(int(std::lround(st.stroke.radius)))
-                                                                                    : QString("%1 cm").arg(st.stroke.worldRadius, 0, 'f', 2))
-                            .arg(st.stroke.strength, 0, 'f', 2)
-                            .arg(surface.isEmpty() ? QString("none (add and density need one)") : surface));
+        drawToolStatus(p, view,
+                       {.tool = "Sculpt Curves",
+                        .subject = n ? QString::fromStdString(n->name()) : QString(),
+                        .mode = brushLabel(b),
+                        .fields = {{"radius", st.stroke.radiusUnit == brush::RadiusUnit::Screen ? QString("%1 px").arg(int(std::lround(st.stroke.radius)))
+                                                                                                 : QString("%1 cm").arg(st.stroke.worldRadius, 0, 'f', 2)},
+                                   {"strength", QString::number(st.stroke.strength, 'f', 2)},
+                                   {"surface", surface.isEmpty() ? QString("none") : surface}},
+                        .flags = {{"invert", invert}},
+                        .prompt = !n ? QString("select a curve") : surface.isEmpty() ? QString("add and density need a surface") : QString(),
+                        .keys = {{"1-0", "brush"}, {"Shift", "smooth"}, {"Ctrl", "invert"},
+                                 {"B-drag", "radius"}, {"M-drag", "strength"}, {"Esc", "exit"}}});
         drawPalette(p, view, b);
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> cs;

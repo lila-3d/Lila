@@ -126,11 +126,15 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        const QString text = gExplode ? (mTargets.empty() ? QString("Select a destruction first (Esc to cancel)")
-                                                          : QString("Click where it explodes, on this frame (Esc to cancel)"))
-                             : mTargets.empty() ? QString("Select a mesh to break apart first (Esc to cancel)")
-                                                : QString("Click where the %1 is hit (Esc to cancel)").arg(QString::fromStdString(gMaterial));
-        drawToolMessage(p, view, text);
+        ToolStatus status{.tool = name(), .keys = {{"Esc", "cancel"}}};
+        if (gExplode)
+            status.prompt = mTargets.empty() ? "select a destruction" : "click where it explodes, on this frame";
+        else
+        {
+            status.mode = QString::fromStdString(gMaterial);
+            status.prompt = mTargets.empty() ? "select a mesh" : "click where it is hit";
+        }
+        drawToolStatus(p, view, status);
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }
