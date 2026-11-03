@@ -169,6 +169,7 @@ void registerChaosExport(ext::Context& ctx)
             std::vector<int32_t> indices, materialIds;
             std::vector<uint8_t> internal;
             std::vector<glm::dvec3> scales(count, glm::dvec3(1.0));
+            std::vector<double> volumes(count, 0.0); // cm3
             json pieces = json::array();
             for (size_t k = 0; k < count; ++k)
             {
@@ -222,6 +223,13 @@ void registerChaosExport(ext::Context& ctx)
                             }
                             ids.push_back(w->second);
                         }
+                        for (size_t c = 1; c + 1 < corners.size(); ++c)
+                        {
+                            const glm::dvec3 p0 = m->position(m->cornerPoint(corners[0])) * rest.scale;
+                            const glm::dvec3 p1 = m->position(m->cornerPoint(corners[c])) * rest.scale;
+                            const glm::dvec3 p2 = m->position(m->cornerPoint(corners[c + 1])) * rest.scale;
+                            volumes[k] += glm::dot(p0, glm::cross(p1, p2)) / 6.0;
+                        }
                         for (size_t c = 1; c + 1 < ids.size(); ++c)
                         {
                             // A mirroring basis turns the winding inside out; swapping two corners puts the outside back.
@@ -272,6 +280,25 @@ void registerChaosExport(ext::Context& ctx)
                 }
                 for (size_t k = 0; k < count; ++k)
                     pieces[k]["releaseFrame"] = release[k];
+                // What broke free on each break: the first piece's velocity on that frame and its mass.
+                const double density = std::max(1e-3, in->f("density"));
+                std::span<const float> densities = inst.attrs.get<float>("density");
+                for (json& b : breaks)
+                {
+                    const int piece = b["pieceA"].get<int>();
+                    if (piece < 0 || size_t(piece) >= count)
+                        continue;
+                    const std::vector<uint8_t> bytes = gn::simulationState(g, mod->id(), b["frame"].get<int64_t>());
+                    const StateView v(bytes);
+                    if (v.valid() && size_t(piece) < v.header().bodies)
+                    {
+                        const BodyRecord body = v.body(size_t(piece));
+                        const glm::dvec3 vel = glm::dvec3(body.velocity[0], body.velocity[1], body.velocity[2]) * 100.0;
+                        b["velocity"] = arr(basis * (glm::dmat3(world) * vel));
+                    }
+                    const double kgPerCm3 = (size_t(piece) < densities.size() ? double(densities[size_t(piece)]) : density) * 1e-6;
+                    b["mass"] = std::abs(volumes[size_t(piece)]) * kgPerCm3;
+                }
             }
 
             Bin bin;
