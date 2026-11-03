@@ -10,6 +10,7 @@
 #include <lila/GeometryNodes.h>
 #include <lila/Paths.h>
 #include <lila/Profile.h>
+#include <lila/Relocate.h>
 #include <lila/TextureGraph.h>
 #include <lila/Workspace.h>
 
@@ -234,6 +235,7 @@ bool registerLiveHotspot(ext::Context& ctx)
         n->outAttr = out;
         return n;
     };
+    lila::scene::relocate::registerNeutral(t.name);
     return types::registerType(ctx, std::move(t)) != nullptr;
 }
 } // namespace
