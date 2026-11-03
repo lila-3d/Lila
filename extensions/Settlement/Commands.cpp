@@ -5,6 +5,7 @@
 #include "Settlement.h"
 
 #include <lila/Command.h>
+#include <lila/Curves.h>
 #include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
@@ -50,6 +51,11 @@ constexpr Exposed kInputs[] = {
     {"heightScale", "float", "Scale", 0, 4, "Multiplies every building's floors."},
     {"widthScale", "float", "Scale", 0.05, 4, "Multiplies every street width."},
     {"lotScale", "float", "Scale", 0.05, 4, "Multiplies lot frontage, depth and building depth."},
+    {"blocks", "bool", "Layout", 0, 0, "Blocks and lots between the streets; off for streets and paths only."},
+    {"buildings", "bool", "Layout", 0, 0, "A building envelope on each lot."},
+    {"walkSlope", "float", "Surface", 0, 89, "Steepest walkable face, degrees."},
+    {"walkStep", "float", "Surface", 0, 200, "Height a walk may step between separate pieces, cm."},
+    {"edits", "string", "Edits", 0, 0, "Streets, routes, exclusions and road profiles as JSON."},
     {"showStreets", "bool", "Display", 0, 0, "Show street ribbons."},
     {"showLots", "bool", "Display", 0, 0, "Show lot outlines."},
     {"showBuildings", "bool", "Display", 0, 0, "Show building envelopes."},
@@ -68,6 +74,11 @@ std::vector<FlagDef> layoutFlags()
         {"heightScale", "hs", T::Float, o.heightScale, "Multiplies building floors.", {}, {}, 0.0},
         {"widthScale", "ws", T::Float, o.widthScale, "Multiplies street widths.", {}, {}, 0.0},
         {"lotScale", "ls", T::Float, o.lotScale, "Multiplies lot sizes.", {}, {}, 0.0},
+        {"blocks", "bk", T::Bool, true, "Blocks and lots between the streets; off for streets and paths only."},
+        {"buildings", "bu", T::Bool, true, "A building envelope on each lot; off for empty lots."},
+        {"walkSlope", "wsl", T::Float, o.walk.maxSlope, "Steepest walkable face of the walkable mesh, degrees.", {}, {}, 0.0, 89.0},
+        {"walkStep", "wst", T::Float, o.walk.step, "Height a walk may step between separate pieces of it, cm.", {}, {}, 0.0},
+        {"edits", "ed", T::String, "", "Streets, routes, exclusions and road profiles as JSON (the edit commands write it)."},
         {"showStreets", "ss", T::Bool, true, "Show street ribbons."},
         {"showLots", "sl", T::Bool, true, "Show lot outlines."},
         {"showBuildings", "sb", T::Bool, true, "Show building envelopes."},
@@ -79,9 +90,13 @@ Options optionsFromJson(const json& values)
     auto num = [&](const char* id) { return values.at(id).get<double>(); };
     auto integer = [&](const char* id) { return int64_t(std::llround(values.at(id).get<double>())); };
     auto text = [&](const char* id) { return values.at(id).is_string() ? values.at(id).get<std::string>() : std::string(); };
+    auto flag = [&](const char* id) {
+        const json& v = values.at(id);
+        return v.is_boolean() ? v.get<bool>() : v.is_number() ? v.get<double>() != 0.0 : true;
+    };
     try
     {
-        return optionsFrom(num, integer, text);
+        return optionsFrom(num, integer, text, flag);
     }
     catch (const std::exception& e)
     {
@@ -236,7 +251,8 @@ json modifierValues(const Node& mod)
     json values = json::object();
     for (const Exposed& e : kInputs)
         values[e.name] = ops::execute("getAttr", {{"args", {mod.path() + "." + e.name}}});
-    values["ground"] = ops::execute("getAttr", {{"args", {mod.path() + ".ground"}}});
+    for (const char* extra : {"ground", "walkable"})
+        values[extra] = ops::execute("getAttr", {{"args", {mod.path() + "." + extra}}});
     return values;
 }
 
@@ -266,6 +282,8 @@ Ground groundOf(Graph& g, const std::string& name, double planeY, const char* cm
     return Ground::fromMesh(worldMesh(g, name, cmd), 200.0);
 }
 
+std::string textOf(const json& v) { return v.is_string() ? v.get<std::string>() : std::string(); }
+
 /** The region to plan in: the outline given, else the ground's extent, else a square of size. */
 Polygon regionOutline(Graph& g, const Args& a, const std::string& groundName, const char* cmd)
 {
@@ -287,16 +305,6 @@ Polygon regionOutline(Graph& g, const Args& a, const std::string& groundName, co
     return p;
 }
 
-/** Rebuilds the layout a settlement modifier shows, for measuring and export. */
-struct Rebuilt
-{
-    Layout layout;
-    Ground ground;
-    Options options;
-    json values;
-    std::string mesh, modifier;
-};
-
 Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
 {
     Node* mod = settlementModifier(g, name, cmd);
@@ -314,10 +322,13 @@ Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
         site = siteFrom(geom, &planeY);
     }
     site.size = std::max(100.0, r.values.at("size").get<double>());
-    r.ground = groundOf(g, r.values.at("ground").is_string() ? r.values.at("ground").get<std::string>() : std::string(), planeY, cmd);
+    r.ground = groundOf(g, textOf(r.values.at("ground")), planeY, cmd);
+    if (const std::string walkable = textOf(r.values.at("walkable")); !walkable.empty())
+        r.walk = WalkSurface::fromMesh(worldMesh(g, walkable, cmd), r.options.walk);
     try
     {
-        r.layout = build(site, r.ground, r.options);
+        applyEdits(site, parseEdits(textOf(r.values.at("edits"))));
+        r.layout = build(site, r.ground, r.options, &r.walk);
     }
     catch (const std::runtime_error& e)
     {
@@ -327,7 +338,167 @@ Rebuilt rebuild(Graph& g, const std::string& name, const char* cmd)
     r.modifier = mod->path();
     return r;
 }
+
+json parseEditsOr(const std::string& text, const char* cmd)
+{
+    try
+    {
+        return parseEdits(text);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string(cmd) + ": " + e.what());
+    }
+}
+
+/** The next free edit id, advanced. */
+int nextId(json& edits)
+{
+    int id = edits.value("next", 1);
+    for (const char* list : {"streets", "routes", "exclusions"})
+        for (const json& item : edits.value(list, json::array()))
+            id = std::max(id, item.value("id", 0) + 1);
+    edits["next"] = id + 1;
+    return id;
+}
+
+int addExclusion(json& edits, std::span<const Vec2> pts, double margin, const std::string& source, const std::string& name)
+{
+    const int id = nextId(edits);
+    json item = {{"id", id}, {"polygon", xzPoints(pts)}, {"margin", margin}};
+    if (!source.empty())
+        item["source"] = source;
+    if (!name.empty())
+        item["name"] = name;
+    edits["exclusions"].push_back(item);
+    return id;
+}
+
+/**
+ * What an object keeps clear, seen from above: a mesh's footprint (grown by margin), a closed curve's inside (grown), an
+ * open curve's corridor (margin each side, at least 1 m).
+ */
+std::vector<std::vector<Vec2>> objectFootprints(Graph& g, const std::string& name, double margin, const char* cmd)
+{
+    Node* n = g.find(name);
+    if (!n)
+        throw CommandError(std::string(cmd) + ": no object named '" + name + "'");
+    std::vector<Polygon> polys;
+    if (n->type().isA("mesh"))
+        polys = meshFootprint(worldMesh(g, name, cmd), margin);
+    else if (n->type().isA("curve"))
+    {
+        g.evaluate();
+        std::vector<std::vector<Vec2>> open;
+        for (const curve::Spline& s : curve::splinesOf(n->value(curve::CurveShape::kWorldSpace)))
+        {
+            if (!curve::isValid(s) || s.size() < 2)
+                continue;
+            const curve::Polyline line = curve::tessellate(s);
+            std::vector<Vec2> pts;
+            for (const glm::dvec3& p : line.points)
+                pts.push_back({p.x, p.z});
+            if (line.closed && pts.size() >= 3)
+            {
+                if (Polygon p = grow(makePolygon(pts), margin); !p.pts.empty())
+                    polys.push_back(std::move(p));
+            }
+            else
+                open.push_back(std::move(pts));
+        }
+        if (!open.empty())
+            for (Polygon& p : lineFootprint(open, std::max(margin, 100.0)))
+                polys.push_back(std::move(p));
+    }
+    else
+        throw CommandError(std::string(cmd) + ": '" + name + "' is neither a mesh nor a curve");
+    if (polys.empty())
+        throw CommandError(std::string(cmd) + ": '" + name + "' covers no ground");
+    std::vector<std::vector<Vec2>> out;
+    for (Polygon& p : polys)
+        out.push_back(std::move(p.pts));
+    return out;
+}
+
+/** A settlement's edits, to change and write back with setEdits. */
+struct EditTarget
+{
+    Node* modifier = nullptr;
+    json edits;
+};
+
+EditTarget editTarget(Graph& g, const Args& a, const char* cmd)
+{
+    std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(std::string(cmd) + ": give one settlement");
+    EditTarget t;
+    t.modifier = settlementModifier(g, names[0], cmd);
+    t.edits = parseEditsOr(textOf(ops::execute("getAttr", {{"args", {t.modifier->path() + ".edits"}}})), cmd);
+    return t;
+}
+
+void setEdits(const EditTarget& t)
+{
+    ops::execute("setAttr", {{"args", {t.modifier->path() + ".edits", t.edits.dump()}}});
+}
+
+/** The result an edit command returns: the edit's outcome in the rebuilt layout, the checks, and the counts. */
+json editResult(Graph& g, const EditTarget& t, const std::vector<int>& ids, const char* cmd)
+{
+    Rebuilt r = rebuild(g, t.modifier->path(), cmd);
+    json out = {{"ids", ids}, {"modifier", r.modifier}, {"mesh", r.mesh}};
+    json results = json::array();
+    for (const json& p : pathResults(r.layout))
+        if (std::ranges::find(ids, p.value("id", -1)) != ids.end())
+            results.push_back(p);
+    out["paths"] = results;
+    out["checks"] = checks(r.layout, r.ground, r.options);
+    out["stats"] = stats(r.layout);
+    return out;
+}
+
+/** A street or route edit from the flags (points or stops already read), class, profile and mode checked. */
+json pathEdit(const Args& a, int id, const char* pointsKey, const json& points, const char* defaultClass, const char* cmd)
+{
+    json item = {{"id", id}, {pointsKey, points}};
+    const std::string cls = a.get<std::string>("streetClass", defaultClass);
+    if (StreetClass c; !parseClass(cls, &c) || c >= StreetClass::Boundary)
+        throw CommandError(std::string(cmd) + ": unknown class '" + cls + "' (arterial, collector, local, alley, path)");
+    item["class"] = cls;
+    for (const char* key : {"profile", "name", "mode"})
+        if (a.has(key))
+            item[key] = a.get<std::string>(key);
+    if (item.contains("mode"))
+        if (PathMode m; !parsePathMode(item["mode"].get<std::string>(), &m))
+            throw CommandError(std::string(cmd) + ": unknown mode '" + item["mode"].get<std::string>() + "' (auto, ground, surface)");
+    if (a.has("width"))
+        item["width"] = a.get<double>("width");
+    return item;
+}
+
+json pointList(const json& pts, const char* cmd, const char* what)
+{
+    if (!pts.is_array())
+        throw CommandError(std::string(cmd) + ": " + what + " is a list of points");
+    for (const json& p : pts)
+        if (!p.is_array() || (p.size() != 2 && p.size() != 3))
+            throw CommandError(std::string(cmd) + ": each point in " + what + " is [x, z] or [x, y, z]");
+    return pts;
+}
+
+std::vector<FlagDef> pathFlags(const char* defaultClass)
+{
+    return {{"streetClass", "c", T::String, defaultClass, "Street class.", {"arterial", "collector", "local", "alley", "path"}},
+            {"profile", "pf", T::String, nullptr, "Road profile (cross-section): settlementRoadProfiles lists them. Default: the class's."},
+            {"width", "w", T::Float, nullptr, "Width in cm, over the profile's.", {}, {}, 0.0},
+            {"mode", "md", T::String, nullptr, "auto (default): stops with a height on the walkable mesh go there, the rest on the "
+                                               "ground; ground; or surface.", {"auto", "ground", "surface"}},
+            {"name", "n", T::String, nullptr, "A name to find it by."}};
+}
 } // namespace
+
+Rebuilt rebuildSettlement(scene::Graph& g, const std::string& name, const char* cmd) { return rebuild(g, name, cmd); }
 
 void registerCommands(ext::Context& ctx)
 {
@@ -339,6 +510,11 @@ void registerCommands(ext::Context& ctx)
         {"waterWidth", "ww", T::Float, 2000.0, "Width of the water lines, cm.", {}, {}, 0.0},
         {"attractors", "at", T::List, nullptr, "Points: the first is the centre, the rest are places main roads run to (bridge, harbour, gate)."},
         {"ground", "gd", T::String, "", "Mesh the settlement stands on (world space). Empty for flat ground."},
+        {"walkable", "wk", T::String, "", "Mesh routes may walk on: a structure's ramps, terraces and floors (world space)."},
+        {"exclusions", "ex", T::List, nullptr, "Regions kept clear: a list of closed polygons [[x, z], ...]."},
+        {"exclude", "xo", T::List, nullptr, "Objects kept clear: meshes by their footprint seen from above, curves (closed: their "
+                                            "inside; open: a corridor along them)."},
+        {"exclusionMargin", "xm", T::Float, 0.0, "Clearance around exclusions, cm.", {}, {}, 0.0},
         {"name", "n", T::String, "Settlement", "Name of the mesh made to hold the site."},
     };
     for (FlagDef& f : layoutFlags())
@@ -364,10 +540,21 @@ void registerCommands(ext::Context& ctx)
             for (const Exposed& e : kInputs)
                 values[e.name] = a.flags[e.name];
             const Options o = optionsFromJson(values);
-            const std::string groundName = a.get<std::string>("ground", "");
-            if (!groundName.empty())
-                if (Node* groundNode = g.find(groundName); !groundNode || !groundNode->type().isA("mesh"))
-                    throw CommandError("settlementCreate: ground '" + groundName + "' is not a mesh");
+            const std::string groundName = a.get<std::string>("ground", ""), walkName = a.get<std::string>("walkable", "");
+            for (const std::string* n : {&groundName, &walkName})
+                if (!n->empty())
+                    if (Node* node = g.find(*n); !node || !node->type().isA("mesh"))
+                        throw CommandError("settlementCreate: '" + *n + "' is not a mesh");
+            {
+                json edits = parseEditsOr(textOf(values["edits"]), "settlementCreate");
+                const double margin = std::max(0.0, a.get<double>("exclusionMargin", 0.0));
+                for (const json& poly : a.flags.value("exclusions", json::array()))
+                    addExclusion(edits, pointsFromJson(poly, "settlementCreate", "exclusions"), margin, "", "");
+                for (const json& obj : a.flags.value("exclude", json::array()))
+                    for (const std::vector<Vec2>& pts : objectFootprints(g, textOf(obj), margin, "settlementCreate"))
+                        addExclusion(edits, pts, 0.0, textOf(obj), "");
+                values["edits"] = edits.empty() ? std::string() : edits.dump();
+            }
 
             std::string host;
             if (!a.positional.empty())
@@ -405,14 +592,15 @@ void registerCommands(ext::Context& ctx)
                 inputs.push_back(in);
                 links.push_back(std::string("GroupInput.") + e.name + " -> Settle." + e.name);
             }
-            // The ground's name rides along as an input of its own, so settlementInfo measures on the same ground.
+            // The ground's and walkable mesh's names ride along as inputs of their own, so commands rebuild on the same ones.
             inputs.push_back({{"name", "ground"}, {"type", "string"}, {"default", groundName}, {"panel", "Layout"},
-                              {"description", "Mesh the settlement stands on, set by settlementCreate."}});
-            if (!groundName.empty())
-            {
-                nodes.push_back({{"name", "Ground"}, {"type", "ObjectInfo"}, {"props", {{"object", groundName}, {"transformSpace", "world"}}}});
-                links.push_back("Ground.geometry -> Settle.ground");
-            }
+                              {"description", "Mesh the settlement stands on (settlementSurfaces sets it)."}});
+            inputs.push_back({{"name", "walkable"}, {"type", "string"}, {"default", walkName}, {"panel", "Surface"},
+                              {"description", "Mesh routes may walk on (settlementSurfaces sets it)."}});
+            nodes.push_back({{"name", "Ground"}, {"type", "ObjectInfo"}, {"props", {{"object", groundName}, {"transformSpace", "world"}}}});
+            nodes.push_back({{"name", "Walkable"}, {"type", "ObjectInfo"}, {"props", {{"object", walkName}, {"transformSpace", "world"}}}});
+            links.push_back("Ground.geometry -> Settle.ground");
+            links.push_back("Walkable.geometry -> Settle.walkable");
             json spec = {{"name", group},
                          {"description", "Lays out streets, lots and building envelopes inside the mesh's outline."},
                          {"inputs", inputs},
@@ -420,6 +608,12 @@ void registerCommands(ext::Context& ctx)
                          {"links", links}};
             ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
             json mod = ops::execute("gnApply", {{"args", {host, group}}});
+            // A group type registered before under this name keeps its first defaults, so every input is set here.
+            const std::string modName = mod.is_string() ? mod.get<std::string>() : mod.dump();
+            for (const Exposed& e : kInputs)
+                ops::execute("setAttr", {{"args", {modName + "." + e.name, values[e.name]}}});
+            ops::execute("setAttr", {{"args", {modName + ".ground", groundName}}});
+            ops::execute("setAttr", {{"args", {modName + ".walkable", walkName}}});
 
             Rebuilt r = rebuild(g, host, "settlementCreate");
             json out = stats(r.layout);
@@ -431,6 +625,7 @@ void registerCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"settlementCreate(profile='medievalTown', size=60000)",
+                     "settlementCreate(size=200000, exclude=['Temple'], exclusionMargin=2000, pattern='none', blocks=False)",
                      "town = settlementCreate(outline=[[-40000, -30000], [45000, -25000], [38000, 35000], [-35000, 30000]],\n"
                      "                        attractors=[[0, 0], [40000, 0]], ground='Terrain', profile='europeanCity')\n"
                      "setAttr(town['modifier'] + '.overrides', '{\"maxFloors\": 9}')\n"
@@ -677,5 +872,285 @@ void registerCommands(ext::Context& ctx)
         },
         .examples = {"settlementRegion(ground='Terrain', water=[[[-200000, -150000], [0, 0], [180000, 160000]]], cities=1, towns=2, villages=6)"},
     });
+
+    std::vector<FlagDef> streetFlags = {{"points", "p", T::List, nullptr, "The street's points, [[x, z], ...] or [[x, y, z], ...] in cm."}};
+    for (FlagDef& f : pathFlags("collector"))
+        streetFlags.push_back(std::move(f));
+    ctx.registerCommand({
+        .name = "settlementAddStreet",
+        .doc = "Adds a street the way it is drawn: its points are kept, and generated streets fill in around it. Points with "
+               "heights that all lie on the walkable mesh (ramps, terraces, floors) make a path on it; otherwise it lies on the "
+               "ground, cut where it enters an exclusion or leaves the outline. Returns the edit id, how it came out (paths), "
+               "the checks and the counts. Undo removes it; it saves with the scene.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = streetFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementAddStreet";
+            Graph& g = Graph::current();
+            EditTarget t = editTarget(g, a, cmd);
+            const json pts = pointList(a.flags.value("points", json()), cmd, "points");
+            if (pts.size() < 2)
+                throw CommandError(std::string(cmd) + ": points= needs two or more points");
+            const int id = nextId(t.edits);
+            t.edits["streets"].push_back(pathEdit(a, id, "points", pts, "collector", cmd));
+            setEdits(t);
+            return editResult(g, t, {id}, cmd);
+        },
+        .examples = {"settlementAddStreet('Settlement', points=[[-20000, 0], [0, 5000], [20000, 0]], profile='avenue')"},
+    });
+
+    std::vector<FlagDef> routeFlags = {
+        {"start", "st", T::List, nullptr, "Where the route starts, [x, z] on the ground or [x, y, z] (on the walkable mesh when it lies there)."},
+        {"end", "en", T::List, nullptr, "Where it ends."},
+        {"via", "v", T::List, nullptr, "Stops on the way, in order: a list of points."}};
+    for (FlagDef& f : pathFlags("local"))
+        routeFlags.push_back(std::move(f));
+    ctx.registerCommand({
+        .name = "settlementRoute",
+        .doc = "Routes a street or path between points: each leg the cheapest way over the ground (around exclusions, along "
+               "the slope, across rivers only where it must) or across the walkable mesh, from floor to ramp to terrace; a leg "
+               "from one to the other leaves the mesh where it meets the ground nearest the way on. The route is re-solved "
+               "whenever the ground, the walkable mesh or the exclusions change. Returns the edit id, its ground and surface "
+               "lengths (or why it failed), the checks and the counts. Undo removes it; it saves with the scene.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = routeFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementRoute";
+            Graph& g = Graph::current();
+            EditTarget t = editTarget(g, a, cmd);
+            json stops = json::array();
+            stops.push_back(a.flags.value("start", json()));
+            for (const json& v : a.flags.value("via", json::array()))
+                stops.push_back(v);
+            stops.push_back(a.flags.value("end", json()));
+            pointList(stops, cmd, "start, via and end");
+            const int id = nextId(t.edits);
+            t.edits["routes"].push_back(pathEdit(a, id, "stops", stops, "local", cmd));
+            setEdits(t);
+            return editResult(g, t, {id}, cmd);
+        },
+        .examples = {"settlementRoute('Settlement', start=[-90000, -90000], end=[12000, 4500, 3000], streetClass='path', profile='footpath')",
+                     "settlementRoute('Settlement', start=[-90000, 0], via=[[0, 60000]], end=[90000, 0], profile='serviceRoad')"},
+    });
+
+    std::vector<FlagDef> editFlags = {
+        {"id", "i", T::Int, nullptr, "The street or route to change."},
+        {"points", "p", T::List, nullptr, "New points (a street) or stops (a route)."}};
+    for (FlagDef& f : pathFlags("local"))
+    {
+        f.defaultValue = nullptr;
+        editFlags.push_back(std::move(f));
+    }
+    ctx.registerCommand({
+        .name = "settlementEditStreet",
+        .doc = "Changes a street or route added by settlementAddStreet or settlementRoute: its points (or stops), class, road "
+               "profile, width, mode or name. Only the flags given change. Returns the outcome as settlementRoute does.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = editFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementEditStreet";
+            Graph& g = Graph::current();
+            EditTarget t = editTarget(g, a, cmd);
+            if (!a.has("id"))
+                throw CommandError(std::string(cmd) + ": id= required");
+            const int id = int(a.get<int64_t>("id", -1));
+            json* item = nullptr;
+            const char* pointsKey = "points";
+            for (const char* list : {"streets", "routes"})
+                for (json& s : t.edits[list])
+                    if (s.value("id", -1) == id)
+                    {
+                        item = &s;
+                        pointsKey = std::string_view(list) == "routes" ? "stops" : "points";
+                    }
+            if (!item)
+                throw CommandError(std::string(cmd) + ": no street or route with id " + std::to_string(id));
+            if (a.has("points"))
+            {
+                const json pts = pointList(a.flags["points"], cmd, "points");
+                if (pts.size() < 2)
+                    throw CommandError(std::string(cmd) + ": points= needs two or more points");
+                (*item)[pointsKey] = pts;
+            }
+            if (a.has("streetClass"))
+            {
+                const std::string cls = a.get<std::string>("streetClass");
+                if (StreetClass c; !parseClass(cls, &c) || c >= StreetClass::Boundary)
+                    throw CommandError(std::string(cmd) + ": unknown class '" + cls + "'");
+                (*item)["class"] = cls;
+            }
+            for (const char* key : {"profile", "name", "mode"})
+                if (a.has(key))
+                    (*item)[key] = a.get<std::string>(key);
+            if (item->contains("mode"))
+                if (PathMode m; !parsePathMode((*item)["mode"].get<std::string>(), &m))
+                    throw CommandError(std::string(cmd) + ": unknown mode '" + (*item)["mode"].get<std::string>() + "'");
+            if (a.has("width"))
+                (*item)["width"] = a.get<double>("width");
+            setEdits(t);
+            return editResult(g, t, {id}, cmd);
+        },
+        .examples = {"settlementEditStreet('Settlement', id=3, profile='highway', streetClass='arterial')"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementAddExclusion",
+        .doc = "Keeps a region clear of everything the settlement lays out (streets, blocks, lots, buildings, routes, growth): "
+               "a polygon, or objects (a mesh by its footprint seen from above, a closed curve by its inside, an open curve as a "
+               "corridor along it), with a clearance margin. Objects are measured now; run it again after moving them. Returns "
+               "the edit ids, the checks and the counts. Undo removes them; they save with the scene.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"polygon", "pg", T::List, nullptr, "A closed polygon, [[x, z], ...] in cm."},
+                  {"objects", "ob", T::List, nullptr, "Meshes or curves to keep clear, by name."},
+                  {"margin", "m", T::Float, 0.0, "Clearance around it, cm.", {}, {}, 0.0},
+                  {"name", "n", T::String, nullptr, "A name to find it by."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementAddExclusion";
+            Graph& g = Graph::current();
+            EditTarget t = editTarget(g, a, cmd);
+            const double margin = std::max(0.0, a.get<double>("margin", 0.0));
+            const std::string name = a.get<std::string>("name", "");
+            std::vector<int> ids;
+            if (a.has("polygon"))
+            {
+                const std::vector<Vec2> pts = pointsFromJson(a.flags["polygon"], cmd, "polygon");
+                if (pts.size() < 3)
+                    throw CommandError(std::string(cmd) + ": polygon= needs three or more points");
+                ids.push_back(addExclusion(t.edits, pts, margin, "", name));
+            }
+            for (const json& obj : a.flags.value("objects", json::array()))
+                for (const std::vector<Vec2>& pts : objectFootprints(g, textOf(obj), margin, cmd))
+                    ids.push_back(addExclusion(t.edits, pts, 0.0, textOf(obj), name));
+            if (ids.empty())
+                throw CommandError(std::string(cmd) + ": give polygon= or objects=");
+            setEdits(t);
+            return editResult(g, t, ids, cmd);
+        },
+        .examples = {"settlementAddExclusion('Settlement', objects=['Monolith'], margin=1500)"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementDelete",
+        .doc = "Removes streets, routes and exclusions added by the edit commands, by id. Returns the ids removed, the checks "
+               "and the counts.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"ids", "i", T::List, nullptr, "Edit ids to remove."}},
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const char* cmd = "settlementDelete";
+            Graph& g = Graph::current();
+            EditTarget t = editTarget(g, a, cmd);
+            std::vector<int> gone, wanted;
+            for (const json& v : a.flags.value("ids", json::array()))
+                if (v.is_number())
+                    wanted.push_back(v.get<int>());
+            for (const char* list : {"streets", "routes", "exclusions"})
+            {
+                json kept = json::array();
+                for (const json& item : t.edits.value(list, json::array()))
+                {
+                    const int id = item.value("id", -1);
+                    if (std::ranges::find(wanted, id) != wanted.end())
+                        gone.push_back(id);
+                    else
+                        kept.push_back(item);
+                }
+                if (t.edits.contains(list))
+                    t.edits[list] = kept;
+            }
+            if (gone.size() != wanted.size())
+                throw CommandError(std::string(cmd) + ": some ids are not edits of this settlement");
+            setEdits(t);
+            json out = editResult(g, t, {}, cmd);
+            out["ids"] = gone;
+            return out;
+        },
+        .examples = {"settlementDelete('Settlement', ids=[4, 5])"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementSurfaces",
+        .doc = "Sets what a settlement stands and walks on: ground (the mesh its streets and lots sit on; empty for flat "
+               "ground) and walkable (the mesh routes may walk on: a structure's ramps, terraces and floors). Both are live: "
+               "editing the meshes re-runs the layout.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"ground", "gd", T::String, nullptr, "Ground mesh, or empty for flat ground."},
+                  {"walkable", "wk", T::String, nullptr, "Walkable mesh, or empty for none."}},
+        .run = [](const Args& a) -> json {
+            const char* cmd = "settlementSurfaces";
+            Graph& g = Graph::current();
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError(std::string(cmd) + ": give one settlement");
+            Node* mod = settlementModifier(g, names[0], cmd);
+            const Node* groupNode = gn::groupOfModifier(g, *mod);
+            const std::string group = groupNode ? groupNode->name() : std::string();
+            for (const auto& [flag, node] : {std::pair{"ground", "Ground"}, std::pair{"walkable", "Walkable"}})
+            {
+                if (!a.has(flag))
+                    continue;
+                const std::string mesh = a.get<std::string>(flag);
+                if (!mesh.empty())
+                    if (Node* n = g.find(mesh); !n || !n->type().isA("mesh"))
+                        throw CommandError(std::string(cmd) + ": '" + mesh + "' is not a mesh");
+                ops::execute("setAttr", {{"args", {mod->path() + "." + flag, mesh}}});
+                if (!group.empty())
+                    ops::execute("gnSetValue", {{"args", {group, std::string(node) + ".object", mesh}}});
+            }
+            Rebuilt r = rebuild(g, mod->path(), cmd);
+            json out = stats(r.layout);
+            out["checks"] = checks(r.layout, r.ground, r.options);
+            out["walkableNodes"] = int64_t(r.walk.nodeCount());
+            return out;
+        },
+        .examples = {"settlementSurfaces('Settlement', ground='Terrain', walkable='Temple')"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementMetrics",
+        .doc = "Street measures comparable with real cities: street length and density, orientation entropy and order "
+               "(Boeing 2019), intersections, dead-end ratio, degree histogram, block areas. Changes nothing.",
+        .positionalDoc = "settlement mesh or its modifier (default the selection)",
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("settlementMetrics: give one settlement");
+            return metrics(rebuild(Graph::current(), names[0], "settlementMetrics").layout);
+        },
+        .examples = {"settlementMetrics('Settlement')['deadEndRatio']"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementRoadProfiles",
+        .doc = "The built-in road profiles (cross-sections streets and routes may name) with every field, as {name: profile}, "
+               "and which one each class takes by default. Custom ones go in a settlement's edits under roadProfiles, as "
+               "{name: {base: 'street', sidewalk: 300}}.",
+        .undoable = false,
+        .run = [](const Args&) -> json {
+            json out = json::object(), defaults = json::object();
+            for (const std::string& n : roadProfileNames())
+            {
+                RoadProfile r;
+                builtinRoadProfile(n, &r);
+                out[n] = toJson(r);
+            }
+            for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Path})
+                defaults[className(c)] = defaultRoadProfile(c);
+            return {{"profiles", out}, {"classDefaults", defaults}};
+        },
+        .examples = {"settlementRoadProfiles()['profiles']['avenue']['width']"},
+    });
+
+    registerUnrealCommands(ctx);
 }
 } // namespace settlement

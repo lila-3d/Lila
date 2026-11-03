@@ -126,7 +126,7 @@ json metrics(const Layout& l)
             {"blockAreaMeanM2", blockAreas.empty() ? 0.0 : std::accumulate(blockAreas.begin(), blockAreas.end(), 0.0) / double(blockAreas.size())}};
 }
 
-json checks(const Layout& l, const Ground& ground, const Options&)
+json checks(const Layout& l, const Ground& ground, const Options& o)
 {
     LILA_ZONE();
 
@@ -189,6 +189,24 @@ json checks(const Layout& l, const Ground& ground, const Options&)
     for (const Envelope& env : l.envelopes)
         if (env.floors <= 0 || env.footprint.pts.size() < 3)
             ++emptyEnvelopes;
+    // Anything inside an exclusion is a fault: streets through it, lots or buildings on it.
+    auto inside = [&](Vec2 q) {
+        for (const Polygon& x : l.exclusions)
+            if (contains(x.pts, q) && boundaryDistance(x.pts, q) > 1.0)
+                return true;
+        return false;
+    };
+    int inExclusions = 0;
+    for (size_t e = 0; e < g.edges.size(); ++e)
+        if (g.isStreet(int(e)) && inside((g.nodes[size_t(g.edges[e].a)].p + g.nodes[size_t(g.edges[e].b)].p) * 0.5))
+            ++inExclusions;
+    for (const Lot& lot : l.lots)
+        if (std::ranges::any_of(lot.outline.pts, inside))
+            ++inExclusions;
+    json failed = json::array();
+    for (const PathResult& r : l.pathResults)
+        if (!r.ok)
+            failed.push_back({{"id", r.id}, {"error", r.error}});
     const int components = int(roots.size());
     return {{"components", components},
             {"crossings", crossings},
@@ -197,7 +215,10 @@ json checks(const Layout& l, const Ground& ground, const Options&)
             {"sharpJunctions", sharp},
             {"landlockedLots", landlocked},
             {"badEnvelopes", emptyEnvelopes},
-            {"ok", components <= 1 && crossings == 0 && emptyEnvelopes == 0 && !l.lots.empty()}};
+            {"inExclusions", inExclusions},
+            {"failedPaths", failed},
+            {"ok", components <= 1 && crossings == 0 && emptyEnvelopes == 0 && inExclusions == 0 && failed.empty() &&
+                       (!o.blocks || !l.lots.empty())}};
 }
 
 json stats(const Layout& l)
@@ -236,7 +257,10 @@ json stats(const Layout& l)
             {"buildings", int64_t(l.envelopes.size())},
             {"floors", {{"min", minF}, {"max", maxF}, {"mean", l.envelopes.empty() ? 0.0 : sumF / double(l.envelopes.size())}}},
             {"refusedStreets", l.refused},
-            {"bridges", int64_t(l.bridges.size())}};
+            {"bridges", int64_t(l.bridges.size())},
+            {"exclusions", int64_t(l.exclusions.size())},
+            {"surfacePaths", int64_t(l.surfacePaths.size())},
+            {"paths", pathResults(l)}};
 }
 
 const char* useName(Use u)
@@ -276,6 +300,8 @@ json toJson(const Layout& l)
                            {"b", remap[size_t(x.b)]},
                            {"class", className(x.cls)},
                            {"width", edgeWidth(l, int(e))},
+                           {"profile", edgeProfile(l, int(e)).name},
+                           {"path", x.path},
                            {"era", x.era}});
     }
     json blocks = json::array();
@@ -329,6 +355,20 @@ json toJson(const Layout& l)
     json bridges = json::array();
     for (const Vec2& b : l.bridges)
         bridges.push_back(xz(b));
+    json exclusions = json::array();
+    for (size_t k = 0; k < l.exclusions.size(); ++k)
+        exclusions.push_back({{"id", k < l.exclusionIds.size() ? l.exclusionIds[k] : -1}, {"outline", ring(l.exclusions[k])}});
+    json surface = json::array();
+    for (const SurfacePath& s : l.surfacePaths)
+    {
+        json pts = json::array();
+        for (const glm::dvec3& q : s.pts)
+            pts.push_back(json::array({q.x, q.y, q.z}));
+        surface.push_back({{"path", s.path}, {"class", className(s.cls)}, {"profile", l.roads[size_t(s.profile)].name}, {"width", s.width}, {"points", pts}});
+    }
+    json roads = json::array();
+    for (const RoadProfile& r : l.roads)
+        roads.push_back(toJson(r));
     return {{"format", "lila.settlement"},
             {"version", 1},
             {"units", "cm"},
@@ -343,7 +383,10 @@ json toJson(const Layout& l)
             {"lots", lots},
             {"envelopes", envelopes},
             {"water", water},
-            {"bridges", bridges}};
+            {"bridges", bridges},
+            {"exclusions", exclusions},
+            {"surfacePaths", surface},
+            {"roadProfiles", roads}};
 }
 
 MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o)
@@ -352,11 +395,12 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
 
     MeshParts out;
     const StreetGraph& g = l.graph;
-    const double seg = std::max(o.segment, 10.0);
-    auto at = [&](Vec2 p, double lift) { return glm::dvec3(p.x, ground.height(p) + lift, p.y); };
+    // Draped no coarser than the ground's own grid, on its exact surface, so ribbons follow it at any scale.
+    const double seg = std::max(std::min(o.segment, ground.isPlane() ? o.segment : std::max(ground.cellSize(), 50.0)), 10.0);
+    auto at = [&](Vec2 p, double lift) { return glm::dvec3(p.x, ground.surfaceHeight(p) + lift, p.y); };
 
     // A ribbon per edge, wound so its normal faces up (clockwise in XZ seen as x, z).
-    std::vector<int32_t> streetId, streetClass, waterId;
+    std::vector<int32_t> streetId, streetClass, streetPath, waterId;
     for (size_t e = 0; e < g.edges.size(); ++e)
     {
         const StreetEdge& x = g.edges[e];
@@ -387,13 +431,38 @@ MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o
                 {
                     streetId.push_back(int32_t(e));
                     streetClass.push_back(int32_t(x.cls));
+                    streetPath.push_back(int32_t(x.path));
                 }
             }
             prevL = L;
             prevR = R;
         }
     }
-    setFaceInts(out.streets, {{"street", streetId}, {"class", streetClass}});
+    // Surface paths: ribbons on the walkable surface, level with each point, -1 for the street id.
+    for (const SurfacePath& s : l.surfacePaths)
+    {
+        const double half = 0.5 * s.width;
+        geo::Index prevL = 0, prevR = 0;
+        for (size_t k = 0; k < s.pts.size(); ++k)
+        {
+            const glm::dvec3 prev = s.pts[k > 0 ? k - 1 : k], next = s.pts[k + 1 < s.pts.size() ? k + 1 : k];
+            glm::dvec2 d(next.x - prev.x, next.z - prev.z);
+            d = glm::length(d) > 1e-9 ? d / glm::length(d) : glm::dvec2(1.0, 0.0);
+            const glm::dvec3 side(-d.y * half, 0.0, d.x * half), up(0.0, o.lift, 0.0);
+            const geo::Index L = out.streets.addPoint(s.pts[k] + side + up);
+            const geo::Index R = out.streets.addPoint(s.pts[k] - side + up);
+            if (k > 0)
+            {
+                out.streets.addFace({prevL, L, R, prevR});
+                streetId.push_back(-1);
+                streetClass.push_back(int32_t(s.cls));
+                streetPath.push_back(int32_t(s.path));
+            }
+            prevL = L;
+            prevR = R;
+        }
+    }
+    setFaceInts(out.streets, {{"street", streetId}, {"class", streetClass}, {"path", streetPath}});
     setFaceInts(out.water, {{"water", waterId}});
 
     // Lots: outlines as loose edges draped on the ground.
@@ -459,29 +528,39 @@ std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground)
     const StreetGraph& g = l.graph;
     std::vector<char> used(g.edges.size(), 0);
     std::vector<StreetLine> lines;
+    auto same = [&](int a, int b) {
+        const StreetEdge &x = g.edges[size_t(a)], &y = g.edges[size_t(b)];
+        return x.cls == y.cls && x.profile == y.profile && x.path == y.path && edgeWidth(l, a) == edgeWidth(l, b);
+    };
     auto through = [&](int node, int e) {
-        // The edge that carries a street straight on through a plain node: same class, the only other one.
+        // The edge that carries a street straight on through a plain node: the same kind, the only other one.
         if (g.degree(node) != 2)
             return -1;
         for (int x : g.incident(node))
-            if (x != e && g.isStreet(x) && g.edges[size_t(x)].cls == g.edges[size_t(e)].cls)
+            if (x != e && g.isStreet(x) && same(x, e))
                 return x;
         return -1;
     };
     auto walk = [&](int start, int e) {
         StreetLine line;
-        line.cls = g.edges[size_t(e)].cls;
+        const StreetEdge& first = g.edges[size_t(e)];
+        line.cls = first.cls;
+        line.profile = first.profile >= 0 ? first.profile : int(std::min(first.cls, StreetClass::Path));
+        line.width = edgeWidth(l, e);
+        line.path = first.path;
+        line.startNode = start;
         int node = start;
-        line.pts.push_back({g.nodes[size_t(node)].p.x, ground.height(g.nodes[size_t(node)].p), g.nodes[size_t(node)].p.y});
+        line.pts.push_back({g.nodes[size_t(node)].p.x, ground.surfaceHeight(g.nodes[size_t(node)].p), g.nodes[size_t(node)].p.y});
         while (e >= 0 && !used[size_t(e)])
         {
             used[size_t(e)] = 1;
             const StreetEdge& x = g.edges[size_t(e)];
             node = x.a == node ? x.b : x.a;
             const Vec2 p = g.nodes[size_t(node)].p;
-            line.pts.push_back({p.x, ground.height(p), p.y});
+            line.pts.push_back({p.x, ground.surfaceHeight(p), p.y});
             e = through(node, e);
         }
+        line.endNode = node;
         if (line.pts.size() >= 2)
             lines.push_back(std::move(line));
     };
@@ -492,6 +571,89 @@ std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground)
     for (size_t e = 0; e < g.edges.size(); ++e)
         if (g.isStreet(int(e)) && !used[e])
             walk(g.edges[e].a, int(e));
+    for (const SurfacePath& s : l.surfacePaths)
+    {
+        StreetLine line;
+        line.pts = s.pts;
+        line.cls = s.cls;
+        line.profile = s.profile;
+        line.width = s.width;
+        line.path = s.path;
+        line.surface = true;
+        lines.push_back(std::move(line));
+    }
     return lines;
+}
+
+json pathResults(const Layout& l)
+{
+    json out = json::array();
+    for (const PathResult& r : l.pathResults)
+    {
+        json j = {{"id", r.id}, {"ok", r.ok}, {"lengthM", r.length / 100.0}, {"surfaceLengthM", r.surfaceLength / 100.0}};
+        if (!r.ok)
+            j["error"] = r.error;
+        out.push_back(j);
+    }
+    return out;
+}
+
+RoadNetwork roadNetwork(const Layout& l, const Ground& ground)
+{
+    LILA_ZONE();
+
+    RoadNetwork net;
+    net.lines = streetLines(l, ground);
+    std::map<int, size_t> at; // graph node -> junction
+    for (size_t k = 0; k < net.lines.size(); ++k)
+    {
+        const StreetLine& line = net.lines[k];
+        for (const int node : {line.startNode, line.endNode})
+            if (node >= 0 && l.graph.degree(node) >= 3 && !at.contains(node))
+            {
+                at[node] = net.junctions.size();
+                Junction j;
+                const Vec2 p = l.graph.nodes[size_t(node)].p;
+                j.p = {p.x, ground.surfaceHeight(p), p.y};
+                // Wide enough for the widest road meeting there, and never past half of any road's length.
+                for (int e : l.graph.incident(node))
+                    if (l.graph.isStreet(e))
+                        j.radius = std::max(j.radius, 0.5 * edgeWidth(l, e) + 100.0);
+                net.junctions.push_back(j);
+            }
+    }
+    for (size_t k = 0; k < net.lines.size(); ++k)
+    {
+        StreetLine& line = net.lines[k];
+        for (int end = 0; end < 2; ++end)
+        {
+            const int node = end == 0 ? line.startNode : line.endNode;
+            auto it = at.find(node);
+            if (it == at.end())
+                continue;
+            Junction& j = net.junctions[it->second];
+            double length = 0.0;
+            for (size_t i = 0; i + 1 < line.pts.size(); ++i)
+                length += glm::length(line.pts[i + 1] - line.pts[i]);
+            const double cut = std::min(j.radius, 0.45 * length);
+            // Walk in from this end by cut, dropping the points passed.
+            std::vector<glm::dvec3>& pts = line.pts;
+            if (end == 1)
+                std::reverse(pts.begin(), pts.end());
+            double left = cut;
+            while (pts.size() >= 2 && glm::length(pts[1] - pts[0]) <= left)
+            {
+                left -= glm::length(pts[1] - pts[0]);
+                pts.erase(pts.begin());
+            }
+            if (pts.size() >= 2)
+                pts[0] += glm::normalize(pts[1] - pts[0]) * left;
+            const glm::dvec3 out = pts.size() >= 2 ? glm::normalize(pts[1] - pts[0]) : glm::dvec3(1, 0, 0);
+            j.ends.push_back({int(k), end == 0, pts[0], out});
+            if (end == 1)
+                std::reverse(pts.begin(), pts.end());
+        }
+    }
+    return net;
 }
 } // namespace settlement

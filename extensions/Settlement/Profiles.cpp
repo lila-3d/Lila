@@ -22,6 +22,7 @@ struct IntField
 constexpr DoubleField kDoubles[] = {
     {"widthArterial", &Profile::widthArterial}, {"widthCollector", &Profile::widthCollector},
     {"widthLocal", &Profile::widthLocal},       {"widthAlley", &Profile::widthAlley},
+    {"widthPath", &Profile::widthPath},
     {"segment", &Profile::segment},             {"turn", &Profile::turn},
     {"minAngle", &Profile::minAngle},           {"spacing", &Profile::spacing},
     {"maxGrade", &Profile::maxGrade},           {"density", &Profile::density},
@@ -166,13 +167,14 @@ const char* patternName(Pattern p)
     case Pattern::Radial: return "radial";
     case Pattern::Linear: return "linear";
     case Pattern::OrganicGrid: return "organicGrid";
+    case Pattern::None: return "none";
     }
     return "organic";
 }
 
 bool parsePattern(std::string_view name, Pattern* out)
 {
-    for (Pattern p : {Pattern::Organic, Pattern::Grid, Pattern::Radial, Pattern::Linear, Pattern::OrganicGrid})
+    for (Pattern p : {Pattern::Organic, Pattern::Grid, Pattern::Radial, Pattern::Linear, Pattern::OrganicGrid, Pattern::None})
         if (name == patternName(p))
         {
             *out = p;
@@ -244,7 +246,7 @@ void applyJson(Profile& p, const json& j)
         else if (k == "pattern" && v.is_string())
         {
             if (!parsePattern(v.get<std::string>(), &p.pattern))
-                throw std::runtime_error("unknown pattern '" + v.get<std::string>() + "' (organic, grid, radial, linear, organicGrid)");
+                throw std::runtime_error("unknown pattern '" + v.get<std::string>() + "' (organic, grid, radial, linear, organicGrid, none)");
         }
         else
             throw std::runtime_error("unknown or mistyped profile field '" + k + "'");
@@ -259,9 +261,121 @@ double streetWidth(const Profile& p, StreetClass c)
     case StreetClass::Collector: return p.widthCollector;
     case StreetClass::Local: return p.widthLocal;
     case StreetClass::Alley: return p.widthAlley;
+    case StreetClass::Path: return p.widthPath;
     case StreetClass::Boundary:
     case StreetClass::Water: return 0.0;
     }
     return p.widthLocal;
+}
+
+namespace
+{
+RoadProfile road(const char* name, int lanes, double laneWidth, double median, double sidewalk, double verge, double speed, bool oneWay = false)
+{
+    RoadProfile r;
+    r.name = name;
+    r.lanes = lanes;
+    r.laneWidth = laneWidth;
+    r.median = median;
+    r.sidewalk = sidewalk;
+    r.verge = verge;
+    r.speed = speed;
+    r.oneWay = oneWay;
+    return r;
+}
+
+const std::vector<RoadProfile>& roadBuiltins()
+{
+    static const std::vector<RoadProfile> all = {
+        road("highway", 4, 365.0, 300.0, 0.0, 300.0, 100.0),
+        road("avenue", 4, 325.0, 200.0, 300.0, 0.0, 50.0),
+        road("street", 2, 300.0, 0.0, 200.0, 0.0, 40.0),
+        road("lane", 2, 250.0, 0.0, 100.0, 0.0, 30.0),
+        road("alley", 1, 300.0, 0.0, 0.0, 0.0, 15.0),
+        road("serviceRoad", 2, 300.0, 0.0, 0.0, 50.0, 30.0),
+        road("track", 1, 300.0, 0.0, 0.0, 0.0, 20.0),
+        road("footpath", 0, 0.0, 0.0, 100.0, 0.0, 5.0),
+        road("stairs", 0, 0.0, 0.0, 125.0, 0.0, 3.0),
+    };
+    return all;
+}
+
+struct RoadField
+{
+    const char* name;
+    double RoadProfile::*member;
+};
+
+constexpr RoadField kRoadFields[] = {{"laneWidth", &RoadProfile::laneWidth}, {"median", &RoadProfile::median},
+                                     {"sidewalk", &RoadProfile::sidewalk},   {"verge", &RoadProfile::verge},
+                                     {"speed", &RoadProfile::speed}};
+} // namespace
+
+std::vector<std::string> roadProfileNames()
+{
+    std::vector<std::string> out;
+    for (const RoadProfile& r : roadBuiltins())
+        out.push_back(r.name);
+    return out;
+}
+
+bool builtinRoadProfile(std::string_view name, RoadProfile* out)
+{
+    for (const RoadProfile& r : roadBuiltins())
+        if (r.name == name)
+        {
+            *out = r;
+            return true;
+        }
+    return false;
+}
+
+const char* defaultRoadProfile(StreetClass c)
+{
+    switch (c)
+    {
+    case StreetClass::Arterial: return "avenue";
+    case StreetClass::Collector: return "street";
+    case StreetClass::Local: return "lane";
+    case StreetClass::Alley: return "alley";
+    case StreetClass::Path: return "footpath";
+    default: return "lane";
+    }
+}
+
+json toJson(const RoadProfile& p)
+{
+    json j = {{"name", p.name}, {"lanes", p.lanes}, {"oneWay", p.oneWay}, {"width", p.width()}};
+    for (const RoadField& f : kRoadFields)
+        j[f.name] = p.*f.member;
+    return j;
+}
+
+void applyJson(RoadProfile& p, const json& j)
+{
+    if (!j.is_object())
+        throw std::runtime_error("a road profile is a JSON object");
+    for (auto& [k, v] : j.items())
+    {
+        bool done = false;
+        for (const RoadField& f : kRoadFields)
+            if (k == f.name)
+            {
+                if (!v.is_number() || v.get<double>() < 0.0)
+                    throw std::runtime_error("road profile field " + k + " takes a number, 0 or more");
+                p.*f.member = v.get<double>();
+                done = true;
+            }
+        if (done || k == "width")
+            continue;
+        if (k == "lanes" && v.is_number() && v.get<double>() >= 0.0)
+            p.lanes = int(v.get<double>());
+        else if (k == "oneWay" && v.is_boolean())
+            p.oneWay = v.get<bool>();
+        else if (k == "name" && v.is_string())
+            p.name = v.get<std::string>();
+        else
+            throw std::runtime_error("unknown or mistyped road profile field '" + k + "'");
+    }
 }
 } // namespace settlement

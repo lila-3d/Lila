@@ -51,19 +51,61 @@ Polygon inset(const Polygon& p, std::span<const double> distances);
 bool selfIntersects(std::span<const Vec2> pts);
 /** Closed polygon from points, made counter-clockwise, duplicate and collinear points dropped. */
 Polygon makePolygon(std::vector<Vec2> pts, int tag = -1);
+/** Distance from q to the polygon's boundary. */
+double boundaryDistance(std::span<const Vec2> pts, Vec2 q);
+/** True when the segment a-b crosses or touches any side of the polygon. */
+bool segmentCrosses(std::span<const Vec2> pts, Vec2 a, Vec2 b);
+/** Distance from the segment a-b to the polygon's boundary, 0 where they cross. */
+double segmentDistance(std::span<const Vec2> pts, Vec2 a, Vec2 b);
+/** The polygon grown outward by margin (mitred where that holds, else traced from a raster). Empty when it has no area. */
+Polygon grow(const Polygon& p, double margin);
+
+/** A boolean raster over the XZ plane, for footprints of meshes and curves. */
+struct Mask
+{
+    Vec2 origin{0.0};
+    double cell = 100.0;
+    int w = 0, h = 0;
+    std::vector<uint8_t> on;
+
+    static Mask around(Vec2 lo, Vec2 hi, double cell, double pad);
+    void fillTriangle(Vec2 a, Vec2 b, Vec2 c);
+    void fillSegment(Vec2 a, Vec2 b);
+    void fillPolygon(std::span<const Vec2> pts);
+    /** Sets every cell within r of a set one. */
+    void dilate(double r);
+    /** Outer outlines of the set cells, holes filled, simplified to within about a cell. */
+    std::vector<Polygon> outlines() const;
+};
+
+/** What a mesh covers seen from above, grown by margin: one polygon per separate piece. */
+std::vector<Polygon> meshFootprint(const geo::Mesh& mesh, double margin, double cell = 0.0);
+/** A corridor of half-width margin along polylines, as polygons. */
+std::vector<Polygon> lineFootprint(std::span<const std::vector<Vec2>> lines, double margin, double cell = 0.0);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Ground
 
-/** What streets and buildings stand on: a plane, or a mesh baked to a height grid by casting down onto it. */
+/**
+ * What streets and buildings stand on: a plane, or a mesh baked to a height grid (its top surface) for routing and slope,
+ * with the mesh kept for exact heights where geometry is draped on it.
+ */
 class Ground
 {
 public:
     static Ground plane(double height = 0.0);
-    /** Heights over the mesh's XZ bounds at about cell cm spacing (the grid is capped at 1024 a side). */
-    static Ground fromMesh(const geo::Mesh& mesh, double cell = 100.0);
+    /**
+     * Heights over the mesh's XZ bounds at about cell cm spacing. The grid grows with the mesh up to maxSide a side (so a
+     * 10 km terrain keeps cells near 2.5 m); past that the cells widen.
+     */
+    static Ground fromMesh(const geo::Mesh& mesh, double cell = 100.0, int maxSide = 4096);
 
     double height(Vec2 p) const;
+    /** The mesh's own top surface at p (a raycast), else the grid height. For draping ribbons and outlines. */
+    double surfaceHeight(Vec2 p) const;
+    double cellSize() const { return mCell; }
+    int gridWidth() const { return mW; }
+    int gridHeight() const { return mH; }
     /** Rise over run at p, from central differences over one cell. */
     double grade(Vec2 p) const;
     /** Grade along the segment a-b, the steepest of a few samples. */
@@ -78,6 +120,55 @@ private:
     double mCell = 100.0;
     int mW = 0, mH = 0;
     std::vector<float> mHeights; // NaN where the mesh has no surface
+    std::shared_ptr<const geo::MeshBvh> mBvh;
+    double mTop = 0.0, mDepth = 0.0;
+};
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Walkable surfaces: ramps, terraces and floors of a structure, any number of levels
+
+struct WalkOptions
+{
+    double maxSlope = 35.0; // degrees: steeper faces are walls
+    double step = 60.0;     // cm: pieces this close in height (and gap apart) join, as a step or a threshold
+    double gap = 100.0;
+    double spacing = 400.0; // cm between route points along mesh edges
+};
+
+/**
+ * A walkable mesh as a graph over its upward faces: their corners and points along their edges, every pair on a face
+ * joined. Routes on it are shortest paths that stay on the surface, from floor to ramp to terrace.
+ */
+class WalkSurface
+{
+public:
+    /** A point on a walkable face. */
+    struct Spot
+    {
+        glm::dvec3 p{0.0};
+        int face = -1;
+    };
+
+    static WalkSurface fromMesh(const geo::Mesh& mesh, const WalkOptions& o = {});
+
+    bool empty() const { return mNodes.empty(); }
+    size_t nodeCount() const { return mNodes.size(); }
+    glm::dvec3 position(int node) const { return mNodes[size_t(node)]; }
+    /** The walkable point nearest p within reach. False when there is none. */
+    bool locate(glm::dvec3 p, double reach, Spot* out) const;
+    /** Shortest walk from a to b on the surface, both included (simplified). Empty when they are not connected. */
+    std::vector<glm::dvec3> route(const Spot& a, const Spot& b) const;
+    /** Shortest walk from a to a node. */
+    std::vector<glm::dvec3> route(const Spot& a, int node) const;
+    /** Walk lengths from a to every node (infinity where unreachable). */
+    std::vector<double> distances(const Spot& a) const;
+
+private:
+    std::vector<glm::dvec3> mNodes;
+    std::vector<std::vector<std::pair<int, float>>> mLinks;
+    std::vector<std::vector<int>> mRings; // per walkable face (the BVH's face ids), the nodes around it
+    std::shared_ptr<const geo::MeshBvh> mBvh;
+    std::vector<glm::dvec3> search(const Spot& a, const Spot* b, int node, std::vector<double>* all) const;
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -89,7 +180,8 @@ enum class StreetClass : uint8_t
     Collector, // streets that grow off them
     Local,
     Alley,
-    Boundary, // the settlement's outline: closes blocks, is not a street
+    Path,     // footpaths, stairs and service walks: people, not vehicles
+    Boundary, // the settlement's outline and its exclusions: closes blocks, is not a street
     Water,    // a river or canal: closes blocks, only arterials bridge it
 };
 
@@ -108,7 +200,9 @@ struct StreetEdge
     StreetClass cls = StreetClass::Local;
     int era = 0;
     bool alive = true;
-    double width = 0.0; // overrides the class's width when above 0 (rivers)
+    double width = 0.0; // overrides the class's width when above 0 (rivers, given widths)
+    int profile = -1;   // road profile (Layout::roads), -1 for the class's
+    int path = -1;      // the edit (street or route) it was laid for, -1 when generated
 };
 
 /** Planar street network: inserting a street splits every street it crosses and snaps its ends to what is near. */
@@ -124,6 +218,9 @@ public:
     /** Adds the segment p-q, split where it crosses or touches existing edges. Returns the edges made, in order p to q. */
     std::vector<int> addStreet(Vec2 p, Vec2 q, StreetClass cls, int era = 0, double width = 0.0);
     std::vector<int> addPolyline(std::span<const Vec2> pts, StreetClass cls, int era = 0, bool closed = false, double width = 0.0);
+    /** As above, every edge made a copy of like (class, era, width, profile, path). */
+    std::vector<int> addStreet(Vec2 p, Vec2 q, const StreetEdge& like);
+    std::vector<int> addPolyline(std::span<const Vec2> pts, const StreetEdge& like, bool closed = false);
 
     /** Nearest node within r, or -1. */
     int nearestNode(Vec2 p, double r) const;
@@ -150,7 +247,7 @@ private:
 
     int addNode(Vec2 p);
     int nodeAt(Vec2 p);
-    int addEdge(int a, int b, StreetClass cls, int era, double width = 0.0);
+    int addEdge(int a, int b, const StreetEdge& like);
     int64_t key(int x, int y) const { return (int64_t(x) << 32) ^ int64_t(uint32_t(y)); }
     template <class F> void forCells(Vec2 lo, Vec2 hi, F&& f) const;
 };
@@ -174,6 +271,7 @@ enum class Pattern : uint8_t
     Radial,      // rings and spokes
     Linear,      // one main street through, lots and lanes off it
     OrganicGrid, // an organic core inside a ring road, a grid beyond it
+    None,        // no generated streets: only the given streets, roads and routes
 };
 
 const char* patternName(Pattern p);
@@ -185,7 +283,7 @@ struct Profile
     std::string name = "medievalTown";
     Pattern pattern = Pattern::Organic;
 
-    double widthArterial = 900.0, widthCollector = 650.0, widthLocal = 450.0, widthAlley = 250.0;
+    double widthArterial = 900.0, widthCollector = 650.0, widthLocal = 450.0, widthAlley = 250.0, widthPath = 200.0;
     int gates = 4;            // arterials leave through this many points on the outline
     double segment = 2500.0;  // growing street segment length
     double turn = 18.0;       // degrees a growing street may bend per segment
@@ -222,6 +320,33 @@ json toJson(const Profile& p);
 void applyJson(Profile& p, const json& j);
 double streetWidth(const Profile& p, StreetClass c);
 
+/**
+ * A street's cross-section, what lane graphs and road meshes are made from: driving lanes (both directions together),
+ * then a median, sidewalks and verges on each side. Widths cm, speed km/h.
+ */
+struct RoadProfile
+{
+    std::string name = "street";
+    int lanes = 2;
+    double laneWidth = 325.0;
+    double median = 0.0;
+    double sidewalk = 0.0;
+    double verge = 0.0;
+    bool oneWay = false;
+    double speed = 50.0;
+
+    double width() const { return lanes * laneWidth + median + 2.0 * (sidewalk + verge); }
+};
+
+/** highway, avenue, street, lane, alley, serviceRoad, track, footpath, stairs. */
+std::vector<std::string> roadProfileNames();
+bool builtinRoadProfile(std::string_view name, RoadProfile* out);
+/** The profile streets of a class take when they name none. */
+const char* defaultRoadProfile(StreetClass c);
+json toJson(const RoadProfile& p);
+/** Applies the fields present in j over p. Throws std::runtime_error for an unknown field or a bad value. */
+void applyJson(RoadProfile& p, const json& j);
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Layout
 
@@ -232,7 +357,42 @@ struct WaterLine
     double width = 2000.0;
 };
 
-/** What the user gives: an outline, fixed streets and roads, water, a centre and attractors. */
+/** A region nothing is laid in: no street, block, lot or building. The space a structure stands in, a ruin, a lake. */
+struct Exclusion
+{
+    int id = -1;
+    std::string name, source;
+    std::vector<Vec2> pts; // closed
+    double margin = 0.0;   // cm kept clear around it
+};
+
+enum class PathMode : uint8_t
+{
+    Ground,  // on the ground, in the street network
+    Surface, // on the walkable surface: ramps, terraces, floors
+    Auto,    // each stop where it is: given heights on the walkable surface go there, the rest on the ground
+};
+
+const char* pathModeName(PathMode m);
+bool parsePathMode(std::string_view name, PathMode* out);
+
+/**
+ * A street the user draws (points used as they are) or a route between stops (each leg the cheapest way over the ground
+ * or the walkable surface). Points are world XYZ; y is NaN where only [x, z] was given.
+ */
+struct SitePath
+{
+    int id = -1;
+    std::string name;
+    bool routed = false;
+    std::vector<glm::dvec3> pts;
+    StreetClass cls = StreetClass::Collector;
+    std::string profile; // road profile name; empty for the class's
+    double width = 0.0;  // overrides the profile's width when above 0
+    PathMode mode = PathMode::Auto;
+};
+
+/** What the user gives: an outline, fixed streets and roads, water, a centre and attractors, exclusions and edits. */
 struct Site
 {
     std::vector<Vec2> outline;                 // closed; empty for a square of size
@@ -242,7 +402,18 @@ struct Site
     std::vector<WaterLine> water;              // streets other than arterials stop at its banks
     std::vector<Vec2> attractors;              // the first is the centre when hasCenter
     bool hasCenter = false;
+    std::vector<Exclusion> exclusions;
+    std::vector<SitePath> paths;
+    std::vector<RoadProfile> roadProfiles; // custom profiles paths may name, besides the built-in ones
 };
+
+/**
+ * The edits a settlement carries as JSON (its edits input): {"next": id, "streets": [...], "routes": [...],
+ * "exclusions": [...], "roadProfiles": {name: profile}}. Each street {id, name, points, class, profile, width, mode};
+ * each route the same with stops for points; each exclusion {id, name, polygon, margin, source}. Throws
+ * std::runtime_error naming what is wrong.
+ */
+void applyEdits(Site& site, const json& edits);
 
 struct Options
 {
@@ -252,6 +423,9 @@ struct Options
     double heightScale = 1.0;
     double widthScale = 1.0;
     double lotScale = 1.0;
+    bool blocks = true;    // false: streets and paths only, no blocks, lots or buildings
+    bool buildings = true; // false: blocks and lots without building envelopes
+    WalkOptions walk;
 };
 
 enum class Use : uint8_t
@@ -302,6 +476,26 @@ struct Envelope
     float random = 0.0f;
 };
 
+/** A path off the ground: on the walkable surface, across ramps, terraces and floors at any height. */
+struct SurfacePath
+{
+    int path = -1; // the edit it was laid for
+    std::vector<glm::dvec3> pts;
+    StreetClass cls = StreetClass::Path;
+    int profile = 0; // Layout::roads
+    double width = 0.0;
+};
+
+/** How an edit came out: laid, and how long, or why not. */
+struct PathResult
+{
+    int id = -1;
+    bool ok = false;
+    double length = 0.0;        // cm, ground and surface together
+    double surfaceLength = 0.0; // cm on the walkable surface
+    std::string error;
+};
+
 struct Layout
 {
     StreetGraph graph;
@@ -315,13 +509,24 @@ struct Layout
     int refused = 0; // grown streets turned down by the local rules
     std::vector<WaterLine> water;
     std::vector<Vec2> bridges; // where streets cross water
+    std::vector<Polygon> exclusions; // grown by their margins
+    std::vector<int> exclusionIds;
+    std::vector<RoadProfile> roads; // the classes' profiles first (index = class), then the ones paths name
+    std::vector<SurfacePath> surfacePaths;
+    std::vector<PathResult> pathResults;
 };
 
-/** An edge's width: its own (rivers), else its class's. */
+/** An edge's width: its own (rivers, given widths), else its profile's when a path named one, else its class's. */
 double edgeWidth(const Layout& l, int edge);
+/** The road profile of an edge. Only for streets. */
+const RoadProfile& edgeProfile(const Layout& l, int edge);
+/** True inside any exclusion. */
+bool excluded(const Layout& l, Vec2 q);
+/** True when the segment crosses or ends in an exclusion. */
+bool crossesExclusion(const Layout& l, Vec2 a, Vec2 b);
 
 /** Streets, blocks, lots and envelopes for a site. Same inputs give the same layout. */
-Layout build(const Site& site, const Ground& ground, const Options& o);
+Layout build(const Site& site, const Ground& ground, const Options& o, const WalkSurface* walk = nullptr);
 
 // Stages, exposed for tests.
 void growOrganic(Layout& l, const Ground& ground, const Options& o, double radiusLimit = 0.0);
@@ -330,8 +535,11 @@ void layRadial(Layout& l, const Ground& ground, const Options& o);
 void cutLargeBlocks(Layout& l, const Ground& ground, const Options& o);
 std::vector<Lot> subdivide(const Block& b, const Options& o, int firstId);
 Envelope envelopeFor(const Lot& lot, const Layout& l, const Ground& ground, const Options& o);
-/** Least-cost path over the ground between a and b inside the outline, smoothed. Empty when there is none. */
-std::vector<Vec2> route(const Layout& l, const Ground& ground, const Profile& p, Vec2 a, Vec2 b);
+/**
+ * Least-cost path over the ground between a and b inside the outline, at least clearance from every exclusion (half
+ * the arterial width when negative), smoothed. Empty when there is none.
+ */
+std::vector<Vec2> route(const Layout& l, const Ground& ground, const Profile& p, Vec2 a, Vec2 b, double clearance = -1.0);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Measures, checks, output
@@ -342,6 +550,8 @@ json metrics(const Layout& l);
 json checks(const Layout& l, const Ground& ground, const Options& o);
 /** Counts and sizes. */
 json stats(const Layout& l);
+/** Each edit path: laid or not, its length on the ground and on the walkable surface, and why it failed. */
+json pathResults(const Layout& l);
 /** The whole layout as data: streets, blocks, lots, envelopes (the schema building generators read). */
 json toJson(const Layout& l);
 
@@ -361,13 +571,49 @@ struct OutputOptions
 
 MeshParts toMeshes(const Layout& l, const Ground& ground, const OutputOptions& o = {});
 
-/** Street centrelines joined through plain junctions, as polylines with their class. */
+/**
+ * Street centrelines joined through plain junctions (the same class, profile and path on both sides), then the surface
+ * paths, as polylines.
+ */
 struct StreetLine
 {
     std::vector<glm::dvec3> pts;
     StreetClass cls = StreetClass::Local;
+    int profile = 0; // Layout::roads
+    double width = 0.0;
+    int path = -1;
+    bool surface = false;
+    int startNode = -1, endNode = -1; // street graph nodes at the ends; -1 on surface paths
 };
 std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground);
+
+/**
+ * What engines need of the street network: roads as lines with their cross-sections, and junctions where three or more
+ * meet with the road ends that touch them (trimmed back by the junction's radius, pointing out along the road).
+ * Lila space, cm. Built by roadNetwork.
+ */
+struct RoadEnd
+{
+    int line = 0;
+    bool start = true;      // the line's start touches the junction
+    glm::dvec3 p{0.0};      // where the trimmed road ends
+    glm::dvec3 out{1, 0, 0}; // unit, from the junction along the road
+};
+
+struct Junction
+{
+    glm::dvec3 p{0.0};
+    double radius = 0.0;
+    std::vector<RoadEnd> ends;
+};
+
+struct RoadNetwork
+{
+    std::vector<StreetLine> lines; // trimmed back at junctions
+    std::vector<Junction> junctions;
+};
+
+RoadNetwork roadNetwork(const Layout& l, const Ground& ground);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Siting and regions: where settlements go, and many of them on one map

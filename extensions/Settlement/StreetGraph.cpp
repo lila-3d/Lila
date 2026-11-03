@@ -31,6 +31,7 @@ const char* className(StreetClass c)
     case StreetClass::Collector: return "collector";
     case StreetClass::Local: return "local";
     case StreetClass::Alley: return "alley";
+    case StreetClass::Path: return "path";
     case StreetClass::Boundary: return "boundary";
     case StreetClass::Water: return "water";
     }
@@ -39,7 +40,7 @@ const char* className(StreetClass c)
 
 bool parseClass(std::string_view name, StreetClass* out)
 {
-    for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Boundary,
+    for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Path, StreetClass::Boundary,
                           StreetClass::Water})
         if (name == className(c))
         {
@@ -69,8 +70,9 @@ int StreetGraph::addNode(Vec2 p)
     return id;
 }
 
-int StreetGraph::addEdge(int a, int b, StreetClass cls, int era, double width)
+int StreetGraph::addEdge(int a, int b, const StreetEdge& like)
 {
+    const StreetClass cls = like.cls;
     if (a == b || a < 0 || b < 0)
         return -1;
     for (int e : mIncident[size_t(a)])
@@ -79,11 +81,20 @@ int StreetGraph::addEdge(int a, int b, StreetClass cls, int era, double width)
             // A street laid over the outline, or a more important street over a lesser one, takes over the edge.
             StreetEdge& x = edges[size_t(e)];
             if (cls < x.cls)
+            {
                 x.cls = cls;
+                x.width = like.width;
+                x.profile = like.profile;
+                x.path = like.path;
+            }
             return e;
         }
     const int id = int(edges.size());
-    edges.push_back({a, b, cls, era, true, width});
+    StreetEdge made = like;
+    made.a = a;
+    made.b = b;
+    made.alive = true;
+    edges.push_back(made);
     mIncident[size_t(a)].push_back(id);
     mIncident[size_t(b)].push_back(id);
     const Vec2 pa = nodes[size_t(a)].p, pb = nodes[size_t(b)].p;
@@ -130,8 +141,8 @@ int StreetGraph::splitEdge(int e, double t)
         return x.b;
     const int m = addNode(p);
     removeEdge(e);
-    addEdge(x.a, m, x.cls, x.era, x.width);
-    addEdge(m, x.b, x.cls, x.era, x.width);
+    addEdge(x.a, m, x);
+    addEdge(m, x.b, x);
     return m;
 }
 
@@ -250,6 +261,15 @@ int StreetGraph::nodeAt(Vec2 p)
 
 std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era, double width)
 {
+    StreetEdge like;
+    like.cls = cls;
+    like.era = era;
+    like.width = width;
+    return addStreet(p, q, like);
+}
+
+std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, const StreetEdge& like)
+{
     std::vector<int> made;
     const int a = nodeAt(p);
     const int b = nodeAt(q);
@@ -309,7 +329,7 @@ std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era
                 break;
             next = m;
         }
-        if (int e = addEdge(cur, next, cls, era, width); e >= 0)
+        if (int e = addEdge(cur, next, like); e >= 0)
             made.push_back(e);
         cur = next;
     }
@@ -318,11 +338,20 @@ std::vector<int> StreetGraph::addStreet(Vec2 p, Vec2 q, StreetClass cls, int era
 
 std::vector<int> StreetGraph::addPolyline(std::span<const Vec2> pts, StreetClass cls, int era, bool closed, double width)
 {
+    StreetEdge like;
+    like.cls = cls;
+    like.era = era;
+    like.width = width;
+    return addPolyline(pts, like, closed);
+}
+
+std::vector<int> StreetGraph::addPolyline(std::span<const Vec2> pts, const StreetEdge& like, bool closed)
+{
     std::vector<int> made;
     const size_t n = pts.size();
     for (size_t k = 0; k + 1 < n + (closed ? 1 : 0); ++k)
     {
-        std::vector<int> e = addStreet(pts[k], pts[(k + 1) % n], cls, era, width);
+        std::vector<int> e = addStreet(pts[k], pts[(k + 1) % n], like);
         made.insert(made.end(), e.begin(), e.end());
     }
     return made;

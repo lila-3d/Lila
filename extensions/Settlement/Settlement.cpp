@@ -41,7 +41,7 @@ struct Chain
 {
     std::vector<glm::dvec3> pts;
     bool closed = false;
-    int kind = 0;       // 0 street or outline, 1 road, 2 water: the int edge attributes road and water
+    int kind = 0;       // 0 street or outline, 1 road, 2 water, 3 exclusion: the int edge attributes road, water, exclude
     double width = 0.0; // the float edge attribute width, for water
 };
 
@@ -61,10 +61,13 @@ std::vector<Chain> chains(const geo::Mesh& m)
     std::vector<char> used(m.edgeCapacity(), 0);
     const std::span<const int32_t> road = m.edgeAttrs().get<int32_t>("road");
     const std::span<const int32_t> water = m.edgeAttrs().get<int32_t>("water");
+    const std::span<const int32_t> exclude = m.edgeAttrs().get<int32_t>("exclude");
     const std::span<const float> width = m.edgeAttrs().get<float>("width");
     auto walk = [&](geo::Index start, geo::Index e) {
         Chain c;
-        if (e < water.size() && water[e])
+        if (e < exclude.size() && exclude[e])
+            c.kind = 3;
+        else if (e < water.size() && water[e])
             c.kind = 2;
         else if (e < road.size() && road[e])
             c.kind = 1;
@@ -121,17 +124,19 @@ void settlementExec(ExecContext& c)
     try
     {
         o = optionsFrom([&](const char* id) { return c.f(id); }, [&](const char* id) { return c.i(id); },
-                        [&](const char* id) { return c.s(id); });
+                        [&](const char* id) { return c.s(id); }, [&](const char* id) { return c.b(id); });
+        applyEdits(site, parseEdits(c.s("edits")));
     }
-    catch (const std::runtime_error& e)
+    catch (const std::exception& e)
     {
         throw gn::ExecError(std::string("Settlement: ") + e.what());
     }
     const Ground ground = groundFrom(*c.geometry("ground"), planeY);
+    const WalkSurface walk = walkFrom(*c.geometry("walkable"), o.walk);
     Layout l;
     try
     {
-        l = build(site, ground, o);
+        l = build(site, ground, o, &walk);
     }
     catch (const std::runtime_error& e)
     {
@@ -168,14 +173,18 @@ gn::NodeDecl settlementDecl()
         .doc = "Lays out a settlement inside an outline: arterial roads routed over the ground from the centre to gates and "
                "attractors, streets grown, gridded or ringed by the profile's pattern, blocks between them, lots along the "
                "streets and a building envelope on each lot (the space a building may fill: footprint, floors, height, roof). "
-               "Streets are ribbons with face attributes street and class (0 arterial, 1 collector, 2 local, 3 alley); lots are "
+               "Exclusions (closed loops with int edge attribute exclude, or in edits) stay clear of all of it; edits add "
+               "streets and routes, routed over the ground or across the walkable mesh. "
+               "Streets are ribbons with face attributes street, class (0 arterial, 1 collector, 2 local, 3 alley, 4 path) and "
+               "path (the edit id, -1 when generated); lots are "
                "outlines with an edge attribute lot; envelopes are closed volumes with face attributes lot, use (0 residential, "
                "1 commercial, 2 civic), floors and part (0 wall, 1 roof, 2 floor). Curves carry the centrelines, lot outlines "
                "and footprints. Lengths are cm, Y up.",
         .sockets = {.inputs = {geoSocket("site", "Outline (the largest closed curve or loose-edge loop), fixed streets (open lines) "
                                                  "and points (the first is the centre, the rest attractors main roads run to). Loose "
                                                  "edges with int attribute road are main roads arriving from outside; with int "
-                                                 "attribute water they are rivers, float attribute width their width."),
+                                                 "attribute water they are rivers, float attribute width their width; loops with "
+                                                 "int attribute exclude are exclusions."),
                                geoSocket("ground", "Mesh the settlement stands on. Empty for flat ground at the site's height."),
                                in("profile", T::String, "medievalTown", "Style: " + profiles + "."),
                                in("pattern", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
@@ -186,6 +195,13 @@ gn::NodeDecl settlementDecl()
                                in("widthScale", T::Float, o.widthScale, "Multiplies every street width.", 0.05),
                                in("lotScale", T::Float, o.lotScale, "Multiplies lot frontage, depth and building depth.", 0.05),
                                in("seed", T::Int, int64_t(o.seed), "Another seed gives another settlement on the same site."),
+                               in("blocks", T::Bool, true, "Blocks and lots between the streets. Off for streets and paths only."),
+                               in("buildings", T::Bool, true, "A building envelope on each lot. Off for empty lots."),
+                               in("edits", T::String, "", "Streets, routes, exclusions and road profiles as JSON (settlementAddStreet, "
+                                                          "settlementRoute and settlementAddExclusion write it)."),
+                               geoSocket("walkable", "Mesh routes may walk on: a structure's ramps, terraces and floors."),
+                               in("walkSlope", T::Float, o.walk.maxSlope, "Steepest walkable face, degrees.", 0.0, 89.0),
+                               in("walkStep", T::Float, o.walk.step, "Height a walk may step between separate pieces, cm.", 0.0),
                                in("showStreets", T::Bool, true, "Include streets in geometry."),
                                in("showLots", T::Bool, true, "Include lot outlines in geometry."),
                                in("showBuildings", T::Bool, true, "Include building envelopes in geometry.")},
@@ -273,6 +289,13 @@ Site siteFrom(const gn::Geometry& g, double* planeY)
     {
         if (int(k) == outline)
             site.outline = flat(all[k].pts);
+        else if (all[k].kind == 3)
+        {
+            Exclusion x;
+            x.pts = flat(all[k].pts);
+            if (x.pts.size() >= 3)
+                site.exclusions.push_back(std::move(x));
+        }
         else if (all[k].kind == 2)
             site.water.push_back({flat(all[k].pts), all[k].width > 0.0 ? all[k].width : 2000.0});
         else if (all[k].kind == 1)
@@ -297,8 +320,25 @@ Ground groundFrom(const gn::Geometry& g, double planeY)
     return Ground::plane(planeY);
 }
 
+WalkSurface walkFrom(const gn::Geometry& g, const WalkOptions& o)
+{
+    if (g.mesh && g.mesh->numFaces() > 0)
+        return WalkSurface::fromMesh(*g.mesh, o);
+    return {};
+}
+
+json parseEdits(const std::string& text)
+{
+    if (text.empty())
+        return json::object();
+    json j = json::parse(text, nullptr, false);
+    if (j.is_discarded() || !j.is_object())
+        throw std::runtime_error("edits isn't a JSON object");
+    return j;
+}
+
 Options optionsFrom(const std::function<double(const char*)>& f, const std::function<int64_t(const char*)>& i,
-                    const std::function<std::string(const char*)>& s)
+                    const std::function<std::string(const char*)>& s, const std::function<bool(const char*)>& b)
 {
     Options o;
     const std::string profile = s("profile");
@@ -311,7 +351,7 @@ Options optionsFrom(const std::function<double(const char*)>& f, const std::func
     }
     const std::string pattern = s("pattern");
     if (!pattern.empty() && !parsePattern(pattern, &o.profile.pattern))
-        throw std::runtime_error("unknown pattern '" + pattern + "' (organic, grid, radial, linear, organicGrid)");
+        throw std::runtime_error("unknown pattern '" + pattern + "' (organic, grid, radial, linear, organicGrid, none)");
     const std::string overrides = s("overrides");
     if (!overrides.empty())
     {
@@ -325,6 +365,10 @@ Options optionsFrom(const std::function<double(const char*)>& f, const std::func
     o.heightScale = std::max(0.0, f("heightScale"));
     o.widthScale = std::max(0.05, f("widthScale"));
     o.lotScale = std::max(0.05, f("lotScale"));
+    o.blocks = b("blocks");
+    o.buildings = b("buildings");
+    o.walk.maxSlope = std::clamp(f("walkSlope"), 0.0, 89.0);
+    o.walk.step = std::max(0.0, f("walkStep"));
     return o;
 }
 
@@ -335,13 +379,15 @@ Parts toGeometry(const Layout& l, const Ground& ground)
     MeshParts meshes = toMeshes(l, ground);
 
     gn::CurveSet centre;
-    std::vector<int32_t> lineClass;
+    std::vector<int32_t> lineClass, linePath, lineSurface;
     for (const StreetLine& line : streetLines(l, ground))
     {
         centre.addCurve(line.pts, false);
         lineClass.push_back(int32_t(line.cls));
+        linePath.push_back(int32_t(line.path));
+        lineSurface.push_back(line.surface ? 1 : 0);
     }
-    setCurveInts(centre, {{"class", lineClass}});
+    setCurveInts(centre, {{"class", lineClass}, {"path", linePath}, {"surface", lineSurface}});
 
     gn::CurveSet lotCurves;
     std::vector<int32_t> lotId, lotUse;

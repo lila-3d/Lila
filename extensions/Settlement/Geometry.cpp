@@ -212,7 +212,7 @@ Ground Ground::plane(double height)
     return g;
 }
 
-Ground Ground::fromMesh(const geo::Mesh& mesh, double cell)
+Ground Ground::fromMesh(const geo::Mesh& mesh, double cell, int maxSide)
 {
     LILA_ZONE();
 
@@ -221,23 +221,61 @@ Ground Ground::fromMesh(const geo::Mesh& mesh, double cell)
     if (!b.valid() || mesh.numFaces() == 0)
         return g;
     const double ex = b.max.x - b.min.x, ez = b.max.z - b.min.z;
-    g.mCell = std::max({cell, ex / 1023.0, ez / 1023.0, 1e-3});
+    const double side = double(std::max(maxSide, 2) - 1);
+    g.mCell = std::max({cell, ex / side, ez / side, 1e-3});
     g.mOrigin = {b.min.x, b.min.z};
     g.mW = int(std::ceil(ex / g.mCell)) + 1;
     g.mH = int(std::ceil(ez / g.mCell)) + 1;
     g.mHeights.assign(size_t(g.mW) * size_t(g.mH), std::numeric_limits<float>::quiet_NaN());
-    geo::MeshBvh bvh(mesh);
-    const double top = b.max.y + 100.0, depth = (b.max.y - b.min.y) + 200.0;
-    for (int z = 0; z < g.mH; ++z)
-        for (int x = 0; x < g.mW; ++x)
-        {
-            geo::BvhHit hit;
-            const glm::dvec3 o(g.mOrigin.x + x * g.mCell, top, g.mOrigin.y + z * g.mCell);
-            if (bvh.raycast(o, {0.0, -1.0, 0.0}, hit, depth))
-                g.mHeights[size_t(z) * size_t(g.mW) + size_t(x)] = float(hit.point.y);
-        }
+    // Each triangle writes the grid points under it; the highest surface wins, as a ray cast down would find.
+    auto put = [&](const glm::dvec3& a, const glm::dvec3& c1, const glm::dvec3& c2) {
+        const double den = (c1.z - c2.z) * (a.x - c2.x) + (c2.x - c1.x) * (a.z - c2.z);
+        if (std::abs(den) < 1e-12)
+            return;
+        const double lx = std::min({a.x, c1.x, c2.x}), hx = std::max({a.x, c1.x, c2.x});
+        const double lz = std::min({a.z, c1.z, c2.z}), hz = std::max({a.z, c1.z, c2.z});
+        const int x0 = std::max(0, int(std::ceil((lx - g.mOrigin.x) / g.mCell - 1e-9)));
+        const int x1 = std::min(g.mW - 1, int(std::floor((hx - g.mOrigin.x) / g.mCell + 1e-9)));
+        const int z0 = std::max(0, int(std::ceil((lz - g.mOrigin.y) / g.mCell - 1e-9)));
+        const int z1 = std::min(g.mH - 1, int(std::floor((hz - g.mOrigin.y) / g.mCell + 1e-9)));
+        for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x)
+            {
+                const double px = g.mOrigin.x + x * g.mCell, pz = g.mOrigin.y + z * g.mCell;
+                const double w0 = ((c1.z - c2.z) * (px - c2.x) + (c2.x - c1.x) * (pz - c2.z)) / den;
+                const double w1 = ((c2.z - a.z) * (px - c2.x) + (a.x - c2.x) * (pz - c2.z)) / den;
+                const double w2 = 1.0 - w0 - w1;
+                if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9)
+                    continue;
+                const float y = float(w0 * a.y + w1 * c1.y + w2 * c2.y);
+                float& h = g.mHeights[size_t(z) * size_t(g.mW) + size_t(x)];
+                if (std::isnan(h) || y > h)
+                    h = y;
+            }
+    };
+    for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)
+    {
+        if (!mesh.faceValid(f))
+            continue;
+        const std::vector<geo::Index> pts = mesh.facePoints(f);
+        for (size_t k = 1; k + 1 < pts.size(); ++k)
+            put(mesh.position(pts[0]), mesh.position(pts[k]), mesh.position(pts[k + 1]));
+    }
+    g.mBvh = std::make_shared<const geo::MeshBvh>(mesh);
+    g.mTop = b.max.y + 100.0;
+    g.mDepth = (b.max.y - b.min.y) + 200.0;
     g.mPlane = b.min.y;
     return g;
+}
+
+double Ground::surfaceHeight(Vec2 p) const
+{
+    if (!mBvh)
+        return height(p);
+    geo::BvhHit hit;
+    if (mBvh->raycast({p.x, mTop, p.y}, {0.0, -1.0, 0.0}, hit, mDepth))
+        return hit.point.y;
+    return height(p);
 }
 
 double Ground::height(Vec2 p) const

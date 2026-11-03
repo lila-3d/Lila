@@ -88,30 +88,47 @@ void circleCrossings(Vec2 a, Vec2 b, Vec2 c, double r, std::vector<double>& out)
             out.push_back(t);
 }
 
-/** The parts of a polyline inside the outline and between the two radii around c (0 for no limit). */
-std::vector<std::vector<Vec2>> clipPolyline(std::span<const Vec2> pts, const Polygon& outline, Vec2 c, double inner, double outer)
+/** Parameters along a-b where it crosses the polygon's sides. */
+void polygonCrossings(Vec2 a, Vec2 b, std::span<const Vec2> poly, std::vector<double>& out)
+{
+    const size_t n = poly.size();
+    for (size_t j = 0; j < n; ++j)
+    {
+        const Vec2 p = poly[j], q = poly[(j + 1) % n];
+        const double den = cross(b - a, q - p);
+        if (std::abs(den) <= 1e-9 * glm::length(b - a) * glm::length(q - p))
+            continue;
+        const double t = cross(p - a, q - p) / den, u = cross(p - a, b - a) / den;
+        if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0)
+            out.push_back(t);
+    }
+}
+
+bool insideAny(std::span<const Polygon> polys, Vec2 q)
+{
+    for (const Polygon& p : polys)
+        if (contains(p.pts, q))
+            return true;
+    return false;
+}
+
+/** The parts of a polyline inside the outline, outside the holes and between the two radii around c (0 for no limit). */
+std::vector<std::vector<Vec2>> clipPolyline(std::span<const Vec2> pts, const Polygon& outline, Vec2 c, double inner, double outer,
+                                            std::span<const Polygon> holes = {})
 {
     std::vector<std::vector<Vec2>> runs;
     std::vector<Vec2> run;
     auto keep = [&](Vec2 q) {
         const double d = glm::length(q - c);
-        return contains(outline.pts, q) && (inner <= 0.0 || d >= inner) && (outer <= 0.0 || d <= outer);
+        return contains(outline.pts, q) && (inner <= 0.0 || d >= inner) && (outer <= 0.0 || d <= outer) && !insideAny(holes, q);
     };
-    const size_t n = outline.pts.size();
     for (size_t k = 0; k + 1 < pts.size(); ++k)
     {
         const Vec2 a = pts[k], b = pts[k + 1];
         std::vector<double> ts = {0.0, 1.0};
-        for (size_t j = 0; j < n; ++j)
-        {
-            const Vec2 p = outline.pts[j], q = outline.pts[(j + 1) % n];
-            const double den = cross(b - a, q - p);
-            if (std::abs(den) <= 1e-9 * glm::length(b - a) * glm::length(q - p))
-                continue;
-            const double t = cross(p - a, q - p) / den, u = cross(p - a, b - a) / den;
-            if (t > 0.0 && t < 1.0 && u >= 0.0 && u <= 1.0)
-                ts.push_back(t);
-        }
+        polygonCrossings(a, b, outline.pts, ts);
+        for (const Polygon& h : holes)
+            polygonCrossings(a, b, h.pts, ts);
         circleCrossings(a, b, c, inner, ts);
         circleCrossings(a, b, c, outer, ts);
         std::sort(ts.begin(), ts.end());
@@ -359,8 +376,8 @@ std::vector<Vec2> addPlaza(Layout& l, const Profile& p, double angle)
     std::vector<Vec2> sq;
     for (int k = 0; k < 4; ++k)
         sq.push_back(l.center + rotate(Vec2(k == 0 || k == 3 ? -half : half, k < 2 ? -half : half), angle));
-    for (const Vec2& q : sq)
-        if (!contains(l.outline.pts, q))
+    for (size_t k = 0; k < sq.size(); ++k)
+        if (!contains(l.outline.pts, sq[k]) || crossesExclusion(l, sq[k], sq[(k + 1) % sq.size()]))
             return {};
     l.graph.addPolyline(sq, StreetClass::Collector, 0, true);
     return sq;
@@ -436,14 +453,14 @@ void joinComponents(Layout& l, const Ground& g)
         const Vec2 pa = graph.nodes[size_t(from)].p, pb = graph.nodes[size_t(to)].p;
         const Vec2 ends[] = {pa, pb};
         const bool dry = l.water.empty() || cutAtWater(std::vector<Vec2>(ends, ends + 2), l.water).size() == 1;
-        if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= p.maxGrade * 1.5)
+        if (gap < 3.0 * p.segment && dry && g.gradeAlong(pa, pb) <= p.maxGrade * 1.5 && !crossesExclusion(l, pa, pb))
             graph.addStreet(pa, pb, StreetClass::Local);
         else if (length < p.segment)
             for (int a : nodes)
             {
                 const std::vector<int> inc = graph.incident(a);
                 for (int e : inc)
-                    if (graph.isStreet(e))
+                    if (graph.isStreet(e) && graph.edges[size_t(e)].path < 0)
                         graph.removeEdge(e);
             }
     }
@@ -476,7 +493,7 @@ void pullBackFromWater(Layout& l)
             const double len = glm::length(far - at), pull = half + 300.0;
             g.removeEdge(e);
             if (len > pull + 2.0 * g.snap())
-                g.addStreet(far, at + (far - at) / len * pull, x.cls, x.era);
+                g.addStreet(far, at + (far - at) / len * pull, x);
         }
     }
 }
@@ -484,7 +501,7 @@ void pullBackFromWater(Layout& l)
 /** A planned line laid as streets: clipped to the outline and radii, split where too steep, gapped at water unless arterial. */
 void layLine(Layout& l, const Ground& g, const Profile& p, std::span<const Vec2> pts, StreetClass cls, int era, double inner, double step)
 {
-    for (const std::vector<Vec2>& run : clipPolyline(pts, l.outline, l.center, inner, 0.0))
+    for (const std::vector<Vec2>& run : clipPolyline(pts, l.outline, l.center, inner, 0.0, l.exclusions))
         for (const std::vector<Vec2>& part : climbable(run, g, p.maxGrade * 1.5, step))
         {
             if (cls == StreetClass::Arterial)
@@ -494,22 +511,56 @@ void layLine(Layout& l, const Ground& g, const Profile& p, std::span<const Vec2>
                     l.graph.addPolyline(dry, cls, era);
         }
 }
+
+std::vector<Face> layoutFaces(const Layout& l);
 } // namespace
 
 double edgeWidth(const Layout& l, int edge)
 {
     const StreetEdge& e = l.graph.edges[size_t(edge)];
-    return e.width > 0.0 ? e.width : streetWidth(l.profile, e.cls);
+    if (e.width > 0.0)
+        return e.width;
+    if (e.profile >= 0 && size_t(e.profile) < l.roads.size())
+        return l.roads[size_t(e.profile)].width();
+    return streetWidth(l.profile, e.cls);
 }
 
-std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2 a, Vec2 b)
+const RoadProfile& edgeProfile(const Layout& l, int edge)
+{
+    static const RoadProfile fallback;
+    const StreetEdge& e = l.graph.edges[size_t(edge)];
+    if (e.profile >= 0 && size_t(e.profile) < l.roads.size())
+        return l.roads[size_t(e.profile)];
+    const size_t c = size_t(std::min(e.cls, StreetClass::Path));
+    return c < l.roads.size() ? l.roads[c] : fallback;
+}
+
+bool excluded(const Layout& l, Vec2 q) { return insideAny(l.exclusions, q); }
+
+bool crossesExclusion(const Layout& l, Vec2 a, Vec2 b)
+{
+    for (const Polygon& x : l.exclusions)
+        if (contains(x.pts, a) || contains(x.pts, b) || segmentCrosses(x.pts, a, b))
+            return true;
+    return false;
+}
+
+std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2 a, Vec2 b, double clearance)
 {
     LILA_ZONE();
 
+    if (clearance < 0.0)
+        clearance = 0.5 * p.widthArterial;
+    auto clearOf = [&](Vec2 x, Vec2 y) {
+        for (const Polygon& h : l.exclusions)
+            if (segmentDistance(h.pts, x, y) < clearance)
+                return false;
+        return true;
+    };
     if (g.isPlane())
     {
         const Vec2 ends[] = {a, b};
-        if (clipPolyline(ends, l.outline, l.center, 0.0, 0.0).size() <= 1)
+        if (clipPolyline(ends, l.outline, l.center, 0.0, 0.0).size() <= 1 && clearOf(a, b))
             return {a, b};
     }
     Vec2 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
@@ -519,7 +570,10 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
         hi = glm::max(hi, q);
     }
     const Vec2 ext = hi - lo;
-    const double cell = std::max({p.widthArterial, ext.x / 256.0, ext.y / 256.0, 50.0});
+    // Exclusions need a finer grid, so routes find the gaps between them.
+    const double cell = l.exclusions.empty()
+                            ? std::max({p.widthArterial, ext.x / 256.0, ext.y / 256.0, 50.0})
+                            : std::max({std::min(p.widthArterial, std::max(ext.x, ext.y) / 128.0), ext.x / 640.0, ext.y / 640.0, 50.0});
     const int w = int(std::ceil(ext.x / cell)) + 1, h = int(std::ceil(ext.y / cell)) + 1;
     auto at = [&](int x, int y) { return lo + Vec2(x * cell, y * cell); };
     auto cellOf = [&](Vec2 q) {
@@ -538,6 +592,26 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
             open[size_t(y) * w + x] = contains(l.outline.pts, q) && g.solid(q);
             wet[size_t(y) * w + x] = !l.water.empty() && bankDistance(q, l.water) < 0.0;
         }
+    // Exclusions close their cells and a margin of half the road around them.
+    const double keep = clearance + 0.5 * cell;
+    for (const Polygon& x : l.exclusions)
+    {
+        Vec2 xlo(std::numeric_limits<double>::max()), xhi(-std::numeric_limits<double>::max());
+        for (const Vec2& q : x.pts)
+        {
+            xlo = glm::min(xlo, q);
+            xhi = glm::max(xhi, q);
+        }
+        const auto [x0, y0] = cellOf(xlo - Vec2(keep));
+        const auto [x1, y1] = cellOf(xhi + Vec2(keep));
+        for (int y = y0; y <= y1; ++y)
+            for (int cx = x0; cx <= x1; ++cx)
+            {
+                const Vec2 q = at(cx, y);
+                if (contains(x.pts, q) || boundaryDistance(x.pts, q) < keep)
+                    open[size_t(y) * w + cx] = 0;
+            }
+    }
     open[size_t(sy) * w + sx] = open[size_t(ty) * w + tx] = 1;
 
     std::vector<double> dist(size_t(w) * h, std::numeric_limits<double>::max());
@@ -569,6 +643,9 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
                 const int j = ny * w + nx;
                 if (!open[size_t(j)])
                     continue;
+                // No corner cutting past a closed cell: the diagonal would graze an exclusion.
+                if (dx != 0 && dy != 0 && (!open[size_t(y * w + nx)] || !open[size_t(ny * w + x)]))
+                    continue;
                 const double run = cell * std::sqrt(double(dx * dx + dy * dy));
                 const double grade = std::abs(height[size_t(j)] - height[size_t(i)]) / run;
                 if (grade > 2.5 * p.maxGrade)
@@ -592,14 +669,19 @@ std::vector<Vec2> route(const Layout& l, const Ground& g, const Profile& p, Vec2
     std::reverse(path.begin(), path.end());
     path.front() = a;
     path.back() = b;
-    std::vector<char> keep(path.size(), 0);
-    keep.front() = keep.back() = 1;
-    simplify(path, 0, path.size() - 1, cell * 0.7, keep);
+    std::vector<char> keepPt(path.size(), 0);
+    keepPt.front() = keepPt.back() = 1;
+    simplify(path, 0, path.size() - 1, cell * 0.7, keepPt);
     std::vector<Vec2> simple;
     for (size_t k = 0; k < path.size(); ++k)
-        if (keep[k])
+        if (keepPt[k])
             simple.push_back(path[k]);
-    return chaikin(std::move(simple), 2);
+    std::vector<Vec2> smooth = chaikin(simple, 2);
+    // Smoothing must not pull a bend into an exclusion; where it would, the bend stays sharp.
+    for (size_t k = 0; k + 1 < smooth.size(); ++k)
+        if (!l.exclusions.empty() && crossesExclusion(l, smooth[k], smooth[k + 1]))
+            return simple;
+    return smooth;
 }
 
 void growOrganic(Layout& l, const Ground& g, const Options& o, double limit)
@@ -714,7 +796,7 @@ void growOrganic(Layout& l, const Ground& g, const Options& o, double limit)
                 break;
             if (limit > 0.0 && glm::length(next - l.center) > limit)
                 break;
-            if (!g.solid(next) || !contains(l.outline.pts, next) || (!plaza.empty() && contains(plaza, next)))
+            if (!g.solid(next) || !contains(l.outline.pts, next) || excluded(l, next) || (!plaza.empty() && contains(plaza, next)))
                 break;
             if (int n = l.graph.nearestNode(next, reach); n >= 0)
             {
@@ -826,7 +908,7 @@ void cutLargeBlocks(Layout& l, const Ground& g, const Options& o)
     for (int pass = 0; pass < 8; ++pass)
     {
         bool cut = false;
-        for (const Face& f : planarFaces(l.graph))
+        for (const Face& f : layoutFaces(l))
         {
             const Polygon& poly = f.outline;
             if (area(poly) / kM2 <= p.maxBlock || (p.plaza && contains(poly.pts, l.center)))
@@ -1036,13 +1118,351 @@ Envelope envelopeFor(const Lot& lot, const Layout& l, const Ground& g, const Opt
     return env;
 }
 
-Layout build(const Site& site, const Ground& g, const Options& in)
+namespace
+{
+/** A point strictly inside the face, a hair to the left of its longest side. */
+Vec2 interiorPoint(const Polygon& f)
+{
+    const double sign = signedArea(f.pts) >= 0.0 ? 1.0 : -1.0;
+    size_t best = 0;
+    double len = -1.0;
+    for (size_t k = 0; k < f.size(); ++k)
+        if (const double d = glm::length(f.pts[(k + 1) % f.size()] - f.pts[k]); d > len)
+        {
+            len = d;
+            best = k;
+        }
+    const Vec2 a = f.pts[best], b = f.pts[(best + 1) % f.size()];
+    const Vec2 d = (b - a) / std::max(len, 1e-12);
+    return (a + b) * 0.5 + leftNormal(d) * sign * std::min(1.0, 0.01 * len);
+}
+
+/** Where q ends up when it must stand clear of the exclusions: just outside the one it is in, inside the outline. */
+Vec2 freePoint(const Layout& l, Vec2 q, double clearance)
+{
+    auto ok = [&](Vec2 x) {
+        if (!contains(l.outline.pts, x))
+            return false;
+        for (const Polygon& h : l.exclusions)
+            if (contains(h.pts, x) || boundaryDistance(h.pts, x) < clearance * 0.99)
+                return false;
+        return true;
+    };
+    if (ok(q))
+        return q;
+    // Out through the nearest side of the exclusion it stands in.
+    double best = std::numeric_limits<double>::max();
+    Vec2 out = q;
+    for (const Polygon& h : l.exclusions)
+        for (size_t k = 0; k < h.size(); ++k)
+        {
+            const Vec2 a = h.pts[k], d = h.pts[(k + 1) % h.size()] - a;
+            const double t = std::clamp(glm::dot(q - a, d) / std::max(glm::dot(d, d), 1e-12), 0.0, 1.0);
+            const Vec2 c = a + d * t;
+            const double dist = glm::length(c - q);
+            if (dist >= best)
+                continue;
+            const Vec2 outward = glm::length(d) > 1e-9 ? Vec2(d.y, -d.x) / glm::length(d) : Vec2(1.0, 0.0);
+            const Vec2 cand = c + outward * (clearance * 1.05 + 1.0);
+            if (ok(cand))
+            {
+                best = dist;
+                out = cand;
+            }
+        }
+    if (best < std::numeric_limits<double>::max())
+        return out;
+    const double step = std::max(clearance, 100.0);
+    for (int ring = 1; ring < 400; ++ring)
+        for (int k = 0; k < 16; ++k)
+        {
+            const double a = 2.0 * kPi * k / 16.0;
+            const Vec2 cand = q + Vec2(std::cos(a), std::sin(a)) * (step * ring);
+            if (ok(cand))
+                return cand;
+        }
+    return q;
+}
+
+/**
+ * The polygon with no corner closer to the one before than gap and no near-straight corners, so the street graph,
+ * which snaps points that close together, holds it exactly as it is.
+ */
+Polygon spaced(const Polygon& in, double gap)
+{
+    std::vector<Vec2> pts = in.pts;
+    auto offLine = [](Vec2 q, Vec2 a, Vec2 b) {
+        const Vec2 d = b - a;
+        const double len = glm::length(d);
+        return len > 1e-9 ? std::abs(cross(d, q - a)) / len : glm::length(q - a);
+    };
+    for (bool changed = true; changed && pts.size() > 3;)
+    {
+        changed = false;
+        for (size_t k = 0; k < pts.size() && pts.size() > 3;)
+        {
+            const size_t n = pts.size();
+            const Vec2 prev = pts[(k + n - 1) % n], cur = pts[k], next = pts[(k + 1) % n];
+            if (glm::length(cur - prev) < gap || offLine(cur, prev, next) < 0.1 * gap)
+            {
+                pts.erase(pts.begin() + long(k));
+                changed = true;
+            }
+            else
+                ++k;
+        }
+    }
+    return makePolygon(std::move(pts));
+}
+
+/** The faces that become blocks: inside the outline and in no exclusion. */
+std::vector<Face> layoutFaces(const Layout& l)
+{
+    std::vector<Face> out;
+    for (Face& f : planarFaces(l.graph))
+    {
+        if (l.exclusions.empty())
+        {
+            out.push_back(std::move(f));
+            continue;
+        }
+        const Vec2 q = interiorPoint(f.outline);
+        if (contains(l.outline.pts, q) && !excluded(l, q))
+            out.push_back(std::move(f));
+    }
+    return out;
+}
+
+bool hasHeight(const glm::dvec3& p) { return !std::isnan(p.y); }
+
+Vec2 flat2(const glm::dvec3& p) { return {p.x, p.z}; }
+
+/** The index in l.roads of a named profile (built-in or the site's own), added on first use; -1 when unknown. */
+int roadIndex(Layout& l, const Site& site, const std::string& name)
+{
+    for (size_t k = int(StreetClass::Path) + 1; k < l.roads.size(); ++k)
+        if (l.roads[k].name == name)
+            return int(k);
+    for (const RoadProfile& r : site.roadProfiles)
+        if (r.name == name)
+        {
+            l.roads.push_back(r);
+            return int(l.roads.size() - 1);
+        }
+    RoadProfile r;
+    if (!builtinRoadProfile(name, &r))
+        return -1;
+    l.roads.push_back(r);
+    return int(l.roads.size() - 1);
+}
+
+double polyLength3(std::span<const glm::dvec3> pts)
+{
+    double len = 0.0;
+    for (size_t k = 0; k + 1 < pts.size(); ++k)
+        len += glm::length(pts[k + 1] - pts[k]);
+    return len;
+}
+
+/**
+ * The user's streets and routes. Ground legs go into the street network (routed around exclusions and up the slope);
+ * legs on the walkable surface become surface paths; a leg from one to the other leaves the surface where it meets the
+ * ground nearest the way on.
+ */
+void layPaths(Layout& l, const Site& site, const Ground& g, const Options& o, const WalkSurface* walk)
+{
+    LILA_ZONE();
+
+    const double reach = std::max(2.0 * o.walk.step, 300.0);
+    for (const SitePath& sp : site.paths)
+    {
+        PathResult res;
+        res.id = sp.id;
+        auto fail = [&](std::string why) {
+            res.error = std::move(why);
+            l.pathResults.push_back(res);
+        };
+        StreetEdge like;
+        like.cls = sp.cls;
+        like.width = sp.width;
+        like.path = sp.id;
+        if (!sp.profile.empty())
+        {
+            like.profile = roadIndex(l, site, sp.profile);
+            if (like.profile < 0)
+            {
+                fail("unknown road profile '" + sp.profile + "'");
+                continue;
+            }
+        }
+        const int profile = like.profile >= 0 ? like.profile : int(std::min(sp.cls, StreetClass::Path));
+        const double width = sp.width > 0.0 ? sp.width : (like.profile >= 0 ? l.roads[size_t(profile)].width() : streetWidth(l.profile, sp.cls));
+        Profile rp = l.profile;
+        if (sp.cls == StreetClass::Path)
+            rp.maxGrade *= 2.5; // paths take stairs
+        const double clearance = 0.5 * width;
+
+        auto spotOf = [&](const glm::dvec3& p, WalkSurface::Spot* s) {
+            return walk && !walk->empty() && hasHeight(p) && walk->locate(p, reach, s);
+        };
+        auto onSurface = [&](const glm::dvec3& p) {
+            WalkSurface::Spot s;
+            if (sp.mode == PathMode::Ground || !spotOf(p, &s))
+                return false;
+            return sp.mode == PathMode::Surface || p.y - g.height(flat2(p)) > o.walk.step;
+        };
+        auto addSurface = [&](std::vector<glm::dvec3> pts) {
+            if (pts.size() < 2)
+                return;
+            res.surfaceLength += polyLength3(pts);
+            res.length += polyLength3(pts);
+            l.surfacePaths.push_back({sp.id, std::move(pts), sp.cls, profile, width});
+        };
+        auto addGround = [&](std::span<const Vec2> pts) {
+            for (const std::vector<Vec2>& run : clipPolyline(pts, l.outline, l.center, 0.0, 0.0, l.exclusions))
+            {
+                l.graph.addPolyline(run, like);
+                res.length += polylineLength(run);
+            }
+        };
+        auto routeGround = [&](Vec2 a, Vec2 b) -> bool {
+            const Vec2 fa = freePoint(l, a, clearance), fb = freePoint(l, b, clearance);
+            if (!contains(l.outline.pts, fa) || !contains(l.outline.pts, fb))
+                return false;
+            const std::vector<Vec2> path = route(l, g, rp, fa, fb, clearance);
+            if (path.size() < 2)
+                return false;
+            l.graph.addPolyline(path, like);
+            res.length += polylineLength(path);
+            return true;
+        };
+        // Surface walk from node s to where it meets the ground best for reaching ground point gp. Returns the walk
+        // (from s) ending on the ground clear of exclusions, and that ground point.
+        auto toGround = [&](const WalkSurface::Spot& s, Vec2 gp, std::vector<glm::dvec3>* walkOut, Vec2* exit) -> bool {
+            const std::vector<double> d = walk->distances(s);
+            int bestNode = -1;
+            double best = std::numeric_limits<double>::max();
+            for (size_t n = 0; n < walk->nodeCount(); ++n)
+            {
+                if (!std::isfinite(d[n]))
+                    continue;
+                const glm::dvec3 p = walk->position(int(n));
+                if (std::abs(p.y - g.height(flat2(p))) > o.walk.step)
+                    continue;
+                const double score = d[n] + glm::length(flat2(p) - gp);
+                if (score < best)
+                {
+                    best = score;
+                    bestNode = int(n);
+                }
+            }
+            if (bestNode < 0)
+                return false;
+            *walkOut = walk->route(s, bestNode);
+            const Vec2 e = flat2(walk->position(bestNode));
+            *exit = freePoint(l, e, clearance);
+            if (glm::length(*exit - e) > 1.0)
+                walkOut->push_back({exit->x, g.height(*exit), exit->y});
+            return walkOut->size() >= 2;
+        };
+
+        if (sp.pts.size() < 2)
+        {
+            fail("needs two or more points");
+            continue;
+        }
+        bool ok = true;
+        if (!sp.routed)
+        {
+            bool surface = walk && !walk->empty() && sp.mode != PathMode::Ground;
+            for (const glm::dvec3& p : sp.pts)
+                surface = surface && onSurface(p);
+            if (surface)
+                addSurface(sp.pts);
+            else
+            {
+                std::vector<Vec2> pts;
+                for (const glm::dvec3& p : sp.pts)
+                    pts.push_back(flat2(p));
+                addGround(pts);
+                ok = res.length > 0.0;
+            }
+        }
+        else
+            for (size_t k = 0; k + 1 < sp.pts.size() && ok; ++k)
+            {
+                const glm::dvec3 a = sp.pts[k], b = sp.pts[k + 1];
+                const bool sa = onSurface(a), sb = onSurface(b);
+                if (sp.mode == PathMode::Surface && (!sa || !sb))
+                {
+                    fail("a stop is not on the walkable surface");
+                    ok = false;
+                    break;
+                }
+                if (!sa && !sb)
+                {
+                    if (!routeGround(flat2(a), flat2(b)))
+                    {
+                        fail("no way over the ground between stops " + std::to_string(k) + " and " + std::to_string(k + 1));
+                        ok = false;
+                    }
+                }
+                else if (sa && sb)
+                {
+                    WalkSurface::Spot from, to;
+                    spotOf(a, &from);
+                    spotOf(b, &to);
+                    std::vector<glm::dvec3> pts = walk->route(from, to);
+                    if (pts.empty())
+                    {
+                        fail("no walkable way between stops " + std::to_string(k) + " and " + std::to_string(k + 1));
+                        ok = false;
+                        break;
+                    }
+                    addSurface(std::move(pts));
+                }
+                else
+                {
+                    const glm::dvec3 gp = sa ? b : a;
+                    WalkSurface::Spot s;
+                    spotOf(sa ? a : b, &s);
+                    std::vector<glm::dvec3> w;
+                    Vec2 exit{0.0};
+                    if (!toGround(s, flat2(gp), &w, &exit))
+                    {
+                        fail("the walkable surface does not reach the ground");
+                        ok = false;
+                        break;
+                    }
+                    if (!sa)
+                        std::reverse(w.begin(), w.end());
+                    addSurface(std::move(w));
+                    if (!routeGround(sa ? exit : flat2(gp), sa ? flat2(gp) : exit))
+                    {
+                        fail("no way over the ground from the surface to stop " + std::to_string(sa ? k + 1 : k));
+                        ok = false;
+                    }
+                }
+            }
+        if (!ok)
+        {
+            if (res.error.empty())
+                fail("lies outside the outline or inside an exclusion");
+            continue;
+        }
+        res.ok = true;
+        l.pathResults.push_back(res);
+    }
+}
+} // namespace
+
+Layout build(const Site& site, const Ground& g, const Options& in, const WalkSurface* walk)
 {
     LILA_ZONE();
 
     Options o = in;
     Profile& p = o.profile;
-    for (double* w : {&p.widthArterial, &p.widthCollector, &p.widthLocal, &p.widthAlley})
+    for (double* w : {&p.widthArterial, &p.widthCollector, &p.widthLocal, &p.widthAlley, &p.widthPath})
         *w *= std::max(o.widthScale, 0.05);
     for (double* w : {&p.lotWidth, &p.lotDepth, &p.buildDepth})
         *w *= std::max(o.lotScale, 0.05);
@@ -1057,16 +1477,34 @@ Layout build(const Site& site, const Ground& g, const Options& in)
     }
     Layout l{StreetGraph(std::clamp(p.widthLocal * 0.5, 50.0, 1500.0), std::max({p.segment, p.gridWidth * 0.5, 1000.0}))};
     l.profile = p;
+    for (StreetClass c : {StreetClass::Arterial, StreetClass::Collector, StreetClass::Local, StreetClass::Alley, StreetClass::Path})
+    {
+        RoadProfile r;
+        builtinRoadProfile(defaultRoadProfile(c), &r);
+        l.roads.push_back(r);
+    }
     l.outline = makePolygon(outline);
     if (l.outline.pts.empty())
         throw std::runtime_error("the settlement outline has no area");
+    for (const Exclusion& x : site.exclusions)
+    {
+        Polygon poly = spaced(grow(makePolygon(x.pts), x.margin), 1.05 * l.graph.snap());
+        if (poly.pts.empty())
+            continue;
+        l.exclusions.push_back(std::move(poly));
+        l.exclusionIds.push_back(x.id);
+    }
     l.center = centroid(l.outline);
     if (site.hasCenter && !site.attractors.empty() && contains(l.outline.pts, site.attractors.front()))
         l.center = site.attractors.front();
+    // A structure at the centre: the town gathers at its edge instead.
+    l.center = freePoint(l, l.center, std::max(p.widthArterial, 500.0));
     for (const Vec2& q : l.outline.pts)
         l.radius = std::max(l.radius, glm::length(q - l.center));
 
     l.graph.addPolyline(l.outline.pts, StreetClass::Boundary, 0, true);
+    for (const Polygon& x : l.exclusions)
+        l.graph.addPolyline(x.pts, StreetClass::Boundary, 0, true);
     for (const WaterLine& w : site.water)
         for (std::vector<Vec2>& run : clipPolyline(w.pts, l.outline, l.center, 0.0, 0.0))
         {
@@ -1074,16 +1512,19 @@ Layout build(const Site& site, const Ground& g, const Options& in)
             l.water.push_back({std::move(run), w.width});
         }
     for (const std::vector<Vec2>& r : site.roads)
-        for (const std::vector<Vec2>& run : clipPolyline(r, l.outline, l.center, 0.0, 0.0))
+        for (const std::vector<Vec2>& run : clipPolyline(r, l.outline, l.center, 0.0, 0.0, l.exclusions))
             l.graph.addPolyline(run, StreetClass::Arterial);
     for (const std::vector<Vec2>& s : site.streets)
         if (s.size() >= 2)
-            l.graph.addPolyline(s, StreetClass::Collector);
+            for (const std::vector<Vec2>& run : clipPolyline(s, l.outline, l.center, 0.0, 0.0, l.exclusions))
+                l.graph.addPolyline(run, StreetClass::Collector);
+    layPaths(l, site, g, o, walk);
     // Attractors past the centre pull arterials to them: a bridge, a harbour, a mine.
     for (size_t k = site.hasCenter ? 1 : 0; k < site.attractors.size(); ++k)
         if (contains(l.outline.pts, site.attractors[k]))
         {
-            std::vector<Vec2> path = route(l, g, p, l.center, site.attractors[k]);
+            const Vec2 to = freePoint(l, site.attractors[k], 0.5 * p.widthArterial);
+            std::vector<Vec2> path = route(l, g, p, l.center, to);
             if (!path.empty())
                 l.graph.addPolyline(path, StreetClass::Arterial);
         }
@@ -1106,24 +1547,29 @@ Layout build(const Site& site, const Ground& g, const Options& in)
             const double t = 2.0 * kPi * s / segs;
             ring.push_back(l.center + Vec2(std::cos(t), std::sin(t)) * core);
         }
-        for (const std::vector<Vec2>& run : clipPolyline(ring, l.outline, l.center, 0.0, 0.0))
+        for (const std::vector<Vec2>& run : clipPolyline(ring, l.outline, l.center, 0.0, 0.0, l.exclusions))
             l.graph.addPolyline(run, StreetClass::Arterial, 1);
         layGrid(l, g, o, core);
         break;
     }
+    case Pattern::None: break;
     }
-    cutLargeBlocks(l, g, o);
+    if (o.blocks)
+        cutLargeBlocks(l, g, o);
     pullBackFromWater(l);
-    joinComponents(l, g);
+    if (p.pattern != Pattern::None)
+        joinComponents(l, g);
     for (size_t n = 0; n < l.graph.nodes.size(); ++n)
     {
         if (onWater(l.graph, int(n)) && l.graph.degree(int(n)) > 0)
             l.bridges.push_back(l.graph.nodes[n].p);
     }
+    if (!o.blocks)
+        return l;
 
     // Blocks: faces of the street graph, pulled in by half of each street's width.
     int blockId = 0;
-    for (const Face& f : planarFaces(l.graph))
+    for (const Face& f : layoutFaces(l))
     {
         Polygon src = f.outline;
         std::vector<double> d(src.size());
@@ -1200,13 +1646,14 @@ Layout build(const Site& site, const Ground& g, const Options& in)
     if (civic >= 0)
         l.lots[size_t(civic)].use = Use::Civic;
 
-    for (const Lot& lot : l.lots)
-        if (lot.use == Use::Residential || lot.use == Use::Commercial || lot.use == Use::Civic)
-        {
-            Envelope env = envelopeFor(lot, l, g, o);
-            if (!env.footprint.pts.empty())
-                l.envelopes.push_back(std::move(env));
-        }
+    if (o.buildings)
+        for (const Lot& lot : l.lots)
+            if (lot.use == Use::Residential || lot.use == Use::Commercial || lot.use == Use::Civic)
+            {
+                Envelope env = envelopeFor(lot, l, g, o);
+                if (!env.footprint.pts.empty())
+                    l.envelopes.push_back(std::move(env));
+            }
     return l;
 }
 } // namespace settlement
