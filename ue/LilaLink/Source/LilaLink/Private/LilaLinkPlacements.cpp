@@ -934,7 +934,7 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 	return Obj(Out);
 }
 
-TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>&, FString& OutError)
+TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::ListPlacements);
 
@@ -944,17 +944,33 @@ TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>&, FString& O
 		OutError = TEXT("listPlacements: no level is open");
 		return nullptr;
 	}
+	TSet<FString> Only;
+	const TArray<TSharedPtr<FJsonValue>>* Groups = nullptr;
+	if (Params->TryGetArrayField(TEXT("groups"), Groups))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Groups)
+		{
+			Only.Add(V->AsString());
+		}
+	}
 	TArray<TSharedPtr<FJsonValue>> Out;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		const FString Group = TagValue(*It, GroupPrefix);
-		if (Group.IsEmpty())
+		if (Group.IsEmpty() || (Groups && !Only.Contains(Group)))
 		{
 			continue;
 		}
 		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
 		Entry->SetStringField(TEXT("actor"), It->GetActorLabel());
 		Entry->SetStringField(TEXT("group"), Group);
+		if (const UStaticMeshComponent* C = It->FindComponentByClass<UStaticMeshComponent>(); C && C->GetStaticMesh())
+		{
+			Entry->SetStringField(TEXT("mesh"), C->GetStaticMesh()->GetPathName());
+			Entry->SetStringField(TEXT("collision"), C->GetCollisionProfileName().ToString());
+		}
+		const FVector Location = It->GetActorLocation();
+		Entry->SetArrayField(TEXT("location"), {MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z)});
 		if (It->Tags.Contains(InstancedTag))
 		{
 			Entry->SetNumberField(TEXT("instances"), Weight(*It));

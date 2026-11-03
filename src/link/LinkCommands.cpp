@@ -124,6 +124,24 @@ std::shared_ptr<RpcClient> requireClient()
         throw CommandError("not connected to Unreal");
     return c;
 }
+
+/** A call whose failure, the connection's included, comes back as {ok: false, error, code} instead of throwing. */
+json callAsData(const std::string& method, const json& params, int timeoutMs)
+{
+    std::shared_ptr<RpcClient> client;
+    try
+    {
+        client = requireClient();
+    }
+    catch (const CommandError& e)
+    {
+        return {{"ok", false}, {"error", e.what()}, {"code", RpcResult::kDisconnected}};
+    }
+    RpcResult r = client->call(method, params, timeoutMs);
+    if (!r.ok)
+        return {{"ok", false}, {"error", r.error}, {"code", r.code}};
+    return {{"ok", true}, {"result", r.result}};
+}
 } // namespace
 
 void registerMlDeformerCommands();
@@ -411,6 +429,104 @@ void registerCommands()
                 if (errors.empty())
                     log::info("Unreal: imported {}", r.result.value("assets", json::array()).dump());
             });
+            return out;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "unrealCall",
+        .doc = "Call any LilaLink method in the connected Unreal editor and return its reply as {ok, result}, or {ok: False, "
+               "error, code} when it fails or Unreal is not connected. runPython takes {code, mode: exec|evaluate} and returns "
+               "{ok, result, log}.",
+        .positionalDoc = "method",
+        .flags = {{"params", "p", T::Any, nullptr, "The method's params, a dict (default empty)."},
+                  {"timeoutMs", "to", T::Int, 60000, "Fail the call after this long.", {}, {}, 1.0}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() != 1 || !a.positional[0].is_string())
+                throw CommandError("unrealCall: give one method name");
+            json params = a.has("params") ? a.flags.at("params") : json::object();
+            if (!params.is_object())
+                throw CommandError("unrealCall: params is a dict");
+            return callAsData(a.positional[0].get<std::string>(), params, a.get<int>("timeoutMs", 60000));
+        },
+        .examples = {"unrealCall(\"runPython\", params={\"code\": \"unreal.EditorLevelLibrary.get_all_level_actors()\", \"mode\": \"evaluate\"})"},
+    });
+
+    ops::registerCommand({
+        .name = "unrealListPlacements",
+        .doc = "What unrealPlaceInstances placed in Unreal's open level: [{actor, group, node or instances, mesh, location}], "
+               "only the instance groups of the given meshes when any are given. Returns {ok, placements} or {ok: False, error}.",
+        .positionalDoc = "objects (default every group)",
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            json params = json::object();
+            if (!a.positional.empty())
+            {
+                scene::Graph& g = scene::Graph::current();
+                std::vector<scene::NodeId> roots;
+                for (const std::string& name : a.objects())
+                {
+                    scene::Node* n = g.find(name);
+                    if (!n)
+                        throw CommandError("unrealListPlacements: no node named '" + name + "'");
+                    roots.push_back(n->id());
+                }
+                json groups = json::array();
+                const json plan = placementPlan(g, roots, PlacementOptions{});
+                for (const json& grp : plan["groups"])
+                    groups.push_back(grp["key"]);
+                params["groups"] = std::move(groups);
+            }
+            json r = callAsData("listPlacements", params, placementTimeoutMs(0));
+            if (!r["ok"].get<bool>())
+                return r;
+            json list = json::array();
+            for (const json& p : r["result"].is_array() ? r["result"] : json::array())
+                if (!params.contains("groups") || std::ranges::find(params["groups"], p.value("group", json())) != params["groups"].end())
+                    list.push_back(p);
+            return {{"ok", true}, {"placements", std::move(list)}};
+        },
+    });
+
+    ops::registerCommand({
+        .name = "unrealAssetInfo",
+        .doc = "An Unreal asset's class, material slots, LODs, vertex and triangle counts, Nanite and collision (simple shape "
+               "count, complexAsSimple), as {ok, ...} or {ok: False, error}.",
+        .positionalDoc = "asset path (/Game/Lila/Instances/SM_Wall)",
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (a.positional.size() != 1 || !a.positional[0].is_string())
+                throw CommandError("unrealAssetInfo: give one asset path");
+            json r = callAsData("assetInfo", {{"path", a.positional[0]}}, 30000);
+            if (!r["ok"].get<bool>() || !r["result"].is_object())
+                return r;
+            json out = r["result"];
+            out["ok"] = true;
+            return out;
+        },
+    });
+
+    ops::registerCommand({
+        .name = "unrealSaveAssets",
+        .doc = "Save assets in Unreal: the given paths, the open level, or every unsaved package. Returns {ok, saved, errors}, "
+               "or {ok: False, error} when Unreal can't be reached.",
+        .positionalDoc = "asset paths",
+        .flags = {{"level", "lv", T::Bool, false, "Save the open level (where placements live)."},
+                  {"dirty", "d", T::Bool, false, "Save every unsaved level and asset."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            json paths = json::array();
+            for (const json& p : a.positional)
+                if (p.is_string())
+                    paths.push_back(p);
+            if (paths.empty() && !a.get<bool>("level") && !a.get<bool>("dirty"))
+                throw CommandError("unrealSaveAssets: give asset paths, level=True or dirty=True");
+            json r = callAsData("saveAssets", {{"paths", paths}, {"level", a.get<bool>("level")}, {"dirty", a.get<bool>("dirty")}}, 10 * 60000);
+            if (!r["ok"].get<bool>() || !r["result"].is_object())
+                return r;
+            json out = r["result"];
+            out["ok"] = out.value("errors", json::array()).empty();
             return out;
         },
     });

@@ -374,6 +374,65 @@ TEST_CASE("placement collision: options checked, UCX_ proxies go with their sour
     CHECK(importParams("C:/x.fbx", {{"contentPath", "/Game/A"}, {"collision", "convex"}})["options"]["collision"] == "convex");
 }
 
+TEST_CASE("verification commands: unrealCall, unrealListPlacements, unrealAssetInfo, unrealSaveAssets return errors as data")
+{
+    setup();
+    buildKit();
+    FakeServer server([](const json& req) -> std::optional<json> {
+        const std::string m = req["method"];
+        if (m == "hello")
+            return FakeServer::reply(req, {{"project", "TestGame"}, {"features", {"progress", "placements"}}});
+        if (m == "ping")
+            return FakeServer::reply(req, "pong");
+        if (m == "listPlacements")
+            return FakeServer::reply(req, json::array({{{"actor", "Bolt"}, {"group", "g1"}, {"node", "n1"}},
+                                                       {{"actor", "Lila_Crate"}, {"group", "other"}, {"instances", 40}}}));
+        if (m == "assetInfo")
+            return FakeServer::reply(req, {{"path", req["params"]["path"]}, {"class", "StaticMesh"}, {"collision", {{"simple", 1}}}});
+        if (m == "saveAssets")
+            return FakeServer::reply(req, {{"saved", false}, {"errors", {"Saving the level failed"}}});
+        return json{{"jsonrpc", "2.0"}, {"id", req["id"]}, {"error", {{"code", -32601}, {"message", "no method " + m}}}};
+    });
+    Link::ConnectOptions o;
+    o.port = server.port();
+    Link::get().connect(o);
+
+    json r = run("unrealCall", {{"args", {"ping"}}});
+    CHECK(r["ok"] == true);
+    CHECK(r["result"] == "pong");
+    r = run("unrealCall", {{"args", {"noSuchMethod"}}, {"params", {{"x", 1}}}});
+    CHECK(r["ok"] == false);
+    CHECK(r["code"] == -32601);
+    CHECK(r["error"].get<std::string>().find("noSuchMethod") != std::string::npos);
+
+    // Every placement, or only the groups of the given meshes (their keys sent along).
+    r = run("unrealListPlacements");
+    REQUIRE(r["ok"] == true);
+    CHECK(r["placements"].size() == 2);
+    r = run("unrealListPlacements", {{"args", {"Crate"}}});
+    REQUIRE(r["ok"] == true);
+    CHECK(r["placements"].empty());
+    json listed;
+    for (const json& q : server.requests())
+        if (q["method"] == "listPlacements")
+            listed = q["params"];
+    CHECK(listed["groups"] == json::array({std::to_string(scene::Graph::current().find("Crate")->id())}));
+
+    r = run("unrealAssetInfo", {{"args", {"/Game/Lila/Instances/SM_Bolt"}}});
+    CHECK(r["ok"] == true);
+    CHECK(r["collision"]["simple"] == 1);
+    r = run("unrealSaveAssets", {{"level", true}});
+    CHECK(r["ok"] == false);
+    CHECK(r["errors"].size() == 1);
+    json saved;
+    for (const json& q : server.requests())
+        if (q["method"] == "saveAssets")
+            saved = q["params"];
+    CHECK(saved["level"] == true);
+    CHECK_THROWS_AS(run("unrealSaveAssets"), CommandError);
+    Link::get().disconnect();
+}
+
 TEST_CASE("placement timeouts scale with the count; a km-wide grid of thousands plans as one hism group")
 {
     setup();

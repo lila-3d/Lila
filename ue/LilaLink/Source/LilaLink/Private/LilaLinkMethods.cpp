@@ -22,6 +22,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "FileHelpers.h"
 #include "IContentBrowserSingleton.h"
 #include "IPythonScriptPlugin.h"
@@ -134,13 +135,30 @@ TSharedPtr<FJsonValue> SaveAssets(const TSharedPtr<FJsonObject>& Params, FString
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMethods::SaveAssets);
 
 	TArray<FString> Paths = StringArray(Params, TEXT("paths"));
-	if (Paths.IsEmpty())
+	bool bLevel = false, bDirty = false;
+	Params->TryGetBoolField(TEXT("level"), bLevel);
+	Params->TryGetBoolField(TEXT("dirty"), bDirty);
+	if (Paths.IsEmpty() && !bLevel && !bDirty)
 	{
-		OutError = TEXT("saveAssets: give paths");
+		OutError = TEXT("saveAssets: give paths, level or dirty");
 		return nullptr;
 	}
 	TArray<FString> Errors;
-	LilaLink::SaveAssetPaths(Paths, Errors);
+	if (!Paths.IsEmpty())
+	{
+		LilaLink::SaveAssetPaths(Paths, Errors);
+	}
+	if (bDirty)
+	{
+		if (!UEditorLoadingAndSavingUtils::SaveDirtyPackages(true, true))
+		{
+			Errors.Add(TEXT("Saving the unsaved packages failed; see the editor log"));
+		}
+	}
+	else if (bLevel && !UEditorLoadingAndSavingUtils::SaveCurrentLevel())
+	{
+		Errors.Add(TEXT("Saving the level failed; it may never have been saved (use Save As in the editor first)"));
+	}
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	TArray<TSharedPtr<FJsonValue>> ErrorValues;
 	for (const FString& E : Errors)
@@ -244,6 +262,12 @@ TSharedPtr<FJsonValue> AssetInfo(const TSharedPtr<FJsonObject>& Params, FString&
 		Out->SetNumberField(TEXT("triangles"), Mesh->GetNumLODs() > 0 ? Mesh->GetNumTriangles(0) : 0);
 		Out->SetNumberField(TEXT("materials"), Mesh->GetStaticMaterials().Num());
 		Out->SetBoolField(TEXT("nanite"), Mesh->IsNaniteEnabled());
+		TSharedRef<FJsonObject> Collision = MakeShared<FJsonObject>();
+		const UBodySetup* Body = Mesh->GetBodySetup();
+		Collision->SetNumberField(TEXT("simple"), Body ? Body->AggGeom.GetElementCount() : 0);
+		Collision->SetNumberField(TEXT("convex"), Body ? Body->AggGeom.ConvexElems.Num() : 0);
+		Collision->SetBoolField(TEXT("complexAsSimple"), Body && Body->CollisionTraceFlag == CTF_UseComplexAsSimple);
+		Out->SetObjectField(TEXT("collision"), Collision);
 	}
 	else if (USkeletalMesh* Skel = Cast<USkeletalMesh>(Asset))
 	{
