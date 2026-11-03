@@ -13,7 +13,7 @@
 
 namespace nb = nanobind;
 
-extern "C" PyObject* PyInit__lila();
+PyMODINIT_FUNC PyInit__lila();
 
 namespace lila::python
 {

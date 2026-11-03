@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "geo/Mesh.h"
@@ -15,31 +16,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_fbx_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
-
-struct Loaded
-{
-    ufbx_scene* scene = nullptr;
-    explicit Loaded(const fs::path& p)
-    {
-        ufbx_load_opts opts{};
-        ufbx_error err{};
-        scene = ufbx_load_file(p.string().c_str(), &opts, &err);
-    }
-    ~Loaded() { ufbx_free_scene(scene); }
-};
-
 /** A source with a modifier, two instances placed apart, and a plain copy for contrast. */
 void buildKit()
 {
@@ -72,7 +53,7 @@ TEST_CASE("fbx export writes one Geometry per instance group, connected to every
     std::string err;
     REQUIRE(fbx::writeFbx(fbx::gatherExport(g, ids({"Bolt", "BoltA", "BoltB", "Copy"}), opts), path, opts, &err));
 
-    Loaded s(path);
+    UfbxScene s(path);
     REQUIRE(s.scene);
     // Bolt, BoltA and BoltB share one; the plain copy has its own.
     CHECK(s.scene->meshes.count == 2);
@@ -94,7 +75,7 @@ TEST_CASE("fbx export writes one Geometry per instance group, connected to every
     fs::path baked = tempFile("instances_world.fbx");
     opts.worldSpace = true;
     REQUIRE(fbx::writeFbx(fbx::gatherExport(g, ids({"Bolt", "BoltA", "BoltB"}), opts), baked, opts, &err));
-    Loaded w(baked);
+    UfbxScene w(baked);
     REQUIRE(w.scene);
     CHECK(w.scene->meshes.count == 3);
 }
@@ -153,7 +134,7 @@ TEST_CASE("fbx export writes a live array's copies as models sharing the source'
     fs::path path = tempFile("array.fbx");
     std::string err;
     REQUIRE(fbx::writeFbx(scene, path, opts, &err));
-    Loaded s(path);
+    UfbxScene s(path);
     REQUIRE(s.scene);
     CHECK(s.scene->meshes.count == 1);
     const ufbx_node* spoke = ufbx_find_node(s.scene, "Spoke");

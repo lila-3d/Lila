@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/ImageIO.h"
 #include "fbx/Fbx.h"
@@ -19,24 +21,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-MeshPtr outMesh(const std::string& mesh)
-{
-    Graph& g = Graph::current();
-    g.evaluate();
-    Node* n = g.find(mesh);
-    REQUIRE(n);
-    MeshPtr m = n->as<MeshPtr>(MeshNode::kOutMesh);
-    REQUIRE(m);
-    return m;
-}
-
-std::string tempFile(const std::string& name)
+std::string tempFileName(const std::string& name)
 {
     auto dir = std::filesystem::temp_directory_path() / "lila_deform_tests";
     std::filesystem::create_directories(dir);
@@ -91,7 +80,7 @@ TEST_CASE("textureDeformer displaces along the normal by an image and is identit
     run("newScene");
     std::string plane = run("polyPlane", {{"name", "Sheet"}, {"width", 10}, {"depth", 10}, {"subdivisionsX", 3}, {"subdivisionsZ", 3}})[0];
     MeshPtr before = outMesh(plane);
-    const std::string file = tempFile("texture_deformer.png");
+    const std::string file = tempFileName("texture_deformer.png");
     image::write(file, flat(8, 8, glm::vec4(1.0f)), 8);
     std::string d = run("textureDeformer", {{"args", {plane}}, {"image", file}, {"strength", 2.0}, {"midLevel", 0.5}})[0];
     MeshPtr after = outMesh(plane);
@@ -148,7 +137,7 @@ TEST_CASE("tension outputs, Unreal curves and the baked mask")
     CHECK(*std::max_element(samples.begin(), samples.end()) > 0.1);
 
     g.setTime(0.0);
-    const std::string file = tempFile("tension_mask.png");
+    const std::string file = tempFileName("tension_mask.png");
     std::filesystem::remove(file);
     json baked = run("bakeTension", {{"args", {plane}}, {"start", 0}, {"end", 10}, {"file", file}, {"resolution", 64}});
     CHECK(baked["frames"] == 11);

@@ -3,6 +3,7 @@
 #include "bake/Backend.h"
 #include "bake/Bake.h"
 #include "bake/BakeCache.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeNodes.h"
 #include "bake/Maps.h"
 #include "bake/Naming.h"
@@ -36,10 +37,13 @@
 namespace lila::bake
 {
 namespace fs = std::filesystem;
+using T = ArgType;
 
 namespace
 {
-using T = ArgType;
+using detail::findNode;
+using detail::projectArg;
+using detail::shortName;
 using scene::Graph;
 using scene::Node;
 using scene::NodeId;
@@ -116,18 +120,6 @@ uint64_t meshDigest(const scene::MeshPtr& mesh)
     return hs.h;
 }
 
-Node* findNode(Graph& g, const std::string& name)
-{
-    try
-    {
-        return g.find(name);
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
-}
-
 void hashMeshNode(Hasher& hs, Graph& g, const std::string& name)
 {
     hs.str(name);
@@ -141,28 +133,6 @@ void hashMeshNode(Hasher& hs, Graph& g, const std::string& name)
     const scene::PlugValue w = g.value({n->id(), scene::Transform::kWorldMatrix, -1});
     if (std::holds_alternative<glm::dmat4>(w))
         hs.bytes(&std::get<glm::dmat4>(w), sizeof(glm::dmat4));
-}
-
-std::string shortName(const std::string& path)
-{
-    const size_t bar = path.rfind('|');
-    return bar == std::string::npos ? path : path.substr(bar + 1);
-}
-
-/** project=, else the scene's only project. */
-Node& projectArg(Graph& g, const Args& a, const char* cmd)
-{
-    if (a.has("project"))
-    {
-        Node* n = findNode(g, a.get<std::string>("project"));
-        if (!n || !isProject(*n))
-            throw CommandError(std::string(cmd) + ": " + a.get<std::string>("project") + " is not a bake project");
-        return *n;
-    }
-    const std::vector<NodeId> ps = projects(g);
-    if (ps.size() != 1)
-        throw CommandError(std::string(cmd) + (ps.empty() ? ": the scene has no bake project" : ": several bake projects; name one with project="));
-    return *g.node(ps.front());
 }
 
 /** The last result of a project: this session's, else its manifest on disk. */

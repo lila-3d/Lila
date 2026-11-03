@@ -230,7 +230,7 @@ struct Search
     }
 };
 
-double turnDegrees(const std::vector<glm::dvec3>& pts, int i)
+double turnDegreesAt(const std::vector<glm::dvec3>& pts, int i)
 {
     const int n = int(pts.size());
     const glm::dvec3 u = pts[i] - pts[(i + n - 1) % n], v = pts[(i + 1) % n] - pts[i];
@@ -253,7 +253,7 @@ std::vector<Candidate> findCandidates(const PatchBoundary& b, int padding)
     const int sides = int(b.corners.size());
     std::vector<double> turn(sides);
     for (int i = 0; i < sides; ++i)
-        turn[i] = turnDegrees(b.points, b.corners[i]);
+        turn[i] = turnDegreesAt(b.points, b.corners[i]);
     // A ring takes two off every side, the same as shortening every spoke by one, so padding never makes a pattern fit
     // that did not fit without it: the fewest that fit is always none.
     const int maxPad = std::max(padding, 0);
@@ -838,7 +838,7 @@ std::vector<int> patchCorners(const std::vector<glm::dvec3>& loop, int wanted, d
         return {};
     std::vector<double> turn(n), arc(n, 0.0);
     for (int i = 0; i < n; ++i)
-        turn[i] = turnDegrees(loop, i);
+        turn[i] = turnDegreesAt(loop, i);
     for (int i = 1; i < n; ++i)
         arc[i] = arc[i - 1] + glm::length(loop[i] - loop[i - 1]);
     const double total = arc[n - 1] + glm::length(loop[0] - loop[n - 1]);

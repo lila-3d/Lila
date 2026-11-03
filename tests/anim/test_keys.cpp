@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -7,23 +8,12 @@
 #include <filesystem>
 
 using namespace lila;
+using namespace animtest;
 using json = nlohmann::json;
 using scene::Graph;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-double get(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }
-void at(double seconds) { run("currentTime", {{"args", {seconds}}}); }
-bool exists(const std::string& name) { return run("objExists", {{"args", {name}}}).get<bool>(); }
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_anim_tests" / "scenes";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
-
 /** loc.ty keyed 0 at 0s and 10 at 1s. */
 void keyedLocator()
 {

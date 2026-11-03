@@ -24,10 +24,10 @@ using T = ArgType;
 namespace tt = scene::turntable;
 
 /** A profile in (radius, height) from the top face's centre, top first, ending on the axis underneath. */
-using Profile = std::vector<glm::dvec2>;
+using BaseProfile = std::vector<glm::dvec2>;
 
 /** A quarter round at a corner: from `from` along the first edge to `to`, centred on the corner offset inwards. */
-void roundCorner(Profile& p, glm::dvec2 corner, glm::dvec2 in, glm::dvec2 out, double radius, int segments)
+void roundCorner(BaseProfile& p, glm::dvec2 corner, glm::dvec2 in, glm::dvec2 out, double radius, int segments)
 {
     if (radius <= 1e-6 || segments < 1)
     {
@@ -45,17 +45,17 @@ void roundCorner(Profile& p, glm::dvec2 corner, glm::dvec2 in, glm::dvec2 out, d
 }
 
 /** A disc from height top down to bottom, radius r, with its outer edges rounded by bevel. */
-void disc(Profile& p, double r, double top, double bottom, double bevel, int segments)
+void disc(BaseProfile& p, double r, double top, double bottom, double bevel, int segments)
 {
     const double b = std::min({bevel, r * 0.5, (top - bottom) * 0.5});
     roundCorner(p, {r, top}, {1, 0}, {0, -1}, b, segments);
     roundCorner(p, {r, bottom}, {0, -1}, {-1, 0}, b, segments);
 }
 
-Profile profileFor(std::string_view style, double r, double h, double bevel)
+BaseProfile profileFor(std::string_view style, double r, double h, double bevel)
 {
     const int seg = 4;
-    Profile p{{0.0, 0.0}};
+    BaseProfile p{{0.0, 0.0}};
     if (style == "stepped")
     {
         const double b = std::min(bevel, h * 0.2);
@@ -96,9 +96,9 @@ Profile profileFor(std::string_view style, double r, double h, double bevel)
 }
 
 /** The fixed foot under a lazy susan's top. */
-Profile footFor(double r, double h, double bevel)
+BaseProfile footFor(double r, double h, double bevel)
 {
-    Profile p{{0.0, -h * 0.55}};
+    BaseProfile p{{0.0, -h * 0.55}};
     disc(p, r * 0.85, -h * 0.55, -h * 1.3, bevel, 4);
     p.push_back({0.0, p.back().y});
     return p;
@@ -124,7 +124,7 @@ struct Made
 };
 
 /** Revolves profile about the axis through pivot into a mesh; the profile curve is kept, hidden, for live edits. */
-Made revolve(Graph& g, const Profile& profile, const glm::dvec3& pivot, const glm::dvec3& up, int sections, const std::string& name)
+Made revolve(Graph& g, const BaseProfile& profile, const glm::dvec3& pivot, const glm::dvec3& up, int sections, const std::string& name)
 {
     // The profile lies in the plane of up and a horizontal axis.
     const glm::dvec3 side = std::abs(up.x) < 0.9 ? glm::dvec3(1, 0, 0) : glm::dvec3(0, 0, 1);

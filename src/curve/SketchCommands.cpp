@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -16,6 +17,7 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -128,8 +130,6 @@ Splines sketchMoved(const Node& curve, const Splines& stored, const std::vector<
 
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
 Node& sketchCurve(const Args& a, const char* cmd)
 {
     Graph& g = graph();
@@ -152,12 +152,6 @@ Node& sketchCurve(const Args& a, const char* cmd)
     if (!n->type().isA("curve"))
         throw CommandError(std::string(cmd) + ": " + name + " is not a curve");
     return *n;
-}
-
-Splines storedSplines(Graph& g, Node& n)
-{
-    g.evaluate();
-    return splinesOf(g.value({n.id(), CurveShape::kLocal, -1}));
 }
 
 /** Writes splines and sketch together; history feeding the curve is frozen first, as any direct edit does. */

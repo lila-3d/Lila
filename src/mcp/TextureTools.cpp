@@ -51,7 +51,7 @@ json meshesUsing(scene::Graph& g, const std::string& slot)
 }
 
 /** The set as an agent needs it to edit: settings, the stack (or graph mode), what its masks bind to, and its paint. */
-json describe(scene::Node& set)
+json describeTextureSet(scene::Node& set)
 {
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
@@ -144,7 +144,7 @@ void registerTextureTools()
                        "texSetLayer...), check with material_lint, look with render_material_preview.",
         .inputSchema = {{"type", "object"},
                         {"properties", {{"set", {{"type", "string"}, {"description", "Texture set; default the scene's only one."}}}}}},
-        .run = [](const json& args) { return text(describe(setArg(args))); },
+        .run = [](const json& args) { return text(describeTextureSet(setArg(args))); },
     });
 
     s.addTool({

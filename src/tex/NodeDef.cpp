@@ -82,7 +82,7 @@ json portJson(const PortDecl& p, bool input)
 }
 
 /** The value a param takes when nothing sets it. */
-json defaultFor(const ParamDecl& p)
+json typeDefault(const ParamDecl& p)
 {
     switch (p.type)
     {
@@ -111,7 +111,7 @@ ParamDecl paramFromJson(const json& j, const std::string& type)
     p.options = j.value("options", std::vector<std::string>());
     if (p.type == ParamType::Enum && p.options.empty())
         throw std::invalid_argument(type + "." + p.id + ": an enum needs options");
-    p.defaultValue = j.contains("default") ? j["default"] : defaultFor(p);
+    p.defaultValue = j.contains("default") ? j["default"] : typeDefault(p);
     if (!paramValueValid(p.type, p.defaultValue, p.options))
         throw std::invalid_argument(type + "." + p.id + ": default " + p.defaultValue.dump() + " doesn't fit a " + paramTypeName(p.type));
     p.label = j.value("label", std::string());

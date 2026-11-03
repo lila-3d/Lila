@@ -13,7 +13,10 @@
 #include "ui/Actions.h"
 #include "ui/NodeLookup.h"
 #include "ui/RetopoDrawTool.h"
+#include "ui/ToolColors.h"
+#include "ui/UiCommands.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QTimer>
@@ -30,8 +33,6 @@ using geo::Index;
 using geo::kInvalid;
 using retopo::ConstructKind;
 
-constexpr double kPickRadius = 12.0; // px
-constexpr const char* kPrefs = "general";
 constexpr const char* kBrushPref = "/topology/brush";
 constexpr const char* kEdgePref = "/topology/edgeLength";
 constexpr const char* kQualityPref = "/topology/qualityOverlay";
@@ -40,13 +41,7 @@ constexpr const char* kSquarenessPref = "/topology/relax/squareness";
 constexpr const char* kStiffnessPref = "/topology/relax/stiffness";
 
 // Overlay colours are sRGB; the 3D streams take linear.
-const glm::vec4 kVertexFill(0.15f, 0.15f, 0.15f, 1.0f);
-const glm::vec4 kVertexRim(0.8f, 0.8f, 0.8f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
-const glm::vec4 kBrush(0.85f, 0.85f, 0.85f, 0.8f);
-const glm::vec4 kWireLinear(0.35f, 0.35f, 0.35f, 1.0f);
 const glm::vec4 kLiveWireLinear(0.55f, 0.55f, 0.55f, 1.0f);
-const glm::vec4 kHotLinear(1.0f, 1.0f, 1.0f, 1.0f);
 
 struct ModeInfo
 {
@@ -57,20 +52,6 @@ constexpr ModeInfo kModes[] = {
     {"Pencil", "topo.pencil"}, {"Patch", "topo.patch"},     {"Strip", "topo.strip"},     {"Stroke", "topo.stroke"},
     {"Cylinder", "topo.cylinder"}, {"Auto Region", "topo.region"}, {"Handles", "topo.handles"}, {"Relax", "topo.relax"},
 };
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
-
-double segmentDistPx(QPointF p, QPointF a, QPointF b)
-{
-    QPointF ab = b - a;
-    double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-    double u = len2 > 0.0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0.0;
-    return distPx(p, a + ab * u);
-}
-
-json vec(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
-
-bool monotone() { return PrefStore::get().value<bool>(kPrefs, viewportDisplay::kMonotone, false); }
 
 /** Esc and Enter reach the tool even when a hotkey would take them; Shift and Ctrl redraw the hints at once. */
 class KeyFilter : public QObject
@@ -154,18 +135,18 @@ void TopologyTool::setActiveConstruct(int id)
     viewportTools::requestRedraw();
 }
 
-double TopologyTool::brushRadius() { return std::clamp(PrefStore::get().value<double>(kPrefs, kBrushPref, 40.0), 4.0, 600.0); }
+double TopologyTool::brushRadius() { return std::clamp(PrefStore::get().value<double>("general", kBrushPref, 40.0), 4.0, 600.0); }
 void TopologyTool::setBrushRadius(double px)
 {
-    PrefStore::get().set(kPrefs, kBrushPref, std::clamp(px, 4.0, 600.0));
+    PrefStore::get().set("general", kBrushPref, std::clamp(px, 4.0, 600.0));
     viewportTools::requestRedraw();
 }
-double TopologyTool::edgeLength() { return std::max(0.0, PrefStore::get().value<double>(kPrefs, kEdgePref, 0.0)); }
-void TopologyTool::setEdgeLength(double cm) { PrefStore::get().set(kPrefs, kEdgePref, std::max(0.0, cm)); }
-bool TopologyTool::qualityOverlay() { return PrefStore::get().value<bool>(kPrefs, kQualityPref, false); }
+double TopologyTool::edgeLength() { return std::max(0.0, PrefStore::get().value<double>("general", kEdgePref, 0.0)); }
+void TopologyTool::setEdgeLength(double cm) { PrefStore::get().set("general", kEdgePref, std::max(0.0, cm)); }
+bool TopologyTool::qualityOverlay() { return PrefStore::get().value<bool>("general", kQualityPref, false); }
 void TopologyTool::setQualityOverlay(bool on)
 {
-    PrefStore::get().set(kPrefs, kQualityPref, on);
+    PrefStore::get().set("general", kQualityPref, on);
     viewportTools::requestRedraw();
 }
 
@@ -173,9 +154,9 @@ retopo::LiveRelaxOptions TopologyTool::relaxOptions()
 {
     PrefStore& p = PrefStore::get();
     retopo::LiveRelaxOptions o;
-    o.evenSize = std::clamp(p.value<double>(kPrefs, kEvenSizePref, 0.5), 0.0, 1.0);
-    o.squareness = std::clamp(p.value<double>(kPrefs, kSquarenessPref, 0.7), 0.0, 1.0);
-    o.stiffness = std::clamp(p.value<double>(kPrefs, kStiffnessPref, 0.5), 0.05, 1.0);
+    o.evenSize = std::clamp(p.value<double>("general", kEvenSizePref, 0.5), 0.0, 1.0);
+    o.squareness = std::clamp(p.value<double>("general", kSquarenessPref, 0.7), 0.0, 1.0);
+    o.stiffness = std::clamp(p.value<double>("general", kStiffnessPref, 0.5), 0.05, 1.0);
     return o;
 }
 
@@ -333,14 +314,14 @@ TopologyTool::Hit TopologyTool::pick(QPointF px, const ViewInfo& view) const
         return h;
     const geo::Mesh& m = *mRetopo;
     auto screen = projectPoints(view);
-    double best = kPickRadius;
+    double best = kPickRadiusPx;
     for (Index p = 0; p < m.pointCapacity(); ++p)
         if (screen[p] && distPx(*screen[p], px) < best)
         {
             best = distPx(*screen[p], px);
             h.point = p;
         }
-    double bestEdge = kPickRadius;
+    double bestEdge = kPickRadiusPx;
     for (Index e = 0; e < m.edgeCapacity(); ++e)
     {
         if (!m.edgeValid(e))
@@ -397,7 +378,7 @@ Index TopologyTool::pickBorderPoint(QPointF px, const ViewInfo& view) const
         return kInvalid;
     auto screen = projectPoints(view);
     Index bestP = kInvalid;
-    double best = kPickRadius * 1.5;
+    double best = kPickRadiusPx * 1.5;
     for (Index p = 0; p < mRetopo->pointCapacity(); ++p)
         if (screen[p] && mRetopo->isBoundaryPoint(p) && distPx(*screen[p], px) < best)
         {
@@ -413,7 +394,7 @@ Index TopologyTool::pickBorderEdge(QPointF px, const ViewInfo& view) const
         return kInvalid;
     auto screen = projectPoints(view);
     Index bestE = kInvalid;
-    double best = kPickRadius;
+    double best = kPickRadiusPx;
     for (Index e = 0; e < mRetopo->edgeCapacity(); ++e)
     {
         if (!mRetopo->edgeValid(e) || !mRetopo->isBoundaryEdge(e))
@@ -601,7 +582,7 @@ void TopologyTool::deleteAt(QPointF px, const ViewInfo& view)
                 {
                     json pts = json::array();
                     for (const glm::dvec3& p : mGuides[i].points)
-                        pts.push_back(vec(p));
+                        pts.push_back(vecJson(p));
                     guides.push_back({{"points", pts}, {"closed", mGuides[i].closed},
                                       {"color", json::array({mGuides[i].color.r, mGuides[i].color.g, mGuides[i].color.b})}});
                 }
@@ -706,7 +687,7 @@ void TopologyTool::commitRelax()
         for (auto& [p, pos] : mMoved)
         {
             points.push_back(p);
-            positions.push_back(vec(pos));
+            positions.push_back(vecJson(pos));
         }
         run("retopoDrawMove", {{"mesh", mRetopoName}, {"points", points}, {"positions", positions}});
     }
@@ -888,7 +869,7 @@ bool TopologyTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
                 json spec = rec->spec;
                 if (size_t(mDragKnot) < spec["knots"].size())
                 {
-                    spec["knots"][mDragKnot] = vec(hit);
+                    spec["knots"][mDragKnot] = vecJson(hit);
                     previewConstruct(mDragConstruct, spec);
                 }
             }
@@ -898,7 +879,7 @@ bool TopologyTool::mouseMove(QMouseEvent* e, const ViewInfo& view)
             if (const retopo::ConstructRecord* rec = record(mDragConstruct))
             {
                 json spec = rec->spec;
-                spec["pull"] = vec(hit);
+                spec["pull"] = vecJson(hit);
                 previewConstruct(mDragConstruct, spec);
             }
         break;
@@ -949,7 +930,7 @@ bool TopologyTool::mouseRelease(QMouseEvent* e, const ViewInfo& view)
             {
                 json pts = json::array();
                 for (const glm::dvec3& p : mGuides[i].points)
-                    pts.push_back(vec(i == mDragGuide ? onSurface(p + delta) : p));
+                    pts.push_back(vecJson(i == mDragGuide ? onSurface(p + delta) : p));
                 guides.push_back({{"points", pts}, {"closed", mGuides[i].closed},
                                   {"color", json::array({mGuides[i].color.r, mGuides[i].color.g, mGuides[i].color.b})}});
             }
@@ -1138,8 +1119,8 @@ void TopologyTool::drawRetopo(render::FrameState& s, OverlayPainter& p, const Vi
         if (screen[i])
         {
             bool hot = here && i == mHover.point && (mMode == TopoMode::Relax || mMode == TopoMode::Stroke || mMode == TopoMode::Patch);
-            p.disc(*screen[i], hot ? 5.5f : 3.5f, hot ? kHot : kVertexRim, 12);
-            p.disc(*screen[i], hot ? 3.0f : 2.0f, hot ? kHot : kVertexFill, 10);
+            p.disc(*screen[i], hot ? 5.5f : 3.5f, hot ? kHotColor : kVertexRim, 12);
+            p.disc(*screen[i], hot ? 3.0f : 2.0f, hot ? kHotColor : kVertexFill, 10);
         }
     if (mPreviewId && !mPreviewFaces.empty())
     {
@@ -1161,7 +1142,7 @@ void TopologyTool::drawQuality(OverlayPainter& p, const ViewInfo& view) const
     if (!mRetopo || !qualityOverlay())
         return;
     const geo::Mesh& m = *mRetopo;
-    const bool mono = monotone();
+    const bool mono = viewportDisplay::monotone();
     auto screen = projectPoints(view);
     for (Index pt = 0; pt < m.pointCapacity(); ++pt)
     {
@@ -1221,7 +1202,7 @@ void TopologyTool::drawSurfacePolyline(OverlayPainter& p, const ViewInfo& view, 
 
 void TopologyTool::drawGuides(OverlayPainter& p, const ViewInfo& view) const
 {
-    const bool mono = monotone();
+    const bool mono = viewportDisplay::monotone();
     for (size_t i = 0; i < mGuides.size(); ++i)
     {
         const retopo::Guide& g = mGuides[i];
@@ -1241,7 +1222,7 @@ void TopologyTool::drawBrush(OverlayPainter& p, double radius) const
         double a = k / 48.0 * 6.283185307179586;
         circle.push_back(mCursor + QPointF(std::cos(a), std::sin(a)) * radius);
     }
-    p.polyline(circle, 1.5f, kBrush, true);
+    p.polyline(circle, 1.5f, kTopoBrush, true);
 }
 
 QString TopologyTool::hint() const
@@ -1275,12 +1256,12 @@ void TopologyTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo
     drawQuality(p, view);
 
     if (here && !mStrokePx.empty() && (mDrag == Drag::Stroke || mDrag == Drag::Erase) && mMode != TopoMode::Region)
-        p.polyline(mStrokePx, mDrag == Drag::Erase ? 1.5f : 2.0f, kHot);
+        p.polyline(mStrokePx, mDrag == Drag::Erase ? 1.5f : 2.0f, kHotColor);
     if (here && mDrag == Drag::Line)
     {
-        p.line(mPressPx, mCursor, 2.0f, kHot);
-        p.disc(mPressPx, 3.5f, kHot, 12);
-        p.disc(mCursor, 3.5f, kHot, 12);
+        p.line(mPressPx, mCursor, 2.0f, kHotColor);
+        p.disc(mPressPx, 3.5f, kHotColor, 12);
+        p.disc(mCursor, 3.5f, kHotColor, 12);
     }
     const bool shift = mMods & Qt::ShiftModifier, ctrl = mMods & Qt::ControlModifier;
     if (here && (mDrag == Drag::RelaxBrush || (mDrag == Drag::None && shift && !ctrl && mMode != TopoMode::Region) ||
@@ -1326,24 +1307,12 @@ void startMode(TopoMode mode)
 }
 
 /** The retopo mesh the session actions work on, or empty. */
-std::string sessionRetopo()
+std::string sessionRetopoName()
 {
     std::optional<retopo::RetopoDrawTargets> t = sessionTargets();
     if (!t || !findNode(t->retopo))
         return {};
     return t->retopo;
-}
-
-void runCommand(const char* name, const json& call)
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
 }
 } // namespace
 
@@ -1380,8 +1349,8 @@ void registerTopologyActions()
         .label = "Freeze All Constructs",
         .category = "Topology",
         .run = [] {
-            if (std::string mesh = sessionRetopo(); !mesh.empty())
-                runCommand("retopoConstructFreeze", {{"mesh", mesh}});
+            if (std::string mesh = sessionRetopoName(); !mesh.empty())
+                runUi("retopoConstructFreeze", {{"mesh", mesh}});
         },
         .doc = "Leaves every live patch, strip, cylinder and region on the retopo mesh as plain faces.",
         .python = "lila.ops.retopoConstructFreeze(mesh=\"body_retopo\")",
@@ -1391,10 +1360,10 @@ void registerTopologyActions()
         .label = "Settle Retopo Mesh",
         .category = "Topology",
         .run = [] {
-            if (std::string mesh = sessionRetopo(); !mesh.empty())
+            if (std::string mesh = sessionRetopoName(); !mesh.empty())
             {
                 retopo::LiveRelaxOptions o = TopologyTool::relaxOptions();
-                runCommand("retopoSettle", {{"mesh", mesh}, {"evenSize", o.evenSize}, {"squareness", o.squareness}});
+                runUi("retopoSettle", {{"mesh", mesh}, {"evenSize", o.evenSize}, {"squareness", o.squareness}});
             }
         },
         .doc = "Live relaxes the whole retopo mesh to rest on its reference: even, square faces, borders held.",

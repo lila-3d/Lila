@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "uv/Bff.h"
+#include "uv/OptimizeMath.h"
 
 #include <Eigen/Sparse>
 #include <Eigen/SparseCholesky>
@@ -19,37 +20,15 @@ namespace lila::uv
 {
 namespace
 {
-using Triplet = Eigen::Triplet<double>;
-using SpMat = Eigen::SparseMatrix<double>;
-
-/** Gradient basis of a triangle in its own plane: grad f = sum f_j * g[j]. */
-struct TriFrame
-{
-    glm::dvec2 g[3];
-    double area = 0.0;
-};
-
-TriFrame triFrame(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c)
-{
-    TriFrame t;
-    glm::dvec3 e1 = b - a, e2 = c - a;
-    double l1 = glm::length(e1);
-    if (l1 <= 0.0)
-        return t;
-    glm::dvec3 x = e1 / l1;
-    double px = glm::dot(e2, x);
-    double py = glm::length(e2 - px * x);
-    glm::dvec2 p[3] = {{0.0, 0.0}, {l1, 0.0}, {px, py}};
-    t.area = 0.5 * l1 * py;
-    if (t.area <= 0.0)
-        return t;
-    for (int j = 0; j < 3; ++j)
-    {
-        glm::dvec2 e = p[(j + 2) % 3] - p[(j + 1) % 3];
-        t.g[j] = glm::dvec2(-e.y, e.x) / (2.0 * t.area);
-    }
-    return t;
-}
+using detail::Jac2;
+using detail::SpMat;
+using detail::Svd2;
+using detail::TriFrame;
+using detail::Triplet;
+using detail::jacobian;
+using detail::signedArea2;
+using detail::svd2;
+using detail::triFrame;
 
 std::vector<TriFrame> frames(const Chart& ch, double scale = 1.0)
 {
@@ -60,40 +39,6 @@ std::vector<TriFrame> frames(const Chart& ch, double scale = 1.0)
         out[i] = triFrame(ch.pos[t[0]] * scale, ch.pos[t[1]] * scale, ch.pos[t[2]] * scale);
     }
     return out;
-}
-
-double signedArea(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c)
-{
-    glm::dvec2 e1 = b - a, e2 = c - a;
-    return 0.5 * (e1.x * e2.y - e1.y * e2.x);
-}
-
-/** Jacobian rows: grad u and grad v. */
-struct Jac
-{
-    double a, b, c, d; // [a b; c d]
-    double det() const { return a * d - b * c; }
-};
-
-Jac jacobian(const TriFrame& f, const glm::dvec2& u0, const glm::dvec2& u1, const glm::dvec2& u2)
-{
-    glm::dvec2 gu = u0.x * f.g[0] + u1.x * f.g[1] + u2.x * f.g[2];
-    glm::dvec2 gv = u0.y * f.g[0] + u1.y * f.g[1] + u2.y * f.g[2];
-    return {gu.x, gu.y, gv.x, gv.y};
-}
-
-/** Closed-form signed 2x2 SVD: M = Rot(phi) * diag(s1, s2) * Rot(theta), s1 >= |s2|. */
-struct Svd2
-{
-    double s1, s2, phi, theta;
-};
-
-Svd2 svd2(const Jac& m)
-{
-    double e = (m.a + m.d) * 0.5, f = (m.a - m.d) * 0.5, g = (m.c + m.b) * 0.5, h = (m.c - m.b) * 0.5;
-    double q = std::sqrt(e * e + h * h), r = std::sqrt(f * f + g * g);
-    double a1 = std::atan2(g, f), a2 = std::atan2(h, e);
-    return {q + r, q - r, (a2 + a1) * 0.5, (a2 - a1) * 0.5};
 }
 
 double dirichlet(double s1, double s2)
@@ -109,7 +54,7 @@ std::vector<double> distortions(const Chart& ch, const std::vector<TriFrame>& fr
         if (fr[i].area <= 0.0)
             continue;
         const auto& t = ch.tris[i];
-        Jac j = jacobian(fr[i], uv[t[0]], uv[t[1]], uv[t[2]]);
+        Jac2 j = jacobian(fr[i], uv[t[0]], uv[t[1]], uv[t[2]]);
         if (j.det() <= 0.0)
         {
             out[i] = std::numeric_limits<double>::infinity();
@@ -342,7 +287,7 @@ size_t foldedTriangles(const Chart& ch)
         if (fr[i].area <= 0.0)
             continue;
         const auto& t = ch.tris[i];
-        if (sign * signedArea(ch.uv[t[0]], ch.uv[t[1]], ch.uv[t[2]]) <= 0.0)
+        if (sign * signedArea2(ch.uv[t[0]], ch.uv[t[1]], ch.uv[t[2]]) <= 0.0)
             ++n;
     }
     return n;
@@ -413,7 +358,7 @@ int slim(Chart& ch, int iterations, bool usePins)
         if (fr[i].area > 0.0)
         {
             const auto& t = ch.tris[i];
-            if (signedArea(uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2])) <= 0.0)
+            if (signedArea2(uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2])) <= 0.0)
                 return -1;
         }
 
@@ -425,7 +370,7 @@ int slim(Chart& ch, int iterations, bool usePins)
             if (fr[i].area <= 0.0)
                 continue;
             const auto& t = ch.tris[i];
-            Jac j = jacobian(fr[i], uvAt(s, t[0]), uvAt(s, t[1]), uvAt(s, t[2]));
+            Jac2 j = jacobian(fr[i], uvAt(s, t[0]), uvAt(s, t[1]), uvAt(s, t[2]));
             if (j.det() <= 0.0)
                 return std::numeric_limits<double>::infinity();
             Svd2 d = svd2(j);
@@ -497,7 +442,7 @@ int slim(Chart& ch, int iterations, bool usePins)
             if (f.area <= 0.0)
                 return;
             const auto& t = ch.tris[i];
-            Jac j = jacobian(f, uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2]));
+            Jac2 j = jacobian(f, uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2]));
             Svd2 s = svd2(j);
             double s1 = std::max(s.s1, 1e-8), s2 = std::max(s.s2, 1e-8);
             auto weight = [](double sv) {
@@ -601,8 +546,8 @@ int slim(Chart& ch, int iterations, bool usePins)
             if (fr[i].area <= 0.0)
                 continue;
             const auto& t = ch.tris[i];
-            Jac j0 = jacobian(fr[i], uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2]));
-            Jac jd = jacobian(fr[i], uvAt(dir, t[0]), uvAt(dir, t[1]), uvAt(dir, t[2]));
+            Jac2 j0 = jacobian(fr[i], uvAt(x, t[0]), uvAt(x, t[1]), uvAt(x, t[2]));
+            Jac2 jd = jacobian(fr[i], uvAt(dir, t[0]), uvAt(dir, t[1]), uvAt(dir, t[2]));
             double qa = jd.det();
             double qb = j0.a * jd.d + j0.d * jd.a - j0.b * jd.c - j0.c * jd.b;
             double qc = j0.det();

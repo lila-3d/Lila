@@ -13,6 +13,7 @@
 #include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QCursor>
@@ -36,8 +37,6 @@ struct Placement
     glm::dvec3 position{0.0};
     glm::dvec3 normal{0.0, 1.0, 0.0};
 };
-
-json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
 /** Runs fn without recording undo: the live preview is replaced by one undoable create on drop. */
 template <class Fn> void unrecorded(Fn&& fn)
@@ -269,8 +268,8 @@ private:
         {
             u.flushFuture();
             json call = sizeFlags();
-            call["position"] = vec(mLast->position);
-            call["normal"] = vec(mLast->normal);
+            call["position"] = vecJson(mLast->position);
+            call["normal"] = vecJson(mLast->normal);
             actions::runWithOptions(mCommand, call);
         }
         else
@@ -477,7 +476,7 @@ void createAt(const std::string& command, const QString& label)
     focusViewportUnderCursor();
     if (hasComponentSelection())
     {
-        actions::runWithOptions(command, {{"position", vec(scene::symmetricSelectionCenter())}, {"normal", vec(scene::selectionNormal())}});
+        actions::runWithOptions(command, {{"position", vecJson(scene::symmetricSelectionCenter())}, {"normal", vecJson(scene::selectionNormal())}});
         achievementRules::primitivePlaced();
         if (const scene::lastOp::Op* op = scene::lastOp::current(); op && op->command == command && scene::lastOp::live())
             viewportTools::set(std::make_unique<ResizeCreatedTool>(command, label));

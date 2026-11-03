@@ -107,8 +107,6 @@ const Model* modelOf(std::string_view id)
     return nullptr;
 }
 
-template <class T> const T& val(const scene::Node& n, int attr) { return n.as<T>(attr); }
-
 using mtlx::Input;
 using mtlx::Network;
 
@@ -236,7 +234,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     const Model& model = surface == mtlx::Surface::StandardSurface ? kStandard : kOpenPbr;
     const bool standard = surface == mtlx::Surface::StandardSurface;
     const scene::Node* n = scene::materials::find(mGraph, slot);
-    const bool unlit = n && mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) == mat::ShadingModel::Unlit;
+    const bool unlit = n && mat::ShadingModel(n->as<int64_t>(mat::kShadingModel)) == mat::ShadingModel::Unlit;
     if (unlit)
         add(net, net.surface, "surface_unlit", "surfaceshader", "ND_surface_unlit");
     else
@@ -256,7 +254,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     // Warnings the UsdPreviewSurface written beside this network already gives are left to it.
     const bool alone = !mPreview || !mStage;
 
-    const int uvSet = int(std::max<int64_t>(0, val<int64_t>(*n, mat::kUvSet)));
+    const int uvSet = int(std::max<int64_t>(0, n->as<int64_t>(mat::kUvSet)));
     std::string texcoord;
     auto uv = [&]() -> std::string {
         if (uvSet == 0 || !texcoord.empty())
@@ -299,12 +297,12 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
         return name;
     };
 
-    const auto blend = mat::BlendMode(val<int64_t>(*n, mat::kBlendMode));
+    const auto blend = mat::BlendMode(n->as<int64_t>(mat::kBlendMode));
     const bool alpha = blend != mat::BlendMode::Opaque;
-    const float opacity = float(val<double>(*n, mat::kOpacity));
-    const glm::dvec3 base = val<glm::dvec3>(*n, mat::kBaseColor);
+    const float opacity = float(n->as<double>(mat::kOpacity));
+    const glm::dvec3 base = n->as<glm::dvec3>(mat::kBaseColor);
     std::string color, alphaNode;
-    if (const std::string& baseMap = val<std::string>(*n, mat::kBaseColorMap); !baseMap.empty())
+    if (const std::string& baseMap = n->as<std::string>(mat::kBaseColorMap); !baseMap.empty())
     {
         if (alpha)
         {
@@ -353,7 +351,7 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
         else
             value("emission_color", "color3", baseValue);
         writeOpacity("opacity", false);
-        if (alone && !val<std::string>(*n, mat::kEmissiveMap).empty())
+        if (alone && !n->as<std::string>(mat::kEmissiveMap).empty())
             warnings.push_back(std::format("material {}: MaterialX's unlit surface has no room for an emissive map; left out", slot));
         return net;
     }
@@ -362,10 +360,10 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     else
         value(model.baseColor, "color3", baseValue);
 
-    if (const std::string& orm = val<std::string>(*n, mat::kOrmMap); !orm.empty())
+    if (const std::string& orm = n->as<std::string>(mat::kOrmMap); !orm.empty())
     {
         static const char* kOut[3] = {"outx", "outy", "outz"};
-        const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(val<int64_t>(*n, mat::kPackedLayout)));
+        const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(n->as<int64_t>(mat::kPackedLayout)));
         const std::string img = image(orm, mat::kOrmMap, "orm", "vector3", false);
         mtlx::Node& split = add(net, "MtlxOrmChannels", "separate3", "multioutput", "ND_separate3_vector3");
         for (const char* o : kOut)
@@ -376,25 +374,25 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
     }
     else
     {
-        if (const std::string& p = val<std::string>(*n, mat::kMetallicMap); !p.empty())
+        if (const std::string& p = n->as<std::string>(mat::kMetallicMap); !p.empty())
             connect(model.metalness, "float", image(p, mat::kMetallicMap, "metallic", "float", false));
         else
-            value(model.metalness, "float", {float(val<double>(*n, mat::kMetallic))});
-        if (const std::string& p = val<std::string>(*n, mat::kRoughnessMap); !p.empty())
+            value(model.metalness, "float", {float(n->as<double>(mat::kMetallic))});
+        if (const std::string& p = n->as<std::string>(mat::kRoughnessMap); !p.empty())
             connect(model.roughness, "float", image(p, mat::kRoughnessMap, "roughness", "float", false));
         else
-            value(model.roughness, "float", {float(val<double>(*n, mat::kRoughness))});
-        if (alone && !val<std::string>(*n, mat::kAmbientOcclusionMap).empty())
+            value(model.roughness, "float", {float(n->as<double>(mat::kRoughness))});
+        if (alone && !n->as<std::string>(mat::kAmbientOcclusionMap).empty())
             warnings.push_back(std::format("material {}: {} has no occlusion input; its occlusion map is left out", slot, model.category));
     }
-    if (const double s = val<double>(*n, mat::kSpecular); std::abs(s - 0.5) > 1e-6)
+    if (const double s = n->as<double>(mat::kSpecular); std::abs(s - 0.5) > 1e-6)
         value(model.ior, "float", {float(iorOfSpecular(s))});
 
-    if (const std::string& p = val<std::string>(*n, mat::kNormalMap); !p.empty())
+    if (const std::string& p = n->as<std::string>(mat::kNormalMap); !p.empty())
     {
         std::string src = image(p, mat::kNormalMap, "normal", "vector3", false);
         // MaterialX reads normal maps OpenGL style; a DirectX map's green becomes 1 - g on the way in.
-        if (mat::NormalFormat(val<int64_t>(*n, mat::kNormalFormat)) == mat::NormalFormat::DirectX)
+        if (mat::NormalFormat(n->as<int64_t>(mat::kNormalFormat)) == mat::NormalFormat::DirectX)
         {
             add(net, "MtlxNormalFlip", "multiply", "vector3", "ND_multiply_vector3");
             link(net, "MtlxNormalFlip", "in1", "vector3", src);
@@ -409,21 +407,21 @@ mtlx::Network MaterialWriter::network(const std::string& slot, mtlx::Surface sur
         connect(model.normal, "vector3", "MtlxNormalMap");
     }
 
-    const float intensity = float(val<double>(*n, mat::kEmissiveIntensity));
-    if (const std::string& p = val<std::string>(*n, mat::kEmissiveMap); !p.empty())
+    const float intensity = float(n->as<double>(mat::kEmissiveIntensity));
+    if (const std::string& p = n->as<std::string>(mat::kEmissiveMap); !p.empty())
     {
         connect(model.emissionColor, "color3", image(p, mat::kEmissiveMap, "emissive", "color3", true));
         value(model.emission, "float", {intensity});
     }
-    else if (const glm::dvec3 e = val<glm::dvec3>(*n, mat::kEmissiveColor); e * double(intensity) != glm::dvec3(0.0))
+    else if (const glm::dvec3 e = n->as<glm::dvec3>(mat::kEmissiveColor); e * double(intensity) != glm::dvec3(0.0))
     {
         value(model.emissionColor, "color3", {float(e.x), float(e.y), float(e.z)});
         value(model.emission, "float", {intensity});
     }
     writeOpacity(model.opacity, standard);
-    if (alone && mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) != mat::ShadingModel::DefaultLit)
+    if (alone && mat::ShadingModel(n->as<int64_t>(mat::kShadingModel)) != mat::ShadingModel::DefaultLit)
         warnings.push_back(std::format("material {}: its {} shading is kept for Lila only; other tools see the default lit inputs", slot,
-                                       n->type().attrs[mat::kShadingModel].enumNames[size_t(val<int64_t>(*n, mat::kShadingModel))]));
+                                       n->type().attrs[mat::kShadingModel].enumNames[size_t(n->as<int64_t>(mat::kShadingModel))]));
     return net;
 }
 
@@ -728,7 +726,8 @@ std::string fileOf(const UsdShadeShader& image)
     return image && valueOf(image, "file", &a) ? a.GetAssetPath() : std::string();
 }
 
-mat::TextureSampling samplingOf(const UsdShadeShader& image)
+/** Wrap and filter of a MaterialX image node or a UsdUVTexture. */
+mat::TextureSampling imageSampling(const UsdShadeShader& image)
 {
     mat::TextureSampling s;
     const bool preview = idOf(image).GetString().find("UsdUVTexture") != std::string::npos;
@@ -860,7 +859,7 @@ void MaterialReader::readMtlx(const UsdShadeShader& surface, scene::NodeId id, c
         if (!color && srgb)
             warnings.push_back(std::format("material {}: {} texture is marked {}; Lila reads data maps as linear", name, role, space));
         set(mapAttr, texturePath(t.image, name));
-        materials::setSampling(mGraph, id, mapAttr, samplingOf(t.image));
+        materials::setSampling(mGraph, id, mapAttr, imageSampling(t.image));
     };
     auto plain = [&](const Signal& t, const char* role) {
         const size_t c = std::min<size_t>(t.channels.size(), 3);

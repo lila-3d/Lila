@@ -30,8 +30,8 @@ struct DeformPush
 };
 static_assert(sizeof(DeformPush) == 80);
 
-constexpr VkShaderStageFlags kCompute = VK_SHADER_STAGE_COMPUTE_BIT;
-constexpr uint32_t kGroup = 64;
+constexpr VkShaderStageFlags kDeformStage = VK_SHADER_STAGE_COMPUTE_BIT;
+constexpr uint32_t kDeformGroup = 64;
 /** Bind data kept on the device; the least recently used goes first past it. */
 constexpr VkDeviceSize kResidentBudget = VkDeviceSize(1536) << 20;
 
@@ -155,8 +155,8 @@ private:
             mHash = compute::spirvHash(mCode);
         }
         if (!mLayout)
-            mLayout = compute::pipelineLayout(vk, sizeof(DeformPush), kCompute);
-        return compute::sharedPipelines().get(vk, mLayout, compute::layoutKey(sizeof(DeformPush), kCompute), mCode, mHash, entry);
+            mLayout = compute::pipelineLayout(vk, sizeof(DeformPush), kDeformStage);
+        return compute::sharedPipelines().get(vk, mLayout, compute::layoutKey(sizeof(DeformPush), kDeformStage), mCode, mHash, entry);
     }
 
     /** The device copy of a blob, uploaded through staging recorded into cmd when it is not resident yet. */
@@ -256,13 +256,13 @@ private:
                 for (uint32_t it = 0; it < p.iterations; ++it)
                 {
                     push.dst = mScratch[it & 1].address;
-                    compute::dispatchChunks(cmd, mLayout, push, 0, n, kGroup, chunk);
+                    compute::dispatchChunks(cmd, mLayout, push, 0, n, kDeformGroup, chunk);
                     compute::memoryBarrier(cmd);
                     push.src = push.dst;
                 }
             }
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, main);
-            compute::dispatchChunks(cmd, mLayout, push, 0, n, kGroup, chunk);
+            compute::dispatchChunks(cmd, mLayout, push, 0, n, kDeformGroup, chunk);
             compute::memoryBarrier(cmd);
             vkCmdCopyBuffer(cmd, mOut.buffer, mHostOut.buffer, 1, &toHost);
         });
@@ -289,7 +289,7 @@ private:
     uint64_t mHash = 0;
 };
 
-std::once_flag gStopHook;
+std::once_flag gDeformStopHook;
 std::shared_ptr<GpuDeformers> gBackend;
 } // namespace
 
@@ -297,7 +297,7 @@ void registerGpuDeformers()
 {
     if (!gBackend)
         gBackend = std::make_shared<GpuDeformers>();
-    std::call_once(gStopHook, [] {
+    std::call_once(gDeformStopHook, [] {
         Renderer::get().addStopHook([](VulkanContext& vk) {
             if (gBackend)
                 gBackend->release(vk);

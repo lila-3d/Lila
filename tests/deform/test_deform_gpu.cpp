@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
@@ -21,14 +23,10 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-Graph& graph() { return Graph::current(); }
-
 /** Starts the renderer and registers the GPU deformers once; false (and the GPU cases pass unchecked) without a device. */
 bool gpu()
 {
@@ -58,18 +56,6 @@ DeformerNode& deformer(const std::string& name)
     REQUIRE(n);
     REQUIRE(deformers::isDeformer(*n));
     return static_cast<DeformerNode&>(*n);
-}
-
-/** Replaces a mesh's base points: point p moves by offset(p). */
-void editPoints(const std::string& mesh, const std::function<glm::dvec3(geo::Index, const glm::dvec3&)>& offset)
-{
-    Graph& g = graph();
-    NodeId id = g.find(mesh)->id();
-    PlugRef plug = modifiers::editPlug(g, id);
-    auto m = std::make_shared<geo::Mesh>(*std::get<MeshPtr>(g.value(plug)));
-    for (geo::Index p = 0; p < m->pointCapacity(); ++p)
-        m->setPosition(p, m->position(p) + offset(p, m->position(p)));
-    g.setValue(plug, MeshPtr(m));
 }
 
 /**

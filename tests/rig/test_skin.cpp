@@ -9,26 +9,6 @@ using namespace lila::scene;
 
 namespace
 {
-/** A 100 cm cylinder along Y (y in [-50, 50]) with a three-joint chain up its middle, bound with default weights. */
-std::string skinnedCylinder()
-{
-    run("newScene");
-    std::string mesh = run("polyCylinder", {{"name", "Tube"}, {"radius", 10}, {"height", 100}, {"subdivisionsHeight", 10}, {"caps", false}})[0];
-    run("select", {{"args", json::array()}});
-    run("joint", {{"position", v3(0, -50, 0)}, {"name", "bone_a"}});
-    run("joint", {{"position", v3(0, 0, 0)}, {"name", "bone_b"}});
-    run("joint", {{"position", v3(0, 50, 0)}, {"name", "bone_c"}});
-    run("skinCluster", {{"args", {"bone_a", mesh}}});
-    return mesh;
-}
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    MeshPtr m = outMesh(mesh);
-    REQUIRE(m);
-    return {m->positions().begin(), m->positions().end()};
-}
-
 double maxY(const std::vector<glm::dvec3>& pts)
 {
     double y = -1e300;

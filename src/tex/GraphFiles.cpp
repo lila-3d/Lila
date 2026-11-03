@@ -17,7 +17,6 @@ namespace lila::tex
 namespace
 {
 namespace fs = std::filesystem;
-using T = ArgType;
 
 constexpr const char* kMaterialFormat = "lilamat";
 
@@ -75,6 +74,7 @@ std::string freeName(std::string name)
 
 void registerFileCommands()
 {
+    using T = ArgType;
     ops::registerCommand({
         .name = "texExportGraph",
         .doc = "Write a texture set to a file: .lilamat holds its graph and settings (import it to make the set again); "

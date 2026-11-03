@@ -3,9 +3,10 @@
 #include "TailorCore.h"
 
 #include <lila/Command.h>
+#include <lila/Graph.h>
 #include <lila/Mesh.h>
-
 #include <lila/Node.h>
+#include <lila/Transform.h>
 
 #include <glm/mat4x4.hpp>
 
@@ -31,6 +32,20 @@ inline constexpr const char* kGarmentType = "tailorGarment";
 inline constexpr const char* kBindingType = "tailorBinding";
 /** Garments are solved in metres; the scene is in centimetres. */
 inline constexpr double kCmPerM = 100.0;
+
+/** The world matrix of the first mesh a garment feeds, which places its points. */
+inline glm::dmat4 garmentWorld(lila::scene::Graph& g, lila::scene::NodeId garment)
+{
+    using namespace lila::scene;
+    const Node* n = g.node(garment);
+    if (!n)
+        return glm::dmat4(1.0);
+    for (const PlugRef& d : g.destinations({garment, n->type().attrIndex("outMesh")}))
+        if (const Node* mesh = g.node(d.node))
+            if (const PlugValue v = g.value({mesh->id(), Transform::kWorldMatrix}); const auto* m = std::get_if<glm::dmat4>(&v))
+                return *m;
+    return glm::dmat4(1.0);
+}
 
 /** A collider mesh in garment space (metres) as triangles. */
 void colliderTriangles(const lila::geo::Mesh& m, const glm::dmat4& world, std::vector<Vec3>& points,

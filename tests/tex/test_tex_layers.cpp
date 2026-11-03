@@ -16,8 +16,6 @@ namespace
 {
 namespace fs = std::filesystem;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 scene::Node& setNode(const std::string& name)
 {
     scene::Node* n = findSet(scene::Graph::current(), name);

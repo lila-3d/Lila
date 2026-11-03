@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -33,16 +34,15 @@ namespace
 {
 // Same grayscale ranks as locators: unselected, under a selected node, selected.
 const glm::vec4 kJointColor(0.02f, 0.02f, 0.02f, 1.0f);
-const glm::vec4 kChildOfSelectedColor(0.55f, 0.55f, 0.55f, 1.0f);
-const glm::vec4 kSelectedColor(0.95f, 0.95f, 0.95f, 1.0f);
-constexpr double kPi = 3.14159265358979323846;
+const glm::vec4 kChildOfSelectedJointColor(0.55f, 0.55f, 0.55f, 1.0f);
+const glm::vec4 kSelectedJointColor(0.95f, 0.95f, 0.95f, 1.0f);
 
 using scene::Joint;
 using scene::NodeId;
 
 double displayScale() { return PrefStore::get().value<double>("general", "/rig/jointDisplayScale", 1.0); }
 
-bool drawn(const scene::Node& n)
+bool jointDrawn(const scene::Node& n)
 {
     return scene::rig::isJoint(n) && scene::selectionMask::shown(n) && scene::effectivelyVisible(scene::Graph::current(), n.id()) &&
            n.as<int64_t>(Joint::kDrawStyle) != Joint::kHidden;
@@ -61,7 +61,7 @@ void addCircle(std::vector<render::LineVertex>& out, const glm::dvec3& c, const 
 {
     for (int k = 0; k < segments; ++k)
     {
-        double a0 = 2.0 * kPi * k / segments, a1 = 2.0 * kPi * (k + 1) / segments;
+        double a0 = 2.0 * std::numbers::pi * k / segments, a1 = 2.0 * std::numbers::pi * (k + 1) / segments;
         out.push_back({glm::vec3(c + (u * std::cos(a0) + v * std::sin(a0)) * r), color});
         out.push_back({glm::vec3(c + (u * std::cos(a1) + v * std::sin(a1)) * r), color});
     }
@@ -182,7 +182,7 @@ std::vector<NodeId> childJoints(scene::Graph& g, NodeId id)
 {
     std::vector<NodeId> out;
     for (NodeId c : g.children(id))
-        if (drawn(*g.node(c)))
+        if (jointDrawn(*g.node(c)))
             out.push_back(c);
     return out;
 }
@@ -220,21 +220,21 @@ void drawJoints(render::FrameState& s, OverlayPainter&, const ViewInfo&)
     for (scene::Node* jn : scene::sceneIndex::matching(g, "joint", scene::rig::isJoint))
     {
         const NodeId id = jn->id();
-        if (!drawn(*jn))
+        if (!jointDrawn(*jn))
             continue;
         if (highlight && g.isSelected(id))
             styled.push_back({id, 1000, chainColor(0, chainLook)});
         else if (auto it = chain.find(id); it != chain.end())
             styled.push_back({id, 1000 - it->second, chainColor(it->second, chainLook), true});
         else
-            styled.push_back({id, under.contains(id) ? 1 : 0, under.contains(id) ? kChildOfSelectedColor : kJointColor});
+            styled.push_back({id, under.contains(id) ? 1 : 0, under.contains(id) ? kChildOfSelectedJointColor : kJointColor});
     }
     std::stable_sort(styled.begin(), styled.end(), [](const Styled& a, const Styled& b) { return a.order < b.order; });
     const bool colorBranches = PrefStore::get().value<bool>("general", kJointChainBranches, false);
     auto boneColor = [&](const Styled& from, NodeId child) {
         if (!from.ancestor || colorBranches || chain.contains(child) || (highlight && g.isSelected(child)))
             return from.color;
-        return under.contains(child) ? kChildOfSelectedColor : kJointColor;
+        return under.contains(child) ? kChildOfSelectedJointColor : kJointColor;
     };
 
     for (const Styled& st : styled)
@@ -277,7 +277,7 @@ void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         const NodeId id = n->id();
         if (!isIkHandle(*n))
             continue;
-        const glm::vec4& color = viewportDisplay::highlightSelection() && g.isSelected(id) ? kSelectedColor : kChildOfSelectedColor;
+        const glm::vec4& color = viewportDisplay::highlightSelection() && g.isSelected(id) ? kSelectedJointColor : kChildOfSelectedJointColor;
         glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
         std::vector<NodeId> chain = scene::ik::chainOf(g, id);
         double r = 2.0 * scale;
@@ -296,7 +296,7 @@ void drawIkHandles(render::FrameState& s, OverlayPainter&, const ViewInfo&)
         addLine(out, start, p, color);
         glm::dvec3 pole = n->as<glm::dvec3>(scene::IkHandle::kPoleVector);
         if (glm::length(pole) > 1e-9)
-            addLine(out, start, start + glm::normalize(pole) * glm::length(p - start) * 0.5, kChildOfSelectedColor);
+            addLine(out, start, start + glm::normalize(pole) * glm::length(p - start) * 0.5, kChildOfSelectedJointColor);
     }
 }
 
@@ -346,7 +346,7 @@ std::vector<viewportHooks::PickHit> pickJoints(QPointF a, QPointF b, bool click,
     for (NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
-        if (!drawn(*n))
+        if (!jointDrawn(*n))
             continue;
         glm::dvec3 p(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
         auto c = view.project(p);

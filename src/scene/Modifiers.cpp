@@ -10,6 +10,7 @@
 #include "geo/Ops.h"
 #include "geo/Reduce.h"
 #include "geo/Topology.h"
+#include "scene/AttrBuilders.h"
 #include "scene/AutoBevel.h"
 #include "scene/Components.h"
 #include "scene/ExtrudeModifier.h"
@@ -24,28 +25,18 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 /** TransferAttributes.cpp. */
 void registerTransferModifier();
 void registerBooleanModifier();
 
 namespace
 {
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
-
-double f(const Node& n, const char* a) { return n.as<double>(n.type().attrIndex(a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(n.type().attrIndex(a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(n.type().attrIndex(a)); }
-glm::dvec3 v(const Node& n, const char* a) { return n.as<glm::dvec3>(n.type().attrIndex(a)); }
-
-AttrDef inCategory(AttrDef def, const char* category)
-{
-    def.category = category;
-    return def;
-}
+double numOf(const Node& n, const char* a) { return n.as<double>(n.type().attrIndex(a)); }
+int64_t intOf(const Node& n, const char* a) { return n.as<int64_t>(n.type().attrIndex(a)); }
+bool flagOf(const Node& n, const char* a) { return n.as<bool>(n.type().attrIndex(a)); }
+glm::dvec3 vectorOf(const Node& n, const char* a) { return n.as<glm::dvec3>(n.type().attrIndex(a)); }
 
 /** arrayModifier's center enum. */
 enum ArrayCenter : int64_t
@@ -60,22 +51,22 @@ geo::ArrayOptions arrayOptions(const Node& n)
 {
     geo::ArrayOptions o;
     geo::ArrayLayout& l = o.layout;
-    l.mode = geo::ArrayMode(std::clamp<int64_t>(i(n, "mode"), 0, 2));
-    l.count = int(std::clamp<int64_t>(i(n, "count"), 1, 1000));
-    l.gridCount = {l.count, int(std::clamp<int64_t>(i(n, "countY"), 1, 1000)), int(std::clamp<int64_t>(i(n, "countZ"), 1, 1000))};
+    l.mode = geo::ArrayMode(std::clamp<int64_t>(intOf(n, "mode"), 0, 2));
+    l.count = int(std::clamp<int64_t>(intOf(n, "count"), 1, 1000));
+    l.gridCount = {l.count, int(std::clamp<int64_t>(intOf(n, "countY"), 1, 1000)), int(std::clamp<int64_t>(intOf(n, "countZ"), 1, 1000))};
     // Grids stay under the same total as rows so a stray count cannot hang the evaluation.
     while (int64_t(l.gridCount.x) * l.gridCount.y * l.gridCount.z > 100000)
         l.gridCount = glm::max(l.gridCount / 2, glm::ivec3(1));
-    l.offset = l.mode == geo::ArrayMode::Grid ? v(n, "spacing") : l.mode == geo::ArrayMode::Linear ? v(n, "offset") : glm::dvec3(0.0);
-    l.rotate = v(n, "rotate");
-    l.scale = v(n, "scale");
-    l.axis = int(std::clamp<int64_t>(i(n, "axis"), 0, 2));
-    l.angle = f(n, "angle");
-    l.stepAngle = i(n, "angleMode") == 1;
-    l.rise = f(n, "rise");
-    switch (i(n, "center"))
+    l.offset = l.mode == geo::ArrayMode::Grid ? vectorOf(n, "spacing") : l.mode == geo::ArrayMode::Linear ? vectorOf(n, "offset") : glm::dvec3(0.0);
+    l.rotate = vectorOf(n, "rotate");
+    l.scale = vectorOf(n, "scale");
+    l.axis = int(std::clamp<int64_t>(intOf(n, "axis"), 0, 2));
+    l.angle = numOf(n, "angle");
+    l.stepAngle = intOf(n, "angleMode") == 1;
+    l.rise = numOf(n, "rise");
+    switch (intOf(n, "center"))
     {
-    case kCenterPoint: l.frame = glm::translate(glm::dmat4(1.0), v(n, "centerPoint")); break;
+    case kCenterPoint: l.frame = glm::translate(glm::dmat4(1.0), vectorOf(n, "centerPoint")); break;
     case kCenterObject:
     {
         // The object's frame relative to this mesh; scale is dropped so it orients and places the centre only.
@@ -88,9 +79,9 @@ geo::ArrayOptions arrayOptions(const Node& n)
     }
     default: break;
     }
-    o.weld = b(n, "weld");
-    o.mergeEnds = b(n, "mergeEnds");
-    o.tolerance = std::max(f(n, "tolerance"), 0.0);
+    o.weld = flagOf(n, "weld");
+    o.mergeEnds = flagOf(n, "mergeEnds");
+    o.tolerance = std::max(numOf(n, "tolerance"), 0.0);
     return o;
 }
 
@@ -153,12 +144,12 @@ geo::Mesh solidify(const geo::Mesh& in, double thickness)
 geo::Mesh decimate(const geo::Mesh& in, const Node& n)
 {
     geo::ReduceOptions o;
-    o.ratio = std::clamp(f(n, "ratio"), 0.0, 1.0);
-    o.targetTriangles = geo::Index(std::max<int64_t>(0, i(n, "targetTriangles")));
-    o.keepBorders = b(n, "keepBorders");
-    o.keepHardEdges = b(n, "keepHardEdges");
-    o.symmetryAxis = int(std::clamp<int64_t>(i(n, "symmetry"), 0, 3)) - 1;
-    o.quads = b(n, "quads");
+    o.ratio = std::clamp(numOf(n, "ratio"), 0.0, 1.0);
+    o.targetTriangles = geo::Index(std::max<int64_t>(0, intOf(n, "targetTriangles")));
+    o.keepBorders = flagOf(n, "keepBorders");
+    o.keepHardEdges = flagOf(n, "keepHardEdges");
+    o.symmetryAxis = int(std::clamp<int64_t>(intOf(n, "symmetry"), 0, 3)) - 1;
+    o.quads = flagOf(n, "quads");
     return geo::reduceMesh(in, o).mesh;
 }
 
@@ -186,10 +177,10 @@ std::vector<ModifierType> modifierTypes()
              geo::Mesh m = in;
              geo::MirrorOptions o;
              o.plane.normal = glm::dvec3(0.0);
-             o.plane.normal[int(std::clamp<int64_t>(i(n, "axis"), 0, 2))] = 1.0;
-             o.direction = geo::MirrorDirection(std::clamp<int64_t>(i(n, "direction"), 0, 2));
-             o.weld = b(n, "weld");
-             o.tolerance = f(n, "tolerance");
+             o.plane.normal[int(std::clamp<int64_t>(intOf(n, "axis"), 0, 2))] = 1.0;
+             o.direction = geo::MirrorDirection(std::clamp<int64_t>(intOf(n, "direction"), 0, 2));
+             o.weld = flagOf(n, "weld");
+             o.tolerance = numOf(n, "tolerance");
              geo::mirrorMesh(m, o);
              return m;
          }},
@@ -199,8 +190,8 @@ std::vector<ModifierType> modifierTypes()
           param("keepHardEdges", PlugType::Bool, false, "Keep normals split along hard edges; off smooths the shading across them.")},
          [](const geo::Mesh& in, const Node& n) {
              geo::SubdivideOptions o;
-             o.levels = int(std::clamp<int64_t>(i(n, "levels"), 0, 4));
-             o.keepHardEdges = b(n, "keepHardEdges");
+             o.levels = int(std::clamp<int64_t>(intOf(n, "levels"), 0, 4));
+             o.keepHardEdges = flagOf(n, "keepHardEdges");
              return o.levels == 0 ? in : geo::subdivide(in, o);
          }},
         {"bevelModifier",
@@ -213,10 +204,10 @@ std::vector<ModifierType> modifierTypes()
          [](const geo::Mesh& in, const Node& n) {
              geo::Mesh m = in;
              geo::BevelOptions o;
-             o.offset = f(n, "offset");
-             o.segments = int(std::clamp<int64_t>(i(n, "segments"), 1, 32));
-             o.profile = f(n, "profile");
-             geo::bevelEdges(m, sharpEdges(m, f(n, "angle")), o);
+             o.offset = numOf(n, "offset");
+             o.segments = int(std::clamp<int64_t>(intOf(n, "segments"), 1, 32));
+             o.profile = numOf(n, "profile");
+             geo::bevelEdges(m, sharpEdges(m, numOf(n, "angle")), o);
              return m;
          }},
         {"arrayModifier",
@@ -262,14 +253,14 @@ std::vector<ModifierType> modifierTypes()
          [](const geo::Mesh& in, const Node& n) {
              // Face-area weighting keeps big flat faces flat, the usual game-art bevel look.
              geo::Mesh m = in;
-             geo::updateCornerNormals(m, {geo::NormalWeight::Area, b(n, "keepHardEdges")});
+             geo::updateCornerNormals(m, {geo::NormalWeight::Area, flagOf(n, "keepHardEdges")});
              return m;
          }},
         {"solidifyModifier",
          "Gives a surface thickness: an inner shell offset along the normals, joined to the outer one at open borders. Use it "
          "to turn planes and open shells into solid panels.",
          {param("thickness", PlugType::Float, 2.0, "Shell thickness, cm, offset inward along the normals.")},
-         [](const geo::Mesh& in, const Node& n) { return solidify(in, f(n, "thickness")); }},
+         [](const geo::Mesh& in, const Node& n) { return solidify(in, numOf(n, "thickness")); }},
         {"decimateModifier",
          "Reduces the triangle count while keeping the shape, silhouette, UVs and normals. Use it for LODs or to lighten "
          "scans and sculpts.",
@@ -283,17 +274,15 @@ std::vector<ModifierType> modifierTypes()
     };
 }
 
-Graph& graph() { return Graph::current(); }
-
 std::map<std::string, std::function<void(Graph&, Node&, NodeId)>>& createHooks()
 {
     static std::map<std::string, std::function<void(Graph&, Node&, NodeId)>> hooks;
     return hooks;
 }
 
-Node& meshNamed(const std::string& name, const char* cmd)
+Node& modifierMesh(const std::string& name, const char* cmd)
 {
-    Node* n = graph().find(name);
+    Node* n = Graph::current().find(name);
     if (!n || !n->type().isA("mesh"))
         throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
     return *n;
@@ -580,9 +569,9 @@ void registerCommands()
             auto objs = a.objects();
             if (objs.empty() || !a.has("kind"))
                 throw CommandError("addModifier: give a mesh and kind=");
-            Graph& g = graph();
+            Graph& g = Graph::current();
             // On an instance it goes on the root's stack, which every member shares.
-            Node& mesh = *g.node(instancing::root(g, meshNamed(objs.back(), "addModifier").id()));
+            Node& mesh = *g.node(instancing::root(g, modifierMesh(objs.back(), "addModifier").id()));
             const NodeType* t = types::find(a.get<std::string>("kind") + "Modifier");
             if (!t)
                 throw CommandError("addModifier: unknown kind '" + a.get<std::string>("kind") + "'");
@@ -629,7 +618,7 @@ void registerCommands()
         .flags = {{"pivot", "", T::Bool, nullptr, "Centre on the arrayed mesh's current pivot."}},
         .run = [](const Args& a) -> json {
             auto objs = a.objects();
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node* mod = objs.empty() ? nullptr : g.find(objs.front());
             if (!mod || mod->type().name != "arrayModifier")
                 throw CommandError("arrayCenter: give an array modifier first");
@@ -673,8 +662,8 @@ void registerCommands()
             if (objs.empty())
                 throw CommandError("modifiers: no mesh");
             json out = json::array();
-            for (NodeId id : stack(graph(), meshNamed(objs.back(), "modifiers").id()))
-                out.push_back(graph().node(id)->path());
+            for (NodeId id : stack(Graph::current(), modifierMesh(objs.back(), "modifiers").id()))
+                out.push_back(Graph::current().node(id)->path());
             return out;
         },
     });
@@ -696,7 +685,7 @@ void registerCommands()
         .doc = "Remove modifiers, reconnecting the stack around them.",
         .positionalDoc = "modifiers",
         .run = [unlink](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             for (const std::string& name : a.objects())
             {
                 Node* n = g.find(name);
@@ -713,7 +702,7 @@ void registerCommands()
         .doc = "Bake a modifier (and everything below it in the stack) into the base mesh.",
         .positionalDoc = "modifier",
         .run = [unlink](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             for (const std::string& name : a.objects())
             {
                 Node* n = g.find(name);
@@ -761,7 +750,7 @@ void registerCommands()
         .positionalDoc = "modifier",
         .flags = {{"by", "", T::Int, 1, "Steps."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("moveModifier: no modifier");

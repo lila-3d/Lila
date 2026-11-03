@@ -26,14 +26,6 @@ json importFixture(const char* name, json flags = json::object())
     return run("importUsd", flags);
 }
 
-bool listed(const json& list, const std::string& part)
-{
-    for (const json& s : list)
-        if (s.get<std::string>().find(part) != std::string::npos)
-            return true;
-    return false;
-}
-
 glm::dmat4 trs(const glm::dvec3& t, const glm::dmat4& r, const glm::dvec3& s = glm::dvec3(1.0))
 {
     return glm::translate(glm::dmat4(1.0), t) * r * glm::scale(glm::dmat4(1.0), s);

@@ -1,5 +1,6 @@
 #include "ui/BakerPanelInternal.h"
 #include "ui/ChoiceTips.h"
+#include "ui/UiCommands.h"
 
 namespace lila::ui
 {

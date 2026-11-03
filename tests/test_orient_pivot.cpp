@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Mesh.h"
 #include "geo/Primitives.h"
 #include "ops/Command.h"
@@ -23,41 +25,12 @@
 using namespace lila;
 using json = nlohmann::json;
 using scene::ComponentMode;
+using namespace testutil;
 namespace op = scene::orientpivot;
 
 namespace
 {
-json run(const char* name, const json& call = json::object()) { return ops::execute(name, call); }
-
-bool near(const glm::dvec3& a, const glm::dvec3& b, double tol = 1e-6) { return glm::length(a - b) < tol; }
-
-glm::dvec3 vec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
-
 scene::Node& node(const std::string& name) { return *scene::Graph::current().find(name); }
-
-geo::Mesh meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *node(name).as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-glm::dmat4 worldOf(const std::string& name)
-{
-    scene::Graph::current().evaluate();
-    return node(name).as<glm::dmat4>(scene::Transform::kWorldMatrix);
-}
-
-std::vector<glm::dvec3> worldPoints(const std::string& name)
-{
-    geo::Mesh m = meshOf(name);
-    glm::dmat4 w = worldOf(name);
-    std::vector<glm::dvec3> out;
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p))
-            out.push_back(glm::dvec3(w * glm::dvec4(m.position(p), 1.0)));
-    return out;
-}
 
 void checkRotation(const glm::dmat3& f)
 {

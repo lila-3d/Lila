@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "geo/Symmetry.h"
 #include "scene/Graph.h"
@@ -11,23 +12,10 @@
 #include <cmath>
 
 using namespace lila;
+using namespace uvtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::MeshPtr meshOf(const std::string& name)
-{
-    scene::Graph::current().evaluate();
-    return scene::Graph::current().find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-std::vector<glm::vec2> uvsOf(const std::string& name)
-{
-    auto s = meshOf(name)->cornerAttrs().get<glm::vec2>("uv0");
-    return {s.begin(), s.end()};
-}
-
 /** Corner pairs across x = 0, found from the positions. */
 std::vector<std::pair<geo::Index, geo::Index>> cornerPairs(const geo::Mesh& m)
 {

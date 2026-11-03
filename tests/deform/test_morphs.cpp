@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Deformers.h"
@@ -19,26 +21,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-Graph& graph() { return Graph::current(); }
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    Graph& g = graph();
-    g.evaluate();
-    Node* n = g.find(mesh);
-    REQUIRE(n);
-    MeshPtr m = n->as<MeshPtr>(MeshNode::kOutMesh);
-    REQUIRE(m);
-    return {m->positions().begin(), m->positions().end()};
-}
-
 /** World space points of a mesh node. */
 std::vector<glm::dvec3> worldPoints(const std::string& mesh)
 {
@@ -49,36 +36,7 @@ std::vector<glm::dvec3> worldPoints(const std::string& mesh)
     return p;
 }
 
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) <= eps; }
-
-double maxDistance(const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b)
-{
-    REQUIRE(a.size() == b.size());
-    double d = 0.0;
-    for (size_t i = 0; i < a.size(); ++i)
-        d = std::max(d, glm::length(a[i] - b[i]));
-    return d;
-}
-
-void editPoints(const std::string& mesh, const std::function<glm::dvec3(geo::Index, const glm::dvec3&)>& offset)
-{
-    Graph& g = graph();
-    NodeId id = g.find(mesh)->id();
-    PlugRef plug = modifiers::editPlug(g, id);
-    auto m = std::make_shared<geo::Mesh>(*std::get<MeshPtr>(g.value(plug)));
-    for (geo::Index p = 0; p < m->pointCapacity(); ++p)
-        m->setPosition(p, m->position(p) + offset(p, m->position(p)));
-    g.setValue(plug, MeshPtr(m));
-}
-
 double plugValue(const std::string& plug) { return std::get<double>(graph().value(graph().plug(plug))); }
-
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_deform_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
 
 /** A tube skinned to a two joint chain, bone_b at the middle (an elbow). */
 std::string skinnedTube(int method = 0)

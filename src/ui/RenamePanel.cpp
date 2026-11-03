@@ -29,13 +29,6 @@ namespace lila::ui
 {
 namespace
 {
-enum Scope
-{
-    kSelection,
-    kSelectionOutliner,
-    kHierarchy,
-};
-
 /** Lists every name the naming conventions would change and renames them once confirmed. */
 void conformNames()
 {
@@ -87,7 +80,7 @@ void conformNames()
     }
 }
 
-QSpinBox* spin(QWidget* parent, int lo, int hi, int value)
+QSpinBox* intSpin(QWidget* parent, int lo, int hi, int value)
 {
     auto* s = new QSpinBox(parent);
     s->setRange(lo, hi);
@@ -130,10 +123,10 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
     mSeparator->setMaximumWidth(28);
     mSeparator->setToolTip("Between the name and its number");
     form->addRow("Name", row({mBase, mSeparator}));
-    mPadding = spin(this, 0, 8, 2);
+    mPadding = intSpin(this, 0, 8, 2);
     mPadding->setToolTip("Digits in the number; 0 leaves it off");
-    mStart = spin(this, -99999, 99999, 1);
-    mStep = spin(this, -999, 999, 1);
+    mStart = intSpin(this, -99999, 99999, 1);
+    mStep = intSpin(this, -999, 999, 1);
     form->addRow("Padding", row({mPadding, label("Start"), mStart, label("Step"), mStep}));
 
     mFind = new QLineEdit(this);
@@ -147,9 +140,9 @@ RenamePanel::RenamePanel(QWidget* parent) : QWidget(parent)
     mMatchCase = new QCheckBox("Match case", this);
     form->addRow("", row({mRegex, mMatchCase}));
 
-    mStripStart = spin(this, 0, 999, 0);
+    mStripStart = intSpin(this, 0, 999, 0);
     mStripStart->setToolTip("Characters dropped from the front");
-    mStripEnd = spin(this, 0, 999, 0);
+    mStripEnd = intSpin(this, 0, 999, 0);
     mStripEnd->setToolTip("Characters dropped from the end");
     mStripDigits = new QCheckBox("Number", this);
     mStripDigits->setToolTip("Drops the trailing number and the separator before it: Arm_02 becomes Arm");

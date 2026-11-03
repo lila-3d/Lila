@@ -1,6 +1,7 @@
 #include "curve/Skeleton.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 
 #include <glm/gtc/constants.hpp>
 
@@ -14,12 +15,9 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
 constexpr double kInf = std::numeric_limits<double>::infinity();
 // Edge directions closer than this (sine of the angle) count as parallel: near-degenerate input acts like the exact case.
 constexpr double kParallel = 1e-8;
-
-double cross2(const D2& a, const D2& b) { return a.x * b.y - a.y * b.x; }
 
 double angleOf(const D2& d)
 {
@@ -28,7 +26,7 @@ double angleOf(const D2& d)
 }
 
 /** An input edge's supporting line, moving inward (toward n) at speed w. */
-struct Line
+struct EdgeLine
 {
     D2 o{0.0}, d{1.0, 0.0}, n{0.0, 1.0};
     double w = 1.0;
@@ -113,7 +111,7 @@ public:
     }
 
 private:
-    std::vector<Line> mLines;
+    std::vector<EdgeLine> mLines;
     std::vector<Vtx> mVerts;
     std::vector<int> mActive;
     std::vector<std::vector<int>> mEdgeVerts; // per edge, every vertex that ever had it as out
@@ -165,7 +163,7 @@ private:
             for (size_t i = 0; i < n; ++i)
             {
                 addNode(pts[i], 0.0);
-                Line ln;
+                EdgeLine ln;
                 ln.o = pts[i];
                 D2 d = pts[(i + 1) % n] - pts[i];
                 double len = glm::length(d);
@@ -208,8 +206,8 @@ private:
     /** Velocity and reflexness from the vertex's two lines. */
     void setMotion(Vtx& v)
     {
-        const Line& a = mLines[size_t(v.in)];
-        const Line& b = mLines[size_t(v.out)];
+        const EdgeLine& a = mLines[size_t(v.in)];
+        const EdgeLine& b = mLines[size_t(v.out)];
         double det = cross2(a.n, b.n);
         v.reflex = cross2(a.d, b.d) < -kParallel;
         v.spike = false;
@@ -282,7 +280,7 @@ private:
         {
             if (int(e) == r.in || int(e) == r.out || !edgeActive(int(e)))
                 continue;
-            const Line& ln = mLines[e];
+            const EdgeLine& ln = mLines[e];
             if (!r.reflex)
             {
                 bool against = (glm::dot(ln.d, din) < 0.0 && std::abs(cross2(ln.d, din)) < kParallel) ||
@@ -313,7 +311,7 @@ private:
     /** True when x lies on an active segment of edge e at time t (not one ending at vertex skip). */
     bool onActiveSegment(int e, const D2& x, double t, int skip) const
     {
-        const Line& ln = mLines[size_t(e)];
+        const EdgeLine& ln = mLines[size_t(e)];
         for (int a : mEdgeVerts[size_t(e)])
         {
             const Vtx& va = mVerts[size_t(a)];

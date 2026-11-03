@@ -9,6 +9,8 @@
 #include "ui/AudioUi.h"
 #include "ui/DockSidebar.h"
 #include "ui/GraphEditor.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -63,18 +65,6 @@ void setTime(double seconds)
 {
     ops::execute("currentTime", {{"args", {seconds}}});
     notifyTimeChanged();
-}
-
-void runUi(const char* command, const json& call = json::object())
-{
-    try
-    {
-        ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
 }
 
 /** Steps the scene time through a PlaybackClock at the playback speed. */
@@ -186,19 +176,6 @@ Player& player()
 {
     static Player p;
     return p;
-}
-
-QDockWidget* findDock(const char* name)
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-    {
-        if (w->objectName() == name)
-            if (auto* d = qobject_cast<QDockWidget*>(w))
-                return d;
-        if (auto* d = w->findChild<QDockWidget*>(name))
-            return d;
-    }
-    return nullptr;
 }
 
 void stepFrame(int delta)

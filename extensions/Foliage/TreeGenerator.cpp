@@ -897,7 +897,7 @@ std::string opacityMap(Graph& g, NodeId leaf, const std::string& folder, const s
     return path;
 }
 
-json exportLeaf(Graph& g, const std::vector<NodeId>& given, const json& values, const std::string& preset)
+json exportLeafFiles(Graph& g, const std::vector<NodeId>& given, const json& values, const std::string& preset)
 {
     std::vector<NodeId> meshes = given;
     if (meshes.empty())
@@ -1490,7 +1490,7 @@ void registerCommands(ext::Context& ctx)
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             const Call c = callOf(a);
-            return exportLeaf(g, nodesNamed(g, listOf(a.flags.value("leaf", json())), "treeExportLeaf"), c.values, c.preset);
+            return exportLeafFiles(g, nodesNamed(g, listOf(a.flags.value("leaf", json())), "treeExportLeaf"), c.values, c.preset);
         },
     });
 

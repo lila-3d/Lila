@@ -41,4 +41,23 @@ struct CacheStats
 };
 LILA_SCENE_API CacheStats cacheStats();
 LILA_SCENE_API void clearCache();
+
+/** The CPU side of a compiled pass's globals and entry varying: what gPass points at, the gU, gArena and gOut views, and the group range. */
+struct PassHeader
+{
+    float res[4];
+    float uv[4];
+};
+
+struct BufferView
+{
+    const void* data;
+    size_t count;
+};
+
+struct Varying
+{
+    uint32_t start[3];
+    uint32_t end[3];
+};
 } // namespace lila::tex::slangrt

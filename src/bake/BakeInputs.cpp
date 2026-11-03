@@ -2,6 +2,7 @@
 
 #include "bake/BakeCache.h"
 
+#include "bake/BakeCommon.h"
 #include "bake/BakeNodes.h"
 #include "bake/HighFiles.h"
 #include "core/Log.h"
@@ -31,6 +32,9 @@ namespace lila::bake
 {
 namespace
 {
+using detail::exportedMesh;
+using detail::worldOf;
+
 struct NoUndo
 {
     bool was = UndoStack::get().enabled();
@@ -186,12 +190,6 @@ std::vector<uint32_t> faceIslands(const geo::Mesh& mesh, uint32_t& count)
     return island;
 }
 
-glm::dmat4 worldOf(scene::Graph& g, scene::NodeId id)
-{
-    const scene::PlugValue v = g.value({id, scene::Transform::kWorldMatrix, -1});
-    return std::holds_alternative<glm::dmat4>(v) ? std::get<glm::dmat4>(v) : glm::dmat4(1.0);
-}
-
 scene::Node& meshNode(scene::Graph& g, const std::string& name, const std::string& group, const char* role)
 {
     scene::Node* n = nullptr;
@@ -205,14 +203,6 @@ scene::Node& meshNode(scene::Graph& g, const std::string& name, const std::strin
     if (!n || !n->type().isA("mesh"))
         throw std::runtime_error("bake group " + group + ": " + role + " '" + name + "' is not a mesh in the scene");
     return *n;
-}
-
-scene::MeshPtr exportedMesh(scene::Graph& g, scene::NodeId id)
-{
-    scene::MeshPtr m = scene::modifiers::exportMesh(g, id);
-    if (!m)
-        m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
-    return m;
 }
 
 float diagonal(const glm::vec3& lo, const glm::vec3& hi) { return glm::length(hi - lo); }

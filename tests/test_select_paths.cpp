@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/ComponentPaths.h"
 #include "geo/Primitives.h"
 #include "geo/Topology.h"
@@ -12,39 +14,20 @@
 
 using namespace lila;
 using geo::Index;
+using namespace testutil;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-
-Index pointAt(const geo::Mesh& m, double x, double z)
-{
-    for (Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p) && std::abs(m.position(p).x - x) < 1e-6 && std::abs(m.position(p).z - z) < 1e-6)
-            return p;
-    return geo::kInvalid;
-}
-
-Index edgeAt(const geo::Mesh& m, double x0, double z0, double x1, double z1) { return m.findEdge(pointAt(m, x0, z0), pointAt(m, x1, z1)); }
-
-Index faceAt(const geo::Mesh& m, double x, double z)
-{
-    for (Index f = 0; f < m.faceCapacity(); ++f)
-        if (m.faceValid(f) && std::abs(m.faceCentroid(f).x - x) < 1e-6 && std::abs(m.faceCentroid(f).z - z) < 1e-6)
-            return f;
-    return geo::kInvalid;
-}
+Index edgeJoining(const geo::Mesh& m, double x0, double z0, double x1, double z1) { return m.findEdge(pointAt(m, x0, z0), pointAt(m, x1, z1)); }
 
 /** 4 x 4 quads, points on the integer grid from -2 to 2. */
 geo::Mesh grid() { return geo::makePlane({.width = 4.0, .depth = 4.0, .subdivX = 4, .subdivZ = 4}); }
-
-bool contains(const std::vector<Index>& v, Index x) { return std::find(v.begin(), v.end(), x) != v.end(); }
 } // namespace
 
 TEST_CASE("edge path between follows a shared loop, a shared ring, else the shortest path")
 {
     geo::Mesh m = grid();
-    Index a = edgeAt(m, -2, 0, -1, 0), b = edgeAt(m, 1, 0, 2, 0);
+    Index a = edgeJoining(m, -2, 0, -1, 0), b = edgeJoining(m, 1, 0, 2, 0);
     REQUIRE(a != geo::kInvalid);
     REQUIRE(b != geo::kInvalid);
     std::vector<Index> loop = geo::edgePathBetween(m, a, b);
@@ -54,23 +37,23 @@ TEST_CASE("edge path between follows a shared loop, a shared ring, else the shor
     for (Index e : loop)
         CHECK(std::abs(m.position(m.edgePoint(e, 0)).z) < 1e-9);
 
-    Index r0 = edgeAt(m, -1, -2, -1, -1), r1 = edgeAt(m, 2, -2, 2, -1);
+    Index r0 = edgeJoining(m, -1, -2, -1, -1), r1 = edgeJoining(m, 2, -2, 2, -1);
     std::vector<Index> ring = geo::edgePathBetween(m, r0, r1);
     CHECK(ring.size() == 4);
-    CHECK(contains(ring, edgeAt(m, 0, -2, 0, -1)));
-    CHECK(contains(ring, edgeAt(m, 1, -2, 1, -1)));
+    CHECK(has(ring, edgeJoining(m, 0, -2, 0, -1)));
+    CHECK(has(ring, edgeJoining(m, 1, -2, 1, -1)));
 
     // Border edges share the boundary loop, so it is followed the shorter way round.
-    std::vector<Index> border = geo::edgePathBetween(m, edgeAt(m, -2, -2, -1, -2), edgeAt(m, 1, 2, 2, 2));
+    std::vector<Index> border = geo::edgePathBetween(m, edgeJoining(m, -2, -2, -1, -2), edgeJoining(m, 1, 2, 2, 2));
     CHECK(border.size() == 9);
     for (Index e : border)
         CHECK(m.isBoundaryEdge(e));
 
     // Neither loop nor ring: the shortest connected chain.
-    Index c0 = edgeAt(m, -1, -1, 0, -1), c1 = edgeAt(m, 0, 1, 1, 1);
+    Index c0 = edgeJoining(m, -1, -1, 0, -1), c1 = edgeJoining(m, 0, 1, 1, 1);
     std::vector<Index> path = geo::edgePathBetween(m, c0, c1);
-    CHECK(contains(path, c0));
-    CHECK(contains(path, c1));
+    CHECK(has(path, c0));
+    CHECK(has(path, c1));
     CHECK(geo::chainEdges(m, path).size() == 1);
     CHECK(path.size() == 4);
 }
@@ -88,7 +71,7 @@ TEST_CASE("edge path takes the shorter way round a closed loop")
     std::vector<Index> path = geo::edgePathBetween(m, loop[0], loop[5]);
     REQUIRE(path.size() == 4);
     for (Index e : {loop[0], loop[5], loop[6], loop[7]})
-        CHECK(contains(path, e));
+        CHECK(has(path, e));
 }
 
 TEST_CASE("point and face paths between")
@@ -117,7 +100,7 @@ TEST_CASE("point and face paths between")
 TEST_CASE("face loop crosses the edge's ring")
 {
     geo::Mesh m = grid();
-    std::vector<Index> loop = geo::faceLoop(m, edgeAt(m, 0, -1, 0, 0));
+    std::vector<Index> loop = geo::faceLoop(m, edgeJoining(m, 0, -1, 0, 0));
     REQUIRE(loop.size() == 4);
     for (Index f : loop)
         CHECK(std::abs(m.faceCentroid(f).z + 0.5) < 1e-9);
@@ -140,13 +123,13 @@ TEST_CASE("contained faces flood fill inside closed borders")
     geo::Mesh m = grid();
     std::vector<Index> square;
     for (int k = -1; k < 1; ++k)
-        for (Index e : {edgeAt(m, k, -1, k + 1, -1), edgeAt(m, k, 1, k + 1, 1), edgeAt(m, -1, k, -1, k + 1), edgeAt(m, 1, k, 1, k + 1)})
+        for (Index e : {edgeJoining(m, k, -1, k + 1, -1), edgeJoining(m, k, 1, k + 1, 1), edgeJoining(m, -1, k, -1, k + 1), edgeJoining(m, 1, k, 1, k + 1)})
             square.push_back(e);
     std::vector<Index> inside = geo::containedFaces(m, square);
     CHECK(inside.size() == 4);
     for (Index f : inside)
         CHECK(std::abs(m.faceCentroid(f).x) < 1.0);
-    Index open[] = {edgeAt(m, -1, -1, 0, -1)};
+    Index open[] = {edgeJoining(m, -1, -1, 0, -1)};
     CHECK(geo::containedFaces(m, open).empty());
 }
 

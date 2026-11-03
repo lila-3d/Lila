@@ -29,7 +29,7 @@ bool segmentsCross(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c
     return ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps));
 }
 
-double pointSegmentDistance(const glm::dvec2& p, const glm::dvec2& a, const glm::dvec2& b)
+double pointSegmentDistance2d(const glm::dvec2& p, const glm::dvec2& a, const glm::dvec2& b)
 {
     glm::dvec2 ab = b - a;
     double t = std::clamp(glm::dot(p - a, ab) / std::max(glm::dot(ab, ab), 1e-300), 0.0, 1.0);
@@ -161,7 +161,7 @@ Chord bestChord(const Mesh& mesh, Index f, std::span<const Index> corners, doubl
                 size_t k1 = (k + 1) % n;
                 if (k != i && k != j && k1 != i && k1 != j && segmentsCross(p[i], p[j], p[k], p[k1], eps))
                     clear = false;
-                if (k != i && k != j && pointSegmentDistance(p[k], p[i], p[j]) < 1e-6 * meanEdge)
+                if (k != i && k != j && pointSegmentDistance2d(p[k], p[i], p[j]) < 1e-6 * meanEdge)
                     clear = false;
             }
             if (!clear)

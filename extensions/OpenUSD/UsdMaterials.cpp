@@ -29,8 +29,6 @@ const TfToken kPreviewSurface("UsdPreviewSurface");
 const TfToken kUvTexture("UsdUVTexture");
 const TfToken kPrimvarReader("UsdPrimvarReader_float2");
 const TfToken kTransform2d("UsdTransform2d");
-
-template <class T> const T& val(const scene::Node& n, int attr) { return n.as<T>(attr); }
 } // namespace
 
 std::string materialSettings(const scene::Node& n)
@@ -85,7 +83,7 @@ MaterialWriter::MaterialWriter(scene::Graph& graph, UsdStagePtr stage, SdfPath s
 bool MaterialWriter::twoSided(const std::string& slot) const
 {
     const scene::Node* n = scene::materials::find(mGraph, slot);
-    return n && val<bool>(*n, mat::kTwoSided);
+    return n && n->as<bool>(mat::kTwoSided);
 }
 
 std::string MaterialWriter::assetPath(const std::string& lilaPath)
@@ -154,10 +152,10 @@ void MaterialWriter::writeUnlit(const UsdShadeMaterial& m, UsdShadeShader surfac
     input("roughness", SdfValueTypeNames->Float).Set(1.0f);
     input("metallic", SdfValueTypeNames->Float).Set(0.0f);
     input("ior", SdfValueTypeNames->Float).Set(1.0f);
-    const auto blend = mat::BlendMode(val<int64_t>(n, mat::kBlendMode));
-    const double opacity = val<double>(n, mat::kOpacity);
+    const auto blend = mat::BlendMode(n.as<int64_t>(mat::kBlendMode));
+    const double opacity = n.as<double>(mat::kOpacity);
     UsdShadeInput emissive = input("emissiveColor", SdfValueTypeNames->Color3f);
-    if (const std::string& baseMap = val<std::string>(n, mat::kBaseColorMap); !baseMap.empty())
+    if (const std::string& baseMap = n.as<std::string>(mat::kBaseColorMap); !baseMap.empty())
     {
         UsdShadeShader t = texture(baseMap, GfVec4f(1.0f, 1.0f, 1.0f, blend == mat::BlendMode::Opaque ? 1.0f : float(opacity)));
         emissive.ConnectToSource(t.ConnectableAPI(), TfToken("rgb"));
@@ -166,15 +164,15 @@ void MaterialWriter::writeUnlit(const UsdShadeMaterial& m, UsdShadeShader surfac
     }
     else
     {
-        const glm::dvec3 c = val<glm::dvec3>(n, mat::kBaseColor);
+        const glm::dvec3 c = n.as<glm::dvec3>(mat::kBaseColor);
         emissive.Set(GfVec3f(float(c.x), float(c.y), float(c.z)));
         if (blend != mat::BlendMode::Opaque)
             input("opacity", SdfValueTypeNames->Float).Set(float(opacity));
     }
     if (blend == mat::BlendMode::Masked)
-        input("opacityThreshold", SdfValueTypeNames->Float).Set(float(val<double>(n, mat::kOpacityMaskClip)));
+        input("opacityThreshold", SdfValueTypeNames->Float).Set(float(n.as<double>(mat::kOpacityMaskClip)));
     setLilaData(m.GetPrim(), "unlit", VtValue(true));
-    if (!val<std::string>(n, mat::kEmissiveMap).empty())
+    if (!n.as<std::string>(mat::kEmissiveMap).empty())
         warnings.push_back(std::format("material {}: UsdPreviewSurface has no room for an unlit material's emissive map; left out", slot));
 }
 
@@ -214,7 +212,7 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
         return;
     }
 
-    const int uvSet = int(std::max<int64_t>(0, val<int64_t>(*n, mat::kUvSet)));
+    const int uvSet = int(std::max<int64_t>(0, n->as<int64_t>(mat::kUvSet)));
     UsdShadeShader reader;
     auto stReader = [&]() -> UsdShadeShader {
         if (!reader)
@@ -259,10 +257,10 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     auto connect = [&](UsdShadeInput in, const UsdShadeShader& tex, const char* channel) { in.ConnectToSource(tex.ConnectableAPI(), TfToken(channel)); };
     auto vec3f = [](const glm::dvec3& v) { return GfVec3f(float(v.x), float(v.y), float(v.z)); };
 
-    const auto blend = mat::BlendMode(val<int64_t>(*n, mat::kBlendMode));
-    const double opacity = val<double>(*n, mat::kOpacity);
-    const std::string& baseMap = val<std::string>(*n, mat::kBaseColorMap);
-    if (mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) == mat::ShadingModel::Unlit)
+    const auto blend = mat::BlendMode(n->as<int64_t>(mat::kBlendMode));
+    const double opacity = n->as<double>(mat::kOpacity);
+    const std::string& baseMap = n->as<std::string>(mat::kBaseColorMap);
+    if (mat::ShadingModel(n->as<int64_t>(mat::kShadingModel)) == mat::ShadingModel::Unlit)
     {
         writeUnlit(m, surface, *n, slot,
                    [&](const std::string& p, GfVec4f scale) { return texture(p, "baseColor", true, mat::kBaseColorMap, scale); });
@@ -279,20 +277,20 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     }
     else
     {
-        diffuse.Set(vec3f(val<glm::dvec3>(*n, mat::kBaseColor)));
+        diffuse.Set(vec3f(n->as<glm::dvec3>(mat::kBaseColor)));
         if (blend != mat::BlendMode::Opaque)
             input("opacity", SdfValueTypeNames->Float).Set(float(opacity));
     }
     if (blend == mat::BlendMode::Masked)
-        input("opacityThreshold", SdfValueTypeNames->Float).Set(float(val<double>(*n, mat::kOpacityMaskClip)));
+        input("opacityThreshold", SdfValueTypeNames->Float).Set(float(n->as<double>(mat::kOpacityMaskClip)));
 
-    const std::string& orm = val<std::string>(*n, mat::kOrmMap);
+    const std::string& orm = n->as<std::string>(mat::kOrmMap);
     UsdShadeInput metallic = input("metallic", SdfValueTypeNames->Float);
     UsdShadeInput roughness = input("roughness", SdfValueTypeNames->Float);
     if (!orm.empty())
     {
         static const char* kChannel[3] = {"r", "g", "b"};
-        const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(val<int64_t>(*n, mat::kPackedLayout)));
+        const std::array<int, 3> ch = scene::materials::packedChannels(mat::PackedLayout(n->as<int64_t>(mat::kPackedLayout)));
         UsdShadeShader t = texture(orm, "orm", false, mat::kOrmMap);
         connect(input("occlusion", SdfValueTypeNames->Float), t, kChannel[ch[0]]);
         connect(roughness, t, kChannel[ch[1]]);
@@ -300,43 +298,43 @@ void MaterialWriter::writePreview(const UsdShadeMaterial& m, const scene::Node* 
     }
     else
     {
-        if (const std::string& p = val<std::string>(*n, mat::kMetallicMap); !p.empty())
+        if (const std::string& p = n->as<std::string>(mat::kMetallicMap); !p.empty())
             connect(metallic, texture(p, "metallic", false, mat::kMetallicMap), "r");
         else
-            metallic.Set(float(val<double>(*n, mat::kMetallic)));
-        if (const std::string& p = val<std::string>(*n, mat::kRoughnessMap); !p.empty())
+            metallic.Set(float(n->as<double>(mat::kMetallic)));
+        if (const std::string& p = n->as<std::string>(mat::kRoughnessMap); !p.empty())
             connect(roughness, texture(p, "roughness", false, mat::kRoughnessMap), "r");
         else
-            roughness.Set(float(val<double>(*n, mat::kRoughness)));
-        if (const std::string& p = val<std::string>(*n, mat::kAmbientOcclusionMap); !p.empty())
+            roughness.Set(float(n->as<double>(mat::kRoughness)));
+        if (const std::string& p = n->as<std::string>(mat::kAmbientOcclusionMap); !p.empty())
             connect(input("occlusion", SdfValueTypeNames->Float), texture(p, "occlusion", false, mat::kAmbientOcclusionMap), "r");
     }
-    if (const double s = val<double>(*n, mat::kSpecular); std::abs(s - 0.5) > 1e-6)
+    if (const double s = n->as<double>(mat::kSpecular); std::abs(s - 0.5) > 1e-6)
         input("ior", SdfValueTypeNames->Float).Set(float(iorOfSpecular(s)));
 
-    if (const std::string& p = val<std::string>(*n, mat::kNormalMap); !p.empty())
+    if (const std::string& p = n->as<std::string>(mat::kNormalMap); !p.empty())
     {
         // USD's normal input is OpenGL style; a DirectX map's green is flipped by the texture's scale and bias.
-        const bool directX = mat::NormalFormat(val<int64_t>(*n, mat::kNormalFormat)) == mat::NormalFormat::DirectX;
+        const bool directX = mat::NormalFormat(n->as<int64_t>(mat::kNormalFormat)) == mat::NormalFormat::DirectX;
         UsdShadeShader t = texture(p, "normal", false, mat::kNormalMap, GfVec4f(2.0f, directX ? -2.0f : 2.0f, 2.0f, 1.0f),
                                    GfVec4f(-1.0f, directX ? 1.0f : -1.0f, -1.0f, 0.0f));
         connect(input("normal", SdfValueTypeNames->Normal3f), t, "rgb");
     }
 
-    const double intensity = val<double>(*n, mat::kEmissiveIntensity);
-    if (const std::string& p = val<std::string>(*n, mat::kEmissiveMap); !p.empty())
+    const double intensity = n->as<double>(mat::kEmissiveIntensity);
+    if (const std::string& p = n->as<std::string>(mat::kEmissiveMap); !p.empty())
     {
         const float k = float(intensity);
         connect(input("emissiveColor", SdfValueTypeNames->Color3f), texture(p, "emissive", true, mat::kEmissiveMap, GfVec4f(k, k, k, 1.0f)),
                 "rgb");
     }
-    else if (const glm::dvec3 e = val<glm::dvec3>(*n, mat::kEmissiveColor) * intensity; e != glm::dvec3(0.0))
+    else if (const glm::dvec3 e = n->as<glm::dvec3>(mat::kEmissiveColor) * intensity; e != glm::dvec3(0.0))
     {
         input("emissiveColor", SdfValueTypeNames->Color3f).Set(vec3f(e));
     }
-    if (mat::ShadingModel(val<int64_t>(*n, mat::kShadingModel)) != mat::ShadingModel::DefaultLit)
+    if (mat::ShadingModel(n->as<int64_t>(mat::kShadingModel)) != mat::ShadingModel::DefaultLit)
         warnings.push_back(std::format("material {}: its {} shading is kept for Lila only; other tools see the default lit inputs", slot,
-                                       n->type().attrs[mat::kShadingModel].enumNames[size_t(val<int64_t>(*n, mat::kShadingModel))]));
+                                       n->type().attrs[mat::kShadingModel].enumNames[size_t(n->as<int64_t>(mat::kShadingModel))]));
 }
 
 // Import

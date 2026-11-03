@@ -18,14 +18,12 @@ namespace lila::geo
 {
 namespace
 {
-using V = glm::dvec3;
-
 constexpr uint8_t kSurface = 1;
 constexpr uint8_t kExterior = 2;
 
 struct Grid
 {
-    V origin{0.0};
+    glm::dvec3 origin{0.0};
     double cell = 1.0;
     int n[3] = {1, 1, 1};
     std::vector<uint8_t> state;
@@ -34,8 +32,8 @@ struct Grid
     size_t size() const { return size_t(n[0]) * n[1] * n[2]; }
     size_t index(int x, int y, int z) const { return (size_t(z) * n[1] + y) * n[0] + x; }
     glm::ivec3 coords(size_t i) const { return {int(i % n[0]), int((i / n[0]) % n[1]), int(i / (size_t(n[0]) * n[1]))}; }
-    V center(int x, int y, int z) const { return origin + (V(x, y, z) + 0.5) * cell; }
-    glm::ivec3 cellOf(const V& p) const
+    glm::dvec3 center(int x, int y, int z) const { return origin + (glm::dvec3(x, y, z) + 0.5) * cell; }
+    glm::ivec3 cellOf(const glm::dvec3& p) const
     {
         glm::ivec3 c;
         for (int k = 0; k < 3; ++k)
@@ -44,25 +42,25 @@ struct Grid
     }
 };
 
-bool separated(const V& axis, const V& h, const V& a, const V& b, const V& c)
+bool separated(const glm::dvec3& axis, const glm::dvec3& h, const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c)
 {
     double p0 = glm::dot(a, axis), p1 = glm::dot(b, axis), p2 = glm::dot(c, axis);
     double r = h.x * std::abs(axis.x) + h.y * std::abs(axis.y) + h.z * std::abs(axis.z);
     return std::min({p0, p1, p2}) > r || std::max({p0, p1, p2}) < -r;
 }
 
-bool triangleOverlapsBox(const V& center, const V& h, V a, V b, V c)
+bool triangleOverlapsBox(const glm::dvec3& center, const glm::dvec3& h, glm::dvec3 a, glm::dvec3 b, glm::dvec3 c)
 {
     a -= center;
     b -= center;
     c -= center;
-    const V edges[3] = {b - a, c - b, a - c};
-    for (const V& e : edges)
+    const glm::dvec3 edges[3] = {b - a, c - b, a - c};
+    for (const glm::dvec3& e : edges)
         for (int k = 0; k < 3; ++k)
         {
-            V unit(0.0);
+            glm::dvec3 unit(0.0);
             unit[k] = 1.0;
-            V axis = glm::cross(unit, e);
+            glm::dvec3 axis = glm::cross(unit, e);
             if (glm::dot(axis, axis) > 1e-24 && separated(axis, h, a, b, c))
                 return false;
         }
@@ -74,7 +72,7 @@ bool triangleOverlapsBox(const V& center, const V& h, V a, V b, V c)
 
 struct Sample
 {
-    V p;
+    glm::dvec3 p;
     size_t voxel;
     int shell;
 };
@@ -134,12 +132,12 @@ Voxelized voxelize(const Mesh& mesh, int resolution)
             b.extend(mesh.position(p));
     if (!b.valid())
         return out;
-    V ext = b.size();
+    glm::dvec3 ext = b.size();
     double longest = std::max({ext.x, ext.y, ext.z});
     if (longest <= 0.0)
         return out;
     g.cell = longest / std::clamp(resolution, 4, 256);
-    g.origin = b.min - V(g.cell);
+    g.origin = b.min - glm::dvec3(g.cell);
     for (int k = 0; k < 3; ++k)
         g.n[k] = int(std::ceil(ext[k] / g.cell)) + 3;
     g.state.assign(g.size(), 0);
@@ -148,7 +146,7 @@ Voxelized voxelize(const Mesh& mesh, int resolution)
     MeshBvh bvh;
     bvh.build(mesh);
     const Triangulation& tris = bvh.triangles();
-    const V half(g.cell * 0.5 * (1.0 + 1e-9));
+    const glm::dvec3 half(g.cell * 0.5 * (1.0 + 1e-9));
 
     for (Index p = 0; p < mesh.pointCapacity(); ++p)
         if (mesh.pointValid(p))
@@ -160,12 +158,12 @@ Voxelized voxelize(const Mesh& mesh, int resolution)
 
     for (size_t t = 0; t * 3 + 2 < tris.corners.size(); ++t)
     {
-        V v[3];
+        glm::dvec3 v[3];
         for (int k = 0; k < 3; ++k)
             v[k] = mesh.position(mesh.cornerPoint(tris.corners[t * 3 + k]));
         const int shell = shellOf[mesh.cornerPoint(tris.corners[t * 3])];
         Bounds tb;
-        for (const V& p : v)
+        for (const glm::dvec3& p : v)
             tb.extend(p);
         glm::ivec3 lo = g.cellOf(tb.min), hi = g.cellOf(tb.max);
         for (int z = lo.z; z <= hi.z; ++z)
@@ -182,7 +180,7 @@ Voxelized voxelize(const Mesh& mesh, int resolution)
                 int k = div - i - j;
                 if (i == div || j == div || k == div)
                     continue;
-                V p = (v[0] * double(i) + v[1] * double(j) + v[2] * double(k)) / double(div);
+                glm::dvec3 p = (v[0] * double(i) + v[1] * double(j) + v[2] * double(k)) / double(div);
                 glm::ivec3 c = g.cellOf(p);
                 out.samples.push_back({p, g.index(c.x, c.y, c.z), shell});
             }
@@ -214,14 +212,14 @@ Voxelized voxelize(const Mesh& mesh, int resolution)
     {
         const int u = (axis + 1) % 3, w = (axis + 2) % 3;
         const double ju = g.cell * (0.0713 + 0.0191 * axis), jw = g.cell * (0.0397 + 0.0263 * axis);
-        const V dir = V(axis == 0, axis == 1, axis == 2);
+        const glm::dvec3 dir = glm::dvec3(axis == 0, axis == 1, axis == 2);
         const double span = g.cell * (g.n[axis] + 2);
         tbb::parallel_for(tbb::blocked_range<int>(0, g.n[w]), [&](const tbb::blocked_range<int>& r) {
             std::vector<double> hits;
             for (int cw = r.begin(); cw < r.end(); ++cw)
                 for (int cu = 0; cu < g.n[u]; ++cu)
                 {
-                    V o(0.0);
+                    glm::dvec3 o(0.0);
                     o[u] = g.origin[u] + (cu + 0.5) * g.cell + ju;
                     o[w] = g.origin[w] + (cw + 0.5) * g.cell + jw;
                     o[axis] = g.origin[axis] - g.cell;
@@ -425,10 +423,10 @@ std::vector<int> mergeRegions(const std::vector<IBox>& boxes, const Counts& coun
     return root;
 }
 
-const std::vector<V>& probeDirections()
+const std::vector<glm::dvec3>& probeDirections()
 {
-    static const std::vector<V> dirs = [] {
-        std::vector<V> d{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    static const std::vector<glm::dvec3> dirs = [] {
+        std::vector<glm::dvec3> d{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         const int n = 90;
         const double golden = 3.14159265358979323846 * (3.0 - std::sqrt(5.0));
         for (int i = 0; i < n; ++i)
@@ -443,9 +441,9 @@ const std::vector<V>& probeDirections()
 
 struct Node
 {
-    std::vector<V> pts;
+    std::vector<glm::dvec3> pts;
     /** Per probe direction, the point farthest along it: a small stand-in for the hull when solving frames. */
-    std::vector<V> ext;
+    std::vector<glm::dvec3> ext;
     std::vector<uint32_t> vox;
     OrientedBox box;
     double fill = 0.0;
@@ -463,7 +461,7 @@ struct Decomposer
     /** Most the box could hold: every filled voxel in its axis-aligned extent. */
     double fillCeiling(const OrientedBox& b) const
     {
-        V reach(0.0);
+        glm::dvec3 reach(0.0);
         for (int i = 0; i < 3; ++i)
             for (int k = 0; k < 3; ++k)
                 reach[k] += std::abs(b.axes[i][k]) * (b.size[i] * 0.5 + g.cell);
@@ -476,21 +474,21 @@ struct Decomposer
 
     static void probe(Node& n)
     {
-        const std::vector<V>& dirs = probeDirections();
-        n.ext.assign(dirs.size(), n.pts.empty() ? V(0.0) : n.pts[0]);
+        const std::vector<glm::dvec3>& dirs = probeDirections();
+        n.ext.assign(dirs.size(), n.pts.empty() ? glm::dvec3(0.0) : n.pts[0]);
         for (size_t d = 0; d < dirs.size(); ++d)
         {
             double best = glm::dot(n.ext[d], dirs[d]);
-            for (const V& p : n.pts)
+            for (const glm::dvec3& p : n.pts)
                 if (double t = glm::dot(p, dirs[d]); t > best)
                     best = t, n.ext[d] = p;
         }
     }
 
-    static std::vector<V> mergedExtremes(const Node& a, const Node& b)
+    static std::vector<glm::dvec3> mergedExtremes(const Node& a, const Node& b)
     {
-        const std::vector<V>& dirs = probeDirections();
-        std::vector<V> out(dirs.size());
+        const std::vector<glm::dvec3>& dirs = probeDirections();
+        std::vector<glm::dvec3> out(dirs.size());
         for (size_t d = 0; d < dirs.size(); ++d)
             out[d] = glm::dot(b.ext[d], dirs[d]) > glm::dot(a.ext[d], dirs[d]) ? b.ext[d] : a.ext[d];
         return out;
@@ -516,7 +514,7 @@ struct Decomposer
         glm::dmat3 frame(1.0);
         if (opts.oriented)
         {
-            std::vector<V> e = b ? mergedExtremes(a, *b) : a.ext;
+            std::vector<glm::dvec3> e = b ? mergedExtremes(a, *b) : a.ext;
             if (std::optional<OrientedBox> ob = minimumVolumeBox(e))
                 frame = ob->axes;
         }
@@ -527,11 +525,11 @@ struct Decomposer
     /** Filled-voxel volume inside the box; each voxel counts by how much of it the box covers. */
     double occupied(const OrientedBox& b) const
     {
-        V reach(0.0);
+        glm::dvec3 reach(0.0);
         for (int i = 0; i < 3; ++i)
             for (int k = 0; k < 3; ++k)
                 reach[k] += std::abs(b.axes[i][k]) * (b.size[i] * 0.5 + g.cell);
-        V width;
+        glm::dvec3 width;
         for (int i = 0; i < 3; ++i)
             width[i] = g.cell * (std::abs(b.axes[i].x) + std::abs(b.axes[i].y) + std::abs(b.axes[i].z));
         glm::ivec3 lo = g.cellOf(b.center - reach), hi = g.cellOf(b.center + reach);
@@ -542,7 +540,7 @@ struct Decomposer
                 {
                     if (!g.filled[g.index(x, y, z)])
                         continue;
-                    V d = g.center(x, y, z) - b.center;
+                    glm::dvec3 d = g.center(x, y, z) - b.center;
                     double share = 1.0;
                     for (int i = 0; i < 3 && share > 0.0; ++i)
                         share *= std::clamp((b.size[i] * 0.5 - std::abs(glm::dot(d, b.axes[i]))) / width[i] + 0.5, 0.0, 1.0);
@@ -564,9 +562,9 @@ struct Decomposer
         n.fill = fillOf(n.box);
     }
 
-    std::pair<V, V> worldBounds(const OrientedBox& b) const
+    std::pair<glm::dvec3, glm::dvec3> worldBounds(const OrientedBox& b) const
     {
-        V reach(0.0);
+        glm::dvec3 reach(0.0);
         for (int i = 0; i < 3; ++i)
             for (int k = 0; k < 3; ++k)
                 reach[k] += std::abs(b.axes[i][k]) * (b.size[i] * 0.5 + g.cell * 0.5);
@@ -686,8 +684,8 @@ struct Decomposer
     struct Bin
     {
         int count = 0;
-        V lo{std::numeric_limits<double>::max()};
-        V hi{-std::numeric_limits<double>::max()};
+        glm::dvec3 lo{std::numeric_limits<double>::max()};
+        glm::dvec3 hi{-std::numeric_limits<double>::max()};
     };
 
     static void absorb(Bin& a, const Bin& b)
@@ -717,8 +715,8 @@ struct Decomposer
         for (uint32_t v : n.vox)
         {
             glm::ivec3 c = g.coords(v);
-            V d = g.center(c.x, c.y, c.z) - box.center;
-            V u(glm::dot(d, box.axes[0]), glm::dot(d, box.axes[1]), glm::dot(d, box.axes[2]));
+            glm::dvec3 d = g.center(c.x, c.y, c.z) - box.center;
+            glm::dvec3 u(glm::dot(d, box.axes[0]), glm::dot(d, box.axes[1]), glm::dot(d, box.axes[2]));
             Bin one{1, u, u};
             absorb(whole, one);
             for (int i = 0; i < 3; ++i)
@@ -754,11 +752,11 @@ struct Decomposer
         return cut;
     }
 
-    void addCorners(std::vector<V>& pts, uint32_t v) const
+    void addCorners(std::vector<glm::dvec3>& pts, uint32_t v) const
     {
         glm::ivec3 c = g.coords(v);
         for (int k = 0; k < 8; ++k)
-            pts.push_back(g.origin + (V(c) + V(k & 1, (k >> 1) & 1, (k >> 2) & 1)) * g.cell);
+            pts.push_back(g.origin + (glm::dvec3(c) + glm::dvec3(k & 1, (k >> 1) & 1, (k >> 2) & 1)) * g.cell);
     }
 
     void split(int index, const Cut& cut)
@@ -769,13 +767,13 @@ struct Decomposer
         const int a = cut.axis;
         const double plane = -(box.size[a] + g.cell) * 0.5 + (cut.bin + 1) * g.cell;
         Node halves[2];
-        auto side = [&](const V& p) { return glm::dot(p - box.center, box.axes[a]) < plane ? 0 : 1; };
-        for (const V& p : parent.pts)
+        auto side = [&](const glm::dvec3& p) { return glm::dot(p - box.center, box.axes[a]) < plane ? 0 : 1; };
+        for (const glm::dvec3& p : parent.pts)
             halves[side(p)].pts.push_back(p);
         for (uint32_t v : parent.vox)
         {
             glm::ivec3 c = g.coords(v);
-            V center = g.center(c.x, c.y, c.z);
+            glm::dvec3 center = g.center(c.x, c.y, c.z);
             int s = side(center);
             halves[s].vox.push_back(v);
             if (!(g.state[v] & kSurface) && std::abs(glm::dot(center - box.center, box.axes[a]) - plane) <= g.cell)
@@ -949,7 +947,7 @@ MultiBoxResult multiBoxDecompose(const Mesh& mesh, const MultiBoxOptions& opts)
         if (n.alive)
             live.push_back(&n);
     std::sort(live.begin(), live.end(), [](const Node* a, const Node* b) {
-        const V &p = a->box.center, &q = b->box.center;
+        const glm::dvec3 &p = a->box.center, &q = b->box.center;
         if (p.x != q.x)
             return p.x < q.x;
         if (p.y != q.y)
@@ -974,7 +972,7 @@ MultiBoxResult multiBoxDecompose(const Mesh& mesh, const MultiBoxOptions& opts)
             for (int y = clo.y; y <= chi.y; ++y)
                 for (int x = clo.x; x <= chi.x; ++x)
                 {
-                    V dv = g.center(x, y, z) - n->box.center;
+                    glm::dvec3 dv = g.center(x, y, z) - n->box.center;
                     bool in = true;
                     for (int i = 0; i < 3 && in; ++i)
                         in = std::abs(glm::dot(dv, n->box.axes[i])) <= (n->box.size[i] + g.cell) * 0.5 + 1e-9;

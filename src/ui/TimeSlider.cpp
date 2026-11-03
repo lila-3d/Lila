@@ -13,6 +13,8 @@
 #include "ui/Deletion.h"
 #include "ui/Ghosting.h"
 #include "ui/Icons.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QComboBox>
@@ -34,24 +36,10 @@ namespace
 namespace anim = scene::anim;
 using scene::Graph;
 
-QColor gray(int v, int a = 255) { return themeShade(v, a); }
-
-void runUi(const char* command, const json& call = json::object())
-{
-    try
-    {
-        ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
-
 int frameOf(double seconds) { return int(std::lround(anim::frameOf(seconds))); }
 
 /** A step that keeps labelled ticks at least minPx apart: 1, 2, 5, 10, 20, 50... frames. */
-int niceStep(double pxPerFrame, double minPx)
+int frameTickStep(double pxPerFrame, double minPx)
 {
     for (int base = 1;; base *= 10)
         for (int m : {1, 2, 5})
@@ -59,7 +47,7 @@ int niceStep(double pxPerFrame, double minPx)
                 return base * m;
 }
 
-enum class Glyph
+enum class TransportGlyph
 {
     ToStart,
     StepBack,
@@ -72,7 +60,7 @@ enum class Glyph
     ToEnd,
 };
 
-QIcon glyphIcon(Glyph g)
+QIcon glyphIcon(TransportGlyph g)
 {
     QPixmap pm(32, 32);
     pm.fill(Qt::transparent);
@@ -92,20 +80,20 @@ QIcon glyphIcon(Glyph g)
     auto key = [&](double cx) { p.drawPolygon(QPolygonF({{cx, 10}, {cx + 6, 16}, {cx, 22}, {cx - 6, 16}})); };
     switch (g)
     {
-    case Glyph::ToStart: bar(7); tri(24, 11); break;
-    case Glyph::StepBack: tri(20, 7); bar(22); break;
-    case Glyph::PlayBack: tri(23, 9); break;
-    case Glyph::Play: tri(9, 23); break;
-    case Glyph::Pause: bar(10); bar(19); break;
-    case Glyph::StepForward: bar(7); tri(12, 25); break;
-    case Glyph::PrevKey: key(10); tri(27, 17); break;
-    case Glyph::NextKey: tri(5, 15); key(22); break;
-    case Glyph::ToEnd: tri(8, 21); bar(22); break;
+    case TransportGlyph::ToStart: bar(7); tri(24, 11); break;
+    case TransportGlyph::StepBack: tri(20, 7); bar(22); break;
+    case TransportGlyph::PlayBack: tri(23, 9); break;
+    case TransportGlyph::Play: tri(9, 23); break;
+    case TransportGlyph::Pause: bar(10); bar(19); break;
+    case TransportGlyph::StepForward: bar(7); tri(12, 25); break;
+    case TransportGlyph::PrevKey: key(10); tri(27, 17); break;
+    case TransportGlyph::NextKey: tri(5, 15); key(22); break;
+    case TransportGlyph::ToEnd: tri(8, 21); bar(22); break;
     }
     return QIcon(pm);
 }
 
-QToolButton* toolButton(QWidget* parent, const QString& tip)
+QToolButton* transportButton(QWidget* parent, const QString& tip)
 {
     auto* b = new QToolButton(parent);
     b->setAutoRaise(true);
@@ -168,8 +156,8 @@ protected:
         QFont f = font();
         f.setPointSizeF(f.pointSizeF() * 0.9);
         p.setFont(f);
-        int labelStep = niceStep(ppf, 46);
-        int tickStep = std::max(1, niceStep(ppf, 6));
+        int labelStep = frameTickStep(ppf, 46);
+        int tickStep = std::max(1, frameTickStep(ppf, 6));
         for (int fr = first - (first % tickStep); fr <= last; fr += tickStep)
         {
             if (fr < first)
@@ -447,17 +435,17 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     top->addWidget(mRuler, 1);
     mFrame = frameField(this, "Current frame");
     top->addWidget(mFrame);
-    auto addButton = [&](Glyph g, const QString& tip, const char* action) {
-        QToolButton* b = toolButton(this, tip);
+    auto addButton = [&](TransportGlyph g, const QString& tip, const char* action) {
+        QToolButton* b = transportButton(this, tip);
         b->setIcon(glyphIcon(g));
         connect(b, &QToolButton::clicked, this, [action] { actions::run(json(action)); });
         top->addWidget(b);
         return b;
     };
-    addButton(Glyph::ToStart, "Go to start", "anim.firstFrame");
-    addButton(Glyph::PrevKey, "Previous key (,)", "anim.prevKey");
-    addButton(Glyph::StepBack, "Step back one frame (Alt+,)", "anim.prevFrame");
-    mPlayBack = toolButton(this, "Play backwards");
+    addButton(TransportGlyph::ToStart, "Go to start", "anim.firstFrame");
+    addButton(TransportGlyph::PrevKey, "Previous key (,)", "anim.prevKey");
+    addButton(TransportGlyph::StepBack, "Step back one frame (Alt+,)", "anim.prevFrame");
+    mPlayBack = transportButton(this, "Play backwards");
     top->addWidget(mPlayBack);
     connect(mPlayBack, &QToolButton::clicked, this, [] {
         if (anim::playDirection() < 0)
@@ -465,7 +453,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         else
             actions::run(json("anim.playBackward"));
     });
-    mPlay = toolButton(this, "Play forwards (Alt+V)");
+    mPlay = transportButton(this, "Play forwards (Alt+V)");
     top->addWidget(mPlay);
     connect(mPlay, &QToolButton::clicked, this, [] {
         if (anim::playDirection() > 0)
@@ -473,9 +461,9 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         else
             runUi("play");
     });
-    addButton(Glyph::StepForward, "Step forward one frame (Alt+.)", "anim.nextFrame");
-    addButton(Glyph::NextKey, "Next key (.)", "anim.nextKey");
-    addButton(Glyph::ToEnd, "Go to end", "anim.lastFrame");
+    addButton(TransportGlyph::StepForward, "Step forward one frame (Alt+.)", "anim.nextFrame");
+    addButton(TransportGlyph::NextKey, "Next key (.)", "anim.nextKey");
+    addButton(TransportGlyph::ToEnd, "Go to end", "anim.lastFrame");
     outer->addLayout(top);
 
     auto* bottom = new QHBoxLayout();
@@ -497,16 +485,16 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     mFps->setToolTip("Frames per second");
     mFps->setFocusPolicy(Qt::NoFocus);
     bottom->addWidget(mFps);
-    mLoop = toolButton(this, "Loop playback");
+    mLoop = transportButton(this, "Loop playback");
     mLoop->setIcon(icon("repeat"));
     mLoop->setCheckable(true);
     bottom->addWidget(mLoop);
-    mAutoKey = toolButton(this, "Auto Key: key animated channels whenever they change");
+    mAutoKey = transportButton(this, "Auto Key: key animated channels whenever they change");
     mAutoKey->setIcon(icon("key"));
     mAutoKey->setCheckable(true);
     bottom->addWidget(mAutoKey);
     {
-        QToolButton* ghost = toolButton(this, QString::fromStdString(actions::tooltip("anim.toggleGhosts")) + "\nRight-click for ghost options");
+        QToolButton* ghost = transportButton(this, QString::fromStdString(actions::tooltip("anim.toggleGhosts")) + "\nRight-click for ghost options");
         ghost->setIcon(icon("ghost"));
         ghost->setCheckable(true);
         ghost->setChecked(ghostActionState("anim.toggleGhosts").value_or(false));
@@ -543,7 +531,7 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
         bottom->addWidget(ghost);
     }
     {
-        QToolButton* cache = toolButton(this, "Cached Playback: keep evaluated frames in memory so playback replays them\n"
+        QToolButton* cache = transportButton(this, "Cached Playback: keep evaluated frames in memory so playback replays them\n"
                                               "Right-click to fill or clear the cache");
         cache->setIcon(icon("database"));
         cache->setCheckable(true);
@@ -661,8 +649,8 @@ void TimeSlider::refreshOptions()
         mAutoKey->setChecked(anim::autoKey());
     }
     int dir = anim::playDirection();
-    mPlay->setIcon(glyphIcon(dir > 0 ? Glyph::Pause : Glyph::Play));
-    mPlayBack->setIcon(glyphIcon(dir < 0 ? Glyph::Pause : Glyph::PlayBack));
+    mPlay->setIcon(glyphIcon(dir > 0 ? TransportGlyph::Pause : TransportGlyph::Play));
+    mPlayBack->setIcon(glyphIcon(dir < 0 ? TransportGlyph::Pause : TransportGlyph::PlayBack));
     mRuler->update();
     mRange->update();
     refreshTime();

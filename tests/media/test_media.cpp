@@ -12,10 +12,11 @@
 #include <cmath>
 #include <vector>
 
+using json = nlohmann::json;
+
 namespace
 {
 using namespace lila;
-using json = nlohmann::json;
 using scene::Graph;
 
 json mediaRun(const char* cmd, const json& call = json::object())

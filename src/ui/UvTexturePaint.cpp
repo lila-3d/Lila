@@ -30,7 +30,6 @@ namespace
 {
 namespace tp = tex::paint;
 namespace rp = render::paint;
-using json = nlohmann::json;
 
 /** The mesh a set paints: the first using its material, else the first mesh. */
 std::string meshOf(scene::Graph& g, const scene::Node& set)

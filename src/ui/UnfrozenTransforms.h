@@ -3,6 +3,7 @@
 #include "core/Export.h"
 #include "scene/Plug.h"
 
+#include <QStringList>
 #include <QWidget>
 
 #include <vector>
@@ -36,11 +37,27 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
+    enum Scope
+    {
+        kSelection,
+        kHierarchies,
+        kScene,
+    };
+
+    enum Column
+    {
+        kName,
+        kTranslate,
+        kRotate,
+        kScale,
+    };
+
     void scheduleRefresh(int delayMs = 0);
     void refresh();
     void selectRows();
     void syncFromScene();
     void updateButtons();
+    QStringList selectedNames() const;
 
     QComboBox* mScope = nullptr;
     QPushButton* mLoad = nullptr;

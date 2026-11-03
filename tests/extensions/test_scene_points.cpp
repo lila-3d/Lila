@@ -24,11 +24,6 @@ using namespace lila;
 
 namespace
 {
-json run(const char* cmd, json call = json::object())
-{
-    return ops::execute(cmd, call);
-}
-
 /** The installed-SDK build of the sample when LILA_TEST_SCENE_POINTS_PACKAGE names one, else the in-tree build. */
 std::string scenePointsPackage()
 {

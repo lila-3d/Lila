@@ -11,8 +11,6 @@ namespace lila::gn::nodes
 {
 namespace topology
 {
-using D3 = glm::dvec3;
-
 /** A field read off the mesh of the context it is evaluated in; anything but a mesh gets the type's zero. */
 class MeshField final : public Field
 {

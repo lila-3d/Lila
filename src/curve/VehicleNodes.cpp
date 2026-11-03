@@ -4,6 +4,7 @@
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/Network.h"
+#include "curve/NodeHelpers.h"
 #include "geo/Topology.h"
 #include "scene/Graph.h"
 
@@ -16,82 +17,19 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
-const std::vector<std::string> kContinuity = {"g0", "g1", "g2", "g3"};
 const std::vector<std::string> kBlendEnds = {"start", "end", "parameter"};
-
-AttrDef dataIn(std::string name, std::string doc, bool stored = true)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = (stored ? kIn : AttrInput) | AttrHidden,
-            .doc = std::move(doc)};
-}
-
-/** Curves in any number, one per element; fileAlias reads the numbered attrs it replaced. */
-AttrDef dataArray(std::string name, std::string doc, std::string fileAlias)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray,
-            .doc = std::move(doc), .fileAlias = std::move(fileAlias)};
-}
-
-AttrDef meshIn(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-
-AttrDef matrixIn(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-}
-
-AttrDef sAttr(std::string name, std::string doc, uint32_t extra = 0)
-{
-    return {.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = kIn | extra, .doc = std::move(doc)};
-}
 
 AttrDef warningOut()
 {
     return {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput,
             .doc = "Problems with the last build (curves left out, sides that touch)."};
 }
-
-int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
-double f(const Node& n, const char* a) { return n.as<double>(idx(n, a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(idx(n, a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(idx(n, a)); }
-const std::string& s(const Node& n, const char* a) { return n.as<std::string>(idx(n, a)); }
-const Splines& in(const Node& n, const char* a) { return splinesOf(n.value(idx(n, a))); }
 
 /** The mesh plug carried into world space by its matrix plug. */
 std::optional<geo::Mesh> worldMesh(const Node& n, const char* meshAttr, const char* matrixAttr)
@@ -107,7 +45,7 @@ std::optional<geo::Mesh> worldMesh(const Node& n, const char* meshAttr, const ch
     return w;
 }
 
-std::string joined(const std::vector<std::string>& w)
+std::string semicolonJoined(const std::vector<std::string>& w)
 {
     std::string out;
     for (const std::string& x : w)
@@ -137,7 +75,7 @@ public:
             warnings.push_back(e.what());
             setOutput(outAttr, type().attrs[size_t(outAttr)].type == PlugType::Mesh ? PlugValue(MeshPtr()) : PlugValue(DataPtr()));
         }
-        std::string w = joined(warnings);
+        std::string w = semicolonJoined(warnings);
         if (warnAttr >= 0)
         {
             if (!w.empty() && w != as<std::string>(warnAttr))
@@ -171,8 +109,6 @@ void registerNode(std::string name, std::string icon, std::string doc, std::vect
     };
     types::registerType(std::move(t));
 }
-
-PlugValue meshValue(geo::Mesh m) { return MeshPtr(std::make_shared<geo::Mesh>(std::move(m))); }
 
 /** A blend end on a curve: one of its ends, or a point heading toward `toward` (flip reverses either). */
 Geometry curveEnd(const Spline& s, int64_t mode, double u, bool flip, const D3* toward)

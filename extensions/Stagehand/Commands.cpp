@@ -20,15 +20,10 @@ using namespace lila;
 
 namespace stagehand
 {
-namespace
-{
-using json = nlohmann::json;
 using T = ArgType;
 
-constexpr double kPi = 3.14159265358979323846;
-
-json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
-
+namespace
+{
 glm::dvec3 vecArg(const Args& a, const char* flag, const glm::dvec3& fallback, const char* cmd)
 {
     if (!a.has(flag))
@@ -51,7 +46,7 @@ NodeId meshNamed(Graph& g, const json& name, const char* cmd)
     return n->id();
 }
 
-std::vector<NodeId> meshesOf(Graph& g, const std::vector<std::string>& names, const char* cmd)
+std::vector<NodeId> meshesNamed(Graph& g, const std::vector<std::string>& names, const char* cmd)
 {
     std::vector<NodeId> out;
     for (const std::string& n : names)
@@ -186,9 +181,6 @@ glm::dvec3 pushPoint(const glm::dvec3& lo, const glm::dvec3& hi, const glm::dvec
     return c + back * glm::dot(glm::abs(back), half) + up * glm::dot(glm::abs(up), half) * 0.6;
 }
 
-const char* kRoleNames[] = {"dynamic", "static", "kinematic", "off"};
-const char* kShapeNames[] = {"auto", "box", "hull", "sphere", "capsule", "mesh", "decompose"};
-
 int64_t choiceIndex(const std::string& v, std::initializer_list<const char*> names, const char* what)
 {
     int64_t i = 0;
@@ -283,7 +275,7 @@ void registerCommands(ext::Context& ctx)
                   {"remove", "rm", T::Bool, false, "Delete the body nodes instead."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            const std::vector<NodeId> meshes = meshesOf(g, a.objects(), "physicsBody");
+            const std::vector<NodeId> meshes = meshesNamed(g, a.objects(), "physicsBody");
             json out = json::array();
             for (NodeId id : meshes)
             {
@@ -341,7 +333,7 @@ void registerCommands(ext::Context& ctx)
             LILA_ZONE();
 
             Graph& g = Graph::current();
-            WorldOptions o = optionsOf(g, a, meshesOf(g, a.objects(), "settle"), "settle", false);
+            WorldOptions o = optionsOf(g, a, meshesNamed(g, a.objects(), "settle"), "settle", false);
             World w(g, o);
             const physics::SettleResult t = w.settle(a.get<double>("time", 120.0));
             w.write(g);
@@ -406,7 +398,7 @@ void registerCommands(ext::Context& ctx)
             LILA_ZONE();
 
             Graph& g = Graph::current();
-            WorldOptions o = optionsOf(g, a, meshesOf(g, a.objects(), "wiggle"), "wiggle", false);
+            WorldOptions o = optionsOf(g, a, meshesNamed(g, a.objects(), "wiggle"), "wiggle", false);
             Session s(g, o);
             physics::RigidScene& scene = s.world().scene();
             std::mt19937 rng(uint32_t(a.get<int64_t>("seed", 1)));
@@ -453,7 +445,7 @@ void registerCommands(ext::Context& ctx)
             LILA_ZONE();
 
             Graph& g = Graph::current();
-            const std::vector<NodeId> targets = meshesOf(g, a.objects(), "drop");
+            const std::vector<NodeId> targets = meshesNamed(g, a.objects(), "drop");
             WorldOptions o = optionsOf(g, a, targets, "drop", false);
             const glm::dvec3 up = glm::length(o.gravity) > 1e-9 ? -glm::normalize(o.gravity) : glm::dvec3(0, 1, 0);
             if (a.has("onto"))
@@ -578,7 +570,7 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             g.evaluate();
             json out = json::array();
-            for (NodeId id : meshesOf(g, a.objects(), "dressInfo"))
+            for (NodeId id : meshesNamed(g, a.objects(), "dressInfo"))
             {
                 const BodySettings s = bodySettings(g, id);
                 const physics::Shape shape = shapeOf(g, id, s.shape, s.rounding, s.role == RoleChoice::Static && s.hasNode, s.maxParts);
@@ -627,7 +619,7 @@ void registerCommands(ext::Context& ctx)
 
             Graph& g = Graph::current();
             WorldOptions o;
-            o.movers = meshesOf(g, a.objects(), "dressCheck");
+            o.movers = meshesNamed(g, a.objects(), "dressCheck");
             o.includeDynamicBodies = false;
             o.ground = a.get<bool>("ground", true);
             o.groundHeight = a.get<double>("groundHeight", 0.0);

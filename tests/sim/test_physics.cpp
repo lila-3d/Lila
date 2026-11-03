@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "extensions/ExtensionManager.h"
@@ -24,13 +25,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace simtest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 void loadPhysics()
 {
     if (!sim::solverTypes().find("physicsSolver"))
@@ -73,24 +72,6 @@ glm::dvec3 worldPos(const char* name)
     Graph& g = Graph::current();
     g.evaluate();
     return glm::dvec3(g.find(name)->as<glm::dmat4>(Transform::kWorldMatrix)[3]);
-}
-
-std::string layerKeys(const std::string& layer)
-{
-    Graph& g = Graph::current();
-    const NodeId l = g.find(layer)->id();
-    std::string out;
-    for (const PlugRef& m : anim::layerMembers(g, l))
-    {
-        const NodeId b = anim::blendFor(g, m, l);
-        for (int k = -1; k < 3; ++k)
-            if (auto s = g.source({b, anim::BlendNode::kInputB, k}))
-            {
-                const Node& c = *g.node(s->node);
-                out += g.plugName(m) + ":" + c.as<std::string>(c.type().attrIndex("keys")) + "\n";
-            }
-    }
-    return out;
 }
 
 double angleDeg(glm::dvec3 a, glm::dvec3 b)

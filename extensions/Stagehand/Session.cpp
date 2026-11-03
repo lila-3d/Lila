@@ -10,29 +10,6 @@ using namespace lila;
 
 namespace stagehand
 {
-namespace
-{
-constexpr double kPi = 3.14159265358979323846;
-
-/** Runs fn with undo recording off, restoring it after. */
-template <class Fn> void unrecorded(Fn&& fn)
-{
-    UndoStack& u = UndoStack::get();
-    const bool was = u.enabled();
-    u.setEnabled(false);
-    try
-    {
-        fn();
-    }
-    catch (...)
-    {
-        u.setEnabled(was);
-        throw;
-    }
-    u.setEnabled(was);
-}
-} // namespace
-
 Session::Session(Graph& g, const WorldOptions& o) : mWorld(std::make_unique<World>(g, o))
 {
     mPinned.assign(mWorld->scene().size(), 0);

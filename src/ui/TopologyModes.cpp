@@ -6,7 +6,9 @@
 #include "core/Profile.h"
 #include "retopo/Patch.h"
 #include "retopo/Retopo.h"
+#include "ui/ToolColors.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportToolMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,35 +22,13 @@ using geo::Index;
 using geo::kInvalid;
 using retopo::ConstructKind;
 
-constexpr const char* kPrefs = "general";
 constexpr const char* kStripRowsPref = "/topology/stripRows";
 constexpr const char* kCylinderPointsPref = "/topology/cylinderPoints";
 constexpr const char* kHandleFalloffPref = "/topology/handleFalloff";
 
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kKnotRim(0.08f, 0.08f, 0.08f, 1.0f);
 const glm::vec4 kKnotFill(0.9f, 0.9f, 0.9f, 1.0f);
 const glm::vec4 kStroke(0.85f, 0.85f, 0.85f, 1.0f);
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
-
-double segmentDistPx(QPointF p, QPointF a, QPointF b)
-{
-    QPointF ab = b - a;
-    double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-    double u = len2 > 0.0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0.0;
-    return distPx(p, a + ab * u);
-}
-
-json vec(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
-
-json vecs(const std::vector<glm::dvec3>& ps)
-{
-    json out = json::array();
-    for (const glm::dvec3& p : ps)
-        out.push_back(vec(p));
-    return out;
-}
 
 std::vector<glm::dvec3> toVecs(const json& j)
 {
@@ -59,8 +39,6 @@ std::vector<glm::dvec3> toVecs(const json& j)
                 out.emplace_back(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
     return out;
 }
-
-bool monotone() { return PrefStore::get().value<bool>(kPrefs, viewportDisplay::kMonotone, false); }
 
 double distanceToPolyline(const glm::dvec3& p, const std::vector<glm::dvec3>& line)
 {
@@ -83,7 +61,7 @@ json loopSides(const std::vector<glm::dvec3>& loop, const std::vector<int>& corn
     for (size_t i = 0; i < corners.size(); ++i)
     {
         std::vector<glm::dvec3> span = retopo::polylineSpan(loop, corners[i], corners[(i + 1) % corners.size()], true);
-        sides.push_back({{"points", vecs(span)}, {"fixed", fixed}, {"count", fixed ? int(span.size()) - 1 : 0}});
+        sides.push_back({{"points", vecListJson(span)}, {"fixed", fixed}, {"count", fixed ? int(span.size()) - 1 : 0}});
     }
     return sides;
 }
@@ -115,7 +93,7 @@ void TopologyTool::finishStroke(const ViewInfo& view, bool erase)
                         hit = segmentDistPx(*sp, mStrokePx[i], mStrokePx[i + 1]) < 8.0;
             removed |= hit;
             if (!hit)
-                guides.push_back({{"points", vecs(g.points)}, {"closed", g.closed}, {"color", json::array({g.color.r, g.color.g, g.color.b})}});
+                guides.push_back({{"points", vecListJson(g.points)}, {"closed", g.closed}, {"color", json::array({g.color.r, g.color.g, g.color.b})}});
         }
         if (removed)
             run("retopoSetGuides", targetCall({{"guides", guides}}));
@@ -156,9 +134,9 @@ void TopologyTool::commitPencil(const retopo::SurfaceStroke& s)
 {
     json guides = json::array();
     for (const retopo::Guide& g : mGuides)
-        guides.push_back({{"points", vecs(g.points)}, {"closed", g.closed}, {"color", json::array({g.color.r, g.color.g, g.color.b})}});
+        guides.push_back({{"points", vecListJson(g.points)}, {"closed", g.closed}, {"color", json::array({g.color.r, g.color.g, g.color.b})}});
     glm::vec3 c = retopo::guidePaletteColor(int(mGuides.size()));
-    guides.push_back({{"points", vecs(s.points)}, {"closed", s.closed}, {"color", json::array({c.r, c.g, c.b})}});
+    guides.push_back({{"points", vecListJson(s.points)}, {"closed", s.closed}, {"color", json::array({c.r, c.g, c.b})}});
     run("retopoSetGuides", targetCall({{"guides", guides}}));
     refresh();
 }
@@ -194,9 +172,9 @@ void TopologyTool::commitPatch(const retopo::SurfaceStroke& s, Index a, Index b,
             {
                 std::vector<glm::dvec3> span = retopo::polylineSpan(path, breaks[i], breaks[i + 1], false);
                 lengths.push_back(retopo::polylineLength(span));
-                sides.push_back({{"points", vecs(span)}, {"fixed", false}, {"count", 0}});
+                sides.push_back({{"points", vecListJson(span)}, {"fixed", false}, {"count", 0}});
             }
-            sides.push_back({{"points", vecs(arc)}, {"fixed", true}, {"count", int(arc.size()) - 1}});
+            sides.push_back({{"points", vecListJson(arc)}, {"fixed", true}, {"count", int(arc.size()) - 1}});
             // A U against the border becomes a clean grid: the far side matches the border, the legs match each other.
             if (sides.size() == 4)
             {
@@ -282,15 +260,15 @@ void TopologyTool::commitStrip(const retopo::SurfaceStroke& s, const ViewInfo& v
     }
     if (knots.size() < 2)
         return;
-    json spec = {{"knots", vecs(knots)}, {"corners", corners}, {"width", width}, {"closed", s.closed},
-                 {"rows", std::max(1, PrefStore::get().value<int>(kPrefs, kStripRowsPref, 1))}};
+    json spec = {{"knots", vecListJson(knots)}, {"corners", corners}, {"width", width}, {"closed", s.closed},
+                 {"rows", std::max(1, PrefStore::get().value<int>("general", kStripRowsPref, 1))}};
     auto edgeRow = [&](QPointF px, size_t knot) {
         Index e = pickBorderEdge(px, view);
         if (e == kInvalid)
             return json();
         glm::dvec3 p0 = pointWorld(mRetopo->edgePoint(e, 0)), p1 = pointWorld(mRetopo->edgePoint(e, 1));
         knots[knot] = (p0 + p1) * 0.5;
-        return json::array({vec(p0), vec(p1)});
+        return json::array({vecJson(p0), vecJson(p1)});
     };
     if (!s.closed)
     {
@@ -298,7 +276,7 @@ void TopologyTool::commitStrip(const retopo::SurfaceStroke& s, const ViewInfo& v
             spec["startRow"] = row;
         if (json row = edgeRow(mStrokePx.back(), knots.size() - 1); !row.is_null())
             spec["endRow"] = row;
-        spec["knots"] = vecs(knots);
+        spec["knots"] = vecListJson(knots);
     }
     createConstruct(ConstructKind::Strip, spec, width);
 }
@@ -345,7 +323,7 @@ void TopologyTool::commitStroke(const retopo::SurfaceStroke& s, Index a, Index b
             else
                 sign = glm::dot(glm::cross(normalAt(path.front()), d), forward) > 0.0 ? 1 : -1;
         }
-        json spec = {{"border", vecs(loop.world)}, {"borderClosed", loop.closed}, {"anchor", anchor}, {"span", 2 * sign}, {"path", vecs(path)}};
+        json spec = {{"border", vecListJson(loop.world)}, {"borderClosed", loop.closed}, {"anchor", anchor}, {"span", 2 * sign}, {"path", vecListJson(path)}};
         createConstruct(ConstructKind::Sweep, spec, edge);
         return;
     }
@@ -386,7 +364,7 @@ void TopologyTool::commitStroke(const retopo::SurfaceStroke& s, Index a, Index b
             std::vector<glm::dvec3> arc = borderArc(loop, pa, pb);
             if (arc.size() >= 2)
             {
-                createConstruct(ConstructKind::Bridge, {{"a", vecs(arc)}, {"aFixed", true}, {"b", vecs(path)}}, edge);
+                createConstruct(ConstructKind::Bridge, {{"a", vecListJson(arc)}, {"aFixed", true}, {"b", vecListJson(path)}}, edge);
                 return;
             }
         }
@@ -404,11 +382,11 @@ void TopologyTool::commitStroke(const retopo::SurfaceStroke& s, Index a, Index b
         UndoChunk chunk("Bridge Strokes");
         run("retopoConstructDelete", {{"mesh", mRetopoName}, {"ids", {pendingId}}});
         refresh();
-        createConstruct(ConstructKind::Bridge, {{"a", other["path"]}, {"b", vecs(path)}, {"divisions", other.value("divisions", 0)}}, edge);
+        createConstruct(ConstructKind::Bridge, {{"a", other["path"]}, {"b", vecListJson(path)}, {"divisions", other.value("divisions", 0)}}, edge);
         return;
     }
     int divisions = std::max(1, int(std::lround(s.length() / std::max(edge, 1e-9))));
-    createConstruct(ConstructKind::Stroke, {{"path", vecs(path)}, {"divisions", divisions}}, edge);
+    createConstruct(ConstructKind::Stroke, {{"path", vecListJson(path)}, {"divisions", divisions}}, edge);
 }
 
 // Cylinder
@@ -438,7 +416,7 @@ void TopologyTool::commitCylinderLine(QPointF from, QPointF to, const ViewInfo& 
     if (glm::length(normal) < 1e-12)
         return;
     normal = glm::normalize(normal);
-    json ring = {{"origin", vec(hit)}, {"normal", vec(normal)}, {"pick", vec(hit)}};
+    json ring = {{"origin", vecJson(hit)}, {"normal", vecJson(normal)}, {"pick", vecJson(hit)}};
 
     auto insertInto = [&](int id) {
         return editConstruct(id, [&](json& spec) {
@@ -481,7 +459,7 @@ void TopologyTool::commitCylinderLine(QPointF from, QPointF to, const ViewInfo& 
         insertInto(mCylinder);
         return;
     }
-    int points = std::max(3, PrefStore::get().value<int>(kPrefs, kCylinderPointsPref, 8));
+    int points = std::max(3, PrefStore::get().value<int>("general", kCylinderPointsPref, 8));
     mCylinder = createConstruct(ConstructKind::Cylinder, {{"rings", json::array({ring})}, {"points", points}}, 0.0);
 }
 
@@ -597,7 +575,7 @@ bool TopologyTool::runRegion()
     }
     json guides = json::array();
     for (const retopo::Guide& g : mGuides)
-        guides.push_back(vecs(g.points));
+        guides.push_back(vecListJson(g.points));
     // A retopo border loop lying along the region's edge is what the region stitches to.
     json border = json::array();
     if (mRetopo)
@@ -625,7 +603,7 @@ bool TopologyTool::runRegion()
                 }
             }
             if (loop.closed && loop.points.size() >= 3 && near >= int(loop.points.size() * 8 / 10))
-                border = vecs(loop.world);
+                border = vecListJson(loop.world);
         }
     }
     json spec = {{"faces", faces}, {"referenceFaces", mRefWorldMesh.numFaces()}, {"edgeLength", edge}, {"guides", guides}, {"border", border}};
@@ -658,7 +636,7 @@ void TopologyTool::beginHandles(const std::vector<glm::dvec3>& path, const ViewI
         int count = std::clamp(int(std::lround(retopo::polylineLength(path) / (2.0 * radius))) + 1, 2, 8);
         handles = retopo::resamplePolyline(path, count - 1, false, &mRefBvh);
     }
-    double falloff = std::clamp(PrefStore::get().value<double>(kPrefs, kHandleFalloffPref, 0.5), 0.0, 1.0);
+    double falloff = std::clamp(PrefStore::get().value<double>("general", kHandleFalloffPref, 0.5), 0.0, 1.0);
     mRig = retopo::HandleRig(world, region, handles, falloff);
     mXforms.clear();
     for (const glm::dvec3& h : handles)
@@ -682,7 +660,7 @@ void TopologyTool::commitHandles()
         for (auto& [p, pos] : mMoved)
         {
             points.push_back(p);
-            positions.push_back(vec(pos));
+            positions.push_back(vecJson(pos));
         }
         run("retopoDrawMove", {{"mesh", mRetopoName}, {"points", points}, {"positions", positions}});
     }
@@ -699,7 +677,7 @@ void TopologyTool::commitHandles()
         if (world.pointValid(p))
             world.setPosition(p, pointWorld(p));
     std::vector<Index> region = mRig.points();
-    double falloff = std::clamp(PrefStore::get().value<double>(kPrefs, kHandleFalloffPref, 0.5), 0.0, 1.0);
+    double falloff = std::clamp(PrefStore::get().value<double>("general", kHandleFalloffPref, 0.5), 0.0, 1.0);
     mRig = retopo::HandleRig(world, region, handles, falloff);
     std::vector<retopo::HandleXform> next;
     for (size_t i = 0; i < handles.size(); ++i)
@@ -909,7 +887,7 @@ bool TopologyTool::wheelConstruct(int id, int delta, bool second, QPointF px, co
 
 void TopologyTool::drawConstructs(render::FrameState& s, OverlayPainter& p, const ViewInfo& view, bool here) const
 {
-    const bool mono = monotone();
+    const bool mono = viewportDisplay::monotone();
     for (const retopo::ConstructRecord& r : mRecords)
     {
         if (!r.live)
@@ -930,12 +908,12 @@ void TopologyTool::drawConstructs(render::FrameState& s, OverlayPainter& p, cons
                     if (corner)
                     {
                         p.rect(QRectF(sp->x() - size, sp->y() - size, size * 2, size * 2), kKnotRim);
-                        p.rect(QRectF(sp->x() - size + 1.5, sp->y() - size + 1.5, size * 2 - 3, size * 2 - 3), hot ? kHot : kKnotFill);
+                        p.rect(QRectF(sp->x() - size + 1.5, sp->y() - size + 1.5, size * 2 - 3, size * 2 - 3), hot ? kHotColor : kKnotFill);
                     }
                     else
                     {
                         p.disc(*sp, size, kKnotRim, 16);
-                        p.disc(*sp, size - 1.5f, hot ? kHot : kKnotFill, 16);
+                        p.disc(*sp, size - 1.5f, hot ? kHotColor : kKnotFill, 16);
                     }
                 }
         }
@@ -980,10 +958,10 @@ void TopologyTool::drawConstructs(render::FrameState& s, OverlayPainter& p, cons
                     {
                     }
                 }
-                drawSurfacePolyline(p, view, mRing, true, 2.0f, kHot);
+                drawSurfacePolyline(p, view, mRing, true, 2.0f, kHotColor);
                 for (const glm::dvec3& w : mRing)
                     if (auto sp = view.project(w); sp && visible(w, view))
-                        p.disc(*sp, 3.5f, kHot, 10);
+                        p.disc(*sp, 3.5f, kHotColor, 10);
             }
         }
         else if (r.kind == ConstructKind::Patch && r.id == mActive && r.spec.contains("pull") && !r.spec["pull"].is_null())
@@ -992,7 +970,7 @@ void TopologyTool::drawConstructs(render::FrameState& s, OverlayPainter& p, cons
             if (auto sp = view.project(pull); sp && visible(pull, view))
             {
                 p.disc(*sp, 6.0f, kKnotRim, 16);
-                p.disc(*sp, 2.5f, kHot, 12);
+                p.disc(*sp, 2.5f, kHotColor, 12);
             }
         }
     }
@@ -1025,10 +1003,10 @@ void TopologyTool::drawConstructs(render::FrameState& s, OverlayPainter& p, cons
                     double a = k / 32.0 * 6.283185307179586 + glm::radians(mXforms[i].rotate);
                     circle.push_back(*sp + QPointF(std::cos(a), std::sin(a)) * ring);
                 }
-                p.polyline(circle, 1.5f, hot ? kHot : kKnotFill, true);
-                p.line(*sp, circle.front(), 1.5f, hot ? kHot : kKnotFill);
+                p.polyline(circle, 1.5f, hot ? kHotColor : kKnotFill, true);
+                p.line(*sp, circle.front(), 1.5f, hot ? kHotColor : kKnotFill);
                 p.disc(*sp, 4.0f, kKnotRim, 12);
-                p.disc(*sp, 2.5f, hot ? kHot : kKnotFill, 12);
+                p.disc(*sp, 2.5f, hot ? kHotColor : kKnotFill, 12);
             }
         }
 }

@@ -15,13 +15,13 @@ namespace lila::geo
 {
 namespace
 {
-double cross2(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c)
+double orient2d(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c)
 {
     return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
 /** Orthonormal u, v with u x v along n. */
-void planeBasis(const glm::dvec3& n, glm::dvec3& u, glm::dvec3& v)
+void planeAxes(const glm::dvec3& n, glm::dvec3& u, glm::dvec3& v)
 {
     const glm::dvec3 a = std::abs(n.x) < 0.6 ? glm::dvec3(1, 0, 0) : std::abs(n.y) < 0.6 ? glm::dvec3(0, 1, 0)
                                                                                           : glm::dvec3(0, 0, 1);
@@ -30,7 +30,7 @@ void planeBasis(const glm::dvec3& n, glm::dvec3& u, glm::dvec3& v)
 }
 
 /** Largest coordinate extent, so tolerances scale with the polygon. */
-double extentOf(std::span<const glm::dvec2> poly)
+double polygonSize(std::span<const glm::dvec2> poly)
 {
     glm::dvec2 lo(1e300), hi(-1e300);
     for (const glm::dvec2& p : poly)
@@ -45,7 +45,7 @@ double extentOf(std::span<const glm::dvec2> poly)
 /** p inside or on the closed triangle abc (counter-clockwise), with a tolerance that blocks touching. */
 bool inClosedTriangle(const glm::dvec2& p, const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c, double eps)
 {
-    return cross2(a, b, p) >= -eps && cross2(b, c, p) >= -eps && cross2(c, a, p) >= -eps;
+    return orient2d(a, b, p) >= -eps && orient2d(b, c, p) >= -eps && orient2d(c, a, p) >= -eps;
 }
 
 /** > 0 when d lies inside the circle through the counter-clockwise triangle abc. */
@@ -71,7 +71,7 @@ void delaunayFlips(std::span<const glm::dvec2> poly, std::span<Index> tris, std:
     const size_t nt = tris.size() / 3;
     if (nt < 2)
         return;
-    const double ext = extentOf(poly);
+    const double ext = polygonSize(poly);
     const double areaEps = 1e-12 * ext * ext;
     const double circleEps = 1e-10 * ext * ext * ext * ext;
     const auto key = [n](Index a, Index b) { return uint64_t(a) * n + b; };
@@ -124,7 +124,7 @@ void delaunayFlips(std::span<const glm::dvec2> poly, std::span<Index> tris, std:
         if (x == kInvalid || y == kInvalid || x == y || owner.count(key(x, y)) || owner.count(key(y, x)) || isForbidden(forbidden, n, x, y))
             continue;
         // t1 = (a, b, x), t2 = (b, a, y): the quad is a, y, b, x.
-        if (cross2(poly[a], poly[y], poly[x]) <= areaEps || cross2(poly[y], poly[b], poly[x]) <= areaEps)
+        if (orient2d(poly[a], poly[y], poly[x]) <= areaEps || orient2d(poly[y], poly[b], poly[x]) <= areaEps)
             continue;
         if (inCircle(poly[a], poly[b], poly[x], poly[y]) <= circleEps)
             continue;
@@ -238,7 +238,7 @@ void triangulateFaceImpl(const Mesh& mesh, Index f, std::vector<Index>& out, con
         return;
     }
     glm::dvec3 u, v;
-    planeBasis(newell / newellLen, u, v);
+    planeAxes(newell / newellLen, u, v);
     s.poly.resize(n);
     for (Index i = 0; i < n; ++i)
     {
@@ -248,12 +248,12 @@ void triangulateFaceImpl(const Mesh& mesh, Index f, std::vector<Index>& out, con
 
     if (n == 4)
     {
-        const double ext = extentOf(s.poly);
+        const double ext = polygonSize(s.poly);
         const double eps = 1e-12 * ext * ext;
         const auto& q = s.poly;
         // A diagonal folds when one of its triangles faces against the polygon.
-        const bool ok02 = cross2(q[0], q[1], q[2]) > eps && cross2(q[0], q[2], q[3]) > eps;
-        const bool ok13 = cross2(q[1], q[2], q[3]) > eps && cross2(q[1], q[3], q[0]) > eps;
+        const bool ok02 = orient2d(q[0], q[1], q[2]) > eps && orient2d(q[0], q[2], q[3]) > eps;
+        const bool ok13 = orient2d(q[1], q[2], q[3]) > eps && orient2d(q[1], q[3], q[0]) > eps;
         bool alt = false;
         if (opts.quads == QuadSplit::ShortestDiagonal)
         {
@@ -290,7 +290,7 @@ void earClipImpl(std::span<const glm::dvec2> poly, std::vector<Index>& out, std:
     const Index n = Index(poly.size());
     if (n < 3)
         return;
-    const double ext = extentOf(poly);
+    const double ext = polygonSize(poly);
     const double areaEps = 1e-12 * ext * ext;
     std::vector<Index> next(n), prev(n);
     for (Index i = 0; i < n; ++i)
@@ -304,7 +304,7 @@ void earClipImpl(std::span<const glm::dvec2> poly, std::vector<Index>& out, std:
     auto isEar = [&](Index i) {
         const Index ia = prev[i], ic = next[i];
         const glm::dvec2 &a = poly[ia], &b = poly[i], &c = poly[ic];
-        if (cross2(a, b, c) <= areaEps || (remaining > 3 && isForbidden(forbidden, n, ia, ic)))
+        if (orient2d(a, b, c) <= areaEps || (remaining > 3 && isForbidden(forbidden, n, ia, ic)))
             return false;
         const glm::dvec2 lo = glm::min(a, glm::min(b, c)), hi = glm::max(a, glm::max(b, c));
         for (Index j = next[ic]; j != ia; j = next[j])
@@ -334,7 +334,7 @@ void earClipImpl(std::span<const glm::dvec2> poly, std::vector<Index>& out, std:
             Index j = i;
             for (Index k = 0; k < remaining; ++k, j = next[j])
             {
-                const double cr = cross2(poly[prev[j]], poly[j], poly[next[j]]);
+                const double cr = orient2d(poly[prev[j]], poly[j], poly[next[j]]);
                 if (cr > bestCross)
                 {
                     bestCross = cr;

@@ -10,9 +10,6 @@ using namespace textest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
 /** Bricks tinted by Colorize; the tint's input comes straight from the bricks or through a chain of reroutes. */
 Graph tinted(int reroutes)
 {

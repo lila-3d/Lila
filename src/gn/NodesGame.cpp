@@ -14,7 +14,6 @@
 
 namespace lila::gn::nodes::game
 {
-using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 
 /** Faces grouped by connectivity through shared points. */

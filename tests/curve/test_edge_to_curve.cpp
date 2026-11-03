@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
@@ -12,19 +14,18 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 /** A 30 cm plane of 3x3 quads: points at -15, -5, 5 and 15 on X and Z. */
-std::string grid()
+std::string gridPlane()
 {
     run("newScene");
     return run("polyPlane", {{"width", 30}, {"depth", 30}, {"subdivisionsX", 3}, {"subdivisionsZ", 3}})[0];
 }
 
-geo::Mesh meshOf(const std::string& name)
+geo::Mesh meshCopy(const std::string& name)
 {
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
@@ -33,19 +34,7 @@ geo::Mesh meshOf(const std::string& name)
     return *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
 }
 
-json edgesWhere(const std::string& mesh, const std::function<bool(const D3& a, const D3& b)>& keep)
-{
-    geo::Mesh m = meshOf(mesh);
-    json out = json::array();
-    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
-        if (m.edgeValid(e) && keep(m.position(m.edgePoint(e, 0)), m.position(m.edgePoint(e, 1))))
-            out.push_back(e);
-    return out;
-}
-
 bool near(double a, double b) { return std::abs(a - b) < 1e-6; }
-
-json curveJson(const std::string& name, bool world = true) { return run("curveData", {{"args", {name}}, {"worldSpace", world}}); }
 
 D3 translateOf(const std::string& name)
 {
@@ -57,7 +46,7 @@ D3 translateOf(const std::string& name)
 
 TEST_CASE("polyEdgeToCurve: open chain, closed loop, separate chains")
 {
-    std::string plane = grid();
+    std::string plane = gridPlane();
     json front = edgesWhere(plane, [](const D3& a, const D3& b) { return near(a.z, -15) && near(b.z, -15); });
     REQUIRE(front.size() == 3);
     run("selectComponents", {{"args", {plane}}, {"edges", front}});
@@ -103,8 +92,8 @@ TEST_CASE("polyEdgeToCurve: open chain, closed loop, separate chains")
 
 TEST_CASE("polyEdgeToCurve: face border, branching, kinds")
 {
-    std::string plane = grid();
-    geo::Mesh m = meshOf(plane);
+    std::string plane = gridPlane();
+    geo::Mesh m = meshCopy(plane);
     json centre = json::array();
     for (geo::Index f = 0; f < m.faceCapacity(); ++f)
         if (m.faceValid(f) && glm::length(m.faceCentroid(f)) < 1e-6)
@@ -148,7 +137,7 @@ TEST_CASE("polyEdgeToCurve: face border, branching, kinds")
 
 TEST_CASE("polyEdgeToCurve: nurbs corners and undo")
 {
-    std::string plane = grid();
+    std::string plane = gridPlane();
     // An L: three edges along the front, three up the right side.
     json ell = edgesWhere(plane, [](const D3& a, const D3& b) { return (near(a.z, -15) && near(b.z, -15)) || (near(a.x, 15) && near(b.x, 15)); });
     REQUIRE(ell.size() == 6);
@@ -171,7 +160,7 @@ TEST_CASE("polyEdgeToCurve: nurbs corners and undo")
 
 TEST_CASE("polyEdgeToCurve: history follows the mesh")
 {
-    std::string plane = grid();
+    std::string plane = gridPlane();
     json front = edgesWhere(plane, [](const D3& a, const D3& b) { return near(a.z, -15) && near(b.z, -15); });
     json made = run("polyEdgeToCurve", {{"args", {plane}}, {"edges", front}, {"constructionHistory", true}});
     REQUIRE(made.size() == 1);

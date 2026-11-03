@@ -27,12 +27,7 @@ namespace
 using namespace curveTools;
 using curve::Spline;
 
-constexpr const char* kPrefs = "/pipeTool/";
-const std::array<const char*, 5> kPresets = {"", "pipe", "hose", "cable", "conduit"};
-
-double prefD(const char* key, double def) { return prefs().value<double>("general", std::string(kPrefs) + key, def); }
-bool prefB(const char* key, bool def) { return prefs().value<bool>("general", std::string(kPrefs) + key, def); }
-void setPref(const char* key, const json& v) { prefs().set("general", std::string(kPrefs) + key, v); }
+const std::array<const char*, 5> kPipePresets = {"", "pipe", "hose", "cable", "conduit"};
 
 /** The selected face region's border (or a selected closed edge loop): where a pipe starts and which way it leaves. */
 struct StartLoop
@@ -115,7 +110,7 @@ public:
         mRadius = prefD("radius", 5.0);
         mSides = int(prefD("sides", 12.0));
         mWall = prefD("wall", 0.0);
-        mPreset = int(prefD("preset", 0.0)) % int(kPresets.size());
+        mPreset = int(prefD("preset", 0.0)) % int(kPipePresets.size());
         mFromLoop = prefB("fromLoop", true);
         mAttach = prefB("attach", false);
         mSurface = prefB("surface", true);
@@ -243,9 +238,9 @@ public:
         case Qt::Key_Minus:
         case Qt::Key_Underscore: setSides(mSides - 1); return true;
         case Qt::Key_P:
-            mPreset = (mPreset + 1) % int(kPresets.size());
+            mPreset = (mPreset + 1) % int(kPipePresets.size());
             setPref("preset", mPreset);
-            if (json v = curve::pipePreset(kPresets[size_t(mPreset)]); !v.is_null())
+            if (json v = curve::pipePreset(kPipePresets[size_t(mPreset)]); !v.is_null())
             {
                 setRadius(v["radius"].get<double>());
                 setSides(v["sides"].get<int>());
@@ -360,7 +355,7 @@ public:
                 p.polyline(ring, 1.5f, kPreview, true);
             }
         }
-        const char* preset = kPresets[size_t(mPreset)];
+        const char* preset = kPipePresets[size_t(mPreset)];
         drawToolMessage(p, view,
                         QString("Pipe  next radius %1 cm, %2 sides, %3%4  B-drag/Ctrl+scroll: radius, +/-: sides, P: preset (%5), T: wall, "
                                 "S: on surfaces %6, F: from loop %7, A: attach %8, Y: symmetry %9  Z/Backspace: undo point, Shift+Z: redo point, "
@@ -377,6 +372,11 @@ public:
     }
 
 private:
+    static constexpr const char* kPrefs = "/pipeTool/";
+    static double prefD(const char* key, double def) { return prefs().value<double>("general", std::string(kPrefs) + key, def); }
+    static bool prefB(const char* key, bool def) { return prefs().value<bool>("general", std::string(kPrefs) + key, def); }
+    static void setPref(const char* key, const json& v) { prefs().set("general", std::string(kPrefs) + key, v); }
+
     /** Points go on mesh surfaces (lifted by the radius so the pipe rests on them) or where the curve tools put them. */
     std::optional<D3> placeAt(QPointF px, const ViewInfo& view, D3* normalOut)
     {
@@ -490,8 +490,8 @@ private:
     void finish()
     {
         json call = {{"radius", mRadius}, {"sides", mSides}, {"wallThickness", mWall}};
-        if (*kPresets[size_t(mPreset)])
-            call["preset"] = kPresets[size_t(mPreset)];
+        if (*kPipePresets[size_t(mPreset)])
+            call["preset"] = kPipePresets[size_t(mPreset)];
         if (mSpline.size() < 2)
         {
             if (mSpline.size() <= (mStart ? 1u : 0u))

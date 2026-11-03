@@ -21,8 +21,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-constexpr const char* kPrefFile = "unreal";
-
 const std::map<std::string, std::string, std::less<>>& defaultParameters()
 {
     // The names Lila's own generated Unreal materials use, so one of them can be the parent.
@@ -39,7 +37,7 @@ std::string instanceName(const std::string& slot)
     return "MI_" + (slot.starts_with("M_") ? slot.substr(2) : slot);
 }
 
-scene::Node* findNode(const std::string& path)
+scene::Node* findCurrentNode(const std::string& path)
 {
     try
     {
@@ -59,7 +57,7 @@ json mappedMeshes()
     {
         if (!m.is_object() || m.value("kind", std::string("static")) != "static")
             continue;
-        if (scene::Node* n = findNode(m.value("node", std::string())))
+        if (scene::Node* n = findCurrentNode(m.value("node", std::string())))
             out[n->path()] = m.value("contentPath", std::string());
     }
     return out;
@@ -228,7 +226,7 @@ void registerTextureCommands()
             scene::Graph& g = scene::Graph::current();
             scene::Node* project = nullptr;
             if (a.has("project"))
-                project = findNode(a.get<std::string>("project"));
+                project = findCurrentNode(a.get<std::string>("project"));
             else if (const auto ps = bake::projects(g); ps.size() == 1)
                 project = g.node(ps.front());
             if (!project || !bake::isProject(*project))
@@ -243,8 +241,8 @@ void registerTextureCommands()
 
             PrefStore& prefs = PrefStore::get();
             json options = json::object();
-            options["folder"] = a.has("folder") ? a.get<std::string>("folder") : prefs.value<std::string>(kPrefFile, "/textureFolder", "/Game/Textures");
-            const std::string parent = a.has("materialParent") ? a.get<std::string>("materialParent") : prefs.value<std::string>(kPrefFile, "/materialParent", "");
+            options["folder"] = a.has("folder") ? a.get<std::string>("folder") : prefs.value<std::string>(kUnrealPrefFile, "/textureFolder", "/Game/Textures");
+            const std::string parent = a.has("materialParent") ? a.get<std::string>("materialParent") : prefs.value<std::string>(kUnrealPrefFile, "/materialParent", "");
             if (!parent.empty())
                 options["materialParent"] = parent;
             options["materialMode"] = a.has("materialMode") ? a.get<std::string>("materialMode") : std::string(parent.empty() ? "none" : "instance");

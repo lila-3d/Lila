@@ -22,8 +22,11 @@
 #include "ui/Icons.h"
 #include "ui/Tools.h"
 #include "ui/MeshCache.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 #include "vcolor/VertexColors.h"
 
 #include <QApplication>
@@ -60,7 +63,6 @@ using scene::kNoNode;
 using scene::MeshPtr;
 using scene::NodeId;
 
-constexpr const char* kPrefs = "general";
 constexpr size_t kRecentMax = 12;
 
 json colorJson(const glm::vec4& c) { return json::array({c.r, c.g, c.b, c.a}); }
@@ -70,17 +72,15 @@ glm::vec4 colorFrom(const json& j, const glm::vec4& fallback)
         return fallback;
     return {j[0].get<float>(), j[1].get<float>(), j[2].get<float>(), j[3].get<float>()};
 }
-json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
-
 /** Display color of a linear RGBA, for swatches. */
-QColor swatchColor(const glm::vec4& linear)
+QColor vertexColorSwatch(const glm::vec4& linear)
 {
     glm::vec4 s = vcolor::linearToSrgb(glm::clamp(linear, 0.0f, 1.0f));
     return QColor::fromRgbF(s.r, s.g, s.b);
 }
 
 /** The shared brush's defaults for vertex paint. */
-brush::BrushSettings defaultStroke()
+brush::BrushSettings defaultVertexPaintStroke()
 {
     brush::BrushSettings b;
     b.radius = 50.0;
@@ -93,7 +93,7 @@ brush::BrushSettings defaultStroke()
     return b;
 }
 
-struct Settings
+struct VertexPaintSettings
 {
     glm::vec4 color{1.0f};
     glm::vec4 secondary{0.0f, 0.0f, 0.0f, 1.0f};
@@ -103,94 +103,72 @@ struct Settings
     bool paintThrough = false;
     bool selectionOnly = true;
     /** Radius, strength, spacing, falloff, mirror, pressure and the rest of the shared brush. */
-    brush::BrushSettings stroke = defaultStroke();
+    brush::BrushSettings stroke = defaultVertexPaintStroke();
     std::vector<glm::vec4> swatches;
     std::vector<glm::vec4> recent;
 };
 
-Settings load()
+VertexPaintSettings load()
 {
-    Settings s;
+    VertexPaintSettings s;
     const PrefStore& p = PrefStore::get();
-    s.color = colorFrom(p.value<json>(kPrefs, "/vertexPaint/color", json()), s.color);
-    s.secondary = colorFrom(p.value<json>(kPrefs, "/vertexPaint/secondary", json()), s.secondary);
-    s.blend = p.value<std::string>(kPrefs, "/vertexPaint/blend", s.blend);
+    s.color = colorFrom(p.value<json>("general", "/vertexPaint/color", json()), s.color);
+    s.secondary = colorFrom(p.value<json>("general", "/vertexPaint/secondary", json()), s.secondary);
+    s.blend = p.value<std::string>("general", "/vertexPaint/blend", s.blend);
     s.stroke.loadPrefs("/vertexPaint");
     s.stroke.radius = std::clamp(s.stroke.radius, 2.0, 2000.0);
     s.stroke.spacing = std::clamp(s.stroke.spacing, 0.02, 2.0);
-    s.channels = p.value<std::string>(kPrefs, "/vertexPaint/channels", s.channels);
-    s.frontFacesOnly = p.value<bool>(kPrefs, "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
-    s.paintThrough = p.value<bool>(kPrefs, "/vertexPaint/paintThrough", s.paintThrough);
-    s.selectionOnly = p.value<bool>(kPrefs, "/vertexPaint/selectionOnly", s.selectionOnly);
-    for (const json& j : p.value<json>(kPrefs, "/vertexPaint/swatches", json::array()))
+    s.channels = p.value<std::string>("general", "/vertexPaint/channels", s.channels);
+    s.frontFacesOnly = p.value<bool>("general", "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
+    s.paintThrough = p.value<bool>("general", "/vertexPaint/paintThrough", s.paintThrough);
+    s.selectionOnly = p.value<bool>("general", "/vertexPaint/selectionOnly", s.selectionOnly);
+    for (const json& j : p.value<json>("general", "/vertexPaint/swatches", json::array()))
         s.swatches.push_back(colorFrom(j, glm::vec4(1.0f)));
-    for (const json& j : p.value<json>(kPrefs, "/vertexPaint/recent", json::array()))
+    for (const json& j : p.value<json>("general", "/vertexPaint/recent", json::array()))
         s.recent.push_back(colorFrom(j, glm::vec4(1.0f)));
     if (vcolor::channelsFromString(s.channels) == 0)
         s.channels = "rgba";
     return s;
 }
 
-Settings& settings()
+VertexPaintSettings& vertexPaintSettings()
 {
-    static Settings s = load();
+    static VertexPaintSettings s = load();
     return s;
 }
 
-void save()
+void saveVertexPaintSettings()
 {
-    const Settings& s = settings();
+    const VertexPaintSettings& s = vertexPaintSettings();
     PrefStore& p = PrefStore::get();
-    p.set(kPrefs, "/vertexPaint/color", colorJson(s.color));
-    p.set(kPrefs, "/vertexPaint/secondary", colorJson(s.secondary));
-    p.set(kPrefs, "/vertexPaint/blend", s.blend);
+    p.set("general", "/vertexPaint/color", colorJson(s.color));
+    p.set("general", "/vertexPaint/secondary", colorJson(s.secondary));
+    p.set("general", "/vertexPaint/blend", s.blend);
     s.stroke.savePrefs("/vertexPaint");
-    p.set(kPrefs, "/vertexPaint/channels", s.channels);
-    p.set(kPrefs, "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
-    p.set(kPrefs, "/vertexPaint/paintThrough", s.paintThrough);
-    p.set(kPrefs, "/vertexPaint/selectionOnly", s.selectionOnly);
+    p.set("general", "/vertexPaint/channels", s.channels);
+    p.set("general", "/vertexPaint/frontFacesOnly", s.frontFacesOnly);
+    p.set("general", "/vertexPaint/paintThrough", s.paintThrough);
+    p.set("general", "/vertexPaint/selectionOnly", s.selectionOnly);
     json sw = json::array(), rc = json::array();
     for (const glm::vec4& c : s.swatches)
         sw.push_back(colorJson(c));
     for (const glm::vec4& c : s.recent)
         rc.push_back(colorJson(c));
-    p.set(kPrefs, "/vertexPaint/swatches", sw);
-    p.set(kPrefs, "/vertexPaint/recent", rc);
+    p.set("general", "/vertexPaint/swatches", sw);
+    p.set("general", "/vertexPaint/recent", rc);
 }
 
 void pushRecent(const glm::vec4& c)
 {
-    auto& r = settings().recent;
+    auto& r = vertexPaintSettings().recent;
     std::erase(r, c);
     r.insert(r.begin(), c);
     if (r.size() > kRecentMax)
         r.resize(kRecentMax);
 }
 
-/** Runs a command as the UI does (echoed), logging failures instead of throwing. */
-json runCommand(const char* name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-    return nullptr;
-}
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
-
 /** The lead selected mesh, or kNoNode. */
-NodeId leadMesh()
+NodeId leadPaintMesh()
 {
     scene::Graph& g = scene::Graph::current();
     const auto& sel = g.selection();
@@ -220,7 +198,7 @@ public:
     void setColor(const glm::vec4& linear)
     {
         mColor = linear;
-        QColor c = swatchColor(linear);
+        QColor c = vertexColorSwatch(linear);
         setProperty("lilaRawColors", true);
         setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #1c1c1c; border-radius: 2px; }"
                               "QToolButton:hover { border: 1px solid #d0d0d0; }")
@@ -303,7 +281,7 @@ public:
         connect(mPrimary, &QToolButton::clicked, this, [this] { editColor(true); });
         connect(mSecondary, &QToolButton::clicked, this, [this] { editColor(false); });
         connect(swap, &QToolButton::clicked, this, [this] {
-            std::swap(settings().color, settings().secondary);
+            std::swap(vertexPaintSettings().color, vertexPaintSettings().secondary);
             changed();
         });
         connect(eyedrop, &QToolButton::clicked, this, [this] {
@@ -323,7 +301,7 @@ public:
             mValue[k]->setToolTip("Primary color, linear (what the mesh stores and Unreal reads)");
             rgba->addWidget(mValue[k]);
             connect(mValue[k], &QDoubleSpinBox::valueChanged, this, [this, k](double v) {
-                settings().color[k] = float(v);
+                vertexPaintSettings().color[k] = float(v);
                 changed();
             });
         }
@@ -401,13 +379,13 @@ public:
             });
             mChecks.push_back({cb, ref});
         };
-        check("Front faces only", "Leave points facing away from the view", []() -> bool& { return settings().frontFacesOnly; });
-        check("Paint through", "Reach points hidden behind other parts of the mesh", []() -> bool& { return settings().paintThrough; });
+        check("Front faces only", "Leave points facing away from the view", []() -> bool& { return vertexPaintSettings().frontFacesOnly; });
+        check("Paint through", "Reach points hidden behind other parts of the mesh", []() -> bool& { return vertexPaintSettings().paintThrough; });
         check("Mirror (mesh symmetry)", "Mirror strokes across the mesh's symmetry plane when it is on",
-              []() -> bool& { return settings().stroke.mirror; });
-        check("Selected components only", "With components selected, only they change", []() -> bool& { return settings().selectionOnly; });
+              []() -> bool& { return vertexPaintSettings().stroke.mirror; });
+        check("Selected components only", "With components selected, only they change", []() -> bool& { return vertexPaintSettings().selectionOnly; });
         col->addWidget(opts);
-        mStrokeOptions = new brush::ui::StrokeOptions(body, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        mStrokeOptions = new brush::ui::StrokeOptions(body, []() -> brush::BrushSettings& { return vertexPaintSettings().stroke; }, [this] { changed(); });
         col->addWidget(mStrokeOptions);
 
         // Display.
@@ -465,20 +443,20 @@ public:
             json call = targetCall("vertexColorGradient");
             call["type"] = mGradType->currentData().toString().toStdString();
             call["axis"] = mGradAxis->currentData().toString().toStdString();
-            call["colorA"] = colorJson(settings().secondary);
-            call["colorB"] = colorJson(settings().color);
-            runCommand("vertexColorGradient", call);
+            call["colorA"] = colorJson(vertexPaintSettings().secondary);
+            call["colorB"] = colorJson(vertexPaintSettings().color);
+            runUi("vertexColorGradient", call);
         });
-        buttonRow({{"Invert", "contrast", "Invert the painted channels", [this] { runCommand("vertexColorAdjust", targetCall("vertexColorAdjust")); }},
+        buttonRow({{"Invert", "contrast", "Invert the painted channels", [this] { runUi("vertexColorAdjust", targetCall("vertexColorAdjust")); }},
                    {"Blur", "blur", "Smooth the painted channels across edges", [this] {
                         json c = targetCall("vertexColorBlur");
                         c["iterations"] = 2;
-                        runCommand("vertexColorBlur", c);
+                        runUi("vertexColorBlur", c);
                     }},
                    {"Sharpen", "focus-2", "Sharpen the painted channels", [this] {
                         json c = targetCall("vertexColorBlur");
                         c["strength"] = -0.5;
-                        runCommand("vertexColorBlur", c);
+                        runUi("vertexColorBlur", c);
                     }}});
         auto* levelsRow = new QHBoxLayout;
         for (int k = 0; k < 3; ++k)
@@ -500,7 +478,7 @@ public:
             c["inBlack"] = mLevels[0]->value();
             c["inWhite"] = mLevels[1]->value();
             c["gamma"] = mLevels[2]->value();
-            runCommand("vertexColorAdjust", c);
+            runUi("vertexColorAdjust", c);
         });
         col->addWidget(fills);
 
@@ -525,29 +503,29 @@ public:
             json c = targetCall("vertexColorBake");
             c["type"] = mBakeType->currentData().toString().toStdString();
             c["rays"] = mBakeRays->value();
-            runCommand("vertexColorBake", c);
+            runUi("vertexColorBake", c);
         });
         col->addWidget(bakes);
         col->addStretch(1);
 
         connect(mBlend, &QComboBox::activated, this, [this](int) {
-            settings().blend = mBlend->currentData().toString().toStdString();
+            vertexPaintSettings().blend = mBlend->currentData().toString().toStdString();
             changed();
         });
         connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().stroke.strength = v;
+            vertexPaintSettings().stroke.strength = v;
             changed();
         });
         connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) {
-            settings().stroke.radius = v;
+            vertexPaintSettings().stroke.radius = v;
             changed();
         });
         connect(mSpacing, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().stroke.spacing = v;
+            vertexPaintSettings().stroke.spacing = v;
             changed();
         });
         connect(mFalloff, &QComboBox::activated, this, [this](int) {
-            settings().stroke.falloff = mFalloff->currentText().toStdString();
+            vertexPaintSettings().stroke.falloff = mFalloff->currentText().toStdString();
             changed();
         });
 
@@ -560,7 +538,7 @@ public:
 
     void syncFromSettings()
     {
-        const Settings& s = settings();
+        const VertexPaintSettings& s = vertexPaintSettings();
         mPrimary->setColor(s.color);
         mSecondary->setColor(s.secondary);
         for (int k = 0; k < 4; ++k)
@@ -596,9 +574,9 @@ public:
             mStrokeOptions->sync();
         {
             QSignalBlocker b1(mDisplay), b2(mChannelView);
-            std::string mode = PrefStore::get().value<std::string>(kPrefs, viewportDisplay::kVertexColors, "off");
+            std::string mode = PrefStore::get().value<std::string>("general", viewportDisplay::kVertexColors, "off");
             mDisplay->setCurrentIndex(std::max(0, mDisplay->findData(QString::fromStdString(mode))));
-            std::string channel = PrefStore::get().value<std::string>(kPrefs, viewportDisplay::kColorChannel, "rgb");
+            std::string channel = PrefStore::get().value<std::string>("general", viewportDisplay::kColorChannel, "rgb");
             mChannelView->setCurrentIndex(std::max(0, mChannelView->findData(QString::fromStdString(channel))));
         }
         rebuildSwatches();
@@ -643,7 +621,7 @@ protected:
 private:
     void changed()
     {
-        save();
+        saveVertexPaintSettings();
         syncFromSettings();
         if (onChanged)
             onChanged();
@@ -655,7 +633,7 @@ private:
         for (int k = 0; k < 4; ++k)
             if (mChannel[k]->isChecked())
                 ch |= uint8_t(1 << k);
-        settings().channels = ch ? vcolor::channelsToString(ch) : "rgba";
+        vertexPaintSettings().channels = ch ? vcolor::channelsToString(ch) : "rgba";
         changed();
     }
 
@@ -667,19 +645,19 @@ private:
 
     json targetCall(const char*) const
     {
-        return {{"args", {meshName()}}, {"channels", settings().channels}};
+        return {{"args", {meshName()}}, {"channels", vertexPaintSettings().channels}};
     }
 
     void fill(const char* which)
     {
         json c = targetCall("vertexColorFill");
         c["target"] = which;
-        c["color"] = colorJson(settings().color);
-        std::string blend = settings().blend;
+        c["color"] = colorJson(vertexPaintSettings().color);
+        std::string blend = vertexPaintSettings().blend;
         c["blend"] = blend;
-        c["opacity"] = settings().stroke.strength;
-        runCommand("vertexColorFill", c);
-        pushRecent(settings().color);
+        c["opacity"] = vertexPaintSettings().stroke.strength;
+        runUi("vertexColorFill", c);
+        pushRecent(vertexPaintSettings().color);
         changed();
     }
 
@@ -710,19 +688,19 @@ private:
                 return;
             c.update({{"colorSet", cur}, {"rename", true}, {"newColorSet", to.toStdString()}});
         }
-        runCommand("polyColorSet", c);
+        runUi("polyColorSet", c);
         syncTarget();
     }
 
     void editColor(bool primary)
     {
         auto apply = [this, primary](const QColor& picked) {
-            glm::vec4& c = primary ? settings().color : settings().secondary;
+            glm::vec4& c = primary ? vertexPaintSettings().color : vertexPaintSettings().secondary;
             c = vcolor::srgbToLinear(glm::vec4(float(picked.redF()), float(picked.greenF()), float(picked.blueF()), float(picked.alphaF())));
             changed();
         };
-        const glm::vec4 c = primary ? settings().color : settings().secondary;
-        if (QColor picked = colorPopup::getColor(swatchColor(c), this, primary ? "Primary Color" : "Secondary Color", true, apply); picked.isValid())
+        const glm::vec4 c = primary ? vertexPaintSettings().color : vertexPaintSettings().secondary;
+        if (QColor picked = colorPopup::getColor(vertexColorSwatch(c), this, primary ? "Primary Color" : "Secondary Color", true, apply); picked.isValid())
             apply(picked);
     }
 
@@ -737,7 +715,7 @@ private:
         };
         clear(mSwatchLayout);
         clear(mRecentLayout);
-        Settings& s = settings();
+        VertexPaintSettings& s = vertexPaintSettings();
         for (size_t i = 0; i < s.swatches.size(); ++i)
         {
             auto* sw = new Swatch(mSwatchHost, 20);
@@ -747,13 +725,13 @@ private:
             glm::vec4 c = s.swatches[i];
             connect(sw, &QToolButton::clicked, this, [this, c] {
                 QTimer::singleShot(0, this, [this, c] {
-                    settings().color = c;
+                    vertexPaintSettings().color = c;
                     changed();
                 });
             });
             connect(sw, &QWidget::customContextMenuRequested, this, [this, c] {
                 QTimer::singleShot(0, this, [this, c] {
-                    std::erase(settings().swatches, c);
+                    std::erase(vertexPaintSettings().swatches, c);
                     changed();
                 });
             });
@@ -765,9 +743,9 @@ private:
         add->setToolTip("Save the primary color as a swatch");
         connect(add, &QToolButton::clicked, this, [this] {
             QTimer::singleShot(0, this, [this] {
-                auto& sw = settings().swatches;
-                if (std::find(sw.begin(), sw.end(), settings().color) == sw.end())
-                    sw.push_back(settings().color);
+                auto& sw = vertexPaintSettings().swatches;
+                if (std::find(sw.begin(), sw.end(), vertexPaintSettings().color) == sw.end())
+                    sw.push_back(vertexPaintSettings().color);
                 changed();
             });
         });
@@ -778,7 +756,7 @@ private:
             sw->setColor(c);
             connect(sw, &QToolButton::clicked, this, [this, c] {
                 QTimer::singleShot(0, this, [this, c] {
-                    settings().color = c;
+                    vertexPaintSettings().color = c;
                     changed();
                 });
             });
@@ -872,8 +850,8 @@ public:
         {
             if (down)
             {
-                std::swap(settings().color, settings().secondary);
-                save();
+                std::swap(vertexPaintSettings().color, vertexPaintSettings().secondary);
+                saveVertexPaintSettings();
                 if (mPanel)
                     mPanel->syncFromSettings();
                 viewportTools::requestRedraw();
@@ -910,9 +888,9 @@ public:
             mEyedropArmed = false;
             if (mPaint && surfaceHit(e->position(), view, hit))
             {
-                settings().color = mPaint->sample(hit.bvh);
-                pushRecent(settings().color);
-                save();
+                vertexPaintSettings().color = mPaint->sample(hit.bvh);
+                pushRecent(vertexPaintSettings().color);
+                saveVertexPaintSettings();
                 if (mPanel)
                     mPanel->syncFromSettings();
             }
@@ -930,7 +908,7 @@ public:
         }
         if (!ensurePaint())
             return true;
-        const bool line = settings().stroke.mode == brush::StrokeMode::Line;
+        const bool line = vertexPaintSettings().stroke.mode == brush::StrokeMode::Line;
         if (!line && !surfaceHit(e->position(), view, hit))
             return false;
         beginStroke(e, view);
@@ -971,13 +949,13 @@ public:
             mGradientDrag = false;
             scene::Node* n = scene::Graph::current().node(mMesh);
             if (n && glm::length(mGradientTo - mGradientFrom) > 1e-9)
-                runCommand("vertexColorGradient", {{"args", {n->path()}},
+                runUi("vertexColorGradient", {{"args", {n->path()}},
                                                    {"type", (e->modifiers() & Qt::ShiftModifier) ? "radial" : "linear"},
                                                    {"start", vecJson(mGradientFrom)},
                                                    {"end", vecJson(mGradientTo)},
-                                                   {"colorA", colorJson(settings().secondary)},
-                                                   {"colorB", colorJson(settings().color)},
-                                                   {"channels", settings().channels}});
+                                                   {"colorA", colorJson(vertexPaintSettings().secondary)},
+                                                   {"colorB", colorJson(vertexPaintSettings().color)},
+                                                   {"channels", vertexPaintSettings().channels}});
             viewportTools::requestRedraw();
             return true;
         }
@@ -1011,7 +989,7 @@ public:
             return;
         }
         substituteLiveMesh(s, *n);
-        const Settings& st = settings();
+        const VertexPaintSettings& st = vertexPaintSettings();
         const bool blur = ((mStroking ? mStrokeMods : QApplication::keyboardModifiers()) & Qt::ShiftModifier) != 0;
         const std::string blend = blur ? std::string(vcolor::blendName(vcolor::Blend::Blur)) : st.blend;
         drawToolMessage(p, view, QString("Vertex paint %1: %2   %3 %4   radius %5 px   strength %6%7")
@@ -1102,7 +1080,7 @@ private:
         LILA_ZONE();
 
         scene::Graph& g = scene::Graph::current();
-        NodeId id = leadMesh();
+        NodeId id = leadPaintMesh();
         if (id == kNoNode && mMesh != kNoNode && g.node(mMesh))
             id = mMesh;
         if (id != mMesh)
@@ -1156,7 +1134,7 @@ private:
             return false;
         MeshPtr cage = cageOf(mMesh);
         if (cage && geo::colors::current(*cage).empty())
-            runCommand("polyColorSet", {{"args", {n->path()}}, {"create", true}, {"colorSet", "colorSet"}});
+            runUi("polyColorSet", {{"args", {n->path()}}, {"create", true}, {"colorSet", "colorSet"}});
         retarget();
         return mPaint != nullptr;
     }
@@ -1252,7 +1230,7 @@ private:
     {
         const Qt::KeyboardModifiers mods = e->modifiers();
         mStrokeMods = mods;
-        const Settings& st = settings();
+        const VertexPaintSettings& st = vertexPaintSettings();
         scene::Node* n = scene::Graph::current().node(mMesh);
         vcolor::BrushSettings b;
         b.blend = (mods & Qt::ShiftModifier) ? vcolor::Blend::Blur : vcolor::blendFromName(st.blend).value_or(vcolor::Blend::Replace);
@@ -1336,7 +1314,7 @@ private:
     {
         mStroke.end();
         mStroking = false;
-        save();
+        saveVertexPaintSettings();
         if (mPanel)
             mPanel->syncFromSettings();
         scene::Node* n = scene::Graph::current().node(mMesh);
@@ -1376,13 +1354,13 @@ private:
     }
 
     std::shared_ptr<bool> mAlive;
-    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return vertexPaintSettings().stroke; },
                                        [this] {
                                            if (mPanel)
                                                mPanel->syncFromSettings();
                                            viewportTools::requestRedraw();
                                        },
-                                       [] { save(); }};
+                                       [] { saveVertexPaintSettings(); }};
     brush::Stroke mStroke;
     QPointer<VertexPaintPanel> mPanel;
     int mListener = 0;
@@ -1422,9 +1400,9 @@ void startVertexPaint()
 void registerVertexPaintUi()
 {
     paintColor::addListener([](const glm::vec3& c) {
-        settings().color = glm::vec4(c, settings().color.a);
-        pushRecent(settings().color);
-        save();
+        vertexPaintSettings().color = glm::vec4(c, vertexPaintSettings().color.a);
+        pushRecent(vertexPaintSettings().color);
+        saveVertexPaintSettings();
     });
     actions::add({.id = "vcolor.paint",
                   .label = "Paint Vertex Colors",

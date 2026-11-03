@@ -71,6 +71,17 @@ inline AttrDef outMatrix(const char* name, const char* doc)
     return {.name = name, .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrOutput | AttrHidden, .doc = doc};
 }
 
+inline Graph& graph() { return Graph::current(); }
+
+/** True when node is ancestor or below it. */
+inline bool isUnder(const Graph& g, NodeId node, NodeId ancestor)
+{
+    for (NodeId cur = node; cur; cur = g.parent(cur))
+        if (cur == ancestor)
+            return true;
+    return false;
+}
+
 inline int attrOf(const Node& n, const char* name) { return n.type().attrIndex(name); }
 inline PlugRef plugOf(const Node& n, const char* name) { return {n.id(), attrOf(n, name), -1}; }
 
@@ -176,6 +187,14 @@ inline std::vector<std::string> objectArgs(const lila::Args& a)
         if (!s.empty())
             out.push_back(s);
     return out;
+}
+
+/** The command's own call with its objects and flags passed on as they came. */
+inline json forwarded(const lila::Args& a)
+{
+    json call = a.flags;
+    call["args"] = objectArgs(a);
+    return call;
 }
 
 inline json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }

@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "curve/CapFill.h"
 #include "curve/CurveBoolean.h"
+#include "curve/CurveMath.h"
 #include "curve/Skeleton.h"
 #include "geo/Attribute.h"
 #include "geo/Normals.h"
@@ -18,8 +19,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
 using geo::Index;
 
 /** A bevel vertex: a skeleton node (a == b) or where the arc a-b crosses a level; level -1 for a node between levels. */
@@ -54,7 +53,7 @@ struct Levels
     }
 };
 
-std::vector<D2> resample(const std::vector<D2>& loop, double maxEdge)
+std::vector<D2> resampleLoop(const std::vector<D2>& loop, double maxEdge)
 {
     std::vector<D2> out;
     for (size_t i = 0; i < loop.size(); ++i)
@@ -882,13 +881,13 @@ BevelPlusResult bevelPlus(const Splines& curves, const BevelPlusOptions& options
     {
         std::vector<std::vector<D2>> polys;
         double tol = std::max(extent * 1e-7, 1e-9);
-        std::vector<D2> outer = cleanLoop(resample(r.outer.points, spacing), tol);
+        std::vector<D2> outer = cleanLoop(resampleLoop(r.outer.points, spacing), tol);
         if (outer.size() < 3)
             continue;
         polys.push_back(std::move(outer));
         for (const Loop2& h : r.holes)
         {
-            std::vector<D2> hole = cleanLoop(resample(h.points, spacing), tol);
+            std::vector<D2> hole = cleanLoop(resampleLoop(h.points, spacing), tol);
             if (hole.size() >= 3)
                 polys.push_back(std::move(hole));
         }

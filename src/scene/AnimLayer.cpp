@@ -6,6 +6,7 @@
 #include "scene/AnimCurve.h"
 #include "scene/Graph.h"
 #include "scene/Offsets.h"
+#include "scene/RigUtil.h"
 #include "scene/RotationCurve.h"
 #include "scene/TransformOps.h"
 
@@ -144,28 +145,10 @@ glm::dvec3 solveA(const BlendInfo& i, const glm::dvec3& o)
     return xformops::closestEuler(glm::mat3_cast(qa), i.order, i.a);
 }
 
-std::string channelName(Graph& g, const PlugRef& p)
-{
-    const AttrDef& a = g.attr(p);
-    return p.component >= 0 ? a.childNames[p.component] : a.name;
-}
-
 std::string safeName(std::string s)
 {
     std::replace(s.begin(), s.end(), ':', '_');
     return s;
-}
-
-const char* curveTypeFor(const AttrDef& a)
-{
-    if (a.type == PlugType::Vec3 || a.type == PlugType::Float)
-    {
-        if (rotationAttr(a.name))
-            return "animCurveTA";
-        if (a.name.find("translate") != std::string::npos || a.name.find("Translate") != std::string::npos)
-            return "animCurveTL";
-    }
-    return "animCurveTU";
 }
 
 std::optional<PlugRef> linkSource(Graph& g, const PlugRef& p, bool vec)
@@ -782,19 +765,7 @@ std::optional<NodeId> setLayeredRotationKey(Graph& g, const PlugRef& plug, doubl
 
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
-template <class F> auto guarded(F&& f)
-{
-    try
-    {
-        return f();
-    }
-    catch (const std::invalid_argument& e)
-    {
-        throw CommandError(e.what());
-    }
-}
+using rigutil::guarded;
 
 NodeId layerNamed(Graph& g, const std::string& name, const char* cmd)
 {
@@ -1277,7 +1248,7 @@ void registerLayerCommands()
             {"empty", "e", T::Bool, false, "Don't add the selection."},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId l = createLayer(g, a.get<std::string>("name", "AnimLayer1"), LayerMode(modeArg(a.get<std::string>("mode"), "createAnimLayer")));
             g.setValue({l, LayerNode::kAccumulation}, accumulationArg(a.get<std::string>("accumulation"), "createAnimLayer"));
             if (!a.get<bool>("empty"))
@@ -1293,7 +1264,7 @@ void registerLayerCommands()
         .doc = "Delete animation layers with their curves; their members lose what the layers added.",
         .positionalDoc = "layers",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty())
                 throw CommandError("deleteAnimLayer: name the layers");
             for (const std::string& name : a.objects())
@@ -1308,7 +1279,7 @@ void registerLayerCommands()
         .positionalDoc = "objects or plugs",
         .flags = {layerFlag},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId l = layerArg(g, a, "addAnimLayerMembers");
             if (!l)
                 throw CommandError("addAnimLayerMembers: the base animation has no members; name a layer");
@@ -1331,7 +1302,7 @@ void registerLayerCommands()
         .positionalDoc = "objects or plugs",
         .flags = {layerFlag},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId l = layerArg(g, a, "removeAnimLayerMembers");
             if (!l)
                 throw CommandError("removeAnimLayerMembers: name a layer");
@@ -1354,7 +1325,7 @@ void registerLayerCommands()
                "result is sampled every frame across their keys, so it evaluates the same. Returns the layer merged into.",
         .positionalDoc = "layers",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty())
                 throw CommandError("mergeAnimLayers: name the layers");
             std::vector<NodeId> named;
@@ -1371,7 +1342,7 @@ void registerLayerCommands()
         .positionalDoc = "objects or plugs",
         .flags = {layerFlag, {"name", "n", T::String, nullptr, "Name of the new layer."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId src = layerArg(g, a, "extractAnimLayer");
             if (src && g.node(src)->as<bool>(LayerNode::kLock))
                 throw CommandError("extractAnimLayer: " + g.node(src)->path() + " is locked");
@@ -1385,7 +1356,7 @@ void registerLayerCommands()
         .positionalDoc = "layer",
         .flags = {{"name", "n", T::String, nullptr, "Name of the copy."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.size() != 1)
                 throw CommandError("duplicateAnimLayer: name one layer");
             NodeId src = layerNamed(g, a.positional[0].get<std::string>(), "duplicateAnimLayer");
@@ -1399,7 +1370,7 @@ void registerLayerCommands()
         .positionalDoc = "layer",
         .flags = {{"index", "i", T::Int, nullptr, "New position.", {}, {}, 0.0}, {"by", "b", T::Int, nullptr, "Steps up (positive) or down."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.size() != 1)
                 throw CommandError("reorderAnimLayer: name one layer");
             NodeId l = layerNamed(g, a.positional[0].get<std::string>(), "reorderAnimLayer");
@@ -1417,7 +1388,7 @@ void registerLayerCommands()
         .doc = "Choose the layer keys go to; BaseAnimation (or no argument) for the base animation.",
         .positionalDoc = "layer",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::string name = a.positional.empty() ? kBaseLayerName : a.positional[0].get<std::string>();
             setActive(g, name == kBaseLayerName ? kNoNode : layerNamed(g, name, "setActiveAnimLayer"));
             return name;
@@ -1437,7 +1408,7 @@ void registerLayerCommands()
             {"accumulation", "acc", T::String, nullptr, "quaternion | euler", {"quaternion", "euler"}},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.size() != 1)
                 throw CommandError("editAnimLayer: name one layer");
             NodeId l = layerNamed(g, a.positional[0].get<std::string>(), "editAnimLayer");
@@ -1464,7 +1435,7 @@ void registerLayerCommands()
         .doc = "The layer stack from the bottom: BaseAnimation first, then each layer's settings and members.",
         .undoable = false,
         .run = [](const Args&) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json out = json::array();
             out.push_back({{"name", kBaseLayerName}, {"base", true}, {"active", activeLayer(g) == kNoNode}});
             for (NodeId l : layers(g))

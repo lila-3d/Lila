@@ -1,16 +1,10 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 
 #include <doctest/doctest.h>
 
 using namespace lila;
-
-namespace
-{
-json run(const char* name, json call = json::object())
-{
-    return ops::execute(name, call);
-}
-} // namespace
+using namespace uvtest;
 
 TEST_CASE("uv optimise, bff, optcuts, symmetry and align commands")
 {

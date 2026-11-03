@@ -34,7 +34,7 @@ Index findRoot(std::vector<Index>& parent, Index p)
 }
 
 /** True when copies a and b sit next to each other in the layout, so their seams may weld. */
-bool neighbours(const ArrayOptions& o, int copies, int a, int b)
+bool adjacentCopies(const ArrayOptions& o, int copies, int a, int b)
 {
     const ArrayLayout& l = o.layout;
     if (l.mode == ArrayMode::Grid)
@@ -119,7 +119,7 @@ void weldCopies(Mesh& m, const ArrayOptions& o, int copies, Index perCopy)
                     for (Index q : it->second)
                     {
                         // Each pair once, and never two points of the same copy: those coincide by the modeller's choice.
-                        if (q <= p || int(q / perCopy) == copyP || !neighbours(o, copies, copyP, int(q / perCopy)))
+                        if (q <= p || int(q / perCopy) == copyP || !adjacentCopies(o, copies, copyP, int(q / perCopy)))
                             continue;
                         if (glm::distance(pos, m.position(q)) > tol)
                             continue;

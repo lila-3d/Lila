@@ -9,6 +9,8 @@
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
 #include "ui/Panels.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
@@ -25,49 +27,7 @@ namespace
 {
 namespace al = scene::anim;
 
-enum Column
-{
-    kMute,
-    kSolo,
-    kLock,
-    kMode,
-    kWeight,
-    kName,
-};
-
 constexpr int kLayerRole = Qt::UserRole;
-
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    return b;
-}
-
-json selectionNames()
-{
-    scene::Graph& g = scene::Graph::current();
-    json out = json::array();
-    for (scene::NodeId id : g.selection())
-        out.push_back(g.node(id)->path());
-    return out;
-}
 } // namespace
 
 AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
@@ -84,43 +44,43 @@ AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
         connect(b, &QToolButton::clicked, this, fn);
         bar->addWidget(b);
     };
-    add("plus", "Create an empty layer", [] { run("createAnimLayer", {{"empty", true}}); });
-    add("stack-plus", "Create a layer from the selected objects", [] { run("createAnimLayer", {{"args", selectionNames()}}); });
+    add("plus", "Create an empty layer", [] { runUi("createAnimLayer", {{"empty", true}}); });
+    add("stack-plus", "Create a layer from the selected objects", [] { runUi("createAnimLayer", {{"args", selectionNames()}}); });
     add("square-plus", "Add the selected objects to the current layer", [this] {
         if (std::string l = currentLayer(); !l.empty() && !selectionNames().empty())
-            run("addAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
+            runUi("addAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
     });
     add("stack-minus", "Remove the selected objects from the current layer", [this] {
         if (std::string l = currentLayer(); !l.empty() && !selectionNames().empty())
-            run("removeAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
+            runUi("removeAnimLayerMembers", {{"args", selectionNames()}, {"layer", l}});
     });
     add("stack-pop", "Extract the selected objects' animation from the current layer to a new one", [this] {
         if (!selectionNames().empty())
         {
             std::string l = currentLayer();
-            run("extractAnimLayer", {{"args", selectionNames()}, {"layer", l.empty() ? al::kBaseLayerName : l}});
+            runUi("extractAnimLayer", {{"args", selectionNames()}, {"layer", l.empty() ? al::kBaseLayerName : l}});
         }
     });
     add("arrow-up", "Move the current layer up", [this] {
         if (std::string l = currentLayer(); !l.empty())
-            run("reorderAnimLayer", {{"args", {l}}, {"by", 1}});
+            runUi("reorderAnimLayer", {{"args", {l}}, {"by", 1}});
     });
     add("arrow-down", "Move the current layer down", [this] {
         if (std::string l = currentLayer(); !l.empty())
-            run("reorderAnimLayer", {{"args", {l}}, {"by", -1}});
+            runUi("reorderAnimLayer", {{"args", {l}}, {"by", -1}});
     });
     add("copy", "Duplicate the current layer", [this] {
         if (std::string l = currentLayer(); !l.empty())
-            run("duplicateAnimLayer", {{"args", {l}}});
+            runUi("duplicateAnimLayer", {{"args", {l}}});
     });
     add("arrows-join", "Merge the current layer down", [this] {
         if (std::string l = currentLayer(); !l.empty())
-            run("mergeAnimLayers", {{"args", {l}}});
+            runUi("mergeAnimLayers", {{"args", {l}}});
     });
     bar->addStretch(1);
     add("trash", "Delete the current layer and its keys", [this] {
         if (std::string l = currentLayer(); !l.empty())
-            run("deleteAnimLayer", {{"args", {l}}});
+            runUi("deleteAnimLayer", {{"args", {l}}});
     });
     v->addLayout(bar);
 
@@ -135,7 +95,7 @@ AnimLayersPanel::AnimLayersPanel(QWidget* parent) : QWidget(parent)
     Hotkeys::passThrough(mTree);
     deletion::claim(mTree, [this] {
         if (std::string l = currentLayer(); !l.empty() && l != al::kBaseLayerName)
-            run("deleteAnimLayer", {{"args", {l}}});
+            runUi("deleteAnimLayer", {{"args", {l}}});
     });
     QHeaderView* header = mTree->header();
     header->setStretchLastSection(true);
@@ -237,7 +197,7 @@ void AnimLayersPanel::refresh()
         weight->setToolTip("Layer weight");
         const std::string layer = name.toStdString();
         connect(weight, &QDoubleSpinBox::editingFinished, this, [weight, layer] {
-            run("editAnimLayer", {{"args", {layer}}, {"weight", weight->value()}});
+            runUi("editAnimLayer", {{"args", {layer}}, {"weight", weight->value()}});
         });
         mTree->setItemWidget(item, kWeight, weight);
         if (l["active"].get<bool>())
@@ -259,7 +219,7 @@ void AnimLayersPanel::clicked(QTreeWidgetItem* item, int column)
     const std::string layer = item->data(kName, kLayerRole).toString().toStdString();
     if (layer.empty())
     {
-        run("setActiveAnimLayer", {{"args", {al::kBaseLayerName}}});
+        runUi("setActiveAnimLayer", {{"args", {al::kBaseLayerName}}});
         return;
     }
     scene::Node* n = findNode(layer);
@@ -267,13 +227,13 @@ void AnimLayersPanel::clicked(QTreeWidgetItem* item, int column)
         return;
     switch (column)
     {
-    case kMute: run("editAnimLayer", {{"args", {layer}}, {"mute", !n->as<bool>(al::LayerNode::kMute)}}); break;
-    case kSolo: run("editAnimLayer", {{"args", {layer}}, {"solo", !n->as<bool>(al::LayerNode::kSolo)}}); break;
-    case kLock: run("editAnimLayer", {{"args", {layer}}, {"lock", !n->as<bool>(al::LayerNode::kLock)}}); break;
+    case kMute: runUi("editAnimLayer", {{"args", {layer}}, {"mute", !n->as<bool>(al::LayerNode::kMute)}}); break;
+    case kSolo: runUi("editAnimLayer", {{"args", {layer}}, {"solo", !n->as<bool>(al::LayerNode::kSolo)}}); break;
+    case kLock: runUi("editAnimLayer", {{"args", {layer}}, {"lock", !n->as<bool>(al::LayerNode::kLock)}}); break;
     case kMode:
-        run("editAnimLayer", {{"args", {layer}}, {"mode", n->as<int64_t>(al::LayerNode::kMode) == 0 ? "override" : "additive"}});
+        runUi("editAnimLayer", {{"args", {layer}}, {"mode", n->as<int64_t>(al::LayerNode::kMode) == 0 ? "override" : "additive"}});
         break;
-    case kName: run("setActiveAnimLayer", {{"args", {layer}}}); break;
+    case kName: runUi("setActiveAnimLayer", {{"args", {layer}}}); break;
     default: break;
     }
 }

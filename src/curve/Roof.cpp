@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "curve/CapFill.h"
+#include "curve/CurveMath.h"
 #include "curve/Skeleton.h"
 #include "geo/Attribute.h"
 #include "geo/Normals.h"
@@ -17,11 +18,7 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
 using geo::Index;
-
-double cross2(const D2& a, const D2& b) { return a.x * b.y - a.y * b.x; }
 
 /** Closed curves as regions of clean 2D loops on their plane. */
 struct Regions

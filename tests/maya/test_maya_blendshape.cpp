@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "geo/Mesh.h"
@@ -23,12 +24,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace mayatest;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path fixture(const std::string& name) { return fs::path(LILA_MAYA_TEST_DATA) / name; }
-
 maya::ImportResult loadFresh(const std::string& name)
 {
     io::refs::clear();
@@ -41,16 +41,7 @@ maya::ImportResult loadFresh(const std::string& name)
     return r;
 }
 
-scene::Node* node(const std::string& name)
-{
-    scene::Node* n = Graph::current().find(name);
-    if (!n)
-        MESSAGE("missing node " << name);
-    REQUIRE(n);
-    return n;
-}
-
-glm::dvec3 world(const std::string& mesh, geo::Index p)
+glm::dvec3 worldPoint(const std::string& mesh, geo::Index p)
 {
     Graph& g = Graph::current();
     scene::Node* n = node(mesh);
@@ -60,18 +51,10 @@ glm::dvec3 world(const std::string& mesh, geo::Index p)
     return glm::dvec3(w * glm::dvec4(m->position(p), 1.0));
 }
 
-void checkVec(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6)
+void checkVecTight(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6)
 {
     INFO("got " << a.x << " " << a.y << " " << a.z << ", want " << b.x << " " << b.y << " " << b.z);
     CHECK(glm::length(a - b) < eps);
-}
-
-bool contains(const std::vector<std::string>& lines, std::string_view what)
-{
-    for (const std::string& s : lines)
-        if (s.find(what) != std::string::npos)
-            return true;
-    return false;
 }
 
 /** The morph's targets by export name. */
@@ -147,34 +130,34 @@ TEST_CASE("maya blendShape: inline targets, in-betweens, target and base weights
 
     // Frame 0: smile at its in-between, raise from ctrl.ty = 1 through the driven key, tilt wired to ctrl.rz = 0.25.
     g.setTime(0.0);
-    checkVec(world("strip", 4), {1, 2, 0});
-    checkVec(world("strip", 5), {1, 2, 0});
-    checkVec(world("strip", 1), {1, 1, 0});
-    checkVec(world("strip", 3), {1, 1, 0.25});
-    checkVec(world("strip", 0), {0, 0, 0});
+    checkVecTight(worldPoint("strip", 4), {1, 2, 0});
+    checkVecTight(worldPoint("strip", 5), {1, 2, 0});
+    checkVecTight(worldPoint("strip", 1), {1, 1, 0});
+    checkVecTight(worldPoint("strip", 3), {1, 1, 0.25});
+    checkVecTight(worldPoint("strip", 0), {0, 0, 0});
 
     // Frame 24: frown keyed to 1, scaled by the base weight at vertex 0 and the target weight at vertex 2.
     g.setTime(1.0);
-    checkVec(world("strip", 0), {0, 0, 0.5});
-    checkVec(world("strip", 2), {0, 1, 1});
+    checkVecTight(worldPoint("strip", 0), {0, 0, 0.5});
+    checkVecTight(worldPoint("strip", 2), {0, 1, 1});
 
     // Halfway between the in-between and the full shape.
     setWeight(t["smile"], 0.75);
-    checkVec(world("strip", 4), {0.5, 2.5, 0});
-    checkVec(world("strip", 5), {1, 2.5, 0});
+    checkVecTight(worldPoint("strip", 4), {0.5, 2.5, 0});
+    checkVecTight(worldPoint("strip", 5), {1, 2.5, 0});
     setWeight(t["smile"], 1.0);
-    checkVec(world("strip", 4), {0, 3, 0});
+    checkVecTight(worldPoint("strip", 4), {0, 3, 0});
 
     // The driven key follows its control.
     g.setValue({node("ctrl")->id(), Transform::kTranslate, 1}, 2.0);
-    checkVec(world("strip", 1), {1, 2, 0});
+    checkVecTight(worldPoint("strip", 1), {1, 2, 0});
     CHECK(g.source({t["raise"], morphs::kWeight, -1}).has_value());
     CHECK(drivers::isChannel(*g.node(g.source({t["raise"], morphs::kWeight, -1})->node)));
 
     // vtx[*] covers every point.
     setWeight(t["scripted"], 1.0);
-    checkVec(world("strip", 5), {1, 3, 3});
-    checkVec(world("strip", 0), {0, 0, 0.5 + 1.5});
+    checkVecTight(worldPoint("strip", 5), {1, 3, 3});
+    checkVecTight(worldPoint("strip", 0), {0, 0, 0.5 + 1.5});
 }
 
 TEST_CASE("maya blendShape: live target meshes stay live, others bake, world origin uses both placements")
@@ -189,10 +172,10 @@ TEST_CASE("maya blendShape: live target meshes stay live, others bake, world ori
     CHECK(liveSrc->node == node("stretch")->id());
     CHECK_FALSE(g.source({t["push"], morphs::kTargetMesh, -1}).has_value());
 
-    checkVec(world("strip", 5), {1, 3, 0});
-    checkVec(world("strip", 0), {0, 0, -1});
+    checkVecTight(worldPoint("strip", 5), {1, 3, 0});
+    checkVecTight(worldPoint("strip", 0), {0, 0, -1});
     setWeight(t["stretch"], 0.5);
-    checkVec(world("strip", 5), {2, 2, 0});
+    checkVecTight(worldPoint("strip", 5), {2, 2, 0});
 
     // Moving a point of the live target moves the blend.
     setWeight(t["stretch"], 1.0);
@@ -200,11 +183,11 @@ TEST_CASE("maya blendShape: live target meshes stay live, others bake, world ori
     auto edited = std::make_shared<geo::Mesh>(*std::get<MeshPtr>(g.value({stretch->id(), MeshNode::kOutMesh, -1})));
     edited->setPosition(5, {1, 4, 0});
     g.setValue({stretch->id(), MeshNode::kInMesh, -1}, MeshPtr(edited));
-    checkVec(world("strip", 5), {1, 4, 0});
+    checkVecTight(worldPoint("strip", 5), {1, 4, 0});
 
     // World origin: the target sits 5 along X of the base, so half the weight moves the base 2.5.
-    checkVec(world("strip2", 0), {2.5, 0, 10});
-    checkVec(world("strip2", 5), {3.5, 2, 10});
+    checkVecTight(worldPoint("strip2", 0), {2.5, 0, 10});
+    checkVecTight(worldPoint("strip2", 5), {3.5, 2, 10});
 }
 
 TEST_CASE("maya blendShape: ahead of a skinCluster, posed like Maya, and exported to FBX as morph targets")
@@ -220,10 +203,10 @@ TEST_CASE("maya blendShape: ahead of a skinCluster, posed like Maya, and exporte
     CHECK_FALSE(contains(r.warnings, "after its skinCluster"));
 
     g.setTime(0.0);
-    checkVec(world("strip", 5), {2, 2, 0});
+    checkVecTight(worldPoint("strip", 5), {2, 2, 0});
     g.setTime(1.0); // frame 30 at ntsc: the elbow is at 90
-    checkVec(world("strip", 5), {-1, 3, 0});
-    checkVec(world("strip", 3), {0.25, 1.75, 0});
+    checkVecTight(worldPoint("strip", 5), {-1, 3, 0});
+    checkVecTight(worldPoint("strip", 3), {0.25, 1.75, 0});
 
     fs::path path = fs::temp_directory_path() / "lila_maya_tests" / "blendshape_skin.fbx";
     fs::create_directories(path.parent_path());
@@ -269,9 +252,9 @@ TEST_CASE("maya blendShape: the inline targets of a converted .lila still blend"
     std::map<std::string, NodeId> t = targetsByName(morph);
     REQUIRE(t.size() == 5);
     g.setTime(1.0);
-    checkVec(world("strip", 0), {0, 0, 0.5});
-    checkVec(world("strip", 2), {0, 1, 1});
-    checkVec(world("strip", 4), {1, 2, 0});
+    checkVecTight(worldPoint("strip", 0), {0, 0, 0.5});
+    checkVecTight(worldPoint("strip", 2), {0, 1, 1});
+    checkVecTight(worldPoint("strip", 4), {1, 2, 0});
     io::refs::clear();
     Graph::current().clear();
     io::setCurrentPath({});

@@ -38,9 +38,10 @@ using namespace lila;
 
 namespace terrain
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::Node;
 using T = ArgType;

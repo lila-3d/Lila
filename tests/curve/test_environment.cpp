@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Cable.h"
 #include "curve/Contour.h"
 #include "curve/CurveNodes.h"
@@ -17,11 +19,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 curve::Splines splinesOf(const std::string& name)
 {
     scene::Graph& g = scene::Graph::current();
@@ -37,14 +38,6 @@ double polyLength(const std::vector<D3>& pts)
     for (size_t i = 1; i < pts.size(); ++i)
         l += glm::distance(pts[i - 1], pts[i]);
     return l;
-}
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
 }
 } // namespace
 

@@ -12,16 +12,6 @@ namespace
 {
 namespace fs = std::filesystem;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-fs::path tempDir(const std::string& name)
-{
-    fs::path d = fs::temp_directory_path() / "lila_tex_tests" / name;
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
 /** A small set: bricks feed base colour (through colorize) and height, height feeds the normal; roughness is a constant. */
 void buildRock()
 {

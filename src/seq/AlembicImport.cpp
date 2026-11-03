@@ -21,8 +21,6 @@ namespace lila::seq
 {
 namespace
 {
-using T = ArgType;
-
 struct Imported
 {
     std::vector<scene::NodeId> nodes;
@@ -78,6 +76,7 @@ json names(scene::Graph& g, const std::vector<scene::NodeId>& ids)
 
 void registerAlembicImport()
 {
+    using T = ArgType;
     ops::registerCommand({
         .name = "importAlembic",
         .doc = "Import an Alembic (.abc) file's PolyMeshes as meshes, each placed through its transforms at its first sample. A "

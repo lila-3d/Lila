@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/Events.h"
 #include "core/MainQueue.h"
 #include "geo/Mesh.h"
@@ -19,12 +21,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 /** A wire client: one JSON object per line, reading while it drains the main queue as Lila's event loop would. */
 struct Client
 {
@@ -412,7 +413,7 @@ TEST_CASE("change stream: in-process subscribers hear the same groups and record
 
 namespace
 {
-json worldOf(const json& changes, const std::string& path)
+json worldChange(const json& changes, const std::string& path)
 {
     for (const json& c : changes)
         if (c["kind"] == "world" && c["path"] == path)
@@ -495,8 +496,8 @@ TEST_CASE("change stream: world clients get evaluated world matrices for a moved
     for (int i = 0; i < 3; ++i)
         world.nextOf("group");
     json kidOnly = world.nextOf("group");
-    CHECK(worldOf(kidOnly["changes"], "|Parent").is_null());
-    CHECK(translation(worldOf(kidOnly["changes"], "|Parent|Kid")) == glm::dvec3(1, 0, 0));
+    CHECK(worldChange(kidOnly["changes"], "|Parent").is_null());
+    CHECK(translation(worldChange(kidOnly["changes"], "|Parent|Kid")) == glm::dvec3(1, 0, 0));
 
     run("setAttr", {{"args", {"Parent.translate", json::array({10, 0, 0})}}});
     json moved = world.nextOf("group");
@@ -506,14 +507,14 @@ TEST_CASE("change stream: world clients get evaluated world matrices for a moved
     CHECK(changes[0]["kind"] == "value");
     CHECK(changes[1]["path"] == "|Parent");
     CHECK(changes[2]["path"] == "|Parent|Kid");
-    CHECK(translation(worldOf(changes, "|Parent")) == glm::dvec3(10, 0, 0));
-    CHECK(translation(worldOf(changes, "|Parent|Kid")) == glm::dvec3(11, 0, 0));
+    CHECK(translation(worldChange(changes, "|Parent")) == glm::dvec3(10, 0, 0));
+    CHECK(translation(worldChange(changes, "|Parent|Kid")) == glm::dvec3(11, 0, 0));
     CHECK(changesOf(plain.nextOf("group"), "world").empty());
 
     // Reparenting keeps the world position (keepWorld), so the matrix stays while the path changes.
     run("parent", {{"args", {"Kid"}}, {"world", true}});
     json unparented = world.nextOf("group");
-    CHECK(translation(worldOf(unparented["changes"], "|Kid")) == glm::dvec3(11, 0, 0));
+    CHECK(translation(worldChange(unparented["changes"], "|Kid")) == glm::dvec3(11, 0, 0));
 
     // Live messages carry world matrices too.
     Graph& g = Graph::current();
@@ -523,7 +524,7 @@ TEST_CASE("change stream: world clients get evaluated world matrices for a moved
         mainq::drain();
         json live = world.nextOf("live");
         REQUIRE(live.is_object());
-        CHECK(translation(worldOf(live["changes"], "|Parent")) == glm::dvec3(20, 0, 0));
+        CHECK(translation(worldChange(live["changes"], "|Parent")) == glm::dvec3(20, 0, 0));
     }
     world.nextOf("group");
 

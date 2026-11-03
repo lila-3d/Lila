@@ -24,15 +24,7 @@ namespace lila::scene
 {
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
-Node& nodeNamed(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n)
-        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
-    return *n;
-}
+using rigutil::nodeNamed;
 
 std::vector<NodeId> topLevel(Graph& g, const std::vector<std::string>& names, const char* cmd)
 {
@@ -163,7 +155,7 @@ void registerObjectCommands()
                "parented under it, so a group centres on its children) without moving the object.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             g.evaluate();
             for (const std::string& name : a.objects())
             {
@@ -194,7 +186,7 @@ void registerObjectCommands()
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Freeze Transformations");
             std::vector<NodeId> ids = topLevel(g, a.objects(), "freezeTransforms");
             // Parents first, so each child is frozen after taking on what its parent gave up.
@@ -257,7 +249,7 @@ void registerObjectCommands()
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Bake Pivot");
             for (NodeId id : topLevel(g, a.objects(), "bakePivot"))
             {
@@ -298,7 +290,7 @@ void registerObjectCommands()
         .doc = "Hide objects (visibility off). Defaults to the selection.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Hide");
             std::vector<NodeId> hidden;
             for (const std::string& name : a.objects())
@@ -317,7 +309,7 @@ void registerObjectCommands()
         .name = "showLastHidden",
         .doc = "Show the objects the last hide (or hiding toggle) hid. Returns them.",
         .run = [](const Args&) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Show Last Hidden");
             json out = json::array();
             if (lastHidden.graph != &g)
@@ -338,7 +330,7 @@ void registerObjectCommands()
                "were visible (a tie hides), shown otherwise. Returns the new visibility.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Toggle Visibility");
             std::vector<NodeId> ids;
             size_t shown = 0;
@@ -366,7 +358,7 @@ void registerObjectCommands()
         .positionalDoc = "objects",
         .flags = {{"all", "", T::Bool, false, "Show everything."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Show");
             if (a.get<bool>("all"))
             {
@@ -388,7 +380,7 @@ void registerObjectCommands()
                "Defaults to the selection; returns the children.",
         .positionalDoc = "groups",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Ungroup");
             json out = json::array();
             for (const std::string& name : a.objects())
@@ -415,7 +407,7 @@ void registerObjectCommands()
         .doc = "Put translate, rotate and scale back to their defaults (the object moves).",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Reset Transformations");
             for (const std::string& name : a.objects())
             {
@@ -448,7 +440,7 @@ void registerObjectCommands()
                   {"tolerance", "", T::Float, 1e-4, "How far from identity, or from the step, still counts as on it."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             g.evaluate();
             const double tol = a.get<double>("tolerance", 1e-4);
             const double step = a.get<double>("rotateStep", 0.0);

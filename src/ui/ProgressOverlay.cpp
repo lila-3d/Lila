@@ -145,9 +145,9 @@ protected:
         const QRectF bar(c.left() + pad, titleRect.bottom() + 14, c.width() - 2 * pad, 6);
         paintBar(p, bar, mState, mClock.elapsed() / 1000.0);
 
-        QFont small = font();
-        p.setFont(small);
-        const QFontMetrics fm(small);
+        QFont smallFont = font();
+        p.setFont(smallFont);
+        const QFontMetrics fm(smallFont);
         const QString percent = mState.determinate ? QString("%1%").arg(int(std::floor(mState.fraction * 100.0))) : QString();
         const int percentWidth = percent.isEmpty() ? 0 : fm.horizontalAdvance("100%") + 8;
         const QRect statusRect(int(bar.left()), int(bar.bottom()) + 10, int(bar.width()) - percentWidth, fm.height());

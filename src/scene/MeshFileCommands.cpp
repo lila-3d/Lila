@@ -20,8 +20,6 @@ namespace
 {
 namespace fs = std::filesystem;
 
-Graph& graph() { return Graph::current(); }
-
 /** Centimetres per file unit. */
 double unitScale(const std::string& unit, const char* cmd)
 {
@@ -85,7 +83,7 @@ std::string readPath(const Args& a, const char* cmd)
 
 json addMeshes(std::vector<std::pair<std::string, geo::Mesh>>& meshes)
 {
-    Graph& g = graph();
+    Graph& g = Graph::current();
     Graph::Batch batch(g);
     json names = json::array();
     std::vector<NodeId> ids;
@@ -103,7 +101,7 @@ json addMeshes(std::vector<std::pair<std::string, geo::Mesh>>& meshes)
 /** The evaluated meshes of the named nodes and the meshes under them (the selection by default), in file space. */
 std::vector<std::pair<std::string, geo::Mesh>> gatherMeshes(const Args& a, const char* cmd, const glm::dmat4& sceneToFile)
 {
-    Graph& g = graph();
+    Graph& g = Graph::current();
     std::vector<NodeId> roots;
     for (size_t k = 1; k < a.positional.size(); ++k)
     {

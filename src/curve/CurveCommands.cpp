@@ -8,6 +8,7 @@
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
 #include "curve/GroomNode.h"
+#include "curve/NodeHelpers.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
 #include "curve/TurntableBase.h"
@@ -30,14 +31,13 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
 std::vector<D3> pointsArg(const Args& a, const char* flag)
 {
     std::vector<D3> out;
@@ -50,16 +50,6 @@ std::vector<D3> pointsArg(const Args& a, const char* flag)
         out.emplace_back(p[0].get<double>(), p[1].get<double>(), p[2].get<double>());
     }
     return out;
-}
-
-Node& curveNamed(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n)
-        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
-    if (!n->type().isA("curve"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a curve");
-    return *n;
 }
 
 /** The curves among the given names (or the selection, and the curves holding selected points). */
@@ -83,27 +73,8 @@ std::vector<Node*> curvesOf(const Args& a, const char* cmd, size_t from = 0)
         return out;
     }
     for (const std::string& name : names)
-        out.push_back(&curveNamed(name, cmd));
+        out.push_back(&curveNamed(graph(), name, cmd));
     return out;
-}
-
-Node* createCurve(Graph& g, Splines s, const std::string& name)
-{
-    for (const Spline& sp : s)
-    {
-        std::string why;
-        if (!isValid(sp, &why))
-            throw CommandError("curve: " + why);
-    }
-    Node* n = g.createNode(*types::find("curve"), name.empty() ? "Curve" : name, kNoNode, true);
-    g.setValue({n->id(), CurveShape::kCreate, -1}, makeCurveData(std::move(s)));
-    return n;
-}
-
-Splines storedSplines(Graph& g, Node& n)
-{
-    g.evaluate();
-    return splinesOf(g.value({n.id(), CurveShape::kLocal, -1}));
 }
 
 /** Replaces a curve's splines, freezing any history feeding it. */
@@ -113,34 +84,6 @@ void setSplines(Graph& g, Node& n, Splines s)
     if (g.source(create))
         g.disconnect(create);
     g.setValue(create, makeCurveData(std::move(s)));
-}
-
-/** Option flags for every editable attr of a node type (enums by name). */
-std::vector<FlagDef> attrFlags(const std::string& type)
-{
-    std::vector<FlagDef> out;
-    const NodeType* t = types::find(type);
-    for (const AttrDef& d : t->ownAttrs)
-    {
-        if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
-            continue;
-        FlagDef f{d.name, "", T::Float, nullptr, d.doc};
-        f.min = d.minValue;
-        f.max = d.maxValue;
-        switch (d.type)
-        {
-        case PlugType::Bool: f.type = T::Bool; break;
-        case PlugType::Int: f.type = T::Int; break;
-        case PlugType::Vec3: f.type = T::Vec3; break;
-        case PlugType::Enum:
-            f.type = T::String;
-            f.choices = d.enumNames;
-            break;
-        default: break;
-        }
-        out.push_back(std::move(f));
-    }
-    return out;
 }
 
 /**
@@ -158,9 +101,9 @@ void registerRebuildFill()
                                if (Node* n = g.node(*it); n && n->type().isA("curve"))
                                    if (const Splines& s = shapeSplines(g, n->id()); !s.empty())
                                    {
-                                       static const char* kKinds[] = {"poly", "bezier", "nurbs"};
+                                       static const char* kKindNames[] = {"poly", "bezier", "nurbs"};
                                        const Spline& sp = s.front();
-                                       return json{{"kind", kKinds[std::clamp(int(sp.kind), 0, 2)]},
+                                       return json{{"kind", kKindNames[std::clamp(int(sp.kind), 0, 2)]},
                                                    {"spans", std::max(1, spanCount(sp))},
                                                    {"degree", sp.kind == Kind::Nurbs ? sp.degree : 3},
                                                    {"pointPercent", 100.0}};
@@ -195,24 +138,6 @@ void applyAttrFlags(Graph& g, Node& n, const Args& a)
             throw CommandError(d.name + ": " + e.what());
         }
     }
-}
-
-std::vector<FlagDef> withFlags(std::vector<FlagDef> base, std::vector<FlagDef> extra)
-{
-    base.insert(base.end(), extra.begin(), extra.end());
-    return base;
-}
-
-FlagDef chFlag() { return {"constructionHistory", "ch", T::Bool, true, "Keep the history node so its settings stay live."}; }
-
-/** Bakes what a history node makes into its destination and drops the node. */
-void bake(Graph& g, Node& op, const PlugRef& dst)
-{
-    g.evaluate();
-    PlugValue v = g.value(dst);
-    g.disconnect(dst);
-    g.setValue(dst, v);
-    g.deleteNode(op.id());
 }
 
 /** A curve to curve history node on each curve: in place (replaceOriginal) or into a new curve. */
@@ -509,7 +434,7 @@ void registerCommands()
             Node* path = cs.front();
             Node* prof = cs.size() > 1 ? cs[1] : nullptr;
             if (a.has("profileCurve"))
-                prof = &curveNamed(a.get<std::string>("profileCurve"), "extrude");
+                prof = &curveNamed(graph(), a.get<std::string>("profileCurve"), "extrude");
             return meshOp("curveSweep", a, [&](Graph& g, Node& op) {
                 if (!a.has("upVector"))
                     g.setValue({op.id(), op.type().attrIndex("upVector"), -1}, sceneUp());
@@ -551,7 +476,7 @@ void registerCommands()
                 throw CommandError("loft: give at least two section curves");
             std::vector<Node*> rails;
             for (const json& r : a.flags.value("rails", json::array()))
-                rails.push_back(&curveNamed(r.get<std::string>(), "loft"));
+                rails.push_back(&curveNamed(graph(), r.get<std::string>(), "loft"));
             if (rails.size() > 2)
                 throw CommandError("loft: at most two rails");
             return meshOp("curveLoft", a, [&](Graph& g, Node& op) {
@@ -929,8 +854,8 @@ void registerCommands()
                    {"world", "object"}}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();
-            static const std::vector<std::string> kAxes = {"off", "x", "y", "z"};
-            const int64_t axis = std::ranges::find(kAxes, a.get<std::string>("axis", "x")) - kAxes.begin();
+            static const std::vector<std::string> kMirrorAxes = {"off", "x", "y", "z"};
+            const int64_t axis = std::ranges::find(kMirrorAxes, a.get<std::string>("axis", "x")) - kMirrorAxes.begin();
             json names = json::array();
             for (Node* c : curvesOf(a, "curveSymmetry"))
             {

@@ -6,9 +6,12 @@
 #include <lila/Node.h>
 
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <cstdint>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <set>
 #include <string>
@@ -29,6 +32,22 @@ using lila::scene::Graph;
 using lila::scene::Node;
 using lila::scene::NodeId;
 namespace physics = lila::physics;
+using json = nlohmann::json;
+
+inline constexpr double kPi = std::numbers::pi;
+
+inline json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
+
+/** s with every character outside [A-Za-z0-9] made '_', and prefix put in front when it doesn't start with a letter. */
+inline std::string identifier(const std::string& s, const char* prefix)
+{
+    std::string out;
+    for (char c : s)
+        out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+    if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0])))
+        out = prefix + out;
+    return out;
+}
 
 /** The body settings a material starts from. */
 struct Material
@@ -66,6 +85,10 @@ enum class RoleChoice : int
     Kinematic = 2,
     Off = 3, // ignored by physics
 };
+
+/** Enum names by ShapeChoice and RoleChoice value. */
+inline constexpr const char* kShapeNames[] = {"auto", "box", "hull", "sphere", "capsule", "mesh", "decompose"};
+inline constexpr const char* kRoleNames[] = {"dynamic", "static", "kinematic", "off"};
 
 /** A mesh's resolved physics settings: its body node's, or the defaults when it has none. */
 struct BodySettings

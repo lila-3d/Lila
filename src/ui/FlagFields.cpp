@@ -80,7 +80,7 @@ QString tip(const opt::Field& f)
     return QString::fromStdString(f.flag + (f.doc.empty() ? "" : ": " + f.doc));
 }
 
-double num(const json& v, double fallback = 0.0)
+double jsonNumber(const json& v, double fallback = 0.0)
 {
     return v.is_number() ? v.get<double>() : v.is_boolean() ? double(v.get<bool>()) : fallback;
 }
@@ -124,22 +124,22 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     case opt::FieldKind::Check:
     {
         auto* box = new QCheckBox(label, parent);
-        box->setChecked(num(value) != 0.0);
+        box->setChecked(jsonNumber(value) != 0.0);
         QObject::connect(box, &QCheckBox::toggled, box, [changed](bool on) { changed(on); });
-        bool on = num(f.defaultValue) != 0.0;
+        bool on = jsonNumber(f.defaultValue) != 0.0;
         onMiddleClickReset(box, [box, on] { box->setChecked(on); }, on ? "on" : "off");
         out.field = box;
         out.set = [box](const json& v) {
             QSignalBlocker b(box);
-            box->setChecked(num(v) != 0.0);
+            box->setChecked(jsonNumber(v) != 0.0);
         };
         break;
     }
     case opt::FieldKind::Int:
     {
         auto* spin = new QSpinBox(parent);
-        int v = int(std::lround(num(value)));
-        int d = int(std::lround(num(f.defaultValue)));
+        int v = int(std::lround(jsonNumber(value)));
+        int d = int(std::lround(jsonNumber(f.defaultValue)));
         spin->setRange(!std::isnan(f.min) ? int(f.min) : (v < 0 || d < 0) ? -1000000 : 0, std::isnan(f.max) ? 1000000 : int(f.max));
         spin->setSuffix(QString::fromStdString(f.suffix));
         spin->setValue(v);
@@ -162,24 +162,24 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         out.field = spin;
         out.set = [spin](const json& x) {
             QSignalBlocker b(spin);
-            spin->setValue(int(std::lround(num(x))));
+            spin->setValue(int(std::lround(jsonNumber(x))));
         };
         break;
     }
     case opt::FieldKind::Float:
     {
         QDoubleSpinBox* spin = floatSpin(f, parent);
-        spin->setValue(num(value));
+        spin->setValue(jsonNumber(value));
         QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [changed](double x) { changed(x); });
         auto* scrub = new ScrubLabel(label, [spin](double dx) { spin->setValue(spin->value() + dx); }, parent);
-        double d = num(f.defaultValue);
+        double d = jsonNumber(f.defaultValue);
         setSpinDefault(spin, d);
         onMiddleClickReset(scrub, [spin, d] { spin->setValue(d); }, defText, spin);
         out.label = scrub;
         out.field = spin;
         out.set = [spin](const json& x) {
             QSignalBlocker b(spin);
-            spin->setValue(num(x));
+            spin->setValue(jsonNumber(x));
         };
         break;
     }
@@ -272,7 +272,7 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
         for (int i = 0; i < 3; ++i)
         {
             QDoubleSpinBox* spin = floatSpin(f, box);
-            spin->setValue(value.is_array() && value.size() == 3 ? num(value[i]) : 0.0);
+            spin->setValue(value.is_array() && value.size() == 3 ? jsonNumber(value[i]) : 0.0);
             QObject::connect(spin, &QDoubleSpinBox::valueChanged, spin, [emitAll](double) { emitAll(); });
             (*spins)[i] = spin;
             h->addWidget(spin);
@@ -283,7 +283,7 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
             for (int i = 0; i < 3; ++i)
             {
                 QSignalBlocker b((*spins)[i]);
-                (*spins)[i]->setValue(v.is_array() && v.size() == 3 ? num(v[i]) : 0.0);
+                (*spins)[i]->setValue(v.is_array() && v.size() == 3 ? jsonNumber(v[i]) : 0.0);
             }
         };
         break;

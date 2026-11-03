@@ -58,9 +58,9 @@ public:
         QFontMetrics fm(base);
         QRect r = opt.rect.adjusted(6, 0, -6, 0);
 
-        QFont small = base;
-        small.setPointSizeF(base.pointSizeF() * 0.85);
-        p->setFont(small);
+        QFont smallFont = base;
+        smallFont.setPointSizeF(base.pointSizeF() * 0.85);
+        p->setFont(smallFont);
         p->setPen(palette::gray(118));
         int tagW = fm.horizontalAdvance("mod") + 6;
         p->drawText(QRect(r.left(), r.top(), tagW, r.height()), Qt::AlignVCenter | Qt::AlignLeft, kindTag(entry.kind));
@@ -96,12 +96,12 @@ public:
         QString detail = entry.detail.simplified();
         if (!detail.isEmpty())
         {
-            p->setFont(small);
+            p->setFont(smallFont);
             p->setPen(palette::gray(125));
             int avail = r.right() - labelEnd - 16;
             if (avail > 30)
             {
-                QString el = QFontMetrics(small).elidedText(detail, Qt::ElideRight, avail);
+                QString el = QFontMetrics(smallFont).elidedText(detail, Qt::ElideRight, avail);
                 p->drawText(QRect(labelEnd + 16, r.top(), avail, r.height()), Qt::AlignVCenter | Qt::AlignRight, el);
             }
         }

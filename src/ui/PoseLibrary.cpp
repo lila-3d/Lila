@@ -10,6 +10,8 @@
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -33,28 +35,10 @@ namespace lila::ui
 namespace
 {
 namespace poses = scene::poses;
-constexpr int kThumb = 96;
+constexpr int kPoseThumb = 96;
 constexpr int kNameRole = Qt::UserRole;
 constexpr int kTierRole = Qt::UserRole + 1;
 constexpr int kCharacterRole = Qt::UserRole + 2;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-bool runUi(const char* command, const json& call, json* result = nullptr)
-{
-    try
-    {
-        json r = ops::execute(command, call, CallSource::UI);
-        if (result)
-            *result = std::move(r);
-        return true;
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return false;
-    }
-}
 
 class PoseLibraryPanel : public QWidget
 {
@@ -84,8 +68,8 @@ public:
 
         mList = new QListWidget(this);
         mList->setViewMode(QListView::IconMode);
-        mList->setIconSize(QSize(kThumb, kThumb));
-        mList->setGridSize(QSize(kThumb + 16, kThumb + 28));
+        mList->setIconSize(QSize(kPoseThumb, kPoseThumb));
+        mList->setGridSize(QSize(kPoseThumb + 16, kPoseThumb + 28));
         mList->setResizeMode(QListView::Adjust);
         mList->setMovement(QListView::Static);
         mList->setUniformItemSizes(true);
@@ -140,7 +124,7 @@ public:
             if (QListWidgetItem* item = mList->currentItem())
                 applyItem(item, true);
             else
-                runUi("mirrorPose", json::object());
+                tryRunUi("mirrorPose", json::object());
         });
         connect(save, &QPushButton::clicked, this, [this] { savePose(); });
         connect(mList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& at) { contextMenu(at); });
@@ -262,7 +246,7 @@ private:
         call["weight"] = mBlend->value() / 100.0;
         call["mirror"] = mirror;
         json report;
-        if (runUi("applyPose", call, &report) && report.contains("missing") && !report["missing"].empty())
+        if (tryRunUi("applyPose", call, &report) && report.contains("missing") && !report["missing"].empty())
             log::warn("Pose '{}': skipped {} node(s) this rig doesn't have", item->text().toStdString(), report["missing"].size());
     }
 
@@ -282,7 +266,7 @@ private:
         json call = {{"args", {name.toStdString()}}, {"tier", mSaveTier->currentData().toString().toStdString()}};
         if (QString c = mCharacter->currentData().toString(); !c.isEmpty())
             call["character"] = c.toStdString();
-        runUi("savePose", call);
+        tryRunUi("savePose", call);
     }
 
     /** Asks first: a pose saved to a file doesn't come back with undo. */
@@ -294,7 +278,7 @@ private:
             return;
         json call = poseCall(item);
         call["force"] = poses::isReserved(item->data(kNameRole).toString().toStdString());
-        runUi("deletePose", call);
+        tryRunUi("deletePose", call);
     }
 
     void contextMenu(const QPoint& at)
@@ -305,7 +289,7 @@ private:
         {
             menu.addAction("Apply", this, [this, item] { applyItem(item, false); });
             menu.addAction("Apply Mirrored", this, [this, item] { applyItem(item, true); });
-            menu.addAction("Save Mirrored Copy", this, [this, item] { runUi("mirrorPose", poseCall(item)); });
+            menu.addAction("Save Mirrored Copy", this, [this, item] { tryRunUi("mirrorPose", poseCall(item)); });
             menu.addSeparator();
             const bool readOnly = item->data(kTierRole).toString() == "template";
             const bool reserved = poses::isReserved(item->data(kNameRole).toString().toStdString());
@@ -316,7 +300,7 @@ private:
                 {
                     json call = poseCall(item);
                     call["args"].push_back(to.toStdString());
-                    runUi("renamePose", call);
+                    tryRunUi("renamePose", call);
                 }
             });
             rename->setEnabled(!readOnly && !reserved);
@@ -324,7 +308,7 @@ private:
             del->setEnabled(!readOnly);
             menu.addSeparator();
         }
-        menu.addAction("Mirror Current Pose", this, [] { runUi("mirrorPose", json::object()); });
+        menu.addAction("Mirror Current Pose", this, [] { tryRunUi("mirrorPose", json::object()); });
         menu.addAction("Refresh", this, [this] { refresh(); });
         menu.exec(mList->viewport()->mapToGlobal(at));
     }
@@ -346,7 +330,7 @@ std::string thumbnail(const std::vector<scene::NodeId>&)
     try
     {
         capture::Options o;
-        o.width = o.height = 2 * kThumb;
+        o.width = o.height = 2 * kPoseThumb;
         o.display = "shaded";
         o.frameSelection = true;
         o.grid = false;
@@ -372,7 +356,7 @@ void registerPoseLibraryUi()
     poses::setThumbnailProvider(thumbnail);
     panels::add({.id = kPoseLibraryDock, .title = "Pose Library", .create = [](QWidget* parent) { return createPoseLibraryPanel(parent); },
                  .area = Qt::RightDockWidgetArea, .icon = "man", .open = false, .toggleAction = "window.poseLibrary"});
-    actions::add({.id = "pose.mirror", .label = "Mirror Pose", .category = "Animation", .run = [] { runUi("mirrorPose", json::object()); },
+    actions::add({.id = "pose.mirror", .label = "Mirror Pose", .category = "Animation", .run = [] { tryRunUi("mirrorPose", json::object()); },
                   .doc = "Mirror the selected character's current pose: left and right swap, the centre reflects.",
                   .python = "mirrorPose()"});
 }

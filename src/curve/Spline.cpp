@@ -1,6 +1,7 @@
 #include "curve/Spline.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 #include "curve/Internal.h"
 #include "curve/Tessellate.h"
@@ -18,11 +19,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
-
-constexpr double kEps = 1e-12;
-
 D4 homo(const D3& p, double w) { return D4(p * w, w); }
 
 template <class T> void erase(std::vector<T>& v, size_t i)

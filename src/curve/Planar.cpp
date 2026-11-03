@@ -1,6 +1,7 @@
 #include "curve/Planar.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -10,11 +11,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
-
-double cross2(const D2& a, const D2& b) { return a.x * b.y - a.y * b.x; }
-
 D3 newell(const std::vector<D3>& pts)
 {
     D3 n(0.0);
@@ -27,7 +23,7 @@ D3 newell(const std::vector<D3>& pts)
     return n;
 }
 
-int orient(const D2& a, const D2& b, const D2& c)
+int orientSign(const D2& a, const D2& b, const D2& c)
 {
     double v = cross2(b - a, c - a);
     double scale = std::max({std::abs(b.x - a.x), std::abs(b.y - a.y), std::abs(c.x - a.x), std::abs(c.y - a.y), 1e-300});
@@ -80,7 +76,7 @@ std::vector<D2> insideProbes(const std::vector<D2>& pts)
 
 bool segmentsTouch(const D2& a, const D2& b, const D2& c, const D2& d)
 {
-    int o1 = orient(a, b, c), o2 = orient(a, b, d), o3 = orient(c, d, a), o4 = orient(c, d, b);
+    int o1 = orientSign(a, b, c), o2 = orientSign(a, b, d), o3 = orientSign(c, d, a), o4 = orientSign(c, d, b);
     if (o1 != o2 && o3 != o4)
         return true;
     return (o1 == 0 && onSegment(a, b, c)) || (o2 == 0 && onSegment(a, b, d)) || (o3 == 0 && onSegment(c, d, a)) || (o4 == 0 && onSegment(c, d, b));

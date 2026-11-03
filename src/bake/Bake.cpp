@@ -2,6 +2,7 @@
 
 #include "bake/AutoDistance.h"
 #include "bake/Backend.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/BakePipeline.h"
@@ -44,6 +45,7 @@ namespace fs = std::filesystem;
 
 namespace
 {
+using detail::shortName;
 using Clock = std::chrono::steady_clock;
 
 double since(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
@@ -63,12 +65,6 @@ std::map<scene::NodeId, json>& lastResults()
 {
     static std::map<scene::NodeId, json> r;
     return r;
-}
-
-std::string shortName(const std::string& path)
-{
-    const size_t bar = path.rfind('|');
-    return bar == std::string::npos ? path : path.substr(bar + 1);
 }
 
 struct PlannedMap

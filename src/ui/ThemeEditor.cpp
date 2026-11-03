@@ -6,6 +6,7 @@
 #include "ui/Icons.h"
 #include "ui/ThemeModel.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -34,8 +35,6 @@ namespace lila::ui
 {
 namespace
 {
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
 QIcon swatch(themes::Rgba c)
 {
     QPixmap pm(28, 14);

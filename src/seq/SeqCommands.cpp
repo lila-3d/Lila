@@ -16,8 +16,6 @@ namespace lila::seq
 {
 namespace
 {
-using T = ArgType;
-
 fs::path resolve(const std::string& s)
 {
     fs::path p(s);
@@ -29,6 +27,7 @@ fs::path resolve(const std::string& s)
 /** Flags shared by exportMeshSequence and exportAlembic. */
 std::vector<FlagDef> sampleFlags()
 {
+    using T = ArgType;
     return {
         {"start", "st", T::Float, nullptr, "First frame. Without start and end the playback range is used."},
         {"end", "e", T::Float, nullptr, "Last frame, inclusive."},
@@ -126,6 +125,7 @@ json run(const std::vector<scene::NodeId>& meshes, const SequenceOptions& o, boo
 
 void registerCommands()
 {
+    using T = ArgType;
     registerAlembicImport();
     registerVatNode();
     registerImposterNode();

@@ -31,9 +31,10 @@ using namespace lila;
 
 namespace destruction
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::Node;
 
@@ -80,7 +81,7 @@ Node* simulationModifier(Graph& g, Node& target)
 }
 
 /** Breaks as exportBreaks finds them, positioned at their rest anchors (world space). */
-json breaksOf(const StateView& end, const gn::GeometryPtr& links, const glm::dmat4& world, const glm::dmat3& basis)
+json breaksAtRest(const StateView& end, const gn::GeometryPtr& links, const glm::dmat4& world, const glm::dmat3& basis)
 {
     json out = json::array();
     if (!links->curves)
@@ -276,7 +277,7 @@ void registerChaosExport(ext::Context& ctx)
                             release[k] = f;
                     }
                     if (f == last && ok)
-                        breaks = breaksOf(v, in->geometry("links"), world, basis);
+                        breaks = breaksAtRest(v, in->geometry("links"), world, basis);
                 }
                 for (size_t k = 0; k < count; ++k)
                     pieces[k]["releaseFrame"] = release[k];

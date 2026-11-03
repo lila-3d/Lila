@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -43,4 +44,15 @@ LILA_SCENE_API std::shared_ptr<ProcessRunner> systemRunner();
 
 /** Full path of an executable found on PATH, or empty. */
 LILA_SCENE_API std::filesystem::path findExecutable(const std::string& name);
+
+/** s without leading and trailing whitespace, for one line of a tool's output. */
+inline std::string trim(std::string s)
+{
+    while (!s.empty() && std::isspace((unsigned char)s.back()))
+        s.pop_back();
+    size_t i = 0;
+    while (i < s.size() && std::isspace((unsigned char)s[i]))
+        ++i;
+    return s.substr(i);
+}
 } // namespace lila::vcs

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
@@ -14,33 +16,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-scene::MeshPtr meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
-}
-
-std::string polyCurve(std::initializer_list<D3> list, const char* name)
-{
-    return run("curve", {{"type", "poly"}, {"points", pts(list)}, {"name", name}});
-}
-
 std::string modifierError(const std::string& mod)
 {
     scene::Graph& g = scene::Graph::current();

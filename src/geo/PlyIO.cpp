@@ -1,6 +1,7 @@
 #include "geo/PlyIO.h"
 
 #include "geo/ColorSets.h"
+#include "geo/IoCommon.h"
 #include "geo/Normals.h"
 #include "geo/PointWeld.h"
 #include "geo/Primitives.h"
@@ -28,6 +29,9 @@ namespace lila::geo
 {
 namespace
 {
+using detail::linearToSrgb;
+using detail::srgbToLinear;
+
 enum class Type : uint8_t
 {
     I8,
@@ -89,17 +93,6 @@ float channelScale(Type t)
     }
 }
 
-float srgbToLinear(float c)
-{
-    c = std::max(c, 0.0f);
-    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
-}
-float linearToSrgb(float c)
-{
-    c = std::clamp(c, 0.0f, 1.0f);
-    return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
-}
-
 struct Property
 {
     std::string name;
@@ -134,10 +127,10 @@ enum class Format
 bool wideType(Type t) { return t == Type::F64 || t == Type::I32 || t == Type::U32; }
 
 /** Reads values from one record of the body, in any of the three encodings, never past its end. */
-class Cursor
+class RecordReader
 {
 public:
-    Cursor(const char* at, const char* end, Format format) : mAt(at), mEnd(end), mFormat(format) {}
+    RecordReader(const char* at, const char* end, Format format) : mAt(at), mEnd(end), mFormat(format) {}
 
     bool ok() const { return mOk; }
     const char* at() const { return mAt; }
@@ -400,7 +393,7 @@ enum class Pass
     Skip,
 };
 
-bool readRecord(const Element& e, const std::vector<bool>& want, Cursor& c, size_t k, Columns& out, Pass pass)
+bool readRecord(const Element& e, const std::vector<bool>& want, RecordReader& c, size_t k, Columns& out, Pass pass)
 {
     for (size_t i = 0; i < e.props.size(); ++i)
     {
@@ -524,7 +517,7 @@ bool readElement(std::string_view body, Format format, const Element& e, const R
         tbb::parallel_for(tbb::blocked_range<size_t>(0, e.count, 4096), [&](const tbb::blocked_range<size_t>& r) {
             for (size_t k = r.begin(); k < r.end(); ++k)
             {
-                Cursor c(body.data() + rec.start(k), body.data() + rec.start(k + 1), format);
+                RecordReader c(body.data() + rec.start(k), body.data() + rec.start(k + 1), format);
                 if (!readRecord(e, want, c, k, out, pass))
                 {
                     bad = true;
@@ -557,7 +550,7 @@ bool binaryRecords(std::string_view body, Format format, const Element& e, size_
     const std::vector<bool> nothing(e.props.size(), false);
     // Byte ranges of the first record's list lengths.
     std::vector<std::pair<size_t, size_t>> lengths;
-    Cursor first(body.data() + at, body.data() + body.size(), format);
+    RecordReader first(body.data() + at, body.data() + body.size(), format);
     for (size_t i = 0; i < e.props.size() && first.ok(); ++i)
     {
         const Property& p = e.props[i];
@@ -597,7 +590,7 @@ bool binaryRecords(std::string_view body, Format format, const Element& e, size_
         return true;
     }
     table.resize(e.count + 1);
-    Cursor c(body.data() + at, body.data() + body.size(), format);
+    RecordReader c(body.data() + at, body.data() + body.size(), format);
     for (size_t k = 0; k < e.count; ++k)
     {
         table[k] = size_t(c.at() - body.data());
@@ -615,7 +608,7 @@ bool asciiRecords(std::string_view body, const Element& e, size_t at, std::vecto
     Columns none;
     const std::vector<bool> nothing(e.props.size(), false);
     table.resize(e.count + 1);
-    Cursor c(body.data() + at, body.data() + body.size(), Format::Ascii);
+    RecordReader c(body.data() + at, body.data() + body.size(), Format::Ascii);
     for (size_t k = 0; k < e.count; ++k)
     {
         table[k] = size_t(c.at() - body.data());

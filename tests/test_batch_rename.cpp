@@ -1,17 +1,18 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/BatchRename.h"
 #include "scene/Graph.h"
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-std::string make(const char* name, const char* parent = nullptr)
+std::string makeTransform(const char* name, const char* parent = nullptr)
 {
     json call = {{"args", {"transform"}}, {"name", name}, {"skipSelect", true}};
     if (parent)
@@ -62,9 +63,9 @@ TEST_CASE("batchRenamed applies each rule")
 TEST_CASE("batchRename names a hierarchy chain and undoes in one step")
 {
     run("newScene");
-    make("Root");
-    make("Mid", "Root");
-    make("Tip", "Mid");
+    makeTransform("Root");
+    makeTransform("Mid", "Root");
+    makeTransform("Tip", "Mid");
     json plans = run("batchRename", {{"args", {"Root"}}, {"name", "tail_##"}, {"hierarchy", true}, {"order", "outliner"}});
     CHECK(names(plans) == std::vector<std::string>{"tail_01", "tail_02", "tail_03"});
     CHECK(scene::Graph::current().find("|tail_01|tail_02|tail_03"));
@@ -75,23 +76,23 @@ TEST_CASE("batchRename names a hierarchy chain and undoes in one step")
 TEST_CASE("batchRename follows selection order, previews and swaps names")
 {
     run("newScene");
-    make("A");
-    make("B");
-    make("C");
+    makeTransform("A");
+    makeTransform("B");
+    makeTransform("C");
     run("select", {{"args", {"C", "A", "B"}}});
     json preview = run("batchRename", {{"name", "n#"}, {"preview", true}});
     CHECK(names(preview) == std::vector<std::string>{"n1", "n2", "n3"});
     CHECK(scene::Graph::current().find("A"));
 
     run("newScene");
-    make("n1");
-    make("n2");
+    makeTransform("n1");
+    makeTransform("n2");
     // Each asks for the other's name; both land there because every name is freed first.
     json swapped = run("batchRename", {{"args", {"n1", "n2"}}, {"name", "n#"}, {"start", 2}, {"step", -1}});
     CHECK(names(swapped) == std::vector<std::string>{"n2", "n1"});
     CHECK(swapped[0]["status"] == "renamed");
 
-    make("Taken");
+    makeTransform("Taken");
     json clash = run("batchRename", {{"args", {"n1"}}, {"name", "Taken"}, {"preview", true}});
     CHECK(clash[0]["status"] == "clash");
 }
@@ -99,9 +100,9 @@ TEST_CASE("batchRename follows selection order, previews and swaps names")
 TEST_CASE("namingConvention fix covers a hierarchy and keeps side suffixes")
 {
     run("newScene");
-    make("root_grp");
-    make("dog_leg_b", "root_grp");
-    make("wheel_lf");
+    makeTransform("root_grp");
+    makeTransform("dog_leg_b", "root_grp");
+    makeTransform("wheel_lf");
     scene::Graph& g = scene::Graph::current();
     g.setNamingPolicy(scene::NamingPolicy::fromJson({{"enabled", true}}));
     json fixed = run("namingConvention", {{"args", {"root_grp"}}, {"fix", true}});

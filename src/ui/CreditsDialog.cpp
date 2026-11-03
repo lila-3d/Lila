@@ -46,7 +46,7 @@ using credits::Tier;
 constexpr int kColumnWidth = 560;
 constexpr double kRowSpeed = 26.0; // pixels per second
 constexpr int kNameGap = 30;
-constexpr int kMaxRows = 3;
+constexpr int kMaxNameRows = 3;
 constexpr int kFade = 36;
 
 /** Windows' "Show animations" setting, off for people who need motion kept down. LILA_REDUCED_MOTION=0 or 1 overrides it. */
@@ -299,7 +299,7 @@ private:
     int rowCount(int w) const
     {
         const int rows = int(std::ceil(totalWidth() / std::max(1.0, w * 1.5)));
-        return std::clamp(rows, 1, std::min(kMaxRows, int(mNames.size())));
+        return std::clamp(rows, 1, std::min(kMaxNameRows, int(mNames.size())));
     }
 
     bool moving() const

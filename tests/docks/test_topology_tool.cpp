@@ -123,13 +123,13 @@ std::vector<QPointF> path(const std::vector<QPointF>& corners)
     return out;
 }
 
-void wheel(QPointF at, int notches, const ui::ViewInfo& view, Qt::KeyboardModifiers mods = Qt::NoModifier)
+void toolWheel(QPointF at, int notches, const ui::ViewInfo& view, Qt::KeyboardModifiers mods = Qt::NoModifier)
 {
     QWheelEvent e(at, at, QPoint(), QPoint(0, 120 * notches), Qt::NoButton, mods, Qt::NoScrollPhase, false);
     tool()->wheel(&e, view);
 }
 
-void key(int k)
+void toolKey(int k)
 {
     QKeyEvent e(QEvent::KeyPress, k, Qt::NoModifier);
     tool()->keyPress(&e, topView());
@@ -185,7 +185,7 @@ TEST_CASE("topology tool: patch, wheel and pull on a closed shape")
     CHECK(tool()->activeConstruct() == recs[0].id);
     size_t faces = m->numFaces();
 
-    wheel(px(0, -29), 1, view);
+    toolWheel(px(0, -29), 1, view);
     CHECK(topoMesh()->numFaces() != faces);
     CHECK(records().size() == 1);
     CHECK(records()[0].live);
@@ -194,7 +194,7 @@ TEST_CASE("topology tool: patch, wheel and pull on a closed shape")
     CHECK(records()[0].spec.contains("pull"));
     CHECK(allQuads(*topoMesh()));
 
-    key(Qt::Key_Return);
+    toolKey(Qt::Key_Return);
     CHECK(records().empty());
     CHECK(topoMesh()->numFaces() > 4);
     ui::viewportTools::set(nullptr);
@@ -268,7 +268,7 @@ TEST_CASE("topology tool: cylinder rings, pencil guides, auto region and handles
         drag({QPointF(60, 100), QPointF(140, 100)}, view);
         CHECK(records().size() == 1);
         CHECK(records()[0].spec["rings"].size() == 3);
-        wheel(QPointF(100, 80), 1, view);
+        toolWheel(QPointF(100, 80), 1, view);
         CHECK(records()[0].spec["points"].get<int>() == 9);
         CHECK(topoMesh()->numFaces() != faces);
     }
@@ -292,7 +292,7 @@ TEST_CASE("topology tool: cylinder rings, pencil guides, auto region and handles
         ui::ViewInfo view = topView();
         drag(path({px(-30, 0), px(30, 0)}), view);
         CHECK(tool()->regionFaceCount() > 20);
-        key(Qt::Key_Return);
+        toolKey(Qt::Key_Return);
         std::vector<retopo::ConstructRecord> recs = records();
         REQUIRE(recs.size() == 1);
         CHECK(recs[0].kind == retopo::ConstructKind::Region);

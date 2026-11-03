@@ -7,8 +7,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 struct MathOp
 {
     int arity;

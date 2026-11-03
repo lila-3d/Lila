@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "retarget/Bvh.h"
 #include "retarget/SceneRetarget.h"
@@ -16,11 +17,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using rtest::run;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 Graph& graph() { return Graph::current(); }
 
 Node& node(const std::string& name)

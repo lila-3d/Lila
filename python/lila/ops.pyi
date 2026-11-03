@@ -1202,7 +1202,7 @@ def blendCurve(*objects: Any, continuityA: str | None = None, continuityB: str |
         mesh: Blend to this mesh's border instead of a second curve. Short form m.
         edge: Border edge of mesh= to blend to. Short form e.
         edgeT: Where along the edge, 0 to 1. Default 0.5.
-        constructionHistory: Keep the history node so the result stays live. Short form ch. Default True.
+        constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Name of the blend curve. Short form n.
     """
 
@@ -1272,7 +1272,7 @@ def borderBlend(segments: int | None = None, tensionA: float | None = None, tens
         edgesA: Edges of side A.
         meshB: Mesh of side B.
         edgesB: Edges of side B.
-        constructionHistory: Keep the history node so the result stays live. Short form ch. Default True.
+        constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Mesh name. Short form n.
     """
 
@@ -2207,7 +2207,7 @@ def curveNetwork(*objects: Any, tolerance: float | None = None, spansU: int | No
         uCurves: Curves forced into the U family.
         vCurves: Curves forced into the V family.
         flip: Flip the faces. Default False.
-        constructionHistory: Keep the history node so the result stays live. Short form ch. Default True.
+        constructionHistory: Keep the history node so its settings stay live. Short form ch. Default True.
         name: Mesh name. Short form n.
     """
 
@@ -6961,7 +6961,7 @@ def reverseFoot(*objects: Any, ankle: str | None = None, ball: str | None = None
         parent: Node to put the element under, such as a character. Short form p.
     """
 
-def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequence[float] | None = None, startSweep: float | None = None, endSweep: float | None = None, sections: int | None = None, caps: bool | None = None, flip: bool | None = None, material: float | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def revolve(*objects: Any, axisOrigin: Sequence[float] | None = None, axis: Sequence[float] | None = None, startSweep: float | None = None, endSweep: float | None = None, sections: int | None = None, caps: bool | None = None, flip: bool | None = None, material: str | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Revolve profile curves around an axis into a quad mesh with live history. Returns [mesh, curveRevolve].
 
     Args:

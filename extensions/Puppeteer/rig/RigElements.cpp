@@ -315,8 +315,6 @@ bool registerLegacyTypes(ext::Context& ctx)
 
 // Commands --------------------------------------------------------------------------------------------------------
 
-Graph& graph() { return Graph::current(); }
-
 /** The base command's call with the parent set to the first object's character, when it has one. */
 json withCharacter(Graph& g, json call, const std::string& node)
 {
@@ -325,14 +323,6 @@ json withCharacter(Graph& g, json call, const std::string& node)
     if (Node* n = g.find(node))
         if (NodeId c = elementParentFor(g, n->id()))
             call["parent"] = g.node(c)->path();
-    return call;
-}
-
-/** The command's own call with its objects and flags passed on as they came. */
-json forwarded(const Args& a)
-{
-    json call = a.flags;
-    call["args"] = objectArgs(a);
     return call;
 }
 

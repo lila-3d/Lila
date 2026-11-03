@@ -24,10 +24,10 @@ using namespace lila::ui;
 
 namespace terrain
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 struct Target
 {
     std::string mesh;

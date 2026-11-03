@@ -20,7 +20,7 @@ using scene::Graph;
 using scene::NodeId;
 namespace inst = scene::instancing;
 
-void run(const char* name, const std::string& node, json flags = json::object())
+void runOnNode(const char* name, const std::string& node, json flags = json::object())
 {
     try
     {
@@ -62,7 +62,7 @@ QWidget* instancingPanel(NodeId mesh)
     auto button = [&](const char* text, const char* cmd, const char* tip) {
         auto* b = new QPushButton(text);
         b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, b, [cmd, path] { run(cmd, path); });
+        QObject::connect(b, &QPushButton::clicked, b, [cmd, path] { runOnNode(cmd, path); });
         row->addWidget(b);
     };
     if (kind != inst::Kind::Source)
@@ -92,7 +92,7 @@ QWidget* arrayPanel(NodeId id)
     auto button = [&](const char* text, const char* mode, const char* tip) {
         auto* b = new QPushButton(text);
         b->setToolTip(tip);
-        QObject::connect(b, &QPushButton::clicked, b, [mode, path] { run("bakeArray", path, {{"mode", mode}}); });
+        QObject::connect(b, &QPushButton::clicked, b, [mode, path] { runOnNode("bakeArray", path, {{"mode", mode}}); });
         row->addWidget(b);
     };
     button("Bake to Instances", "instance", "Replace the array with a group of real objects that share the sources' meshes.");

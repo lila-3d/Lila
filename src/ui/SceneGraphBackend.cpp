@@ -2,6 +2,7 @@
 
 #include "scene/Graph.h"
 #include "scene/SceneGraph.h"
+#include "ops/Command.h"
 #include "ui/NodeEditor.h"
 #include "ui/Theme.h"
 
@@ -16,7 +17,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
 /** The scene's dependency graph: each group is a view of real nodes around the selection, edited through sceneGraph* commands. */
 class SceneBackend final : public GraphBackend

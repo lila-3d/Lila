@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
@@ -33,12 +34,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace mayatest;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path fixture(const std::string& name) { return fs::path(LILA_MAYA_TEST_DATA) / name; }
-
 Graph& fresh()
 {
     io::refs::clear();
@@ -54,15 +54,6 @@ maya::ImportResult load(const std::string& name, maya::ImportOptions opts = {})
         MESSAGE(r.error);
     REQUIRE(r.ok);
     return r;
-}
-
-scene::Node* node(Graph& g, const std::string& name)
-{
-    scene::Node* n = g.find(name);
-    if (!n)
-        MESSAGE("missing node " << name);
-    REQUIRE(n);
-    return n;
 }
 
 MeshPtr outMesh(Graph& g, const std::string& name)
@@ -87,14 +78,6 @@ void checkVec(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-4)
 }
 
 glm::dvec3 vec(Graph& g, const std::string& n, int attr) { return node(g, n)->as<glm::dvec3>(attr); }
-
-bool contains(const std::vector<std::string>& lines, std::string_view what)
-{
-    for (const std::string& s : lines)
-        if (s.find(what) != std::string::npos)
-            return true;
-    return false;
-}
 
 std::string slotOfFace(const geo::Mesh& m, geo::Index f)
 {

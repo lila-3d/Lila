@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "render/Renderer.h"
 #include "ui/Camera.h"
 
@@ -10,19 +11,11 @@
 
 using namespace lila;
 using namespace lila::render;
+using namespace stylisedtest;
 
 namespace
 {
-constexpr int kSize = 128;
-
-bool gpu()
-{
-    Renderer& r = Renderer::get();
-    if (r.running() || r.start())
-        return true;
-    MESSAGE("no GPU for instanced draw tests");
-    return false;
-}
+constexpr int kDrawSize = 128;
 
 /** A closed box, half size h, with face normals and wire edges. */
 std::shared_ptr<RenderMesh> box(float h)
@@ -71,20 +64,12 @@ FrameState frameAt(double frameRadius)
     return s;
 }
 
-std::vector<uint8_t> renderFrame(const FrameState& s, Renderer::FrameStats* stats = nullptr, int repeat = 1)
+std::vector<uint8_t> renderInstanced(const FrameState& s, Renderer::FrameStats* stats = nullptr, int repeat = 1)
 {
     std::vector<uint8_t> bgra;
     std::string err;
-    REQUIRE_MESSAGE(Renderer::get().renderOffscreen(s, kSize, kSize, bgra, &err, stats, repeat), err);
+    REQUIRE_MESSAGE(Renderer::get().renderOffscreen(s, kDrawSize, kDrawSize, bgra, &err, stats, repeat), err);
     return bgra;
-}
-
-int maxDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
-{
-    int m = 0;
-    for (size_t i = 0; i < a.size(); ++i)
-        m = std::max(m, std::abs(int(a[i]) - int(b[i])));
-    return m;
 }
 
 /** Mean x of the lit pixels, in pixels, or -1 when nothing is lit. */
@@ -92,10 +77,10 @@ double litCentroidX(const std::vector<uint8_t>& bgra)
 {
     double sum = 0.0;
     int n = 0;
-    for (int y = 0; y < kSize; ++y)
-        for (int x = 0; x < kSize; ++x)
+    for (int y = 0; y < kDrawSize; ++y)
+        for (int x = 0; x < kDrawSize; ++x)
         {
-            const uint8_t* p = &bgra[(size_t(y) * kSize + x) * 4];
+            const uint8_t* p = &bgra[(size_t(y) * kDrawSize + x) * 4];
             if (p[0] + p[1] + p[2] > 6)
             {
                 sum += x;
@@ -129,12 +114,12 @@ FrameState gridOfBoxes(int side, bool shareMesh)
 
 TEST_CASE("Instanced draws: a shared mesh draws all its placements in one call, pixel for pixel")
 {
-    if (!gpu())
+    if (!gpu("instanced draw"))
         return;
     constexpr int kSide = 10;
     Renderer::FrameStats shared, unique;
-    const auto a = renderFrame(gridOfBoxes(kSide, true), &shared);
-    const auto b = renderFrame(gridOfBoxes(kSide, false), &unique);
+    const auto a = renderInstanced(gridOfBoxes(kSide, true), &shared);
+    const auto b = renderInstanced(gridOfBoxes(kSide, false), &unique);
     CHECK(shared.meshDrawCalls == 1);
     CHECK(shared.meshInstances == kSide * kSide);
     CHECK(unique.meshDrawCalls == kSide * kSide);
@@ -152,13 +137,13 @@ TEST_CASE("Instanced draws: a shared mesh draws all its placements in one call, 
     d.instances = list;
     listed.meshes.push_back(d);
     Renderer::FrameStats listedStats;
-    CHECK(maxDiff(renderFrame(listed, &listedStats), a) == 0);
+    CHECK(maxDiff(renderInstanced(listed, &listedStats), a) == 0);
     CHECK(listedStats.meshDrawCalls == 1);
 }
 
 TEST_CASE("Instanced draws: placements read their own world matrix")
 {
-    if (!gpu())
+    if (!gpu("instanced draw"))
         return;
     // One box moved right of centre: a transposed matrix would lose the translation and leave it in the middle.
     FrameState s = frameAt(40.0);
@@ -166,18 +151,18 @@ TEST_CASE("Instanced draws: placements read their own world matrix")
     d.mesh = box(5.0f);
     d.world = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
     s.meshes.push_back(d);
-    const double right = litCentroidX(renderFrame(s));
+    const double right = litCentroidX(renderInstanced(s));
     s.meshes.edit()[0].world = glm::translate(glm::mat4(1.0f), glm::vec3(-20.0f, 0.0f, 0.0f));
-    const double left = litCentroidX(renderFrame(s));
+    const double left = litCentroidX(renderInstanced(s));
     REQUIRE(right >= 0.0);
     REQUIRE(left >= 0.0);
-    CHECK(right > kSize * 0.6);
-    CHECK(left < kSize * 0.4);
+    CHECK(right > kDrawSize * 0.6);
+    CHECK(left < kDrawSize * 0.4);
 }
 
 TEST_CASE("Instanced draws: a live mesh's wire follows each new snapshot of its points")
 {
-    if (!gpu())
+    if (!gpu("instanced draw"))
         return;
     auto first = box(3.0f);
     first->key = RenderMesh::nextKey();
@@ -188,7 +173,7 @@ TEST_CASE("Instanced draws: a live mesh's wire follows each new snapshot of its 
     d.mesh = first;
     d.flags = DrawWire;
     s.meshes.push_back(d);
-    const double before = litCentroidX(renderFrame(s));
+    const double before = litCentroidX(renderInstanced(s));
 
     // A later snapshot of the same live mesh: same key and vertex buffer, points moved.
     auto moved = std::make_shared<RenderMesh>(*first);
@@ -202,28 +187,28 @@ TEST_CASE("Instanced draws: a live mesh's wire follows each new snapshot of its 
         moved->dynamic->allDirty = true;
     }
     s.meshes.edit()[0].mesh = moved;
-    const double after = litCentroidX(renderFrame(s));
+    const double after = litCentroidX(renderInstanced(s));
     REQUIRE(before >= 0.0);
     REQUIRE(after >= 0.0);
-    CHECK(after > before + kSize * 0.2);
+    CHECK(after > before + kDrawSize * 0.2);
 }
 
 TEST_CASE("Instanced draws: wire, selection and translucency per placement")
 {
-    if (!gpu())
+    if (!gpu("instanced draw"))
         return;
     FrameState s = gridOfBoxes(3, true);
     for (MeshDraw& d : s.meshes.edit())
         d.flags = DrawShaded | DrawWire;
     s.meshes.edit()[4].flags |= DrawSelected;
-    const auto shaded = renderFrame(s);
+    const auto shaded = renderInstanced(s);
     // The same frame drawn per mesh copy matches, once its selected draw comes last as batches order highlighted wires.
     FrameState unique = gridOfBoxes(3, false);
     for (size_t i = 0; i < unique.meshes.size(); ++i)
         unique.meshes.edit()[i].flags = s.meshes[i].flags;
     std::vector<MeshDraw>& rotated = unique.meshes.edit();
     std::rotate(rotated.begin() + 4, rotated.begin() + 5, rotated.end());
-    CHECK(maxDiff(shaded, renderFrame(unique)) == 0);
+    CHECK(maxDiff(shaded, renderInstanced(unique)) == 0);
 
     // Translucent placements sort one by one, so they match the per-copy frame too.
     for (FrameState* f : {&s, &unique})
@@ -235,18 +220,18 @@ TEST_CASE("Instanced draws: wire, selection and translucency per placement")
             d.materials = {m};
         }
     Renderer::FrameStats stats;
-    CHECK(maxDiff(renderFrame(s, &stats), renderFrame(unique)) == 0);
+    CHECK(maxDiff(renderInstanced(s, &stats), renderInstanced(unique)) == 0);
     CHECK(stats.meshInstances == 9);
 }
 
 TEST_CASE("Instanced draws: timing for many placements of one mesh")
 {
-    if (!gpu())
+    if (!gpu("instanced draw"))
         return;
     constexpr int kSide = 70; // 4900 boxes
     Renderer::FrameStats shared, unique;
-    renderFrame(gridOfBoxes(kSide, true), &shared, 5);
-    renderFrame(gridOfBoxes(kSide, false), &unique, 5);
+    renderInstanced(gridOfBoxes(kSide, true), &shared, 5);
+    renderInstanced(gridOfBoxes(kSide, false), &unique, 5);
     CHECK(shared.meshDrawCalls == 1);
     CHECK(unique.meshDrawCalls == kSide * kSide);
     MESSAGE("4900 boxes, CPU record ms: instanced " << shared.cpuMs << ", one draw each " << unique.cpuMs << "; GPU ms: " << shared.gpuMs << " vs "

@@ -1,6 +1,8 @@
 #include <Decompose.h>
 #include <RigidScene.h>
 
+#include "TestUtil.h"
+
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -12,20 +14,10 @@
 #include <vector>
 
 namespace physics = lila::physics;
+using stagehandtest::box;
 
 namespace
 {
-physics::BodyDesc box(const glm::dvec3& at, const glm::dvec3& half, physics::Role role = physics::Role::Dynamic, double density = 600.0)
-{
-    physics::BodyDesc b;
-    b.shape.kind = physics::Shape::Kind::Box;
-    b.shape.halfExtents = half;
-    b.position = at;
-    b.role = role;
-    b.density = density;
-    return b;
-}
-
 /** A closed box's twelve triangles, outward facing. */
 void boxTriangles(std::vector<glm::dvec3>& t, const glm::dvec3& lo, const glm::dvec3& hi)
 {

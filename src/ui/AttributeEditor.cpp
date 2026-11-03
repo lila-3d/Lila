@@ -28,6 +28,7 @@
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 #include "ui/FileDialog.h"
 
@@ -361,22 +362,6 @@ private:
     double mAccum = 0.0;
 };
 
-QString niceName(const std::string& name)
-{
-    QString out;
-    for (size_t i = 0; i < name.size(); ++i)
-    {
-        char c = name[i];
-        if (i == 0)
-            out += QChar(c).toUpper();
-        else if (std::isupper(static_cast<unsigned char>(c)))
-            out += QString(' ') + QChar(c);
-        else
-            out += QChar(c);
-    }
-    return out;
-}
-
 QString fmt(double v)
 {
     if (std::abs(v) < 5e-7)
@@ -426,12 +411,6 @@ QWidget* section(const QString& title, QWidget* content, const std::vector<const
     v->addWidget(header);
     v->addWidget(content);
     return box;
-}
-
-double toSrgb(double c)
-{
-    c = std::clamp(c, 0.0, 1.0);
-    return c <= 0.0031308 ? c * 12.92 : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055;
 }
 
 std::vector<attributeEditor::Section*> extraSections()
@@ -892,7 +871,7 @@ QWidget* AttributeEditor::colorSwatch(const scene::AttrDef& def, scene::NodeId i
     };
     mUpdaters.push_back([b, current] {
         glm::dvec3 c = current();
-        QColor q = QColor::fromRgbF(float(toSrgb(c.x)), float(toSrgb(c.y)), float(toSrgb(c.z)));
+        QColor q = QColor::fromRgbF(float(linearToSrgb(c.x)), float(linearToSrgb(c.y)), float(linearToSrgb(c.z)));
         b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid #141414; }").arg(q.name()));
     });
     connect(b, &QToolButton::clicked, this, [b, attr, title, id, index, current] {
@@ -1981,7 +1960,6 @@ void AttributeEditor::showViewPopover(QWidget* anchor)
     pop->move(anchor->mapToGlobal(QPoint(anchor->width() - pop->width(), anchor->height())));
     pop->show();
 }
-
 
 void AttributeEditor::openAdd(QWidget* anchor, std::string category)
 {

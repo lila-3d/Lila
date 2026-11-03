@@ -11,7 +11,6 @@
 
 namespace lila::gn::nodes::fieldnodes
 {
-using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 
 /** The context for the same component on another domain; components with one domain keep theirs. */

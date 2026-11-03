@@ -35,6 +35,15 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
+    enum Column
+    {
+        kName,
+        kSlider,
+        kValue,
+        kEdit,
+        kInfo,
+    };
+
     void scheduleRefresh();
     void refresh();
 

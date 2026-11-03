@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "gn/Gn.h"
@@ -10,27 +11,23 @@
 #include <string>
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
-gn::Group group(const char* name) { return gn::readGroup(*gn::findGroupNode(scene::Graph::current(), name)); }
-
-std::string add(const char* group, const char* type, double x = 0, double y = 0)
+std::string addAt(const char* group, const char* type, double x = 0, double y = 0)
 {
     return run("gnAddNode", {{"args", {group, type}}, {"position", {x, y}}}).get<std::string>();
 }
 
 /** A 4x4 grid offset upwards by Combine XYZ, applied to a plane; returns the plane. */
-std::string build(const char* name)
+std::string buildOffsetPlane(const char* name)
 {
     run("gnCreateGroup", args({name}));
-    add(name, "MeshGrid");
-    add(name, "SetPosition", 300);
-    add(name, "CombineXYZ", 0, 200);
+    addAt(name, "MeshGrid");
+    addAt(name, "SetPosition", 300);
+    addAt(name, "CombineXYZ", 0, 200);
     run("gnSetValue", args({name, "MeshGrid.verticesX", 4}));
     run("gnSetValue", args({name, "MeshGrid.verticesY", 4}));
     run("gnSetValue", args({name, "CombineXYZ.z", 5.0}));
@@ -62,12 +59,12 @@ double highestZ(const geo::Mesh& m)
 TEST_CASE("reroutes pass their wire through unchanged, chained and fanned out")
 {
     run("newScene");
-    std::string mesh = build("R");
+    std::string mesh = buildOffsetPlane("R");
     geo::Mesh before = result(mesh);
     REQUIRE(before.numPoints() == 16);
 
     // Two reroutes in a row on the geometry wire, one on the offset wire.
-    std::string r1 = add("R", gn::kRerouteType, 150, 0), r2 = add("R", gn::kRerouteType, 220, 0), r3 = add("R", gn::kRerouteType, 150, 200);
+    std::string r1 = addAt("R", gn::kRerouteType, 150, 0), r2 = addAt("R", gn::kRerouteType, 220, 0), r3 = addAt("R", gn::kRerouteType, 150, 200);
     run("gnConnect", args({"R", "MeshGrid.mesh", r1 + ".input"}));
     run("gnConnect", args({"R", r1 + ".output", r2 + ".input"}));
     run("gnConnect", args({"R", r2 + ".output", "SetPosition.geometry"}));
@@ -103,8 +100,8 @@ TEST_CASE("reroutes pass their wire through unchanged, chained and fanned out")
 TEST_CASE("a reroute can't close a loop")
 {
     run("newScene");
-    build("R");
-    std::string r = add("R", gn::kRerouteType);
+    buildOffsetPlane("R");
+    std::string r = addAt("R", gn::kRerouteType);
     run("gnConnect", args({"R", "SetPosition.geometry", r + ".input"}));
     CHECK_THROWS(run("gnConnect", args({"R", r + ".output", "SetPosition.geometry"})));
 }
@@ -112,10 +109,10 @@ TEST_CASE("a reroute can't close a loop")
 TEST_CASE("portals carry a value without a wire, and flag what can't work")
 {
     run("newScene");
-    std::string mesh = build("P");
+    std::string mesh = buildOffsetPlane("P");
     double lifted = highestZ(result(mesh));
 
-    std::string send = add("P", gn::kSendType, 150, 200), receive = add("P", gn::kReceiveType, 150, 300);
+    std::string send = addAt("P", gn::kSendType, 150, 200), receive = addAt("P", gn::kReceiveType, 150, 300);
     run("gnSetValue", args({"P", send + ".name", "lift"}));
     run("gnConnect", args({"P", "CombineXYZ.vector", send + ".value"}));
     run("gnSetValue", args({"P", receive + ".name", "lift"}));
@@ -145,8 +142,8 @@ TEST_CASE("portals carry a value without a wire, and flag what can't work")
     CHECK(highestZ(result(mesh)) == doctest::Approx(lifted));
 
     // A Receive can't feed its own Send, by name or by link.
-    std::string loopSend = add("P", gn::kSendType, 600, 0), loopReceive = add("P", gn::kReceiveType, 400, 0);
-    std::string math = add("P", "VectorMath", 500, 0);
+    std::string loopSend = addAt("P", gn::kSendType, 600, 0), loopReceive = addAt("P", gn::kReceiveType, 400, 0);
+    std::string math = addAt("P", "VectorMath", 500, 0);
     run("gnConnect", args({"P", loopReceive + ".value", math + ".a"}));
     run("gnConnect", args({"P", math + ".vector", loopSend + ".value"}));
     run("gnSetValue", args({"P", loopSend + ".name", "round"}));
@@ -159,7 +156,7 @@ TEST_CASE("portals carry a value without a wire, and flag what can't work")
 TEST_CASE("a muted node passes its matching input through")
 {
     run("newScene");
-    std::string mesh = build("M");
+    std::string mesh = buildOffsetPlane("M");
     double lifted = highestZ(result(mesh));
     double flat = lifted - 5.0;
 
@@ -176,7 +173,7 @@ TEST_CASE("a muted node passes its matching input through")
     CHECK(highestZ(result(mesh)) == doctest::Approx(lifted));
 
     // Muted nodes in a row pass along the chain.
-    std::string second = add("M", "SetPosition", 500, 0);
+    std::string second = addAt("M", "SetPosition", 500, 0);
     run("gnConnect", args({"M", "SetPosition.geometry", second + ".geometry"}));
     run("gnConnect", args({"M", second + ".geometry", "GroupOutput.geometry"}));
     run("gnSetNodeFlags", {{"args", {"M", "SetPosition", second}}, {"muted", true}});

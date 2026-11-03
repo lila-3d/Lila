@@ -32,18 +32,16 @@ using namespace lila;
 
 namespace stagehand
 {
+using T = ArgType;
+
 namespace
 {
-using json = nlohmann::json;
-using T = ArgType;
 using library::Asset;
 
 constexpr const char* kMasters = "StagehandLibrary";
 /** Stagehand's own node types under a mesh or group: data, not geometry. */
 const std::set<std::string> kTagTypes = {kBodyType, "stagehandSnap", "stagehandAsset", "stagehandAssembly"};
 constexpr const char* kAssetType = "stagehandAsset";
-
-json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
 glm::dvec3 vecFlag(const Args& a, const char* flag, const glm::dvec3& fallback, const char* cmd)
 {
@@ -53,16 +51,6 @@ glm::dvec3 vecFlag(const Args& a, const char* flag, const glm::dvec3& fallback, 
     if (!j.is_array() || j.size() != 3)
         throw CommandError(std::string(cmd) + ": " + flag + " takes [x, y, z]");
     return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
-}
-
-std::string identifier(const std::string& s)
-{
-    std::string out;
-    for (char c : s)
-        out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
-    if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0])))
-        out = "Asset" + out;
-    return out;
 }
 
 /** The model file's modification time, which tells a master it's stale. */
@@ -196,7 +184,7 @@ NodeId loadMaster(Graph& g, const Asset& a)
     LILA_ZONE();
 
     const NodeId group = mastersGroup(g);
-    const json made = ops::execute("group", {{"empty", true}, {"name", identifier(a.name)}, {"parent", g.node(group)->path()}});
+    const json made = ops::execute("group", {{"empty", true}, {"name", identifier(a.name, "Asset")}, {"parent", g.node(group)->path()}});
     const NodeId root = g.find(made.is_array() ? made[0].get<std::string>() : made.get<std::string>())->id();
     // The model's own nodes may share the root's name, so its path is looked up fresh each time.
     auto rootPath = [&] { return g.node(root)->path(); };
@@ -211,7 +199,7 @@ NodeId loadMaster(Graph& g, const Asset& a)
     if (ext == ".lila" || ext == ".lilaa")
     {
         log::write(LogLevel::Warning, "Library: " + a.id + " is a .lila scene; loading it clears undo (store props as .glb to keep it)");
-        const json ns = ops::execute("createReference", {{"args", {file}}, {"namespace", identifier(a.name) + "_lib"}});
+        const json ns = ops::execute("createReference", {{"args", {file}}, {"namespace", identifier(a.name, "Asset") + "_lib"}});
         ops::execute("importReference", {{"args", {ns}}});
     }
     else if (ext == ".glb" || ext == ".gltf")
@@ -368,7 +356,7 @@ NodeId instantiate(Graph& g, const Asset& a, const std::string& mode, int depth 
         return copyOfMaster(g, a, mode);
     if (depth > 16)
         throw CommandError("place: " + a.id + " nests assemblies too deep (does it hold itself?)");
-    const json made = ops::execute("group", {{"empty", true}, {"name", identifier(a.name)}});
+    const json made = ops::execute("group", {{"empty", true}, {"name", identifier(a.name, "Asset")}});
     const NodeId root = g.find(made.is_array() ? made[0].get<std::string>() : made.get<std::string>())->id();
     tagAssembly(g, root, a.assembly.value("kind", std::string("levelInstance")));
     const json tag = ops::execute("createNode", {{"args", {kAssetType}}, {"name", "asset"}, {"parent", g.node(root)->fullPath()}, {"skipSelect", true}});
@@ -681,7 +669,7 @@ void registerLibraryCommands(ext::Context& ctx)
             const fs::path base = library::tierDir(tier);
             if (base.empty())
                 throw CommandError("libraryAdd: tier '" + tier + "' has no folder (open a workspace, or give a path)");
-            const std::string name = identifier(a.get<std::string>("name", g.node(ids[0])->name()));
+            const std::string name = identifier(a.get<std::string>("name", g.node(ids[0])->name()), "Asset");
             const std::string collection = a.get<std::string>("collection", "Props");
             const fs::path dir = base / library::utf8Path(collection) / name;
             if (fs::exists(dir / "asset.json") && !a.get<bool>("overwrite", false))

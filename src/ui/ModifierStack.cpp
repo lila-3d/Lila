@@ -21,6 +21,8 @@
 #include "ui/NumberExpr.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
@@ -63,8 +65,6 @@ using scene::PlugType;
 constexpr const char* kMime = "application/x-lila-modifier";
 constexpr std::string_view kSuffix = "Modifier";
 
-QColor gray(int v) { return themeShade(v); }
-
 std::map<std::string, QString>& iconTable()
 {
     static std::map<std::string, QString> t = {
@@ -89,7 +89,7 @@ std::string kindOf(const std::string& typeName)
 }
 
 /** "weightedNormals" -> "Weighted Normals". */
-QString niceName(const std::string& name)
+QString spacedName(const std::string& name)
 {
     QString out;
     for (size_t i = 0; i < name.size(); ++i)
@@ -105,7 +105,7 @@ QString niceName(const std::string& name)
     return out;
 }
 
-QString formatNumber(double v, bool integer)
+QString formatPlugNumber(double v, bool integer)
 {
     if (integer)
         return QString::number(std::llround(v));
@@ -117,7 +117,7 @@ QString formatNumber(double v, bool integer)
     return s;
 }
 
-double numericOf(const scene::PlugValue& v)
+double scalarOf(const scene::PlugValue& v)
 {
     if (auto* d = std::get_if<double>(&v))
         return *d;
@@ -126,19 +126,6 @@ double numericOf(const scene::PlugValue& v)
     if (auto* b = std::get_if<bool>(&v))
         return *b ? 1.0 : 0.0;
     return 0.0;
-}
-
-json run(const char* name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return nullptr;
-    }
 }
 
 void setAttr(const PlugRef& p, const json& value)
@@ -156,13 +143,7 @@ void setAttr(const PlugRef& p, const json& value)
         if (c != d)
             v = v.is_number_integer() ? json(int64_t(std::llround(c))) : json(c);
     }
-    run("setAttr", {{"args", {g.plugName(p), v}}});
-}
-
-std::string nameOf(NodeId id)
-{
-    scene::Node* n = Graph::current().node(id);
-    return n ? n->path() : std::string();
+    runUi("setAttr", {{"args", {g.plugName(p), v}}});
 }
 
 struct Counts
@@ -183,7 +164,7 @@ Counts countsOf(const scene::MeshPtr& m)
     return c;
 }
 
-QToolButton* toolButton(const QString& iconName, const QString& tip, QWidget* parent, bool checkable = false)
+QToolButton* stackButton(const QString& iconName, const QString& tip, QWidget* parent, bool checkable = false)
 {
     auto* b = new QToolButton(parent);
     b->setIcon(icon(iconName));
@@ -222,7 +203,7 @@ std::optional<json> defaultOf(const PlugRef& ref)
     return valueReset::plugDefault(g.attr(ref), ref.component);
 }
 
-QString defaultText(const PlugRef& ref)
+QString plugDefaultText(const PlugRef& ref)
 {
     std::optional<json> def = defaultOf(ref);
     return def ? QString::fromStdString(valueReset::describe(*def, Graph::current().attr(ref).enumNames)) : QString();
@@ -255,7 +236,7 @@ void addResetAction(QMenu* menu, const PlugRef& ref, QWidget* flash)
 void resetOnMiddleClick(QLabel* label, const PlugRef& ref, QWidget* field)
 {
     if (defaultOf(ref))
-        onMiddleClickReset(label, [ref] { resetPlug(ref); }, defaultText(ref), field);
+        onMiddleClickReset(label, [ref] { resetPlug(ref); }, plugDefaultText(ref), field);
 }
 
 void addKeyActions(QMenu* menu, const PlugRef& ref)
@@ -265,9 +246,9 @@ void addKeyActions(QMenu* menu, const PlugRef& ref)
         return;
     std::string plug = g.plugName(ref);
     menu->addSeparator();
-    menu->addAction(icon("keyframe"), "Set Key", [plug] { run("setKeyframe", {{"args", {plug}}}); });
+    menu->addAction(icon("keyframe"), "Set Key", [plug] { runUi("setKeyframe", {{"args", {plug}}}); });
     if (scene::anim::curveFor(g, ref))
-        menu->addAction("Delete Keys", [plug] { run("cutKey", {{"args", {plug}}, {"clear", true}}); });
+        menu->addAction("Delete Keys", [plug] { runUi("cutKey", {{"args", {plug}}, {"clear", true}}); });
 }
 
 /**
@@ -306,7 +287,7 @@ public:
         label->setCursor(Qt::SizeHorCursor);
         label->installEventFilter(this);
         if (defaultOf(mPlug))
-            label->setToolTip(label->toolTip() + (label->toolTip().isEmpty() ? "" : "\n") + resetHint(defaultText(mPlug)));
+            label->setToolTip(label->toolTip() + (label->toolTip().isEmpty() ? "" : "\n") + resetHint(plugDefaultText(mPlug)));
     }
 
     bool busy() const { return hasFocus() || mScrubbing; }
@@ -319,7 +300,7 @@ public:
             tip += (tip.isEmpty() ? "" : "\n") + note;
         tip += (tip.isEmpty() ? "" : "\n") + QString("Drag to scrub (Ctrl slow, Shift fast); click to type, +=5 works");
         if (defaultOf(mPlug))
-            tip += "\n" + resetHint(defaultText(mPlug));
+            tip += "\n" + resetHint(plugDefaultText(mPlug));
         setToolTip(tip);
     }
 
@@ -345,7 +326,7 @@ public:
             setDoc(mDoc, note);
         }
         if (!busy())
-            setText(formatNumber(numericOf(g.value(mPlug)), mInt));
+            setText(formatPlugNumber(scalarOf(g.value(mPlug)), mInt));
     }
 
 protected:
@@ -511,11 +492,11 @@ private:
         mLast = pos;
         // Held at the limits so dragging back moves the value straight away.
         const scene::AttrDef& def = Graph::current().attr(mPlug);
-        double base = numericOf(mSaved);
+        double base = scalarOf(mSaved);
         mAccum = std::clamp(base + mAccum, def.minValue.value_or(-HUGE_VAL), def.maxValue.value_or(HUGE_VAL)) - base;
         // Live preview without undo; endScrub records the one real setAttr.
         withoutUndo([this](Graph& g) { g.setValue(mPlug, scrubbed()); });
-        setText(formatNumber(numericOf(scrubbed()), mInt));
+        setText(formatPlugNumber(scalarOf(scrubbed()), mInt));
     }
 
     void endScrub(bool commit)
@@ -525,7 +506,7 @@ private:
         withoutUndo([this](Graph& g) { g.setValue(mPlug, mSaved); });
         if (commit && mAccum != 0.0)
         {
-            double v = numericOf(final);
+            double v = scalarOf(final);
             setAttr(mPlug, mInt ? json(int64_t(std::llround(v))) : json(std::round(v * 1e4) / 1e4));
         }
         refresh(Graph::current());
@@ -533,7 +514,7 @@ private:
 
     scene::PlugValue scrubbed() const
     {
-        double v = numericOf(mSaved) + mAccum;
+        double v = scalarOf(mSaved) + mAccum;
         if (std::holds_alternative<int64_t>(mSaved))
             return int64_t(std::llround(v));
         return v;
@@ -562,7 +543,7 @@ private:
         Graph& g = Graph::current();
         if (!g.node(mPlug.node))
             return;
-        std::optional<double> v = evalExpression(text(), numericOf(g.value(mPlug)));
+        std::optional<double> v = evalExpression(text(), scalarOf(g.value(mPlug)));
         if (!v)
         {
             log::warn("modifier stack: can't read '{}'", text().toStdString());
@@ -740,16 +721,16 @@ ModifierStackWidget::ModifierStackWidget(QWidget* parent) : QWidget(parent)
     fillAddModifierMenu(addMenu);
     mAdd->setMenu(addMenu);
     top->addWidget(mAdd, 1);
-    mMore = toolButton("dots-vertical", "Stack actions", mHeader);
+    mMore = stackButton("dots-vertical", "Stack actions", mHeader);
     mMore->setPopupMode(QToolButton::InstantPopup);
     auto* more = new QMenu(mMore);
     more->addAction(icon("check"), "Apply All", this, [this] {
         if (mMesh)
-            run("applyAllModifiers", {{"args", {nameOf(mMesh)}}});
+            runUi("applyAllModifiers", {{"args", {nameOf(mMesh)}}});
     })->setToolTip("Bake every modifier into the base mesh");
     more->addAction(icon("stack-pop"), "Bake Modifier Stack", this, [this] {
         if (mMesh)
-            run("bakeModifierStack", {{"args", {nameOf(mMesh)}}});
+            runUi("bakeModifierStack", {{"args", {nameOf(mMesh)}}});
     })->setToolTip("Bake the generator and every modifier into the mesh itself");
     more->addSeparator();
     more->addAction(icon("chevron-down"), "Expand All", this, [this] { setCollapsed(scene::kNoNode, false, true); });
@@ -801,7 +782,7 @@ void ModifierStackWidget::removeCardModifier()
                 if (card.first == w)
                 {
                     if (scene::Node* n = Graph::current().node(id); n && scene::modifiers::isModifier(*n))
-                        run("removeModifier", {{"args", {nameOf(id)}}});
+                        runUi("removeModifier", {{"args", {nameOf(id)}}});
                     return;
                 }
 }
@@ -1000,7 +981,7 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     h->setContentsMargins(2, 2, 2, 2);
     h->setSpacing(2);
 
-    auto* chevron = toolButton(mCollapsed.contains(id) ? "chevron-right" : "chevron-down", "Show or hide the settings (Ctrl: all cards)", header);
+    auto* chevron = stackButton(mCollapsed.contains(id) ? "chevron-right" : "chevron-down", "Show or hide the settings (Ctrl: all cards)", header);
     chevron->setObjectName("chevron");
     connect(chevron, &QToolButton::clicked, this, [this, id] {
         bool collapse = !mCollapsed.contains(id);
@@ -1021,7 +1002,7 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     auto* typeIcon = new QLabel(header);
     typeIcon->setPixmap(icon(modifierIconName(n->type().name)).pixmap(16, 16));
     QString typeDoc = QString::fromStdString(n->type().doc);
-    QString kindName = niceName(kindOf(n->type().name));
+    QString kindName = spacedName(kindOf(n->type().name));
     typeIcon->setToolTip(kindName + "  (" + QString::fromStdString(n->type().name) + ")" + (typeDoc.isEmpty() ? "" : "\n" + typeDoc));
     h->addWidget(typeIcon);
 
@@ -1039,7 +1020,7 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
         std::string now = nameOf(id);
         std::string wanted = name->text().trimmed().toStdString();
         if (!wanted.empty() && wanted != now)
-            run("rename", {{"args", {now, wanted}}});
+            runUi("rename", {{"args", {now, wanted}}});
         name->setText(QString::fromStdString(nameOf(id)));
     });
     h->addWidget(name, 1);
@@ -1057,7 +1038,7 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     error->hide();
     h->addWidget(error);
 
-    auto* viewport = toolButton("device-desktop", "Show in viewport", header, true);
+    auto* viewport = stackButton("device-desktop", "Show in viewport", header, true);
     PlugRef enabledPlug{id, mn->enabledAttr, -1};
     connect(viewport, &QToolButton::clicked, this, [enabledPlug](bool on) { setAttr(enabledPlug, on); });
     h->addWidget(viewport);
@@ -1066,37 +1047,37 @@ QWidget* ModifierStackWidget::buildHeaderFor(QWidget* card, QWidget* body, NodeI
     QToolButton* exporter = nullptr;
     if (exportAttr >= 0)
     {
-        exporter = toolButton("file-export", "Apply on export", header, true);
+        exporter = stackButton("file-export", "Apply on export", header, true);
         connect(exporter, &QToolButton::clicked, this, [id, exportAttr](bool on) { setAttr({id, exportAttr, -1}, on); });
         h->addWidget(exporter);
     }
 
-    auto* apply = toolButton("check", "Apply: bake this modifier (and those before it) into the base mesh", header);
-    connect(apply, &QToolButton::clicked, this, [id] { run("applyModifier", {{"args", {nameOf(id)}}}); });
+    auto* apply = stackButton("check", "Apply: bake this modifier (and those before it) into the base mesh", header);
+    connect(apply, &QToolButton::clicked, this, [id] { runUi("applyModifier", {{"args", {nameOf(id)}}}); });
     h->addWidget(apply);
 
-    auto* menuButton = toolButton("dots-vertical", "More", header);
+    auto* menuButton = stackButton("dots-vertical", "More", header);
     menuButton->setPopupMode(QToolButton::InstantPopup);
     auto* menu = new QMenu(menuButton);
-    menu->addAction(icon("check"), "Apply", this, [id] { run("applyModifier", {{"args", {nameOf(id)}}}); });
-    menu->addAction(icon("copy"), "Duplicate", this, [id] { run("duplicateModifier", {{"args", {nameOf(id)}}}); });
+    menu->addAction(icon("check"), "Apply", this, [id] { runUi("applyModifier", {{"args", {nameOf(id)}}}); });
+    menu->addAction(icon("copy"), "Duplicate", this, [id] { runUi("duplicateModifier", {{"args", {nameOf(id)}}}); });
     menu->addSeparator();
-    QAction* up = menu->addAction(icon("arrow-up"), "Move Up", this, [id] { run("moveModifier", {{"args", {nameOf(id)}}, {"by", -1}}); });
-    QAction* down = menu->addAction(icon("arrow-down"), "Move Down", this, [id] { run("moveModifier", {{"args", {nameOf(id)}}, {"by", 1}}); });
-    QAction* first = menu->addAction("Move to First", this, [id, index] { run("moveModifier", {{"args", {nameOf(id)}}, {"by", -index}}); });
-    QAction* last = menu->addAction("Move to Last", this, [id, index, count] { run("moveModifier", {{"args", {nameOf(id)}}, {"by", count - 1 - index}}); });
+    QAction* up = menu->addAction(icon("arrow-up"), "Move Up", this, [id] { runUi("moveModifier", {{"args", {nameOf(id)}}, {"by", -1}}); });
+    QAction* down = menu->addAction(icon("arrow-down"), "Move Down", this, [id] { runUi("moveModifier", {{"args", {nameOf(id)}}, {"by", 1}}); });
+    QAction* first = menu->addAction("Move to First", this, [id, index] { runUi("moveModifier", {{"args", {nameOf(id)}}, {"by", -index}}); });
+    QAction* last = menu->addAction("Move to Last", this, [id, index, count] { runUi("moveModifier", {{"args", {nameOf(id)}}, {"by", count - 1 - index}}); });
     up->setEnabled(index > 0);
     first->setEnabled(index > 0);
     down->setEnabled(index < count - 1);
     last->setEnabled(index < count - 1);
     menu->addSeparator();
-    menu->addAction(icon("focus-2"), "Select Node", this, [id] { run("select", {{"args", {nameOf(id)}}}); });
-    menu->addAction(icon("trash"), "Delete", this, [id] { run("removeModifier", {{"args", {nameOf(id)}}}); });
+    menu->addAction(icon("focus-2"), "Select Node", this, [id] { runUi("select", {{"args", {nameOf(id)}}}); });
+    menu->addAction(icon("trash"), "Delete", this, [id] { runUi("removeModifier", {{"args", {nameOf(id)}}}); });
     menuButton->setMenu(menu);
     h->addWidget(menuButton);
 
-    auto* remove = toolButton("x", "Delete this modifier", header);
-    connect(remove, &QToolButton::clicked, this, [id] { run("removeModifier", {{"args", {nameOf(id)}}}); });
+    auto* remove = stackButton("x", "Delete this modifier", header);
+    connect(remove, &QToolButton::clicked, this, [id] { runUi("removeModifier", {{"args", {nameOf(id)}}}); });
     h->addWidget(remove);
 
     auto* errorText = body->findChild<QLabel*>("errorText");
@@ -1139,7 +1120,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
     h->setSpacing(3);
     auto* name = new QLabel(row);
     h->addWidget(name, 1);
-    auto* pick = toolButton("arrow-big-left-lines", "Use the selected mesh as the source (transferSource)", row);
+    auto* pick = stackButton("arrow-big-left-lines", "Use the selected mesh as the source (transferSource)", row);
     h->addWidget(pick);
     NodeId mod = ref.node;
     connect(pick, &QToolButton::clicked, this, [mod] {
@@ -1148,7 +1129,7 @@ QWidget* ModifierStackWidget::buildMeshInputRow(const PlugRef& ref, QWidget* par
         for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
             if (scene::Node* n = g.node(*it); n && n->type().isA("mesh") && n->id() != target)
             {
-                run("transferSource", {{"args", {nameOf(mod), n->path()}}});
+                runUi("transferSource", {{"args", {nameOf(mod), n->path()}}});
                 return;
             }
         log::error("Transfer source: select the source mesh (not the one being modified), then click again");
@@ -1171,9 +1152,9 @@ QWidget* ModifierStackWidget::buildArrayCenterRow(NodeId mod, QWidget* parent)
     h->setSpacing(3);
     auto* name = new QLabel(row);
     h->addWidget(name, 1);
-    auto* pick = toolButton("arrow-big-left-lines", "Centre on the selected object's transform (arrayCenter)", row);
-    auto* pivot = toolButton("focus-centered", "Centre on this mesh's pivot (arrayCenter pivot=True)", row);
-    auto* clear = toolButton("unlink", "Back to the object's origin", row);
+    auto* pick = stackButton("arrow-big-left-lines", "Centre on the selected object's transform (arrayCenter)", row);
+    auto* pivot = stackButton("focus-centered", "Centre on this mesh's pivot (arrayCenter pivot=True)", row);
+    auto* clear = stackButton("unlink", "Back to the object's origin", row);
     h->addWidget(pick);
     h->addWidget(pivot);
     h->addWidget(clear);
@@ -1183,13 +1164,13 @@ QWidget* ModifierStackWidget::buildArrayCenterRow(NodeId mod, QWidget* parent)
         for (auto it = g.selection().rbegin(); it != g.selection().rend(); ++it)
             if (scene::Node* n = g.node(*it); n && n->type().isA("transform") && n->id() != target)
             {
-                run("arrayCenter", {{"args", {nameOf(mod), n->path()}}});
+                runUi("arrayCenter", {{"args", {nameOf(mod), n->path()}}});
                 return;
             }
         log::error("Array centre: select the object to centre on (not the arrayed mesh), then click again");
     });
-    connect(pivot, &QToolButton::clicked, this, [mod] { run("arrayCenter", {{"args", {nameOf(mod)}}, {"pivot", true}}); });
-    connect(clear, &QToolButton::clicked, this, [mod] { run("arrayCenter", {{"args", {nameOf(mod)}}}); });
+    connect(pivot, &QToolButton::clicked, this, [mod] { runUi("arrayCenter", {{"args", {nameOf(mod)}}, {"pivot", true}}); });
+    connect(clear, &QToolButton::clicked, this, [mod] { runUi("arrayCenter", {{"args", {nameOf(mod)}}}); });
     mUpdaters.push_back([name, mod] {
         Graph& g = Graph::current();
         scene::Node* m = g.node(mod);
@@ -1242,7 +1223,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         {
             if (QWidget* row = buildMeshInputRow({id, i, -1}, box))
             {
-                auto* label = new QLabel(niceName(def.name == "sourceMesh" ? "source" : def.name));
+                auto* label = new QLabel(spacedName(def.name == "sourceMesh" ? "source" : def.name));
                 label->setToolTip(QString::fromStdString(def.doc));
                 form->addRow(label, row);
                 ++rows;
@@ -1254,7 +1235,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         if (isModifier && (def.name == "enabled" || def.name == "exportEnabled"))
             continue;
         QString doc = QString::fromStdString(def.doc);
-        auto* label = new QLabel(def.niceName.empty() ? niceName(def.name) : QString::fromStdString(def.niceName));
+        auto* label = new QLabel(def.niceName.empty() ? spacedName(def.name) : QString::fromStdString(def.niceName));
         label->setToolTip(QString::fromStdString(def.name + (def.doc.empty() ? "" : "\n" + def.doc)));
         QWidget* field = nullptr;
         PlugRef ref{id, i, -1};
@@ -1312,7 +1293,7 @@ QWidget* ModifierStackWidget::buildParams(NodeId id, bool isModifier)
         {
             auto* combo = new QComboBox(box);
             for (const std::string& e : def.enumNames)
-                combo->addItem(niceName(e));
+                combo->addItem(spacedName(e));
             connect(combo, &QComboBox::activated, this, [ref](int k) { setAttr(ref, int64_t(k)); });
             mUpdaters.push_back([combo, ref] {
                 Graph& gr = Graph::current();
@@ -1477,7 +1458,7 @@ void ModifierStackWidget::dropModifier(const std::string& name, int to)
     if (to > from)
         --to;
     if (to != from)
-        run("moveModifier", {{"args", {name}}, {"by", to - from}});
+        runUi("moveModifier", {{"args", {name}}, {"by", to - from}});
 }
 
 void fillAddModifierMenu(QMenu* menu, bool stackRow)
@@ -1499,12 +1480,12 @@ void fillAddModifierMenu(QMenu* menu, bool stackRow)
         bool any = false;
         for (const std::string& kind : scene::modifiers::kinds())
         {
-            QAction* a = add(new QAction(icon(modifierIconName(kind)), niceName(kind), menu));
+            QAction* a = add(new QAction(icon(modifierIconName(kind)), spacedName(kind), menu));
             any = true;
             std::string id = "modifier." + kind;
             a->setData(QString::fromStdString(id));
             std::string doc = scene::modifiers::kindDoc(kind);
-            std::string tip = actions::find(id) ? actions::tooltip(id) : niceName(kind).toStdString() + (doc.empty() ? "" : "\n" + doc);
+            std::string tip = actions::find(id) ? actions::tooltip(id) : spacedName(kind).toStdString() + (doc.empty() ? "" : "\n" + doc);
             if (const scene::NodeType* t = scene::types::find(kind + std::string(kSuffix)); t && !t->owner.empty())
                 tip += "\nFrom " + t->owner;
             a->setToolTip(QString::fromStdString(tip));
@@ -1522,7 +1503,7 @@ void fillAddModifierMenu(QMenu* menu, bool stackRow)
                 }
                 UndoChunk chunk("Add " + kind + " Modifier");
                 for (const json& m : meshes)
-                    run("addModifier", {{"args", {m}}, {"kind", kind}});
+                    runUi("addModifier", {{"args", {m}}, {"kind", kind}});
                 showModifierStack();
             });
         }
@@ -1572,7 +1553,7 @@ void registerModifierStackActions()
             if (meshes.empty())
                 log::error("select a mesh");
             else
-                run(command, {{"args", meshes}});
+                runUi(command, {{"args", meshes}});
         };
     };
     actions::add({.id = "modifier.applyAll", .label = "Apply All Modifiers", .category = "Modifiers", .run = onMeshes("applyAllModifiers"),

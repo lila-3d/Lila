@@ -15,6 +15,8 @@
 #include "ui/Panels.h"
 #include "ui/Theme.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QActionGroup>
 #include <QApplication>
@@ -48,26 +50,6 @@ namespace
 {
 namespace pk = scene::picker;
 using scene::NodeId;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-QColor gray(int v, int a = 255) { return themeShade(v, a); }
-
-bool runUi(const char* command, const json& call, json* result = nullptr)
-{
-    try
-    {
-        json r = ops::execute(command, call, CallSource::UI);
-        if (result)
-            *result = std::move(r);
-        return true;
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return false;
-    }
-}
-
 QColor itemColor(const std::string& c, const QColor& fallback = QColor(128, 128, 128))
 {
     QColor q(qs(c));
@@ -383,13 +365,13 @@ public:
             return false;
         if (!isTemplate())
             return true;
-        return runUi("createPicker", {{"args", {doc->name}}, {"fromTemplate", doc->name}});
+        return tryRunUi("createPicker", {{"args", {doc->name}}, {"fromTemplate", doc->name}});
     }
 
     void edit(json extra)
     {
         if (ensureEditable())
-            runUi("editPicker", pageCall(std::move(extra)));
+            tryRunUi("editPicker", pageCall(std::move(extra)));
     }
 
     void select(const std::vector<std::string>& ids, const char* mode)
@@ -398,7 +380,7 @@ public:
             return;
         json c = call({{"items", ids}, {"mode", mode}, {"page", mPage}});
         c["namespace"] = nameSpace();
-        runUi("pickerSelect", c);
+        tryRunUi("pickerSelect", c);
     }
 
     void activate(const pk::Item& item)
@@ -406,7 +388,7 @@ public:
         json c = call();
         c["args"].push_back(item.id);
         c["namespace"] = nameSpace();
-        runUi("pickerRun", c);
+        tryRunUi("pickerRun", c);
     }
 
     void setEditing(bool on)
@@ -457,7 +439,7 @@ public:
         if (!ensureEditable())
             return;
         json r;
-        if (runUi("editPicker", pageCall({{"addItem", items}}), &r))
+        if (tryRunUi("editPicker", pageCall({{"addItem", items}}), &r))
             selectAdded(r);
     }
 
@@ -471,7 +453,7 @@ public:
         if (!ensureEditable())
             return;
         json r;
-        if (runUi("editPicker", pageCall({{"addFromSelection", true}}), &r))
+        if (tryRunUi("editPicker", pageCall({{"addFromSelection", true}}), &r))
             selectAdded(r);
     }
 
@@ -487,7 +469,7 @@ public:
         if (mCanvas->editSelection.empty() || !ensureEditable())
             return;
         json r;
-        if (runUi("editPicker", pageCall({{"mirrorItems", editIds()}}), &r))
+        if (tryRunUi("editPicker", pageCall({{"mirrorItems", editIds()}}), &r))
             selectAdded(r);
     }
 
@@ -624,7 +606,7 @@ public:
             c["character"] = ch.id;
             c["namespace"] = ch.nameSpace;
         }
-        if (!runUi("createPicker", c))
+        if (!tryRunUi("createPicker", c))
             return;
         mName = name.toStdString();
         reload();
@@ -642,7 +624,7 @@ public:
             fromTemplate->addAction(qs(t.name), this, [this, name = t.name] {
                 bool ok = false;
                 QString to = QInputDialog::getText(this, "New Picker", "Picker name:", QLineEdit::Normal, qs(name), &ok).trimmed();
-                if (ok && !to.isEmpty() && runUi("createPicker", {{"args", {to.toStdString()}}, {"fromTemplate", name}, {"replace", to.toStdString() == name}}))
+                if (ok && !to.isEmpty() && tryRunUi("createPicker", {{"args", {to.toStdString()}}, {"fromTemplate", name}, {"replace", to.toStdString() == name}}))
                 {
                     mName = to.toStdString();
                     reload();
@@ -652,7 +634,7 @@ public:
         menu->addAction(icon("file-import"), "Import...", this, [this] {
             QString file = ui::fileDialog::getOpenFileName(this, "Import Picker", QString(), "Lila picker (*.lilapicker);;All files (*)");
             json r;
-            if (!file.isEmpty() && runUi("importPicker", {{"args", {file.toStdString()}}, {"replace", true}}, &r))
+            if (!file.isEmpty() && tryRunUi("importPicker", {{"args", {file.toStdString()}}, {"replace", true}}, &r))
             {
                 mName = r.value("name", std::string());
                 reload();
@@ -661,14 +643,14 @@ public:
         QAction* exportAction = menu->addAction(icon("file-export"), "Export...", this, [this] {
             QString file = ui::fileDialog::getSaveFileName(this, "Export Picker", qs(doc->name + ".lilapicker"), "Lila picker (*.lilapicker)");
             if (!file.isEmpty())
-                runUi("exportPicker", call({{"file", file.toStdString()}}));
+                tryRunUi("exportPicker", call({{"file", file.toStdString()}}));
         });
         exportAction->setEnabled(doc.has_value());
         menu->addSeparator();
         QAction* rename = menu->addAction("Rename Picker...", this, [this] {
             bool ok = false;
             QString to = QInputDialog::getText(this, "Rename Picker", "New name:", QLineEdit::Normal, qs(doc->name), &ok).trimmed();
-            if (ok && !to.isEmpty() && to.toStdString() != doc->name && ensureEditable() && runUi("editPicker", call({{"rename", to.toStdString()}})))
+            if (ok && !to.isEmpty() && to.toStdString() != doc->name && ensureEditable() && tryRunUi("editPicker", call({{"rename", to.toStdString()}})))
             {
                 mName = to.toStdString();
                 reload();
@@ -677,7 +659,7 @@ public:
         rename->setEnabled(doc.has_value());
         QAction* del = menu->addAction(icon("trash"), "Delete Picker", this, [this] {
             if (QMessageBox::question(this, "Delete Picker", QString("Delete the picker '%1'?").arg(qs(doc->name))) == QMessageBox::Yes)
-                runUi("deletePicker", call());
+                tryRunUi("deletePicker", call());
         });
         del->setEnabled(doc.has_value() && !isTemplate());
         menu->addSeparator();

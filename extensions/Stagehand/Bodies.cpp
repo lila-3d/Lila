@@ -28,9 +28,6 @@ namespace
 using scene::AttrDef;
 using scene::PlugType;
 
-constexpr const char* kShapeNames[] = {"auto", "box", "hull", "sphere", "capsule", "mesh", "decompose"};
-constexpr const char* kRoleNames[] = {"dynamic", "static", "kinematic", "off"};
-
 std::vector<std::string> materialNames()
 {
     std::vector<std::string> out;

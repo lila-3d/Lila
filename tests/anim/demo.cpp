@@ -1,6 +1,7 @@
 // Throwaway harness: builds the time slider, graph editor and channel box over a keyed scene and grabs PNGs.
 // Usage (with LILA_CONFIG_DIR pointing at a temp dir): lila_anim_demo <outdir>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
@@ -23,6 +24,7 @@
 #include <cstdio>
 
 using namespace lila;
+using animtest::run;
 
 namespace
 {
@@ -43,8 +45,6 @@ void save(QWidget* w, const char* name)
     w->grab().save(gOut + "/" + name);
     std::printf("saved %s\n", name);
 }
-
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 void mouse(QWidget* w, QEvent::Type type, QPointF at, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = {})
 {

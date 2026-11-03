@@ -7,6 +7,7 @@
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "scene/Anim.h"
+#include "scene/DeformerUtil.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/RigUtil.h"
@@ -19,27 +20,12 @@
 namespace lila::scene::deformers
 {
 using namespace rigutil;
+using namespace deformutil;
 
 namespace
 {
 std::mutex gSourceMutex;
 TextureSetSource gSetSource;
-
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
-}
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
-}
-AttrDef enumAttr(std::string name, int64_t def, std::vector<std::string> names, std::string doc)
-{
-    AttrDef a = stored(std::move(name), PlugType::Enum, def, std::move(doc));
-    a.enumNames = std::move(names);
-    return a;
-}
 
 double componentOf(const glm::vec4& c, int64_t component)
 {
@@ -158,27 +144,6 @@ private:
     mutable int64_t mReload = -1;
 };
 
-Graph& g() { return Graph::current(); }
-
-Node& meshNamed(const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (!n.type().isA("mesh") || n.type().isA("lattice"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return n;
-}
-
-void setPlug(Graph& graph, NodeId node, const std::string& attr, PlugValue v)
-{
-    int a = graph.node(node)->type().attrIndex(attr);
-    if (a < 0)
-        throw CommandError("no attribute " + attr + " on " + graph.node(node)->name());
-    guarded([&] {
-        graph.setValue({node, a, -1}, std::move(v));
-        return 0;
-    });
-}
-
 int64_t choiceIndex(const std::string& value, std::initializer_list<const char*> names, const char* cmd, const char* flag)
 {
     int64_t i = 0;
@@ -201,10 +166,10 @@ DeformerNode& tensionNamed(const std::string& name, const char* cmd)
         return static_cast<DeformerNode&>(n);
     if (n.type().isA("mesh"))
     {
-        std::vector<NodeId> stack = list(g(), n.id());
+        std::vector<NodeId> stack = list(Graph::current(), n.id());
         for (auto it = stack.rbegin(); it != stack.rend(); ++it)
-            if (g().node(*it)->type().name == "tension")
-                return static_cast<DeformerNode&>(*g().node(*it));
+            if (Graph::current().node(*it)->type().name == "tension")
+                return static_cast<DeformerNode&>(*Graph::current().node(*it));
     }
     throw CommandError(std::string(cmd) + ": " + name + " is not a tension deformer, nor a mesh with one");
 }
@@ -401,7 +366,7 @@ void registerTextureCommands()
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
             const char* cmd = "textureDeformer";
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes;
             for (const std::string& o : a.objects())
                 meshes.push_back(meshNamed(o, cmd).id());
@@ -442,7 +407,7 @@ void registerTextureCommands()
                   {"uvSet", "", T::String, "uv0", "The uv set the image is laid out by."}},
         .run = [](const Args& a) -> json {
             const char* cmd = "bakeTension";
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<std::string> objs = a.objects();
             if (objs.size() != 1)
                 throw CommandError("bakeTension: give one tension deformer or a mesh with one");

@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Backend.h"
 #include "bake/Bake.h"
 #include "core/ImageIO.h"
@@ -27,51 +28,12 @@
 #include <thread>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_bake_gpu_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
-scene::Graph& graph() { return scene::Graph::current(); }
-
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    return n->path();
-}
-
-geo::Mesh plane(int subdiv = 1, glm::vec2 uvMin = {0.0f, 0.0f}, glm::vec2 uvMax = {1.0f, 1.0f})
-{
-    geo::PlaneOptions o;
-    o.subdivX = o.subdivZ = subdiv;
-    geo::Mesh m = geo::makePlane(o);
-    for (glm::vec2& uv : m.cornerAttrs().get<glm::vec2>("uv0"))
-        uv = uvMin + uv * (uvMax - uvMin);
-    return m;
-}
-
-template <class F> geo::Mesh displaced(int subdiv, F f)
-{
-    geo::Mesh m = plane(subdiv);
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-    {
-        glm::dvec3 q = m.position(p);
-        q.y = f(q.x, q.z);
-        m.setPosition(p, q);
-    }
-    return m;
-}
-
 geo::Mesh moved(geo::Mesh m, const glm::dvec3& by, bool flip = false)
 {
     for (geo::Index p = 0; p < m.pointCapacity(); ++p)
@@ -83,20 +45,6 @@ geo::Mesh moved(geo::Mesh m, const glm::dvec3& by, bool flip = false)
         m.setPosition(p, q + by);
     }
     return m;
-}
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-std::string project(const fs::path& dir, int res, int ss, const std::string& format = "exr")
-{
-    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
-    ops::execute("setBakeOutput", {{"project", p},         {"folder", dir.generic_string()}, {"resolution", res}, {"supersampling", ss},
-                                   {"format", format},     {"name", "{group}_{map}"},        {"padding", 4}});
-    return p;
 }
 
 /** The GPU backends this machine has: "gpu-rt" with ray query, "gpu-compute" always, none without a Vulkan device. */
@@ -146,9 +94,9 @@ Baked bakeWith(const std::string& p, const std::vector<std::string>& maps, const
     return b;
 }
 
-glm::vec4 texel(const image::Image& img, size_t i) { return {img.rgba[i * 4], img.rgba[i * 4 + 1], img.rgba[i * 4 + 2], img.rgba[i * 4 + 3]}; }
+glm::vec4 texelAt(const image::Image& img, size_t i) { return {img.rgba[i * 4], img.rgba[i * 4 + 1], img.rgba[i * 4 + 2], img.rgba[i * 4 + 3]}; }
 
-float angleDeg(glm::vec3 a, glm::vec3 b)
+float angleDegOrFlat(glm::vec3 a, glm::vec3 b)
 {
     if (glm::length(a) < 1e-6f || glm::length(b) < 1e-6f)
         return glm::length(a - b) < 1e-6f ? 0.0f : 180.0f;
@@ -174,8 +122,8 @@ void compare(const Baked& cpu, const Baked& gpu, const std::string& map, float t
     const size_t n = size_t(a.width) * size_t(a.height);
     for (size_t i = 0; i < n; ++i)
     {
-        const glm::vec4 x = texel(a, i), y = texel(b, i);
-        const float d = normal ? angleDeg(glm::vec3(x) * 2.0f - 1.0f, glm::vec3(y) * 2.0f - 1.0f)
+        const glm::vec4 x = texelAt(a, i), y = texelAt(b, i);
+        const float d = normal ? angleDegOrFlat(glm::vec3(x) * 2.0f - 1.0f, glm::vec3(y) * 2.0f - 1.0f)
                                : std::max({std::abs(x.r - y.r), std::abs(x.g - y.g), std::abs(x.b - y.b), std::abs(x.a - y.a)});
         worst = std::max(worst, d);
         if (d > tol)
@@ -226,7 +174,7 @@ TEST_CASE("GPU bake matches the CPU: bump plane normals, height, position")
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("bump");
+    const fs::path dir = tempDir("lila_bake_gpu_bump");
     const double A = 3.0, k = glm::two_pi<double>() / 100.0;
     const std::string low = addMesh("bump_low", plane(1));
     const std::string high = addMesh("bump_high", displaced(200, [&](double x, double z) { return A * std::cos(k * x) + A * std::cos(k * z); }));
@@ -254,7 +202,7 @@ TEST_CASE("GPU bake matches the CPU: sphere over an icosphere, normals and AO")
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("sphere");
+    const fs::path dir = tempDir("lila_bake_gpu_sphere");
     geo::SphereOptions so;
     so.subdivAxis = 32;
     so.subdivHeight = 32;
@@ -289,7 +237,7 @@ TEST_CASE("GPU bake matches the CPU: exact material IDs, islands and coverage")
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("id");
+    const fs::path dir = tempDir("lila_bake_gpu_id");
     geo::Mesh hi = plane(16);
     std::vector<uint32_t> left, right;
     for (geo::Index f = 0; f < hi.faceCapacity(); ++f)
@@ -325,7 +273,7 @@ TEST_CASE("GPU bake matches the CPU: isolated groups, AO scopes and backfaces")
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("isolate");
+    const fs::path dir = tempDir("lila_bake_gpu_isolate");
     const std::string low1 = addMesh("a_low", plane(1, {0.0f, 0.0f}, {0.5f, 1.0f}));
     const std::string low2 = addMesh("b_low", plane(1, {0.5f, 0.0f}, {1.0f, 1.0f}));
     const std::string high1 = addMesh("a_high", moved(plane(4), {0.0, 1.0, 0.0}));
@@ -369,7 +317,7 @@ TEST_CASE("GPU bake matches the CPU: self highs per low and unlinked occluders, 
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("links");
+    const fs::path dir = tempDir("lila_bake_gpu_links");
     // A floor and a lid 0.5 cm over it, each baking onto itself; a roof and a second group's low above, all unlinked from the floor.
     const std::string floor = addMesh("floor", plane(1, {0.0f, 0.0f}, {0.5f, 1.0f}));
     const std::string lid = addMesh("lid", moved(plane(1, {0.5f, 0.0f}, {1.0f, 1.0f}), {0.0, 0.5, 0.0}));
@@ -396,10 +344,10 @@ TEST_CASE("GPU bake matches the CPU: self highs per low and unlinked occluders, 
         REQUIRE(cpu.maps.size() == 4);
         // The floor (u < 0.5) is open to the sky through the unlinked roof; the lid (u > 0.5) stays under it.
         const image::Image& ao = cpu.maps.at("pair_ao");
-        CHECK(texel(ao, size_t(16 * 32 + 8)).r > 0.95f);
-        CHECK(texel(ao, size_t(16 * 32 + 24)).r < 0.8f);
+        CHECK(texelAt(ao, size_t(16 * 32 + 8)).r > 0.95f);
+        CHECK(texelAt(ao, size_t(16 * 32 + 24)).r < 0.8f);
         // The floor bakes itself, not the lid 0.5 cm above it.
-        CHECK(texel(cpu.maps.at("pair_height"), size_t(16 * 32 + 8)).r == doctest::Approx(0.5f).epsilon(0.02));
+        CHECK(texelAt(cpu.maps.at("pair_height"), size_t(16 * 32 + 8)).r == doctest::Approx(0.5f).epsilon(0.02));
         for (const std::string& be : gpuBackends())
         {
             INFO("backend " << be);
@@ -465,7 +413,7 @@ TEST_CASE("GPU bake speed against the CPU" * doctest::skip())
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("speed");
+    const fs::path dir = tempDir("lila_bake_gpu_speed");
     const char* resEnv = std::getenv("LILA_BAKE_BENCH_RES");
     const int res = resEnv ? std::atoi(resEnv) : 2048;
     const double A = 3.0, k = glm::two_pi<double>() / 25.0;
@@ -505,7 +453,7 @@ void compareAngle(const Baked& cpu, const Baked& gpu, const std::string& map, fl
     const size_t n = size_t(a.width) * size_t(a.height);
     for (size_t i = 0; i < n; ++i)
     {
-        const float d = angleDeg(glm::vec3(texel(a, i)) * 2.0f - 1.0f, glm::vec3(texel(b, i)) * 2.0f - 1.0f);
+        const float d = angleDegOrFlat(glm::vec3(texelAt(a, i)) * 2.0f - 1.0f, glm::vec3(texelAt(b, i)) * 2.0f - 1.0f);
         worst = std::max(worst, d);
         outliers += d > tolDeg ? 1 : 0;
     }
@@ -529,7 +477,7 @@ TEST_CASE("GPU bake matches the CPU: thickness, bent normals, rounded edges, cur
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("raymaps");
+    const fs::path dir = tempDir("lila_bake_gpu_raymaps");
     geo::SphereOptions so;
     so.subdivAxis = 32;
     so.subdivHeight = 32;
@@ -578,7 +526,7 @@ TEST_CASE("GPU bake matches the CPU: material transfer, vertex colours, the high
     if (gpuBackends().empty())
         return;
     newScene();
-    const fs::path dir = tempDir("transfer");
+    const fs::path dir = tempDir("lila_bake_gpu_transfer");
     image::Image tex{4, 4, {}};
     for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x)
@@ -658,7 +606,7 @@ TEST_CASE("Async bakes run off the main thread, report each texture as it lands 
 {
     const std::string be = gpuBackends().empty() ? std::string("cpu") : gpuBackends().back();
     newScene();
-    const fs::path dir = tempDir("async");
+    const fs::path dir = tempDir("lila_bake_gpu_async");
     const std::string low = addMesh("as_low", plane(1));
     const std::string high = addMesh("as_high", moved(plane(8), {0.0, 1.0, 0.0}));
     const std::string p = project(dir, 64, 4, "png");
@@ -745,13 +693,13 @@ TEST_CASE("Bake benchmark: Painter maps at 2K from 1M triangles, 4K normal and A
     };
 
     scene(1000, 500);
-    fs::path dir = tempDir("bench_painter");
+    fs::path dir = tempDir("lila_bake_gpu_bench_painter");
     std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
     ops::execute("setBakeOutput", {{"project", p}, {"folder", dir.generic_string()}});
     run("Painter, 8 maps, 2048, ss4", {{"project", p}, {"target", "substancePainter"}, {"backend", gpuBackends().back()}}, 3.0);
 
     scene(3200, 1600);
-    dir = tempDir("bench_10m");
+    dir = tempDir("lila_bake_gpu_bench_10m");
     p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
     ops::execute("setBakeOutput", {{"project", p}, {"folder", dir.generic_string()}, {"resolution", 4096}});
     ops::execute("autoGroupBake", {{"project", p}});

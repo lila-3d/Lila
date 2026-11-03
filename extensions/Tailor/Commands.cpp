@@ -352,21 +352,11 @@ json bakeDrapeMaps(Graph& g, const std::string& high, const std::string& low, co
     return ops::execute("bake", {{"project", project}, {"maps", maps}});
 }
 
-/** The world matrix of the first mesh a garment feeds, which places its points. */
-glm::dmat4 garmentWorld(Graph& g, const Node& op)
-{
-    for (const PlugRef& d : g.destinations({op.id(), plugIndex(op, "outMesh")}))
-        if (const Node* mesh = g.node(d.node))
-            if (const PlugValue v = g.value({mesh->id(), Transform::kWorldMatrix}); const auto* m = std::get_if<glm::dmat4>(&v))
-                return *m;
-    return glm::dmat4(1.0);
-}
-
 /** [[x, y, z], ...] world cm to garment space metres. */
 std::vector<glm::dvec3> brushPoints(Graph& g, const Node& op, const Args& a, const char* cmd)
 {
     const json list = a.flags.value("points", json::array());
-    const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op));
+    const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op.id()));
     std::vector<glm::dvec3> out;
     if (list.is_array())
         for (const json& p : list)
@@ -859,7 +849,7 @@ json sendClothAsset(Graph& g, Node& op, link::RpcClient& client, const std::stri
         if (const Node* collider = g.node(src->node))
             writeMaxDistance(g, *collider, *measured);
     const geo::Mesh& m = *measured;
-    const glm::dmat4 world = garmentWorld(g, op);
+    const glm::dmat4 world = garmentWorld(g, op.id());
     const std::span<const int32_t> panel = m.faceAttrs().get<int32_t>("panel");
     const std::span<const int32_t> side = m.faceAttrs().get<int32_t>("side");
     const std::span<const glm::vec2> fabric = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(1));
@@ -2335,7 +2325,7 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorStrap");
             std::vector<glm::dvec3> path;
-            const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op));
+            const glm::dmat4 toLocal = glm::inverse(garmentWorld(g, op.id()));
             if (a.has("curve"))
             {
                 const json data = ops::execute("curveData", {{"args", {a.get<std::string>("curve")}}, {"worldSpace", true}});

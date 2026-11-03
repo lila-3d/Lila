@@ -19,8 +19,6 @@ namespace lila::uv
 namespace
 {
 using namespace detail;
-using Triplet = Eigen::Triplet<double>;
-using SpMat = Eigen::SparseMatrix<double>;
 
 /** Per-triangle target singular values for a mode, from the current ones (s2 taken unsigned). */
 std::pair<double, double> targetStretch(OptimizeMode mode, double mix, double s1, double s2)

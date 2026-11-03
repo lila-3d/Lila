@@ -1,19 +1,15 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/OutlinerLogic.h"
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace outliner = lila::ui::outliner;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::NodeId idOf(const std::string& name) { return scene::Graph::current().find(name)->id(); }
-} // namespace
 
 TEST_CASE("node type icons fall back through the base types")
 {

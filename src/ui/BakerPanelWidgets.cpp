@@ -1,4 +1,5 @@
 #include "ui/BakerPanelInternal.h"
+#include "ui/UiCommands.h"
 
 namespace lila::ui
 {
@@ -62,21 +63,6 @@ protected:
             dropped(names, at);
     }
 };
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip, const QString& text = {})
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    if (!text.isEmpty())
-    {
-        b->setText(text);
-        b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    return b;
-}
 
 /**
  * Results thumbnails drag out with the middle button (the left one selects), as their files plus the bake outputs, so a

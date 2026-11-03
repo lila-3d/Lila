@@ -18,16 +18,6 @@ namespace
 {
 namespace fs = std::filesystem;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-fs::path tempDir(const std::string& name)
-{
-    fs::path d = fs::temp_directory_path() / "lila_tex_tests" / name;
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
 /** A layered set: a grey base fill under a red half-covered layer. */
 void buildLayered()
 {

@@ -566,8 +566,6 @@ namespace nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 int dimensionsOf(const std::string& s) { return s == "1D" ? 1 : s == "2D" ? 2 : s == "4D" ? 4 : 3; }
 
 tex::VoronoiFeature featureOf(const std::string& s)

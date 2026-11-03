@@ -41,7 +41,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::NodeId;
 
@@ -226,14 +225,14 @@ struct ClaySettings
     double radius = 5.0, blend = 2.0;
 };
 
-ClaySettings& settings()
+ClaySettings& claySettings()
 {
     static ClaySettings s;
     return s;
 }
 
 constexpr const char* kPaletteId = "clayPalette";
-constexpr const char* kKeysPref = "/clay/keys";
+constexpr const char* kClayKeysPref = "/clay/keys";
 constexpr const char* kPalettePlacedPref = "/clay/palettePlaced";
 
 void settingsChanged();
@@ -339,7 +338,7 @@ std::optional<StrokeEnd> strokeEndNear(const glm::dvec3& p)
 /** The Clay tool's keys, with the ones that only matter now. */
 std::vector<KeyHint> clayKeys()
 {
-    const ClaySettings& s = settings();
+    const ClaySettings& s = claySettings();
     std::vector<KeyHint> keys = {{"Drag", s.stroke ? (s.cut ? "Cut stroke" : "Stroke") : s.cut ? "Cut" : "Add"},
                                  {"Ctrl+drag", s.cut ? "Add" : "Cut"},
                                  {"Shift+click", "Select a shape"},
@@ -388,7 +387,7 @@ public:
             b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             connect(b, &QToolButton::clicked, this, [cut] {
-                settings().cut = cut;
+                claySettings().cut = cut;
                 settingsChanged();
             });
             ops->addWidget(b);
@@ -411,7 +410,7 @@ public:
             b->setAutoRaise(true);
             b->setToolTip(def.key ? QString("%1  (%2)").arg(def.label, def.key) : QString(def.label));
             connect(b, &QToolButton::clicked, this, [i] {
-                ClaySettings& s = settings();
+                ClaySettings& s = claySettings();
                 s.stroke = i == kToolShapes.size();
                 if (!s.stroke)
                     s.shape = int(i);
@@ -428,7 +427,7 @@ public:
         mTaper = new QCheckBox("Taper");
         mTaper->setToolTip("Strokes thin toward their end  (T)");
         connect(mTaper, &QCheckBox::clicked, this, [](bool on) {
-            settings().taper = on;
+            claySettings().taper = on;
             settingsChanged();
         });
         v->addWidget(mTaper);
@@ -442,7 +441,7 @@ public:
             s->setToolTip(tip);
             s->setKeyboardTracking(false);
             connect(s, &QDoubleSpinBox::valueChanged, this, [field](double value) {
-                settings().*field = value;
+                claySettings().*field = value;
                 settingsChanged();
             });
             form->addRow(label, s);
@@ -463,7 +462,7 @@ public:
         mKeys = new QCheckBox("Show keys");
         mKeys->setToolTip("List the tool's keys in the corner of the view.");
         connect(mKeys, &QCheckBox::clicked, this, [](bool on) {
-            PrefStore::get().set("general", kKeysPref, on);
+            PrefStore::get().set("general", kClayKeysPref, on);
             viewportTools::requestRedraw();
         });
         v->addWidget(mKeys);
@@ -481,7 +480,7 @@ public:
 
     void sync()
     {
-        const ClaySettings& s = settings();
+        const ClaySettings& s = claySettings();
         mAdd->setChecked(!s.cut);
         mCut->setChecked(s.cut);
         const size_t current = s.stroke ? kToolShapes.size() : size_t(s.shape);
@@ -500,7 +499,7 @@ public:
         mMirror->setEnabled(surface);
         mMirror->setChecked(surface && surface->as<int64_t>(surface->type().attrIndex("symmetry")) == 1);
         mMirror->setToolTip(surface ? QString("Mirror %1 across its YZ plane.").arg(QString::fromStdString(o->name())) : "Select clay to mirror it.");
-        mKeys->setChecked(PrefStore::get().value<bool>("general", kKeysPref, true));
+        mKeys->setChecked(PrefStore::get().value<bool>("general", kClayKeysPref, true));
     }
 
 private:
@@ -594,7 +593,7 @@ public:
         {
             mRadiusDrag = true;
             mPressPx = mNowPx = e->position();
-            mStartRadius = e->button() == Qt::MiddleButton ? 0.05 : settings().radius;
+            mStartRadius = e->button() == Qt::MiddleButton ? 0.05 : claySettings().radius;
             mRadiusUnit = view.unitsPerPixel(mHover);
             return true;
         }
@@ -610,7 +609,7 @@ public:
         }
         if (!hit)
             mPress = onViewPlane(e->position(), view);
-        const ClaySettings& s = settings();
+        const ClaySettings& s = claySettings();
         mCut = bool(e->modifiers() & Qt::ControlModifier) != s.cut;
         mPressPx = mNowPx = e->position();
         mDragging = true;
@@ -652,7 +651,7 @@ public:
     {
         if (mRadiusDrag)
         {
-            settings().radius = std::clamp(mStartRadius + (e->position().x() - mPressPx.x()) * mRadiusUnit, 0.05, 1e4);
+            claySettings().radius = std::clamp(mStartRadius + (e->position().x() - mPressPx.x()) * mRadiusUnit, 0.05, 1e4);
             settingsChanged();
             return true;
         }
@@ -664,13 +663,13 @@ public:
             if (!hit)
                 mHover = onViewPlane(mHoverPx, view);
             mHoverView = view.camera;
-            mHoverEnd = hit && settings().stroke ? strokeEndNear(mHover) : std::nullopt;
-            mHoverSnapped = !settings().stroke && snapToMirror(mHover, settings().radius);
+            mHoverEnd = hit && claySettings().stroke ? strokeEndNear(mHover) : std::nullopt;
+            mHoverSnapped = !claySettings().stroke && snapToMirror(mHover, claySettings().radius);
             viewportTools::requestRedraw();
             return false;
         }
         mNowPx = e->position();
-        if (settings().stroke)
+        if (claySettings().stroke)
         {
             glm::dvec3 p;
             if (!surfaceHit(mNowPx, view, p))
@@ -694,7 +693,7 @@ public:
         if (e->button() != Qt::LeftButton || !mDragging)
             return false;
         mDragging = false;
-        const ClaySettings& s = settings();
+        const ClaySettings& s = claySettings();
         if (s.stroke)
         {
             if (mStrokePoints.size() >= 2)
@@ -732,8 +731,8 @@ public:
         {
             if (dragPx() >= 4.0)
             {
-                settings().radius = std::max(0.05, dragPx() * view.unitsPerPixel(mPress));
-                resizeLive(settings().radius);
+                claySettings().radius = std::max(0.05, dragPx() * view.unitsPerPixel(mPress));
+                resizeLive(claySettings().radius);
             }
             finishLive(true);
             settingsChanged();
@@ -745,7 +744,7 @@ public:
     bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
         const int k = e->key();
-        ClaySettings& s = settings();
+        ClaySettings& s = claySettings();
         if (k == Qt::Key_S)
             s.stroke = !s.stroke;
         else if (k == Qt::Key_T)
@@ -781,7 +780,7 @@ public:
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
     {
-        const ClaySettings& s = settings();
+        const ClaySettings& s = claySettings();
         const glm::vec4 color = (mDragging ? mCut : mCtrl != s.cut) ? kCutColor : kAddColor;
         // The brush: the current radius at the surface under the cursor (at the press while B-dragging it).
         if (!mDragging && view.camera == mHoverView)
@@ -829,7 +828,7 @@ public:
             }
         }
         // Above the view axis in the bottom-left corner.
-        if (PrefStore::get().value<bool>("general", kKeysPref, true))
+        if (PrefStore::get().value<bool>("general", kClayKeysPref, true))
             drawKeyList(p, QPointF(16.0, view.height - 84.0), clayKeys());
     }
 
@@ -849,7 +848,7 @@ private:
     /** The size flags for the current shape at radius r. */
     static json sizeCall(double r)
     {
-        const int shape = settings().shape;
+        const int shape = claySettings().shape;
         return {{"radius", r},
                 {"endRadius", shape == 5 ? 0.0 : shape == 6 ? r * 0.3 : r},
                 {"length", 2.0 * r},
@@ -863,7 +862,7 @@ private:
         if (!n)
             return;
         r = std::max(0.05, r);
-        const int shape = settings().shape;
+        const int shape = claySettings().shape;
         auto set = [&](const char* attr, scene::PlugValue v) { g.setValue({n->id(), n->type().attrIndex(attr), -1}, std::move(v)); };
         set("radius", r);
         set("endRadius", shape == 5 ? 0.0 : shape == 6 ? r * 0.3 : r);

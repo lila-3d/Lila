@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/PrefStore.h"
@@ -18,13 +19,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace simtest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 /** A point on a damped spring chasing a locator, plus seeded noise: small enough to reason about, real enough to test. */
 class SpringSolver final : public sim::Solver
 {

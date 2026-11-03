@@ -23,7 +23,7 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr int kSlotBits = 256;
 
-struct CellHash
+struct WideCellHash
 {
     size_t operator()(const glm::i64vec3& c) const
     {
@@ -70,7 +70,7 @@ glm::dmat3 rotation(const glm::dvec3& a, double angle)
 struct PointGrid
 {
     double cell = 1.0;
-    std::unordered_map<glm::i64vec3, std::vector<Index>, CellHash> cells;
+    std::unordered_map<glm::i64vec3, std::vector<Index>, WideCellHash> cells;
 
     glm::i64vec3 key(const glm::dvec3& p) const { return glm::i64vec3(glm::floor(p / cell)); }
 

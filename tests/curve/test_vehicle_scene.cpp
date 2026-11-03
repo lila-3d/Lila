@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Tessellate.h"
 #include "geo/Mesh.h"
@@ -12,24 +14,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
-}
-
-std::string polyCurve(std::initializer_list<D3> list, const char* name)
-{
-    return run("curve", {{"type", "poly"}, {"points", pts(list)}, {"name", name}});
-}
-
 curve::Spline worldSpline(const std::string& name, size_t k = 0)
 {
     scene::Graph& g = scene::Graph::current();
@@ -47,26 +35,7 @@ D3 endOf(const std::string& name, bool atEnd)
     return curve::pointAt(s, atEnd ? curve::spanCount(s) : 0.0);
 }
 
-scene::MeshPtr meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 bool exists(const std::string& name) { return run("objExists", {{"args", {name}}}).get<bool>(); }
-
-json edgesWhere(const std::string& mesh, const std::function<bool(const D3& a, const D3& b)>& keep)
-{
-    scene::MeshPtr m = meshOf(mesh);
-    json out = json::array();
-    for (geo::Index e = 0; e < m->edgeCapacity(); ++e)
-        if (m->edgeValid(e) && keep(m->position(m->edgePoint(e, 0)), m->position(m->edgePoint(e, 1))))
-            out.push_back(e);
-    return out;
-}
 } // namespace
 
 TEST_CASE("blendCurve is live and bakes")

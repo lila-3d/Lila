@@ -1,6 +1,8 @@
 #include "curve/Pipe.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
+#include "curve/Internal.h"
 #include "curve/Ops.h"
 #include "geo/Attribute.h"
 
@@ -16,50 +18,12 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D2 = glm::dvec2;
+using detail::addFaceUv;
+using detail::setFaceInt;
 using geo::Index;
 
-constexpr double kEps = 1e-9;
+constexpr double kLengthEps = 1e-9;
 constexpr double kCornerAngle = 0.0175;
-
-double angleOf(const D3& a, const D3& b) { return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b)); }
-
-D3 perpUnit(const D3& v, const D3& t)
-{
-    D3 r = v - t * glm::dot(v, t);
-    double l = glm::length(r);
-    return l > 1e-12 ? r / l : D3(0.0);
-}
-
-Index addFaceUv(geo::Mesh& m, std::vector<Index> pts, std::vector<glm::vec2> uvs, bool flip)
-{
-    if (flip)
-    {
-        std::reverse(pts.begin(), pts.end());
-        std::reverse(uvs.begin(), uvs.end());
-    }
-    Index f = m.addFace(pts);
-    if (f == geo::kInvalid || uvs.empty())
-        return f;
-    auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
-    size_t i = 0;
-    m.forEachFaceCorner(f, [&](Index c) {
-        if (i < uvs.size())
-            uv[c] = uvs[i];
-        ++i;
-    });
-    return f;
-}
-
-void setFaceInt(geo::Mesh& m, std::string_view name, Index f, int value)
-{
-    if (f == geo::kInvalid)
-        return;
-    auto v = m.faceAttrs().getOrAdd<int32_t>(name);
-    if (f < v.size())
-        v[f] = value;
-}
 
 void setAllFaces(geo::Mesh& m, std::string_view name, int value)
 {
@@ -90,7 +54,10 @@ void addBox(geo::Mesh& m, const D3& lo, const D3& hi)
     const int quads[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
     const std::vector<glm::vec2> uv = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     for (auto& q : quads)
-        addFaceUv(m, {p[q[0]], p[q[1]], p[q[2]], p[q[3]]}, uv, false);
+    {
+        const Index face[4] = {p[q[0]], p[q[1]], p[q[2]], p[q[3]]};
+        addFaceUv(m, face, uv, false);
+    }
 }
 
 /** A station along a path: position, frame and the path's own scale, interpolated between its points. */
@@ -105,7 +72,7 @@ Station sampleAt(const Path& P, double s)
 {
     size_t n = P.size();
     double L = P.closed ? P.length : P.s.back();
-    s = P.closed ? s - std::floor(s / std::max(L, kEps)) * L : std::clamp(s, 0.0, L);
+    s = P.closed ? s - std::floor(s / std::max(L, kLengthEps)) * L : std::clamp(s, 0.0, L);
     size_t i = size_t(std::upper_bound(P.s.begin(), P.s.end(), s) - P.s.begin());
     i = i == 0 ? 0 : i - 1;
     size_t j = i + 1;
@@ -119,7 +86,7 @@ Station sampleAt(const Path& P, double s)
     }
     else
         sj = P.s[j];
-    double f = sj - P.s[i] > kEps ? (s - P.s[i]) / (sj - P.s[i]) : 0.0;
+    double f = sj - P.s[i] > kLengthEps ? (s - P.s[i]) / (sj - P.s[i]) : 0.0;
     Station st;
     st.origin = glm::mix(P.points[i], P.points[j], f);
     st.frame.t = glm::normalize(glm::mix(P.frames[i].t, P.frames[j].t, f) + D3(1e-30));
@@ -197,7 +164,7 @@ constexpr double kSwellSoftness = 0.3;
 void blurAlong(const Path& P, std::vector<double>& v, double sigma)
 {
     const size_t n = P.size();
-    if (sigma <= kEps || n < 3 || v.size() != n)
+    if (sigma <= kLengthEps || n < 3 || v.size() != n)
         return;
     const double L = P.closed ? P.length : P.s.back();
     const double reach = 3.0 * sigma;
@@ -339,7 +306,7 @@ std::vector<double> radiusAlong(const Path& P, const Spline& input)
 /** Extra points so no segment is longer than step, at whole multiples of it along the curve. */
 Polyline resample(const Polyline& pl, double step)
 {
-    if (step <= kEps)
+    if (step <= kLengthEps)
         return pl;
     Polyline out;
     out.closed = pl.closed;
@@ -361,7 +328,7 @@ Polyline resample(const Polyline& pl, double step)
         double u1 = j == 0 ? pl.params[i] + (pl.params[i] - (i ? pl.params[i - 1] : pl.params[i])) : pl.params[j];
         for (double s = (std::floor(s0 / step) + 1.0) * step; s < s1 - step * 0.05; s += step)
         {
-            double f = (s - s0) / std::max(s1 - s0, kEps);
+            double f = (s - s0) / std::max(s1 - s0, kLengthEps);
             D3 t = glm::normalize(glm::mix(pl.tangentOut[i], pl.tangentIn[j], f) + D3(1e-30));
             out.points.push_back(glm::mix(pl.points[i], pl.points[j], f));
             out.tangentIn.push_back(t);
@@ -490,7 +457,7 @@ std::function<double(double)> parseRamp(std::string_view keys)
         while (i < k.size() && k[i].first < t)
             ++i;
         double span = k[i].first - k[i - 1].first;
-        double f = span > kEps ? (t - k[i - 1].first) / span : 1.0;
+        double f = span > kLengthEps ? (t - k[i - 1].first) / span : 1.0;
         f = f * f * (3.0 - 2.0 * f);
         return glm::mix(k[i - 1].second, k[i].second, f);
     };
@@ -521,7 +488,7 @@ geo::Mesh lathe(const std::vector<glm::dvec2>& input, bool closed, int sides, do
     std::vector<double> v(n + 1, 0.0);
     for (size_t j = 1; j <= n; ++j)
         v[j] = v[j - 1] + (j < n || closed ? glm::distance(P[j - 1], P[j % n]) : 0.0);
-    double vl = std::max(closed ? v[n] : v[n - 1], kEps);
+    double vl = std::max(closed ? v[n] : v[n - 1], kLengthEps);
     for (size_t j = 0; j < n; ++j)
         for (int i = 0; i < sides; ++i)
         {
@@ -537,7 +504,9 @@ geo::Mesh lathe(const std::vector<glm::dvec2>& input, bool closed, int sides, do
         for (int i = 0; i < sides; ++i)
         {
             float u0 = float(i) / float(sides), u1 = float(i + 1) / float(sides);
-            addFaceUv(m, {idx(j, i), idx(j, i + 1), idx(j1, i + 1), idx(j1, i)}, {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}}, false);
+            const Index face[4] = {idx(j, i), idx(j, i + 1), idx(j1, i + 1), idx(j1, i)};
+            const glm::vec2 uv[4] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+            addFaceUv(m, face, uv, false);
         }
     }
     // The start ring's cap runs against the quads beside it, the end ring's with them.
@@ -669,7 +638,7 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
         {
             if (!input.closed && j == 0)
                 continue;
-            double theta = angleOf(endTangent(ps[(j + K - 1) % K], true), endTangent(ps[j], false));
+            double theta = angleBetween(endTangent(ps[(j + K - 1) % K], true), endTangent(ps[j], false));
             if (theta > kCornerAngle && theta < glm::pi<double>() - 1e-3)
                 corners.push_back({ps[j].start(), theta});
         }
@@ -734,9 +703,9 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
             const D3& b = P.points[i];
             const D3& c = P.points[(i + 1) % n];
             double la = glm::distance(a, b), lc = glm::distance(b, c);
-            if (la < kEps || lc < kEps)
+            if (la < kLengthEps || lc < kLengthEps)
                 continue;
-            double theta = angleOf(b - a, c - b);
+            double theta = angleBetween(b - a, c - b);
             if (theta > 1e-4)
                 r.tightestBend = std::min(r.tightestBend, 0.5 * (la + lc) / (2.0 * std::sin(theta * 0.5)));
         }
@@ -897,7 +866,8 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
                                                  cr.at(0.5 + 0.5 * k * std::cos(a1), 0.5 + 0.5 * k * std::sin(a1)),
                                                  cr.at(0.5 + 0.5 * k * std::cos(a0), 0.5 + 0.5 * k * std::sin(a0))};
                     // Counter-clockwise about +t at the end ring; the start rim faces back.
-                    Index f = addFaceUv(m, {O + Index(j), O + j1, I + j1, I + Index(j)}, uv, (end == 0) != o.flip);
+                    const Index face[4] = {O + Index(j), O + j1, I + j1, I + Index(j)};
+                    Index f = addFaceUv(m, face, uv, (end == 0) != o.flip);
                     setFaceInt(m, "part", f, ro.part);
                     if (size_t(ro.part) < so.partMaterials.size())
                         setFaceInt(m, geo::attr::kMaterial, f, so.partMaterials[size_t(ro.part)]);

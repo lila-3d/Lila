@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "gn/Clipboard.h"
@@ -27,20 +29,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void pump()
-{
-    for (int i = 0; i < 4; ++i)
-    {
-        mainq::drain();
-        QApplication::processEvents();
-    }
-}
-
 /** A key press as a user types it: to the focus widget, through the app-wide hotkey filter. */
 void press(QWidget* w, Qt::Key key, Qt::KeyboardModifiers mods = Qt::NoModifier)
 {
@@ -193,7 +185,7 @@ void mouse(QGraphicsView* view, QEvent::Type type, QPointF scenePos, Qt::MouseBu
     pump();
 }
 
-void drag(QGraphicsView* view, QPointF from, QPointF to, Qt::KeyboardModifiers mods = Qt::NoModifier)
+void dragInView(QGraphicsView* view, QPointF from, QPointF to, Qt::KeyboardModifiers mods = Qt::NoModifier)
 {
     mouse(view, QEvent::MouseButtonPress, from, Qt::LeftButton, mods);
     for (int i = 1; i <= 4; ++i)
@@ -228,11 +220,11 @@ TEST_CASE("holding T and dragging across wires ties them, and the tie drags")
     pump();
 
     // Without the key, the same drag is a rubber band and ties nothing.
-    drag(view, {235, -30}, {235, 330});
+    dragInView(view, {235, -30}, {235, 330});
     CHECK(editor->shownTies().empty());
 
     key(view, QEvent::KeyPress, Qt::Key_T);
-    drag(view, {235, -30}, {235, 330});
+    dragInView(view, {235, -30}, {235, 330});
     key(view, QEvent::KeyRelease, Qt::Key_T);
     pump();
     REQUIRE(editor->shownTies().size() == 1);
@@ -244,7 +236,7 @@ TEST_CASE("holding T and dragging across wires ties them, and the tie drags")
 
     // Dragging the band moves the tie, undoably.
     QPointF at(g.ties[0].position.x, g.ties[0].position.y);
-    drag(view, at, at + QPointF(30, 20));
+    dragInView(view, at, at + QPointF(30, 20));
     g = gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G"));
     CHECK(g.ties[0].position.x == doctest::Approx(at.x() + 30).epsilon(0.02));
     run("undo");
@@ -330,7 +322,7 @@ TEST_CASE("dropping an unlinked node on a wire wires it in and slides the rest a
     QMainWindow win;
     ui::NodeEditor* editor = openOn(win, "G");
     auto* view = editor->findChild<QGraphicsView*>();
-    drag(view, {85, 312}, {85 - 60, 12});
+    dragInView(view, {85, 312}, {85 - 60, 12});
     pump();
     gn::Group g = gn::readGroup(*gn::findGroupNode(scene::Graph::current(), "G"));
     auto has = [&](gn::GLink l) { return std::find(g.links.begin(), g.links.end(), l) != g.links.end(); };
@@ -358,7 +350,7 @@ TEST_CASE("a wire let go on empty canvas offers only nodes that fit, and wires t
     ui::NodeEditor* editor = openOn(win, "G");
     auto* view = editor->findChild<QGraphicsView*>();
     // From Group Input's geometry socket out into empty canvas.
-    drag(view, {-130, 34}, {100, 150});
+    dragInView(view, {-130, 34}, {100, 150});
     QWidget* popup = QApplication::activePopupWidget();
     REQUIRE(popup);
     auto* search = popup->findChild<QLineEdit*>();
@@ -471,7 +463,7 @@ TEST_CASE("frames gather the selection, carry their nodes, take dropped ones in 
     // Dragging the title moves the frame and both nodes, as one undo step.
     QPointF title(at.x + 100, at.y + 10);
     view->scene()->clearSelection();
-    drag(view, title, title + QPointF(0, -200));
+    dragInView(view, title, title + QPointF(0, -200));
     g = read();
     // Within a pixel: the drag goes through view coordinates.
     CHECK(g.frames[0].position.y == doctest::Approx(at.y - 200).epsilon(0.01));
@@ -484,7 +476,7 @@ TEST_CASE("frames gather the selection, carry their nodes, take dropped ones in 
     CHECK(g.frames[0].position.y == doctest::Approx(at.y));
 
     // A node dropped inside joins; dragged out, it leaves.
-    drag(view, {85, 512}, {85 + 120, 12 + 60});
+    dragInView(view, {85, 512}, {85 + 120, 12 + 60});
     CHECK(read().frames[0].nodes.size() == 3);
     run("undo");
     pump();
@@ -614,10 +606,10 @@ TEST_CASE("Alt+right-drag connects nodes; Ctrl moves and Shift copies a link; Al
 
     // A's geometry input is its second row: header 24, one output row, then the input at 24 + 20 + 10.
     QPointF aIn(100, 54), bIn(100, 304);
-    drag(view, aIn, bIn, Qt::ShiftModifier);
+    dragInView(view, aIn, bIn, Qt::ShiftModifier);
     CHECK(linked({"GroupInput", "geometry", "A", "geometry"}));
     CHECK(linked({"GroupInput", "geometry", "B", "geometry"}));
-    drag(view, bIn, aIn + QPointF(0, 0), Qt::ControlModifier);
+    dragInView(view, bIn, aIn + QPointF(0, 0), Qt::ControlModifier);
     CHECK_FALSE(linked({"GroupInput", "geometry", "B", "geometry"}));
     CHECK(linked({"GroupInput", "geometry", "A", "geometry"}));
 

@@ -3,6 +3,7 @@
 // under what rests on it; Variant Pool gives instances a bounded set of deformed variants (or one each) so a row of the
 // same book reads as many.
 
+#include "NodeSockets.h"
 #include "Stagehand.h"
 
 #include <lila/Extension.h>
@@ -23,20 +24,6 @@ namespace
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
-using T = gn::SocketType;
-
-constexpr double kPi = 3.14159265358979323846;
-
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc) { return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)}; }
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
-{
-    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
-    s.min = lo;
-    s.max = hi;
-    return s;
-}
-gn::SocketDecl geoIn(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
-gn::SocketDecl geoOut(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
 struct ContactPoint
 {
@@ -350,12 +337,12 @@ bool registerWearNodes(ext::Context& ctx)
                 "chips where they hit hard. Feed it to vertex colour or a material's wear mask.",
          .sockets = {.inputs = {geoIn("geometry", "The worn mesh, in the same space as the contacts (world for Object Info in world)."),
                                 geoIn("contacts", kContactsDoc),
-                                in("radius", T::Float, 3.0, "How far around a contact the wear spreads, cm.", 1e-3),
-                                in("resting", T::Float, 0.5, "Weight of resting contacts.", 0.0),
-                                in("sliding", T::Float, 0.8, "Weight of sliding.", 0.0),
-                                in("hits", T::Float, 1.0, "Weight of hard hits.", 0.0),
-                                in("hitImpulse", T::Float, 200.0, "Impulse counted as a full-strength hit, kg cm/s.", 1e-6),
-                                in("attribute", T::String, "wear", "Name of the point attribute written.")},
+                                in("radius", Socket::Float, 3.0, "How far around a contact the wear spreads, cm.", 1e-3),
+                                in("resting", Socket::Float, 0.5, "Weight of resting contacts.", 0.0),
+                                in("sliding", Socket::Float, 0.8, "Weight of sliding.", 0.0),
+                                in("hits", Socket::Float, 1.0, "Weight of hard hits.", 0.0),
+                                in("hitImpulse", Socket::Float, 200.0, "Impulse counted as a full-strength hit, kg cm/s.", 1e-6),
+                                in("attribute", Socket::String, "wear", "Name of the point attribute written.")},
                      .outputs = {geoOut("geometry", "The mesh with the attribute.")}},
          .exec = contactWearExec},
         {.type = "DentAtContacts",
@@ -365,10 +352,10 @@ bool registerWearNodes(ext::Context& ctx)
                 "mark; at fullImpulse the dent is the full depth.",
          .sockets = {.inputs = {geoIn("geometry", "The mesh to dent, in the contacts' space."),
                                 geoIn("contacts", kContactsDoc),
-                                in("radius", T::Float, 2.0, "Dent size, cm.", 1e-3),
-                                in("depth", T::Float, 0.4, "Deepest dent, cm.", 0.0),
-                                in("minImpulse", T::Float, 50.0, "Softest hit that marks, kg cm/s.", 0.0),
-                                in("fullImpulse", T::Float, 400.0, "Hit that dents the full depth, kg cm/s.", 0.0)},
+                                in("radius", Socket::Float, 2.0, "Dent size, cm.", 1e-3),
+                                in("depth", Socket::Float, 0.4, "Deepest dent, cm.", 0.0),
+                                in("minImpulse", Socket::Float, 50.0, "Softest hit that marks, kg cm/s.", 0.0),
+                                in("fullImpulse", Socket::Float, 400.0, "Hit that dents the full depth, kg cm/s.", 0.0)},
                      .outputs = {geoOut("geometry", "The dented mesh.")}},
          .exec = dentExec},
         {.type = "SagUnderLoad",
@@ -378,12 +365,12 @@ bool registerWearNodes(ext::Context& ctx)
                 "middle bend it most. The span runs along its longer horizontal side.",
          .sockets = {.inputs = {geoIn("geometry", "The board, in the contacts' space."),
                                 geoIn("contacts", kContactsDoc),
-                                in("amount", T::Float, 0.3, "Sag at the middle for 10 kg resting there, cm.", 0.0),
-                                in("toLocalX", T::Vector, gn::json::array({1, 0, 0}), "Columns of the matrix taking contacts into the board's space."),
-                                in("toLocalY", T::Vector, gn::json::array({0, 1, 0}), "Second column."),
-                                in("toLocalZ", T::Vector, gn::json::array({0, 0, 1}), "Third column."),
-                                in("toLocalOrigin", T::Vector, gn::json::array({0, 0, 0}), "Translation."),
-                                in("ownWeight", T::Float, 0.0, "The board's own weight as an even load, kg.", 0.0)},
+                                in("amount", Socket::Float, 0.3, "Sag at the middle for 10 kg resting there, cm.", 0.0),
+                                in("toLocalX", Socket::Vector, gn::json::array({1, 0, 0}), "Columns of the matrix taking contacts into the board's space."),
+                                in("toLocalY", Socket::Vector, gn::json::array({0, 1, 0}), "Second column."),
+                                in("toLocalZ", Socket::Vector, gn::json::array({0, 0, 1}), "Third column."),
+                                in("toLocalOrigin", Socket::Vector, gn::json::array({0, 0, 0}), "Translation."),
+                                in("ownWeight", Socket::Float, 0.0, "The board's own weight as an even load, kg.", 0.0)},
                      .outputs = {geoOut("geometry", "The bent board.")}},
          .exec = sagExec},
         {.type = "VariantPool",
@@ -394,10 +381,10 @@ bool registerWearNodes(ext::Context& ctx)
                 "mesh per instance. Adds variant.",
          .props = {{.id = "mode", .options = {"pool", "unique"}, .defaultValue = "pool", .doc = "pool shares a few variants; unique makes one per instance."}},
          .sockets = {.inputs = {geoIn("instances", "The instances to vary."),
-                                in("variants", T::Int, 5, "Variants per mesh in pool mode.", 1, 64),
-                                in("bow", T::Float, 0.6, "Most an item's middle bows sideways, cm.", 0.0),
-                                in("bulge", T::Float, 0.15, "Most its faces swell at mid height, cm.", 0.0),
-                                in("driver", T::String, "random", "Instance attribute (0 to 1) that picks how deformed each one is.")},
+                                in("variants", Socket::Int, 5, "Variants per mesh in pool mode.", 1, 64),
+                                in("bow", Socket::Float, 0.6, "Most an item's middle bows sideways, cm.", 0.0),
+                                in("bulge", Socket::Float, 0.15, "Most its faces swell at mid height, cm.", 0.0),
+                                in("driver", Socket::String, "random", "Instance attribute (0 to 1) that picks how deformed each one is.")},
                      .outputs = {geoOut("instances", "The instances on their variants.")}},
          .exec = variantsExec},
     };

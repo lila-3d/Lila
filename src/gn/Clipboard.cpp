@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "gn/NodeLib.h"
+#include "gn/Routing.h"
 #include "gn/Zones.h"
 
 #include <algorithm>
@@ -55,31 +56,6 @@ json extractJson(std::string_view text)
 }
 
 bool isVec2(const json& j) { return j.is_array() && j.size() == 2 && j[0].is_number() && j[1].is_number(); }
-
-bool hasCycle(const std::vector<GLink>& links)
-{
-    std::map<std::string, std::vector<std::string>> next;
-    for (const GLink& l : links)
-        next[l.fromNode].push_back(l.toNode);
-    std::map<std::string, int> state; // 1 visiting, 2 done
-    std::function<bool(const std::string&)> visit = [&](const std::string& n) {
-        int& s = state[n];
-        if (s == 1)
-            return true;
-        if (s == 2)
-            return false;
-        s = 1;
-        for (const std::string& m : next[n])
-            if (visit(m))
-                return true;
-        state[n] = 2;
-        return false;
-    };
-    for (auto& [n, list] : next)
-        if (visit(n))
-            return true;
-    return false;
-}
 } // namespace
 
 std::string copyNodesText(const Group& g, const std::vector<std::string>& names)

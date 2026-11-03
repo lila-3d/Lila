@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "geo/Mesh.h"
 #include "uv/Uv.h"
 
@@ -12,15 +13,11 @@
 #include <span>
 
 using namespace lila;
+using namespace uvtest;
 using geo::Index;
 
 namespace
 {
-double seconds(std::chrono::steady_clock::time_point t0)
-{
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-}
-
 struct Rng
 {
     uint32_t seed;
@@ -130,13 +127,7 @@ geo::Mesh shapeSoup(int n, uint32_t seed = 777)
     return b.build();
 }
 
-size_t overlaps(const geo::Mesh& m, std::string_view set = "uv0")
-{
-    std::vector<uint8_t> flags;
-    return uv::overlappingFaces(m, set, flags);
-}
-
-std::vector<uv::Chart> islands(const geo::Mesh& m, std::string_view set = "uv0")
+std::vector<uv::Chart> uvCharts(const geo::Mesh& m, std::string_view set = "uv0")
 {
     uv::ChartOptions co;
     co.source = uv::IslandSource::Uvs;
@@ -144,17 +135,10 @@ std::vector<uv::Chart> islands(const geo::Mesh& m, std::string_view set = "uv0")
     return uv::buildCharts(m, {}, co);
 }
 
-double segDist(glm::dvec2 p, glm::dvec2 a, glm::dvec2 b)
-{
-    glm::dvec2 d = b - a;
-    double t = glm::dot(d, d) > 0.0 ? std::clamp(glm::dot(p - a, d) / glm::dot(d, d), 0.0, 1.0) : 0.0;
-    return glm::length(p - (a + t * d));
-}
-
 /** Smallest distance between the boundaries of different islands, in texels of a texture of the given size. */
 double gapTexels(const geo::Mesh& m, double resolution, std::string_view set = "uv0")
 {
-    std::vector<uv::Chart> charts = islands(m, set);
+    std::vector<uv::Chart> charts = uvCharts(m, set);
     std::vector<std::vector<std::pair<glm::dvec2, glm::dvec2>>> segs(charts.size());
     std::vector<glm::dvec2> lo(charts.size()), hi(charts.size());
     for (size_t i = 0; i < charts.size(); ++i)
@@ -196,7 +180,7 @@ bool inside(const geo::Mesh& m, glm::dvec2 lo, glm::dvec2 hi, std::string_view s
     return true;
 }
 
-std::vector<glm::vec2> uvsOf(const geo::Mesh& m, std::string_view set = "uv0")
+std::vector<glm::vec2> meshUvs(const geo::Mesh& m, std::string_view set = "uv0")
 {
     std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
     return {uv.begin(), uv.end()};
@@ -248,7 +232,7 @@ TEST_CASE("pack: small islands nest in a ring's hole")
     uv::PackResult r = uv::packIslands(m, {}, "uv0", po);
     REQUIRE(r.ok);
     CHECK(overlaps(m) == 0);
-    std::vector<uv::Chart> charts = islands(m);
+    std::vector<uv::Chart> charts = uvCharts(m);
     // The ring is the island with the most vertices; its hole is a circle about its centre.
     auto ring = std::max_element(charts.begin(), charts.end(), [](const uv::Chart& a, const uv::Chart& c) { return a.uv.size() < c.uv.size(); });
     glm::dvec2 centre = (ring->uvMin() + ring->uvMax()) * 0.5;
@@ -319,7 +303,7 @@ TEST_CASE("pack: pre-orient keeps to the rotation step")
     uv::PackOptions po;
     po.rotateStep = 90;
     REQUIRE(uv::packIslands(m, {}, "uv0", po).ok);
-    for (const uv::Chart& ch : islands(m))
+    for (const uv::Chart& ch : uvCharts(m))
     {
         const auto loop = ch.boundaryLoops().front();
         glm::dvec2 e = ch.uv[loop[1]] - ch.uv[loop[0]];
@@ -380,11 +364,11 @@ TEST_CASE("pack: fixed islands stay put and the rest go around them")
     po.resolution = 1024;
     po.padding = 3.0;
     REQUIRE(uv::packIslands(m, {}, "uv0", po).ok);
-    std::vector<uv::Chart> charts = islands(m);
+    std::vector<uv::Chart> charts = uvCharts(m);
     std::vector<Index> fixedFaces;
     for (size_t i = 0; i < charts.size(); i += 4)
         fixedFaces.insert(fixedFaces.end(), charts[i].faces.begin(), charts[i].faces.end());
-    std::vector<glm::vec2> before = uvsOf(m);
+    std::vector<glm::vec2> before = meshUvs(m);
     uv::PackTarget t;
     t.mesh = &m;
     t.fixedFaces = fixedFaces;
@@ -392,7 +376,7 @@ TEST_CASE("pack: fixed islands stay put and the rest go around them")
     pf.rotateStep = 45;
     uv::PackResult r = uv::packMeshes(std::span<uv::PackTarget>(&t, 1), "uv0", pf);
     REQUIRE(r.ok);
-    std::vector<glm::vec2> after = uvsOf(m);
+    std::vector<glm::vec2> after = meshUvs(m);
     bool fixedKept = true, othersMoved = false;
     std::set<Index> fixedSet(fixedFaces.begin(), fixedFaces.end());
     for (Index f = 0; f < m.faceCapacity(); ++f)
@@ -411,7 +395,7 @@ TEST_CASE("pack: fixed islands stay put and the rest go around them")
 TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
 {
     geo::Mesh m = shapeSoup(60, 8);
-    std::vector<uv::Chart> charts = islands(m);
+    std::vector<uv::Chart> charts = uvCharts(m);
     {
         std::span<int32_t> group = m.faceAttrs().getOrAdd<int32_t>("uvGroup");
         for (size_t i = 0; i < charts.size(); ++i)
@@ -429,7 +413,7 @@ TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
     CHECK(overlaps(m) == 0);
     auto tileOf = [](const uv::Chart& ch) { return glm::ivec2(glm::floor(ch.uvCentroid())); };
     bool rule = true;
-    for (const uv::Chart& ch : islands(m))
+    for (const uv::Chart& ch : uvCharts(m))
     {
         int g = group[ch.faces.front()];
         rule &= tileOf(ch) == glm::ivec2(g % 2, g / 2);
@@ -443,7 +427,7 @@ TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
         pk.rotateStep = 0;
         REQUIRE(uv::packIslands(m, {}, "uv0", pk).ok);
         bool kept = true;
-        for (const uv::Chart& ch : islands(m))
+        for (const uv::Chart& ch : uvCharts(m))
         {
             int g = group[ch.faces.front()];
             kept &= tileOf(ch) == glm::ivec2(g % 2, g / 2);
@@ -502,7 +486,7 @@ TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
         for (glm::vec2& p : n.cornerAttrs().get<glm::vec2>("uv0"))
             p *= 0.02f;
         std::vector<double> areas;
-        for (const uv::Chart& ch : islands(n))
+        for (const uv::Chart& ch : uvCharts(n))
             areas.push_back(std::abs(ch.areaUv()));
         uv::PackOptions pl;
         pl.lockScale = true;
@@ -510,7 +494,7 @@ TEST_CASE("pack: udim tiles by group, keep tile, region and locked scale")
         uv::PackResult rl = uv::packIslands(n, {}, "uv0", pl);
         REQUIRE(rl.ok);
         CHECK(rl.tilesUsed >= 2);
-        std::vector<uv::Chart> after = islands(n);
+        std::vector<uv::Chart> after = uvCharts(n);
         REQUIRE(after.size() == areas.size());
         bool same = true;
         for (size_t i = 0; i < after.size(); ++i)
@@ -542,7 +526,7 @@ TEST_CASE("pack: deterministic")
     uv::PackResult ra = uv::packIslands(a, {}, "uv0", po), rb = uv::packIslands(b, {}, "uv0", po);
     REQUIRE(ra.ok);
     CHECK(ra.coverage == rb.coverage);
-    CHECK(uvsOf(a) == uvsOf(b));
+    CHECK(meshUvs(a) == meshUvs(b));
 }
 
 TEST_CASE("pack benchmark: 200 and 2000 islands" * doctest::skip())

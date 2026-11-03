@@ -22,6 +22,7 @@
 #include "scene/Skin.h"
 #include "ui/Actions.h"
 #include "ui/Tools.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportTool.h"
 
@@ -57,9 +58,9 @@ using scene::WeightTable;
 using Mode = scene::skin::PaintMode;
 const char* kModeNames[] = {"Add", "Replace", "Smooth", "Scale"};
 
-constexpr const char* kPrefix = "/weightPaint";
+constexpr const char* kWeightPaintPrefix = "/weightPaint";
 
-struct Settings
+struct WeightPaintSettings
 {
     Mode mode = Mode::Replace;
     float value = 1.0f;
@@ -80,25 +81,17 @@ struct Settings
     }();
 };
 
-Settings& settings()
+WeightPaintSettings& weightPaintSettings()
 {
-    static Settings s = [] {
-        Settings out;
-        out.stroke.loadPrefs(kPrefix);
+    static WeightPaintSettings s = [] {
+        WeightPaintSettings out;
+        out.stroke.loadPrefs(kWeightPaintPrefix);
         return out;
     }();
     return s;
 }
 
-void save() { settings().stroke.savePrefs(kPrefix); }
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
+void saveWeightPaintSettings() { weightPaintSettings().stroke.savePrefs(kWeightPaintPrefix); }
 
 /** Floating tool settings: influences with lock toggles, brush mode and sizes, mirror, flood. */
 class WeightPaintPanel final : public QWidget
@@ -144,7 +137,7 @@ public:
         mirrorRow->addWidget(mAxis);
         form->addRow(mirrorRow);
         col->addLayout(form);
-        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return weightPaintSettings().stroke; }, [this] { changed(); });
         col->addWidget(mStrokeOptions);
 
         auto* buttons = new QHBoxLayout;
@@ -155,12 +148,12 @@ public:
         col->addLayout(buttons);
 
         syncFromSettings();
-        connect(mMode, &QComboBox::currentIndexChanged, this, [this](int i) { settings().mode = Mode(i); changed(); });
-        connect(mValue, &QDoubleSpinBox::valueChanged, this, [this](double v) { settings().value = float(v); changed(); });
-        connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) { settings().stroke.radius = v; changed(); });
-        connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) { settings().stroke.strength = v; changed(); });
-        connect(mMirror, &QCheckBox::toggled, this, [this](bool on) { settings().stroke.mirror = on; changed(); });
-        connect(mAxis, &QComboBox::currentIndexChanged, this, [this](int i) { settings().mirrorAxis = i; changed(); });
+        connect(mMode, &QComboBox::currentIndexChanged, this, [this](int i) { weightPaintSettings().mode = Mode(i); changed(); });
+        connect(mValue, &QDoubleSpinBox::valueChanged, this, [this](double v) { weightPaintSettings().value = float(v); changed(); });
+        connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) { weightPaintSettings().stroke.radius = v; changed(); });
+        connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) { weightPaintSettings().stroke.strength = v; changed(); });
+        connect(mMirror, &QCheckBox::toggled, this, [this](bool on) { weightPaintSettings().stroke.mirror = on; changed(); });
+        connect(mAxis, &QComboBox::currentIndexChanged, this, [this](int i) { weightPaintSettings().mirrorAxis = i; changed(); });
         connect(flood, &QPushButton::clicked, this, [this] { if (onFlood) onFlood(); });
         connect(normalize, &QPushButton::clicked, this, [this] { if (onNormalize) onNormalize(); });
         connect(mList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
@@ -168,13 +161,13 @@ public:
                 return;
             if (item->data(kMapRole).isValid())
             {
-                settings().mapNode = item->data(kMapRole).toULongLong();
-                settings().mapLayer = item->data(kMapRole + 1).toInt();
+                weightPaintSettings().mapNode = item->data(kMapRole).toULongLong();
+                weightPaintSettings().mapLayer = item->data(kMapRole + 1).toInt();
             }
             else
             {
-                settings().mapNode = kNoNode;
-                settings().influence = item->data(Qt::UserRole).toLongLong();
+                weightPaintSettings().mapNode = kNoNode;
+                weightPaintSettings().influence = item->data(Qt::UserRole).toLongLong();
             }
             changed();
         });
@@ -193,7 +186,7 @@ public:
 
     void syncFromSettings()
     {
-        const Settings& s = settings();
+        const WeightPaintSettings& s = weightPaintSettings();
         QSignalBlocker b1(mMode), b2(mValue), b3(mRadius), b4(mStrength), b5(mMirror), b6(mAxis);
         mMode->setCurrentIndex(int(s.mode));
         mValue->setValue(s.value);
@@ -218,7 +211,7 @@ public:
             item->setCheckState(i.locked ? Qt::Checked : Qt::Unchecked);
             item->setData(Qt::UserRole, qlonglong(i.index));
             item->setData(Qt::UserRole + 1, QString::fromStdString(scene::Graph::current().node(i.link)->path()));
-            if (settings().mapNode == kNoNode && int64_t(i.index) == settings().influence)
+            if (weightPaintSettings().mapNode == kNoNode && int64_t(i.index) == weightPaintSettings().influence)
                 mList->setCurrentItem(item);
         }
         for (const auto& m : maps)
@@ -227,7 +220,7 @@ public:
             item->setData(kMapRole, qulonglong(m.node));
             item->setData(kMapRole + 1, m.layer);
             item->setToolTip(m.layer < 0 ? "The deformer's weight map" : "A painted layer of the field the deformers read");
-            if (settings().mapNode == m.node && settings().mapLayer == m.layer)
+            if (weightPaintSettings().mapNode == m.node && weightPaintSettings().mapLayer == m.layer)
                 mList->setCurrentItem(item);
         }
         if (!mList->currentItem() && mList->count() > 0)
@@ -236,13 +229,13 @@ public:
             QListWidgetItem* first = mList->item(0);
             if (first->data(kMapRole).isValid())
             {
-                settings().mapNode = first->data(kMapRole).toULongLong();
-                settings().mapLayer = first->data(kMapRole + 1).toInt();
+                weightPaintSettings().mapNode = first->data(kMapRole).toULongLong();
+                weightPaintSettings().mapLayer = first->data(kMapRole + 1).toInt();
             }
             else
             {
-                settings().mapNode = kNoNode;
-                settings().influence = first->data(Qt::UserRole).toLongLong();
+                weightPaintSettings().mapNode = kNoNode;
+                weightPaintSettings().influence = first->data(Qt::UserRole).toLongLong();
             }
         }
     }
@@ -260,7 +253,7 @@ private:
 
     void changed()
     {
-        save();
+        saveWeightPaintSettings();
         if (onChanged)
             onChanged();
     }
@@ -337,7 +330,7 @@ public:
         beginStroke();
         mMods = e->modifiers();
         const ViewInfo v = view;
-        mStroke.begin(settings().stroke, mControls.input(e),
+        mStroke.begin(weightPaintSettings().stroke, mControls.input(e),
                       [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); }, *this, false);
         return true;
     }
@@ -395,12 +388,12 @@ public:
 
         QString infName = "(none)";
         for (const auto& i : mInfluences)
-            if (int64_t(i.index) == settings().influence)
+            if (int64_t(i.index) == weightPaintSettings().influence)
                 infName = QString::fromStdString(i.name);
         if (mapMode())
             infName = QString::fromStdString(mMap.label);
         const Qt::KeyboardModifiers mods = mStroking ? mMods : QApplication::keyboardModifiers();
-        const Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : settings().mode;
+        const Mode mode = (mods & Qt::ShiftModifier) ? Mode::Smooth : weightPaintSettings().mode;
         drawToolMessage(p, view, QString("Paint weights: %1  (%2)").arg(infName, kModeNames[int(mode)]));
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
@@ -412,7 +405,7 @@ public:
             surface = brush::ui::CursorSurface{glm::dvec3(w * glm::dvec4(hit.point, 1.0)),
                                                glm::normalize(glm::dvec3(glm::transpose(glm::inverse(glm::dmat3(w))) * triangleNormal(hit.triangle)))};
         }
-        brush::ui::drawCursor(p, view, settings().stroke, at, surface,
+        brush::ui::drawCursor(p, view, weightPaintSettings().stroke, at, surface,
                               {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength, .stroke = &mStroke});
     }
 
@@ -423,7 +416,7 @@ private:
 
     /** Painting a deformer's or field's map rather than a skin influence. */
     bool mapMode() const { return mMap.node != kNoNode; }
-    bool canPaint() const { return mapMode() ? mMap.mesh != nullptr : mSkin != kNoNode && settings().influence >= 0; }
+    bool canPaint() const { return mapMode() ? mMap.mesh != nullptr : mSkin != kNoNode && weightPaintSettings().influence >= 0; }
 
     /**
      * The surface painted on, with point ids matching the weights: the skin's own output, or for a map the mesh as shown
@@ -476,8 +469,8 @@ private:
             {
                 mesh = scene::modifiers::meshOf(g, n->id());
                 skin = mesh != kNoNode ? scene::skin::find(g, mesh) : kNoNode;
-                settings().mapNode = n->id();
-                settings().mapLayer = -1;
+                weightPaintSettings().mapNode = n->id();
+                weightPaintSettings().mapLayer = -1;
             }
         }
         // Keep painting the current mesh when the selection moves to a joint (picking influences from the viewport).
@@ -500,13 +493,13 @@ private:
             }
         scene::deformWeights::MapTarget map;
         for (const auto& m : maps)
-            if (m.node == settings().mapNode && m.layer == settings().mapLayer)
+            if (m.node == weightPaintSettings().mapNode && m.layer == weightPaintSettings().mapLayer)
                 map = m;
         if (map.node == kNoNode && skin == kNoNode && !maps.empty())
         {
             map = maps.front();
-            settings().mapNode = map.node;
-            settings().mapLayer = map.layer;
+            weightPaintSettings().mapNode = map.node;
+            weightPaintSettings().mapLayer = map.layer;
         }
         if (skin != mSkin || mesh != mMesh || map.node != mMap.node || map.layer != mMap.layer || map.mesh != mMap.mesh)
         {
@@ -524,8 +517,8 @@ private:
                 for (const auto& i : mInfluences)
                     if (i.joint == *it)
                     {
-                        settings().influence = i.index;
-                        settings().mapNode = kNoNode;
+                        weightPaintSettings().influence = i.index;
+                        weightPaintSettings().mapNode = kNoNode;
                         mMap = {};
                         return;
                     }
@@ -575,7 +568,7 @@ private:
         {
             mMapStart = scene::deformWeights::read(g, mMap);
             mMapWork = mMapStart;
-            if (settings().stroke.mirror)
+            if (weightPaintSettings().stroke.mirror)
                 buildSymmetry();
             return;
         }
@@ -584,7 +577,7 @@ private:
         mInfluences = scene::skin::influences(g, mSkin);
         mLocked = scene::skin::lockMask(mInfluences);
         mMaxInf = int(g.node(mSkin)->as<int64_t>(scene::SkinClusterNode::kMaxInfluences));
-        if (settings().stroke.mirror)
+        if (weightPaintSettings().stroke.mirror)
             buildSymmetry();
     }
 
@@ -592,7 +585,7 @@ private:
     {
         scene::Graph& g = scene::Graph::current();
         scene::MeshPtr input = mapMode() ? mMap.mesh : scene::skin::inputMesh(g, mSkin);
-        if (!input || (input == mSymmetryFor && mSymmetryAxis == settings().mirrorAxis))
+        if (!input || (input == mSymmetryFor && mSymmetryAxis == weightPaintSettings().mirrorAxis))
             return;
         geo::Mesh world = *input;
         glm::dmat4 geom = mapMode() ? mMap.world : g.node(mSkin)->as<glm::dmat4>(scene::SkinClusterNode::kGeomMatrix);
@@ -600,10 +593,10 @@ private:
             world.setPosition(p, glm::dvec3(geom * glm::dvec4(input->position(p), 1.0)));
         geo::SymmetryPlane plane;
         plane.normal = glm::dvec3(0.0);
-        plane.normal[settings().mirrorAxis] = 1.0;
+        plane.normal[weightPaintSettings().mirrorAxis] = 1.0;
         mSymmetry = geo::SymmetryMap::build(world, plane, 0.1);
         mSymmetryFor = input;
-        mSymmetryAxis = settings().mirrorAxis;
+        mSymmetryAxis = weightPaintSettings().mirrorAxis;
         mPartner.clear();
         for (const auto& i : mInfluences)
         {
@@ -617,7 +610,7 @@ private:
 
     void apply(const std::vector<std::pair<uint32_t, float>>& pts, Mode mode, bool invert, uint32_t inf, float amount)
     {
-        const Settings& s = settings();
+        const WeightPaintSettings& s = weightPaintSettings();
         if (mapMode())
         {
             if (mode == Mode::Smooth)
@@ -669,7 +662,7 @@ private:
     {
         LILA_ZONE();
 
-        const Settings& s = settings();
+        const WeightPaintSettings& s = weightPaintSettings();
         const Mode mode = (mMods & Qt::ShiftModifier) ? Mode::Smooth : s.mode;
         const bool invert = mMods & Qt::ControlModifier;
         const auto inf = uint32_t(s.influence);
@@ -747,9 +740,9 @@ private:
         {
             static const char* kModeArgs[] = {"add", "replace", "smooth", "scale"};
             nlohmann::json call = {{"args", {nodeName(mMap.node)}},
-                                   {"value", settings().value},
-                                   {"mode", kModeArgs[int(settings().mode)]},
-                                   {"strength", settings().stroke.strength}};
+                                   {"value", weightPaintSettings().value},
+                                   {"mode", kModeArgs[int(weightPaintSettings().mode)]},
+                                   {"strength", weightPaintSettings().stroke.strength}};
             if (mMap.layer >= 0)
             {
                 call["layer"] = mMap.layer;
@@ -762,7 +755,7 @@ private:
             viewportTools::requestRedraw();
             return;
         }
-        if (mSkin == kNoNode || settings().influence < 0)
+        if (mSkin == kNoNode || weightPaintSettings().influence < 0)
             return;
         scene::Graph& g = scene::Graph::current();
         ensureBvh();
@@ -782,7 +775,7 @@ private:
         std::vector<std::pair<uint32_t, float>> pts;
         for (uint32_t p : ids)
             pts.push_back({p, 1.0f});
-        apply(pts, settings().mode, false, uint32_t(settings().influence), float(settings().stroke.strength));
+        apply(pts, weightPaintSettings().mode, false, uint32_t(weightPaintSettings().influence), float(weightPaintSettings().stroke.strength));
         UndoChunk chunk("floodSkinWeights");
         scene::skin::setWeights(g, mSkin, mWork);
         viewportTools::requestRedraw();
@@ -797,13 +790,13 @@ private:
         scene::MeshPtr m = deformed();
         scene::DataPtr w = mapMode() ? mapKey() : std::get<scene::DataPtr>(g.storedValue({mSkin, scene::SkinClusterNode::kWeights, -1}));
         glm::dmat4 world = meshWorld();
-        bool same = m == mDrawnMesh && w == mDrawnWeights && settings().influence == mDrawnInfluence && world == mDrawnWorld &&
+        bool same = m == mDrawnMesh && w == mDrawnWeights && weightPaintSettings().influence == mDrawnInfluence && world == mDrawnWorld &&
                     glm::dvec3(s.eye) == mDrawnEye;
         if (!same && m && mBvhMesh && m->pointCapacity() == mBvhMesh->pointCapacity())
         {
             mDrawnMesh = m;
             mDrawnWeights = w;
-            mDrawnInfluence = settings().influence;
+            mDrawnInfluence = weightPaintSettings().influence;
             mDrawnWorld = world;
             mDrawnEye = s.eye;
             const auto* sw = dynamic_cast<const scene::SkinWeights*>(w.get());
@@ -818,7 +811,7 @@ private:
             else if (sw)
                 for (uint32_t p = 0; p < std::min<uint32_t>(sw->pointCount(), uint32_t(ramp.size())); ++p)
                     for (uint32_t k = sw->offsets[p]; k < sw->offsets[p + 1]; ++k)
-                        if (int64_t(sw->influences[k]) == settings().influence)
+                        if (int64_t(sw->influences[k]) == weightPaintSettings().influence)
                             ramp[p] = viewportDisplay::weightColor(sw->weights[k], gray);
             const auto& tris = mBvh.triangles();
             size_t count = tris.faces.size();
@@ -877,13 +870,13 @@ private:
     QPointF mHover;
     Qt::KeyboardModifiers mMods;
     brush::Stroke mStroke;
-    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return weightPaintSettings().stroke; },
                                        [this] {
                                            if (mPanel)
                                                mPanel->syncFromSettings();
                                            viewportTools::requestRedraw();
                                        },
-                                       [] { save(); }};
+                                       [] { saveWeightPaintSettings(); }};
 
     scene::MeshPtr mDrawnMesh;
     scene::DataPtr mDrawnWeights;

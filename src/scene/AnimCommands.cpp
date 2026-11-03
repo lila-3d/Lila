@@ -8,6 +8,7 @@
 #include "core/Profile.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "scene/RigUtil.h"
 #include "scene/RotationCurve.h"
 #include "scene/Spaces.h"
 
@@ -21,10 +22,7 @@ namespace lila::scene::anim
 {
 namespace
 {
-constexpr double kTimeEps = 1e-6;
 constexpr double kInf = std::numeric_limits<double>::infinity();
-
-Graph& graph() { return Graph::current(); }
 
 struct State
 {
@@ -57,41 +55,11 @@ std::vector<ClipChannel>& clipboard()
     return c;
 }
 
-template <class F> auto guarded(F&& f)
-{
-    try
-    {
-        return f();
-    }
-    catch (const std::invalid_argument& e)
-    {
-        throw CommandError(e.what());
-    }
-}
+using rigutil::guarded;
 
 bool stepped(const AttrDef& a)
 {
     return a.type == PlugType::Bool || a.type == PlugType::Enum;
-}
-
-const char* curveTypeFor(const AttrDef& a)
-{
-    if (a.type == PlugType::Vec3 || a.type == PlugType::Float)
-    {
-        const std::string& n = a.name;
-        if (n.starts_with("rotate") && n.find("Pivot") == std::string::npos)
-            return "animCurveTA";
-        if (n.find("translate") != std::string::npos || n.find("Translate") != std::string::npos)
-            return "animCurveTL";
-    }
-    return "animCurveTU";
-}
-
-/** "translateX" for a component plug, else the attribute name. */
-std::string channelName(Graph& g, const PlugRef& p)
-{
-    const AttrDef& a = g.attr(p);
-    return p.component >= 0 ? a.childNames[p.component] : a.name;
 }
 
 double currentValue(Graph& g, const PlugRef& p)
@@ -300,6 +268,25 @@ int setBreakdown(Graph& g, NodeId curve, double t0, double t1, bool on)
     return changed;
 }
 } // namespace
+
+const char* curveTypeFor(const AttrDef& a)
+{
+    if (a.type == PlugType::Vec3 || a.type == PlugType::Float)
+    {
+        const std::string& n = a.name;
+        if (n.starts_with("rotate") && n.find("Pivot") == std::string::npos)
+            return "animCurveTA";
+        if (n.find("translate") != std::string::npos || n.find("Translate") != std::string::npos)
+            return "animCurveTL";
+    }
+    return "animCurveTU";
+}
+
+std::string channelName(Graph& g, const PlugRef& p)
+{
+    const AttrDef& a = g.attr(p);
+    return p.component >= 0 ? a.childNames[p.component] : a.name;
+}
 
 json Playback::toJson() const
 {
@@ -621,7 +608,7 @@ void registerCommands()
             s.playback.speed = PlaybackSpeed::EveryFrameMaxRealTime;
     }
 
-    graph().setDrivenSetHook([](Graph& g, const PlugRef& dst, const PlugRef& src, double v) {
+    Graph::current().setDrivenSetHook([](Graph& g, const PlugRef& dst, const PlugRef& src, double v) {
         Node* s = g.node(src.node);
         if (!s || !(isCurve(*s) || isBlend(*s)))
             return Graph::DrivenEdit::Reject;
@@ -653,7 +640,7 @@ void registerCommands()
             {"breakdown", "bd", T::Bool, false, "Set breakdown keys."},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             double time = a.get<double>("time", g.time());
             std::vector<NodeId> keyed;
             std::optional<Tangent> in, out;
@@ -744,7 +731,7 @@ void registerCommands()
                   {"disable", "d", T::Bool, false, "Unmute."},
                   {"query", "q", T::Bool, false, "Return whether the first channel is muted."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<NodeId> curves;
             for (const Target& t : targets(g, a, true))
                 if (t.curve && std::find(curves.begin(), curves.end(), t.curve) == curves.end())
@@ -777,7 +764,7 @@ void registerCommands()
                   {"value", "v", T::Bool, true, "True makes breakdowns, False plain keys."},
                   {"query", "q", T::Bool, false, "Return the first channel's breakdown key times."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto [t0, t1] = timeRange(a);
             std::vector<NodeId> curves;
             for (const Target& t : targets(g, a, true))
@@ -814,7 +801,7 @@ void registerCommands()
         .positionalDoc = "objects",
         .flags = {attrFlag, timeFlag, {"clear", "cl", T::Bool, false, "Don't copy to the clipboard."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto [t0, t1] = timeRange(a);
             std::vector<Target> ts = targets(g, a, true);
             if (!a.get<bool>("clear"))
@@ -833,7 +820,7 @@ void registerCommands()
         .flags = {attrFlag, timeFlag},
         .undoable = false,
         .run = [](const Args& a) -> json {
-            return copyKeys(graph(), a);
+            return copyKeys(Graph::current(), a);
         },
     });
 
@@ -849,7 +836,7 @@ void registerCommands()
             {"option", "o", T::String, "merge", "merge | replace"},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             const auto& clip = clipboard();
             if (clip.empty())
                 throw CommandError("pasteKey: nothing copied");
@@ -971,7 +958,7 @@ void registerCommands()
             {"relative", "r", T::Bool, false, "Offset instead of set."},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto [t0, t1] = timeRange(a);
             std::vector<Target> ts = targets(g, a, true);
             if (a.get<bool>("query"))
@@ -1124,7 +1111,7 @@ void registerCommands()
             {"weightedTangents", "wt", T::Bool, nullptr, "Make the curves weighted or not."},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto [t0, t1] = timeRange(a);
             std::vector<Target> ts = targets(g, a, true);
             if (a.get<bool>("query"))
@@ -1283,7 +1270,7 @@ void registerCommands()
             {"query", "q", T::Bool, false, ""},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json out = json::array();
             std::vector<NodeId> rotationsDone;
             for (const Target& t : targets(g, a, true))
@@ -1334,7 +1321,7 @@ void registerCommands()
         },
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<double> times;
             for (const Target& t : targets(g, a, true))
                 for (double k : curveKeyTimes(*g.node(t.curve)))

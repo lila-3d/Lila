@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
 #include "scene/Duplicate.h"
@@ -17,28 +19,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json fromUi(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
-double get(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }
-std::string kind(const std::string& m) { return run("instanceInfo", {{"args", {m}}})["kind"].get<std::string>(); }
-
-glm::dvec3 worldPos(const std::string& n)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return glm::dvec3(g.find(n)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
-}
-
-void checkNear(const glm::dvec3& a, const glm::dvec3& b)
-{
-    for (int i = 0; i < 3; ++i)
-        CHECK(a[i] == doctest::Approx(b[i]).epsilon(1e-6));
-}
-
-size_t count(const char* type) { return run("ls", {{"type", type}}).size(); }
 
 /** Full paths, which later copies with the same short names can't make ambiguous. */
 std::vector<std::string> full(const json& made)

@@ -11,8 +11,6 @@
 
 namespace lila::gn::nodes::curveops
 {
-using D3 = glm::dvec3;
-
 /** Arc length at each point; closed curves get one more entry, the length with the closing segment. */
 std::vector<double> cumulative(std::span<const D3> p, bool cyclic)
 {

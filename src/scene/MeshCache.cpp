@@ -85,7 +85,7 @@ private:
     double mTime = 0.0;
 };
 
-AttrDef param(std::string name, PlugType type, PlugValue def, uint32_t flags, std::string doc)
+AttrDef cacheAttr(std::string name, PlugType type, PlugValue def, uint32_t flags, std::string doc)
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = flags, .doc = std::move(doc)};
 }
@@ -209,11 +209,11 @@ void registerTypes()
         kType, "movie",
         "Plays back a point cache: every point's position per frame, read from USD time samples or recorded with "
         "bakeMeshCache, interpolated between samples. Deformers above it move the cached motion.",
-        {param("samples", PlugType::Data, DataPtr(), AttrInput | AttrStorable | AttrHidden, "The cached positions, object space."),
-         param("timeOffset", PlugType::Float, 0.0, AttrInput | AttrStorable | AttrKeyable,
+        {cacheAttr("samples", PlugType::Data, DataPtr(), AttrInput | AttrStorable | AttrHidden, "The cached positions, object space."),
+         cacheAttr("timeOffset", PlugType::Float, 0.0, AttrInput | AttrStorable | AttrKeyable,
                "Seconds the cache starts later: cache time is (scene time - timeOffset) * speed."),
-         param("speed", PlugType::Float, 1.0, AttrInput | AttrStorable | AttrKeyable, "Playback rate of the cache; 2 plays twice as fast."),
-         param("interpolate", PlugType::Bool, true, AttrInput | AttrStorable,
+         cacheAttr("speed", PlugType::Float, 1.0, AttrInput | AttrStorable | AttrKeyable, "Playback rate of the cache; 2 plays twice as fast."),
+         cacheAttr("interpolate", PlugType::Bool, true, AttrInput | AttrStorable,
                "Blend linearly between samples; off holds each sample until the next."),
          {.name = "outOfRange", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
           .enumNames = {"hold", "loop"}, .doc = "Before the first or after the last sample: hold that sample, or loop the cache."}},

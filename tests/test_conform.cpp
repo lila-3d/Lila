@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Conform.h"
 #include "geo/Mesh.h"
@@ -15,21 +17,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using geo::Index;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
-
-const geo::Mesh& meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 /** Plane point id at column i, row j (rows run toward -Z). */
 Index gridId(int sx, int i, int j) { return Index(j * (sx + 1) + i); }
 
@@ -250,7 +241,7 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     for (int i = 0; i <= 4; ++i)
         rows.push_back(gridId(4, i, 0)), rows.push_back(gridId(4, i, 2));
     run("selectComponents", {{"args", {plane}}, {"vertices", rows}});
-    ui("polyStraighten");
+    runUi("polyStraighten");
     for (Index p : rows)
         CHECK(meshOf(plane).position(p).y == doctest::Approx(0.0));
     CHECK(meshOf(plane).position(gridId(4, 2, 0)).x == doctest::Approx(0.0));
@@ -269,7 +260,7 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     for (int f = 0; f < 16; ++f)
         all.push_back(f);
     run("selectComponents", {{"args", {plane}}, {"faces", all}});
-    ui("polyCircularize");
+    runUi("polyCircularize");
     auto radiusOf = [&](Index p) { return glm::length(glm::dvec2(meshOf(plane).position(p).x, meshOf(plane).position(p).z)); };
     CHECK(radiusOf(gridId(4, 0, 0)) == doctest::Approx(radiusOf(gridId(4, 2, 0))));
     REQUIRE(scene::lastOp::live());
@@ -277,7 +268,7 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     CHECK(radiusOf(gridId(4, 0, 0)) == doctest::Approx(30.0));
     CHECK(radiusOf(gridId(4, 3, 4)) == doctest::Approx(30.0));
     CHECK(radiusOf(gridId(4, 1, 1)) < 30.0);
-    ui("polyConformShape", {{"shape", "square"}});
+    runUi("polyConformShape", {{"shape", "square"}});
     run("undo");
     CHECK(radiusOf(gridId(4, 3, 4)) == doctest::Approx(30.0));
 
@@ -286,7 +277,7 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
     run("convertSelection", {{"args", {"vertex"}}});
     run("selectAllComponents");
-    ui("polySpherize");
+    runUi("polySpherize");
     std::vector<double> radii;
     const geo::Mesh& m = meshOf(cube);
     for (Index p = 0; p < m.pointCapacity(); ++p)
@@ -300,7 +291,7 @@ TEST_CASE("conform commands: straighten, circularize, spherize, shape and object
     plane = run("polyPlane", {{"width", 60}, {"depth", 60}, {"subdivisionsX", 2}, {"subdivisionsZ", 2}})[0];
     run("move", {{"args", {plane}}, {"to", {0, 48, 0}}});
     run("selectComponents", {{"args", {plane}}, {"faces", {0, 1, 2, 3}}});
-    ui("polyConformToObject", {{"target", cyl}});
+    runUi("polyConformToObject", {{"target", cyl}});
     json pts = run("meshData", {{"args", {plane}}, {"worldSpace", true}})["points"];
     int onRim = 0;
     for (const json& p : pts)

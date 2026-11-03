@@ -1,6 +1,7 @@
 #include "geo/StlIO.h"
 
 #include "geo/ColorSets.h"
+#include "geo/IoCommon.h"
 #include "geo/Normals.h"
 #include "geo/PointWeld.h"
 #include "geo/Triangulate.h"
@@ -24,15 +25,12 @@ namespace lila::geo
 {
 namespace
 {
+using detail::appendNumber;
+using detail::linearToSrgb;
+using detail::srgbToLinear;
+
 constexpr size_t kHeader = 80;
 constexpr size_t kTriangle = 50;
-
-float srgbToLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
-float linearToSrgb(float c)
-{
-    c = std::clamp(c, 0.0f, 1.0f);
-    return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
-}
 
 template <class T> T load(const char* p)
 {
@@ -443,14 +441,6 @@ std::string_view trimLeft(std::string_view s)
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
         s.remove_prefix(1);
     return s;
-}
-
-void appendNumber(std::string& s, float v, int precision)
-{
-    char buf[64];
-    auto r = precision > 0 ? std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, precision)
-                           : std::to_chars(buf, buf + sizeof(buf), v);
-    s.append(buf, r.ptr);
 }
 
 template <class T> void store(std::string& s, T v)

@@ -140,7 +140,7 @@ template <class Vec> uint32_t scanCounts(Vec& v)
         std::plus<uint32_t>());
 }
 
-glm::dvec3 safeNormalize(const glm::dvec3& v, const glm::dvec3& fallback)
+glm::dvec3 normalizeOr(const glm::dvec3& v, const glm::dvec3& fallback)
 {
     const double len = glm::length(v);
     return len > 1e-300 ? v / len : fallback;
@@ -160,7 +160,7 @@ std::vector<glm::dvec3> faceNormals(const Mesh& mesh)
     std::vector<glm::dvec3> out = faceAreaVectors(mesh);
     tbb::parallel_for(tbb::blocked_range<size_t>(0, out.size(), kGrain), [&](const tbb::blocked_range<size_t>& r) {
         for (size_t f = r.begin(); f < r.end(); ++f)
-            out[f] = safeNormalize(out[f], glm::dvec3(0.0, 1.0, 0.0));
+            out[f] = normalizeOr(out[f], glm::dvec3(0.0, 1.0, 0.0));
     });
     return out;
 }
@@ -180,7 +180,7 @@ std::vector<glm::vec3> pointNormals(const Mesh& mesh, NormalWeight weight)
             mesh.forEachPointCorner(p, [&](Index c) {
                 sum += cornerContribution(mesh, c, area[mesh.cornerFace(c)], weight);
             });
-            out[p] = glm::vec3(safeNormalize(sum, glm::dvec3(0.0, 1.0, 0.0)));
+            out[p] = glm::vec3(normalizeOr(sum, glm::dvec3(0.0, 1.0, 0.0)));
         }
     });
     return out;
@@ -212,8 +212,8 @@ std::vector<glm::vec3> cornerNormals(const Mesh& mesh, const CornerNormalOptions
             for (size_t i = 0; i < k; ++i)
             {
                 const Index c = s.corners[i];
-                const glm::dvec3 fallback = safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
-                out[c] = glm::vec3(safeNormalize(s.sum[s.find(Index(i))], fallback));
+                const glm::dvec3 fallback = normalizeOr(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
+                out[c] = glm::vec3(normalizeOr(s.sum[s.find(Index(i))], fallback));
             }
         }
     });
@@ -371,7 +371,7 @@ void CornerNormalPlan::compute(const Mesh& mesh, std::span<glm::vec3> out)
         for (size_t row = r.begin(); row < r.end(); ++row)
         {
             const glm::vec3 n = mFanNormal[mRowFan[row]];
-            out[row] = n != glm::vec3(0.0f) ? n : glm::vec3(safeNormalize(mArea[mRowFace[row]], glm::dvec3(0.0, 1.0, 0.0)));
+            out[row] = n != glm::vec3(0.0f) ? n : glm::vec3(normalizeOr(mArea[mRowFace[row]], glm::dvec3(0.0, 1.0, 0.0)));
         }
     });
 }
@@ -462,13 +462,13 @@ std::vector<glm::vec3> weightedNormals(const Mesh& mesh, const WeightedNormalOpt
                 const Index root = find(Index(i));
                 if (strengthOf(c) != s.maxStrength[root] || s.weight[i] < dominance * s.maxWeight[root])
                     continue;
-                s.sum[root] += safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0)) * s.weight[i];
+                s.sum[root] += normalizeOr(area[mesh.cornerFace(c)], glm::dvec3(0.0)) * s.weight[i];
             }
             for (size_t i = 0; i < k; ++i)
             {
                 const Index c = s.corners[i];
-                const glm::dvec3 fallback = safeNormalize(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
-                out[c] = glm::vec3(safeNormalize(s.sum[find(Index(i))], fallback));
+                const glm::dvec3 fallback = normalizeOr(area[mesh.cornerFace(c)], glm::dvec3(0.0, 1.0, 0.0));
+                out[c] = glm::vec3(normalizeOr(s.sum[find(Index(i))], fallback));
             }
         }
     });

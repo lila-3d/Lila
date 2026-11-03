@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/GameExport.h"
 #include "math/MathCore.h"
@@ -10,11 +11,11 @@
 #include <filesystem>
 
 using namespace lila;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
 std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
 
 fs::path tempDir()
@@ -33,18 +34,6 @@ std::map<std::string, json> planned(const json& r)
         out[fs::path(j["file"].get<std::string>()).filename().string()] = j["nodes"];
     return out;
 }
-
-struct Loaded
-{
-    ufbx_scene* scene = nullptr;
-    explicit Loaded(const fs::path& p)
-    {
-        ufbx_load_opts opts{};
-        ufbx_error err{};
-        scene = ufbx_load_file(p.string().c_str(), &opts, &err);
-    }
-    ~Loaded() { ufbx_free_scene(scene); }
-};
 } // namespace
 
 TEST_CASE("game export: what goes in which file")
@@ -98,7 +87,7 @@ TEST_CASE("game export writes per-set files with units and smoothing options")
     CHECK(fs::exists(dir / "Props.fbx"));
     CHECK(fs::exists(dir / "Plants.fbx"));
 
-    Loaded props(dir / "Props.fbx");
+    UfbxScene props(dir / "Props.fbx");
     REQUIRE(props.scene);
     CHECK(props.scene->settings.unit_meters == doctest::Approx(1.0));
     const ufbx_node* rock = ufbx_find_node(props.scene, "Rock");
@@ -109,7 +98,7 @@ TEST_CASE("game export writes per-set files with units and smoothing options")
     CHECK_FALSE(ufbx_find_node(props.scene, "Tree"));
 
     run("gameExport", {{"path", dir.string()}, {"filename", "All"}});
-    Loaded all(dir / "All.fbx");
+    UfbxScene all(dir / "All.fbx");
     REQUIRE(all.scene);
     CHECK(all.scene->settings.unit_meters == doctest::Approx(0.01));
     REQUIRE(ufbx_find_node(all.scene, "Rock"));

@@ -10,7 +10,7 @@ namespace tailor
 {
 namespace
 {
-glm::vec3 toVec(const Vec3& v) { return {v[0], v[1], v[2]}; }
+glm::vec3 toGlm(const Vec3& v) { return {v[0], v[1], v[2]}; }
 
 int root(std::vector<int>& parent, int i)
 {
@@ -51,7 +51,7 @@ GarmentSurface garmentSurface(const ClothMesh& mesh, const std::vector<Vec3>& po
             count.push_back(0);
         }
         index[i] = index[r];
-        sum[index[i]] += toVec(positions[i]);
+        sum[index[i]] += toGlm(positions[i]);
         ++count[index[i]];
     }
     out.points.resize(sum.size());
@@ -90,7 +90,7 @@ GarmentSurface garmentSurface(const ClothMesh& mesh, const std::vector<Vec3>& po
     std::vector<glm::vec3> normal(np, glm::vec3(0.f));
     for (const auto& t : out.tris)
     {
-        const glm::vec3 a = toVec(out.points[t[0]]), b = toVec(out.points[t[1]]), c = toVec(out.points[t[2]]);
+        const glm::vec3 a = toGlm(out.points[t[0]]), b = toGlm(out.points[t[1]]), c = toGlm(out.points[t[2]]);
         const glm::vec3 an = glm::cross(b - a, c - a);
         for (int v : t)
             normal[v] += an;
@@ -98,7 +98,7 @@ GarmentSurface garmentSurface(const ClothMesh& mesh, const std::vector<Vec3>& po
     for (int i = 0; i < np; ++i)
     {
         const float l = glm::length(normal[i]);
-        const glm::vec3 p = toVec(out.points[i]) - (l > 1e-20f ? normal[i] / l : glm::vec3(0.f)) * options.thickness;
+        const glm::vec3 p = toGlm(out.points[i]) - (l > 1e-20f ? normal[i] / l : glm::vec3(0.f)) * options.thickness;
         out.points.push_back({p.x, p.y, p.z});
     }
 

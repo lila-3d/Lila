@@ -10,21 +10,7 @@ using namespace lila::scene;
 namespace
 {
 const char* kJoints[] = {"bone_a", "bone_b", "bone_c"};
-const double kTimes[] = {0.0, 1.0, 2.0};
-
-std::string skinnedCylinder()
-{
-    run("newScene");
-    std::string mesh = run("polyCylinder", {{"name", "Tube"}, {"radius", 10}, {"height", 100}, {"subdivisionsHeight", 10}, {"caps", false}})[0];
-    run("select", {{"args", json::array()}});
-    run("joint", {{"position", v3(0, -50, 0)}, {"name", "bone_a"}});
-    run("joint", {{"position", v3(0, 0, 0)}, {"name", "bone_b"}});
-    run("joint", {{"position", v3(0, 50, 0)}, {"name", "bone_c"}});
-    run("skinCluster", {{"args", {"bone_a", mesh}}});
-    return mesh;
-}
-
-void key(const std::string& plug, double t, double v) { run("setKeyframe", {{"args", {plug}}, {"time", t}, {"value", v}}); }
+const double kKeyTimes[] = {0.0, 1.0, 2.0};
 
 /** Euler keys on bone_a and bone_b at uneven times, a rotation curve on bone_c, and translate keys on bone_a. */
 void animate()
@@ -58,7 +44,7 @@ using Worlds = std::vector<std::vector<glm::dmat4>>;
 Worlds worldsAtKeys()
 {
     Worlds out;
-    for (double t : kTimes)
+    for (double t : kKeyTimes)
     {
         graph().setTime(t);
         std::vector<glm::dmat4> w;
@@ -75,13 +61,6 @@ void checkMatrix(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-6)
     for (int c = 0; c < 4; ++c)
         for (int r = 0; r < 4; ++r)
             CHECK(a[c][r] == doctest::Approx(b[c][r]).epsilon(eps).scale(1.0));
-}
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    MeshPtr m = outMesh(mesh);
-    REQUIRE(m);
-    return {m->positions().begin(), m->positions().end()};
 }
 
 void checkPoints(const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b)

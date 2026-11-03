@@ -5,6 +5,7 @@
 #include "uv/Metrics.h"
 #include "uv/OptimizeMath.h"
 #include "uv/Unwrap.h"
+#include "uv/UvCommon.h"
 
 #include <tbb/parallel_for.h>
 
@@ -29,11 +30,6 @@ constexpr size_t kTrialsPerStep = 8;
 constexpr int kMaxSplits = 400;
 constexpr int kMaxMergeTrials = 600;
 constexpr double kInf = std::numeric_limits<double>::infinity();
-
-uint64_t edgeKey(Index a, Index b)
-{
-    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
-}
 
 /** Symmetric Dirichlet energy of one triangle times its area, with the uvs scaled by scale. */
 double triEnergy(const Chart& ch, const TriFrame& f, size_t i, double sign, double scale = 1.0)
@@ -446,7 +442,7 @@ void cutToDisksInto(State& s)
             s.cut[e] = 1;
 }
 
-Index writeSeams(State& s, bool keep)
+Index writeCutSeams(State& s, bool keep)
 {
     geo::Mesh& m = s.mesh;
     std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
@@ -553,7 +549,7 @@ OptCutsResult optCuts(geo::Mesh& mesh, std::span<const Index> faceIds, const Aut
             overlapping.insert(overlapping.end(), ch.faces.begin(), ch.faces.end());
             ++res.overlapFixes;
         }
-    res.seams.seamEdges = writeSeams(s, opts.keepSeams);
+    res.seams.seamEdges = writeCutSeams(s, opts.keepSeams);
     if (!overlapping.empty())
     {
         std::sort(overlapping.begin(), overlapping.end());

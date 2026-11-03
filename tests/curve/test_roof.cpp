@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Roof.h"
 #include "geo/Attribute.h"
 #include "geo/Mesh.h"
@@ -14,11 +16,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 curve::Spline footprint(std::vector<D3> pts)
 {
     curve::Spline s;
@@ -29,7 +30,7 @@ curve::Spline footprint(std::vector<D3> pts)
     return s;
 }
 
-curve::Spline rect(double w, double d) { return footprint({D3(0, 0, 0), D3(w, 0, 0), D3(w, 0, -d), D3(0, 0, -d)}); }
+curve::Spline rectFootprint(double w, double d) { return footprint({D3(0, 0, 0), D3(w, 0, 0), D3(w, 0, -d), D3(0, 0, -d)}); }
 
 int faces(const geo::Mesh& m, int part)
 {
@@ -63,7 +64,7 @@ TEST_CASE("roof: hip and gable roofs over a rectangle")
 {
     curve::RoofOptions o;
     o.pitch = 45.0;
-    curve::RoofResult r = curve::roof({rect(20, 10)}, o);
+    curve::RoofResult r = curve::roof({rectFootprint(20, 10)}, o);
     CHECK(r.warnings.empty());
     // Two trapezoids and two hip triangles meeting at a ridge 5 up.
     CHECK(faces(r.mesh, 0) == 4);
@@ -74,7 +75,7 @@ TEST_CASE("roof: hip and gable roofs over a rectangle")
     CHECK(r.mesh.cornerAttrs().has(geo::attr::uvName(0)));
 
     o.gableEnds = true;
-    r = curve::roof({rect(20, 10)}, o);
+    r = curve::roof({rectFootprint(20, 10)}, o);
     CHECK(faces(r.mesh, 0) == 2);
     CHECK(faces(r.mesh, 1) == 2);
     CHECK(r.mesh.bounds().max.y == doctest::Approx(5.0));
@@ -90,7 +91,7 @@ TEST_CASE("roof: hip and gable roofs over a rectangle")
     o.gables = {1};
     o.height = 8.0;
     o.overhang = 1.0;
-    r = curve::roof({rect(20, 10)}, o);
+    r = curve::roof({rectFootprint(20, 10)}, o);
     CHECK(faces(r.mesh, 1) == 1);
     CHECK(r.mesh.bounds().max.y == doctest::Approx(8.0));
     CHECK(r.mesh.bounds().min.x == doctest::Approx(-1.0));
@@ -108,7 +109,7 @@ TEST_CASE("roof: L, courtyard and a thick slab")
     CHECK(r.mesh.bounds().max.y == doctest::Approx(4.0 * std::tan(glm::radians(30.0))));
     checkUp(r.mesh);
 
-    curve::Spline outer = rect(30, 30), court = footprint({D3(10, 0, -10), D3(10, 0, -20), D3(20, 0, -20), D3(20, 0, -10)});
+    curve::Spline outer = rectFootprint(30, 30), court = footprint({D3(10, 0, -10), D3(10, 0, -20), D3(20, 0, -20), D3(20, 0, -10)});
     r = curve::roof({outer, court}, o);
     CHECK(r.warnings.empty());
     CHECK(faces(r.mesh, 0) == 8);
@@ -116,7 +117,7 @@ TEST_CASE("roof: L, courtyard and a thick slab")
 
     o.thickness = 0.5;
     o.overhang = 2.0;
-    r = curve::roof({rect(20, 10)}, o);
+    r = curve::roof({rectFootprint(20, 10)}, o);
     CHECK(open(r.mesh) == 0);
     CHECK(r.mesh.validate().empty());
     CHECK(faces(r.mesh, 2) == 4);
@@ -141,7 +142,7 @@ TEST_CASE("inset and centre lines on the skeleton")
     CHECK(r.curves.empty());
     CHECK(!r.warnings.empty());
     // A long rectangle's centre line is its ridge.
-    r = curve::centerLines({rect(20, 6)}, D3(0), 0.01);
+    r = curve::centerLines({rectFootprint(20, 6)}, D3(0), 0.01);
     REQUIRE(r.curves.size() == 1);
     CHECK(curve::length(r.curves[0]) == doctest::Approx(14.0));
 }

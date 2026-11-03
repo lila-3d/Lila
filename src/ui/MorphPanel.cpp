@@ -14,6 +14,8 @@
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/SpinScrub.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
@@ -48,51 +50,10 @@ namespace
 {
 using scene::Graph;
 
-enum Column
-{
-    kName,
-    kSlider,
-    kValue,
-    kEdit,
-    kInfo,
-};
-
 constexpr int kTargetRole = Qt::UserRole;
-constexpr int kSliderSteps = 1000;
+constexpr int kWeightSliderSteps = 1000;
 
 std::string gCurrentTarget;
-
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    return b;
-}
-
-json selectionNames()
-{
-    Graph& g = Graph::current();
-    json out = json::array();
-    for (scene::NodeId id : g.selection())
-        out.push_back(g.node(id)->path());
-    return out;
-}
 
 /** The morph of the lead selection: a mesh's, a target's, or the morph itself. */
 std::string selectedMorph()
@@ -272,8 +233,8 @@ void setSliderRange(const std::string& target, double lo, double hi)
     }
     UndoStack& undo = UndoStack::get();
     undo.openChunk("Set Morph Slider Range");
-    run("setAttr", {{"args", {target + ".sliderMin", lo}}});
-    run("setAttr", {{"args", {target + ".sliderMax", hi}}});
+    runUi("setAttr", {{"args", {target + ".sliderMin", lo}}});
+    runUi("setAttr", {{"args", {target + ".sliderMax", hi}}});
     undo.closeChunk();
 }
 
@@ -346,7 +307,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
         json args = json::array({sel.back()});
         for (size_t i = 0; i + 1 < sel.size(); ++i)
             args.push_back(sel[i]);
-        run("addMorphTarget", {{"args", args}});
+        runUi("addMorphTarget", {{"args", args}});
     });
     add("square-plus", "Add an empty target to sculpt with Edit", [this] {
         if (mMorph.empty())
@@ -354,7 +315,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
         bool ok = false;
         QString name = QInputDialog::getText(this, "New Morph Target", "Name", QLineEdit::Normal, "Target", &ok);
         if (ok && !name.isEmpty())
-            run("addMorphTarget", {{"args", {mMorph}}, {"name", name.toStdString()}});
+            runUi("addMorphTarget", {{"args", {mMorph}}, {"name", name.toStdString()}});
     });
     add("pencil", "Edit the current target: sculpt its shape on an edit mesh, click again to bake it back", [] { onTarget("editMorphTarget"); });
     add("timeline", "Add an in-between to the current target (weight in the option box)", [] { onTarget("addInBetween"); });
@@ -366,7 +327,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
     bar->addStretch(1);
     add("trash", "Remove the current target", [] {
         if (std::string t = currentMorphTarget(); !t.empty())
-            run("removeMorphTarget", {{"args", {t}}});
+            runUi("removeMorphTarget", {{"args", {t}}});
     });
     v->addLayout(bar);
 
@@ -377,7 +338,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
     mTree = new QTreeWidget(this);
     deletion::claim(mTree, [] {
         if (std::string t = currentMorphTarget(); !t.empty())
-            run("removeMorphTarget", {{"args", {t}}});
+            runUi("removeMorphTarget", {{"args", {t}}});
     });
     mTree->setColumnCount(5);
     mTree->setHeaderLabels({"Target", "Weight", "", "", ""});
@@ -409,7 +370,7 @@ MorphTargetsPanel::MorphTargetsPanel(QWidget* parent) : QWidget(parent)
         bool ok = false;
         QString name = QInputDialog::getText(this, "Rename Morph Target", "Name", QLineEdit::Normal, item->text(kName), &ok);
         if (ok && !name.isEmpty() && name != item->text(kName))
-            if (json r = run("renameMorphTarget", {{"args", {t, name.toStdString()}}}); r.is_string())
+            if (json r = runUi("renameMorphTarget", {{"args", {t, name.toStdString()}}}); r.is_string())
                 gCurrentTarget = r.get<std::string>();
     });
 
@@ -467,7 +428,7 @@ void MorphTargetsPanel::refresh()
     Graph& g = Graph::current();
     if (!mMorph.empty() && !findNode(mMorph))
         mMorph.clear();
-    json list = mMorph.empty() ? json::array() : run("morphTargets", {{"args", {mMorph}}});
+    json list = mMorph.empty() ? json::array() : runUi("morphTargets", {{"args", {mMorph}}});
     if (!list.is_array())
         list = json::array();
     std::string meshName;
@@ -506,11 +467,11 @@ void MorphTargetsPanel::refresh()
         const double weight = t["weight"].get<double>();
         const double lo = t["sliderMin"].get<double>(), hi = std::max(t["sliderMax"].get<double>(), lo + 1e-3);
         auto* slider = new QSlider(Qt::Horizontal, mTree);
-        slider->setRange(int(std::lround(lo * kSliderSteps)), int(std::lround(hi * kSliderSteps)));
-        slider->setValue(int(std::lround(std::clamp(weight, lo, hi) * kSliderSteps)));
+        slider->setRange(int(std::lround(lo * kWeightSliderSteps)), int(std::lround(hi * kWeightSliderSteps)));
+        slider->setValue(int(std::lround(std::clamp(weight, lo, hi) * kWeightSliderSteps)));
         slider->setEnabled(!driven);
         slider->setToolTip(QString("%1 to %2").arg(lo).arg(hi) + "\n" + resetHint("0"));
-        slider->installEventFilter(new MiddleClickReset(slider, [node] { run("setAttr", {{"args", {node + ".weight", 0.0}}}); }));
+        slider->installEventFilter(new MiddleClickReset(slider, [node] { runUi("setAttr", {{"args", {node + ".weight", 0.0}}}); }));
         auto* value = new QDoubleSpinBox(mTree);
         value->setRange(std::min(-10.0, lo), std::max(10.0, hi));
         value->setKeyboardTracking(false);
@@ -526,7 +487,7 @@ void MorphTargetsPanel::refresh()
         auto start = std::make_shared<double>(weight);
         connect(slider, &QSlider::sliderPressed, this, [start, value] { *start = value->value(); });
         connect(slider, &QSlider::valueChanged, this, [slider, value, node](int v) {
-            const double w = double(v) / kSliderSteps;
+            const double w = double(v) / kWeightSliderSteps;
             value->blockSignals(true);
             value->setValue(w);
             value->blockSignals(false);
@@ -534,18 +495,18 @@ void MorphTargetsPanel::refresh()
                 previewWeight(node, w);
         });
         connect(slider, &QSlider::sliderReleased, this, [slider, start, node] {
-            const double w = double(slider->value()) / kSliderSteps;
+            const double w = double(slider->value()) / kWeightSliderSteps;
             previewWeight(node, *start);
-            run("setAttr", {{"args", {node + ".weight", w}}});
+            runUi("setAttr", {{"args", {node + ".weight", w}}});
         });
-        connect(value, &QDoubleSpinBox::valueChanged, this, [node](double w) { run("setAttr", {{"args", {node + ".weight", w}}}); });
+        connect(value, &QDoubleSpinBox::valueChanged, this, [node](double w) { runUi("setAttr", {{"args", {node + ".weight", w}}}); });
         mTree->setItemWidget(item, kSlider, slider);
         mTree->setItemWidget(item, kValue, value);
 
         auto* edit = toolButton(mTree, "pencil", "Edit mode: sculpt this target on an edit mesh; click again to bake it back");
         edit->setCheckable(true);
         edit->setChecked(t["editing"].is_string());
-        connect(edit, &QToolButton::clicked, this, [node](bool on) { run("editMorphTarget", {{"args", {node}}, {"on", on}}); });
+        connect(edit, &QToolButton::clicked, this, [node](bool on) { runUi("editMorphTarget", {{"args", {node}}, {"on", on}}); });
         mTree->setItemWidget(item, kEdit, edit);
         if (node == keep)
             mTree->setCurrentItem(item);
@@ -561,7 +522,7 @@ void MorphTargetsPanel::fillTargetMenu(QMenu* menu, QTreeWidgetItem* item)
         return;
     const double lo = n->as<double>(scene::morphs::kSliderMin), hi = n->as<double>(scene::morphs::kSliderMax);
     auto* slider = qobject_cast<QSlider*>(mTree->itemWidget(item, kSlider));
-    menu->addAction("Reset Weight", this, [node] { run("setAttr", {{"args", {node + ".weight", 0.0}}}); })
+    menu->addAction("Reset Weight", this, [node] { runUi("setAttr", {{"args", {node + ".weight", 0.0}}}); })
         ->setEnabled(slider && slider->isEnabled());
     QMenu* range = menu->addMenu("Slider Range");
     bool preset = false;
@@ -605,7 +566,7 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
         bool ok = false;
         double v = QInputDialog::getDouble(this, "Set Driven Key", "Driven value at the driver's current value", 0.0, -1e9, 1e9, 4, &ok);
         if (ok)
-            run("setDrivenKey", {{"args", {c}}, {"value", v}});
+            runUi("setDrivenKey", {{"args", {c}}, {"value", v}});
     });
     add("cursor-text", "Set the curve name the channel bakes into on export (Unreal curve)", [this] {
         std::string c = current();
@@ -614,12 +575,12 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
         bool ok = false;
         QString name = QInputDialog::getText(this, "Curve Name", "Unreal curve (empty for none)", QLineEdit::Normal, "", &ok);
         if (ok)
-            run("editDrivenChannel", {{"args", {c}}, {"curveName", name.toStdString()}});
+            runUi("editDrivenChannel", {{"args", {c}}, {"curveName", name.toStdString()}});
     });
     bar->addStretch(1);
     add("trash", "Delete the current channel; the driven plug keeps its value", [this] {
         if (std::string c = current(); !c.empty())
-            run("removeDrivenChannel", {{"args", {c}}});
+            runUi("removeDrivenChannel", {{"args", {c}}});
     });
     v->addLayout(bar);
 
@@ -629,7 +590,7 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
     mTree->setHeaderLabels({"Driver", "Driven", "Curve"});
     deletion::claim(mTree, [this] {
         if (std::string c = current(); !c.empty())
-            run("removeDrivenChannel", {{"args", {c}}});
+            runUi("removeDrivenChannel", {{"args", {c}}});
     });
     mTree->setRootIsDecorated(false);
     mTree->setIndentation(0);
@@ -670,18 +631,18 @@ DrivenChannelsPanel::DrivenChannelsPanel(QWidget* parent) : QWidget(parent)
         std::string c = current();
         if (c.empty())
             return;
-        json info = run("drivenChannels", {{"args", {c}}});
+        json info = runUi("drivenChannels", {{"args", {c}}});
         if (!info.is_array() || info.empty())
             return;
         json keys = info[0]["keys"];
         double in = keys.empty() ? 0.0 : keys.back()[0].get<double>() + 1.0;
         double out = keys.empty() ? 0.0 : keys.back()[1].get<double>();
-        run("setDrivenKey", {{"args", {c}}, {"input", in}, {"value", out}});
+        runUi("setDrivenKey", {{"args", {c}}, {"input", in}, {"value", out}});
     });
     auto removeDrivenKey = [this] {
         std::string c = current();
         if (!c.empty() && mKeys->currentRow() >= 0)
-            run("removeDrivenKey", {{"args", {c}}, {"index", mKeys->currentRow()}});
+            runUi("removeDrivenKey", {{"args", {c}}, {"index", mKeys->currentRow()}});
     };
     connect(removeKey, &QToolButton::clicked, this, removeDrivenKey);
     deletion::claim(mKeys, removeDrivenKey);
@@ -725,7 +686,7 @@ void DrivenChannelsPanel::refresh()
     if (QWidget* f = QApplication::focusWidget(); f && mKeys->isAncestorOf(f))
         return;
     const std::string keep = current();
-    json list = run("drivenChannels", json::object());
+    json list = runUi("drivenChannels", json::object());
     mTree->blockSignals(true);
     mTree->clear();
     for (const json& c : list.is_array() ? list : json::array())
@@ -797,7 +758,7 @@ void DrivenChannelsPanel::commitKeys()
         auto* combo = qobject_cast<QComboBox*>(mKeys->cellWidget(r, 2));
         keys.push_back({in, out, combo ? combo->currentText().toStdString() : std::string("linear")});
     }
-    run("editDrivenChannel", {{"args", {c}}, {"keys", keys}});
+    runUi("editDrivenChannel", {{"args", {c}}, {"keys", keys}});
 }
 
 // ------------------------------------------------------------------------------------------------ actions
@@ -850,7 +811,7 @@ void registerMorphUi()
                   .run =
                       [] {
                           if (std::string t = currentMorphTarget(); !t.empty())
-                              run("removeMorphTarget", {{"args", {t}}});
+                              runUi("removeMorphTarget", {{"args", {t}}});
                       },
                   .enabled = [] { return !currentMorphTarget().empty(); },
                   .doc = "Removes the current morph target from its morph."});

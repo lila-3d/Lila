@@ -25,19 +25,6 @@ namespace
 {
 constexpr double kPickPx = 25.0;
 
-/** The world matrix of the first mesh a garment feeds, which places its points. */
-glm::dmat4 garmentWorld(Graph& g, NodeId garment)
-{
-    const Node* n = g.node(garment);
-    if (!n)
-        return glm::dmat4(1.0);
-    for (const PlugRef& d : g.destinations({garment, n->type().attrIndex("outMesh")}))
-        if (const Node* mesh = g.node(d.node))
-            if (const PlugValue v = g.value({mesh->id(), Transform::kWorldMatrix}); const auto* m = std::get_if<glm::dmat4>(&v))
-                return *m;
-    return glm::dmat4(1.0);
-}
-
 class GrabTool final : public ViewportTool
 {
 public:

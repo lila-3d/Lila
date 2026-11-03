@@ -18,14 +18,6 @@ namespace puppeteer
 {
 namespace
 {
-bool isUnder(Graph& g, NodeId node, NodeId ancestor)
-{
-    for (NodeId cur = node; cur; cur = g.parent(cur))
-        if (cur == ancestor)
-            return true;
-    return false;
-}
-
 NodeId rootOf(Graph& g, NodeId character)
 {
     Node* r = character ? named(g, textOf(*g.node(character), "root")) : nullptr;

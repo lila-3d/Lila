@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Dxf.h"
 #include "curve/Planar.h"
@@ -19,11 +21,10 @@ using namespace lila;
 using json = nlohmann::json;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 using Pairs = std::vector<std::pair<int, std::string>>;
 
 std::string ascii(const Pairs& entities, const Pairs& blocks = {}, const Pairs& header = {})
@@ -46,17 +47,6 @@ std::string ascii(const Pairs& entities, const Pairs& blocks = {}, const Pairs& 
     add(entities);
     add({{0, "ENDSEC"}, {0, "EOF"}});
     return s;
-}
-
-double area(const curve::Spline& s)
-{
-    curve::TessOptions o;
-    o.chordError = 0.0005;
-    curve::Polyline pl = curve::tessellate(s, o);
-    std::vector<D2> p;
-    for (const D3& q : pl.points)
-        p.push_back(D2(q.x, q.y));
-    return curve::signedArea(p);
 }
 
 const curve::DxfLayer* layerNamed(const curve::DxfDocument& d, const std::string& name)

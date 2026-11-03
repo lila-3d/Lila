@@ -6,6 +6,7 @@
 #include "ui/FlagFields.h"
 #include "ui/LocateFlash.h"
 #include "ui/OptionBox.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -28,15 +29,7 @@ namespace
 {
 namespace opt = ops::options;
 namespace lo = scene::lastOp;
-constexpr const char* kCommand = "smartJoin";
-
-QWidget* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (w->inherits("QMainWindow") && w->isVisible())
-            return w;
-    return nullptr;
-}
+constexpr const char* kSmartJoinCommand = "smartJoin";
 
 class SmartJoinDialog : public QDialog
 {
@@ -58,10 +51,10 @@ public:
         grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(4);
         grid->setColumnStretch(1, 1);
-        const json values = opt::values(kCommand);
+        const json values = opt::values(kSmartJoinCommand);
         std::string section = "\x01";
         int row = 0;
-        for (const opt::Field& f : opt::fields(kCommand))
+        for (const opt::Field& f : opt::fields(kSmartJoinCommand))
         {
             if (f.section != section)
             {
@@ -78,7 +71,7 @@ public:
             }
             const std::string flag = f.flag;
             FlagFieldWidgets w = makeFlagField(f, values.value(flag, f.defaultValue), [this, flag](const json& v) {
-                opt::setValue(kCommand, flag, v);
+                opt::setValue(kSmartJoinCommand, flag, v);
                 // Another setting starts an undo step of its own.
                 if (flag != mEditing)
                     settle();
@@ -131,8 +124,8 @@ public:
         connect(mRerun, &QTimer::timeout, this, [this] { rerun(); });
         connect(join, &QPushButton::clicked, this, [this] { joinSelection(); });
         connect(reset, &QPushButton::clicked, this, [this] {
-            opt::reset(kCommand);
-            const json v = opt::values(kCommand);
+            opt::reset(kSmartJoinCommand);
+            const json v = opt::values(kSmartJoinCommand);
             for (auto& [flag, set] : mSetters)
                 if (set && v.contains(flag))
                     set(v[flag]);
@@ -166,7 +159,7 @@ private:
     bool live() const
     {
         const lo::Op* op = lo::current();
-        return !mTargets.empty() && lo::reachable() && op && op->command == kCommand;
+        return !mTargets.empty() && lo::reachable() && op && op->command == kSmartJoinCommand;
     }
 
     /** Ends the edit in progress, so the next one is an undo step of its own. */
@@ -205,7 +198,7 @@ private:
     {
         try
         {
-            const json r = ops::execute(kCommand, opt::callWith(kCommand), CallSource::UI);
+            const json r = ops::execute(kSmartJoinCommand, opt::callWith(kSmartJoinCommand), CallSource::UI);
             mTargets = {r.value("limb", std::string()), r.value("body", std::string())};
             showResult(r);
         }
@@ -220,7 +213,7 @@ private:
     {
         if (!live())
             return;
-        json call = opt::callWith(kCommand);
+        json call = opt::callWith(kSmartJoinCommand);
         // The join's own result is reverted first, which brings the inputs back under their names.
         call["args"] = mTargets;
         try
@@ -272,7 +265,7 @@ void registerSmartJoinUi()
     o.ranges = {{"segments", {0, 32, 1, ""}},       {"tension", {0, 4, 0.05, ""}},      {"twist", {-32, 32, 1, ""}},
                 {"relax", {0, 50, 1, ""}},          {"holeScale", {0.1, 4, 0.05, ""}},  {"offsetU", {-500, 500, 0.5, " cm"}},
                 {"offsetV", {-500, 500, 0.5, " cm"}}, {"limbLoop", {-1, 32, 1, ""}},    {"trimMargin", {0, 2, 0.05, ""}}};
-    opt::setOverride(kCommand, std::move(o));
+    opt::setOverride(kSmartJoinCommand, std::move(o));
     optionBox::addCustom("mesh.smartJoin", [] { openDialog(); });
 }
 } // namespace lila::ui

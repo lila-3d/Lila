@@ -40,14 +40,6 @@ json layout()
                         {"items", {{{"target", "pelvis"}, {"x", 100}, {"y", 100}, {"size", 20}},
                                    {{"target", "hand_l"}, {"x", 150}, {"y", 60}, {"size", 10}, {"shape", "circle"}, {"mirror", true}}}}}}}};
 }
-
-std::vector<std::string> selectedNames()
-{
-    std::vector<std::string> out;
-    for (NodeId id : graph().selection())
-        out.push_back(graph().node(id)->name());
-    return out;
-}
 } // namespace
 
 TEST_CASE("picker documents round trip through json, files and the scene")

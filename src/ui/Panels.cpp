@@ -6,6 +6,7 @@
 #include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/DisplayLayersPanel.h"
+#include "ui/UiCommon.h"
 #include "ui/UndoHistory.h"
 
 #include <QApplication>
@@ -28,14 +29,6 @@ std::function<void(const char*)>& showDockHook()
 
 constexpr const char* kDockedByUserPref = "/ui/dockedByUser";
 
-QDockWidget* findDock(const std::string& id)
-{
-    for (QWidget* top : QApplication::topLevelWidgets())
-        if (auto* dock = top->findChild<QDockWidget*>(QString::fromStdString(id)))
-            return dock;
-    return nullptr;
-}
-
 bool dockedByUser(const std::string& id)
 {
     for (const auto& v : PrefStore::get().value("general", kDockedByUserPref, nlohmann::json::array()))
@@ -50,7 +43,7 @@ std::function<void(const char*)>& toggleDockHook()
     return hook;
 }
 
-void toggle(const char* dock)
+void toggleDockByName(const char* dock)
 {
     if (toggleDockHook())
         toggleDockHook()(dock);
@@ -107,7 +100,7 @@ void panels::show(const std::string& id)
 
 void panels::toggle(const std::string& id)
 {
-    lila::ui::toggle(id.c_str());
+    lila::ui::toggleDockByName(id.c_str());
 }
 
 void panels::floatUnplaced(QDockWidget* dock)
@@ -198,7 +191,7 @@ void registerPanelActions()
                     throw CommandError("showPanel: no panel '" + id + "'");
                 if (a.get<bool>("hide"))
                 {
-                    if (const QDockWidget* dock = findDock(id); dock && dock->isVisible())
+                    if (const QDockWidget* dock = findDock(QString::fromStdString(id)); dock && dock->isVisible())
                         panels::toggle(id);
                 }
                 else
@@ -206,23 +199,23 @@ void registerPanelActions()
                 return nullptr;
             },
         });
-    actions::add({.id = "window.apiReference", .label = "API Reference", .category = "Windows", .run = [] { toggle(kApiReferenceDock); },
+    actions::add({.id = "window.apiReference", .label = "API Reference", .category = "Windows", .run = [] { toggleDockByName(kApiReferenceDock); },
                   .doc = "Searchable reference for every command and the lila Python package.",
                   .python = "lila.ui.run_action(\"window.apiReference\")"});
-    actions::add({.id = "window.scriptEditor", .label = "Script Editor", .category = "Windows", .run = [] { toggle(kScriptEditorDock); },
+    actions::add({.id = "window.scriptEditor", .label = "Script Editor", .category = "Windows", .run = [] { toggleDockByName(kScriptEditorDock); },
                   .doc = "Python editor with tabs, run selection and the API reference a key away.",
                   .python = "lila.ui.run_action(\"window.scriptEditor\")"});
-    actions::add({.id = "window.terminal", .label = "Terminal", .category = "Windows", .run = [] { toggle(kTerminalDock); },
+    actions::add({.id = "window.terminal", .label = "Terminal", .category = "Windows", .run = [] { toggleDockByName(kTerminalDock); },
                   .doc = "Shell in the workspace folder, with Lila's Python on PATH.",
                   .python = "lila.ui.run_action(\"window.terminal\")"});
-    actions::add({.id = "window.referenceEditor", .label = "Reference Editor", .category = "Windows", .run = [] { toggle(kReferenceEditorDock); },
+    actions::add({.id = "window.referenceEditor", .label = "Reference Editor", .category = "Windows", .run = [] { toggleDockByName(kReferenceEditorDock); },
                   .doc = "Lists the scene's references: load, unload, reload, import or remove them. Again to tuck it away.",
                   .python = "lila.ui.run_action(\"window.referenceEditor\")"});
-    actions::add({.id = "window.displayLayers", .label = "Display Layers", .category = "Windows", .run = [] { toggle(kDisplayLayersDock); },
+    actions::add({.id = "window.displayLayers", .label = "Display Layers", .category = "Windows", .run = [] { toggleDockByName(kDisplayLayersDock); },
                   .doc = "Display layer editor: show, hide, template or reference groups of objects together.",
                   .python = "lila.ui.run_action(\"window.displayLayers\")"});
     registerDisplayLayerActions();
-    actions::add({.id = "window.undoHistory", .label = "Undo History", .category = "Windows", .run = [] { toggle(kUndoHistoryDock); },
+    actions::add({.id = "window.undoHistory", .label = "Undo History", .category = "Windows", .run = [] { toggleDockByName(kUndoHistoryDock); },
                   .doc = "Lists the undo steps; click one to undo or redo to it.",
                   .python = "lila.ui.run_action(\"window.undoHistory\")"});
 }

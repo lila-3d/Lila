@@ -1,6 +1,7 @@
 // Settlement around and on a large structure: exclusions, streets-only layouts, routes, walkable surfaces, scale, and
 // the commands that edit them (undo, save and reopen).
 
+#include "TestUtil.h"
 #include "SettlementCore.h"
 
 #include "extensions/ExtensionManager.h"
@@ -18,11 +19,10 @@
 
 using namespace lila;
 using namespace settlement;
+using namespace settlementtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 Options profileOptions(const char* name, uint32_t seed = 1)
 {
     Options o;

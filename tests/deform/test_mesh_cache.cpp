@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Anim.h"
@@ -14,14 +16,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-Graph& graph() { return Graph::current(); }
-
 std::vector<glm::dvec3> pointsAt(const std::string& mesh, double t)
 {
     Graph& g = graph();
@@ -32,7 +31,7 @@ std::vector<glm::dvec3> pointsAt(const std::string& mesh, double t)
     return {m->positions().begin(), m->positions().end()};
 }
 
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-4) { return glm::length(a - b) <= eps; }
+bool nearLoose(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-4) { return glm::length(a - b) <= eps; }
 
 /** Rest points moved along x by 10 per second, sampled at 0, 1 and 2 seconds. */
 std::shared_ptr<MeshCacheSamples> sliding(const std::vector<glm::dvec3>& rest)
@@ -55,13 +54,6 @@ int cachesOn(const std::string& mesh)
         n += graph().node(id)->type().name == meshCache::kType;
     return n;
 }
-
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_deform_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
 } // namespace
 
 TEST_CASE("a mesh cache plays its samples back at the scene time, interpolated, held or looped")
@@ -76,29 +68,29 @@ TEST_CASE("a mesh cache plays its samples back at the scene time, interpolated, 
     REQUIRE(meshCache::samples(g, cache));
     CHECK(meshCache::samples(g, cache)->sampleCount() == 3);
 
-    CHECK(near(pointsAt(box, 0.0)[0], rest[0]));
-    CHECK(near(pointsAt(box, 0.5)[0], rest[0] + glm::dvec3(5, 0, 0)));
-    CHECK(near(pointsAt(box, 2.0)[3], rest[3] + glm::dvec3(20, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 0.0)[0], rest[0]));
+    CHECK(nearLoose(pointsAt(box, 0.5)[0], rest[0] + glm::dvec3(5, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 2.0)[3], rest[3] + glm::dvec3(20, 0, 0)));
     // Past the end it holds the last sample, before the start the first.
-    CHECK(near(pointsAt(box, 7.0)[0], rest[0] + glm::dvec3(20, 0, 0)));
-    CHECK(near(pointsAt(box, -1.0)[0], rest[0]));
+    CHECK(nearLoose(pointsAt(box, 7.0)[0], rest[0] + glm::dvec3(20, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, -1.0)[0], rest[0]));
 
     const NodeType& t = g.node(cache)->type();
     g.setValue({cache, t.attrIndex("interpolate"), -1}, false);
-    CHECK(near(pointsAt(box, 1.75)[0], rest[0] + glm::dvec3(10, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 1.75)[0], rest[0] + glm::dvec3(10, 0, 0)));
     g.setValue({cache, t.attrIndex("interpolate"), -1}, true);
     g.setValue({cache, t.attrIndex("outOfRange"), -1}, int64_t(1));
-    CHECK(near(pointsAt(box, 2.5)[0], rest[0] + glm::dvec3(5, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 2.5)[0], rest[0] + glm::dvec3(5, 0, 0)));
     g.setValue({cache, t.attrIndex("outOfRange"), -1}, int64_t(0));
     g.setValue({cache, t.attrIndex("speed"), -1}, 2.0);
     g.setValue({cache, t.attrIndex("timeOffset"), -1}, 0.5);
-    CHECK(near(pointsAt(box, 1.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 1.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
     g.setValue({cache, t.attrIndex("speed"), -1}, 1.0);
     g.setValue({cache, t.attrIndex("timeOffset"), -1}, 0.0);
 
     // Half the envelope is half way between the input and the cache.
     g.setValue({cache, DeformerNode::kEnvelope, -1}, 0.5);
-    CHECK(near(pointsAt(box, 2.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 2.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
     g.setValue({cache, DeformerNode::kEnvelope, -1}, 1.0);
 
     json info = run("meshCacheInfo", {{"args", {box}}});
@@ -110,7 +102,7 @@ TEST_CASE("a mesh cache plays its samples back at the scene time, interpolated, 
     auto wrong = std::make_shared<MeshCacheSamples>();
     wrong->add(0.0, std::vector<glm::dvec3>(3, glm::dvec3(1.0)));
     meshCache::setSamples(g, cache, wrong);
-    CHECK(near(pointsAt(box, 1.0)[0], rest[0]));
+    CHECK(nearLoose(pointsAt(box, 1.0)[0], rest[0]));
     CHECK(!static_cast<const ModifierNode*>(g.node(cache))->error().empty());
     g.setTime(0.0);
 }
@@ -136,7 +128,7 @@ TEST_CASE("mesh cache samples save and load in both scene formats")
         CHECK(s->times[2] == doctest::Approx(2.0));
         const std::vector<glm::dvec3> mid = pointsAt(box, 1.5);
         for (size_t p = 0; p < rest.size(); ++p)
-            CHECK(near(mid[p], rest[p] + glm::dvec3(15, 0, 0)));
+            CHECK(nearLoose(mid[p], rest[p] + glm::dvec3(15, 0, 0)));
         graph().setTime(0.0);
     }
 }
@@ -156,7 +148,7 @@ TEST_CASE("bakeMeshCache records a mesh's motion into a cache on top of its stac
     CHECK(info["samples"] == 3);
     CHECK(info["end"].get<double>() == doctest::Approx(2.0));
     // The baked cache replays what the stack under it made.
-    CHECK(near(pointsAt(box, 1.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
+    CHECK(nearLoose(pointsAt(box, 1.0)[0], rest[0] + glm::dvec3(10, 0, 0)));
 
     run("undo");
     CHECK(cachesOn(box) == 1);

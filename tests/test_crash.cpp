@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/CrashHandler.h"
 #include "core/CrashReport.h"
 #include "core/Paths.h"
@@ -10,11 +12,12 @@
 #include <thread>
 
 using namespace lila;
+using namespace testutil;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path freshDir(const std::string& name)
+fs::path crashDir(const std::string& name)
 {
     // Per process: other test runs may share the temp folder.
     static const std::string run = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -23,11 +26,6 @@ fs::path freshDir(const std::string& name)
     fs::remove_all(dir, ec);
     fs::create_directories(dir);
     return dir;
-}
-
-bool contains(const std::string& hay, const std::string& needle)
-{
-    return hay.find(needle) != std::string::npos;
 }
 
 crash::Report fakeReport()
@@ -145,7 +143,7 @@ TEST_CASE("crash reports never carry secrets")
 
 TEST_CASE("crash report retention keeps the newest folders")
 {
-    fs::path root = freshDir("retention");
+    fs::path root = crashDir("retention");
     for (int i = 0; i < 25; ++i)
     {
         fs::path dir = crash::createReportDir(root, 1700000000 + i * 60, 1234);

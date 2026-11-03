@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "geo/Bvh.h"
@@ -18,18 +20,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-const geo::Mesh& meshOf(const std::string& name)
-{
-    auto& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 std::map<geo::Index, int> sideCounts(const geo::Mesh& m)
 {
     std::map<geo::Index, int> sizes;
@@ -183,7 +177,6 @@ TEST_CASE("polyBoolean command cleans up and adds weighted normals")
     run("undo");
     CHECK(run("objExists", {{"args", {drill}}}).get<bool>());
 }
-
 
 TEST_CASE("zz boolean dump" * doctest::skip())
 {

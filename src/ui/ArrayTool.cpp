@@ -10,6 +10,8 @@
 #include "scene/TransformOps.h"
 #include "ui/Actions.h"
 #include "ui/MeshCache.h"
+#include "ui/ToolColors.h"
+#include "ui/ViewportToolMath.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -32,13 +34,11 @@ constexpr double kClickSlop = 4.0;     // px
 constexpr double kCountReach = 18.0;   // px past the last copy, so a count handle never sits on a spacing handle
 constexpr int kMaxCount = scene::arrays::kMaxCount;
 
-const glm::vec4 kRim(0.08f, 0.08f, 0.08f, 1.0f);
 const glm::vec4 kIdle(0.72f, 0.72f, 0.72f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kGuide(0.85f, 0.85f, 0.85f, 0.8f);
 const glm::vec4 kPreviewWire(0.55f, 0.55f, 0.55f, 1.0f);
 
-const char* modeName(geo::ArrayMode m)
+const char* arrayModeName(geo::ArrayMode m)
 {
     switch (m)
     {
@@ -48,8 +48,6 @@ const char* modeName(geo::ArrayMode m)
     }
     return "linear";
 }
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 
 /** The parameter along the line (p, unit u) of its closest point to the ray (o, unit d). */
 double lineParam(const glm::dvec3& p, const glm::dvec3& u, const glm::dvec3& o, const glm::dvec3& d)
@@ -71,8 +69,6 @@ glm::dvec3 rotateAbout(const glm::dvec3& v, const glm::dvec3& axis, double degre
 {
     return glm::dvec3(glm::rotate(glm::dmat4(1.0), glm::radians(degrees), axis) * glm::dvec4(v, 0.0));
 }
-
-json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
 QString cm(double v) { return QString::number(v, 'f', std::abs(v) < 10.0 ? 2 : 1) + " cm"; }
 } // namespace
@@ -515,12 +511,12 @@ json ArrayTool::call() const
     for (NodeId s : mSources)
         if (scene::Node* n = g.node(s))
             args.push_back(n->fullPath());
-    json c = {{"args", args}, {"edit", false}, {"mode", modeName(mSettings.mode)}, {"center", vec(mSettings.center)}};
+    json c = {{"args", args}, {"edit", false}, {"mode", arrayModeName(mSettings.mode)}, {"center", vecJson(mSettings.center)}};
     switch (mSettings.mode)
     {
     case geo::ArrayMode::Linear:
         c["count"] = mSettings.count;
-        c["offset"] = vec(mSettings.offset);
+        c["offset"] = vecJson(mSettings.offset);
         break;
     case geo::ArrayMode::Radial:
         c["count"] = mSettings.count;
@@ -533,7 +529,7 @@ json ArrayTool::call() const
         c["count"] = mSettings.gridCount.x;
         c["countY"] = mSettings.gridCount.y;
         c["countZ"] = mSettings.gridCount.z;
-        c["spacing"] = vec(mSettings.spacing);
+        c["spacing"] = vecJson(mSettings.spacing);
         break;
     }
     return c;
@@ -710,9 +706,9 @@ void ArrayTool::draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& v
         if (std::optional<QPointF> at = handlePos(h, view))
         {
             const bool hot = h == mHandle || (here && mDrag == Drag::None && h == mHover);
-            p.disc(*at, 7.0f, kRim, 16);
-            p.disc(*at, 5.0f, hot ? kHot : kIdle, 16);
-            p.label(*at + QPointF(12, -10), label(h), hot ? kHot : kIdle);
+            p.disc(*at, 7.0f, kHandleRim, 16);
+            p.disc(*at, 5.0f, hot ? kHotColor : kIdle, 16);
+            p.label(*at + QPointF(12, -10), label(h), hot ? kHotColor : kIdle);
         }
 
     const QString how = mPlaced ? "Array: drag the handles, 1 row, 2 ring, 3 grid, +/- copies, click a new centre or drag a new "

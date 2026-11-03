@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/ExtensionContext.h"
 #include "core/Paths.h"
 #include "ops/Command.h"
@@ -10,11 +12,10 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 Node& lightNamed(const json& name) { return *Graph::current().find(name.get<std::string>()); }
 } // namespace
 

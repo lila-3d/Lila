@@ -1,6 +1,8 @@
 #include "curve/Sweep.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
+#include "curve/Internal.h"
 #include "geo/Attribute.h"
 
 #include <glm/gtc/constants.hpp>
@@ -14,10 +16,9 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
+using detail::addFaceUv;
+using detail::setFaceInt;
 using geo::Index;
-
-constexpr double kEps = 1e-12;
 
 /** Hard and seam edges by their end points, applied once every face exists (edge ids settle only then). */
 struct EdgeMarks
@@ -38,45 +39,6 @@ struct EdgeMarks
         set(geo::attr::kSeam, seam);
     }
 };
-
-/** Adds a face with per-corner uvs (in the face's point order); flipped faces keep their uvs on their points. */
-Index addFaceUv(geo::Mesh& m, std::span<const Index> pts, std::span<const glm::vec2> uvs, bool flip)
-{
-    std::vector<Index> p(pts.begin(), pts.end());
-    std::vector<glm::vec2> u(uvs.begin(), uvs.end());
-    if (flip)
-    {
-        std::reverse(p.begin(), p.end());
-        std::reverse(u.begin(), u.end());
-    }
-    Index f = m.addFace(p);
-    if (f == geo::kInvalid || u.empty())
-        return f;
-    auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
-    size_t i = 0;
-    m.forEachFaceCorner(f, [&](Index c) {
-        if (i < u.size())
-            uv[c] = u[i];
-        ++i;
-    });
-    return f;
-}
-
-void setFaceInt(geo::Mesh& m, std::string_view name, Index f, int value)
-{
-    if (f == geo::kInvalid)
-        return;
-    auto v = m.faceAttrs().getOrAdd<int32_t>(name);
-    if (f < v.size())
-        v[f] = value;
-}
-
-D3 perpUnit(const D3& v, const D3& t)
-{
-    D3 r = v - t * glm::dot(v, t);
-    double l = glm::length(r);
-    return l > 1e-12 ? r / l : D3(0.0);
-}
 
 /** Planar uvs for a loop of points in the frame plane, a disc of radius extent filling the rect. */
 std::vector<glm::vec2> planarUvs(const geo::Mesh& m, std::span<const Index> pts, const D3& origin, const D3& ax, const D3& ay, double extent,

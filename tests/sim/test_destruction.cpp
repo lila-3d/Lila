@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "geo/Mesh.h"
@@ -18,11 +19,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace simtest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 std::string add(const std::string& g, const char* type) { return run("gnAddNode", args({g, type})).get<std::string>(); }
 void link(const std::string& g, const std::string& from, const std::string& to) { run("gnConnect", args({g, from, to})); }

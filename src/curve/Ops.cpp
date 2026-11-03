@@ -1,6 +1,7 @@
 #include "curve/Ops.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 #include "geo/Bvh.h"
 #include "geo/Mesh.h"
@@ -15,24 +16,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
-
-constexpr double kEps = 1e-12;
-
-D3 unit(const D3& v)
-{
-    double l = glm::length(v);
-    return l > kEps ? v / l : D3(0.0);
-}
-
-double angleBetween(const D3& a, const D3& b) { return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b)); }
-
-constexpr double kGx[8] = {-0.9602898564975363, -0.7966664774136267, -0.5255324099163290, -0.1834346424956498,
-                           0.1834346424956498,  0.5255324099163290,  0.7966664774136267,  0.9602898564975363};
-constexpr double kGw[8] = {0.1012285362903763, 0.2223810344533745, 0.3137066458778873, 0.3626837833783620,
-                           0.3626837833783620, 0.3137066458778873, 0.2223810344533745, 0.1012285362903763};
-
 double lengthBetween(const Piece& p, double t0, double t1)
 {
     double total = 0.0;
@@ -383,8 +366,6 @@ Plane planeFor(const std::vector<D3>& pts, const D3& want)
 }
 
 using V2 = glm::dvec2;
-
-double cross2(const V2& a, const V2& b) { return a.x * b.y - a.y * b.x; }
 
 double distToPolyline(const V2& p, const std::vector<V2>& pl, bool closed)
 {

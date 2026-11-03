@@ -11,6 +11,7 @@ namespace lila::gn::nodes
 {
 using geo::Index;
 using T = SocketType;
+using D3 = glm::dvec3;
 inline constexpr double kPi = 3.14159265358979323846;
 
 inline SocketDecl in(std::string id, SocketType t, json def = nullptr, std::string doc = {})

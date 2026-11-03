@@ -10,6 +10,7 @@
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -56,17 +57,7 @@ namespace lila::ui
 {
 namespace
 {
-constexpr int kSetRole = Qt::UserRole;
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    return b;
-}
+constexpr int kSetPathRole = Qt::UserRole;
 } // namespace
 
 QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
@@ -90,7 +81,7 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
             return;
         refresh();
         for (int i = 0; i < mTree->topLevelItemCount(); ++i)
-            if (QTreeWidgetItem* it = mTree->topLevelItem(i); it->data(0, kSetRole).toString().toStdString() == r.get<std::string>())
+            if (QTreeWidgetItem* it = mTree->topLevelItem(i); it->data(0, kSetPathRole).toString().toStdString() == r.get<std::string>())
             {
                 mTree->setCurrentItem(it);
                 rename(it);
@@ -136,7 +127,7 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
     v->addWidget(mTree, 1);
 
     connect(mTree, &QTreeWidget::itemClicked, this, [](QTreeWidgetItem* item, int) {
-        const std::string set = item->data(0, kSetRole).toString().toStdString();
+        const std::string set = item->data(0, kSetPathRole).toString().toStdString();
         if (set.empty())
             return;
         const bool add = QApplication::keyboardModifiers() & (Qt::ControlModifier | Qt::ShiftModifier);
@@ -146,7 +137,7 @@ QuickSelectSetsPanel::QuickSelectSetsPanel(QWidget* parent) : QWidget(parent)
     connect(mTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (mFilling || column != 0)
             return;
-        const std::string old = item->data(0, kSetRole).toString().toStdString();
+        const std::string old = item->data(0, kSetPathRole).toString().toStdString();
         const std::string name = item->text(0).trimmed().toStdString();
         if (!name.empty() && name != old)
             sets::run("rename", {{"args", {old, name}}});
@@ -210,7 +201,7 @@ void QuickSelectSetsPanel::refresh()
         const size_t count = scene::objectSets::members(g, set->id()).size();
         auto* item = new QTreeWidgetItem(mTree);
         item->setFlags(item->flags() | Qt::ItemIsEditable);
-        item->setData(0, kSetRole, QString::fromStdString(set->path()));
+        item->setData(0, kSetPathRole, QString::fromStdString(set->path()));
         item->setText(0, name);
         item->setIcon(0, icon("list-details"));
         item->setText(1, QString::number(count));
@@ -241,7 +232,7 @@ void QuickSelectSetsPanel::rename(QTreeWidgetItem* item)
 std::string QuickSelectSetsPanel::currentSet() const
 {
     if (QTreeWidgetItem* it = mTree ? mTree->currentItem() : nullptr)
-        return it->data(0, kSetRole).toString().toStdString();
+        return it->data(0, kSetPathRole).toString().toStdString();
     return {};
 }
 
@@ -249,7 +240,7 @@ void QuickSelectSetsPanel::contextMenu(const QPoint& at)
 {
     QTreeWidgetItem* item = mTree->itemAt(at);
     QMenu menu(this);
-    const std::string set = item ? item->data(0, kSetRole).toString().toStdString() : std::string();
+    const std::string set = item ? item->data(0, kSetPathRole).toString().toStdString() : std::string();
     if (set.empty())
     {
         menu.addAction(icon("plus"), "Create Quick Select Set from Selection",

@@ -16,7 +16,10 @@
 #include "ui/OptionBox.h"
 #include "ui/RetopoDrawTool.h"
 #include "ui/SpinScrub.h"
+#include "ui/ToolkitLayout.h"
 #include "ui/TopologyTool.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportTool.h"
 
 #include <QApplication>
@@ -44,52 +47,7 @@ namespace
 {
 using retopo::ConstructKind;
 
-constexpr const char* kPrefs = "general";
-constexpr const char* kCollapsedPref = "/topologyToolkit/collapsed";
-
-QWidget* section(const QString& title, QWidget* content, QWidget* parent)
-{
-    auto* box = new QWidget(parent);
-    auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
-    auto* header = new QToolButton(box);
-    header->setText(title);
-    header->setCheckable(true);
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header->setStyleSheet("QToolButton { text-align: left; font-weight: 600; padding: 3px; }");
-    std::string key = std::string(kCollapsedPref) + "/" + title.toStdString();
-    bool open = !PrefStore::get().value<bool>(kPrefs, key, false);
-    header->setChecked(open);
-    header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-    content->setVisible(open);
-    QObject::connect(header, &QToolButton::toggled, content, [header, content, key](bool on) {
-        content->setVisible(on);
-        header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-        PrefStore::get().set(kPrefs, key, !on);
-    });
-    v->addWidget(header);
-    v->addWidget(content, 1);
-    return box;
-}
-
-QWidget* rowBox(QWidget* parent, FixedRowLayout** layout, int columns = 0)
-{
-    auto* w = new QWidget(parent);
-    *layout = new FixedRowLayout(columns, 3);
-    (*layout)->setContentsMargins(2, 0, 2, 2);
-    w->setLayout(*layout);
-    return w;
-}
-
-QDockWidget* findDock(const char* name)
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* d = w->findChild<QDockWidget*>(name))
-            return d;
-    return nullptr;
-}
+constexpr const char* kTopologyCollapsed = "/topologyToolkit/collapsed";
 
 /** The retopo mesh the toolkit shows: the running tool's, else the one the selection resolves to. */
 scene::Node* sessionRetopo(scene::NodeId* reference = nullptr)
@@ -106,18 +64,6 @@ scene::Node* sessionRetopo(scene::NodeId* reference = nullptr)
     if (reference)
         *reference = t->reference;
     return findNode(t->retopo);
-}
-
-void runCommand(const char* name, const json& call)
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
 }
 
 /** One setting of a construct kind, edited in the active construct's panel. */
@@ -162,7 +108,7 @@ std::vector<Field> fieldsFor(ConstructKind k)
     return {};
 }
 
-const char* kindLabel(ConstructKind k)
+const char* constructLabel(ConstructKind k)
 {
     static const char* labels[] = {"Patch", "Strip", "Stroke", "Bridge", "Sweep", "Cylinder", "Region"};
     return labels[size_t(k)];
@@ -208,22 +154,22 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
         if (scene::Node* n = sessionRetopo())
         {
             static const char* axes[] = {"off", "x", "y", "z"};
-            runCommand("setSymmetry", {{"args", {n->path()}}, {"axis", axes[std::clamp(i, 0, 3)]}});
+            runUi("setSymmetry", {{"args", {n->path()}}, {"axis", axes[std::clamp(i, 0, 3)]}});
         }
     });
     sessionRow->addWidget(symmetry);
     sessionLayout->addWidget(sessionButtons);
-    root->addWidget(section("Session", sessionBox, body));
+    root->addWidget(collapsibleSection("Session", sessionBox, body, kTopologyCollapsed));
 
     // Tools.
     FixedRowLayout* tools = nullptr;
-    QWidget* toolsBox = rowBox(body, &tools, 4);
+    QWidget* toolsBox = rowBox(body, &tools, kToolkitColumns);
     row(toolsBox,
         {{"retopo.draw", "pencil", "Draw"}, {"topo.pencil", "pencil-plus", "Pencil"}, {"topo.stroke", "line", "Stroke"}, {"topo.strip", "road", "Strip"},
          {"topo.patch", "square-plus", "Patch"}, {"topo.cylinder", "cylinder", "Cylinder"}, {"topo.region", "wand", "Region"},
          {"topo.handles", "hand-move", "Handles"}, {"topo.relax", "wave-sine", "Relax"}},
         tools);
-    root->addWidget(section("Tools", toolsBox, body));
+    root->addWidget(collapsibleSection("Tools", toolsBox, body, kTopologyCollapsed));
 
     // Settings shared by the tools.
     auto* settingsBox = new QWidget(body);
@@ -236,22 +182,22 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
         s->setDecimals(decimals);
         s->setSuffix(suffix);
         s->setKeyboardTracking(false);
-        s->setValue(prefs.value<double>(kPrefs, key, def));
+        s->setValue(prefs.value<double>("general", key, def));
         s->setToolTip(tip);
         s->setObjectName(key);
         setSpinDefault(s, def);
-        connect(s, &QDoubleSpinBox::valueChanged, this, [key](double v) { PrefStore::get().set(kPrefs, key, v); });
+        connect(s, &QDoubleSpinBox::valueChanged, this, [key](double v) { PrefStore::get().set("general", key, v); });
         form->addRow(label, s);
     };
     auto intSpin = [&](const char* key, int def, int lo, int hi, const char* tip, const char* label) {
         auto* s = new QSpinBox(settingsBox);
         s->setRange(lo, hi);
         s->setKeyboardTracking(false);
-        s->setValue(prefs.value<int>(kPrefs, key, def));
+        s->setValue(prefs.value<int>("general", key, def));
         s->setToolTip(tip);
         s->setObjectName(key);
         setSpinDefault(s, def);
-        connect(s, &QSpinBox::valueChanged, this, [key](int v) { PrefStore::get().set(kPrefs, key, v); });
+        connect(s, &QSpinBox::valueChanged, this, [key](int v) { PrefStore::get().set("general", key, v); });
         form->addRow(label, s);
     };
     doubleSpin("/topology/brush", 40.0, 4.0, 600.0, 0, " px", "Brush radius on screen: strip width, region and relax brushes, handle reach (Shift-wheel)", "Brush");
@@ -262,7 +208,7 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     doubleSpin("/topology/relax/squareness", 0.7, 0.0, 1.0, 2, "", "Relax: 0 only evens spacing, 1 pulls faces fully square", "Squareness");
     doubleSpin("/topology/relax/stiffness", 0.5, 0.05, 1.0, 2, "", "Relax: how far each step goes", "Stiffness");
     doubleSpin("/topology/handleFalloff", 0.5, 0.0, 1.0, 2, "", "Handles: how much of the region fades out toward its border", "Handle falloff");
-    root->addWidget(section("Settings", settingsBox, body));
+    root->addWidget(collapsibleSection("Settings", settingsBox, body, kTopologyCollapsed));
 
     // The active construct.
     auto* activeBox = new QWidget(body);
@@ -280,19 +226,19 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     connect(freeze, &QPushButton::clicked, this, [] {
         TopologyTool* t = activeTopologyTool();
         if (t && t->activeConstruct())
-            runCommand("retopoConstructFreeze", {{"mesh", t->retopoName()}, {"ids", {t->activeConstruct()}}});
+            runUi("retopoConstructFreeze", {{"mesh", t->retopoName()}, {"ids", {t->activeConstruct()}}});
     });
     auto* remove = new QPushButton("Delete", activeBox);
     remove->setToolTip("Delete the active construct and its faces");
     connect(remove, &QPushButton::clicked, this, [] {
         TopologyTool* t = activeTopologyTool();
         if (t && t->activeConstruct())
-            runCommand("retopoConstructDelete", {{"mesh", t->retopoName()}, {"ids", {t->activeConstruct()}}});
+            runUi("retopoConstructDelete", {{"mesh", t->retopoName()}, {"ids", {t->activeConstruct()}}});
     });
     activeButtons->addWidget(freeze);
     activeButtons->addWidget(remove);
     activeLayout->addLayout(activeButtons);
-    root->addWidget(section("Active Construct", activeBox, body));
+    root->addWidget(collapsibleSection("Active Construct", activeBox, body, kTopologyCollapsed));
 
     // Every live construct.
     auto* listBox = new QWidget(body);
@@ -318,20 +264,20 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     clearGuides->setToolTip("Remove every guide drawn with the Pencil");
     connect(clearGuides, &QToolButton::clicked, this, [] {
         if (scene::Node* n = sessionRetopo())
-            runCommand("retopoSetGuides", {{"mesh", n->path()}, {"guides", json::array()}});
+            runUi("retopoSetGuides", {{"mesh", n->path()}, {"guides", json::array()}});
     });
     listRow->addWidget(clearGuides);
     listLayout->addWidget(listButtons);
-    root->addWidget(section("Constructs", listBox, body));
+    root->addWidget(collapsibleSection("Constructs", listBox, body, kTopologyCollapsed));
 
     // Auto retopo and cleanup.
     FixedRowLayout* autoRow = nullptr;
-    QWidget* autoBox = rowBox(body, &autoRow, 4);
+    QWidget* autoBox = rowBox(body, &autoRow, kToolkitColumns);
     row(autoBox,
         {{"topo.runRegion", "wand", "Retopo Region"}, {"mesh.quadRemesh", "grid-4x4", "Quad Remesh"}, {"mesh.voxelRemesh", "box", "Voxel Remesh"},
          {"retopo.poles", "point", "Poles"}, {"topo.settle", "wave-sine", "Settle"}, {"mesh.relax", "wave-square", "Relax"}},
         autoRow);
-    root->addWidget(section("Auto Retopo", autoBox, body));
+    root->addWidget(collapsibleSection("Auto Retopo", autoBox, body, kTopologyCollapsed));
 
     // Quality.
     auto* qualityBox = new QWidget(body);
@@ -348,7 +294,7 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     mStats = new QLabel(qualityBox);
     mStats->setWordWrap(true);
     qualityLayout->addWidget(mStats);
-    root->addWidget(section("Quality", qualityBox, body));
+    root->addWidget(collapsibleSection("Quality", qualityBox, body, kTopologyCollapsed));
     root->addStretch(1);
     // The panel stops at its narrowest fixed row instead of clipping it.
     scroll->setMinimumWidth(body->minimumSizeHint().width() + scroll->verticalScrollBar()->sizeHint().width());
@@ -360,7 +306,7 @@ TopologyToolkit::TopologyToolkit(QWidget* parent) : QWidget(parent)
     mGraphListener = scene::Graph::current().addListener([this](scene::Change, scene::NodeId) { mRefresh->start(); });
     mToolListener = viewportTools::addListener([this] { mRefresh->start(); });
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
-        if (file == kPrefs)
+        if (file == "general")
             QMetaObject::invokeMethod(mRefresh, qOverload<>(&QTimer::start), Qt::QueuedConnection);
     });
     refreshState();
@@ -433,7 +379,7 @@ void TopologyToolkit::refreshState()
         if (s->objectName().startsWith("/topology/") && !s->hasFocus())
         {
             QSignalBlocker block(s);
-            s->setValue(PrefStore::get().value<double>(kPrefs, s->objectName().toStdString(), s->value()));
+            s->setValue(PrefStore::get().value<double>("general", s->objectName().toStdString(), s->value()));
         }
 
     std::vector<retopo::ConstructRecord> records;
@@ -442,7 +388,7 @@ void TopologyToolkit::refreshState()
     mList->clear();
     for (const retopo::ConstructRecord& r : records)
     {
-        auto* item = new QListWidgetItem(QString("#%1  %2%3").arg(r.id).arg(kindLabel(r.kind)).arg(r.live ? "" : "  (edited, freezes on next change)"), mList);
+        auto* item = new QListWidgetItem(QString("#%1  %2%3").arg(r.id).arg(constructLabel(r.kind)).arg(r.live ? "" : "  (edited, freezes on next change)"), mList);
         item->setData(Qt::UserRole, r.id);
         if (tool && tool->activeConstruct() == r.id)
             item->setSelected(true);
@@ -500,7 +446,7 @@ void TopologyToolkit::rebuildConstructPanel()
         mActiveLabel->setText(tool ? "None: make or click a construct." : "Start a topology tool to edit constructs.");
         return;
     }
-    mActiveLabel->setText(QString("#%1 %2%3").arg(active->id).arg(kindLabel(active->kind)).arg(active->live ? "" : " (edited by hand)"));
+    mActiveLabel->setText(QString("#%1 %2%3").arg(active->id).arg(constructLabel(active->kind)).arg(active->live ? "" : " (edited by hand)"));
     auto* form = new QWidget(mConstructPanel);
     auto* layout = new QFormLayout(form);
     layout->setContentsMargins(0, 0, 0, 0);

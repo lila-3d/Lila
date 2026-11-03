@@ -13,8 +13,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 int clampInt(int64_t v, int lo, int hi) { return int(std::clamp<int64_t>(v, lo, hi)); }
 
 geo::Mesh icoSphere(double radius, int subdiv)
@@ -98,7 +96,7 @@ SocketDecl sweepFraction() { return bounded(in("fraction", T::Float, 1.0, "Porti
 SocketDecl cutCaps() { return in("cutCaps", T::Bool, true, "Close the flat ends a partial sweep leaves."); }
 double fraction(ExecContext& c) { return std::clamp(c.f("fraction"), 0.01, 1.0); }
 
-void primitives()
+void meshPrimitives()
 {
     primitive(
         "MeshCube", "Cube",
@@ -618,7 +616,7 @@ void distribute()
 
 void registerMeshNodes()
 {
-    primitives();
+    meshPrimitives();
     meshOps();
     pointConversions();
     distribute();

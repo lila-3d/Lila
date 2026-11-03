@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "deform/Deform.h"
 #include "deform/Surface.h"
@@ -18,23 +20,10 @@
 using namespace lila;
 using namespace lila::deform;
 using json = nlohmann::json;
+using namespace deformtest;
 
 namespace
 {
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-9) { return glm::length(a - b) <= eps; }
-
-std::vector<glm::dvec3> randomPoints(size_t n, double lo, double hi, unsigned seed = 11)
-{
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> d(lo, hi);
-    std::vector<glm::dvec3> out(n);
-    for (auto& p : out)
-        p = {d(rng), d(rng), d(rng)};
-    return out;
-}
-
-std::vector<glm::dvec3> pointsOf(const geo::Mesh& m) { return {m.positions().begin(), m.positions().end()}; }
-
 glm::dvec3 apply(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 
 std::vector<glm::dvec3> transformed(const glm::dmat4& m, std::span<const glm::dvec3> pts)
@@ -69,7 +58,7 @@ TEST_CASE("rigidFit recovers a rotation and translation exactly and never reflec
     glm::dmat4 m = someRigid();
     RigidFit f = rigidFit(rest, transformed(m, rest));
     for (const glm::dvec3& p : rest)
-        CHECK(near(f.apply(p), apply(m, p), 1e-10));
+        CHECK(nearTight(f.apply(p), apply(m, p), 1e-10));
     CHECK(glm::determinant(f.rotation) == doctest::Approx(1.0));
 
     std::vector<glm::dvec3> mirrored = rest;
@@ -118,7 +107,7 @@ TEST_CASE("shrinkwrap puts points on the target, or outside it by the offset")
         CHECK(h.distance < 1e-9);
     }
     // Points already on the target stay.
-    CHECK(near(shrinkwrap(mesh, adj, on, target, o)[0], on[0]));
+    CHECK(nearTight(shrinkwrap(mesh, adj, on, target, o)[0], on[0]));
 
     o.place = ShrinkwrapPlace::Outside;
     o.offset = 0.5;
@@ -139,7 +128,7 @@ TEST_CASE("shrinkwrap puts points on the target, or outside it by the offset")
     o.cull = CullFaces::Back;
     std::vector<glm::dvec3> culled = shrinkwrap(mesh, adj, pts, target, o);
     // From inside, the bottom face faces away from a downward ray, so culling it leaves the points where they were.
-    CHECK(near(culled[0], pts[0]));
+    CHECK(nearTight(culled[0], pts[0]));
 
     o = {};
     o.mode = ShrinkwrapMode::NearestVertex;
@@ -181,8 +170,8 @@ TEST_CASE("surfaceDeform reproduces the driver's rigid motion exactly, by polygo
     std::vector<glm::dvec3> rest = surfaceApply(b, drv, targets), out = surfaceApply(b, drvMoved, targets);
     for (size_t i = 0; i < targets.size(); ++i)
     {
-        CHECK(near(rest[i], targets[i]));
-        CHECK(near(out[i], apply(m, targets[i])));
+        CHECK(nearTight(rest[i], targets[i]));
+        CHECK(nearTight(out[i], apply(m, targets[i])));
     }
 
     PointCapture c = pointCapture(drv, targets, 8, 0.0, 8);
@@ -190,8 +179,8 @@ TEST_CASE("surfaceDeform reproduces the driver's rigid motion exactly, by polygo
     out = pointDeform(c, drvMoved, targets);
     for (size_t i = 0; i < targets.size(); ++i)
     {
-        CHECK(near(rest[i], targets[i]));
-        CHECK(near(out[i], apply(m, targets[i])));
+        CHECK(nearTight(rest[i], targets[i]));
+        CHECK(nearTight(out[i], apply(m, targets[i])));
     }
 }
 
@@ -205,10 +194,10 @@ TEST_CASE("surfaceDeform carries its binding to a new driver topology by uv")
     CHECK(again.driverPoints == fine.pointCapacity());
     std::vector<glm::dvec3> rest = surfaceApply(again, pointsOf(fine), targets);
     for (size_t i = 0; i < targets.size(); ++i)
-        CHECK(near(rest[i], targets[i], 1e-8));
+        CHECK(nearTight(rest[i], targets[i], 1e-8));
     glm::dmat4 up = glm::translate(glm::dmat4(1.0), glm::dvec3(0, 5, 0));
     std::vector<glm::dvec3> out = surfaceApply(again, transformed(up, pointsOf(fine)), targets);
-    CHECK(near(out[7], targets[7] + glm::dvec3(0, 5, 0), 1e-8));
+    CHECK(nearTight(out[7], targets[7] + glm::dvec3(0, 5, 0), 1e-8));
 }
 
 TEST_CASE("proximity wrap: rigid, scale compensation, snap and several drivers")
@@ -226,7 +215,7 @@ TEST_CASE("proximity wrap: rigid, scale compensation, snap and several drivers")
     std::span<const glm::dvec3> rest[] = {pa, pb};
     std::vector<glm::dvec3> same = proximityApply(bind, rest, targets, WrapMode::Offset, 0.0);
     for (size_t i = 0; i < targets.size(); ++i)
-        CHECK(near(same[i], targets[i]));
+        CHECK(nearTight(same[i], targets[i]));
 
     // Moving one driver moves only the points bound to it.
     glm::dmat4 m = someRigid();
@@ -234,9 +223,9 @@ TEST_CASE("proximity wrap: rigid, scale compensation, snap and several drivers")
     std::span<const glm::dvec3> one[] = {pa, pbMoved};
     std::vector<glm::dvec3> out = proximityApply(bind, one, targets, WrapMode::Offset, 0.0);
     for (size_t i = 0; i < 60; ++i)
-        CHECK(near(out[i], targets[i]));
+        CHECK(nearTight(out[i], targets[i]));
     for (size_t i = 60; i < targets.size(); ++i)
-        CHECK(near(out[i], apply(m, targets[i])));
+        CHECK(nearTight(out[i], apply(m, targets[i])));
 
     // Scaling a driver about the origin scales its points with full compensation; without it the offsets keep their size.
     glm::dmat4 s = glm::scale(glm::dmat4(1.0), glm::dvec3(2.0));
@@ -244,13 +233,13 @@ TEST_CASE("proximity wrap: rigid, scale compensation, snap and several drivers")
     std::span<const glm::dvec3> scaled[] = {paScaled, pb};
     out = proximityApply(bind, scaled, targets, WrapMode::Offset, 1.0);
     for (size_t i = 0; i < 60; ++i)
-        CHECK(near(out[i], targets[i] * 2.0));
+        CHECK(nearTight(out[i], targets[i] * 2.0));
 
     std::vector<glm::dvec3> pbUp = transformed(glm::translate(glm::dmat4(1.0), glm::dvec3(0, 0, 3)), pb);
     std::span<const glm::dvec3> up[] = {pa, pbUp};
     out = proximityApply(bind, up, targets, WrapMode::Surface, 0.0);
-    CHECK(near(out[0], targets[0]));
-    CHECK(near(out[60], targets[60] + glm::dvec3(0, 0, 3)));
+    CHECK(nearTight(out[0], targets[0]));
+    CHECK(nearTight(out[60], targets[60] + glm::dvec3(0, 0, 3)));
     ProximityBinding single = proximityBind(std::span<const geo::Mesh* const>(drivers, 1), std::span<const glm::dvec3>(targets.data(), 1), {.maxDrivers = 1});
     std::span<const glm::dvec3> onlyA[] = {pa};
     out = proximityApply(single, onlyA, std::span<const glm::dvec3>(targets.data(), 1), WrapMode::Snap, 0.0);
@@ -268,7 +257,7 @@ TEST_CASE("proximity wrap: rigid, scale compensation, snap and several drivers")
     std::vector<glm::dvec3> sp = pointsOf(sphere);
     out = proximityApply(smooth, movedA, sp, WrapMode::Offset, 0.0);
     for (size_t i = 0; i < sp.size(); ++i)
-        CHECK(near(out[i], apply(m, sp[i]), 1e-8));
+        CHECK(nearTight(out[i], apply(m, sp[i]), 1e-8));
 }
 
 TEST_CASE("collision leaves no point inside a collider")
@@ -289,7 +278,7 @@ TEST_CASE("collision leaves no point inside a collider")
         SurfaceTarget::Hit h;
         REQUIRE(collider.closest(out[i], h));
         CHECK(h.distance >= 0.25 - 1e-9);
-        pushed += near(out[i], pts[i]) ? 0 : 1;
+        pushed += nearTight(out[i], pts[i]) ? 0 : 1;
     }
     CHECK(pushed > 0);
 
@@ -308,7 +297,7 @@ TEST_CASE("collision leaves no point inside a collider")
     out = collide(sheet, probe, {}, std::span<const Capsule>(&cap, 1), o);
     CHECK(glm::length(glm::dvec2(out[0].x, out[0].z)) == doctest::Approx(2.5));
     CHECK(glm::length(glm::dvec2(out[1].x, out[1].z)) >= 2.5 - 1e-9);
-    CHECK(near(out[2], probe[2]));
+    CHECK(nearTight(out[2], probe[2]));
 }
 
 TEST_CASE("rigidify regions match a rigid transform")
@@ -327,7 +316,7 @@ TEST_CASE("rigidify regions match a rigid transform")
         for (size_t j = i + 1; j < rest.size(); j += 7)
             if (regions[i] == regions[j])
                 CHECK(glm::length(out[i] - out[j]) == doctest::Approx(glm::length(rest[i] - rest[j])).epsilon(1e-12));
-    CHECK(near(rigidify(adj, rest, rest, regions, 2)[5], rest[5], 1e-12));
+    CHECK(nearTight(rigidify(adj, rest, rest, regions, 2)[5], rest[5], 1e-12));
 }
 
 TEST_CASE("skinSlide keeps points on the rest surface and is identity at rest")
@@ -338,7 +327,7 @@ TEST_CASE("skinSlide keeps points on the rest surface and is identity at rest")
     Adjacency adj = pointAdjacency(plane);
     std::vector<glm::dvec3> same = skinSlide(adj, rest, surface, rest, {});
     for (size_t i = 0; i < rest.size(); ++i)
-        CHECK(near(same[i], rest[i]));
+        CHECK(nearTight(same[i], rest[i]));
     std::vector<glm::dvec3> pulled = rest;
     for (glm::dvec3& p : pulled)
         p += glm::dvec3(0.0, 2.0 * std::exp(-(p.x * p.x + p.z * p.z) / 20.0), 0.5);
@@ -364,7 +353,7 @@ TEST_CASE("surface pins find a uv and frame it along u")
     CHECK(std::abs(glm::length(glm::dvec3(f[0])) - 1.0) < 1e-12);
     SurfacePoint again;
     REQUIRE(locateNearest(plane, glm::dvec3(f[3]) + glm::dvec3(0, 3, 0), "uv0", again));
-    CHECK(near(glm::dvec3(surfaceFrame(pts, again)[3]), glm::dvec3(f[3])));
+    CHECK(nearTight(glm::dvec3(surfaceFrame(pts, again)[3]), glm::dvec3(f[3])));
     CHECK_FALSE(locateUv(plane, "uv0", {3.0, 3.0}, sp));
 }
 
@@ -373,9 +362,6 @@ TEST_CASE("surface pins find a uv and frame it along u")
 namespace
 {
 using namespace lila::scene;
-
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 std::vector<glm::dvec3> scenePoints(const std::string& mesh, bool world = false)
 {
@@ -391,7 +377,7 @@ std::vector<glm::dvec3> scenePoints(const std::string& mesh, bool world = false)
     return out;
 }
 
-void editPoints(const std::string& mesh, const std::function<glm::dvec3(const glm::dvec3&)>& offset)
+void offsetPoints(const std::string& mesh, const std::function<glm::dvec3(const glm::dvec3&)>& offset)
 {
     Graph& g = Graph::current();
     PlugRef plug = modifiers::editPlug(g, g.find(mesh)->id());
@@ -406,16 +392,6 @@ std::string tempPath(const std::string& name)
     auto dir = std::filesystem::temp_directory_path() / "lila_deform_tests";
     std::filesystem::create_directories(dir);
     return (dir / name).string();
-}
-
-bool samePoints(const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b, double eps = 1e-6)
-{
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (!near(a[i], b[i], eps))
-            return false;
-    return true;
 }
 } // namespace
 
@@ -456,14 +432,14 @@ TEST_CASE("surfaceDeform, wrap with several drivers, and old wrap bindings")
     run("move", {{"args", {proxy}}, {"by", v3(3, 0, -2)}});
     std::vector<glm::dvec3> out = scenePoints(ball);
     for (size_t i = 0; i < rest.size(); ++i)
-        CHECK(near(out[i], rest[i] + glm::dvec3(3, 0, -2), 1e-6));
+        CHECK(nearTight(out[i], rest[i] + glm::dvec3(3, 0, -2), 1e-6));
     run("setAttr", {{"args", {sd + ".mode", 1}}});
     run("rebindDeformer", {{"args", {sd}}});
     CHECK(samePoints(scenePoints(ball), rest));
     run("move", {{"args", {proxy}}, {"by", v3(0, 2, 0)}});
     out = scenePoints(ball);
     for (size_t i = 0; i < rest.size(); ++i)
-        CHECK(near(out[i], rest[i] + glm::dvec3(0, 2, 0), 1e-6));
+        CHECK(nearTight(out[i], rest[i] + glm::dvec3(0, 2, 0), 1e-6));
 
     run("newScene");
     std::string left = run("polySphere", {{"name", "Left"}, {"radius", 5}})[0];
@@ -481,7 +457,7 @@ TEST_CASE("surfaceDeform, wrap with several drivers, and old wrap bindings")
     run("move", {{"args", {b}}, {"by", v3(0, 4, 0)}});
     CHECK(samePoints(scenePoints(left, true), leftRest));
     std::vector<glm::dvec3> r = scenePoints(right, true);
-    CHECK(near(r[0], rightRest[0] + glm::dvec3(0, 4, 0), 1e-6));
+    CHECK(nearTight(r[0], rightRest[0] + glm::dvec3(0, 4, 0), 1e-6));
     run("undo");
     run("undo");
     CHECK(samePoints(scenePoints(right, true), rightRest));
@@ -552,12 +528,12 @@ TEST_CASE("collision, rigidify, skinSlide and pins from commands")
     json pins = run("surfacePin", {{"args", {prop, skin}}, {"mode", "uv"}});
     REQUIRE(pins.size() == 1);
     glm::dvec3 before = glm::dvec3(g3.find(prop)->as<glm::dmat4>(Transform::kWorldMatrix)[3]);
-    CHECK(near(before, glm::dvec3(1, 2, 1), 1e-6));
-    editPoints(skin, [](const glm::dvec3&) { return glm::dvec3(0, 3, 0); });
+    CHECK(nearTight(before, glm::dvec3(1, 2, 1), 1e-6));
+    offsetPoints(skin, [](const glm::dvec3&) { return glm::dvec3(0, 3, 0); });
     g3.evaluate();
     glm::dvec3 after = glm::dvec3(g3.find(prop)->as<glm::dmat4>(Transform::kWorldMatrix)[3]);
-    CHECK(near(after, before + glm::dvec3(0, 3, 0), 1e-6));
+    CHECK(nearTight(after, before + glm::dvec3(0, 3, 0), 1e-6));
     json near2 = run("surfacePin", {{"args", {skin}}, {"mode", "nearest"}, {"position", v3(2, 0, 2)}});
     g3.evaluate();
-    CHECK(near(glm::dvec3(g3.find(near2[0].get<std::string>())->as<glm::dmat4>(Transform::kWorldMatrix)[3]), glm::dvec3(2, 3, 2), 1e-6));
+    CHECK(nearTight(glm::dvec3(g3.find(near2[0].get<std::string>())->as<glm::dmat4>(Transform::kWorldMatrix)[3]), glm::dvec3(2, 3, 2), 1e-6));
 }

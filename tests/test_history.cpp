@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/Paths.h"
@@ -16,15 +18,14 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace fs = std::filesystem;
 namespace history = io::history;
 namespace recovery = io::recovery;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-fs::path freshDir(const char* name)
+fs::path historyDir(const char* name)
 {
     fs::path dir = fs::temp_directory_path() / "lila_tests" / "history" / name;
     std::error_code ec;
@@ -33,15 +34,9 @@ fs::path freshDir(const char* name)
     return dir;
 }
 
-void touch(const fs::path& p, const std::string& text = "x")
+void touchBinary(const fs::path& p, const std::string& text = "x")
 {
     std::ofstream(p, std::ios::binary) << text;
-}
-
-std::string slurp(const fs::path& p)
-{
-    std::ifstream in(p, std::ios::binary);
-    return {std::istreambuf_iterator<char>(in), {}};
 }
 
 void ageFile(const fs::path& p, std::chrono::seconds by)
@@ -52,15 +47,15 @@ void ageFile(const fs::path& p, std::chrono::seconds by)
 
 TEST_CASE("increment naming keeps padding and skips taken names")
 {
-    fs::path dir = freshDir("increment");
+    fs::path dir = historyDir("increment");
     CHECK(history::nextIncrement(dir / "scene.lila").filename() == "scene_v002.lila");
     CHECK(history::nextIncrement(dir / "scene_v002.lila").filename() == "scene_v003.lila");
     CHECK(history::nextIncrement(dir / "scene_v9.lilaa").filename() == "scene_v10.lilaa");
     CHECK(history::nextIncrement(dir / "scene_v0099.lila").filename() == "scene_v0100.lila");
     CHECK(history::nextIncrement(dir / "shot_v999.lila").filename() == "shot_v1000.lila");
 
-    touch(dir / "scene_v003.lila");
-    touch(dir / "scene_v004.lilaa");
+    touchBinary(dir / "scene_v003.lila");
+    touchBinary(dir / "scene_v004.lilaa");
     CHECK(history::nextIncrement(dir / "scene_v002.lila").filename() == "scene_v005.lila");
     CHECK(history::nextIncrement(dir / "scene.lila").filename() == "scene_v002.lila");
 
@@ -71,9 +66,9 @@ TEST_CASE("increment naming keeps padding and skips taken names")
     CHECK(history::parseVersionedStem("_v2").width == 0);
     CHECK(history::parseVersionedStem("scene_vx").base == "scene_vx");
 
-    touch(dir / "scene.lila");
-    touch(dir / "scene_v003.lila");
-    touch(dir / "other_v002.lila");
+    touchBinary(dir / "scene.lila");
+    touchBinary(dir / "scene_v003.lila");
+    touchBinary(dir / "other_v002.lila");
     auto inc = history::increments(dir / "scene_v003.lila");
     REQUIRE(inc.size() == 2);
     CHECK(inc[0].filename() == "scene.lila");
@@ -82,7 +77,7 @@ TEST_CASE("increment naming keeps padding and skips taken names")
 
 TEST_CASE("history names parse and sort, and pruning removes the oldest")
 {
-    fs::path dir = freshDir("rotation");
+    fs::path dir = historyDir("rotation");
     auto p = history::parseName("scene.20261022-140312.autosave.lila", "scene");
     REQUIRE(p);
     CHECK(p->stamp == "20261022-140312");
@@ -102,14 +97,14 @@ TEST_CASE("history names parse and sort, and pruning removes the oldest")
 
     // Same second twice: the second gets a counter and still sorts after the first.
     fs::path a = history::uniqueName(dir, "scene", "20261022-100000", "autosave");
-    touch(a);
+    touchBinary(a);
     fs::path b = history::uniqueName(dir, "scene", "20261022-100000", "autosave");
     CHECK(b.filename() == "scene.20261022-100000-2.autosave.lila");
-    touch(b);
+    touchBinary(b);
     for (const char* stamp : {"20261021-090000", "20261022-110000", "20261020-235959"})
-        touch(history::uniqueName(dir, "scene", stamp, "autosave"));
-    touch(history::uniqueName(dir, "scene", "20261019-000000", "emergency"));
-    touch(dir / "scene_other.20261019-000000.autosave.lila");
+        touchBinary(history::uniqueName(dir, "scene", stamp, "autosave"));
+    touchBinary(history::uniqueName(dir, "scene", "20261019-000000", "emergency"));
+    touchBinary(dir / "scene_other.20261019-000000.autosave.lila");
 
     auto all = history::entries(dir, "scene", "autosave");
     REQUIRE(all.size() == 5);
@@ -129,7 +124,7 @@ TEST_CASE("history names parse and sort, and pruning removes the oldest")
 
 TEST_CASE("backups copy the previous version, keep N, and leave read-only originals in place")
 {
-    fs::path dir = freshDir("backup");
+    fs::path dir = historyDir("backup");
     fs::path ws = dir / "ws";
     fs::create_directories(ws / "chars");
     fs::path scene = ws / "chars" / "hero.lila";
@@ -145,7 +140,7 @@ TEST_CASE("backups copy the previous version, keep N, and leave read-only origin
     CHECK(history::folderFor(base, {}, ws) == base / "untitled");
 
     CHECK(history::backup(scene, folder, 3).empty());
-    touch(scene, "v1");
+    touchBinary(scene, "v1");
     // Perforce leaves files read-only until checkout; the backup must still work and the original must stay.
     fs::permissions(scene, fs::perms::owner_write, fs::perm_options::remove);
     fs::path first = history::backup(scene, folder, 3);
@@ -160,7 +155,7 @@ TEST_CASE("backups copy the previous version, keep N, and leave read-only origin
 
     for (int i = 2; i <= 5; ++i)
     {
-        touch(scene, "v" + std::to_string(i));
+        touchBinary(scene, "v" + std::to_string(i));
         history::backup(scene, folder, 3);
     }
     auto kept = history::entries(folder, "hero", "");
@@ -169,13 +164,13 @@ TEST_CASE("backups copy the previous version, keep N, and leave read-only origin
     CHECK(slurp(kept.back()) == "v5");
 
     fs::path text = ws / "chars" / "hero.lilaa";
-    touch(text, "ascii");
+    touchBinary(text, "ascii");
     CHECK(history::backup(text, folder, 3).extension() == ".lilaa");
 }
 
 TEST_CASE("saving backs up the previous file; autosave never touches the scene file")
 {
-    fs::path dir = freshDir("save");
+    fs::path dir = historyDir("save");
     fs::path scene = dir / "shot.lila";
     std::error_code ec;
     fs::remove_all(history::backupFolder(scene), ec);
@@ -240,10 +235,10 @@ TEST_CASE("saving backs up the previous file; autosave never touches the scene f
 
 TEST_CASE("unclean exit detection")
 {
-    fs::path dir = freshDir("sessions");
-    fs::path scenes = freshDir("sessions_scenes");
+    fs::path dir = historyDir("sessions");
+    fs::path scenes = historyDir("sessions_scenes");
     fs::path scene = scenes / "level.lila";
-    touch(scene);
+    touchBinary(scene);
     int64_t started = recovery::nowMs() - 60000;
     auto writeSession = [&](int64_t pid, const fs::path& scenePath, const fs::path& folder) {
         json s = {{"pid", pid}, {"started", started}, {"scenes", {{{"path", scenePath.generic_string()}, {"folders", {folder.generic_string()}}}}}};
@@ -280,7 +275,7 @@ TEST_CASE("unclean exit detection")
 
     // An autosave older than the saved scene is not offered.
     fs::path old = history::uniqueName(folder, "level", "20261022-100000", "autosave");
-    touch(old);
+    touchBinary(old);
     ageFile(old, std::chrono::seconds(30));
     CHECK(recovery::findRecoverable(crashed).empty());
 
@@ -291,7 +286,7 @@ TEST_CASE("unclean exit detection")
     CHECK(found[0].file == old);
     CHECK(found[0].kind == history::Kind::Autosave);
     fs::path em = history::uniqueName(folder, "level", "20261022-100001", "emergency");
-    touch(em);
+    touchBinary(em);
     found = recovery::findRecoverable(crashed);
     REQUIRE(found.size() == 1);
     CHECK(found[0].file == em);
@@ -310,7 +305,7 @@ TEST_CASE("unclean exit detection")
     fs::path uf = scenes / "untitled_auto";
     fs::create_directories(uf);
     untitled.scenes.push_back({{}, {uf}});
-    touch(history::uniqueName(uf, "untitled", history::timestamp(), "autosave"));
+    touchBinary(history::uniqueName(uf, "untitled", history::timestamp(), "autosave"));
     found = recovery::findRecoverable({untitled});
     REQUIRE(found.size() == 1);
     CHECK(found[0].scene.empty());
@@ -321,7 +316,7 @@ TEST_CASE("unclean exit detection")
     CHECK(fs::exists(dir / "222.json"));
 
     // Our own session file comes and goes.
-    fs::path mine = freshDir("sessions_mine");
+    fs::path mine = historyDir("sessions_mine");
     recovery::beginSession(mine);
     fs::path own = mine / (std::to_string(recovery::currentPid()) + ".json");
     CHECK(fs::exists(own));
@@ -333,7 +328,7 @@ TEST_CASE("unclean exit detection")
 
 TEST_CASE("undoing back to the opened state clears the modified flag; selection never sets it")
 {
-    fs::path scene = freshDir("dirty") / "shot.lila";
+    fs::path scene = historyDir("dirty") / "shot.lila";
     run("newScene");
     run("spaceLocator", {{"name", "A"}});
     run("saveScene", {{"args", {scene.generic_string()}}});
@@ -359,7 +354,7 @@ TEST_CASE("undoing back to the opened state clears the modified flag; selection 
 
 TEST_CASE("flushUndo stops undo at that point and keeps a saved scene unmodified")
 {
-    fs::path scene = freshDir("flush") / "shot.lila";
+    fs::path scene = historyDir("flush") / "shot.lila";
     run("newScene");
     run("spaceLocator", {{"name", "A"}});
     run("saveScene", {{"args", {scene.generic_string()}}});
@@ -469,13 +464,13 @@ TEST_CASE("undoJump undoes and redoes to a position with one notification")
 
 TEST_CASE("recovered scenes are kept apart from their autosaves until pruned or cleared")
 {
-    fs::path dir = freshDir("recovered");
-    fs::path source = freshDir("recovered_source");
+    fs::path dir = historyDir("recovered");
+    fs::path source = historyDir("recovered_source");
     fs::path scene = source / "level.lila";
     fs::path older = source / "level.20261001-100000.autosave.lila";
     fs::path newer = source / "untitled.20261020-100000.emergency.lila";
-    touch(older, "older");
-    touch(newer, "newer");
+    touchBinary(older, "older");
+    touchBinary(newer, "newer");
     const int64_t now = 2000000000;
     std::vector<recovery::Candidate> found = {{scene, older, history::Kind::Autosave, now - 40 * 86400, 0},
                                               {{}, newer, history::Kind::Emergency, now - 86400, 0}};
@@ -520,13 +515,13 @@ TEST_CASE("opening an import-only format starts a new untitled scene")
     CHECK(filter.find("Test import (*.tstimp)") != std::string::npos);
     CHECK(filter.find("Lila scenes") < filter.find("FBX ("));
 
-    fs::path dir = freshDir("open_import");
+    fs::path dir = historyDir("open_import");
     fs::path saved = dir / "before.lila";
     run("newScene");
     run("spaceLocator", {{"name", "Old"}});
     run("saveScene", {{"args", {saved.generic_string()}}});
     fs::path file = dir / "thing.tstimp";
-    touch(file);
+    touchBinary(file);
     run("openScene", {{"args", {file.generic_string()}}});
     scene::Graph& g = scene::Graph::current();
     CHECK(g.find("Imported"));

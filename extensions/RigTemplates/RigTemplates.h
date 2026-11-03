@@ -4,6 +4,7 @@
 
 #include <lila/Extension.h>
 #include <lila/Graph.h>
+#include <lila/Node.h>
 
 #include <filesystem>
 #include <functional>
@@ -44,4 +45,13 @@ bool registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
 void loadTemplates(lila::ext::Context& ctx);
 void shutdown();
+
+inline int attrOf(const lila::scene::Node& n, const char* name) { return n.type().attrIndex(name); }
+
+/** A string attr's value; empty when the node has no such attr. */
+inline std::string str(const lila::scene::Node& n, const char* attr)
+{
+    int a = attrOf(n, attr);
+    return a < 0 ? std::string() : n.as<std::string>(a);
+}
 } // namespace rigt

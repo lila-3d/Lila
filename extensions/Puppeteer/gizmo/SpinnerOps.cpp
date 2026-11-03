@@ -17,8 +17,6 @@ namespace
 {
 constexpr double kTimeEps = 1e-6;
 
-Graph& graph() { return Graph::current(); }
-
 int depthOf(Graph& g, NodeId id)
 {
     int d = 0;

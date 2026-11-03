@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/BevelPlus.h"
 #include "curve/CurveBoolean.h"
 #include "curve/Roof.h"
@@ -12,19 +14,10 @@
 using namespace lila;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-curve::Spline poly(std::vector<D3> pts, bool closed = true)
-{
-    curve::Spline s;
-    s.kind = curve::Kind::Poly;
-    s.closed = closed;
-    s.points = std::move(pts);
-    s.normalize();
-    return s;
-}
-
 bool finite(const geo::Mesh& m)
 {
     for (geo::Index p = 0; p < m.pointCapacity(); ++p)
@@ -45,12 +38,12 @@ bool finite(const curve::Splines& s)
 
 TEST_CASE("planar tools warn on degenerate input instead of failing")
 {
-    curve::Spline open = poly({D3(0), D3(10, 0, 0), D3(10, 10, 0)}, false);
-    curve::Spline flat = poly({D3(0), D3(5, 0, 0), D3(10, 0, 0)});
-    curve::Spline repeated = poly({D3(0), D3(0), D3(10, 0, 0), D3(10, 0, 0), D3(10, 10, 0), D3(0, 10, 0)});
-    curve::Spline single = poly({D3(1, 2, 3), D3(1, 2, 3), D3(1, 2, 3)});
+    curve::Spline open = polyline({D3(0), D3(10, 0, 0), D3(10, 10, 0)});
+    curve::Spline flat = polyLoop({D3(0), D3(5, 0, 0), D3(10, 0, 0)});
+    curve::Spline repeated = polyLoop({D3(0), D3(0), D3(10, 0, 0), D3(10, 0, 0), D3(10, 10, 0), D3(0, 10, 0)});
+    curve::Spline single = polyLoop({D3(1, 2, 3), D3(1, 2, 3), D3(1, 2, 3)});
     // A figure eight crosses itself.
-    curve::Spline eight = poly({D3(0), D3(10, 10, 0), D3(10, 0, 0), D3(0, 10, 0)});
+    curve::Spline eight = polyLoop({D3(0), D3(10, 10, 0), D3(10, 0, 0), D3(0, 10, 0)});
 
     curve::CurveBooleanResult b = curve::curveBoolean({{open}, {flat}}, {});
     CHECK(b.curves.empty());
@@ -92,7 +85,7 @@ TEST_CASE("planar tools warn on degenerate input instead of failing")
     CHECK(!roof.warnings.empty());
     curve::RoofOptions ro;
     ro.overhang = 50.0;
-    roof = curve::roof({poly({D3(0), D3(10, 0, 0), D3(10, 0, -10), D3(5, 0, -10), D3(5, 0, -1), D3(4, 0, -1), D3(4, 0, -10), D3(0, 0, -10)})}, ro);
+    roof = curve::roof({polyLoop({D3(0), D3(10, 0, 0), D3(10, 0, -10), D3(5, 0, -10), D3(5, 0, -1), D3(4, 0, -1), D3(4, 0, -10), D3(0, 0, -10)})}, ro);
     CHECK(!roof.warnings.empty());
     CHECK(finite(roof.mesh));
 

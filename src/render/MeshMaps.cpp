@@ -77,7 +77,7 @@ bool globalFinalize(const bake::MapSettings& s)
     return false;
 }
 
-bool sameMaterial(const bake::MaterialInput& a, const bake::MaterialInput& b)
+bool sameBakeMaterial(const bake::MaterialInput& a, const bake::MaterialInput& b)
 {
     return std::tie(a.found, a.baseColor, a.metallic, a.roughness, a.emissive, a.emissiveIntensity, a.opacity, a.blendMode, a.normalOpenGL,
                     a.packedLayout, a.baseColorMap, a.metallicMap, a.roughnessMap, a.normalMap, a.ormMap, a.emissiveMap, a.occlusionMap) ==
@@ -90,7 +90,7 @@ bool sameMaterials(const bake::BakeInputs& a, const bake::BakeInputs& b)
     if (a.materials.size() != b.materials.size())
         return false;
     for (auto i = a.materials.begin(), j = b.materials.begin(); i != a.materials.end(); ++i, ++j)
-        if (i->first != j->first || !sameMaterial(i->second, j->second))
+        if (i->first != j->first || !sameBakeMaterial(i->second, j->second))
             return false;
     return true;
 }

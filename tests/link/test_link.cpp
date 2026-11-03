@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "FakeServer.h"
 
 #include "ops/Command.h"
@@ -25,6 +26,7 @@
 
 using namespace lila;
 using namespace lila::link;
+using namespace linktest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -72,14 +74,6 @@ FakeServer::Handler editor(std::function<std::optional<json>(const json&)> extra
             return extra(req);
         return json{{"jsonrpc", "2.0"}, {"id", req["id"]}, {"error", {{"code", -32601}, {"message", "Unknown method"}}}};
     };
-}
-
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_link_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
 }
 
 template <class F> bool waitUntil(F&& f, int ms = 3000)

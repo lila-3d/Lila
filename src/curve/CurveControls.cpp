@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "curve/CurveDeform.h"
 #include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/RigUtil.h"
@@ -19,6 +20,7 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -72,32 +74,6 @@ void applyDriven(Spline& s, std::vector<std::pair<uint32_t, D3>>& moves)
     }
     if (bezier)
         updateHandles(s);
-}
-
-
-std::vector<Node*> curvesArg(const Args& a, const char* cmd)
-{
-    Graph& g = Graph::current();
-    std::vector<Node*> out;
-    if (a.positional.empty())
-    {
-        for (NodeId id : g.selection())
-            if (Node* n = g.node(id); n && n->type().isA("curve"))
-                out.push_back(n);
-        if (out.empty())
-            throw CommandError(std::string(cmd) + ": select a curve");
-        return out;
-    }
-    for (const json& j : a.positional)
-    {
-        Node* n = g.find(j.get<std::string>());
-        if (!n)
-            throw CommandError(std::string(cmd) + ": no node named '" + j.get<std::string>() + "'");
-        if (!n->type().isA("curve"))
-            throw CommandError(std::string(cmd) + ": " + n->name() + " is not a curve");
-        out.push_back(n);
-    }
-    return out;
 }
 
 D3 worldPoint(const glm::dmat4& m, const D3& p) { return D3(m * glm::dvec4(p, 1.0)); }
@@ -456,7 +432,7 @@ void registerCurveControlCommands()
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             json out = json::array();
-            for (Node* c : curvesArg(a, "curveControls"))
+            for (Node* c : curvesArg(graph(), a, "curveControls"))
                 for (json& n : buildControls(g, *c, a))
                     out.push_back(std::move(n));
             return out;
@@ -471,7 +447,7 @@ void registerCurveControlCommands()
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             json out = json::array();
-            for (Node* c : curvesArg(a, "removeCurveControls"))
+            for (Node* c : curvesArg(graph(), a, "removeCurveControls"))
                 if (removeControls(g, *c))
                     out.push_back(c->path());
             if (out.empty())

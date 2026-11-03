@@ -45,13 +45,6 @@ void notify()
 
 Graph& graph() { return Graph::current(); }
 
-std::string lower(std::string s)
-{
-    for (char& c : s)
-        c = char(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-
 std::string bare(const std::string& name) { return poses::stripNamespace(name); }
 
 /** "a, b,c" -> {a, b, c}. */
@@ -96,14 +89,6 @@ glm::dquat rotationOf(const glm::dmat4& m)
 }
 
 glm::dvec3 degrees(const glm::dquat& q, RotateOrder order = RotateOrder::XYZ) { return matrixToEuler(glm::mat3_cast(q), order); }
-
-int attrOf(const Node& n, const char* name) { return n.type().attrIndex(name); }
-
-std::string str(const Node& n, const char* attr)
-{
-    int a = attrOf(n, attr);
-    return a < 0 ? std::string() : n.as<std::string>(a);
-}
 
 /** The top joint above a joint, and every joint under it parent first. */
 NodeId topJoint(Graph& g, NodeId id)

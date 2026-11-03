@@ -1,4 +1,6 @@
 #include <doctest/doctest.h>
+#include "TestUtil.h"
+
 #include "scene/TransformOps.h"
 
 #include "ops/Command.h"
@@ -12,12 +14,7 @@
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-} // namespace
+using namespace testutil;
 
 TEST_CASE("component selection and modeling ops")
 {
@@ -329,17 +326,6 @@ TEST_CASE("bounding mesh: fitted collision named and parented for Unreal")
     run("undo");
     CHECK(run("ls", {{"type", "polyCapsule"}}).empty());
 }
-
-namespace
-{
-geo::Mesh meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-} // namespace
 
 TEST_CASE("component normals are area weighted and selection aware")
 {

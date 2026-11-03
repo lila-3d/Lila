@@ -1,6 +1,7 @@
 #include "geo/ObjIO.h"
 
 #include "geo/ColorSets.h"
+#include "geo/IoCommon.h"
 #include "geo/Normals.h"
 #include "geo/Primitives.h"
 #include "geo/Topology.h"
@@ -25,6 +26,8 @@ namespace lila::geo
 {
 namespace
 {
+using detail::appendNumber;
+
 constexpr int64_t kNoRef = std::numeric_limits<int64_t>::min();
 
 struct Event
@@ -651,21 +654,6 @@ ObjReadResult readObjFile(const std::string& path, const ObjReadOptions& opts)
 
 namespace
 {
-void appendNumber(std::string& s, double v, int precision)
-{
-    char buf[64];
-    auto r = precision > 0 ? std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, precision)
-                           : std::to_chars(buf, buf + sizeof(buf), v);
-    s.append(buf, r.ptr);
-}
-
-void appendNumber(std::string& s, float v, int precision)
-{
-    char buf[64];
-    auto r = precision > 0 ? std::to_chars(buf, buf + sizeof(buf), v, std::chars_format::general, precision)
-                           : std::to_chars(buf, buf + sizeof(buf), v);
-    s.append(buf, r.ptr);
-}
 
 void appendIndex(std::string& s, size_t v)
 {

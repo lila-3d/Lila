@@ -11,6 +11,7 @@
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
 #include "ui/NodeLookup.h"
+#include "ui/UiCommands.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "scene/SceneIndex.h"
@@ -33,18 +34,6 @@ using scene::Graph;
 using scene::NodeId;
 
 const glm::vec4 kEdgeColor(0.8f, 0.8f, 0.8f, 1.0f);
-
-void run(const char* name, json call = json::object())
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
 
 void drawBevelEdges(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
 {
@@ -89,7 +78,7 @@ void drawBevelEdges(render::FrameState& s, OverlayPainter&, const ViewInfo& view
     }
 }
 
-QPushButton* button(const QString& text, const QString& tip, std::function<void()> fn)
+QPushButton* pushButton(const QString& text, const QString& tip, std::function<void()> fn)
 {
     auto* b = new QPushButton(text);
     b->setToolTip(tip);
@@ -112,23 +101,23 @@ QWidget* modifierPanel(NodeId mod, bool withSelect)
         scene::Node* n = Graph::current().node(mod);
         return n ? n->path() : std::string();
     };
-    auto call = [name](const char* cmd) { return [name, cmd] { run(cmd, {{"args", {name()}}}); }; };
+    auto call = [name](const char* cmd) { return [name, cmd] { runUi(cmd, {{"args", {name()}}}); }; };
 
     auto* row1 = new QHBoxLayout;
-    auto* edit = button("Edit Edges", "Show the input mesh with these edges selected; change them with normal selection.", call("bevelEditEdges"));
-    auto* apply = button("Apply", "Store the selected edges and finish editing.", call("bevelApplyEdges"));
-    auto* cancel = button("Cancel", "Finish editing without changing the edges.", call("bevelCancelEdges"));
+    auto* edit = pushButton("Edit Edges", "Show the input mesh with these edges selected; change them with normal selection.", call("bevelEditEdges"));
+    auto* apply = pushButton("Apply", "Store the selected edges and finish editing.", call("bevelApplyEdges"));
+    auto* cancel = pushButton("Cancel", "Finish editing without changing the edges.", call("bevelCancelEdges"));
     row1->addWidget(edit);
     row1->addWidget(apply);
     row1->addWidget(cancel);
     v->addLayout(row1);
     auto* row2 = new QHBoxLayout;
-    row2->addWidget(button("Measure Thin", "Set thin to 1.5 times the selected edge's length.", call("bevelMeasureThin")));
-    auto* clear = button("Clear Overrides", "Drop the hand-picked edges.", call("bevelClearOverrides"));
+    row2->addWidget(pushButton("Measure Thin", "Set thin to 1.5 times the selected edge's length.", call("bevelMeasureThin")));
+    auto* clear = pushButton("Clear Overrides", "Drop the hand-picked edges.", call("bevelClearOverrides"));
     row2->addWidget(clear);
     if (withSelect)
-        row2->addWidget(button("Select", "Select the modifier to edit its parameters and see its edges.", [name] {
-            run("select", {{"args", {name()}}});
+        row2->addWidget(pushButton("Select", "Select the modifier to edit its parameters and see its edges.", [name] {
+            runUi("select", {{"args", {name()}}});
         }));
     v->addLayout(row2);
 
@@ -192,13 +181,13 @@ QWidget* meshPanel(NodeId mesh)
     return w;
 }
 
-void registerActions()
+void registerAutoBevelActions()
 {
     auto add = [](const char* id, const char* label, const char* cmd, const char* doc) {
         actions::add({.id = id,
                       .label = label,
                       .category = "Modifiers",
-                      .run = [cmd] { run(cmd); },
+                      .run = [cmd] { runUi(cmd); },
                       .doc = doc,
                       .python = std::string(cmd) + "()"});
     };
@@ -231,7 +220,7 @@ void registerActions()
                               return;
                           }
                           for (const json& name : names)
-                              run("setAttr", {{"args", {name.get<std::string>() + ".showEdges", on}}});
+                              runUi("setAttr", {{"args", {name.get<std::string>() + ".showEdges", on}}});
                           viewportTools::requestRedraw();
                       },
                   .doc = "Toggle the viewport highlight of the selected auto bevel modifiers' edges."});
@@ -244,7 +233,7 @@ void registerAutoBevelUi()
     if (done)
         return;
     done = true;
-    registerActions();
+    registerAutoBevelActions();
     viewportHooks::addDrawer(drawBevelEdges);
     attributeEditor::addSection("autoBevelModifier", "Bevel Edges", [](NodeId id) { return modifierPanel(id, false); });
     attributeEditor::addSection("mesh", "Auto Bevel", [](NodeId id) { return meshPanel(id); });

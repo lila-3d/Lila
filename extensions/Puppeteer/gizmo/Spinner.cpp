@@ -253,8 +253,6 @@ glm::vec4 gray(float v, float a = 1.0f) { return {v, v, v, a}; }
 const glm::vec4 kOrange{0.93f, 0.55f, 0.13f, 1.0f};
 const glm::vec4 kYellow{0.92f, 0.78f, 0.22f, 1.0f};
 
-Graph& graph() { return Graph::current(); }
-
 std::vector<std::string> selectedTransforms()
 {
     Graph& g = graph();
@@ -1360,7 +1358,7 @@ void registerIcons(ext::Context& ctx)
         overlayIcons::add(ctx, id, {.tabler = tabler});
 }
 
-void registerActions(ext::Context& ctx)
+void registerSpinnerActions(ext::Context& ctx)
 {
     const char* cat = "Puppeteer Spinner";
     auto flag = [&](const char* id, const char* label, bool Settings::* member, const char* doc) {
@@ -1424,7 +1422,7 @@ void registerActions(ext::Context& ctx)
 void registerSpinner(ext::Context& ctx)
 {
     registerIcons(ctx);
-    registerActions(ctx);
+    registerSpinnerActions(ctx);
     gizmos::add(ctx, {.id = kSpinnerGizmo, .label = "Spinner", .create = [] { return std::make_unique<SpinnerGizmo>(); }});
 }
 } // namespace puppeteer

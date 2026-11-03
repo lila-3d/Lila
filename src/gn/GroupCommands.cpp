@@ -1,3 +1,4 @@
+#include "gn/CommandArgs.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 
@@ -34,8 +35,6 @@ using Arg = ArgType;
 constexpr const char* kFileFormat = "lila.nodes";
 constexpr int kFileVersion = 1;
 
-Graph& graph() { return Graph::current(); }
-
 std::string positional(const Args& a, size_t i, const char* cmd, const char* what)
 {
     if (a.positional.size() <= i || !a.positional[i].is_string())
@@ -45,7 +44,7 @@ std::string positional(const Args& a, size_t i, const char* cmd, const char* wha
 
 Node& groupNodeOf(const std::string& name, const char* cmd)
 {
-    Node* n = findGroupNode(graph(), name);
+    Node* n = findGroupNode(Graph::current(), name);
     if (!n)
         throw CommandError(std::string(cmd) + ": no geometry-nodes group named '" + name + "'");
     return *n;
@@ -67,7 +66,7 @@ void commitOrFail(Node& n, Group grp, const char* cmd, const std::map<std::strin
 {
     try
     {
-        commitGroup(graph(), n, std::move(grp), renames);
+        commitGroup(Graph::current(), n, std::move(grp), renames);
     }
     catch (const CommandError&)
     {
@@ -87,14 +86,6 @@ json edit(const Args& a, const char* cmd, const std::function<json(Group&, std::
     json result = fn(grp, renames);
     commitOrFail(n, std::move(grp), cmd, renames);
     return result;
-}
-
-std::pair<std::string, std::string> splitPlug(const std::string& s, const char* cmd)
-{
-    auto dot = s.find('.');
-    if (dot == std::string::npos || dot == 0 || dot + 1 == s.size())
-        throw CommandError(std::string(cmd) + ": expected node.socket, got '" + s + "'");
-    return {s.substr(0, dot), s.substr(dot + 1)};
 }
 
 Sockets socketsOf(const Group& grp, const GNode& n)
@@ -277,17 +268,17 @@ std::vector<Group> groupsInDocument(const json& doc)
 /** Brings a group into the scene: replaces the definition of an existing one (its modifiers update) or creates it. */
 void installGroup(Group grp)
 {
-    if (Node* existing = findGroupNode(graph(), grp.name))
+    if (Node* existing = findGroupNode(Graph::current(), grp.name))
     {
         Group cur = readGroup(*existing);
         grp.typeVersion = cur.typeVersion;
-        commitGroup(graph(), *existing, std::move(grp));
+        commitGroup(Graph::current(), *existing, std::move(grp));
         return;
     }
     if (!validIdentifier(grp.name))
         throw std::invalid_argument("'" + grp.name + "' isn't a valid group name");
     grp.typeVersion = 1;
-    detail::createGroupNode(graph(), grp);
+    detail::createGroupNode(Graph::current(), grp);
 }
 
 std::vector<std::string> importFile(const fs::path& path, const char* cmd)
@@ -836,8 +827,8 @@ std::map<std::string, json> availableGroups()
             {
             }
         }
-    for (const std::string& name : groupNames(graph()))
-        if (Node* n = findGroupNode(graph(), name))
+    for (const std::string& name : groupNames(Graph::current()))
+        if (Node* n = findGroupNode(Graph::current(), name))
             try
             {
                 out[name] = readGroup(*n).toJson();
@@ -1057,7 +1048,7 @@ void registerGroupCommands()
             if (!validIdentifier(base))
                 throw CommandError("gnGroupNodes: '" + base + "' isn't a valid group name");
             std::string innerName = base;
-            for (int i = 1; graph().find(innerName); ++i)
+            for (int i = 1; Graph::current().find(innerName); ++i)
                 innerName = base + std::to_string(i);
             std::vector<std::string> names;
             for (size_t i = 1; i < a.positional.size(); ++i)
@@ -1066,7 +1057,7 @@ void registerGroupCommands()
             Collapsed c = collapse(outer, names, innerName, "gnGroupNodes");
             try
             {
-                detail::createGroupNode(graph(), c.inner);
+                detail::createGroupNode(Graph::current(), c.inner);
             }
             catch (const std::exception& e)
             {
@@ -1185,7 +1176,7 @@ void registerGroupCommands()
                     err.add((g.name.empty() ? std::string("spec") : g.name) + ": " + l);
                 if (one.lines.empty())
                 {
-                    if (!replace && findGroupNode(graph(), g.name))
+                    if (!replace && findGroupNode(Graph::current(), g.name))
                         err.add(g.name + ": the scene already has this group (pass replace=True)");
                     available[g.name] = g.toJson();
                     built.push_back(std::move(g));

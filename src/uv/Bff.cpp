@@ -1,7 +1,9 @@
 #include "uv/Bff.h"
 
 #include "core/Profile.h"
+#include "uv/OptimizeMath.h"
 #include "uv/Unwrap.h"
+#include "uv/UvCommon.h"
 
 #include <Eigen/Sparse>
 #include <Eigen/SparseCholesky>
@@ -19,14 +21,10 @@ namespace lila::uv
 {
 namespace
 {
-using Triplet = Eigen::Triplet<double>;
-using SpMat = Eigen::SparseMatrix<double>;
-constexpr double kTwoPi = glm::two_pi<double>();
-
-uint64_t edgeKey(Index a, Index b)
-{
-    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
-}
+using detail::SpMat;
+using detail::Triplet;
+using detail::edgeKey;
+using detail::kTwoPi;
 
 /** Cotan Laplacian (positive semi-definite) and the angle sum at each vertex, from 3D lengths. */
 struct Geometry

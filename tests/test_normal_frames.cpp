@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
@@ -11,18 +13,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using scene::ComponentMode;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-geo::Mesh meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 /** A 2x1 strip of quads in the XZ plane facing +Y: points 0-2 at z=0, 3-5 at z=10. */
 geo::Mesh strip()
 {
@@ -44,14 +38,12 @@ template <class F> void setUvs(geo::Mesh& m, F&& fn)
             uv[c] = fn(m.position(m.cornerPoint(c)), m.cornerFace(c));
 }
 
-bool near(const glm::dvec3& a, const glm::dvec3& b) { return glm::length(a - b) < 1e-9; }
-
 void checkOrthonormal(const glm::dmat3& f)
 {
     for (int i = 0; i < 3; ++i)
         CHECK(glm::length(f[i]) == doctest::Approx(1.0));
     CHECK(std::abs(glm::dot(f[0], f[1])) < 1e-9);
-    CHECK(near(glm::cross(f[0], f[1]), f[2]));
+    CHECK(nearTight(glm::cross(f[0], f[1]), f[2]));
 }
 } // namespace
 
@@ -66,9 +58,9 @@ TEST_CASE("componentFrames: normal, uv tangent and fallbacks")
         for (geo::Index p = 0; p < 6; ++p)
         {
             checkOrthonormal(f[p]);
-            CHECK(near(f[p][2], up));
-            CHECK(near(f[p][0], refX));
-            CHECK(near(f[p][1], glm::dvec3(0, 0, -1)));
+            CHECK(nearTight(f[p][2], up));
+            CHECK(nearTight(f[p][0], refX));
+            CHECK(nearTight(f[p][1], glm::dvec3(0, 0, -1)));
         }
     }
     SUBCASE("uvs: U follows increasing u")
@@ -78,7 +70,7 @@ TEST_CASE("componentFrames: normal, uv tangent and fallbacks")
         for (geo::Index p = 0; p < 6; ++p)
         {
             checkOrthonormal(f[p]);
-            CHECK(near(f[p][0], glm::dvec3(0, 0, 1)));
+            CHECK(nearTight(f[p][0], glm::dvec3(0, 0, 1)));
         }
     }
     SUBCASE("islands mirrored across a point cancel and fall back to the reference")
@@ -86,10 +78,10 @@ TEST_CASE("componentFrames: normal, uv tangent and fallbacks")
         // Face 1's u runs the opposite way, so points 1 and 4 on the shared edge have no net direction.
         setUvs(m, [](const glm::dvec3& p, geo::Index f) { return glm::vec2(float(f == 0 ? p.x : -p.x) * 0.1f, float(p.z) * 0.1f); });
         auto f = scene::componentFrames(m, ComponentMode::Vertex, {1}, glm::dvec3(0, 0, 1));
-        CHECK(near(f[0][0], refX));
-        CHECK(near(f[2][0], -refX));
-        CHECK(near(f[1][0], glm::dvec3(0, 0, 1)));
-        CHECK(near(f[4][0], glm::dvec3(0, 0, 1)));
+        CHECK(nearTight(f[0][0], refX));
+        CHECK(nearTight(f[2][0], -refX));
+        CHECK(nearTight(f[1][0], glm::dvec3(0, 0, 1)));
+        CHECK(nearTight(f[4][0], glm::dvec3(0, 0, 1)));
     }
     SUBCASE("edge mode: points on selected edges take U along them")
     {
@@ -97,7 +89,7 @@ TEST_CASE("componentFrames: normal, uv tangent and fallbacks")
         auto f = scene::componentFrames(m, ComponentMode::Edge, {e}, refX);
         CHECK(std::abs(glm::dot(f[1][0], glm::dvec3(0, 0, 1))) == doctest::Approx(1.0));
         CHECK(std::abs(glm::dot(f[4][0], glm::dvec3(0, 0, 1))) == doctest::Approx(1.0));
-        CHECK(near(f[0][0], refX));
+        CHECK(nearTight(f[0][0], refX));
     }
     SUBCASE("a loose point has no frame")
     {
@@ -120,15 +112,15 @@ TEST_CASE("componentFrames: face selections use only the selected faces")
     for (geo::Index p : m.facePoints(top))
     {
         checkOrthonormal(frames[p]);
-        CHECK(near(frames[p][2], glm::dvec3(0, 1, 0)));
+        CHECK(nearTight(frames[p][2], glm::dvec3(0, 1, 0)));
     }
 
     run("selectComponents", {{"args", {cube}}, {"faces", {top}}});
     glm::dmat3 frame = scene::selectionNormalFrame();
     checkOrthonormal(frame);
-    CHECK(near(frame[2], glm::dvec3(0, 1, 0)));
+    CHECK(nearTight(frame[2], glm::dvec3(0, 1, 0)));
     // The selection's points move along their own U, which the manipulator's U shows.
-    CHECK(near(frame[0], frames[m.facePoints(top)[0]][0]));
+    CHECK(nearTight(frame[0], frames[m.facePoints(top)[0]][0]));
 }
 
 TEST_CASE("moveComponents uvn= moves each point along its own frame")
@@ -164,7 +156,7 @@ TEST_CASE("moveComponents uvn= moves each point along its own frame")
     CHECK(glm::length(after.position(10) - before.position(10)) == doctest::Approx(glm::length(uvn)));
 
     run("undo");
-    CHECK(near(meshOf(sphere).position(10), before.position(10)));
+    CHECK(nearTight(meshOf(sphere).position(10), before.position(10)));
     CHECK_THROWS(run("moveComponents", {{"uvn", {1, 0, 0}}, {"normal", 1}}));
 }
 

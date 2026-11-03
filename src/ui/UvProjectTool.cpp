@@ -8,10 +8,13 @@
 #include "scene/LastOp.h"
 #include "ui/Actions.h"
 #include "ui/GizmoMath.h"
+#include "ui/ToolColors.h"
 #include "ui/Tools.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 #include "uv/UvCommands.h"
 
 #include <QKeyEvent>
@@ -29,49 +32,33 @@ namespace lila::ui
 namespace
 {
 namespace lo = scene::lastOp;
-using json = nlohmann::json;
 using uv::Projection;
 
-constexpr const char* kCommand = "uvProject";
+constexpr const char* kProjectCommand = "uvProject";
 constexpr const char* kToolName = "uvProject";
-const glm::vec4 kGray(0.70f, 0.70f, 0.70f, 1.0f);
 const glm::vec4 kDim(0.55f, 0.55f, 0.55f, 0.8f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 constexpr double kPick = 8.0;
 
 std::optional<glm::dvec3> gViewDir;
 std::optional<glm::dvec3> gViewEye;
 
-double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
-
 bool sessionLive()
 {
     const lo::Op* op = lo::current();
-    return op && op->command == kCommand && lo::reachable() && !uv::lastProjections().empty() &&
+    return op && op->command == kProjectCommand && lo::reachable() && !uv::lastProjections().empty() &&
            uv::lastProjections().front().type != Projection::Camera;
-}
-
-double segmentDistance(QPointF p, QPointF a, QPointF b)
-{
-    QPointF d = b - a;
-    double len2 = QPointF::dotProduct(d, d);
-    double t = len2 > 0 ? std::clamp(QPointF::dotProduct(p - a, d) / len2, 0.0, 1.0) : 0.0;
-    QPointF q = a + d * t;
-    return std::hypot(p.x() - q.x(), p.y() - q.y());
 }
 
 double pixelDistance(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 
-json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
-
 /** The first projected mesh's frame, placed in the world. */
-struct Shape
+struct ProjectionShape
 {
     uv::ProjectionRecord rec;
     glm::dmat3 w3{1.0};
     glm::dmat4 inv{1.0};
 
-    explicit Shape(const uv::ProjectionRecord& r) : rec(r), w3(r.world), inv(glm::inverse(r.world)) {}
+    explicit ProjectionShape(const uv::ProjectionRecord& r) : rec(r), w3(r.world), inv(glm::inverse(r.world)) {}
     const uv::ProjectFrame& fr() const { return rec.frame; }
     /** A point in frame coordinates (object units) to world. */
     glm::dvec3 world(const glm::dvec3& l) const { return glm::dvec3(rec.world * glm::dvec4(fr().center + fr().axes * l, 1.0)); }
@@ -84,7 +71,7 @@ struct Shape
     glm::dvec3 around(double angle, double r, double z) const { return {r * std::cos(angle), r * std::sin(angle), z}; }
 };
 
-enum class Kind
+enum class HandleKind
 {
     None,
     Center,
@@ -96,7 +83,7 @@ enum class Kind
 
 struct Handle
 {
-    Kind kind = Kind::None;
+    HandleKind kind = HandleKind::None;
     int axis = 0;
     int sign = 1;
     bool operator==(const Handle&) const = default;
@@ -109,7 +96,7 @@ struct Marker
 };
 
 /** The square and disc handles of a shape, in frame coordinates. */
-std::vector<Marker> markers(const Shape& s)
+std::vector<Marker> markers(const ProjectionShape& s)
 {
     const uv::ProjectFrame& f = s.fr();
     std::vector<Marker> out;
@@ -118,27 +105,27 @@ std::vector<Marker> markers(const Shape& s)
     case Projection::Planar:
         for (int sg : {1, -1})
         {
-            out.push_back({{Kind::Size, 0, sg}, {sg * f.width * 0.5, 0, 0}});
-            out.push_back({{Kind::Size, 1, sg}, {0, sg * f.height * 0.5, 0}});
+            out.push_back({{HandleKind::Size, 0, sg}, {sg * f.width * 0.5, 0, 0}});
+            out.push_back({{HandleKind::Size, 1, sg}, {0, sg * f.height * 0.5, 0}});
         }
         break;
     case Projection::Box:
         for (int sg : {1, -1})
         {
-            out.push_back({{Kind::Size, 0, sg}, {sg * f.width * 0.5, 0, 0}});
-            out.push_back({{Kind::Size, 1, sg}, {0, sg * f.height * 0.5, 0}});
-            out.push_back({{Kind::Size, 2, sg}, {0, 0, sg * f.depth * 0.5}});
+            out.push_back({{HandleKind::Size, 0, sg}, {sg * f.width * 0.5, 0, 0}});
+            out.push_back({{HandleKind::Size, 1, sg}, {0, sg * f.height * 0.5, 0}});
+            out.push_back({{HandleKind::Size, 2, sg}, {0, 0, sg * f.depth * 0.5}});
         }
         break;
     case Projection::Cylindrical:
         for (int sg : {1, -1})
-            out.push_back({{Kind::Size, 2, sg}, {0, 0, sg * f.height * 0.5}});
-        out.push_back({{Kind::Radius}, s.around(s.seam() + glm::half_pi<double>(), f.radius, 0.0)});
-        out.push_back({{Kind::Seam}, s.around(s.seam(), f.radius, f.height * 0.5)});
+            out.push_back({{HandleKind::Size, 2, sg}, {0, 0, sg * f.height * 0.5}});
+        out.push_back({{HandleKind::Radius}, s.around(s.seam() + glm::half_pi<double>(), f.radius, 0.0)});
+        out.push_back({{HandleKind::Seam}, s.around(s.seam(), f.radius, f.height * 0.5)});
         break;
     case Projection::Spherical:
-        out.push_back({{Kind::Radius}, s.around(s.seam() + glm::half_pi<double>(), f.radius, 0.0)});
-        out.push_back({{Kind::Seam}, s.around(s.seam(), f.radius, 0.0)});
+        out.push_back({{HandleKind::Radius}, s.around(s.seam() + glm::half_pi<double>(), f.radius, 0.0)});
+        out.push_back({{HandleKind::Seam}, s.around(s.seam(), f.radius, 0.0)});
         break;
     default: break;
     }
@@ -171,7 +158,7 @@ void wire(OverlayPainter& p, const ViewInfo& view, const std::vector<glm::dvec3>
     flush();
 }
 
-std::vector<glm::dvec3> circle(const Shape& s, double r, double z, int n = 64)
+std::vector<glm::dvec3> projectionCircle(const ProjectionShape& s, double r, double z, int n = 64)
 {
     std::vector<glm::dvec3> out;
     for (int i = 0; i < n; ++i)
@@ -180,7 +167,7 @@ std::vector<glm::dvec3> circle(const Shape& s, double r, double z, int n = 64)
 }
 
 /** A world ring around c in the plane perpendicular to n. */
-std::vector<glm::dvec3> ring(const glm::dvec3& c, const glm::dvec3& n, double r, int count = 64)
+std::vector<glm::dvec3> ringAround(const glm::dvec3& c, const glm::dvec3& n, double r, int count = 64)
 {
     glm::dvec3 a = glm::normalize(glm::cross(n, std::abs(n.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0)));
     glm::dvec3 b = glm::cross(n, a);
@@ -208,9 +195,9 @@ public:
     {
         if (e->button() != Qt::LeftButton)
             return false;
-        std::optional<Shape> s = shape();
+        std::optional<ProjectionShape> s = shape();
         Handle h = s ? pick(*s, e->position(), view) : Handle{};
-        if (h.kind == Kind::None)
+        if (h.kind == HandleKind::None)
         {
             // A click away from the handles ends the session and goes on to select as usual; nothing touches this after.
             viewportTools::set(nullptr);
@@ -224,7 +211,7 @@ public:
     {
         if (!mDrag)
         {
-            std::optional<Shape> s = shape();
+            std::optional<ProjectionShape> s = shape();
             Handle h = s ? pick(*s, e->position(), view) : Handle{};
             if (!(h == mHover))
             {
@@ -266,7 +253,7 @@ public:
     {
         LILA_ZONE();
 
-        std::optional<Shape> s = shape();
+        std::optional<ProjectionShape> s = shape();
         if (!s)
         {
             if (!mDrag)
@@ -274,23 +261,23 @@ public:
             return;
         }
         Handle hot = mDrag ? mDrag->h : mHover;
-        auto colorOf = [&](const Handle& h) { return h == hot ? kHot : kGray; };
+        auto colorOf = [&](const Handle& h) { return h == hot ? kHotColor : kHandleGray; };
         drawShape(*s, p, view, hot);
 
         glm::dvec3 c = s->center();
         double upp = view.unitsPerPixel(c);
         for (int i = 0; i < 3; ++i)
         {
-            Handle h{Kind::Ring, i};
+            Handle h{HandleKind::Ring, i};
             glm::vec4 col(viewportDisplay::axisColor(i), h == hot ? 1.0f : 0.55f);
-            wire(p, view, ring(c, glm::normalize(s->dir(axisVector(i))), ringPixels() * upp), h == hot ? 3.0f : 1.5f, col, true);
+            wire(p, view, ringAround(c, glm::normalize(s->dir(axisVector(i))), ringPixels() * upp), h == hot ? 3.0f : 1.5f, col, true);
         }
         if (auto cp = view.project(c))
-            square(p, *cp, colorOf({Kind::Center}));
+            square(p, *cp, colorOf({HandleKind::Center}));
         for (const Marker& m : markers(*s))
             if (auto q = view.project(s->world(m.local)))
             {
-                if (m.h.kind == Kind::Seam)
+                if (m.h.kind == HandleKind::Seam)
                     p.disc(*q, m.h == hot ? 7.0f : 5.5f, colorOf(m.h));
                 else
                     square(p, *q, colorOf(m.h));
@@ -298,9 +285,9 @@ public:
 
         if (mDrag)
             p.label(mDrag->lastPx + QPointF(18, -14), mDrag->readout);
-        else if (hot.kind != Kind::None)
+        else if (hot.kind != HandleKind::None)
             if (auto at = handleScreen(*s, hot, view))
-                p.text(*at + QPointF(14, 4), hint(s->rec.type, hot), kGray);
+                p.text(*at + QPointF(14, 4), hint(s->rec.type, hot), kHandleGray);
         drawToolMessage(p, view, summary(*s));
         drawToolMessage(p, view, "Drag the handles; Shift scales U/V instead, Ctrl+centre offsets U/V. Enter or Esc to finish.", kDim);
     }
@@ -309,7 +296,7 @@ private:
     struct Drag
     {
         Handle h;
-        Shape start;
+        ProjectionShape start;
         json base;
         QPointF startPx, lastPx;
         glm::dvec3 startHit{0.0};
@@ -335,35 +322,35 @@ private:
             viewportTools::set(nullptr);
     }
 
-    static std::optional<Shape> shape()
+    static std::optional<ProjectionShape> shape()
     {
         if (!sessionLive() || !scene::Graph::current().node(uv::lastProjections().front().node))
             return std::nullopt;
-        return Shape(uv::lastProjections().front());
+        return ProjectionShape(uv::lastProjections().front());
     }
 
     static void square(OverlayPainter& p, QPointF at, const glm::vec4& c)
     {
         QRectF box(at.x() - 5, at.y() - 5, 10, 10);
         std::vector<QPointF> pts = {box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()};
-        p.fill(pts, {c.r, c.g, c.b, c == kHot ? 0.6f : 0.25f});
-        p.polyline(pts, c == kHot ? 2.0f : 1.5f, c, true);
+        p.fill(pts, {c.r, c.g, c.b, c == kHotColor ? 0.6f : 0.25f});
+        p.polyline(pts, c == kHotColor ? 2.0f : 1.5f, c, true);
     }
 
     static QString hint(Projection t, const Handle& h)
     {
         switch (h.kind)
         {
-        case Kind::Center: return "move";
-        case Kind::Ring: return "rotate";
-        case Kind::Size: return sizeFlag(t, h.axis);
-        case Kind::Radius: return "radius";
-        case Kind::Seam: return "seam";
+        case HandleKind::Center: return "move";
+        case HandleKind::Ring: return "rotate";
+        case HandleKind::Size: return sizeFlag(t, h.axis);
+        case HandleKind::Radius: return "radius";
+        case HandleKind::Seam: return "seam";
         default: return {};
         }
     }
 
-    QString summary(const Shape& s) const
+    QString summary(const ProjectionShape& s) const
     {
         const uv::ProjectFrame& f = s.fr();
         const lo::Op* op = lo::current();
@@ -391,7 +378,7 @@ private:
             .arg(flag("offsetV", 0.0), 0, 'f', 2);
     }
 
-    void drawShape(const Shape& s, OverlayPainter& p, const ViewInfo& view, const Handle& hot) const
+    void drawShape(const ProjectionShape& s, OverlayPainter& p, const ViewInfo& view, const Handle& hot) const
     {
         const uv::ProjectFrame& f = s.fr();
         auto edge = [&](const glm::dvec3& a, const glm::dvec3& b, const glm::vec4& c, float w = 1.5f) { wire(p, view, {s.world(a), s.world(b)}, w, c); };
@@ -400,10 +387,10 @@ private:
         case Projection::Planar:
         {
             double x = f.width * 0.5, y = f.height * 0.5;
-            wire(p, view, {s.world({-x, -y, 0}), s.world({x, -y, 0}), s.world({x, y, 0}), s.world({-x, y, 0})}, 1.5f, kGray, true);
+            wire(p, view, {s.world({-x, -y, 0}), s.world({x, -y, 0}), s.world({x, y, 0}), s.world({-x, y, 0})}, 1.5f, kHandleGray, true);
             // The uv origin corner, and the normal the projection looks along.
-            edge({-x, -y, 0}, {-x + f.width * 0.15, -y, 0}, kHot, 2.5f);
-            edge({-x, -y, 0}, {-x, -y + f.height * 0.15, 0}, kHot, 2.5f);
+            edge({-x, -y, 0}, {-x + f.width * 0.15, -y, 0}, kHotColor, 2.5f);
+            edge({-x, -y, 0}, {-x, -y + f.height * 0.15, 0}, kHotColor, 2.5f);
             edge({0, 0, 0}, {0, 0, std::max(f.width, f.height) * 0.2}, kDim);
             break;
         }
@@ -419,28 +406,28 @@ private:
                         p0[i] = -h[i], p1[i] = h[i];
                         p0[j] = p1[j] = a * h[j];
                         p0[k] = p1[k] = b * h[k];
-                        edge(p0, p1, kGray);
+                        edge(p0, p1, kHandleGray);
                     }
             break;
         }
         case Projection::Cylindrical:
         {
             double z = f.height * 0.5;
-            wire(p, view, circle(s, f.radius, z), 1.5f, kGray, true);
-            wire(p, view, circle(s, f.radius, -z), 1.5f, kGray, true);
+            wire(p, view, projectionCircle(s, f.radius, z), 1.5f, kHandleGray, true);
+            wire(p, view, projectionCircle(s, f.radius, -z), 1.5f, kHandleGray, true);
             for (int i = 1; i < 8; ++i)
             {
                 double a = s.seam() + glm::two_pi<double>() * i / 8.0;
                 edge(s.around(a, f.radius, -z), s.around(a, f.radius, z), kDim, 1.0f);
             }
-            edge(s.around(s.seam(), f.radius, -z), s.around(s.seam(), f.radius, z), hot.kind == Kind::Seam ? kHot : kGray, 2.5f);
+            edge(s.around(s.seam(), f.radius, -z), s.around(s.seam(), f.radius, z), hot.kind == HandleKind::Seam ? kHotColor : kHandleGray, 2.5f);
             edge({0, 0, -z}, {0, 0, z}, kDim, 1.0f);
             break;
         }
         case Projection::Spherical:
         {
             double r = f.radius;
-            wire(p, view, circle(s, r, 0.0), 1.5f, kGray, true);
+            wire(p, view, projectionCircle(s, r, 0.0), 1.5f, kHandleGray, true);
             for (double a : {s.seam(), s.seam() + glm::half_pi<double>()})
             {
                 std::vector<glm::dvec3> m;
@@ -450,7 +437,7 @@ private:
                     m.push_back(s.world(s.around(a, r * std::cos(t), r * std::sin(t))));
                 }
                 bool seam = a == s.seam();
-                wire(p, view, m, seam ? 2.5f : 1.0f, seam ? (hot.kind == Kind::Seam ? kHot : kGray) : kDim);
+                wire(p, view, m, seam ? 2.5f : 1.0f, seam ? (hot.kind == HandleKind::Seam ? kHotColor : kHandleGray) : kDim);
                 if (!seam)
                 {
                     for (glm::dvec3& q : m)
@@ -458,16 +445,16 @@ private:
                     wire(p, view, m, 1.0f, kDim);
                 }
             }
-            edge({0, 0, r}, {0, 0, r * 1.25}, kGray, 2.0f);
+            edge({0, 0, r}, {0, 0, r * 1.25}, kHandleGray, 2.0f);
             break;
         }
         default: break;
         }
     }
 
-    std::optional<QPointF> handleScreen(const Shape& s, const Handle& h, const ViewInfo& view) const
+    std::optional<QPointF> handleScreen(const ProjectionShape& s, const Handle& h, const ViewInfo& view) const
     {
-        if (h.kind == Kind::Center || h.kind == Kind::Ring)
+        if (h.kind == HandleKind::Center || h.kind == HandleKind::Ring)
             return view.project(s.center());
         for (const Marker& m : markers(s))
             if (m.h == h)
@@ -475,7 +462,7 @@ private:
         return std::nullopt;
     }
 
-    Handle pick(const Shape& s, QPointF px, const ViewInfo& view) const
+    Handle pick(const ProjectionShape& s, QPointF px, const ViewInfo& view) const
     {
         Handle best;
         double bestD = kPick;
@@ -484,30 +471,30 @@ private:
                 bestD = pixelDistance(*q, px), best = m.h;
         glm::dvec3 c = s.center();
         if (auto q = view.project(c); q && pixelDistance(*q, px) <= std::min(bestD + 0.01, kPick))
-            return Handle{Kind::Center};
-        if (best.kind != Kind::None)
+            return Handle{HandleKind::Center};
+        if (best.kind != HandleKind::None)
             return best;
         double upp = view.unitsPerPixel(c);
         double ringD = 6.0;
         for (int i = 0; i < 3; ++i)
         {
-            std::vector<glm::dvec3> pts = ring(c, glm::normalize(s.dir(axisVector(i))), ringPixels() * upp);
+            std::vector<glm::dvec3> pts = ringAround(c, glm::normalize(s.dir(axisVector(i))), ringPixels() * upp);
             for (size_t k = 0; k < pts.size(); ++k)
             {
                 auto a = view.project(pts[k]), b = view.project(pts[(k + 1) % pts.size()]);
-                if (a && b && segmentDistance(px, *a, *b) < ringD)
-                    ringD = segmentDistance(px, *a, *b), best = {Kind::Ring, i};
+                if (a && b && segmentDistPx(px, *a, *b) < ringD)
+                    ringD = segmentDistPx(px, *a, *b), best = {HandleKind::Ring, i};
             }
         }
         return best;
     }
 
     /** The full frame as flags, so the re-run reproduces it exactly whatever the fit would do. */
-    static json frameFlags(const Shape& s)
+    static json frameFlags(const ProjectionShape& s)
     {
         const uv::ProjectFrame& f = s.fr();
-        return {{"center", vec(f.center)},
-                {"rotation", vec(uv::frameEuler(f.axes))},
+        return {{"center", vecJson(f.center)},
+                {"rotation", vecJson(uv::frameEuler(f.axes))},
                 {"width", f.width},
                 {"height", f.height},
                 {"depth", f.depth},
@@ -519,7 +506,7 @@ private:
                 {"offsetV", s.rec.offset.y}};
     }
 
-    void beginDrag(const Shape& s, const Handle& h, QMouseEvent* e, const ViewInfo& view)
+    void beginDrag(const ProjectionShape& s, const Handle& h, QMouseEvent* e, const ViewInfo& view)
     {
         lo::endDrag();
         Drag d{.h = h, .start = s, .base = frameFlags(s)};
@@ -529,8 +516,8 @@ private:
         glm::dvec3 c = s.center();
         switch (h.kind)
         {
-        case Kind::Center: gizmo::rayPlane(o, dir, c, view.viewDir(c), d.startHit); break;
-        case Kind::Ring:
+        case HandleKind::Center: gizmo::rayPlane(o, dir, c, view.viewDir(c), d.startHit); break;
+        case HandleKind::Ring:
         {
             glm::dvec3 n = glm::normalize(s.dir(axisVector(h.axis))), hit;
             if (gizmo::rayPlane(o, dir, c, n, hit))
@@ -561,7 +548,7 @@ private:
     {
         Drag& d = *mDrag;
         d.lastPx = px;
-        const Shape& s = d.start;
+        const ProjectionShape& s = d.start;
         const uv::ProjectFrame& f = s.fr();
         glm::dvec3 o, dir;
         view.ray(px, o, dir);
@@ -582,7 +569,7 @@ private:
 
         switch (d.h.kind)
         {
-        case Kind::Center:
+        case HandleKind::Center:
         {
             if (mods & Qt::ControlModifier)
             {
@@ -596,11 +583,11 @@ private:
             if (!gizmo::rayPlane(o, dir, c, view.viewDir(c), hit))
                 return;
             glm::dvec3 moved = glm::dvec3(s.inv * glm::dvec4(c + hit - d.startHit, 1.0));
-            flags["center"] = vec(moved);
+            flags["center"] = vecJson(moved);
             d.readout = QString("centre %1, %2, %3").arg(moved.x, 0, 'f', 2).arg(moved.y, 0, 'f', 2).arg(moved.z, 0, 'f', 2);
             break;
         }
-        case Kind::Ring:
+        case HandleKind::Ring:
         {
             glm::dvec3 n = glm::normalize(s.dir(axisVector(d.h.axis))), hit;
             if (!gizmo::rayPlane(o, dir, c, n, hit))
@@ -613,11 +600,11 @@ private:
             // object's scale is uniform; a mirrored object turns the other way.
             double sign = glm::determinant(s.w3) < 0.0 ? -1.0 : 1.0;
             glm::dmat3 turn(glm::rotate(glm::dmat4(1.0), glm::radians(deg) * sign, f.axes[d.h.axis]));
-            flags["rotation"] = vec(uv::frameEuler(turn * f.axes));
+            flags["rotation"] = vecJson(uv::frameEuler(turn * f.axes));
             d.readout = QString("rotate %1°").arg(deg, 0, 'f', 1);
             break;
         }
-        case Kind::Size:
+        case HandleKind::Size:
         {
             const double from = s.rec.type == Projection::Cylindrical || d.h.axis == 1 ? f.height : d.h.axis == 0 ? f.width : f.depth;
             // Sizes stay centred on the frame, as the handle on either side pulls both.
@@ -632,7 +619,7 @@ private:
             }
             break;
         }
-        case Kind::Radius:
+        case HandleKind::Radius:
         {
             double r = std::max(lengthAlong(c, s.around(s.seam() + glm::half_pi<double>(), 1.0, 0.0)), tiny);
             if (shift)
@@ -644,7 +631,7 @@ private:
             }
             break;
         }
-        case Kind::Seam:
+        case HandleKind::Seam:
         {
             glm::dvec3 capCenter = s.world({0, 0, s.rec.type == Projection::Cylindrical ? f.height * 0.5 : 0.0}), hit;
             glm::dvec3 n = s.dir(axisVector(2));
@@ -678,7 +665,7 @@ private:
     {
         mDrag.reset();
         lo::endDrag();
-        if (const lo::Op* op = lo::current(); op && op->command == kCommand)
+        if (const lo::Op* op = lo::current(); op && op->command == kProjectCommand)
             log::write(LogLevel::Echo, ops::toPython(op->command, op->call) + "\n");
         viewportTools::requestRedraw();
     }

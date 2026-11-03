@@ -13,8 +13,6 @@ namespace lila::gn::nodes
 {
 namespace analysis
 {
-using D3 = glm::dvec3;
-
 /** A field computed from the mesh of the context it is evaluated in; anything but a mesh gets the type's zero. */
 class SurfaceField final : public Field
 {

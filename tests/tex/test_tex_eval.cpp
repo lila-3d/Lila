@@ -13,38 +13,6 @@ using namespace textest;
 namespace
 {
 namespace fs = std::filesystem;
-
-/** g with `node.socket` into a fresh Material Output's baseColor. */
-Graph into(Graph g, const std::string& from)
-{
-    g.nodes.push_back({"Output", kMaterialOutputType, {0.0, 0.0}, json::object()});
-    link(g, from, "Output.baseColor");
-    return g;
-}
-
-fs::path goldenDir() { return fs::path(LILA_SOURCE_DIR) / "tests" / "data" / "tex"; }
-
-/** Compares against tests/data/tex/<name>.png (16 bit); writes it when missing or LILA_TEX_UPDATE_GOLDENS is set. */
-void golden(const std::string& name, const image::Image& img)
-{
-    fs::path path = goldenDir() / (name + ".png");
-    if (std::getenv("LILA_TEX_UPDATE_GOLDENS") || !fs::exists(path))
-    {
-        fs::create_directories(goldenDir());
-        image::write(path, img, 16);
-        MESSAGE("wrote golden " << path.string());
-        return;
-    }
-    std::string err;
-    image::Image ref = image::readPng(path, &err);
-    REQUIRE_MESSAGE(ref.width == img.width, err);
-    // PNG holds 0 to 1; the evaluator's values clamp the same way before comparing.
-    image::Image clamped = img;
-    for (float& v : clamped.rgba)
-        v = std::clamp(v, 0.0f, 1.0f);
-    CAPTURE(name);
-    CHECK(maxDiff(clamped, ref) < 2e-3);
-}
 } // namespace
 
 TEST_CASE("tex: the CPU target is available")

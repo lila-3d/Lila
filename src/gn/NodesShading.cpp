@@ -6,7 +6,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 
 D3 hsvToRgb(D3 hsv)

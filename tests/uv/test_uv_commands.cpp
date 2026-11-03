@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
@@ -12,11 +13,7 @@
 #include <algorithm>
 
 using namespace lila;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-} // namespace
+using namespace uvtest;
 
 TEST_CASE("uv commands on a cube")
 {

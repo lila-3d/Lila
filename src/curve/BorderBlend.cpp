@@ -1,6 +1,7 @@
 #include "curve/BorderBlend.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Tessellate.h"
 #include "geo/Attribute.h"
 
@@ -13,12 +14,7 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using geo::Index;
-
-constexpr double kEps = 1e-12;
-
-D3 unit(const D3& v) { return glm::length(v) > kEps ? glm::normalize(v) : D3(0.0); }
 
 /** Normalised arc length at each point; a closed side's total includes the closing edge. */
 std::vector<double> arcParams(const std::vector<D3>& p, bool closed)

@@ -1,6 +1,7 @@
 #include "curve/PipeSupport.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Ops.h"
 #include "geo/Attribute.h"
 
@@ -14,7 +15,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using geo::Index;
 
 /** Turns a mesh built along +z so it runs along +y (a rotation about x). */

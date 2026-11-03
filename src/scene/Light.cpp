@@ -3,6 +3,7 @@
 #include "core/ExtensionContext.h"
 #include "core/PrefStore.h"
 #include "ops/Command.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 #include "scene/NodeBounds.h"
 #include "scene/Transform.h"
@@ -16,35 +17,28 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
-constexpr uint32_t kStored = AttrInput | AttrStorable;
-
-constexpr std::array<const char*, 6> kKindNames{"point", "spot", "directional", "area", "disc", "dome"};
+constexpr std::array<const char*, 6> kLightKinds{"point", "spot", "directional", "area", "disc", "dome"};
 constexpr std::array<const char*, 6> kUnitNames{"unitless", "candela", "lumens", "lux", "nits", "watts"};
-
-AttrDef floatAttr(std::string name, std::string shortName, double def, std::string doc, std::optional<double> lo = {},
-                  std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .shortName = std::move(shortName), .type = PlugType::Float, .defaultValue = def,
-            .flags = kStored | AttrKeyable, .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
 
 AttrDef stringAttr(std::string name, std::string shortName, std::string doc, uint32_t extraFlags = 0)
 {
     return {.name = std::move(name), .shortName = std::move(shortName), .type = PlugType::String, .defaultValue = std::string(),
-            .flags = kStored | extraFlags, .doc = std::move(doc)};
+            .flags = kStoredFlags | extraFlags, .doc = std::move(doc)};
 }
 
 std::vector<AttrDef> lightAttrs()
 {
     std::vector<AttrDef> a(Light::kCount - Light::kLightType);
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Light::kLightType)]; };
-    at(Light::kLightType) = {.name = "lightType", .shortName = "lt", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = kStored,
-                             .enumNames = {kKindNames.begin(), kKindNames.end()},
+    at(Light::kLightType) = {.name = "lightType", .shortName = "lt", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = kStoredFlags,
+                             .enumNames = {kLightKinds.begin(), kLightKinds.end()},
                              .doc = "Point, spot, directional, area (a rectangle), disc or dome."};
     AttrDef color{.name = "color", .shortName = "cl", .type = PlugType::Vec3, .defaultValue = glm::dvec3(1.0),
-                  .flags = kStored | AttrKeyable, .doc = "Linear colour.", .minValue = 0.0};
+                  .flags = kStoredFlags | AttrKeyable, .doc = "Linear colour.", .minValue = 0.0};
     for (int i = 0; i < 3; ++i)
     {
         color.childNames[i] = std::string("color") + "RGB"[i];
@@ -53,10 +47,10 @@ std::vector<AttrDef> lightAttrs()
     at(Light::kColor) = color;
     at(Light::kIntensity) = floatAttr("intensity", "in", 1.0, "Brightness, in intensityUnits.", 0.0);
     at(Light::kIntensityUnits) = {.name = "intensityUnits", .shortName = "iu", .type = PlugType::Enum, .defaultValue = int64_t(0),
-                                  .flags = kStored, .enumNames = {kUnitNames.begin(), kUnitNames.end()},
+                                  .flags = kStoredFlags, .enumNames = {kUnitNames.begin(), kUnitNames.end()},
                                   .doc = "What intensity is measured in, kept so formats with real units convert exactly."};
     at(Light::kUseTemperature) = {.name = "useTemperature", .shortName = "ut", .type = PlugType::Bool, .defaultValue = false,
-                                  .flags = kStored, .doc = "Tint by temperature as well as colour."};
+                                  .flags = kStoredFlags, .doc = "Tint by temperature as well as colour."};
     at(Light::kTemperature) = floatAttr("temperature", "tmp", 6500.0, "Colour temperature, kelvin.", 1000.0, 40000.0);
     at(Light::kRange) = floatAttr("range", "rng", 0.0, "Distance the light stops reaching, cm. 0 has no cutoff.", 0.0);
     at(Light::kInnerConeAngle) = floatAttr("innerConeAngle", "ica", 0.0, "Spot: half angle of full brightness, degrees.", 0.0, 90.0);
@@ -64,7 +58,7 @@ std::vector<AttrDef> lightAttrs()
     at(Light::kWidth) = floatAttr("width", "w", 100.0, "Area: width, cm. Disc: diameter.", 0.0);
     at(Light::kHeight) = floatAttr("height", "h", 100.0, "Area: height, cm.", 0.0);
     at(Light::kSourceRadius) = floatAttr("sourceRadius", "sr", 0.0, "Point and spot: emitter radius for soft shadows, cm. Directional: the sun's angular radius, degrees.", 0.0);
-    at(Light::kCastShadows) = {.name = "castShadows", .shortName = "cs", .type = PlugType::Bool, .defaultValue = true, .flags = kStored,
+    at(Light::kCastShadows) = {.name = "castShadows", .shortName = "cs", .type = PlugType::Bool, .defaultValue = true, .flags = kStoredFlags,
                                .doc = "Casts shadows."};
     at(Light::kTexture) = stringAttr("texture", "tex", "Dome: environment image. Point and spot: IES profile.", AttrFile | AttrImage);
     at(Light::kProvider) = stringAttr("provider", "prv", "Light provider asked first for this light; empty lets any handle it.");
@@ -80,13 +74,13 @@ namespace lights
 {
 const char* kindName(Kind kind)
 {
-    return kKindNames[std::clamp(size_t(kind), size_t(0), kKindNames.size() - 1)];
+    return kLightKinds[std::clamp(size_t(kind), size_t(0), kLightKinds.size() - 1)];
 }
 
 Settings settings(const Node& n)
 {
     Settings s;
-    s.kind = Kind(std::clamp<int64_t>(n.as<int64_t>(Light::kLightType), 0, int64_t(kKindNames.size()) - 1));
+    s.kind = Kind(std::clamp<int64_t>(n.as<int64_t>(Light::kLightType), 0, int64_t(kLightKinds.size()) - 1));
     s.color = n.as<glm::dvec3>(Light::kColor);
     s.intensity = n.as<double>(Light::kIntensity);
     s.units = Units(std::clamp<int64_t>(n.as<int64_t>(Light::kIntensityUnits), 0, int64_t(kUnitNames.size()) - 1));
@@ -265,7 +259,7 @@ void registerLightCommands()
                 return glm::dvec3(j.at(0).get<double>(), j.at(1).get<double>(), j.at(2).get<double>());
             };
             lights::Settings s;
-            s.kind = lights::Kind(index(kKindNames, a.get<std::string>("type", "point"), "type"));
+            s.kind = lights::Kind(index(kLightKinds, a.get<std::string>("type", "point"), "type"));
             if (a.has("color"))
                 s.color = vec("color");
             if (a.has("intensity"))

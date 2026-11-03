@@ -483,24 +483,6 @@ const std::map<std::string, std::string>& kernelFiles()
                                                          {"normalToHeight", "normalToHeight"}};
     return m;
 }
-
-struct PassHeader
-{
-    float res[4];
-    float uv[4];
-};
-
-struct BufferView
-{
-    const void* data;
-    size_t count;
-};
-
-struct Varying
-{
-    uint32_t start[3];
-    uint32_t end[3];
-};
 } // namespace
 
 bool hasNativeKernels(const std::string& type) { return kernelFiles().contains(type); }
@@ -696,11 +678,11 @@ void runNativeKernelsCpu(const NativeCall& call)
             throw std::runtime_error("native kernel " + s.file + "." + st.entry + " failed to compile:\n" + err);
         const auto& od = descs.at(size_t(st.output));
         const int ow = int(od[1]), oh = int(od[2]);
-        PassHeader header{{float(ow), float(oh), 1.0f / float(ow), 1.0f / float(oh)}, {st.constants[0], st.constants[1], st.constants[2], st.constants[3]}};
-        const PassHeader* headerPtr = &header;
-        BufferView u{frame.data(), frame.size() / 4};
-        BufferView a{arena.data(), arena.size() / 4};
-        BufferView o{&arena[size_t(od[0]) * 4], size_t(ow) * size_t(oh)};
+        slangrt::PassHeader header{{float(ow), float(oh), 1.0f / float(ow), 1.0f / float(oh)}, {st.constants[0], st.constants[1], st.constants[2], st.constants[3]}};
+        const slangrt::PassHeader* headerPtr = &header;
+        slangrt::BufferView u{frame.data(), frame.size() / 4};
+        slangrt::BufferView a{arena.data(), arena.size() / 4};
+        slangrt::BufferView o{&arena[size_t(od[0]) * 4], size_t(ow) * size_t(oh)};
         std::vector<uint8_t> globals(kernel->globalsSize, 0);
         std::memcpy(&globals[kernel->offPass], &headerPtr, sizeof(headerPtr));
         std::memcpy(&globals[kernel->offU], &u, sizeof(u));
@@ -709,7 +691,7 @@ void runNativeKernelsCpu(const NativeCall& call)
         std::memcpy(&globals[kernel->offOut], &o, sizeof(o));
         const uint32_t groupsX = uint32_t((st.threadsX + 7) / 8), groupsY = uint32_t((st.threadsY + 7) / 8);
         tbb::parallel_for(uint32_t(0), groupsY, [&](uint32_t gy) {
-            Varying v{{0, gy, 0}, {groupsX, gy + 1, 1}};
+            slangrt::Varying v{{0, gy, 0}, {groupsX, gy + 1, 1}};
             std::vector<uint8_t> local = globals;
             kernel->fn(&v, nullptr, local.data());
         });

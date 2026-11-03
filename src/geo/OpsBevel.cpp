@@ -30,10 +30,6 @@ using namespace detail;
 
 /** An unbevelled edge closer than this (sine of the angle) to the bevelled one cannot be slid along. */
 constexpr double kMinSlide = 0.2;
-/** Offsets clamped short of a crossing, or of a closing that would leave a flat patch, stop this share short. */
-constexpr double kClampMargin = 0.02;
-/** New points a clamped bevel brings closer than this share of the offset are welded. */
-constexpr double kWeldShare = 1e-7;
 /** Faces closer than this (1 - cosine of the angle between them) to lying flat on each other have no room for a strip. */
 constexpr double kFlatFold = 1e-6;
 
@@ -100,7 +96,7 @@ glm::dvec3 unfold(const glm::dvec3& d, const glm::dvec3& from, const glm::dvec3&
     return d * c + glm::cross(k, d) * s + k * glm::dot(k, d) * (1.0 - c);
 }
 
-enum class Kind : uint8_t
+enum class ChainKind : uint8_t
 {
     Point,  // the bevelled point itself
     Slide,  // along an unbevelled edge
@@ -111,7 +107,7 @@ enum class Kind : uint8_t
 /** One of the points replacing the bevelled point in a fan face, in face order. */
 struct ChainPoint
 {
-    Kind kind;
+    ChainKind kind;
     Index edge = kInvalid;   // Slide: the edge it moves along
     glm::dvec3 dir{0.0};     // displacement per unit offset
     Index point = kInvalid;
@@ -605,9 +601,9 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             const Index in = v.inEdge(i), out = v.outEdge(i);
             const bool sIn = slides.count({vi, in}) != 0, sOut = slides.count({vi, out}) != 0;
             std::vector<ChainPoint>& ch = v.chain[i];
-            auto slide = [&](Index e, Index src) { ch.push_back({Kind::Slide, e, slideDir(vi, e), kInvalid, {}, src}); };
-            auto offset = [&](Index src) { ch.push_back({Kind::Offset, kInvalid, v.offsetDir[i], kInvalid, {}, src}); };
-            auto point = [&](Index src) { ch.push_back({Kind::Point, kInvalid, glm::dvec3(0.0), v.point, {}, src}); };
+            auto slide = [&](Index e, Index src) { ch.push_back({ChainKind::Slide, e, slideDir(vi, e), kInvalid, {}, src}); };
+            auto offset = [&](Index src) { ch.push_back({ChainKind::Offset, kInvalid, v.offsetDir[i], kInvalid, {}, src}); };
+            auto point = [&](Index src) { ch.push_back({ChainKind::Point, kInvalid, glm::dvec3(0.0), v.point, {}, src}); };
             switch (v.kind[i])
             {
             case FaceKind::Miter:
@@ -762,10 +758,10 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             for (ChainPoint& cp : v.chain[i])
                 switch (cp.kind)
                 {
-                case Kind::Point:
+                case ChainKind::Point:
                     cp.mix = Mix::one(c);
                     break;
-                case Kind::Slide:
+                case ChainKind::Slide:
                 {
                     const SlideAcc& acc = slides.at({vi, cp.edge});
                     cp.point = acc.point;
@@ -773,12 +769,12 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                     cp.mix = Mix::two(c, isIn ? mesh.cornerPrev(c) : mesh.cornerNext(c), acc.t);
                     break;
                 }
-                case Kind::Offset:
+                case ChainKind::Offset:
                     cp.point = mesh.addPoint(pv + cp.dir * offset);
                     mesh.pointAttrs().copy(cp.point, v.point);
                     cp.mix = CornerTri::of(mesh, c).mix(mesh.position(cp.point));
                     break;
-                case Kind::Extra:
+                case ChainKind::Extra:
                     break;
                 }
         }
@@ -994,7 +990,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             const Index c = v.corners[side.face];
             const Index src = v.chain[side.face][side.at].srcEdge;
             for (size_t j = from; j < to; ++j)
-                ins.pts.push_back({Kind::Extra, kInvalid, glm::dvec3(0.0), full[j], CornerTri::of(mesh, c).mix(mesh.position(full[j])), src});
+                ins.pts.push_back({ChainKind::Extra, kInvalid, glm::dvec3(0.0), full[j], CornerTri::of(mesh, c).mix(mesh.position(full[j])), src});
             if (!ins.pts.empty())
                 inserts.push_back(std::move(ins));
         };
@@ -1095,7 +1091,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 // Spaced like the strip's end, so the two agree wherever the face shares the strip's uvs.
                 int k = 0;
                 for (Index p : arcIds(arc.profile, from))
-                    ins.pts.push_back({Kind::Extra, kInvalid, glm::dvec3(0.0), p, Mix::lerp(lo.mix, hi.mix, double(++k) / segments), lo.srcEdge});
+                    ins.pts.push_back({ChainKind::Extra, kInvalid, glm::dvec3(0.0), p, Mix::lerp(lo.mix, hi.mix, double(++k) / segments), lo.srcEdge});
                 inserts.push_back(std::move(ins));
                 vm.fill = Fill::Merge;
             }
@@ -1141,7 +1137,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                     const Index c = v.corners[s.face];
                     const Index src = v.chain[s.face][s.at].srcEdge;
                     for (size_t j = ids.size() - 1; j-- > 1;)
-                        ins.pts.push_back({Kind::Extra, kInvalid, glm::dvec3(0.0), ids[j], CornerTri::of(mesh, c).mix(mesh.position(ids[j])), src});
+                        ins.pts.push_back({ChainKind::Extra, kInvalid, glm::dvec3(0.0), ids[j], CornerTri::of(mesh, c).mix(mesh.position(ids[j])), src});
                     inserts.push_back(std::move(ins));
                 }
             }

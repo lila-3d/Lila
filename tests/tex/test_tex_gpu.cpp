@@ -21,22 +21,13 @@ using namespace lila::render;
 
 namespace
 {
-bool gpu()
+bool graphGpu()
 {
     Renderer& r = Renderer::get();
     if (r.running() || r.start())
         return true;
     MESSAGE("no GPU for texture graph GPU tests");
     return false;
-}
-
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-Graph into(Graph g, const std::string& from)
-{
-    g.nodes.push_back({"Output", kMaterialOutputType, {0.0, 0.0}, json::object()});
-    link(g, from, "Output.baseColor");
-    return g;
 }
 
 /** Runs an evaluator to completion on the render thread, slices of budgetMs. */
@@ -106,7 +97,7 @@ std::array<int, 4> centrePixel(Material m)
 
 TEST_CASE("tex gpu: golden cases match the CPU evaluator")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     auto single = [](std::string type, json values, std::string out) {
         Graph g;
@@ -192,7 +183,7 @@ TEST_CASE("tex gpu: golden cases match the CPU evaluator")
 
 TEST_CASE("tex gpu: every library node matches the CPU evaluator")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     size_t checked = 0;
     for (const NodeDef* d : allNodes())
@@ -245,7 +236,7 @@ TEST_CASE("tex gpu: every library node matches the CPU evaluator")
 
 TEST_CASE("tex gpu: value edits upload uniforms, create no pipelines and rerun only what they feed")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     // Base colour: perlin -> blur (native, buffered) -> levels. Roughness: voronoi, independent of both.
     Graph g = Graph::makeMaterial("S");
@@ -311,7 +302,7 @@ TEST_CASE("tex gpu: value edits upload uniforms, create no pipelines and rerun o
 
 TEST_CASE("tex gpu: a trimmed evaluator stays idle, then reruns in full on the next edit")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     Graph g = Graph::makeMaterial("S");
     add(g, "P", "perlin", {{"scale", 4}});
@@ -360,7 +351,7 @@ TEST_CASE("tex gpu: a trimmed evaluator stays idle, then reruns in full on the n
 
 TEST_CASE("tex gpu: small slices split passes into row bands with the same result")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     Graph g;
     add(g, "V", "voronoi", {{"scale", 9}});
@@ -382,7 +373,7 @@ TEST_CASE("tex gpu: small slices split passes into row bands with the same resul
 
 TEST_CASE("tex gpu: outputs land in viewport images in their formats")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     Graph g;
     add(g, "P", "perlin", {{"scale", 4}});
@@ -449,7 +440,7 @@ TEST_CASE("tex gpu: outputs land in viewport images in their formats")
 
 TEST_CASE("tex gpu: externals read GPU images, with uv as the fallback")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     Graph g;
     add(g, "Pos", "position");
@@ -481,7 +472,7 @@ TEST_CASE("tex gpu: externals read GPU images, with uv as the fallback")
 
 TEST_CASE("tex gpu: texEvaluate runs on the GPU by default and matches the CPU")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     run("newScene");
     run("texCreateSet", {{"args", {"Gpu"}}, {"resolution", 32}});
@@ -499,7 +490,7 @@ TEST_CASE("tex gpu: texEvaluate runs on the GPU by default and matches the CPU")
 
 TEST_CASE("tex gpu: a texture set drives its material in the viewport, live")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     ui::texLive::install();
     run("newScene");
@@ -605,7 +596,7 @@ void layeredSet(const std::string& name, int res)
 
 TEST_CASE("tex gpu: mesh maps at another resolution than the set read as on the CPU")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     run("newScene");
     run("texCreateSet", {{"args", {"Mixed"}}, {"resolution", 64}});
@@ -630,7 +621,7 @@ TEST_CASE("tex gpu: mesh maps at another resolution than the set read as on the 
 
 TEST_CASE("tex gpu: compact buffers share memory and match the CPU")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     layeredSet("Packed", 64);
     const Plan p = setPlan("Packed", 64);
@@ -668,7 +659,7 @@ TEST_CASE("tex gpu: compact buffers share memory and match the CPU")
 
 TEST_CASE("tex gpu: a 4K set with many generator layers and 4K mesh maps evaluates")
 {
-    if (!gpu())
+    if (!graphGpu())
         return;
     layeredSet("Big", 4096);
     const Plan p = setPlan("Big", 4096);

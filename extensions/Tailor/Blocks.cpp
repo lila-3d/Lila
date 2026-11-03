@@ -2,13 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace tailor
 {
-namespace blocks_detail
+namespace
 {
 
-constexpr float kPi = 3.14159265358979f;
 constexpr float kStep = 0.01f; // curve sampling
 constexpr float kGap = 0.025f; // body to panel at placement
 
@@ -110,7 +110,7 @@ Symmetric symmetric(const std::vector<Vec2>& half, float neckY, float neckA, flo
     for (const Vec2& p : half)
         s.plus.push_back(b.add(p[0], p[1]));
     if (neckB > 0.f)
-        b.arc({0.f, neckY}, neckA, neckB, 0.f, -kPi, false);
+        b.arc({0.f, neckY}, neckA, neckB, 0.f, -std::numbers::pi_v<float>, false);
     s.minus.assign(h, 0);
     for (int r = h - 1; r >= 1; --r)
         s.minus[r] = b.add(-half[r][0], half[r][1]);
@@ -125,7 +125,7 @@ Symmetric symmetric(const std::vector<Vec2>& half, float neckY, float neckA, flo
  */
 float lensRadius(float halfWidth, float z0)
 {
-    if (halfWidth <= z0 * kPi * 0.5f)
+    if (halfWidth <= z0 * std::numbers::pi_v<float> * 0.5f)
         return z0;
     const float target = z0 - 0.005f;
     float lo = z0, hi = halfWidth * halfWidth / target + z0;
@@ -214,7 +214,7 @@ HoodPanels addHood(Garment& g, const Body& body, float neckLength, float depth, 
     b.add(-f, 0.f);
     b.add(d0 - f, 0.f);
     b.add(d - f, yc);
-    b.arc({-f, yc}, d, h - yc, 0.f, kPi * 0.5f, true);
+    b.arc({-f, yc}, d, h - yc, 0.f, std::numbers::pi_v<float> * 0.5f, true);
     const int n = int(b.pts.size());
 
     HoodPanels hp;
@@ -223,7 +223,7 @@ HoodPanels addHood(Garment& g, const Body& body, float neckLength, float depth, 
     Panel pp = makePanel("Hood L", b.pts);
     Panel pm = makePanel("Hood R", mirrorX(b.pts));
     pp.particleDistance = pm.particleDistance = 0.015f;
-    const float hx = body.head / (2.f * kPi) + 0.03f;
+    const float hx = body.head / (2.f * std::numbers::pi_v<float>) + 0.03f;
     place(pp, {hx, body.neckY(), 0.f}, {0.f, 1.f, 0.f}, {1.f, 0.f, 0.f}, 0.f);
     place(pm, {-hx, body.neckY(), 0.f}, {0.f, 1.f, 0.f}, {-1.f, 0.f, 0.f}, 0.f);
     g.panels.push_back(std::move(pp));
@@ -252,11 +252,9 @@ float halfWidthAt(const std::vector<Vec2>& o, float y)
     return w;
 }
 
-} // namespace blocks_detail
+} // namespace
 
-using namespace blocks_detail;
-
-float Body::chestRadius() const { return chest / (2.f * kPi); }
+float Body::chestRadius() const { return chest / (2.f * std::numbers::pi_v<float>); }
 
 const char* sleeveStyleName(SleeveStyle s)
 {
@@ -266,7 +264,7 @@ const char* sleeveStyleName(SleeveStyle s)
     return i >= 0 && i < int(SleeveStyle::Count) ? names[i] : "set-in";
 }
 
-namespace blocks_detail
+namespace
 {
 /** What a sleeve style drafts: cap height as a share of armhole depth, cap ease, wrist and cuff, default length. */
 struct SleeveShape
@@ -311,7 +309,7 @@ std::vector<Vec2> capCurve(float w, float h)
     for (int i = 1; i < n; ++i)
     {
         const float t = -1.f + 2.f * float(i) / float(n);
-        out.push_back({0.5f * w * t, -h * 0.5f * (1.f + std::cos(kPi * t))});
+        out.push_back({0.5f * w * t, -h * 0.5f * (1.f + std::cos(std::numbers::pi_v<float> * t))});
     }
     return out;
 }
@@ -339,7 +337,7 @@ std::vector<Vec2> bezier(const Vec2& a, const Vec2& c, const Vec2& b)
     }
     return out;
 }
-} // namespace blocks_detail
+} // namespace
 
 Garment top(const Body& body, const TopParams& p)
 {
@@ -358,7 +356,7 @@ Garment top(const Body& body, const TopParams& p)
         wh = std::max(wh, body.hip * (1.f + ease) * 0.25f);
     wh += std::max(p.hemFlare, 0.f);
     const float sx = body.shoulderWidth * 0.5f;
-    const float nx = std::min(body.neck * (1.f + ease) / kPi * 0.58f + 0.01f, sx - 0.04f);
+    const float nx = std::min(body.neck * (1.f + ease) / std::numbers::pi_v<float> * 0.58f + 0.01f, sx - 0.04f);
     const float yT = len;
     const float yN = len + 0.035f;
 
@@ -428,7 +426,7 @@ Garment top(const Body& body, const TopParams& p)
 
     struct Runs { SeamSide side, arm, shoulder, wrist; };
     Runs fPlus, fMinus, bPlus, bMinus;
-    const float z0 = 2.f * wc / kPi + kGap;
+    const float z0 = 2.f * wc / std::numbers::pi_v<float> + kGap;
     // Batwing fronts lie flat: wrapped round the torso, the sleeves would curl round it too.
     auto placeBody = [&](Panel& panel, float z, bool front) {
         if (batwing)
@@ -565,11 +563,11 @@ Garment top(const Body& body, const TopParams& p)
         for (int i = 1; i < n; ++i)
         {
             const float t = float(i) / float(n);
-            sb.add(0.5f * wristW * (1.f - 2.f * t), mainLen * (1.f - 0.65f * std::sin(kPi * t)));
+            sb.add(0.5f * wristW * (1.f - 2.f * t), mainLen * (1.f - 0.65f * std::sin(std::numbers::pi_v<float> * t)));
         }
     }
     hemTo = sb.add(-0.5f * wristW, mainLen);
-    const float rs = w / (2.f * kPi);
+    const float rs = w / (2.f * std::numbers::pi_v<float>);
     // Short sleeves band the upper arm, long ones the wrist.
     const float armGirth = ls < 0.4f * body.armLength ? 0.8f * w : std::max(body.armLength * 0.27f, 0.16f);
 
@@ -630,7 +628,7 @@ Garment top(const Body& body, const TopParams& p)
         float along = mainLen;
         auto tube = [&](const std::string& name, float top, float bottom, float height) {
             const int tp = int(g.panels.size());
-            const float r = std::max(top, bottom) / (2.f * kPi);
+            const float r = std::max(top, bottom) / (2.f * std::numbers::pi_v<float>);
             Panel t = makePanel(name + side, {{-0.5f * top, 0.f}, {0.5f * top, 0.f}, {0.5f * bottom, height}, {-0.5f * bottom, height}});
             place(t, add3(add3(bicep, mul3(up, along)), mul3(nrm, r)), up, nrm, r);
             g.panels.push_back(std::move(t));
@@ -666,7 +664,7 @@ Garment top(const Body& body, const TopParams& p)
         if (flounce)
         {
             // A three-quarter ring: its inner edge is the elbow hem, its outer edge falls in a circle.
-            const float sweep = 1.5f * kPi, r1 = wristW / sweep, r2 = r1 + std::max(ls - mainLen, 0.08f);
+            const float sweep = 1.5f * std::numbers::pi_v<float>, r1 = wristW / sweep, r2 = r1 + std::max(ls - mainLen, 0.08f);
             Builder fb;
             const int n = std::max(12, int(std::ceil(sweep * r2 / kStep)));
             for (int i = 0; i <= n; ++i)
@@ -683,7 +681,7 @@ Garment top(const Body& body, const TopParams& p)
             const int innerEnd = int(fb.pts.size()) - 1;
             const int fp = int(g.panels.size());
             Panel fl = makePanel("Flounce" + side, fb.pts);
-            place(fl, add3(add3(bicep, mul3(up, mainLen + r1)), mul3(nrm, wristW / (2.f * kPi))), up, nrm, wristW / (2.f * kPi));
+            place(fl, add3(add3(bicep, mul3(up, mainLen + r1)), mul3(nrm, wristW / (2.f * std::numbers::pi_v<float>))), up, nrm, wristW / (2.f * std::numbers::pi_v<float>));
             g.panels.push_back(std::move(fl));
             // Both run right to left already.
             g.seams.push_back(seam({hem}, {{fp, innerStart, innerEnd}}, false));
@@ -729,7 +727,7 @@ Garment trousers(const Body& body, const TrousersParams& p)
         b.add(cf + 0.01f, yw + rise);
         b.add(cf, yh);
         // Quarter ellipse down and in to the crotch point.
-        const int c = b.arc({cf - ext, yh}, ext, yh - yc, 0.f, -kPi * 0.5f, true);
+        const int c = b.arc({cf - ext, yh}, ext, yh - yc, 0.f, -std::numbers::pi_v<float> * 0.5f, true);
         return Shape{b.pts, c};
     };
     const Shape f = shape(0.045f, 0.f);
@@ -737,7 +735,7 @@ Garment trousers(const Body& body, const TrousersParams& p)
     const int nf = int(f.o.size()), nb = int(bk.o.size());
 
     const float legX = std::max(body.hip * 0.095f, tx - 0.02f);
-    const float z0 = body.hip * 0.6f / (2.f * kPi) + kGap + 0.03f;
+    const float z0 = body.hip * 0.6f / (2.f * std::numbers::pi_v<float>) + kGap + 0.03f;
     const float halfW = tx + 0.09f;
     const Vec3 up{0.f, 1.f, 0.f};
     auto leg = [&](const char* name, std::vector<Vec2> o, float x, float zs) {
@@ -773,7 +771,7 @@ Garment skirt(const Body& body, const SkirtParams& p)
     const float waistX = body.waist * (1.f + ease) * 0.25f;
     const float hemX = hipX + std::max(p.flare, 0.f);
     const std::vector<Vec2> half{{hemX, 0.f}, {hipX, len - drop}, {waistX, len}};
-    const float z0 = 2.f * hipX / kPi + kGap;
+    const float z0 = 2.f * hipX / std::numbers::pi_v<float> + kGap;
     for (int i = 0; i < 2; ++i)
     {
         const Symmetric s = symmetric(half, len, waistX, 0.f);
@@ -800,7 +798,7 @@ Garment drape(const Body& body, const DrapeParams& p)
     const float neckY = body.neckY();
     const float len = std::clamp(p.length, 0.25f, neckY - 0.02f);
     const float hemY = neckY - len;
-    const float nx = body.neck / kPi * 0.6f + 0.01f;
+    const float nx = body.neck / std::numbers::pi_v<float> * 0.6f + 0.01f;
     const float sx = body.shoulderWidth * 0.5f + 0.04f;
     const float yS = len - (neckY - body.shoulderY()) - 0.01f;
     const float hw = sx + std::max(p.flare, 0.f);
@@ -813,7 +811,7 @@ Garment drape(const Body& body, const DrapeParams& p)
     b.add(xin, 0.f);
     for (const Vec2& q : half)
         b.add(q[0], q[1]);
-    const int fLast = b.arc({xin, len}, nx - xin, 0.06f, 0.f, -kPi * 0.5f, true);
+    const int fLast = b.arc({xin, len}, nx - xin, 0.06f, 0.f, -std::numbers::pi_v<float> * 0.5f, true);
     const int nf = int(b.pts.size());
 
     const float z0 = p.clearance > 0.f ? p.clearance : body.chestRadius() + 0.08f;
@@ -900,9 +898,9 @@ Garment belt(const Body& body, const BeltParams& p, std::vector<BlockAnchor>* an
 {
     Garment g = withFabric("Leather");
     const float target = body.waist * (1.f + std::max(p.ease, 0.f));
-    const float fitR = p.fitRadius > 0.f ? p.fitRadius : body.waist / (2.f * kPi) + 0.04f;
+    const float fitR = p.fitRadius > 0.f ? p.fitRadius : body.waist / (2.f * std::numbers::pi_v<float>) + 0.04f;
     // Cut to fit loosely around the placement radius; warp shrink pulls it in to the target length.
-    const float cut = 2.f * kPi * fitR;
+    const float cut = 2.f * std::numbers::pi_v<float> * fitR;
     g.fabrics[0].shrinkWarp = std::min(1.f, target / cut);
     const float h = std::clamp(p.width, 0.01f, 0.2f);
     Panel pn = makePanel("Belt", {{-cut * 0.5f, 0.f}, {cut * 0.5f, 0.f}, {cut * 0.5f, h}, {-cut * 0.5f, h}});
@@ -921,7 +919,7 @@ Garment sack(const Body& body, const SackParams& p)
     Garment g = withFabric("Canvas");
     const float w = std::clamp(p.width, 0.1f, 2.f), h = std::clamp(p.height, 0.1f, 2.f);
     const std::vector<Vec2> o{{-w * 0.5f, 0.f}, {w * 0.5f, 0.f}, {w * 0.5f, h}, {-w * 0.5f, h}};
-    const float x = body.hip / kPi * 0.5f + w * 0.5f + 0.15f;
+    const float x = body.hip / std::numbers::pi_v<float> * 0.5f + w * 0.5f + 0.15f;
     const float y = std::max(0.05f, body.hipY() - h * 0.5f);
     for (float s : {1.f, -1.f})
     {
@@ -975,12 +973,12 @@ Garment tent(const Body&, const TentParams& p)
     const int n = std::clamp(p.sides, 3, 16);
     const float r = std::max(p.radius, 0.3f);
     const float h = std::max(p.height, 0.3f);
-    const float apothem = r * std::cos(kPi / float(n));
-    const float hb = r * std::sin(kPi / float(n));
+    const float apothem = r * std::cos(std::numbers::pi_v<float> / float(n));
+    const float hb = r * std::sin(std::numbers::pi_v<float> / float(n));
     const float slant = std::hypot(apothem, h);
     for (int i = 0; i < n; ++i)
     {
-        const float phi = 2.f * kPi * float(i) / float(n);
+        const float phi = 2.f * std::numbers::pi_v<float> * float(i) / float(n);
         const float sp = std::sin(phi), cp = std::cos(phi);
         Panel pn = makePanel("Side " + std::to_string(i + 1), {{-hb, 0.f}, {hb, 0.f}, {0.f, slant}});
         place(pn, {sp * apothem, 0.f, cp * apothem}, {-apothem * sp, h, -apothem * cp}, {h * sp, apothem, h * cp}, 0.f);
@@ -1058,7 +1056,7 @@ Garment cloakTunicBelt(const Body& body, const OutfitParams& p, std::vector<Bloc
 
 // Registry
 
-namespace blocks_detail
+namespace
 {
 
 template <class P>
@@ -1231,7 +1229,7 @@ std::vector<Block> makeBlocks()
     return out;
 }
 
-} // namespace blocks_detail
+} // namespace
 
 const std::vector<Block>& blocks()
 {

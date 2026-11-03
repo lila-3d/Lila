@@ -33,8 +33,6 @@ void addHealth(const std::string& object)
     graph().setElements({node(object).id(), attrOf(object, "usdApiSchemas"), -1}, {PlugValue(std::string("HealthAPI"))});
 }
 
-bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
-
 size_t count(const std::string& text, const std::string& part)
 {
     size_t n = 0;

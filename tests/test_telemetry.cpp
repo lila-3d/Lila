@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
 
 namespace
 {
-fs::path freshDir(const char* name)
+fs::path telemetryDir(const char* name)
 {
     fs::path dir = fs::temp_directory_path() / "lila_test_telemetry" / name;
     std::error_code ec;
@@ -28,7 +28,7 @@ fs::path freshDir(const char* name)
     return dir;
 }
 
-void setEnv(const char* name, const char* value)
+void setOrUnsetEnv(const char* name, const char* value)
 {
 #ifdef _WIN32
     _putenv_s(name, value);
@@ -56,7 +56,7 @@ TEST_CASE("telemetry buckets")
 
 TEST_CASE("telemetry install channel")
 {
-    fs::path root = freshDir("channel");
+    fs::path root = telemetryDir("channel");
     fs::path steam = root / "SteamLibrary" / "steamapps" / "common" / "Lila";
     fs::create_directories(steam);
     CHECK(tel::installChannel(steam) == "steam");
@@ -73,23 +73,23 @@ TEST_CASE("telemetry install channel")
 
 TEST_CASE("telemetry environment opt-out")
 {
-    setEnv("DO_NOT_TRACK", "");
-    setEnv("LILA_NO_TELEMETRY", "");
+    setOrUnsetEnv("DO_NOT_TRACK", "");
+    setOrUnsetEnv("LILA_NO_TELEMETRY", "");
     CHECK_FALSE(tel::optedOutByEnvironment());
-    setEnv("DO_NOT_TRACK", "0");
+    setOrUnsetEnv("DO_NOT_TRACK", "0");
     CHECK_FALSE(tel::optedOutByEnvironment());
-    setEnv("DO_NOT_TRACK", "1");
+    setOrUnsetEnv("DO_NOT_TRACK", "1");
     CHECK(tel::optedOutByEnvironment());
     CHECK_FALSE(tel::enabled());
-    setEnv("DO_NOT_TRACK", "");
-    setEnv("LILA_NO_TELEMETRY", "1");
+    setOrUnsetEnv("DO_NOT_TRACK", "");
+    setOrUnsetEnv("LILA_NO_TELEMETRY", "1");
     CHECK(tel::optedOutByEnvironment());
-    setEnv("LILA_NO_TELEMETRY", "");
+    setOrUnsetEnv("LILA_NO_TELEMETRY", "");
 }
 
 TEST_CASE("telemetry queue caps, retries and drops")
 {
-    tel::Store store(freshDir("queue"));
+    tel::Store store(telemetryDir("queue"));
     for (size_t i = 0; i < tel::kMaxQueued + 5; ++i)
         store.enqueue({{"event", "e"}, {"n", i}});
     json q = store.queue();
@@ -114,7 +114,7 @@ TEST_CASE("telemetry queue caps, retries and drops")
 
 TEST_CASE("telemetry sessions left by a gone process become crashed session ends")
 {
-    tel::Store store(freshDir("sessions"));
+    tel::Store store(telemetryDir("sessions"));
     tel::Session gone;
     gone.id = "a";
     gone.pid = 111;
@@ -175,7 +175,7 @@ TEST_CASE("crash report upload strips identifying details")
 
 TEST_CASE("crash consent round trip and always-send writes the prefs")
 {
-    fs::path dir = freshDir("consent");
+    fs::path dir = telemetryDir("consent");
     fs::path consent = dir / "crash-consent.json";
     fs::path prefs = dir / "general.json";
     std::ofstream(prefs) << R"({"telemetry": {"usage": true}})";
@@ -199,7 +199,7 @@ TEST_CASE("support bundle zips the session and redacts secrets from prefs")
     PrefStore::get().start();
     PrefStore::get().set("test_support", "/apiToken", "super-secret-value");
     PrefStore::get().flush();
-    fs::path zip = freshDir("support") / "bundle.zip";
+    fs::path zip = telemetryDir("support") / "bundle.zip";
     std::string error;
     REQUIRE(ui::support::writeBundle(zip, false, &error));
 

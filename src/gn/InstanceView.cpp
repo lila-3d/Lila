@@ -12,16 +12,16 @@ namespace lila::gn
 {
 namespace
 {
-struct Store
+struct InstanceViewStore
 {
     std::mutex mutex;
     std::map<scene::NodeId, InstanceViewPtr> views;
 };
 
-Store& store()
+InstanceViewStore& instanceViews()
 {
     // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
-    static Store* s = new Store;
+    static InstanceViewStore* s = new InstanceViewStore;
     return *s;
 }
 
@@ -104,21 +104,21 @@ InstanceViewPtr makeInstanceView(const Geometry& g, scene::MeshPtr output)
 
 void setInstanceView(scene::NodeId modifier, InstanceViewPtr view)
 {
-    std::lock_guard lock(store().mutex);
-    store().views[modifier] = std::move(view);
+    std::lock_guard lock(instanceViews().mutex);
+    instanceViews().views[modifier] = std::move(view);
 }
 
 void clearInstanceView(scene::NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    store().views.erase(modifier);
+    std::lock_guard lock(instanceViews().mutex);
+    instanceViews().views.erase(modifier);
 }
 
 InstanceViewPtr instanceView(scene::NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    auto it = store().views.find(modifier);
-    return it != store().views.end() ? it->second : nullptr;
+    std::lock_guard lock(instanceViews().mutex);
+    auto it = instanceViews().views.find(modifier);
+    return it != instanceViews().views.end() ? it->second : nullptr;
 }
 
 InstanceViewPtr instanceViewFor(scene::Graph& g, scene::NodeId mesh)

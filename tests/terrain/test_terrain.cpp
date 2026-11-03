@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "Erosion.h"
 #include "Export.h"
 #include "Inputs.h"
@@ -24,18 +25,11 @@
 #include <fstream>
 
 using namespace lila;
+using namespace terraintest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void loadTerrain()
-{
-    if (!gn::findDecl("HeightfieldGrid"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_TERRAIN_PACKAGE) == "Terrain");
-}
-
 void newScene() { run("newScene"); }
 
 /** A bumpy test heightfield. */

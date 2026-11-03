@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "MasonryBake.h"
 #include "MasonryCore.h"
 #include "MasonryShip.h"
@@ -21,14 +22,11 @@
 
 using namespace lila;
 using namespace masonry;
+using namespace masonrytest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-Footprint line(std::initializer_list<glm::dvec3> pts, bool closed = false) { return {std::vector<glm::dvec3>(pts), closed}; }
-
 Footprint circle(double radius, int segments)
 {
     Footprint f;
@@ -61,12 +59,6 @@ bool closedManifold(const geo::Mesh& m)
         if (m.edgeValid(e) && m.edgeFaceCount(e) != 2)
             return false;
     return m.validate().empty();
-}
-
-void loadMasonry()
-{
-    if (!gn::findDecl("MasonryWall"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_MASONRY_PACKAGE) == "Masonry");
 }
 } // namespace
 

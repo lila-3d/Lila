@@ -1,6 +1,7 @@
 #include "curve/Cable.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 
 #include <glm/gtc/constants.hpp>
@@ -13,8 +14,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 D3 downOf(const D3& gravity)
 {
     double l = glm::length(gravity);

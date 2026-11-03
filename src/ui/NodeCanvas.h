@@ -20,6 +20,7 @@
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 
 #include <QApplication>
@@ -82,8 +83,6 @@ class NodeCanvas;
 
 namespace canvas
 {
-inline QColor gray(int v, int alpha = 255) { return themeShade(v, alpha); }
-
 constexpr double kNodeWidth = 170.0;
 constexpr double kHeader = 24.0;
 constexpr double kRow = 20.0;
@@ -129,8 +128,6 @@ inline CanvasPrefs readCanvasPrefs()
 
 /** How every canvas draws its wires; set from the prefs. */
 inline WireStyle gWireStyle = WireStyle::Curved;
-
-inline QString qs(const std::string& s) { return QString::fromStdString(s); }
 
 /** "sizeX" -> "Size X". */
 inline QString pretty(const std::string& id)

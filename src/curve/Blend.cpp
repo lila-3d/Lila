@@ -1,6 +1,7 @@
 #include "curve/Blend.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Ops.h"
 #include "curve/Tessellate.h"
 #include "geo/Mesh.h"
@@ -14,11 +15,7 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
 using geo::Index;
-
-constexpr double kEps = 1e-12;
 
 /** Point and first three derivatives of a rational Bezier piece at t. */
 std::array<D3, 4> pieceDerivatives(const Piece& pc, double t)

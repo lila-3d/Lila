@@ -6,6 +6,7 @@ lila_module(lila_retopo Scene
     Extract.cpp
     Border.cpp
     Budget.cpp
+    CommandArgs.h
     Construct.cpp
     Construct.h
     Field.cpp

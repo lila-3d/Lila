@@ -3,6 +3,7 @@
 // instances, with item, pose and random attributes for variation downstream.
 
 #include "Arrange.h"
+#include "NodeSockets.h"
 #include "Stagehand.h"
 
 #include <lila/Extension.h>
@@ -20,21 +21,6 @@ namespace
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
-using T = gn::SocketType;
-
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc) { return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)}; }
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
-{
-    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
-    s.min = lo;
-    s.max = hi;
-    return s;
-}
-gn::SocketDecl geoIn(std::string id, std::string doc, bool multi = false)
-{
-    return {.id = std::move(id), .type = T::Geometry, .multi = multi, .doc = std::move(doc)};
-}
-gn::SocketDecl geoOut(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
 /** The items linked in, each realized to one mesh, with its bounds. */
 struct Items
@@ -315,7 +301,7 @@ void settleExec(ExecContext& c)
 
 std::vector<gn::SocketDecl> scaleSockets(double lo, double hi)
 {
-    return {in("scaleMin", T::Float, lo, "Smallest uniform scale an item gets.", 0.0), in("scaleMax", T::Float, hi, "Largest uniform scale an item gets.", 0.0)};
+    return {in("scaleMin", Socket::Float, lo, "Smallest uniform scale an item gets.", 0.0), in("scaleMax", Socket::Float, hi, "Largest uniform scale an item gets.", 0.0)};
 }
 
 const char* kItemsDoc = "The things to place: each geometry linked in is one item (Object Info of a library master, say).";
@@ -326,45 +312,45 @@ bool registerArrangeNodes(ext::Context& ctx)
 {
     std::vector<gn::SocketDecl> row = {geoIn("line", "Where the row runs: curves, or a mesh's loose edges; items stand on it, Y up."),
                                        geoIn("items", kItemsDoc, true),
-                                       in("gap", T::Float, 0.3, "Space between items, cm.", 0.0),
-                                       in("gapJitter", T::Float, 0.5, "0 to 1: how much the gaps vary.", 0.0, 1.0),
-                                       in("leanChance", T::Float, 0.08, "0 to 1: chance an item leans back on its neighbour.", 0.0, 1.0),
-                                       in("leanAngle", T::Float, 14.0, "Most an item leans, degrees.", 0.0, 90.0),
-                                       in("lyingChance", T::Float, 0.04, "0 to 1: chance a small stack of items lies flat.", 0.0, 1.0),
-                                       in("lyingMax", T::Int, 4, "Most items in a lying stack.", 1),
-                                       in("fill", T::Float, 1.0, "0 to 1: how much of the line is used, from its start.", 0.0, 1.0),
-                                       in("inset", T::Float, 0.0, "Kept clear at both ends, cm.", 0.0),
-                                       in("depthJitter", T::Float, 0.4, "Back and forth across the line, cm.", 0.0),
-                                       in("seed", T::Int, 1, "Another seed gives another row.")};
+                                       in("gap", Socket::Float, 0.3, "Space between items, cm.", 0.0),
+                                       in("gapJitter", Socket::Float, 0.5, "0 to 1: how much the gaps vary.", 0.0, 1.0),
+                                       in("leanChance", Socket::Float, 0.08, "0 to 1: chance an item leans back on its neighbour.", 0.0, 1.0),
+                                       in("leanAngle", Socket::Float, 14.0, "Most an item leans, degrees.", 0.0, 90.0),
+                                       in("lyingChance", Socket::Float, 0.04, "0 to 1: chance a small stack of items lies flat.", 0.0, 1.0),
+                                       in("lyingMax", Socket::Int, 4, "Most items in a lying stack.", 1),
+                                       in("fill", Socket::Float, 1.0, "0 to 1: how much of the line is used, from its start.", 0.0, 1.0),
+                                       in("inset", Socket::Float, 0.0, "Kept clear at both ends, cm.", 0.0),
+                                       in("depthJitter", Socket::Float, 0.4, "Back and forth across the line, cm.", 0.0),
+                                       in("seed", Socket::Int, 1, "Another seed gives another row.")};
     for (gn::SocketDecl& s : scaleSockets(0.9, 1.1))
         row.push_back(std::move(s));
-    std::vector<gn::SocketDecl> stack = {in("base", T::Vector, gn::json::array({0, 0, 0}), "Where the stack stands."),
+    std::vector<gn::SocketDecl> stack = {in("base", Socket::Vector, gn::json::array({0, 0, 0}), "Where the stack stands."),
                                          geoIn("items", kItemsDoc, true),
-                                         in("count", T::Int, 6, "How many.", 0),
-                                         in("offset", T::Float, 1.0, "Sideways wander per level, cm.", 0.0),
-                                         in("turn", T::Float, 6.0, "Turn per level, degrees either way.", 0.0, 180.0),
-                                         in("seed", T::Int, 1, "Another seed gives another stack.")};
+                                         in("count", Socket::Int, 6, "How many.", 0),
+                                         in("offset", Socket::Float, 1.0, "Sideways wander per level, cm.", 0.0),
+                                         in("turn", Socket::Float, 6.0, "Turn per level, degrees either way.", 0.0, 180.0),
+                                         in("seed", Socket::Int, 1, "Another seed gives another stack.")};
     for (gn::SocketDecl& s : scaleSockets(0.95, 1.05))
         stack.push_back(std::move(s));
-    std::vector<gn::SocketDecl> pile = {in("center", T::Vector, gn::json::array({0, 0, 0}), "Centre of the footprint, at its floor."),
+    std::vector<gn::SocketDecl> pile = {in("center", Socket::Vector, gn::json::array({0, 0, 0}), "Centre of the footprint, at its floor."),
                                         geoIn("items", kItemsDoc, true),
-                                        in("count", T::Int, 30, "How many.", 0),
-                                        in("radius", T::Float, 40.0, "Footprint radius, cm.", 0.0),
-                                        in("gap", T::Float, 1.0, "Space between items as they start, cm.", 0.0),
-                                        in("seed", T::Int, 1, "Another seed gives another heap.")};
+                                        in("count", Socket::Int, 30, "How many.", 0),
+                                        in("radius", Socket::Float, 40.0, "Footprint radius, cm.", 0.0),
+                                        in("gap", Socket::Float, 1.0, "Space between items as they start, cm.", 0.0),
+                                        in("seed", Socket::Int, 1, "Another seed gives another heap.")};
     for (gn::SocketDecl& s : scaleSockets(0.85, 1.15))
         pile.push_back(std::move(s));
     std::vector<gn::SocketDecl> scatter = {geoIn("surface", "The mesh to scatter over."),
                                            geoIn("items", kItemsDoc, true),
-                                           in("maxCount", T::Int, 200, "At most this many.", 0),
-                                           in("density", T::Float, 4.0, "Per square metre.", 0.0),
-                                           in("spacing", T::Float, 1.0, "Footprints kept clear, as a multiple of each item's own.", 0.0),
-                                           in("slopeMax", T::Float, 35.0, "Steepest surface used, degrees from up.", 0.0, 90.0),
-                                           in("align", T::Float, 0.0, "0 upright, 1 along the surface.", 0.0, 1.0),
-                                           in("turn", T::Float, 180.0, "Random turn about up, degrees either way.", 0.0, 180.0),
-                                           in("mask", T::String, "", "A point attribute (0 to 1) on the surface that thins it out; empty for none."),
+                                           in("maxCount", Socket::Int, 200, "At most this many.", 0),
+                                           in("density", Socket::Float, 4.0, "Per square metre.", 0.0),
+                                           in("spacing", Socket::Float, 1.0, "Footprints kept clear, as a multiple of each item's own.", 0.0),
+                                           in("slopeMax", Socket::Float, 35.0, "Steepest surface used, degrees from up.", 0.0, 90.0),
+                                           in("align", Socket::Float, 0.0, "0 upright, 1 along the surface.", 0.0, 1.0),
+                                           in("turn", Socket::Float, 180.0, "Random turn about up, degrees either way.", 0.0, 180.0),
+                                           in("mask", Socket::String, "", "A point attribute (0 to 1) on the surface that thins it out; empty for none."),
                                            geoIn("avoid", "Things nothing goes in or under (world space): each linked geometry's bounds.", true),
-                                           in("seed", T::Int, 1, "Another seed gives another scatter.")};
+                                           in("seed", Socket::Int, 1, "Another seed gives another scatter.")};
     for (gn::SocketDecl& s : scaleSockets(0.8, 1.2))
         scatter.push_back(std::move(s));
 
@@ -405,12 +391,12 @@ bool registerArrangeNodes(ext::Context& ctx)
                 "(kg pressing there), for wear and sag.",
          .sockets = {.inputs = {geoIn("instances", "What falls."),
                                 geoIn("colliders", "What it lands on and never moves: meshes, in world space.", true),
-                                in("seconds", T::Float, 10.0, "Longest it runs; it stops sooner once everything rests.", 0.0),
-                                in("ground", T::Bool, false, "A floor plane under everything too."),
-                                in("groundHeight", T::Float, 0.0, "Height of that floor."),
-                                in("density", T::Float, 600.0, "kg per cubic metre of every item.", 1.0),
-                                in("friction", T::Float, 0.6, "0 slides, 1 grips.", 0.0),
-                                in("bounce", T::Float, 0.05, "0 lands dead, 1 bounces back as high.", 0.0, 1.0)},
+                                in("seconds", Socket::Float, 10.0, "Longest it runs; it stops sooner once everything rests.", 0.0),
+                                in("ground", Socket::Bool, false, "A floor plane under everything too."),
+                                in("groundHeight", Socket::Float, 0.0, "Height of that floor."),
+                                in("density", Socket::Float, 600.0, "kg per cubic metre of every item.", 1.0),
+                                in("friction", Socket::Float, 0.6, "0 slides, 1 grips.", 0.0),
+                                in("bounce", Socket::Float, 0.05, "0 lands dead, 1 bounces back as high.", 0.0, 1.0)},
                      .outputs = {geoOut("instances", "Where they came to rest."), geoOut("contacts", "Where they touched, as points.")}},
          .exec = settleExec},
     };

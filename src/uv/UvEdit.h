@@ -19,6 +19,9 @@ namespace lila::uv
 {
 using UvMeshEditFn = std::function<json(geo::Mesh&, const scene::components::Ids& ids, scene::Node&)>;
 
+/** The uvSet flag the uv commands take: a set name, else the current set. */
+inline FlagDef uvSetFlag() { return {"uvSet", "", ArgType::String, nullptr, "UV set; the current one (uvSetCurrent) when not given."}; }
+
 /**
  * Runs fn on a copy of every target mesh (the component selection converted to kind, or whole selected meshes when
  * allowWhole) and writes it back to inMesh as one undo step. Returns fn's results keyed by mesh name.

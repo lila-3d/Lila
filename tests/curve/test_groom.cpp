@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Groom.h"
 #include "curve/HairCards.h"
@@ -17,11 +19,12 @@ using namespace lila;
 using namespace lila::curve;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
 /** A 40 x 40 ground plane facing +Y. */
-groom::Surface ground(std::string densitySet = {}, geo::Mesh* keep = nullptr)
+groom::Surface groundSurface(std::string densitySet = {}, geo::Mesh* keep = nullptr)
 {
     geo::Mesh m = geo::makePlane({40.0, 40.0, 8, 8});
     if (keep)
@@ -65,8 +68,6 @@ groom::Dab dabAt(const D3& c, double r)
     d.normal = D3(0, 1, 0);
     return d;
 }
-
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
 } // namespace
 
 TEST_CASE("groom resample spreads points evenly")
@@ -82,7 +83,7 @@ TEST_CASE("groom resample spreads points evenly")
 
 TEST_CASE("groom comb, smooth and puff keep roots and lengths")
 {
-    groom::Surface surf = ground();
+    groom::Surface surf = groundSurface();
     std::mt19937 rng(1);
     Splines s = patch();
     const Splines before = s;
@@ -173,7 +174,7 @@ TEST_CASE("groom length, cut and pinch")
 TEST_CASE("groom add, delete, density and slide on a surface")
 {
     geo::Mesh plane;
-    groom::Surface surf = ground({}, &plane);
+    groom::Surface surf = groundSurface({}, &plane);
     std::mt19937 rng(7);
     groom::Settings o;
     o.strength = 1.0;
@@ -243,7 +244,7 @@ TEST_CASE("groom add, delete, density and slide on a surface")
 
 TEST_CASE("groom mask, attach and guides")
 {
-    groom::Surface surf = ground();
+    groom::Surface surf = groundSurface();
     std::mt19937 rng(1);
     groom::Settings o;
     o.brush = groom::Brush::Comb;
@@ -290,7 +291,7 @@ TEST_CASE("groom mask, attach and guides")
 
 TEST_CASE("hair cards: strips, atlas cells and facing")
 {
-    groom::Surface surf = ground();
+    groom::Surface surf = groundSurface();
     // Strands lying along the scalp: cards facing the surface lie flat, normals up.
     Splines s;
     for (int k = 0; k < 6; ++k)

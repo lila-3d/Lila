@@ -35,14 +35,6 @@ std::string joinNames(const std::vector<std::string>& names)
     return out;
 }
 
-bool isUnder(Graph& g, NodeId node, NodeId ancestor)
-{
-    for (NodeId cur = node; cur; cur = g.parent(cur))
-        if (cur == ancestor)
-            return true;
-    return false;
-}
-
 /** Meshes whose skinCluster has an influence at or below root. */
 std::vector<std::string> skinnedMeshes(Graph& g, NodeId root)
 {
@@ -190,7 +182,7 @@ bool registerTypes(ext::Context& ctx)
     return types::registerType(ctx, std::move(t)) != nullptr;
 }
 
-void registerCommands(ext::Context& ctx)
+void registerCharacterCommands(ext::Context& ctx)
 {
     using T = ArgType;
     ctx.registerCommand({
@@ -318,7 +310,7 @@ bool registerCharacter(ext::Context& ctx)
 {
     if (!registerTypes(ctx))
         return false;
-    registerCommands(ctx);
+    registerCharacterCommands(ctx);
     return true;
 }
 } // namespace puppeteer

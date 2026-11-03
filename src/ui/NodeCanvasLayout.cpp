@@ -214,16 +214,16 @@ void NodeCanvas::autoLayout()
             std::map<NodeItem*, double> key;
             for (NodeItem* n : cols[size_t(c)])
             {
-                const std::vector<NodeItem*>& near = down ? preds[n] : succs[n];
-                if (near.empty())
+                const std::vector<NodeItem*>& neighbours = down ? preds[n] : succs[n];
+                if (neighbours.empty())
                 {
                     key[n] = slot[n];
                     continue;
                 }
                 double sum = 0.0;
-                for (NodeItem* m : near)
+                for (NodeItem* m : neighbours)
                     sum += slot[m];
-                key[n] = sum / double(near.size());
+                key[n] = sum / double(neighbours.size());
             }
             std::stable_sort(cols[size_t(c)].begin(), cols[size_t(c)].end(), [&](NodeItem* a, NodeItem* b) { return key[a] < key[b]; });
             number();

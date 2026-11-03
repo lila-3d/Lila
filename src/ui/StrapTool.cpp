@@ -12,6 +12,7 @@
 #include "ui/Actions.h"
 #include "ui/Isolate.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 
 #include <array>
 
@@ -38,8 +39,6 @@ std::vector<curve::StrapTarget> strapTargets()
         out.resize(kMaxStrapMeshes);
     return out;
 }
-
-json vecJson(const D3& v) { return {v.x, v.y, v.z}; }
 
 /**
  * Strap: drag a slash across the meshes and a strap goes round what it crosses, in the plane of the slash edge on to the view,

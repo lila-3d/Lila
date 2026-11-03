@@ -5,6 +5,7 @@
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -14,26 +15,28 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
 using geo::Index;
 
-enum Attr
-{
-    kInMesh,
-    kEnabled,
-    kExportEnabled,
-    kThickness,
-    kOffset,
-    kIndividual,
-    kComponents,
-    kOutMesh,
-    kLost,
-};
-
 class ExtrudeModifierNode final : public ModifierNode
 {
 public:
+    enum Attr
+    {
+        kInMesh,
+        kEnabled,
+        kExportEnabled,
+        kThickness,
+        kOffset,
+        kIndividual,
+        kComponents,
+        kOutMesh,
+        kLost,
+    };
+
     ExtrudeModifierNode()
     {
         inAttr = kInMesh;
@@ -88,14 +91,14 @@ private:
     std::unordered_map<uint64_t, std::vector<Index>> mGrid;
 };
 
-bool sameTopology(const geo::Mesh& m, const ExtrudeComponents& c)
+bool componentsMatch(const geo::Mesh& m, const ExtrudeComponents& c)
 {
     return m.pointCapacity() == c.pointCount && m.edgeCapacity() == c.edgeCount && m.faceCapacity() == c.faceCount;
 }
 
 extrudeModifier::Resolved resolveOn(const geo::Mesh& m, const Node& n)
 {
-    return extrudeModifier::resolveComponents(m, dynamic_cast<const ExtrudeComponents*>(n.as<DataPtr>(kComponents).get()));
+    return extrudeModifier::resolveComponents(m, dynamic_cast<const ExtrudeComponents*>(n.as<DataPtr>(ExtrudeModifierNode::kComponents).get()));
 }
 } // namespace
 
@@ -111,7 +114,7 @@ extrudeModifier::Resolved extrudeModifier::resolveComponents(const geo::Mesh& m,
                 r.ids.push_back(f);
         return r;
     }
-    const bool same = sameTopology(m, *c);
+    const bool same = componentsMatch(m, *c);
     if (c->edges)
     {
         r.kind = ComponentMode::Edge;
@@ -201,13 +204,7 @@ geo::EdgeRef edgeRefFromJson(const json& j)
 void takeSelection(Graph& g, Node& mod, NodeId mesh)
 {
     if (DataPtr c = extrudeModifier::selectedComponents(g, mesh))
-        g.setValue({mod.id(), kComponents, -1}, c);
-}
-
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
+        g.setValue({mod.id(), ExtrudeModifierNode::kComponents, -1}, c);
 }
 } // namespace
 
@@ -284,7 +281,7 @@ std::optional<Resolved> resolve(Graph& g, NodeId modifier)
     if (!n || !isExtrude(*n))
         return std::nullopt;
     g.evaluate();
-    MeshPtr in = n->as<MeshPtr>(kInMesh);
+    MeshPtr in = n->as<MeshPtr>(ExtrudeModifierNode::kInMesh);
     if (!in)
         return std::nullopt;
     Resolved r = resolveOn(*in, *n);
@@ -298,8 +295,8 @@ void baseRemapped(Graph& g, NodeId mesh, const geo::MeshRemap& remap, const geo:
     if (s.empty() || !isExtrude(*g.node(s.front())))
         return;
     Node& mod = *g.node(s.front());
-    if (DataPtr next = remapComponents(dynamic_cast<const ExtrudeComponents*>(mod.as<DataPtr>(kComponents).get()), remap, base))
-        g.setValue({mod.id(), kComponents, -1}, next);
+    if (DataPtr next = remapComponents(dynamic_cast<const ExtrudeComponents*>(mod.as<DataPtr>(ExtrudeModifierNode::kComponents).get()), remap, base))
+        g.setValue({mod.id(), ExtrudeModifierNode::kComponents, -1}, next);
 }
 
 DataPtr remapComponents(const ExtrudeComponents* c, const geo::MeshRemap& remap, const geo::Mesh& base)

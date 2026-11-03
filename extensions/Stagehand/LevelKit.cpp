@@ -135,13 +135,11 @@ bool joined(const SnapPoint& a, const SnapPoint& b, double tolerance)
 }
 } // namespace kit
 
+using T = ArgType;
+
 namespace
 {
-using json = nlohmann::json;
-using T = ArgType;
 using kit::SnapPoint;
-
-json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
 glm::dvec3 vec(const json& j, const glm::dvec3& fallback)
 {

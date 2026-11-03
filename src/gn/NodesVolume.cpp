@@ -11,7 +11,6 @@ namespace lila::gn::nodes
 {
 namespace volume_nodes
 {
-using D3 = glm::dvec3;
 using VolumePtr = std::shared_ptr<const Volume>;
 
 constexpr size_t kMaxPoints = size_t(50) << 20;

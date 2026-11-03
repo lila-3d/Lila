@@ -8,6 +8,7 @@
 #include "media/Media.h"
 #include "media/SoundCues.h"
 #include "scene/AnimLayer.h"
+#include "scene/RigUtil.h"
 #include "scene/Take.h"
 #include "scene/BatchRename.h"
 #include "scene/Camera.h"
@@ -56,23 +57,15 @@ namespace lila::scene
 {
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
-Node& nodeNamed(const std::string& name)
-{
-    Node* n = graph().find(name);
-    if (!n)
-        throw CommandError("no node named '" + name + "'");
-    return *n;
-}
+using rigutil::nodeNamed;
 
 /** Every added attribute under the category, and the category's name out of usdApiSchemas (USD components). */
 void deleteCategory(NodeId id, const std::string& category)
 {
-    const Node* n = graph().node(id);
+    const Node* n = Graph::current().node(id);
     for (int i = int(n->type().attrs.size()) - 1; i >= 0; --i)
         if (const AttrDef& d = n->type().attrs[size_t(i)]; (d.flags & AttrUser) && d.category == category)
-            graph().deleteAttr({id, i});
+            Graph::current().deleteAttr({id, i});
     const int list = n->type().attrIndex("usdApiSchemas");
     if (list < 0 || n->type().attrs[size_t(list)].type != PlugType::String || !(n->type().attrs[size_t(list)].flags & AttrArray))
         return;
@@ -81,7 +74,7 @@ void deleteCategory(NodeId id, const std::string& category)
         if (std::get<std::string>(v) != category)
             kept.push_back(v);
     if (kept.size() != n->elements(list).size())
-        graph().setElements({id, list, -1}, kept);
+        Graph::current().setElements({id, list, -1}, kept);
 }
 
 std::vector<NodeId> idsOf(const std::vector<std::string>& names)
@@ -96,7 +89,7 @@ json namesOf(const std::vector<NodeId>& ids)
 {
     json out = json::array();
     for (NodeId id : ids)
-        if (Node* n = graph().node(id))
+        if (Node* n = Graph::current().node(id))
             out.push_back(n->path());
     return out;
 }
@@ -105,7 +98,7 @@ PlugRef plugArg(const std::string& path)
 {
     try
     {
-        return graph().plug(path);
+        return Graph::current().plug(path);
     }
     catch (const std::invalid_argument& e)
     {
@@ -113,18 +106,7 @@ PlugRef plugArg(const std::string& path)
     }
 }
 
-/** Re-throws graph errors as user-facing command errors. */
-template <class F> auto guarded(F&& f)
-{
-    try
-    {
-        return f();
-    }
-    catch (const std::invalid_argument& e)
-    {
-        throw CommandError(e.what());
-    }
-}
+using rigutil::guarded;
 
 NodeId parentArg(const Args& a)
 {
@@ -163,9 +145,9 @@ json create(const std::string& type, const Args& a)
     const NodeType* t = types::find(type);
     if (!t)
         throw CommandError("unknown node type '" + type + "'");
-    Node* n = guarded([&] { return graph().createNode(*t, a.get<std::string>("name", ""), parentArg(a)); });
+    Node* n = guarded([&] { return Graph::current().createNode(*t, a.get<std::string>("name", ""), parentArg(a)); });
     if (!a.get<bool>("skipSelect", false) && t->dag)
-        graph().select({n->id()});
+        Graph::current().select({n->id()});
     return n->path();
 }
 
@@ -235,7 +217,7 @@ NodeId walkFromGhost(const Graph& g, const WalkGhost& ghost, const std::string& 
 
 void loadNamingPolicy()
 {
-    graph().setNamingPolicy(NamingPolicy::fromJson(PrefStore::get().merged("naming")));
+    Graph::current().setNamingPolicy(NamingPolicy::fromJson(PrefStore::get().merged("naming")));
 }
 
 void registerTransformCommands();
@@ -338,33 +320,33 @@ void registerCommands()
 
             if (a.get<bool>("check") || a.get<bool>("fix"))
             {
-                NamingPolicy policy = graph().namingPolicy();
+                NamingPolicy policy = Graph::current().namingPolicy();
                 policy.enabled = true;
                 std::vector<NodeId> ids;
                 if (a.positional.empty())
-                    ids = graph().nodes();
+                    ids = Graph::current().nodes();
                 else
                     for (const json& o : a.positional)
                     {
-                        Node* n = graph().find(o.get<std::string>());
+                        Node* n = Graph::current().find(o.get<std::string>());
                         if (!n)
                             throw CommandError("namingConvention: no object '" + o.get<std::string>() + "'");
                         ids.push_back(n->id());
-                        std::ranges::copy(graph().descendants(n->id()), std::back_inserter(ids));
+                        std::ranges::copy(Graph::current().descendants(n->id()), std::back_inserter(ids));
                     }
                 json out = json::array();
                 for (NodeId id : ids)
                 {
-                    Node* n = graph().node(id);
+                    Node* n = Graph::current().node(id);
                     if (n->referenceId())
                         continue;
                     std::string was = n->name();
                     std::string want = policy.conform(n->type(), was);
                     if (want == was)
                         continue;
-                    std::string at = graph().path(id);
+                    std::string at = Graph::current().path(id);
                     if (a.get<bool>("fix"))
-                        want = guarded([&] { return materials::rename(graph(), id, want); });
+                        want = guarded([&] { return materials::rename(Graph::current(), id, want); });
                     out.push_back({at, want});
                 }
                 return out;
@@ -377,8 +359,8 @@ void registerCommands()
 
     ops::setSelectionProvider([] {
         std::vector<std::string> out;
-        for (NodeId id : graph().selection())
-            out.push_back(graph().path(id));
+        for (NodeId id : Graph::current().selection())
+            out.push_back(Graph::current().path(id));
         return out;
     });
 
@@ -411,7 +393,7 @@ void registerCommands()
             c.flags.erase("position");
             json name = create("locator", c);
             if (a.has("position"))
-                graph().setValue(graph().plug(name.get<std::string>() + ".translate"),
+                Graph::current().setValue(Graph::current().plug(name.get<std::string>() + ".translate"),
                                  glm::dvec3(a.flags["position"][0], a.flags["position"][1], a.flags["position"][2]));
             return name;
         },
@@ -433,11 +415,11 @@ void registerCommands()
                 c.flags["name"] = "Group";
             c.flags["skipSelect"] = true;
             std::string name = create("transform", c).get<std::string>();
-            NodeId g = graph().find(name)->id();
+            NodeId g = Graph::current().find(name)->id();
             for (NodeId m : members)
-                guarded([&] { graph().setParent(m, g); return 0; });
-            graph().select({g});
-            return graph().path(g);
+                guarded([&] { Graph::current().setParent(m, g); return 0; });
+            Graph::current().select({g});
+            return Graph::current().path(g);
         },
     });
 
@@ -449,14 +431,14 @@ void registerCommands()
             auto ids = idsOf(a.objects());
             for (NodeId id : ids)
             {
-                std::vector<NodeId> doomed = graph().descendants(id);
+                std::vector<NodeId> doomed = Graph::current().descendants(id);
                 doomed.push_back(id);
                 for (NodeId d : doomed)
-                    if (graph().node(d)->referenceId())
-                        throw CommandError("delete: '" + graph().path(d) +
+                    if (Graph::current().node(d)->referenceId())
+                        throw CommandError("delete: '" + Graph::current().path(d) +
                                            "' comes from a reference; remove or unload the reference instead");
             }
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<WalkGhost> ghosts;
             for (NodeId id : ids)
                 if (g.isSelected(id))
@@ -483,9 +465,9 @@ void registerCommands()
                 target = a.positional[0].get<std::string>();
                 newName = a.positional[1].get<std::string>();
             }
-            else if (a.positional.size() == 1 && graph().selection().size() == 1)
+            else if (a.positional.size() == 1 && Graph::current().selection().size() == 1)
             {
-                target = graph().path(graph().selection()[0]);
+                target = Graph::current().path(Graph::current().selection()[0]);
                 newName = a.positional[0].get<std::string>();
             }
             else
@@ -493,8 +475,8 @@ void registerCommands()
             if (nodeNamed(target).referenceId())
                 throw CommandError("rename: '" + target + "' comes from a reference and keeps its name");
             NodeId id = nodeNamed(target).id();
-            guarded([&] { return materials::rename(graph(), id, newName); });
-            return graph().path(id);
+            guarded([&] { return materials::rename(Graph::current(), id, newName); });
+            return Graph::current().path(id);
         },
     });
 
@@ -519,7 +501,7 @@ void registerCommands()
                     throw CommandError("parent: chain needs at least two objects");
                 std::vector<NodeId> ids = idsOf(objs);
                 for (size_t i = 0; i + 1 < ids.size(); ++i)
-                    guarded([&] { graph().setParent(ids[i], ids[i + 1], !a.get<bool>("relative")); return 0; });
+                    guarded([&] { Graph::current().setParent(ids[i], ids[i + 1], !a.get<bool>("relative")); return 0; });
                 return objs;
             }
             NodeId p = kNoNode;
@@ -534,15 +516,15 @@ void registerCommands()
             if (!a.has("index"))
             {
                 for (NodeId c : ids)
-                    guarded([&] { graph().setParent(c, p, !a.get<bool>("relative")); return 0; });
-                graph().select(ids);
+                    guarded([&] { Graph::current().setParent(c, p, !a.get<bool>("relative")); return 0; });
+                Graph::current().select(ids);
                 return objs;
             }
             int index = a.get<int>("index");
             if (index < 0)
                 throw CommandError("parent: index must be 0 or more");
             std::vector<NodeId> others;
-            for (NodeId s : p == kNoNode ? graph().roots() : graph().children(p))
+            for (NodeId s : p == kNoNode ? Graph::current().roots() : Graph::current().children(p))
                 if (std::find(ids.begin(), ids.end(), s) == ids.end())
                     others.push_back(s);
             // Each object goes in front of the sibling it should precede, so earlier moves don't shift later ones.
@@ -550,17 +532,17 @@ void registerCommands()
             for (size_t i = ids.size(); i-- > 0;)
             {
                 guarded([&] {
-                    const auto& sib = p == kNoNode ? graph().roots() : graph().children(p);
+                    const auto& sib = p == kNoNode ? Graph::current().roots() : Graph::current().children(p);
                     size_t at = size_t(std::find(sib.begin(), sib.end(), before) - sib.begin());
                     auto self = std::find(sib.begin(), sib.end(), ids[i]);
                     if (self != sib.end() && size_t(self - sib.begin()) < at)
                         --at;
-                    graph().setParent(ids[i], p, !a.get<bool>("relative"), at);
+                    Graph::current().setParent(ids[i], p, !a.get<bool>("relative"), at);
                     return 0;
                 });
                 before = ids[i];
             }
-            graph().select(ids);
+            Graph::current().select(ids);
             return objs;
         },
     });
@@ -578,26 +560,26 @@ void registerCommands()
             PlugRef p = plugArg(a.positional[0].get<std::string>());
             // Unlock before setting and lock after, so setAttr(plug, v, lock=...) works either way.
             if (a.has("lock") && !a.get<bool>("lock"))
-                guarded([&] { graph().setLocked(p, false); return 0; });
-            if (!lockOnly && (graph().attr(p).flags & AttrArray) && p.element < 0)
+                guarded([&] { Graph::current().setLocked(p, false); return 0; });
+            if (!lockOnly && (Graph::current().attr(p).flags & AttrArray) && p.element < 0)
             {
                 if (!a.positional[1].is_array())
-                    throw CommandError("setAttr: " + graph().plugName(p) + " is an array; give a list of its values");
+                    throw CommandError("setAttr: " + Graph::current().plugName(p) + " is an array; give a list of its values");
                 std::vector<PlugValue> values;
                 for (const json& v : a.positional[1])
-                    values.push_back(guarded([&] { return fromJson(graph().attr(p), v); }));
-                guarded([&] { graph().setElements(p, values); return 0; });
+                    values.push_back(guarded([&] { return fromJson(Graph::current().attr(p), v); }));
+                guarded([&] { Graph::current().setElements(p, values); return 0; });
             }
             else if (!lockOnly)
             {
                 json v = a.positional.size() == 4 ? json::array({a.positional[1], a.positional[2], a.positional[3]}) : a.positional[1];
-                AttrDef def = graph().attr(p);
+                AttrDef def = Graph::current().attr(p);
                 if (p.component >= 0)
                     def.type = PlugType::Float;
-                guarded([&] { graph().setValue(p, fromJson(def, v)); return 0; });
+                guarded([&] { Graph::current().setValue(p, fromJson(def, v)); return 0; });
             }
             if (a.has("lock") && a.get<bool>("lock"))
-                guarded([&] { graph().setLocked(p, true); return 0; });
+                guarded([&] { Graph::current().setLocked(p, true); return 0; });
             return nullptr;
         },
     });
@@ -615,22 +597,22 @@ void registerCommands()
                 throw CommandError("getAttr: expected a plug");
             PlugRef p = plugArg(a.positional[0].get<std::string>());
             if (a.get<bool>("lock"))
-                return graph().isLocked(p);
+                return Graph::current().isLocked(p);
             if (a.get<bool>("multiIndices"))
             {
                 json out = json::array();
-                for (const PlugRef& e : graph().elements(p))
+                for (const PlugRef& e : Graph::current().elements(p))
                     out.push_back(e.element);
                 return out;
             }
-            if ((graph().attr(p).flags & AttrArray) && p.element < 0)
+            if ((Graph::current().attr(p).flags & AttrArray) && p.element < 0)
             {
                 json out = json::array();
-                for (const PlugRef& e : graph().elements(p))
-                    out.push_back(toJson(guarded([&] { return graph().value(e); })));
+                for (const PlugRef& e : Graph::current().elements(p))
+                    out.push_back(toJson(guarded([&] { return Graph::current().value(e); })));
                 return out;
             }
-            return toJson(guarded([&] { return graph().value(p); }));
+            return toJson(guarded([&] { return Graph::current().value(p); }));
         },
     });
 
@@ -643,7 +625,7 @@ void registerCommands()
             if (a.positional.size() != 2)
                 throw CommandError("connectAttr: expected (src, dst)");
             PlugRef s = plugArg(a.positional[0]), d = plugArg(a.positional[1]);
-            return graph().plugName(guarded([&] { return graph().connect(s, d, a.get<bool>("force")); }));
+            return Graph::current().plugName(guarded([&] { return Graph::current().connect(s, d, a.get<bool>("force")); }));
         },
     });
 
@@ -655,17 +637,17 @@ void registerCommands()
             if (a.positional.empty())
                 throw CommandError("disconnectAttr: expected a plug");
             PlugRef d = plugArg(a.positional.back());
-            if (!(graph().attr(d).flags & AttrArray) || d.element >= 0)
+            if (!(Graph::current().attr(d).flags & AttrArray) || d.element >= 0)
             {
-                graph().disconnect(d);
+                Graph::current().disconnect(d);
                 return nullptr;
             }
             std::optional<PlugRef> from;
             if (a.positional.size() > 1)
                 from = plugArg(a.positional.front());
-            for (const PlugRef& e : graph().elements(d))
-                if (!from || graph().source(e) == from)
-                    graph().disconnect(e);
+            for (const PlugRef& e : Graph::current().elements(d))
+                if (!from || Graph::current().source(e) == from)
+                    Graph::current().disconnect(e);
             return nullptr;
         },
     });
@@ -793,9 +775,9 @@ void registerCommands()
                     if (multi)
                         child.flags |= AttrArray;
                 }
-                int index = guarded([&] { return graph().addAttr(n.id(), child); });
+                int index = guarded([&] { return Graph::current().addAttr(n.id(), child); });
                 pendingCompounds().erase({n.id(), group});
-                out.push_back(graph().plugName({n.id(), index}));
+                out.push_back(Graph::current().plugName({n.id(), index}));
             }
             return out;
         },
@@ -836,12 +818,12 @@ void registerCommands()
                     if (pendingCompounds().erase({n.id(), group}) || (!children.empty() && n.type().attrIndex(group) < 0))
                     {
                         for (auto c = children.rbegin(); c != children.rend(); ++c)
-                            guarded([&] { graph().deleteAttr({n.id(), *c}); return 0; });
+                            guarded([&] { Graph::current().deleteAttr({n.id(), *c}); return 0; });
                         continue;
                     }
                 }
                 PlugRef p = plugArg(path);
-                guarded([&] { graph().deleteAttr({p.node, p.attr}); return 0; });
+                guarded([&] { Graph::current().deleteAttr({p.node, p.attr}); return 0; });
             }
             return nullptr;
         },
@@ -867,12 +849,12 @@ void registerCommands()
                     {
                         int index = std::stoi(path.substr(open + 1, path.size() - open - 2));
                         for (int c : children)
-                            guarded([&] { graph().removeElement({n.id(), c, -1, index}); return 0; });
+                            guarded([&] { Graph::current().removeElement({n.id(), c, -1, index}); return 0; });
                         continue;
                     }
                 }
                 PlugRef p = plugArg(path);
-                guarded([&] { graph().removeElement(p); return 0; });
+                guarded([&] { Graph::current().removeElement(p); return 0; });
             }
             return nullptr;
         },
@@ -925,7 +907,7 @@ void registerCommands()
         },
         .undoable = false,
         .run = [](const Args& a) -> json {
-            std::vector<NodeId> ids = a.get<bool>("selection") ? graph().selection() : graph().nodes();
+            std::vector<NodeId> ids = a.get<bool>("selection") ? Graph::current().selection() : Graph::current().nodes();
             // A short name matching several nodes lists them all, like a pattern would.
             std::vector<NodeId> wanted;
             bool filtered = false;
@@ -933,20 +915,20 @@ void registerCommands()
                 if (v.is_string())
                 {
                     filtered = true;
-                    for (NodeId id : graph().findAll(v.get<std::string>()))
+                    for (NodeId id : Graph::current().findAll(v.get<std::string>()))
                         wanted.push_back(id);
                 }
             json out = json::array();
             for (NodeId id : ids)
             {
-                Node* n = graph().node(id);
+                Node* n = Graph::current().node(id);
                 if (a.has("type") && !n->type().isA(a.get<std::string>("type")))
                     continue;
                 if (a.get<bool>("dag") && !n->type().dag)
                     continue;
                 if (filtered && std::find(wanted.begin(), wanted.end(), id) == wanted.end())
                     continue;
-                out.push_back(graph().path(id));
+                out.push_back(Graph::current().path(id));
             }
             return out;
         },
@@ -965,7 +947,7 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             if (a.get<bool>("clear"))
             {
-                graph().select({});
+                Graph::current().select({});
                 return nullptr;
             }
             std::vector<std::string> names;
@@ -979,7 +961,7 @@ void registerCommands()
                               : a.get<bool>("deselect") ? SelectMode::Remove
                               : a.get<bool>("toggle") ? SelectMode::Toggle
                                                      : SelectMode::Replace;
-            graph().select(idsOf(names), mode);
+            Graph::current().select(idsOf(names), mode);
             return nullptr;
         },
     });
@@ -991,7 +973,7 @@ void registerCommands()
                "where the deleted objects were.",
         .flags = {{"direction", "", T::String, "down", "up, down, left or right."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::string dir = a.get<std::string>("direction");
             if (dir != "up" && dir != "down" && dir != "left" && dir != "right")
                 throw CommandError("pickWalk: direction must be up, down, left or right");
@@ -1039,7 +1021,7 @@ void registerCommands()
         .name = "selectHierarchy",
         .doc = "Add every transform below each selected object to the selection, parents before children.",
         .run = [](const Args&) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<NodeId> out;
             std::function<void(NodeId)> visit = [&](NodeId id) {
                 if (std::find(out.begin(), out.end(), id) == out.end())
@@ -1061,7 +1043,7 @@ void registerCommands()
         .doc = "True if a node with this name or path exists.",
         .positionalDoc = "name",
         .undoable = false,
-        .run = [](const Args& a) -> json { return !a.positional.empty() && !graph().findAll(a.positional[0].get<std::string>()).empty(); },
+        .run = [](const Args& a) -> json { return !a.positional.empty() && !Graph::current().findAll(a.positional[0].get<std::string>()).empty(); },
     });
 
     ops::registerCommand({
@@ -1092,10 +1074,10 @@ void registerCommands()
                 throw CommandError("listRelatives: no object");
             NodeId id = nodeNamed(objs[0]).id();
             if (a.get<bool>("parent"))
-                return namesOf({graph().parent(id)});
+                return namesOf({Graph::current().parent(id)});
             if (a.get<bool>("allDescendents"))
-                return namesOf(graph().descendants(id));
-            return namesOf(graph().children(id));
+                return namesOf(Graph::current().descendants(id));
+            return namesOf(Graph::current().children(id));
         },
     });
 
@@ -1120,7 +1102,7 @@ void registerCommands()
              "xform(\"cube1\", query=True, worldSpace=True, matrix=True)"},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             auto objs = idsOf(a.objects());
             bool ws = a.get<bool>("worldSpace");
             if (a.get<bool>("query"))
@@ -1189,7 +1171,7 @@ void registerCommands()
         .doc = "Clear the scene. Not undoable.",
         .undoable = false,
         .run = [](const Args&) -> json {
-            graph().clear();
+            Graph::current().clear();
             events::send({.type = events::Event::SceneNew});
             return nullptr;
         },
@@ -1202,8 +1184,8 @@ void registerCommands()
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (!a.positional.empty())
-                graph().setTime(a.positional[0].get<double>());
-            return graph().time();
+                Graph::current().setTime(a.positional[0].get<double>());
+            return Graph::current().time();
         },
     });
 }

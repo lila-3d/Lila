@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Fit.h"
 #include "curve/Ops.h"
 #include "curve/Spline.h"
@@ -17,18 +19,10 @@
 using namespace lila;
 using namespace lila::curve;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-Spline poly(std::vector<D3> pts, bool closed = false)
-{
-    Spline s;
-    s.kind = Kind::Poly;
-    s.closed = closed;
-    s.points = std::move(pts);
-    return s;
-}
-
 Spline randomBezier(std::mt19937& rng, int n, bool closed)
 {
     std::uniform_real_distribution<double> d(-50.0, 50.0);
@@ -78,15 +72,6 @@ bool allQuads(const geo::Mesh& m)
         if (m.faceValid(f) && m.faceSize(f) != 4)
             return false;
     return true;
-}
-
-int boundaryEdges(const geo::Mesh& m)
-{
-    int n = 0;
-    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
-        if (m.edgeValid(e) && m.isBoundaryEdge(e))
-            ++n;
-    return n;
 }
 
 bool manifold(const geo::Mesh& m)

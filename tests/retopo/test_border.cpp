@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Primitives.h"
@@ -11,6 +12,7 @@
 #include <cmath>
 
 using namespace lila;
+using namespace retopotest;
 using geo::Index;
 
 namespace
@@ -42,13 +44,6 @@ void checkChained(const geo::Mesh& m, const retopo::BorderRun& r)
         Index a = r.points[i], b = r.points[(i + 1) % r.points.size()];
         CHECK(m.findEdge(a, b) == r.edges[i]);
     }
-}
-
-const geo::Mesh& outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
 }
 } // namespace
 

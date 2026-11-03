@@ -3,6 +3,7 @@
 #include "geo/Bvh.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
+#include "geo/OpsCommon.h"
 #include "geo/Topology.h"
 
 #include "core/Profile.h"
@@ -21,6 +22,7 @@ namespace lila::geo
 {
 namespace
 {
+using detail::insidePolygon;
 using V = glm::dvec3;
 using V2 = glm::dvec2;
 
@@ -73,16 +75,6 @@ int senseOf(const Frame& f, const std::vector<V>& pts)
     for (const V& x : pts)
         p.push_back(f.to2(x));
     return signedArea(p) >= 0.0 ? 1 : -1;
-}
-
-bool insidePolygon(const std::vector<V2>& poly, const V2& q)
-{
-    bool in = false;
-    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
-        if ((poly[i].y > q.y) != (poly[j].y > q.y) &&
-            q.x < (poly[j].x - poly[i].x) * (q.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x)
-            in = !in;
-    return in;
 }
 
 double distanceToPolygon(const std::vector<V2>& poly, const V2& q)

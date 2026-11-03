@@ -19,7 +19,6 @@ namespace lila::tex
 namespace
 {
 using scene::Node;
-using T = ArgType;
 
 scene::Graph& graph() { return scene::Graph::current(); }
 
@@ -103,7 +102,7 @@ bool reaches(const Graph& g, const std::string& from, const std::string& to)
     return false;
 }
 
-json portJson(const PortDecl& p, const GNode* n, const Graph* g, bool input)
+json portStateJson(const PortDecl& p, const GNode* n, const Graph* g, bool input)
 {
     json j = {{"id", p.id}, {"type", portTypeName(p.type)}};
     if (input)
@@ -125,7 +124,7 @@ json portJson(const PortDecl& p, const GNode* n, const Graph* g, bool input)
     return j;
 }
 
-json paramJson(const ParamDecl& p, const GNode* n)
+json paramStateJson(const ParamDecl& p, const GNode* n)
 {
     json j = {{"id", p.id}, {"type", paramTypeName(p.type)}, {"default", p.defaultValue}};
     if (n)
@@ -157,11 +156,11 @@ json nodeJson(const GNode& n, const Graph& g, const SetSettings& s)
     }
     json ins = json::array(), outs = json::array(), prms = json::array();
     for (const PortDecl& d : p.inputs)
-        ins.push_back(portJson(d, &n, &g, true));
+        ins.push_back(portStateJson(d, &n, &g, true));
     for (const PortDecl& d : p.outputs)
-        outs.push_back(portJson(d, &n, &g, false));
+        outs.push_back(portStateJson(d, &n, &g, false));
     for (const ParamDecl& d : p.params)
-        prms.push_back(paramJson(d, &n));
+        prms.push_back(paramStateJson(d, &n));
     j["inputs"] = ins;
     j["outputs"] = outs;
     j["params"] = prms;
@@ -177,11 +176,11 @@ json defJson(const NodeDef& d, bool detail)
     {
         json ins = json::array(), outs = json::array(), prms = json::array();
         for (const PortDecl& p : d.inputs)
-            ins.push_back(portJson(p, nullptr, nullptr, true));
+            ins.push_back(portStateJson(p, nullptr, nullptr, true));
         for (const PortDecl& p : d.outputs)
-            outs.push_back(portJson(p, nullptr, nullptr, false));
+            outs.push_back(portStateJson(p, nullptr, nullptr, false));
         for (const ParamDecl& p : d.params)
-            prms.push_back(paramJson(p, nullptr));
+            prms.push_back(paramStateJson(p, nullptr));
         e["inputs"] = ins;
         e["outputs"] = outs;
         e["params"] = prms;
@@ -230,6 +229,7 @@ constexpr const char* kClipFormat = "lila.textureNodes";
 
 void registerCommands()
 {
+    using T = ArgType;
     ops::registerCommand({
         .name = "texCreateSet",
         .doc = "Create a texture set: a texture graph with a Material Output, and the channels, tile sizes and export preset its maps use. "

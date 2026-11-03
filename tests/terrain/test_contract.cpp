@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "Analysis.h"
 #include "Stamps.h"
 #include "Terrain.h"
@@ -16,18 +17,11 @@
 #include <set>
 
 using namespace lila;
+using namespace terraintest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void loadTerrain()
-{
-    if (!gn::findDecl("HeightfieldGrid"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_TERRAIN_PACKAGE) == "Terrain");
-}
-
 /** A valley along X falling toward -X, steep sides, and a bowl that holds a lake. 2.56 km, 10 m cells. */
 std::shared_ptr<geo::Heightfield> valley()
 {
@@ -41,11 +35,6 @@ std::shared_ptr<geo::Heightfield> valley()
             h->heights[h->index(x, z)] = float(v);
         }
     return h;
-}
-
-double heightAt(const json& t, double x, double z)
-{
-    return run("terrainSample", {{"args", {t["mesh"]}}, {"points", {{x, z}}}})[0]["height"].get<double>();
 }
 } // namespace
 

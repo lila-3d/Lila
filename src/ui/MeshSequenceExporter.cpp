@@ -10,6 +10,8 @@
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -35,38 +37,8 @@ namespace lila::ui
 {
 namespace
 {
-constexpr const char* kPrefFile = "meshSequence";
-constexpr const char* kLastPref = "/last";
-
-json runUi(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return nullptr;
-    }
-}
-
-void addChoices(QComboBox* box, std::initializer_list<std::pair<const char*, const char*>> items)
-{
-    for (auto [label, value] : items)
-        box->addItem(label, QString(value));
-}
-
-void setChoice(QComboBox* box, const json& value)
-{
-    if (!value.is_string())
-        return;
-    int i = box->findData(QString::fromStdString(value.get<std::string>()));
-    if (i >= 0)
-        box->setCurrentIndex(i);
-}
-
-std::string choice(const QComboBox* box) { return box->currentData().toString().toStdString(); }
+constexpr const char* kMeshSequencePrefs = "meshSequence";
+constexpr const char* kLastSequencePref = "/last";
 
 QDoubleSpinBox* frameBox(QWidget* parent, int decimals)
 {
@@ -208,7 +180,7 @@ MeshSequenceExporter::MeshSequenceExporter(QWidget* parent) : QDialog(parent)
     bottom->addWidget(close);
     v->addLayout(bottom);
 
-    json last = PrefStore::get().value(kPrefFile, kLastPref, json::object());
+    json last = PrefStore::get().value(kMeshSequencePrefs, kLastSequencePref, json::object());
     apply(last.is_object() ? last : json::object());
 
     auto changed = [this] {
@@ -227,7 +199,7 @@ MeshSequenceExporter::MeshSequenceExporter(QWidget* parent) : QDialog(parent)
     for (QLineEdit* e : {mFolder, mName})
         connect(e, &QLineEdit::textChanged, this, changed);
     connect(mFormat, &QComboBox::currentIndexChanged, this, [this] {
-        const bool perFrame = choice(mFormat) != "abc";
+        const bool perFrame = currentChoice(mFormat) != "abc";
         mNumbering->setEnabled(perFrame);
         mPadding->setEnabled(perFrame);
         mNiagara->setEnabled(perFrame);
@@ -293,15 +265,15 @@ json MeshSequenceExporter::settings() const
         {"start", mStart->value()},
         {"end", mEnd->value()},
         {"step", mStep->value()},
-        {"format", choice(mFormat)},
+        {"format", currentChoice(mFormat)},
         {"folder", mFolder->text().trimmed().toStdString()},
         {"name", mName->text().trimmed().toStdString()},
-        {"numbering", choice(mNumbering)},
+        {"numbering", currentChoice(mNumbering)},
         {"padding", mPadding->value()},
         {"scale", mScale->value()},
-        {"profile", choice(mProfile)},
-        {"worldSpace", choice(mSpace) == "world"},
-        {"recenter", choice(mRecenter)},
+        {"profile", currentChoice(mProfile)},
+        {"worldSpace", currentChoice(mSpace) == "world"},
+        {"recenter", currentChoice(mRecenter)},
         {"applyModifiers", mModifiers->isChecked()},
         {"normals", mNormals->isChecked()},
         {"uvs", mUvs->isChecked()},
@@ -399,7 +371,7 @@ void MeshSequenceExporter::updatePreview()
 
 void MeshSequenceExporter::exportNow()
 {
-    PrefStore::get().set(kPrefFile, kLastPref, settings());
+    PrefStore::get().set(kMeshSequencePrefs, kLastSequencePref, settings());
     json written = runUi("exportMeshSequence", call(false));
     if (written.is_array())
         log::info("Mesh sequence: wrote {} file(s)", written.size());
@@ -408,7 +380,7 @@ void MeshSequenceExporter::exportNow()
 void MeshSequenceExporter::sendToUnreal()
 {
     const json s = settings();
-    PrefStore::get().set(kPrefFile, kLastPref, s);
+    PrefStore::get().set(kMeshSequencePrefs, kLastSequencePref, s);
     json selection = ops::execute("ls", {{"selection", true}});
     if (selection.size() != 1)
     {

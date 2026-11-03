@@ -147,25 +147,25 @@ struct Entry
     std::string error;
 };
 
-struct Store
+struct SimStore
 {
     std::mutex mutex;
     std::map<NodeId, Entry> entries;
     std::set<NodeId> simulating;
 };
 
-Store& store()
+SimStore& simStore()
 {
     // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
-    static Store* s = new Store;
+    static SimStore* s = new SimStore;
     return *s;
 }
 
 std::shared_ptr<const SimInputs> latestInputs(NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    auto it = store().entries.find(modifier);
-    return it == store().entries.end() ? nullptr : it->second.inputs;
+    std::lock_guard lock(simStore().mutex);
+    auto it = simStore().entries.find(modifier);
+    return it == simStore().entries.end() ? nullptr : it->second.inputs;
 }
 
 void pack(const std::vector<uint8_t>& bytes, std::vector<double>& state)
@@ -284,8 +284,8 @@ public:
         bool inputsUseTime = true;
         std::shared_ptr<const SimInputs> latest;
         {
-            std::lock_guard lock(store().mutex);
-            if (auto it = store().entries.find(mModifier); it != store().entries.end())
+            std::lock_guard lock(simStore().mutex);
+            if (auto it = simStore().entries.find(mModifier); it != simStore().entries.end())
             {
                 latest = it->second.inputs;
                 inputsUseTime = it->second.inputsUseTime;
@@ -309,8 +309,8 @@ void beforeEvaluate(Graph& g)
 {
     std::vector<NodeId> ids;
     {
-        std::lock_guard lock(store().mutex);
-        ids.assign(store().simulating.begin(), store().simulating.end());
+        std::lock_guard lock(simStore().mutex);
+        ids.assign(simStore().simulating.begin(), simStore().simulating.end());
     }
     if (ids.empty())
         return;
@@ -318,9 +318,9 @@ void beforeEvaluate(Graph& g)
     for (NodeId id : ids)
     {
         {
-            std::lock_guard lock(store().mutex);
-            auto it = store().entries.find(id);
-            if (it == store().entries.end() || it->second.frame == frame)
+            std::lock_guard lock(simStore().mutex);
+            auto it = simStore().entries.find(id);
+            if (it == simStore().entries.end() || it->second.frame == frame)
                 continue;
         }
         if (!g.node(id))
@@ -328,8 +328,8 @@ void beforeEvaluate(Graph& g)
         std::shared_ptr<const sim::Frame> f = sim::cached(g, id, frame);
         if (!f)
             continue;
-        std::lock_guard lock(store().mutex);
-        Entry& e = store().entries[id];
+        std::lock_guard lock(simStore().mutex);
+        Entry& e = simStore().entries[id];
         e.source = f;
         e.state = std::make_shared<const std::vector<uint8_t>>(unpack(f->state));
         e.frame = frame;
@@ -346,8 +346,8 @@ void afterEvaluate(Graph& g)
         return;
     std::vector<NodeId> ids;
     {
-        std::lock_guard lock(store().mutex);
-        ids.assign(store().simulating.begin(), store().simulating.end());
+        std::lock_guard lock(simStore().mutex);
+        ids.assign(simStore().simulating.begin(), simStore().simulating.end());
     }
     if (ids.empty())
         return;
@@ -364,8 +364,8 @@ void afterEvaluate(Graph& g)
             continue;
         }
         {
-            std::lock_guard lock(store().mutex);
-            Entry& e = store().entries[id];
+            std::lock_guard lock(simStore().mutex);
+            Entry& e = simStore().entries[id];
             if (e.checkedVersion == g.version() && e.frame == frame)
                 continue;
         }
@@ -379,8 +379,8 @@ void afterEvaluate(Graph& g)
         {
             error = ex.what();
         }
-        std::lock_guard lock(store().mutex);
-        Entry& e = store().entries[id];
+        std::lock_guard lock(simStore().mutex);
+        Entry& e = simStore().entries[id];
         if (!error.empty())
         {
             if (error != e.error)
@@ -479,8 +479,8 @@ void execStateful(ExecContext& c)
     std::shared_ptr<const std::vector<uint8_t>> state;
     const int64_t frame = sim::frameOf(c.env.time);
     {
-        std::lock_guard lock(store().mutex);
-        Entry& e = store().entries[owner];
+        std::lock_guard lock(simStore().mutex);
+        Entry& e = simStore().entries[owner];
         e.inputs = std::move(inputs);
         if (e.frame == frame)
             state = e.state;
@@ -503,16 +503,16 @@ std::shared_ptr<const SimInputs> simulationInputs(NodeId modifier) { return late
 
 bool simulationStateReady(NodeId modifier, double time)
 {
-    std::lock_guard lock(store().mutex);
-    auto it = store().entries.find(modifier);
-    return it != store().entries.end() && it->second.state && it->second.frame == sim::frameOf(time);
+    std::lock_guard lock(simStore().mutex);
+    auto it = simStore().entries.find(modifier);
+    return it != simStore().entries.end() && it->second.state && it->second.frame == sim::frameOf(time);
 }
 
 void restoreSimulationInputs(NodeId modifier, std::shared_ptr<const SimInputs> inputs)
 {
-    std::lock_guard lock(store().mutex);
-    if (store().simulating.contains(modifier))
-        store().entries[modifier].inputs = std::move(inputs);
+    std::lock_guard lock(simStore().mutex);
+    if (simStore().simulating.contains(modifier))
+        simStore().entries[modifier].inputs = std::move(inputs);
 }
 
 bool hasStateful(const Group& g)
@@ -532,8 +532,8 @@ void registerSimulationSupport()
         .create = [](Graph&, NodeId node) -> std::unique_ptr<sim::Solver> { return std::make_unique<GnSolver>(node); },
         .matches =
             [](const Node& n) {
-                std::lock_guard lock(store().mutex);
-                return store().simulating.contains(n.id());
+                std::lock_guard lock(simStore().mutex);
+                return simStore().simulating.contains(n.id());
             },
     });
     Graph::setEvaluateHook([](Graph& g, bool after) {
@@ -546,20 +546,20 @@ void registerSimulationSupport()
 
 void noteSimulationModifier(NodeId modifier, bool simulating, bool inputsUseTime)
 {
-    std::lock_guard lock(store().mutex);
+    std::lock_guard lock(simStore().mutex);
     if (simulating)
     {
-        store().simulating.insert(modifier);
-        store().entries[modifier].inputsUseTime = inputsUseTime;
+        simStore().simulating.insert(modifier);
+        simStore().entries[modifier].inputsUseTime = inputsUseTime;
     }
-    else if (store().simulating.erase(modifier))
-        store().entries.erase(modifier);
+    else if (simStore().simulating.erase(modifier))
+        simStore().entries.erase(modifier);
 }
 
 void forgetSimulationModifier(NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    store().simulating.erase(modifier);
-    store().entries.erase(modifier);
+    std::lock_guard lock(simStore().mutex);
+    simStore().simulating.erase(modifier);
+    simStore().entries.erase(modifier);
 }
 } // namespace lila::gn

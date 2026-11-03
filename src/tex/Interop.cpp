@@ -28,8 +28,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-using T = ArgType;
-
 scene::Node& setArg(const Args& a, const char* cmd)
 {
     if (a.positional.empty() || !a.positional[0].is_string())
@@ -50,7 +48,7 @@ fs::path resolveFile(const std::string& file)
 }
 
 /** A channel, or node.socket of the set's graph, as an output request. */
-OutputRequest requestFor(const Graph& g, const SetSettings& s, const std::string& source, const std::string& field)
+OutputRequest outputRequestFor(const Graph& g, const SetSettings& s, const std::string& source, const std::string& field)
 {
     const auto dot = source.find('.');
     if (dot == std::string::npos)
@@ -347,7 +345,7 @@ static void installDeformerSource()
             return slot.second;
         const Graph g = readGraph(*set);
         const SetSettings s = readSettings(*set);
-        const OutputRequest r = requestFor(g, s, source, "");
+        const OutputRequest r = outputRequestFor(g, s, source, "");
         auto out = evaluateOutputs(*set, {r}, s.tiles.front().udim, 0, 0, "cpu");
         slot = {stamp, std::make_shared<image::Image>(std::move(out.at(r.name)))};
         return slot.second;
@@ -356,6 +354,7 @@ static void installDeformerSource()
 
 void registerInteropCommands()
 {
+    using T = ArgType;
     installDeformerSource();
     ops::registerCommand({
         .name = "texExportImage",
@@ -378,7 +377,7 @@ void registerInteropCommands()
             {
                 const Graph g = readGraph(set);
                 const SetSettings s = readSettings(set);
-                const OutputRequest r = requestFor(g, s, source, a.get<std::string>("field", ""));
+                const OutputRequest r = outputRequestFor(g, s, source, a.get<std::string>("field", ""));
                 const int res = a.get<int>("resolution", 0);
                 std::vector<std::string> warnings;
                 const auto out = evaluateOutputs(set, {r}, a.get<int>("udim", s.tiles.front().udim), res, res, a.get<std::string>("backend", ""), &warnings);

@@ -14,16 +14,6 @@ using namespace textest;
 namespace
 {
 namespace fs = std::filesystem;
-
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-fs::path tempDir(const std::string& name)
-{
-    fs::path d = fs::temp_directory_path() / "lila_tex_tests" / name;
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
 } // namespace
 
 TEST_CASE("tex: a set exports to .lilamat and imports as a new set")

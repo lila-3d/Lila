@@ -36,12 +36,11 @@
 #endif
 
 using namespace lila;
-
-namespace
-{
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+namespace
+{
 fs::path gPackageRoot;
 std::atomic<bool> gLoaded{false};
 /** True on the thread loading OpenUSDCore, whose start-up imports pxr and so reaches lilaUsdLoad again through lila.usd. */

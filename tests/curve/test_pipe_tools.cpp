@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Carve.h"
 #include "curve/Channel.h"
 #include "curve/CurveNodes.h"
@@ -24,11 +26,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 scene::MeshPtr meshNamed(const std::string& name)
 {
     scene::Graph& g = scene::Graph::current();
@@ -44,15 +45,6 @@ json points(std::initializer_list<D3> list)
     for (const D3& p : list)
         a.push_back({p.x, p.y, p.z});
     return a;
-}
-
-curve::Spline line(std::initializer_list<D3> list)
-{
-    curve::Spline s;
-    s.kind = curve::Kind::Poly;
-    s.points = list;
-    s.normalize();
-    return s;
 }
 
 /** The uv0 range over the faces whose face int attr `name` is value (or every face with an empty name). */
@@ -104,21 +96,12 @@ double attr(const std::string& node, const char* name)
 }
 
 /** A flat open grid on y = 0, size cm square with cells x cells faces, centred on centre. */
-geo::Mesh ground(double size, int cells, const D3& centre = D3(0.0))
+geo::Mesh groundMesh(double size, int cells, const D3& centre = D3(0.0))
 {
     geo::Mesh m = geo::makePlane({size, size, cells, cells});
     for (D3& p : m.positions())
         p += centre;
     return m;
-}
-
-int boundaryEdges(const geo::Mesh& m)
-{
-    int n = 0;
-    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
-        if (m.edgeValid(e) && m.isBoundaryEdge(e))
-            ++n;
-    return n;
 }
 
 int nonManifoldEdges(const geo::Mesh& m)
@@ -129,18 +112,11 @@ int nonManifoldEdges(const geo::Mesh& m)
             ++n;
     return n;
 }
-
-double distToSegment(const D3& p, const D3& a, const D3& b)
-{
-    const D3 d = b - a;
-    const double t = glm::dot(d, d) > 0.0 ? std::clamp(glm::dot(p - a, d) / glm::dot(d, d), 0.0, 1.0) : 0.0;
-    return glm::distance(a + d * t, p);
-}
 } // namespace
 
 TEST_CASE("sweep strip uvs: layout, rectangle, texel density and caps")
 {
-    curve::Path path = curve::pathFrom(line({D3(0), D3(0, 0, 300)}));
+    curve::Path path = curve::pathFrom(polyline({D3(0), D3(0, 0, 300)}));
     curve::SweepOptions o;
     o.uv.layout = curve::UvLayout::Along;
     o.uv.rect = {{0.0, 0.25}, {1.0, 0.375}};
@@ -193,7 +169,7 @@ TEST_CASE("pipe strip uvs: body, inner wall, rims and parts land in their rectan
     o.uv.perCm = 0.005;
     o.uv.caps = {{0.0, 0.0}, {0.25, 0.25}};
     o.innerUv = {{0.0, 0.75}, {1.0, 0.875}};
-    curve::PipeResult r = curve::makePipe(line({D3(0), D3(0, 0, 400)}), o);
+    curve::PipeResult r = curve::makePipe(polyline({D3(0), D3(0, 0, 400)}), o);
     REQUIRE(r.mesh.numFaces() > 0);
     // Couplings sit outside the body's strip only on their ends; bolts the same.
     UvBox parts = uvBox(r.mesh, "pipePart", int(curve::PipePart::Coupling));
@@ -248,7 +224,7 @@ TEST_CASE("strap strip uvs")
     o.uv.layout = curve::UvLayout::Along;
     o.uv.rect = {{0.0, 0.125}, {1.0, 0.25}};
     o.uv.perCm = 0.01;
-    curve::StrapResult r = curve::makeStrap(line({D3(0), D3(200, 0, 0)}), o);
+    curve::StrapResult r = curve::makeStrap(polyline({D3(0), D3(200, 0, 0)}), o);
     REQUIRE(r.mesh.numFaces() > 0);
     auto uv = r.mesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
     double along = 0.0;
@@ -348,7 +324,7 @@ TEST_CASE("channel sections")
             CHECK(std::abs(p.x) <= 150.0 + 1e-9);
         }
         CHECK(low == doctest::Approx(-120.0));
-        geo::Mesh cutter = curve::channelCutter(line({D3(0), D3(1000, 0, 0)}), o);
+        geo::Mesh cutter = curve::channelCutter(polyline({D3(0), D3(1000, 0, 0)}), o);
         CHECK(boundaryEdges(cutter) == 0);
         CHECK(nonManifoldEdges(cutter) == 0);
     }
@@ -359,8 +335,8 @@ TEST_CASE("carve a channel into an open surface")
     curve::ChannelOptions o;
     o.width = 200.0;
     o.depth = 80.0;
-    geo::Mesh surface = ground(2000.0, 20);
-    geo::Mesh cutter = curve::channelCutter(line({D3(-500, 0, 0), D3(500, 0, 300)}), o);
+    geo::Mesh surface = groundMesh(2000.0, 20);
+    geo::Mesh cutter = curve::channelCutter(polyline({D3(-500, 0, 0), D3(500, 0, 300)}), o);
     curve::CarveResult r = curve::carve(surface, glm::dmat4(1.0), cutter);
     REQUIRE(r.ok());
     CHECK(r.patchFaces > 0);
@@ -385,12 +361,12 @@ TEST_CASE("carve at kilometre scale far from the origin keeps the rest of the su
 {
     // 4 km of terrain 30 km from the origin, in 100 m faces, with a 3 m wide trench 1.2 km long.
     const D3 far(3.0e6, 1500.0, -2.0e6);
-    geo::Mesh surface = ground(400000.0, 40, far);
+    geo::Mesh surface = groundMesh(400000.0, 40, far);
     curve::ChannelOptions o;
     o.width = 300.0;
     o.depth = 150.0;
     o.shape = curve::ChannelShape::Stepped;
-    geo::Mesh cutter = curve::channelCutter(line({far + D3(-60000, 0, 2500), far + D3(60000, 0, 6500)}), o);
+    geo::Mesh cutter = curve::channelCutter(polyline({far + D3(-60000, 0, 2500), far + D3(60000, 0, 6500)}), o);
     const auto t0 = std::chrono::steady_clock::now();
     curve::CarveResult r = curve::carve(surface, glm::dmat4(1.0), cutter);
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -413,7 +389,7 @@ TEST_CASE("carve at kilometre scale far from the origin keeps the rest of the su
 
     // The same carve placed by a matrix gives the same cut.
     const glm::dmat4 m = glm::translate(glm::dmat4(1.0), far);
-    curve::CarveResult moved = curve::carve(ground(400000.0, 40), m, cutter);
+    curve::CarveResult moved = curve::carve(groundMesh(400000.0, 40), m, cutter);
     REQUIRE(moved.ok());
     CHECK(moved.mesh.numFaces() == r.mesh.numFaces());
 }
@@ -543,8 +519,8 @@ TEST_CASE("supports reach to the nearest surface")
 {
     // A floor at y = 0 and a ceiling at y = 400 over a 10 m run 300 cm up.
     curve::WorldMeshes world;
-    world.add(std::make_shared<geo::Mesh>(ground(3000.0, 1)), glm::dmat4(1.0));
-    geo::Mesh ceiling = ground(3000.0, 1, D3(0, 400, 0));
+    world.add(std::make_shared<geo::Mesh>(groundMesh(3000.0, 1)), glm::dmat4(1.0));
+    geo::Mesh ceiling = groundMesh(3000.0, 1, D3(0, 400, 0));
     for (geo::Index f = 0; f < ceiling.faceCapacity(); ++f)
         if (ceiling.faceValid(f))
             ceiling.flipFace(f);
@@ -553,7 +529,7 @@ TEST_CASE("supports reach to the nearest surface")
     o.pipeRadius = 5.0;
     o.spacing = 200.0;
     o.cast = [&](const D3& p, const D3& d, double maxD) { return world.raycast(p, d, maxD); };
-    const curve::Spline run10 = line({D3(-500, 300, 0), D3(500, 300, 0)});
+    const curve::Spline run10 = polyline({D3(-500, 300, 0), D3(500, 300, 0)});
     curve::SupportResult r = curve::makeSupports(run10, o);
     REQUIRE(r.placements.size() == 5);
     for (const curve::SupportPlacement& p : r.placements)

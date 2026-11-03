@@ -42,7 +42,6 @@ namespace stagehand
 {
 namespace
 {
-using json = nlohmann::json;
 
 constexpr const char* kMime = "application/x-lila-library-asset";
 constexpr const char* kPanel = "stagehand.library";

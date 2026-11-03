@@ -1,6 +1,7 @@
 #include "curve/Intersect.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Ops.h"
 #include "curve/Tessellate.h"
 
@@ -14,9 +15,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
-
 constexpr double kIntersectEps = 1e-12;
 
 /** Flattens along a direction (unit, or zero for none). */

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -9,19 +11,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
 json members(const std::string& set) { return run("setMembers", {{"args", {set}}}); }
-
-std::string tempPath(const std::string& name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_tests" / "sets";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
 } // namespace
 
 TEST_CASE("object sets: membership, renames, undo")
@@ -137,7 +131,7 @@ TEST_CASE("object sets save and open in both formats")
 
     for (const char* ext : {".lila", ".lilaa"})
     {
-        auto path = tempPath(std::string("sets") + ext);
+        auto path = tempPath("sets", std::string("sets") + ext);
         run("saveScene", {{"args", {path}}});
         run("newScene");
         CHECK(run("listSets").empty());
@@ -155,7 +149,7 @@ TEST_CASE("object sets survive referencing")
     run("newScene");
     std::string a = made(run("polyCube")), b = made(run("polyCube"));
     run("createSet", {{"args", {a, b + ".f[2]"}}, {"name", "Parts"}});
-    std::string asset = tempPath("set_asset.lilaa");
+    std::string asset = tempPath("sets", "set_asset.lilaa");
     run("saveScene", {{"args", {asset}}});
 
     run("newScene");
@@ -166,7 +160,7 @@ TEST_CASE("object sets survive referencing")
     run("createSet", {{"args", {"hero:" + a}}, {"name", "Shot"}});
     run("unloadReference", {{"args", {"hero"}}});
     CHECK(members("Shot").empty());
-    std::string shot = tempPath("set_shot.lila");
+    std::string shot = tempPath("sets", "set_shot.lila");
     run("saveScene", {{"args", {shot}}});
     run("loadReference", {{"args", {"hero"}}});
     CHECK(members("Shot") == json({"hero:" + a}));

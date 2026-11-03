@@ -1,6 +1,7 @@
 // Settlement: stable street ids and changes to generated streets, road cross-sections as shape grammars, and the
 // junction control and parking a traffic system reads.
 
+#include "TestUtil.h"
 #include "SettlementCore.h"
 
 #include "extensions/ExtensionManager.h"
@@ -16,11 +17,10 @@
 
 using namespace lila;
 using namespace settlement;
+using namespace settlementtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 Options grid()
 {
     Options o;

@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Backend.h"
 #include "bake/Bake.h"
 #include "core/ImageIO.h"
@@ -23,6 +24,7 @@
 #include <thread>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -48,46 +50,16 @@ bool haveGpu()
     return ok;
 }
 
-scene::Graph& graph() { return scene::Graph::current(); }
-
-void newScene()
+void newLiveMapsScene()
 {
     render::shutdownLiveMaps();
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
+    newScene();
 }
 
 void setMesh(const std::string& path, geo::Mesh m)
 {
     scene::Graph& g = graph();
     g.setValue({g.find(path)->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-}
-
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    setMesh(n->path(), std::move(m));
-    return n->path();
-}
-
-geo::Mesh plane(int subdiv)
-{
-    geo::PlaneOptions o;
-    o.subdivX = o.subdivZ = subdiv;
-    return geo::makePlane(o);
-}
-
-template <class F> geo::Mesh displaced(int subdiv, F f)
-{
-    geo::Mesh m = plane(subdiv);
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-    {
-        glm::dvec3 q = m.position(p);
-        q.y = f(q.x, q.z);
-        m.setPosition(p, q);
-    }
-    return m;
 }
 
 /** A bumpy high over a flat low, in a project writing 32-bit EXRs. */
@@ -101,7 +73,7 @@ struct Scene
 
 Scene bumpScene(const char* name, int lowSubdiv, int res, int ss)
 {
-    newScene();
+    newLiveMapsScene();
     Scene s;
     s.dir = fs::temp_directory_path() / ("lila_live_maps_" + std::string(name));
     fs::remove_all(s.dir);
@@ -198,7 +170,7 @@ TEST_CASE("Live mesh maps land in GPU images that match the file-output bake")
     CHECK(info["images"][0]["width"] == 64);
     live({{"project", s.project}, {"disable", true}});
     CHECK(!render::findMeshMap(s.projectId, "normal", 1001));
-    newScene();
+    newLiveMapsScene();
 }
 
 TEST_CASE("Live mesh maps: a low edit re-traces only the tiles it touches and bumps versions")
@@ -286,7 +258,7 @@ TEST_CASE("Live mesh maps: a low edit re-traces only the tiles it touches and bu
     CHECK(stroke["update"]["tilesTraced"].get<int>() > 0);
     CHECK(stroke["update"]["tilesTraced"].get<int>() <= 9);
     render::removeMeshMapSetListener(id);
-    newScene();
+    newLiveMapsScene();
 }
 
 TEST_CASE("Live mesh maps rebake off the main thread after an edit, debounced")
@@ -318,5 +290,5 @@ TEST_CASE("Live mesh maps rebake off the main thread after an edit, debounced")
     CHECK(st["updates"] == 2);
     CHECK(st["last"]["full"] == false);
     render::setLiveMapsAsync(false);
-    newScene();
+    newLiveMapsScene();
 }

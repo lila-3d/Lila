@@ -1,5 +1,6 @@
 // Masonry architecture, ruin, age and the commands around them, down to whale scale.
 
+#include "TestUtil.h"
 #include "Masonry.h"
 #include "MasonryArch.h"
 #include "MasonryBuilding.h"
@@ -24,20 +25,11 @@
 
 using namespace lila;
 using namespace masonry;
+using namespace masonrytest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void loadMasonry()
-{
-    if (!gn::findDecl("MasonryWall"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_MASONRY_PACKAGE) == "Masonry");
-}
-
-Footprint line(std::initializer_list<glm::dvec3> pts, bool closed = false) { return {std::vector<glm::dvec3>(pts), closed, {}}; }
-
 double ms(std::chrono::steady_clock::time_point t0) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
 
 int countRole(std::span<const Stone> stones, Role r)
@@ -69,14 +61,6 @@ uint64_t hashOf(std::span<const Stone> stones)
         mix(double(s.role));
     }
     return h;
-}
-
-json pts(std::initializer_list<std::array<double, 3>> p)
-{
-    json out = json::array();
-    for (const auto& q : p)
-        out.push_back({q[0], q[1], q[2]});
-    return out;
 }
 } // namespace
 

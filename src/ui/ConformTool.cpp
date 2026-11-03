@@ -534,7 +534,7 @@ void startSpherize()
         viewportTools::set(std::make_unique<SpherizeTool>(start));
 }
 
-void add(std::string id, std::string label, const char* command, json call, std::string doc)
+void addMeshCommand(std::string id, std::string label, const char* command, json call, std::string doc)
 {
     std::string py = ops::toPython(command, call);
     actions::add({.id = std::move(id), .label = std::move(label), .category = "Mesh", .doc = std::move(doc), .python = py, .command = command,
@@ -544,9 +544,9 @@ void add(std::string id, std::string label, const char* command, json call, std:
 
 void registerConformActions()
 {
-    add("mesh.straighten", "Straighten", "polyStraighten", json::object(),
+    addMeshCommand("mesh.straighten", "Straighten", "polyStraighten", json::object(),
         "Lines up the selected edge chains (or chains of vertices) between their ends; separate chains straighten separately.");
-    add("mesh.circularize", "Circularize", "polyCircularize", json::object(),
+    addMeshCommand("mesh.circularize", "Circularize", "polyCircularize", json::object(),
         "Makes the selected edge loops, face borders or vertices round, in their best-fit plane. A rectangle of faces becomes a disc, "
         "ready to extrude into a pipe.");
     actions::add({
@@ -560,11 +560,11 @@ void registerConformActions()
         .command = kSpherizeCommand,
         .call = json::object(),
     });
-    add("mesh.editEdgeFlow", "Edit Edge Flow", "polyEditEdgeFlow", json::object(),
+    addMeshCommand("mesh.editEdgeFlow", "Edit Edge Flow", "polyEditEdgeFlow", json::object(),
         "Moves the selected edge loops so they follow the curvature of the surface around them, rounding a flat loop into a curved "
         "surface. Vertex and face selections fit both directions.");
-    add("mesh.flatten", "Flatten", "polyConformShape", {{"shape", "plane"}}, "Moves the selected components onto their best-fit plane.");
-    add("mesh.conformShape", "Conform to Shape", "polyConformShape", json::object(),
+    addMeshCommand("mesh.flatten", "Flatten", "polyConformShape", {{"shape", "plane"}}, "Moves the selected components onto their best-fit plane.");
+    addMeshCommand("mesh.conformShape", "Conform to Shape", "polyConformShape", json::object(),
         "Fits the selected components to a line, circle, square, rectangle, sphere, cylinder or plane; pick the shape in the option box.");
     actions::add({
         .id = "mesh.conformToObject",

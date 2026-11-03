@@ -121,13 +121,6 @@ fs::path resolve(const std::string& s, const Spec& spec)
 
 bool isLilaExtension(const std::string& ext) { return ext == ".lila" || ext == ".lilaa"; }
 
-bool readOnly(const fs::path& p)
-{
-    std::error_code ec;
-    fs::file_status st = fs::status(p, ec);
-    return !ec && (st.permissions() & fs::perms::owner_write) == fs::perms::none;
-}
-
 std::string key(const fs::path& p) { return folded(paths::toUtf8(fs::absolute(p).lexically_normal())); }
 
 struct Filter
@@ -438,6 +431,13 @@ std::vector<Item> gather(const Spec& s, std::vector<std::string>* warnings)
     return out;
 }
 
+bool isReadOnly(const fs::path& p)
+{
+    std::error_code ec;
+    fs::file_status st = fs::status(p, ec);
+    return !ec && (st.permissions() & fs::perms::owner_write) == fs::perms::none;
+}
+
 fs::path outputFor(const Spec& s, const Item& item)
 {
     if (s.save == SaveMode::None)
@@ -477,7 +477,7 @@ void plan(const Spec& s, std::vector<Item>& items)
         else if (!fs::exists(item.output, ec))
             item.access = Access::New;
         else
-            item.access = readOnly(item.output) ? Access::ReadOnly : Access::Replace;
+            item.access = isReadOnly(item.output) ? Access::ReadOnly : Access::Replace;
     }
 }
 

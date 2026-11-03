@@ -5,6 +5,7 @@
 #include "python/Python.h"
 #include "ui/PythonBridge.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -31,11 +32,6 @@ namespace
 {
 constexpr int kEntryRole = Qt::UserRole + 1;
 constexpr int kMaxResults = 300;
-
-QString qs(const std::string& s)
-{
-    return QString::fromStdString(s);
-}
 
 QString esc(const QString& s)
 {

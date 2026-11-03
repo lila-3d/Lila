@@ -15,9 +15,10 @@
 
 namespace masonry
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 namespace bake = lila::bake;
 
 /** The two axes a box face's texture runs along: z and y for an x face, x and z for a y face, x and y for a z face. */

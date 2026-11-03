@@ -1,16 +1,17 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/ValueReset.h"
 
 using namespace lila;
+using namespace testutil;
 namespace vr = lila::ui::valueReset;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 /** What the editors do on a middle click: setAttr the plug's AttrDef default. */
 void resetPlug(const std::string& plug)
 {

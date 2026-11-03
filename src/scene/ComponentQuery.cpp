@@ -23,7 +23,7 @@ namespace
 using components::Ids;
 using geo::Index;
 
-Node& meshNamed(const std::string& name, const char* cmd)
+Node& componentMesh(const std::string& name, const char* cmd)
 {
     Node* n = Graph::current().find(name);
     if (!n)
@@ -37,7 +37,7 @@ Node& meshNamed(const std::string& name, const char* cmd)
 Node& targetMesh(const Args& a, const char* cmd)
 {
     if (!a.positional.empty())
-        return meshNamed(a.positional.back().get<std::string>(), cmd);
+        return componentMesh(a.positional.back().get<std::string>(), cmd);
     if (components::mode() != ComponentMode::Object)
         for (auto& [node, ids] : components::selected(components::mode()))
             if (Node* n = Graph::current().node(node))
@@ -45,7 +45,7 @@ Node& targetMesh(const Args& a, const char* cmd)
     auto objs = a.objects();
     if (objs.empty())
         throw CommandError(std::string(cmd) + ": no mesh");
-    return meshNamed(objs.back(), cmd);
+    return componentMesh(objs.back(), cmd);
 }
 
 ComponentMode kindArg(const Args& a, const char* cmd)

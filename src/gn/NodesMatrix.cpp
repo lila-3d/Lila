@@ -4,7 +4,6 @@
 
 namespace lila::gn::nodes::matrixnodes
 {
-using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 using M4 = glm::dmat4;
 

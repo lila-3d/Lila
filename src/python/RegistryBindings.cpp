@@ -5,6 +5,7 @@
 #include "link/Exporters.h"
 #include "mcp/McpServer.h"
 #include "ops/StudioRestrictions.h"
+#include "python/Convert.h"
 #include "python/Python.h"
 #include "scene/AttrComponents.h"
 #include "stream/ChangeStream.h"
@@ -17,20 +18,10 @@
 
 namespace nb = nanobind;
 using lila::json;
+using lila::python::hold;
 
 namespace
 {
-/** Owns a reference without needing the GIL to copy; the last release takes it. */
-std::shared_ptr<PyObject> hold(nb::handle h)
-{
-    return std::shared_ptr<PyObject>(h.inc_ref().ptr(), [](PyObject* o) {
-        if (!Py_IsInitialized())
-            return;
-        lila::python::Gil gil;
-        Py_DECREF(o);
-    });
-}
-
 /** The context to register under: the extension's when owner names one, else null for a plain registration. */
 lila::ext::Context* contextFor(const std::string& owner)
 {

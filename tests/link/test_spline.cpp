@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "FakeServer.h"
 
 #include "core/MainQueue.h"
@@ -17,13 +18,14 @@
 
 using namespace lila;
 using namespace lila::link;
+using namespace linktest;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 namespace fs = std::filesystem;
 
 namespace
 {
-void setup()
+void setupSplineTest()
 {
     static bool once = [] {
         mainq::init();
@@ -68,19 +70,11 @@ std::vector<json> requestsOf(FakeServer& s, const char* method)
             out.push_back(r);
     return out;
 }
-
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_link_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
 } // namespace
 
 TEST_CASE("splinePoints: Unreal axes, Hermite tangents from Bezier handles, up from tilt, scale from radius")
 {
-    setup();
+    setupSplineTest();
     // Y-up Lila (forward +Z, right -X, up +Y) maps onto Unreal X, Y, Z: (x, y, z) -> (z, -x, y).
     curve::Spline s;
     s.kind = curve::Kind::Bezier;
@@ -140,7 +134,7 @@ TEST_CASE("splinePoints: Unreal axes, Hermite tangents from Bezier handles, up f
 
 TEST_CASE("a curve mapped as a spline is sent with setSpline on save, under a stable id")
 {
-    setup();
+    setupSplineTest();
     fs::path ws = tempDir("splines");
     PrefStore::get().setWorkspaceDir(ws / ".lila");
     scene::Graph& g = scene::Graph::current();
@@ -192,7 +186,7 @@ TEST_CASE("a curve mapped as a spline is sent with setSpline on save, under a st
 
 TEST_CASE("unrealSendCurve sends now, maps for later saves, resolves spline meshes and removes")
 {
-    setup();
+    setupSplineTest();
     fs::path ws = tempDir("sendcurve");
     PrefStore::get().setWorkspaceDir(ws / ".lila");
     scene::Graph& g = scene::Graph::current();

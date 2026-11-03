@@ -30,26 +30,11 @@ namespace lila::ui
 {
 namespace
 {
-enum Scope
-{
-    kSelection,
-    kHierarchies,
-    kScene,
-};
-
-enum Column
-{
-    kName,
-    kTranslate,
-    kRotate,
-    kScale,
-};
-
 constexpr int kUnfrozenIdRole = Qt::UserRole;
 
 QPointer<UnfrozenTransformsPanel> sPanel;
 
-QString number(double v)
+QString trimmedNumber(double v)
 {
     QString s = QString::number(v, 'f', 3);
     while (s.endsWith('0'))
@@ -59,7 +44,7 @@ QString number(double v)
     return s == "-0" ? "0" : s;
 }
 
-QString triple(const nlohmann::json& v) { return number(v[0].get<double>()) + ", " + number(v[1].get<double>()) + ", " + number(v[2].get<double>()); }
+QString triple(const nlohmann::json& v) { return trimmedNumber(v[0].get<double>()) + ", " + trimmedNumber(v[1].get<double>()) + ", " + trimmedNumber(v[2].get<double>()); }
 
 /** The rotate snap presets, as the viewport toolbar offers them, smallest first. */
 void addSteps(QComboBox* combo)
@@ -67,25 +52,17 @@ void addSteps(QComboBox* combo)
     const QString deg(QChar(0x00B0));
     std::vector<std::pair<double, QString>> steps;
     for (double v : gizmo::kRotateSteps)
-        steps.push_back({v, number(v) + deg});
+        steps.push_back({v, trimmedNumber(v) + deg});
     for (int n : gizmo::kTurnDivisions)
     {
         const double v = gizmo::turnDivision(n);
         if (std::none_of(steps.begin(), steps.end(), [v](const auto& s) { return std::abs(s.first - v) < 1e-9; }))
-            steps.push_back({v, number(v) + deg + "  (360/" + QString::number(n) + ")"});
+            steps.push_back({v, trimmedNumber(v) + deg + "  (360/" + QString::number(n) + ")"});
     }
     std::sort(steps.begin(), steps.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     combo->addItem("Off", 0.0);
     for (const auto& [v, text] : steps)
         combo->addItem(text, v);
-}
-
-QStringList namesOf(const QList<QTreeWidgetItem*>& items)
-{
-    QStringList names;
-    for (QTreeWidgetItem* item : items)
-        names << item->text(kName);
-    return names;
 }
 
 nlohmann::json toJson(const QStringList& names)
@@ -180,7 +157,7 @@ UnfrozenTransformsPanel::UnfrozenTransformsPanel(QWidget* parent) : QWidget(pare
     connect(mList, &QTreeWidget::itemSelectionChanged, this, [this] { selectRows(); });
     connect(mSelectAll, &QPushButton::clicked, mList, &QTreeWidget::selectAll);
     connect(mFreeze, &QPushButton::clicked, this, [this] {
-        const QStringList names = namesOf(mList->selectedItems());
+        const QStringList names = selectedNames();
         if (names.isEmpty())
             return;
         try
@@ -338,7 +315,7 @@ void UnfrozenTransformsPanel::selectRows()
     updateButtons();
     if (mSyncing)
         return;
-    const QStringList names = namesOf(mList->selectedItems());
+    const QStringList names = selectedNames();
     try
     {
         if (names.isEmpty())
@@ -374,6 +351,14 @@ void UnfrozenTransformsPanel::updateButtons()
         any = mList->topLevelItem(i)->flags() & Qt::ItemIsSelectable;
     mSelectAll->setEnabled(any);
     mFreeze->setEnabled(!mList->selectedItems().isEmpty());
+}
+
+QStringList UnfrozenTransformsPanel::selectedNames() const
+{
+    QStringList names;
+    for (QTreeWidgetItem* item : mList->selectedItems())
+        names << item->text(kName);
+    return names;
 }
 
 void registerUnfrozenTransformsPanel()

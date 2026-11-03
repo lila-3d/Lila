@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/BakeNodes.h"
 #include "bake/Cage.h"
 #include "bake/CageEstimate.h"
@@ -19,33 +20,12 @@
 #include <thread>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-scene::Graph& graph() { return scene::Graph::current(); }
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    return n->path();
-}
-
-scene::MeshPtr baseMesh(const std::string& name)
-{
-    scene::Graph& g = graph();
-    return std::get<scene::MeshPtr>(g.storedValue(scene::modifiers::editPlug(g, g.find(name)->id())));
-}
-
 /** A project with one group: low and high meshes, output into a temp folder. */
 std::string pairGroup(const std::string& low, const std::string& high, const fs::path& folder)
 {
@@ -53,14 +33,6 @@ std::string pairGroup(const std::string& low, const std::string& high, const fs:
     ops::execute("setBakeOutput", {{"project", p}, {"folder", folder.generic_string()}, {"resolution", 64}, {"supersampling", 1}});
     ops::execute("bakeGroup", {{"args", {"pair"}}, {"project", p}, {"lows", {low}}, {"highs", {high}}});
     return "pair";
-}
-
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_cage_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
 }
 } // namespace
 
@@ -167,7 +139,7 @@ TEST_CASE("bakeEstimateCage: one click gives a near-zero-miss cage on known pair
         lo.subdivX = lo.subdivY = lo.subdivZ = 3;
         const std::string low = addMesh("box_low", geo::makeCube(lo));
         const std::string high = addMesh("box_high", std::move(pr.high));
-        const std::string grp = pairGroup(low, high, tempDir("estimate"));
+        const std::string grp = pairGroup(low, high, tempDir("lila_cage_estimate"));
         // A hand-set cage of a few cm, as a group starts out before anyone tunes it.
         ops::execute("bakeGroup", {{"args", {grp}}, {"frontal", 3.0}, {"rear", 3.0}});
 
@@ -213,7 +185,7 @@ TEST_CASE("bakeEstimateCage: a low's cage stops short of another low lying on it
     boxO.height = 40.0;
     const std::string box = addMesh("box_high", geo::makeCube(boxO));
     const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
-    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("clearance").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
+    ops::execute("setBakeOutput", {{"project", p}, {"folder", tempDir("lila_cage_clearance").generic_string()}, {"resolution", 64}, {"supersampling", 1}});
     ops::execute("bakeGroup", {{"args", {"g"}}, {"project", p}, {"lows", {skirt, ribbon}}, {"highs", {box}}});
 
     const json r = ops::execute("bakeEstimateCage", {{"args", {"g"}}, {"resolution", 128}});
@@ -244,7 +216,7 @@ TEST_CASE("cage previews bake in memory off the main thread and write nothing")
     so.radius = 70.0;
     const std::string low = addMesh("ball_low", geo::makeCube());
     const std::string high = addMesh("ball_high", geo::makeSphere(so));
-    const fs::path folder = tempDir("preview");
+    const fs::path folder = tempDir("lila_cage_preview");
     const std::string grp = pairGroup(low, high, folder);
     const scene::NodeId gid = graph().find(grp)->id();
 

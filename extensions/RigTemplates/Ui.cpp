@@ -43,14 +43,6 @@ std::string currentTemplate()
     return all.empty() ? std::string() : all.front()->tmpl.id;
 }
 
-int attrOf(const Node& n, const char* name) { return n.type().attrIndex(name); }
-
-std::string str(const Node& n, const char* attr)
-{
-    int a = attrOf(n, attr);
-    return a < 0 ? std::string() : n.as<std::string>(a);
-}
-
 glm::dvec3 axis(const std::string& a)
 {
     try

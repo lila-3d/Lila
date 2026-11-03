@@ -1,6 +1,7 @@
 #include "curve/HairCards.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Tessellate.h"
 #include "geo/Attribute.h"
 
@@ -15,8 +16,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 /** The curve as points along it: the tessellation, then resampled to n evenly by length. */
 std::vector<D3> along(const Spline& s, int n)
 {

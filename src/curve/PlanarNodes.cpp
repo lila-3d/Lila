@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "curve/CurveBoolean.h"
 #include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "curve/Roof.h"
 #include "curve/Svg.h"
@@ -26,6 +27,7 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
@@ -33,79 +35,12 @@ using T = ArgType;
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::string cat = {}, std::optional<double> lo = std::nullopt,
-              std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, std::string cat = {}, double lo = 0.0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef sAttr(std::string name, std::string def, std::string doc, std::string cat = {}, uint32_t extra = 0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::String, .defaultValue = std::move(def), .flags = kIn | extra, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef vAttr(std::string name, const D3& def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-        a.childNames[size_t(i)] = name + char('X' + i);
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef dataIn(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-
-AttrDef curveOut() { return {.name = "outCurve", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden, .doc = "The curves it makes."}; }
-
-AttrDef meshOut() { return {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The mesh it makes."}; }
-
 /** The node's curves, one element per input curve; fileAlias reads the numbered inCurve0 ... attrs it replaced. */
 std::vector<AttrDef> curveInputs(const std::string& doc)
 {
     return {{.name = "inCurves", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray, .doc = doc,
              .fileAlias = "inCurve"}};
 }
-
-int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
-double f(const Node& n, const char* a) { return n.as<double>(idx(n, a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(idx(n, a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(idx(n, a)); }
-D3 v(const Node& n, const char* a) { return n.as<D3>(idx(n, a)); }
-const std::string& s(const Node& n, const char* a) { return n.as<std::string>(idx(n, a)); }
 
 /** Each connected input's splines: one operand per input. */
 std::vector<Splines> operandsOf(const Node& n)
@@ -184,8 +119,6 @@ void registerPlanar(std::string name, std::string icon, std::string doc, std::ve
     };
     types::registerType(std::move(t));
 }
-
-PlugValue meshValue(geo::Mesh m) { return MeshPtr(std::make_shared<geo::Mesh>(std::move(m))); }
 
 void append(std::vector<std::string>& to, const std::vector<std::string>& from) { to.insert(to.end(), from.begin(), from.end()); }
 
@@ -379,7 +312,7 @@ void registerTypesHere()
                             "union joins every input, subtract cuts the others out of the first, intersect keeps what all share, xor what "
                             "an odd number cover."),
                       vAttr("normal", D3(0.0), "Plane normal; zero fits the plane to the curves."),
-                      fAttr("tolerance", 0.002, "Where the cuts fall: chord error of the clip, cm. The pieces are cut from the input curves.", {}, 1e-5),
+                      fAttr("tolerance", 0.002, "Where the cuts fall: chord error of the clip, cm. The pieces are cut from the input curves.", 1e-5),
                       curveOut()})
         bo.push_back(a);
     registerPlanar("curveBoolean", "layers-union", "2D boolean of closed planar curves, each piece cut exactly from the input it lies on.", bo,
@@ -388,15 +321,15 @@ void registerTypesHere()
     std::vector<AttrDef> ro = curveInputs("Closed curves bounding the region (holes even-odd), world space.");
     for (AttrDef a : {fAttr("distance", 1.0, "cm; positive grows the region, negative insets it."),
                       eAttr("join", kJoins, 0, "Corners on the outside: round, miter or square."),
-                      fAttr("miterLimit", 4.0, "Longest miter, in distances.", {}, 1.0),
+                      fAttr("miterLimit", 4.0, "Longest miter, in distances.", 1.0),
                       vAttr("normal", D3(0.0), "Plane normal; zero fits the plane to the curves."),
-                      fAttr("tolerance", 0.01, "Fitting tolerance for curved results, cm.", {}, 1e-5), curveOut()})
+                      fAttr("tolerance", 0.01, "Fitting tolerance for curved results, cm.", 1e-5), curveOut()})
         ro.push_back(a);
     registerPlanar("offsetRegion", "ripple", "Offsets the region closed curves bound: loops that run into each other merge, holes shrink as it grows.", ro,
                    offsetRegionRun);
 
     std::vector<AttrDef> bp = curveInputs("Closed planar curves; loops inside others are holes. World space.");
-    bp.push_back(dataIn("profileCurve", "A curve drawn in the front view as the custom bevel profile: x inset, y rise."));
+    bp.push_back(dataIn("profileCurve", "A curve drawn in the front view as the custom bevel profile: x inset, y rise.", false));
     bp.push_back({.name = "meshMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrStorable | AttrHidden,
                   .doc = "The mesh's world matrix when it was made; the curves are read relative to it, so the mesh sits on their transform."});
     for (AttrDef a : {fAttr("extrudeDepth", 2.0, "Length of the straight sides along the normal, cm; negative extrudes the other way.", ext),
@@ -411,7 +344,7 @@ void registerTypesHere()
                       fAttr("backDepth", 0.5, "How far the back bevel reaches past the sides, cm.", bb, 0.0),
                       eAttr("backProfile", kProfiles, 0, "Shape across the back bevel.", bb),
                       iAttr("backSegments", 1, "Segments across the back bevel.", bb, 1),
-                      sAttr("customProfile", "", "Custom profile points \"inset:rise ...\" from the side to the cap, e.g. \"0:0 0.2:0.7 1:1\".", fb),
+                      sAttrDefault("customProfile", "", "Custom profile points \"inset:rise ...\" from the side to the cap, e.g. \"0:0 0.2:0.7 1:1\".", fb),
                       bAttr("frontCap", true, "Close the front.", cap),
                       bAttr("backCap", true, "Close the back.", cap),
                       fAttr("capSpacing", 0.0, "Quad size on the caps and longest side edge, cm; 0 picks it from the outline.", cap, 0.0),
@@ -427,7 +360,7 @@ void registerTypesHere()
     for (AttrDef a : {fAttr("pitch", 30.0, "Slope of the roof planes, degrees.", rf, 1.0, 89.0),
                       fAttr("height", 0.0, "Ridge height above the footprint, cm; 0 uses the pitch.", rf, 0.0),
                       fAttr("overhang", 0.0, "How far the eaves reach past the footprint, cm.", rf, 0.0),
-                      sAttr("gableEdges", "", "Footprint edges that end in a gable, e.g. \"0 2\" (edge i runs from point i to i + 1).", rf),
+                      sAttrDefault("gableEdges", "", "Footprint edges that end in a gable, e.g. \"0 2\" (edge i runs from point i to i + 1).", rf),
                       bAttr("gableEnds", false, "Gable every end: each edge between two convex corners shorter than both neighbours.", rf),
                       fAttr("thickness", 0.0, "Roof slab thickness, cm; 0 is a single surface.", rf, 0.0),
                       fAttr("uvScale", 100.0, "cm per UV unit along the roof planes.", outp, 1e-3),
@@ -438,9 +371,9 @@ void registerTypesHere()
                    ro2, roofRun);
 
     std::vector<AttrDef> in2 = curveInputs("Closed curves bounding the region (holes by containment), world space.");
-    for (AttrDef a : {fAttr("distance", 1.0, "How far in, cm.", {}, 0.0), iAttr("steps", 1, "Evenly spaced insets out to the distance.", {}, 1),
+    for (AttrDef a : {fAttr("distance", 1.0, "How far in, cm.", 0.0), iAttr("steps", 1, "Evenly spaced insets out to the distance.", 1),
                       vAttr("normal", D3(0.0), "Plane normal; zero fits the plane to the curves."),
-                      fAttr("tolerance", 0.01, "Tessellation of curved input, cm.", {}, 1e-5), curveOut()})
+                      fAttr("tolerance", 0.01, "Tessellation of curved input, cm.", 1e-5), curveOut()})
         in2.push_back(a);
     registerPlanar("insetCurve", "border-inner",
                    "Insets the region closed curves bound along the straight skeleton: mitred corners, narrow parts vanish, pinched loops split.", in2,
@@ -448,14 +381,14 @@ void registerTypesHere()
 
     std::vector<AttrDef> cl = curveInputs("Closed curves bounding the region (holes by containment), world space.");
     for (AttrDef a : {vAttr("normal", D3(0.0), "Plane normal; zero fits the plane to the curves."),
-                      fAttr("tolerance", 0.01, "Tessellation of curved input, cm.", {}, 1e-5), curveOut()})
+                      fAttr("tolerance", 0.01, "Tessellation of curved input, cm.", 1e-5), curveOut()})
         cl.push_back(a);
     registerPlanar("curveCenterLine", "line", "Centre lines of the region closed curves bound: the straight skeleton's inner arcs.", cl, centerRun);
 
     const std::string txt = "Text", lay = "Layout", sty = "Style";
     registerPlanar("curveText", "typography", "Text as closed Bezier curves, the glyph outlines of a TrueType or OpenType font, live.",
-                   {sAttr("text", "Lila", "The text; new lines start new lines.", txt, AttrMultiline),
-                    sAttr("font", "Inter", "A font file, or a family and style (\"Inter\", \"Inter SemiBold\", \"Arial Bold\") among the bundled and installed fonts.",
+                   {sAttrDefault("text", "Lila", "The text; new lines start new lines.", txt, AttrMultiline),
+                    sAttrDefault("font", "Inter", "A font file, or a family and style (\"Inter\", \"Inter SemiBold\", \"Arial Bold\") among the bundled and installed fonts.",
                           txt, AttrFile | AttrFont),
                     fAttr("size", 10.0, "Em size, cm.", txt, 0.0),
                     eAttr("alignment", {"left", "center", "right", "justify"}, 0,
@@ -482,33 +415,8 @@ void registerTypesHere()
                    bp, bevelRun);
 }
 
-Node& curveNamed(Graph& g, const std::string& name, const char* cmd)
-{
-    Node* n = g.find(name);
-    if (!n)
-        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
-    if (!n->type().isA("curve"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a curve");
-    return *n;
-}
-
-/** The given curves, or the selected ones in selection order. */
-std::vector<Node*> curvesArg(Graph& g, const Args& a, const char* cmd)
-{
-    std::vector<Node*> out;
-    for (const json& p : a.positional)
-        out.push_back(&curveNamed(g, p.get<std::string>(), cmd));
-    if (out.empty())
-        for (NodeId id : g.selection())
-            if (Node* n = g.node(id); n && n->type().isA("curve"))
-                out.push_back(n);
-    if (out.empty())
-        throw CommandError(std::string(cmd) + ": select closed curves");
-    return out;
-}
-
 /** Flags for every editable attr of a node type (enums by name), with no defaults so only given ones apply. */
-std::vector<FlagDef> attrFlags(const std::string& type)
+std::vector<FlagDef> attrFlagsWithDefaults(const std::string& type)
 {
     std::vector<FlagDef> out;
     for (const AttrDef& d : types::find(type)->ownAttrs)
@@ -543,50 +451,6 @@ std::vector<FlagDef> attrFlags(const std::string& type)
     return out;
 }
 
-std::vector<FlagDef> withFlags(std::vector<FlagDef> base, std::vector<FlagDef> extra)
-{
-    base.insert(base.end(), extra.begin(), extra.end());
-    return base;
-}
-
-void applyAttrFlags(Graph& g, Node& n, const Args& a, const char* cmd)
-{
-    for (const AttrDef& d : n.type().ownAttrs)
-    {
-        if (!(d.flags & AttrInput) || (d.flags & AttrHidden) || !a.has(d.name))
-            continue;
-        int at = n.type().attrIndex(d.name);
-        const json& val = a.flags[d.name];
-        if (d.type == PlugType::Enum && val.is_string())
-        {
-            auto it = std::ranges::find(d.enumNames, val.get<std::string>());
-            if (it == d.enumNames.end())
-                throw CommandError(std::string(cmd) + ": " + d.name + ": unknown value '" + val.get<std::string>() + "'");
-            g.setValue({n.id(), at, -1}, int64_t(it - d.enumNames.begin()));
-            continue;
-        }
-        try
-        {
-            g.setValue({n.id(), at, -1}, fromJson(d, val));
-        }
-        catch (const std::exception& e)
-        {
-            throw CommandError(std::string(cmd) + ": " + d.name + ": " + e.what());
-        }
-    }
-}
-
-FlagDef chFlag() { return {"constructionHistory", "ch", T::Bool, true, "Keep the history node so its settings stay live."}; }
-
-void bake(Graph& g, Node& op, const PlugRef& dst)
-{
-    g.evaluate();
-    PlugValue val = g.value(dst);
-    g.disconnect(dst);
-    g.setValue(dst, val);
-    g.deleteNode(op.id());
-}
-
 void connectInputs(Graph& g, Node& op, const std::vector<Node*>& curves)
 {
     for (Node* c : curves)
@@ -597,7 +461,7 @@ void connectInputs(Graph& g, Node& op, const std::vector<Node*>& curves)
 json curveResult(Graph& g, const std::string& type, const Args& a, const std::vector<Node*>& curves, const char* defaultName)
 {
     Node* op = g.createNode(*types::find(type), {}, kNoNode, true);
-    applyAttrFlags(g, *op, a, type.c_str());
+    applyFlags(g, *op, a, type.c_str());
     connectInputs(g, *op, curves);
     Node* c = g.createNode(*types::find("curve"), a.get<std::string>("name", defaultName), kNoNode, true);
     g.connect({op->id(), op->type().attrIndex("outCurve"), -1}, {c->id(), CurveShape::kCreate, -1});
@@ -650,7 +514,7 @@ Node* textSourceOf(Graph& g, const Node& curve)
 json bevelResult(Graph& g, const std::vector<Node*>& curves, Node* profile, const Args& a, const char* cmd, const char* defaultName)
 {
     Node* op = g.createNode(*types::find("bevelPlus"), {}, kNoNode, true);
-    applyAttrFlags(g, *op, a, cmd);
+    applyFlags(g, *op, a, cmd);
     connectInputs(g, *op, curves);
     if (profile)
     {
@@ -701,12 +565,12 @@ void registerSkeletonCommands()
                "edge at the pitch (or reaching the given ridge height), hips and valleys between them, ridges where they meet, "
                "gables on the edges asked for, an overhang and a slab thickness. Returns [mesh, roof].",
         .positionalDoc = "footprints",
-        .flags = withFlags(attrFlags("roof"), {chFlag(), {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
+        .flags = withFlags(attrFlagsWithDefaults("roof"), {chFlag(), {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             std::vector<Node*> curves = curvesArg(g, a, "roof");
             Node* op = g.createNode(*types::find("roof"), {}, kNoNode, true);
-            applyAttrFlags(g, *op, a, "roof");
+            applyFlags(g, *op, a, "roof");
             if (!a.has("normal"))
                 g.setValue({op->id(), op->type().attrIndex("normal"), -1}, sceneUp());
             connectInputs(g, *op, curves);
@@ -723,7 +587,7 @@ void registerSkeletonCommands()
                "parts narrower than twice the distance vanish and loops pinched apart come out as separate curves. steps gives "
                "several evenly spaced insets. Returns [curve, insetCurve].",
         .positionalDoc = "curves",
-        .flags = withFlags(attrFlags("insetCurve"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
+        .flags = withFlags(attrFlagsWithDefaults("insetCurve"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             return curveResult(g, "insetCurve", a, curvesArg(g, a, "insetCurve"), "Inset");
@@ -737,7 +601,7 @@ void registerSkeletonCommands()
         .doc = "Centre lines (the medial axis of the straight skeleton) of the region closed planar curves bound, as poly curves "
                "with live history. Returns [curve, curveCenterLine].",
         .positionalDoc = "curves",
-        .flags = withFlags(attrFlags("curveCenterLine"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
+        .flags = withFlags(attrFlagsWithDefaults("curveCenterLine"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             return curveResult(g, "curveCenterLine", a, curvesArg(g, a, "curveCenterLine"), "CenterLine");
@@ -921,7 +785,7 @@ void registerCommandsHere()
         .doc = "Make text as curves (Maya's textCurves): closed Bezier outlines of each glyph, exact, in the XY plane with the first "
                "baseline on the origin. The curveText node keeps the text, font and layout live, so editing it updates anything built "
                "on the curve (a bevelPlus, say). Returns [curve, curveText].",
-        .flags = withFlags(attrFlags("curveText"), {chFlag(), {"name", "n", T::String, nullptr, "Curve name; made unique."}}),
+        .flags = withFlags(attrFlagsWithDefaults("curveText"), {chFlag(), {"name", "n", T::String, nullptr, "Curve name; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             return curveResult(g, "curveText", a, {}, "Text");
@@ -952,7 +816,7 @@ void registerCommandsHere()
                "subtract (the rest from the first), intersect or xor. Each curve's loops fill even-odd, so a letter's counter stays "
                "a hole. Pieces are cut exactly from the inputs, with sharp corners where they cross. Returns [curve, curveBoolean].",
         .positionalDoc = "target tools...",
-        .flags = withFlags(attrFlags("curveBoolean"), {chFlag(),
+        .flags = withFlags(attrFlagsWithDefaults("curveBoolean"), {chFlag(),
                                                        {"hideInputs", "", T::Bool, false, "Hide the input curves (they still drive the result)."},
                                                        {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
         .run = [](const Args& a) -> json {
@@ -971,7 +835,7 @@ void registerCommandsHere()
         .doc = "Offset the region closed planar curves bound (holes even-odd) into new curves with live history: loops that run "
                "into each other merge, parts that vanish drop, holes shrink as the outline grows. Returns [curve, offsetRegion].",
         .positionalDoc = "curves",
-        .flags = withFlags(attrFlags("offsetRegion"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
+        .flags = withFlags(attrFlagsWithDefaults("offsetRegion"), {chFlag(), {"name", "n", T::String, nullptr, "Name of the result curve; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             return curveResult(g, "offsetRegion", a, curvesArg(g, a, "offsetRegion"), "Offset");
@@ -987,7 +851,7 @@ void registerCommandsHere()
                "straight skeleton, meeting in a ridge where the shape is thinner than the bevel. Quad caps, hard edges by angle, "
                "UVs (caps planar, sides along the outline). Returns [mesh, bevelPlus].",
         .positionalDoc = "curves",
-        .flags = withFlags(attrFlags("bevelPlus"), {{"profileCurve", "pc", T::String, nullptr, "Curve to use as the custom profile (sets both profiles to custom)."},
+        .flags = withFlags(attrFlagsWithDefaults("bevelPlus"), {{"profileCurve", "pc", T::String, nullptr, "Curve to use as the custom profile (sets both profiles to custom)."},
                                                    chFlag(),
                                                    {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {
@@ -1022,7 +886,7 @@ void registerCommandsHere()
                "left as they are), the mesh on their transform. Takes every textCurves and bevelPlus setting. "
                "Returns [mesh, curveText, bevelPlus].",
         .positionalDoc = "textCurves",
-        .flags = withFlags(textMeshDefaults(withFlags(attrFlags("curveText"), attrFlags("bevelPlus"))),
+        .flags = withFlags(textMeshDefaults(withFlags(attrFlagsWithDefaults("curveText"), attrFlagsWithDefaults("bevelPlus"))),
                            {chFlag(), {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -1040,9 +904,9 @@ void registerCommandsHere()
                 return json::array({r[0], text ? json(text->path()) : json(), r[1]});
             }
             Node* text = g.createNode(*types::find("curveText"), {}, kNoNode, true);
-            applyAttrFlags(g, *text, a, "textMesh");
+            applyFlags(g, *text, a, "textMesh");
             Node* op = g.createNode(*types::find("bevelPlus"), {}, kNoNode, true);
-            applyAttrFlags(g, *op, a, "textMesh");
+            applyFlags(g, *op, a, "textMesh");
             g.connect({text->id(), text->type().attrIndex("outCurve"), -1}, {op->id(), op->type().attrIndex("inCurves")});
             json r = meshResult(g, *op, a, "Text");
             if (r[1].is_null())

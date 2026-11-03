@@ -8,6 +8,7 @@
 #include "geo/Ops.h"
 #include "geo/Symmetry.h"
 #include "geo/Topology.h"
+#include "retopo/CommandArgs.h"
 #include "retopo/Retopo.h"
 #include "retopo/TopologyCommands.h"
 #include "scene/Components.h"
@@ -32,29 +33,10 @@ using scene::Node;
 using scene::PlugRef;
 using scene::Transform;
 
-Graph& graph() { return Graph::current(); }
-
-Node& meshArg(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return *n;
-}
-
-geo::Mesh baseMesh(const PlugRef& p)
-{
-    graph().evaluate();
-    const MeshPtr& m = std::get<MeshPtr>(graph().storedValue(p));
-    return m ? *m : geo::Mesh();
-}
-
-glm::dmat4 worldOf(const Node& n) { return n.as<glm::dmat4>(Transform::kWorldMatrix); }
-
 /** The mesh's drawn result, moved into another node's object space. */
 geo::Mesh meshInSpaceOf(const Node& src, const Node& space)
 {
-    graph().evaluate();
+    Graph::current().evaluate();
     MeshPtr m = src.as<MeshPtr>(MeshNode::kOutMesh);
     if (!m)
         return {};
@@ -347,7 +329,7 @@ Node& retopoDrawTarget(const Args& a, const char* cmd, bool create)
     std::string name = a.get<std::string>("mesh");
     if (name.empty())
         throw CommandError(std::string(cmd) + ": give mesh=");
-    Graph& g = graph();
+    Graph& g = Graph::current();
     Node* ref = a.has("reference") ? &meshArg(a.get<std::string>("reference"), cmd) : nullptr;
     Node* n = g.find(name);
     bool created = false;
@@ -400,7 +382,7 @@ void registerCommands()
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("quadRemesh: give a source mesh");
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& src = meshArg(objs.front(), "quadRemesh");
             g.evaluate();
             MeshPtr srcMesh = src.as<MeshPtr>(MeshNode::kOutMesh);
@@ -458,7 +440,7 @@ void registerCommands()
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("retopoPoles: give a source mesh");
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& src = meshArg(objs.front(), "retopoPoles");
             g.evaluate();
             MeshPtr srcMesh = src.as<MeshPtr>(MeshNode::kOutMesh);
@@ -488,7 +470,7 @@ void registerCommands()
         .positionalDoc = "objects",
         .flags = repairFlags(),
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             const std::string mode = a.get<std::string>("mode", "repair");
             if (mode != "select" && mode != "repair")
                 throw CommandError("meshRepair: mode must be select or repair");
@@ -551,7 +533,7 @@ void registerCommands()
         .flags = {{"resolution", "", T::Int, 128, "Voxels along the longest side of the bounds, 8 to 1024.", {}, {}, 8.0, 1024.0},
                   {"project", "", T::Bool, true, "Pull the result onto the input surface where it lies close."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json out = json::object();
             UndoChunk chunk("Voxel Remesh");
             for (const std::string& name : scene::meshObjects(a, "voxelRemesh"))
@@ -590,7 +572,7 @@ void registerCommands()
                   {"pinHard", "", T::Bool, false, "Keep points on hard edges fixed."},
                   {"pinSeams", "", T::Bool, false, "Keep points on UV seams fixed."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             UndoChunk chunk("Relax");
             const Node* targetNode = a.has("target") ? &meshArg(a.get<std::string>("target"), "relaxMesh") : nullptr;
             for (const std::string& name : scene::meshObjects(a, "relaxMesh"))
@@ -653,7 +635,7 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             if (!a.has("target"))
                 throw CommandError("shrinkwrap: give target=");
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::string targetName = a.get<std::string>("target");
             Node& targetNode = meshArg(targetName, "shrinkwrap");
             UndoChunk chunk("Shrinkwrap");
@@ -713,7 +695,7 @@ void registerCommands()
                   {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = retopoDrawTarget(a, "retopoDrawAddFace", a.get<bool>("create"));
             const bool many = a.flags.contains("faces") && !a.flags["faces"].is_null();
             std::vector<std::vector<glm::dvec3>> worldFaces;
@@ -780,7 +762,7 @@ void registerCommands()
                   {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = retopoDrawTarget(a, "retopoDrawSetDots", a.get<bool>("create"));
             std::vector<glm::dvec3> world = vecList(a.flags["dots"], "retopoDrawSetDots");
             g.evaluate();
@@ -818,7 +800,7 @@ void registerCommands()
                   {"faces", "", T::List, json::array(), "Face ids."},
                   {"points", "", T::List, json::array(), "Point ids."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = retopoDrawTarget(a, "retopoDrawDelete", false);
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
@@ -844,7 +826,7 @@ void registerCommands()
                   {"positions", "", T::List, json::array(), "World [x, y, z] per point."},
                   {"weld", "", T::Float, 0.0, "Merge a moved point into another point closer than this, cm.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = retopoDrawTarget(a, "retopoDrawMove", false);
             std::vector<Index> points = a.flags["points"].get<std::vector<Index>>();
             std::vector<glm::dvec3> world = vecList(a.flags["positions"], "retopoDrawMove");
@@ -904,7 +886,7 @@ void registerCommands()
                   {"edge", "", T::Int, nullptr, "An edge the loop crosses.", {}, {}, 0.0},
                   {"fraction", "", T::Float, 0.5, "Where along the ring edges, 0 to 1.", {}, {}, 0.01, 0.99}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = retopoDrawTarget(a, "retopoDrawInsertLoop", false);
             if (!a.has("edge"))
                 throw CommandError("retopoDrawInsertLoop: give edge=");

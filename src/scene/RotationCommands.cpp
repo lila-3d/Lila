@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "scene/RigUtil.h"
 #include "scene/RotationCurve.h"
 
 #include <algorithm>
@@ -17,21 +18,8 @@ namespace lila::scene::anim
 {
 namespace
 {
-constexpr double kTimeEps = 1e-6;
 
-Graph& graph() { return Graph::current(); }
-
-template <class F> auto guarded(F&& f)
-{
-    try
-    {
-        return f();
-    }
-    catch (const std::invalid_argument& e)
-    {
-        throw CommandError(e.what());
-    }
-}
+using rigutil::guarded;
 
 bool isTransform(const Node& n) { return n.type().isA("transform"); }
 
@@ -396,7 +384,7 @@ void registerRotationCommands()
     using T = ArgType;
     registerRotationCurveType();
 
-    graph().setDrivenVecSetHook([](Graph& g, const PlugRef& dst, const PlugRef& src, const glm::dvec3& v) {
+    Graph::current().setDrivenVecSetHook([](Graph& g, const PlugRef& dst, const PlugRef& src, const glm::dvec3& v) {
         Node* s = g.node(src.node);
         if (!s || !isRotationCurve(*s))
             return Graph::DrivenEdit::Reject;
@@ -412,9 +400,9 @@ void registerRotationCommands()
     // A rotation curve's Euler output follows its transform's rotateOrder; loads and undo replay carry both already.
     static bool listening = false;
     if (!std::exchange(listening, true))
-        graph().addListener(
+        Graph::current().addListener(
         [](Change c, NodeId id) {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (c != Change::Value || g.batching() || UndoStack::get().replaying())
                 return;
             Node* n = g.node(id);
@@ -441,7 +429,7 @@ void registerRotationCommands()
         .positionalDoc = "objects",
         .flags = {{"to", "to", T::String, "smooth", "euler | slerp | smooth", {"euler", "slerp", "smooth"}}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::string to = a.get<std::string>("to", "smooth");
             RotationInterpolation mode;
             if (to == "euler")
@@ -466,7 +454,7 @@ void registerRotationCommands()
                "need none. Returns the number of keys changed.",
         .positionalDoc = "objects",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             int changed = 0;
             for (NodeId id : transformsFrom(g, a, "eulerFilter"))
             {
@@ -509,7 +497,7 @@ void registerRotationCommands()
             {"snapRange", "sr", T::Bool, true, "Move the playback range end to the loop key."},
         },
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::optional<double> at;
             if (a.has("time"))
                 at = a.get<double>("time");
@@ -534,7 +522,7 @@ void registerRotationCommands()
         .positionalDoc = "objects",
         .flags = {attrFlag},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<NodeId> looping;
             for (NodeId c : curvesFrom(g, a))
                 if (curveLoops(*g.node(c)))

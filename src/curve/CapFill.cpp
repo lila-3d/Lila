@@ -1,6 +1,7 @@
 #include "curve/CapFill.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Skeleton.h"
 #include "geo/Triangulate.h"
 
@@ -18,8 +19,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-
 double orient(const D2& a, const D2& b, const D2& c) { return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); }
 
 /** Positive when d lies inside the circle through the counter-clockwise a, b, c. */

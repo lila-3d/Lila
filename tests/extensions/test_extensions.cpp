@@ -15,14 +15,6 @@
 using namespace lila;
 using lila::extensions::ExtensionManager;
 
-namespace
-{
-json run(const char* cmd, json call = json::object())
-{
-    return ops::execute(cmd, call);
-}
-} // namespace
-
 TEST_CASE("native extension: load, use, unload, reload")
 {
     isolate();

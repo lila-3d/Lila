@@ -167,6 +167,7 @@ lila_module(lila_ui UI
     TextureCache.cpp TextureCache.h
     Theme.cpp Theme.h ThemeEditor.cpp ThemeEditor.h
     TimeSlider.cpp TimeSlider.h
+    ToolColors.h ToolkitLayout.h UiCommands.h UiCommon.h ViewportToolMath.h
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
     UnfrozenTransforms.cpp UnfrozenTransforms.h

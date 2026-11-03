@@ -1,5 +1,6 @@
 #include "gn/Bake.h"
 #include "gn/Clipboard.h"
+#include "gn/CommandArgs.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 #include "gn/Routing.h"
@@ -37,8 +38,6 @@ namespace fs = std::filesystem;
 using scene::Graph;
 using scene::Node;
 
-Graph& graph() { return Graph::current(); }
-
 std::string positionalString(const Args& a, size_t i, const char* cmd, const char* what)
 {
     if (a.positional.size() <= i || !a.positional[i].is_string())
@@ -48,7 +47,7 @@ std::string positionalString(const Args& a, size_t i, const char* cmd, const cha
 
 Node& groupNode(const std::string& name, const char* cmd)
 {
-    Node* n = findGroupNode(graph(), name);
+    Node* n = findGroupNode(Graph::current(), name);
     if (!n)
         throw CommandError(std::string(cmd) + ": no geometry-nodes group named '" + name + "'");
     return *n;
@@ -70,22 +69,13 @@ json editGroup(const Args& a, const char* cmd, const std::function<json(Group&)>
     json result = fn(grp);
     try
     {
-        commitGroup(graph(), n, std::move(grp));
+        commitGroup(Graph::current(), n, std::move(grp));
     }
     catch (const std::exception& e)
     {
         throw CommandError(std::string(cmd) + ": " + e.what());
     }
     return result;
-}
-
-/** "node.socket" split at the first dot. */
-std::pair<std::string, std::string> splitPlug(const std::string& s, const char* cmd)
-{
-    auto dot = s.find('.');
-    if (dot == std::string::npos || dot == 0 || dot + 1 == s.size())
-        throw CommandError(std::string(cmd) + ": expected node.socket, got '" + s + "'");
-    return {s.substr(0, dot), s.substr(dot + 1)};
 }
 
 const NodeDecl& declOf(const GNode& n, const char* cmd)
@@ -292,7 +282,7 @@ void registerCommands()
                 throw CommandError("gnCreateGroup: '" + name + "' isn't a valid name (letters, digits, underscores)");
             try
             {
-                detail::createGroupNode(graph(), Group::makeDefault(name));
+                detail::createGroupNode(Graph::current(), Group::makeDefault(name));
             }
             catch (const std::exception& e)
             {
@@ -816,7 +806,7 @@ void registerCommands()
         .name = "gnGroups",
         .doc = "Names of the geometry-nodes groups in the scene.",
         .undoable = false,
-        .run = [](const Args&) -> json { return groupNames(graph()); },
+        .run = [](const Args&) -> json { return groupNames(Graph::current()); },
     });
 
     ops::registerCommand({
@@ -836,8 +826,8 @@ void registerCommands()
                     nodes.back()["problem"] = it->second;
             }
             json inst = json::array();
-            for (scene::NodeId id : instancesOf(graph(), n.id()))
-                inst.push_back(graph().node(id)->path());
+            for (scene::NodeId id : instancesOf(Graph::current(), n.id()))
+                inst.push_back(Graph::current().node(id)->path());
             PlanPtr plan = compile(grp);
             json zones = json::array();
             for (const ZoneRegion& z : zoneRegions(grp))
@@ -871,7 +861,7 @@ void registerCommands()
             }
             Group grp;
             if (a.has("group"))
-                if (Node* n = findGroupNode(graph(), a.get<std::string>("group")))
+                if (Node* n = findGroupNode(Graph::current(), a.get<std::string>("group")))
                     grp = readGroup(*n);
             bool fromInput = a.get<bool>("linkInput", false);
             json out = json::array();
@@ -934,12 +924,12 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             std::string meshName = positionalString(a, 0, "gnApply", "mesh");
             Node& gn = groupNode(positionalString(a, 1, "gnApply", "group"), "gnApply");
-            Node* mesh = graph().find(meshName);
+            Node* mesh = Graph::current().find(meshName);
             if (!mesh || !mesh->type().isA("mesh"))
                 throw CommandError("gnApply: " + meshName + " is not a mesh");
             try
             {
-                return detail::applyGroup(graph(), gn, *mesh)->path();
+                return detail::applyGroup(Graph::current(), gn, *mesh)->path();
             }
             catch (const std::exception& e)
             {
@@ -1029,15 +1019,15 @@ void registerCommands()
             {
                 throw CommandError(std::string("gnLoadGroup: ") + e.what());
             }
-            if (Node* existing = findGroupNode(graph(), grp.name))
+            if (Node* existing = findGroupNode(Graph::current(), grp.name))
             {
                 Group cur = readGroup(*existing);
                 grp.typeVersion = cur.typeVersion;
-                commitGroup(graph(), *existing, std::move(grp));
+                commitGroup(Graph::current(), *existing, std::move(grp));
                 return existing->name();
             }
             grp.typeVersion = 1;
-            detail::createGroupNode(graph(), grp);
+            detail::createGroupNode(Graph::current(), grp);
             return grp.name;
         },
     });

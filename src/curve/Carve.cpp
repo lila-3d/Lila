@@ -1,6 +1,7 @@
 #include "curve/Carve.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "geo/Attribute.h"
 #include "geo/Ops.h"
 #include "scene/Materials.h"
@@ -17,7 +18,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using geo::Index;
 
 constexpr const char* kSlabSlot = "lila:carveSlab";

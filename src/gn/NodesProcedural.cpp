@@ -14,7 +14,6 @@
 
 namespace lila::gn::nodes::procedural
 {
-using D3 = glm::dvec3;
 inline constexpr D3 kUp{0.0, 1.0, 0.0};
 
 std::string trimText(std::string_view s)

@@ -29,7 +29,7 @@ namespace
 using scene::Graph;
 using scene::PlugType;
 
-enum Role
+enum PlugRole
 {
     kPlug = Qt::UserRole,
     kKind,      // the plug's type, for compatibility

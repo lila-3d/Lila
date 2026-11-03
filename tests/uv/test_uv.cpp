@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
 #include "uv/Uv.h"
@@ -11,27 +12,11 @@
 #include <set>
 
 using namespace lila;
+using namespace uvtest;
 using geo::Index;
 
 namespace
 {
-double seconds(std::chrono::steady_clock::time_point t0)
-{
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-}
-
-void clearSeams(geo::Mesh& m)
-{
-    std::span<bool> s = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
-    std::fill(s.begin(), s.end(), false);
-}
-
-size_t overlaps(const geo::Mesh& m, std::string_view set = "uv0")
-{
-    std::vector<uint8_t> flags;
-    return uv::overlappingFaces(m, set, flags);
-}
-
 bool insideUnit(const geo::Mesh& m, std::string_view set, float margin = 0.0f, float tiles = 1.0f)
 {
     std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(set);
@@ -46,13 +31,6 @@ bool insideUnit(const geo::Mesh& m, std::string_view set, float margin = 0.0f, f
                 return false;
         }
     return true;
-}
-
-double segDist(glm::dvec2 p, glm::dvec2 a, glm::dvec2 b)
-{
-    glm::dvec2 d = b - a;
-    double t = glm::dot(d, d) > 0.0 ? std::clamp(glm::dot(p - a, d) / glm::dot(d, d), 0.0, 1.0) : 0.0;
-    return glm::length(p - (a + t * d));
 }
 
 /** Smallest distance between boundary segments of different uv islands. */

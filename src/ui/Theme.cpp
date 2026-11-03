@@ -6,6 +6,7 @@
 #include "ui/DocsUi.h"
 #include "ui/Telemetry.h"
 #include "ui/ThemeModel.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QApplication>
@@ -186,8 +187,6 @@ private:
     }
 };
 
-bool monotone() { return PrefStore::get().value<bool>("general", ui::viewportDisplay::kMonotone, false); }
-
 /** The colour icon as luminance, alpha kept. */
 QIcon grayscaleIcon(const QString& path)
 {
@@ -217,7 +216,7 @@ QIcon appIcon(bool mono)
 class DarkTitleBars : public QObject
 {
 public:
-    explicit DarkTitleBars(QObject* parent) : QObject(parent), mMono(monotone()) {}
+    explicit DarkTitleBars(QObject* parent) : QObject(parent), mMono(viewportDisplay::monotone()) {}
 
     /** Follows the monotone pref: the app icon and every window's big icon go grey or back to colour. */
     void setMonotone(bool mono)
@@ -329,8 +328,6 @@ QFont monoFont()
 namespace
 {
 QColor qcolor(themes::Rgba c) { return QColor(c.r, c.g, c.b, c.a); }
-
-float srgbToLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
 
 /** Whether a theme's neutral ramp is Monotone's, so greys map to themselves and nothing needs rewriting. */
 bool monotoneRamp(const themes::Theme& t)
@@ -895,7 +892,7 @@ void applyTheme(QApplication& app)
                 QGuiApplication::platformName() != "offscreen";
 
     loadBundledFonts();
-    app.setWindowIcon(appIcon(monotone()));
+    app.setWindowIcon(appIcon(viewportDisplay::monotone()));
     QFont ui(QString::fromStdString(prefs.value<std::string>("general", "/ui/font", "Inter")));
     ui.setPointSizeF(prefs.value<double>("general", "/ui/fontSize", 9.0));
     ui.setHintingPreference(QFont::PreferNoHinting);
@@ -916,7 +913,7 @@ void applyTheme(QApplication& app)
         QTimer::singleShot(0, qApp, [bars] {
             if (!bars)
                 return;
-            bars->setMonotone(monotone());
+            bars->setMonotone(viewportDisplay::monotone());
             if (themes::toText(*themes::current(), true) != gApplied)
                 followTheme(*qApp);
         });

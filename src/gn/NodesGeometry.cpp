@@ -11,8 +11,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 std::vector<uint8_t> maskOf(const FieldPtr& sel, const FieldContext& ctx, bool invert)
 {
     std::vector<uint8_t> m = expand<uint8_t>(evaluate(sel, ctx, T::Bool), ctx.size);

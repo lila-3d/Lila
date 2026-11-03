@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "geo/Primitives.h"
 #include "retopo/Retopo.h"
@@ -7,6 +8,7 @@
 #include <numeric>
 
 using namespace lila;
+using namespace retopotest;
 
 namespace
 {
@@ -28,14 +30,12 @@ std::pair<const retopo::Pole*, double> nearest(const std::vector<retopo::Pole>& 
         }
     return {best, d};
 }
-
-geo::Mesh sphere() { return geo::makeSphere({.radius = 50.0, .subdivAxis = 48, .subdivHeight = 48}); }
 } // namespace
 
 TEST_CASE("poles balance to the shell's total turning")
 {
     retopo::QuadRemeshOptions o{.targetFaces = 600};
-    retopo::PoleResult s = retopo::findPoles(sphere(), o);
+    retopo::PoleResult s = retopo::findPoles(sphere(48), o);
     REQUIRE(s.ok());
     REQUIRE(s.shellTotals.size() == 1);
     REQUIRE(s.shellTotals[0].has_value());
@@ -62,7 +62,7 @@ TEST_CASE("a cube's poles sit on its corners")
 
 TEST_CASE("moved poles are where the field turns")
 {
-    geo::Mesh m = sphere();
+    geo::Mesh m = sphere(48);
     retopo::QuadRemeshOptions o{.targetFaces = 600};
     retopo::PoleResult before = retopo::findPoles(m, o);
     REQUIRE(before.ok());
@@ -99,7 +99,7 @@ TEST_CASE("moved poles are where the field turns")
 
 TEST_CASE("quad remesh honours prescribed poles")
 {
-    geo::Mesh m = sphere();
+    geo::Mesh m = sphere(48);
     retopo::QuadRemeshOptions o{.targetFaces = 600};
     retopo::PoleResult auto_ = retopo::findPoles(m, o);
     REQUIRE(auto_.ok());

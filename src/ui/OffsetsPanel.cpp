@@ -11,6 +11,8 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
@@ -25,38 +27,7 @@ namespace lila::ui
 {
 namespace
 {
-enum Column
-{
-    kMute,
-    kWeight,
-    kName,
-    kInfo,
-};
-
 constexpr int kOffsetRole = Qt::UserRole;
-
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    return b;
-}
 
 /** The active layer when it is an offset, for the actions that work without the panel. */
 std::string activeOffset()
@@ -94,28 +65,28 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
     add("plus", "Offset the selected joints (option box: right-click the action in a menu)", [] { actions::run(json("anim.createOffset")); });
     add("pointer", "Select the current offset's joints", [this] {
         std::string o = currentOffset();
-        json list = run("listOffsets", json::object());
+        json list = runUi("listOffsets", json::object());
         if (o.empty() || !list.is_array())
             return;
         for (const json& e : list)
             if (e["name"] == o)
-                run("select", {{"args", e["joints"]}});
+                runUi("select", {{"args", e["joints"]}});
     });
     add("arrows-join", "Bake the current offset into the layer below", [this] {
         if (std::string o = currentOffset(); !o.empty())
-            run("bakeOffset", {{"args", {o}}});
+            runUi("bakeOffset", {{"args", {o}}});
     });
     bar->addStretch(1);
     add("trash", "Delete the current offset (the animation underneath is untouched)", [this] {
         if (std::string o = currentOffset(); !o.empty())
-            run("deleteOffset", {{"args", {o}}});
+            runUi("deleteOffset", {{"args", {o}}});
     });
     v->addLayout(bar);
 
     mTree = new QTreeWidget(this);
     deletion::claim(mTree, [this] {
         if (std::string o = currentOffset(); !o.empty())
-            run("deleteOffset", {{"args", {o}}});
+            runUi("deleteOffset", {{"args", {o}}});
     });
     mTree->setColumnCount(4);
     mTree->setHeaderHidden(true);
@@ -140,9 +111,9 @@ OffsetsPanel::OffsetsPanel(QWidget* parent) : QWidget(parent)
         if (!n)
             return;
         if (column == kMute)
-            run("editOffset", {{"args", {o}}, {"mute", !n->as<bool>(scene::anim::LayerNode::kMute)}});
+            runUi("editOffset", {{"args", {o}}, {"mute", !n->as<bool>(scene::anim::LayerNode::kMute)}});
         else if (column == kName || column == kInfo)
-            run("setActiveAnimLayer", {{"args", {o}}});
+            runUi("setActiveAnimLayer", {{"args", {o}}});
     });
 
     QPointer<OffsetsPanel> self(this);
@@ -218,7 +189,7 @@ void OffsetsPanel::refresh()
         weight->setButtonSymbols(QAbstractSpinBox::NoButtons);
         weight->setValue(o["weight"].get<double>());
         weight->setToolTip("Offset weight");
-        connect(weight, &QDoubleSpinBox::editingFinished, this, [weight, name] { run("editOffset", {{"args", {name}}, {"weight", weight->value()}}); });
+        connect(weight, &QDoubleSpinBox::editingFinished, this, [weight, name] { runUi("editOffset", {{"args", {name}}, {"weight", weight->value()}}); });
         mTree->setItemWidget(item, kWeight, weight);
         if (name == active)
             mTree->setCurrentItem(item);
@@ -251,7 +222,7 @@ void registerOffsetsPanel()
                   .run =
                       [] {
                           if (std::string o = activeOffset(); !o.empty())
-                              run("bakeOffset", {{"args", {o}}});
+                              runUi("bakeOffset", {{"args", {o}}});
                       },
                   .enabled = [] { return !activeOffset().empty(); },
                   .doc = "Merge the active offset into the layer below it, sampled every frame."});
@@ -261,7 +232,7 @@ void registerOffsetsPanel()
                   .run =
                       [] {
                           if (std::string o = activeOffset(); !o.empty())
-                              run("deleteOffset", {{"args", {o}}});
+                              runUi("deleteOffset", {{"args", {o}}});
                       },
                   .enabled = [] { return !activeOffset().empty(); },
                   .doc = "Delete the active offset; the animation underneath is untouched."});

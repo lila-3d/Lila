@@ -28,7 +28,7 @@ namespace stagehand
 {
 namespace
 {
-constexpr const char* kTool = "stagehand.push";
+constexpr const char* kPushTool = "stagehand.push";
 /** How much push the wiggle brush gives per second held, cm/s, spread over the frames. */
 constexpr double kWiggleSpeedPerSecond = 400.0;
 
@@ -401,9 +401,9 @@ private:
 void startTool(Mode m)
 {
     gStartMode = m;
-    if (viewportTools::activeId() == kTool)
+    if (viewportTools::activeId() == kPushTool)
         viewportTools::set(nullptr);
-    viewportTools::activate(kTool);
+    viewportTools::activate(kPushTool);
 }
 
 /** Runs a command on the selection from a menu, reporting failure on the status line. */
@@ -428,7 +428,7 @@ void onSelection(const char* command, nlohmann::json flags = nlohmann::json::obj
 
 void registerUi(ext::Context& ctx)
 {
-    viewportTools::add(ctx, {.id = kTool, .label = "Push Tool", .icon = "hand-finger", .create = [] { return std::make_unique<PushTool>(); }});
+    viewportTools::add(ctx, {.id = kPushTool, .label = "Push Tool", .icon = "hand-finger", .create = [] { return std::make_unique<PushTool>(); }});
 
     menus::addItem(ctx, {.id = "stagehand.menu.tools", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Physics Tools",
                          .before = levelToolkit::kAssetsSection});

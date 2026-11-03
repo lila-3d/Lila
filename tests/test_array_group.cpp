@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/ArrayTransform.h"
 #include "scene/ArrayGroup.h"
@@ -20,20 +22,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-scene::Graph& g() { return scene::Graph::current(); }
-scene::NodeId id(const std::string& name) { return g().find(name)->id(); }
-size_t count(const char* type) { return run("ls", {{"type", type}}).size(); }
-
-void checkNear(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6)
-{
-    for (int i = 0; i < 3; ++i)
-        CHECK(a[i] == doctest::Approx(b[i]).epsilon(eps).scale(1.0));
-}
-
 bool nearMat(const glm::dmat4& a, const glm::dmat4& b)
 {
     for (int c = 0; c < 4; ++c)
@@ -41,12 +33,6 @@ bool nearMat(const glm::dmat4& a, const glm::dmat4& b)
             if (std::abs(a[c][r] - b[c][r]) > 1e-9)
                 return false;
     return true;
-}
-
-glm::dvec3 worldPos(const std::string& n)
-{
-    g().evaluate();
-    return glm::dvec3(g().find(n)->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3]);
 }
 
 /** Where every generated copy of a node puts its origin, world space. */
@@ -58,13 +44,6 @@ std::vector<glm::dvec3> copyOrigins(const std::string& n)
     for (const scene::arrays::Copy& c : scene::arrays::copiesOf(g(), id(n)))
         out.push_back(glm::dvec3((c.transform * w)[3]));
     return out;
-}
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_array_tests";
-    std::filesystem::create_directories(dir);
-    return (dir / name).string();
 }
 
 /** A unit-ish cube moved out to x = 100. */
@@ -224,7 +203,7 @@ TEST_CASE("array group: undo, adjust last op, save and open regenerate the copie
 
     for (const char* ext : {".lila", ".lilaa"})
     {
-        std::string path = tempPath((std::string("array") + ext).c_str());
+        std::string path = tempPath("array", (std::string("array") + ext).c_str());
         run("saveScene", {{"args", {path}}});
         run("newScene");
         run("openScene", {{"args", {path}}});

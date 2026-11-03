@@ -20,6 +20,7 @@
 #include "ui/Icons.h"
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 #include "ui/FileDialog.h"
 #include "ui/FontPicker.h"
@@ -229,14 +230,6 @@ QDoubleSpinBox* numberBox(QWidget* parent, double v, bool integer)
     return s;
 }
 
-double toSrgb(double c)
-{
-    c = std::clamp(c, 0.0, 1.0);
-    return c <= 0.0031308 ? c * 12.92 : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055;
-}
-
-double toLinear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
-
 /** A swatch button for a linear RGBA value; the swatch shows the colour itself, so it is data, not chrome. */
 QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json)> set)
 {
@@ -249,17 +242,17 @@ QWidget* colorEditor(QWidget* parent, const json& value, std::function<void(json
     else if (value.is_number())
         (*rgba)[0] = (*rgba)[1] = (*rgba)[2] = value.get<double>();
     auto paint = [b, rgba] {
-        QColor c = QColor::fromRgbF(float(toSrgb((*rgba)[0])), float(toSrgb((*rgba)[1])), float(toSrgb((*rgba)[2])));
+        QColor c = QColor::fromRgbF(float(linearToSrgb((*rgba)[0])), float(linearToSrgb((*rgba)[1])), float(linearToSrgb((*rgba)[2])));
         b->setStyleSheet(QString("QToolButton { background: %1; border: 1px solid rgb(20,20,20); min-height: 16px; }").arg(c.name()));
         b->setToolTip(QString("Linear %1, %2, %3, alpha %4").arg((*rgba)[0], 0, 'f', 3).arg((*rgba)[1], 0, 'f', 3).arg((*rgba)[2], 0, 'f', 3).arg((*rgba)[3], 0, 'f', 3));
     };
     paint();
     QObject::connect(b, &QToolButton::clicked, b, [b, rgba, paint, set] {
-        QColor init = QColor::fromRgbF(float(toSrgb((*rgba)[0])), float(toSrgb((*rgba)[1])), float(toSrgb((*rgba)[2])), float((*rgba)[3]));
+        QColor init = QColor::fromRgbF(float(linearToSrgb((*rgba)[0])), float(linearToSrgb((*rgba)[1])), float(linearToSrgb((*rgba)[2])), float((*rgba)[3]));
         QColor c = colorPopup::getColor(init, b, "Color", true);
         if (!c.isValid())
             return;
-        *rgba = {toLinear(c.redF()), toLinear(c.greenF()), toLinear(c.blueF()), c.alphaF()};
+        *rgba = {srgbToLinear(double(c.redF())), srgbToLinear(double(c.greenF())), srgbToLinear(double(c.blueF())), c.alphaF()};
         paint();
         set(json::array({(*rgba)[0], (*rgba)[1], (*rgba)[2], (*rgba)[3]}));
     });

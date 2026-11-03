@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 
 #include <QElapsedTimer>
+#include <QPointF>
 #include <QWidget>
 
 #include <array>
@@ -65,6 +66,9 @@ LILA_UI_API std::vector<std::string> contributedNames();
  */
 LILA_UI_API std::string viewportMenuName(const std::string& base, bool overObject, bool componentMode);
 } // namespace markingMenus
+
+/** Unit directions of the eight compass slots, N first and clockwise, in screen space (y down). */
+inline constexpr QPointF kCompassDirs[8] = {{0, -1}, {0.71, -0.71}, {1, 0}, {0.71, 0.71}, {0, 1}, {-0.71, 0.71}, {-1, 0}, {-0.71, -0.71}};
 
 /**
  * Maya-style radial menu. Eight compass slots plus an overflow list under the south slot; items may nest. Pick by

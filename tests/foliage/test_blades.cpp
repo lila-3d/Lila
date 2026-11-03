@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "BladeExtrude.h"
 
 #include "ops/Command.h"
@@ -18,22 +19,13 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace foliagetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-void ensureLoaded()
+void freshInObjectMode()
 {
-    auto& em = extensions::ExtensionManager::get();
-    if (!em.isLoaded("Foliage"))
-        REQUIRE(em.load(LILA_TEST_FOLIAGE_PACKAGE) == "Foliage");
-}
-
-void fresh()
-{
-    ensureLoaded();
-    run("newScene");
+    fresh();
     run("selectMode", {{"args", {"object"}}});
 }
 
@@ -140,7 +132,7 @@ TEST_CASE("foliage blades registers its commands, panel, actions and menu")
 
 TEST_CASE("blade extrude")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub();
     const json blades = info(plane);
     CHECK(blades.size() == 8);
@@ -177,7 +169,7 @@ TEST_CASE("blade extrude")
 
 TEST_CASE("blade extrude bakes the values into the geometry")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub();
     run("select", {{"args", {plane}}});
     run("randomizeBladeExtrude", {{"fields", fields(1.0, 5.0)}, {"up", "Y"}, {"seed", 7}});
@@ -209,7 +201,7 @@ TEST_CASE("blade extrude bakes the values into the geometry")
 
 TEST_CASE("selecting what the blades made")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub();
     const json caps = run("bladeExtrudeInfo", {{"args", {plane}}});
     std::set<int> capIds, stemIds;
@@ -241,7 +233,7 @@ TEST_CASE("selecting what the blades made")
 
 TEST_CASE("bias pulls the range up or down the mesh")
 {
-    fresh();
+    freshInObjectMode();
     const std::string cube = run("polyCube")[0];
     run("bladeExtrude", {{"args", {cube}}, {"faces", range(0, 5)}, {"thickness", 1.0}});
     run("select", {{"args", {cube}}});
@@ -268,7 +260,7 @@ TEST_CASE("bias pulls the range up or down the mesh")
 
 TEST_CASE("blades come apart however the faces touch")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub();
     const json blades = info(plane);
     REQUIRE(blades.size() == 8);
@@ -300,7 +292,7 @@ TEST_CASE("blades come apart however the faces touch")
 
 TEST_CASE("deformers per blade")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub();
     run("selectComponents", {{"args", {plane}}, {"faces", towers(plane)}});
     const json before = points(plane);
@@ -339,7 +331,7 @@ TEST_CASE("deformers per blade")
     for (const Kind spec : {Kind{"bend", 70.0}, {"flare", 0.2}, {"twist", 60.0}, {"sine", 0.3}, {"squash", 0.4}, {"wave", 0.3}})
     {
         CAPTURE(spec.kind);
-        fresh();
+        freshInObjectMode();
         const std::string p = shrub(4);
         run("selectComponents", {{"args", {p}}, {"faces", towers(p, 4)}});
         const json b = points(p);
@@ -357,7 +349,7 @@ TEST_CASE("deformers per blade")
 
 TEST_CASE("deformers take whole objects and converted components")
 {
-    fresh();
+    freshInObjectMode();
     const std::string plane = shrub(4);
     run("select", {{"args", {plane}}});
     CHECK(run("addBladeDeformer", {{"kind", "flare"}, {"perBlade", false}, {"up", "Y"}, {"seed", 1}}).size() == 1);
@@ -367,7 +359,7 @@ TEST_CASE("deformers take whole objects and converted components")
 
 TEST_CASE("faces kept together grow one blade per connected region")
 {
-    fresh();
+    freshInObjectMode();
     const std::string a = run("polyCube")[0];
     const std::string b = run("polyCube")[0];
     run("move", {{"args", {b}}, {"by", {1000.0, 0.0, 0.0}}});

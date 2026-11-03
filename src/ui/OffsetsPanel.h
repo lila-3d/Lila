@@ -26,6 +26,14 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
+    enum Column
+    {
+        kMute,
+        kWeight,
+        kName,
+        kInfo,
+    };
+
     void scheduleRefresh();
     void refresh();
     std::string currentOffset() const;

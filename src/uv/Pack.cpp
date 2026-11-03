@@ -4,6 +4,7 @@
 #include "core/Progress.h"
 #include "uv/Layout.h"
 #include "uv/Unwrap.h"
+#include "uv/UvCommon.h"
 
 #include <tbb/parallel_for.h>
 
@@ -25,7 +26,7 @@ namespace lila::uv
 {
 namespace
 {
-using Tri2 = std::array<glm::dvec2, 3>;
+using detail::Tri2;
 using Clock = std::chrono::steady_clock;
 
 /** Cells covered by a shape, as sorted, merged [x0, x1) spans per row. */
@@ -460,7 +461,7 @@ struct BinDef
 };
 
 /** Everything the attempts share. */
-struct Context
+struct PackContext
 {
     std::vector<Island> islands;
     std::vector<BinDef> binDefs;
@@ -475,7 +476,7 @@ struct Level
     std::vector<Bin> templates; // empty bins with margins and fixed islands
 };
 
-Attempt runAttempt(const Context& ctx, const Level& lv, const std::vector<std::vector<Mask>>& masks, int heuristic, double scale,
+Attempt runAttempt(const PackContext& ctx, const Level& lv, const std::vector<std::vector<Mask>>& masks, int heuristic, double scale,
                    const std::function<bool()>& stop)
 {
     LILA_ZONE();
@@ -1056,7 +1057,7 @@ PackResult packCharts(std::span<Chart> charts, const PackOptions& opts, std::spa
         }
     }
 
-    Context ctx;
+    PackContext ctx;
     ctx.binDefs = binDefs;
     std::vector<int> islandOf(charts.size(), -1);
     std::vector<double> base = baseAngles(opts);

@@ -20,7 +20,6 @@ namespace stagehand
 {
 namespace
 {
-using json = nlohmann::json;
 using RealizeArg = ArgType;
 
 /** One referenced mesh and where each of its instances sits, in the modifier's (the mesh node's) space. */

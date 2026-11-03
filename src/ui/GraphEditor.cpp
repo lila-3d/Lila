@@ -14,6 +14,7 @@
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QHBoxLayout>
@@ -49,29 +50,10 @@ constexpr double kEps = 1e-6;
 constexpr int kRulerHeight = 18;
 constexpr double kHandleLength = 36.0;
 
-QColor gray(int v, int a = 255) { return themeShade(v, a); }
-
 GraphEditor*& current()
 {
     static GraphEditor* e = nullptr;
     return e;
-}
-
-/** "translateX" -> "Translate X". */
-QString niceName(const std::string& name)
-{
-    QString out;
-    for (size_t i = 0; i < name.size(); ++i)
-    {
-        char c = name[i];
-        if (i == 0)
-            out += QChar(c).toUpper();
-        else if (std::isupper(static_cast<unsigned char>(c)))
-            out += QString(' ') + QChar(c);
-        else
-            out += QChar(c);
-    }
-    return out;
 }
 
 /** Smallest of 1, 2, 5 x 10^n at least rough. */
@@ -97,7 +79,7 @@ QString formatValue(double v)
 }
 
 /** Runs a command quietly; callers group several into one undo chunk. */
-bool runQuiet(const char* command, const json& call)
+bool runUnechoed(const char* command, const json& call)
 {
     try
     {
@@ -197,7 +179,7 @@ anim::Curve derivedChannel(const anim::RotationCurve& rc, int slot)
     return out;
 }
 
-QIcon swatch(const Channel& ch)
+QIcon channelSwatch(const Channel& ch)
 {
     QPixmap pm(28, 12);
     pm.fill(Qt::transparent);
@@ -945,10 +927,10 @@ private:
                     {
                         rotationTimes[realCurve(curve)].insert(t);
                         if (dv != 0.0)
-                            runQuiet("keyframe", {{"args", {name}}, {"time", t}, {"valueChange", dv}, {"relative", true}});
+                            runUnechoed("keyframe", {{"args", {name}}, {"time", t}, {"valueChange", dv}, {"relative", true}});
                         continue;
                     }
-                    runQuiet("keyframe",
+                    runUnechoed("keyframe",
                              {{"args", {name}}, {"time", t}, {"timeChange", dt}, {"valueChange", dv}, {"relative", true}});
                 }
             }
@@ -960,7 +942,7 @@ private:
                         std::reverse(times.begin(), times.end());
                     if (scene::Node* n = Graph::current().node(curve))
                         for (double t : times)
-                            runQuiet("keyframe", {{"args", {n->path()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
+                            runUnechoed("keyframe", {{"args", {n->path()}}, {"time", t}, {"timeChange", dt}, {"relative", true}});
                 }
         }
         log::write(LogLevel::Echo, "# moved " + std::to_string(sel.size()) + " keys\n");
@@ -1246,7 +1228,7 @@ void GraphEditor::rebuild()
             ch.level = kLevels[channels.size() % 4];
             ch.dash = kDashes[channels.size() % 3];
             auto* item = new QTreeWidgetItem(top, {ch.label});
-            item->setIcon(0, swatch(ch));
+            item->setIcon(0, channelSwatch(ch));
             item->setData(0, Qt::UserRole, int(channels.size()));
             item->setData(0, Qt::UserRole + 1, QString::fromStdString(g.plugName(ap.plug)) + ch.label);
             channels.push_back(std::move(ch));
@@ -1351,7 +1333,7 @@ void GraphEditor::applyTangent(const char* type)
                 json call = {{"args", {name}}, {"time", k.time}, {"outTangentType", type}};
                 if (!step)
                     call["inTangentType"] = type;
-                runQuiet("keyTangent", call);
+                runUnechoed("keyTangent", call);
             }
     }
     else
@@ -1361,7 +1343,7 @@ void GraphEditor::applyTangent(const char* type)
                 json call = {{"args", {name}}, {"outTangentType", type}};
                 if (!step)
                     call["inTangentType"] = type;
-                runQuiet("keyTangent", call);
+                runUnechoed("keyTangent", call);
             }
     log::write(LogLevel::Echo, std::string("# tangents: ") + type + "\n");
 }
@@ -1396,7 +1378,7 @@ void GraphEditor::deleteSelectedKeys()
         UndoChunk chunk("Delete Keys");
         for (const KeySel& k : doomed)
             if (std::string name = mView->commandTarget(k.curve); !name.empty())
-                runQuiet("cutKey", {{"args", {name}}, {"time", k.time}, {"clear", true}});
+                runUnechoed("cutKey", {{"args", {name}}, {"time", k.time}, {"clear", true}});
     }
     log::write(LogLevel::Echo, "# deleted " + std::to_string(doomed.size()) + " keys\n");
     refreshKeyFields();
@@ -1445,13 +1427,13 @@ void GraphEditor::editKeyField(bool time)
         if (std::abs(to - k.time) < kEps)
             return;
         if (std::string name = mView->commandTarget(k.curve); !name.empty())
-            if (runQuiet("keyframe", {{"args", {name}}, {"time", k.time}, {"timeChange", to}}))
+            if (runUnechoed("keyframe", {{"args", {name}}, {"time", k.time}, {"timeChange", to}}))
                 k.time = to;
         return;
     }
     UndoChunk chunk("Key Values");
     for (const KeySel& k : mView->sel)
         if (std::string name = mView->commandTarget(k.curve); !name.empty())
-            runQuiet("keyframe", {{"args", {name}}, {"time", k.time}, {"valueChange", x}});
+            runUnechoed("keyframe", {{"args", {name}}, {"time", k.time}, {"valueChange", x}});
 }
 } // namespace lila::ui

@@ -8,8 +8,10 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -268,6 +270,27 @@ private:
     std::vector<std::vector<Index>> mBuckets;      // segments per hashed cell
     std::vector<std::vector<Index>> mCornerBuckets;
 };
+
+/** The point nearest x on any of the segments; x itself when there are none. */
+inline glm::dvec3 closestOnSegments(const glm::dvec3& x, std::span<const std::array<glm::dvec3, 2>> segs)
+{
+    glm::dvec3 best = x;
+    double bestD = std::numeric_limits<double>::max();
+    for (const auto& [a, b] : segs)
+    {
+        const glm::dvec3 ab = b - a;
+        const double len2 = glm::dot(ab, ab);
+        const double t = len2 > 0.0 ? std::clamp(glm::dot(x - a, ab) / len2, 0.0, 1.0) : 0.0;
+        const glm::dvec3 q = a + ab * t;
+        const double d = glm::dot(x - q, x - q);
+        if (d < bestD)
+        {
+            bestD = d;
+            best = q;
+        }
+    }
+    return best;
+}
 
 /** Unit vector perpendicular to n, chosen deterministically. */
 inline glm::dvec3 anyTangent(const glm::dvec3& n)

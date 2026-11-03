@@ -10,6 +10,7 @@
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
+#include "ui/UiCommands.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -38,7 +39,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::NodeId;
 
@@ -51,21 +51,6 @@ json query(const char* command, const json& call)
     }
     catch (const CommandError& e)
     {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-json run(const char* command, const json& call, std::string* error = nullptr)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        if (error)
-            *error = e.what();
         log::warn("{}", e.what());
         return nullptr;
     }
@@ -144,7 +129,7 @@ const std::map<std::string, QStringList>& enums()
     return e;
 }
 
-QDoubleSpinBox* number(QWidget* parent, double v)
+QDoubleSpinBox* valueSpin(QWidget* parent, double v)
 {
     auto* s = new QDoubleSpinBox(parent);
     s->setRange(-1e6, 1e6);
@@ -159,7 +144,7 @@ QDoubleSpinBox* number(QWidget* parent, double v)
  * An editor for one JSON value: a check box, a number, a choice, a line of text or three numbers. onEdit gets the
  * new value. Null for values it can't edit (nested objects).
  */
-QWidget* valueEditor(QWidget* parent, const std::string& key, const json& v, std::function<void(json)> onEdit)
+QWidget* settingEditor(QWidget* parent, const std::string& key, const json& v, std::function<void(json)> onEdit)
 {
     if (v.is_boolean())
     {
@@ -179,7 +164,7 @@ QWidget* valueEditor(QWidget* parent, const std::string& key, const json& v, std
     }
     if (v.is_number())
     {
-        QDoubleSpinBox* s = number(parent, v.get<double>());
+        QDoubleSpinBox* s = valueSpin(parent, v.get<double>());
         QObject::connect(s, &QDoubleSpinBox::valueChanged, s, [onEdit](double x) { onEdit(x); });
         return s;
     }
@@ -206,7 +191,7 @@ QWidget* valueEditor(QWidget* parent, const std::string& key, const json& v, std
         auto boxes = std::make_shared<std::array<QDoubleSpinBox*, 3>>();
         for (int k = 0; k < 3; ++k)
         {
-            (*boxes)[size_t(k)] = number(w, v[size_t(k)].get<double>());
+            (*boxes)[size_t(k)] = valueSpin(w, v[size_t(k)].get<double>());
             h->addWidget((*boxes)[size_t(k)]);
             QObject::connect((*boxes)[size_t(k)], &QDoubleSpinBox::valueChanged, w, [boxes, onEdit](double) {
                 onEdit(json::array({(*boxes)[0]->value(), (*boxes)[1]->value(), (*boxes)[2]->value()}));
@@ -227,7 +212,7 @@ QWidget* objectForm(QWidget* parent, const json& obj, const std::function<void(j
     for (const auto& [key, value] : obj.items())
     {
         const std::string k = key;
-        if (QWidget* e = valueEditor(w, k, value, [k, onEdit](json v) { onEdit(json{{k, std::move(v)}}); }))
+        if (QWidget* e = settingEditor(w, k, value, [k, onEdit](json v) { onEdit(json{{k, std::move(v)}}); }))
             f->addRow(titleCase(k), e);
     }
     return w;
@@ -263,7 +248,7 @@ QWidget* listEditor(QWidget* parent, const json& list, const json& blank, const 
         {
             const std::string k = keys[c];
             const json value = (*data)[r].contains(k) ? (*data)[r][k] : blank[k];
-            if (QWidget* e = valueEditor(tree, k, value, [data, r, k, onChange](json nv) {
+            if (QWidget* e = settingEditor(tree, k, value, [data, r, k, onChange](json nv) {
                     (*data)[r][k] = std::move(nv);
                     onChange(*data);
                 }))
@@ -336,7 +321,7 @@ public:
                 log::warn("Retargeter: select a joint of the source skeleton, then one of the target skeleton");
                 return;
             }
-            const json r = run("retargeter", {{"source", sel[0].toStdString()}, {"target", sel[1].toStdString()}});
+            const json r = runUi("retargeter", {{"source", sel[0].toStdString()}, {"target", sel[1].toStdString()}});
             if (r.is_object())
                 mCurrent = r["retargeter"].get<std::string>();
             refresh();
@@ -344,21 +329,21 @@ public:
         button("player-play", "Retarget: key the target into a take", [this] {
             if (mCurrent.empty())
                 return;
-            const json r = run("retarget", {{"retargeter", mCurrent}, {"mode", mMode->currentText().toStdString()}});
+            const json r = runUi("retarget", {{"retargeter", mCurrent}, {"mode", mMode->currentText().toStdString()}});
             if (r.is_object())
                 mReport->setText(reportText(r));
         });
         button("arrows-maximize", "Align the target's retarget pose to the source's", [this] {
             if (!mCurrent.empty())
-                run("alignRetargetPose", {{"args", {mCurrent}}});
+                runUi("alignRetargetPose", {{"args", {mCurrent}}});
         });
         button("camera", "Capture both skeletons' current poses as this pair's retarget poses", [this] {
             if (!mCurrent.empty())
-                run("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"captureSource", true}, {"captureTarget", true}});
+                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"captureSource", true}, {"captureTarget", true}});
         });
         button("restore", "Reset the retarget poses to each rig's own", [this] {
             if (!mCurrent.empty())
-                run("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"reset", true}});
+                runUi("alignRetargetPose", {{"args", {mCurrent}}, {"align", false}, {"reset", true}});
         });
         v->addLayout(top);
 
@@ -444,7 +429,7 @@ private:
         mEditing = true;
         json c = call;
         c["args"] = {mCurrent};
-        run("editRetargeter", c);
+        runUi("editRetargeter", c);
         mEditing = false;
     }
 
@@ -453,7 +438,7 @@ private:
         mEditing = true;
         json c = call;
         c["args"] = {rig};
-        run("editRetargetRig", c);
+        runUi("editRetargetRig", c);
         mEditing = false;
     }
 
@@ -608,7 +593,7 @@ private:
             auto* again = new QPushButton("Characterize Again", w);
             again->setToolTip("Find the chains again from the skeleton as it is posed now (the retarget pose becomes this pose)");
             const std::string topPath = g.path(top);
-            connect(again, &QPushButton::clicked, this, [topPath] { run("characterize", {{"args", {topPath}}}); });
+            connect(again, &QPushButton::clicked, this, [topPath] { runUi("characterize", {{"args", {topPath}}}); });
             head->addWidget(again);
             v->addLayout(head);
             const json def = query("editRetargetRig", {{"args", {rig}}, {"query", true}});
@@ -752,7 +737,7 @@ public:
                     NodeId r = retarget::retargeterFor(g, s->id(), t->id());
                     if (r == scene::kNoNode)
                     {
-                        const json made = run("retargeter", {{"source", g.path(s->id())}, {"target", g.path(t->id())}});
+                        const json made = runUi("retargeter", {{"source", g.path(s->id())}, {"target", g.path(t->id())}});
                         if (made.is_object())
                             r = g.find(made["retargeter"].get<std::string>())->id();
                     }
@@ -770,7 +755,7 @@ public:
     {
         // Closing after a preview takes it back.
         if (mPreviewed)
-            run("undo", json::object());
+            runUi("undo", json::object());
         mPreviewed = false;
         QDialog::reject();
     }
@@ -779,7 +764,7 @@ private:
     void go()
     {
         if (mPreviewed)
-            run("undo", json::object());
+            runUi("undo", json::object());
         mPreviewed = false;
         json call = {{"target", mTarget->currentText().toStdString()}};
         if (mFiles.isEmpty())
@@ -797,8 +782,8 @@ private:
         call["mode"] = modes[std::clamp(mMode->currentIndex(), 0, 2)];
         call["gait"] = mGait->currentText().toStdString();
         std::string error;
-        const json r = run("retarget", call, &error);
-        if (r.is_null())
+        json r;
+        if (!tryRunUi("retarget", call, &r, &error))
         {
             mReport->setText(QString::fromStdString(error));
             return;
@@ -863,7 +848,7 @@ void registerRetargetUi()
                               log::warn("Characterize Skeleton: select a joint of the skeleton");
                               return;
                           }
-                          const json r = run("characterize", {{"args", {j}}});
+                          const json r = runUi("characterize", {{"args", {j}}});
                           if (r.is_object())
                               for (const json& n : r.value("notes", json::array()))
                                   log::warn("Characterize Skeleton: {}", n.get<std::string>());

@@ -15,7 +15,7 @@ namespace lila::deform
 namespace
 {
 using SpMat = Eigen::SparseMatrix<double>;
-using Solver = Eigen::SimplicialLDLT<SpMat>;
+using CholeskySolver = Eigen::SimplicialLDLT<SpMat>;
 using Rows = Eigen::Matrix<double, Eigen::Dynamic, 3>;
 
 /** The positive semidefinite cotangent Laplacian: L_ii = sum of w_ij, L_ij = -w_ij. */
@@ -159,7 +159,7 @@ struct HandleSolver::Impl
     std::vector<uint32_t> freePoints;
     int groups = 0;
     SpMat L, Q;
-    Solver biharmonic, rigid;
+    CholeskySolver biharmonic, rigid;
     Eigen::MatrixXd blend; // free points x groups: biharmonic weights of each group, for the ARAP start
     // Weighted neighbours, CSR, for the ARAP local step.
     std::vector<uint32_t> offsets, nbr;
@@ -398,7 +398,7 @@ std::vector<float> boundedBiharmonicWeights(const geo::Mesh& topology, std::span
             Eigen::VectorXd rhs(Eigen::Index(freePts.size()));
             for (size_t i = 0; i < freePts.size(); ++i)
                 rhs[Eigen::Index(i)] = -qx[freePts[i]];
-            Solver s(restrictFree(Q, freeIdx, int(freePts.size())));
+            CholeskySolver s(restrictFree(Q, freeIdx, int(freePts.size())));
             if (s.info() != Eigen::Success)
                 break;
             Eigen::VectorXd x = s.solve(rhs);

@@ -20,24 +20,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-struct PassHeader
-{
-    float res[4];
-    float uv[4];
-};
-
-struct BufferView
-{
-    const void* data;
-    size_t count;
-};
-
-struct Varying
-{
-    uint32_t start[3];
-    uint32_t end[3];
-};
-
 int wrap(int i, int n) { return ((i % n) + n) % n; }
 
 /** Separable Gaussian, radius in uv (fraction of the width), wrapping at the edges. */
@@ -243,11 +225,11 @@ EvalResult evaluateCpu(const Plan& plan, const EvalOptions& options)
         auto kernel = slangrt::cpuKernel(pass.source, pass.hash, &err);
         if (!kernel)
             throw std::runtime_error("pass for " + pass.node + " failed to compile:\n" + err);
-        PassHeader header{{float(w), float(h), 1.0f / float(w), 1.0f / float(h)}, {options.uvOffset[0], options.uvOffset[1], 1.0f, 1.0f}};
-        const PassHeader* headerPtr = &header;
-        BufferView u{uniforms.data(), uniforms.size() / 4};
-        BufferView a{arena.data(), arena.size() / 4};
-        BufferView o{out, size_t(w) * size_t(h)};
+        slangrt::PassHeader header{{float(w), float(h), 1.0f / float(w), 1.0f / float(h)}, {options.uvOffset[0], options.uvOffset[1], 1.0f, 1.0f}};
+        const slangrt::PassHeader* headerPtr = &header;
+        slangrt::BufferView u{uniforms.data(), uniforms.size() / 4};
+        slangrt::BufferView a{arena.data(), arena.size() / 4};
+        slangrt::BufferView o{out, size_t(w) * size_t(h)};
         std::vector<uint8_t> globals(kernel->globalsSize, 0);
         std::memcpy(&globals[kernel->offPass], &headerPtr, sizeof(headerPtr));
         std::memcpy(&globals[kernel->offU], &u, sizeof(u));
@@ -256,7 +238,7 @@ EvalResult evaluateCpu(const Plan& plan, const EvalOptions& options)
         std::memcpy(&globals[kernel->offOut], &o, sizeof(o));
         const uint32_t groupsX = uint32_t((w + 7) / 8), groupsY = uint32_t((h + 7) / 8);
         tbb::parallel_for(uint32_t(0), groupsY, [&](uint32_t gy) {
-            Varying v{{0, gy, 0}, {groupsX, gy + 1, 1}};
+            slangrt::Varying v{{0, gy, 0}, {groupsX, gy + 1, 1}};
             std::vector<uint8_t> local = globals;
             kernel->fn(&v, nullptr, local.data());
         });

@@ -85,8 +85,6 @@ std::string prop(const std::string& object, const std::string& name)
 void setTranslate(const std::string& name, const glm::dvec3& v) { graph().setValue({node(name).id(), Transform::kTranslate, -1}, v); }
 glm::dvec3 translateOf(const std::string& name) { return node(name).as<glm::dvec3>(Transform::kTranslate); }
 
-bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
-
 bool warned(const json& list, const std::string& part)
 {
     for (const json& w : list)

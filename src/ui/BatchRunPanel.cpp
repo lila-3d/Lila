@@ -14,6 +14,8 @@
 #include "ui/Panels.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/editor/CodeEditor.h"
 #include "ui/editor/ScriptEditor.h"
 #include "ui/FileDialog.h"
@@ -63,10 +65,9 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
-constexpr const char* kPrefs = "batchRun";
+constexpr const char* kBatchRunPrefs = "batchRun";
 
-enum Column
+enum BatchColumn
 {
     kIndex,
     kFile,
@@ -84,37 +85,7 @@ enum Source
     kFromEditor,
     kFromScene,
 };
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
 std::string ss(const QString& s) { return s.toStdString(); }
-
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip, const QString& text = {})
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    if (!text.isEmpty())
-    {
-        b->setText(text);
-        b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
-    return b;
-}
 
 const char* statusIcon(batch::Status s)
 {
@@ -293,7 +264,7 @@ BatchRunPanel::BatchRunPanel(QWidget* parent) : QWidget(parent)
     mRemember = new QTimer(this);
     mRemember->setSingleShot(true);
     mRemember->setInterval(500);
-    connect(mRemember, &QTimer::timeout, this, [this] { PrefStore::get().set(kPrefs, "/last", formState()); });
+    connect(mRemember, &QTimer::timeout, this, [this] { PrefStore::get().set(kBatchRunPrefs, "/last", formState()); });
 
     connect(mPreview, &QToolButton::clicked, this, [this] { start(true); });
     connect(mRun, &QToolButton::clicked, this, [this] { start(false); });
@@ -322,7 +293,7 @@ BatchRunPanel::BatchRunPanel(QWidget* parent) : QWidget(parent)
     connect(mPresets, &QComboBox::activated, this, [this](int i) {
         if (i <= 0)
             return;
-        json all = PrefStore::get().value(kPrefs, "/presets", json::object());
+        json all = PrefStore::get().value(kBatchRunPrefs, "/presets", json::object());
         std::string name = ss(mPresets->itemText(i));
         if (all.is_object() && all.contains(name))
             applyState(all[name]);
@@ -331,7 +302,7 @@ BatchRunPanel::BatchRunPanel(QWidget* parent) : QWidget(parent)
     connect(deletePresetButton, &QToolButton::clicked, this, &BatchRunPanel::deletePreset);
 
     refreshPresets();
-    json last = PrefStore::get().value(kPrefs, "/last", json());
+    json last = PrefStore::get().value(kBatchRunPrefs, "/last", json());
     if (last.is_object())
         applyState(last);
 
@@ -817,9 +788,9 @@ void BatchRunPanel::start(bool dryRun)
     }
     if (dryRun)
         c["dryRun"] = true;
-    PrefStore::get().set(kPrefs, "/last", formState());
+    PrefStore::get().set(kBatchRunPrefs, "/last", formState());
 
-    json started = run("batchRun", c);
+    json started = runUi("batchRun", c);
     if (started.is_null())
     {
         QMessageBox::warning(this, "Batch Script Execution", "The run did not start; the Script Output has the reason.");
@@ -834,7 +805,7 @@ void BatchRunPanel::start(bool dryRun)
 void BatchRunPanel::cancel()
 {
     if (mRunShown && !mRunShown->isFinished())
-        run("batchRunCancel", {{"args", {mRunShown->id()}}});
+        runUi("batchRunCancel", {{"args", {mRunShown->id()}}});
 }
 
 void BatchRunPanel::retry(const std::vector<size_t>& indices)
@@ -844,7 +815,7 @@ void BatchRunPanel::retry(const std::vector<size_t>& indices)
     json c = {{"args", {mRunShown->id()}}};
     if (!indices.empty())
         c["indices"] = indices;
-    json started = run("batchRunRetry", c);
+    json started = runUi("batchRunRetry", c);
     if (!started.is_null())
         watch(started["id"].get<int>());
 }
@@ -1061,7 +1032,7 @@ void BatchRunPanel::refreshPresets()
     const QString current = mPresets->currentText();
     mPresets->clear();
     mPresets->addItem("(none)");
-    json all = PrefStore::get().value(kPrefs, "/presets", json::object());
+    json all = PrefStore::get().value(kBatchRunPrefs, "/presets", json::object());
     if (all.is_object())
         for (auto it = all.begin(); it != all.end(); ++it)
             mPresets->addItem(qs(it.key()));
@@ -1077,7 +1048,7 @@ void BatchRunPanel::savePreset()
                        .trimmed();
     if (!ok || name.isEmpty())
         return;
-    run("batchRunPreset", {{"args", {ss(name)}}, {"spec", formState()}});
+    runUi("batchRunPreset", {{"args", {ss(name)}}, {"spec", formState()}});
     refreshPresets();
     mPresets->setCurrentIndex(std::max(0, mPresets->findText(name)));
 }
@@ -1089,7 +1060,7 @@ void BatchRunPanel::deletePreset()
     const QString name = mPresets->currentText();
     if (QMessageBox::question(this, "Delete Preset", "Delete the preset '" + name + "'?") != QMessageBox::Yes)
         return;
-    run("batchRunPreset", {{"args", {ss(name)}}, {"delete", true}});
+    runUi("batchRunPreset", {{"args", {ss(name)}}, {"delete", true}});
     refreshPresets();
 }
 
@@ -1105,9 +1076,9 @@ void BatchRunPanel::fillFileListMenu()
         json files = json::array();
         for (int i = 0; i < mInputs->count(); ++i)
             files.push_back(ss(mInputs->item(i)->text()));
-        run("batchRunFileList", {{"args", {ss(name)}}, {"files", files}});
+        runUi("batchRunFileList", {{"args", {ss(name)}}, {"files", files}});
     });
-    json lists = PrefStore::get().value(kPrefs, "/fileLists", json::object());
+    json lists = PrefStore::get().value(kBatchRunPrefs, "/fileLists", json::object());
     if (!lists.is_object() || lists.empty())
         return;
     m->addSeparator();
@@ -1130,7 +1101,7 @@ void BatchRunPanel::fillFileListMenu()
             m->addSeparator();
             remove = new QMenu("Delete List", m);
         }
-        remove->addAction(qs(name), this, [name] { run("batchRunFileList", {{"args", {name}}, {"delete", true}}); });
+        remove->addAction(qs(name), this, [name] { runUi("batchRunFileList", {{"args", {name}}, {"delete", true}}); });
     }
     if (remove)
         m->addMenu(remove);

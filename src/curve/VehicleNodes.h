@@ -6,6 +6,7 @@
 
 #include <span>
 #include <string>
+#include <vector>
 
 namespace lila::scene
 {
@@ -20,6 +21,9 @@ class Node;
  */
 namespace lila::curve
 {
+/** The continuity choices of a blend's ends: position, tangent, curvature, curvature rate. */
+inline const std::vector<std::string> kContinuity = {"g0", "g1", "g2", "g3"};
+
 /** Edge ids as the nodes store them: a JSON list. */
 LILA_SCENE_API std::string edgeListToJson(std::span<const geo::Index> edges);
 LILA_SCENE_API std::vector<geo::Index> edgeListFromJson(const std::string& text);

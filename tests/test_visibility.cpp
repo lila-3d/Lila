@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "scene/Graph.h"
@@ -8,18 +10,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
-NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
 bool own(const std::string& name) { return Graph::current().find(name)->as<bool>(Transform::kVisibility); }
-size_t selectedCount(const std::string& m, const char* kind)
-{
-    json sel = run("componentSelection");
-    return sel.contains(m) && sel[m].contains(kind) ? sel[m][kind].size() : 0;
-}
 } // namespace
 
 TEST_CASE("hiding a group hides what is under it unless inheritance is off")

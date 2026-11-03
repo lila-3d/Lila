@@ -18,7 +18,7 @@ namespace
  * A tube skinned to clavicle > upperarm_l > lowerarm_l > hand_l, with upperarm_twist_01_l under the upper arm (its
  * own correctiveRoot holding a bicep) taking the weights round y = -25.
  */
-std::string arm()
+std::string twistArm()
 {
     run("newScene");
     std::string mesh = run("polyCylinder", {{"name", "Arm"}, {"radius", 8}, {"height", 120}, {"subdivisionsHeight", 24}, {"caps", false}})[0];
@@ -36,8 +36,6 @@ std::string arm()
     run("skinCluster", {{"args", {"clavicle_l", mesh}}});
     return mesh;
 }
-
-NodeId id(const std::string& name) { return node(name).id(); }
 
 /** A face of the mesh that joint dominates. */
 uint32_t faceOf(const std::string& mesh, const std::string& joint)
@@ -60,7 +58,7 @@ TEST_CASE("helper joint names")
 
 TEST_CASE("selectAs redirects through renames, files and undo")
 {
-    arm();
+    twistArm();
     CHECK(run("selectAs", {{"args", {"upperarm_twist_01_l"}}})["upperarm_twist_01_l"].is_null());
     run("selectAs", {{"args", {"upperarm_twist_01_l"}}, {"target", "upperarm_l"}});
     CHECK(rig::selectAsTarget(graph(), id("upperarm_twist_01_l")) == id("upperarm_l"));
@@ -91,7 +89,7 @@ TEST_CASE("selectAs redirects through renames, files and undo")
 
 TEST_CASE("the auto rule sends helpers to their limb bone")
 {
-    arm();
+    twistArm();
     run("select", {{"args", json::array()}});
     json would = run("autoSelectAs", {{"query", true}});
     CHECK(would["upperarm_twist_01_l"] == "upperarm_l");
@@ -124,7 +122,7 @@ TEST_CASE("the auto rule sends helpers to their limb bone")
 
 TEST_CASE("candidates under the cursor: redirect, weighted, parent, child, influences")
 {
-    std::string mesh = arm();
+    std::string mesh = twistArm();
     // With joints selected only those and what is under them change.
     run("select", {{"args", {"upperarm_twist_01_l"}}});
     CHECK(run("autoSelectAs").size() == 2);

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/MainQueue.h"
 #include "gn/Gn.h"
 #include "ops/Command.h"
@@ -30,12 +32,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void pump()
+void pumpWithDeletes()
 {
     for (int i = 0; i < 4; ++i)
     {
@@ -43,26 +44,6 @@ void pump()
         QApplication::processEvents();
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     }
-}
-
-void registerAll()
-{
-    mainq::init();
-    ops::registerBuiltins();
-    scene::types::registerBuiltins();
-    scene::registerCommands();
-    gn::registerTypes();
-    gn::registerCommands();
-    if (!scene::types::find(tex::kTextureSetType))
-        tex::registerTypes();
-    if (!ops::find("texCreateSet"))
-        tex::registerCommands();
-    if (!ops::find("texExportGraph"))
-        tex::registerFileCommands();
-    ui::actions::registerBuiltins();
-    ui::registerNodeEditorActions();
-    ui::registerTexGraphBackend();
-    ui::Hotkeys::get().install();
 }
 
 json stack() { return run("texLayerStack", {{"args", {"Rock"}}}); }
@@ -91,7 +72,7 @@ const json* layerIn(const json& layers, const std::string& id)
 
 TEST_CASE("texture set panel builds a layer stack through tex commands, and undo restores it")
 {
-    registerAll();
+    registerTexGraphUi();
     run("newScene");
     run("texCreateSet", {{"args", {"Rock"}}, {"resolution", 64}});
 
@@ -108,7 +89,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     win.resize(420, 900);
     win.show();
     panel->setTextureSet("Rock");
-    pump();
+    pumpWithDeletes();
     CHECK(panel->setPicker()->currentText() == "Rock");
 
     // Two fill layers: the second goes above the selected first, and the rows show the top first.
@@ -118,7 +99,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     CHECK(panel->selectedLayer() == a);
     const std::string b = panel->addLayer("fill");
     REQUIRE(!b.empty());
-    pump();
+    pumpWithDeletes();
     CHECK(rootIds() == std::vector<std::string>{a, b});
     REQUIRE(panel->tree()->topLevelItemCount() == 2);
     CHECK(panel->tree()->topLevelItem(0)->data(0, Qt::UserRole + 1).toString().toStdString() == b);
@@ -126,7 +107,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     // Reorder: drop the top layer below the other.
     executed.clear();
     panel->moveLayer(b, a, ui::TextureSetPanel::Drop::Below);
-    pump();
+    pumpWithDeletes();
     CHECK(ran("texMoveLayer"));
     CHECK(rootIds() == std::vector<std::string>{b, a});
     CHECK(panel->tree()->topLevelItem(0)->data(0, Qt::UserRole + 1).toString().toStdString() == a);
@@ -137,7 +118,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     REQUIRE(emissive);
     executed.clear();
     emissive->click();
-    pump();
+    pumpWithDeletes();
     CHECK(ran("texSetLayer"));
     CHECK(layerIn(stack()["layers"], a)->at("resolved")["emissive"]["enabled"].get<bool>());
 
@@ -146,7 +127,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     REQUIRE(opacity);
     executed.clear();
     opacity->setValue(50);
-    pump();
+    pumpWithDeletes();
     CHECK(ran("texSetLayer"));
     json resolved = layerIn(stack()["layers"], a)->at("resolved");
     CHECK(resolved["baseColor"]["opacity"].get<double>() == doctest::Approx(0.5));
@@ -155,7 +136,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
 
     // Undo puts the opacity back, and the row follows.
     REQUIRE(UndoStack::get().undo());
-    pump();
+    pumpWithDeletes();
     CHECK(layerIn(stack()["layers"], a)->at("resolved")["baseColor"]["opacity"].get<double>() == doctest::Approx(1.0));
     opacity = panel->findChild<QSpinBox*>(QString::fromStdString("opacity:" + a));
     REQUIRE(opacity);
@@ -166,12 +147,12 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     auto* eye = panel->findChild<QToolButton*>(QString::fromStdString("eye:" + a));
     REQUIRE(eye);
     eye->click();
-    pump();
+    pumpWithDeletes();
     CHECK_FALSE(layerIn(stack()["layers"], a)->at("enabled").get<bool>());
     const std::string folder = panel->addLayer("folder");
     REQUIRE(!folder.empty());
     panel->moveLayer(a, folder, ui::TextureSetPanel::Drop::Into);
-    pump();
+    pumpWithDeletes();
     const json afterMove = stack();
     const json* f = layerIn(afterMove["layers"], folder);
     REQUIRE(f);
@@ -180,7 +161,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
 
     // A mask on the selected layer, then duplicate keeps it with fresh ids.
     panel->selectLayer(b);
-    pump();
+    pumpWithDeletes();
     const std::string mask = panel->addMask("black");
     REQUIRE(!mask.empty());
     CHECK(ran("texAddMask"));
@@ -188,7 +169,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     panel->selectLayer(b);
     const size_t before = rootIds().size();
     panel->duplicateSelected();
-    pump();
+    pumpWithDeletes();
     std::vector<std::string> ids = rootIds();
     REQUIRE(ids.size() == before + 1);
     const json afterCopy = stack();
@@ -201,7 +182,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
     // Delete the copy.
     executed.clear();
     panel->deleteSelected();
-    pump();
+    pumpWithDeletes();
     CHECK(ran("texRemoveLayer"));
     CHECK(rootIds().size() == before);
 
@@ -210,7 +191,7 @@ TEST_CASE("texture set panel builds a layer stack through tex commands, and undo
 
 TEST_CASE("texture set panel applies smart materials from its shelf and shows the graph-mode banner")
 {
-    registerAll();
+    registerTexGraphUi();
     run("newScene");
     run("texCreateSet", {{"args", {"Rock"}}, {"resolution", 64}});
 
@@ -220,7 +201,7 @@ TEST_CASE("texture set panel applies smart materials from its shelf and shows th
     win.resize(420, 900);
     win.show();
     panel->setTextureSet("Rock");
-    pump();
+    pumpWithDeletes();
 
     REQUIRE(panel->smartShelf()->count() > 0);
     std::string material;
@@ -235,7 +216,7 @@ TEST_CASE("texture set panel applies smart materials from its shelf and shows th
             executed.push_back(std::string(e.name));
     });
     panel->applySmartMaterial(material);
-    pump();
+    pumpWithDeletes();
     CHECK(std::find(executed.begin(), executed.end(), "texApplySmartMaterial") != executed.end());
     REQUIRE(rootIds().size() == 1);
     CHECK(panel->selectedLayer() == rootIds().front());
@@ -245,13 +226,13 @@ TEST_CASE("texture set panel applies smart materials from its shelf and shows th
 
     // A node added by hand that the stack can't show puts the set in graph mode; Rebuild Layers drops it.
     run("texAddNode", {{"args", {"Rock", "levels"}}});
-    pump();
+    pumpWithDeletes();
     CHECK(stack()["mode"] == "graph");
     CHECK_FALSE(panel->banner()->isHidden());
     auto* rebuild = panel->banner()->findChild<QPushButton*>("rebuildLayers");
     REQUIRE(rebuild);
     rebuild->click();
-    pump();
+    pumpWithDeletes();
     CHECK(stack()["mode"] == "stack");
     CHECK(panel->banner()->isHidden());
 

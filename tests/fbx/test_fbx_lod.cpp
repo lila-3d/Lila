@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "geo/Mesh.h"
@@ -17,32 +18,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_fbx_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
-
-struct Loaded
-{
-    ufbx_scene* scene = nullptr;
-    explicit Loaded(const fs::path& p)
-    {
-        ufbx_load_opts opts{};
-        ufbx_error err{};
-        scene = ufbx_load_file(p.string().c_str(), &opts, &err);
-        if (!scene)
-            MESSAGE(std::string(err.description.data, err.description.length));
-    }
-    ~Loaded() { ufbx_free_scene(scene); }
-};
-
-Node* addMesh(Graph& g, const std::string& name, double size, NodeId parent = kNoNode)
+Node* addCube(Graph& g, const std::string& name, double size, NodeId parent = kNoNode)
 {
     Node* n = g.createNode(*types::find("mesh"), name, parent, false);
     g.setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::make_shared<geo::Mesh>(geo::makeCube({.width = size, .height = size, .depth = size}))));
@@ -55,7 +36,7 @@ NodeId buildGroup(Graph& g, const std::string& sizes)
     Node* group = g.createNode(*types::find("lodGroup"), "Rock", kNoNode, false);
     g.setValue({group->id(), Transform::kTranslate, -1}, glm::dvec3(300, 0, 0));
     for (int i = 0; i < 3; ++i)
-        addMesh(g, "Rock_LOD" + std::to_string(i), 100.0 - 20.0 * i, group->id());
+        addCube(g, "Rock_LOD" + std::to_string(i), 100.0 - 20.0 * i, group->id());
     g.setValue({group->id(), LodGroup::kScreenSizes, -1}, sizes);
     g.evaluate();
     return group->id();
@@ -143,10 +124,10 @@ TEST_CASE("lodGroup command groups levels in order, names them and generates red
     math::setUpAxis(math::UpAxis::Y);
     Graph& g = Graph::current();
     g.clear();
-    Node* a = addMesh(g, "Crate", 100.0);
+    Node* a = addCube(g, "Crate", 100.0);
     g.setValue({a->id(), Transform::kTranslate, -1}, glm::dvec3(50, 0, 0));
-    addMesh(g, "CrateLow", 100.0);
-    addMesh(g, "CrateLowest", 100.0);
+    addCube(g, "CrateLow", 100.0);
+    addCube(g, "CrateLowest", 100.0);
     g.evaluate();
 
     std::string path = ops::execute("lodGroup", {{"args", {"Crate", "CrateLow", "CrateLowest"}}, {"screenSizes", {1.0, 0.3, 0.1}}}).get<std::string>();
@@ -196,7 +177,7 @@ TEST_CASE("LOD groups export as FbxLODGroup and import back")
         ss << f.rdbuf();
         CHECK(ss.str().find("FbxLODGroup") != std::string::npos);
     }
-    Loaded s(path);
+    UfbxScene s(path);
     REQUIRE(s.scene);
     REQUIRE(s.scene->lod_groups.count == 1);
     const ufbx_lod_group& lod = *s.scene->lod_groups.data[0];
@@ -237,7 +218,7 @@ TEST_CASE("LOD groups without screen sizes leave them to the importer, in skelet
     for (fbx::ExportKind kind : {fbx::ExportKind::Static, fbx::ExportKind::Skeletal})
     {
         const std::string path = exported(g, group, kind == fbx::ExportKind::Static ? "lod_auto.fbx" : "lod_skeletal.fbx", kind);
-        Loaded s(path);
+        UfbxScene s(path);
         REQUIRE(s.scene);
         REQUIRE(s.scene->lod_groups.count == 1);
         CHECK(s.scene->lod_groups.data[0]->instances.data[0]->children.count == 3);

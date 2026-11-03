@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Arrange.h"
 #include "bake/Bake.h"
 #include "bake/BakeInputs.h"
@@ -30,67 +31,18 @@
 #include <map>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_bakegrp_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
-scene::Graph& graph() { return scene::Graph::current(); }
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-std::string addMesh(const std::string& name, geo::Mesh m, const glm::dvec3& translate = glm::dvec3(0.0))
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    if (translate != glm::dvec3(0.0))
-        g.setValue({n->id(), scene::Transform::kTranslate, -1}, translate);
-    return n->path();
-}
-
-/** A 100 cm plane in XZ facing +Y; uv0 spans [uvMin, uvMax]. */
-geo::Mesh plane(int subdiv = 1, glm::vec2 uvMin = {0.0f, 0.0f}, glm::vec2 uvMax = {1.0f, 1.0f})
-{
-    geo::PlaneOptions o;
-    o.subdivX = o.subdivZ = subdiv;
-    geo::Mesh m = geo::makePlane(o);
-    for (glm::vec2& uv : m.cornerAttrs().get<glm::vec2>("uv0"))
-        uv = uvMin + uv * (uvMax - uvMin);
-    return m;
-}
-
-geo::Mesh lifted(geo::Mesh m, double y)
-{
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-        m.setPosition(p, m.position(p) + glm::dvec3(0.0, y, 0.0));
-    return m;
-}
-
-std::string project(const fs::path& dir, int res = 32, const std::string& name = "{group}_{map}")
+std::string smallProject(const fs::path& dir, int res = 32, const std::string& name = "{group}_{map}")
 {
     const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
     ops::execute("setBakeOutput", {{"project", p}, {"folder", dir.generic_string()}, {"resolution", res}, {"supersampling", 1}, {"format", "exr"},
                                    {"name", name}, {"padding", 2}});
     return p;
-}
-
-scene::MeshPtr baseMesh(const std::string& name)
-{
-    scene::Graph& g = graph();
-    return std::get<scene::MeshPtr>(g.storedValue(scene::modifiers::editPlug(g, g.find(name)->id())));
 }
 
 std::vector<json> issues(const json& report, const std::string& check)
@@ -141,7 +93,7 @@ TEST_CASE("groups hold lows, highs, cages and projects by node: renames follow, 
 
     for (const char* ext : {".lila", ".lilaa"})
     {
-        const fs::path file = tempDir("refs") / (std::string("scene") + ext);
+        const fs::path file = tempDir("lila_bakegrp_refs") / (std::string("scene") + ext);
         ops::execute("saveScene", {{"args", {file.generic_string()}}});
         newScene();
         ops::execute("openScene", {{"args", {file.generic_string()}}, {"force", true}});
@@ -312,7 +264,7 @@ TEST_CASE("bakePaint: add, subtract, set, smooth, flood, symmetry, one undo step
 
 TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
 {
-    const fs::path dir = tempDir("lint");
+    const fs::path dir = tempDir("lila_bakegrp_lint");
 
     SUBCASE("hard edges off seams")
     {
@@ -326,13 +278,13 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         }
         geo::setHardEdgesByAngle(roof, 10.0);
         geo::updateCornerNormals(roof);
-        const std::string p = project(dir);
+        const std::string p = smallProject(dir);
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("roof", roof)}}, {"self", true}});
         const auto found = issues(lintOnly(p, "hardEdges"), "hardEdges");
         REQUIRE(found.size() == 1);
         CHECK(found[0]["data"]["count"] == 2);
         newScene();
-        const std::string p2 = project(dir);
+        const std::string p2 = smallProject(dir);
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("flat", plane(2))}}, {"self", true}});
         CHECK(issues(lintOnly(p2, "hardEdges"), "hardEdges").empty());
     }
@@ -345,7 +297,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         geo::Mesh squashed = plane(1);
         for (glm::vec2& uv : squashed.cornerAttrs().get<glm::vec2>("uv0"))
             uv.y = 0.5f;
-        const std::string p = project(dir);
+        const std::string p = smallProject(dir);
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("bare", m), addMesh("squashed", squashed)}}, {"self", true}});
         const auto found = issues(lintOnly(p, "uvMissing"), "uvMissing");
         CHECK(found.size() == 2);
@@ -355,7 +307,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
     {
         newScene();
         const std::string a = addMesh("a_low", plane()), b = addMesh("b_low", plane());
-        const std::string p = project(dir, 32, "{project}_{map}");
+        const std::string p = smallProject(dir, 32, "{project}_{map}");
         ops::execute("bakeGroup", {{"args", {"ga"}}, {"lows", {a}}, {"self", true}});
         ops::execute("bakeGroup", {{"args", {"gb"}}, {"lows", {b}}, {"self", true}});
         const auto found = issues(lintOnly(p, "uvOverlap"), "uvOverlap");
@@ -372,7 +324,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
     SUBCASE("texel density outliers")
     {
         newScene();
-        const std::string p = project(dir, 32, "{mesh}_{map}");
+        const std::string p = smallProject(dir, 32, "{mesh}_{map}");
         ops::execute("bakeGroup", {{"args", {"g"}},
                                    {"lows", {addMesh("d1", plane()), addMesh("d2", plane()), addMesh("tiny", plane(1, {0.0f, 0.0f}, {0.1f, 0.1f}))}},
                                    {"self", true}});
@@ -392,7 +344,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         geo::Mesh mirrored = plane(2);
         for (glm::vec2& uv : mirrored.cornerAttrs().get<glm::vec2>("uv0"))
             uv.x = 1.0f - uv.x;
-        const std::string p = project(dir, 32, "{mesh}_{map}");
+        const std::string p = smallProject(dir, 32, "{mesh}_{map}");
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("folded", folded), addMesh("mirrored", mirrored), addMesh("plain", plane(2))}}, {"self", true}});
         const auto found = issues(lintOnly(p, "mirroredTangents"), "mirroredTangents");
         CHECK(std::ranges::any_of(found, [](const json& i) { return i["mesh"] == "folded" && i["message"].get<std::string>().find("fold") != std::string::npos; }));
@@ -404,7 +356,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         newScene();
         const std::string low = addMesh("r_low", plane(2));
         const std::string far = addMesh("r_far", lifted(plane(2), 50.0));
-        const std::string p = project(dir);
+        const std::string p = smallProject(dir);
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {low}}, {"highs", {far}}, {"frontal", 1.0}, {"rear", 1.0}});
         const json r = ops::execute("bakeLint", {{"project", p}, {"checks", {"highRange", "cageContainment"}}});
         CHECK(issues(r, "highRange").size() == 1);
@@ -429,7 +381,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
         newScene();
         geo::Mesh bent = plane(1);
         bent.setPosition(0, bent.position(0) + glm::dvec3(0.0, 20.0, 0.0));
-        const std::string p = project(dir);
+        const std::string p = smallProject(dir);
         ops::execute("bakeGroup", {{"args", {"g"}}, {"lows", {addMesh("bent", bent)}}, {"self", true}, {"cage", addMesh("wrong_cage", geo::makeCube())}});
         const json r = ops::execute("bakeLint", {{"project", p}, {"checks", {"triangulation", "cageTopology"}}, {"highs", false}});
         CHECK(issues(r, "triangulation").size() == 1);
@@ -442,7 +394,7 @@ TEST_CASE("bakeLint finds each problem and bake lists its warnings first")
 TEST_CASE("high files: OBJ, Alembic and FBX highs stream in at bake time and are cached")
 {
     newScene();
-    const fs::path dir = tempDir("files");
+    const fs::path dir = tempDir("lila_bakegrp_files");
     auto bump = [](geo::Mesh m) {
         for (geo::Index i = 0; i < m.pointCapacity(); ++i)
             m.setPosition(i, m.position(i) + glm::dvec3(0.0, 1.0 + 0.002 * m.position(i).x, 0.0));
@@ -477,7 +429,7 @@ TEST_CASE("high files: OBJ, Alembic and FBX highs stream in at bake time and are
     }
 
     const std::string low = addMesh("f_low", plane(2));
-    const std::string p = project(dir);
+    const std::string p = smallProject(dir);
     auto heightRange = [&](const json& r) {
         for (const json& o : r["outputs"])
             if (o["map"] == "height")
@@ -587,7 +539,7 @@ TEST_CASE("one group per mesh and Arrange")
 TEST_CASE("createBakeFromGenerator wires a ground tile hand-off into a Painter bake project")
 {
     newScene();
-    const fs::path dir = tempDir("generator");
+    const fs::path dir = tempDir("lila_bakegrp_generator");
     const fs::path high = dir / "tile_Hi.obj";
     REQUIRE(geo::writeObjFile(high.string(), lifted(plane(6), 4.0)));
     const std::string bakePlane = addMesh("tile_bakePlane", plane(2));

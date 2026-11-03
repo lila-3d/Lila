@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "deform/Deform.h"
 #include "deform/Handles.h"
 #include "deform/Shape.h"
@@ -13,23 +15,10 @@
 
 using namespace lila;
 using namespace lila::deform;
+using namespace deformtest;
 
 namespace
 {
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-9) { return glm::length(a - b) <= eps; }
-
-std::vector<glm::dvec3> randomPoints(size_t n, double lo, double hi, unsigned seed = 11)
-{
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> d(lo, hi);
-    std::vector<glm::dvec3> out(n);
-    for (auto& p : out)
-        p = {d(rng), d(rng), d(rng)};
-    return out;
-}
-
-std::vector<glm::dvec3> pointsOf(const geo::Mesh& m) { return {m.positions().begin(), m.positions().end()}; }
-
 /** A closed cube cage of half size h, triangulated, outward facing. */
 geo::Mesh cubeCage(double h)
 {
@@ -83,13 +72,13 @@ TEST_CASE("kelvinlet grab matches the closed form and moves the centre exactly")
     const double a = 1.0 / (4.0 * glm::pi<double>()), b = a / (4.0 * (1.0 - nu));
     const double re = std::sqrt(glm::dot(r, r) + eps * eps);
     glm::dvec3 expect = ((a - b) / re) * f + (b / (re * re * re)) * glm::dot(r, f) * r + (a * eps * eps / (2.0 * re * re * re)) * f;
-    CHECK(near(kelvinletGrab(r, f, eps, nu), expect, 1e-15));
+    CHECK(nearTight(kelvinletGrab(r, f, eps, nu), expect, 1e-15));
 
     for (int scales = 1; scales <= 3; ++scales)
     {
         KelvinletBrush brush{eps, nu, scales};
         CAPTURE(scales);
-        CHECK(near(kelvinletGrabBrush(glm::dvec3(0.0), {1, 2, 3}, brush), {1, 2, 3}, 1e-12));
+        CHECK(nearTight(kelvinletGrabBrush(glm::dvec3(0.0), {1, 2, 3}, brush), {1, 2, 3}, 1e-12));
     }
     // More scales fade faster.
     glm::dvec3 far(20.0, 0.0, 0.0);
@@ -127,7 +116,7 @@ TEST_CASE("kelvinlet affine loads: twist, scale and pinch have the asked gradien
     const double a = 1.0 / (4.0 * glm::pi<double>());
     const double re = std::sqrt(glm::dot(r, r) + eps * eps);
     const double k = 1.0 / std::pow(re, 3) + 1.5 * eps * eps / std::pow(re, 5);
-    CHECK(near(kelvinletAffine(r, W, eps, nu), -a * k * glm::cross(q, r), 1e-14));
+    CHECK(nearTight(kelvinletAffine(r, W, eps, nu), -a * k * glm::cross(q, r), 1e-14));
 
     KelvinletBrush brush{eps, nu, 1};
     const glm::dvec3 axis = glm::normalize(glm::dvec3(1, 2, 2));
@@ -138,14 +127,14 @@ TEST_CASE("kelvinlet affine loads: twist, scale and pinch have the asked gradien
     expect[1][2] = axis.x * small, expect[2][0] = axis.y * small, expect[2][1] = -axis.x * small;
     // The rotation's own second-order term, (cos - 1), is about angle^2 / 2 = 5e-9.
     for (int c = 0; c < 3; ++c)
-        CHECK(near(J[c], expect[c], 2e-8));
+        CHECK(nearTight(J[c], expect[c], 2e-8));
     // Large twists rotate: lengths from the centre are kept.
     glm::dvec3 p(0.3, 0.2, 0.1);
     CHECK(glm::length(p + kelvinletTwistBrush(p, axis * 2.0, brush)) == doctest::Approx(glm::length(p)));
 
     J = jacobian([&](const glm::dvec3& x) { return kelvinletScaleBrush(x, 0.25, brush); }, glm::dvec3(0.0));
     for (int c = 0; c < 3; ++c)
-        CHECK(near(J[c], glm::dmat3(0.25)[c], 1e-8));
+        CHECK(nearTight(J[c], glm::dmat3(0.25)[c], 1e-8));
 
     glm::dmat3 G(0.0);
     G[0][0] = 0.2, G[1][1] = -0.3, G[2][2] = 0.1, G[1][0] = G[0][1] = 0.05;
@@ -154,7 +143,7 @@ TEST_CASE("kelvinlet affine loads: twist, scale and pinch have the asked gradien
         KelvinletBrush b{eps, nu, scales};
         J = jacobian([&](const glm::dvec3& x) { return kelvinletPinchBrush(x, G, b); }, glm::dvec3(0.0), 1e-4);
         for (int c = 0; c < 3; ++c)
-            CHECK(near(J[c], G[c], 1e-6));
+            CHECK(nearTight(J[c], G[c], 1e-6));
     }
 }
 
@@ -162,13 +151,13 @@ TEST_CASE("kelvinlet motion splits a handle transform into its parts")
 {
     glm::dmat3 R = glm::dmat3(glm::rotate(glm::dmat4(1.0), glm::radians(30.0), glm::dvec3(0, 0, 1)));
     KelvinletMotion m = kelvinletMotion(R * 1.2, {1, 2, 3}, {});
-    CHECK(near(m.grab, {1, 2, 3}));
-    CHECK(near(m.twist, {0, 0, glm::radians(30.0)}, 1e-12));
+    CHECK(nearTight(m.grab, {1, 2, 3}));
+    CHECK(nearTight(m.twist, {0, 0, glm::radians(30.0)}, 1e-12));
     CHECK(m.scale == doctest::Approx(0.2));
     for (int c = 0; c < 3; ++c)
-        CHECK(near(m.pinch[c], glm::dvec3(0.0), 1e-12));
+        CHECK(nearTight(m.pinch[c], glm::dvec3(0.0), 1e-12));
     KelvinletMotion none = kelvinletMotion(glm::dmat3(1.0), glm::dvec3(0.0), {});
-    CHECK(near(kelvinletDisplacement({0.4, 0.1, -2.0}, none, {}), glm::dvec3(0.0), 1e-15));
+    CHECK(nearTight(kelvinletDisplacement({0.4, 0.1, -2.0}, none, {}), glm::dvec3(0.0), 1e-15));
 }
 
 TEST_CASE("Green coordinates reproduce the point at rest and similarity maps of the cage")
@@ -195,13 +184,13 @@ TEST_CASE("Green coordinates reproduce the point at rest and similarity maps of 
             glm::dvec3 n = glm::normalize(glm::cross(rest[tris[t * 3 + 1]] - rest[tris[t * 3]], rest[tris[t * 3 + 2]] - rest[tris[t * 3]]));
             back += psi[t] * n;
         }
-        CHECK(near(back, x, 1e-8));
+        CHECK(nearTight(back, x, 1e-8));
         glm::dvec3 u(0.0);
         for (size_t i = 0; i < nv; ++i)
             u += phi[i] * (moved[i] - rest[i]);
         for (size_t t = 0; t < nf; ++t)
             u += psi[t] * faceDelta[t];
-        CHECK(near(x + u, glm::dvec3(sim * glm::dvec4(x, 1.0)), 1e-7));
+        CHECK(nearTight(x + u, glm::dvec3(sim * glm::dvec4(x, 1.0)), 1e-7));
     }
 }
 
@@ -229,7 +218,7 @@ TEST_CASE("Somigliana coordinates reproduce linear elastic fields and translatio
             shift += apply(&C[i * 9], {1.0, -2.0, 0.5});
             u += apply(&C[i * 9], A * rest[i]);
         }
-        CHECK(near(shift, {1.0, -2.0, 0.5}, 1e-12));
+        CHECK(nearTight(shift, {1.0, -2.0, 0.5}, 1e-12));
         for (size_t t = 0; t < nf; ++t)
         {
             glm::dvec3 n = glm::normalize(glm::cross(rest[tris[t * 3 + 1]] - rest[tris[t * 3]], rest[tris[t * 3 + 2]] - rest[tris[t * 3]]));
@@ -247,10 +236,10 @@ TEST_CASE("Somigliana coordinates reproduce linear elastic fields and translatio
     glm::dmat3 fitR = fit.rotation;
     glm::dvec3 fitT = fit.to - fit.rotation * fit.from;
     for (int c = 0; c < 3; ++c)
-        CHECK(near(fitR[c], rot[c], 1e-12));
-    CHECK(near(fitT, {4, 0, 1}, 1e-12));
+        CHECK(nearTight(fitR[c], rot[c], 1e-12));
+    CHECK(nearTight(fitT, {4, 0, 1}, 1e-12));
     for (const glm::dvec3& t : somiglianaTractions(rest, moved, tris, fitR, fitT, {}))
-        CHECK(near(t, glm::dvec3(0.0), 1e-12));
+        CHECK(nearTight(t, glm::dvec3(0.0), 1e-12));
 
     // A cage squashed linearly carries its inside exactly at bulge 0, and bulges it out above.
     glm::dmat3 squash(1.0);
@@ -271,7 +260,7 @@ TEST_CASE("Somigliana coordinates reproduce linear elastic fields and translatio
             for (int r = 0; r < 3; ++r)
                 u[r] += D[t * 9 + r * 3] * tr[t].x + D[t * 9 + r * 3 + 1] * tr[t].y + D[t * 9 + r * 3 + 2] * tr[t].z;
         if (bulge == 0.0)
-            CHECK(near(x + u, squash * x, 1e-3));
+            CHECK(nearTight(x + u, squash * x, 1e-3));
         else
             CHECK((x + u).x > x.x + 0.01);
     }
@@ -279,8 +268,8 @@ TEST_CASE("Somigliana coordinates reproduce linear elastic fields and translatio
 
 TEST_CASE("shear, cast, Taubin smoothing, noise and tension")
 {
-    CHECK(near(shear({1, 0.5, 2}, {0.5, -1.0, -1.0, 1.0}), {1.25, 0.5, 1.5}));
-    CHECK(near(shear({1, 3, 2}, {0.5, 0.0, -1.0, 1.0}), {1.5, 3, 2}));
+    CHECK(nearTight(shear({1, 0.5, 2}, {0.5, -1.0, -1.0, 1.0}), {1.25, 0.5, 1.5}));
+    CHECK(nearTight(shear({1, 3, 2}, {0.5, 0.0, -1.0, 1.0}), {1.5, 3, 2}));
 
     std::vector<glm::dvec3> pts = randomPoints(50, -2.0, 2.0);
     std::vector<glm::dvec3> sphere = pts;
@@ -293,7 +282,7 @@ TEST_CASE("shear, cast, Taubin smoothing, noise and tension")
         CHECK(std::max({std::abs(p.x), std::abs(p.y), std::abs(p.z)}) == doctest::Approx(1.0));
     std::vector<glm::dvec3> half = pts;
     cast(half, CastShape::Cylinder, 0.0, 0.0);
-    CHECK(near(half[3], pts[3]));
+    CHECK(nearTight(half[3], pts[3]));
 
     // Taubin keeps a sphere's size where plain Laplacian smoothing shrinks it.
     geo::Mesh ball = geo::makeSphere({.radius = 10.0, .subdivAxis = 24, .subdivHeight = 16});
@@ -344,12 +333,12 @@ TEST_CASE("handle solver: identity at rest, rigid moves are exact, ARAP keeps le
         REQUIRE(s.prepare(tube, rest, group, mode));
         std::vector<glm::dvec3> out = s.solve(rest, {}, 5);
         for (size_t p = 0; p < n; ++p)
-            CHECK(near(out[p], rest[p], 1e-7));
+            CHECK(nearTight(out[p], rest[p], 1e-7));
         glm::dmat4 shift = glm::translate(glm::dmat4(1.0), glm::dvec3(4, 0, 0));
         std::vector<glm::dmat4> both = {shift, shift};
         out = s.solve(rest, both, 3);
         for (size_t p = 0; p < n; ++p)
-            CHECK(near(out[p], rest[p] + glm::dvec3(4, 0, 0), 1e-6));
+            CHECK(nearTight(out[p], rest[p] + glm::dvec3(4, 0, 0), 1e-6));
         if (mode == HandleSolver::Mode::Arap)
         {
             // Both ends under one rigid motion: the whole tube follows it.
@@ -367,7 +356,7 @@ TEST_CASE("handle solver: identity at rest, rigid moves are exact, ARAP keeps le
             std::vector<glm::dmat4> one = {m};
             out = single.solve(rest, one, 2);
             for (size_t p = 0; p < n; ++p)
-                CHECK(near(out[p], glm::dvec3(m * glm::dvec4(rest[p], 1.0)), 1e-8));
+                CHECK(nearTight(out[p], glm::dvec3(m * glm::dvec4(rest[p], 1.0)), 1e-8));
         }
     }
     // Bend into a quarter circle of the tube's length: the top turns 90 degrees, the bottom stays.

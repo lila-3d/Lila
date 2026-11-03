@@ -20,14 +20,14 @@ namespace
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
-using T = gn::SocketType;
+using Socket = gn::SocketType;
 
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc)
+gn::SocketDecl in(std::string id, Socket t, gn::json def, std::string doc)
 {
     return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
 }
 
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+gn::SocketDecl in(std::string id, Socket t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
 {
     gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
     s.min = lo;
@@ -35,7 +35,7 @@ gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optio
     return s;
 }
 
-gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
+gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = Socket::Geometry, .doc = std::move(doc)}; }
 
 struct Chain
 {
@@ -186,25 +186,25 @@ gn::NodeDecl settlementDecl()
                                                  "attribute water they are rivers, float attribute width their width; loops with "
                                                  "int attribute exclude are exclusions."),
                                geoSocket("ground", "Mesh the settlement stands on. Empty for flat ground at the site's height."),
-                               in("profile", T::String, "medievalTown", "Style: " + profiles + "."),
-                               in("pattern", T::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
-                               in("overrides", T::String, "", "JSON object of profile fields to change, such as {\"maxFloors\": 6}."),
-                               in("size", T::Float, 40000.0, "Side of the square used when the site has no outline.", 100.0),
-                               in("growth", T::Float, o.growth, "0 to 1: how far the settlement has grown.", 0.0, 1.0),
-                               in("heightScale", T::Float, o.heightScale, "Multiplies every building's floors.", 0.0),
-                               in("widthScale", T::Float, o.widthScale, "Multiplies every street width.", 0.05),
-                               in("lotScale", T::Float, o.lotScale, "Multiplies lot frontage, depth and building depth.", 0.05),
-                               in("seed", T::Int, int64_t(o.seed), "Another seed gives another settlement on the same site."),
-                               in("blocks", T::Bool, true, "Blocks and lots between the streets. Off for streets and paths only."),
-                               in("buildings", T::Bool, true, "A building envelope on each lot. Off for empty lots."),
-                               in("edits", T::String, "", "Streets, routes, exclusions and road profiles as JSON (settlementAddStreet, "
+                               in("profile", Socket::String, "medievalTown", "Style: " + profiles + "."),
+                               in("pattern", Socket::String, "", "Override the profile's pattern: organic, grid, radial, linear, organicGrid."),
+                               in("overrides", Socket::String, "", "JSON object of profile fields to change, such as {\"maxFloors\": 6}."),
+                               in("size", Socket::Float, 40000.0, "Side of the square used when the site has no outline.", 100.0),
+                               in("growth", Socket::Float, o.growth, "0 to 1: how far the settlement has grown.", 0.0, 1.0),
+                               in("heightScale", Socket::Float, o.heightScale, "Multiplies every building's floors.", 0.0),
+                               in("widthScale", Socket::Float, o.widthScale, "Multiplies every street width.", 0.05),
+                               in("lotScale", Socket::Float, o.lotScale, "Multiplies lot frontage, depth and building depth.", 0.05),
+                               in("seed", Socket::Int, int64_t(o.seed), "Another seed gives another settlement on the same site."),
+                               in("blocks", Socket::Bool, true, "Blocks and lots between the streets. Off for streets and paths only."),
+                               in("buildings", Socket::Bool, true, "A building envelope on each lot. Off for empty lots."),
+                               in("edits", Socket::String, "", "Streets, routes, exclusions and road profiles as JSON (settlementAddStreet, "
                                                           "settlementRoute and settlementAddExclusion write it)."),
                                geoSocket("walkable", "Mesh routes may walk on: a structure's ramps, terraces and floors."),
-                               in("walkSlope", T::Float, o.walk.maxSlope, "Steepest walkable face, degrees.", 0.0, 89.0),
-                               in("walkStep", T::Float, o.walk.step, "Height a walk may step between separate pieces, cm.", 0.0),
-                               in("showStreets", T::Bool, true, "Include streets in geometry."),
-                               in("showLots", T::Bool, true, "Include lot outlines in geometry."),
-                               in("showBuildings", T::Bool, true, "Include building envelopes in geometry.")},
+                               in("walkSlope", Socket::Float, o.walk.maxSlope, "Steepest walkable face, degrees.", 0.0, 89.0),
+                               in("walkStep", Socket::Float, o.walk.step, "Height a walk may step between separate pieces, cm.", 0.0),
+                               in("showStreets", Socket::Bool, true, "Include streets in geometry."),
+                               in("showLots", Socket::Bool, true, "Include lot outlines in geometry."),
+                               in("showBuildings", Socket::Bool, true, "Include building envelopes in geometry.")},
                     .outputs = {geoSocket("geometry", "What the show inputs select, joined."),
                                 geoSocket("streets", "Street ribbons and centreline curves."),
                                 geoSocket("lots", "Lot outlines as loose edges and closed curves."),

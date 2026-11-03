@@ -12,7 +12,7 @@ namespace themes = lila::ui::themes;
 
 namespace
 {
-void ensureCommands()
+void ensureThemeCommands()
 {
     if (!ops::find("setTheme"))
         themes::registerCommands();
@@ -160,7 +160,7 @@ TEST_CASE("the Monotone pref greys a hued theme except where Monotone keeps hue"
 
 TEST_CASE("theme commands save, switch, rename and delete")
 {
-    ensureCommands();
+    ensureThemeCommands();
     clearSaved();
     CHECK(ops::execute("currentTheme", json::object()) == "Monotone");
     CHECK(ops::execute("listThemes", json::object()).size() == themes::builtIns().size());

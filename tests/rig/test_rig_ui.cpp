@@ -20,18 +20,6 @@ using namespace lila::scene;
 
 namespace
 {
-std::string skinnedCylinder()
-{
-    run("newScene");
-    std::string mesh = run("polyCylinder", {{"name", "Tube"}, {"radius", 10}, {"height", 100}, {"subdivisionsHeight", 20}, {"caps", false}})[0];
-    run("select", {{"args", json::array()}});
-    run("joint", {{"position", v3(0, -50, 0)}, {"name", "bone_a"}});
-    run("joint", {{"position", v3(0, 0, 0)}, {"name", "bone_b"}});
-    run("joint", {{"position", v3(0, 50, 0)}, {"name", "bone_c"}});
-    run("skinCluster", {{"args", {"bone_a", mesh}}});
-    return mesh;
-}
-
 lila::ui::ViewInfo frontView()
 {
     lila::ui::Camera cam;
@@ -79,7 +67,7 @@ void mouse(lila::ui::ViewportTool* tool, QEvent::Type type, QPointF at, const li
 TEST_CASE("joints draw in grayscale under Monotone and pick by bone")
 {
     lila::PrefStore::get().set("general", lila::ui::viewportDisplay::kMonotone, true);
-    skinnedCylinder();
+    skinnedCylinder(20);
     lila::ui::ViewInfo view = frontView();
     lila::render::FrameState s;
     lila::ui::OverlayPainter painter(s.overlayTris, 1.0);
@@ -106,7 +94,7 @@ TEST_CASE("joints draw in grayscale under Monotone and pick by bone")
 
 TEST_CASE("a weight paint stroke paints the current influence as one undo step")
 {
-    std::string mesh = skinnedCylinder();
+    std::string mesh = skinnedCylinder(20);
     run("select", {{"args", {mesh, "bone_c"}}});
     lila::ui::startWeightPaint();
     lila::ui::ViewportTool* tool = lila::ui::viewportTools::active();
@@ -139,7 +127,7 @@ TEST_CASE("a weight paint stroke paints the current influence as one undo step")
 
 TEST_CASE("brush math keeps sums and locks")
 {
-    std::string mesh = skinnedCylinder();
+    std::string mesh = skinnedCylinder(20);
     NodeId sk = skin::find(graph(), node(mesh).id());
     WeightTable t = skin::table(graph(), sk);
     auto infs = skin::influences(graph(), sk);
@@ -160,7 +148,7 @@ TEST_CASE("brush math keeps sums and locks")
 
 TEST_CASE("the split mesh tool previews pieces at the joints and cuts on Enter")
 {
-    std::string mesh = skinnedCylinder();
+    std::string mesh = skinnedCylinder(20);
     run("select", {{"args", {mesh}}});
     REQUIRE(lila::ui::viewportTools::activate("mesh.splitMeshTool"));
     lila::ui::ViewportTool* tool = lila::ui::viewportTools::active();
@@ -182,7 +170,7 @@ TEST_CASE("the split mesh tool previews pieces at the joints and cuts on Enter")
 
 TEST_CASE("a click on an anim proxy piece selects its joint")
 {
-    std::string mesh = skinnedCylinder();
+    std::string mesh = skinnedCylinder(20);
     std::string set = run("animProxyFromMesh", {{"args", {mesh}}, {"remesh", "decimate"}});
     json pieces = run("proxySetInfo", {{"args", {set}}})[0]["pieces"];
     REQUIRE(pieces.size() == 2);
@@ -313,7 +301,7 @@ TEST_CASE("split planes mirror across the symmetry plane of a mesh that is not s
 
 TEST_CASE("undoing a made anim proxy brings the tool back with its planes")
 {
-    std::string mesh = skinnedCylinder();
+    std::string mesh = skinnedCylinder(20);
     lila::ui::ViewportTool* tool = startSplitTool(mesh, "rig.animProxyTool");
     lila::ui::ViewInfo view = frontView();
     const std::vector<lila::scene::split::Plane> before = lila::ui::splitToolPlanes();

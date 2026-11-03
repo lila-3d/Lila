@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "render/FrameState.h"
@@ -23,35 +24,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace puptest;
 using json = nlohmann::json;
 using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-void load()
-{
-    if (!ops::find("puppeteerIkChain"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_PUPPETEER_PACKAGE) == "Puppeteer");
-}
-
-ui::ViewInfo view()
-{
-    ui::ViewInfo v;
-    v.eye = {0.0, 0.0, 300.0};
-    v.view = glm::lookAt(v.eye, glm::dvec3(0.0), glm::dvec3(0, 1, 0));
-    v.proj = glm::perspective(glm::radians(45.0), 800.0 / 600.0, 1.0, 10000.0);
-    v.proj[1][1] *= -1.0;
-    v.width = 800.0;
-    v.height = 600.0;
-    v.camera = "drawTest";
-    return v;
-}
-
-const QPointF kCenter(650.0, 300.0);
-double u(double canvas) { return canvas * 120.0 / 212.0; }
 
 double cross(glm::vec2 a, glm::vec2 b, glm::vec2 p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
 
@@ -90,7 +68,7 @@ std::vector<render::OverlayVertex> drawSpinner(ui::Gizmo& gz)
 {
     std::vector<render::OverlayVertex> out;
     ui::OverlayPainter p(out, 1.0);
-    gz.setView(view());
+    gz.setView(view("drawTest"));
     gz.draw(p);
     return out;
 }
@@ -130,13 +108,13 @@ TEST_CASE("spinner draw: the three zones tile the disc, red on top, blue lower r
         MESSAGE("no offscreen Qt platform: skipped");
         return;
     }
-    load();
+    loadPuppeteer();
     run("newScene");
     run("joint", {{"position", v3(0, 0, 0)}, {"name", "j"}});
     run("select", {{"args", {"j"}}});
     std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
     REQUIRE(gz);
-    gz->setView(view());
+    gz->setView(view("drawTest"));
     // Rotate on a plain joint: full wedges.
     REQUIRE(gz->supports("rotate"));
     checkZones(drawSpinner(*gz), u(60.0));
@@ -154,13 +132,13 @@ TEST_CASE("spinner draw: hit testing agrees with the drawing")
         MESSAGE("no offscreen Qt platform: skipped");
         return;
     }
-    load();
+    loadPuppeteer();
     run("newScene");
     run("autoKeyframe", {{"state", false}});
     run("joint", {{"position", v3(0, 0, 0)}, {"name", "j"}});
     run("select", {{"args", {"j"}}});
     std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
-    gz->setView(view());
+    gz->setView(view("drawTest"));
     REQUIRE(gz->supports("rotate"));
     const std::vector<render::OverlayVertex> tris = drawSpinner(*gz);
     // Pressing where a colour is drawn turns about that colour's axis (local axes: the joint's own, identity here).
@@ -172,7 +150,7 @@ TEST_CASE("spinner draw: hit testing agrees with the drawing")
         const int hue = hueOf(colorAt(tris, glm::vec2(float(at.x()), float(at.y()))));
         REQUIRE(hue >= 0);
         const glm::dvec3 r0 = std::get<glm::dvec3>(Graph::current().value(Graph::current().plug("j.rotate")));
-        gz->setView(view());
+        gz->setView(view("drawTest"));
         REQUIRE(gz->press(at, Qt::LeftButton, Qt::NoModifier));
         gz->drag(at + QPointF(0.0, -20.0), Qt::NoModifier);
         gz->release();
@@ -191,7 +169,7 @@ TEST_CASE("spinner draw: hit testing agrees with the drawing")
 
 TEST_CASE("spinner: entering Animate starts in Rotate, and moves track the cursor on screen")
 {
-    load();
+    loadPuppeteer();
     run("newScene");
     run("autoKeyframe", {{"state", false}});
     run("joint", {{"position", v3(0, 0, 0)}, {"name", "j"}});
@@ -201,7 +179,7 @@ TEST_CASE("spinner: entering Animate starts in Rotate, and moves track the curso
     REQUIRE(ui::modes::activate("puppeteerAnimate"));
     CHECK(ui::tools::current() == ui::Tool::Rotate);
     std::unique_ptr<ui::Gizmo> gz = ui::gizmos::create("puppeteer.spinner");
-    gz->setView(view());
+    gz->setView(view("drawTest"));
     REQUIRE(gz->supports(ui::tools::name(ui::tools::current())));
     const QPointF xZone = kCenter + QPointF(0.0, -u(110.0));
     REQUIRE(gz->press(xZone, Qt::LeftButton, Qt::NoModifier));
@@ -215,13 +193,13 @@ TEST_CASE("spinner: entering Animate starts in Rotate, and moves track the curso
 
     // Move: an 80 px drag moves the joint 80 px on screen along the axis's projection.
     REQUIRE(gz->supports("move"));
-    const auto before = view().project(glm::dvec3(0.0));
+    const auto before = view("drawTest").project(glm::dvec3(0.0));
     REQUIRE(gz->press(xZone, Qt::LeftButton, Qt::NoModifier));
     gz->drag(xZone + QPointF(0.0, -80.0), Qt::NoModifier);
     gz->release();
     g.evaluate();
     const glm::dvec3 t = std::get<glm::dvec3>(g.value(g.plug("j.translate")));
-    const auto after = view().project(t);
+    const auto after = view("drawTest").project(t);
     REQUIRE(before);
     REQUIRE(after);
     CHECK(std::hypot(after->x() - before->x(), after->y() - before->y()) == Approx(80.0).epsilon(0.01));

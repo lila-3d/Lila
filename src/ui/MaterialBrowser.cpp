@@ -21,6 +21,8 @@
 #include "ui/Panels.h"
 #include "ui/TextureGraphUi.h"
 #include "ui/Theme.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportHooks.h"
 
 #include <QApplication>
@@ -52,26 +54,10 @@ namespace lila::ui
 namespace
 {
 namespace library = tex::library;
-using json = nlohmann::json;
 
 constexpr int kMaterialIdRole = Qt::UserRole;
 constexpr int kFilterRole = Qt::UserRole + 1;
 constexpr int kThumb = 96;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-json runUi(const char* cmd, const json& call)
-{
-    try
-    {
-        return ops::execute(cmd, call, CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::error("{}", e.what());
-        return nullptr;
-    }
-}
 
 std::map<std::string, std::string>& presetChoices()
 {

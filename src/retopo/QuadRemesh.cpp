@@ -92,7 +92,7 @@ void projectPoints(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::M
 }
 
 /** Tangential Laplacian relax that slides points along the surface and crease points along their creases. */
-void relaxOnSurface(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, const FeatureLines& lines, double h,
+void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, const FeatureLines& lines, double h,
                     int iterations)
 {
     LILA_ZONE();
@@ -911,7 +911,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         boundary.resize(m.pointCapacity(), 0);
         snapBorder(m, feature, border, 1.5 * coarseH);
         projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
-        relaxOnSurface(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
+        relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
         clock.lap("cleanup");
 
         if (opts.pureQuads)
@@ -920,7 +920,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             snapBorder(m, feature, border, coarseH);
             projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
         }
-        relaxOnSurface(m, feature, bvh, lines, h, opts.relaxIterations);
+        relaxAlongFeatures(m, feature, bvh, lines, h, opts.relaxIterations);
         untangle(m, feature, src, bvh, lines, h);
         clock.lap("refine");
 

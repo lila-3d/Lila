@@ -2,6 +2,7 @@
 
 #include "core/Paths.h"
 #include "core/Profile.h"
+#include "core/TextMatch.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
@@ -168,11 +169,6 @@ std::string uriEncode(std::string_view s)
     return out;
 }
 
-std::string lower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 /** The images and textures of an export, embedded or written next to it. */
 class Textures final : public TextureSink
@@ -310,9 +306,9 @@ private:
     {
         const fs::path w = utf8Path(wanted);
         std::string name = wanted;
-        for (int k = 1; mNames.count(lower(name)) && mNames[lower(name)] != key; ++k)
+        for (int k = 1; mNames.count(textMatch::lower(name)) && mNames[textMatch::lower(name)] != key; ++k)
             name = utf8(w.stem()) + "_" + std::to_string(k) + utf8(w.extension());
-        mNames[lower(name)] = key;
+        mNames[textMatch::lower(name)] = key;
         return name;
     }
 

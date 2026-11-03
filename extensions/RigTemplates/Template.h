@@ -4,6 +4,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -186,4 +187,11 @@ std::vector<std::string> aliasesFor(const std::string& label);
 
 glm::dvec3 axisOf(const std::string& axis);
 std::string sideOf(const std::string& name);
+
+inline std::string lower(std::string s)
+{
+    for (char& c : s)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
 } // namespace rigt

@@ -2134,14 +2134,14 @@ namespace
  * Post-multiplied onto a camera's file-space local matrix: an FBX camera looks down its local +X with +Y up, a Lila
  * camera down -Z, so the file frame is the Lila one turned 90 degrees about its local Y (then into file axes).
  */
-glm::dmat4 cameraFrame(const glm::dmat3& basis)
+glm::dmat4 exportCameraFrame(const glm::dmat3& basis)
 {
     const glm::dmat3 lilaFromFbx(glm::dvec3(0, 0, -1), glm::dvec3(0, 1, 0), glm::dvec3(1, 0, 0));
     return glm::dmat4(basis * lilaFromFbx);
 }
 
 /** The same for lights: an FBX light shines down its local -Y with -Z up, a Lila light down -Z with +Y up. */
-glm::dmat4 lightFrame(const glm::dmat3& basis)
+glm::dmat4 exportLightFrame(const glm::dmat3& basis)
 {
     const glm::dmat3 lilaFromFbx(glm::dvec3(1, 0, 0), glm::dvec3(0, 0, 1), glm::dvec3(0, -1, 0));
     return glm::dmat4(basis * lilaFromFbx);
@@ -2237,7 +2237,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
     const std::string creator = "Lila FBX exporter (" + std::string(profileName(opts.profile)) + ")";
     const ExportTake* take = scene.take ? &*scene.take : nullptr;
     auto toFile = [&](const glm::dmat4& m) { return basis * m * basisInv; };
-    const glm::dmat4 camFrame = cameraFrame(basis3), lightFrm = lightFrame(basis3);
+    const glm::dmat4 camFrame = exportCameraFrame(basis3), lightFrm = exportLightFrame(basis3);
     /** The turn between a node's Lila frame and its file frame: cameras look down +X and lights shine down -Y in FBX. */
     auto frameOf = [&](const ExportNode& n) { return n.camera ? camFrame : n.light ? lightFrm : glm::dmat4(1.0); };
     auto turned = [&](const ExportNode& n) { return n.camera || n.light; };

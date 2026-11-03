@@ -1,6 +1,7 @@
 #include "curve/Tessellate.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/rotate_vector.hpp>
@@ -13,24 +14,7 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
-constexpr double kEps = 1e-12;
 constexpr double kKinkAngle = 1e-3; // radians: tangent breaks smaller than this are numerical noise
-
-// 8-point Gauss-Legendre on [-1, 1].
-constexpr double kGx[8] = {-0.9602898564975363, -0.7966664774136267, -0.5255324099163290, -0.1834346424956498,
-                           0.1834346424956498,  0.5255324099163290,  0.7966664774136267,  0.9602898564975363};
-constexpr double kGw[8] = {0.1012285362903763, 0.2223810344533745, 0.3137066458778873, 0.3626837833783620,
-                           0.3626837833783620, 0.3137066458778873, 0.2223810344533745, 0.1012285362903763};
-
-double angleBetween(const D3& a, const D3& b)
-{
-    double la = glm::length(a), lb = glm::length(b);
-    if (la < kEps || lb < kEps)
-        return 0.0;
-    return std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
-}
 
 /** Arc length of a piece from t0 to t1. */
 double pieceLength(const Piece& p, double t0, double t1, int pieces = 4)

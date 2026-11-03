@@ -22,7 +22,6 @@ namespace
 {
 using scene::Node;
 using scene::PlugType;
-using T = ArgType;
 namespace fs = std::filesystem;
 
 constexpr uint32_t kCueStored = scene::AttrInput | scene::AttrStorable;
@@ -250,6 +249,7 @@ void registerSoundCueTypes()
 
 void registerSoundCueCommands()
 {
+    using T = ArgType;
     if (ops::find("soundCue"))
         return;
 

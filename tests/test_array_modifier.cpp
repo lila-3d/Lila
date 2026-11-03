@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/ArrayMesh.h"
 #include "geo/Mesh.h"
@@ -13,25 +15,13 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 json info(const std::string& m) { return run("meshInfo", args({m})); }
-int faces(const std::string& m) { return info(m)["faces"].get<int>(); }
 int points(const std::string& m) { return info(m)["points"].get<int>(); }
-
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::distance(a, b) < eps; }
-
-scene::MeshPtr outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
 
 /** Every edge has exactly two faces: a closed manifold surface. */
 bool closedManifold(const geo::Mesh& m)

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/ExtensionContext.h"
 #include "scene/Graph.h"
@@ -23,11 +25,10 @@
 using namespace lila;
 using namespace lila::ui;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 ViewInfo frontView()
 {
     Camera cam;

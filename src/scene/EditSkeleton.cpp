@@ -87,14 +87,6 @@ NodeId stateNode(Graph& g)
     return kNoNode;
 }
 
-int depthOf(Graph& g, NodeId id)
-{
-    int d = 0;
-    for (NodeId p = g.parent(id); p != kNoNode; p = g.parent(p))
-        ++d;
-    return d;
-}
-
 NodeId topJoint(Graph& g, NodeId j)
 {
     while (g.parent(j) != kNoNode && rig::isJoint(*g.node(g.parent(j))))
@@ -103,7 +95,7 @@ NodeId topJoint(Graph& g, NodeId j)
 }
 
 /** Skins and whole skeletons the targets name: meshes, skinClusters or joints; everything skinned when empty. */
-void gather(Graph& g, const std::vector<std::string>& targets, std::vector<NodeId>& skins, std::vector<NodeId>& joints)
+void gatherSkinsAndJoints(Graph& g, const std::vector<std::string>& targets, std::vector<NodeId>& skins, std::vector<NodeId>& joints)
 {
     std::set<NodeId> skinSet, tops;
     std::vector<NodeId> allSkins;
@@ -185,7 +177,7 @@ void enter(Graph& g, const std::vector<std::string>& targets)
     if (stateNode(g) != kNoNode)
         throw CommandError("editSkeleton: already editing; turn it off first");
     std::vector<NodeId> skins, joints;
-    gather(g, targets, skins, joints);
+    gatherSkinsAndJoints(g, targets, skins, joints);
     if (joints.empty())
         throw CommandError("editSkeleton: nothing skinned to edit; select a skinned mesh or a joint");
 

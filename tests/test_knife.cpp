@@ -1,15 +1,12 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-} // namespace
+using namespace testutil;
 
 TEST_CASE("polyKnife: loops and paths are one undo step each")
 {

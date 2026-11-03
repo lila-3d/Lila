@@ -23,12 +23,13 @@ using namespace lila;
 
 namespace terrain
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 constexpr int kAx[8] = {1, -1, 0, 0, 1, -1, 1, -1};
 constexpr int kAz[8] = {0, 0, 1, -1, 1, -1, -1, 1};
-constexpr double kDeg = 57.29577951308232;
+constexpr double kDegPerRad = 57.29577951308232;
 
 double phi(double z) { return 0.5 * (1.0 + std::erf(z / 1.4142135623730951)); }
 
@@ -136,7 +137,7 @@ std::mutex& analysisMutex()
     return m;
 }
 
-json ringJson(const WorldMap& w, const Heightfield& h, const std::vector<glm::dvec2>& ring, double lift = 0.0)
+json worldRingJson(const WorldMap& w, const Heightfield& h, const std::vector<glm::dvec2>& ring, double lift = 0.0)
 {
     json out = json::array();
     for (const glm::dvec2& p : ring)
@@ -559,7 +560,7 @@ std::vector<float> Analysis::compute(const std::string& name) const
     {
         each([&](int x, int z, size_t) {
             const Gradient g = gradientAt(h, x, z);
-            return std::atan(std::hypot(g.gx, g.gz)) * kDeg;
+            return std::atan(std::hypot(g.gx, g.gz)) * kDegPerRad;
         });
         return out;
     }
@@ -570,7 +571,7 @@ std::vector<float> Analysis::compute(const std::string& name) const
             const Gradient g = gradientAt(h, x, z);
             if (std::hypot(g.gx, g.gz) < 1e-9)
                 return -1.0;
-            const double a = std::atan2(-g.gx, g.gz) * kDeg;
+            const double a = std::atan2(-g.gx, g.gz) * kDegPerRad;
             return a < 0.0 ? a + 360.0 : a;
         });
         return out;
@@ -618,7 +619,7 @@ std::vector<float> Analysis::compute(const std::string& name) const
             if (r == i)
                 return -1.0;
             const double dx = double(int(r % uint32_t(h.nx)) - x), dz = double(int(r / uint32_t(h.nx)) - z);
-            const double a = std::atan2(dx, -dz) * kDeg;
+            const double a = std::atan2(dx, -dz) * kDegPerRad;
             return a < 0.0 ? a + 360.0 : a;
         });
         return out;
@@ -751,7 +752,7 @@ std::vector<float> Analysis::compute(const std::string& name) const
         const std::vector<float>& slope = field("slope");
         for (size_t i = 0; i < n; ++i)
         {
-            const double pct = std::tan(slope[i] / kDeg) * 100.0;
+            const double pct = std::tan(slope[i] / kDegPerRad) * 100.0;
             out[i] = pct < 5.0 ? 0.0f : pct < 10.0 ? 1.0f : pct < 20.0 ? 2.0f : pct < 35.0 ? 3.0f : 4.0f;
         }
         return out;
@@ -802,10 +803,10 @@ std::vector<float> Analysis::compute(const std::string& name) const
     if (name == "solar")
     {
         // Sun from the south (+Z, north being -Z) at 40 degrees, averaged over south-east, south and south-west.
-        const double e = 40.0 / kDeg;
+        const double e = 40.0 / kDegPerRad;
         std::vector<glm::dvec3> suns;
         for (double az : {-45.0, 0.0, 45.0})
-            suns.push_back(glm::normalize(glm::dvec3(std::sin(az / kDeg) * std::cos(e), std::sin(e), std::cos(az / kDeg) * std::cos(e))));
+            suns.push_back(glm::normalize(glm::dvec3(std::sin(az / kDegPerRad) * std::cos(e), std::sin(e), std::cos(az / kDegPerRad) * std::cos(e))));
         each([&](int x, int z, size_t) {
             const Gradient g = gradientAt(h, x, z);
             const glm::dvec3 nrm = glm::normalize(glm::dvec3(-g.gx, 1.0, -g.gz));
@@ -899,7 +900,7 @@ json waterGraph(const Analysis& a, const WorldMap& w)
                 const glm::dvec2 edge = p + dir * (width * 0.5 + h.cell);
                 const double bankTop = h.heightAt(edge.x, edge.y) - level;
                 const glm::dvec2 far = p + dir * (width * 0.5 + 3.0 * h.cell);
-                const double angle = std::atan2(h.heightAt(far.x, far.y) - level, glm::length(far - p) - width * 0.5) * kDeg;
+                const double angle = std::atan2(h.heightAt(far.x, far.y) - level, glm::length(far - p) - width * 0.5) * kDegPerRad;
                 const double dep = deposit && deposit->size() == h.size() ? (*deposit)[cellAt(edge)] : 0.0;
                 const std::string type = angle > 60.0 ? "cliff" : angle > 25.0 ? "steep" : (dep > 0.4 && bankTop < 100.0) ? "gravelBar" : "low";
                 double fp = 0.0;
@@ -1005,7 +1006,7 @@ json waterGraph(const Analysis& a, const WorldMap& w)
         std::vector<float> score(h.size(), 0.0f);
         for (const auto& ring : outlines(h, set))
         {
-            shores.push_back(ringJson(w, h, ring));
+            shores.push_back(worldRingJson(w, h, ring));
             std::string runType;
             json run = json::array();
             for (size_t k = 0; k < ring.size(); ++k)
@@ -1119,7 +1120,7 @@ json waterGraph(const Analysis& a, const WorldMap& w)
             set[i] = label[i] == c;
         json rings = json::array();
         for (const auto& ring : outlines(h, set))
-            rings.push_back(ringJson(w, h, ring));
+            rings.push_back(worldRingJson(w, h, ring));
         wetlands.push_back({{"outline", rings}, {"area", double(sizes[size_t(c)]) * h.cell * h.cell * w.across * w.across * 1e-4}});
     }
 
@@ -1176,9 +1177,9 @@ json buildableRegions(const Analysis& a, const WorldMap& w, double minAreaM2, do
         std::sort(rings.begin(), rings.end(), [](const auto& x, const auto& y) { return x.size() > y.size(); });
         json holes = json::array();
         for (size_t k = 1; k < rings.size(); ++k)
-            holes.push_back(ringJson(w, h, rings[k]));
+            holes.push_back(worldRingJson(w, h, rings[k]));
         const glm::dvec2 centre = s.c / double(s.n);
-        out.push_back({{"outline", rings.empty() ? json::array() : ringJson(w, h, rings[0])},
+        out.push_back({{"outline", rings.empty() ? json::array() : worldRingJson(w, h, rings[0])},
                        {"holes", holes},
                        {"area", double(s.n) * cellM2},
                        {"centroid", w.point(centre.x, h.heightAt(centre.x, centre.y), centre.y)},

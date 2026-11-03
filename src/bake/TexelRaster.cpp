@@ -1,5 +1,6 @@
 #include "bake/TexelRaster.h"
 
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "core/Profile.h"
 
@@ -10,6 +11,9 @@ namespace lila::bake
 {
 namespace
 {
+using detail::edgeFunction;
+using detail::mix3;
+
 uint32_t hash(uint32_t x)
 {
     x ^= x >> 16;
@@ -25,10 +29,6 @@ float hash01(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
     const uint32_t h = hash(a ^ hash(b ^ hash(c ^ hash(d))));
     return float(h >> 8) * (1.0f / 16777216.0f);
 }
-
-double edge(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
-
-template <class T> T mix3(const T* v, const glm::dvec3& w) { return v[0] * float(w.x) + v[1] * float(w.y) + v[2] * float(w.z); }
 
 /** The cage direction n blended toward the triangle's geometric normal by skew. */
 glm::vec3 skewed(const glm::vec3& n, const glm::vec3* tri, float skew)
@@ -66,7 +66,7 @@ TexelRaster::TexelRaster(const LowInput& low, const RasterSettings& settings, in
         const glm::vec2* uv = &s.uvs[size_t(t) * 3];
         const glm::vec2 c = (uv[0] + uv[1] + uv[2]) / 3.0f;
         const int tu = int(std::floor(c.x)), tv = int(std::floor(c.y));
-        const double area = edge(glm::dvec2(uv[0]), glm::dvec2(uv[1]), glm::dvec2(uv[2]));
+        const double area = edgeFunction(glm::dvec2(uv[0]), glm::dvec2(uv[1]), glm::dvec2(uv[2]));
         if (tu < 0 || tu > 9 || tv < 0 || std::abs(area) < 1e-14)
         {
             ++mSkipped;
@@ -124,7 +124,7 @@ void TexelRaster::band(int udim, size_t band, const CageParams& cage, std::vecto
         glm::dvec2 p[3];
         for (int k = 0; k < 3; ++k)
             p[k] = {(double(uv[k].x) - tile.u) * W, (1.0 - (double(uv[k].y) - tile.v)) * H};
-        const double area = edge(p[0], p[1], p[2]);
+        const double area = edgeFunction(p[0], p[1], p[2]);
         if (std::abs(area) < 1e-12)
             continue;
         const double minX = std::min({p[0].x, p[1].x, p[2].x}), maxX = std::max({p[0].x, p[1].x, p[2].x});
@@ -142,7 +142,7 @@ void TexelRaster::band(int udim, size_t band, const CageParams& cage, std::vecto
                     const double jx = n == 1 ? 0.5 : hash01(uint32_t(x), uint32_t(y), uint32_t(sub * 2), uint32_t(udim));
                     const double jy = n == 1 ? 0.5 : hash01(uint32_t(x), uint32_t(y), uint32_t(sub * 2 + 1), uint32_t(udim));
                     const glm::dvec2 sp(x + (i + jx) / n, y + (j + jy) / n);
-                    const glm::dvec3 w(edge(p[1], p[2], sp) / area, edge(p[2], p[0], sp) / area, edge(p[0], p[1], sp) / area);
+                    const glm::dvec3 w(edgeFunction(p[1], p[2], sp) / area, edgeFunction(p[2], p[0], sp) / area, edgeFunction(p[0], p[1], sp) / area);
                     if (w.x < 0.0 || w.y < 0.0 || w.z < 0.0)
                         continue;
                     claimed[slot] = 1;

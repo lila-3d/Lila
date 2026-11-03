@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "bake/Bake.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
@@ -51,19 +53,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 namespace fs = std::filesystem;
 
 namespace
 {
-void pump()
-{
-    for (int i = 0; i < 4; ++i)
-    {
-        mainq::drain();
-        QApplication::processEvents();
-    }
-}
-
 std::string addPlane(const std::string& name, double y)
 {
     scene::Graph& g = scene::Graph::current();
@@ -107,7 +101,7 @@ scene::Node* onlyGroup(const std::string& project)
     return g.node(groups.front());
 }
 
-void setup()
+void setupBaker()
 {
     static bool done = false;
     if (std::exchange(done, true))
@@ -124,7 +118,7 @@ void setup()
 
 TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake and thumbnails, all through undoable commands")
 {
-    setup();
+    setupBaker();
     ops::execute("newScene", json::object());
     UndoStack::get().clear();
     const std::string low = addPlane("crate_low", 0.0);
@@ -378,7 +372,7 @@ TEST_CASE("baker panel: groups from names, drops, stacks, output preview, bake a
 
 TEST_CASE("baker panel: presets stick on group and High rows, typed params edit the stack, Delete removes only tree rows")
 {
-    setup();
+    setupBaker();
     REQUIRE(scene::types::find("autoBevelModifier"));
     ops::execute("newScene", json::object());
     UndoStack::get().clear();
@@ -600,7 +594,7 @@ TEST_CASE("baker panel: presets stick on group and High rows, typed params edit 
 
 TEST_CASE("baker actions and menu are registered with docs")
 {
-    setup();
+    setupBaker();
     for (const char* id : {"window.baker", "bake.forTarget", "bake.bake", "bake.bakeSelected", "bake.cancel", "bake.newProject", "bake.autoGroup",
                            "bake.groupPerMesh", "bake.lint", "bake.removeRows"})
     {
@@ -614,7 +608,7 @@ TEST_CASE("baker actions and menu are registered with docs")
 
 TEST_CASE("baker MCP tools: bake returns a contact sheet, bake_inspect reads texels, bake_lint reports")
 {
-    setup();
+    setupBaker();
     ui::registerBakerMcpTools();
     ops::execute("newScene", json::object());
     UndoStack::get().clear();

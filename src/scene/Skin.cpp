@@ -8,6 +8,7 @@
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
 #include "scene/Components.h"
+#include "scene/DeformerUtil.h"
 #include "scene/MeshNodes.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
@@ -23,6 +24,7 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace deformutil;
 
 // ------------------------------------------------------------------------------------------------ weights data
 
@@ -535,12 +537,6 @@ void smoothPoints(const geo::Mesh& m, WeightTable& t, const std::vector<std::pai
 
 namespace
 {
-struct Bone
-{
-    uint32_t index;
-    std::vector<std::pair<glm::dvec3, glm::dvec3>> segments;
-};
-
 double segmentDistance(const glm::dvec3& p, const glm::dvec3& a, const glm::dvec3& b, glm::dvec3* closest = nullptr)
 {
     glm::dvec3 d = b - a;
@@ -552,27 +548,8 @@ double segmentDistance(const glm::dvec3& p, const glm::dvec3& a, const glm::dvec
     return glm::length(p - q);
 }
 
-std::vector<Bone> bonesOf(Graph& g, const std::vector<skin::Influence>& infs)
-{
-    std::vector<Bone> bones;
-    for (const skin::Influence& inf : infs)
-    {
-        if (inf.joint == kNoNode)
-            continue;
-        Bone b{inf.index, {}};
-        glm::dvec3 a = positionOf(*g.node(inf.joint));
-        for (NodeId c : g.children(inf.joint))
-            if (rig::isJoint(*g.node(c)))
-                b.segments.push_back({a, positionOf(*g.node(c))});
-        if (b.segments.empty())
-            b.segments.push_back({a, a});
-        bones.push_back(std::move(b));
-    }
-    return bones;
-}
-
 /** Closest-distance weights (Maya's default bind): the nearest bones by distance, falling off as 1/d^dropoff. */
-WeightTable closestWeights(const geo::Mesh& world, const std::vector<Bone>& bones, int maxInf, double dropoff, const geo::MeshBvh* bvh)
+WeightTable closestWeights(const geo::Mesh& world, const std::vector<SkinBone>& bones, int maxInf, double dropoff, const geo::MeshBvh* bvh)
 {
     LILA_ZONE();
 
@@ -587,7 +564,7 @@ WeightTable closestWeights(const geo::Mesh& world, const std::vector<Bone>& bone
                 continue;
             glm::dvec3 pos = world.position(p);
             cand.clear();
-            for (const Bone& b : bones)
+            for (const SkinBone& b : bones)
             {
                 double best = 1e300;
                 glm::dvec3 q, bestQ;
@@ -613,7 +590,7 @@ WeightTable closestWeights(const geo::Mesh& world, const std::vector<Bone>& bone
             {
                 // Nothing visible: fall back to plain distance for this point.
                 cand.clear();
-                for (const Bone& b : bones)
+                for (const SkinBone& b : bones)
                 {
                     double best = 1e300;
                     for (auto& [a, e] : b.segments)
@@ -837,7 +814,7 @@ void registerSkinCommandsImpl()
                 bvh = std::make_unique<geo::MeshBvh>(world);
             g.evaluate();
             std::vector<skin::Influence> infs = skin::influences(g, skin);
-            WeightTable t = closestWeights(world, bonesOf(g, infs), maxInf, a.get<double>("dropoffRate"), bvh.get());
+            WeightTable t = closestWeights(world, skinBones(g, infs), maxInf, a.get<double>("dropoffRate"), bvh.get());
             if (method == "heatmap")
                 smoothWeights(world, t, 6, maxInf, {});
             skin::setWeights(g, skin, t);

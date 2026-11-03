@@ -11,16 +11,6 @@ namespace lila::vcs
 {
 namespace
 {
-std::string trim(std::string s)
-{
-    while (!s.empty() && std::isspace((unsigned char)s.back()))
-        s.pop_back();
-    size_t i = 0;
-    while (i < s.size() && std::isspace((unsigned char)s[i]))
-        ++i;
-    return s.substr(i);
-}
-
 /** Paths compare case-insensitively where the file system does. */
 std::string key(std::string s)
 {

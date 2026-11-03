@@ -40,7 +40,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 
 constexpr double kNoValue = std::numeric_limits<double>::quiet_NaN();

@@ -6,6 +6,7 @@
 #include "ui/HotkeyCheatSheet.h"
 #include "ui/HotkeyEditor.h"
 #include "ui/MarkingMenuEditor.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QMainWindow>
@@ -15,14 +16,6 @@ namespace lila::ui
 {
 namespace
 {
-QWidget* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (qobject_cast<QMainWindow*>(w))
-            return w;
-    return nullptr;
-}
-
 /** One instance per editor, as a tool window over the main window. */
 template <class T> void openSingle(QPointer<T>& slot)
 {

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Sketch.h"
 #include "curve/Tessellate.h"
@@ -15,21 +17,12 @@ using namespace lila;
 using namespace lila::curve;
 using namespace lila::curve::sketch;
 using json = nlohmann::json;
+using namespace curvetest;
 
 namespace
 {
 /** The ground plane (Y up): horizontal is X, vertical is -Z. */
-Plane ground() { return planeFrom(D3(0.0), D3(0, 1, 0)); }
-
-Spline poly(std::initializer_list<D3> pts, bool closed = false)
-{
-    Spline s;
-    s.kind = Kind::Poly;
-    s.points = pts;
-    s.closed = closed;
-    s.normalize();
-    return s;
-}
+Plane groundPlane() { return planeFrom(D3(0.0), D3(0, 1, 0)); }
 
 Ref P(int s, int i) { return {RefKind::Point, s, i}; }
 Ref Ln(int s, int i) { return {RefKind::Line, s, i}; }
@@ -53,16 +46,6 @@ uint32_t add(Sketch& k, const Splines& s, Constraint c)
 }
 
 D2 at(const Splines& s, const Plane& pl, Ref r) { return pl.to2d(refPosition(s, pl, r)); }
-
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
-}
 } // namespace
 
 TEST_CASE("sketch refs and storage round trip")
@@ -80,8 +63,8 @@ TEST_CASE("sketch refs and storage round trip")
     CHECK(!parseRef("p-1.2", &r));
 
     Sketch k;
-    k.plane = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 1), D3(10, 0, 5)})};
+    k.plane = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 1), D3(10, 0, 5)})};
     add(k, s, make(Type::Horizontal, {Ln(0, 0)}));
     uint32_t d = add(k, s, make(Type::Length, {Ln(0, 1)}, 4.0));
     k.constraints.back().expr = "2 * 2cm";
@@ -94,8 +77,8 @@ TEST_CASE("sketch refs and storage round trip")
 
 TEST_CASE("sketch rectangle solves fully constrained")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0.3, 0, 0.2), D3(9.0, 0, -0.5), D3(10.4, 0, -6.0), D3(-0.2, 0, -4.3)}, true)};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0.3, 0, 0.2), D3(9.0, 0, -0.5), D3(10.4, 0, -6.0), D3(-0.2, 0, -4.3)}, true)};
     Sketch k;
     k.plane = pl;
     Status st = analyze(s, k);
@@ -131,8 +114,8 @@ TEST_CASE("sketch rectangle solves fully constrained")
 
 TEST_CASE("sketch dof per point and redundancy")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 0.5)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 0.5)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {P(0, 0)}));
@@ -160,8 +143,8 @@ TEST_CASE("sketch dof per point and redundancy")
 
 TEST_CASE("sketch conflicts name the constraints in the way")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 0)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 0)})};
     Sketch k;
     k.plane = pl;
     uint32_t a = add(k, s, make(Type::Fixed, {P(0, 0)}));
@@ -179,8 +162,8 @@ TEST_CASE("sketch conflicts name the constraints in the way")
 
 TEST_CASE("sketch geometric constraints between lines")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, -1)}), poly({D3(2, 0, -3), D3(8, 0, -9)}), poly({D3(20, 0, 0), D3(21, 0, -6)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, -1)}), polyline({D3(2, 0, -3), D3(8, 0, -9)}), polyline({D3(20, 0, 0), D3(21, 0, -6)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {Ln(0, 0)}));
@@ -197,7 +180,7 @@ TEST_CASE("sketch geometric constraints between lines")
     CHECK(glm::distance(b0, (a0 + a1) * 0.5) < 1e-6);
 
     // Exactly parallel lines made perpendicular (a flat spot for cross and dot residuals).
-    Splines par = {poly({D3(0), D3(10, 0, 0)}), poly({D3(0, 0, -3), D3(10, 0, -3)})};
+    Splines par = {polyline({D3(0), D3(10, 0, 0)}), polyline({D3(0, 0, -3), D3(10, 0, -3)})};
     Sketch pk;
     pk.plane = pl;
     add(pk, par, make(Type::Fixed, {Ln(0, 0)}));
@@ -207,7 +190,7 @@ TEST_CASE("sketch geometric constraints between lines")
     CHECK(std::abs(pd.x) < 1e-6 * glm::length(pd));
 
     // Angle and collinear.
-    Splines t = {poly({D3(0), D3(10, 0, 0)}), poly({D3(0, 0, -1), D3(5, 0, -4)}), poly({D3(12, 0, 1), D3(16, 0, 2)})};
+    Splines t = {polyline({D3(0), D3(10, 0, 0)}), polyline({D3(0, 0, -1), D3(5, 0, -4)}), polyline({D3(12, 0, 1), D3(16, 0, 2)})};
     Sketch q;
     q.plane = pl;
     add(q, t, make(Type::Fixed, {Ln(0, 0)}));
@@ -223,8 +206,8 @@ TEST_CASE("sketch geometric constraints between lines")
 
 TEST_CASE("sketch symmetric, distances and point on line")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0, 0, 5), D3(0, 0, -5)}), poly({D3(-3, 0, -1), D3(4, 0, -2)}), poly({D3(5, 0, 5), D3(9, 0, 4)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0, 0, 5), D3(0, 0, -5)}), polyline({D3(-3, 0, -1), D3(4, 0, -2)}), polyline({D3(5, 0, 5), D3(9, 0, 4)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {Ln(0, 0)}));
@@ -244,8 +227,8 @@ TEST_CASE("sketch symmetric, distances and point on line")
 
 TEST_CASE("sketch circles and arcs")
 {
-    const Plane pl = ground();
-    Splines s = {circle(D3(0), D3(0, 1, 0), 3.0), poly({D3(-10, 0, -5), D3(10, 0, -4)}), circle(D3(1, 0, 1), D3(0, 1, 0), 1.0)};
+    const Plane pl = groundPlane();
+    Splines s = {circle(D3(0), D3(0, 1, 0), 3.0), polyline({D3(-10, 0, -5), D3(10, 0, -4)}), circle(D3(1, 0, 1), D3(0, 1, 0), 1.0)};
     REQUIRE(circleOf(s[0], pl).shape == Shape::Circle);
     CHECK(circleOf(s[1], pl).shape == Shape::Points);
     Sketch k;
@@ -267,7 +250,7 @@ TEST_CASE("sketch circles and arcs")
     CHECK(analyze(s, k).splineFixed[2]);
 
     // An arc's end held on a line end, its radius dimensioned.
-    Splines t = {poly({D3(-10, 0, 0), D3(0, 0, 0)}), arc(D3(0.5, 0, -5), D3(0, 1, 0), D3(0.5, 0, 0), glm::half_pi<double>())};
+    Splines t = {polyline({D3(-10, 0, 0), D3(0, 0, 0)}), arc(D3(0.5, 0, -5), D3(0, 1, 0), D3(0.5, 0, 0), glm::half_pi<double>())};
     REQUIRE(circleOf(t[1], pl).shape == Shape::Arc);
     Sketch q;
     q.plane = pl;
@@ -307,8 +290,8 @@ TEST_CASE("sketch circles and arcs")
 
 TEST_CASE("sketch drag keeps constraints")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 0), D3(10, 0, -5)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 0), D3(10, 0, -5)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {P(0, 0)}));
@@ -329,7 +312,7 @@ TEST_CASE("sketch drag keeps constraints")
 
 TEST_CASE("sketch tangent keeps a Bezier smooth")
 {
-    const Plane pl = ground();
+    const Plane pl = groundPlane();
     Spline b;
     b.kind = Kind::Bezier;
     b.points = {D3(10, 0, 0), D3(20, 0, -8)};
@@ -337,7 +320,7 @@ TEST_CASE("sketch tangent keeps a Bezier smooth")
     b.handleR = {D3(12, 0, -4), D3(22, 0, -6)};
     b.typeL.assign(2, HandleType::Free);
     b.typeR.assign(2, HandleType::Free);
-    Splines s = {poly({D3(0), D3(10, 0, 0)}), b};
+    Splines s = {polyline({D3(0), D3(10, 0, 0)}), b};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {Ln(0, 0)}));
@@ -350,12 +333,12 @@ TEST_CASE("sketch tangent keeps a Bezier smooth")
 
 TEST_CASE("sketch point on a NURBS curve")
 {
-    const Plane pl = ground();
+    const Plane pl = groundPlane();
     Spline n;
     n.kind = Kind::Nurbs;
     n.degree = 3;
     n.points = {D3(0), D3(5, 0, -6), D3(10, 0, 6), D3(15, 0, 0)};
-    Splines s = {n, poly({D3(7, 0, -9), D3(9, 0, -12)})};
+    Splines s = {n, polyline({D3(7, 0, -9), D3(9, 0, -12)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {C(0)}));
@@ -379,8 +362,8 @@ TEST_CASE("sketch dimension expressions")
     CHECK(!evalExpression("1 / 0", names));
     CHECK(!evalExpression("(1 + 2", names));
 
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 0), D3(10, 0, -5)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 0), D3(10, 0, -5)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Fixed, {P(0, 0)}));
@@ -398,8 +381,8 @@ TEST_CASE("sketch dimension expressions")
 
 TEST_CASE("sketch inference while drawing")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(10, 0, 0)}), circle(D3(20, 0, 0), D3(0, 1, 0), 2.0)};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(10, 0, 0)}), circle(D3(20, 0, 0), D3(0, 1, 0), 2.0)};
     Inference i = infer(s, pl, D2(10.2, 0.1), std::nullopt, 0.5);
     REQUIRE(i.constraints.size() == 1);
     CHECK(i.constraints[0].type == Type::Coincident);
@@ -420,8 +403,8 @@ TEST_CASE("sketch inference while drawing")
 
 TEST_CASE("sketch degenerate input stays finite")
 {
-    const Plane pl = ground();
-    Splines s = {poly({D3(0), D3(0)}), poly({D3(1, 0, 1), D3(1, 0, 1)})};
+    const Plane pl = groundPlane();
+    Splines s = {polyline({D3(0), D3(0)}), polyline({D3(1, 0, 1), D3(1, 0, 1)})};
     Sketch k;
     k.plane = pl;
     add(k, s, make(Type::Parallel, {Ln(0, 0), Ln(1, 0)}));
@@ -513,7 +496,7 @@ TEST_CASE("sketch commands: combine and add with auto constraints")
     CHECK(data[1]["points"][0][2].get<double>() == doctest::Approx(data[0]["points"][1][2].get<double>()));
 
     json r = run("sketchAdd", {{"args", {a}},
-                               {"splines", json::array({splineToJson(poly({D3(10, 0, -5), D3(0, 0, -5)}))})},
+                               {"splines", json::array({splineToJson(polyline({D3(10, 0, -5), D3(0, 0, -5)}))})},
                                {"constraints", json::array({{{"type", "coincident"}, {"refs", {"p2.0", "p1.1"}}},
                                                             {{"type", "horizontal"}, {"refs", {"l2.0"}}},
                                                             {{"type", "length"}, {"refs", {"l2.0"}}, {"value", 10.0}},

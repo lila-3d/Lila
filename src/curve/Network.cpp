@@ -1,6 +1,7 @@
 #include "curve/Network.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Intersect.h"
 #include "curve/Tessellate.h"
 #include "geo/Attribute.h"
@@ -15,10 +16,7 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using geo::Index;
-
-constexpr double kEps = 1e-12;
 
 std::string str(int i) { return std::to_string(i); }
 
@@ -171,7 +169,7 @@ struct Cardinal
 };
 
 /** One line of the grid: a curve of one family (oriented to run with the other family's order) or a pole. */
-struct Line
+struct FamilyLine
 {
     int curve = -1; // input index, -1 for a pole
     Spline spline;
@@ -180,7 +178,7 @@ struct Line
 };
 
 /** Evenly spread global parameters of the crossings: the mean of each line's normalised arc length to them. */
-std::vector<double> globalParams(const std::vector<Line>& lines, const std::vector<Measured>& measured, size_t crossings)
+std::vector<double> globalParams(const std::vector<FamilyLine>& lines, const std::vector<Measured>& measured, size_t crossings)
 {
     std::vector<double> g(crossings, 0.0);
     int count = 0;
@@ -208,7 +206,7 @@ std::vector<double> globalParams(const std::vector<Line>& lines, const std::vect
 }
 
 /** Samples a line at global parameters: arc length mapped smoothly so it reaches each crossing at its global parameter. */
-std::vector<D3> sampleLine(const Line& line, const Measured* m, const std::vector<double>& global, const std::vector<double>& at)
+std::vector<D3> sampleLine(const FamilyLine& line, const Measured* m, const std::vector<double>& global, const std::vector<double>& at)
 {
     std::vector<D3> out;
     if (line.curve < 0)
@@ -358,11 +356,11 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
         int ref = fam[1 - f].front();
         std::sort(order[f].begin(), order[f].end(), [&](int a, int b) { return paramOn(ref, a) < paramOn(ref, b); });
     }
-    std::vector<Line> lines[2];
+    std::vector<FamilyLine> lines[2];
     for (int f = 0; f < 2; ++f)
         for (int c : order[f])
         {
-            Line L;
+            FamilyLine L;
             L.curve = c;
             L.spline = curves[size_t(c)];
             for (int other : order[1 - f])
@@ -389,15 +387,15 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
     bool anyPole[2] = {false, false};
     for (int f = 0; f < 2; ++f)
     {
-        const std::vector<Line>& others = lines[1 - f];
-        if (std::ranges::any_of(others, [](const Line& L) { return L.curve < 0; }))
+        const std::vector<FamilyLine>& others = lines[1 - f];
+        if (std::ranges::any_of(others, [](const FamilyLine& L) { return L.curve < 0; }))
             continue;
         for (bool atEnd : {false, true})
         {
             D3 first = atEnd ? pointAt(others.front().spline, spanCount(others.front().spline)) : pointAt(others.front().spline, 0.0);
             D3 sum(0.0);
             bool meet = others.size() >= 2;
-            for (const Line& L : others)
+            for (const FamilyLine& L : others)
             {
                 double K = spanCount(L.spline);
                 D3 e = atEnd ? pointAt(L.spline, K) : pointAt(L.spline, 0.0);
@@ -409,14 +407,14 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
             }
             if (!meet)
                 continue;
-            Line pole;
+            FamilyLine pole;
             pole.pole = sum / double(others.size());
             pole.at.assign(others.size(), 0.0);
             if (atEnd)
                 lines[f].push_back(pole);
             else
                 lines[f].insert(lines[f].begin(), pole);
-            for (Line& L : lines[1 - f])
+            for (FamilyLine& L : lines[1 - f])
             {
                 double K = spanCount(L.spline);
                 if (atEnd)
@@ -438,7 +436,7 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
     for (size_t i = 0; i < R; ++i)
         for (size_t j = 0; j < C; ++j)
         {
-            const Line &u = lines[0][i], &v = lines[1][j];
+            const FamilyLine &u = lines[0][i], &v = lines[1][j];
             if (u.curve < 0)
                 X[i][j] = u.pole;
             else if (v.curve < 0)
@@ -448,9 +446,9 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
         }
 
     std::vector<Measured> mu, mv;
-    for (const Line& L : lines[0])
+    for (const FamilyLine& L : lines[0])
         mu.emplace_back(L.curve >= 0 ? L.spline : Spline(), tol);
-    for (const Line& L : lines[1])
+    for (const FamilyLine& L : lines[1])
         mv.emplace_back(L.curve >= 0 ? L.spline : Spline(), tol);
     std::vector<double> sNodes = globalParams(lines[0], mu, C), tNodes = globalParams(lines[1], mv, R);
 
@@ -562,9 +560,9 @@ NetworkResult curveNetwork(const Splines& curves, const NetworkOptions& o)
             size_t k = 0;
             m.forEachFaceCorner(f, [&](Index c) { uv[c] = fu[k++]; });
         }
-    for (const Line& L : lines[0])
+    for (const FamilyLine& L : lines[0])
         r.uOrder.push_back(L.curve);
-    for (const Line& L : lines[1])
+    for (const FamilyLine& L : lines[1])
         r.vOrder.push_back(L.curve);
     return r;
 }

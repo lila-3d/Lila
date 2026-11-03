@@ -12,6 +12,8 @@
 #pragma warning(pop)
 #endif
 
+#include "deform/EigenGlm.h"
+
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
@@ -24,24 +26,6 @@ namespace lila::deform
 namespace
 {
 using Solver = Dem::DemBones<double, double>;
-
-Eigen::Matrix4d toEigen(const glm::dmat4& m)
-{
-    Eigen::Matrix4d e;
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            e(r, c) = m[c][r];
-    return e;
-}
-
-glm::dmat4 toGlm(const Eigen::Matrix4d& e)
-{
-    glm::dmat4 m;
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            m[c][r] = e(r, c);
-    return m;
-}
 
 void setWeights(Solver& s, int bones, const std::vector<uint32_t>& offsets, const std::vector<uint32_t>& influences, const std::vector<float>& weights)
 {

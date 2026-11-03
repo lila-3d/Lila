@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "../../extensions/Overlap/OverlapSolver.h"
 
 #include "ops/Command.h"
@@ -21,14 +22,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace simtest;
 using json = nlohmann::json;
 using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 /** A root, hips keyed side to side over frames 0..30, and a four-joint tail behind the hips. */
 void tailScene(bool loop)
 {
@@ -44,30 +43,6 @@ void tailScene(bool loop)
         run("setKeyframe", {{"args", {"hips.tx"}}, {"time", k * 7.5 / 30.0}, {"value", xs[k]}});
     if (loop)
         run("setLoopKey", {{"args", {"hips"}}, {"time", 1.0}});
-}
-
-/** Keys of every curve on a layer, as text, in member order. */
-std::string layerKeys(const std::string& layer)
-{
-    Graph& g = Graph::current();
-    const NodeId l = g.find(layer)->id();
-    std::string out;
-    for (const PlugRef& m : anim::layerMembers(g, l))
-    {
-        const NodeId b = anim::blendFor(g, m, l);
-        std::vector<PlugRef> srcs;
-        if (auto s = g.source({b, anim::BlendNode::kInputB, -1}))
-            srcs.push_back(*s);
-        for (int k = 0; k < 3; ++k)
-            if (auto s = g.source({b, anim::BlendNode::kInputB, k}))
-                srcs.push_back(*s);
-        for (const PlugRef& s : srcs)
-        {
-            const Node& c = *g.node(s.node);
-            out += g.plugName(m) + ":" + c.as<std::string>(c.type().attrIndex("keys")) + "\n";
-        }
-    }
-    return out;
 }
 
 std::string overlapPackage() { return LILA_TEST_OVERLAP_PACKAGE; }

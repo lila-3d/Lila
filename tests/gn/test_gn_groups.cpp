@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "geo/ColorSets.h"
@@ -15,14 +16,12 @@
 #include <string>
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
 scene::MeshPtr outMesh(const std::string& mesh)
 {
     scene::Graph& g = scene::Graph::current();

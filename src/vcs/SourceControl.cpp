@@ -24,11 +24,6 @@ std::string dirKey(const fs::path& dir)
     return s;
 }
 
-bool isDepotSyntax(const fs::path& p)
-{
-    std::string s = p.string();
-    return s.size() > 2 && s[0] == '/' && s[1] == '/' && s.find('\\') == std::string::npos;
-}
 
 fs::path dirOf(const fs::path& path)
 {
@@ -46,7 +41,7 @@ bool isReadOnly(const fs::path& p)
     return !ec && fs::exists(st) && (st.permissions() & fs::perms::owner_write) == fs::perms::none;
 }
 
-std::string str(const json& j, const char* key, const std::string& fallback)
+std::string stringOr(const json& j, const char* key, const std::string& fallback)
 {
     return j.is_object() && j.contains(key) && j[key].is_string() ? j[key].get<std::string>() : fallback;
 }
@@ -114,7 +109,7 @@ std::shared_ptr<Provider> SourceControl::detect(const fs::path& dir, const json&
 {
     LILA_ZONE();
 
-    std::string mode = str(prefs, "provider", "auto");
+    std::string mode = stringOr(prefs, "provider", "auto");
     if (mode == "none")
         return nullptr;
     std::shared_ptr<ProcessRunner> run = runner();
@@ -172,7 +167,7 @@ std::shared_ptr<Provider> SourceControl::providerFor(const fs::path& path)
 {
     LILA_ZONE();
 
-    if (isDepotSyntax(path))
+    if (isDepotSyntax(path.string()))
     {
         std::shared_ptr<Provider> p = providerForContext();
         return p && p->name() == "perforce" ? p : nullptr;
@@ -346,7 +341,7 @@ WriteAccess SourceControl::requestWrite(const fs::path& file, std::string* error
     if (!fs::exists(file, ec) || !isReadOnly(file))
         return WriteAccess::Writable;
 
-    std::string mode = str(settings(), "autoCheckout", "prompt");
+    std::string mode = stringOr(settings(), "autoCheckout", "prompt");
     std::shared_ptr<Provider> p = providerFor(file);
     if (!p)
         return fail(WriteAccess::Denied, file.string() + " is read-only and not under source control");

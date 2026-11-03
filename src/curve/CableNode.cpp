@@ -1,5 +1,5 @@
 #include "curve/Cable.h"
-#include "curve/EnvAttrs.h"
+#include "curve/NodeHelpers.h"
 #include "curve/EnvironmentNodes.h"
 
 #include "core/Log.h"
@@ -14,7 +14,7 @@
 namespace lila::curve
 {
 using namespace scene;
-using namespace env;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -127,14 +127,6 @@ public:
     }
 };
 
-Node& meshNamed(Graph& g, const std::string& name)
-{
-    Node* n = g.find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError("cable: " + name + " is not a mesh");
-    return *n;
-}
-
 std::vector<D3> pointsFlag(const Args& a)
 {
     std::vector<D3> out;
@@ -147,7 +139,7 @@ std::vector<D3> pointsFlag(const Args& a)
     return out;
 }
 
-void registerOptionLayout()
+void registerCableOptionLayout()
 {
     namespace opt = ops::options;
     opt::Override o;
@@ -176,7 +168,7 @@ void registerCableType()
     t.icon = "line-dashed";
     t.doc = "Cables hanging between the points of anchor curves: true catenaries by slack or sag depth under gravity, bundles with "
             "seeded variation, optionally draped over collider meshes.";
-    t.ownAttrs.push_back(dataIn("inCurve", "Anchor curves, world space: a cable spans each pair of neighbouring points."));
+    t.ownAttrs.push_back(dataIn("inCurve", "Anchor curves, world space: a cable spans each pair of neighbouring points.", false));
     for (int k = 0; k < kColliders; ++k)
     {
         t.ownAttrs.push_back(meshIn(slot("collider", k), "A mesh the cables drape over."));
@@ -231,7 +223,7 @@ void registerCableCommands()
             std::vector<Node*> colliders;
             if (a.has("colliders"))
                 for (const json& c : a.flags["colliders"])
-                    colliders.push_back(&meshNamed(g, c.get<std::string>()));
+                    colliders.push_back(&meshNamed(g, c.get<std::string>(), "cable"));
             if (a.has("points"))
             {
                 Spline s;
@@ -312,6 +304,6 @@ void registerCableCommands()
             return out;
         },
     });
-    registerOptionLayout();
+    registerCableOptionLayout();
 }
 } // namespace lila::curve

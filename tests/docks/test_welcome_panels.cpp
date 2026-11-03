@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/MainQueue.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
@@ -20,19 +22,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-void pump()
-{
-    for (int i = 0; i < 4; ++i)
-    {
-        mainq::drain();
-        QApplication::processEvents();
-    }
-}
-
-void registerAll()
+void registerWelcomeUi()
 {
     mainq::init();
     ops::registerBuiltins();
@@ -93,7 +87,7 @@ TEST_CASE("welcome dialog shows whole rows of three examples and ignores clicks 
 
 TEST_CASE("material editor filters by name and shows icon-only buttons in order")
 {
-    registerAll();
+    registerWelcomeUi();
     ops::execute("newScene", json::object());
     for (const char* name : {"M_Brick", "M_Wood", "M_RedBRICK"})
         ops::execute("createMaterial", {{"args", {name}}});
@@ -132,7 +126,7 @@ TEST_CASE("material editor filters by name and shows icon-only buttons in order"
 
 TEST_CASE("display layers panel marks empty layers")
 {
-    registerAll();
+    registerWelcomeUi();
     ops::execute("newScene", json::object());
     ops::execute("createDisplayLayer", {{"empty", true}});
     ui::DisplayLayersPanel panel;

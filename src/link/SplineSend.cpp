@@ -28,7 +28,7 @@ D3 toUnreal(const D3& v)
     return {glm::dot(v, b.forward), glm::dot(v, b.right), glm::dot(v, b.up)};
 }
 
-json vec(const D3& v)
+json cleanVec(const D3& v)
 {
     auto clean = [](double x) { return std::abs(x) < 1e-12 ? 0.0 : x; };
     return json::array({clean(v.x), clean(v.y), clean(v.z)});
@@ -79,18 +79,18 @@ json splineJson(const curve::Spline& s, const D3& origin)
         D3 neighbour = i + 1 < n ? b.points[i + 1] - p : p - b.points[i - 1];
         const D3 t = unit(glm::length(leave) > 1e-12 ? leave : arrive, unit(neighbour, math::axisBasis().forward));
         const double tilt = valueAt(s, b, i, s.tilt, 0.0), radius = valueAt(s, b, i, s.radius, 1.0);
-        points.push_back({{"position", vec(toUnreal(p - origin))},
-                          {"arriveTangent", vec(toUnreal(arrive))},
-                          {"leaveTangent", vec(toUnreal(leave))},
-                          {"up", vec(toUnreal(upAt(t, tilt)))},
+        points.push_back({{"position", cleanVec(toUnreal(p - origin))},
+                          {"arriveTangent", cleanVec(toUnreal(arrive))},
+                          {"leaveTangent", cleanVec(toUnreal(leave))},
+                          {"up", cleanVec(toUnreal(upAt(t, tilt)))},
                           // Unreal is left-handed, so a right-handed turn about the tangent is a negative roll there.
                           {"roll", -tilt * 180.0 / math::kPi},
-                          {"scale", vec(D3(1.0, radius, radius))}});
+                          {"scale", cleanVec(D3(1.0, radius, radius))}});
     }
     return {{"closed", b.closed}, {"points", points}};
 }
 
-std::shared_ptr<RpcClient> requireClient(const char* cmd)
+std::shared_ptr<RpcClient> requireClientFor(const char* cmd)
 {
     try
     {
@@ -165,7 +165,7 @@ json splineParams(scene::Graph& g, scene::NodeId id, const json& mapping)
     json params = {{"id", mapping.value("splineId", n->fullPath())},
                    {"label", n->name()},
                    {"mode", mapping.value("splineType", std::string("actor"))},
-                   {"location", vec(toUnreal(origin))},
+                   {"location", cleanVec(toUnreal(origin))},
                    {"splines", splines}};
     if (std::string mesh = mapping.value("splineMesh", std::string()); !mesh.empty())
     {
@@ -245,7 +245,7 @@ void registerSplineCommands()
                 for (const json& i : preflight(g, ids, "unrealSendCurve", a.get<bool>("validate", true)))
                     log::warn("unrealSendCurve: {}: {}", i["target"].get<std::string>(), i["message"].get<std::string>());
             }
-            std::shared_ptr<RpcClient> client = requireClient("unrealSendCurve");
+            std::shared_ptr<RpcClient> client = requireClientFor("unrealSendCurve");
             json replies = json::array();
             for (scene::Node* c : curves)
             {

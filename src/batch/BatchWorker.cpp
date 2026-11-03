@@ -38,20 +38,14 @@ void writeJson(const fs::path& p, const json& j)
     fs::rename(tmp, p, ec);
 }
 
-bool readOnly(const fs::path& p)
-{
-    std::error_code ec;
-    return fs::exists(p, ec) && (fs::status(p, ec).permissions() & fs::perms::owner_write) == fs::perms::none;
-}
-
 /** Makes out writable per the spec: a source control checkout first, then clearing the flag when allowed. */
 bool prepareWrite(const Spec& spec, const fs::path& out, std::string& why)
 {
-    if (!readOnly(out))
+    if (!isReadOnly(out))
         return true;
     if (spec.checkout == "auto")
     {
-        if (vcs::SourceControl::get().requestWrite(out, &why, true) == vcs::WriteAccess::Writable && !readOnly(out))
+        if (vcs::SourceControl::get().requestWrite(out, &why, true) == vcs::WriteAccess::Writable && !isReadOnly(out))
         {
             log::info("batch: checked out {}", paths::toUtf8(out));
             return true;
@@ -63,7 +57,7 @@ bool prepareWrite(const Spec& spec, const fs::path& out, std::string& why)
     {
         std::error_code ec;
         fs::permissions(out, fs::perms::owner_write, fs::perm_options::add, ec);
-        if (!ec && !readOnly(out))
+        if (!ec && !isReadOnly(out))
         {
             log::info("batch: made {} writable", paths::toUtf8(out));
             return true;

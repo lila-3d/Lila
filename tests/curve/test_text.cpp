@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/BevelPlus.h"
 #include "curve/CurveNodes.h"
 #include "curve/Planar.h"
@@ -13,11 +15,10 @@ using namespace lila;
 using json = nlohmann::json;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 void bounds(const curve::Splines& s, D3& lo, D3& hi)
 {
     lo = D3(1e300);

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
@@ -11,12 +13,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-
 int validFaces(const scene::MeshPtr& m)
 {
     int n = 0;

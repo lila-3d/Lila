@@ -21,11 +21,6 @@ struct RegionMove
     bool clamp = false;     // shrink the thickness so no face's border crosses itself
 };
 
-/** Clamped thickness leaves this share of the room where points of a face would cross inside it. */
-constexpr double kClampMargin = 0.02;
-/** Border points a clamped inset brings closer than this share of the thickness are welded. */
-constexpr double kWeldShare = 1e-7;
-
 struct Clamp
 {
     double share = 1.0;     // of the thickness

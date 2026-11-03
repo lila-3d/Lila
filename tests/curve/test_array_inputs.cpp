@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Mesh.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
@@ -11,11 +13,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
 size_t facesOf(const std::string& mesh)
 {
     scene::Graph& g = scene::Graph::current();

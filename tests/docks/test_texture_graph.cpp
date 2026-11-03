@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/MainQueue.h"
 #include "gn/Gn.h"
 #include "ops/Command.h"
@@ -30,20 +32,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void pump()
-{
-    for (int i = 0; i < 4; ++i)
-    {
-        mainq::drain();
-        QApplication::processEvents();
-    }
-}
-
 /** Pumps until done() or the timeout; the CPU evaluator compiles each new graph structure first. */
 template <typename F>
 bool pumpUntil(F done, int seconds = 60)
@@ -59,7 +51,7 @@ bool pumpUntil(F done, int seconds = 60)
     return false;
 }
 
-void press(QWidget* w, Qt::Key key, Qt::KeyboardModifiers mods = Qt::NoModifier, const QString& text = {})
+void pressWithText(QWidget* w, Qt::Key key, Qt::KeyboardModifiers mods = Qt::NoModifier, const QString& text = {})
 {
     QKeyEvent down(QEvent::KeyPress, key, mods, text);
     QApplication::sendEvent(w, &down);
@@ -68,7 +60,7 @@ void press(QWidget* w, Qt::Key key, Qt::KeyboardModifiers mods = Qt::NoModifier,
     pump();
 }
 
-void mouse(QGraphicsView* view, QEvent::Type type, QPointF scenePos, Qt::MouseButton button, Qt::KeyboardModifiers mods = Qt::NoModifier)
+void viewMouse(QGraphicsView* view, QEvent::Type type, QPointF scenePos, Qt::MouseButton button, Qt::KeyboardModifiers mods = Qt::NoModifier)
 {
     QPoint local = view->mapFromScene(scenePos);
     QPoint global = view->viewport()->mapToGlobal(local);
@@ -79,7 +71,7 @@ void mouse(QGraphicsView* view, QEvent::Type type, QPointF scenePos, Qt::MouseBu
 
 tex::Graph rock() { return tex::readGraph(*tex::findSet(scene::Graph::current(), "Rock")); }
 
-QGraphicsItem* itemAt(QGraphicsView* view, const std::string& node)
+QGraphicsItem* nodeItem(QGraphicsView* view, const std::string& node)
 {
     const tex::GNode* n = rock().node(node);
     REQUIRE(n);
@@ -88,31 +80,11 @@ QGraphicsItem* itemAt(QGraphicsView* view, const std::string& node)
             return i;
     return nullptr;
 }
-
-void registerAll()
-{
-    mainq::init();
-    ops::registerBuiltins();
-    scene::types::registerBuiltins();
-    scene::registerCommands();
-    gn::registerTypes();
-    gn::registerCommands();
-    if (!scene::types::find(tex::kTextureSetType))
-        tex::registerTypes();
-    if (!ops::find("texCreateSet"))
-        tex::registerCommands();
-    if (!ops::find("texExportGraph"))
-        tex::registerFileCommands();
-    ui::actions::registerBuiltins();
-    ui::registerNodeEditorActions();
-    ui::registerTexGraphBackend();
-    ui::Hotkeys::get().install();
-}
 } // namespace
 
 TEST_CASE("texture graph editor adds, links and edits nodes through tex commands, and the 2D view shows them")
 {
-    registerAll();
+    registerTexGraphUi();
     run("newScene");
     run("texCreateSet", {{"args", {"Rock"}}, {"resolution", 64}});
 
@@ -137,14 +109,14 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
     pump();
 
     // Tab opens the add-node search (tex nodes only); typing and Enter adds the node under the cursor.
-    press(view, Qt::Key_Tab);
+    pressWithText(view, Qt::Key_Tab);
     QWidget* popup = QApplication::activePopupWidget();
     REQUIRE(popup);
     auto* search = popup->findChild<QLineEdit*>();
     REQUIRE(search);
     search->setText("perlin");
     pump();
-    press(search, Qt::Key_Return);
+    pressWithText(search, Qt::Key_Return);
     pump();
     REQUIRE(rock().nodes.size() == 2);
     std::string perlin;
@@ -159,7 +131,7 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
     pump();
     editor->frameAll();
     pump();
-    QGraphicsItem* noise = itemAt(view, perlin);
+    QGraphicsItem* noise = nodeItem(view, perlin);
     REQUIRE(noise);
     // Header 24, a 96 px thumbnail with 8 of margin, then one 20 px row per socket: outputs first.
     const QPointF out = QPointF(-400 + 170, 24 + 96 + 8 + 10);
@@ -172,10 +144,10 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
                     roughness = int(i);
     REQUIRE(roughness >= 0);
     const QPointF in = QPointF(0, 24 + 20.0 * roughness + 10);
-    mouse(view, QEvent::MouseButtonPress, out, Qt::LeftButton);
-    mouse(view, QEvent::MouseMove, (out + in) * 0.5, Qt::LeftButton);
-    mouse(view, QEvent::MouseMove, in, Qt::LeftButton);
-    mouse(view, QEvent::MouseButtonRelease, in, Qt::LeftButton);
+    viewMouse(view, QEvent::MouseButtonPress, out, Qt::LeftButton);
+    viewMouse(view, QEvent::MouseMove, (out + in) * 0.5, Qt::LeftButton);
+    viewMouse(view, QEvent::MouseMove, in, Qt::LeftButton);
+    viewMouse(view, QEvent::MouseButtonRelease, in, Qt::LeftButton);
     pump();
     tex::Graph g = rock();
     REQUIRE(g.links.size() == 1);
@@ -185,7 +157,7 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
 
     // Selecting the node shows its parameters; editing one runs texSetValue.
     view->scene()->clearSelection();
-    itemAt(view, perlin)->setSelected(true);
+    nodeItem(view, perlin)->setSelected(true);
     pump();
     QDoubleSpinBox* persistence = nullptr;
     for (QDoubleSpinBox* s : editor->findChildren<QDoubleSpinBox*>())
@@ -208,8 +180,8 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
     ui::Texture2DView view2d;
     view2d.resize(400, 400);
     view2d.show();
-    mouse(view, QEvent::MouseButtonPress, itemAt(view, perlin)->pos() + QPointF(60, 10), Qt::LeftButton, Qt::ControlModifier | Qt::ShiftModifier);
-    mouse(view, QEvent::MouseButtonRelease, itemAt(view, perlin)->pos() + QPointF(60, 10), Qt::LeftButton, Qt::ControlModifier | Qt::ShiftModifier);
+    viewMouse(view, QEvent::MouseButtonPress, nodeItem(view, perlin)->pos() + QPointF(60, 10), Qt::LeftButton, Qt::ControlModifier | Qt::ShiftModifier);
+    viewMouse(view, QEvent::MouseButtonRelease, nodeItem(view, perlin)->pos() + QPointF(60, 10), Qt::LeftButton, Qt::ControlModifier | Qt::ShiftModifier);
     pump();
     CHECK(ui::texture2d::current().node == perlin);
     view2d.setResolution(128);
@@ -237,7 +209,7 @@ TEST_CASE("texture graph editor adds, links and edits nodes through tex commands
 
 TEST_CASE("texture graph backend follows texture sets and their meshes")
 {
-    registerAll();
+    registerTexGraphUi();
     run("newScene");
     run("texCreateSet", {{"args", {"Wood"}}, {"settings", {{"material", "Planks"}}}});
     run("texCreateSet", {{"args", {"Stone"}}});

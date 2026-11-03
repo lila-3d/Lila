@@ -11,8 +11,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 /** Static kd-tree for nearest-point queries. */
 class KdTree
 {

@@ -1,4 +1,5 @@
 #include "ui/BakerPanelInternal.h"
+#include "ui/UiCommands.h"
 
 namespace lila::ui
 {
@@ -30,8 +31,6 @@ json projectCall(json call = json::object())
 
 namespace bakerPanel
 {
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
 std::string ss(const QString& s) { return s.toStdString(); }
 
 std::string shortName(const std::string& path)
@@ -52,19 +51,6 @@ void openFolder(const QString& dir)
 {
     if (!dir.isEmpty())
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
-}
-
-json runUi(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
 }
 
 std::string backendPref()

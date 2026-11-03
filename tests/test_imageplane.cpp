@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -9,14 +11,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 namespace ip = lila::scene::imagePlane;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-bool near(const glm::dvec3& a, const glm::dvec3& b) { return glm::distance(a, b) < 1e-9; }
-bool near(const glm::dvec4& a, const glm::dvec4& b) { return glm::length(a - b) < 1e-9; }
+bool nearTight(const glm::dvec4& a, const glm::dvec4& b) { return glm::length(a - b) < 1e-9; }
 } // namespace
 
 TEST_CASE("image plane fit")
@@ -27,15 +27,15 @@ TEST_CASE("image plane fit")
     {
         CHECK(ip::fit(ip::Fit::Best, box, 4.0).size == glm::dvec2(200.0, 50.0));
         CHECK(ip::fit(ip::Fit::Best, box, 1.0).size == glm::dvec2(100.0, 100.0));
-        CHECK(near(ip::fit(ip::Fit::Best, box, 1.0).uv, {0, 0, 1, 1}));
+        CHECK(nearTight(ip::fit(ip::Fit::Best, box, 1.0).uv, {0, 0, 1, 1}));
     }
     SUBCASE("fill covers and crops")
     {
         ip::FitResult wide = ip::fit(ip::Fit::Fill, box, 4.0);
         CHECK(wide.size == box);
-        CHECK(near(wide.uv, {0.25, 0.0, 0.75, 1.0}));
+        CHECK(nearTight(wide.uv, {0.25, 0.0, 0.75, 1.0}));
         ip::FitResult square = ip::fit(ip::Fit::Fill, box, 1.0);
-        CHECK(near(square.uv, {0.0, 0.25, 1.0, 0.75}));
+        CHECK(nearTight(square.uv, {0.0, 0.25, 1.0, 0.75}));
         // The shown part keeps the image's aspect.
         double shownAspect = (square.uv.z - square.uv.x) * 1.0 / (square.uv.w - square.uv.y);
         CHECK(shownAspect == doctest::Approx(2.0));
@@ -46,7 +46,7 @@ TEST_CASE("image plane fit")
         CHECK(ip::fit(ip::Fit::Vertical, box, 4.0).size == glm::dvec2(400.0, 100.0));
         ip::FitResult stretched = ip::fit(ip::Fit::ToSize, box, 0.5);
         CHECK(stretched.size == box);
-        CHECK(near(stretched.uv, {0, 0, 1, 1}));
+        CHECK(nearTight(stretched.uv, {0, 0, 1, 1}));
     }
     SUBCASE("degenerate input")
     {
@@ -67,13 +67,13 @@ TEST_CASE("image plane layout")
         glm::dmat4 world = glm::translate(glm::dmat4(1.0), glm::dvec3(0, 50, 0)) * glm::rotate(glm::dmat4(1.0), glm::radians(90.0), {0, 1, 0});
         ip::Quad q = ip::layoutFree(s, world, 1.5);
         // Local +X maps to world -Z after the turn around Y.
-        CHECK(near(q.center, {0, 50, -10}));
-        CHECK(near(q.halfU, {0, 0, -150}));
-        CHECK(near(q.halfV, {0, 100, 0}));
-        CHECK(near(q.normal(), {1, 0, 0}));
+        CHECK(nearTight(q.center, {0, 50, -10}));
+        CHECK(nearTight(q.halfU, {0, 0, -150}));
+        CHECK(nearTight(q.halfV, {0, 100, 0}));
+        CHECK(nearTight(q.normal(), {1, 0, 0}));
         auto c = q.corners();
-        CHECK(near(c[0], {0, 150, 140}));
-        CHECK(near(c[2], {0, -50, -160}));
+        CHECK(nearTight(c[0], {0, 150, 140}));
+        CHECK(nearTight(c[2], {0, -50, -160}));
     }
     SUBCASE("maintain ratio off uses the height")
     {
@@ -81,7 +81,7 @@ TEST_CASE("image plane layout")
         s.height = 50.0;
         s.fit = ip::Fit::ToSize;
         ip::Quad q = ip::layoutFree(s, glm::dmat4(1.0), 1.5);
-        CHECK(near(q.halfV, {0, 25, 0}));
+        CHECK(nearTight(q.halfV, {0, 25, 0}));
     }
     SUBCASE("orthographic camera keeps the plane fixed in the world")
     {
@@ -94,18 +94,18 @@ TEST_CASE("image plane layout")
         s.depth = 1000.0;
         s.offset = {0.0, 75.0};
         ip::Quad q = ip::layoutAttached(s, front, 2.0);
-        CHECK(near(q.center, {0, 75, -1000}));
-        CHECK(near(q.halfU, {150, 0, 0}));
-        CHECK(near(q.halfV, {0, 75, 0}));
+        CHECK(nearTight(q.center, {0, 75, -1000}));
+        CHECK(nearTight(q.halfU, {150, 0, 0}));
+        CHECK(nearTight(q.halfV, {0, 75, 0}));
         front.eye = {-500, 0, 20};
-        CHECK(near(ip::layoutAttached(s, front, 2.0).center, q.center));
+        CHECK(nearTight(ip::layoutAttached(s, front, 2.0).center, q.center));
 
         ip::CameraFrame side = front;
         side.forward = {-1, 0, 0};
         side.right = {0, 0, -1};
         ip::Quad r = ip::layoutAttached(s, side, 2.0);
-        CHECK(near(r.center, {-1000, 75, 0}));
-        CHECK(near(r.normal(), {1, 0, 0})); // facing the camera
+        CHECK(nearTight(r.center, {-1000, 75, 0}));
+        CHECK(nearTight(r.normal(), {1, 0, 0})); // facing the camera
     }
     SUBCASE("perspective camera fills its film gate at depth")
     {
@@ -115,18 +115,18 @@ TEST_CASE("image plane layout")
         s.depth = 200.0;
         s.fit = ip::Fit::Fill;
         ip::Quad q = ip::layoutAttached(s, cam, 1.0);
-        CHECK(near(q.center, {0, 0, -100}));
-        CHECK(near(q.halfU, {100, 0, 0}));
-        CHECK(near(q.halfV, {0, 50, 0}));
-        CHECK(near(q.uv, {0.0, 0.25, 1.0, 0.75}));
+        CHECK(nearTight(q.center, {0, 0, -100}));
+        CHECK(nearTight(q.halfU, {100, 0, 0}));
+        CHECK(nearTight(q.halfV, {0, 50, 0}));
+        CHECK(nearTight(q.uv, {0.0, 0.25, 1.0, 0.75}));
 
         s.fit = ip::Fit::Best;
-        CHECK(near(ip::layoutAttached(s, cam, 1.0).halfU, {50, 0, 0}));
+        CHECK(nearTight(ip::layoutAttached(s, cam, 1.0).halfU, {50, 0, 0}));
         // A plane further away covers the same part of the view.
         s.depth = 400.0;
         ip::Quad far = ip::layoutAttached(s, cam, 1.0);
-        CHECK(near(far.halfU, {100, 0, 0}));
-        CHECK(near(far.center, {0, 0, -300}));
+        CHECK(nearTight(far.halfU, {100, 0, 0}));
+        CHECK(nearTight(far.center, {0, 0, -300}));
     }
     SUBCASE("rotation turns the image in its plane")
     {
@@ -135,9 +135,9 @@ TEST_CASE("image plane layout")
         s.rotation = 90.0;
         s.depth = 0.0;
         ip::Quad q = ip::layoutAttached(s, front, 1.0);
-        CHECK(near(q.halfU, {0, 150, 0}));
-        CHECK(near(q.halfV, {-150, 0, 0}));
-        CHECK(near(q.normal(), {0, 0, 1}));
+        CHECK(nearTight(q.halfU, {0, 150, 0}));
+        CHECK(nearTight(q.halfV, {-150, 0, 0}));
+        CHECK(nearTight(q.normal(), {0, 0, 1}));
     }
 }
 

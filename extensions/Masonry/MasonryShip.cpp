@@ -17,10 +17,10 @@
 
 namespace masonry
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 json vec(const lila::math::Vector& v) { return json::array({v.x, v.y, v.z}); }
 
 json placementAt(const glm::dmat4& world, std::string id, json customData)

@@ -90,6 +90,14 @@ LILA_SCENE_API NodeId setKey(Graph& g, const PlugRef& plug, double time, double 
 /** Removes keys in [t0, t1]; deletes the curve when none are left. Returns how many went. */
 LILA_SCENE_API int removeKeys(Graph& g, NodeId curve, double t0, double t1);
 
+/** Key times closer than this, in seconds, count as the same time. */
+inline constexpr double kTimeEps = 1e-6;
+
+/** The curve type that keys the attribute: animCurveTA for rotations, animCurveTL for translations, else animCurveTU. */
+LILA_SCENE_API const char* curveTypeFor(const AttrDef& a);
+/** "translateX" for a component plug, else the attribute name. */
+LILA_SCENE_API std::string channelName(Graph& g, const PlugRef& p);
+
 // Rotation curves (animCurveRQ). curveFor and animatedPlugs report one for each component of the rotate it drives.
 
 /**

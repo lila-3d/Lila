@@ -11,6 +11,7 @@
 #include "ui/DrawOverrides.h"
 #include "ui/Hotkeys.h"
 #include "ui/Overlay.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportToast.h"
@@ -45,9 +46,7 @@ constexpr const char* kRingPref = "/turntable/ring";
 constexpr const char* kPitchPref = "/turntable/pitch";
 constexpr const char* kKeysPref = "/turntable/keys";
 
-bool pref(const char* key, bool fallback) { return PrefStore::get().value<bool>("general", key, fallback); }
-
-void flipPref(const char* key, bool fallback) { PrefStore::get().set("general", key, !pref(key, fallback)); }
+void flipPref(const char* key, bool fallback) { PrefStore::get().set("general", key, !generalPref(key, fallback)); }
 /** Seconds the on-view controls stay after the last turntable action when nothing turntable-related is selected. */
 constexpr double kControlsLinger = 3.0;
 
@@ -204,7 +203,7 @@ std::vector<glm::dvec3> turntableRingPoints(const scene::Node& node, const glm::
 
 void drawTurntableRing(drawOverrides::DrawContext& c)
 {
-    if (!pref(kRingPref, true))
+    if (!generalPref(kRingPref, true))
         return;
     const std::vector<glm::dvec3> pts = turntableRingPoints(c.node, c.world);
     for (size_t i = 0; i + 1 < pts.size() - 2; ++i)
@@ -218,7 +217,7 @@ void drawTurntableRing(drawOverrides::DrawContext& c)
 
 std::optional<double> pickTurntableRing(const drawOverrides::PickContext& c)
 {
-    if (!pref(kRingPref, true))
+    if (!generalPref(kRingPref, true))
         return std::nullopt;
     const std::vector<glm::dvec3> pts = turntableRingPoints(c.node, c.world);
     const QRectF box = QRectF(c.a, c.b).normalized();
@@ -269,7 +268,7 @@ void drawTurntableKeys(OverlayPainter& p, QPointF bottomLeft, float alpha)
 {
     drawKeyList(p, bottomLeft, {
         {turntableKeyOr("turntable.spin", "Alt+Shift+T"), "Spin or pause"},
-        {"Alt+Shift + drag", pref(kPitchPref, true) ? "Turn by hand; up and down tilts" : "Turn by hand"},
+        {"Alt+Shift + drag", generalPref(kPitchPref, true) ? "Turn by hand; up and down tilts" : "Turn by hand"},
         {"Alt+Shift+Ctrl + drag", "Turn, snapping to the stops"},
         {"Alt+Shift + wheel", "Faster or slower"},
         {turntableKeyOr("turntable.stepBack", "Alt+Shift+Left") + " / " + turntableKeyOr("turntable.stepNext", "Alt+Shift+Right"), "Previous or next stop"},
@@ -318,15 +317,15 @@ void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInf
     x += 6.0;
     // Toggles: lit when on.
     const glm::vec4 off(0.55f, 0.55f, 0.55f, float(alpha));
-    for (auto [id, icon, on] : {std::tuple{kPitch, "arrows-vertical", pref(kPitchPref, true)}, std::tuple{kRing, "circle-dashed", pref(kRingPref, true)},
-                                std::tuple{kKeys, "keyboard", pref(kKeysPref, false)}})
+    for (auto [id, icon, on] : {std::tuple{kPitch, "arrows-vertical", generalPref(kPitchPref, true)}, std::tuple{kRing, "circle-dashed", generalPref(kRingPref, true)},
+                                std::tuple{kKeys, "keyboard", generalPref(kKeysPref, false)}})
     {
         const QRectF r(x, bar.top() + 4.0, size, size);
         p.icon(r.adjusted(4, 4, -4, -4), icon, on ? accent : off);
         s.buttons.push_back({r, id});
         x += size + gap;
     }
-    if (pref(kKeysPref, false))
+    if (generalPref(kKeysPref, false))
         drawTurntableKeys(p, QPointF(bar.left(), bar.top() - 10.0), float(alpha));
     s.buttonsView = QSizeF(view.width, view.height);
 }
@@ -418,7 +417,7 @@ void moveTurnDrag(QMouseEvent* e, const ViewInfo& view)
         d += 360.0;
     tt::drag(Graph::current(), t->id(), d, dt);
     // Dragging down brings the top toward the camera.
-    if (pref(kPitchPref, true) && dy != 0.0)
+    if (generalPref(kPitchPref, true) && dy != 0.0)
         tt::dragPitch(Graph::current(), t->id(), dy / std::max(view.height, 1.0) * 180.0, s.pitchAxis, s.pitchCentre);
     turntableState().lastAction = now;
     redrawTurntables();
@@ -582,14 +581,14 @@ void registerTurntableActions()
                           redrawTurntables();
                       },
                   .doc = "Show the ring each turntable draws on the ground round what it turns.",
-                  .checked = [] { return pref(kRingPref, true); },
+                  .checked = [] { return generalPref(kRingPref, true); },
                   .icon = "circle-dashed"});
     actions::add({.id = "turntable.pitch",
                   .label = "Turntable Tilt by Hand",
                   .category = "View",
                   .run = [] { flipPref(kPitchPref, true); },
                   .doc = "Dragging up and down with Alt+Shift tilts the turntable toward or away from the camera. Front levels it again.",
-                  .checked = [] { return pref(kPitchPref, true); },
+                  .checked = [] { return generalPref(kPitchPref, true); },
                   .icon = "arrows-vertical"});
     actions::add({.id = "create.turntableBase",
                   .label = "Turntable Base",

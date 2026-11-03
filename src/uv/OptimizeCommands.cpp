@@ -25,16 +25,11 @@ namespace
 {
 using scene::ComponentMode;
 using scene::Node;
-using Ids = scene::components::Ids;
+using scene::components::Ids;
 
 std::string uvSetOf(const Args& a)
 {
     return a.has("uvSet") ? a.get<std::string>("uvSet") : currentUvSet();
-}
-
-FlagDef uvSetFlag()
-{
-    return {"uvSet", "", ArgType::String, nullptr, "UV set; the current one (uvSetCurrent) when not given."};
 }
 
 std::vector<Chart> uvIslands(const geo::Mesh& m, std::span<const Index> faces, const std::string& set)

@@ -10,6 +10,7 @@
 #include "scene/Components.h"
 #include "scene/DeformEval.h"
 #include "scene/DeformWeights.h"
+#include "scene/DeformerUtil.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
@@ -31,38 +32,12 @@
 namespace lila::scene::deformers
 {
 using namespace rigutil;
+using namespace deformutil;
 
 namespace
 {
 
 // ------------------------------------------------------------------------------------------------ data kinds
-
-template <class V> void readArray(const json& j, const char* key, std::vector<V>& out)
-{
-    out.clear();
-    if (!j.contains(key) || !j[key].is_array())
-        return;
-    out.reserve(j[key].size());
-    for (const json& x : j[key])
-        out.push_back(V(x.get<double>()));
-}
-
-std::vector<double> flatten(std::span<const glm::dvec3> v)
-{
-    std::vector<double> out;
-    out.reserve(v.size() * 3);
-    for (const glm::dvec3& p : v)
-        out.insert(out.end(), {p.x, p.y, p.z});
-    return out;
-}
-
-std::vector<glm::dvec3> unflatten(const std::vector<double>& f)
-{
-    std::vector<glm::dvec3> out(f.size() / 3);
-    for (size_t i = 0; i < out.size(); ++i)
-        out[i] = {f[i * 3], f[i * 3 + 1], f[i * 3 + 2]};
-    return out;
-}
 
 /** Offsets as CSR with every entry clamped to count and non-decreasing, so a damaged file can't index out of range. */
 void sanitizeOffsets(std::vector<uint32_t>& offsets, size_t count)
@@ -305,32 +280,6 @@ struct PinData final : Data
 
 // ------------------------------------------------------------------------------------------------ attr helpers
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc),
-            .minValue = lo, .maxValue = hi};
-}
-AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrHidden,
-            .doc = std::move(doc)};
-}
-AttrDef connected(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-AttrDef enumAttr(std::string name, int64_t def, std::vector<std::string> names, std::string doc)
-{
-    AttrDef a = stored(std::move(name), PlugType::Enum, def, std::move(doc));
-    a.enumNames = std::move(names);
-    return a;
-}
-AttrDef geomMatrixAttr() { return hiddenStored("geomMatrix", PlugType::Matrix, glm::dmat4(1.0), "The mesh's world matrix when the deformer was made."); }
 AttrDef output(std::string name, PlugType type, PlugValue def, std::string doc)
 {
     AttrDef a{.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrOutput, .doc = std::move(doc)};
@@ -338,24 +287,6 @@ AttrDef output(std::string name, PlugType type, PlugValue def, std::string doc)
         for (int k = 0; k < 3; ++k)
             a.childNames[k] = a.name + char('X' + k);
     return a;
-}
-
-
-glm::dmat4 safeInverse(const glm::dmat4& m, const char* what)
-{
-    if (std::abs(glm::determinant(m)) < 1e-18)
-        throw std::runtime_error(std::string(what) + " has zero scale");
-    return glm::inverse(m);
-}
-
-glm::dvec3 xform(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
-
-template <class F> void parallelPoints(size_t n, F&& fn)
-{
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 512), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i)
-            fn(i);
-    });
 }
 
 std::vector<glm::dvec3> toWorld(const glm::dmat4& m, std::span<const glm::dvec3> pts)
@@ -861,56 +792,12 @@ private:
 
 // ------------------------------------------------------------------------------------------------ command helpers
 
-Graph& g() { return Graph::current(); }
-
-Node& meshNamed(const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (!n.type().isA("mesh") || n.type().isA("lattice"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return n;
-}
-
 DeformerNode& deformerOfType(const std::string& name, const char* type, const char* cmd)
 {
     Node& n = nodeNamed(name, cmd);
     if (!isDeformer(n) || n.type().name != type)
         throw CommandError(std::string(cmd) + ": " + name + " is not a " + type + " deformer");
     return static_cast<DeformerNode&>(n);
-}
-
-void setPlug(Graph& graph, NodeId node, const std::string& attr, PlugValue v)
-{
-    int a = graph.node(node)->type().attrIndex(attr);
-    if (a < 0)
-        throw CommandError("no attribute " + attr + " on " + graph.node(node)->name());
-    guarded([&] {
-        graph.setValue({node, a, -1}, std::move(v));
-        return 0;
-    });
-}
-
-void connectPlug(Graph& graph, NodeId src, const std::string& srcAttr, NodeId dst, const std::string& dstAttr)
-{
-    guarded([&] {
-        graph.connect({src, graph.node(src)->type().attrIndex(srcAttr), -1}, {dst, graph.node(dst)->type().attrIndex(dstAttr), -1}, true);
-        return 0;
-    });
-}
-
-void applyParams(Graph& graph, Node& n, const json& params)
-{
-    if (!params.is_object())
-        return;
-    for (auto& [k, val] : params.items())
-        guarded([&] {
-            PlugRef p = graph.plug(n.name() + "." + k);
-            AttrDef def = graph.attr(p);
-            if (p.component >= 0)
-                def.type = PlugType::Float;
-            graph.setValue(p, fromJson(def, val));
-            return 0;
-        });
 }
 
 /** Sets an enum attr from a flag's name, throwing with the choices on a typo. */
@@ -1175,7 +1062,7 @@ std::optional<uint32_t> dominantAt(const WeightTable& t, const deform::SurfacePo
 json bakePins(const Args& a)
 {
     const char* cmd = "bakeSurfacePin";
-    Graph& graph = g();
+    Graph& graph = Graph::current();
     std::vector<std::string> objs = a.objects();
     if (objs.empty())
         throw CommandError("bakeSurfacePin: give the pins or their locators");
@@ -1395,7 +1282,7 @@ void registerSurfaceCommands()
                   {"params", "", T::Any, nullptr, "{param: value} for any other attribute."},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto [meshes, target] = meshesAndLast(a.objects(), "shrinkwrapDeformer", "target");
             if (!target->type().isA("mesh"))
                 throw CommandError("shrinkwrapDeformer: " + target->name() + " is not a mesh");
@@ -1431,7 +1318,7 @@ void registerSurfaceCommands()
                   {"rebind", "", T::String, "none", "When the driver's topology changes: none | restAttribute | uv", {"none", "restAttribute", "uv"}},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto [meshes, driver] = meshesAndLast(a.objects(), "surfaceDeform", "driver");
             if (!driver->type().isA("mesh"))
                 throw CommandError("surfaceDeform: " + driver->name() + " is not a mesh");
@@ -1467,7 +1354,7 @@ void registerSurfaceCommands()
                   {"scaleCompensation", "", T::Float, 0.0, "0 to 1: offsets follow the driver's local scale.", {}, {}, 0.0, 1.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto [meshes, driver] = meshesAndLast(a.objects(), "wrap", "driver");
             std::vector<Node*> drivers = {driver};
             if (a.has("drivers"))
@@ -1502,7 +1389,7 @@ void registerSurfaceCommands()
         .doc = "Add driver meshes to a wrap deformer and rebind it.",
         .positionalDoc = "wrap, drivers...",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<std::string> objs = a.objects();
             if (objs.size() < 2)
                 throw CommandError("addWrapDriver: give the wrap deformer, then the drivers");
@@ -1536,7 +1423,7 @@ void registerSurfaceCommands()
                   {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto [meshes, first] = meshesAndLast(a.objects(), "collision", "collider");
             std::vector<Node*> colliders = {first};
             if (a.has("colliders"))
@@ -1569,7 +1456,7 @@ void registerSurfaceCommands()
         .flags = {{"capsuleRadius", "", T::Float, 5.0, "Radius for transform colliders.", {}, {}, 0.0},
                   {"capsuleLength", "", T::Float, 10.0, "Length for transform colliders, along their Y.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<std::string> objs = a.objects();
             if (objs.size() < 2)
                 throw CommandError("addCollider: give the collision deformer, then the colliders");
@@ -1591,7 +1478,7 @@ void registerSurfaceCommands()
                   {"blendRings", "", T::Int, 2, "Edge rings easing from rigid into the deformation.", {}, {}, 0.0, 100.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::string mode = a.get<std::string>("regions");
             std::vector<objectSets::Member> members;
             if (mode == "selection")
@@ -1687,7 +1574,7 @@ void registerSurfaceCommands()
                   {"normalAmount", "", T::Float, 0.0, "0 to 1: how much movement off the rest surface is kept.", {}, {}, 0.0, 1.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             json out = json::array();
             std::vector<std::string> names = a.objects();
             if (names.empty())

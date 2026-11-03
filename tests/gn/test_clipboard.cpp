@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "gn/Clipboard.h"
@@ -10,17 +11,13 @@
 #include <string>
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
-gn::Group group(const char* name) { return gn::readGroup(*gn::findGroupNode(scene::Graph::current(), name)); }
-
 /** Grid -> Set Position (offset from a Combine XYZ whose y is exposed as "height") -> output. */
-void build(const char* name)
+void buildExposedGrid(const char* name)
 {
     run("gnCreateGroup", args({name}));
     std::string grid = run("gnAddNode", {{"args", {name, "MeshGrid"}}, {"position", {0, 0}}}).get<std::string>();
@@ -54,7 +51,7 @@ std::string mustFail(const std::string& text)
 TEST_CASE("copied nodes paste back as text with values and internal links")
 {
     run("newScene");
-    build("Src");
+    buildExposedGrid("Src");
     gn::Group src = group("Src");
     std::string text = run("gnCopyNodes", args({"Src", "MeshGrid", "SetPosition", "GroupOutput"})).get<std::string>();
     json j = json::parse(text);
@@ -103,7 +100,7 @@ TEST_CASE("text round trip keeps every node, value and link")
 TEST_CASE("pasting a group input brings the parameters it feeds")
 {
     run("newScene");
-    build("Src");
+    buildExposedGrid("Src");
     std::string text = run("gnCopyNodes", args({"Src", "GroupInput", "CombineXYZ"})).get<std::string>();
     CHECK(json::parse(text)["inputs"][0]["name"] == "height");
 

@@ -29,20 +29,6 @@ std::string lower(std::string s)
     return s;
 }
 
-std::string trim(std::string s)
-{
-    while (!s.empty() && std::isspace((unsigned char)s.back()))
-        s.pop_back();
-    size_t i = 0;
-    while (i < s.size() && std::isspace((unsigned char)s[i]))
-        ++i;
-    return s.substr(i);
-}
-
-bool isDepotSyntax(const std::string& s)
-{
-    return s.size() > 2 && s[0] == '/' && s[1] == '/' && s.find('\\') == std::string::npos;
-}
 
 /** Comparable form of a local path; p4 hands back backslashes and its own casing. */
 std::string pathKey(const std::string& p)

@@ -11,6 +11,7 @@
 #include "ui/Icons.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportLayout.h"
 #include "ui/ViewportWidget.h"
 
@@ -614,14 +615,6 @@ json pythonItem(const QString& code)
 {
     return {{"label", "Py"}, {"tooltip", code.trimmed().split('\n').first().toStdString()}, {"target", {{"python", code.toStdString()}}}};
 }
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
 } // namespace
 
 // ------------------------------------------------------------------- ShelfPage
@@ -675,9 +668,9 @@ void ShelfPage::rebuild()
     }
     json all = shelves::items(mShelf);
     const int iconSize = mFloating ? shelves::floatingIconSize() : 16;
-    QFont small = font();
-    small.setPointSizeF(small.pointSizeF() - 1.0);
-    QFontMetrics fm(small);
+    QFont smallFont = font();
+    smallFont.setPointSizeF(smallFont.pointSizeF() - 1.0);
+    QFontMetrics fm(smallFont);
     // Labels get two lines and a width that grows with the icons, so bigger icons show more of each name.
     const int cell = std::max(iconSize + 24, iconSize * 3 / 2 + 16);
     const int cellHeight = iconSize + 10 + 2 * fm.lineSpacing();
@@ -693,7 +686,7 @@ void ShelfPage::rebuild()
         b->setProperty("shelfIndex", i);
         if (mFloating)
         {
-            b->setFont(small);
+            b->setFont(smallFont);
             b->setText(wrapLabel(fm, label, cell - 6, 2));
             b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
             b->setIconSize({iconSize, iconSize});

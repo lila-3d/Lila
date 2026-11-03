@@ -9,6 +9,8 @@
 #include <random>
 #include <string>
 
+inline nlohmann::json run(const char* cmd, nlohmann::json call = nlohmann::json::object()) { return lila::ops::execute(cmd, call); }
+
 /** Keeps the tests off the user's real config (no userSetup.py, no prefs) and registers the built-ins once. */
 inline void isolate()
 {

@@ -2,6 +2,7 @@
 // a compatible snap point of another piece it jumps to join it. Release keeps the move as one undo step.
 
 #include "Kit.h"
+#include "Session.h"
 
 #include <lila/Actions.h>
 #include <lila/Command.h>
@@ -31,18 +32,9 @@ namespace stagehand
 {
 namespace
 {
-constexpr const char* kTool = "stagehand.kitPlace";
+constexpr const char* kKitPlaceTool = "stagehand.kitPlace";
 /** How near on screen a snap point has to come to a compatible one to join it, pixels. */
 constexpr double kSnapPixels = 24.0;
-
-template <class Fn> void unrecorded(Fn&& fn)
-{
-    UndoStack& u = UndoStack::get();
-    const bool was = u.enabled();
-    u.setEnabled(false);
-    fn();
-    u.setEnabled(was);
-}
 
 class KitPlaceTool final : public ViewportTool
 {
@@ -237,11 +229,11 @@ private:
 
 void registerKitUi(ext::Context& ctx)
 {
-    viewportTools::add(ctx, {.id = kTool, .label = "Kit Place", .icon = "puzzle", .create = [] { return std::make_unique<KitPlaceTool>(); }});
+    viewportTools::add(ctx, {.id = kKitPlaceTool, .label = "Kit Place", .icon = "puzzle", .create = [] { return std::make_unique<KitPlaceTool>(); }});
     actions::add(ctx, {.id = "stagehand.tool.kitPlace",
                        .label = "Kit Place Tool",
                        .category = "Dress",
-                       .run = [] { viewportTools::activate(kTool); },
+                       .run = [] { viewportTools::activate(kKitPlaceTool); },
                        .doc = "Drag a piece over surfaces; it snaps to compatible snap points of other pieces."});
     const struct
     {

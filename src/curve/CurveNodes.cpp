@@ -4,6 +4,7 @@
 #include "core/Profile.h"
 #include "curve/AlongNodes.h"
 #include "curve/CurveControls.h"
+#include "curve/NodeHelpers.h"
 #include "curve/PipeToolsNodes.h"
 #include "curve/StripUvAttrs.h"
 #include "curve/EdgeToCurve.h"
@@ -35,6 +36,7 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 
@@ -460,67 +462,6 @@ Splines movedComponents(const Splines& in, const std::vector<std::pair<uint32_t,
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
-AttrDef dataIn(std::string name, std::string doc, bool stored = true)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = (stored ? kIn : AttrInput) | AttrHidden,
-            .doc = std::move(doc)};
-}
-
-/** Curves in any number, one per element; fileAlias reads the numbered attrs it replaced. */
-AttrDef dataArray(std::string name, std::string doc, std::string fileAlias)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden | AttrArray,
-            .doc = std::move(doc), .fileAlias = std::move(fileAlias)};
-}
-
-AttrDef dataOut(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrOutput | AttrHidden, .doc = std::move(doc)};
-}
-
-AttrDef meshOut()
-{
-    return {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden,
-            .doc = "The mesh it makes."};
-}
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, double lo = 0.0, std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-}
-
-AttrDef vAttr(std::string name, const D3& def, std::string doc)
-{
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-        a.childNames[size_t(i)] = name + char('X' + i);
-    return a;
-}
-
 std::vector<AttrDef> tessAttrs(int64_t mode)
 {
     return {eAttr("tessellation", {"fixed", "adaptive", "game"}, mode,
@@ -529,12 +470,6 @@ std::vector<AttrDef> tessAttrs(int64_t mode)
             iAttr("segments", 8, "Segments per curved span (fixed).", 1), fAttr("chordError", 0.02, "Largest gap from the true curve, cm (adaptive).", 1e-5),
             fAttr("maxAngle", 10.0, "Largest turn between segments, degrees (adaptive and game).", 0.1, 90.0)};
 }
-
-double f(const Node& n, const char* a) { return n.as<double>(n.type().attrIndex(a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(n.type().attrIndex(a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(n.type().attrIndex(a)); }
-D3 v(const Node& n, const char* a) { return n.as<D3>(n.type().attrIndex(a)); }
-const Splines& in(const Node& n, const char* a) { return splinesOf(n.value(n.type().attrIndex(a))); }
 
 TessOptions tessOf(const Node& n)
 {
@@ -568,8 +503,6 @@ public:
         }
     }
 };
-
-PlugValue meshValue(geo::Mesh m) { return MeshPtr(std::make_shared<geo::Mesh>(std::move(m))); }
 
 void registerOp(std::string name, std::string icon, std::string doc, std::vector<AttrDef> attrs, std::function<PlugValue(const Node&)> run)
 {
@@ -803,7 +736,6 @@ PlugValue projectRun(const Node& n)
 }
 
 AttrDef curveIn() { return dataIn("inCurve", "The curves it works on."); }
-AttrDef curveOut() { return dataOut("outCurve", "The curves it makes."); }
 
 void registerHistoryTypes()
 {

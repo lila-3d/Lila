@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ErosionGpu.h"
 #include "Export.h"
 #include "Stamps.h"
@@ -22,24 +23,12 @@
 #include <fstream>
 
 using namespace lila;
+using namespace terraintest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void loadTerrain()
-{
-    if (!gn::findDecl("HeightfieldGrid"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_TERRAIN_PACKAGE) == "Terrain");
-}
-
-double heightAt(const json& terrain, double x, double z)
-{
-    return run("terrainSample", {{"args", {terrain["mesh"]}}, {"points", {{x, z}}}})[0]["height"].get<double>();
-}
-
 /** A tilted, bumpy heightfield, km wide. */
 geo::Heightfield slope(int n = 257, double size = 400000.0)
 {

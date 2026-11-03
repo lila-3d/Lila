@@ -15,6 +15,7 @@
 #include "ui/MaterialDraw.h"
 #include "ui/TexPreview.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
 
@@ -42,9 +43,6 @@ namespace lila::ui
 {
 namespace
 {
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-QColor gray(int v, int alpha = 255) { return themeShade(v, alpha); }
-
 constexpr const char* kMeshHook = "texture2d.meshPreview";
 
 /** What the 2D View and the mesh preview show, shared by every view and kept while none is open. */

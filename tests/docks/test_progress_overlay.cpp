@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/Progress.h"
@@ -26,11 +28,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 /** The overlay card: the visible top-level window other than the main one. */
 QWidget* card(QMainWindow& win)
 {
@@ -57,7 +58,7 @@ void pressKey(QWidget* target, Qt::Key key)
     QApplication::sendEvent(target, &e);
 }
 
-void setup()
+void setupProgress()
 {
     static bool done = false;
     if (done)
@@ -74,7 +75,7 @@ void setup()
 
 TEST_CASE("progress overlay: shown after 300 ms, pumps with input blocked, gone at the end")
 {
-    setup();
+    setupProgress();
     QMainWindow win;
     auto* button = new QPushButton("work", &win);
     win.setCentralWidget(button);
@@ -146,7 +147,7 @@ TEST_CASE("progress overlay: shown after 300 ms, pumps with input blocked, gone 
 TEST_CASE("progress overlay: a scene open with the editors up stays quick")
 {
     // LILA_PROGRESS_SCENE names a big .lila or Maya file to time by hand; otherwise a small generated scene.
-    setup();
+    setupProgress();
     QMainWindow win;
     auto* outliner = new QDockWidget("Outliner", &win);
     auto* tree = new ui::Outliner(outliner);

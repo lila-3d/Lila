@@ -29,7 +29,7 @@ fs::path freshDir(const std::string& name)
     return dir;
 }
 
-bool contains(const std::string& hay, const std::string& needle)
+bool containsText(const std::string& hay, const std::string& needle)
 {
     return hay.find(needle) != std::string::npos;
 }
@@ -125,11 +125,11 @@ void checkCommon(const HelperRun& run, const char* code)
     CHECK(run.watchdogExit == 1);
     REQUIRE(r.find("crash"));
     CHECK(r.find("crash")->get("exception.code") == code);
-    CHECK(contains(r.summary, code));
-    CHECK(contains(run.text, "crashtest: marker line"));
-    CHECK(contains(run.text, "lila.ops.polyCube(name='crashtestCube')"));
-    CHECK(contains(run.text, "scene: X:/crashtest/scene.lila"));
-    CHECK_FALSE(contains(run.text, "crashtestSecretToken0123456789"));
+    CHECK(containsText(r.summary, code));
+    CHECK(containsText(run.text, "crashtest: marker line"));
+    CHECK(containsText(run.text, "lila.ops.polyCube(name='crashtestCube')"));
+    CHECK(containsText(run.text, "scene: X:/crashtest/scene.lila"));
+    CHECK_FALSE(containsText(run.text, "crashtestSecretToken0123456789"));
     REQUIRE(r.find("system"));
     CHECK_FALSE(r.find("system")->get("os").empty());
     CHECK_FALSE(r.find("system")->get("cpu").empty());
@@ -155,11 +155,11 @@ TEST_CASE("crash watchdog: access violation is captured live")
     CHECK(run.exitCode == 0xC0000005);
     checkCommon(run, "0xC0000005");
     crash::Report r = crash::parseReport(run.text);
-    CHECK(contains(r.find("crash")->get("detected.by"), "watchdog"));
-    CHECK(contains(r.find("crash")->get("access"), "write of 0x0000000000000000"));
+    CHECK(containsText(r.find("crash")->get("detected.by"), "watchdog"));
+    CHECK(containsText(r.find("crash")->get("access"), "write of 0x0000000000000000"));
     CHECK(fs::file_size(run.report / "minidump.dmp") > 10000);
     REQUIRE(r.find("stack"));
-    CHECK(contains(r.summary, "crash_helper.cpp"));
+    CHECK(containsText(r.summary, "crash_helper.cpp"));
     CHECK(r.find("threads")->lines.size() > r.find("stack")->lines.size());
     CHECK(r.find("modules")->lines.size() > 5);
 }
@@ -168,14 +168,14 @@ TEST_CASE("crash watchdog: unhandled C++ exception names its type")
 {
     HelperRun run = runHelper("throw", false);
     checkCommon(run, "0xE06D7363");
-    CHECK(contains(run.text, "runtime_error"));
+    CHECK(containsText(run.text, "runtime_error"));
 }
 
 TEST_CASE("crash watchdog: std::terminate says why")
 {
     HelperRun run = runHelper("terminate", false);
     checkCommon(run, "0xE0000001");
-    CHECK(contains(run.text, "note: std::terminate called without an active exception"));
+    CHECK(containsText(run.text, "note: std::terminate called without an active exception"));
 }
 
 TEST_CASE("crash watchdog: stack overflow")
@@ -193,10 +193,10 @@ TEST_CASE("crash watchdog: __fastfail is reported through WER")
     checkCommon(run, "0xC0000409");
     crash::Report r = crash::parseReport(run.text);
     // Needs Windows Error Reporting enabled; without it the report has the exit code and the log, but no stack.
-    CHECK(contains(r.find("crash")->get("detected.by"), "Windows Error Reporting"));
-    CHECK(contains(r.find("crash")->get("fastfail.code"), "FAST_FAIL_FATAL_APP_EXIT"));
+    CHECK(containsText(r.find("crash")->get("detected.by"), "Windows Error Reporting"));
+    CHECK(containsText(r.find("crash")->get("fastfail.code"), "FAST_FAIL_FATAL_APP_EXIT"));
     CHECK(fs::exists(run.report / "minidump.dmp"));
-    CHECK(contains(r.summary, "crash_helper.cpp"));
+    CHECK(containsText(r.summary, "crash_helper.cpp"));
 }
 
 TEST_CASE("crash watchdog: heap corruption is reported through WER")

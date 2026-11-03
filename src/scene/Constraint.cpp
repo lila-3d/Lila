@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "scene/AnimLayer.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
 #include "scene/TransformOps.h"
@@ -15,28 +16,11 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace attrdefs;
 
 namespace
 {
-const char* kKindNames[] = {"parentConstraint", "pointConstraint", "orientConstraint", "aimConstraint"};
-
-AttrDef vec3Attr(std::string name, glm::dvec3 def, uint32_t flags, std::string doc)
-{
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = flags, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-        a.childNames[i] = name + char('X' + i);
-    return a;
-}
-
-AttrDef matrixAttr(std::string name, uint32_t flags, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = flags, .doc = std::move(doc)};
-}
-
-AttrDef boolAttr(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = false, .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
-}
+const char* kConstraintTypes[] = {"parentConstraint", "pointConstraint", "orientConstraint", "aimConstraint"};
 
 /** Weighted quaternion average in one hemisphere; fine for the small spreads constraint targets have. */
 struct QuatBlend
@@ -194,7 +178,7 @@ json makeConstraint(Kind kind, const Args& a)
 {
     LILA_ZONE();
 
-    const char* cmd = kKindNames[int(kind)];
+    const char* cmd = kConstraintTypes[int(kind)];
     Graph& g = graph();
     auto objs = a.objects();
     if (objs.size() < 2)
@@ -455,12 +439,12 @@ void registerConstraintTypes()
         vec3Attr("constraintRotateTranslate", glm::dvec3(0.0), stored, "The constrained object's rotatePivotTranslate."),
         vec3Attr("restTranslate", glm::dvec3(0.0), stored, "Translate for skipped axes; the aim origin."),
         vec3Attr("restRotate", glm::dvec3(0.0), stored, "Rotate for skipped axes."),
-        boolAttr("skipTranslateX", "Leave translateX alone."),
-        boolAttr("skipTranslateY", "Leave translateY alone."),
-        boolAttr("skipTranslateZ", "Leave translateZ alone."),
-        boolAttr("skipRotateX", "Leave rotateX alone."),
-        boolAttr("skipRotateY", "Leave rotateY alone."),
-        boolAttr("skipRotateZ", "Leave rotateZ alone."),
+        boolAttr("skipTranslateX", false, "Leave translateX alone."),
+        boolAttr("skipTranslateY", false, "Leave translateY alone."),
+        boolAttr("skipTranslateZ", false, "Leave translateZ alone."),
+        boolAttr("skipRotateX", false, "Leave rotateX alone."),
+        boolAttr("skipRotateY", false, "Leave rotateY alone."),
+        boolAttr("skipRotateZ", false, "Leave rotateZ alone."),
         vec3Attr("offset", glm::dvec3(0.0), stored | AttrKeyable, "Translate (point) or rotation (orient, aim) offset."),
     };
     // One element per target, matched by index; the numbered target0Matrix ... attrs of older scenes load into them.
@@ -479,7 +463,7 @@ void registerConstraintTypes()
     for (int k = 0; k < 4; ++k)
     {
         NodeType t;
-        t.name = kKindNames[k];
+        t.name = kConstraintTypes[k];
         t.base = &b;
         if (Kind(k) == Kind::Aim)
             t.ownAttrs = {

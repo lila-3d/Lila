@@ -1,6 +1,7 @@
 #include "uv/Uv.h"
 
 #include "core/Profile.h"
+#include "uv/UvCommon.h"
 
 #include <tbb/parallel_for.h>
 
@@ -12,11 +13,7 @@ namespace lila::uv
 {
 namespace
 {
-bool usable(const Chart& ch)
-{
-    double a = std::abs(ch.areaUv());
-    return std::isfinite(a) && a > 1e-14 * std::max(1.0, ch.area3d()) && foldedTriangles(ch) == 0;
-}
+using detail::usable;
 
 size_t pinCount(const Chart& ch)
 {

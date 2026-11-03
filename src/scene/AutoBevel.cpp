@@ -56,7 +56,7 @@ enum Mode : int64_t
 };
 
 const std::vector<std::string> kModeNames = {"auto", "autoOverrides", "manual", "angle", "weight"};
-const std::vector<std::string> kSideNames = {"both", "outside", "inside"};
+const std::vector<std::string> kBevelSideNames = {"both", "outside", "inside"};
 
 /** Opaque json payload: the selection to restore when Edit Edges ends. */
 struct JsonData final : Data
@@ -211,19 +211,17 @@ void AutoBevelNode::compute(const EvalContext&)
     setOutput(kChosen, DataPtr(set));
 }
 
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = AttrKeyable, std::optional<double> lo = {},
+AttrDef bevelParam(std::string name, PlugType type, PlugValue def, std::string doc, uint32_t extra = AttrKeyable, std::optional<double> lo = {},
               std::optional<double> hi = {})
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | extra,
             .doc = std::move(doc), .minValue = lo, .maxValue = hi};
 }
 
-Graph& graph() { return Graph::current(); }
-
 /** A named autoBevelModifier, or the one editing (else the topmost) in a named or selected mesh's stack. */
 Node& modifierArg(const Args& a, const char* cmd)
 {
-    Graph& g = graph();
+    Graph& g = Graph::current();
     for (const std::string& name : a.objects())
     {
         Node* n = g.find(name);
@@ -245,7 +243,7 @@ Node& modifierArg(const Args& a, const char* cmd)
     throw CommandError(std::string(cmd) + ": give an autoBevel modifier or a mesh that has one");
 }
 
-std::shared_ptr<const geo::Mesh> inputOf(Graph& g, Node& mod)
+std::shared_ptr<const geo::Mesh> bevelInput(Graph& g, Node& mod)
 {
     g.evaluate();
     return mod.as<MeshPtr>(kInMesh);
@@ -394,31 +392,31 @@ void registerTypes()
     t.icon = "stack-2";
     t.doc = "Bevels the fold edges it finds live on its input by angle, side and length rules, plus edges picked by hand. Use "
             "it for game-art bevels that keep following the mesh as you edit it.";
-    auto modeAttr = param("mode", PlugType::Enum, int64_t(kAuto),
+    auto modeAttr = bevelParam("mode", PlugType::Enum, int64_t(kAuto),
                           "auto: fold edges by the rule. autoOverrides: the rule plus edges added and removed by hand. manual: only "
                           "the hand-picked edges. angle: every edge sharper than minAngle (Blender's angle limit). weight: edges "
                           "whose bevelWeight is above weightThreshold.");
     modeAttr.enumNames = kModeNames;
-    auto sideAttr = param("side", PlugType::Enum, int64_t(0), "Which folds: both, outside (convex) or inside (concave).");
-    sideAttr.enumNames = kSideNames;
+    auto sideAttr = bevelParam("side", PlugType::Enum, int64_t(0), "Which folds: both, outside (convex) or inside (concave).");
+    sideAttr.enumNames = kBevelSideNames;
     t.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
-        param("enabled", PlugType::Bool, true, "Turn the modifier off without removing it."),
+        bevelParam("enabled", PlugType::Bool, true, "Turn the modifier off without removing it."),
         modeAttr,
-        param("minAngle", PlugType::Float, 30.0, "Smallest fold to bevel, degrees between the face normals.", AttrKeyable, 0.0, 180.0),
-        param("maxAngle", PlugType::Float, 180.0, "Largest fold to bevel, degrees.", AttrKeyable, 0.0, 180.0),
+        bevelParam("minAngle", PlugType::Float, 30.0, "Smallest fold to bevel, degrees between the face normals.", AttrKeyable, 0.0, 180.0),
+        bevelParam("maxAngle", PlugType::Float, 180.0, "Largest fold to bevel, degrees.", AttrKeyable, 0.0, 180.0),
         sideAttr,
-        param("thin", PlugType::Float, 0.0, "Skip thickness edges: shorter than this or beside a face narrower than this, cm. 0 is off.", AttrKeyable, 0.0),
-        param("minLength", PlugType::Float, 0.0, "Skip edges shorter than this, cm.", AttrKeyable, 0.0),
-        param("completeCorners", PlugType::Bool, true, "Where folds meet at an angle, add the quad loops that join them."),
-        param("weightThreshold", PlugType::Float, 0.0, "weight mode: bevel edges whose bevelWeight is above this.", AttrKeyable, 0.0, 1.0),
-        param("offset", PlugType::Float, 1.0, "Bevel width, cm.", AttrKeyable, 0.0),
-        param("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder.", AttrKeyable, 1.0, 32.0),
-        param("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer.", AttrKeyable, 0.0, 1.0),
-        param("clamp", PlugType::Bool, true, "Keep the width under half the shortest neighbouring edge."),
-        param("smoothingAngle", PlugType::Float, 30.0, "New edges sharper than this are hard; negative leaves them soft.", AttrKeyable, {}, 180.0),
-        param("showEdges", PlugType::Bool, false, "Highlight the picked edges in the viewport even when the modifier isn't selected.", 0),
-        param("editing", PlugType::Bool, false, "Edit Edges is in progress.", AttrHidden),
+        bevelParam("thin", PlugType::Float, 0.0, "Skip thickness edges: shorter than this or beside a face narrower than this, cm. 0 is off.", AttrKeyable, 0.0),
+        bevelParam("minLength", PlugType::Float, 0.0, "Skip edges shorter than this, cm.", AttrKeyable, 0.0),
+        bevelParam("completeCorners", PlugType::Bool, true, "Where folds meet at an angle, add the quad loops that join them."),
+        bevelParam("weightThreshold", PlugType::Float, 0.0, "weight mode: bevel edges whose bevelWeight is above this.", AttrKeyable, 0.0, 1.0),
+        bevelParam("offset", PlugType::Float, 1.0, "Bevel width, cm.", AttrKeyable, 0.0),
+        bevelParam("segments", PlugType::Int, int64_t(2), "Edges across each bevel, 1 to 32. More is rounder.", AttrKeyable, 1.0, 32.0),
+        bevelParam("profile", PlugType::Float, 0.5, "Profile shape: 0.5 is a round arc, 0.25 a straight chamfer.", AttrKeyable, 0.0, 1.0),
+        bevelParam("clamp", PlugType::Bool, true, "Keep the width under half the shortest neighbouring edge."),
+        bevelParam("smoothingAngle", PlugType::Float, 30.0, "New edges sharper than this are hard; negative leaves them soft.", AttrKeyable, {}, 180.0),
+        bevelParam("showEdges", PlugType::Bool, false, "Highlight the picked edges in the viewport even when the modifier isn't selected.", 0),
+        bevelParam("editing", PlugType::Bool, false, "Edit Edges is in progress.", AttrHidden),
         {.name = "overrides", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "Edges added and removed by hand."},
         {.name = "editBackup", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
@@ -464,12 +462,12 @@ void registerCommands()
         .positionalDoc = "meshes",
         .flags = createFlags,
         .run = [createFlags](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json params = json::object();
             for (const FlagDef& f : createFlags)
                 if (a.has(f.name))
                     params[f.name] = a.flags[f.name];
-            for (auto [flag, names] : {std::pair{"mode", &kModeNames}, {"side", &kSideNames}})
+            for (auto [flag, names] : {std::pair{"mode", &kModeNames}, {"side", &kBevelSideNames}})
                 if (a.has(flag))
                     params[flag] = enumArg(a, flag, *names, "autoBevel");
             json out = json::array();
@@ -489,7 +487,7 @@ void registerCommands()
         .undoable = false,
         .run = [](const Args& a) -> json {
             Node& mod = modifierArg(a, "bevelEdgeInfo");
-            auto set = chosen(graph(), mod.id());
+            auto set = chosen(Graph::current(), mod.id());
             json edges = set ? json(set->edges) : json::array();
             return {{"edges", edges}, {"count", edges.size()}, {"lost", set ? set->lost : 0}, {"editing", editing(mod)}};
         },
@@ -501,7 +499,7 @@ void registerCommands()
                "be changed with the normal selection tools. Finish with bevelApplyEdges or bevelCancelEdges.",
         .positionalDoc = "modifier or mesh",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& mod = modifierArg(a, "bevelEditEdges");
             NodeId mesh = meshOf(g, mod.id());
             if (mesh == kNoNode)
@@ -528,12 +526,12 @@ void registerCommands()
                "{added, removed}.",
         .positionalDoc = "modifier or mesh",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& mod = modifierArg(a, "bevelApplyEdges");
             if (!editing(mod))
                 throw CommandError("bevelApplyEdges: " + mod.path() + " is not editing its edges");
             NodeId mesh = meshOf(g, mod.id());
-            MeshPtr in = inputOf(g, mod);
+            MeshPtr in = bevelInput(g, mod);
             if (!in || mesh == kNoNode)
                 throw CommandError("bevelApplyEdges: " + mod.path() + " has no input mesh");
             const geo::Mesh& m = *in;
@@ -566,7 +564,7 @@ void registerCommands()
         .doc = "End an autoBevel modifier's Edit Edges without changing its edge set.",
         .positionalDoc = "modifier or mesh",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& mod = modifierArg(a, "bevelCancelEdges");
             if (!editing(mod))
                 throw CommandError("bevelCancelEdges: " + mod.path() + " is not editing its edges");
@@ -581,7 +579,7 @@ void registerCommands()
         .positionalDoc = "modifier or mesh",
         .run = [](const Args& a) -> json {
             Node& mod = modifierArg(a, "bevelClearOverrides");
-            graph().setValue({mod.id(), kOverrides, -1}, DataPtr());
+            Graph::current().setValue({mod.id(), kOverrides, -1}, DataPtr());
             return nullptr;
         },
     });
@@ -591,7 +589,7 @@ void registerCommands()
         .doc = "Set an autoBevel modifier's thin to 1.5 times the longest selected edge (pick a thickness edge). Returns it.",
         .positionalDoc = "modifier or mesh",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& mod = modifierArg(a, "bevelMeasureThin");
             NodeId mesh = meshOf(g, mod.id());
             MeshPtr cage = mesh != kNoNode ? modifiers::cage(g, mesh) : nullptr;
@@ -622,11 +620,11 @@ void registerCommands()
         .positionalDoc = "meshes",
         .flags = selectFlags,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             geo::FoldEdgeOptions o;
             o.minAngle = a.get<double>("minAngle");
             o.maxAngle = a.get<double>("maxAngle");
-            o.side = geo::FoldSide(enumArg(a, "side", kSideNames, "selectFoldEdges"));
+            o.side = geo::FoldSide(enumArg(a, "side", kBevelSideNames, "selectFoldEdges"));
             o.thin = a.get<double>("thin");
             o.minLength = a.get<double>("minLength");
             o.completeCorners = a.get<bool>("completeCorners");

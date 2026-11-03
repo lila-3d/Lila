@@ -111,6 +111,9 @@ LILA_SCENE_API std::vector<Item> gather(const Spec& s, std::vector<std::string>*
 /** Where item saves under spec, empty when it does not. */
 LILA_SCENE_API fs::path outputFor(const Spec& s, const Item& item);
 
+/** True when p exists and its owner write permission is clear. */
+LILA_SCENE_API bool isReadOnly(const fs::path& p);
+
 /** Fills every item's output and access, marking later items that would overwrite an earlier one's output. */
 LILA_SCENE_API void plan(const Spec& s, std::vector<Item>& items);
 

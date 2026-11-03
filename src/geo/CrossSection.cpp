@@ -1,6 +1,7 @@
 #include "geo/CrossSection.h"
 
 #include "core/Profile.h"
+#include "geo/OpsCommon.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,8 @@ namespace lila::geo
 {
 namespace
 {
+using detail::insidePolygon;
+
 struct Basis
 {
     glm::dvec3 n, u, v;
@@ -33,18 +36,6 @@ glm::dvec2 project(const Basis& b, const glm::dvec3& origin, const glm::dvec3& p
 }
 
 double cross2(const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; }
-
-bool contains(const std::vector<glm::dvec2>& poly, const glm::dvec2& q)
-{
-    bool in = false;
-    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
-    {
-        const glm::dvec2 &a = poly[i], &b = poly[j];
-        if ((a.y > q.y) != (b.y > q.y) && q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)
-            in = !in;
-    }
-    return in;
-}
 
 double distanceTo(const std::vector<glm::dvec2>& poly, const glm::dvec2& q)
 {
@@ -288,7 +279,7 @@ std::optional<SectionPick> sectionCenter(std::span<const SectionContour> contour
         poly.clear();
         for (const glm::dvec3& p : c.points)
             poly.push_back(project(b, point, p));
-        if (contains(poly, q))
+        if (insidePolygon(poly, q))
         {
             // Nested loops (a sleeve over an arm, a hollow pipe) all contain it; the tightest is the one it sits in.
             if (!inside || c.area < inside->area)

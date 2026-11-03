@@ -3,6 +3,7 @@
 #include "core/Paths.h"
 #include "core/Profile.h"
 #include "curve/CurveBoolean.h"
+#include "curve/CurveMath.h"
 #include "curve/Planar.h"
 
 #ifdef _MSC_VER
@@ -31,8 +32,6 @@ namespace lila::curve
 namespace
 {
 namespace fs = std::filesystem;
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
 
 struct FontEntry
 {
@@ -531,7 +530,7 @@ Spline rectangle(double x0, double y0, double x1, double y1)
     return s;
 }
 
-struct Line
+struct TextLine
 {
     size_t begin = 0, end = 0;
     bool paragraphEnd = true;
@@ -617,7 +616,7 @@ TextResult textCurves(const TextOptions& o)
         return ink;
     };
 
-    std::vector<Line> lines;
+    std::vector<TextLine> lines;
     const double wrap = std::max(0.0, o.wrapWidth);
     for (size_t ps = 0; ps <= n;)
     {
@@ -660,7 +659,7 @@ TextResult textCurves(const TextOptions& o)
 
     double blockWidth = wrap;
     if (blockWidth <= 0.0)
-        for (const Line& l : lines)
+        for (const TextLine& l : lines)
             blockWidth = std::max(blockWidth, measure(l.begin, l.end, nullptr));
 
     glm::dmat4 shape(1.0);
@@ -676,7 +675,7 @@ TextResult textCurves(const TextOptions& o)
     std::vector<int> barLine;
     for (size_t li = 0; li < lines.size(); ++li)
     {
-        const Line& l = lines[li];
+        const TextLine& l = lines[li];
         const double y = -double(li) * lineHeight;
         int spaces = 0;
         double width = measure(l.begin, l.end, &spaces);

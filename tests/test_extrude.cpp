@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Mesh.h"
@@ -18,12 +20,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using geo::Index;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
-
 /** Faces lying on top of another face: the same corner positions in any order. */
 int coincidentFaces(const geo::Mesh& m)
 {
@@ -65,15 +65,6 @@ Index faceFacing(const geo::Mesh& m, const glm::dvec3& dir)
             best = f;
         }
     return best;
-}
-
-const geo::Mesh& meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
 }
 } // namespace
 
@@ -122,7 +113,7 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     run("newScene");
     std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
-    ui("polyInset", {{"thickness", 5}});
+    runUi("polyInset", {{"thickness", 5}});
     CHECK(meshOf(cube).numFaces() == 10);
     CHECK(coincidentFaces(meshOf(cube)) == 0);
     REQUIRE(scene::lastOp::live());
@@ -134,7 +125,7 @@ TEST_CASE("polyInset and polyExtrude through the command and adjust-last-op path
     run("newScene");
     cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
-    ui("polyExtrude", {{"thickness", 20}, {"offset", 10}});
+    runUi("polyExtrude", {{"thickness", 20}, {"offset", 10}});
     const geo::Mesh& m = meshOf(cube);
     CHECK(m.numFaces() == 10);
     CHECK(coincidentFaces(m) == 0);
@@ -157,7 +148,7 @@ TEST_CASE("polyExtrude duplicate puts the extruded faces in a new mesh")
     const std::string cube = run("polyCube")[0];
     run("move", {{"args", {cube}}, {"to", {0, 0, 300}}});
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
-    json made = ui("polyExtrude", {{"thickness", 20}, {"duplicate", true}});
+    json made = runUi("polyExtrude", {{"thickness", 20}, {"duplicate", true}});
     REQUIRE(made.size() == 1);
     const std::string copy = made[0];
     CHECK(meshOf(cube).numFaces() == 6);
@@ -191,12 +182,12 @@ TEST_CASE("adjust-last-op stays reachable through selection changes")
     run("newScene");
     std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
-    ui("polyInset", {{"thickness", 5}});
+    runUi("polyInset", {{"thickness", 5}});
     std::vector<scene::lastOp::Change> changes;
     int listener = scene::lastOp::addListener([&](scene::lastOp::Change c) { changes.push_back(c); });
 
-    ui("selectComponents", {{"args", {cube}}, {"faces", {1}}});
-    ui("selectComponents", {{"args", {cube}}, {"faces", {2}}});
+    runUi("selectComponents", {{"args", {cube}}, {"faces", {1}}});
+    runUi("selectComponents", {{"args", {cube}}, {"faces", {2}}});
     CHECK_FALSE(scene::lastOp::live());
     CHECK(scene::lastOp::reachable());
     CHECK(changes.empty());
@@ -225,7 +216,7 @@ TEST_CASE("adjust-last-op stays reachable through selection changes")
     run("redo");
     CHECK(scene::lastOp::live());
     CHECK(changes.back() == scene::lastOp::Change::Restored);
-    ui("selectComponents", {{"args", {cube}}, {"faces", {3}}});
+    runUi("selectComponents", {{"args", {cube}}, {"faces", {3}}});
     run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
     CHECK_FALSE(scene::lastOp::reachable());
     CHECK(changes.back() == scene::lastOp::Change::Other);
@@ -290,7 +281,7 @@ TEST_CASE("polyBevel offset adjusts through adjust-last-op and keeps edge mode")
     std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectMode", {{"args", {"edge"}}});
     run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
-    ui("polyBevel", {{"offset", 2}});
+    runUi("polyBevel", {{"offset", 2}});
     auto spread = [&] {
         double lo = 1e9;
         const geo::Mesh& m = meshOf(cube);

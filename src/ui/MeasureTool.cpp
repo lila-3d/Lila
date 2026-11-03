@@ -32,15 +32,14 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::NodeId;
 
 const glm::vec4 kColor(0.80f, 0.80f, 0.80f, 1.0f);
-const glm::vec4 kSelectedColor(1.0f, 1.0f, 1.0f, 1.0f);
+const glm::vec4 kSelectedMeasureColor(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kHudColor(0.92f, 0.92f, 0.92f, 1.0f);
 const glm::vec4 kDimColor(0.55f, 0.55f, 0.55f, 1.0f);
 constexpr float kTick = 6.0f;
-constexpr float kDash = 5.0f;
+constexpr float kMeasureDash = 5.0f;
 
 PrefStore& prefs() { return PrefStore::get(); }
 
@@ -90,7 +89,7 @@ struct Shape
     {
         for (auto [a, b] : dashed)
             if (clip(a, b, view))
-                p.dashedLine(a, b, 1.5f, kDash, color);
+                p.dashedLine(a, b, 1.5f, kMeasureDash, color);
         for (auto [a, b] : solid)
             if (clip(a, b, view))
                 p.line(a, b, 1.5f, color);
@@ -312,7 +311,7 @@ void drawHud(OverlayPainter& p, const ViewInfo& view)
             continue;
         QPointF pa = *a, pb = *b;
         if (clip(pa, pb, view))
-            p.dashedLine(pa, pb, 2.0f, kDash, kHudColor);
+            p.dashedLine(pa, pb, 2.0f, kMeasureDash, kHudColor);
     }
     if (r.contains("circle"))
     {
@@ -345,7 +344,7 @@ void drawMeasures(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
                     continue;
                 Shape s = shapeOf(*n, view);
                 if (s.valid)
-                    s.draw(p, view, pass ? kSelectedColor : kColor);
+                    s.draw(p, view, pass ? kSelectedMeasureColor : kColor);
             }
     }
     drawHud(p, view);
@@ -481,7 +480,7 @@ Snap snapAt(QPointF px, const ViewInfo& view)
 
 // ------------------------------------------------------------------- tool
 
-void runCommand(const char* name, json args)
+void runAction(const char* name, json args)
 {
     actions::run({{"command", name}, {"args", std::move(args)}});
 }
@@ -577,7 +576,7 @@ public:
             pts.push_back(mHover->p);
         for (const Snap& s : mPicked)
             if (auto q = view.project(s.p))
-                p.disc(*q, 3.5f, kSelectedColor);
+                p.disc(*q, 3.5f, kSelectedMeasureColor);
         if (mHover)
             if (auto q = view.project(mHover->p))
             {
@@ -615,7 +614,7 @@ public:
             {
             }
         if (s.valid)
-            s.draw(p, view, kSelectedColor);
+            s.draw(p, view, kSelectedMeasureColor);
         p.setShadow(false);
     }
 
@@ -638,7 +637,7 @@ private:
         std::vector<Snap> picked = std::move(mPicked);
         mPicked.clear();
         if (mKind == Kind::Distance)
-            runCommand("distanceMeasure",
+            runAction("distanceMeasure",
                        {{"start", point(picked[0].p)}, {"end", point(picked[1].p)}, {"startParent", parentFor(picked[0])},
                         {"endParent", parentFor(picked[1])}});
         else if (mKind == Kind::Angle)
@@ -649,7 +648,7 @@ private:
                 pts.push_back(point(s.p));
                 parents.push_back(parentFor(s));
             }
-            runCommand("angleMeasure", {{"points", pts}, {"parents", parents}});
+            runAction("angleMeasure", {{"points", pts}, {"parents", parents}});
         }
         else
         {
@@ -660,14 +659,14 @@ private:
                 json verts = json::array();
                 for (const Snap& s : picked)
                     verts.push_back(s.vertex);
-                runCommand("radiusMeasure", {{"mesh", scene::Graph::current().node(picked[0].mesh)->path()}, {"vertices", verts}});
+                runAction("radiusMeasure", {{"mesh", scene::Graph::current().node(picked[0].mesh)->path()}, {"vertices", verts}});
             }
             else
             {
                 json pts = json::array();
                 for (const Snap& s : picked)
                     pts.push_back(point(s.p));
-                runCommand("radiusMeasure", {{"points", pts}});
+                runAction("radiusMeasure", {{"points", pts}});
             }
         }
     }
@@ -777,7 +776,7 @@ void copyField(const char* what, std::vector<std::string> fields)
     status(QString::fromStdString(msg));
 }
 
-void registerActions()
+void registerMeasureActions()
 {
     auto add = [](const char* id, const char* label, std::function<void()> fn, const char* python = "", const char* doc = "") {
         actions::add({.id = id, .label = label, .category = "Measure", .run = std::move(fn), .doc = doc, .python = python});
@@ -796,11 +795,11 @@ void registerActions()
         "Click the first arm, the corner, then the second arm to place a live angle measurement.");
     add("measure.radiusTool", "Radius Tool", [] { viewportTools::set(std::make_unique<MeasureTool>(MeasureTool::Kind::Radius)); }, "",
         "Click three or more points on a round shape, then Enter, to place a best-fit radius and diameter.");
-    add("measure.distanceFromSelection", "Distance Measure from Selection", [] { runCommand("distanceMeasure", json::object()); },
+    add("measure.distanceFromSelection", "Distance Measure from Selection", [] { runAction("distanceMeasure", json::object()); },
         "lila.ops.distanceMeasure()", "Places a distance measurement between the two selected points or objects; it updates as they move.");
-    add("measure.angleFromSelection", "Angle Measure from Selection", [] { runCommand("angleMeasure", json::object()); }, "lila.ops.angleMeasure()",
+    add("measure.angleFromSelection", "Angle Measure from Selection", [] { runAction("angleMeasure", json::object()); }, "lila.ops.angleMeasure()",
         "Places an angle measurement on the three selected points; it updates as they move.");
-    add("measure.radiusFromSelection", "Radius Measure from Selection", [] { runCommand("radiusMeasure", json::object()); },
+    add("measure.radiusFromSelection", "Radius Measure from Selection", [] { runAction("radiusMeasure", json::object()); },
         "lila.ops.radiusMeasure()", "Places a best-fit circle through the selected vertices; it updates under edits.");
     add("measure.toggleShow", "Show Measurements", [] {
             prefs().set("general", "/measure/show", !scene::measure::shown());
@@ -820,6 +819,6 @@ void registerMeasureUi()
     viewportHooks::addPicker(pickMeasures);
     overlayIcons::add(kCopyIcon, {.tabler = kCopyIcon});
     viewportHooks::setClickHook("lila.measureHud", clickHud);
-    registerActions();
+    registerMeasureActions();
 }
 } // namespace lila::ui

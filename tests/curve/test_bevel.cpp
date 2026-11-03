@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/BevelPlus.h"
 #include "curve/CapFill.h"
 #include "curve/Planar.h"
@@ -14,19 +16,10 @@
 using namespace lila;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-curve::Spline polyLoop(std::vector<D3> pts)
-{
-    curve::Spline s;
-    s.kind = curve::Kind::Poly;
-    s.closed = true;
-    s.points = std::move(pts);
-    s.normalize();
-    return s;
-}
-
 /** A closed, manifold, consistently wound mesh with no degenerate faces. */
 void checkSolid(const geo::Mesh& m)
 {

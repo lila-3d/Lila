@@ -12,7 +12,7 @@ namespace
 {
 bool isUpper(char c) { return c >= 'A' && c <= 'Z'; }
 bool isLower(char c) { return c >= 'a' && c <= 'z'; }
-bool isDigit(char c) { return c >= '0' && c <= '9'; }
+
 char lowerChar(char c) { return char(std::tolower(static_cast<unsigned char>(c))); }
 char upperChar(char c) { return char(std::toupper(static_cast<unsigned char>(c))); }
 

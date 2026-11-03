@@ -17,6 +17,7 @@ lila_module(lila_curve Scene
     CurveBoolean.h
     CurveDeform.cpp
     CurveDeform.h
+    CurveMath.h
     Dxf.cpp
     Dxf.h
     EdgeCurve.cpp
@@ -80,7 +81,7 @@ endforeach()
 
 lila_module(lila_curve_scene Scene AlongNodes.cpp AlongNodes.h CurveCommands.cpp CurveControls.cpp CurveControls.h CurveDeformCommands.cpp CurveNodes.cpp CurveNodes.h DxfCommands.cpp EdgeToCurve.cpp EdgeToCurve.h PipeNode.cpp PipeNode.h
     StripUvAttrs.cpp StripUvAttrs.h Carve.cpp Carve.h PipeToolsNodes.cpp PipeToolsNodes.h
-    CableNode.cpp ContourNode.cpp StrapNode.cpp StrapNode.h EnvAttrs.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp
+    CableNode.cpp ContourNode.cpp StrapNode.cpp StrapNode.h NodeHelpers.h EnvironmentNodes.h EzCurve.cpp LiveSurface.cpp
     VehicleCommands.cpp VehicleNodes.cpp VehicleNodes.h
     SketchCommands.cpp SketchNode.h GroomCommands.cpp GroomNode.h
     PlanarNodes.cpp PlanarNodes.h TurntableBase.cpp TurntableBase.h)

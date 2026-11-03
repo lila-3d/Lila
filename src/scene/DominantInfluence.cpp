@@ -26,9 +26,9 @@ std::unordered_map<NodeId, CacheEntry>& cache()
     return c;
 }
 
-const SkinWeights* weightsOf(const DataPtr& d) { return dynamic_cast<const SkinWeights*>(d.get()); }
+const SkinWeights* asSkinWeights(const DataPtr& d) { return dynamic_cast<const SkinWeights*>(d.get()); }
 
-std::shared_ptr<rig::DominantInfluenceMap> build(const geo::Mesh& m, const SkinWeights& w)
+std::shared_ptr<rig::DominantInfluenceMap> buildDominantMap(const geo::Mesh& m, const SkinWeights& w)
 {
     LILA_ZONE();
 
@@ -78,13 +78,13 @@ std::shared_ptr<const DominantInfluenceMap> dominantInfluences(Graph& g, NodeId 
         return nullptr;
     DataPtr weights = std::get<DataPtr>(g.storedValue({skin, SkinClusterNode::kWeights, -1}));
     MeshPtr mesh = skin::inputMesh(g, skin);
-    const SkinWeights* w = weightsOf(weights);
+    const SkinWeights* w = asSkinWeights(weights);
     if (!w || !mesh)
         return nullptr;
     CacheEntry& e = cache()[skin];
     // Weights and meshes are immutable once shared, so a new pointer is the only change there can be.
     if (!e.map || e.weights != weights || e.mesh != mesh)
-        e = {weights, mesh, build(*mesh, *w)};
+        e = {weights, mesh, buildDominantMap(*mesh, *w)};
     return e.map;
 }
 
@@ -125,7 +125,7 @@ std::vector<float> influenceWeights(Graph& g, NodeId mesh, NodeId joint)
     for (const skin::Influence& inf : skin::influences(g, skin))
         if (inf.joint == joint)
             id = inf.index;
-    const SkinWeights* w = weightsOf(std::get<DataPtr>(g.storedValue({skin, SkinClusterNode::kWeights, -1})));
+    const SkinWeights* w = asSkinWeights(std::get<DataPtr>(g.storedValue({skin, SkinClusterNode::kWeights, -1})));
     if (id < 0 || !w)
         return {};
     std::vector<float> out(w->pointCount(), 0.0f);

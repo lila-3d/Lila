@@ -7,9 +7,13 @@
 
 #include <memory>
 #include <mutex>
+#include <string_view>
 
 namespace lila::vcs
 {
+/** True for a depot path such as //depot/game/a.uasset, as opposed to a local one. */
+inline bool isDepotSyntax(std::string_view s) { return s.size() > 2 && s[0] == '/' && s[1] == '/' && s.find('\\') == std::string_view::npos; }
+
 /** Empty fields fall through to p4's own lookup: P4CONFIG files, P4PORT/P4USER/P4CLIENT, then `p4 set`. */
 struct LILA_SCENE_API PerforceSettings
 {

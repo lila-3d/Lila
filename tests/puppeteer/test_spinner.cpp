@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "rig/RigMath.h"
 
 #include "ops/Command.h"
@@ -19,48 +20,17 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace puptest;
 using json = nlohmann::json;
 using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-void load()
-{
-    if (!ops::find("puppeteerIkChain"))
-        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_PUPPETEER_PACKAGE) == "Puppeteer");
-}
-
-/** An 800 x 600 perspective view looking down -Z at the origin, as a viewport hands its gizmo. */
-ui::ViewInfo view()
-{
-    ui::ViewInfo v;
-    v.eye = {0.0, 0.0, 300.0};
-    v.view = glm::lookAt(v.eye, glm::dvec3(0.0), glm::dvec3(0, 1, 0));
-    v.proj = glm::perspective(glm::radians(45.0), 800.0 / 600.0, 1.0, 10000.0);
-    v.proj[1][1] *= -1.0; // y down on screen, as the viewport's projection
-    v.width = 800.0;
-    v.height = 600.0;
-    v.camera = "persp";
-    return v;
-}
-
-Graph& graph() { return Graph::current(); }
-NodeId id(const std::string& n) { return graph().find(n)->id(); }
-glm::dmat4 world(const std::string& n)
-{
-    graph().evaluate();
-    return std::get<glm::dmat4>(graph().value({id(n), Transform::kWorldMatrix, -1}));
-}
-glm::dvec3 pos(const std::string& n) { return glm::dvec3(world(n)[3]); }
 glm::dvec3 vec(const std::string& n, int attr)
 {
     graph().evaluate();
     return std::get<glm::dvec3>(graph().value({id(n), attr, -1}));
 }
-double attr(const std::string& plug) { return std::get<double>(graph().value(graph().plug(plug))); }
 glm::dquat rot(const std::string& n) { return glm::quat_cast(puppeteer::math::rotationOf(world(n))); }
 /** Degrees between two orientations. */
 double turned(const glm::dquat& a, const glm::dquat& b) { return glm::degrees(2.0 * std::acos(std::min(1.0, std::abs(glm::dot(a, b))))); }
@@ -96,10 +66,6 @@ std::unique_ptr<ui::Gizmo> spinner(const char* tool)
     return gz;
 }
 
-// The Spinner sits 250 px right of the view's centre by default: (650, 300) in the 800 x 600 view. Its layout is
-// measured on a 424 px canvas, drawn at radius 120 px, so a canvas length L is L * 120 / 212 pixels.
-double u(double canvas) { return canvas * 120.0 / 212.0; }
-const QPointF kCenter(650.0, 300.0);
 QPointF polar(double r, double screenDegrees)
 {
     const double a = glm::radians(screenDegrees);
@@ -141,7 +107,7 @@ std::string legWithIk()
 
 TEST_CASE("spinner: zones drag vertically, up increases, sideways does nothing")
 {
-    load();
+    loadPuppeteer();
     chain3();
     auto gz = spinner("rotate");
     const glm::dquat r0 = rot("arm");
@@ -166,7 +132,7 @@ TEST_CASE("spinner: zones drag vertically, up increases, sideways does nothing")
 
 TEST_CASE("spinner: inherit rotate is the rotate button's right-click alternative")
 {
-    load();
+    loadPuppeteer();
     chain3();
     auto gz = spinner("rotate");
     const glm::dquat hand0 = rot("hand"), arm0 = rot("arm");
@@ -182,7 +148,7 @@ TEST_CASE("spinner: inherit rotate is the rotate button's right-click alternativ
 
 TEST_CASE("spinner: scale is linear, toon scale compensates the other axes, the centre scales uniformly")
 {
-    load();
+    loadPuppeteer();
     chain3();
     auto gz = spinner("scale");
     drag(*gz, kXZone, kXZone + kUp * 80.0);
@@ -206,7 +172,7 @@ TEST_CASE("spinner: scale is linear, toon scale compensates the other axes, the 
 
 TEST_CASE("spinner: middle drag turns freely like a trackball, the same way every time")
 {
-    load();
+    loadPuppeteer();
     chain3();
     auto gz = spinner("rotate");
     const glm::dquat r0 = rot("arm");
@@ -223,7 +189,7 @@ TEST_CASE("spinner: middle drag turns freely like a trackball, the same way ever
 
 TEST_CASE("spinner: on an IK controller the centre swings the pole, right-drag turns the hand with it")
 {
-    load();
+    loadPuppeteer();
     const std::string chain = legWithIk();
     const std::string handle = run("getAttr", {{"args", {chain + ".handle"}}}).get<std::string>();
     run("select", {{"args", {handle}}});
@@ -246,7 +212,7 @@ TEST_CASE("spinner: on an IK controller the centre swings the pole, right-drag t
 
 TEST_CASE("spinner: right-dragging a reverse foot's rings rolls, twists and banks it within its limits")
 {
-    load();
+    loadPuppeteer();
     legWithIk();
     const std::string foot = run("puppeteerReverseFoot", {{"args", {"ankle_l"}}}).get<std::string>();
     run("select", {{"args", {foot}}});
@@ -269,7 +235,7 @@ TEST_CASE("spinner: right-dragging a reverse foot's rings rolls, twists and bank
 
 TEST_CASE("spinner: right-clicking a controller locks its key, and a locked key holds until the next")
 {
-    load();
+    loadPuppeteer();
     const std::string chain = legWithIk();
     const std::string foot = run("puppeteerReverseFoot", {{"args", {"ankle_l"}}}).get<std::string>();
     run("select", {{"args", json::array()}});
@@ -305,7 +271,7 @@ TEST_CASE("spinner: right-clicking a controller locks its key, and a locked key 
 
 TEST_CASE("spinner: off a key in Animate mode it is disabled")
 {
-    load();
+    loadPuppeteer();
     chain3();
     run("setKeyframe", {{"args", {"arm.rotate"}}, {"time", 0.0}});
     REQUIRE(ui::modes::activate("puppeteerAnimate"));
@@ -324,7 +290,7 @@ TEST_CASE("spinner: off a key in Animate mode it is disabled")
 
 TEST_CASE("spinner: the breakdown slider is proportional past a dead zone and its result sticks")
 {
-    load();
+    loadPuppeteer();
     run("newScene");
     run("autoKeyframe", {{"state", false}});
     run("joint", {{"position", v3(0, 0, 0)}, {"name", "root"}});
@@ -345,7 +311,7 @@ TEST_CASE("spinner: the breakdown slider is proportional past a dead zone and it
 
 TEST_CASE("spinner: the rim moves it, per view, and it stays in the view")
 {
-    load();
+    loadPuppeteer();
     chain3();
     auto gz = spinner("rotate");
     drag(*gz, kRim, kRim + QPointF(-300.0, 50.0));
@@ -359,7 +325,7 @@ TEST_CASE("spinner: the rim moves it, per view, and it stays in the view")
 
 TEST_CASE("spinner: sticky aim keeps the orients along the bones while rigging")
 {
-    load();
+    loadPuppeteer();
     chain3();
     run("puppeteerMove", {{"args", {"arm"}}, {"by", v3(10, 0, 0)}, {"stickyAim", true}});
     const glm::dvec3 bone = glm::normalize(pos("arm") - pos("root"));
@@ -381,7 +347,7 @@ TEST_CASE("spinner: sticky aim keeps the orients along the bones while rigging")
 
 TEST_CASE("spinner: pivot moves a joint without its children; sticky aim re-aims the parent at it")
 {
-    load();
+    loadPuppeteer();
     chain3();
     run("puppeteerMove", {{"args", {"arm"}}, {"by", v3(10, 0, 0)}, {"keepChildren", true}, {"stickyAim", true}});
     CHECK(glm::length(pos("hand") - glm::dvec3(0, 40, 0)) < 1e-9);
@@ -401,7 +367,7 @@ TEST_CASE("spinner: right-clicks over it reach it through the viewport, not the 
         MESSAGE("no offscreen Qt platform: skipped");
         return;
     }
-    load();
+    loadPuppeteer();
     chain3();
     REQUIRE(ui::gizmos::setActive("puppeteer.spinner"));
     ui::tools::setCurrent(ui::Tool::Rotate);

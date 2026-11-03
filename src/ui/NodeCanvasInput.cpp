@@ -430,11 +430,11 @@ void NodeCanvas::mouseDoubleClickEvent(QMouseEvent* e)
     if (!n)
         if (LinkItem* l = linkAt(sp))
         {
-            if (NodeItem* far = otherEnd(l, sp))
+            if (NodeItem* otherNode = otherEnd(l, sp))
             {
                 mScene.clearSelection();
-                far->setSelected(true);
-                centerOn(far->sceneBoundingRect().center());
+                otherNode->setSelected(true);
+                centerOn(otherNode->sceneBoundingRect().center());
             }
             else if (backend->supports("AddNode"))
                 insertReroutes({{l, nearestOn(l->path(), sp)}});

@@ -22,6 +22,8 @@
 #include "ui/TextureGraphUi.h"
 #include "ui/Theme.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QBoxLayout>
@@ -36,24 +38,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-json runUi(const std::string& name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
 constexpr int kThumbnail = 96;
 
@@ -224,7 +208,7 @@ public:
         QPointer<NodeEditor> ed(&editor);
         return texParams::nodePanel(parent, node, [ed, group, name](const std::string& id, const json& v) {
             if (ed)
-                ed->setValueFromField(args({group, name + "." + id, v}));
+                ed->setValueFromField(argsCall({group, name + "." + id, v}));
         });
     }
 
@@ -240,7 +224,7 @@ public:
         exportMaps->setToolTip("Write this set's maps through its export preset (texExport)");
         QObject::connect(exportMaps, &QToolButton::clicked, &editor, [&editor] {
             if (!editor.group().isEmpty())
-                if (json r = runUi("texExport", args({editor.group().toStdString()})); r.is_object())
+                if (json r = runUi("texExport", argsCall({editor.group().toStdString()})); r.is_object())
                     log::info("exported {} maps", r.value("files", json::array()).size());
         });
         bar->addWidget(exportMaps);
@@ -292,7 +276,7 @@ void openSet(const std::string& set)
 void newSet()
 {
     std::string slot = selectedSlot();
-    json call = args({uniqueName(slot.empty() ? "TextureSet" : slot + "Tex")});
+    json call = argsCall({uniqueName(slot.empty() ? "TextureSet" : slot + "Tex")});
     if (!slot.empty())
         call["settings"] = {{"material", slot}};
     json r = runUi("texCreateSet", call);
@@ -311,7 +295,7 @@ void importFiles()
     UndoChunk chunk("Import Texture Graphs");
     std::string last;
     for (const QString& f : files)
-        if (json r = runUi("texImportGraph", args({f.toStdString()})); r.is_array() && !r.empty())
+        if (json r = runUi("texImportGraph", argsCall({f.toStdString()})); r.is_array() && !r.empty())
             last = r.back().get<std::string>();
     if (!last.empty())
         openSet(last);
@@ -329,7 +313,7 @@ void exportFile(const char* suffix)
                                                 std::string_view(suffix) == "lilamat" ? "Materials (*.lilamat)" : "Node libraries (*.lilatexnodes)");
     if (path.isEmpty())
         return;
-    if (json r = runUi("texExportGraph", args({set, path.toStdString()})); r.is_string())
+    if (json r = runUi("texExportGraph", argsCall({set, path.toStdString()})); r.is_string())
         log::info("exported {}", r.get<std::string>());
 }
 } // namespace
@@ -412,7 +396,7 @@ void registerTextureGraphUi()
                   .run =
                       [] {
                           if (std::string set = currentTextureSet(); !set.empty())
-                              if (json r = runUi("texExport", args({set})); r.is_object())
+                              if (json r = runUi("texExport", argsCall({set})); r.is_object())
                                   log::info("exported {} maps", r.value("files", json::array()).size());
                       },
                   .doc = "Evaluate the current texture set and write its maps through its export preset (Unreal by default).",

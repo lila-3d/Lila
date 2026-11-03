@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Mesh.h"
 #include "math/MathCore.h"
 #include "ops/Command.h"
@@ -14,23 +16,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
-
-const geo::Mesh& meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    scene::MeshPtr m = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-    REQUIRE(m);
-    return *m;
-}
-
 int64_t upAxisOf(const std::string& generator)
 {
     scene::Node* n = scene::Graph::current().find(generator);
@@ -172,7 +161,7 @@ TEST_CASE("a primitive created from the UI is adjustable, upAxis included")
 {
     scene::lastOp::install();
     run("newScene");
-    json r = ui("polyTorus", {{"radius", 50.0}, {"sectionRadius", 20.0}, {"position", {10, 0, 0}}});
+    json r = runUi("polyTorus", {{"radius", 50.0}, {"sectionRadius", 20.0}, {"position", {10, 0, 0}}});
     REQUIRE(scene::lastOp::live());
     REQUIRE(scene::lastOp::current()->command == "polyTorus");
     CHECK(scene::lastOp::current()->call["upAxis"] == "y");
@@ -201,12 +190,12 @@ TEST_CASE("moving a created primitive keeps it adjustable and the move survives 
 {
     scene::lastOp::install();
     run("newScene");
-    json r = ui("polyQuadSphere", {{"radius", 50.0}});
+    json r = runUi("polyQuadSphere", {{"radius", 50.0}});
     const std::string name = r[0];
     REQUIRE(scene::lastOp::live());
-    ui("move", {{"args", {name}}, {"by", {0, 30, 0}}});
+    runUi("move", {{"args", {name}}, {"by", {0, 30, 0}}});
     CHECK(scene::lastOp::reachable());
-    ui("setAttr", {{"args", {name + ".translateX", 5.0}}});
+    runUi("setAttr", {{"args", {name + ".translateX", 5.0}}});
     CHECK(scene::lastOp::reachable());
 
     scene::lastOp::rerun({{"subdivisions", 5}});
@@ -221,8 +210,8 @@ TEST_CASE("moving a created primitive keeps it adjustable and the move survives 
     CHECK(run("getAttr", {{"args", {std::string(gens[0]) + ".subdivisions"}}}).get<int64_t>() == 4);
 
     // Moving another object ends it.
-    json other = ui("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
-    ui("move", {{"args", {name}}, {"by", {0, 1, 0}}});
+    json other = runUi("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}});
+    runUi("move", {{"args", {name}}, {"by", {0, 1, 0}}});
     CHECK(scene::lastOp::current()->command == "polyCube");
     CHECK_FALSE(scene::lastOp::reachable());
     (void)other;

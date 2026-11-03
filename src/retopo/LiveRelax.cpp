@@ -1,6 +1,7 @@
 #include "retopo/LiveRelax.h"
 
 #include "core/Profile.h"
+#include "retopo/Internal.h"
 
 #include <tbb/parallel_for.h>
 
@@ -33,26 +34,6 @@ glm::dvec3 targetPull(const glm::dvec3& from, const glm::dvec3& to, double weigh
     glm::dvec3 pull = (to - from) * weight;
     const double pl = glm::length(pull);
     return pl > kDragStep * length ? pull * (kDragStep * length / pl) : pull;
-}
-
-glm::dvec3 closestOnSegments(const glm::dvec3& x, std::span<const std::array<glm::dvec3, 2>> segs)
-{
-    glm::dvec3 best = x;
-    double bestD = std::numeric_limits<double>::max();
-    for (const auto& [a, b] : segs)
-    {
-        const glm::dvec3 ab = b - a;
-        const double len2 = glm::dot(ab, ab);
-        const double t = len2 > 0.0 ? std::clamp(glm::dot(x - a, ab) / len2, 0.0, 1.0) : 0.0;
-        const glm::dvec3 q = a + ab * t;
-        const double d = glm::dot(x - q, x - q);
-        if (d < bestD)
-        {
-            bestD = d;
-            best = q;
-        }
-    }
-    return best;
 }
 
 /** Newell area vector of a run of points: twice the area along the normal. */
@@ -346,7 +327,7 @@ glm::dvec3 LiveRelax::place(Index p, const glm::dvec3& at) const
 {
     glm::dvec3 x = at;
     if (slides(p))
-        x = closestOnSegments(x, std::span(mSegs).subspan(mSegStart[p], mSegStart[p + 1] - mSegStart[p]));
+        x = detail::closestOnSegments(x, std::span(mSegs).subspan(mSegStart[p], mSegStart[p + 1] - mSegStart[p]));
     geo::BvhClosest c;
     if (mOpts.project && mSurface && mSurface->closestPoint(x, c))
         x = c.point;

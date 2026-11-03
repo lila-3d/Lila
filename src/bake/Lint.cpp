@@ -1,6 +1,7 @@
 #include "bake/Lint.h"
 
 #include "bake/Backend.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/Cage.h"
@@ -25,16 +26,13 @@ namespace lila::bake
 {
 namespace
 {
+using detail::exportedMesh;
+using detail::shortName;
+
 /** Component ids an issue lists for selecting them; the count it reports has no cap. */
 constexpr size_t kMaxComponents = 100000;
 
 bool wanted(const LintOptions& o, const char* check) { return o.checks.empty() || std::ranges::find(o.checks, check) != o.checks.end(); }
-
-std::string shortName(const std::string& path)
-{
-    const size_t bar = path.rfind('|');
-    return bar == std::string::npos ? path : path.substr(bar + 1);
-}
 
 double uvArea(const glm::vec2* uv) { return 0.5 * (double(uv[1].x - uv[0].x) * (uv[2].y - uv[0].y) - double(uv[2].x - uv[0].x) * (uv[1].y - uv[0].y)); }
 double area3(const glm::vec3* p) { return 0.5 * double(glm::length(glm::cross(p[1] - p[0], p[2] - p[0]))); }
@@ -503,14 +501,6 @@ scene::Node* meshNamed(scene::Graph& g, const std::string& name)
     }
 }
 
-scene::MeshPtr exported(scene::Graph& g, scene::NodeId id)
-{
-    scene::MeshPtr m = scene::modifiers::exportMesh(g, id);
-    if (!m)
-        m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
-    return m;
-}
-
 void triangulation(scene::Graph& g, const GroupInputs& gi, LintReport& r)
 {
     for (const std::string& name : gi.settings.lows)
@@ -518,7 +508,7 @@ void triangulation(scene::Graph& g, const GroupInputs& gi, LintReport& r)
         scene::Node* n = meshNamed(g, name);
         if (!n)
             continue;
-        scene::MeshPtr m = exported(g, n->id());
+        scene::MeshPtr m = exportedMesh(g, n->id());
         if (!m)
             continue;
         const geo::Triangulation tris = geo::triangulate(*m);
@@ -583,8 +573,8 @@ void cageTopology(scene::Graph& g, const GroupInputs& gi, LintReport& r)
         return;
     }
     scene::Node* low = meshNamed(g, s.lows.front());
-    scene::MeshPtr lm = low ? exported(g, low->id()) : nullptr;
-    scene::MeshPtr cm = exported(g, cage->id());
+    scene::MeshPtr lm = low ? exportedMesh(g, low->id()) : nullptr;
+    scene::MeshPtr cm = exportedMesh(g, cage->id());
     if (!lm || !cm)
         return;
     if (const std::string why = cageMismatch(*lm, *cm); !why.empty())

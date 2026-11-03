@@ -6,6 +6,7 @@
 #include "core/Version.h"
 #include "core/Workspace.h"
 #include "scene/SceneData.h"
+#include "python/Convert.h"
 #include "python/Python.h"
 
 #include <nanobind/nanobind.h>
@@ -16,6 +17,8 @@
 
 namespace nb = nanobind;
 using lila::json;
+using lila::python::toJson;
+using lila::python::toPy;
 
 namespace lila::python
 {
@@ -29,64 +32,6 @@ void bindRegistries(nb::module_& m);
 
 namespace
 {
-json toJson(nb::handle h)
-{
-    if (h.is_none())
-        return nullptr;
-    if (nb::isinstance<nb::bool_>(h))
-        return nb::cast<bool>(h);
-    if (nb::isinstance<nb::int_>(h))
-        return nb::cast<int64_t>(h);
-    if (nb::isinstance<nb::float_>(h))
-        return nb::cast<double>(h);
-    if (nb::isinstance<nb::str>(h))
-        return nb::cast<std::string>(h);
-    if (nb::isinstance<nb::dict>(h))
-    {
-        json o = json::object();
-        for (auto [k, v] : nb::borrow<nb::dict>(h))
-            o[nb::cast<std::string>(nb::str(k))] = toJson(v);
-        return o;
-    }
-    if (nb::isinstance<nb::list>(h) || nb::isinstance<nb::tuple>(h) || nb::hasattr(h, "__iter__"))
-    {
-        json a = json::array();
-        for (nb::handle item : h)
-            a.push_back(toJson(item));
-        return a;
-    }
-    // Objects with a name (future node wrappers) pass by name.
-    return nb::cast<std::string>(nb::str(h));
-}
-
-nb::object toPy(const json& j)
-{
-    switch (j.type())
-    {
-    case json::value_t::null: return nb::none();
-    case json::value_t::boolean: return nb::bool_(j.get<bool>());
-    case json::value_t::number_integer:
-    case json::value_t::number_unsigned: return nb::int_(j.get<int64_t>());
-    case json::value_t::number_float: return nb::float_(j.get<double>());
-    case json::value_t::string: return nb::str(j.get_ref<const std::string&>().c_str());
-    case json::value_t::array:
-    {
-        nb::list l;
-        for (const json& x : j)
-            l.append(toPy(x));
-        return l;
-    }
-    case json::value_t::object:
-    {
-        nb::dict d;
-        for (auto& [k, v] : j.items())
-            d[k.c_str()] = toPy(v);
-        return d;
-    }
-    default: return nb::none();
-    }
-}
-
 const char* argTypeName(lila::ArgType t)
 {
     using T = lila::ArgType;

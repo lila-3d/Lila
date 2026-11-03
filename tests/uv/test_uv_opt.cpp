@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "geo/Primitives.h"
 #include "geo/Symmetry.h"
 #include "uv/Align.h"
@@ -18,21 +19,11 @@
 #include <map>
 
 using namespace lila;
+using namespace uvtest;
 using geo::Index;
 
 namespace
 {
-double seconds(std::chrono::steady_clock::time_point t0)
-{
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-}
-
-void clearSeams(geo::Mesh& m)
-{
-    std::span<bool> s = m.edgeAttrs().getOrAdd<bool>(geo::attr::kSeam);
-    std::fill(s.begin(), s.end(), false);
-}
-
 std::vector<Index> facesWhere(const geo::Mesh& m, const std::function<bool(const glm::dvec3&)>& keep)
 {
     std::vector<Index> out;

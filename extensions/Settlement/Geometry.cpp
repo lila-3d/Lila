@@ -12,10 +12,6 @@ namespace settlement
 {
 namespace
 {
-double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
-
-Vec2 leftNormal(Vec2 d) { return {-d.y, d.x}; }
-
 bool segmentsCross(Vec2 a, Vec2 b, Vec2 c, Vec2 d)
 {
     const double d1 = cross(b - a, c - a), d2 = cross(b - a, d - a);

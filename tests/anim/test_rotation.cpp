@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -10,13 +11,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace animtest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 /** Angle in degrees between two rotations. */
 double angleBetween(const glm::dquat& a, const glm::dquat& b)
 {
@@ -24,13 +23,6 @@ double angleBetween(const glm::dquat& a, const glm::dquat& b)
 }
 
 glm::dquat poseOf(const glm::dvec3& euler, RotateOrder order) { return anim::eulerToQuat(euler, order); }
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_anim_tests" / "scenes";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
 
 anim::RotationCurve twoKeys(anim::RotInterp interp, const glm::dvec3& a, const glm::dvec3& b)
 {
@@ -56,7 +48,7 @@ void keyedJoint()
     run("setKeyframe", {{"args", {"j.rotate"}}});
 }
 
-glm::dvec3 rotateOf(const char* node)
+glm::dvec3 rotatePlugValue(const char* node)
 {
     Graph& g = Graph::current();
     return std::get<glm::dvec3>(g.value(g.plug(std::string(node) + ".rotate")));
@@ -194,12 +186,12 @@ TEST_CASE("joints key into a rotation curve that commands edit")
     CHECK(run("keyframe", {{"args", {"j.rotateY"}}, {"query", true}}) == json({0.0, 1.0, 2.0}));
     CHECK(run("keyframe", {{"args", {"j.rotateY"}}, {"query", true}, {"valueChange", true}}) == json({0.0, 90.0, 20.0}));
     run("currentTime", {{"args", {1.0}}});
-    CHECK(rotateOf("j").y == doctest::Approx(90.0));
-    CHECK(rotateOf("j").z == doctest::Approx(30.0));
+    CHECK(rotatePlugValue("j").y == doctest::Approx(90.0));
+    CHECK(rotatePlugValue("j").z == doctest::Approx(30.0));
 
     // One axis's value change rewrites that key's quaternion; a time change moves the whole key.
     run("keyframe", {{"args", {"j.rotateZ"}}, {"time", 1.0}, {"valueChange", 10.0}, {"relative", true}});
-    CHECK(rotateOf("j").z == doctest::Approx(40.0));
+    CHECK(rotatePlugValue("j").z == doctest::Approx(40.0));
     run("keyframe", {{"args", {"j.rotateX"}}, {"time", 1.0}, {"timeChange", 1.5}});
     CHECK(run("keyframe", {{"args", {"j"}}, {"attribute", "rotateZ"}, {"query", true}}) == json({0.0, 1.5, 2.0}));
 
@@ -219,8 +211,8 @@ TEST_CASE("joints key into a rotation curve that commands edit")
     run("setAttr", {{"args", {"j.rotate", v3(5, 6, 7)}}});
     run("setAttr", {{"args", {"j.rotateX", 9.0}}});
     run("autoKeyframe", {{"state", false}});
-    CHECK(rotateOf("j").x == doctest::Approx(9.0));
-    CHECK(rotateOf("j").z == doctest::Approx(7.0));
+    CHECK(rotatePlugValue("j").x == doctest::Approx(9.0));
+    CHECK(rotatePlugValue("j").z == doctest::Approx(7.0));
     CHECK(run("keyframe", {{"args", {"j.rotateX"}}, {"query", true}, {"keyCount", true}}) == 4);
 
     // Copy and paste the whole rotation.
@@ -229,7 +221,7 @@ TEST_CASE("joints key into a rotation curve that commands edit")
     run("pasteKey", {{"args", {"k"}}, {"attribute", "rotate"}, {"time", 0.0}});
     CHECK(run("nodeType", {{"args", {"k_rotate"}}}) == "animCurveRQ");
     run("currentTime", {{"args", {0.5}}});
-    CHECK(rotateOf("k").x == doctest::Approx(9.0));
+    CHECK(rotatePlugValue("k").x == doctest::Approx(9.0));
 
     // findKeyframe and cutKey.
     CHECK(run("findKeyframe", {{"args", {"j"}}, {"which", "last"}}).get<double>() == doctest::Approx(2.0));
@@ -264,7 +256,7 @@ TEST_CASE("convertRotationCurves goes both ways keeping key times and poses; eul
     for (double t : {0.0, 1.0, 2.0})
     {
         run("currentTime", {{"args", {t}}});
-        poses.push_back(rotateOf("j"));
+        poses.push_back(rotatePlugValue("j"));
     }
     CHECK(run("convertRotationCurves", {{"args", {"j"}}, {"to", "euler"}}) == 1);
     CHECK(run("nodeType", {{"args", {"j_rotateX"}}}) == "animCurveTA");
@@ -273,7 +265,7 @@ TEST_CASE("convertRotationCurves goes both ways keeping key times and poses; eul
     for (int i = 0; i < 3; ++i)
     {
         run("currentTime", {{"args", {double(i)}}});
-        CHECK(angleBetween(poseOf(rotateOf("j"), RotateOrder::XYZ), poseOf(poses[size_t(i)], RotateOrder::XYZ)) < 1e-6);
+        CHECK(angleBetween(poseOf(rotatePlugValue("j"), RotateOrder::XYZ), poseOf(poses[size_t(i)], RotateOrder::XYZ)) < 1e-6);
     }
     CHECK(run("eulerFilter", {{"args", {"j"}}}) == 0);
     CHECK(run("convertRotationCurves", {{"args", {"j"}}, {"to", "slerp"}}) == 1);
@@ -282,7 +274,7 @@ TEST_CASE("convertRotationCurves goes both ways keeping key times and poses; eul
     for (int i = 0; i < 3; ++i)
     {
         run("currentTime", {{"args", {double(i)}}});
-        CHECK(angleBetween(poseOf(rotateOf("j"), RotateOrder::XYZ), poseOf(poses[size_t(i)], RotateOrder::XYZ)) < 1e-6);
+        CHECK(angleBetween(poseOf(rotatePlugValue("j"), RotateOrder::XYZ), poseOf(poses[size_t(i)], RotateOrder::XYZ)) < 1e-6);
     }
     run("undo");
     run("undo");
@@ -299,7 +291,7 @@ TEST_CASE("setLoopKey and clearLoopKey, on scalar and rotation curves, snap the 
     Graph& g = Graph::current();
     CHECK(anim::loopKeyTimes(g, {g.find("j")->id()}) == std::vector<double>{3.0});
     run("currentTime", {{"args", {3.0}}});
-    CHECK(rotateOf("j").y == doctest::Approx(0.0));
+    CHECK(rotatePlugValue("j").y == doctest::Approx(0.0));
     CHECK(run("getAttr", {{"args", {"j.tx"}}}).get<double>() == doctest::Approx(1.0));
     run("currentTime", {{"args", {3.5}}});
     double cycled = run("getAttr", {{"args", {"j.tx"}}}).get<double>();
@@ -321,7 +313,7 @@ TEST_CASE("rotation curves save and load in both scene formats")
         keyedJoint();
         run("setLoopKey", {{"args", {"j"}}, {"snapRange", false}});
         run("currentTime", {{"args", {0.7}}});
-        glm::dvec3 before = rotateOf("j");
+        glm::dvec3 before = rotatePlugValue("j");
         std::string path = tempPath(file);
         run("saveScene", {{"args", {path}}});
         run("newScene");
@@ -329,7 +321,7 @@ TEST_CASE("rotation curves save and load in both scene formats")
         run("currentTime", {{"args", {0.0}}});
         run("currentTime", {{"args", {0.7}}});
         CHECK(run("nodeType", {{"args", {"j_rotate"}}}) == "animCurveRQ");
-        CHECK(glm::length(rotateOf("j") - before) < 1e-6);
+        CHECK(glm::length(rotatePlugValue("j") - before) < 1e-6);
         CHECK(anim::curveLoops(*Graph::current().find("j_rotate")));
     }
 }

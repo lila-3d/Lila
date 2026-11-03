@@ -19,17 +19,6 @@ namespace
 namespace ph = lila::physics;
 
 constexpr double kM = 0.01; // cm to m
-constexpr double kPi = 3.14159265358979323846;
-
-glm::dvec3 rotationVector(const glm::dquat& q0)
-{
-    glm::dquat q = q0.w < 0.0 ? -q0 : q0;
-    const double s = glm::length(glm::dvec3(q.x, q.y, q.z));
-    if (s < 1e-12)
-        return glm::dvec3(q.x, q.y, q.z) * 2.0;
-    return glm::dvec3(q.x, q.y, q.z) * (2.0 * std::atan2(s, q.w) / s);
-}
-
 ph::Shape bodyShape(const BodyDef& b)
 {
     const ShapeDesc& s = b.shape;

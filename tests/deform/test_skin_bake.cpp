@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "deform/Deform.h"
 #include "deform/Ssdr.h"
@@ -22,40 +24,10 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-Graph& graph() { return Graph::current(); }
-
-MeshPtr outMesh(const std::string& mesh)
-{
-    Graph& g = graph();
-    g.evaluate();
-    Node* n = g.find(mesh);
-    REQUIRE(n);
-    MeshPtr m = n->as<MeshPtr>(MeshNode::kOutMesh);
-    REQUIRE(m);
-    return m;
-}
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    MeshPtr m = outMesh(mesh);
-    return {m->positions().begin(), m->positions().end()};
-}
-
-double maxDistance(const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b)
-{
-    REQUIRE(a.size() == b.size());
-    double d = 0.0;
-    for (size_t i = 0; i < a.size(); ++i)
-        d = std::max(d, glm::length(a[i] - b[i]));
-    return d;
-}
-
 double volume(const std::string& mesh)
 {
     MeshPtr m = outMesh(mesh);
@@ -67,7 +39,7 @@ double volume(const std::string& mesh)
 }
 
 /** A closed tube skinned to a three joint chain, bone_b at the middle (an elbow). */
-std::string skinnedTube(const std::string& method = "linear")
+std::string skinnedArm(const std::string& method = "linear")
 {
     run("newScene");
     std::string mesh = run("polyCylinder", {{"name", "Arm"}, {"radius", 5}, {"height", 100}, {"subdivisionsHeight", 12}})[0];
@@ -136,7 +108,7 @@ TEST_CASE("centres of rotation and direct delta mush: exact at rest, rigid under
     for (const char* method : {"centresOfRotation", "directDeltaMush"})
     {
         CAPTURE(method);
-        std::string mesh = skinnedTube("linear");
+        std::string mesh = skinnedArm("linear");
         const std::vector<glm::dvec3> rest = points(mesh);
         bend(70.0);
         const std::vector<glm::dvec3> linear = points(mesh);
@@ -173,7 +145,7 @@ TEST_CASE("centres of rotation and direct delta mush: exact at rest, rigid under
 
 TEST_CASE("bakeSkinWeights: SSDR fits a delta mush rig, goes linear and turns the delta mush off")
 {
-    std::string mesh = skinnedTube();
+    std::string mesh = skinnedArm();
     bend(45.0);
     const std::vector<glm::dvec3> linear = points(mesh);
     bend(0.0);
@@ -211,7 +183,7 @@ TEST_CASE("bakeSkinWeights: SSDR fits a delta mush rig, goes linear and turns th
 
 TEST_CASE("bakeCorrectiveMorphs reproduces the stack at every sampled pose")
 {
-    std::string mesh = skinnedTube("directDeltaMush");
+    std::string mesh = skinnedArm("directDeltaMush");
     Graph& g = graph();
     const NodeId skin = skinOf(mesh);
     skinbake::RomOptions rom;
@@ -287,7 +259,7 @@ TEST_CASE("jiggle: lags, settles, and scrubbing matches playing")
 
 TEST_CASE("rangeOfMotion keys one pose per frame into its own take")
 {
-    std::string mesh = skinnedTube();
+    std::string mesh = skinnedArm();
     json r = run("rangeOfMotion", {{"args", {mesh}}, {"axes", "z"}, {"randomPoses", 3}});
     CHECK(r["poses"].get<int>() == 3 * 2 + 3);
     CHECK(r["end"].get<int>() == 9);
@@ -300,7 +272,7 @@ TEST_CASE("rangeOfMotion keys one pose per frame into its own take")
 
 TEST_CASE("skeletal FBX export fits linear weights for a direct delta mush skin")
 {
-    std::string mesh = skinnedTube("directDeltaMush");
+    std::string mesh = skinnedArm("directDeltaMush");
     Graph& g = graph();
     fbx::ExportOptions o;
     o.kind = fbx::ExportKind::Skeletal;
@@ -318,7 +290,7 @@ TEST_CASE("skeletal FBX export fits linear weights for a direct delta mush skin"
 
 TEST_CASE("bakeSkinWeights over animation with helper joints captures what weights alone can't")
 {
-    std::string mesh = skinnedTube();
+    std::string mesh = skinnedArm();
     run("deltaMush", {{"args", {mesh}}, {"iterations", 20}});
     Graph& g = graph();
     const double fps = anim::playback().fps;

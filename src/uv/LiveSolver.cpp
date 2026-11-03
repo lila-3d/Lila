@@ -1,6 +1,7 @@
 #include "uv/LiveSolver.h"
 
 #include "core/Profile.h"
+#include "uv/OptimizeMath.h"
 #include "uv/Unwrap.h"
 
 #include <Eigen/Sparse>
@@ -18,8 +19,11 @@ namespace lila::uv
 {
 namespace
 {
-using SpMat = Eigen::SparseMatrix<double>;
-using Triplet = Eigen::Triplet<double>;
+using detail::Jac2;
+using detail::SpMat;
+using detail::Svd2;
+using detail::Triplet;
+using detail::svd2;
 
 constexpr double kPinWeight = 1e6;    // times the mean diagonal
 constexpr double kTargetWeight = 1e3; // soft pins (drags)
@@ -29,29 +33,8 @@ double cross2(glm::dvec2 a, glm::dvec2 b)
     return a.x * b.y - a.y * b.x;
 }
 
-/** Jacobian [a b; c d]: rows are grad u and grad v. */
-struct Jac
-{
-    double a, b, c, d;
-    double det() const { return a * d - b * c; }
-};
-
-/** Signed 2x2 SVD: M = Rot(phi) * diag(s1, s2) * Rot(theta), s1 >= |s2|, s2 < 0 when M flips. */
-struct Svd2
-{
-    double s1, s2, phi, theta;
-};
-
-Svd2 svd2(const Jac& m)
-{
-    double e = (m.a + m.d) * 0.5, f = (m.a - m.d) * 0.5, g = (m.c + m.b) * 0.5, h = (m.c - m.b) * 0.5;
-    double q = std::sqrt(e * e + h * h), r = std::sqrt(f * f + g * g);
-    double a1 = std::atan2(g, f), a2 = std::atan2(h, e);
-    return {q + r, q - r, (a2 + a1) * 0.5, (a2 - a1) * 0.5};
-}
-
 /** Smallest t in (0, inf) where det(J0 + t Jd) reaches zero, or infinity. */
-double flipRoot(const Jac& j0, const Jac& jd)
+double flipRoot(const Jac2& j0, const Jac2& jd)
 {
     double qa = jd.det();
     double qb = j0.a * jd.d + j0.d * jd.a - j0.b * jd.c - j0.c * jd.b;
@@ -500,7 +483,7 @@ double LiveIsland::maxStep(const std::vector<glm::dvec2>& dir) const
             du += dir[tr[j]].x * f.g[j];
             dv += dir[tr[j]].y * f.g[j];
         }
-        Jac j0{gu.x, gu.y, gv.x, gv.y}, jd{du.x, du.y, dv.x, dv.y};
+        Jac2 j0{gu.x, gu.y, gv.x, gv.y}, jd{du.x, du.y, dv.x, dv.y};
         if (j0.det() <= 0.0)
             continue;
         t = std::min(t, 0.9 * flipRoot(j0, jd));
@@ -543,7 +526,7 @@ void LiveIsland::step(std::span<const double> weights)
             gu += mX[t[j]].x * fr.g[j];
             gv += mX[t[j]].y * fr.g[j];
         }
-        Jac jm{gu.x, gu.y, gv.x, gv.y};
+        Jac2 jm{gu.x, gu.y, gv.x, gv.y};
         Svd2 s = svd2(jm);
         double sig[2] = {s.s1, s.s2}, tau[2], e = 0.0;
         for (int k = 0; k < 2; ++k)

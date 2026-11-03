@@ -6,6 +6,7 @@
 #include "scene/SplitRingsModifier.h"
 #include "ui/Actions.h"
 #include "ui/AttributeEditor.h"
+#include "ui/UiCommands.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,18 +23,6 @@ namespace
 {
 using scene::Graph;
 using scene::NodeId;
-
-void runCommand(const char* name, json call = json::object())
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
 
 QPushButton* panelButton(const QString& text, const QString& tip, std::function<void()> fn)
 {
@@ -57,7 +46,7 @@ QWidget* selectionPanel(NodeId mod)
     auto call = [mod](const char* cmd) {
         return [mod, cmd] {
             if (scene::Node* n = Graph::current().node(mod))
-                runCommand(cmd, {{"args", {n->path()}}});
+                runUi(cmd, {{"args", {n->path()}}});
         };
     };
     auto* row = new QHBoxLayout;
@@ -115,7 +104,7 @@ void registerSplitRingsUi()
         return;
     done = true;
     auto add = [](const char* id, const char* label, const char* cmd, const char* doc) {
-        actions::add({.id = id, .label = label, .category = "Modifiers", .run = [cmd] { runCommand(cmd); }, .doc = doc,
+        actions::add({.id = id, .label = label, .category = "Modifiers", .run = [cmd] { runUi(cmd); }, .doc = doc,
                       .python = std::string(cmd) + "()"});
     };
     add("splitRings.editSelection", "Edit Split Rings Selection", "splitRingsEditSelection",

@@ -15,8 +15,10 @@
 #include "scene/Transform.h"
 #include "ui/Actions.h"
 #include "ui/OptionBox.h"
+#include "ui/UiCommands.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -38,7 +40,7 @@ namespace
 using D3 = glm::dvec3;
 namespace groom = curve::groom;
 
-constexpr const char* kPrefix = "/curveSculpt";
+constexpr const char* kCurveSculptPrefix = "/curveSculpt";
 
 /** What the Sculpt Curves tool remembers between sessions. */
 struct CurveSculptSettings
@@ -55,16 +57,16 @@ struct CurveSculptSettings
     bool frontOnly = true;
 };
 
-CurveSculptSettings& settings()
+CurveSculptSettings& curveSculptSettings()
 {
     static CurveSculptSettings s = [] {
         CurveSculptSettings c;
         const PrefStore& p = PrefStore::get();
-        groom::parseBrush(p.value<std::string>("general", std::string(kPrefix) + "/brush", "comb"), &c.brush);
+        groom::parseBrush(p.value<std::string>("general", std::string(kCurveSculptPrefix) + "/brush", "comb"), &c.brush);
         c.stroke.strength = 0.5;
-        c.stroke.loadPrefs(kPrefix);
+        c.stroke.loadPrefs(kCurveSculptPrefix);
         c.stroke.radius = std::clamp(c.stroke.radius, 2.0, 2000.0);
-        auto key = [](const char* k) { return std::string(kPrefix) + "/" + k; };
+        auto key = [](const char* k) { return std::string(kCurveSculptPrefix) + "/" + k; };
         c.addCount = std::clamp(p.value<int>("general", key("addCount"), c.addCount), 1, 1000);
         c.addLength = std::max(1e-3, p.value<double>("general", key("addLength"), c.addLength));
         c.addPoints = std::clamp(p.value<int>("general", key("addPoints"), c.addPoints), 2, 256);
@@ -80,11 +82,11 @@ CurveSculptSettings& settings()
 
 void saveSettings()
 {
-    const CurveSculptSettings& c = settings();
+    const CurveSculptSettings& c = curveSculptSettings();
     PrefStore& p = PrefStore::get();
-    auto key = [](const char* k) { return std::string(kPrefix) + "/" + k; };
+    auto key = [](const char* k) { return std::string(kCurveSculptPrefix) + "/" + k; };
     p.set("general", key("brush"), std::string(groom::brushName(c.brush)));
-    c.stroke.savePrefs(kPrefix);
+    c.stroke.savePrefs(kCurveSculptPrefix);
     p.set("general", key("addCount"), c.addCount);
     p.set("general", key("addLength"), c.addLength);
     p.set("general", key("addPoints"), c.addPoints);
@@ -102,21 +104,7 @@ QString brushLabel(groom::Brush b)
     return n.left(1).toUpper() + n.mid(1);
 }
 
-json vecJson(const D3& v) { return json::array({v.x, v.y, v.z}); }
-
 D3 xform(const glm::dmat4& m, const D3& p, double w) { return D3(m * glm::dvec4(p, w)); }
-
-void runUi(const char* cmd, const json& call)
-{
-    try
-    {
-        ops::execute(cmd, ops::options::callWith(cmd, call), CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
 
 /**
  * Sculpt Curves: brushes for curve nodes holding many curves (hair, fur). 1 to 0 pick comb, smooth, length, puff, add,
@@ -150,7 +138,7 @@ public:
                 }
         // A mesh selected with the curves becomes their surface when they have none.
         if (scene::Node* n = g.node(mNode); n && !mesh.empty() && curve::groomSurfaceOf(*n).empty())
-            runUi("groomSurface", {{"args", {n->path()}}, {"mesh", mesh}, {"attach", false}});
+            runUiWithOptions("groomSurface", {{"args", {n->path()}}, {"mesh", mesh}, {"attach", false}});
         mControls.activate({}, {});
         const scene::NodeId* target = &mNode;
         const bool* stroking = &mStroking;
@@ -212,7 +200,7 @@ public:
     bool wheel(QWheelEvent* e, const ViewInfo&) override
     {
         const double steps = e->angleDelta().y() / 120.0;
-        brush::BrushSettings& s = settings().stroke;
+        brush::BrushSettings& s = curveSculptSettings().stroke;
         if (e->modifiers() & Qt::ControlModifier)
         {
             if (s.radiusUnit == brush::RadiusUnit::Screen)
@@ -250,7 +238,7 @@ public:
     {
         LILA_ZONE();
 
-        const CurveSculptSettings& st = settings();
+        const CurveSculptSettings& st = curveSculptSettings();
         scene::Node* n = target();
         if (mStroking && n)
         {
@@ -330,7 +318,7 @@ private:
             const int i = k == Qt::Key_0 ? 9 : k - Qt::Key_1;
             if (i < int(groom::Brush::Count))
             {
-                settings().brush = groom::Brush(i);
+                curveSculptSettings().brush = groom::Brush(i);
                 saveSettings();
             }
             return true;
@@ -402,7 +390,7 @@ private:
             }
         const glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
         const curve::Splines& splines = mStroking ? mWork : curve::shapeSplines(scene::Graph::current(), mNode);
-        const double reach = settings().stroke.radius;
+        const double reach = curveSculptSettings().stroke.radius;
         double best = reach;
         std::optional<D3> nearest;
         D3 lo(1e300), hi(-1e300);
@@ -435,7 +423,7 @@ private:
     {
         scene::Node* n = target();
         scene::Graph& g = scene::Graph::current();
-        const CurveSculptSettings& st = settings();
+        const CurveSculptSettings& st = curveSculptSettings();
         const Qt::KeyboardModifiers mods = e->modifiers();
         mBrush = (mods & Qt::ShiftModifier) ? groom::Brush::Smooth : st.brush;
         mInvert = (mods & Qt::ControlModifier) != 0;
@@ -488,7 +476,7 @@ private:
         scene::Node* n = target();
         if (n && !mDabs.empty())
         {
-            const CurveSculptSettings& st = settings();
+            const CurveSculptSettings& st = curveSculptSettings();
             json call = {{"args", {n->path()}},
                          {"brush", groom::brushName(mBrush)},
                          {"dabs", std::move(mDabs)},
@@ -544,7 +532,7 @@ private:
         bool operator==(const SurfaceKey&) const = default;
     };
 
-    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; }, [] { saveSettings(); }, {}};
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return curveSculptSettings().stroke; }, [] { saveSettings(); }, {}};
     scene::NodeId mNode = scene::kNoNode;
     brush::Stroke mStroke;
     bool mStroking = false;
@@ -563,7 +551,7 @@ private:
 
 void openOptions()
 {
-    CurveSculptSettings& st = settings();
+    CurveSculptSettings& st = curveSculptSettings();
     QDialog dlg(QApplication::activeWindow());
     dlg.setWindowTitle("Sculpt Curves Options");
     auto* form = new QFormLayout(&dlg);
@@ -659,7 +647,7 @@ void registerCurveSculptTool()
                       .category = "Curves",
                       .run =
                           [br] {
-                              settings().brush = br;
+                              curveSculptSettings().brush = br;
                               saveSettings();
                               if (!viewportTools::active() || std::string_view(viewportTools::active()->name()) != "Sculpt Curves")
                                   viewportTools::activate("curve.sculptCurves");
@@ -688,7 +676,7 @@ void registerCurveSculptTool()
                               log::error("Set Groom Surface: select the curves and the mesh they grow from");
                               return;
                           }
-                          runUi("groomSurface", {{"args", curves}, {"mesh", mesh}});
+                          runUiWithOptions("groomSurface", {{"args", curves}, {"mesh", mesh}});
                       },
                   .doc = "Makes the selected mesh the surface the selected curves grow from, moving their roots onto it.",
                   .python = "lila.ops.groomSurface(\"Hair\", mesh=\"Scalp\")",

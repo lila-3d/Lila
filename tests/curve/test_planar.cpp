@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveBoolean.h"
 #include "curve/Planar.h"
 #include "curve/Skeleton.h"
@@ -12,20 +14,11 @@
 using namespace lila;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-curve::Spline polyLoop(std::initializer_list<D3> list)
-{
-    curve::Spline s;
-    s.kind = curve::Kind::Poly;
-    s.closed = true;
-    s.points = list;
-    s.normalize();
-    return s;
-}
-
-curve::Spline rect(double x0, double z0, double x1, double z1)
+curve::Spline rectLoop(double x0, double z0, double x1, double z1)
 {
     return polyLoop({D3(x0, 0, z0), D3(x1, 0, z0), D3(x1, 0, z1), D3(x0, 0, z1)});
 }
@@ -159,7 +152,7 @@ TEST_CASE("straight skeleton: jittered star and circle-ish polygons")
 
 TEST_CASE("curve boolean: union, subtract, intersect, xor of rectangles")
 {
-    curve::Spline a = rect(0, 0, 10, 10), b = rect(5, 5, 15, 15);
+    curve::Spline a = rectLoop(0, 0, 10, 10), b = rectLoop(5, 5, 15, 15);
     curve::CurveBooleanOptions o;
     curve::CurveBooleanResult r = curve::curveBoolean({{a}, {b}}, o);
     REQUIRE(r.curves.size() == 1);
@@ -186,7 +179,7 @@ TEST_CASE("curve boolean: union, subtract, intersect, xor of rectangles")
 
     // A tool inside the target makes a hole: one outer loop and one clockwise loop.
     o.op = curve::BooleanOp::Subtract;
-    r = curve::curveBoolean({{a}, {rect(3, 3, 6, 6)}}, o);
+    r = curve::curveBoolean({{a}, {rectLoop(3, 3, 6, 6)}}, o);
     REQUIRE(r.curves.size() == 2);
     double signedSum = splineArea(r.curves[0], r.plane) + splineArea(r.curves[1], r.plane);
     CHECK(std::abs(signedSum) == doctest::Approx(91.0));
@@ -220,16 +213,16 @@ TEST_CASE("region offset grows, shrinks and merges")
     curve::RegionOffsetOptions o;
     o.distance = 1.0;
     o.join = curve::JoinType::Miter;
-    curve::CurveBooleanResult r = curve::regionOffset({rect(0, 0, 10, 10)}, o);
+    curve::CurveBooleanResult r = curve::regionOffset({rectLoop(0, 0, 10, 10)}, o);
     REQUIRE(r.curves.size() == 1);
     CHECK(r.curves[0].kind == curve::Kind::Poly);
     CHECK(std::abs(splineArea(r.curves[0], r.plane)) == doctest::Approx(144.0));
     // Two squares 1 apart merge when grown by 0.6.
     o.distance = 0.6;
-    r = curve::regionOffset({rect(0, 0, 4, 4), rect(5, 0, 9, 4)}, o);
+    r = curve::regionOffset({rectLoop(0, 0, 4, 4), rectLoop(5, 0, 9, 4)}, o);
     CHECK(r.curves.size() == 1);
     o.distance = -2.5;
-    r = curve::regionOffset({rect(0, 0, 4, 4)}, o);
+    r = curve::regionOffset({rectLoop(0, 0, 4, 4)}, o);
     CHECK(r.curves.empty());
     o.distance = -1.0;
     o.join = curve::JoinType::Round;
@@ -267,7 +260,7 @@ TEST_CASE("straight skeleton: random stars and rectilinear unions")
         {
             double x = std::floor(rnd() * 8.0), z = std::floor(rnd() * 8.0);
             double w = 1.0 + std::floor(rnd() * 3.0), h = 1.0 + std::floor(rnd() * 3.0);
-            cells.push_back(rect(x, z, x + w, z + h));
+            cells.push_back(rectLoop(x, z, x + w, z + h));
         }
         std::vector<curve::Splines> ops;
         for (const curve::Spline& c : cells)
@@ -350,7 +343,7 @@ TEST_CASE("curve boolean: curves on a tilted plane, and a warning when they are 
 {
     glm::dmat4 tilt = glm::rotate(glm::dmat4(1.0), 0.7, D3(1, 0.3, 0.2));
     tilt = glm::translate(tilt, D3(3, -2, 5));
-    curve::Spline a = rect(0, 0, 10, 10), b = rect(5, 5, 15, 15);
+    curve::Spline a = rectLoop(0, 0, 10, 10), b = rectLoop(5, 5, 15, 15);
     curve::transform(a, tilt);
     curve::transform(b, tilt);
     curve::CurveBooleanResult r = curve::curveBoolean({{a}, {b}}, {});
@@ -362,8 +355,8 @@ TEST_CASE("curve boolean: curves on a tilted plane, and a warning when they are 
         CHECK(std::abs(glm::dot(p - o, n)) < 1e-9);
     CHECK(std::abs(splineArea(r.curves[0], r.plane)) == doctest::Approx(175.0));
 
-    curve::Spline lifted = rect(5, 5, 15, 15);
+    curve::Spline lifted = rectLoop(5, 5, 15, 15);
     lifted.points[2].y = 1.0;
-    r = curve::curveBoolean({{rect(0, 0, 10, 10)}, {lifted}}, {});
+    r = curve::curveBoolean({{rectLoop(0, 0, 10, 10)}, {lifted}}, {});
     CHECK(!r.warnings.empty());
 }

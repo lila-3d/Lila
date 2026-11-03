@@ -1,24 +1,14 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 
 #include <filesystem>
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-double get(const std::string& plug) { return run("getAttr", {{"args", {plug}}}).get<double>(); }
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_tests" / "refs";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
-} // namespace
+using namespace testutil;
 
 TEST_CASE("references load, keep edits across reload, and save")
 {
@@ -30,7 +20,7 @@ TEST_CASE("references load, keep edits across reload, and save")
     run("setAttr", {{"args", {"Tip.ty", 5}}});
     run("spaceLocator", {{"name", "Driven"}});
     run("connectAttr", {{"args", {"Tip.translate", "Driven.rotate"}}});
-    std::string asset = tempPath("asset.lilaa");
+    std::string asset = tempPath("refs", "asset.lilaa");
     run("saveScene", {{"args", {asset}}});
 
     // The shot references it twice and edits one copy.
@@ -48,13 +38,13 @@ TEST_CASE("references load, keep edits across reload, and save")
 
     // Upstream change: the asset's Tip moves up.
     {
-        run("saveScene", {{"args", {tempPath("shot.lila")}}});
+        run("saveScene", {{"args", {tempPath("refs", "shot.lila")}}});
         run("newScene");
         run("openScene", {{"args", {asset}}});
         run("setAttr", {{"args", {"Tip.ty", 7}}});
         run("saveScene", {{"args", {asset}}});
         run("newScene");
-        run("openScene", {{"args", {tempPath("shot.lila")}}});
+        run("openScene", {{"args", {tempPath("refs", "shot.lila")}}});
     }
     CHECK(get("hero:Tip.ty") == doctest::Approx(7)); // upstream
     CHECK(get("hero:Tip.tx") == doctest::Approx(3)); // local edit kept
@@ -85,7 +75,7 @@ TEST_CASE("locks on referenced nodes are reference edits")
     run("newScene");
     run("spaceLocator", {{"name", "Tip"}});
     run("setAttr", {{"args", {"Tip.rx"}}, {"lock", true}});
-    std::string asset = tempPath("lockAsset.lilaa");
+    std::string asset = tempPath("refs", "lockAsset.lilaa");
     run("saveScene", {{"args", {asset}}});
 
     run("newScene");
@@ -95,7 +85,7 @@ TEST_CASE("locks on referenced nodes are reference edits")
     run("setAttr", {{"args", {"hero:Tip.rx"}}, {"lock", false}});
     run("setAttr", {{"args", {"hero:Tip.rx", 30}}});
 
-    std::string shot = tempPath("lockShot.lila");
+    std::string shot = tempPath("refs", "lockShot.lila");
     run("saveScene", {{"args", {shot}}});
     run("newScene");
     run("openScene", {{"args", {shot}}});

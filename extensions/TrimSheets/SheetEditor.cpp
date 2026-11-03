@@ -36,10 +36,10 @@ using namespace lila::ui;
 
 namespace trims
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 const char* const kKindNames[] = {"stripU", "stripV", "rect", "radial", "unique", "flat"};
 
 json edit(const json& call)

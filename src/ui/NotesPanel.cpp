@@ -3,6 +3,7 @@
 #include "core/Events.h"
 #include "ops/Undo.h"
 #include "scene/SceneData.h"
+#include "ops/Command.h"
 #include "ui/AchievementRules.h"
 #include "ui/Deletion.h"
 #include "ui/Icons.h"
@@ -28,7 +29,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
 constexpr const char* kNotesKey = "notes";
 

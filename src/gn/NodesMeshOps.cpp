@@ -19,8 +19,6 @@ namespace lila::gn::nodes
 {
 namespace meshops
 {
-using D3 = glm::dvec3;
-
 int clampInt(int64_t v, int lo, int hi) { return int(std::clamp<int64_t>(v, lo, hi)); }
 
 struct UnionFind

@@ -8,6 +8,8 @@
 #include "ui/Actions.h"
 #include "ui/Menus.h"
 #include "ui/MeshCache.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 
@@ -23,26 +25,12 @@ namespace
 {
 namespace gh = scene::ghosts;
 
-void runUi(const json& call)
-{
-    try
-    {
-        ops::execute("ghosting", call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
-
-float toLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
-
 glm::vec3 prefColor(const char* key, const char* fallback)
 {
     QColor c(QString::fromStdString(PrefStore::get().value<std::string>("general", key, fallback)));
     if (!c.isValid())
         c = QColor(fallback);
-    return {toLinear(float(c.redF())), toLinear(float(c.greenF())), toLinear(float(c.blueF()))};
+    return {srgbToLinear(float(c.redF())), srgbToLinear(float(c.greenF())), srgbToLinear(float(c.blueF()))};
 }
 
 void drawGhosts(render::FrameState& s, OverlayPainter&, const ViewInfo&)
@@ -97,15 +85,13 @@ void drawGhosts(render::FrameState& s, OverlayPainter&, const ViewInfo&)
             }
     }
 }
-
-bool pref(const char* key, bool fallback) { return PrefStore::get().value<bool>("general", key, fallback); }
 std::string prefText(const char* key, const char* fallback) { return PrefStore::get().value<std::string>("general", key, fallback); }
 } // namespace
 
 std::optional<bool> ghostActionState(const std::string& id)
 {
     if (id == "anim.toggleGhosts")
-        return pref(gh::kEnabled, false);
+        return generalPref(gh::kEnabled, false);
     if (id.starts_with("anim.ghostMode."))
         return prefText(gh::kMode, "keys") == id.substr(15);
     if (id.starts_with("anim.ghostShow."))
@@ -137,19 +123,19 @@ void registerGhostingUi()
         actions::add({.id = std::move(id), .label = std::move(label), .category = "Animation", .run = std::move(run), .doc = std::move(doc),
                       .python = std::move(python)});
     };
-    add("anim.toggleGhosts", "Ghosting", [] { runUi({{"enable", !pref(gh::kEnabled, false)}}); },
+    add("anim.toggleGhosts", "Ghosting", [] { runUi("ghosting", {{"enable", !generalPref(gh::kEnabled, false)}}); },
         "Show the selected characters faintly at the keys (or frames) around the current time.", "ghosting(enable=True)");
-    add("anim.ghostMode.keys", "Ghost at Keys", [] { runUi({{"mode", "keys"}, {"enable", true}}); },
+    add("anim.ghostMode.keys", "Ghost at Keys", [] { runUi("ghosting", {{"mode", "keys"}, {"enable", true}}); },
         "Ghosts sit at the previous and next keys.", "ghosting(mode=\"keys\")");
-    add("anim.ghostMode.frames", "Ghost Every N Frames", [] { runUi({{"mode", "frames"}, {"enable", true}}); },
+    add("anim.ghostMode.frames", "Ghost Every N Frames", [] { runUi("ghosting", {{"mode", "frames"}, {"enable", true}}); },
         "Ghosts sit every step frames before and after the current time.", "ghosting(mode=\"frames\")");
-    add("anim.ghostShow.mesh", "Ghost Meshes", [] { runUi({{"show", "mesh"}, {"enable", true}}); },
+    add("anim.ghostShow.mesh", "Ghost Meshes", [] { runUi("ghosting", {{"show", "mesh"}, {"enable", true}}); },
         "Ghosts show the evaluated (skinned) meshes; skeletons without a mesh still show their bones.", "ghosting(show=\"mesh\")");
-    add("anim.ghostShow.skeleton", "Ghost Skeletons", [] { runUi({{"show", "skeleton"}, {"enable", true}}); },
+    add("anim.ghostShow.skeleton", "Ghost Skeletons", [] { runUi("ghosting", {{"show", "skeleton"}, {"enable", true}}); },
         "Ghosts show only the bones.", "ghosting(show=\"skeleton\")");
-    add("anim.ghostShow.both", "Ghost Meshes and Skeletons", [] { runUi({{"show", "both"}, {"enable", true}}); },
+    add("anim.ghostShow.both", "Ghost Meshes and Skeletons", [] { runUi("ghosting", {{"show", "both"}, {"enable", true}}); },
         "Ghosts show meshes with their bones.", "ghosting(show=\"both\")");
-    add("anim.refreshGhosts", "Refresh Ghosts", [] { runUi({{"refresh", true}}); },
+    add("anim.refreshGhosts", "Refresh Ghosts", [] { runUi("ghosting", {{"refresh", true}}); },
         "Recapture the ghosts, after edits that aren't keys (a static channel, say).", "ghosting(refresh=True)");
 }
 } // namespace lila::ui

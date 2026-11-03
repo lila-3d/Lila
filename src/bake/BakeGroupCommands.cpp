@@ -2,6 +2,7 @@
 #include "bake/AutoDistance.h"
 #include "bake/Backend.h"
 #include "bake/Bake.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/Cage.h"
@@ -28,24 +29,18 @@
 
 namespace lila::bake
 {
+using T = ArgType;
+
 namespace
 {
-using T = ArgType;
+using detail::findNode;
+using detail::listArg;
+using detail::projectArg;
+using detail::shortName;
+using detail::worldOf;
 using scene::Graph;
 using scene::Node;
 using scene::NodeId;
-
-Node* findNode(Graph& g, const std::string& name)
-{
-    try
-    {
-        return g.find(name);
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
-}
 
 Node& groupArg(const Args& a, const char* cmd)
 {
@@ -67,60 +62,12 @@ Node& groupArg(const Args& a, const char* cmd)
     throw CommandError(std::string(cmd) + ": name a bake group (or select one, or its low)");
 }
 
-Node& projectArg(const Args& a, const char* cmd, bool create)
-{
-    Graph& g = Graph::current();
-    if (a.has("project"))
-    {
-        const std::string name = a.get<std::string>("project");
-        Node* n = findNode(g, name);
-        if (n && isProject(*n))
-            return *n;
-        if (!n && create)
-            return *createProject(g, name);
-        throw CommandError(std::string(cmd) + ": " + name + " is not a bake project");
-    }
-    const std::vector<NodeId> ps = projects(g);
-    if (ps.size() == 1)
-        return *g.node(ps.front());
-    if (ps.empty() && create)
-        return *createProject(g, "");
-    throw CommandError(std::string(cmd) + (ps.empty() ? ": the scene has no bake project" : ": the scene has several bake projects; name one with project="));
-}
-
-std::vector<std::string> listArg(const Args& a, const char* flag)
-{
-    std::vector<std::string> out;
-    if (!a.has(flag))
-        return out;
-    const json& v = a.flags[flag];
-    if (v.is_string())
-        out.push_back(v.get<std::string>());
-    else if (v.is_array())
-        for (const json& x : v)
-            if (x.is_string())
-                out.push_back(x.get<std::string>());
-    return out;
-}
-
-std::string shortName(const std::string& path)
-{
-    const size_t bar = path.rfind('|');
-    return bar == std::string::npos ? path : path.substr(bar + 1);
-}
-
 std::string safeName(std::string s)
 {
     for (char& c : s)
         if (c == ':' || c == '|')
             c = '_';
     return s;
-}
-
-glm::dmat4 worldOf(Graph& g, NodeId id)
-{
-    const scene::PlugValue v = g.value({id, scene::Transform::kWorldMatrix, -1});
-    return std::holds_alternative<glm::dmat4>(v) ? std::get<glm::dmat4>(v) : glm::dmat4(1.0);
 }
 
 json groupJson(Graph& g, const Node& group)
@@ -505,7 +452,7 @@ void registerGroupCommands()
             LILA_ZONE();
 
             Graph& g = Graph::current();
-            Node& project = projectArg(a, "bakeLint", false);
+            Node& project = projectArg(Graph::current(), a, "bakeLint", false);
             std::vector<NodeId> groups;
             for (const std::string& name : listArg(a, "groups"))
             {
@@ -574,7 +521,7 @@ void registerGroupCommands()
                 if (stack.is_null())
                     throw CommandError("bakeGroupPerMesh: no bake modifier preset named " + a.get<std::string>("preset"));
             }
-            Node& project = projectArg(a, "bakeGroupPerMesh", true);
+            Node& project = projectArg(Graph::current(), a, "bakeGroupPerMesh", true);
             std::vector<std::string> all;
             for (NodeId id : g.nodes())
                 if (Node* n = g.node(id); n && n->type().isA("mesh"))
@@ -630,7 +577,7 @@ void registerGroupCommands()
         .undoable = false,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            Node& project = projectArg(a, "bakeArrange", false);
+            Node& project = projectArg(Graph::current(), a, "bakeArrange", false);
             const bool on = !a.get<bool>("reset") && (a.has("on") ? a.get<bool>("on") : !arrange::active(g, project.id()));
             json out = json::object();
             if (!on)

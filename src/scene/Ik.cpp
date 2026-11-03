@@ -1,6 +1,7 @@
 #include "scene/Ik.h"
 
 #include "core/Profile.h"
+#include "scene/AttrBuilders.h"
 #include "scene/IkSolver.h"
 #include "scene/Rig.h"
 #include "scene/RigUtil.h"
@@ -18,13 +19,14 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace attrdefs;
 
 namespace
 {
 constexpr const char* kTwoBone = "ik2BoneSolver";
 constexpr const char* kFabrik = "ikFabrikSolver";
 
-glm::dvec3 positionOf(const glm::dmat4& m) { return glm::dvec3(m[3]); }
+glm::dvec3 translationOf(const glm::dmat4& m) { return glm::dvec3(m[3]); }
 
 glm::dmat3 axisAngle(const glm::dvec3& axis, double radians) { return glm::mat3_cast(glm::angleAxis(radians, glm::normalize(axis))); }
 
@@ -82,7 +84,7 @@ std::vector<glm::dmat3> followPositions(const std::vector<glm::dmat4>& world, co
     glm::dmat3 inherited(1.0);
     for (size_t i = 0; i + 1 < world.size(); ++i)
     {
-        glm::dvec3 fkDir = positionOf(world[i + 1]) - positionOf(world[i]);
+        glm::dvec3 fkDir = translationOf(world[i + 1]) - translationOf(world[i]);
         glm::dvec3 newDir = pos[i + 1] - pos[i];
         glm::dmat3 turn = inherited;
         if (glm::length(fkDir) > 1e-12 && glm::length(newDir) > 1e-12)
@@ -126,7 +128,7 @@ Bones bonesOf(const ik::Problem& p)
     for (size_t i = 0; i + 1 < p.world.size(); ++i)
     {
         const glm::dmat3 r = orthonormal(glm::dmat3(p.world[i]));
-        const glm::dvec3 d = positionOf(p.world[i + 1]) - positionOf(p.world[i]);
+        const glm::dvec3 d = translationOf(p.world[i + 1]) - translationOf(p.world[i]);
         const double l = glm::length(d);
         b.dir.push_back(l > 1e-12 ? glm::transpose(r) * (d / l) : glm::dvec3(1, 0, 0));
         b.len.push_back(l);
@@ -171,7 +173,7 @@ std::vector<glm::dmat3> refineLimited(const ik::Problem& p, const Bones& b, cons
     std::vector<glm::dvec3> pos(m + 1);
     auto pose = [&] {
         glm::dmat3 parent = root;
-        pos[0] = positionOf(p.world[0]);
+        pos[0] = translationOf(p.world[0]);
         for (size_t i = 0; i < m; ++i)
         {
             w[i] = parent * local[i];
@@ -216,7 +218,7 @@ std::vector<glm::dmat3> solveLimited(const ik::Problem& p, const std::vector<glm
     const Bones b = bonesOf(p);
     const size_t n = p.world.size();
     std::vector<glm::dvec3> pos(n);
-    pos[0] = positionOf(p.world[0]);
+    pos[0] = translationOf(p.world[0]);
     for (size_t i = 0; i + 1 < n; ++i)
         pos[i + 1] = pos[i] + free[i] * b.dir[i] * b.len[i];
     std::vector<glm::dmat3> best = forwardLimited(p, b, pos);
@@ -227,7 +229,7 @@ std::vector<glm::dmat3> solveLimited(const ik::Problem& p, const std::vector<glm
         pos[n - 1] = p.target;
         for (size_t i = n - 1; i-- > 0;)
             pos[i] = pos[i + 1] + safeDir(pos[i] - pos[i + 1]) * b.len[i];
-        pos[0] = positionOf(p.world[0]);
+        pos[0] = translationOf(p.world[0]);
         std::vector<glm::dmat3> world = forwardLimited(p, b, pos);
         if (const double e = glm::length(pos[n - 1] - p.target); e < bestError - 1e-12)
         {
@@ -246,7 +248,7 @@ ik::Solution solveTwoBone(const ik::Problem& p)
 {
     LILA_ZONE();
 
-    const glm::dvec3 p0 = positionOf(p.world[0]), p1 = positionOf(p.world[1]), p2 = positionOf(p.world[2]);
+    const glm::dvec3 p0 = translationOf(p.world[0]), p1 = translationOf(p.world[1]), p2 = translationOf(p.world[2]);
     const double a = glm::length(p1 - p0), b = glm::length(p2 - p1);
     const glm::dvec3 toTarget = p.target - p0, fkToEnd = p2 - p0;
     const double d = glm::length(toTarget);
@@ -290,7 +292,7 @@ ik::Solution solveFabrik(const ik::Problem& p)
     std::vector<double> len(n - 1);
     double reach = 0.0;
     for (size_t i = 0; i < n; ++i)
-        pos[i] = positionOf(p.world[i]);
+        pos[i] = translationOf(p.world[i]);
     for (size_t i = 0; i + 1 < n; ++i)
         reach += len[i] = glm::length(pos[i + 1] - pos[i]);
     const glm::dvec3 root = pos[0];
@@ -344,17 +346,6 @@ ik::Solution solveFabrik(const ik::Problem& p)
     }
     std::vector<glm::dmat3> world = followPositions(p.world, pos);
     return toLocal(p, limited(p) ? solveLimited(p, world) : world);
-}
-
-AttrDef vec3Attr(std::string name, std::string shortName, glm::dvec3 def, uint32_t flags, std::string doc)
-{
-    AttrDef a{.name = name, .shortName = shortName, .type = PlugType::Vec3, .defaultValue = def, .flags = flags, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-    {
-        a.childNames[i] = name + char('X' + i);
-        a.childShort[i] = shortName.empty() ? "" : shortName + char('x' + i);
-    }
-    return a;
 }
 
 NodeType makeHandleType(const NodeType& base)
@@ -438,14 +429,14 @@ std::vector<NodeId> chainBetween(Graph& g, NodeId start, NodeId end)
 glm::dvec3 restPole(Graph& g, const std::vector<NodeId>& chain)
 {
     g.evaluate();
-    glm::dvec3 root = positionOf(worldOf(*g.node(chain.front())));
-    glm::dvec3 end = positionOf(worldOf(*g.node(chain.back())));
+    glm::dvec3 root = translationOf(worldOf(*g.node(chain.front())));
+    glm::dvec3 end = translationOf(worldOf(*g.node(chain.back())));
     if (glm::length(end - root) < 1e-12)
         return glm::dvec3(0.0);
     glm::dvec3 axis = glm::normalize(end - root);
     glm::dvec3 mid(0.0);
     for (size_t i = 1; i + 1 < chain.size(); ++i)
-        mid += positionOf(worldOf(*g.node(chain[i]))) - root;
+        mid += translationOf(worldOf(*g.node(chain[i]))) - root;
     return clean(perpendicular(mid, axis));
 }
 } // namespace
@@ -487,7 +478,7 @@ void IkHandle::compute(const EvalContext& ctx)
     p.target = glm::dvec3(as<glm::dmat4>(kWorldMatrix)[3]);
     glm::dvec3 pv = as<glm::dvec3>(kPoleVector);
     if (glm::length(pv) > 1e-12)
-        p.pole = positionOf(p.world[0]) + pv;
+        p.pole = translationOf(p.world[0]) + pv;
     p.twist = glm::radians(as<double>(kPoleAngle));
     p.tolerance = 1e-9;
     p.maxIterations = 256;
@@ -587,10 +578,10 @@ Result solve(const Solver& solver, const Problem& in)
     if (rebuild)
         build();
 
-    const glm::dvec3 root = positionOf(p.world[0]);
+    const glm::dvec3 root = translationOf(p.world[0]);
     double reach = 0.0;
     for (size_t i = 0; i + 1 < n; ++i)
-        reach += glm::length(positionOf(p.world[i + 1]) - positionOf(p.world[i]));
+        reach += glm::length(translationOf(p.world[i + 1]) - translationOf(p.world[i]));
     const double d = glm::length(p.target - root);
     double soft = std::min(d, reach);
     if (p.softness > 0.0 && reach > 1e-12)
@@ -667,7 +658,7 @@ std::vector<NodeId> chainOf(Graph& g, NodeId handle)
     if (!end)
     {
         // Renamed: the child whose offset matches the stored rest offset.
-        glm::dvec3 want = positionOf(h->as<glm::dmat4>(IkHandle::slotLocal(count - 1)));
+        glm::dvec3 want = translationOf(h->as<glm::dmat4>(IkHandle::slotLocal(count - 1)));
         end = nullptr;
         double best = 1e300;
         for (NodeId c : g.children(chain.back()))
@@ -775,7 +766,7 @@ json createHandle(const Args& a)
     }
 
     g.evaluate();
-    glm::dvec3 target = positionOf(worldOf(*g.node(end)));
+    glm::dvec3 target = translationOf(worldOf(*g.node(end)));
     Node* h = guarded([&] { return g.createNode(*types::find("ikHandle"), a.get<std::string>("name", "ikHandle"), kNoNode); });
     NodeId id = h->id();
     g.setValue({id, Transform::kTranslate}, target);

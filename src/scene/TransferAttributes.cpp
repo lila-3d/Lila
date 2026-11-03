@@ -6,6 +6,7 @@
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
 #include "geo/Primitives.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -17,6 +18,8 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
 using geo::Index;
@@ -60,7 +63,7 @@ struct Options
 };
 
 /** Where a target sample lands on the source: triangle + barycentrics, or nothing within range. */
-struct Sample
+struct SurfaceSample
 {
     Index triangle = geo::kInvalid;
     glm::dvec3 bary{0.0};
@@ -99,9 +102,9 @@ public:
 
     bool uvSpace() const { return mUvSpace; }
 
-    Sample at(const glm::dvec3& p, const glm::dvec3& dir, const Options& o) const
+    SurfaceSample at(const glm::dvec3& p, const glm::dvec3& dir, const Options& o) const
     {
-        Sample s;
+        SurfaceSample s;
         double limit = o.maxDistance > 0.0 ? o.maxDistance : std::numeric_limits<double>::max();
         if (o.search == Search::AlongNormal && glm::length(dir) > 1e-12)
         {
@@ -147,7 +150,7 @@ template <class T> T blend(std::span<const T> values, const std::array<Index, 3>
 
 /** Copies a corner layer by sampling the source per target corner. */
 template <class T>
-void transferCornerLayer(const geo::Mesh& src, geo::Mesh& dst, std::string_view name, const std::vector<Sample>& cornerSamples,
+void transferCornerLayer(const geo::Mesh& src, geo::Mesh& dst, std::string_view name, const std::vector<SurfaceSample>& cornerSamples,
                          const Sampler& sampler, std::string_view toName = {})
 {
     auto from = src.cornerAttrs().get<T>(name);
@@ -155,7 +158,7 @@ void transferCornerLayer(const geo::Mesh& src, geo::Mesh& dst, std::string_view 
         return;
     auto to = dst.cornerAttrs().getOrAdd<T>(toName.empty() ? name : toName);
     tbb::parallel_for(Index(0), dst.cornerCapacity(), [&](Index c) {
-        const Sample& s = cornerSamples[c];
+        const SurfaceSample& s = cornerSamples[c];
         if (s.triangle != geo::kInvalid && dst.cornerValid(c))
             to[c] = blend<T>(from, sampler.corners(s.triangle), s.bary);
     });
@@ -275,7 +278,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
     auto dstUv = dst.cornerAttrs().get<glm::vec2>("uv0");
 
     // Corner samples sit a hair inside their face, so a corner on a UV seam picks the island its face belongs to.
-    std::vector<Sample> cornerSamples(dst.cornerCapacity());
+    std::vector<SurfaceSample> cornerSamples(dst.cornerCapacity());
     tbb::parallel_for(Index(0), dst.faceCapacity(), [&](Index f) {
         if (!dst.faceValid(f))
             return;
@@ -327,7 +330,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         auto srcNormals = geo::cornerNormals(src);
         auto to = dst.cornerAttrs().getOrAdd<glm::vec3>(geo::attr::kNormal);
         tbb::parallel_for(Index(0), dst.cornerCapacity(), [&](Index c) {
-            const Sample& s = cornerSamples[c];
+            const SurfaceSample& s = cornerSamples[c];
             if (s.triangle == geo::kInvalid || !dst.cornerValid(c))
                 return;
             glm::dvec3 n(blend<glm::vec3>(srcNormals, sampler.corners(s.triangle), s.bary));
@@ -357,7 +360,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
             if (!dst.pointValid(p))
                 return;
             glm::dvec3 at = glm::dvec3(toSource * glm::dvec4(dst.position(p), 1.0));
-            Sample s = sampler.at(flip(at), glm::normalize(normalToSource * glm::dvec3(dstNormals[p])), o);
+            SurfaceSample s = sampler.at(flip(at), glm::normalize(normalToSource * glm::dvec3(dstNormals[p])), o);
             moved[p] = dst.position(p);
             if (s.triangle == geo::kInvalid)
                 return;
@@ -381,7 +384,7 @@ TransferSpace spaceFrom(const std::string& s)
 
 int flipFrom(const std::string& s) { return s == "x" ? 0 : s == "y" ? 1 : s == "z" ? 2 : -1; }
 
-std::vector<std::string> splitNames(const std::string& s)
+std::vector<std::string> splitCommaList(const std::string& s)
 {
     std::vector<std::string> out;
     std::string part;
@@ -455,7 +458,7 @@ private:
         o.normals = as<bool>(attr("normals"));
         o.colors = as<bool>(attr("colors"));
         o.positions = as<bool>(attr("positions"));
-        o.attributes = splitNames(as<std::string>(attr("attributes")));
+        o.attributes = splitCommaList(as<std::string>(attr("attributes")));
         o.space = TransferSpace(std::clamp<int64_t>(as<int64_t>(attr("sampleSpace")), 0, 4));
         o.search = as<int64_t>(attr("searchMethod")) == 1 ? Search::AlongNormal : Search::Closest;
         o.maxDistance = as<double>(attr("maxDistance"));
@@ -474,12 +477,6 @@ private:
     mutable std::shared_ptr<const Sampler> mSampler;
     mutable uint64_t mBuilds = 0;
 };
-
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::vector<std::string> enums = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .enumNames = std::move(enums), .doc = std::move(doc)};
-}
 
 AttrDef limitedTransferParam(AttrDef a, std::optional<double> lo, std::optional<double> hi)
 {

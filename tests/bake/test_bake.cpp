@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Backend.h"
 #include "bake/Bake.h"
 #include "bake/CpuBackend.h"
@@ -28,98 +29,9 @@
 #include <set>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
-
-namespace
-{
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_bake_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
-scene::Graph& graph() { return scene::Graph::current(); }
-
-std::string addMesh(const std::string& name, geo::Mesh m, const glm::dvec3& translate = glm::dvec3(0.0))
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    if (translate != glm::dvec3(0.0))
-        g.setValue({n->id(), scene::Transform::kTranslate, -1}, translate);
-    return n->path();
-}
-
-/** A 100 cm plane in XZ facing +Y; uv0 spans [uvMin, uvMax] (u along +x, v along -z). */
-geo::Mesh plane(int subdiv = 1, glm::vec2 uvMin = {0.0f, 0.0f}, glm::vec2 uvMax = {1.0f, 1.0f})
-{
-    geo::PlaneOptions o;
-    o.subdivX = o.subdivZ = subdiv;
-    geo::Mesh m = geo::makePlane(o);
-    for (glm::vec2& uv : m.cornerAttrs().get<glm::vec2>("uv0"))
-        uv = uvMin + uv * (uvMax - uvMin);
-    return m;
-}
-
-/** A dense plane with y = f(x, z). */
-template <class F> geo::Mesh displaced(int subdiv, F f)
-{
-    geo::Mesh m = plane(subdiv);
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-    {
-        glm::dvec3 q = m.position(p);
-        q.y = f(q.x, q.z);
-        m.setPosition(p, q);
-    }
-    return m;
-}
-
-image::Image readImage(const json& out)
-{
-    std::string err;
-    image::Image img = image::read(fs::path(out["file"].get<std::string>()), &err);
-    INFO(err);
-    REQUIRE(img.width > 0);
-    return img;
-}
-
-glm::vec4 texel(const image::Image& img, int x, int y)
-{
-    const float* p = &img.rgba[(size_t(y) * size_t(img.width) + size_t(x)) * 4];
-    return {p[0], p[1], p[2], p[3]};
-}
-
-const json& outputFor(const json& result, const std::string& map)
-{
-    for (const json& o : result["outputs"])
-        if (o["map"] == map)
-            return o;
-    FAIL("no output for " << map);
-    static json none;
-    return none;
-}
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-/** A project writing res x res EXR (or the format given) textures into dir, one sample per texel unless ss says otherwise. */
-std::string project(const fs::path& dir, int res, int ss = 1, const std::string& format = "exr", const std::string& name = "{group}_{map}")
-{
-    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
-    ops::execute("setBakeOutput", {{"project", p},          {"folder", dir.generic_string()}, {"resolution", res},
-                                   {"supersampling", ss},  {"format", format},                {"name", name},
-                                   {"padding", 4}});
-    return p;
-}
-
-float angleDeg(glm::vec3 a, glm::vec3 b) { return glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(a), glm::normalize(b)), -1.0f, 1.0f))); }
-} // namespace
 
 TEST_CASE("naming tokens expand, stay file safe and take UDIMs")
 {
@@ -168,7 +80,7 @@ TEST_CASE("auto grouping pairs _low/_high, _lo/_hi and _LP/_HP names")
 
 TEST_CASE("image files round trip: png 8/16, exr half, tga")
 {
-    const fs::path dir = tempDir("io");
+    const fs::path dir = tempDir("lila_bake_io");
     image::Image img{3, 2, {}};
     for (int i = 0; i < 6; ++i)
         img.rgba.insert(img.rgba.end(), {float(i) / 5.0f, 0.25f, 1.0f - float(i) / 5.0f, 1.0f});
@@ -221,7 +133,7 @@ TEST_CASE("dilation fills padding from the nearest island and never changes cove
 TEST_CASE("plane bump: height and tangent normals match the analytic surface")
 {
     newScene();
-    const fs::path dir = tempDir("bump");
+    const fs::path dir = tempDir("lila_bake_bump");
     const double A = 3.0, L = 100.0, k = glm::two_pi<double>() / L;
     auto f = [&](double x, double z) { return A * std::cos(k * x) + A * std::cos(k * z); };
     const std::string low = addMesh("bump_low", plane(1));
@@ -271,7 +183,7 @@ TEST_CASE("plane bump: height and tangent normals match the analytic surface")
 TEST_CASE("sphere over an icosphere: radial normals and positions")
 {
     newScene();
-    const fs::path dir = tempDir("sphere");
+    const fs::path dir = tempDir("lila_bake_sphere");
     geo::SphereOptions so;
     so.subdivAxis = 32;
     so.subdivHeight = 32;
@@ -312,7 +224,7 @@ TEST_CASE("sphere over an icosphere: radial normals and positions")
 TEST_CASE("material ID maps hold exact colours with no averaging")
 {
     newScene();
-    const fs::path dir = tempDir("id");
+    const fs::path dir = tempDir("lila_bake_id");
     geo::Mesh hi = plane(16);
     std::vector<uint32_t> left, right;
     for (geo::Index f = 0; f < hi.faceCapacity(); ++f)
@@ -362,7 +274,7 @@ TEST_CASE("material ID maps hold exact colours with no averaging")
 TEST_CASE("UV island and coverage masks")
 {
     newScene();
-    const fs::path dir = tempDir("masks");
+    const fs::path dir = tempDir("lila_bake_masks");
     geo::Mesh a = plane(1, {0.0f, 0.0f}, {0.4f, 1.0f});
     geo::Mesh b = plane(1, {0.6f, 0.0f}, {1.0f, 1.0f});
     for (geo::Index pt = 0; pt < b.pointCapacity(); ++pt)
@@ -387,7 +299,7 @@ TEST_CASE("UV island and coverage masks")
 TEST_CASE("groups are isolated: overlapping groups trace only their own highs and can share one texture")
 {
     newScene();
-    const fs::path dir = tempDir("isolate");
+    const fs::path dir = tempDir("lila_bake_isolate");
     auto lift = [](geo::Mesh m, double y) {
         for (geo::Index p = 0; p < m.pointCapacity(); ++p)
             m.setPosition(p, m.position(p) + glm::dvec3(0.0, y, 0.0));
@@ -426,7 +338,7 @@ TEST_CASE("groups are isolated: overlapping groups trace only their own highs an
 TEST_CASE("bake-time smooth modifiers shape the high without touching the scene")
 {
     newScene();
-    const fs::path dir = tempDir("smooth");
+    const fs::path dir = tempDir("lila_bake_smooth");
     const std::string low = addMesh("box_low", geo::makeCube());
     scene::Graph& g = graph();
     const scene::NodeId id = g.find(low)->id();
@@ -466,7 +378,7 @@ TEST_CASE("bake projects round trip through .lila and .lilaa and edits undo")
     for (const char* ext : {".lila", ".lilaa"})
     {
         newScene();
-        const fs::path dir = tempDir("roundtrip");
+        const fs::path dir = tempDir("lila_bake_roundtrip");
         const std::string low = addMesh("crate_low", geo::makeCube());
         const std::string high = addMesh("crate_high", geo::makeCube());
         const std::string p = project(dir, 512, 4, "png", "T_{mesh}_{map}");
@@ -539,7 +451,7 @@ TEST_CASE("target profiles resolve built in, user and workspace files and drive 
     CHECK_THROWS(bake::TargetProfile::fromJson({{"name", "x"}, {"maps", json::array()}, {"pipeline", {{"autoAssign", "yes"}}}}));
 
     // A workspace target of the same name replaces the built-in one.
-    const fs::path ws = tempDir("workspace");
+    const fs::path ws = tempDir("lila_bake_workspace");
     fs::create_directories(ws / ".lila" / "bake" / "targets");
     {
         std::ofstream f(ws / ".lila" / "bake" / "targets" / "studio.json");
@@ -553,7 +465,7 @@ TEST_CASE("target profiles resolve built in, user and workspace files and drive 
     CHECK(bake::findTarget("substancePainter")->label == "Smart Material Inputs");
 
     // bakeForTarget: auto-groups, applies Painter's maps and names, reports what it skipped.
-    const fs::path dir = tempDir("painter");
+    const fs::path dir = tempDir("lila_bake_painter");
     geo::Mesh lowMesh = plane(1);
     scene::materials::assign(lowMesh, "M_Panel", {});
     const std::string low = addMesh("panel_low", std::move(lowMesh));
@@ -583,7 +495,7 @@ TEST_CASE("target profiles resolve built in, user and workspace files and drive 
 TEST_CASE("Auto frontal and rear are measured against the highs")
 {
     newScene();
-    const fs::path dir = tempDir("autodistance");
+    const fs::path dir = tempDir("lila_bake_autodistance");
     addMesh("crate_low", geo::makeCube());
     geo::SphereOptions so;
     so.radius = 75.0;
@@ -680,7 +592,7 @@ TEST_CASE("band by band: a lazily built tracer never runs a band inside another 
 {
     bake::registerBackend("lazyCpu", [] { return std::make_unique<LazyCpuBackend>(); });
     newScene();
-    const fs::path dir = tempDir("lazy");
+    const fs::path dir = tempDir("lila_bake_lazy");
     // One-row bands, most of them empty: idle workers steal the tracer build's tasks, so the band building it waits and
     // could pick up other bands.
     std::vector<std::string> lows;

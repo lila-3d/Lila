@@ -28,6 +28,8 @@
 #include "ui/Deletion.h"
 #include "ui/DocsUi.h"
 #include "ui/SpinScrub.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportToast.h"
 #include "ui/FlagFields.h"
@@ -114,7 +116,6 @@ constexpr int kOutputRole = Qt::UserRole + 7;
 /** Drag payload of Results thumbnails: a JSON array of their bake outputs. */
 inline constexpr const char* kOutputsMime = "application/x-lila-bake-outputs";
 
-QString qs(const std::string& s);
 std::string ss(const QString& s);
 std::string shortName(const std::string& path);
 
@@ -122,7 +123,6 @@ std::string shortName(const std::string& path);
 std::string& currentProject();
 scene::Graph& graph();
 void openFolder(const QString& dir);
-json runUi(const char* command, const json& call);
 
 /** The backend bakes from the Baker run on: the preference, else the GPU when one is registered. */
 std::string backendPref();

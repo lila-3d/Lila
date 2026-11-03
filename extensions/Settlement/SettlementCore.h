@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <numbers>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +24,12 @@ namespace settlement
 namespace geo = lila::geo;
 using Vec2 = glm::dvec2;
 using json = nlohmann::json;
+
+inline constexpr double kPi = std::numbers::pi;
+inline constexpr double kM2 = 1.0e4; // cm2 per m2
+
+inline double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
+inline Vec2 leftNormal(Vec2 d) { return {-d.y, d.x}; }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Polygons

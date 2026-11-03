@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/MainQueue.h"
 #include "ops/Command.h"
 #include "scene/Node.h"
@@ -15,12 +17,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-QStringList rows(QTreeWidget* tree)
+QStringList sortedRows(QTreeWidget* tree)
 {
     QStringList out;
     for (int i = 0; i < tree->topLevelItemCount(); ++i)
@@ -58,14 +59,14 @@ TEST_CASE("unfrozen transforms panel: filters update the list and picking rows s
     panel.loadSelection();
     auto* tree = panel.findChild<QTreeWidget*>();
     REQUIRE(tree);
-    CHECK(rows(tree) == QStringList{"Quarter", "Tilted"});
+    CHECK(sortedRows(tree) == QStringList{"Quarter", "Tilted"});
 
     // Picking a row selects that object alone, and the list stays.
     tree->clearSelection();
     tree->topLevelItem(0)->setSelected(true);
     QApplication::processEvents();
     CHECK(selection() == std::vector<std::string>{tree->topLevelItem(0)->text(0).toStdString()});
-    CHECK(rows(tree) == QStringList{"Quarter", "Tilted"});
+    CHECK(sortedRows(tree) == QStringList{"Quarter", "Tilted"});
 
     QComboBox* step = nullptr;
     for (QComboBox* c : panel.findChildren<QComboBox*>())
@@ -73,14 +74,14 @@ TEST_CASE("unfrozen transforms panel: filters update the list and picking rows s
             step = c;
     REQUIRE(step);
     step->setCurrentIndex(step->findData(90.0));
-    CHECK(rows(tree) == QStringList{"Tilted"});
+    CHECK(sortedRows(tree) == QStringList{"Tilted"});
     QCheckBox* invert = nullptr;
     for (QCheckBox* c : panel.findChildren<QCheckBox*>())
         if (c->text() == "Invert")
             invert = c;
     REQUIRE(invert);
     invert->setChecked(true);
-    CHECK(rows(tree) == QStringList{"Quarter"});
+    CHECK(sortedRows(tree) == QStringList{"Quarter"});
 
     // Freeze clears the picked row off the list.
     tree->topLevelItem(0)->setSelected(true);

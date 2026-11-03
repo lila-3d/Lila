@@ -9,6 +9,7 @@
 #include "scene/Graph.h"
 #include "ui/Actions.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 
 namespace lila::ui
 {
@@ -17,10 +18,8 @@ namespace
 using namespace curveTools;
 using curvePick::SceneCurve;
 
-const glm::vec4 kCut(1.0f, 0.42f, 0.28f, 1.0f);
+const glm::vec4 kTrimCut(1.0f, 0.42f, 0.28f, 1.0f);
 const glm::vec4 kGrow(0.45f, 0.85f, 1.0f, 1.0f);
-
-json vec(const D3& v) { return json::array({v.x, v.y, v.z}); }
 
 /**
  * Trim: hover a curve and the stretch between the intersections around the cursor lights up; click deletes it. E switches
@@ -63,18 +62,18 @@ public:
         const SceneCurve& c = mCurves[mHover->curve];
         json call = {{"args", {c.path}}, {"tolerance", tolerance()}};
         if (mProjected)
-            call["direction"] = vec(curvePick::viewAxis(view));
+            call["direction"] = vecJson(curvePick::viewAxis(view));
         try
         {
             if (mExtending)
             {
-                call["point"] = vec(curve::pointAt(c.s, mAtEnd ? curve::spanCount(c.s) : 0.0));
+                call["point"] = vecJson(curve::pointAt(c.s, mAtEnd ? curve::spanCount(c.s) : 0.0));
                 call["mode"] = curve::extendModeName(mExtendMode);
                 ops::execute("extendCurve", call, CallSource::UI);
             }
             else
             {
-                call["point"] = vec(mHover->point);
+                call["point"] = vecJson(mHover->point);
                 ops::execute("trimCurve", call, CallSource::UI);
             }
         }
@@ -119,9 +118,9 @@ public:
         {
             const SceneCurve& c = mCurves[mHover->curve];
             for (double u : mCuts[mHover->curve])
-                dot(p, view, curve::pointAt(c.s, u), 3.5f, kCut);
+                dot(p, view, curve::pointAt(c.s, u), 3.5f, kTrimCut);
             if (!mPreview.empty())
-                curvePick::drawPolyline(p, view, mPreview, false, 3.5f, mExtending ? kGrow : kCut);
+                curvePick::drawPolyline(p, view, mPreview, false, 3.5f, mExtending ? kGrow : kTrimCut);
             if (mExtending && !mPreview.empty())
                 dot(p, view, mPreview.back(), 4.0f, kGrow);
         }

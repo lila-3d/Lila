@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
@@ -19,26 +21,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-Graph& graph() { return Graph::current(); }
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    Graph& g = graph();
-    g.evaluate();
-    MeshPtr m = g.find(mesh)->as<MeshPtr>(MeshNode::kOutMesh);
-    REQUIRE(m);
-    return {m->positions().begin(), m->positions().end()};
-}
-
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) <= eps; }
-
 std::vector<float> floats(const json& j) { return j.get<std::vector<float>>(); }
 
 fields::Layer layer(fields::Shape s, double softness = 0.0)

@@ -1,6 +1,7 @@
 #include "curve/Svg.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 #include "curve/Planar.h"
 
@@ -27,10 +28,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
-
 /** SVG units (y down) to the plane. */
 D3 toPlane(double x, double y, const SvgImportOptions& o, const D2& origin)
 {
@@ -55,7 +52,7 @@ D2 fromPlane(const D3& p, SvgPlane plane)
     return {p.x, p.y};
 }
 
-std::string num(double v)
+std::string shortNumber(double v)
 {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.6g", std::abs(v) < 1e-9 ? 0.0 : v);
@@ -192,12 +189,12 @@ std::string writeSvg(const std::vector<Splines>& curves, const SvgExportOptions&
         lo = hi = D2(0.0);
     std::ostringstream out;
     out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    out << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"" << num(lo.x) << " " << num(lo.y) << " " << num(std::max(hi.x - lo.x, 1e-6)) << " "
-        << num(std::max(hi.y - lo.y, 1e-6)) << "\" width=\"" << num(std::max(hi.x - lo.x, 1e-6)) << "\" height=\"" << num(std::max(hi.y - lo.y, 1e-6))
+    out << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"" << shortNumber(lo.x) << " " << shortNumber(lo.y) << " " << shortNumber(std::max(hi.x - lo.x, 1e-6)) << " "
+        << shortNumber(std::max(hi.y - lo.y, 1e-6)) << "\" width=\"" << shortNumber(std::max(hi.x - lo.x, 1e-6)) << "\" height=\"" << shortNumber(std::max(hi.y - lo.y, 1e-6))
         << "\">\n";
     auto P = [&](const D3& p) {
         D2 q = fromPlane(p, o.plane) / scale;
-        return num(q.x) + " " + num(-q.y);
+        return shortNumber(q.x) + " " + shortNumber(-q.y);
     };
     for (const auto& g : all)
     {

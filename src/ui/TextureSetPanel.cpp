@@ -29,6 +29,8 @@
 #include "ui/TexParams.h"
 #include "ui/TexPreview.h"
 #include "ui/TextureGraphUi.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -69,24 +71,8 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-json runUi(const std::string& name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-constexpr int kThumb = 36;
+constexpr int kLayerThumb = 36;
 constexpr int kRoleKind = Qt::UserRole;
 constexpr int kRoleId = Qt::UserRole + 1;
 constexpr int kRoleLayer = Qt::UserRole + 2;
@@ -259,22 +245,13 @@ QLabel* dim(QWidget* parent, const QString& text)
     return l;
 }
 
-QLabel* heading(QWidget* parent, const QString& text)
+QLabel* boldHeading(QWidget* parent, const QString& text)
 {
     auto* l = new QLabel(text, parent);
     QFont f = l->font();
     f.setBold(true);
     l->setFont(f);
     return l;
-}
-
-QToolButton* toolButton(QWidget* parent, const QString& iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    return b;
 }
 
 QSpinBox* percentSpin(QWidget* parent, double opacity)
@@ -289,7 +266,7 @@ QSpinBox* percentSpin(QWidget* parent, double opacity)
 }
 
 /** A label that reports double-clicks, for inline rename. */
-class NameLabel final : public QLabel
+class LayerNameLabel final : public QLabel
 {
 public:
     using QLabel::QLabel;
@@ -689,7 +666,7 @@ struct TextureSetPanel::Impl
             {
                 const std::string name = t.request.socket.empty() ? t.request.channel : t.request.socket;
                 QImage img = texPreview::toQImage(*r.image, r.type, texPreview::isColor(r.type, name));
-                pm = QPixmap::fromImage(img.scaled(kThumb - 2, kThumb - 2, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+                pm = QPixmap::fromImage(img.scaled(kLayerThumb - 2, kLayerThumb - 2, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
             }
             else if (!r.error.empty())
                 pm = icon(t.fallback).pixmap(20, 20);
@@ -706,13 +683,13 @@ struct TextureSetPanel::Impl
     {
         auto* l = new QLabel(parent);
         l->setObjectName(name);
-        l->setFixedSize(kThumb, kThumb);
+        l->setFixedSize(kLayerThumb, kLayerThumb);
         l->setAlignment(Qt::AlignCenter);
         l->setStyleSheet("border: 1px solid #3c3c3c; background: #1e1e1e;");
         return l;
     }
 
-    void beginRename(QWidget* row, NameLabel* label, const std::string& id, const std::string& current, const std::string& maskOf)
+    void beginRename(QWidget* row, LayerNameLabel* label, const std::string& id, const std::string& current, const std::string& maskOf)
     {
         auto* edit = new QLineEdit(qs(current), row);
         edit->setObjectName("rename:" + qs(id));
@@ -778,8 +755,8 @@ struct TextureSetPanel::Impl
             auto* mt = new QToolButton(row);
             mt->setObjectName("maskThumb:" + qs(id));
             mt->setAutoRaise(true);
-            mt->setIconSize(QSize(kThumb - 4, kThumb - 4));
-            mt->setFixedSize(kThumb, kThumb);
+            mt->setIconSize(QSize(kLayerThumb - 4, kLayerThumb - 4));
+            mt->setFixedSize(kLayerThumb, kLayerThumb);
             mt->setIcon(icon("mask"));
             mt->setToolTip("Mask stack: click to show or hide it");
             QObject::connect(mt, &QToolButton::clicked, row, [this, id] {
@@ -805,7 +782,7 @@ struct TextureSetPanel::Impl
         kindLbl->setPixmap(icon(kindIcon(kind)).pixmap(14, 14));
         kindLbl->setToolTip(capitalised(kind) + " layer");
         th->addWidget(kindLbl);
-        auto* name = new NameLabel(qs(l.value("name", id)), top);
+        auto* name = new LayerNameLabel(qs(l.value("name", id)), top);
         name->setObjectName("name:" + qs(id));
         name->setToolTip("Double-click to rename");
         if (!enabled)
@@ -902,7 +879,7 @@ struct TextureSetPanel::Impl
         k->setPixmap(icon(maskIcon(m.value("kind", ""))).pixmap(16, 16));
         k->setToolTip(capitalised(m.value("kind", "")) + " mask");
         h->addWidget(k);
-        auto* name = new NameLabel(maskName(m), row);
+        auto* name = new LayerNameLabel(maskName(m), row);
         name->setObjectName("maskName:" + qs(id));
         if (!enabled)
             name->setStyleSheet("color: #7a7a7a;");
@@ -1015,7 +992,7 @@ struct TextureSetPanel::Impl
         if (!setNode())
             return;
 
-        v->addWidget(heading(settingsBox, "Channels"));
+        v->addWidget(boldHeading(settingsBox, "Channels"));
         auto* chGrid = new QWidget(settingsBox);
         auto* g = new QGridLayout(chGrid);
         g->setContentsMargins(0, 0, 0, 0);
@@ -1076,7 +1053,7 @@ struct TextureSetPanel::Impl
         ah->addWidget(add);
         v->addWidget(addRowW);
 
-        v->addWidget(heading(settingsBox, "Resolution"));
+        v->addWidget(boldHeading(settingsBox, "Resolution"));
         auto sizeBox = [](QWidget* parent, int value, bool allowDefault) {
             auto* b = new QComboBox(parent);
             if (allowDefault)
@@ -1252,7 +1229,7 @@ struct TextureSetPanel::Impl
     {
         const std::string kind = l.value("kind", "fill");
         const std::string id = l.value("id", "");
-        auto* head = heading(w, qs(l.value("name", id)) + "  (" + capitalised(kind) + " layer, " + qs(id) + ")");
+        auto* head = boldHeading(w, qs(l.value("name", id)) + "  (" + capitalised(kind) + " layer, " + qs(id) + ")");
         v->addWidget(head);
 
         if (kind == "fill" || kind == "paint")
@@ -1308,7 +1285,7 @@ struct TextureSetPanel::Impl
             v->addLayout(form);
         }
 
-        v->addWidget(heading(w, "Channels"));
+        v->addWidget(boldHeading(w, "Channels"));
         auto* grid = new QWidget(w);
         auto* g = new QGridLayout(grid);
         g->setContentsMargins(0, 0, 0, 0);
@@ -1399,7 +1376,7 @@ struct TextureSetPanel::Impl
     {
         const std::string kind = m.value("kind", "fill");
         const std::string id = m.value("id", "");
-        v->addWidget(heading(w, maskName(m) + "  (" + capitalised(kind) + " mask, " + qs(id) + ")"));
+        v->addWidget(boldHeading(w, maskName(m) + "  (" + capitalised(kind) + " mask, " + qs(id) + ")"));
         if (kind == "fill")
         {
             auto* form = new QFormLayout();
@@ -1421,7 +1398,7 @@ struct TextureSetPanel::Impl
             if (kind == "generator")
                 if (const tex::NodeDef* def = tex::findNode(type); def && !def->inputs.empty())
                 {
-                    v->addWidget(heading(w, "Inputs"));
+                    v->addWidget(boldHeading(w, "Inputs"));
                     auto* form = new QFormLayout();
                     const json bindings = m.value("bindings", json::object());
                     for (const tex::PortDecl& in : def->inputs)
@@ -1794,7 +1771,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     sv->setContentsMargins(0, 2, 0, 0);
     sv->setSpacing(2);
     auto* shelfHead = new QHBoxLayout();
-    shelfHead->addWidget(heading(shelfBox, "Smart Materials"));
+    shelfHead->addWidget(boldHeading(shelfBox, "Smart Materials"));
     shelfHead->addStretch(1);
     auto* reload = toolButton(shelfBox, "refresh", "Reread the smart material libraries");
     connect(reload, &QToolButton::clicked, this, [this] {

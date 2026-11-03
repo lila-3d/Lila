@@ -22,23 +22,10 @@ using namespace lila;
 
 namespace stagehand
 {
-namespace
-{
-using json = nlohmann::json;
 using T = ArgType;
 
-json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
-
-std::string identifier(const std::string& s)
+namespace
 {
-    std::string out;
-    for (char c : s)
-        out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
-    if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0])))
-        out = "Set" + out;
-    return out;
-}
-
 std::string uniqueGroupName(const std::string& base)
 {
     const json existing = ops::execute("gnGroups", json::object());
@@ -278,7 +265,7 @@ json finishLive(Graph& g, const Args& a, json nodes, json links, json inputs, co
     const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", hostName}});
     const std::string host = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
     g.setValue({g.find(host)->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(hostMesh))));
-    const std::string group = uniqueGroupName(identifier(host) + "_Arrange");
+    const std::string group = uniqueGroupName(identifier(host, "Set") + "_Arrange");
     const json spec = {{"name", group}, {"description", what}, {"inputs", inputs}, {"nodes", nodes}, {"links", links}};
     ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
     const json mod = ops::execute("gnApply", {{"args", {host, group}}});
@@ -411,7 +398,7 @@ void registerArrangeCommands(ext::Context& ctx)
                 ++each.seed;
             }
             const Result r = settleIf(std::move(placed), g, items, boards, so, doSettle);
-            const std::string name = a.get<std::string>("name", identifier(g.node(boards[0])->name()) + "_Items");
+            const std::string name = a.get<std::string>("name", identifier(g.node(boards[0])->name(), "Set") + "_Items");
 
             json out;
             if (a.get<bool>("realize", false))
@@ -465,7 +452,7 @@ void registerArrangeCommands(ext::Context& ctx)
                 for (NodeId b : boards)
                 {
                     const glm::dmat4 toLocal = glm::inverse(g.node(b)->as<glm::dmat4>(scene::Transform::kWorldMatrix));
-                    const std::string group = uniqueGroupName(identifier(g.node(b)->name()) + "_Sag");
+                    const std::string group = uniqueGroupName(identifier(g.node(b)->name(), "Set") + "_Sag");
                     const json spec = {
                         {"name", group},
                         {"description", "Bends the board under what rests on it."},
@@ -563,7 +550,7 @@ void registerArrangeCommands(ext::Context& ctx)
             arrange::SettleOptions so = settleOptions(a);
             so.density = a.get<double>("massDensity", 600.0);
             const Result r = settleIf(arrange::scatter(meshOf(g, surface, true), bounds, o), g, items, {surface}, so, doSettle);
-            const std::string name = a.get<std::string>("name", identifier(g.node(surface)->name()) + "_Scatter");
+            const std::string name = a.get<std::string>("name", identifier(g.node(surface)->name(), "Set") + "_Scatter");
             if (a.get<bool>("realize", false))
                 return finishRealized(g, a, r, items, name);
 

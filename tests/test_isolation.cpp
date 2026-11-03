@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
 #include "geo/Primitives.h"
@@ -19,29 +21,12 @@
 using namespace lila;
 using geo::Index;
 using scene::ComponentMode;
+using namespace testutil;
 namespace comp = scene::components;
 namespace iso = scene::isolation;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-
-Index faceAt(const geo::Mesh& m, double x, double z)
-{
-    for (Index f = 0; f < m.faceCapacity(); ++f)
-        if (m.faceValid(f) && std::abs(m.faceCentroid(f).x - x) < 1e-6 && std::abs(m.faceCentroid(f).z - z) < 1e-6)
-            return f;
-    return geo::kInvalid;
-}
-
-Index pointAt(const geo::Mesh& m, double x, double z)
-{
-    for (Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p) && std::abs(m.position(p).x - x) < 1e-6 && std::abs(m.position(p).z - z) < 1e-6)
-            return p;
-    return geo::kInvalid;
-}
-
 struct Plane
 {
     std::string name;

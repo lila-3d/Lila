@@ -12,8 +12,6 @@ namespace settlement
 {
 namespace
 {
-double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
-
 /** Parameter of q's projection onto a-b, clamped to the segment. */
 double project(Vec2 a, Vec2 b, Vec2 q)
 {

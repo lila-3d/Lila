@@ -23,7 +23,7 @@ struct Corner
     glm::dvec3 n;
 };
 
-std::vector<Corner> corners(const std::string& name)
+std::vector<Corner> meshCorners(const std::string& name)
 {
     MeshPtr m = node(name).as<MeshPtr>(MeshNode::kOutMesh);
     REQUIRE(m);
@@ -94,7 +94,7 @@ TEST_CASE("draco: a static mesh round-trips compressed")
     Node* box = addMesh(g, "Box", paintedCube());
     setTrs(g, box, {10, 20, 30}, {15, 30, 45});
     g.evaluate();
-    const std::vector<Corner> before = corners("Box");
+    const std::vector<Corner> before = meshCorners("Box");
     const size_t points = node("Box").as<MeshPtr>(MeshNode::kOutMesh)->numPoints();
 
     const fs::path file = tempDir("draco") / "box.glb";
@@ -129,7 +129,7 @@ TEST_CASE("draco: a static mesh round-trips compressed")
     CHECK(node("Box").as<MeshPtr>(MeshNode::kOutMesh)->numPoints() == points);
     CHECK(node("Box").as<MeshPtr>(MeshNode::kOutMesh)->materialNames() == std::vector<std::string>{"M_A", "M_B"});
     // 14 bits over a metre is about 0.006 cm, 12-bit UVs about 2.5e-4, 10-bit normals about 0.002.
-    sameCorners(before, corners("Box"), 0.02, 1e-3, 1e-2);
+    sameCorners(before, meshCorners("Box"), 0.02, 1e-3, 1e-2);
 }
 
 TEST_CASE("draco: a primitive built with the encoder decodes, with normalized colors, skin data and an uncompressed morph target")

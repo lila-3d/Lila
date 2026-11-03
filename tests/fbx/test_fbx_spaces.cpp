@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "scene/Graph.h"
@@ -9,14 +10,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 std::vector<glm::dmat4> sampleWorld(const char* name, int frames, double fps)
 {
     Graph& g = Graph::current();

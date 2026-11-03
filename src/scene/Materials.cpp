@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "core/Paths.h"
 #include "geo/Mesh.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -19,15 +20,11 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
 using namespace material;
-
-AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
 
 AttrDef colorAttr(std::string name, glm::dvec3 def, std::string doc)
 {
@@ -41,17 +38,6 @@ AttrDef pathAttr(std::string name, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable | AttrFile | AttrImage,
             .doc = std::move(doc)};
-}
-
-AttrDef enumAttr(std::string name, std::vector<std::string> names, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
-            .enumNames = std::move(names), .doc = std::move(doc)};
-}
-
-AttrDef boolAttr(std::string name, bool def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
 }
 
 /** Painterly, Toon and Foliage inputs; each model reads only its own and DefaultLit none of them. */
@@ -175,8 +161,6 @@ std::vector<AttrDef> materialAttrs()
     samplingAttrs(a);
     return a;
 }
-
-Graph& graph() { return Graph::current(); }
 
 Node& materialArg(Graph& g, const std::string& name, const char* cmd)
 {
@@ -645,7 +629,7 @@ void registerCommands()
                   {"packedLayout", "", T::Any, nullptr, "orm or mro: the packed map's channel order."},
                   {"emissiveMap", "", T::String, nullptr, "Texture path."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::string name = !a.positional.empty() && a.positional[0].is_string() ? a.positional[0].get<std::string>() : "M_Material";
             if (!Graph::validName(name))
                 throw CommandError("createMaterial: invalid name '" + name + "'");
@@ -672,7 +656,7 @@ void registerCommands()
         .positionalDoc = "material [objects...]",
         .flags = {{"faces", "f", T::List, nullptr, "Face ids of the one object given."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("assignMaterial: give a material name");
             std::string mat = a.positional[0].get<std::string>();
@@ -702,7 +686,7 @@ void registerCommands()
         .positionalDoc = "[objects...]",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json out = json::array();
             if (a.positional.empty())
             {
@@ -732,7 +716,7 @@ void registerCommands()
         .positionalDoc = "material",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("materialInfo: give a material name");
             return describe(g, materialArg(g, a.positional[0].get<std::string>(), "materialInfo"));
@@ -747,7 +731,7 @@ void registerCommands()
         .positionalDoc = "material",
         .flags = {{"faces", "f", T::Bool, nullptr, "Force faces (true) or whole objects (false); unset picks by coverage."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("selectByMaterial: give a material name");
             const std::string mat = materialArg(g, a.positional[0].get<std::string>(), "selectByMaterial").name();
@@ -803,7 +787,7 @@ void registerCommands()
                   {"wrapV", "", T::String, nullptr, "Wrap along V.", {"repeat", "clamp", "mirror", "black"}},
                   {"filter", "", T::String, nullptr, "linear or nearest.", {"linear", "nearest"}}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("setMaterialTexture: give a material name");
             Node& n = materialArg(g, a.positional[0].get<std::string>(), "setMaterialTexture");
@@ -854,7 +838,7 @@ void registerCommands()
         .doc = "Rename a material and every slot bound to it. Returns the new name.",
         .positionalDoc = "material newName",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.size() != 2 || !a.positional[0].is_string() || !a.positional[1].is_string())
                 throw CommandError("renameMaterial: give the material and its new name");
             Node& n = materialArg(g, a.positional[0].get<std::string>(), "renameMaterial");

@@ -5,6 +5,7 @@
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/HairCards.h"
+#include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
@@ -19,69 +20,15 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
 const std::vector<std::string> kSources = {"curves", "clumps", "guides"};
 const std::vector<std::string> kFacings = {"surfaceNormal", "curveFrame", "upVector"};
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::string cat, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, std::string cat, double lo = 0.0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef sAttr(std::string name, std::string def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::String, .defaultValue = std::move(def), .flags = kIn, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef vAttr(std::string name, const D3& def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-        a.childNames[size_t(i)] = name + char('X' + i);
-    a.category = std::move(cat);
-    return a;
-}
-
-int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
-double f(const Node& n, const char* a) { return n.as<double>(idx(n, a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(idx(n, a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(idx(n, a)); }
 
 geo::Mesh transformed(const geo::Mesh& in, const glm::dmat4& m)
 {
@@ -164,33 +111,6 @@ std::vector<FlagDef> nodeFlags()
     return out;
 }
 
-void applyFlags(Graph& g, Node& n, const Args& a, const char* cmd)
-{
-    for (const AttrDef& d : n.type().ownAttrs)
-    {
-        if (!(d.flags & AttrInput) || (d.flags & AttrHidden) || !a.has(d.name))
-            continue;
-        const int at = n.type().attrIndex(d.name);
-        const json& v = a.flags[d.name];
-        if (d.type == PlugType::Enum && v.is_string())
-        {
-            auto it = std::ranges::find(d.enumNames, v.get<std::string>());
-            if (it == d.enumNames.end())
-                throw CommandError(std::string(cmd) + ": " + d.name + ": unknown value '" + v.get<std::string>() + "'");
-            g.setValue({n.id(), at, -1}, int64_t(it - d.enumNames.begin()));
-            continue;
-        }
-        try
-        {
-            g.setValue({n.id(), at, -1}, fromJson(d, v));
-        }
-        catch (const std::exception& e)
-        {
-            throw CommandError(std::string(cmd) + ": " + d.name + ": " + e.what());
-        }
-    }
-}
-
 Node& curveNode(Graph& g, const std::string& name, const char* cmd)
 {
     Node* n = g.find(name);
@@ -208,7 +128,7 @@ Node& meshNode(Graph& g, const std::string& name, const char* cmd)
 }
 
 /** The curves among the positional names, else the selected curves and those holding selected points. */
-std::vector<Node*> curvesArg(Graph& g, const Args& a, const char* cmd)
+std::vector<Node*> curvesOrPointSelection(Graph& g, const Args& a, const char* cmd)
 {
     std::vector<Node*> out;
     for (const json& p : a.positional)
@@ -264,7 +184,7 @@ void storeSplines(Graph& g, Node& n, Splines s)
     g.setValue(create, makeCurveData(std::move(s)));
 }
 
-void registerOptionLayout()
+void registerGroomOptionLayout()
 {
     namespace opt = ops::options;
     opt::Override o;
@@ -336,7 +256,7 @@ void registerGroomType()
         fAttr("width", 1.0, "Card width at the root, cm.", card, 0.0),
         bAttr("autoWidth", false, "Size each clump or guide card to the spread of its curves.", card),
         fAttr("widthScale", 1.0, "Scale of the automatic width.", card, 0.0),
-        sAttr("taper", "0:1 1:0.3", "Width along the card: keys \"t:scale\", t from 0 at the root to 1 at the tip.", card),
+        sAttrDefault("taper", "0:1 1:0.3", "Width along the card: keys \"t:scale\", t from 0 at the root to 1 at the tip.", card),
         iAttr("segments", 8, "Quads along each card; 0 follows each curve's own points.", card),
         iAttr("widthSegments", 1, "Quads across each card.", card, 1),
         eAttr("facing", kFacings, 0, "Cards lie flat to the scalp, follow rotation minimising curve frames, or face the up vector.", card),
@@ -391,7 +311,7 @@ void registerGroomCommands()
                   {"selectedOnly", "", T::Bool, true, "With points of the curve selected, only the curves holding them change."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            Node& c = *curvesArg(g, a, "curveSculptStroke").front();
+            Node& c = *curvesOrPointSelection(g, a, "curveSculptStroke").front();
             groom::Settings o;
             if (!groom::parseBrush(a.get<std::string>("brush", "comb"), &o.brush))
                 throw CommandError("curveSculptStroke: unknown brush '" + a.get<std::string>("brush") + "'");
@@ -463,7 +383,7 @@ void registerGroomCommands()
                   {"attach", "", T::Bool, true, "Move roots onto the surface."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            std::vector<Node*> curves = curvesArg(g, a, "groomSurface");
+            std::vector<Node*> curves = curvesOrPointSelection(g, a, "groomSurface");
             const std::string mesh = a.get<std::string>("mesh");
             if (!mesh.empty())
                 meshNode(g, mesh, "groomSurface");
@@ -555,7 +475,7 @@ void registerGroomCommands()
         .flags = flags,
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            std::vector<Node*> curves = curvesArg(g, a, "hairCards");
+            std::vector<Node*> curves = curvesOrPointSelection(g, a, "hairCards");
             std::vector<Node*> guideNodes;
             for (const json& n : a.flags.value("guides", json::array()))
                 guideNodes.push_back(&curveNode(g, n.get<std::string>(), "hairCards"));
@@ -605,6 +525,6 @@ void registerGroomCommands()
             return out;
         },
     });
-    registerOptionLayout();
+    registerGroomOptionLayout();
 }
 } // namespace lila::curve

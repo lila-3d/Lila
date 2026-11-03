@@ -4,13 +4,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace lila::brush
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-
 uint32_t hash(uint32_t x)
 {
     x ^= x >> 16;
@@ -44,7 +43,7 @@ void StrokeSampler::begin(const BrushSettings& s, const StrokeInput& in, double 
     mLazy = s.lazyRadius;
     mSmoothing = s.smoothing;
     mJitter = s.jitter;
-    mAngle = s.angle * kPi / 180.0;
+    mAngle = s.angle * std::numbers::pi / 180.0;
     mFollow = s.followStroke;
     mSeed = s.seed;
     setRadius(radiusPx);
@@ -148,12 +147,12 @@ void StrokeSampler::push(glm::dvec2 at, double pressure, glm::dvec2 dir)
     {
         if (mJitter.position > 0.0)
         {
-            const double a = random01(mSeed, s.index, 0) * 2.0 * kPi, r = std::sqrt(random01(mSeed, s.index, 1));
+            const double a = random01(mSeed, s.index, 0) * 2.0 * std::numbers::pi, r = std::sqrt(random01(mSeed, s.index, 1));
             s.position += glm::dvec2(std::cos(a), std::sin(a)) * (r * mJitter.position * mRadius);
         }
         s.size = 1.0 - mJitter.size * random01(mSeed, s.index, 2);
         s.opacity = 1.0 - mJitter.opacity * random01(mSeed, s.index, 3);
-        s.angle += (random01(mSeed, s.index, 4) * 2.0 - 1.0) * mJitter.angle * kPi / 180.0;
+        s.angle += (random01(mSeed, s.index, 4) * 2.0 - 1.0) * mJitter.angle * std::numbers::pi / 180.0;
     }
     mOut.push_back(s);
 }

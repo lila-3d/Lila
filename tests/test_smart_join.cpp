@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "geo/Primitives.h"
 #include "geo/SmartJoin.h"
 #include "ops/Command.h"
@@ -10,6 +12,7 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
@@ -43,8 +46,6 @@ int facesOfSize(const geo::Mesh& m, bool (*pred)(geo::Index))
             ++n;
     return n;
 }
-
-json run(const char* name, const json& call = nlohmann::json::object()) { return ops::execute(name, call); }
 
 geo::Mesh body8() { return geo::makeCylinder({.radius = 50.0, .height = 200.0, .subdivAxis = 8, .capFill = geo::CapFill::Ngon}); }
 } // namespace

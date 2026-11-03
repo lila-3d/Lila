@@ -23,7 +23,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::NodeId;
 

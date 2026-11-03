@@ -47,7 +47,7 @@ QPushButton* row(QDockWidget* dock, const QString& label)
     return nullptr;
 }
 
-void settle()
+void settleBriefly()
 {
     for (int i = 0; i < 3; ++i)
         QApplication::processEvents();
@@ -91,7 +91,7 @@ TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
     QMenu* symmetry = mesh->addMenu("Symmetry");
     symmetry->addAction("X");
     window.show();
-    settle();
+    settleBriefly();
 
     CHECK(mesh->isTearOffEnabled());
     CHECK_FALSE(symmetry->isTearOffEnabled());
@@ -105,7 +105,7 @@ TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
 
     QDockWidget* dock = tearoff::tearOff(mesh, QPoint(200, 200));
     REQUIRE(dock);
-    settle();
+    settleBriefly();
     CHECK(dock->objectName() == "tearoff:Mesh");
     CHECK(dock->isFloating());
     CHECK(dock->windowTitle() == "Mesh");
@@ -128,35 +128,35 @@ TEST_CASE("a torn-off menu is a dock of buttons bound to the menu's actions")
         CHECK_FALSE(row(dock, "Disabled"));
         size_t before = rows(dock).size();
         mesh->addAction("Bridge");
-        settle();
+        settleBriefly();
         CHECK(rows(dock).size() == before + 1);
         CHECK(row(dock, "Bridge"));
         mesh->removeAction(toggle);
-        settle();
+        settleBriefly();
         CHECK_FALSE(row(dock, "Symmetry On"));
     }
 
     SUBCASE("clicking the dashed row tears the menu off instead of Qt's floating menu")
     {
         mesh->popup(QPoint(50, 50));
-        settle();
+        settleBriefly();
         QPoint at(mesh->width() / 2, mesh->actionGeometry(extrude).top() / 2);
         QMouseEvent press(QEvent::MouseButtonPress, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(mesh, &press);
         QMouseEvent release(QEvent::MouseButtonRelease, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(mesh, &release);
-        settle();
+        settleBriefly();
         CHECK_FALSE(mesh->isTearOffMenuVisible());
         CHECK_FALSE(mesh->isVisible());
         QDockWidget* sym = nullptr;
         symmetry->popup(QPoint(50, 50));
-        settle();
+        settleBriefly();
         QPoint symAt(symmetry->width() / 2, symmetry->actionGeometry(symmetry->actions().front()).top() / 2);
         QMouseEvent p2(QEvent::MouseButtonPress, symAt, symmetry->mapToGlobal(symAt), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(symmetry, &p2);
         QMouseEvent r2(QEvent::MouseButtonRelease, symAt, symmetry->mapToGlobal(symAt), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
         QApplication::sendEvent(symmetry, &r2);
-        settle();
+        settleBriefly();
         sym = window.findChild<QDockWidget*>("tearoff:Mesh/Symmetry");
         REQUIRE(sym);
         CHECK(row(sym, "X"));
@@ -188,16 +188,16 @@ TEST_CASE("clicking a section title tears off only that section")
     QAction* normals = mesh->addSection("Normals");
     mesh->addAction("Soften Normals");
     window.show();
-    settle();
+    settleBriefly();
 
     mesh->popup(QPoint(50, 50));
-    settle();
+    settleBriefly();
     QPoint at = mesh->actionGeometry(normals).center();
     QMouseEvent press(QEvent::MouseButtonPress, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(mesh, &press);
     QMouseEvent release(QEvent::MouseButtonRelease, at, mesh->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(mesh, &release);
-    settle();
+    settleBriefly();
     QDockWidget* dock = window.findChild<QDockWidget*>("tearoff:Mesh/#Normals");
     REQUIRE(dock);
     CHECK(dock->windowTitle() == "Normals");
@@ -206,7 +206,7 @@ TEST_CASE("clicking a section title tears off only that section")
 
     QDockWidget* combine = tearoff::tearOff(mesh, QPoint(200, 200), "Combine");
     REQUIRE(combine);
-    settle();
+    settleBriefly();
     CHECK(rows(combine).size() == 3);
     CHECK(row(combine, "Extract"));
     CHECK_FALSE(row(combine, "Soften Normals"));
@@ -261,7 +261,7 @@ TEST_CASE("pressing a Create item and dragging out of its menu closes the menus"
     create->addAction("Other");
     window.show();
     create->popup(window.mapToGlobal(QPoint(10, 30)));
-    settle();
+    settleBriefly();
     REQUIRE(QApplication::activePopupWidget() == create);
 
     const QPoint on = create->actionGeometry(locator).center();
@@ -270,7 +270,7 @@ TEST_CASE("pressing a Create item and dragging out of its menu closes the menus"
     const QPoint out(create->width() + 200, on.y());
     QMouseEvent move(QEvent::MouseMove, out, create->mapToGlobal(out), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(create, &move);
-    settle();
+    settleBriefly();
     CHECK(QApplication::activePopupWidget() == nullptr);
     CHECK_FALSE(create->isVisible());
 
@@ -283,13 +283,13 @@ TEST_CASE("pressing a Create item and dragging out of its menu closes the menus"
     DropCatcher catcher;
     catcher.setGeometry(300, 300, 200, 200);
     catcher.show();
-    settle();
+    settleBriefly();
     const QPoint over = catcher.mapToGlobal(QPoint(100, 100));
     QMouseEvent hover(QEvent::MouseMove, ghost->mapFromGlobal(over), over, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(ghost, &hover);
     QMouseEvent release(QEvent::MouseButtonRelease, ghost->mapFromGlobal(over), over, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(ghost, &release);
-    settle();
+    settleBriefly();
     CHECK(catcher.dropped == "create.locator");
 }
 
@@ -304,12 +304,12 @@ TEST_CASE("a tear-off placed from the search follows the cursor until a click dr
     lights->addAction("Sun");
     window.setGeometry(0, 0, 800, 600);
     window.show();
-    settle();
+    settleBriefly();
 
     QCursor::setPos(200, 200);
     QDockWidget* dock = tearoff::tearOffToPlace(lights);
     REQUIRE(dock);
-    settle();
+    settleBriefly();
     CHECK(dock->isFloating());
     CHECK(dock->property(tearoff::kPlacingProperty).toBool());
 
@@ -317,7 +317,7 @@ TEST_CASE("a tear-off placed from the search follows the cursor until a click dr
     for (int i = 0; i < 10 && dock->pos() != QPoint(380, 288); ++i)
     {
         wait(20);
-        settle();
+        settleBriefly();
     }
     CHECK(dock->pos() == QPoint(380, 288));
 
@@ -331,20 +331,20 @@ TEST_CASE("a tear-off placed from the search follows the cursor until a click dr
     QApplication::sendEvent(point, &press);
     QMouseEvent release(QEvent::MouseButtonRelease, at, point->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(point, &release);
-    settle();
+    settleBriefly();
     CHECK_FALSE(ran);
     CHECK_FALSE(dock->property(tearoff::kPlacingProperty).toBool());
     QCursor::setPos(100, 100);
     wait(50);
-    settle();
+    settleBriefly();
     CHECK(dock->pos() == QPoint(380, 288));
 
     // Esc puts back a section made for the placing.
     QDockWidget* sky = tearoff::tearOffToPlace(lights, "Sky");
     REQUIRE(sky);
-    settle();
+    settleBriefly();
     QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(sky, &esc);
-    settle();
+    settleBriefly();
     CHECK_FALSE(sky->isVisible());
 }

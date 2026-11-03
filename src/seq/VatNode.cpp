@@ -12,11 +12,9 @@ namespace lila::seq
 {
 namespace
 {
-using json = nlohmann::json;
-using namespace gn::nodes;
-
 void vatNode()
 {
+    using namespace gn::nodes;
     gn::registerDecl({
         .type = "VertexAnimationTexture",
         .label = "Vertex Animation Texture",

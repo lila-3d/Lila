@@ -24,8 +24,8 @@ struct ClayPush
 };
 static_assert(sizeof(ClayPush) == 72);
 
-constexpr VkShaderStageFlags kCompute = VK_SHADER_STAGE_COMPUTE_BIT;
-constexpr uint32_t kGroup = 64;
+constexpr VkShaderStageFlags kClayStage = VK_SHADER_STAGE_COMPUTE_BIT;
+constexpr uint32_t kClayGroup = 64;
 constexpr size_t kPerBrick = size_t(clay::kBrickSamples) * clay::kBrickSamples * clay::kBrickSamples;
 
 class GpuClay final : public clay::SampleBackend
@@ -99,9 +99,9 @@ private:
             mHash = compute::spirvHash(mCode);
         }
         if (!mLayout)
-            mLayout = compute::pipelineLayout(vk, sizeof(ClayPush), kCompute);
+            mLayout = compute::pipelineLayout(vk, sizeof(ClayPush), kClayStage);
         const VkPipeline pipeline =
-            compute::sharedPipelines().get(vk, mLayout, compute::layoutKey(sizeof(ClayPush), kCompute), mCode, mHash, "sampleCS");
+            compute::sharedPipelines().get(vk, mLayout, compute::layoutKey(sizeof(ClayPush), kClayStage), mCode, mHash, "sampleCS");
 
         // Every input in one upload, each part 16-byte aligned so its address suits any load.
         std::vector<std::pair<const void*, size_t>> parts = {{prims.data(), prims.size_bytes()},           {code.data(), code.size_bytes()},
@@ -139,7 +139,7 @@ private:
             push.h = h;
             push.symmetric = symmetric ? 1u : 0u;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-            compute::dispatchChunks(cmd, mLayout, push, 0, uint32_t(out.size()), kGroup, [](ClayPush& p, uint32_t first, uint32_t count) {
+            compute::dispatchChunks(cmd, mLayout, push, 0, uint32_t(out.size()), kClayGroup, [](ClayPush& p, uint32_t first, uint32_t count) {
                 p.first = first;
                 p.count = count;
             });
@@ -162,7 +162,7 @@ private:
     uint64_t mHash = 0;
 };
 
-std::once_flag gStopHook;
+std::once_flag gClayStopHook;
 std::shared_ptr<GpuClay> gClay;
 } // namespace
 
@@ -170,7 +170,7 @@ void registerGpuClay()
 {
     if (!gClay)
         gClay = std::make_shared<GpuClay>();
-    std::call_once(gStopHook, [] {
+    std::call_once(gClayStopHook, [] {
         Renderer::get().addStopHook([](VulkanContext& vk) {
             if (gClay)
                 gClay->release(vk);

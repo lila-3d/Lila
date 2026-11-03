@@ -24,7 +24,6 @@ using scene::Node;
 using scene::PlugRef;
 using scene::PlugType;
 using scene::anim::TakeNode;
-using T = ArgType;
 
 constexpr uint32_t kStored = scene::AttrInput | scene::AttrStorable;
 
@@ -301,6 +300,7 @@ void registerMediaTypes()
 
 void registerMediaCommands()
 {
+    using T = ArgType;
     if (ops::find("audio"))
         return;
 

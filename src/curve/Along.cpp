@@ -1,6 +1,7 @@
 #include "curve/Along.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "geo/Attribute.h"
 #include "geo/Normals.h"
 #include "geo/Ops.h"
@@ -16,19 +17,9 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D2 = glm::dvec2;
 using geo::Index;
 
-constexpr double kEps = 1e-12;
 constexpr size_t kMaxCopies = 100000;
-
-D3 perp(const D3& v, const D3& t)
-{
-    D3 r = v - t * glm::dot(v, t);
-    double l = glm::length(r);
-    return l > 1e-9 ? r / l : D3(0.0);
-}
 
 D3 unitOr(const D3& v, const D3& fallback)
 {
@@ -142,8 +133,6 @@ glm::dmat4 rigidPlacement(const Rail& rail, double s, const ArrayAlongOptions& o
     m[3] = glm::dvec4(st.p, 1.0);
     return m;
 }
-
-double cross2(const D2& a, const D2& b) { return a.x * b.y - a.y * b.x; }
 
 /** A target triangle with its points, point normals and surface coordinates. */
 struct SurfTri
@@ -268,7 +257,7 @@ Rail::Rail(const Spline& s, const RailOptions& o) : mSpline(s)
     if (o.up == UpMode::AutoNormals)
         fo.mode = FrameMode::FixedUp;
     else
-        fo.startNormal = perp(fo.up, mPl.tangent(0));
+        fo.startNormal = perpUnit(fo.up, mPl.tangent(0), 1e-9);
     mFrames = frames(mPl, fo, o.up == UpMode::AimCurve ? std::span<const double>() : std::span<const double>(tilt));
 
     if (o.up == UpMode::AimCurve && o.aim && isValid(*o.aim))
@@ -293,9 +282,9 @@ Rail::Rail(const Spline& s, const RailOptions& o) : mSpline(s)
             }
             Frame& f = mFrames[i];
             // Where the aim point lies on the tangent line the previous normal carries on.
-            D3 n = perp(best - p, f.t);
+            D3 n = perpUnit(best - p, f.t, 1e-9);
             if (glm::length(n) < 0.5)
-                n = i > 0 ? perp(mFrames[i - 1].n, f.t) : f.n;
+                n = i > 0 ? perpUnit(mFrames[i - 1].n, f.t, 1e-9) : f.n;
             if (glm::length(n) < 0.5)
                 n = f.n;
             if (i < tilt.size() && tilt[i] != 0.0)
@@ -321,8 +310,8 @@ Rail::Station Rail::inside(double s) const
     st.p = glm::mix(mPl.points[i], mPl.points[j], frac);
     const Frame &a = mFrames[i], &b = mFrames[j];
     st.f.t = unitOr(glm::mix(a.t, b.t, frac), a.t);
-    D3 n = perp(glm::mix(a.n, b.n, frac), st.f.t);
-    st.f.n = glm::length(n) > 0.5 ? n : perp(a.n, st.f.t);
+    D3 n = perpUnit(glm::mix(a.n, b.n, frac), st.f.t, 1e-9);
+    st.f.n = glm::length(n) > 0.5 ? n : perpUnit(a.n, st.f.t, 1e-9);
     if (glm::length(st.f.n) < 0.5)
         st.f.n = a.n;
     st.f.b = glm::normalize(glm::cross(st.f.t, st.f.n));
@@ -741,9 +730,9 @@ void flowAlongSurface(geo::Mesh& source, const geo::Mesh& target, const FlowOpti
         D3 n = unitOr(tri->n[0] * b.x + tri->n[1] * b.y + tri->n[2] * b.z, unitOr(glm::cross(tri->p[1] - tri->p[0], tri->p[2] - tri->p[0]), D3(0, 1, 0)));
         D3 laid = at + n * (pos.y - base) * o.heightScale;
         source.setPosition(p, glm::mix(pos, laid, env));
-        D3 eu = perp(tri->du, n);
+        D3 eu = perpUnit(tri->du, n, 1e-9);
         if (glm::length(eu) < 0.5)
-            eu = perp(D3(1, 0, 0), n);
+            eu = perpUnit(D3(1, 0, 0), n, 1e-9);
         rot[p] = glm::dmat3(eu, n, glm::cross(eu, n));
     }
     rotateCornerFrames(source, rot, env);

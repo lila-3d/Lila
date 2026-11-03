@@ -39,7 +39,7 @@ using hotkeys::Binding;
 
 namespace
 {
-enum Role
+enum HotkeyRole
 {
     KindRole = Qt::UserRole,
     ContextRole,
@@ -47,14 +47,14 @@ enum Role
     ActionRole,
 };
 
-enum Kind
+enum RowKind
 {
     BindingRow = 1,
     UnboundDefaultRow,
     ActionRowKind,
 };
 
-enum Column
+enum HotkeyColumn
 {
     ColKey,
     ColAction,
@@ -400,8 +400,8 @@ void KeyboardHeatMap::paintEvent(QPaintEvent*)
     QFont f = font();
     double unit = std::min((width() - 8) / 18.5, (height() - 8) / 6.4);
     f.setPixelSize(std::max(8, int(unit * 0.3)));
-    QFont small = f;
-    small.setPixelSize(std::max(7, int(unit * 0.22)));
+    QFont smallFont = f;
+    smallFont.setPixelSize(std::max(7, int(unit * 0.22)));
 
     for (const Cap& c : mCaps)
     {
@@ -427,7 +427,7 @@ void KeyboardHeatMap::paintEvent(QPaintEvent*)
         p.drawText(r.adjusted(4, 2, -4, -2), Qt::AlignLeft | Qt::AlignTop, c.label);
         if (n > 0)
         {
-            p.setFont(small);
+            p.setFont(smallFont);
             p.drawText(r.adjusted(4, 2, -4, -2), Qt::AlignRight | Qt::AlignBottom, QString::number(n));
         }
     }

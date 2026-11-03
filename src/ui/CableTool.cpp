@@ -20,12 +20,6 @@ namespace
 {
 using namespace curveTools;
 
-constexpr const char* kPrefs = "/cableTool/";
-
-double prefD(const char* key, double def) { return prefs().value<double>("general", std::string(kPrefs) + key, def); }
-bool prefB(const char* key, bool def) { return prefs().value<bool>("general", std::string(kPrefs) + key, def); }
-void setPref(const char* key, const json& v) { prefs().set("general", std::string(kPrefs) + key, v); }
-
 /** A placed anchor and the mesh it landed on (none on the construction plane). */
 struct Anchor
 {
@@ -237,6 +231,11 @@ public:
     }
 
 private:
+    static constexpr const char* kPrefs = "/cableTool/";
+    static double prefD(const char* key, double def) { return prefs().value<double>("general", std::string(kPrefs) + key, def); }
+    static bool prefB(const char* key, bool def) { return prefs().value<bool>("general", std::string(kPrefs) + key, def); }
+    static void setPref(const char* key, const json& v) { prefs().set("general", std::string(kPrefs) + key, v); }
+
     double amount() const { return mDepth ? mSag : std::max(mSlack, 1e-3); }
 
     void setAmount(double v)

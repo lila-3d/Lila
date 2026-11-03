@@ -21,6 +21,7 @@
 #include "ui/ModelingToolkit.h"
 #include "ui/SculptTool.h"
 #include "ui/SpinScrub.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportTool.h"
 
 #include <QApplication>
@@ -128,15 +129,7 @@ QColor swatchColor(const glm::vec3& linear)
     return QColor::fromRgbF(s.r, s.g, s.b);
 }
 
-bool runCommand(const char* name, const json& call) { return actions::run({{"command", name}, {"args", ops::options::callWith(name, call)}}); }
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
+bool runActionWithOptions(const char* name, const json& call) { return actions::run({{"command", name}, {"args", ops::options::callWith(name, call)}}); }
 
 QDockWidget* sculptDock(bool create)
 {
@@ -189,7 +182,7 @@ void enterSculpt()
         log::warn("Enter Sculpt: select a mesh");
         return;
     }
-    if (runCommand("sculptEnter", {{"args", {meshes.back()}}, {"mode", st.proxyMode}, {"levels", st.levels}, {"resolution", st.resolution}}))
+    if (runActionWithOptions("sculptEnter", {{"args", {meshes.back()}}, {"mode", st.proxyMode}, {"levels", st.levels}, {"resolution", st.resolution}}))
     {
         showDock();
         startSculptTool();
@@ -201,7 +194,7 @@ void exitSculpt()
     if (!sculpt::active())
         return;
     const SculptSettings& st = sculptSettings();
-    if (runCommand("sculptExit", {{"method", st.exitMethod}, {"keepProxy", st.keepProxy}}) && sculptToolActive())
+    if (runActionWithOptions("sculptExit", {{"method", st.exitMethod}, {"keepProxy", st.keepProxy}}) && sculptToolActive())
         viewportTools::set(nullptr);
 }
 
@@ -509,7 +502,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
         else
             targets = selectedMeshes();
         if (!targets.empty())
-            runCommand("setSymmetry", {{"args", targets}, {"axis", mSymmetry->currentData().toString().toStdString()}});
+            runActionWithOptions("setSymmetry", {{"args", targets}, {"axis", mSymmetry->currentData().toString().toStdString()}});
     });
     connect(mEnter, &QPushButton::clicked, this, [] { actions::run(json("sculpt.enter")); });
     connect(mExit, &QPushButton::clicked, this, [] { actions::run(json("sculpt.exit")); });
@@ -670,7 +663,7 @@ void SculptPanel::importPresets()
     json args = json::array();
     for (const QString& f : files)
         args.push_back(f.toStdString());
-    runCommand("brushPresetInstall", {{"args", args}});
+    runActionWithOptions("brushPresetInstall", {{"args", args}});
 }
 
 void SculptPanel::presetMenu(size_t index, const QPoint& globalPos)
@@ -686,7 +679,7 @@ void SculptPanel::presetMenu(size_t index, const QPoint& globalPos)
         const QString file = fileDialog::getSaveFileName(this, "Export Brush Preset", QString::fromStdString(p->label + ".lilabrush"),
                                                          "Brush presets (*.lilabrush)");
         if (!file.isEmpty())
-            runCommand("brushPresetExport", {{"args", {p->id}}, {"file", file.toStdString()}});
+            runActionWithOptions("brushPresetExport", {{"args", {p->id}}, {"file", file.toStdString()}});
     });
     menu.addAction(icon("folder-open"), "Show in Folder", this, [p] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdWString(p->file.parent_path().wstring())));
@@ -695,7 +688,7 @@ void SculptPanel::presetMenu(size_t index, const QPoint& globalPos)
     {
         menu.addSeparator();
         menu.addAction(icon("trash"), "Delete", this, [p] {
-            if (!runCommand("brushPresetDelete", {{"args", {p->id}}}))
+            if (!runActionWithOptions("brushPresetDelete", {{"args", {p->id}}}))
                 return;
             SculptSettings& s = sculptSettings();
             s.perBrush.erase("preset:" + p->id);
@@ -720,7 +713,7 @@ void SculptPanel::dropEvent(QDropEvent* e)
         return e->ignore();
     e->acceptProposedAction();
     // After the drop returns, so Explorer's drag loop isn't held.
-    QTimer::singleShot(0, this, [files] { runCommand("brushPresetInstall", {{"args", files}}); });
+    QTimer::singleShot(0, this, [files] { runActionWithOptions("brushPresetInstall", {{"args", files}}); });
 }
 
 void SculptPanel::syncFromSettings()
@@ -875,7 +868,7 @@ void registerSculptUi()
                   .label = "Cancel Sculpt",
                   .category = "Sculpt",
                   .run = [] {
-                      if (runCommand("sculptCancel", json::object()) && sculptToolActive())
+                      if (runActionWithOptions("sculptCancel", json::object()) && sculptToolActive())
                           viewportTools::set(nullptr);
                   },
                   .enabled = [] { return sculpt::active() != nullptr; },
@@ -901,7 +894,7 @@ void registerSculptUi()
         actions::add({.id = id,
                       .label = label,
                       .category = "Sculpt",
-                      .run = [call] { runCommand("sculptMask", call); },
+                      .run = [call] { runActionWithOptions("sculptMask", call); },
                       .enabled = [] { return sculpt::active() != nullptr; },
                       .doc = doc,
                       .python = ops::toPython("sculptMask", call)});
@@ -916,7 +909,7 @@ void registerSculptUi()
                   .category = "Sculpt",
                   .run = [] {
                       const glm::vec3 c = sculptSettings().color;
-                      runCommand("sculptColor", {{"op", "fill"}, {"color", json::array({c.r, c.g, c.b})}});
+                      runActionWithOptions("sculptColor", {{"op", "fill"}, {"color", json::array({c.r, c.g, c.b})}});
                   },
                   .enabled = [] { return sculpt::active() != nullptr; },
                   .doc = "Fill the sculpt's polypaint with the Polypaint color; masked points keep theirs.",
@@ -924,7 +917,7 @@ void registerSculptUi()
     actions::add({.id = "sculpt.colorClear",
                   .label = "Clear Polypaint",
                   .category = "Sculpt",
-                  .run = [] { runCommand("sculptColor", {{"op", "clear"}}); },
+                  .run = [] { runActionWithOptions("sculptColor", {{"op", "clear"}}); },
                   .enabled = [] { return sculpt::active() != nullptr; },
                   .doc = "Clear the sculpt's polypaint back to white.",
                   .python = ops::toPython("sculptColor", {{"op", "clear"}})});
@@ -932,7 +925,7 @@ void registerSculptUi()
     actions::add({.id = "mesh.relaxKeepForm",
                   .label = "Relax (Keep Form)",
                   .category = "Mesh",
-                  .run = [] { runCommand("relaxMesh", {{"pinCreases", true}, {"pinSeams", true}}); },
+                  .run = [] { runActionWithOptions("relaxMesh", {{"pinCreases", true}, {"pinSeams", true}}); },
                   .doc = "Even out the point spacing of the selected components (or whole meshes), sliding points along the "
                          "surface so the shape stays. Borders, creases and UV seams stay put.",
                   .python = ops::toPython("relaxMesh", {{"iterations", 10}, {"pinCreases", true}, {"pinSeams", true}}),
@@ -948,7 +941,7 @@ void registerSculptUi()
                           log::warn("Reproject onto Target: select the target surface, then the meshes to move");
                           return;
                       }
-                      runCommand("shrinkwrap", {{"args", std::vector<std::string>(meshes.begin() + 1, meshes.end())}, {"target", meshes.front()}});
+                      runActionWithOptions("shrinkwrap", {{"args", std::vector<std::string>(meshes.begin() + 1, meshes.end())}, {"target", meshes.front()}});
                   },
                   .doc = "Shrinkwrap meshes onto a surface: select the target first, then the meshes to move. The shrinkwrap "
                          "command also projects along normals or a direction, with an offset.",
@@ -964,7 +957,7 @@ void registerSculptUi()
                           log::warn("Transfer Shape: select the high poly first, then the low-poly cages");
                           return;
                       }
-                      runCommand("transferShape", {{"args", meshes}});
+                      runActionWithOptions("transferShape", {{"args", meshes}});
                   },
                   .doc = "Fit low-poly cages to a high poly (an imported sculpt) so their subdivision matches it, keeping UVs. "
                          "Select the high poly first.",

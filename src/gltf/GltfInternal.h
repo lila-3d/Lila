@@ -22,6 +22,9 @@ inline glm::dmat3 lilaToFile(math::UpAxis up) { return fbx::profileBasis(fbx::Ax
 fs::path utf8Path(std::string_view s);
 std::string utf8(const fs::path& p);
 
+/** A C string from cgltf, which may be null, as a std::string. */
+inline std::string orEmpty(const char* s) { return s ? std::string(s) : std::string(); }
+
 /** Whole file as bytes; false when it can't be read. */
 bool readFile(const fs::path& path, std::string& out);
 bool writeFile(const fs::path& path, std::string_view bytes);

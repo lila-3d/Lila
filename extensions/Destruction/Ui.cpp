@@ -32,10 +32,10 @@ using namespace lila::ui;
 
 namespace destruction
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 /** What the next impact click makes; set by the action that starts the tool. */
 std::string gMaterial = "concrete";
 bool gSimulate = true;

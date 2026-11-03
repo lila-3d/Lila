@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/OutlinerFilter.h"
@@ -8,16 +10,13 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace outliner = lila::ui::outliner;
 using outliner::Filter;
 using outliner::globMatch;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::NodeId idOf(const std::string& name) { return scene::Graph::current().find(name)->id(); }
-
 const scene::NodeType* typeOf(const char* name) { return scene::types::find(name); }
 
 bool passes(const Filter& f, std::string_view name, std::string_view path = {}, const char* type = "transform")

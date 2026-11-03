@@ -12,6 +12,7 @@
 #include "ui/Menus.h"
 #include "ui/OutlinerFilter.h"
 #include "ui/TokenCompleter.h"
+#include "ui/UiCommands.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -27,18 +28,6 @@ namespace
 {
 using scene::Graph;
 using scene::NodeId;
-
-void run(const char* name, json call = json::object())
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::error("{}", e.what());
-    }
-}
 
 std::vector<std::string> selectedWithSpaces()
 {
@@ -61,7 +50,7 @@ void switchSelected(const json& space, bool range)
     json call = {{"args", nodes}, {"space", space}};
     if (range)
         call["range"] = {scene::anim::playback().minTime, scene::anim::playback().maxTime};
-    run("switchSpace", call);
+    runUi("switchSpace", call);
 }
 
 /** The lead selection's spaces, to switch to now or over the playback range. */
@@ -110,13 +99,13 @@ QWidget* spacesPanel(NodeId id)
         sw->setIcon(icon("arrows-exchange"));
         sw->setToolTip("Switch to this space, keeping the pose");
         sw->setEnabled(s.index != now);
-        QObject::connect(sw, &QToolButton::clicked, sw, [node, i = s.index] { run("switchSpace", {{"args", {node}}, {"space", i}}); });
+        QObject::connect(sw, &QToolButton::clicked, sw, [node, i = s.index] { runUi("switchSpace", {{"args", {node}}, {"space", i}}); });
         row->addWidget(sw);
         auto* rm = new QToolButton;
         rm->setIcon(icon("trash"));
         rm->setToolTip("Remove this space; times spent in it go back to the parent, keeping the pose");
         rm->setEnabled(s.index > 0);
-        QObject::connect(rm, &QToolButton::clicked, rm, [node, i = s.index] { run("removeSpace", {{"args", {node}}, {"space", i}}); });
+        QObject::connect(rm, &QToolButton::clicked, rm, [node, i = s.index] { runUi("removeSpace", {{"args", {node}}, {"space", i}}); });
         row->addWidget(rm);
         v->addLayout(row);
     }
@@ -136,27 +125,27 @@ QWidget* spacesPanel(NodeId id)
     addButton->setToolTip("Add a space: world, or another node to follow");
     QObject::connect(addButton, &QPushButton::clicked, addButton, [node, target] {
         const std::string t = target->text().trimmed().toStdString();
-        run("addSpace", {{"args", {node}}, {"space", t.empty() ? "world" : t}});
+        runUi("addSpace", {{"args", {node}}, {"space", t.empty() ? "world" : t}});
     });
     add->addWidget(addButton);
     v->addLayout(add);
     return w;
 }
 
-void registerActions()
+void registerSpaceActions()
 {
     auto add = [](const char* id, const char* label, std::function<void()> fn, const char* python, const char* doc) {
         actions::add({.id = id, .label = label, .category = "Rig", .run = std::move(fn), .doc = doc, .python = python});
     };
-    add("rig.addWorldSpace", "Add World Space", [] { run("addSpace", {{"space", "world"}}); }, "addSpace(space=\"world\")",
+    add("rig.addWorldSpace", "Add World Space", [] { runUi("addSpace", {{"space", "world"}}); }, "addSpace(space=\"world\")",
         "Give the selected nodes a world space to animate in; switching to it keeps the pose.");
-    add("rig.addSpace", "Add Space", [] { run("addSpace"); }, "addSpace()",
+    add("rig.addSpace", "Add Space", [] { runUi("addSpace"); }, "addSpace()",
         "Select the spaces, then the node last: the node can then be animated in any of them, switched from the channel box.");
     add("rig.removeSpace", "Remove Active Space", [] {
         Graph& g = Graph::current();
         for (const std::string& n : selectedWithSpaces())
             if (int i = findNode(n) ? scene::spaces::active(g, findNode(n)->id()) : 0; i > 0)
-                run("removeSpace", {{"args", {n}}, {"space", i}});
+                runUi("removeSpace", {{"args", {n}}, {"space", i}});
     }, "", "Remove the selected nodes' active space, switching them back to their parent with the pose kept.");
     add("rig.switchSpaceParent", "Switch to Parent Space", [] { switchSelected("parent", false); }, "switchSpace(space=\"parent\")",
         "Switch the selected nodes to their parent space at this frame, keeping the pose.");
@@ -171,7 +160,7 @@ void registerSpacesUi()
     if (done)
         return;
     done = true;
-    registerActions();
+    registerSpaceActions();
     attributeEditor::addSection("transform", "Spaces", [](NodeId id) { return spacesPanel(id); });
 }
 

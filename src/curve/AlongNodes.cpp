@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "curve/Along.h"
 #include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
@@ -17,78 +18,21 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
 const std::vector<std::string> kAxes = {"+x", "-x", "+y", "-y", "+z", "-z"};
 const std::vector<std::string> kUpModes = {"curveFrames", "autoNormals", "aimCurve"};
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::string cat = {}, std::optional<double> lo = std::nullopt,
-              std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, std::string cat = {}, double lo = 0.0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef sAttr(std::string name, std::string doc, std::string cat = {}, uint32_t extra = 0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = kIn | extra, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef vAttr(std::string name, D3 def, std::string doc, std::string cat = {})
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Vec3, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    for (int k = 0; k < 3; ++k)
-        a.childNames[size_t(k)] = a.name + char('X' + k);
-    a.category = std::move(cat);
-    return a;
-}
 
 AttrDef hidden(std::string name, PlugType type, PlugValue def, std::string doc, bool stored = false)
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrHidden | (stored ? AttrStorable : 0u),
             .doc = std::move(doc)};
 }
-
-int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
-double f(const Node& n, const char* a) { return n.as<double>(idx(n, a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(idx(n, a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(idx(n, a)); }
-D3 v(const Node& n, const char* a) { return n.as<D3>(idx(n, a)); }
-const std::string& s(const Node& n, const char* a) { return n.as<std::string>(idx(n, a)); }
 
 /** inMesh, enabled and exportEnabled, as every modifier has them first. */
 std::vector<AttrDef> modifierHead()
@@ -166,7 +110,7 @@ std::function<double(double)> twistOf(const Node& n)
     return [total, ramp](double t) { return total * t + (ramp ? glm::radians(ramp(t)) : 0.0); };
 }
 
-std::vector<AttrDef> curveInputs()
+std::vector<AttrDef> curveFollowInputs()
 {
     return {
         hidden("curve", PlugType::Data, DataPtr(), "The curve to follow, world space."),
@@ -292,8 +236,6 @@ geo::Mesh flowRun(const geo::Mesh& in, const Node& n)
     return m;
 }
 
-Graph& graph() { return Graph::current(); }
-
 Node& nodeNamed(Graph& g, const std::string& name, const char* kind, const char* cmd)
 {
     Node* n = g.find(name);
@@ -305,7 +247,7 @@ Node& nodeNamed(Graph& g, const std::string& name, const char* kind, const char*
 }
 
 /** Option flags for every editable attr of a node type, enums by name, without defaults so only given ones apply. */
-std::vector<FlagDef> attrFlags(const std::string& type)
+std::vector<FlagDef> modifierAttrFlags(const std::string& type)
 {
     std::vector<FlagDef> out;
     for (const AttrDef& d : types::find(type)->ownAttrs)
@@ -330,39 +272,6 @@ std::vector<FlagDef> attrFlags(const std::string& type)
         out.push_back(std::move(fd));
     }
     return out;
-}
-
-void applyFlags(Graph& g, Node& n, const Args& a, const char* cmd)
-{
-    for (const AttrDef& d : n.type().ownAttrs)
-    {
-        if (!(d.flags & AttrInput) || (d.flags & AttrHidden) || !a.has(d.name))
-            continue;
-        int at = n.type().attrIndex(d.name);
-        const json& val = a.flags[d.name];
-        if (d.type == PlugType::Enum && val.is_string())
-        {
-            auto it = std::ranges::find(d.enumNames, val.get<std::string>());
-            if (it == d.enumNames.end())
-                throw CommandError(std::string(cmd) + ": " + d.name + ": unknown value '" + val.get<std::string>() + "'");
-            g.setValue({n.id(), at, -1}, int64_t(it - d.enumNames.begin()));
-            continue;
-        }
-        try
-        {
-            g.setValue({n.id(), at, -1}, fromJson(d, val));
-        }
-        catch (const std::exception& e)
-        {
-            throw CommandError(std::string(cmd) + ": " + d.name + ": " + e.what());
-        }
-    }
-}
-
-std::vector<FlagDef> withFlags(std::vector<FlagDef> base, std::vector<FlagDef> extra)
-{
-    base.insert(base.end(), extra.begin(), extra.end());
-    return base;
 }
 
 /** The selected curves and meshes, in selection order. */
@@ -471,7 +380,7 @@ Node* placeInstances(Graph& g, Node& piece, Node* start, Node* end, const std::v
     return group;
 }
 
-void registerOptionLayouts()
+void registerAlongOptionLayouts()
 {
     namespace opt = ops::options;
     {
@@ -519,7 +428,7 @@ void registerAlongTypes()
 {
     const std::string place = "Placement", shape = "Shape", fill = "Fill", frame = "Orientation", rnd = "Random", pieces = "Pieces";
 
-    std::vector<AttrDef> deform = curveInputs();
+    std::vector<AttrDef> deform = curveFollowInputs();
     for (AttrDef& a : frameAttrs(place))
         deform.push_back(a);
     for (AttrDef a : {fAttr("offset", 0.0, "Where the mesh starts along the curve, cm.", place),
@@ -538,7 +447,7 @@ void registerAlongTypes()
                      deform, deformRun);
     modifiers::setCreateHook("curveDeformModifier", curveHook);
 
-    std::vector<AttrDef> array = curveInputs();
+    std::vector<AttrDef> array = curveFollowInputs();
     array.push_back(hidden("startMesh", PlugType::Mesh, MeshPtr(), "A mesh for the first copy (connect another mesh's outMesh)."));
     array.push_back(hidden("endMesh", PlugType::Mesh, MeshPtr(), "A mesh for the last copy."));
     for (AttrDef a : {eAttr("fill", {"count", "spacing"}, 0, "Fill by a number of copies, or by the step between them.", fill),
@@ -571,7 +480,7 @@ void registerAlongTypes()
         hidden("targetMesh", PlugType::Mesh, MeshPtr(), "The surface's outMesh."),
         hidden("targetWorld", PlugType::Matrix, glm::dmat4(1.0), "The surface's worldMatrix."),
         hidden("targetMatrix", PlugType::Matrix, glm::dmat4(1.0), "This mesh's world matrix when the surface was connected.", true),
-        sAttr("targetFaces", "Faces of the surface to flow onto, as a JSON list; empty is all of it.", {}, AttrHidden),
+        sAttr("targetFaces", "Faces of the surface to flow onto, as a JSON list; empty is all of it.", AttrHidden),
         eAttr("parametrization", {"uv", "grid"}, 0,
               "How surface positions are found: the surface's UVs, or the rows and columns of a rectangular patch of quads (targetFaces)."),
         sAttr("uvSet", "UV set to map through (uv parametrization); empty is uv0."),
@@ -582,7 +491,7 @@ void registerAlongTypes()
         bAttr("swapUV", false, "Map X to V and Z to U."),
         fAttr("heightScale", 1.0, "Height off the surface per unit of the mesh's Y."),
         eAttr("heightBase", {"origin", "bottom"}, 0, "Measure height from Y = 0 (the construction plane) or from the mesh's lowest point."),
-        fAttr("envelope", 1.0, "How much of the flow applies, 0 to 1.", {}, 0.0, 1.0),
+        fAttr("envelope", 1.0, "How much of the flow applies, 0 to 1.", 0.0, 1.0),
     };
     registerModifier("surfaceFlowModifier", "texture",
                      "Flows the mesh onto a surface (FlowAlongSrf): its XZ footprint maps onto the surface's UV rectangle, or a "
@@ -599,7 +508,7 @@ void registerAlongCommands()
                "second curve aims the up direction with upMode=aimCurve). The forward axis runs along the curve from its start; editing "
                "or moving the curve updates the meshes. Returns the modifiers.",
         .positionalDoc = "meshes",
-        .flags = withFlags(attrFlags("curveDeformModifier"),
+        .flags = withFlags(modifierAttrFlags("curveDeformModifier"),
                            {{"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."},
                             {"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."}}),
         .run = [](const Args& a) -> json {
@@ -626,7 +535,7 @@ void registerAlongCommands()
                "output=instances places instances of the mesh under a group instead (one shared mesh each, ready to export as "
                "instances; not live). Select the piece meshes and the curve. Returns the modifiers, or the groups.",
         .positionalDoc = "meshes",
-        .flags = withFlags(attrFlags("curveArrayModifier"),
+        .flags = withFlags(modifierAttrFlags("curveArrayModifier"),
                            {{"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."},
                             {"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."},
                             {"startMesh", "", T::String, nullptr, "A mesh to use for the first copy."},
@@ -700,7 +609,7 @@ void registerAlongCommands()
                "surface's UV rectangle, or onto a rectangular patch of quads (selected faces, parametrization grid), and its height "
                "(Y) follows the surface normal. Select the meshes, then the surface last. Returns the modifiers.",
         .positionalDoc = "meshes",
-        .flags = withFlags(attrFlags("surfaceFlowModifier"),
+        .flags = withFlags(modifierAttrFlags("surfaceFlowModifier"),
                            {{"target", "t", T::String, nullptr, "The surface mesh; else the last selected mesh."},
                             {"faces", "", T::List, nullptr, "Surface faces to flow onto; else its selected faces, else all of it."}}),
         .run = [](const Args& a) -> json {
@@ -748,7 +657,7 @@ void registerAlongCommands()
         },
         .examples = {"lila.ops.flowAlongSurface(\"Logo\", target=\"Hull\")"},
     });
-    registerOptionLayouts();
+    registerAlongOptionLayouts();
     registerCurveDeformCommands();
 }
 } // namespace lila::curve

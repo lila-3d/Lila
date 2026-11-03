@@ -361,7 +361,7 @@ TEST_CASE("docs: bookmarks toggle, reorder and round-trip through prefs")
 
 namespace
 {
-bool has(const std::string& html, std::string_view part)
+bool hasPart(const std::string& html, std::string_view part)
 {
     return html.find(part) != std::string::npos;
 }
@@ -370,30 +370,30 @@ bool has(const std::string& html, std::string_view part)
 TEST_CASE("docs html: escaped pipes in table cells, code spans included, render as pipes")
 {
     std::string html = docs::markdownToHtml("| Type | To |\n| --- | --- |\n| `root\\|spine` | Any term with `\\|`. |\n| a \\| b | x |\n");
-    CHECK(has(html, "<table class=\"grid\""));
-    CHECK(has(html, "root|spine"));
-    CHECK(has(html, "a | b"));
-    CHECK_FALSE(has(html, "\\|"));
+    CHECK(hasPart(html, "<table class=\"grid\""));
+    CHECK(hasPart(html, "root|spine"));
+    CHECK(hasPart(html, "a | b"));
+    CHECK_FALSE(hasPart(html, "\\|"));
     // Four cells a row: the escaped pipes never split one.
-    CHECK(has(html, "<th align=\"center\">Type</th><th align=\"center\">To</th></tr>"));
-    CHECK(has(html, "<td class=\"alt\">a | b</td><td class=\"alt\">x</td></tr>"));
+    CHECK(hasPart(html, "<th align=\"center\">Type</th><th align=\"center\">To</th></tr>"));
+    CHECK(hasPart(html, "<td class=\"alt\">a | b</td><td class=\"alt\">x</td></tr>"));
 }
 
 TEST_CASE("docs html: table rows alternate and follow the delimiter row's alignment")
 {
     std::string html = docs::markdownToHtml("| A | B |\n| :-- | --: |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n");
-    CHECK(has(html, "<th align=\"left\">A</th><th align=\"right\">B</th>"));
-    CHECK(has(html, "<td align=\"left\">1</td>"));
-    CHECK(has(html, "<td class=\"alt\" align=\"left\">3</td>"));
-    CHECK(has(html, "<td align=\"left\">5</td>"));
+    CHECK(hasPart(html, "<th align=\"left\">A</th><th align=\"right\">B</th>"));
+    CHECK(hasPart(html, "<td align=\"left\">1</td>"));
+    CHECK(hasPart(html, "<td class=\"alt\" align=\"left\">3</td>"));
+    CHECK(hasPart(html, "<td align=\"left\">5</td>"));
 }
 
 TEST_CASE("docs html: blockquotes become a bar cell beside a body cell")
 {
     std::string html = docs::markdownToHtml("Intro.\n\n> **Note:** There is no type dropdown.\nlazy line\n\nAfter.\n");
-    CHECK(has(html, "<table class=\"quote\""));
-    CHECK(has(html, "<td class=\"bar\" width=\"4\"></td><td class=\"body\"><p class=\"q\"><b>Note:</b> There is no type dropdown. lazy line</p>"));
-    CHECK(has(html, "<p>After.</p>"));
+    CHECK(hasPart(html, "<table class=\"quote\""));
+    CHECK(hasPart(html, "<td class=\"bar\" width=\"4\"></td><td class=\"body\"><p class=\"q\"><b>Note:</b> There is no type dropdown. lazy line</p>"));
+    CHECK(hasPart(html, "<p>After.</p>"));
 }
 
 TEST_CASE("docs html: images are sized from their own size, scaled to the column keeping aspect")
@@ -408,17 +408,17 @@ TEST_CASE("docs html: images are sized from their own size, scaled to the column
     };
     o.maxImageWidth = 800;
     std::string html = docs::markdownToHtml("![Big one](images/big.png)\n\n![Small](images/small.png)\n\n![Gone](images/none.png)\n", o);
-    CHECK(has(html, "<p class=\"img\"><img src=\"images/big.png\" alt=\"Big one\" width=\"800\" height=\"450\" /></p>"));
-    CHECK(has(html, "<img src=\"images/small.png\" alt=\"Small\" width=\"200\" height=\"100\" />"));
-    CHECK(has(html, "<img src=\"images/none.png\" alt=\"Gone\" />"));
+    CHECK(hasPart(html, "<p class=\"img\"><img src=\"images/big.png\" alt=\"Big one\" width=\"800\" height=\"450\" /></p>"));
+    CHECK(hasPart(html, "<img src=\"images/small.png\" alt=\"Small\" width=\"200\" height=\"100\" />"));
+    CHECK(hasPart(html, "<img src=\"images/none.png\" alt=\"Gone\" />"));
 }
 
 TEST_CASE("docs html: headings carry docsify ids and h2 sections a rule")
 {
     std::string html = docs::markdownToHtml("# Essentials\n\nText.\n\n## Find any `menu` command\n\n### Ctrl+T & more ##\n");
-    CHECK(has(html, "<h1><a name=\"essentials\"></a>Essentials</h1>"));
-    CHECK(has(html, "<hr/>\n<h2><a name=\"find-any-menu-command\"></a>Find any <code>"));
-    CHECK(has(html, "<h3><a name=\"ctrlt-more\"></a>Ctrl+T &amp; more</h3>"));
+    CHECK(hasPart(html, "<h1><a name=\"essentials\"></a>Essentials</h1>"));
+    CHECK(hasPart(html, "<hr/>\n<h2><a name=\"find-any-menu-command\"></a>Find any <code>"));
+    CHECK(hasPart(html, "<h3><a name=\"ctrlt-more\"></a>Ctrl+T &amp; more</h3>"));
     // No rule above a page that opens on an h2.
     CHECK(docs::markdownToHtml("## First\n").rfind("<h2>", 0) == 0);
 }
@@ -428,14 +428,14 @@ TEST_CASE("docs html: lists, inline markup, code blocks and comments")
     std::string html = docs::markdownToHtml("- **Enter** runs it.\n- Nested:\n  - inner *em* and _em_ but snake_case\n- [Link](curves.md?id=pipe)\n\n"
                                             "1. One\n2. Two\n\n```python\nif a < b:\n    pass\n```\n\n<!-- TODO image\nof it -->\n"
                                             "Text with `<driver>_x`, <driver> and ~~gone~~ \\*literal\\*.\n");
-    CHECK(has(html, "<ul>\n<li><b>Enter</b> runs it.</li>\n<li>Nested:<ul>\n<li>inner <i>em</i> and <i>em</i> but snake_case</li>"));
-    CHECK(has(html, "<li><a href=\"curves.md?id=pipe\">Link</a></li>"));
-    CHECK(has(html, "<ol>\n<li>One</li>\n<li>Two</li>\n</ol>"));
-    CHECK(has(html, "<table class=\"pre\""));
-    CHECK(has(html, "<pre>if a &lt; b:\n    pass</pre>"));
-    CHECK_FALSE(has(html, "TODO"));
-    CHECK(has(html, "&lt;driver&gt;_x"));
-    CHECK(has(html, ", &lt;driver&gt; and <s>gone</s> *literal*."));
+    CHECK(hasPart(html, "<ul>\n<li><b>Enter</b> runs it.</li>\n<li>Nested:<ul>\n<li>inner <i>em</i> and <i>em</i> but snake_case</li>"));
+    CHECK(hasPart(html, "<li><a href=\"curves.md?id=pipe\">Link</a></li>"));
+    CHECK(hasPart(html, "<ol>\n<li>One</li>\n<li>Two</li>\n</ol>"));
+    CHECK(hasPart(html, "<table class=\"pre\""));
+    CHECK(hasPart(html, "<pre>if a &lt; b:\n    pass</pre>"));
+    CHECK_FALSE(hasPart(html, "TODO"));
+    CHECK(hasPart(html, "&lt;driver&gt;_x"));
+    CHECK(hasPart(html, ", &lt;driver&gt; and <s>gone</s> *literal*."));
 }
 
 TEST_CASE("inline code hyphens never wrap and read back as hyphens")

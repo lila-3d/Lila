@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Pipe.h"
 #include "geo/Mesh.h"
@@ -16,37 +18,10 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-scene::MeshPtr meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(name);
-    REQUIRE(n);
-    return n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
-}
-
-curve::Spline poly(std::initializer_list<D3> list)
-{
-    curve::Spline s;
-    s.kind = curve::Kind::Poly;
-    s.points = list;
-    s.normalize();
-    return s;
-}
-
 int facesOfSize(const geo::Mesh& m, size_t n)
 {
     int count = 0;
@@ -72,13 +47,6 @@ void checkClosed(const geo::Mesh& m)
     CHECK(open == 0);
     CHECK(nonManifold == 0);
 }
-
-double distToSegment(const D3& p, const D3& a, const D3& b)
-{
-    D3 d = b - a;
-    double t = std::clamp(glm::dot(p - a, d) / glm::dot(d, d), 0.0, 1.0);
-    return glm::distance(a + d * t, p);
-}
 } // namespace
 
 TEST_CASE("pipe topology: quads, closed, ring counts")
@@ -87,7 +55,7 @@ TEST_CASE("pipe topology: quads, closed, ring counts")
     o.radius = 5.0;
     o.sides = 8;
     o.startCap = o.endCap = curve::CapMode::Grid;
-    curve::PipeResult r = curve::makePipe(poly({D3(0), D3(100, 0, 0)}), o);
+    curve::PipeResult r = curve::makePipe(polyline({D3(0), D3(100, 0, 0)}), o);
     CHECK(r.rings == 2);
     CHECK(r.mesh.numFaces() == 8 + 2 * 4);
     CHECK(facesOfSize(r.mesh, 4) == int(r.mesh.numFaces()));
@@ -98,7 +66,7 @@ TEST_CASE("pipe topology: quads, closed, ring counts")
             CHECK(std::hypot(p.y, p.z) == doctest::Approx(5.0));
 
     // A right-angle corner rounds into a bend at twice the radius, all quads, still closed.
-    curve::PipeResult bent = curve::makePipe(poly({D3(0), D3(100, 0, 0), D3(100, 100, 0)}), o);
+    curve::PipeResult bent = curve::makePipe(polyline({D3(0), D3(100, 0, 0), D3(100, 100, 0)}), o);
     CHECK(bent.rings > 4);
     CHECK(facesOfSize(bent.mesh, 4) == int(bent.mesh.numFaces()));
     checkClosed(bent.mesh);
@@ -107,7 +75,7 @@ TEST_CASE("pipe topology: quads, closed, ring counts")
 
     // A bend tighter than the radius is reported.
     o.bendRadius = 2.0;
-    CHECK(!curve::makePipe(poly({D3(0), D3(100, 0, 0), D3(100, 100, 0)}), o).warnings.empty());
+    CHECK(!curve::makePipe(polyline({D3(0), D3(100, 0, 0), D3(100, 100, 0)}), o).warnings.empty());
 
     // Corrugation adds rings at a quarter of the period and dips the radius between them.
     curve::PipeOptions h;
@@ -115,7 +83,7 @@ TEST_CASE("pipe topology: quads, closed, ring counts")
     h.sides = 6;
     h.corrugationDepth = 0.2;
     h.corrugationPeriod = 2.0;
-    curve::PipeResult hose = curve::makePipe(poly({D3(0), D3(20, 0, 0)}), h);
+    curve::PipeResult hose = curve::makePipe(polyline({D3(0), D3(20, 0, 0)}), h);
     CHECK(hose.rings == 41);
     double lo = 1e9;
     for (const D3& p : hose.mesh.positions())
@@ -129,7 +97,7 @@ TEST_CASE("pipe wall thickness")
     o.radius = 5.0;
     o.sides = 10;
     o.wall = 1.0;
-    curve::PipeResult r = curve::makePipe(poly({D3(0), D3(0, 0, 60), D3(40, 0, 60)}), o);
+    curve::PipeResult r = curve::makePipe(polyline({D3(0), D3(0, 0, 60), D3(40, 0, 60)}), o);
     checkClosed(r.mesh);
     CHECK(facesOfSize(r.mesh, 4) == int(r.mesh.numFaces()));
     // Outer and inner tubes plus two rims of one ring each.
@@ -150,7 +118,7 @@ TEST_CASE("pipe parts follow the bent path")
     o.sides = 8;
     o.splitEvery = 40.0;
     o.coupling = curve::CouplingKind::Collar;
-    const curve::Spline path = poly({D3(0), D3(100, 0, 0), D3(100, 100, 0)});
+    const curve::Spline path = polyline({D3(0), D3(100, 0, 0), D3(100, 100, 0)});
     curve::PipeResult r = curve::makePipe(path, o);
     const size_t expected = r.segmentStarts.size() - 1;
     REQUIRE(expected >= 4);
@@ -211,7 +179,7 @@ TEST_CASE("pipe bolt rings")
     o.boltCount = 6;
     o.boltPhase = glm::radians(15.0);
     o.startCap = o.endCap = curve::CapMode::Grid;
-    curve::PipeResult r = curve::makePipe(poly({D3(0), D3(0, 100, 0)}), o);
+    curve::PipeResult r = curve::makePipe(polyline({D3(0), D3(0, 100, 0)}), o);
     std::vector<curve::PipePlacement> bolts;
     const curve::PipePlacement* flange = nullptr;
     for (const curve::PipePlacement& p : r.placements)
@@ -363,7 +331,7 @@ TEST_CASE("conform to curve")
 
 TEST_CASE("pipe per-point radius: smooth between points, the node's radius scales it")
 {
-    curve::Spline s = poly({D3(0), D3(100, 0, 0)});
+    curve::Spline s = polyline({D3(0), D3(100, 0, 0)});
     s.radius = {1.0, 2.0};
     curve::PipeOptions o;
     o.radius = 3.0;
@@ -396,7 +364,7 @@ TEST_CASE("pipe per-point radius: smooth between points, the node's radius scale
 
 TEST_CASE("pipe radius swells smoothly through its points")
 {
-    curve::Spline s = poly({D3(0), D3(100, 0, 0), D3(200, 0, 0)});
+    curve::Spline s = polyline({D3(0), D3(100, 0, 0), D3(200, 0, 0)});
     s.radius = {1.0, 1.0, 3.0};
     curve::PipeOptions o;
     o.radius = 5.0;
@@ -419,7 +387,7 @@ TEST_CASE("pipe radius swells smoothly through its points")
 
 TEST_CASE("pipe swell has no crease at its points")
 {
-    curve::Spline s = poly({D3(0), D3(100, 0, 0), D3(130, 0, 0), D3(230, 0, 0)});
+    curve::Spline s = polyline({D3(0), D3(100, 0, 0), D3(130, 0, 0), D3(230, 0, 0)});
     s.radius = {1.0, 1.0, 3.0, 3.0};
     curve::PipeOptions o;
     o.radius = 5.0;

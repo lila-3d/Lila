@@ -31,6 +31,9 @@ namespace fs = std::filesystem;
 constexpr uint16_t kDefaultPort = 8741;
 constexpr int kPortSearchCount = 8;
 
+/** The PrefStore file the Unreal link settings live in. */
+inline constexpr const char* kUnrealPrefFile = "unreal";
+
 /** A running editor with LilaLink, found through its port file or by probing. */
 struct Instance
 {

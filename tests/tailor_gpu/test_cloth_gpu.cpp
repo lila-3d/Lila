@@ -13,7 +13,7 @@ using namespace tailor;
 
 namespace
 {
-bool gpu()
+bool gpuAvailable()
 {
     auto& r = lila::render::Renderer::get();
     if (r.running() || r.start())
@@ -58,7 +58,7 @@ ClothMesh grid(int nu, int nv, float w, float h, const Vec3& origin)
 
 TEST_CASE("gpu: hanging sheet settles where the CPU solver's does")
 {
-    if (!gpu())
+    if (!gpuAvailable())
         return;
     const int nu = 21, nv = 21;
     const ClothMesh m = grid(nu, nv, 0.5f, 0.5f, {-0.25f, 1.f, -0.25f});
@@ -96,7 +96,7 @@ TEST_CASE("gpu: hanging sheet settles where the CPU solver's does")
 
 TEST_CASE("gpu: tunic drapes on the mannequin without passing through")
 {
-    if (!gpu())
+    if (!gpuAvailable())
         return;
     std::vector<Vec3> pts;
     std::vector<std::array<int, 3>> tris;
@@ -134,7 +134,7 @@ TEST_CASE("gpu: tunic drapes on the mannequin without passing through")
 
 TEST_CASE("perf: gpu outfit drape" * doctest::skip())
 {
-    if (!gpu())
+    if (!gpuAvailable())
         return;
     std::vector<Vec3> pts;
     std::vector<std::array<int, 3>> tris;
@@ -156,7 +156,7 @@ TEST_CASE("perf: gpu outfit drape" * doctest::skip())
 
 TEST_CASE("gpu: a folded seam folds like on the CPU")
 {
-    if (!gpu())
+    if (!gpuAvailable())
         return;
     // Two 0.2 x 0.3 m panels side by side, sewn along x = 0 at 90 degrees.
     const int nu = 7, nv = 9;
@@ -211,7 +211,7 @@ TEST_CASE("gpu: a folded seam folds like on the CPU")
 
 TEST_CASE("gpu: crossing edges collide where no vertex meets a triangle")
 {
-    if (!gpu())
+    if (!gpuAvailable())
         return;
     // Two crossed ribbons a centimetre wide, every point well away from the other ribbon: only their edges can meet.
     ClothMesh m;

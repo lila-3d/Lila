@@ -1,8 +1,10 @@
 #include "ui/CameraBookmarks.h"
 
 #include "core/Events.h"
+#include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/ViewportToast.h"
+#include "ui/ViewportToolMath.h"
 #include "ui/ViewportWidgetDetail.h"
 
 #include <algorithm>
@@ -13,7 +15,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
 constexpr const char* kSection = "cameraBookmarks";
 
@@ -28,11 +29,6 @@ std::function<ViewportWidget*()>& activeProvider()
 {
     static std::function<ViewportWidget*()> f;
     return f;
-}
-
-json vecJson(const glm::dvec3& v)
-{
-    return json::array({v.x, v.y, v.z});
 }
 
 bool readNumber(const json& j, const char* key, double& out)

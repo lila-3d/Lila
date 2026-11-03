@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 
@@ -7,24 +9,16 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 std::string make(const char* type, const char* name, const char* parent = nullptr)
 {
     json call = {{"args", {type}}, {"name", name}, {"skipSelect", true}};
     if (parent)
         call["parent"] = parent;
     return run("createNode", call).get<std::string>();
-}
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_tests" / "paths";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
 }
 
 /** Two "Arm"s, under |Body|L and |Body|R. */
@@ -159,10 +153,10 @@ TEST_CASE("scene files keep duplicate short names apart")
         run("setAttr", {{"args", {"L|Arm.tx", 4}}});
         run("connectAttr", {{"args", {"L|Arm.tx", "R|Arm.ty"}}});
         run("select", {{"args", {"R|Arm"}}});
-        run("saveScene", {{"args", {tempPath(file)}}});
+        run("saveScene", {{"args", {tempPath("paths", file)}}});
 
         run("newScene");
-        run("openScene", {{"args", {tempPath(file)}}});
+        run("openScene", {{"args", {tempPath("paths", file)}}});
         scene::Graph& g = scene::Graph::current();
         CHECK(g.findAll("Arm").size() == 3);
         CHECK(run("getAttr", {{"args", {"|Body|L|Arm.tx"}}}).get<double>() == doctest::Approx(4));
@@ -176,15 +170,15 @@ TEST_CASE("scene files keep duplicate short names apart")
 TEST_CASE("a reference with duplicate short names keeps its edits")
 {
     twoArms();
-    std::string asset = tempPath("arms.lilaa");
+    std::string asset = tempPath("paths", "arms.lilaa");
     run("saveScene", {{"args", {asset}}});
 
     run("newScene");
     run("createReference", {{"args", {asset}}, {"namespace", "hero"}});
     run("setAttr", {{"args", {"hero:R|hero:Arm.tx", 2}}});
-    run("saveScene", {{"args", {tempPath("shot.lilaa")}}});
+    run("saveScene", {{"args", {tempPath("paths", "shot.lilaa")}}});
     run("newScene");
-    run("openScene", {{"args", {tempPath("shot.lilaa")}}});
+    run("openScene", {{"args", {tempPath("paths", "shot.lilaa")}}});
     CHECK(run("getAttr", {{"args", {"hero:R|hero:Arm.tx"}}}).get<double>() == doctest::Approx(2));
     CHECK(run("getAttr", {{"args", {"hero:L|hero:Arm.tx"}}}).get<double>() == doctest::Approx(0));
 

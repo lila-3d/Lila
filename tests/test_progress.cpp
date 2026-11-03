@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "core/MainQueue.h"
@@ -15,18 +17,10 @@
 using namespace lila;
 using scene::Graph;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_tests" / "progress";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
-
 const progress::Snapshot* find(const std::vector<progress::Snapshot>& roots, const std::string& title)
 {
     for (const progress::Snapshot& s : roots)
@@ -255,7 +249,7 @@ TEST_CASE("scene load: reading on a worker builds the same scene")
     run("polyCube", {{"name", "Box"}, {"width", 3}});
     run("spaceLocator", {{"name", "Pin"}});
     run("parent", {{"args", {"Pin", "Box"}}});
-    std::string asset = tempPath("asset.lila");
+    std::string asset = tempPath("progress", "asset.lila");
     run("saveScene", {{"args", {asset}}});
 
     run("newScene");
@@ -266,7 +260,7 @@ TEST_CASE("scene load: reading on a worker builds the same scene")
     run("parent", {{"args", {"Ring", "hero:Pin"}}});
     for (const char* name : {"shot.lila", "shot.lilaa"})
     {
-        std::string shot = tempPath(name);
+        std::string shot = tempPath("progress", name);
         run("saveScene", {{"args", {shot}}});
 
         run("openScene", {{"args", {shot}}, {"force", true}});
@@ -287,7 +281,7 @@ TEST_CASE("scene load: cancelling while the file is read leaves the scene alone"
 {
     run("newScene");
     run("polyCube", {{"name", "Keep"}});
-    std::string path = tempPath("cancel.lila");
+    std::string path = tempPath("progress", "cancel.lila");
     run("polySphere", {{"name", "Other"}});
     run("saveScene", {{"args", {path}}});
     run("newScene");
@@ -355,7 +349,7 @@ TEST_CASE("scene load: aborting at any point of the build puts the previous scen
     run("newScene");
     for (int i = 0; i < 20; ++i)
         run("polyCube", {{"name", "Box" + std::to_string(i)}});
-    const std::string path = tempPath("abort_build.lila");
+    const std::string path = tempPath("progress", "abort_build.lila");
     run("saveScene", {{"args", {path}}});
 
     // Once right after the file is read (the scene just cleared), once with the file's nodes half built.
@@ -364,7 +358,7 @@ TEST_CASE("scene load: aborting at any point of the build puts the previous scen
         CAPTURE(midBuild);
         run("newScene");
         run("polyCube", {{"name", "Keep"}});
-        const std::string keep = tempPath("keep.lila");
+        const std::string keep = tempPath("progress", "keep.lila");
         run("saveScene", {{"args", {keep}}});
         run("spaceLocator", {{"name", "Unsaved"}});
         run("select", {{"args", {"Unsaved"}}});

@@ -19,6 +19,7 @@
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 #include "ui/WeightPaintTool.h"
 #include "scene/SceneIndex.h"
 
@@ -40,8 +41,6 @@ using scene::NodeId;
 constexpr const char* kHeatmapPref = "/viewport/deformHeatmap";
 
 using Segments = std::vector<std::pair<glm::dvec3, glm::dvec3>>;
-
-glm::dvec3 xf(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 
 /** A circle of radius r around the origin in the plane spanned by axes a and b, as segments through m. */
 void circle(Segments& out, const glm::dmat4& m, const glm::dvec3& c, double r, int a, int b, int steps = 32, double from = 0.0,
@@ -481,49 +480,44 @@ void drawHeatmaps(render::FrameState& f, OverlayPainter& p, const ViewInfo& view
         p.label(QPointF(12.0, view.height - 64.0), QString("Displacement heatmap: white = %1 cm").arg(shownMax, 0, 'g', 4));
 }
 
-void add(const char* id, const char* label, const char* command, nlohmann::json call, const char* python, const char* doc)
-{
-    actions::add({.id = id, .label = label, .category = "Deform", .doc = doc, .python = python, .command = command, .call = std::move(call)});
-}
-
-void registerActions()
+void registerDeformHandleActions()
 {
     actions::add({.id = "deform.paintWeights",
                   .label = "Paint Deformer Weights",
                   .category = "Deform",
                   .run = [] { startWeightPaint(); },
                   .doc = "Paint the weights of a deformer on the selected mesh, or a painted layer of a field its deformers read."});
-    add("deform.floodWeights", "Flood Weights", "floodDeformerWeights", nlohmann::json::object(), "floodDeformerWeights()",
+    addDeformCommand("deform.floodWeights", "Flood Weights", "floodDeformerWeights", nlohmann::json::object(), "floodDeformerWeights()",
         "Sets the selected deformer's weights (or the top deformer of the selected mesh) to a value, on the selected components or everywhere.");
-    add("deform.smoothWeights", "Smooth Weights", "smoothDeformerWeights", nlohmann::json::object(), "smoothDeformerWeights()",
+    addDeformCommand("deform.smoothWeights", "Smooth Weights", "smoothDeformerWeights", nlohmann::json::object(), "smoothDeformerWeights()",
         "Smooths the selected deformer's weights over the mesh.");
-    add("deform.mirrorWeights", "Mirror Weights", "mirrorDeformerWeights", nlohmann::json::object(), "mirrorDeformerWeights()",
+    addDeformCommand("deform.mirrorWeights", "Mirror Weights", "mirrorDeformerWeights", nlohmann::json::object(), "mirrorDeformerWeights()",
         "Copies the selected deformer's weights from one side of the mesh to the other.");
-    add("deform.copyWeights", "Copy Weights", "copyDeformerWeights", nlohmann::json::object(), "copyDeformerWeights()",
+    addDeformCommand("deform.copyWeights", "Copy Weights", "copyDeformerWeights", nlohmann::json::object(), "copyDeformerWeights()",
         "Select the source deformer, then the destinations: copies the weights, by closest point across different meshes.");
-    add("deform.exportWeights", "Export Weights", "exportDeformerWeights", nlohmann::json::object(), "exportDeformerWeights(file=...)",
+    addDeformCommand("deform.exportWeights", "Export Weights", "exportDeformerWeights", nlohmann::json::object(), "exportDeformerWeights(file=...)",
         "Writes the selected deformer's weights to a JSON file.");
-    add("deform.importWeights", "Import Weights", "importDeformerWeights", nlohmann::json::object(), "importDeformerWeights(file=...)",
+    addDeformCommand("deform.importWeights", "Import Weights", "importDeformerWeights", nlohmann::json::object(), "importDeformerWeights(file=...)",
         "Reads weights from a JSON file onto the selected deformer, by closest point when the mesh differs.");
-    add("deform.setMembership", "Set Membership", "setDeformerMembership", nlohmann::json::object(), "setDeformerMembership()",
+    addDeformCommand("deform.setMembership", "Set Membership", "setDeformerMembership", nlohmann::json::object(), "setDeformerMembership()",
         "Restricts the selected mesh's top deformer (or the deformer named) to the selected components.");
-    add("deform.clearMembership", "Clear Membership", "setDeformerMembership", {{"mode", "clear"}}, "setDeformerMembership(mode=\"clear\")",
+    addDeformCommand("deform.clearMembership", "Clear Membership", "setDeformerMembership", {{"mode", "clear"}}, "setDeformerMembership(mode=\"clear\")",
         "Lets the deformer move every point again.");
-    add("deform.field", "Field", "field", nlohmann::json::object(), "field()",
+    addDeformCommand("deform.field", "Field", "field", nlohmann::json::object(), "field()",
         "Creates a falloff field on the selected meshes; selected deformers read it.");
-    add("deform.addFieldLayer", "Add Field Layer", "addFieldLayer", nlohmann::json::object(), "addFieldLayer(type=\"noise\")",
+    addDeformCommand("deform.addFieldLayer", "Add Field Layer", "addFieldLayer", nlohmann::json::object(), "addFieldLayer(type=\"noise\")",
         "Adds a layer (shape, noise, components, painted, proximity, UV region or attribute) to the selected field.");
-    add("deform.connectField", "Connect Field", "connectField", nlohmann::json::object(), "connectField()",
+    addDeformCommand("deform.connectField", "Connect Field", "connectField", nlohmann::json::object(), "connectField()",
         "Select a field, then deformers (or meshes): they read the field as their weights.");
-    add("deform.disconnectField", "Disconnect Field", "disconnectField", nlohmann::json::object(), "disconnectField()",
+    addDeformCommand("deform.disconnectField", "Disconnect Field", "disconnectField", nlohmann::json::object(), "disconnectField()",
         "The selected deformers stop reading their field.");
-    add("deform.softSelectField", "Soft Select With Field", "softSelectField", nlohmann::json::object(), "softSelectField()",
+    addDeformCommand("deform.softSelectField", "Soft Select With Field", "softSelectField", nlohmann::json::object(), "softSelectField()",
         "Soft selection weights are multiplied by the selected field; with nothing selected it stops.");
-    add("deform.correction", "Correction", "correction", nlohmann::json::object(), "correction()",
+    addDeformCommand("deform.correction", "Correction", "correction", nlohmann::json::object(), "correction()",
         "Adds a correction deformer: sculpted fixes that ride on the deformation below.");
-    add("deform.editCorrection", "Edit Correction", "editCorrection", nlohmann::json::object(), "editCorrection()",
+    addDeformCommand("deform.editCorrection", "Edit Correction", "editCorrection", nlohmann::json::object(), "editCorrection()",
         "Toggles sculpting the selected correction deformer on a stand-in copy.");
-    add("deform.timing", "Deformer Timing", "deformerTiming", nlohmann::json::object(), "deformerTiming()",
+    addDeformCommand("deform.timing", "Deformer Timing", "deformerTiming", nlohmann::json::object(), "deformerTiming()",
         "Prints how long each deformer on the selected meshes took to evaluate.");
 }
 } // namespace
@@ -534,7 +528,7 @@ void registerDeformFoundationUi()
     if (done)
         return;
     done = true;
-    registerActions();
+    registerDeformHandleActions();
     viewportHooks::addDrawer("lila.deformHandles", drawHandles);
     viewportHooks::addPicker("lila.deformHandles", pickHandles);
     viewportHooks::addDrawer("lila.deformHeatmaps", drawHeatmaps);

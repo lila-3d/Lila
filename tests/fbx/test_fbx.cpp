@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "fbx/FbxBinary.h"
@@ -24,17 +25,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_fbx_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
-
 std::string readAll(const fs::path& p)
 {
     std::ifstream f(p, std::ios::binary);
@@ -42,21 +37,6 @@ std::string readAll(const fs::path& p)
     ss << f.rdbuf();
     return ss.str();
 }
-
-struct UfbxScene
-{
-    ufbx_scene* scene = nullptr;
-    explicit UfbxScene(const fs::path& p)
-    {
-        ufbx_load_opts opts{};
-        ufbx_error err{};
-        std::string s = p.string();
-        scene = ufbx_load_file(s.c_str(), &opts, &err);
-        if (!scene)
-            MESSAGE(std::string(err.description.data, err.description.length));
-    }
-    ~UfbxScene() { ufbx_free_scene(scene); }
-};
 
 Node* addNode(Graph& g, const char* type, const std::string& name, NodeId parent = kNoNode)
 {
@@ -135,7 +115,7 @@ std::map<std::string, Snapshot> snapshot(Graph& g)
     return out;
 }
 
-bool near(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-6)
+bool nearRelative(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-6)
 {
     for (int c = 0; c < 4; ++c)
         for (int r = 0; r < 4; ++r)
@@ -144,7 +124,7 @@ bool near(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-6)
     return true;
 }
 
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) <= eps * std::max(1.0, glm::length(a)); }
+bool nearRelative(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) <= eps * std::max(1.0, glm::length(a)); }
 
 void checkMeshesMatch(const geo::Mesh& a, const geo::Mesh& b, bool sameTopology)
 {
@@ -157,7 +137,7 @@ void checkMeshesMatch(const geo::Mesh& a, const geo::Mesh& b, bool sameTopology)
     REQUIRE(a.numFaces() == b.numFaces());
     REQUIRE(a.numCorners() == b.numCorners());
     for (geo::Index p = 0; p < a.pointCapacity(); ++p)
-        CHECK(near(a.position(p), b.position(p)));
+        CHECK(nearRelative(a.position(p), b.position(p)));
 
     for (int set = 0; set < 2; ++set)
     {
@@ -245,8 +225,8 @@ void roundTrip(fbx::AxisProfile profile, math::UpAxis up, bool triangulate)
         REQUIRE(after.count(name));
         const Snapshot& a = after[name];
         CHECK(a.parent == b.parent);
-        CHECK(near(a.local, b.local));
-        CHECK(near(a.world, b.world));
+        CHECK(nearRelative(a.local, b.local));
+        CHECK(nearRelative(a.world, b.world));
         CHECK(bool(a.mesh) == bool(b.mesh));
         if (a.mesh && b.mesh)
             checkMeshesMatch(*b.mesh, *a.mesh, !triangulate);
@@ -338,9 +318,9 @@ TEST_CASE("ue5 and ue6 files hold Lila's semantic axes where Unreal expects them
             const ufbx_mesh* m = s.scene->meshes.data[0];
             REQUIRE(m->vertices.count == 3);
             auto v = [&](size_t i) { return glm::dvec3(m->vertices.data[i].x, m->vertices.data[i].y, m->vertices.data[i].z); };
-            CHECK(near(v(0), c.forward));
-            CHECK(near(v(1), c.right));
-            CHECK(near(v(2), c.up));
+            CHECK(nearRelative(v(0), c.forward));
+            CHECK(nearRelative(v(1), c.right));
+            CHECK(nearRelative(v(2), c.up));
         }
     }
     math::setUpAxis(math::UpAxis::Y);
@@ -409,7 +389,7 @@ TEST_CASE("world-space export bakes mirrored transforms with outward winding")
     g.evaluate();
     Node* m = g.find("Mirrored");
     REQUIRE(m);
-    CHECK(near(m->as<glm::dmat4>(Transform::kWorldMatrix), glm::dmat4(1.0)));
+    CHECK(nearRelative(m->as<glm::dmat4>(Transform::kWorldMatrix), glm::dmat4(1.0)));
     MeshPtr mesh = m->as<MeshPtr>(MeshNode::kOutMesh);
     REQUIRE(mesh);
     CHECK(mesh->bounds().center().x == doctest::Approx(200.0));
@@ -537,7 +517,7 @@ TEST_CASE("exportFbx and importFbx commands")
     CHECK(report["skipped"].empty());
     Node* body = g.find("Body");
     REQUIRE(body);
-    CHECK(near(body->as<glm::dvec3>(Transform::kTranslate), glm::dvec3(0.0)));
+    CHECK(nearRelative(body->as<glm::dvec3>(Transform::kTranslate), glm::dvec3(0.0)));
     CHECK(g.selection() == std::vector<NodeId>{body->id()});
 
     json names = ops::execute("importFbx", {{"args", {path.string()}}});

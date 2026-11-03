@@ -31,7 +31,7 @@ float sideLen(const Garment& g, const std::vector<SeamSide>& sides)
     return len;
 }
 
-std::string cm(float metres)
+std::string cmText(float metres)
 {
     char buf[32];
     std::snprintf(buf, sizeof buf, "%.1f cm", metres * 100.f);
@@ -102,8 +102,8 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
         for (const Vec2& v : o)
             x0 = std::min(x0, v[0]), x1 = std::max(x1, v[0]), y0 = std::min(y0, v[1]), y1 = std::max(y1, v[1]);
         if (std::min(x1 - x0, y1 - y0) < 2.f * p.particleDistance)
-            add(PatternIssue::Warning, int(k), -1, p.name + " is only " + cm(std::min(x1 - x0, y1 - y0)) + " across, too small for its " +
-                                                       cm(p.particleDistance) + " cloth",
+            add(PatternIssue::Warning, int(k), -1, p.name + " is only " + cmText(std::min(x1 - x0, y1 - y0)) + " across, too small for its " +
+                                                       cmText(p.particleDistance) + " cloth",
                 "Lower particleDistance on the garment, or for this panel, so it gets at least two rows of cloth.");
         // Grain should run along the length or on the true bias; anything between hangs and stretches unevenly.
         const float off = std::fmod(std::abs(p.grainAngle) * 180.f / 3.14159265f, 90.f);
@@ -124,13 +124,13 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
         {
             const float ease = cap / hole - 1.f;
             if (ease < -0.005f)
-                add(PatternIssue::Error, -1, int(s), "Sleeve cap is " + cm(hole - cap) + " shorter than the armhole",
+                add(PatternIssue::Error, -1, int(s), "Sleeve cap is " + cmText(hole - cap) + " shorter than the armhole",
                     "The sleeve will pull the armhole in. Widen the sleeve at the bicep or raise the cap until it is 1 to 4 cm longer.");
             else if (ease > 0.06f && ease < 0.15f)
-                add(PatternIssue::Warning, -1, int(s), "Sleeve cap has " + cm(cap - hole) + " of ease (" + pct(ease) + ")",
+                add(PatternIssue::Warning, -1, int(s), "Sleeve cap has " + cmText(cap - hole) + " of ease (" + pct(ease) + ")",
                     "Too much to ease in smoothly except in wool; it will pucker. Lower the cap, or gather it on purpose as a puff.");
             else if (ease >= 0.15f)
-                add(PatternIssue::Info, -1, int(s), "Sleeve cap gathers " + cm(cap - hole) + " into the armhole",
+                add(PatternIssue::Info, -1, int(s), "Sleeve cap gathers " + cmText(cap - hole) + " into the armhole",
                     "A gathered cap (puff, leg-of-mutton). For a smooth set-in sleeve keep the ease at 1 to 4 cm.");
 
             // A low, flat cap is a dropped-shoulder sleeve: the body's shoulder has to come down onto the arm to meet it.
@@ -153,7 +153,7 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
                 const float need = body->shoulderWidth * 0.5f + 0.04f;
                 if (tipX < need)
                     add(PatternIssue::Warning, -1, int(s), "The sleeve cap is low and flat but the shoulder ends at the shoulder point",
-                        "A flat cap is a dropped-shoulder sleeve: carry the shoulder line about " + cm(need + 0.04f - tipX) +
+                        "A flat cap is a dropped-shoulder sleeve: carry the shoulder line about " + cmText(need + 0.04f - tipX) +
                             " past the shoulder point and lower the armhole to match, or raise the cap for a set-in sleeve.");
             }
             continue;
@@ -162,11 +162,11 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
         if (seam.shrink < 1.f || ratio >= 0.15f)
         {
             if (ratio >= 0.15f)
-                add(PatternIssue::Info, -1, int(s), "Seam " + std::to_string(s) + " gathers " + cm(std::max(la, lb)) + " into " + cm(std::min(la, lb)),
+                add(PatternIssue::Info, -1, int(s), "Seam " + std::to_string(s) + " gathers " + cmText(std::max(la, lb)) + " into " + cmText(std::min(la, lb)),
                     "Intended gathers are fine; otherwise make both sides the same length.");
         }
         else if (diff > 0.01f && ratio > 0.02f)
-            add(PatternIssue::Warning, -1, int(s), "Seam " + std::to_string(s) + " sides differ by " + cm(diff),
+            add(PatternIssue::Warning, -1, int(s), "Seam " + std::to_string(s) + " sides differ by " + cmText(diff),
                 "Sewn sides should match within a few millimetres unless one is eased or gathered. True the seam: lengthen the short "
                 "side or shorten the long one.");
     }
@@ -204,10 +204,10 @@ std::vector<PatternIssue> checkPattern(const Garment& g, const Body* body)
         {
             const float ease = girth / body->chest - 1.f;
             if (ease < 0.f)
-                add(PatternIssue::Error, -1, -1, "The garment is " + cm(body->chest - girth) + " smaller round the chest than the body",
+                add(PatternIssue::Error, -1, -1, "The garment is " + cmText(body->chest - girth) + " smaller round the chest than the body",
                     "It can't close round the body. Add width to the side seams, or use a stretch fabric and expect it to pull.");
             else if (ease < 0.04f)
-                add(PatternIssue::Warning, -1, -1, "Only " + cm(girth - body->chest) + " of ease round the chest",
+                add(PatternIssue::Warning, -1, -1, "Only " + cmText(girth - body->chest) + " of ease round the chest",
                     "Woven fabric needs about 8 cm to move in; this fits only a knit. Add width at the side seams.");
         }
     }

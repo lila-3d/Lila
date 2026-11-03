@@ -26,7 +26,7 @@ json runMorphCmd(const char* name, const json& call = json::object())
     return ops::execute(name, call);
 }
 
-void settle()
+void settleTimed()
 {
     QElapsedTimer t;
     t.start();
@@ -80,7 +80,7 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     ui::MorphTargetsPanel panel;
     panel.resize(500, 300);
     panel.show();
-    settle();
+    settleTimed();
     auto* tree = panel.findChild<QTreeWidget*>();
     REQUIRE(tree);
     REQUIRE(tree->topLevelItemCount() == 1);
@@ -95,7 +95,7 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     CHECK(weight() == doctest::Approx(0.0));
     UndoStack::get().undo();
     CHECK(weight() == doctest::Approx(0.6));
-    settle();
+    settleTimed();
 
     QMenu menu;
     panel.fillTargetMenu(&menu, tree->topLevelItem(0));
@@ -103,12 +103,12 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     CHECK(find(&menu, "0 to 1")->isChecked());
     REQUIRE(find(&menu, "-1 to 1"));
     find(&menu, "-1 to 1")->trigger();
-    settle();
+    settleTimed();
     CHECK(runMorphCmd("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == -1.0);
     CHECK(slider()->minimum() == -1000);
     CHECK(slider()->maximum() == 1000);
     UndoStack::get().undo();
-    settle();
+    settleTimed();
     CHECK(runMorphCmd("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == 0.0);
     CHECK(slider()->minimum() == 0);
 

@@ -11,10 +11,11 @@
 #include <set>
 #include <sstream>
 
+using json = nlohmann::json;
+
 namespace
 {
 using namespace lila;
-using json = nlohmann::json;
 using media::EventType;
 using media::SimEvent;
 

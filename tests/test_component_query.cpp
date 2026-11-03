@@ -1,15 +1,16 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 
 using namespace lila;
+using namespace testutil;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-
 std::string cube()
 {
     run("newScene");

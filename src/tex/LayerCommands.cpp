@@ -20,7 +20,6 @@ namespace lila::tex
 namespace
 {
 using scene::Node;
-using T = ArgType;
 
 scene::Graph& scene() { return scene::Graph::current(); }
 
@@ -267,6 +266,7 @@ Mask maskFromArgs(Session& s, const Args& a, MaskKind kind, const Layer& l)
 
 std::vector<FlagDef> maskFlags()
 {
+    using T = ArgType;
     return {{"name", "", T::String, nullptr, "Display name."},
             {"mode", "", T::String, nullptr, "How it combines with the masks below: normal (the first default), multiply (later ones), add, subtract, screen, "
                                              "overlay, darken, lighten, difference."},
@@ -410,6 +410,7 @@ json saveSmart(const Args& a)
 
 void registerLayerCommands()
 {
+    using T = ArgType;
     ops::registerCommand({
         .name = "texLayerStack",
         .doc = "A texture set's layer stack as JSON: layers bottom first (with each channel's resolved enable, mode and opacity), masks, anchors, "

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/MainQueue.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
@@ -25,24 +27,14 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
 namespace fs = std::filesystem;
 namespace lib = tex::library;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-void pump()
-{
-    for (int i = 0; i < 4; ++i)
-    {
-        mainq::drain();
-        QApplication::processEvents();
-    }
-}
-
-void registerAll()
+void registerBrowserUi()
 {
     mainq::init();
     ops::registerBuiltins();
@@ -83,7 +75,7 @@ QStringList userIds(const ui::MaterialBrowser& b)
 
 TEST_CASE("material browser searches, filters by category, picks presets and applies by drop and double-click")
 {
-    registerAll();
+    registerBrowserUi();
     run("newScene");
     fs::remove_all(lib::tierDir("user") / "BrowserTest");
     writeMaterial("BrowserTest/brick", {{"name", "Red Brick"}, {"category", "Stone/Brick"}, {"tags", {"wall"}}, {"scaleCm", 100}},

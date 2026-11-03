@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Bake.h"
 #include "bake/BakeNodes.h"
 #include "bake/BakePipeline.h"
@@ -26,42 +27,12 @@
 #include <thread>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_bakef_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
-scene::Graph& graph() { return scene::Graph::current(); }
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    return n->path();
-}
-
-geo::Mesh plane(int subdiv)
-{
-    geo::PlaneOptions o;
-    o.subdivX = o.subdivZ = subdiv;
-    return geo::makePlane(o);
-}
-
 geo::Mesh bumpy(int subdiv)
 {
     geo::Mesh m = plane(subdiv);
@@ -113,7 +84,7 @@ void checkClose(const image::Image& img, const std::vector<float>& want, float t
 
 TEST_CASE("formats round trip: exr float, tiff 8/16/32 deflate and raw, psd layers 8/16")
 {
-    const fs::path dir = tempDir("formats");
+    const fs::path dir = tempDir("lila_bakef_formats");
     const int W = 37, H = 23;
     const std::vector<float> src = ramp(W, H);
     std::string err;
@@ -207,7 +178,7 @@ TEST_CASE("UDIM labels and the metadata sidecar")
     CHECK(bake::formatBits("psd", 32) == 16);
     CHECK(bake::formatBits("tga", 16) == 8);
 
-    const fs::path dir = tempDir("sidecar");
+    const fs::path dir = tempDir("lila_bakef_sidecar");
     image::writeSidecar(dir / "a.png", {{"map", "normal"}});
     CHECK(image::readSidecar(dir / "a.png")["map"] == "normal");
     CHECK(image::readSidecar(dir / "missing.png").is_null());
@@ -216,7 +187,7 @@ TEST_CASE("UDIM labels and the metadata sidecar")
 TEST_CASE("bakes write tiff, float exr, layered psd and sidecars")
 {
     newScene();
-    const fs::path dir = tempDir("bakeformats");
+    const fs::path dir = tempDir("lila_bakef_bakeformats");
     const std::string p = setUp(dir, "tif", 16);
     ops::execute("setBakeOutput", {{"project", p}, {"sidecar", true}, {"dither", true}});
     json r = ops::execute("bake", {{"project", p}, {"maps", {"normal", "height"}}});
@@ -267,7 +238,7 @@ TEST_CASE("bakes write tiff, float exr, layered psd and sidecars")
 TEST_CASE("input hashes skip unchanged bakes, and saving rebakes changed projects")
 {
     newScene();
-    const fs::path dir = tempDir("rebake");
+    const fs::path dir = tempDir("lila_bakef_rebake");
     const std::string p = setUp(dir, "png");
     ops::execute("setBakeMap", {{"args", {"ao"}}, {"project", p}, {"enabled", false}});
     scene::Graph& g = graph();
@@ -323,7 +294,7 @@ TEST_CASE("rebake on save runs off the main thread, restarts when a save changes
 {
     newScene();
     mainq::drain();
-    const fs::path dir = tempDir("rebakeAsync");
+    const fs::path dir = tempDir("lila_bakef_rebakeAsync");
     const std::string p = setUp(dir, "png");
     for (const char* m : {"objectNormal", "curvature", "cavity", "thickness", "ao"})
         ops::execute("setBakeMap", {{"args", {m}}, {"project", p}, {"enabled", false}});
@@ -395,7 +366,7 @@ TEST_CASE("assignTexture wires a file into the material on a face by its name, a
 TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 {
     newScene();
-    const fs::path dir = tempDir("assign");
+    const fs::path dir = tempDir("lila_bakef_assign");
     const std::string p = setUp(dir, "png");
     ops::execute("createMaterial", {{"args", {"M_Crate"}}});
     ops::execute("assignMaterial", {{"args", {"M_Crate", "crate_low"}}});
@@ -421,7 +392,7 @@ TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 
     // A low with no material gets M_<mesh> on every face.
     newScene();
-    const std::string p2 = setUp(tempDir("assign2"), "png");
+    const std::string p2 = setUp(tempDir("lila_bakef_assign2"), "png");
     ops::execute("bake", {{"project", p2}, {"maps", {"normal"}}});
     const json a2 = ops::execute("bakeAssign", {{"project", p2}});
     CHECK(a2["created"] == json::array({"M_crate_low"}));
@@ -443,7 +414,7 @@ TEST_CASE("relative output folders resolve under the workspace, else the saved s
     CHECK(bake::resolveFolder("bake") == (fs::current_path() / "bake").lexically_normal());
     CHECK(bake::resolveFolder("") == (fs::current_path() / "bake").lexically_normal());
 
-    const fs::path root = tempDir("folders");
+    const fs::path root = tempDir("lila_bakef_folders");
     io::setCurrentPath(root / "scenes" / "ship.lila");
     CHECK(bake::resolveFolder("bake") == (root / "scenes" / "bake").lexically_normal());
     CHECK(bake::resolveFolder("../textures") == (root / "textures").lexically_normal());
@@ -461,7 +432,7 @@ TEST_CASE("autoAssign: every finished bake, sync or async, assigns once as its o
 {
     newScene();
     mainq::drain();
-    const fs::path dir = tempDir("autoAssign");
+    const fs::path dir = tempDir("lila_bakef_autoAssign");
     const std::string p = setUp(dir, "png");
     scene::Graph& g = graph();
     const scene::NodeId pid = g.find(p)->id();

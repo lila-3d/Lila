@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "fbx/Fbx.h"
 #include "geo/Primitives.h"
@@ -15,58 +16,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace fbxtest;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_fbx_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
-
-struct UfbxScene
-{
-    ufbx_scene* scene = nullptr;
-    explicit UfbxScene(const fs::path& p)
-    {
-        ufbx_load_opts opts{};
-        ufbx_error err{};
-        std::string s = p.string();
-        scene = ufbx_load_file(s.c_str(), &opts, &err);
-        if (!scene)
-            MESSAGE(std::string(err.description.data, err.description.length));
-    }
-    ~UfbxScene() { ufbx_free_scene(scene); }
-};
-
-glm::dvec3 vec(const ufbx_vec3& v) { return {v.x, v.y, v.z}; }
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) < eps; }
-
-const ufbx_node* nodeNamed(const ufbx_scene& s, const char* name)
-{
-    for (size_t i = 0; i < s.nodes.count; ++i)
-        if (std::string(s.nodes.data[i]->name.data) == name)
-            return s.nodes.data[i];
-    return nullptr;
-}
-
-double maxDiff(const glm::dmat4& a, const glm::dmat4& b)
-{
-    double d = 0.0;
-    for (int c = 0; c < 4; ++c)
-        for (int r = 0; r < 4; ++r)
-            d = std::max(d, std::abs(a[c][r] - b[c][r]));
-    return d;
-}
-
-glm::dmat4 worldOf(const char* name) { return Graph::current().find(name)->as<glm::dmat4>(Transform::kWorldMatrix); }
-
 /** A camera on frames 0, 12 and 24 at 24 fps: moving, turning, zooming and changing its clipping. */
 void keyedCamera(const char* name)
 {

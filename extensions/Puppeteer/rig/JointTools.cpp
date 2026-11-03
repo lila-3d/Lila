@@ -25,7 +25,7 @@ std::optional<std::pair<std::string, std::string>> sidePair(const std::string& n
     return std::nullopt;
 }
 
-void registerCommands(ext::Context& ctx)
+void registerJointToolCommands(ext::Context& ctx)
 {
     using T = ArgType;
     ctx.registerCommand({
@@ -61,7 +61,7 @@ void registerCommands(ext::Context& ctx)
     });
 }
 
-void registerActions(ext::Context& ctx)
+void registerJointToolActions(ext::Context& ctx)
 {
     using ui::Action;
     const char* cat = "Puppeteer Joints";
@@ -91,7 +91,7 @@ void registerActions(ext::Context& ctx)
 
 void registerJointTools(ext::Context& ctx)
 {
-    registerCommands(ctx);
-    registerActions(ctx);
+    registerJointToolCommands(ctx);
+    registerJointToolActions(ctx);
 }
 } // namespace puppeteer

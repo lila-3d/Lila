@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/DisplayLayers.h"
@@ -10,13 +12,11 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 namespace dl = lila::scene::displayLayers;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
-NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
 std::string layerName(const std::string& node)
 {
     const Node* l = dl::layerOf(Graph::current(), idOf(node));

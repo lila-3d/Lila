@@ -22,7 +22,7 @@ namespace
 {
 constexpr const char* kExt = ".lilasmart";
 
-SmartMaterial readFile(const fs::path& path, const std::string& tier)
+SmartMaterial readSmartFile(const fs::path& path, const std::string& tier)
 {
     std::ifstream in(path, std::ios::binary);
     if (!in)
@@ -84,11 +84,11 @@ void renumber(Layer& l, LayerStack& stack, std::map<std::string, std::string>& i
         renumber(c, stack, ids);
 }
 
-void eachLayer(Layer& l, const std::function<void(Layer&)>& fn)
+void visitLayers(Layer& l, const std::function<void(Layer&)>& fn)
 {
     fn(l);
     for (Layer& c : l.children)
-        eachLayer(c, fn);
+        visitLayers(c, fn);
 }
 } // namespace
 
@@ -156,7 +156,7 @@ std::vector<SmartMaterial> listSmartMaterials()
         {
             try
             {
-                SmartMaterial m = readFile(f, dirs[i].second);
+                SmartMaterial m = readSmartFile(f, dirs[i].second);
                 byName[m.name] = std::move(m);
             }
             catch (const std::exception&)
@@ -175,13 +175,13 @@ SmartMaterial loadSmartMaterial(const std::string& nameOrPath)
     const fs::path p = paths::fromUtf8(nameOrPath);
     std::error_code ec;
     if (p.has_extension() && fs::is_regular_file(p, ec))
-        return readFile(p, "file");
+        return readSmartFile(p, "file");
     const auto dirs = tieredDirs();
     for (size_t i = dirs.size(); i-- > 0;)
     {
         fs::path f = dirs[i].first / (nameOrPath + kExt);
         if (fs::is_regular_file(f, ec))
-            return readFile(f, dirs[i].second);
+            return readSmartFile(f, dirs[i].second);
     }
     const std::string want = lower(nameOrPath);
     for (SmartMaterial& m : listSmartMaterials())
@@ -209,7 +209,7 @@ Layer instantiateLayer(const json& layerJson, LayerStack& stack)
 
     const std::map<std::string, std::string> existing = stack.anchors();
     std::map<std::string, std::string> anchors;
-    eachLayer(l, [&](Layer& x) {
+    visitLayers(l, [&](Layer& x) {
         if (x.kind == LayerKind::Instance)
             if (auto it = ids.find(x.source); it != ids.end())
                 x.source = it->second;
@@ -222,7 +222,7 @@ Layer instantiateLayer(const json& layerJson, LayerStack& stack)
         x.anchor = name;
     });
     if (!anchors.empty())
-        eachLayer(l, [&](Layer& x) {
+        visitLayers(l, [&](Layer& x) {
             for (Mask& m : x.masks)
             {
                 if (auto it = anchors.find(m.anchor); m.kind == MaskKind::Anchor && it != anchors.end())

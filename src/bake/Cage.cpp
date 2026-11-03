@@ -1,5 +1,6 @@
 #include "bake/Cage.h"
 
+#include "bake/BakeCommon.h"
 #include "bake/BakeNodes.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
@@ -22,40 +23,16 @@ namespace lila::bake
 {
 namespace
 {
-double edge2(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
+using detail::edgeFunction;
+using detail::exportedMesh;
+using detail::meshByName;
+using detail::worldOf;
 
 /** Each point once, at its largest weight. */
 void mergeWeights(std::vector<std::pair<geo::Index, float>>& w)
 {
     std::ranges::sort(w, [](const auto& a, const auto& b) { return a.first < b.first || (a.first == b.first && a.second > b.second); });
     w.erase(std::unique(w.begin(), w.end(), [](const auto& a, const auto& b) { return a.first == b.first; }), w.end());
-}
-
-glm::dmat4 worldOf(scene::Graph& g, scene::NodeId id)
-{
-    const scene::PlugValue v = g.value({id, scene::Transform::kWorldMatrix, -1});
-    return std::holds_alternative<glm::dmat4>(v) ? std::get<glm::dmat4>(v) : glm::dmat4(1.0);
-}
-
-scene::MeshPtr exported(scene::Graph& g, scene::NodeId id)
-{
-    scene::MeshPtr m = scene::modifiers::exportMesh(g, id);
-    if (!m)
-        m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
-    return m;
-}
-
-scene::Node* meshByName(scene::Graph& g, const std::string& name)
-{
-    try
-    {
-        scene::Node* n = g.find(name);
-        return n && n->type().isA("mesh") ? n : nullptr;
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
 }
 
 /** World positions as a mesh at the scene root: the low's topology with the given points. */
@@ -223,10 +200,10 @@ bool UvLayout::triangleAt(const glm::dvec2& p, geo::Index& triangle, glm::dvec3&
     {
         const geo::Index* c = &mTris.corners[size_t(t) * 3];
         const glm::dvec2 a = mUv[c[0]], b = mUv[c[1]], d = mUv[c[2]];
-        const double area = edge2(a, b, d);
+        const double area = edgeFunction(a, b, d);
         if (std::abs(area) < 1e-18)
             continue;
-        const glm::dvec3 w(edge2(b, d, p) / area, edge2(d, a, p) / area, edge2(a, b, p) / area);
+        const glm::dvec3 w(edgeFunction(b, d, p) / area, edgeFunction(d, a, p) / area, edgeFunction(a, b, p) / area);
         if (w.x >= -1e-9 && w.y >= -1e-9 && w.z >= -1e-9)
         {
             triangle = t;
@@ -472,7 +449,7 @@ double groupFrontal(scene::Graph& g, const GroupSettings& s)
     glm::dvec3 lo(std::numeric_limits<double>::max()), hi(-std::numeric_limits<double>::max());
     for (const std::string& name : s.lows)
         if (scene::Node* n = meshByName(g, name))
-            if (scene::MeshPtr m = exported(g, n->id()))
+            if (scene::MeshPtr m = exportedMesh(g, n->id()))
             {
                 const glm::dmat4 w = worldOf(g, n->id());
                 for (geo::Index p = 0; p < m->pointCapacity(); ++p)
@@ -530,7 +507,7 @@ scene::Node* createCage(scene::Graph& g, scene::NodeId group, const std::string&
     const scene::NodeId lowId = cageLow(g, *grp);
     scene::Node* low = g.node(lowId);
     GroupSettings s = groupSettings(*grp);
-    scene::MeshPtr m = exported(g, lowId);
+    scene::MeshPtr m = exportedMesh(g, lowId);
     if (!m)
         throw std::runtime_error(low->name() + " has no mesh");
     const std::vector<glm::dvec3> pts = autoCagePoints(*m, worldOf(g, lowId), groupFrontal(g, s), s.cageOffset);
@@ -556,7 +533,7 @@ void cageFromPaint(scene::Graph& g, scene::NodeId group)
     if (!cage)
         throw std::runtime_error(grp->name() + " has no editable cage (bakeCage create=True makes one)");
     const scene::NodeId lowId = cageLow(g, *grp);
-    scene::MeshPtr m = exported(g, lowId);
+    scene::MeshPtr m = exportedMesh(g, lowId);
     const scene::PlugRef base = scene::modifiers::editPlug(g, cage->id());
     const scene::MeshPtr cur = std::get<scene::MeshPtr>(g.storedValue(base));
     if (!m || !cur)

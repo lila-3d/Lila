@@ -5,6 +5,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "core/Progress.h"
+#include "retopo/CommandArgs.h"
 #include "retopo/LiveRelax.h"
 #include "retopo/RetopoCommands.h"
 #include "scene/Components.h"
@@ -29,25 +30,6 @@ using scene::Node;
 using scene::PlugRef;
 using scene::Transform;
 
-Graph& graph() { return Graph::current(); }
-
-glm::dmat4 worldOf(const Node& n) { return n.as<glm::dmat4>(Transform::kWorldMatrix); }
-
-Node& meshArg(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return *n;
-}
-
-geo::Mesh baseMesh(const PlugRef& p)
-{
-    graph().evaluate();
-    const MeshPtr& m = std::get<MeshPtr>(graph().storedValue(p));
-    return m ? *m : geo::Mesh();
-}
-
 Node& target(const Args& a, const char* cmd) { return retopoTargetNode(a, cmd, a.get<bool>("create")); }
 
 std::optional<geo::SymmetryPlane> symmetryPlane(const Node& n)
@@ -70,11 +52,11 @@ struct Surface
 const Surface* surfaceFor(const Node& retopo)
 {
     static Surface cache;
-    scene::NodeId ref = retopoDrawReference(graph(), retopo.id());
-    Node* r = graph().node(ref);
+    scene::NodeId ref = retopoDrawReference(Graph::current(), retopo.id());
+    Node* r = Graph::current().node(ref);
     if (!r)
         return nullptr;
-    graph().evaluate();
+    Graph::current().evaluate();
     MeshPtr m = r->as<MeshPtr>(MeshNode::kOutMesh);
     if (!m || m->numFaces() == 0)
         return nullptr;
@@ -447,7 +429,7 @@ void registerTopologyCommands()
                   referenceFlag,
                   createFlag},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = target(a, "retopoSetGuides");
             glm::dmat4 toLocal = glm::inverse(worldOf(n));
             json out = json::array();
@@ -499,7 +481,7 @@ void registerTopologyCommands()
             ConstructKind kind;
             if (!constructKindFromName(a.get<std::string>("kind", "patch"), kind))
                 throw CommandError(std::string("retopoConstruct: kind must be ") + kKindChoicesDoc);
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = target(a, "retopoConstruct");
             const Surface* surface = surfaceFor(n);
             if (!surface && kind != ConstructKind::Stroke)
@@ -611,7 +593,7 @@ void registerTopologyCommands()
         .doc = "Topology: delete constructs by id, with the faces they made (points other faces share stay).",
         .flags = {meshFlag, {"ids", "", T::List, json::array(), "Construct ids."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = meshArg(a.get<std::string>("mesh"), "retopoConstructDelete");
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
@@ -635,7 +617,7 @@ void registerTopologyCommands()
                "freezes them all.",
         .flags = {meshFlag, {"ids", "", T::List, json::array(), "Construct ids; empty for all."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = meshArg(a.get<std::string>("mesh"), "retopoConstructFreeze");
             PlugRef base = scene::modifiers::editPlug(g, n.id());
             geo::Mesh m = baseMesh(base);
@@ -667,7 +649,7 @@ void registerTopologyCommands()
                   {"squareness", "", T::Float, 0.7, "0 only evens spacing, 1 pulls faces fully square.", {}, {}, 0.0, 1.0},
                   {"pinBoundary", "", T::Bool, true, "Keep border points fixed; off lets them slide along the border."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Node& n = meshArg(a.get<std::string>("mesh"), "retopoSettle");
             const Surface* surface = surfaceFor(n);
             PlugRef base = scene::modifiers::editPlug(g, n.id());

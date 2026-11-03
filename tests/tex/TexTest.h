@@ -1,13 +1,17 @@
 #pragma once
 
 #include "core/ImageIO.h"
+#include "ops/Command.h"
 #include "tex/Evaluate.h"
 #include "tex/Graph.h"
 #include "tex/Plan.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 
 namespace textest
@@ -82,5 +86,50 @@ inline double maxDiff(const image::Image& a, const image::Image& b)
     for (size_t i = 0; i < a.rgba.size(); ++i)
         m = std::max(m, std::abs(double(a.rgba[i]) - double(b.rgba[i])));
     return m;
+}
+
+inline json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
+
+inline json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
+
+/** g with `node.socket` into a fresh Material Output's baseColor. */
+inline Graph into(Graph g, const std::string& from)
+{
+    g.nodes.push_back({"Output", kMaterialOutputType, {0.0, 0.0}, json::object()});
+    link(g, from, "Output.baseColor");
+    return g;
+}
+
+/** An emptied temp folder for one test. */
+inline std::filesystem::path tempDir(const std::string& name)
+{
+    std::filesystem::path d = std::filesystem::temp_directory_path() / "lila_tex_tests" / name;
+    std::filesystem::remove_all(d);
+    std::filesystem::create_directories(d);
+    return d;
+}
+
+inline std::filesystem::path goldenDir() { return std::filesystem::path(LILA_SOURCE_DIR) / "tests" / "data" / "tex"; }
+
+/** Compares against tests/data/tex/<name>.png (16 bit); writes it when missing or LILA_TEX_UPDATE_GOLDENS is set. */
+inline void golden(const std::string& name, const image::Image& img)
+{
+    std::filesystem::path path = goldenDir() / (name + ".png");
+    if (std::getenv("LILA_TEX_UPDATE_GOLDENS") || !std::filesystem::exists(path))
+    {
+        std::filesystem::create_directories(goldenDir());
+        image::write(path, img, 16);
+        MESSAGE("wrote golden " << path.string());
+        return;
+    }
+    std::string err;
+    image::Image ref = image::readPng(path, &err);
+    REQUIRE_MESSAGE(ref.width == img.width, err);
+    // PNG holds 0 to 1; the evaluator's values clamp the same way before comparing.
+    image::Image clamped = img;
+    for (float& v : clamped.rgba)
+        v = std::clamp(v, 0.0f, 1.0f);
+    CAPTURE(name);
+    CHECK(maxDiff(clamped, ref) < 2e-3);
 }
 } // namespace textest

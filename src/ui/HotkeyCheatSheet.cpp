@@ -30,14 +30,14 @@ QPointer<HotkeyCheatSheet> gSheet;
 
 /** A release sooner than this after the press is a tap, which leaves the sheet open. */
 constexpr qint64 kTapMs = 300;
-constexpr double kTitleHeight = 30;
+constexpr double kSheetTitleHeight = 30;
 constexpr double kFilterHeight = 26;
 /** Row heights the layout tries, largest first; past the smallest the list scrolls rather than shrinking. */
 constexpr double kLineMax = 26;
 constexpr double kLineMin = 22;
 constexpr double kMinColumnWidth = 300;
 constexpr int kMaxColumns = 5;
-constexpr double kColumnGap = 36;
+constexpr double kSheetColumnGap = 36;
 /** A category shorter than this moves whole to the next column instead of splitting. */
 constexpr int kMinSplitRows = 6;
 
@@ -77,7 +77,7 @@ QWidget* mainWindowOf(QWidget* w)
     return nullptr;
 }
 
-QWidget* hostWindow()
+QWidget* hostWindowNearCursor()
 {
     if (QWidget* w = mainWindowOf(QApplication::widgetAt(QCursor::pos())))
         return w;
@@ -103,7 +103,7 @@ void HotkeyCheatSheet::open()
             dismiss();
         return;
     }
-    QWidget* host = hostWindow();
+    QWidget* host = hostWindowNearCursor();
     if (!host)
         return;
     gSheet = new HotkeyCheatSheet(host, QApplication::focusWidget());
@@ -265,8 +265,8 @@ void HotkeyCheatSheet::relayout()
     if (mShown.empty() || list.width() <= 0)
         return;
 
-    const int columns = std::clamp(int((list.width() + kColumnGap) / (kMinColumnWidth + kColumnGap)), 1, kMaxColumns);
-    const double colWidth = (list.width() - kColumnGap * (columns - 1)) / columns;
+    const int columns = std::clamp(int((list.width() + kSheetColumnGap) / (kMinColumnWidth + kSheetColumnGap)), 1, kMaxColumns);
+    const double colWidth = (list.width() - kSheetColumnGap * (columns - 1)) / columns;
 
     // Pours the categories down columns of height h; false when they need more columns than there are.
     auto pour = [&](double line, double h, std::vector<Placed>* out, double* used) {
@@ -280,7 +280,7 @@ void HotkeyCheatSheet::relayout()
         };
         auto place = [&](const Group& g, int row, bool cont) {
             if (out)
-                out->push_back({&g, row, col, cont, QPointF(col * (colWidth + kColumnGap), y)});
+                out->push_back({&g, row, col, cont, QPointF(col * (colWidth + kSheetColumnGap), y)});
             y += row < 0 ? hdr : line;
         };
         for (const Group& g : mShown)
@@ -373,7 +373,7 @@ QRectF HotkeyCheatSheet::panelRect() const
 QRectF HotkeyCheatSheet::listRect() const
 {
     QRectF list = panelRect().adjusted(28, 22, -28, -22);
-    list.setTop(list.top() + kTitleHeight + kFilterHeight + 16);
+    list.setTop(list.top() + kSheetTitleHeight + kFilterHeight + 16);
     return list;
 }
 
@@ -381,7 +381,7 @@ void HotkeyCheatSheet::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
     const QRectF content = panelRect().adjusted(28, 22, -28, -22);
-    mFilter->setGeometry(QRectF(content.left(), content.top() + kTitleHeight, std::min(360.0, content.width()), kFilterHeight).toRect());
+    mFilter->setGeometry(QRectF(content.left(), content.top() + kSheetTitleHeight, std::min(360.0, content.width()), kFilterHeight).toRect());
     relayout();
 }
 

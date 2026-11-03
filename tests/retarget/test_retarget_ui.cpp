@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "scene/Anim.h"
 #include "scene/Graph.h"
@@ -22,11 +23,10 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using rtest::run;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 /** Two small bipeds: Hips (source, keyed forward) and pelvis (target). */
 void makeScene()
 {

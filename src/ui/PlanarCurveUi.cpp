@@ -31,11 +31,10 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::NodeId;
 
-void cmd(std::string id, std::string label, std::string category, const char* command, json call, std::string doc)
+void addCommand(std::string id, std::string label, std::string category, const char* command, json call, std::string doc)
 {
     std::string py = ops::toPython(command, call);
     actions::add({.id = std::move(id), .label = std::move(label), .category = std::move(category), .doc = std::move(doc), .python = py,
@@ -69,7 +68,7 @@ std::vector<NodeId> textSources(NodeId from)
     return found;
 }
 
-QDoubleSpinBox* spin(double lo, double hi, double step, int decimals, const QString& suffix, double def)
+QDoubleSpinBox* optionSpin(double lo, double hi, double step, int decimals, const QString& suffix, double def)
 {
     auto* s = new QDoubleSpinBox;
     s->setRange(lo, hi);
@@ -81,7 +80,7 @@ QDoubleSpinBox* spin(double lo, double hi, double step, int decimals, const QStr
     return s;
 }
 
-QToolButton* toggle(const char* iconName, const QString& tip)
+QToolButton* checkButton(const char* iconName, const QString& tip)
 {
     auto* b = new QToolButton;
     b->setIcon(icon(iconName));
@@ -151,10 +150,10 @@ QWidget* textPanel(NodeId textNode)
     // Formatting bar: bold, italic, underline, strike, then alignment.
     auto* bar = new QHBoxLayout;
     bar->setSpacing(1);
-    auto* bold = toggle("bold", "Bold: the family's bold style, or a heavier outline when it has none (Weight).");
-    auto* italic = toggle("italic", "Italic: the family's italic style, or a slant when it has none (Slant).");
-    auto* under = toggle("underline", "Underline");
-    auto* strike = toggle("strikethrough", "Strikethrough");
+    auto* bold = checkButton("bold", "Bold: the family's bold style, or a heavier outline when it has none (Weight).");
+    auto* italic = checkButton("italic", "Italic: the family's italic style, or a slant when it has none (Slant).");
+    auto* under = checkButton("underline", "Underline");
+    auto* strike = checkButton("strikethrough", "Strikethrough");
     for (QToolButton* b : {bold, italic, under, strike})
         bar->addWidget(b);
     bar->addSpacing(8);
@@ -163,7 +162,7 @@ QWidget* textPanel(NodeId textNode)
     const char* alignTips[] = {"Align left", "Center", "Align right", "Justify: wrapped lines fill the wrap width (or the widest line)"};
     for (int k = 0; k < 4; ++k)
     {
-        auto* b = toggle(alignIcons[k], alignTips[k]);
+        auto* b = checkButton(alignIcons[k], alignTips[k]);
         aligns->addButton(b, k);
         bar->addWidget(b);
     }
@@ -245,16 +244,16 @@ QWidget* textPanel(NodeId textNode)
         });
         form->addRow(QString(), c);
     };
-    addSpin("size", "Size", "Em size.", spin(0.001, 1e5, 0.5, 3, " cm", 10.0));
+    addSpin("size", "Size", "Em size.", optionSpin(0.001, 1e5, 0.5, 3, " cm", 10.0));
     addCombo("anchor", "Anchor", "Which part of the block sits on the origin.", {"Baseline", "Top", "Middle", "Bottom"});
-    addSpin("wrapWidth", "Wrap Width", "Lines break between words to fit this width; 0 breaks only at new lines.", spin(0.0, 1e5, 1.0, 3, " cm", 0.0));
-    addSpin("letterSpacing", "Letter Spacing", "Extra space after each character.", spin(-1e4, 1e4, 0.1, 3, " cm", 0.0));
-    addSpin("wordSpacing", "Word Spacing", "Extra space after each space.", spin(-1e4, 1e4, 0.1, 3, " cm", 0.0));
-    addSpin("lineSpacing", "Line Spacing", "Baseline to baseline, in the font's line heights.", spin(0.0, 100.0, 0.05, 3, QString(), 1.0));
+    addSpin("wrapWidth", "Wrap Width", "Lines break between words to fit this width; 0 breaks only at new lines.", optionSpin(0.0, 1e5, 1.0, 3, " cm", 0.0));
+    addSpin("letterSpacing", "Letter Spacing", "Extra space after each character.", optionSpin(-1e4, 1e4, 0.1, 3, " cm", 0.0));
+    addSpin("wordSpacing", "Word Spacing", "Extra space after each space.", optionSpin(-1e4, 1e4, 0.1, 3, " cm", 0.0));
+    addSpin("lineSpacing", "Line Spacing", "Baseline to baseline, in the font's line heights.", optionSpin(0.0, 100.0, 0.05, 3, QString(), 1.0));
     addCombo("textCase", "Case", "Changes the letters' case without editing the text.", {"As Typed", "UPPER", "lower", "Title"});
-    addSpin("width", "Width", "Horizontal scale of the glyphs: below 1 condenses, above 1 widens.", spin(0.01, 100.0, 0.05, 3, QString(), 1.0));
-    addSpin("slant", "Slant", "Oblique slant; positive leans right.", spin(-60.0, 60.0, 1.0, 2, QString::fromUtf8("°"), 0.0));
-    addSpin("weight", "Weight", "Grows each letter's outline (negative thins it).", spin(-1e4, 1e4, 0.01, 3, " cm", 0.0));
+    addSpin("width", "Width", "Horizontal scale of the glyphs: below 1 condenses, above 1 widens.", optionSpin(0.01, 100.0, 0.05, 3, QString(), 1.0));
+    addSpin("slant", "Slant", "Oblique slant; positive leans right.", optionSpin(-60.0, 60.0, 1.0, 2, QString::fromUtf8("°"), 0.0));
+    addSpin("weight", "Weight", "Grows each letter's outline (negative thins it).", optionSpin(-1e4, 1e4, 0.01, 3, " cm", 0.0));
     addCheck("kerning", "Kerning", "Use the font's kerning.", true);
     addCheck("mergeOverlaps", "Merge Overlaps", "Join a letter's overlapping contours so each area fills once.", true);
     v->addLayout(form);
@@ -305,31 +304,31 @@ QWidget* textSection(NodeId id)
 
 void registerPlanarCurveUi()
 {
-    cmd("curve.text", "Text", "Curves", "textCurves", json::object(),
+    addCommand("curve.text", "Text", "Curves", "textCurves", json::object(),
         "Makes text as closed Bezier curves from a font, kept live: select the curve (or what you built from it) and edit the text, font and formatting in the Attribute Editor's Text section.");
-    cmd("curve.textMesh", "Text Mesh", "Curves", "textMesh", json::object(),
+    addCommand("curve.textMesh", "Text Mesh", "Curves", "textMesh", json::object(),
         "Makes text as a bevelled solid mesh in one step. The text, font, depth and bevels stay live: select the mesh and edit them in the Attribute Editor.");
     attributeEditor::addSection("curve", "Text", textSection);
     attributeEditor::addSection("mesh", "Text", textSection);
-    cmd("curve.bevelPlus", "Bevel Plus", "Curves", "bevelPlus", json::object(),
+    addCommand("curve.bevelPlus", "Bevel Plus", "Curves", "bevelPlus", json::object(),
         "Turns the selected closed planar curves into a bevelled solid; curves inside others become holes. Live history.");
-    cmd("curve.booleanUnion", "Curve Union", "Curves", "curveBoolean", {{"operation", "union"}},
+    addCommand("curve.booleanUnion", "Curve Union", "Curves", "curveBoolean", {{"operation", "union"}},
         "Joins the selected closed planar curves into one outline, live.");
-    cmd("curve.booleanSubtract", "Curve Subtract", "Curves", "curveBoolean", {{"operation", "subtract"}},
+    addCommand("curve.booleanSubtract", "Curve Subtract", "Curves", "curveBoolean", {{"operation", "subtract"}},
         "Cuts the other selected closed curves out of the first selected, live.");
-    cmd("curve.booleanIntersect", "Curve Intersect", "Curves", "curveBoolean", {{"operation", "intersect"}},
+    addCommand("curve.booleanIntersect", "Curve Intersect", "Curves", "curveBoolean", {{"operation", "intersect"}},
         "Keeps what the selected closed curves all cover, live.");
-    cmd("curve.booleanXor", "Curve Difference (Xor)", "Curves", "curveBoolean", {{"operation", "xor"}},
+    addCommand("curve.booleanXor", "Curve Difference (Xor)", "Curves", "curveBoolean", {{"operation", "xor"}},
         "Keeps what an odd number of the selected closed curves cover, live.");
-    cmd("curve.offsetRegion", "Offset Region", "Curves", "offsetRegion", json::object(),
+    addCommand("curve.offsetRegion", "Offset Region", "Curves", "offsetRegion", json::object(),
         "Grows or shrinks the region the selected closed curves bound, merging where loops meet, live.");
-    cmd("curve.insetSkeleton", "Inset Along Skeleton", "Curves", "insetCurve", json::object(),
+    addCommand("curve.insetSkeleton", "Inset Along Skeleton", "Curves", "insetCurve", json::object(),
         "Insets the selected closed curves along the straight skeleton: mitred corners, splitting where the shape pinches. Live.");
-    cmd("curve.centerLine", "Center Line", "Curves", "curveCenterLine", json::object(),
+    addCommand("curve.centerLine", "Center Line", "Curves", "curveCenterLine", json::object(),
         "Makes the centre lines (straight skeleton) of the region the selected closed curves bound, live.");
-    cmd("curve.roof", "Roof from Footprint", "Curves", "roof", json::object(),
+    addCommand("curve.roof", "Roof from Footprint", "Curves", "roof", json::object(),
         "Builds a roof over the selected closed footprint curves: hips, valleys and ridges at one pitch, gables where asked. Live.");
-    cmd("mesh.insetRegion", "Inset Region", "Mesh", "polyInsetRegion", json::object(),
+    addCommand("mesh.insetRegion", "Inset Region", "Mesh", "polyInsetRegion", json::object(),
         "Insets each flat region of the selected faces as one along the straight skeleton, splitting where it pinches.");
 }
 } // namespace lila::ui

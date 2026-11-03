@@ -15,6 +15,7 @@
 #include "ui/GnViewerDraw.h"
 #include "ui/NodeEditor.h"
 #include "ui/Theme.h"
+#include "ui/UiCommands.h"
 
 #include <QBoxLayout>
 #include <QToolButton>
@@ -26,7 +27,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
 json runGn(const std::string& name, const json& call)
 {
@@ -40,8 +40,6 @@ json runGn(const std::string& name, const json& call)
         return nullptr;
     }
 }
-
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
 class GnBackend final : public GraphBackend
 {
@@ -114,7 +112,7 @@ public:
             return;
         UndoChunk chunk("View Node");
         std::string viewer;
-        json info = runGn("gnGroupInfo", args({r.group}));
+        json info = runGn("gnGroupInfo", argsCall({r.group}));
         if (info.is_object())
             for (const json& n : info["definition"].value("nodes", json::array()))
                 if (n.value("type", "") == "Viewer")
@@ -133,12 +131,12 @@ public:
         if (!field.empty())
         {
             std::string dt = fieldType == "rotation" ? "vector" : fieldType;
-            runGn("gnSetValue", args({r.group, viewer + ".dataType", dt}));
-            runGn("gnConnect", args({r.group, r.node + "." + field, viewer + ".value"}));
+            runGn("gnSetValue", argsCall({r.group, viewer + ".dataType", dt}));
+            runGn("gnConnect", argsCall({r.group, r.node + "." + field, viewer + ".value"}));
         }
         if (!geometry.empty())
-            runGn("gnConnect", args({r.group, r.node + "." + geometry, viewer + ".geometry"}));
-        runGn("gnSetActiveViewer", args({r.group, viewer}));
+            runGn("gnConnect", argsCall({r.group, r.node + "." + geometry, viewer + ".geometry"}));
+        runGn("gnSetActiveViewer", argsCall({r.group, viewer}));
     }
 
     bool canSend() const override { return true; }
@@ -247,7 +245,7 @@ void GnBackend::addToolbarButtons(QBoxLayout* bar, NodeEditor& editor) const
         UndoChunk chunk("Apply Geometry Nodes");
         for (scene::NodeId id : std::vector<scene::NodeId>(g.selection()))
             if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
-                runGn("gnApply", args({n->path(), group.toStdString()}));
+                runGn("gnApply", argsCall({n->path(), group.toStdString()}));
     });
 }
 } // namespace

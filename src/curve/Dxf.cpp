@@ -2,6 +2,7 @@
 
 #include "core/UninitVector.h"
 
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 #include "curve/Tessellate.h"
 #include "geo/PointWeld.h"
@@ -29,7 +30,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using M4 = glm::dmat4;
 
 struct Group
@@ -982,7 +982,7 @@ private:
 
 // Writing
 
-std::string num(double v)
+std::string exactNumber(double v)
 {
     if (std::abs(v) < 1e-300)
         v = 0.0;
@@ -1042,7 +1042,7 @@ private:
         mOut += v;
         mOut += '\n';
     }
-    void pair(int code, double v) { pair(code, num(v)); }
+    void pair(int code, double v) { pair(code, exactNumber(v)); }
     void pairI(int code, int64_t v) { pair(code, std::to_string(v)); }
     void point(int code, const D3& p)
     {

@@ -52,7 +52,7 @@ glm::vec4 accentInk() { return themeSrgb("accent", glm::vec4(0.92f, 0.92f, 0.92f
 bool autoConstraints() { return prefs().value<bool>("general", "/sketch/autoConstraints", true); }
 void setAutoConstraints(bool on) { prefs().set("general", "/sketch/autoConstraints", on); }
 
-enum class Mode
+enum class SketchMode
 {
     Select,
     Line,
@@ -60,14 +60,14 @@ enum class Mode
     Circle,
 };
 
-const char* modeName(Mode m)
+const char* modeName(SketchMode m)
 {
     switch (m)
     {
-    case Mode::Select: return "Select";
-    case Mode::Line: return "Line";
-    case Mode::Arc: return "Arc";
-    case Mode::Circle: return "Circle";
+    case SketchMode::Select: return "Select";
+    case SketchMode::Line: return "Line";
+    case SketchMode::Arc: return "Arc";
+    case SketchMode::Circle: return "Circle";
     }
     return "";
 }
@@ -89,7 +89,7 @@ struct Button
         Dimension,
         Auto,
     } kind;
-    Mode mode = Mode::Select;
+    SketchMode mode = SketchMode::Select;
     sk::Type type = sk::Type::Coincident;
     std::string key;
     QRectF rect;
@@ -116,7 +116,7 @@ std::string keyOf(sk::Type t)
     return {};
 }
 
-void runUi(const char* cmd, const json& call, QString* error)
+void runSketchCommand(const char* cmd, const json& call, QString* error)
 {
     try
     {
@@ -140,7 +140,7 @@ class SketchTool final : public ViewportTool
 {
 public:
     const char* name() const override { return "Sketch"; }
-    std::optional<QCursor> cursor() const override { return mMode == Mode::Select ? std::nullopt : std::optional(QCursor(Qt::CrossCursor)); }
+    std::optional<QCursor> cursor() const override { return mMode == SketchMode::Select ? std::nullopt : std::optional(QCursor(Qt::CrossCursor)); }
 
     void activate() override
     {
@@ -158,7 +158,7 @@ public:
                     mNode = id;
                     break;
                 }
-        mMode = mNode == scene::kNoNode ? Mode::Line : Mode::Select;
+        mMode = mNode == scene::kNoNode ? SketchMode::Line : SketchMode::Select;
         log::info("Sketch: L line, A arc, R circle, S select; select geometry then a constraint key or D to dimension; double-click a "
                   "dimension to type its value");
     }
@@ -185,7 +185,7 @@ public:
         json call = planeArgs();
         call.update({{"args", {nodePath()}}, {"type", sk::typeName(t)}, {"refs", refs}});
         QString err;
-        runUi("sketchConstrain", call, &err);
+        runSketchCommand("sketchConstrain", call, &err);
         if (err.isEmpty())
             mSel.clear();
         else
@@ -230,7 +230,7 @@ public:
         viewportTools::requestRedraw();
     }
 
-    void setMode(Mode m)
+    void setMode(SketchMode m)
     {
         cancelDrawing();
         mMode = m;
@@ -254,7 +254,7 @@ public:
         const bool dbl = mClick.isValid() && mClick.elapsed() < QApplication::doubleClickInterval() && distPx(px, mClickPx) < 5.0;
         mClick.start();
         mClickPx = px;
-        if (mMode != Mode::Select)
+        if (mMode != SketchMode::Select)
         {
             place(px, view);
             return true;
@@ -322,7 +322,7 @@ public:
             viewportTools::requestRedraw();
             return true;
         }
-        if (mMode != Mode::Select)
+        if (mMode != SketchMode::Select)
             mInference = infer(e->position(), view);
         viewportTools::requestRedraw();
         return false;
@@ -375,7 +375,7 @@ public:
         mView = view;
         refresh();
         // Hover is picked against last frame's glyphs and labels, before they are laid out again.
-        const Pick hover = mMode == Mode::Select && !mDragging && mHoverView == view.camera ? pickAt(mHover, view) : Pick{};
+        const Pick hover = mMode == SketchMode::Select && !mDragging && mHoverView == view.camera ? pickAt(mHover, view) : Pick{};
         mGlyphs.clear();
         mLabels.clear();
         const sketchUi::Display* disp = nodeOk() ? sketchUi::display(*node()) : nullptr;
@@ -506,7 +506,7 @@ private:
     Splines withChain() const
     {
         Splines s = mSplines;
-        if (mMode == Mode::Line && mPlaced.size() >= 2)
+        if (mMode == SketchMode::Line && mPlaced.size() >= 2)
         {
             Spline c;
             c.kind = curve::Kind::Poly;
@@ -527,11 +527,11 @@ private:
             return sk::Inference{*at, {}};
         const double tol = kInferPx * unitsPerPixel(*at, view);
         std::optional<D2> prev;
-        if (mMode == Mode::Line && !mPlaced.empty())
+        if (mMode == SketchMode::Line && !mPlaced.empty())
             prev = mPlaced.back().at;
         sk::Inference inf = sk::infer(withChain(), mPlane, *at, prev, tol);
         // A chain with one point has no spline yet: closing onto it isn't possible, but snapping to it is.
-        if (mMode == Mode::Line && mPlaced.size() == 1 && inf.constraints.empty() && glm::distance(mPlaced[0].at, *at) < tol)
+        if (mMode == SketchMode::Line && mPlaced.size() == 1 && inf.constraints.empty() && glm::distance(mPlaced[0].at, *at) < tol)
             inf.at = mPlaced[0].at;
         return inf;
     }
@@ -547,7 +547,7 @@ private:
             mPlaneLocked = true;
         switch (mMode)
         {
-        case Mode::Line:
+        case SketchMode::Line:
         {
             const int chain = int(mSplines.size());
             // Clicking the chain's first point closes it.
@@ -563,12 +563,12 @@ private:
             mPlaced.push_back(std::move(p));
             break;
         }
-        case Mode::Circle:
+        case SketchMode::Circle:
             mPlaced.push_back(std::move(p));
             if (mPlaced.size() == 2)
                 commitCircle();
             break;
-        case Mode::Arc:
+        case SketchMode::Arc:
             mPlaced.push_back(std::move(p));
             if (mPlaced.size() == 3)
                 commitArc();
@@ -1012,7 +1012,7 @@ private:
             call["points"] = refs;
             call["by"] = {by.x, by.y, by.z};
         }
-        runUi("sketchDrag", call, nullptr);
+        runSketchCommand("sketchDrag", call, nullptr);
     }
 
     template <class V, class T> static void toggle(V& list, const T& v)
@@ -1079,7 +1079,7 @@ private:
         else
             call["expr"] = text.toStdString();
         QString err;
-        runUi("sketchEditDimension", call, &err);
+        runSketchCommand("sketchEditDimension", call, &err);
         if (!err.isEmpty())
             flash(err);
         viewportTools::requestRedraw();
@@ -1117,19 +1117,19 @@ private:
     bool toolKey(int key, Qt::KeyboardModifiers mods)
     {
         const bool shift = mods & Qt::ShiftModifier;
-        if (auto it = constraintKeys().find(key); it != constraintKeys().end() && !shift && mMode == Mode::Select)
+        if (auto it = constraintKeys().find(key); it != constraintKeys().end() && !shift && mMode == SketchMode::Select)
         {
             constrain(it->second);
             return true;
         }
         switch (key)
         {
-        case Qt::Key_L: setMode(Mode::Line); return true;
-        case Qt::Key_A: setMode(Mode::Arc); return true;
-        case Qt::Key_R: setMode(Mode::Circle); return true;
-        case Qt::Key_S: setMode(Mode::Select); return true;
+        case Qt::Key_L: setMode(SketchMode::Line); return true;
+        case Qt::Key_A: setMode(SketchMode::Arc); return true;
+        case Qt::Key_R: setMode(SketchMode::Circle); return true;
+        case Qt::Key_S: setMode(SketchMode::Select); return true;
         case Qt::Key_D:
-            if (mMode != Mode::Select)
+            if (mMode != SketchMode::Select)
                 return false;
             dimension(shift ? std::optional(sk::Type::HorizontalDistance) : std::nullopt);
             return true;
@@ -1148,7 +1148,7 @@ private:
                 for (uint32_t id : mSelIds)
                     ids.push_back(id);
                 QString err;
-                runUi("sketchDelete", {{"args", {nodePath()}}, {"ids", ids}}, &err);
+                runSketchCommand("sketchDelete", {{"args", {nodePath()}}, {"ids", ids}}, &err);
                 mSelIds.clear();
                 if (!err.isEmpty())
                     flash(err);
@@ -1160,15 +1160,15 @@ private:
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (mMode == Mode::Line)
+            if (mMode == SketchMode::Line)
                 commitLine(false);
             viewportTools::requestRedraw();
             return true;
         case Qt::Key_Escape:
             if (!mPlaced.empty())
                 commitOrCancel();
-            else if (mMode != Mode::Select && nodeOk())
-                setMode(Mode::Select);
+            else if (mMode != SketchMode::Select && nodeOk())
+                setMode(SketchMode::Select);
             else if (!mSel.empty() || !mSelIds.empty())
             {
                 mSel.clear();
@@ -1185,7 +1185,7 @@ private:
     /** Esc while drawing a line keeps what was drawn; an unfinished arc or circle is dropped. */
     void commitOrCancel()
     {
-        if (mMode == Mode::Line && mPlaced.size() >= 2)
+        if (mMode == SketchMode::Line && mPlaced.size() >= 2)
             commitLine(false);
         cancelDrawing();
     }
@@ -1425,14 +1425,14 @@ private:
                 const double ang = cf.shape == sk::Shape::Arc ? cf.start + cf.sweep * 0.5 : glm::quarter_pi<double>();
                 const D2 dir(std::cos(ang), std::sin(ang));
                 auto ctr = screen2(cf.center, view), rim = screen2(cf.center + dir * cf.radius, view);
-                auto far = screen2(cf.center - dir * cf.radius, view);
+                auto opposite = screen2(cf.center - dir * cf.radius, view);
                 if (!ctr || !rim)
                     continue;
-                const QPointF from = c.type == sk::Type::Diameter && far ? *far : *ctr;
+                const QPointF from = c.type == sk::Type::Diameter && opposite ? *opposite : *ctr;
                 p.line(from, *rim, 1.5f, col);
                 arrow(p, *rim, from, col);
-                if (c.type == sk::Type::Diameter && far)
-                    arrow(p, *far, *rim, col);
+                if (c.type == sk::Type::Diameter && opposite)
+                    arrow(p, *opposite, *rim, col);
                 const double l = std::max(distPx(*rim, from), 1e-6);
                 labelAt = *rim + (*rim - from) / l * 22.0;
                 break;
@@ -1553,7 +1553,7 @@ private:
         if (!mPreview.empty())
             for (const Spline& s : mPreview)
                 drawSplineLines(f, s, kPreview, true);
-        if (mMode == Mode::Select)
+        if (mMode == SketchMode::Select)
             return;
         const bool hoverHere = mHoverView == view.camera && mInference;
         std::vector<D2> pts;
@@ -1564,19 +1564,19 @@ private:
             f.linesOnTop.push_back({glm::vec3(toWorld(mPlane.to3d(a))), col});
             f.linesOnTop.push_back({glm::vec3(toWorld(mPlane.to3d(b))), col});
         };
-        if (mMode == Mode::Line)
+        if (mMode == SketchMode::Line)
         {
             for (size_t i = 1; i < pts.size(); ++i)
                 line2(pts[i - 1], pts[i], kPreview);
             if (cursor && !pts.empty())
                 line2(pts.back(), *cursor, kPreview);
         }
-        else if (mMode == Mode::Circle && !pts.empty() && cursor)
+        else if (mMode == SketchMode::Circle && !pts.empty() && cursor)
         {
             Spline c = curve::circle(mPlane.to3d(pts[0]), mPlane.normal(), std::max(glm::distance(pts[0], *cursor), 1e-6));
             drawSplineLines(f, c, kPreview, true);
         }
-        else if (mMode == Mode::Arc && cursor)
+        else if (mMode == SketchMode::Arc && cursor)
         {
             if (pts.size() == 1)
                 line2(pts[0], *cursor, kGhost);
@@ -1623,16 +1623,16 @@ private:
     {
         mButtons.clear();
         auto add = [&](Button b) { mButtons.push_back(b); };
-        add({Button::Draw, Mode::Select, {}, "S"});
-        add({Button::Draw, Mode::Line, {}, "L"});
-        add({Button::Draw, Mode::Arc, {}, "A"});
-        add({Button::Draw, Mode::Circle, {}, "R"});
+        add({Button::Draw, SketchMode::Select, {}, "S"});
+        add({Button::Draw, SketchMode::Line, {}, "L"});
+        add({Button::Draw, SketchMode::Arc, {}, "A"});
+        add({Button::Draw, SketchMode::Circle, {}, "R"});
         for (sk::Type t : {sk::Type::Coincident, sk::Type::Horizontal, sk::Type::Vertical, sk::Type::Parallel, sk::Type::Perpendicular,
                            sk::Type::Tangent, sk::Type::Equal, sk::Type::Concentric, sk::Type::Midpoint, sk::Type::Symmetric, sk::Type::Collinear,
                            sk::Type::PointOnCurve, sk::Type::Fixed})
-            add({Button::Constrain, Mode::Select, t, keyOf(t)});
-        add({Button::Dimension, Mode::Select, sk::Type::Distance, "D"});
-        add({Button::Auto, Mode::Select, {}, "I"});
+            add({Button::Constrain, SketchMode::Select, t, keyOf(t)});
+        add({Button::Dimension, SketchMode::Select, sk::Type::Distance, "D"});
+        add({Button::Auto, SketchMode::Select, {}, "I"});
         const double gap = 3.0, groupGap = 10.0;
         const double total = mButtons.size() * (kButton + gap) + 3 * groupGap;
         double x = view.width * 0.5 - total * 0.5;
@@ -1652,11 +1652,11 @@ private:
             switch (b.kind)
             {
             case Button::Draw:
-                if (b.mode == Mode::Select)
+                if (b.mode == SketchMode::Select)
                 {
                     p.triangle(c + QPointF(-5, -7), c + QPointF(-5, 6), c + QPointF(5, 2), ink);
                 }
-                else if (b.mode == Mode::Line)
+                else if (b.mode == SketchMode::Line)
                 {
                     p.line(c + QPointF(-7, 6), c + QPointF(7, -6), 1.6f, ink);
                     p.disc(c + QPointF(-7, 6), 2.2f, ink, 8);
@@ -1665,11 +1665,11 @@ private:
                 else
                 {
                     std::vector<QPointF> ring;
-                    const int n = b.mode == Mode::Arc ? 12 : 24;
+                    const int n = b.mode == SketchMode::Arc ? 12 : 24;
                     for (int k = 0; k <= n; ++k)
                     {
-                        const double a = b.mode == Mode::Arc ? glm::pi<double>() * (1.0 + double(k) / n) : glm::two_pi<double>() * k / n;
-                        ring.push_back(c + QPointF(std::cos(a), std::sin(a) + (b.mode == Mode::Arc ? 0.4 : 0.0)) * 7.5);
+                        const double a = b.mode == SketchMode::Arc ? glm::pi<double>() * (1.0 + double(k) / n) : glm::two_pi<double>() * k / n;
+                        ring.push_back(c + QPointF(std::cos(a), std::sin(a) + (b.mode == SketchMode::Arc ? 0.4 : 0.0)) * 7.5);
                     }
                     p.polyline(ring, 1.6f, ink);
                 }
@@ -1714,13 +1714,13 @@ private:
         QString help;
         switch (mMode)
         {
-        case Mode::Select:
+        case SketchMode::Select:
             help = "click/Shift+click: select, drag: move with constraints, C H V P Q T E O M Y K N F: constrain, D: dimension, "
                    "double-click a dimension: type a value, Delete: remove selected glyphs";
             break;
-        case Mode::Line: help = "click points, click the first to close, Enter/Esc: finish, Backspace: undo point"; break;
-        case Mode::Arc: help = "click start, end, then where it bulges (starting on a line end, it snaps tangent)"; break;
-        case Mode::Circle: help = "click the centre, then the radius"; break;
+        case SketchMode::Line: help = "click points, click the first to close, Enter/Esc: finish, Backspace: undo point"; break;
+        case SketchMode::Arc: help = "click start, end, then where it bulges (starting on a line end, it snaps tangent)"; break;
+        case SketchMode::Circle: help = "click the centre, then the radius"; break;
         }
         drawToolMessage(p, view, QString("Sketch %1  [%2]  auto constraints %3 (I, Alt suppresses)  %4  L/A/R/S: mode, Esc: back")
                                      .arg(state, modeName(mMode), autoConstraints() ? "on" : "off", help));
@@ -1737,7 +1737,7 @@ private:
     Placer mPlacer;
     ViewInfo mView;
 
-    Mode mMode = Mode::Select;
+    SketchMode mMode = SketchMode::Select;
     std::vector<sk::Ref> mSel;
     std::vector<uint32_t> mSelIds;
 
@@ -1782,7 +1782,7 @@ void constrainAction(sk::Type t)
         tool->constrain(t);
         return;
     }
-    runUi(sk::isDimension(t) ? "sketchDimension" : "sketchConstrain", {{"type", sk::typeName(t)}}, nullptr);
+    runSketchCommand(sk::isDimension(t) ? "sketchDimension" : "sketchConstrain", {{"type", sk::typeName(t)}}, nullptr);
 }
 } // namespace
 

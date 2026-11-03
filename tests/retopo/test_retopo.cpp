@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Bvh.h"
@@ -17,6 +18,7 @@
 #include <filesystem>
 
 using namespace lila;
+using namespace retopotest;
 using geo::Index;
 
 namespace
@@ -46,7 +48,7 @@ geo::Mesh bevelledCube()
 }
 
 /** Writes the mesh next to the test binary when LILA_RETOPO_DUMP is set, for eyeballing. */
-void dump(const geo::Mesh& m, const char* name)
+void dumpFile(const geo::Mesh& m, const char* name)
 {
     if (std::getenv("LILA_RETOPO_DUMP"))
         geo::writeObjFile((std::filesystem::temp_directory_path() / name).string(), m);
@@ -58,18 +60,6 @@ double fractionValence4(const retopo::QualityMetrics& q)
     for (Index c : q.valence)
         total += c;
     return total ? double(q.valence.size() > 4 ? q.valence[4] : 0) / double(total) : 0.0;
-}
-
-void report(const char* what, const retopo::QuadRemeshResult& r)
-{
-    double total = 0.0;
-    std::string stages;
-    for (auto& [s, t] : r.timings)
-    {
-        total += t;
-        stages += " " + s + "=" + std::to_string(t);
-    }
-    MESSAGE(std::string(what) << ": " << r.metrics.summary() << " in " << total << " s:" << stages);
 }
 
 bool samePositions(const geo::Mesh& a, const geo::Mesh& b)
@@ -91,7 +81,7 @@ TEST_CASE("quad remesh: high-res sphere")
     retopo::QuadRemeshResult r = retopo::quadRemesh(src, o);
     REQUIRE(r.ok());
     report("sphere", r);
-    dump(r.mesh, "retopo_sphere.obj");
+    dumpFile(r.mesh, "retopo_sphere.obj");
     const retopo::QualityMetrics& q = r.metrics;
     CHECK(q.quadPercent > 95.0);
     CHECK(q.faces > 1400);
@@ -108,13 +98,13 @@ TEST_CASE("quad remesh: high-res sphere")
 TEST_CASE("quad remesh: bevelled cube")
 {
     geo::Mesh src = bevelledCube();
-    dump(src, "retopo_cube_src.obj");
+    dumpFile(src, "retopo_cube_src.obj");
     retopo::QuadRemeshOptions o;
     o.targetFaces = 2000;
     retopo::QuadRemeshResult r = retopo::quadRemesh(src, o);
     REQUIRE(r.ok());
     report("bevelled cube", r);
-    dump(r.mesh, "retopo_cube.obj");
+    dumpFile(r.mesh, "retopo_cube.obj");
     const retopo::QualityMetrics& q = r.metrics;
     CHECK(q.quadPercent > 95.0);
     CHECK(q.faces > 1400);

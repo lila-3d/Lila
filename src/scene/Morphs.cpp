@@ -6,6 +6,7 @@
 #include "core/Profile.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
+#include "scene/DeformerUtil.h"
 #include "scene/Deformers.h"
 #include "scene/Drivers.h"
 #include "scene/Graph.h"
@@ -25,6 +26,7 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace deformutil;
 
 namespace
 {
@@ -40,41 +42,6 @@ using morphs::kTargetMesh;
 using morphs::kWeight;
 
 constexpr double kShapeEps = 1e-6;
-
-template <class V> void readArray(const json& j, const char* key, std::vector<V>& out)
-{
-    out.clear();
-    if (!j.contains(key) || !j[key].is_array())
-        return;
-    out.reserve(j[key].size());
-    for (const json& x : j[key])
-        out.push_back(V(x.get<double>()));
-}
-
-std::vector<double> flatten(const std::vector<glm::dvec3>& v)
-{
-    std::vector<double> out;
-    out.reserve(v.size() * 3);
-    for (const glm::dvec3& p : v)
-        out.insert(out.end(), {p.x, p.y, p.z});
-    return out;
-}
-
-std::vector<glm::dvec3> unflatten(const std::vector<double>& f)
-{
-    std::vector<glm::dvec3> out(f.size() / 3);
-    for (size_t i = 0; i < out.size(); ++i)
-        out[i] = {f[i * 3], f[i * 3 + 1], f[i * 3 + 2]};
-    return out;
-}
-
-template <class F> void parallelPoints(size_t n, F&& fn)
-{
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 512), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i)
-            fn(i);
-    });
-}
 
 /** What one morphTarget passes down its chain. */
 struct MorphLink final : Data
@@ -215,36 +182,7 @@ public:
     }
 };
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc)};
-}
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc)};
-}
-AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrHidden,
-            .doc = std::move(doc)};
-}
-AttrDef connected(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-
 // ------------------------------------------------------------------------------------------------ helpers
-
-Graph& g() { return Graph::current(); }
-
-Node& meshNamed(const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (!n.type().isA("mesh") || n.type().isA("lattice"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return n;
-}
 
 /** A morph, its mesh, or one of its targets, to the morph. */
 NodeId resolveMorph(Graph& graph, const std::string& name, const char* cmd)
@@ -489,13 +427,6 @@ Node* duplicateShape(Graph& graph, NodeId mesh, const MeshPtr& shape, const std:
     return m;
 }
 
-void setVisible(Graph& graph, NodeId id, bool on)
-{
-    PlugRef v{id, Transform::kVisibility, -1};
-    if (!graph.source(v) && std::get<bool>(graph.storedValue(v)) != on)
-        graph.setValue(v, on);
-}
-
 std::string mirroredName(const std::string& name)
 {
     static const std::pair<const char*, const char*> kPairs[] = {{"Left", "Right"}, {"left", "right"}, {"L", "R"}, {"l", "r"}};
@@ -507,17 +438,6 @@ std::string mirroredName(const std::string& name)
             return m;
     }
     return name + "_mirror";
-}
-
-int axisIndex(const std::string& a, const char* cmd)
-{
-    if (a == "x")
-        return 0;
-    if (a == "y")
-        return 1;
-    if (a == "z")
-        return 2;
-    throw CommandError(std::string(cmd) + ": axis must be x, y or z");
 }
 
 /** The offsets reflected across the symmetry plane: each point takes its partner's offset, mirrored. */
@@ -974,7 +894,7 @@ void registerCommands()
         .flags = {{"live", "", T::Bool, false, "Keep targets connected so editing a target mesh updates the morph."},
                   {"name", "", T::String, nullptr, "Name for the morph."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<std::string> objs = a.objects();
             if (objs.empty())
                 throw CommandError("morph: give targets and the base mesh last");
@@ -998,7 +918,7 @@ void registerCommands()
         .flags = {{"live", "", T::Bool, false, "Keep the targets connected so editing them updates the morphs."},
                   {"name", "n", T::String, nullptr, "Export name for a single or empty target. Default: the target mesh's name."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<std::string> objs = a.objects();
             if (objs.empty())
                 throw CommandError("addMorphTarget: give the morph (or its mesh), then the targets");
@@ -1029,7 +949,7 @@ void registerCommands()
         .doc = "Remove morph targets (morphTarget nodes) from their morph. Pose drivers feeding them stay.",
         .positionalDoc = "targets",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             for (const std::string& name : a.objects())
             {
                 Node& n = targetNamed(name, "removeMorphTarget");
@@ -1049,7 +969,7 @@ void registerCommands()
         .positionalDoc = "morph, mesh or target",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("morphTargets: no morph");
@@ -1066,7 +986,7 @@ void registerCommands()
                "Returns the node's new name.",
         .positionalDoc = "target, newName",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             if (a.positional.size() < 2)
                 throw CommandError("renameMorphTarget: give the target and the new name");
             Node& t = targetNamed(a.positional[0].get<std::string>(), "renameMorphTarget");
@@ -1087,7 +1007,7 @@ void registerCommands()
         .positionalDoc = "target",
         .flags = {{"inBetween", "", T::Float, nullptr, "The in-between's weight; default the full shape."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("extractMorphTarget: no target");
@@ -1117,7 +1037,7 @@ void registerCommands()
         .positionalDoc = "target, mesh",
         .flags = {{"inBetween", "", T::Float, nullptr, "The in-between's weight; default the full shape."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.size() < 2)
                 throw CommandError("setMorphTarget: give the target, then the mesh");
@@ -1143,7 +1063,7 @@ void registerCommands()
         .positionalDoc = "target, mesh?",
         .flags = {{"weight", "w", T::Float, 0.5, "Where the in-between is reached; not 0 or 1."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("addInBetween: no target");
@@ -1177,7 +1097,7 @@ void registerCommands()
         .positionalDoc = "target",
         .flags = {{"weight", "w", T::Float, 0.5, "The in-between's weight."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("removeInBetween: no target");
@@ -1212,7 +1132,7 @@ void registerCommands()
                   {"tolerance", "", T::Float, 1e-3, "How far a point may be from its partner's reflection, cm.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "flip: the new target's name."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("mirrorMorphTarget: no target");
@@ -1250,7 +1170,7 @@ void registerCommands()
         .positionalDoc = "target",
         .flags = {{"on", "", T::Bool, nullptr, "Default: toggle."}, {"inBetween", "", T::Float, nullptr, "Edit this in-between; default the full shape."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("editMorphTarget: no target");
@@ -1302,7 +1222,7 @@ void registerCommands()
                "hides the mesh. Sculpt the fix on the copy, then run addCorrective. Returns the sculpt mesh.",
         .positionalDoc = "mesh",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("sculptCorrective: no mesh");
@@ -1334,7 +1254,7 @@ void registerCommands()
                   {"falloff", "", T::String, "smooth", "linear | smooth | smoother", {"linear", "smooth", "smoother"}},
                   {"keep", "", T::Bool, false, "Keep the sculpt mesh instead of deleting it."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("addCorrective: give the sculpt, then the base");

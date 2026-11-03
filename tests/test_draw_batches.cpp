@@ -20,7 +20,7 @@ std::shared_ptr<RenderMesh> triangle()
     return m;
 }
 
-MeshDraw at(const std::shared_ptr<RenderMesh>& mesh, float x)
+MeshDraw drawAt(const std::shared_ptr<RenderMesh>& mesh, float x)
 {
     MeshDraw d;
     d.mesh = mesh;
@@ -35,7 +35,7 @@ TEST_CASE("Draw batches: draws sharing a mesh and materials become one instanced
     FrameState s;
     constexpr int kCopies = 1000;
     for (int i = 0; i < kCopies; ++i)
-        s.meshes.push_back(at(shared, float(i)));
+        s.meshes.push_back(drawAt(shared, float(i)));
     DrawBatches b = batchDraws(s);
     REQUIRE(b.shaded.size() == 1);
     CHECK(b.shaded[0].count == kCopies);
@@ -44,14 +44,14 @@ TEST_CASE("Draw batches: draws sharing a mesh and materials become one instanced
     CHECK(b.instances[b.shaded[0].first + 7].world[3].x == doctest::Approx(7.0f));
 
     // A different mesh, a different material or a different vertex colour display splits the batch.
-    s.meshes.push_back(at(triangle(), 0.0f));
-    MeshDraw red = at(shared, 1.0f);
+    s.meshes.push_back(drawAt(triangle(), 0.0f));
+    MeshDraw red = drawAt(shared, 1.0f);
     red.materials.push_back({});
     red.materials[0].baseColor = {1, 0, 0};
     s.meshes.push_back(red);
     MeshDraw red2 = red;
     s.meshes.push_back(red2);
-    MeshDraw colors = at(shared, 2.0f);
+    MeshDraw colors = drawAt(shared, 2.0f);
     colors.vertexColors = VertexColorMode::Unlit;
     s.meshes.push_back(colors);
     b = batchDraws(s);
@@ -61,7 +61,7 @@ TEST_CASE("Draw batches: draws sharing a mesh and materials become one instanced
 
     // Unshaded and empty draws never reach the shaded batches.
     FrameState w;
-    MeshDraw wireOnly = at(shared, 0.0f);
+    MeshDraw wireOnly = drawAt(shared, 0.0f);
     wireOnly.flags = DrawWire;
     w.meshes.push_back(wireOnly);
     w.meshes.push_back(MeshDraw{});
@@ -74,13 +74,13 @@ TEST_CASE("Draw batches: instance lists expand to placements under the draw's wo
 {
     auto shared = triangle();
     FrameState s;
-    MeshDraw d = at(shared, 100.0f);
+    MeshDraw d = drawAt(shared, 100.0f);
     auto list = std::make_shared<std::vector<glm::mat4>>();
     for (int i = 0; i < 5; ++i)
         list->push_back(glm::translate(glm::mat4(1.0f), glm::vec3(0, float(i), 0)));
     d.instances = list;
     s.meshes.push_back(d);
-    s.meshes.push_back(at(shared, 0.0f));
+    s.meshes.push_back(drawAt(shared, 0.0f));
     DrawBatches b = batchDraws(s);
     REQUIRE(b.shaded.size() == 1);
     CHECK(b.shaded[0].count == 6);
@@ -95,11 +95,11 @@ TEST_CASE("Draw batches: wire overlays carry their colour per placement, highlig
     FrameState s;
     s.wireSelected = glm::vec4(1.0f);
     s.wireDefault = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    MeshDraw selected = at(shared, 0.0f);
+    MeshDraw selected = drawAt(shared, 0.0f);
     selected.flags = DrawShaded | DrawSelected;
-    MeshDraw plain = at(shared, 0.0f);
+    MeshDraw plain = drawAt(shared, 0.0f);
     plain.flags = DrawShaded | DrawWire;
-    MeshDraw tinted = at(shared, 1.0f);
+    MeshDraw tinted = drawAt(shared, 1.0f);
     tinted.flags = DrawShaded | DrawWire;
     tinted.wireColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f);
     s.meshes = {selected, plain, tinted};

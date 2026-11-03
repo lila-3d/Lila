@@ -21,6 +21,9 @@ enum class CaseStyle
     UpperSnake // MY_CUBE
 };
 
+/** ASCII 0 to 9, whatever the locale. */
+inline bool isDigit(char c) { return c >= '0' && c <= '9'; }
+
 /** Splits any of myCube, MyCube, my_cube, my-cube, "my cube", HTTPServer2 into words. */
 LILA_SCENE_API std::vector<std::string> splitWords(std::string_view name);
 /** Which underscores PascalCase and camelCase keep. */

@@ -14,7 +14,9 @@
 #include "ui/DrawOverrides.h"
 #include "ui/SketchUi.h"
 #include "ui/Theme.h"
+#include "ui/UiCommands.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportToolMath.h"
 
 #include <cctype>
 #include <cmath>
@@ -25,7 +27,6 @@ namespace lila::ui
 {
 namespace
 {
-using D3 = glm::dvec3;
 using curve::CurveShape;
 
 // Linear for 3D lines; sRGB for the 2D overlay.
@@ -46,7 +47,7 @@ struct Cached
     std::vector<curve::Polyline> lines;
 };
 
-std::map<scene::NodeId, Cached>& cache()
+std::map<scene::NodeId, Cached>& curveCache()
 {
     static std::map<scene::NodeId, Cached> c;
     return c;
@@ -56,7 +57,7 @@ const std::vector<curve::Polyline>& linesOf(const scene::Node& n)
 {
     const scene::PlugValue& v = n.value(CurveShape::kLocal);
     const scene::DataPtr* d = std::get_if<scene::DataPtr>(&v);
-    Cached& c = cache()[n.id()];
+    Cached& c = curveCache()[n.id()];
     int64_t mode = n.as<int64_t>(CurveShape::kTessMode), seg = n.as<int64_t>(CurveShape::kTessSegments);
     const void* key = d ? d->get() : nullptr;
     if (c.data == key && c.mode == mode && c.segments == seg)
@@ -120,9 +121,7 @@ bool editing(const scene::Node& n)
     return g.isSelected(n.id()) || !scene::components::selected(n.id(), scene::ComponentMode::Vertex).empty();
 }
 
-D3 xf(const glm::dmat4& m, const D3& p) { return D3(m * glm::dvec4(p, 1.0)); }
-
-void line(render::FrameState& f, const D3& a, const D3& b, const glm::vec4& c, bool onTop)
+void line(render::FrameState& f, const glm::dvec3& a, const glm::dvec3& b, const glm::vec4& c, bool onTop)
 {
     auto& out = onTop ? f.linesOnTop : f.lines;
     out.push_back({glm::vec3(a), c});
@@ -216,12 +215,12 @@ void drawCurve(drawOverrides::DrawContext& c)
     }
     if (!points)
         return;
-    const std::vector<std::pair<uint32_t, D3>> positions = curve::componentPositions(splines);
+    const std::vector<std::pair<uint32_t, glm::dvec3>> positions = curve::componentPositions(splines);
     // Soft selection shades the points it will pull, as it does mesh vertices.
     std::map<uint32_t, float> softWeight;
     if (!picked.empty() && PrefStore::get().value<bool>("general", "/softSelect/enabled", false))
     {
-        std::vector<D3> worldPts;
+        std::vector<glm::dvec3> worldPts;
         std::vector<char> on;
         std::vector<uint32_t> ids;
         for (auto& [id, p] : positions)
@@ -303,19 +302,7 @@ std::optional<double> pickCurve(const drawOverrides::PickContext& c)
     return best;
 }
 
-void runCommand(const char* name, const json& call)
-{
-    try
-    {
-        ops::execute(name, ops::options::callWith(name, call), CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
-
-void cmd(std::string id, std::string label, const char* command, json call, std::string doc)
+void addCurveCommand(std::string id, std::string label, const char* command, json call, std::string doc)
 {
     std::string py = ops::toPython(command, call);
     actions::add({.id = std::move(id), .label = std::move(label), .category = "Curves", .doc = std::move(doc), .python = py, .command = command,
@@ -360,7 +347,7 @@ void registerSymmetryActions()
                       .python = "lila.prefs.set(\"general\", \"/curveTools/symmetry\", " + std::to_string(pref) + ")",
                       .checked = [pref] { return curveTools::symmetryPref() == pref; }});
     }
-    cmd("curve.bakeSymmetry", "Bake Symmetry", "bakeCurveSymmetry", json::object(),
+    addCurveCommand("curve.bakeSymmetry", "Bake Symmetry", "bakeCurveSymmetry", json::object(),
         "Turns the selected curves' symmetry copies into curves of their own, so each side can be edited apart.");
     actions::setEnabledWhen("curve.bakeSymmetry", [] {
         const std::string s = selectedCurveSymmetry();
@@ -368,21 +355,21 @@ void registerSymmetryActions()
     });
 }
 
-void registerActions()
+void registerCurveActions()
 {
     registerSymmetryActions();
-    cmd("curve.circle", "Circle", "circle", json::object(), "Creates an exact circle (a rational NURBS).");
-    cmd("curve.fromEdges", "Edges to Curve", "polyEdgeToCurve", json::object(),
+    addCurveCommand("curve.circle", "Circle", "circle", json::object(), "Creates an exact circle (a rational NURBS).");
+    addCurveCommand("curve.fromEdges", "Edges to Curve", "polyEdgeToCurve", json::object(),
         "Makes a curve from each chain of the selected mesh edges, or the borders of the selected faces.");
-    cmd("curve.extrude", "Sweep", "extrude", json::object(),
+    addCurveCommand("curve.extrude", "Sweep", "extrude", json::object(),
         "Sweeps a circle, rectangle or a second selected curve along the first selected curve into quads, live.");
-    cmd("curve.revolve", "Revolve", "revolve", json::object(), "Revolves the selected profile curve around an axis into quads, live.");
-    cmd("curve.loft", "Loft", "loft", json::object(), "Lofts quads through the selected curves in selection order, live.");
-    cmd("curve.patchFill", "Patch Fill", "patchFill", json::object(), "Fills four selected boundary curves with a quad patch, live.");
-    cmd("curve.fillet", "Fillet Corners", "filletCurve", json::object(), "Rounds, chamfers or G2-blends the selected curves' corners.");
-    cmd("curve.offset", "Offset", "offsetCurve", json::object(), "Offsets the selected curves within their plane into new curves.");
-    cmd("curve.rebuild", "Rebuild", "rebuildCurve", json::object(), "Rebuilds the selected curves with even spans, corners kept.");
-    cmd("curve.fit", "Fit", "fitCurve", json::object(), "Refits the selected curves as Beziers with as few points as the tolerance allows.");
+    addCurveCommand("curve.revolve", "Revolve", "revolve", json::object(), "Revolves the selected profile curve around an axis into quads, live.");
+    addCurveCommand("curve.loft", "Loft", "loft", json::object(), "Lofts quads through the selected curves in selection order, live.");
+    addCurveCommand("curve.patchFill", "Patch Fill", "patchFill", json::object(), "Fills four selected boundary curves with a quad patch, live.");
+    addCurveCommand("curve.fillet", "Fillet Corners", "filletCurve", json::object(), "Rounds, chamfers or G2-blends the selected curves' corners.");
+    addCurveCommand("curve.offset", "Offset", "offsetCurve", json::object(), "Offsets the selected curves within their plane into new curves.");
+    addCurveCommand("curve.rebuild", "Rebuild", "rebuildCurve", json::object(), "Rebuilds the selected curves with even spans, corners kept.");
+    addCurveCommand("curve.fit", "Fit", "fitCurve", json::object(), "Refits the selected curves as Beziers with as few points as the tolerance allows.");
     actions::add({.id = "curve.project",
                   .label = "Project onto Mesh",
                   .category = "Curves",
@@ -409,46 +396,46 @@ void registerActions()
                   .doc = "Projects the selected curves onto the selected mesh (closest point, or along the direction in the option box), live.",
                   .python = "lila.ops.projectCurve(\"Curve\", mesh=\"Mesh\")",
                   .command = "projectCurve"});
-    cmd("curve.keepOnSurface", "Keep on Surface", "conformCurve", json::object(),
+    addCurveCommand("curve.keepOnSurface", "Keep on Surface", "conformCurve", json::object(),
         "Keeps the selected curves on the selected mesh: their points stay on it however they or the mesh move (Make Live).");
-    cmd("curve.releaseFromSurface", "Release from Surface", "conformCurve", {{"release", true}},
+    addCurveCommand("curve.releaseFromSurface", "Release from Surface", "conformCurve", {{"release", true}},
         "Lets the selected curves off the surface they were kept on, leaving them where they are.");
-    cmd("curve.sendToUnreal", "Send Curve to Unreal", "unrealSendCurve", json::object(),
+    addCurveCommand("curve.sendToUnreal", "Send Curve to Unreal", "unrealSendCurve", json::object(),
         "Sends the selected curves to the connected Unreal editor as spline actors (or landscape splines), resent on every save.");
-    cmd("curve.attach", "Attach", "attachCurve", json::object(), "Joins the second selected curve onto the first at their nearest ends.");
-    cmd("curve.detach", "Detach", "detachCurve", json::object(), "Splits the curve at the selected points.");
-    cmd("curve.reverse", "Reverse Direction", "reverseCurve", json::object(), "Reverses the selected curves' direction.");
-    cmd("curve.controls", "Curve Controls", "curveControls", json::object(),
+    addCurveCommand("curve.attach", "Attach", "attachCurve", json::object(), "Joins the second selected curve onto the first at their nearest ends.");
+    addCurveCommand("curve.detach", "Detach", "detachCurve", json::object(), "Splits the curve at the selected points.");
+    addCurveCommand("curve.reverse", "Reverse Direction", "reverseCurve", json::object(), "Reverses the selected curves' direction.");
+    addCurveCommand("curve.controls", "Curve Controls", "curveControls", json::object(),
         "Builds a control on each point of the selected curves (and on Bezier tangents, if asked) that the curve follows live.");
-    cmd("curve.removeControls", "Remove Curve Controls", "removeCurveControls", json::object(),
+    addCurveCommand("curve.removeControls", "Remove Curve Controls", "removeCurveControls", json::object(),
         "Deletes the selected curves' controls, keeping the shape they gave them.");
-    cmd("curve.close", "Close", "closeCurve", json::object(), "Closes the selected open curves.");
-    cmd("curve.open", "Open", "openCurve", json::object(), "Opens the selected closed curves at their start.");
-    cmd("curve.deletePoints", "Delete Points", "deleteCurvePoints", json::object(), "Deletes the selected curve points.");
+    addCurveCommand("curve.close", "Close", "closeCurve", json::object(), "Closes the selected open curves.");
+    addCurveCommand("curve.open", "Open", "openCurve", json::object(), "Opens the selected closed curves at their start.");
+    addCurveCommand("curve.deletePoints", "Delete Points", "deleteCurvePoints", json::object(), "Deletes the selected curve points.");
     for (const char* t : {"auto", "vector", "aligned", "free"})
     {
         std::string label = std::string(1, char(std::toupper(t[0]))) + (t + 1);
-        cmd(std::string("curve.handle") + label, label + " Handles", "setCurveHandleType", {{"type", t}},
+        addCurveCommand(std::string("curve.handle") + label, label + " Handles", "setCurveHandleType", {{"type", t}},
             "Sets the selected Bezier points' handles to " + std::string(t) + ".");
     }
-    cmd("curve.bend", "Bend", "bendCurve", json::object(), "Bends the selected curves (or selected points) around an axis by an angle.");
-    cmd("curve.curl", "Curl", "curlCurve", json::object(), "Coils the selected curves around themselves.");
-    cmd("curve.scaleCurvature", "Scale Curvature", "scaleCurvature", json::object(),
+    addCurveCommand("curve.bend", "Bend", "bendCurve", json::object(), "Bends the selected curves (or selected points) around an axis by an angle.");
+    addCurveCommand("curve.curl", "Curl", "curlCurve", json::object(), "Coils the selected curves around themselves.");
+    addCurveCommand("curve.scaleCurvature", "Scale Curvature", "scaleCurvature", json::object(),
         "Flattens (below 1) or exaggerates (above 1) the selected curves' bends, keeping their length.");
-    cmd("curve.smooth", "Smooth", "smoothCurve", json::object(), "Smooths the selected curves, or only the selected points.");
-    cmd("curve.evenSpacing", "Even Spacing", "rebuildCurve", {{"keepPointCount", true}},
+    addCurveCommand("curve.smooth", "Smooth", "smoothCurve", json::object(), "Smooths the selected curves, or only the selected points.");
+    addCurveCommand("curve.evenSpacing", "Even Spacing", "rebuildCurve", {{"keepPointCount", true}},
         "Spreads the selected curves' points evenly along them, keeping their kind, point count and corners.");
-    cmd("curve.deformAlongCurve", "Deform Along Curve", "deformAlongCurve", json::object(),
+    addCurveCommand("curve.deformAlongCurve", "Deform Along Curve", "deformAlongCurve", json::object(),
         "Bends the selected meshes along the selected curve with a live modifier.");
-    cmd("curve.arrayAlongCurve", "Array Along Curve", "arrayAlongCurve", json::object(),
+    addCurveCommand("curve.arrayAlongCurve", "Array Along Curve", "arrayAlongCurve", json::object(),
         "Repeats the selected meshes along the selected curve with a live modifier.");
-    cmd("curve.instanceAlongCurve", "Instance Along Curve", "arrayAlongCurve", {{"output", "instances"}},
+    addCurveCommand("curve.instanceAlongCurve", "Instance Along Curve", "arrayAlongCurve", {{"output", "instances"}},
         "Places instances of the selected meshes along the selected curve, under a group.");
-    cmd("curve.flowAlongSurface", "Flow Along Surface", "flowAlongSurface", json::object(),
+    addCurveCommand("curve.flowAlongSurface", "Flow Along Surface", "flowAlongSurface", json::object(),
         "Flows the selected meshes onto the surface selected last (its UVs, or its selected quad patch), live.");
-    cmd("curve.toBezier", "Convert to Bezier", "convertCurve", {{"type", "bezier"}}, "Converts the selected curves to Beziers.");
-    cmd("curve.toNurbs", "Convert to NURBS", "convertCurve", {{"type", "nurbs"}}, "Converts the selected curves to NURBS (exact).");
-    cmd("curve.toPoly", "Convert to Poly", "convertCurve", {{"type", "poly"}}, "Converts the selected curves to poly lines.");
+    addCurveCommand("curve.toBezier", "Convert to Bezier", "convertCurve", {{"type", "bezier"}}, "Converts the selected curves to Beziers.");
+    addCurveCommand("curve.toNurbs", "Convert to NURBS", "convertCurve", {{"type", "nurbs"}}, "Converts the selected curves to NURBS (exact).");
+    addCurveCommand("curve.toPoly", "Convert to Poly", "convertCurve", {{"type", "poly"}}, "Converts the selected curves to poly lines.");
     actions::add({.id = "curve.toggleComb",
                   .label = "Curvature Comb",
                   .category = "Curves",
@@ -457,7 +444,7 @@ void registerActions()
                           scene::Graph& g = scene::Graph::current();
                           for (scene::NodeId id : g.selection())
                               if (scene::Node* n = g.node(id); n && n->type().isA("curve"))
-                                  runCommand("setAttr", {{"args", {n->path() + ".displayComb", !n->as<bool>(CurveShape::kDisplayComb)}}});
+                                  runUiWithOptions("setAttr", {{"args", {n->path() + ".displayComb", !n->as<bool>(CurveShape::kDisplayComb)}}});
                       },
                   .doc = "Shows or hides the selected curves' curvature combs.",
                   .python = "lila.ops.setAttr(\"Curve.displayComb\", True)"});
@@ -468,7 +455,7 @@ void registerCurveUi()
 {
     if (!drawOverrides::registry().find("lila.curve"))
         drawOverrides::add({.id = "lila.curve", .nodeType = "curve", .draw = drawCurve, .pick = pickCurve});
-    registerActions();
+    registerCurveActions();
     registerCurveTools();
     registerEzCurveTool();
     registerCurvePointTool();

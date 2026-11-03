@@ -35,7 +35,7 @@ namespace lila::ui
 namespace
 {
 // Far enough out that the taller items of neighbouring slots (N and NE) don't overlap.
-constexpr double kRadius = 110.0;
+constexpr double kMenuRadius = 110.0;
 constexpr double kDeadZone = 18.0;
 // How long the cursor must rest on a compass item's option box before releasing there opens it rather than the item.
 constexpr qint64 kBoxDwellMs = 250;
@@ -45,7 +45,6 @@ constexpr double kPadX = 13.0;
 constexpr double kSeparatorHeight = 9.0;
 constexpr double kBoxWidth = 18.0;
 const char* kSlotNames[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-const QPointF kDirs[8] = {{0, -1}, {0.71, -0.71}, {1, 0}, {0.71, 0.71}, {0, 1}, {-0.71, 0.71}, {-1, 0}, {-0.71, -0.71}};
 
 bool hasOptionBox(const json& action, const json& children, const json& boxAction)
 {
@@ -424,8 +423,8 @@ void MarkingMenu::layout(Level& level) const
         Item& it = *level.compass[i];
         bool box = hasOptionBox(it.action, it.children, it.boxAction);
         double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (it.children.is_object() ? 12 : 0) + (box ? kBoxWidth : 0);
-        QPointF p = level.center + kDirs[i] * kRadius;
-        double x = kDirs[i].x() > 0.1 ? p.x() - 12 : kDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
+        QPointF p = level.center + kCompassDirs[i] * kMenuRadius;
+        double x = kCompassDirs[i].x() > 0.1 ? p.x() - 12 : kCompassDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
         it.rect = QRectF(x, p.y() - kItemHeight / 2, w, kItemHeight);
         it.box = box ? QRectF(it.rect.right() - kBoxWidth, it.rect.top(), kBoxWidth, it.rect.height()) : QRectF();
     }
@@ -434,7 +433,7 @@ void MarkingMenu::layout(Level& level) const
     std::array<QRectF, 8> last;
     for (int i = 0; i < 8; ++i)
     {
-        QPointF p = level.center + kDirs[i] * kRadius;
+        QPointF p = level.center + kCompassDirs[i] * kMenuRadius;
         last[i] = level.compass[i] ? level.compass[i]->rect : QRectF(p.x() - 30, p.y() - kItemHeight / 2, 60, kItemHeight);
     }
     constexpr double kGap = 6.0;
@@ -442,7 +441,7 @@ void MarkingMenu::layout(Level& level) const
     for (size_t i = rows; i < level.overflow.size(); ++i)
     {
         Item& it = level.overflow[i];
-        const QPointF d = kDirs[it.outerSlot];
+        const QPointF d = kCompassDirs[it.outerSlot];
         const QRectF& prev = last[it.outerSlot];
         const bool box = hasOptionBox(it.action, it.children, it.boxAction);
         const double w = fm.horizontalAdvance(it.label) + 2 * kPadX + 2 + (box ? kBoxWidth : 0);
@@ -493,7 +492,7 @@ void MarkingMenu::layout(Level& level) const
 
     double left = level.center.x() - total / 2;
     // Below the compass and the outer ring, which can stack down past the south item.
-    double top = level.center.y() + kRadius + kItemHeight / 2;
+    double top = level.center.y() + kMenuRadius + kItemHeight / 2;
     for (const QRectF& r : last)
         top = std::max(top, r.bottom());
     top += 10;
@@ -582,7 +581,7 @@ void MarkingMenu::updateHighlight(QPointF pos)
     }
 
     // Moving past a submenu item opens it, centered on that item.
-    if (Item* it = highlighted(); it && mOverflow < 0 && it->children.is_object() && dist > kRadius + 35)
+    if (Item* it = highlighted(); it && mOverflow < 0 && it->children.is_object() && dist > kMenuRadius + 35)
     {
         mLevels.push_back(buildLevel(it->children, it->rect.center()));
         mSlot = -1;

@@ -18,6 +18,7 @@
 #include "ui/ViewportToast.h"
 #include "ui/ViewportTool.h"
 #include "ui/Tools.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -31,7 +32,6 @@ namespace lila::ui
 {
 namespace
 {
-constexpr const char* kPrefs = "general";
 
 std::map<int, std::function<void()>>& settingsListeners()
 {
@@ -43,7 +43,7 @@ SculptSettings loadSettings()
 {
     SculptSettings s;
     const PrefStore& p = PrefStore::get();
-    const std::string brushName = p.value<std::string>(kPrefs, "/sculpt/brush", "draw");
+    const std::string brushName = p.value<std::string>("general", "/sculpt/brush", "draw");
     if (auto b = sculpt::brushFromName(brushName))
         s.brush = *b;
     else if (!brushName.empty())
@@ -52,29 +52,29 @@ SculptSettings loadSettings()
         s.brush = sculpt::Brush::Custom;
         s.custom = brushName;
     }
-    s.preset = p.value<std::string>(kPrefs, "/sculpt/preset", s.preset);
-    s.paint = p.value<bool>(kPrefs, "/sculpt/paint", s.paint);
-    if (json c = p.value(kPrefs, "/sculpt/color"); c.is_array() && c.size() == 3 && c[0].is_number() && c[1].is_number() && c[2].is_number())
+    s.preset = p.value<std::string>("general", "/sculpt/preset", s.preset);
+    s.paint = p.value<bool>("general", "/sculpt/paint", s.paint);
+    if (json c = p.value("general", "/sculpt/color"); c.is_array() && c.size() == 3 && c[0].is_number() && c[1].is_number() && c[2].is_number())
         s.color = glm::vec3(c[0].get<float>(), c[1].get<float>(), c[2].get<float>());
     s.stroke.loadPrefs("/sculpt");
     if (!brush::Falloff::find(s.stroke.falloff))
         s.stroke.falloff = "smooth";
     s.stroke.radius = std::clamp(s.stroke.radius, 2.0, 2000.0);
     s.stroke.spacing = std::clamp(s.stroke.spacing, 0.02, 2.0);
-    s.frontFacesOnly = p.value<bool>(kPrefs, "/sculpt/frontFacesOnly", s.frontFacesOnly);
-    s.showCage = p.value<bool>(kPrefs, "/sculpt/showCage", s.showCage);
-    s.proxyMode = p.value<std::string>(kPrefs, "/sculpt/proxyMode", s.proxyMode);
-    s.levels = std::clamp(p.value<int>(kPrefs, "/sculpt/levels", s.levels), 1, 6);
-    s.resolution = std::clamp(p.value<int>(kPrefs, "/sculpt/resolution", s.resolution), 16, 2048);
-    s.exitMethod = p.value<std::string>(kPrefs, "/sculpt/exitMethod", s.exitMethod);
-    s.keepProxy = p.value<bool>(kPrefs, "/sculpt/keepProxy", s.keepProxy);
-    s.shareRadius = p.value<bool>(kPrefs, "/sculpt/shareRadius", s.shareRadius);
-    s.shareStrength = p.value<bool>(kPrefs, "/sculpt/shareStrength", s.shareStrength);
-    s.shareStroke = p.value<bool>(kPrefs, "/sculpt/shareStroke", s.shareStroke);
-    s.wireframe = p.value<bool>(kPrefs, "/sculpt/wireframe", s.wireframe);
-    s.wireOpacity = std::clamp(p.value<double>(kPrefs, "/sculpt/wireOpacity", s.wireOpacity), 0.05, 1.0);
-    s.material = p.value<std::string>(kPrefs, "/sculpt/material", s.material);
-    if (json per = p.value(kPrefs, "/sculpt/perBrush"); per.is_object())
+    s.frontFacesOnly = p.value<bool>("general", "/sculpt/frontFacesOnly", s.frontFacesOnly);
+    s.showCage = p.value<bool>("general", "/sculpt/showCage", s.showCage);
+    s.proxyMode = p.value<std::string>("general", "/sculpt/proxyMode", s.proxyMode);
+    s.levels = std::clamp(p.value<int>("general", "/sculpt/levels", s.levels), 1, 6);
+    s.resolution = std::clamp(p.value<int>("general", "/sculpt/resolution", s.resolution), 16, 2048);
+    s.exitMethod = p.value<std::string>("general", "/sculpt/exitMethod", s.exitMethod);
+    s.keepProxy = p.value<bool>("general", "/sculpt/keepProxy", s.keepProxy);
+    s.shareRadius = p.value<bool>("general", "/sculpt/shareRadius", s.shareRadius);
+    s.shareStrength = p.value<bool>("general", "/sculpt/shareStrength", s.shareStrength);
+    s.shareStroke = p.value<bool>("general", "/sculpt/shareStroke", s.shareStroke);
+    s.wireframe = p.value<bool>("general", "/sculpt/wireframe", s.wireframe);
+    s.wireOpacity = std::clamp(p.value<double>("general", "/sculpt/wireOpacity", s.wireOpacity), 0.05, 1.0);
+    s.material = p.value<std::string>("general", "/sculpt/material", s.material);
+    if (json per = p.value("general", "/sculpt/perBrush"); per.is_object())
         for (auto& [name, j] : per.items())
             s.perBrush[name] = brush::BrushSettings::fromJson(j, SculptSettings{}.stroke);
     return s;
@@ -176,8 +176,6 @@ const render::Material& sculptMaterial(const std::string& id)
 
 glm::dvec3 xformPoint(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 glm::dvec3 xformDir(const glm::dmat4& m, const glm::dvec3& d) { return glm::dvec3(m * glm::dvec4(d, 0.0)); }
-
-json vecJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
 class SculptTool final : public ViewportTool, public brush::DabSink
 {
@@ -691,28 +689,28 @@ void sculptSettingsChanged()
 {
     const SculptSettings& s = sculptSettings();
     PrefStore& p = PrefStore::get();
-    p.set(kPrefs, "/sculpt/brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush)));
-    p.set(kPrefs, "/sculpt/preset", s.preset);
-    p.set(kPrefs, "/sculpt/paint", s.paint);
-    p.set(kPrefs, "/sculpt/color", json::array({s.color.r, s.color.g, s.color.b}));
+    p.set("general", "/sculpt/brush", s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush)));
+    p.set("general", "/sculpt/preset", s.preset);
+    p.set("general", "/sculpt/paint", s.paint);
+    p.set("general", "/sculpt/color", json::array({s.color.r, s.color.g, s.color.b}));
     s.stroke.savePrefs("/sculpt");
-    p.set(kPrefs, "/sculpt/frontFacesOnly", s.frontFacesOnly);
-    p.set(kPrefs, "/sculpt/showCage", s.showCage);
-    p.set(kPrefs, "/sculpt/proxyMode", s.proxyMode);
-    p.set(kPrefs, "/sculpt/levels", s.levels);
-    p.set(kPrefs, "/sculpt/resolution", s.resolution);
-    p.set(kPrefs, "/sculpt/exitMethod", s.exitMethod);
-    p.set(kPrefs, "/sculpt/keepProxy", s.keepProxy);
-    p.set(kPrefs, "/sculpt/shareRadius", s.shareRadius);
-    p.set(kPrefs, "/sculpt/shareStrength", s.shareStrength);
-    p.set(kPrefs, "/sculpt/shareStroke", s.shareStroke);
-    p.set(kPrefs, "/sculpt/wireframe", s.wireframe);
-    p.set(kPrefs, "/sculpt/wireOpacity", s.wireOpacity);
-    p.set(kPrefs, "/sculpt/material", s.material);
+    p.set("general", "/sculpt/frontFacesOnly", s.frontFacesOnly);
+    p.set("general", "/sculpt/showCage", s.showCage);
+    p.set("general", "/sculpt/proxyMode", s.proxyMode);
+    p.set("general", "/sculpt/levels", s.levels);
+    p.set("general", "/sculpt/resolution", s.resolution);
+    p.set("general", "/sculpt/exitMethod", s.exitMethod);
+    p.set("general", "/sculpt/keepProxy", s.keepProxy);
+    p.set("general", "/sculpt/shareRadius", s.shareRadius);
+    p.set("general", "/sculpt/shareStrength", s.shareStrength);
+    p.set("general", "/sculpt/shareStroke", s.shareStroke);
+    p.set("general", "/sculpt/wireframe", s.wireframe);
+    p.set("general", "/sculpt/wireOpacity", s.wireOpacity);
+    p.set("general", "/sculpt/material", s.material);
     json per = json::object();
     for (const auto& [name, b] : s.perBrush)
         per[name] = b.toJson();
-    p.set(kPrefs, "/sculpt/perBrush", per);
+    p.set("general", "/sculpt/perBrush", per);
     auto copy = settingsListeners();
     for (auto& [id, fn] : copy)
         fn();

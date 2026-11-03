@@ -17,7 +17,9 @@
 #include "ui/NodeLookup.h"
 #include "ui/OptionBox.h"
 #include "ui/RetopoPolesTool.h"
+#include "ui/ToolColors.h"
 #include "ui/TopologyTool.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QInputDialog>
@@ -37,9 +39,7 @@ namespace
 using geo::Index;
 using geo::kInvalid;
 
-constexpr double kPickRadius = 12.0; // px
 constexpr double kWeldRadius = 10.0; // px
-constexpr const char* kPrefs = "general";
 constexpr const char* kExtrudeAnglePref = "/retopoDraw/extrudeAngle";
 constexpr const char* kSnapAnglePref = "/retopoDraw/snapAngle";
 constexpr const char* kSnapSpacePref = "/retopoDraw/snapSpace";
@@ -49,26 +49,8 @@ constexpr const char* kMergeBadge = "retopo.draw.merge";
 const glm::vec4 kDotFill(0.95f, 0.95f, 0.95f, 1.0f);
 const glm::vec4 kDotRim(0.08f, 0.08f, 0.08f, 1.0f);
 const glm::vec4 kGhostDot(0.6f, 0.6f, 0.6f, 0.8f);
-const glm::vec4 kVertexFill(0.15f, 0.15f, 0.15f, 1.0f);
-const glm::vec4 kVertexRim(0.8f, 0.8f, 0.8f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
-const glm::vec4 kBrush(0.85f, 0.85f, 0.85f, 0.8f);
-const glm::vec4 kWireLinear(0.35f, 0.35f, 0.35f, 1.0f);
-const glm::vec4 kHotLinear(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kFillPreview(0.55f, 0.55f, 0.55f, 0.5f);
 const glm::vec4 kDeleteFace(0.8f, 0.8f, 0.8f, 0.6f);
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
-
-double segmentDistPx(QPointF p, QPointF a, QPointF b, double* t = nullptr)
-{
-    QPointF ab = b - a;
-    double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-    double u = len2 > 0.0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0.0;
-    if (t)
-        *t = u;
-    return distPx(p, a + ab * u);
-}
 
 bool insidePolygon(QPointF p, const std::vector<QPointF>& poly)
 {
@@ -98,21 +80,11 @@ bool convex(const std::vector<QPointF>& poly)
     return true;
 }
 
-json vec(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
-
-json vecs(const std::vector<glm::dvec3>& ps)
-{
-    json out = json::array();
-    for (const glm::dvec3& p : ps)
-        out.push_back(vec(p));
-    return out;
-}
-
 /** Tab never reaches widgets (focus chain), and the tool needs its release too; this sees keys first. */
-class KeyFilter : public QObject
+class RetopoDrawKeyFilter : public QObject
 {
 public:
-    explicit KeyFilter(RetopoDrawTool* tool) : mTool(tool) {}
+    explicit RetopoDrawKeyFilter(RetopoDrawTool* tool) : mTool(tool) {}
 
     bool eventFilter(QObject* obj, QEvent* e) override
     {
@@ -157,7 +129,7 @@ RetopoDrawTool::~RetopoDrawTool() = default;
 
 void RetopoDrawTool::activate()
 {
-    mFilter = std::make_unique<KeyFilter>(this);
+    mFilter = std::make_unique<RetopoDrawKeyFilter>(this);
     qApp->installEventFilter(mFilter.get());
     cursorBadges::add({kMergeBadge, "arrow-merge", [this](const ViewportState&) { return merging(); }, "Vertex merges on release"});
     refresh();
@@ -174,27 +146,27 @@ void RetopoDrawTool::deactivate()
     mFilter.reset();
 }
 
-double RetopoDrawTool::extrudeAngle() { return std::clamp(PrefStore::get().value<double>(kPrefs, kExtrudeAnglePref, 30.0), 1.0, 179.0); }
+double RetopoDrawTool::extrudeAngle() { return std::clamp(PrefStore::get().value<double>("general", kExtrudeAnglePref, 30.0), 1.0, 179.0); }
 
 void RetopoDrawTool::setExtrudeAngle(double degrees)
 {
-    PrefStore::get().set(kPrefs, kExtrudeAnglePref, std::clamp(degrees, 1.0, 179.0));
+    PrefStore::get().set("general", kExtrudeAnglePref, std::clamp(degrees, 1.0, 179.0));
     viewportTools::requestRedraw();
 }
 
-double RetopoDrawTool::snapAngle() { return std::clamp(PrefStore::get().value<double>(kPrefs, kSnapAnglePref, 15.0), 0.1, 180.0); }
+double RetopoDrawTool::snapAngle() { return std::clamp(PrefStore::get().value<double>("general", kSnapAnglePref, 15.0), 0.1, 180.0); }
 
 void RetopoDrawTool::setSnapAngle(double degrees)
 {
-    PrefStore::get().set(kPrefs, kSnapAnglePref, std::clamp(degrees, 0.1, 180.0));
+    PrefStore::get().set("general", kSnapAnglePref, std::clamp(degrees, 0.1, 180.0));
     viewportTools::requestRedraw();
 }
 
-bool RetopoDrawTool::snapObjectSpace() { return PrefStore::get().value<std::string>(kPrefs, kSnapSpacePref, "object") != "world"; }
+bool RetopoDrawTool::snapObjectSpace() { return PrefStore::get().value<std::string>("general", kSnapSpacePref, "object") != "world"; }
 
 void RetopoDrawTool::setSnapObjectSpace(bool object)
 {
-    PrefStore::get().set(kPrefs, kSnapSpacePref, std::string(object ? "object" : "world"));
+    PrefStore::get().set("general", kSnapSpacePref, std::string(object ? "object" : "world"));
     viewportTools::requestRedraw();
 }
 
@@ -382,7 +354,7 @@ std::vector<std::optional<QPointF>> RetopoDrawTool::projectPoints(const ViewInfo
 RetopoDrawTool::Hover RetopoDrawTool::pick(QPointF px, const ViewInfo& view) const
 {
     Hover h;
-    double best = kPickRadius;
+    double best = kPickRadiusPx;
     for (size_t i = 0; i < mDots.size(); ++i)
         if (auto s = view.project(mDots[i]); s && distPx(*s, px) < best)
         {
@@ -402,7 +374,7 @@ RetopoDrawTool::Hover RetopoDrawTool::pick(QPointF px, const ViewInfo& view) con
         }
     if (h.point != kInvalid || h.dot >= 0)
         return h;
-    double bestEdge = kPickRadius;
+    double bestEdge = kPickRadiusPx;
     for (Index e = 0; e < m.edgeCapacity(); ++e)
     {
         if (!m.edgeValid(e))
@@ -483,7 +455,7 @@ json RetopoDrawTool::targetCall(json flags) const
 bool RetopoDrawTool::setDots(const std::vector<glm::dvec3>& dots)
 {
     json name;
-    if (!run("retopoDrawSetDots", targetCall({{"dots", vecs(dots)}}), &name))
+    if (!run("retopoDrawSetDots", targetCall({{"dots", vecListJson(dots)}}), &name))
         return false;
     if (name.is_string())
         mRetopoName = name.get<std::string>();
@@ -648,7 +620,7 @@ void RetopoDrawTool::fillAt(QPointF px, const ViewInfo& view)
     // The face and the dots it used up are one undo step.
     UndoChunk chunk("Retopo Draw Fill");
     json name;
-    if (!run("retopoDrawAddFace", targetCall({{"points", vecs(fill->points)}, {"weld", weld}}), &name))
+    if (!run("retopoDrawAddFace", targetCall({{"points", vecListJson(fill->points)}, {"weld", weld}}), &name))
         return;
     if (name.is_string())
         mRetopoName = name.get<std::string>();
@@ -1037,7 +1009,7 @@ void RetopoDrawTool::commitDrag(const ViewInfo& view)
         {
             Index a = mRetopo->edgePoint(mDragEdge, 0), b = mRetopo->edgePoint(mDragEdge, 1);
             double weld = view.unitsPerPixel(pointWorld(a)) * 0.5;
-            run("retopoDrawAddFace", targetCall({{"points", {vec(pointWorld(a)), vec(pointWorld(b)), vec(mExtendTo[1]), vec(mExtendTo[0])}},
+            run("retopoDrawAddFace", targetCall({{"points", {vecJson(pointWorld(a)), vecJson(pointWorld(b)), vecJson(mExtendTo[1]), vecJson(mExtendTo[0])}},
                                                {"weld", weld}}));
         }
         break;
@@ -1048,7 +1020,7 @@ void RetopoDrawTool::commitDrag(const ViewInfo& view)
             for (size_t i = 0; i < mRun.edges.size(); ++i)
             {
                 size_t j = (i + 1) % mRun.points.size();
-                faces.push_back({vec(pointWorld(mRun.points[i])), vec(pointWorld(mRun.points[j])), vec(mRunTo[j]), vec(mRunTo[i])});
+                faces.push_back({vecJson(pointWorld(mRun.points[i])), vecJson(pointWorld(mRun.points[j])), vecJson(mRunTo[j]), vecJson(mRunTo[i])});
             }
             double weld = view.unitsPerPixel(pointWorld(mRun.points[0])) * 0.5;
             run("retopoDrawAddFace", targetCall({{"faces", faces}, {"weld", weld}}));
@@ -1062,7 +1034,7 @@ void RetopoDrawTool::commitDrag(const ViewInfo& view)
             for (auto& [p, pos] : mMoved)
             {
                 points.push_back(p);
-                positions.push_back(vec(pos));
+                positions.push_back(vecJson(pos));
             }
             double weld = 0.0;
             // Dropped onto another vertex: mouseMove already snapped to it, and the command welds them.
@@ -1228,14 +1200,14 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
                 double a = k / 32.0 * 6.283185307179586;
                 ring.push_back(*screen[mMergeTarget] + QPointF(std::cos(a), std::sin(a)) * 10.0);
             }
-            p.polyline(ring, 2.0f, kHot, true);
+            p.polyline(ring, 2.0f, kHotColor, true);
         }
         for (Index i = 0; i < screen.size(); ++i)
             if (screen[i])
             {
                 bool hot = (here && i == mHover.point && !del) || (mDrag == Drag::Tweak && i == mDragPoint);
-                p.disc(*screen[i], hot ? 6.0f : 4.0f, hot ? kHot : kVertexRim, 16);
-                p.disc(*screen[i], hot ? 3.5f : 2.5f, hot ? kHot : kVertexFill, 12);
+                p.disc(*screen[i], hot ? 6.0f : 4.0f, hot ? kHotColor : kVertexRim, 16);
+                p.disc(*screen[i], hot ? 3.5f : 2.5f, hot ? kHotColor : kVertexFill, 12);
             }
     }
 
@@ -1284,7 +1256,7 @@ void RetopoDrawTool::draw(render::FrameState& s, OverlayPainter& p, const ViewIn
             double a = k / 48.0 * 6.283185307179586;
             circle.push_back(mCursor + QPointF(std::cos(a), std::sin(a)) * mBrush);
         }
-        p.polyline(circle, 1.5f, kBrush, true);
+        p.polyline(circle, 1.5f, kTopoBrush, true);
     }
     if (mRefBvh.empty())
         drawToolMessage(p, view, "Retopo Draw: select a reference mesh first");
@@ -1310,7 +1282,7 @@ void RetopoDrawTool::drawLineSnap(OverlayPainter& p, const ViewInfo& view) const
         if (sp)
             run.push_back(*sp);
         if ((!sp || i == samples) && run.size() > 1)
-            p.dashedPolyline(run, 1.5f, 6.0f, kHot);
+            p.dashedPolyline(run, 1.5f, 6.0f, kHotColor);
         if (!sp)
             run.clear();
     }
@@ -1322,7 +1294,7 @@ void RetopoDrawTool::drawLineSnap(OverlayPainter& p, const ViewInfo& view) const
             double a = k / 24.0 * 6.283185307179586;
             ring.push_back(*sp + QPointF(std::cos(a), std::sin(a)) * 7.0);
         }
-        p.polyline(ring, 1.5f, kHot, true);
+        p.polyline(ring, 1.5f, kHotColor, true);
         p.disc(*sp, 3.5f, kDotFill, 16);
         p.label(*sp + QPointF(10.0, -10.0), QString("%1\u00b0 %2").arg(s.degrees, 0, 'g', 4).arg(snapObjectSpace() ? "object" : "world"));
     }
@@ -1334,7 +1306,7 @@ void RetopoDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, 
     {
         if (auto sp = view.project(mDots[mHover.dot]))
         {
-            p.disc(*sp, 8.0f, kHot, 16);
+            p.disc(*sp, 8.0f, kHotColor, 16);
             p.disc(*sp, 5.0f, kDotRim, 16);
         }
         return;
@@ -1368,7 +1340,7 @@ void RetopoDrawTool::drawDeleteTarget(render::FrameState& s, OverlayPainter& p, 
     if (mHover.point != kInvalid && m.pointValid(mHover.point))
         if (auto sp = view.project(pointWorld(mHover.point)))
         {
-            p.disc(*sp, 7.0f, kHot, 16);
+            p.disc(*sp, 7.0f, kHotColor, 16);
             p.disc(*sp, 4.0f, kVertexFill, 12);
         }
 }

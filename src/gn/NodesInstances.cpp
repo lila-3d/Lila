@@ -2,8 +2,6 @@
 
 namespace lila::gn::nodes::instancenodes
 {
-using D3 = glm::dvec3;
-
 D3 scaleOf(const glm::dmat4& m) { return {glm::length(D3(m[0])), glm::length(D3(m[1])), glm::length(D3(m[2]))}; }
 
 D3 rotationOf(const glm::dmat4& m)

@@ -22,6 +22,14 @@ inline Node& nodeNamed(const std::string& name, const char* cmd)
     return *n;
 }
 
+inline Node& nodeNamed(const std::string& name)
+{
+    Node* n = graph().find(name);
+    if (!n)
+        throw CommandError("no node named '" + name + "'");
+    return *n;
+}
+
 /** Re-throws graph errors as user-facing command errors. */
 template <class F> auto guarded(F&& f)
 {
@@ -43,6 +51,15 @@ inline glm::dvec3 vec3Of(const json& j)
 }
 
 inline json toJson3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
+
+/** How many ancestors the node has. */
+inline int depthOf(Graph& g, NodeId id)
+{
+    int d = 0;
+    for (NodeId p = g.parent(id); p != kNoNode; p = g.parent(p))
+        ++d;
+    return d;
+}
 
 inline glm::dmat4 worldOf(const Node& n) { return n.as<glm::dmat4>(Transform::kWorldMatrix); }
 inline glm::dvec3 positionOf(const Node& n) { return glm::dvec3(worldOf(n)[3]); }

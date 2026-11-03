@@ -1,6 +1,7 @@
 #include "curve/Channel.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Ops.h"
 
 #include <glm/gtc/constants.hpp>
@@ -12,9 +13,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
-
 /** Quarter arc from a to b about c, points after a up to and including b. */
 void arcTo(std::vector<D2>& out, const D2& c, double r, double a0, double a1, int segments)
 {

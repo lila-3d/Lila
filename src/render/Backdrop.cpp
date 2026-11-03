@@ -11,7 +11,7 @@ namespace
 {
 float luminance(glm::vec3 c) { return glm::dot(c, glm::vec3(0.2126f, 0.7152f, 0.0722f)); }
 
-float srgbToLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
+float srgbChannelToLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
 
 /** mesh.slang's neutralTonemap. */
 glm::vec3 neutralTonemap(glm::vec3 c)
@@ -125,7 +125,7 @@ std::vector<float> backdropLuminance(const FrameState& s, const EnvProbe* probe,
     std::vector<float> out(size_t(cols) * size_t(rows));
     if (!probe || !s.envBackground)
     {
-        glm::vec3 flat(srgbToLinear(s.background.r), srgbToLinear(s.background.g), srgbToLinear(s.background.b));
+        glm::vec3 flat(srgbChannelToLinear(s.background.r), srgbChannelToLinear(s.background.g), srgbChannelToLinear(s.background.b));
         std::fill(out.begin(), out.end(), std::clamp(luminance(flat), 0.0f, 1.0f));
         return out;
     }

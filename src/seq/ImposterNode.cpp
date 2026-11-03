@@ -24,9 +24,6 @@ namespace lila::seq
 {
 namespace
 {
-using json = nlohmann::json;
-using namespace gn::nodes;
-
 /** The bounding sphere of the mesh's points around its bounds centre. */
 std::pair<glm::dvec3, double> sphereOf(const geo::Mesh& m)
 {
@@ -53,6 +50,7 @@ geo::Mesh cardMesh(const glm::dvec3& c, double r)
 
 void imposterNode()
 {
+    using namespace gn::nodes;
     gn::registerDecl({
         .type = "Imposter",
         .label = "Imposter",

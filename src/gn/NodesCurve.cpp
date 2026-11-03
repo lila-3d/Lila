@@ -9,8 +9,6 @@ namespace lila::gn::nodes
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 void curvePrimitive(const char* type, const char* label, std::vector<SocketDecl> inputs, std::vector<PropDecl> props, std::function<CurveSet(ExecContext&)> build,
                     const char* doc)
 {
@@ -25,7 +23,7 @@ void curvePrimitive(const char* type, const char* label, std::vector<SocketDecl>
     });
 }
 
-void primitives()
+void curvePrimitives()
 {
     curvePrimitive(
         "CurveLine", "Curve Line", {in("start", T::Vector, vec(0, 0, 0)), in("end", T::Vector, vec(0, 100, 0))}, {},
@@ -554,7 +552,7 @@ void alongNodes()
 void registerCurveNodes()
 {
     splineNodes();
-    primitives();
+    curvePrimitives();
     curveOps();
     alongNodes();
 }

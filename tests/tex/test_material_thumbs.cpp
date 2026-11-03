@@ -18,9 +18,7 @@ namespace
 {
 namespace fs = std::filesystem;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-bool gpu()
+bool thumbsGpu()
 {
     render::Renderer& r = render::Renderer::get();
     if (r.running() || r.start())
@@ -32,7 +30,7 @@ bool gpu()
 
 TEST_CASE("material thumbnails render headless on the shader ball and come from the cache the second time")
 {
-    if (!gpu())
+    if (!thumbsGpu())
         return;
     if (!ops::find("materialLibrary"))
         lib::registerCommands();

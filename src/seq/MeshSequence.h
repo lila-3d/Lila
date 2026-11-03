@@ -81,6 +81,9 @@ LILA_SCENE_API std::vector<double> frames(const SequenceOptions& o);
 /** The file name for one frame (no folder, no extension). */
 LILA_SCENE_API std::string frameName(const std::string& pattern, const std::string& name, int index, double frame, int padding);
 
+/** s with the characters node paths use but file names cannot (: | / \) turned into underscores. */
+LILA_SCENE_API std::string fileSafe(std::string s);
+
 /** "none" | "first" | "each". False for anything else. */
 LILA_SCENE_API bool parseRecenter(std::string_view s, Recenter* out);
 

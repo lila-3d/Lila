@@ -32,7 +32,7 @@ namespace
 json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
 
 /** The same registries test_link.cpp sets up; whichever file runs first does it. */
-void setup()
+void setupPlacementTest()
 {
     if (!ops::find("unrealPlaceInstances"))
     {
@@ -73,7 +73,7 @@ const json* placementOf(const json& group, const std::string& name)
 
 TEST_CASE("placement plan: one asset per instance root, every member placed in Unreal space")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     scene::Graph& g = scene::Graph::current();
     // Selecting one instance brings its whole group.
@@ -117,7 +117,7 @@ TEST_CASE("placement plan: one asset per instance root, every member placed in U
 
 TEST_CASE("placement plan: lights become light actors and lighting channels Unreal's three")
 {
-    setup();
+    setupPlacementTest();
     run("newScene");
     run("polyCube", {{"name", "Crate"}});
     run("polyCube", {{"name", "Floor"}});
@@ -175,7 +175,7 @@ TEST_CASE("placement plan: lights become light actors and lighting channels Unre
 
 TEST_CASE("unrealPlaceInstances exports each source once, imports it and places its members")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     fs::path dir = fs::temp_directory_path() / "lila_link_placements";
     fs::remove_all(dir);
@@ -255,7 +255,7 @@ TEST_CASE("unrealPlaceInstances exports each source once, imports it and places 
 
 TEST_CASE("placement plan: a live array's copies are placements of their source's asset")
 {
-    setup();
+    setupPlacementTest();
     run("newScene");
     run("polyCube", {{"name", "Post"}});
     run("array", {{"args", {"Post"}}, {"count", 4}, {"offset", {200, 0, 0}}, {"name", "Fence"}});
@@ -281,7 +281,7 @@ TEST_CASE("placement plan: a live array's copies are placements of their source'
 
 TEST_CASE("placement keys: link ids survive renames, and copies get their own")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     scene::Graph& g = scene::Graph::current();
     PlacementOptions o;
@@ -311,7 +311,7 @@ TEST_CASE("placement keys: link ids survive renames, and copies get their own")
 
 TEST_CASE("placement assets: names unique across same-named sources, saved and kept after reopening")
 {
-    setup();
+    setupPlacementTest();
     run("newScene");
     run("group", {{"empty", true}, {"name", "North"}});
     run("group", {{"empty", true}, {"name", "South"}});
@@ -353,7 +353,7 @@ TEST_CASE("placement assets: names unique across same-named sources, saved and k
 
 TEST_CASE("placement collision: options checked, UCX_ proxies go with their source and are never placed")
 {
-    setup();
+    setupPlacementTest();
     run("newScene");
     run("polyCube", {{"name", "Arch"}});
     run("polyCube", {{"name", "UCX_Arch_00"}});
@@ -382,7 +382,7 @@ TEST_CASE("placement collision: options checked, UCX_ proxies go with their sour
 
 TEST_CASE("verification commands: unrealCall, unrealListPlacements, unrealAssetInfo, unrealSaveAssets return errors as data")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     FakeServer server([](const json& req) -> std::optional<json> {
         const std::string m = req["method"];
@@ -441,7 +441,7 @@ TEST_CASE("verification commands: unrealCall, unrealListPlacements, unrealAssetI
 
 TEST_CASE("placement timeouts scale with the count; a km-wide grid of thousands plans as one hism group")
 {
-    setup();
+    setupPlacementTest();
     CHECK(placementTimeoutMs(0) == 30000);
     CHECK(placementTimeoutMs(10000) == 230000);
     CHECK(placementTimeoutMs(100000000) == 1800000);
@@ -498,7 +498,7 @@ void buildScatter()
 
 TEST_CASE("geometry nodes instances: one asset per referenced mesh, placed per instance, keyed stably")
 {
-    setup();
+    setupPlacementTest();
     if (!ops::find("gnAddNode"))
     {
         gn::registerTypes();
@@ -570,7 +570,7 @@ TEST_CASE("geometry nodes instances: one asset per referenced mesh, placed per i
 
 TEST_CASE("geometry nodes instances reach Unreal: their meshes written and imported, stale meshes removed")
 {
-    setup();
+    setupPlacementTest();
     if (!ops::find("gnAddNode"))
     {
         gn::registerTypes();
@@ -639,7 +639,7 @@ TEST_CASE("geometry nodes instances reach Unreal: their meshes written and impor
 
 TEST_CASE("custom primitive data: names declared on the source map member attrs to slots, saved and undoable")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     scene::Graph& g = scene::Graph::current();
     run("addAttr", {{"args", {"BoltA"}}, {"longName", "wear"}, {"defaultValue", 0.75}});
@@ -682,7 +682,7 @@ TEST_CASE("custom primitive data: names declared on the source map member attrs 
 
 TEST_CASE("custom primitive data: geometry nodes instances send their instance attributes")
 {
-    setup();
+    setupPlacementTest();
     if (!ops::find("gnAddNode"))
     {
         gn::registerTypes();
@@ -714,7 +714,7 @@ TEST_CASE("custom primitive data: geometry nodes instances send their instance a
 
 TEST_CASE("instanced groups: the holder takes the components every member shares, each instance keeps its own")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     for (const char* m : {"Bolt", "BoltA", "BoltB"})
     {
@@ -739,7 +739,7 @@ TEST_CASE("instanced groups: the holder takes the components every member shares
 
 TEST_CASE("validation gates Unreal sends: blocking issues stop them, the rest come back as issues")
 {
-    setup();
+    setupPlacementTest();
     buildKit();
     namespace dg = scene::diagnostics;
     int runs = 0;

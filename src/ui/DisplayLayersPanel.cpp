@@ -13,6 +13,8 @@
 #include "ui/Icons.h"
 #include "ui/NodeLookup.h"
 #include "ui/Theme.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
 
 #include <QCursor>
@@ -35,18 +37,7 @@ namespace
 {
 namespace dl = scene::displayLayers;
 
-enum Column
-{
-    kV,
-    kP,
-    kType,
-    kSwatch,
-    kName,
-    kEmpty,
-    kColumnCount,
-};
-
-constexpr int kLayerRole = Qt::UserRole;
+constexpr int kDisplayLayerRole = Qt::UserRole;
 
 /** The layer the toolbar and the layers.* actions act on: the row last clicked. */
 std::string& activeLayer()
@@ -55,28 +46,7 @@ std::string& activeLayer()
     return name;
 }
 
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
-
-float toSrgb(double v)
-{
-    float f = std::clamp(float(v), 0.0f, 1.0f);
-    return f <= 0.0031308f ? f * 12.92f : 1.055f * std::pow(f, 1.0f / 2.4f) - 0.055f;
-}
-
-double toLinear(double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); }
-
-QIcon swatch(const json& color, const QColor& frame)
+QIcon layerSwatch(const json& color, const QColor& frame)
 {
     QPixmap pm(14, 14);
     pm.fill(Qt::transparent);
@@ -85,35 +55,15 @@ QIcon swatch(const json& color, const QColor& frame)
     if (color.is_array())
     {
         glm::vec3 c = viewportDisplay::layerTint({color[0].get<float>(), color[1].get<float>(), color[2].get<float>()});
-        p.setBrush(QColor::fromRgbF(toSrgb(c.r), toSrgb(c.g), toSrgb(c.b)));
+        p.setBrush(QColor::fromRgbF(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b)));
     }
     p.drawRect(1, 1, 11, 11);
     return QIcon(pm);
 }
 
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
-{
-    auto* b = new QToolButton(parent);
-    b->setIcon(icon(iconName));
-    b->setToolTip(tip);
-    b->setAutoRaise(true);
-    b->setIconSize(QSize(16, 16));
-    return b;
-}
-
-/** The selection, or nothing to pass when empty (commands take the selection themselves). */
-json selectionNames()
-{
-    scene::Graph& g = scene::Graph::current();
-    json out = json::array();
-    for (scene::NodeId id : g.selection())
-        out.push_back(g.node(id)->path());
-    return out;
-}
-
 void createFromSelected()
 {
-    json r = run("createDisplayLayer", {{"args", selectionNames()}});
+    json r = runUi("createDisplayLayer", {{"args", selectionNames()}});
     if (r.is_string())
         activeLayer() = r.get<std::string>();
 }
@@ -129,13 +79,13 @@ void addSelected(const std::string& layer)
     if (args.empty())
         return;
     args.insert(args.begin(), layer);
-    run("editDisplayLayerMembers", {{"args", args}});
+    runUi("editDisplayLayerMembers", {{"args", args}});
 }
 
 void removeSelected()
 {
     if (json args = selectionNames(); !args.empty())
-        run("removeFromDisplayLayer", {{"args", args}});
+        runUi("removeFromDisplayLayer", {{"args", args}});
 }
 
 const std::string& validActive()
@@ -165,7 +115,7 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
         bar->addWidget(b);
     };
     add("plus", "Create an empty layer", [] {
-        if (json r = run("createDisplayLayer", {{"empty", true}}); r.is_string())
+        if (json r = runUi("createDisplayLayer", {{"empty", true}}); r.is_string())
             activeLayer() = r.get<std::string>();
     });
     add("stack-plus", "Create a layer from the selected objects", [] { createFromSelected(); });
@@ -173,16 +123,16 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     add("stack-minus", "Remove the selected objects from their layers", [] { removeSelected(); });
     add("arrow-up", "Move the current layer up", [this] {
         if (QTreeWidgetItem* it = mTree->currentItem(); it && mTree->indexOfTopLevelItem(it) > 0)
-            run("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) - 1}});
+            runUi("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) - 1}});
     });
     add("arrow-down", "Move the current layer down", [this] {
         if (QTreeWidgetItem* it = mTree->currentItem())
-            run("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) + 1}});
+            runUi("reorderDisplayLayer", {{"args", {currentLayer()}}, {"index", mTree->indexOfTopLevelItem(it) + 1}});
     });
     bar->addStretch(1);
     add("trash", "Delete the current layer (its objects stay)", [this] {
         if (std::string layer = currentLayer(); !layer.empty())
-            run("deleteDisplayLayer", {{"args", {layer}}});
+            runUi("deleteDisplayLayer", {{"args", {layer}}});
     });
     v->addLayout(bar);
 
@@ -200,7 +150,7 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     Hotkeys::passThrough(mTree);
     deletion::claim(mTree, [this] {
         if (std::string layer = currentLayer(); !layer.empty())
-            run("deleteDisplayLayer", {{"args", {layer}}});
+            runUi("deleteDisplayLayer", {{"args", {layer}}});
     });
     QHeaderView* header = mTree->header();
     header->setStretchLastSection(false);
@@ -221,14 +171,14 @@ DisplayLayersPanel::DisplayLayersPanel(QWidget* parent) : QWidget(parent)
     connect(mTree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int column) {
         if (mFilling || column != kName)
             return;
-        const std::string old = item->data(kName, kLayerRole).toString().toStdString();
+        const std::string old = item->data(kName, kDisplayLayerRole).toString().toStdString();
         const std::string name = item->text(kName).trimmed().toStdString();
         if (name.empty() || name == old)
         {
             scheduleRefresh();
             return;
         }
-        json r = run("displayLayer", {{"args", {old}}, {"name", name}});
+        json r = runUi("displayLayer", {{"args", {old}}, {"name", name}});
         if (r.is_object() && activeLayer() == old)
             activeLayer() = r["name"].get<std::string>();
         scheduleRefresh();
@@ -299,7 +249,7 @@ void DisplayLayersPanel::refresh()
         const QString name = QString::fromStdString(layer->name());
         auto* item = new QTreeWidgetItem(mTree);
         item->setFlags(item->flags() | Qt::ItemIsEditable);
-        item->setData(kName, kLayerRole, QString::fromStdString(layer->path()));
+        item->setData(kName, kDisplayLayerRole, QString::fromStdString(layer->path()));
         item->setText(kName, name);
         item->setToolTip(kName, QString("%1 object(s). Click to select them, double-click to rename.").arg(info["members"].size()));
 
@@ -315,7 +265,7 @@ void DisplayLayersPanel::refresh()
         item->setIcon(kType, type == "template" ? icon("cube") : type == "reference" ? icon("lock") : QIcon());
         item->setToolTip(kType, "Display type: blank normal, cube template (grey wire, not pickable), lock reference (not pickable). Click to cycle.");
 
-        item->setIcon(kSwatch, swatch(info["color"], frame));
+        item->setIcon(kSwatch, layerSwatch(info["color"], frame));
         item->setToolTip(kSwatch, info["color"].is_null() ? "No color: click to pick one" : "Wireframe color: click to change");
 
         if (info["members"].empty())
@@ -342,13 +292,13 @@ void DisplayLayersPanel::rename(QTreeWidgetItem* item)
 std::string DisplayLayersPanel::currentLayer() const
 {
     if (QTreeWidgetItem* it = mTree->currentItem())
-        return it->data(kName, kLayerRole).toString().toStdString();
+        return it->data(kName, kDisplayLayerRole).toString().toStdString();
     return validActive();
 }
 
 void DisplayLayersPanel::clicked(QTreeWidgetItem* item, int column)
 {
-    const std::string layer = item->data(kName, kLayerRole).toString().toStdString();
+    const std::string layer = item->data(kName, kDisplayLayerRole).toString().toStdString();
     activeLayer() = layer;
     scene::Node* n = findNode(layer);
     if (!n || !dl::isLayer(*n))
@@ -356,16 +306,16 @@ void DisplayLayersPanel::clicked(QTreeWidgetItem* item, int column)
     const json info = dl::info(scene::Graph::current(), n->id());
     switch (column)
     {
-    case kV: run("displayLayer", {{"args", {layer}}, {"visibility", !info["visibility"].get<bool>()}}); break;
-    case kP: run("displayLayer", {{"args", {layer}}, {"hideOnPlayback", !info["hideOnPlayback"].get<bool>()}}); break;
+    case kV: runUi("displayLayer", {{"args", {layer}}, {"visibility", !info["visibility"].get<bool>()}}); break;
+    case kP: runUi("displayLayer", {{"args", {layer}}, {"hideOnPlayback", !info["hideOnPlayback"].get<bool>()}}); break;
     case kType:
     {
         const std::string t = info["displayType"].get<std::string>();
-        run("displayLayer", {{"args", {layer}}, {"displayType", t == "normal" ? "template" : t == "template" ? "reference" : "normal"}});
+        runUi("displayLayer", {{"args", {layer}}, {"displayType", t == "normal" ? "template" : t == "template" ? "reference" : "normal"}});
         break;
     }
     case kSwatch: pickColor(layer); break;
-    default: run("selectDisplayLayerMembers", {{"args", {layer}}}); break;
+    default: runUi("selectDisplayLayerMembers", {{"args", {layer}}}); break;
     }
 }
 
@@ -394,7 +344,7 @@ void DisplayLayersPanel::pickColor(const std::string& layer)
     const std::optional<colorPopup::Value> picked = colorPopup::exec(QCursor::pos() + QPoint(12, 12), std::move(o));
     preview(start, startUsed);
     if (picked && picked->color != start)
-        run("displayLayer", {{"args", {layer}}, {"color", {picked->color.x, picked->color.y, picked->color.z}}});
+        runUi("displayLayer", {{"args", {layer}}, {"color", {picked->color.x, picked->color.y, picked->color.z}}});
 }
 
 void DisplayLayersPanel::contextMenu(const QPoint& at)
@@ -403,12 +353,12 @@ void DisplayLayersPanel::contextMenu(const QPoint& at)
     QMenu menu(this);
     if (!item)
     {
-        menu.addAction(icon("plus"), "Create Empty Layer", [] { run("createDisplayLayer", {{"empty", true}}); });
+        menu.addAction(icon("plus"), "Create Empty Layer", [] { runUi("createDisplayLayer", {{"empty", true}}); });
         menu.addAction(icon("stack-plus"), "Create Layer from Selected", [] { createFromSelected(); });
         menu.exec(mTree->viewport()->mapToGlobal(at));
         return;
     }
-    const std::string layer = item->data(kName, kLayerRole).toString().toStdString();
+    const std::string layer = item->data(kName, kDisplayLayerRole).toString().toStdString();
     activeLayer() = layer;
     scene::Node* n = findNode(layer);
     if (!n)
@@ -416,7 +366,7 @@ void DisplayLayersPanel::contextMenu(const QPoint& at)
     const json info = dl::info(scene::Graph::current(), n->id());
     const int row = mTree->indexOfTopLevelItem(item);
 
-    menu.addAction("Select Objects", [layer] { run("selectDisplayLayerMembers", {{"args", {layer}}}); });
+    menu.addAction("Select Objects", [layer] { runUi("selectDisplayLayerMembers", {{"args", {layer}}}); });
     menu.addAction(icon("square-plus"), "Add Selected Objects", [layer] { addSelected(layer); });
     menu.addAction(icon("stack-minus"), "Remove Selected Objects", [] { removeSelected(); });
     menu.addSeparator();
@@ -424,22 +374,22 @@ void DisplayLayersPanel::contextMenu(const QPoint& at)
     for (const char* t : {"normal", "template", "reference"})
     {
         QAction* a = menu.addAction(QString(t).replace(0, 1, QString(t).at(0).toUpper()),
-                                    [layer, t] { run("displayLayer", {{"args", {layer}}, {"displayType", t}}); });
+                                    [layer, t] { runUi("displayLayer", {{"args", {layer}}, {"displayType", t}}); });
         a->setCheckable(true);
         a->setChecked(type == t);
     }
     menu.addSeparator();
     menu.addAction("Set Color...", [this, layer] { pickColor(layer); });
-    QAction* noColor = menu.addAction("No Color", [layer] { run("displayLayer", {{"args", {layer}}, {"useColor", false}}); });
+    QAction* noColor = menu.addAction("No Color", [layer] { runUi("displayLayer", {{"args", {layer}}, {"useColor", false}}); });
     noColor->setEnabled(!info["color"].is_null());
     menu.addSeparator();
-    menu.addAction(icon("arrow-up"), "Move Up", [layer, row] { run("reorderDisplayLayer", {{"args", {layer}}, {"index", std::max(0, row - 1)}}); })
+    menu.addAction(icon("arrow-up"), "Move Up", [layer, row] { runUi("reorderDisplayLayer", {{"args", {layer}}, {"index", std::max(0, row - 1)}}); })
         ->setEnabled(row > 0);
-    menu.addAction(icon("arrow-down"), "Move Down", [layer, row] { run("reorderDisplayLayer", {{"args", {layer}}, {"index", row + 1}}); })
+    menu.addAction(icon("arrow-down"), "Move Down", [layer, row] { runUi("reorderDisplayLayer", {{"args", {layer}}, {"index", row + 1}}); })
         ->setEnabled(row + 1 < mTree->topLevelItemCount());
     menu.addAction(icon("pencil"), "Rename", [this, item] { rename(item); });
     menu.addSeparator();
-    menu.addAction(icon("trash"), "Delete Layer", [layer] { run("deleteDisplayLayer", {{"args", {layer}}}); });
+    menu.addAction(icon("trash"), "Delete Layer", [layer] { runUi("deleteDisplayLayer", {{"args", {layer}}}); });
     menu.exec(mTree->viewport()->mapToGlobal(at));
 }
 

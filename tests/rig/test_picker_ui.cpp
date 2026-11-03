@@ -21,14 +21,6 @@ void click(QWidget* w, QPointF at, Qt::KeyboardModifiers mods = Qt::NoModifier)
     QMouseEvent release(QEvent::MouseButtonRelease, at, w->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, mods);
     QApplication::sendEvent(w, &release);
 }
-
-std::vector<std::string> selectedNames()
-{
-    std::vector<std::string> out;
-    for (NodeId id : graph().selection())
-        out.push_back(graph().node(id)->name());
-    return out;
-}
 } // namespace
 
 TEST_CASE("control picker panel selects through clicks and follows the scene selection")

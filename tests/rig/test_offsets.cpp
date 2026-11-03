@@ -15,8 +15,6 @@ using namespace lila::scene;
 
 namespace
 {
-constexpr double kFps = 30.0;
-
 void at(double seconds) { run("currentTime", {{"args", {seconds}}}); }
 double sec(double frame) { return frame / kFps; }
 
@@ -34,7 +32,7 @@ double angleDeg(const glm::dquat& q) { return glm::degrees(2.0 * std::atan2(glm:
 double quatDiff(const glm::dquat& q, const glm::dquat& r) { return angleDeg(glm::inverse(q) * r); }
 
 /** root > spine > head, with the arm shoulder > elbow > wrist under the spine; root, spine and head keyed over a second. */
-void character()
+void keyedCharacter()
 {
     run("newScene");
     run("autoKeyframe", {{"state", false}});
@@ -61,12 +59,12 @@ void character()
     at(0.0);
 }
 
-const std::vector<double> kTimes = {0.0, sec(7), 0.5, sec(22), 1.0};
+const std::vector<double> kOffsetTimes = {0.0, sec(7), 0.5, sec(22), 1.0};
 
-std::map<double, glm::dmat4> sample(const std::string& n)
+std::map<double, glm::dmat4> worldsByTime(const std::string& n)
 {
     std::map<double, glm::dmat4> out;
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         out[t] = world(n);
@@ -81,10 +79,10 @@ glm::dquat local(const std::string& joint, const std::string& parent) { return r
 
 TEST_CASE("an offset starts as nothing, and posing on it moves one value for the whole take")
 {
-    character();
-    auto spineBase = sample("spine");
+    keyedCharacter();
+    auto spineBase = worldsByTime("spine");
     std::map<double, glm::dquat> localBase;
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         localBase[t] = local("spine", "root");
@@ -93,7 +91,7 @@ TEST_CASE("an offset starts as nothing, and posing on it moves one value for the
     std::string l = run("createOffset", {{"args", {"spine"}}, {"channels", "rotate"}});
     CHECK(l == "Offset_spine");
     CHECK(anim::activeLayer(graph()) == node(l).id());
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         CHECK(quatDiff(rotOf(world("spine")), rotOf(spineBase[t])) < 1e-6);
@@ -111,7 +109,7 @@ TEST_CASE("an offset starts as nothing, and posing on it moves one value for the
         CHECK_FALSE(graph().source({blend, anim::BlendNode::kInputB, c}));
 
     std::vector<glm::dquat> deltas;
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         deltas.push_back(local("spine", "root") * glm::inverse(localBase[t]));
@@ -121,7 +119,7 @@ TEST_CASE("an offset starts as nothing, and posing on it moves one value for the
     CHECK(angleDeg(deltas.front()) > 5.0);
 
     // The pivot stays put.
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         checkNear(glm::dvec3(world("spine")[3]), glm::dvec3(spineBase[t][3]), 1e-6);
@@ -130,12 +128,12 @@ TEST_CASE("an offset starts as nothing, and posing on it moves one value for the
 
 TEST_CASE("world and node spaces hold the offset in their axes")
 {
-    character();
-    auto base = sample("head");
+    keyedCharacter();
+    auto base = worldsByTime("head");
     std::string l = run("createOffset", {{"args", {"head"}}, {"space", "world"}, {"channels", "rotate"}});
     run("editOffset", {{"args", {l}}, {"joint", "head"}, {"rotate", v3(0, 0, 30)}});
     const glm::dquat want = glm::angleAxis(glm::radians(30.0), glm::dvec3(0, 0, 1));
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         CHECK(quatDiff(rotOf(world("head")) * glm::inverse(rotOf(base[t])), want) < 1e-6);
@@ -145,7 +143,7 @@ TEST_CASE("world and node spaces hold the offset in their axes")
 
     std::string n = run("createOffset", {{"args", {"head"}}, {"space", "root"}, {"channels", "rotate"}});
     run("editOffset", {{"args", {n}}, {"joint", "head"}, {"rotate", v3(0, 0, 30)}});
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         const glm::dquat r = rotOf(world("root"));
@@ -155,10 +153,10 @@ TEST_CASE("world and node spaces hold the offset in their axes")
     CHECK_THROWS(run("createOffset", {{"args", {"spine"}}, {"space", "head"}}));
 
     // Translation in world axes.
-    auto spine = sample("spine");
+    auto spine = worldsByTime("spine");
     std::string tr = run("createOffset", {{"args", {"spine"}}, {"space", "world"}, {"channels", "translate"}});
     run("editOffset", {{"args", {tr}}, {"joint", "spine"}, {"translate", v3(0, 0, 10)}});
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         checkNear(glm::dvec3(world("spine")[3]), glm::dvec3(spine[t][3]) + glm::dvec3(0, 0, 10), 1e-6);
@@ -167,8 +165,8 @@ TEST_CASE("world and node spaces hold the offset in their axes")
 
 TEST_CASE("a range eases the offset in and out, and posing works where it applies")
 {
-    character();
-    auto base = sample("spine");
+    keyedCharacter();
+    auto base = worldsByTime("spine");
     std::map<double, glm::dmat4> baseAt;
     for (double f : {3.0, 6.0, 9.0, 10.5, 15.0, 19.5, 24.0, 27.0})
     {
@@ -212,13 +210,13 @@ TEST_CASE("a range eases the offset in and out, and posing works where it applie
 
 TEST_CASE("compensation: children keep their world rotation, IK hands keep their contact")
 {
-    character();
-    auto head = sample("head");
+    keyedCharacter();
+    auto head = worldsByTime("head");
     std::string l = run("createOffset", {{"args", {"spine"}}, {"channels", "rotate"}, {"keepChildren", true}});
     json info = run("listOffsets")[0];
     CHECK(info["compensated"].size() == 2); // head and shoulder
     run("editOffset", {{"args", {l}}, {"joint", "spine"}, {"rotate", v3(0, 0, 15)}});
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         CHECK(quatDiff(rotOf(world("head")), rotOf(head[t])) < 1e-6);
@@ -232,13 +230,13 @@ TEST_CASE("compensation: children keep their world rotation, IK hands keep their
     at(0.0);
     run("ikHandle", {{"startJoint", "shoulder"}, {"endEffector", "wrist"}, {"name", "armIk"}});
     run("parent", {{"args", {"armIk", "root"}}});
-    auto shoulder = sample("shoulder");
-    auto goal = sample("armIk");
-    auto reached = sample("wrist");
+    auto shoulder = worldsByTime("shoulder");
+    auto goal = worldsByTime("armIk");
+    auto reached = worldsByTime("wrist");
     std::string o = run("createOffset", {{"args", {"spine"}}, {"channels", "rotate"}});
     run("editOffset", {{"args", {o}}, {"joint", "spine"}, {"rotate", v3(0, 0, -10)}});
     int planted = 0;
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         CHECK(glm::length(glm::dvec3(world("shoulder")[3]) - glm::dvec3(shoulder[t][3])) > 1.0);
@@ -252,7 +250,7 @@ TEST_CASE("compensation: children keep their world rotation, IK hands keep their
 
 TEST_CASE("a locked hand keeps its contact under an offset of the body")
 {
-    character();
+    keyedCharacter();
     const NodeId chain = rigel::createIkChain(graph(), node("shoulder").id(), node("wrist").id());
     REQUIRE(chain);
     rigel::setLock(graph(), chain, 0.0, true);
@@ -268,8 +266,8 @@ TEST_CASE("a locked hand keeps its contact under an offset of the body")
 
 TEST_CASE("weight, mute, undo, stacking, delete and bake")
 {
-    character();
-    auto base = sample("spine");
+    keyedCharacter();
+    auto base = worldsByTime("spine");
     std::string l = run("createOffset", {{"args", {"spine"}}, {"channels", "rotate"}, {"space", "world"}});
     run("editOffset", {{"args", {l}}, {"joint", "spine"}, {"rotate", v3(0, 30, 0)}});
     auto angle = [&](double t) {
@@ -300,7 +298,7 @@ TEST_CASE("weight, mute, undo, stacking, delete and bake")
 
     // Baking keeps the look on every frame and leaves no offset behind.
     std::map<double, glm::dmat4> offsetWorld;
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         offsetWorld[t] = world("spine");
@@ -308,7 +306,7 @@ TEST_CASE("weight, mute, undo, stacking, delete and bake")
     run("bakeOffset", {{"args", {l}}});
     CHECK(run("listOffsets").empty());
     CHECK(graph().find(l) == nullptr);
-    for (double t : kTimes)
+    for (double t : kOffsetTimes)
     {
         at(t);
         CHECK(quatDiff(rotOf(world("spine")), rotOf(offsetWorld[t])) < 1e-3);

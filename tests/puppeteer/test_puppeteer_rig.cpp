@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "rig/RigMath.h"
 
 #include "ops/Command.h"
@@ -17,39 +18,16 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace puptest;
 using json = nlohmann::json;
 using Approx = doctest::Approx;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
 std::string package() { return LILA_TEST_PUPPETEER_PACKAGE; }
 
-void loadPuppeteer()
-{
-    if (!ops::find("puppeteerIkChain"))
-        REQUIRE(extensions::ExtensionManager::get().load(package()) == "Puppeteer");
-}
-
-Graph& graph() { return Graph::current(); }
-NodeId id(const std::string& name)
-{
-    Node* n = graph().find(name);
-    REQUIRE(n);
-    return n->id();
-}
-glm::dmat4 world(const std::string& name)
-{
-    graph().evaluate();
-    return std::get<glm::dmat4>(graph().value({id(name), Transform::kWorldMatrix, -1}));
-}
-glm::dvec3 pos(const std::string& name) { return glm::dvec3(world(name)[3]); }
-double attr(const std::string& plug) { return std::get<double>(graph().value(graph().plug(plug))); }
 void setTime(double t) { run("currentTime", {{"args", {t}}}); }
 
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps) { return glm::length(a - b) <= eps; }
 bool nearRotation(const glm::dmat4& a, const glm::dmat4& b, double eps)
 {
     const glm::dmat3 ra = puppeteer::math::rotationOf(a), rb = puppeteer::math::rotationOf(b);

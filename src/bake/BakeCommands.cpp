@@ -1,6 +1,7 @@
 #include "bake/Bake.h"
 
 #include "bake/Backend.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/HighFiles.h"
@@ -22,65 +23,16 @@
 
 namespace lila::bake
 {
+using T = ArgType;
+
 namespace
 {
-using T = ArgType;
+using detail::findNode;
+using detail::listArg;
+using detail::projectArg;
 using scene::Graph;
 using scene::Node;
 using scene::NodeId;
-
-Node* findNode(Graph& g, const std::string& name)
-{
-    try
-    {
-        return g.find(name);
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
-}
-
-/** project=, else the scene's only project; create makes one when there is none. */
-Node& projectArg(const Args& a, const char* cmd, bool create)
-{
-    Graph& g = Graph::current();
-    if (a.has("project"))
-    {
-        const std::string name = a.get<std::string>("project");
-        Node* n = findNode(g, name);
-        if (n && isProject(*n))
-            return *n;
-        if (!n && create)
-            return *createProject(g, name);
-        throw CommandError(std::string(cmd) + ": " + name + " is not a bake project");
-    }
-    const std::vector<NodeId> ps = projects(g);
-    if (ps.size() == 1)
-        return *g.node(ps.front());
-    if (ps.empty())
-    {
-        if (create)
-            return *createProject(g, "");
-        throw CommandError(std::string(cmd) + ": the scene has no bake project (createBakeProject)");
-    }
-    throw CommandError(std::string(cmd) + ": the scene has several bake projects; name one with project=");
-}
-
-std::vector<std::string> listArg(const Args& a, const char* flag)
-{
-    std::vector<std::string> out;
-    if (!a.has(flag))
-        return out;
-    const json& v = a.flags[flag];
-    if (v.is_string())
-        out.push_back(v.get<std::string>());
-    else if (v.is_array())
-        for (const json& x : v)
-            if (x.is_string())
-                out.push_back(x.get<std::string>());
-    return out;
-}
 
 /** A mesh node's path, or a CommandError. */
 std::string meshPath(Graph& g, const std::string& name, const char* cmd)
@@ -348,12 +300,12 @@ void registerCommands()
             const bool created = !grp;
             if (!grp)
             {
-                Node& project = projectArg(a, "bakeGroup", true);
+                Node& project = projectArg(Graph::current(), a, "bakeGroup", true);
                 grp = createGroup(g, project.id(), name);
             }
             else if (a.has("project"))
             {
-                Node& project = projectArg(a, "bakeGroup", true);
+                Node& project = projectArg(Graph::current(), a, "bakeGroup", true);
                 setGroupProject(g, grp->id(), project.name());
             }
 
@@ -475,7 +427,7 @@ void registerCommands()
                   {"preset", "ps", T::String, nullptr, "Bake modifier preset for the new highs (Smooth x2, Auto Bevel + Smooth)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            Node& project = projectArg(a, "autoGroupBake", true);
+            Node& project = projectArg(Graph::current(), a, "autoGroupBake", true);
             const json stack = a.has("preset") ? stackArg(a.flags["preset"], "autoGroupBake") : json::array();
             return autoGroup(g, project, a.objects(), stack);
         },
@@ -496,7 +448,7 @@ void registerCommands()
                   {"remove", "rm", T::Bool, false, "Remove the map from the project."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            Node& project = projectArg(a, "setBakeMap", true);
+            Node& project = projectArg(Graph::current(), a, "setBakeMap", true);
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("setBakeMap: name the map (bakeMaps lists them)");
             const std::string id = a.positional[0].get<std::string>();
@@ -576,7 +528,7 @@ void registerCommands()
                   {"clear", "clr", T::Bool, false, "With material: drop that texture set's own settings (all of them, or only the flags given)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
-            Node& project = projectArg(a, "setBakeOutput", true);
+            Node& project = projectArg(Graph::current(), a, "setBakeOutput", true);
             ProjectSettings s = projectSettings(project);
             json o = s.output.toJson();
             if (a.has("material"))
@@ -663,7 +615,7 @@ void registerCommands()
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
-            Node& project = projectArg(a, "bake", false);
+            Node& project = projectArg(Graph::current(), a, "bake", false);
             return runBakeCommand(project, a, "bake");
         },
     });
@@ -700,7 +652,7 @@ void registerCommands()
                     all.push_back(projectInfo(g, *g.node(id)));
                 return {{"projects", all}, {"backends", backendNames()}};
             }
-            Node& project = projectArg(a, "bakeStatus", false);
+            Node& project = projectArg(Graph::current(), a, "bakeStatus", false);
             json j = projectInfo(g, project);
             j["last"] = lastResult(project.id());
             j["backends"] = backendNames();
@@ -733,7 +685,7 @@ void registerCommands()
             const auto target = findTarget(name);
             if (!target)
                 throw CommandError("bakeForTarget: no target named " + name);
-            Node& project = projectArg(a, "bakeForTarget", true);
+            Node& project = projectArg(Graph::current(), a, "bakeForTarget", true);
             std::vector<std::string> skipped;
             applyTargetTo(g, project, *target, a.get<bool>("optional"), a.get<bool>("overrideGroups"), skipped);
             json grouped;
@@ -785,7 +737,7 @@ void registerCommands()
             const auto target = findTarget(name);
             if (!target)
                 throw CommandError("applyBakeTarget: no target named " + name);
-            Node& project = projectArg(a, "applyBakeTarget", true);
+            Node& project = projectArg(Graph::current(), a, "applyBakeTarget", true);
             std::vector<std::string> skipped;
             applyTargetTo(g, project, *target, a.get<bool>("optional"), a.get<bool>("overrideGroups"), skipped);
             return {{"target", target->name}, {"project", project.path()}, {"backend", targetBackend(*target)}, {"skipped", skipped}};
@@ -812,7 +764,7 @@ void registerCommands()
             Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string() || a.positional[0].get<std::string>().empty())
                 throw CommandError("saveBakeTarget: name the preset");
-            Node& project = projectArg(a, "saveBakeTarget", false);
+            Node& project = projectArg(Graph::current(), a, "saveBakeTarget", false);
             const ProjectSettings ps = projectSettings(project);
             TargetProfile t;
             t.name = a.positional[0].get<std::string>();

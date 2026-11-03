@@ -1,6 +1,7 @@
 #include "gltf/GltfMaterials.h"
 
 #include "core/Profile.h"
+#include "core/TextMatch.h"
 #include "fbx/ImportCommon.h"
 #include "scene/Graph.h"
 #include "scene/Materials.h"
@@ -22,7 +23,6 @@ float toSrgb(float l)
     return l <= 0.0031308f ? 12.92f * l : 1.055f * std::pow(l, 1.0f / 2.4f) - 0.055f;
 }
 
-std::string str(const char* s) { return s ? std::string(s) : std::string(); }
 
 const cgltf_image* imageOf(const cgltf_texture_view& v)
 {
@@ -100,11 +100,6 @@ material::TextureSampling samplingOf(const cgltf_texture_view& v)
     return s;
 }
 
-std::string lower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 /** Inverse of the sRGB decode, so a pure factor multiply happens in linear space. */
 void multiplySrgb(Pixels& p, const glm::vec3& factor)
@@ -253,7 +248,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
     {
         const cgltf_material& gm = data.materials[i];
         MaterialSlot& slot = out[i];
-        const std::string wanted = fbx::safeName(str(gm.name), "Material");
+        const std::string wanted = fbx::safeName(orEmpty(gm.name), "Material");
         const cgltf_pbr_metallic_roughness& pbr = gm.pbr_metallic_roughness;
         const bool specGloss = gm.has_pbr_specular_glossiness && !gm.has_pbr_metallic_roughness;
 
@@ -511,7 +506,7 @@ std::vector<MaterialSlot> importMaterials(scene::Graph& graph, const cgltf_data&
             set(kShadingModel, int64_t(ShadingModel::Unlit));
         for (const cgltf_texture_view* v : views)
             if (const cgltf_image* img = imageOf(*v); img && img->mime_type)
-                if (std::string mime = lower(img->mime_type); mime != "image/png" && mime != "image/jpeg")
+                if (std::string mime = textMatch::lower(img->mime_type); mime != "image/png" && mime != "image/jpeg")
                     r.warnings.push_back(std::format("material '{}': {} image {} may not display in Lila", name, mime, images.path(img)));
     }
     return out;

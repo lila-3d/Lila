@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Mesh.h"
@@ -13,31 +15,13 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace inst = scene::instancing;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-scene::Graph& g() { return scene::Graph::current(); }
-scene::NodeId id(const std::string& name) { return g().find(name)->id(); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-std::string kind(const std::string& m) { return run("instanceInfo", {{"args", {m}}})["kind"].get<std::string>(); }
-
-scene::MeshPtr outMesh(const std::string& m)
-{
-    g().evaluate();
-    return g().find(m)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 /** A point of the mesh as components are edited on it: the cage under the modifiers. */
 double pointY(const std::string& m, int p) { return run("meshData", {{"args", {m}}, {"base", true}})["points"][p][1].get<double>(); }
-
-std::string tempPath(const char* name)
-{
-    auto dir = std::filesystem::temp_directory_path() / "lila_tests" / "instancing";
-    std::filesystem::create_directories(dir);
-    return (dir / name).generic_string();
-}
 } // namespace
 
 TEST_CASE("an instance shares its source's mesh and component edits on any member reach all of them")
@@ -246,7 +230,7 @@ TEST_CASE("instances survive save and open in both formats and through a file re
     run("move", {{"args", {a}}, {"by", {50, 0, 0}}});
     for (const char* ext : {".lila", ".lilaa"})
     {
-        std::string path = tempPath((std::string("inst") + ext).c_str());
+        std::string path = tempPath("instancing", (std::string("inst") + ext).c_str());
         run("saveScene", {{"args", {path}}});
         run("newScene");
         run("openScene", {{"args", {path}}});
@@ -260,13 +244,13 @@ TEST_CASE("instances survive save and open in both formats and through a file re
     // A local instance of a referenced mesh keeps pointing at it after a reopen.
     run("newScene");
     run("polyCube", {{"name", "Asset"}});
-    std::string asset = tempPath("asset.lilaa");
+    std::string asset = tempPath("instancing", "asset.lilaa");
     run("saveScene", {{"args", {asset}}});
     run("newScene");
     run("createReference", {{"args", {asset}}, {"namespace", "kit"}});
     std::string local = run("instance", {{"args", {"kit:Asset"}}, {"name", "Local"}})[0];
     CHECK(kind(local) == "instance");
-    std::string shot = tempPath("shot.lila");
+    std::string shot = tempPath("instancing", "shot.lila");
     run("saveScene", {{"args", {shot}}});
     run("newScene");
     run("openScene", {{"args", {shot}}});

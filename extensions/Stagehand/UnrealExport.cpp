@@ -22,7 +22,6 @@ namespace stagehand
 {
 namespace
 {
-using json = nlohmann::json;
 using UeArg = ArgType;
 
 constexpr const char* kAssemblyType = "stagehandAssembly";

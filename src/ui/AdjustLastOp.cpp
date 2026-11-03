@@ -390,7 +390,7 @@ QPointer<AdjustLastOpPopup>& popup()
     return p;
 }
 
-QWidget* mainWindow()
+QWidget* viewportWindow()
 {
     for (QWidget* w : QApplication::topLevelWidgets())
         if (w->findChild<ViewportLayout*>())
@@ -402,7 +402,7 @@ void showPopup()
 {
     if (!popup())
     {
-        QWidget* win = mainWindow();
+        QWidget* win = viewportWindow();
         if (!win)
             return;
         popup() = new AdjustLastOpPopup(win);

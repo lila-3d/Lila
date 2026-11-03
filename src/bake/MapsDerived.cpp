@@ -96,13 +96,13 @@ void relax(const Poisson& p, std::vector<float>& h, int iterations)
 }
 
 /** Least-squares heights for the links, coarse to fine. */
-std::vector<float> solve(const Poisson& p, int iterations)
+std::vector<float> solvePoisson(const Poisson& p, int iterations)
 {
     std::vector<float> h(p.mask.size(), 0.0f);
     if (p.width > 32 && p.height > 32)
     {
         const Poisson c = coarsen(p);
-        const std::vector<float> hc = solve(c, iterations);
+        const std::vector<float> hc = solvePoisson(c, iterations);
         for (int y = 0; y < p.height; ++y)
             for (int x = 0; x < p.width; ++x)
                 h[p.at(x, y)] = hc[c.at(x / 2, y / 2)];
@@ -145,7 +145,7 @@ void normalToHeightFinalize(const MapSettings& settings, const BakeInputs&, Text
                     p.gy[i] = 0.5f * (a.y * a.w + b.y * b.w) / float(p.height);
             }
         }
-    std::vector<float> h = solve(p, std::clamp(settings.options.value("iterations", 60), 1, 10000));
+    std::vector<float> h = solvePoisson(p, std::clamp(settings.options.value("iterations", 60), 1, 10000));
 
     // Each linked region (a UV island) floats free: centre it on the low.
     std::vector<int32_t> comp(h.size(), -1);

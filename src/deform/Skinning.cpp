@@ -1,6 +1,7 @@
 #include "deform/Skinning.h"
 
 #include "core/Profile.h"
+#include "deform/DeformUtil.h"
 
 #include <Eigen/Dense>
 #include <glm/gtc/quaternion.hpp>
@@ -15,14 +16,6 @@ namespace lila::deform
 {
 namespace
 {
-template <class F> void parallelPoints(size_t n, F&& fn)
-{
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 256), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i)
-            fn(i);
-    });
-}
-
 using Sparse = std::vector<std::pair<uint32_t, double>>;
 
 /** A point's weights, normalized and sorted by influence id. */

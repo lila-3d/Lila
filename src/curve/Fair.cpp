@@ -1,6 +1,7 @@
 #include "curve/Fair.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Tessellate.h"
 
 #include <algorithm>
@@ -11,10 +12,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
-constexpr double kEps = 1e-12;
-
 double turn(const D3& a, const D3& b)
 {
     if (glm::length(a) < kEps || glm::length(b) < kEps)

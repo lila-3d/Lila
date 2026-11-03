@@ -7,8 +7,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <vector>
@@ -20,6 +22,8 @@ using lila::scene::Graph;
 using lila::scene::kNoNode;
 using lila::scene::Node;
 using lila::scene::NodeId;
+
+inline constexpr double kPi = std::numbers::pi;
 
 inline constexpr const char* kSolverType = "physicsSolver";
 inline constexpr const char* kMarkerType = "physicsMarker";
@@ -199,6 +203,16 @@ glm::dquat boneFrame(Graph& g, NodeId joint);
 /** Twist about X, then swings about Y and Z, of a constraint-space rotation; radians. */
 glm::dvec3 swingTwist(const glm::dquat& q);
 glm::dquat fromSwingTwist(const glm::dvec3& angles);
+
+/** The rotation vector (axis times angle, radians) of q, taking the shorter way round. */
+inline glm::dvec3 rotationVector(const glm::dquat& q0)
+{
+    glm::dquat q = q0.w < 0.0 ? -q0 : q0;
+    const double s = glm::length(glm::dvec3(q.x, q.y, q.z));
+    if (s < 1e-12)
+        return glm::dvec3(q.x, q.y, q.z) * 2.0;
+    return glm::dvec3(q.x, q.y, q.z) * (2.0 * std::atan2(s, q.w) / s);
+}
 
 /** Fits a marker's shape to its joint's dominant-influence region of the skinned meshes (a bone-sized default with none). */
 ShapeDesc fitShape(Graph& g, NodeId joint, ShapeKind kind);

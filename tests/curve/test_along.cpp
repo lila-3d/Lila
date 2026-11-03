@@ -19,7 +19,7 @@ using D2 = glm::dvec2;
 
 namespace
 {
-Spline line(D3 a, D3 b)
+Spline segmentSpline(D3 a, D3 b)
 {
     Spline s;
     s.kind = Kind::Poly;
@@ -65,7 +65,7 @@ double maxError(const geo::Mesh& m, const std::function<double(const D3&)>& err)
 
 TEST_CASE("rail stations, wrap and extrapolation")
 {
-    Rail r(line(D3(0), D3(100, 0, 0)));
+    Rail r(segmentSpline(D3(0), D3(100, 0, 0)));
     REQUIRE(r.valid());
     CHECK(r.length() == doctest::Approx(100.0));
     Rail::Station mid = r.at(30.0);
@@ -83,7 +83,7 @@ TEST_CASE("rail stations, wrap and extrapolation")
     CHECK(glm::distance(loop.at(L * 1.25).p, loop.at(L * 0.25).p) < 1e-6);
     CHECK(glm::distance(loop.at(-L * 0.25).p, loop.at(L * 0.75).p) < 1e-6);
 
-    CHECK(!Rail(line(D3(5), D3(5))).valid());
+    CHECK(!Rail(segmentSpline(D3(5), D3(5))).valid());
 }
 
 TEST_CASE("deform along curve keeps lengths and bends sections")
@@ -113,12 +113,12 @@ TEST_CASE("deform along curve keeps lengths and bends sections")
     geo::Mesh s = beam(10.0, 4);
     DeformAlongOptions so;
     so.stretch = true;
-    deformAlongCurve(s, Rail(line(D3(0), D3(200, 0, 0))), so);
+    deformAlongCurve(s, Rail(segmentSpline(D3(0), D3(200, 0, 0))), so);
     CHECK(s.bounds().max.x == doctest::Approx(200.0));
     geo::Mesh h = beam(10.0, 4);
     DeformAlongOptions ho;
     ho.offsetFraction = 0.5;
-    deformAlongCurve(h, Rail(line(D3(0), D3(200, 0, 0))), ho);
+    deformAlongCurve(h, Rail(segmentSpline(D3(0), D3(200, 0, 0))), ho);
     CHECK(h.bounds().min.x == doctest::Approx(100.0));
     CHECK(h.bounds().max.x == doctest::Approx(110.0));
 
@@ -127,7 +127,7 @@ TEST_CASE("deform along curve keeps lengths and bends sections")
     DeformAlongOptions no;
     no.forward = AlongAxis::NegX;
     no.offset = 50.0;
-    deformAlongCurve(n, Rail(line(D3(0, 0, 0), D3(0, 0, 100))), no);
+    deformAlongCurve(n, Rail(segmentSpline(D3(0, 0, 0), D3(0, 0, 100))), no);
     CHECK(n.bounds().min.z == doctest::Approx(50.0));
     CHECK(n.bounds().max.z == doctest::Approx(60.0));
     geo::Mesh e = beam(10.0, 1);
@@ -138,12 +138,12 @@ TEST_CASE("deform along curve keeps lengths and bends sections")
     for (geo::Index p = 0; p < e.pointCapacity(); ++p)
         CHECK(glm::distance(e.position(p), e0.position(p)) < 1e-12);
 
-    CHECK_THROWS_AS(deformAlongCurve(m, Rail(line(D3(1), D3(1))), {}), std::invalid_argument);
+    CHECK_THROWS_AS(deformAlongCurve(m, Rail(segmentSpline(D3(1), D3(1))), {}), std::invalid_argument);
 }
 
 TEST_CASE("deform along curve: twist, scale, loop, ends and stored normals")
 {
-    Rail rail(line(D3(0), D3(100, 0, 0)));
+    Rail rail(segmentSpline(D3(0), D3(100, 0, 0)));
     geo::Mesh m = beam(100.0, 10);
     DeformAlongOptions o;
     o.scale = [](double t) { return 1.0 + t; };
@@ -186,22 +186,22 @@ TEST_CASE("deform along curve: twist, scale, loop, ends and stored normals")
 
 TEST_CASE("aim curve and auto normals turn the frame")
 {
-    Spline path = line(D3(0), D3(100, 0, 0));
+    Spline path = segmentSpline(D3(0), D3(100, 0, 0));
     RailOptions ro;
     ro.up = UpMode::AimCurve;
-    ro.aim = line(D3(0, 0, 50), D3(100, 0, 50));
+    ro.aim = segmentSpline(D3(0, 0, 50), D3(100, 0, 50));
     Rail aimed(path, ro);
     CHECK(aimed.at(50.0).f.n.z == doctest::Approx(1.0));
     // Auto normals keep up toward Y on a vertical climb's sides too.
     RailOptions auto_;
     auto_.up = UpMode::AutoNormals;
-    Rail climb(line(D3(0), D3(100, 100, 0)), auto_);
+    Rail climb(segmentSpline(D3(0), D3(100, 100, 0)), auto_);
     CHECK(climb.at(10.0).f.n.y > 0.7);
 }
 
 TEST_CASE("array placements: count, spacing, loops, offsets and pieces")
 {
-    Rail rail(line(D3(0), D3(100, 0, 0)));
+    Rail rail(segmentSpline(D3(0), D3(100, 0, 0)));
     ArrayAlongOptions o;
     o.count = 5;
     auto p = arrayPlacements(rail, o, 10.0);

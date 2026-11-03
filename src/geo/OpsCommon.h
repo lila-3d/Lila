@@ -10,6 +10,11 @@
 
 namespace lila::geo::detail
 {
+/** Offsets and thicknesses clamped where points would cross stop this share short of the crossing. */
+inline constexpr double kClampMargin = 0.02;
+/** Points a clamped offset brings closer than this share of the offset are welded. */
+inline constexpr double kWeldShare = 1e-7;
+
 /**
  * addFace that also copies attributes: face from srcFace, corner i from srcCorners[i], and the edge
  * from point i to i+1 from srcEdges[i] when that edge is new. Any source may be kInvalid or empty.
@@ -50,4 +55,17 @@ LILA_SCENE_API void weldPoints(Mesh& mesh, std::span<const Index> target, std::u
 
 /** No two edges of the closed polygon cross or touch, apart from neighbours sharing their corner. */
 LILA_SCENE_API bool polygonIsSimple(std::span<const glm::dvec2> p);
+
+/** q lies inside the closed polygon, by the even-odd rule. */
+inline bool insidePolygon(std::span<const glm::dvec2> poly, const glm::dvec2& q)
+{
+    bool in = false;
+    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+    {
+        const glm::dvec2 &a = poly[i], &b = poly[j];
+        if ((a.y > q.y) != (b.y > q.y) && q.x < (b.x - a.x) * (q.y - a.y) / (b.y - a.y) + a.x)
+            in = !in;
+    }
+    return in;
+}
 } // namespace lila::geo::detail

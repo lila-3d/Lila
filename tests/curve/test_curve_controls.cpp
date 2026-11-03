@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Along.h"
 #include "curve/CurveControls.h"
 #include "curve/CurveNodes.h"
@@ -15,6 +17,7 @@
 using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
@@ -37,13 +40,6 @@ D3 cpoint(const std::string& curve, size_t i, const char* key = "points") { retu
 bool cexists(const std::string& name) { return ccall("objExists", {{"args", {name}}}).get<bool>(); }
 
 void cmove(const std::string& node, const D3& by) { ccall("move", {{"args", {node}}, {"by", {by.x, by.y, by.z}}}); }
-
-void checkNear(const D3& a, const D3& b)
-{
-    CHECK(a.x == doctest::Approx(b.x).epsilon(1e-9));
-    CHECK(a.y == doctest::Approx(b.y).epsilon(1e-9));
-    CHECK(a.z == doctest::Approx(b.z).epsilon(1e-9));
-}
 } // namespace
 
 TEST_CASE("curveControls: driven points follow, undo")

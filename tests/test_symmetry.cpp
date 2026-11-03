@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "geo/Ops.h"
@@ -18,18 +20,10 @@
 using namespace lila;
 using geo::Index;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-geo::Mesh outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 bool sameBits(const geo::Mesh& a, const geo::Mesh& b)
 {
     if (a.pointCapacity() != b.pointCapacity())
@@ -155,11 +149,11 @@ TEST_CASE("scene save, load and undo keep positions bit-exact")
         run("selectComponents", {{"args", {cube}}, {"vertices", {v}}});
         run("moveComponents", {{"by", {d(rng), d(rng), d(rng)}}});
     }
-    geo::Mesh edited = outMesh(cube);
+    geo::Mesh edited = meshOf(cube);
     run("selectComponents", {{"args", {cube}}, {"vertices", {3}}});
     run("moveComponents", {{"by", {1.0 / 3.0, 0, 0}}});
     run("undo");
-    CHECK(sameBits(edited, outMesh(cube)));
+    CHECK(sameBits(edited, meshOf(cube)));
 
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";
     std::filesystem::create_directories(dir);
@@ -169,7 +163,7 @@ TEST_CASE("scene save, load and undo keep positions bit-exact")
         run("saveScene", {{"args", {path}}});
         run("newScene");
         run("openScene", {{"args", {path}}});
-        CHECK(sameBits(edited, outMesh(cube)));
+        CHECK(sameBits(edited, meshOf(cube)));
     }
 }
 
@@ -347,7 +341,7 @@ TEST_CASE("symmetryCheck counts unmatched points as asymmetry")
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     run("symmetryCheck", {{"args", {cube}}}); // stores the cube's pairs
     run("setSymmetry", {{"args", {cube}}, {"axis", "off"}});
-    run("selectComponents", {{"args", {cube}}, {"faces", {findFace(outMesh(cube), [](glm::dvec3 c) { return c.x > 40.0; })}}});
+    run("selectComponents", {{"args", {cube}}, {"faces", {findFace(meshOf(cube), [](glm::dvec3 c) { return c.x > 40.0; })}}});
     run("polyExtrude", {{"thickness", 30}});
     run("setSymmetry", {{"args", {cube}}, {"axis", "x"}});
     json c = run("symmetryCheck", {{"args", {cube}}})[cube];
@@ -373,7 +367,7 @@ TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
         CAPTURE(k.side);
         run("newScene");
         std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"subdivisionsX", k.subdivisionsX}})[0];
-        const geo::Mesh before = outMesh(cube);
+        const geo::Mesh before = meshOf(cube);
         const int face = k.subdivisionsX == 1 ? findFace(before, [](glm::dvec3 c) { return c.x > 40.0; })
                                                : findFace(before, [](glm::dvec3 c) { return c.x > 0.0 && c.y > 40.0; });
         REQUIRE(face >= 0);
@@ -383,7 +377,7 @@ TEST_CASE("symmetryRebuild mirrors the kept side of an asymmetric mesh")
 
         json out = run("symmetryRebuild", {{"args", {cube}}, {"side", k.side}});
         CHECK(out[cube].get<int>() == 0);
-        geo::Mesh m = outMesh(cube);
+        geo::Mesh m = meshOf(cube);
         CHECK(m.numFaces() == Index(k.faces));
         CHECK(m.numPoints() == Index(k.points));
         CHECK(geo::boundaryLoops(m).empty());
@@ -415,7 +409,7 @@ TEST_CASE("symmetryRebuild and symmetryCheck use the plane through the pivot")
 
     json out = run("symmetryRebuild", {{"args", {cube}}});
     CHECK(out[cube].get<int>() == 0);
-    const geo::Mesh m = outMesh(cube);
+    const geo::Mesh m = meshOf(cube);
     CHECK(m.numFaces() == 10);
     CHECK(m.bounds().min.x == doctest::Approx(-20.0));
     CHECK(m.bounds().max.x == doctest::Approx(80.0));

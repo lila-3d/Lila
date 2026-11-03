@@ -19,13 +19,14 @@ using namespace lila;
 
 namespace masonry
 {
+using json = nlohmann::json;
+
 namespace
 {
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
-using json = nlohmann::json;
-using T = gn::SocketType;
+using Socket = gn::SocketType;
 
 // clang-format off
 const Input kWall[] = {
@@ -101,19 +102,19 @@ gn::SocketDecl socketOf(const Input& in)
     switch (in.type)
     {
     case Input::Float:
-        s.type = T::Float;
+        s.type = Socket::Float;
         s.defaultValue = in.def;
         break;
     case Input::Int:
-        s.type = T::Int;
+        s.type = Socket::Int;
         s.defaultValue = int64_t(in.def);
         break;
     case Input::Bool:
-        s.type = T::Bool;
+        s.type = Socket::Bool;
         s.defaultValue = in.def != 0.0;
         break;
     case Input::String:
-        s.type = T::String;
+        s.type = Socket::String;
         s.defaultValue = std::string(in.text ? in.text : "");
         break;
     }
@@ -125,7 +126,7 @@ gn::SocketDecl socketOf(const Input& in)
     return s;
 }
 
-gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
+gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = Socket::Geometry, .doc = std::move(doc)}; }
 
 json valuesOf(ExecContext& c, InputSet set)
 {

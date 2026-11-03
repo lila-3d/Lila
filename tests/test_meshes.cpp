@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "io/FileTranslators.h"
 #include "ops/Command.h"
 #include "geo/Mesh.h"
@@ -10,11 +12,7 @@
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-} // namespace
+using namespace testutil;
 
 TEST_CASE("primitives are procedural until history is deleted")
 {

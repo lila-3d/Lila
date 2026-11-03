@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "geo/Symmetry.h"
@@ -13,18 +15,10 @@
 using namespace lila;
 using geo::Index;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-geo::Mesh outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
 struct Case
 {
     int count;
@@ -106,11 +100,11 @@ TEST_CASE("radial symmetry: a component move is turned (and mirrored) into every
         run("newScene");
         const std::string mesh = tube();
         setRadial(mesh, c);
-        const geo::Mesh before = outMesh(mesh);
+        const geo::Mesh before = meshOf(mesh);
         // A point off every mirror plane: the middle of a column pair isn't a vertex, so take one and move it sideways.
         run("selectComponents", {{"args", {mesh}}, {"vertices", {30}}});
         run("moveComponents", {{"by", {1.0, 2.0, 0.5}}});
-        geo::Mesh after = outMesh(mesh);
+        geo::Mesh after = meshOf(mesh);
         const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(*scene::Graph::current().find(mesh));
         REQUIRE(spec);
         REQUIRE(spec->radial);
@@ -152,7 +146,7 @@ TEST_CASE("symmetrizeRadial rebuilds one wedge round the axis and turns radial s
         scene::Node* n = scene::Graph::current().find(sphere);
         CHECK(n->as<int64_t>(scene::MeshNode::kSymmetry) == scene::kSymmetryRadial);
         CHECK(n->as<int64_t>(scene::MeshNode::kRadialCount) == c.count);
-        const geo::Mesh m = outMesh(sphere);
+        const geo::Mesh m = meshOf(sphere);
         CHECK(m.validate(geo::kValidateDefault).empty());
         json check = run("symmetryCheck", {{"args", {sphere}}})[sphere];
         CHECK(check["maxAsymmetry"].get<double>() < 1e-9);
@@ -184,7 +178,7 @@ TEST_CASE("radial orbits survive save, load and drift with symmetry off")
     run("selectComponents", {{"args", {mesh}}, {"vertices", {3}}});
     run("moveComponents", {{"by", {0.0, 1.0, 0.0}}}); // stores the orbits
     const std::string layer = geo::radialLayerName(*scene::symmetrySpec(*scene::Graph::current().find(mesh))->radial);
-    CHECK(outMesh(mesh).pointAttrs().has(layer));
+    CHECK(meshOf(mesh).pointAttrs().has(layer));
 
     auto dir = std::filesystem::temp_directory_path() / "lila_tests";
     std::filesystem::create_directories(dir);
@@ -192,7 +186,7 @@ TEST_CASE("radial orbits survive save, load and drift with symmetry off")
     run("saveScene", {{"args", {path}}});
     run("newScene");
     run("openScene", {{"args", {path}}});
-    CHECK(outMesh(mesh).pointAttrs().has(layer));
+    CHECK(meshOf(mesh).pointAttrs().has(layer));
 
     run("setSymmetry", {{"args", {mesh}}, {"axis", "off"}});
     for (int v = 0; v < 10; ++v)

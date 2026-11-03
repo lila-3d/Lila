@@ -21,6 +21,7 @@
 #include "ui/OutlinerLogic.h"
 #include "ui/Theme.h"
 #include "ui/TokenCompleter.h"
+#include "ui/UiCommands.h"
 #include "ui/ViewportToolbar.h"
 
 #include <QApplication>
@@ -195,18 +196,6 @@ json namesOf(const std::vector<scene::NodeId>& ids)
     return names;
 }
 
-void runCommand(const char* name, const json& call)
-{
-    try
-    {
-        ops::execute(name, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
-
 constexpr const char* kShowSetsPref = "/outliner/showSets";
 
 bool showSets()
@@ -290,7 +279,7 @@ void registerOutlinerActions()
                               if (std::find(kids.begin(), kids.end(), c) == kids.end())
                                   kids.push_back(c);
                       if (!kids.empty())
-                          runCommand("select", {{"args", namesOf(kids)}});
+                          runUi("select", {{"args", namesOf(kids)}});
                   }, nullptr, "Replaces the selection with the direct children of the selected objects.",
                   "select(listRelatives(children=True))"});
 
@@ -462,7 +451,7 @@ Outliner::Outliner(QWidget* parent) : QTreeWidget(parent)
         if (const outliner::RowSource* src = rowSource(item); src && src->activate && item->data(0, kSourceRowRole).isValid())
             return src->activate(item->data(0, kSourceRowRole).toString().toStdString());
         if (scene::Node* set = scene::Graph::current().node(item->data(0, kSetRole).toULongLong()))
-            runCommand("selectSetMembers", {{"args", {set->path()}}});
+            runUi("selectSetMembers", {{"args", {set->path()}}});
     });
 
     rebuild();
@@ -493,7 +482,7 @@ void Outliner::dropEvent(QDropEvent* e)
         {
             json args = namesOf(moved);
             args.insert(args.begin(), set->path());
-            runCommand("addToSet", {{"args", args}});
+            runUi("addToSet", {{"args", args}});
         }
         return;
     }
@@ -536,7 +525,7 @@ void Outliner::dropEvent(QDropEvent* e)
         call["world"] = true;
     if (place)
         call["index"] = outliner::dropIndex(parent == scene::kNoNode ? g.roots() : g.children(parent), moved, anchor);
-    runCommand("parent", call);
+    runUi("parent", call);
     scheduleRebuild();
 }
 
@@ -833,23 +822,23 @@ void Outliner::showSetMenu(QTreeWidgetItem* item, const QPoint& globalPos)
     if (item->data(0, kSetMemberRole).isValid())
     {
         const std::string member = item->data(0, kSetMemberRole).toString().toStdString();
-        menu.addAction(icon("pointer"), "Select Member", [member] { runCommand("select", {{"args", {member.substr(0, member.find('.'))}}}); });
-        menu.addAction(icon("minus"), "Remove from Set", [name, member] { runCommand("removeFromSet", {{"args", {name, member}}}); });
+        menu.addAction(icon("pointer"), "Select Member", [member] { runUi("select", {{"args", {member.substr(0, member.find('.'))}}}); });
+        menu.addAction(icon("minus"), "Remove from Set", [name, member] { runUi("removeFromSet", {{"args", {name, member}}}); });
         menu.exec(globalPos);
         return;
     }
-    menu.addAction(icon("pointer"), "Select Set Members", [name] { runCommand("selectSetMembers", {{"args", {name}}}); });
-    menu.addAction("Add Selection to Set", [name] { runCommand("addToSet", {{"args", {name}}}); });
-    menu.addAction("Remove Selection from Set", [name] { runCommand("removeFromSet", {{"args", {name}}}); });
+    menu.addAction(icon("pointer"), "Select Set Members", [name] { runUi("selectSetMembers", {{"args", {name}}}); });
+    menu.addAction("Add Selection to Set", [name] { runUi("addToSet", {{"args", {name}}}); });
+    menu.addAction("Remove Selection from Set", [name] { runUi("removeFromSet", {{"args", {name}}}); });
     menu.addSeparator();
     QAction* quick = menu.addAction("Quick Select Set", [name, on = !set->as<bool>(scene::ObjectSet::kQuickSelect)] {
-        runCommand("setAttr", {{"args", {name + ".quickSelect", on}}});
+        runUi("setAttr", {{"args", {name + ".quickSelect", on}}});
     });
     quick->setCheckable(true);
     quick->setChecked(set->as<bool>(scene::ObjectSet::kQuickSelect));
     quick->setToolTip("List it under Edit > Quick Select Sets.");
     menu.addAction(icon("pencil"), "Rename", [this, setItem] { editItem(setItem, 0); })->setEnabled(editable);
-    menu.addAction(icon("trash"), "Delete Set", [name] { runCommand("deleteSet", {{"args", {name}}}); });
+    menu.addAction(icon("trash"), "Delete Set", [name] { runUi("deleteSet", {{"args", {name}}}); });
     menu.exec(globalPos);
 }
 
@@ -1170,7 +1159,7 @@ void Outliner::showContextMenu(const QPoint& pos)
         std::sort(sel.begin(), sel.end());
         std::sort(want.begin(), want.end());
         if (!want.empty() && sel != want)
-            runCommand("select", {{"args", namesOf(targets)}});
+            runUi("select", {{"args", namesOf(targets)}});
         actions::run(target);
     };
 

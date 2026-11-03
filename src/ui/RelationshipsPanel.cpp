@@ -38,7 +38,7 @@ json runQuiet(const char* name, const json& call)
     }
 }
 
-const char* kindIcon(const std::string& kind)
+const char* relationKindIcon(const std::string& kind)
 {
     if (kind == "channel")
         return "bulb";
@@ -49,7 +49,7 @@ const char* kindIcon(const std::string& kind)
     return "stack";
 }
 
-const char* kindLabel(const std::string& kind)
+const char* relationKindLabel(const std::string& kind)
 {
     if (kind == "channel")
         return "Lighting Channel";
@@ -184,7 +184,7 @@ void RelationshipsPanel::refresh()
     const QString q = mSearch->text().trimmed();
     auto shown = [&](const std::string& kind, const std::string& name) {
         return q.isEmpty() || QString::fromStdString(name).contains(q, Qt::CaseInsensitive) ||
-               QString(kindLabel(kind)).contains(q, Qt::CaseInsensitive);
+               QString(relationKindLabel(kind)).contains(q, Qt::CaseInsensitive);
     };
     mRows.clear();
     for (scene::NodeId id : attrView::selectionLeadFirst())
@@ -253,8 +253,8 @@ void RelationshipsPanel::refresh()
     for (size_t c = 0; c < cols.size(); ++c)
     {
         mColumns.push_back(cols[c].first);
-        auto* head = new QTableWidgetItem(icon(kindIcon(cols[c].first.kind)), QString::fromStdString(cols[c].first.name));
-        head->setToolTip(QString("%1: %2").arg(kindLabel(cols[c].first.kind), QString::fromStdString(cols[c].first.name)));
+        auto* head = new QTableWidgetItem(icon(relationKindIcon(cols[c].first.kind)), QString::fromStdString(cols[c].first.name));
+        head->setToolTip(QString("%1: %2").arg(relationKindLabel(cols[c].first.kind), QString::fromStdString(cols[c].first.name)));
         mTable->setHorizontalHeaderItem(int(c), head);
     }
     for (size_t r = 0; r < mRows.size(); ++r)

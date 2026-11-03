@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/FoldEdges.h"
 #include "geo/Ops.h"
@@ -13,12 +15,10 @@
 using namespace lila;
 using geo::Index;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-
 /** An L-shaped profile 1 cm thick with 10 cm legs, extruded 10 cm along z: a bent sheet with thickness. */
 geo::Mesh lBracket()
 {
@@ -60,8 +60,6 @@ Index edgeAt(const geo::Mesh& m, glm::dvec3 a, glm::dvec3 b)
 
 /** The long (z) edge of the bracket at profile point (x, y). */
 Index longEdge(const geo::Mesh& m, double x, double y) { return edgeAt(m, {x, y, 0}, {x, y, 10}); }
-
-bool has(const std::vector<Index>& v, Index e) { return std::find(v.begin(), v.end(), e) != v.end(); }
 } // namespace
 
 TEST_CASE("fold edges on a bent sheet skip its thickness")

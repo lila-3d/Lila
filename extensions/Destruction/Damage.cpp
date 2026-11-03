@@ -23,12 +23,13 @@ using namespace lila;
 
 namespace destruction
 {
+using Socket = gn::SocketType;
+
 namespace
 {
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
-using T = gn::SocketType;
 namespace ph = lila::physics;
 
 /** Seeded uniform [0, 1) from a key, the same on every machine. */
@@ -48,7 +49,7 @@ glm::dvec3 randDir(uint64_t seed, uint64_t key)
     return {r * std::cos(a), z, r * std::sin(a)};
 }
 
-gn::SocketDecl input(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
+gn::SocketDecl input(std::string id, Socket t, gn::json def, std::string doc, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
 {
     gn::SocketDecl s{.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
     s.min = lo;
@@ -56,7 +57,7 @@ gn::SocketDecl input(std::string id, T t, gn::json def, std::string doc, std::op
     return s;
 }
 
-gn::SocketDecl geometrySocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
+gn::SocketDecl geometrySocket(std::string id, std::string doc) { return {.id = std::move(id), .type = Socket::Geometry, .doc = std::move(doc)}; }
 
 gn::json vector3(double x, double y, double z) { return gn::json::array({x, y, z}); }
 
@@ -365,18 +366,18 @@ gn::NodeDecl damageDecl()
         .props = {{.id = "mode", .options = {"cracked", "missing", "chipped", "collapsed"}, .defaultValue = "cracked", .doc = "What kind of damage."}},
         .sockets = {.inputs = {geometrySocket("pieces", "Pieces, as instances (from Fracture)."), geometrySocket("links", "Links between them (from Fracture or Anchor Pieces)."),
                                geometrySocket("colliders", "Collapsed: things the pieces land on besides the ground."),
-                               input("amount", T::Float, 0.3, "How much is damaged, 0 to 1.", 0.0, 1.0),
-                               input("impact", T::Vector, vector3(0, 0, 0), "Where the damage centres, cm (missing, collapsed)."),
-                               input("seed", T::Int, 1, "Another seed gives another result."),
-                               input("gap", T::Float, 0.3, "Cracked: width of the cracks, cm.", 0.0),
-                               input("shift", T::Float, 1.0, "Cracked: how far loose pieces slip, cm.", 0.0),
-                               input("tilt", T::Float, 2.0, "Cracked: how far loose pieces tip, degrees.", 0.0),
-                               input("gravity", T::Vector, vector3(0, -981, 0), "Collapsed: cm/s2."),
-                               input("ground", T::Bool, true, "Collapsed: a floor at Ground Height."),
-                               input("groundHeight", T::Float, 0.0, "Collapsed: cm."),
-                               input("strength", T::Float, 1.0, "Collapsed: multiplies the links' strength; lower brings more down.", 0.0),
-                               input("density", T::Float, 2400.0, "Collapsed: kg/m3.", 1.0),
-                               input("seconds", T::Float, 6.0, "Collapsed: longest it settles for, s.", 0.5, 60.0)},
+                               input("amount", Socket::Float, 0.3, "How much is damaged, 0 to 1.", 0.0, 1.0),
+                               input("impact", Socket::Vector, vector3(0, 0, 0), "Where the damage centres, cm (missing, collapsed)."),
+                               input("seed", Socket::Int, 1, "Another seed gives another result."),
+                               input("gap", Socket::Float, 0.3, "Cracked: width of the cracks, cm.", 0.0),
+                               input("shift", Socket::Float, 1.0, "Cracked: how far loose pieces slip, cm.", 0.0),
+                               input("tilt", Socket::Float, 2.0, "Cracked: how far loose pieces tip, degrees.", 0.0),
+                               input("gravity", Socket::Vector, vector3(0, -981, 0), "Collapsed: cm/s2."),
+                               input("ground", Socket::Bool, true, "Collapsed: a floor at Ground Height."),
+                               input("groundHeight", Socket::Float, 0.0, "Collapsed: cm."),
+                               input("strength", Socket::Float, 1.0, "Collapsed: multiplies the links' strength; lower brings more down.", 0.0),
+                               input("density", Socket::Float, 2400.0, "Collapsed: kg/m3.", 1.0),
+                               input("seconds", Socket::Float, 6.0, "Collapsed: longest it settles for, s.", 0.5, 60.0)},
                     .outputs = {geometrySocket("pieces", "The damaged pieces."), geometrySocket("links", "The links still holding."),
                                 geometrySocket("rubble", "Missing and chipped: the pieces taken out, where they were.")}},
         .exec = damagePieces,
@@ -623,16 +624,16 @@ gn::NodeDecl debrisDecl()
                "Settle they come out flying, with velocity, for another Rigid Body Solver.",
         .sockets = {.inputs = {geometrySocket("events", "Where things broke: points, with impulse and frame attributes when they have them."),
                                geometrySocket("colliders", "What chunks land on and take their inside material from: the pieces, or a mesh."),
-                               input("amount", T::Float, 4.0, "Chunks per break, on average.", 0.0, 1000.0),
-                               input("size", T::Float, 8.0, "Typical chunk size, cm.", 0.1),
-                               input("sizeVariation", T::Float, 0.5, "0 makes every chunk the same size; 1 from nothing to twice it.", 0.0, 1.0),
-                               input("spread", T::Float, 300.0, "How fast chunks fly off, cm/s.", 0.0),
-                               input("dust", T::Int, 20, "Dust points per break.", 0, 10000), input("seed", T::Int, 1, "Another seed gives another scatter."),
-                               input("settle", T::Bool, true, "Let the chunks fall and come to rest."),
-                               input("gravity", T::Vector, vector3(0, -981, 0), "cm/s2."), input("ground", T::Bool, true, "A floor at Ground Height."),
-                               input("groundHeight", T::Float, 0.0, "cm."), input("density", T::Float, 2400.0, "kg/m3.", 1.0),
-                               input("seconds", T::Float, 6.0, "Longest the chunks settle for, s.", 0.5, 60.0),
-                               input("material", T::String, "", "Material of the chunks; empty takes the pieces' inside material.")},
+                               input("amount", Socket::Float, 4.0, "Chunks per break, on average.", 0.0, 1000.0),
+                               input("size", Socket::Float, 8.0, "Typical chunk size, cm.", 0.1),
+                               input("sizeVariation", Socket::Float, 0.5, "0 makes every chunk the same size; 1 from nothing to twice it.", 0.0, 1.0),
+                               input("spread", Socket::Float, 300.0, "How fast chunks fly off, cm/s.", 0.0),
+                               input("dust", Socket::Int, 20, "Dust points per break.", 0, 10000), input("seed", Socket::Int, 1, "Another seed gives another scatter."),
+                               input("settle", Socket::Bool, true, "Let the chunks fall and come to rest."),
+                               input("gravity", Socket::Vector, vector3(0, -981, 0), "cm/s2."), input("ground", Socket::Bool, true, "A floor at Ground Height."),
+                               input("groundHeight", Socket::Float, 0.0, "cm."), input("density", Socket::Float, 2400.0, "kg/m3.", 1.0),
+                               input("seconds", Socket::Float, 6.0, "Longest the chunks settle for, s.", 0.5, 60.0),
+                               input("material", Socket::String, "", "Material of the chunks; empty takes the pieces' inside material.")},
                     .outputs = {geometrySocket("debris", "The chunks, as instances of a few shared shapes."), geometrySocket("dust", "Dust points for Niagara.")}},
         .exec = debrisFromEvents,
     };

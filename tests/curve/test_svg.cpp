@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "curve/Planar.h"
 #include "curve/Svg.h"
@@ -16,22 +18,10 @@ using namespace lila;
 using json = nlohmann::json;
 using D2 = glm::dvec2;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-double area(const curve::Spline& s)
-{
-    curve::TessOptions o;
-    o.chordError = 0.0005;
-    curve::Polyline pl = curve::tessellate(s, o);
-    std::vector<D2> p;
-    for (const D3& q : pl.points)
-        p.push_back(D2(q.x, q.y));
-    return curve::signedArea(p);
-}
-
 const char* kDoc = R"SVG(<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="400" height="200">
   <rect id="box" x="10" y="10" width="40" height="20"/>

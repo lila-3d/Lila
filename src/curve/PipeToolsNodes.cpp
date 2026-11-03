@@ -4,7 +4,7 @@
 #include "core/Profile.h"
 #include "curve/Carve.h"
 #include "curve/Channel.h"
-#include "curve/EnvAttrs.h"
+#include "curve/NodeHelpers.h"
 #include "curve/PipeRoute.h"
 #include "curve/PipeSupport.h"
 #include "curve/StripUvAttrs.h"
@@ -22,7 +22,7 @@
 namespace lila::curve
 {
 using namespace scene;
-using namespace env;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -44,11 +44,6 @@ AttrDef matrixArray(std::string name, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = AttrInput | AttrHidden | AttrArray,
             .doc = std::move(doc)};
-}
-
-AttrDef sAttr(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = kIn, .doc = std::move(doc)};
 }
 
 AttrDef out(std::string name, PlugType type, PlugValue def, std::string doc)
@@ -86,22 +81,6 @@ void connectMeshes(Graph& g, Node& n, const std::vector<Node*>& meshes, const ch
     }
 }
 
-Node& meshNamed(Graph& g, const std::string& name, const char* cmd)
-{
-    Node* n = g.find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return *n;
-}
-
-Node& curveNamed(Graph& g, const std::string& name, const char* cmd)
-{
-    Node* n = g.find(name);
-    if (!n || !n->type().isA("curve"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a curve");
-    return *n;
-}
-
 std::vector<Node*> meshList(Graph& g, const Args& a, const char* flag, const char* cmd)
 {
     std::vector<Node*> out;
@@ -130,18 +109,6 @@ Node* curveFromPoints(Graph& g, const Args& a, const char* cmd, const std::strin
     Node* c = g.createNode(*types::find("curve"), name, kNoNode, true);
     g.setValue({c->id(), CurveShape::kCreate, -1}, makeCurveData({s}));
     return c;
-}
-
-std::vector<Node*> curvesOf(Graph& g, const Args& a, const char* cmd)
-{
-    std::vector<Node*> out;
-    for (const json& p : a.positional)
-        out.push_back(&curveNamed(g, p.get<std::string>(), cmd));
-    if (out.empty())
-        for (NodeId id : g.selection())
-            if (Node* n = g.node(id); n && n->type().isA("curve"))
-                out.push_back(n);
-    return out;
 }
 
 // Channel.
@@ -239,7 +206,7 @@ void registerChannelModifier()
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
         bAttr("enabled", true, "Turn the modifier off without removing it."),
         {.name = "exportEnabled", .type = PlugType::Bool, .defaultValue = true, .flags = kIn, .doc = "Apply the modifier when exporting."},
-        dataIn("path", "Path curves, world space."),
+        dataIn("path", "Path curves, world space.", false),
         {.name = "targetMatrix", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = kIn | AttrHidden,
          .doc = "This mesh's world matrix when the channel was made."},
         eAttr("shape", kShapes, 0, "Cross-section: U channel, V groove, half round or stepped terraces."),
@@ -413,7 +380,7 @@ void registerSupportsType()
     t.doc = "Supports along a pipe run: hangers to a ceiling, brackets to a wall, stands to a floor, clamps or your own mesh, "
             "spaced along the run and each reaching to the nearest surface found by casting rays.";
     t.ownAttrs = {
-        dataIn("path", "The run's path curves, world space (the pipe's own path)."),
+        dataIn("path", "The run's path curves, world space (the pipe's own path).", false),
         meshArray("surfaces", "Meshes supports reach to: walls, floors, ceilings."),
         matrixArray("surfaceMatrices", "The surfaces' world matrices."),
         meshIn("supportMesh", "A mesh to place as each support (style mesh): +y toward the surface, +z along the pipe."),
@@ -509,7 +476,7 @@ void registerPipeToolCommands()
                 if (Node* made = curveFromPoints(g, a, "carveChannel", "ChannelPath"))
                     paths.push_back(made);
                 else
-                    paths = curvesOf(g, a, "carveChannel");
+                    paths = givenOrSelectedCurves(g, a, "carveChannel");
                 if (paths.empty())
                     throw CommandError("carveChannel: select path curves, or give points=");
                 json out = json::array();

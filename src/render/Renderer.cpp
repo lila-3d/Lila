@@ -416,7 +416,7 @@ struct ImagePlanePush
 };
 static_assert(sizeof(ImagePlanePush) == 192, "matches ImagePlanePush in imageplane.slang");
 
-struct Buffer
+struct AllocatedBuffer
 {
     VkBuffer buffer = VK_NULL_HANDLE;
     VmaAllocation alloc = VK_NULL_HANDLE;
@@ -439,7 +439,7 @@ static_assert(sizeof(HeightfieldPush) == 192, "matches HeightfieldPush in height
 /** A heightfield's heights on the GPU, read by heightfieldVS through their address. */
 struct GpuHeights
 {
-    Buffer buffer;
+    AllocatedBuffer buffer;
     VkDeviceAddress address = 0;
     std::shared_ptr<const std::vector<float>> keep;
     uint64_t lastUsed = 0;
@@ -447,7 +447,7 @@ struct GpuHeights
 
 struct GpuMesh
 {
-    Buffer vertices, indices, edges, edgeIndices;
+    AllocatedBuffer vertices, indices, edges, edgeIndices;
     uint32_t indexCount = 0;
     uint32_t edgePointCount = 0;
     uint32_t edgeIndexCount = 0; // 0 draws edges as a plain line list
@@ -463,7 +463,7 @@ struct GpuMesh
 
 struct GpuPoints
 {
-    Buffer buffer;
+    AllocatedBuffer buffer;
     VkDeviceAddress address = 0; // for thinning a dense cloud (points_cull.slang)
     uint32_t count = 0;
     std::shared_ptr<const PointCloud> keep;
@@ -487,7 +487,7 @@ struct Frame
     VmaAllocation linesAlloc = VK_NULL_HANDLE;
     void* linesMapped = nullptr;
     size_t linesCapacity = 0;
-    std::vector<Buffer> staging; // texture uploads recorded into this frame, freed once its fence signals
+    std::vector<AllocatedBuffer> staging; // texture uploads recorded into this frame, freed once its fence signals
     compute::Buffer table;       // bindless texture table, written before the frame is recorded
     compute::Buffer instances;   // GpuInstance per mesh placement, written before the frame is recorded
     compute::Buffer lights;      // GpuLight per light
@@ -592,11 +592,11 @@ struct Viewport
     // Offscreen captures draw into an owned image instead of a swapchain and read it back into a host buffer.
     bool offscreen = false;
     Image offscreenTarget;
-    Buffer readback;
+    AllocatedBuffer readback;
     void* readbackMapped = nullptr;
     bool readbackWanted = true; // false lets an offscreen frame go without copying the picture back
     bool hdrWanted = false;
-    Buffer hdrReadback;
+    AllocatedBuffer hdrReadback;
     void* hdrMapped = nullptr;
 };
 
@@ -762,7 +762,7 @@ struct Renderer::Impl
     VkDescriptorSet envSet = VK_NULL_HANDLE;
     VkSampler envSampler = VK_NULL_HANDLE;
     Image envCube, brdfLut;
-    Buffer envUniforms;
+    AllocatedBuffer envUniforms;
     float envMaxLod = 0.0f;
     bool envLoaded = false;
     // Worker that builds environments; guarded by mutex.
@@ -1522,9 +1522,9 @@ struct Renderer::Impl
     }
 
     /** Host-visible buffer; on ReBAR GPUs VMA puts it in device memory, so no staging copy is needed. */
-    Buffer createBuffer(const void* data, size_t size, VkBufferUsageFlags usage)
+    AllocatedBuffer createBuffer(const void* data, size_t size, VkBufferUsageFlags usage)
     {
-        Buffer b;
+        AllocatedBuffer b;
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bci.size = std::max<size_t>(size, 16);
         bci.usage = usage;
@@ -1549,9 +1549,9 @@ struct Renderer::Impl
      * A device-local copy of data, filled by a copy recorded into cmd. The staging buffer is freed once the frame's fence
      * signals. Falls back to host memory when device memory is full.
      */
-    Buffer deviceBuffer(VkCommandBuffer cmd, Frame& f, const void* data, size_t size, VkBufferUsageFlags usage)
+    AllocatedBuffer deviceBuffer(VkCommandBuffer cmd, Frame& f, const void* data, size_t size, VkBufferUsageFlags usage)
     {
-        Buffer b;
+        AllocatedBuffer b;
         VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bci.size = std::max<size_t>(size, 16);
         bci.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -1561,7 +1561,7 @@ struct Renderer::Impl
             return createBuffer(data, size, usage);
         if (size)
         {
-            Buffer staging = createBuffer(data, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            AllocatedBuffer staging = createBuffer(data, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             f.staging.push_back(staging);
             const VkBufferCopy region{0, 0, size};
             vkCmdCopyBuffer(cmd, staging.buffer, b.buffer, 1, &region);
@@ -1569,7 +1569,7 @@ struct Renderer::Impl
         return b;
     }
 
-    void destroyBuffer(Buffer& b)
+    void destroyBuffer(AllocatedBuffer& b)
     {
         if (b.buffer)
             vmaDestroyBuffer(vk.allocator, b.buffer, b.alloc);
@@ -1590,7 +1590,7 @@ struct Renderer::Impl
                                                                VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                                                          : 0;
         // Looked up first: inserting this entry may rehash the cache under the base's.
-        Buffer shared;
+        AllocatedBuffer shared;
         if (mesh->shareVertices)
             shared = gpuMesh(mesh->shareVertices, cmd, f)->vertices;
         auto it = meshCache.find(mesh->key);
@@ -1646,7 +1646,7 @@ struct Renderer::Impl
             if (!f)
                 return compute::hostBuffer(vk, words.data(), bytes);
             compute::Buffer b = compute::makeBuffer(vk, bytes, 0, compute::Host::None);
-            Buffer staging = createBuffer(words.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            AllocatedBuffer staging = createBuffer(words.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
             f->staging.push_back(staging);
             const VkBufferCopy region{0, 0, bytes};
             vkCmdCopyBuffer(cmd, staging.buffer, b.buffer, 1, &region);
@@ -1965,7 +1965,7 @@ struct Renderer::Impl
         g.image = createTexture(format, extent, mips, false, VK_IMAGE_USAGE_TRANSFER_SRC_BIT, sampleSwizzle(t.format));
         g.view = g.image.view;
         g.lastUsed = frameCounter;
-        Buffer staging = createBuffer(t.rgba.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        AllocatedBuffer staging = createBuffer(t.rgba.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         f.staging.push_back(staging);
 
         constexpr auto transfer = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -2069,7 +2069,7 @@ struct Renderer::Impl
         g.image = createTexture(format, VkExtent2D{uint32_t(t.width), uint32_t(t.height)}, mips, false, 0, swizzle);
         g.view = g.image.view;
         g.lastUsed = frameCounter;
-        Buffer staging = createBuffer(t.rgba.data(), total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        AllocatedBuffer staging = createBuffer(t.rgba.data(), total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         f.staging.push_back(staging);
 
         constexpr auto transfer = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -2707,14 +2707,14 @@ struct Renderer::Impl
             }
             if (!regions.empty())
             {
-                Buffer staging = createBuffer(data.data(), data.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                AllocatedBuffer staging = createBuffer(data.data(), data.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 f.staging.push_back(staging);
                 vkCmdCopyBuffer(cmd, staging.buffer, g.vertices.buffer, uint32_t(regions.size()), regions.data());
             }
             if (edgesStale)
             {
                 const size_t bytes = d.mesh->edgePoints.size() * sizeof(glm::vec3);
-                Buffer staging = createBuffer(d.mesh->edgePoints.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                AllocatedBuffer staging = createBuffer(d.mesh->edgePoints.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 f.staging.push_back(staging);
                 const VkBufferCopy region{0, 0, bytes};
                 vkCmdCopyBuffer(cmd, staging.buffer, g.edges.buffer, 1, &region);
@@ -2822,7 +2822,7 @@ struct Renderer::Impl
 
     void freeStaging(Frame& f)
     {
-        for (Buffer& b : f.staging)
+        for (AllocatedBuffer& b : f.staging)
             destroyBuffer(b);
         f.staging.clear();
         for (compute::Buffer& b : f.scratch)
@@ -4919,7 +4919,7 @@ struct Renderer::Impl
                 half[i * 4 + c] = glm::packHalf1x16(rgb[i * 3 + c]);
             half[i * 4 + 3] = glm::packHalf1x16(1.0f);
         }
-        Buffer staging = createBuffer(half.data(), half.size() * sizeof(uint16_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        AllocatedBuffer staging = createBuffer(half.data(), half.size() * sizeof(uint16_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
         f.staging.push_back(staging);
         barrier(cmd, img.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, 0,
                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_ASPECT_COLOR_BIT);

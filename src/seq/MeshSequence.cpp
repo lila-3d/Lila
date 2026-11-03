@@ -54,13 +54,6 @@ std::string replaceAll(std::string s, std::string_view token, const std::string&
     return s;
 }
 
-std::string fileSafe(std::string s)
-{
-    for (char& c : s)
-        if (c == ':' || c == '|' || c == '/' || c == '\\')
-            c = '_';
-    return s;
-}
 
 std::string baseName(scene::Graph& g, const std::vector<scene::NodeId>& meshes)
 {
@@ -82,6 +75,14 @@ glm::dmat3 yUpBasis(const std::string& profile)
 } // namespace
 
 glm::dmat3 fileBasis(const std::string& profile) { return yUpBasis(profile); }
+
+std::string fileSafe(std::string s)
+{
+    for (char& c : s)
+        if (c == ':' || c == '|' || c == '/' || c == '\\')
+            c = '_';
+    return s;
+}
 
 namespace
 {

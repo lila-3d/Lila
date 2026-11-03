@@ -1,16 +1,17 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 
 using namespace lila;
+using namespace testutil;
 namespace dx = scene::diagnostics;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-
 /** A copy: reporting more moves the stored ones. */
 dx::Issue issue(const json& id)
 {

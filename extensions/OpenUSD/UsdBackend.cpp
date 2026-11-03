@@ -18,9 +18,10 @@
 
 using namespace lila;
 
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 using scene::Graph;
 using scene::NodeId;
 

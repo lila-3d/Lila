@@ -24,6 +24,7 @@
 #include "ui/ColorPopup.h"
 #include "ui/TexLive.h"
 #include "ui/TextureSetPanel.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewInfo.h"
 #include "ui/ViewportTool.h"
 #include "ui/FileDialog.h"
@@ -59,7 +60,7 @@ using scene::NodeId;
 namespace tp = tex::paint;
 namespace rp = render::paint;
 
-constexpr const char* kPrefix = "/texturePaint";
+constexpr const char* kTexturePaintPrefix = "/texturePaint";
 
 struct ChannelValue
 {
@@ -90,7 +91,7 @@ constexpr ToolKind kTools[] = {
     {"project", "Projection", "Paint on the screen-space paint buffer, then Enter projects it into every visible texel."},
 };
 
-struct Settings
+struct TexturePaintSettings
 {
     brush::BrushSettings stroke = [] {
         brush::BrushSettings b;
@@ -132,21 +133,21 @@ struct Settings
     bool warp = false;
 };
 
-Settings& settings()
+TexturePaintSettings& texturePaintState()
 {
-    static Settings s = [] {
-        Settings out;
-        out.stroke.loadPrefs(kPrefix);
+    static TexturePaintSettings s = [] {
+        TexturePaintSettings out;
+        out.stroke.loadPrefs(kTexturePaintPrefix);
         return out;
     }();
     return s;
 }
 
-void save() { settings().stroke.savePrefs(kPrefix); }
+void saveTexturePaintSettings() { texturePaintState().stroke.savePrefs(kTexturePaintPrefix); }
 
 bool filterTool(const std::string& t) { return t == "smudge" || t == "blur" || t == "sharpen" || t == "clone" || t == "heal"; }
 
-tp::Payload payloadFor(const Settings& s, bool erase)
+tp::Payload payloadFor(const TexturePaintSettings& s, bool erase)
 {
     tp::Payload p;
     p.kind = s.tool == "project" ? "project" : s.tool;
@@ -180,7 +181,7 @@ tp::Payload payloadFor(const Settings& s, bool erase)
 }
 
 /** Applies a preset over the settings: only what it names changes. */
-void applyPreset(Settings& s, const tex::brushes::Preset& p)
+void applyPreset(TexturePaintSettings& s, const tex::brushes::Preset& p)
 {
     s.stroke = brush::BrushSettings::fromJson(p.brush, s.stroke);
     const json& pay = p.payload;
@@ -215,23 +216,8 @@ void applyPreset(Settings& s, const tex::brushes::Preset& p)
     s.particleSpec = p.particles.is_object() ? p.particles : json::object();
 }
 
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
-
 float toDisplay(float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), 1.0f / 2.2f); }
 float fromDisplay(float v) { return std::pow(std::clamp(v, 0.0f, 1.0f), 2.2f); }
-float srgbToLinear(float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
-float linearToSrgb(float c)
-{
-    c = std::clamp(c, 0.0f, 1.0f);
-    return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
-}
-
 /** The texture set whose material a face of the mesh uses; the only set when the mesh names none of theirs. */
 scene::Node* setForFace(scene::Graph& g, const geo::Mesh& mesh, geo::Index face)
 {
@@ -246,7 +232,7 @@ scene::Node* setForFace(scene::Graph& g, const geo::Mesh& mesh, geo::Index face)
     return names.size() == 1 ? tex::findSet(g, names.front()) : nullptr;
 }
 
-QDoubleSpinBox* spin(QWidget* parent, double lo, double hi, double step, int decimals, const QString& tip = {})
+QDoubleSpinBox* settingSpin(QWidget* parent, double lo, double hi, double step, int decimals, const QString& tip = {})
 {
     auto* s = new QDoubleSpinBox(parent);
     s->setRange(lo, hi);
@@ -282,15 +268,15 @@ public:
             mTool->setItemData(mTool->count() - 1, t.tip, Qt::ToolTipRole);
         }
         form->addRow("Tool", mTool);
-        for (size_t i = 0; i < settings().channels.size(); ++i)
+        for (size_t i = 0; i < texturePaintState().channels.size(); ++i)
         {
-            ChannelValue& c = settings().channels[i];
+            ChannelValue& c = texturePaintState().channels[i];
             auto* row = new QHBoxLayout;
             auto* on = new QCheckBox(c.label, this);
             row->addWidget(on, 1);
             mOn.push_back(on);
             connect(on, &QCheckBox::toggled, this, [this, i](bool v) {
-                settings().channels[i].on = v;
+                texturePaintState().channels[i].on = v;
                 changed();
             });
             if (c.color)
@@ -301,17 +287,17 @@ public:
                 row->addWidget(swatch);
                 row->addWidget(colorPopup::eyedropperButton(this, [this, i](const glm::dvec3& c) {
                     const glm::dvec3 s = colorMath::toSrgb(glm::clamp(c, 0.0, 1.0));
-                    settings().channels[i].value = {fromDisplay(float(s.x)), fromDisplay(float(s.y)), fromDisplay(float(s.z))};
+                    texturePaintState().channels[i].value = {fromDisplay(float(s.x)), fromDisplay(float(s.y)), fromDisplay(float(s.z))};
                     sync();
                     changed();
                 }));
                 mSwatch.push_back(swatch);
                 mValue.push_back(nullptr);
                 connect(swatch, &QPushButton::clicked, this, [this, i, swatch] {
-                    ChannelValue& cv = settings().channels[i];
+                    ChannelValue& cv = texturePaintState().channels[i];
                     const QColor start = QColor::fromRgbF(toDisplay(cv.value.r), toDisplay(cv.value.g), toDisplay(cv.value.b));
                     auto apply = [this, i](const QColor& picked) {
-                        settings().channels[i].value = {fromDisplay(float(picked.redF())), fromDisplay(float(picked.greenF())), fromDisplay(float(picked.blueF()))};
+                        texturePaintState().channels[i].value = {fromDisplay(float(picked.redF())), fromDisplay(float(picked.greenF())), fromDisplay(float(picked.blueF()))};
                         sync();
                         changed();
                     };
@@ -321,12 +307,12 @@ public:
             }
             else
             {
-                auto* v = spin(this, 0.0, 1.0, 0.05, 3);
+                auto* v = settingSpin(this, 0.0, 1.0, 0.05, 3);
                 row->addWidget(v);
                 mValue.push_back(v);
                 mSwatch.push_back(nullptr);
                 connect(v, &QDoubleSpinBox::valueChanged, this, [this, i](double x) {
-                    settings().channels[i].value = glm::vec3(float(x));
+                    texturePaintState().channels[i].value = glm::vec3(float(x));
                     changed();
                 });
             }
@@ -338,7 +324,7 @@ public:
         for (const tex::library::Entry& e : tex::library::all())
             if (e.tier != "scene")
                 mMaterial->addItem(QString::fromStdString(e.meta.name), QString::fromStdString(e.id));
-        mMaterialScale = spin(this, 0.05, 64.0, 0.25, 2, "Material tiles per uv unit");
+        mMaterialScale = settingSpin(this, 0.05, 64.0, 0.25, 2, "Material tiles per uv unit");
         auto* matRow = new QHBoxLayout;
         matRow->addWidget(mMaterial, 1);
         matRow->addWidget(mMaterialScale);
@@ -348,7 +334,7 @@ public:
         form->addRow("Blend", mBlend);
 
         // Per tool.
-        mTilt = spin(this, 0.0, 1.0, 0.05, 2, "Direction: how far the normal leans along the stroke");
+        mTilt = settingSpin(this, 0.0, 1.0, 0.05, 2, "Direction: how far the normal leans along the stroke");
         mFlow = new QComboBox(this);
         mFlow->setEditable(true);
         mFlow->addItems({"normal", "strokeDir"});
@@ -360,7 +346,7 @@ public:
         mNormalMode = new QComboBox(this);
         mNormalMode->addItem("Bump", "bump");
         mNormalMode->addItem("Stamp", "stamp");
-        mIntensity = spin(this, -4.0, 4.0, 0.1, 2, "Normal: strength; negative digs");
+        mIntensity = settingSpin(this, -4.0, 4.0, 0.1, 2, "Normal: strength; negative digs");
         auto* normalRow = new QHBoxLayout;
         normalRow->addWidget(mNormalMode);
         normalRow->addWidget(mIntensity);
@@ -373,8 +359,8 @@ public:
         stampRow->addWidget(mStamp, 1);
         stampRow->addWidget(browseStamp);
         mStampRow = addRow(form, "Stamp", stampRow);
-        mFilterRadius = spin(this, 0.5, 64.0, 0.5, 1, "Blur, sharpen and heal: kernel radius in texels");
-        mAmount = spin(this, 0.0, 8.0, 0.1, 2, "Smudge: reach in brush radii; sharpen: strength");
+        mFilterRadius = settingSpin(this, 0.5, 64.0, 0.5, 1, "Blur, sharpen and heal: kernel radius in texels");
+        mAmount = settingSpin(this, 0.0, 8.0, 0.1, 2, "Smudge: reach in brush radii; sharpen: strength");
         auto* filterRow = new QHBoxLayout;
         filterRow->addWidget(mFilterRadius);
         filterRow->addWidget(mAmount);
@@ -398,7 +384,7 @@ public:
         for (const char* b : {"paint", "erase", "blur", "smudge", "clone"})
             mBufferBrush->addItem(QString(b).replace(0, 1, QString(b).at(0).toUpper()), b);
         mBufferBrush->setToolTip("What LMB does on the buffer (clone: Ctrl+Alt+click sets the screen source)");
-        mBufferScale = spin(this, 0.5, 2.0, 0.25, 2, "Buffer pixels per screen pixel");
+        mBufferScale = settingSpin(this, 0.5, 2.0, 0.25, 2, "Buffer pixels per screen pixel");
         auto* bufRow = new QHBoxLayout;
         bufRow->addWidget(mBufferBrush, 1);
         bufRow->addWidget(mBufferScale);
@@ -414,7 +400,7 @@ public:
         bufFlags->addWidget(mWarp);
         bufFlags->addWidget(mAuto);
         mBufferFlags = addRow(form, "", bufFlags);
-        mFacing = spin(this, 0.0, 1.0, 0.05, 2, "Fade the projection toward surfaces seen edge-on");
+        mFacing = settingSpin(this, 0.0, 1.0, 0.05, 2, "Fade the projection toward surfaces seen edge-on");
         mFacingRow = addRow(form, "Edge fade", mFacing);
         auto* bufButtons = new QHBoxLayout;
         auto* commit = new QPushButton("Project", this);
@@ -438,7 +424,7 @@ public:
         mRadius->setRange(1, 2000);
         mRadius->setSuffix(" px");
         form->addRow("Radius", mRadius);
-        mStrength = spin(this, 0.0, 1.0, 0.05, 3);
+        mStrength = settingSpin(this, 0.0, 1.0, 0.05, 3);
         form->addRow("Strength", mStrength);
         mFalloff = new QComboBox(this);
         for (const char* f : {"smooth", "sphere", "root", "sharp", "linear", "constant", "bell"})
@@ -451,7 +437,7 @@ public:
         mMirror->setToolTip("Mirror strokes across the mesh's symmetry axis (X when it has none)");
         form->addRow(mMirror);
         col->addLayout(form);
-        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return texturePaintState().stroke; }, [this] { changed(); });
         col->addWidget(mStrokeOptions);
 
         auto* buttons = new QHBoxLayout;
@@ -477,7 +463,7 @@ public:
             const QString f = ui::fileDialog::getOpenFileName(this, "Normal Map Stamp", mStamp->text(), "Images (*.png *.exr *.tga *.tif *.tiff *.psd)");
             if (!f.isEmpty())
                 mStamp->setText(f);
-            settings().stampImage = mStamp->text().toStdString();
+            texturePaintState().stampImage = mStamp->text().toStdString();
             changed();
         });
 
@@ -487,90 +473,90 @@ public:
                 return;
             if (auto p = tex::brushes::find(id.toStdString()))
             {
-                applyPreset(settings(), *p);
+                applyPreset(texturePaintState(), *p);
                 sync();
                 changed();
             }
         });
         connect(mTool, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().tool = mTool->itemData(i).toString().toStdString();
+            texturePaintState().tool = mTool->itemData(i).toString().toStdString();
             changed();
         });
         connect(mMaterial, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().material = mMaterial->itemData(i).toString().toStdString();
+            texturePaintState().material = mMaterial->itemData(i).toString().toStdString();
             changed();
         });
-        connect(mMaterialScale, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().materialScale, float(v)); });
+        connect(mMaterialScale, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().materialScale, float(v)); });
         connect(mBlend, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().blend = tp::Blend(std::clamp(i, 0, 4));
+            texturePaintState().blend = tp::Blend(std::clamp(i, 0, 4));
             changed();
         });
-        connect(mTilt, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().tilt, float(v)); });
+        connect(mTilt, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().tilt, float(v)); });
         connect(mFlow, &QComboBox::currentTextChanged, this, [this](const QString& t) {
-            settings().flowChannel = t.isEmpty() ? "normal" : t.toStdString();
+            texturePaintState().flowChannel = t.isEmpty() ? "normal" : t.toStdString();
             changed();
         });
         connect(mNormalMode, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().normalMode = mNormalMode->itemData(i).toString().toStdString();
+            texturePaintState().normalMode = mNormalMode->itemData(i).toString().toStdString();
             changed();
         });
-        connect(mIntensity, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().intensity, float(v)); });
+        connect(mIntensity, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().intensity, float(v)); });
         connect(mStamp, &QLineEdit::editingFinished, this, [this] {
-            settings().stampImage = mStamp->text().toStdString();
+            texturePaintState().stampImage = mStamp->text().toStdString();
             changed();
         });
-        connect(mFilterRadius, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().filterRadius, float(v)); });
-        connect(mAmount, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().amount, float(v)); });
+        connect(mFilterRadius, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().filterRadius, float(v)); });
+        connect(mAmount, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().amount, float(v)); });
         connect(mFillBy, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().fillBy = mFillBy->itemData(i).toString().toStdString();
+            texturePaintState().fillBy = mFillBy->itemData(i).toString().toStdString();
             changed();
         });
         connect(mParticles, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().particles = mParticles->itemData(i).toString().toStdString();
+            texturePaintState().particles = mParticles->itemData(i).toString().toStdString();
             changed();
         });
         connect(mBufferBrush, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().bufferBrush = mBufferBrush->itemData(i).toString().toStdString();
+            texturePaintState().bufferBrush = mBufferBrush->itemData(i).toString().toStdString();
             changed();
         });
-        connect(mBufferScale, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().bufferScale, float(v)); });
+        connect(mBufferScale, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().bufferScale, float(v)); });
         connect(mTransform, &QCheckBox::toggled, this, [this](bool v) {
-            settings().transform = v;
+            texturePaintState().transform = v;
             if (v)
-                settings().warp = false;
+                texturePaintState().warp = false;
             sync();
             changed();
         });
         connect(mWarp, &QCheckBox::toggled, this, [this](bool v) {
-            settings().warp = v;
+            texturePaintState().warp = v;
             if (v)
-                settings().transform = false;
+                texturePaintState().transform = false;
             sync();
             changed();
         });
         connect(mAuto, &QCheckBox::toggled, this, [this](bool v) {
-            settings().autoProject = v;
+            texturePaintState().autoProject = v;
             changed();
         });
-        connect(mFacing, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(settings().facingFade, float(v)); });
+        connect(mFacing, &QDoubleSpinBox::valueChanged, this, [this](double v) { set(texturePaintState().facingFade, float(v)); });
         connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) {
-            settings().stroke.radius = v;
+            texturePaintState().stroke.radius = v;
             changed();
         });
         connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().stroke.strength = v;
+            texturePaintState().stroke.strength = v;
             changed();
         });
         connect(mFalloff, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().stroke.falloff = mFalloff->itemData(i).toString().toStdString();
+            texturePaintState().stroke.falloff = mFalloff->itemData(i).toString().toStdString();
             changed();
         });
         connect(mOcclusion, &QCheckBox::toggled, this, [this](bool v) {
-            settings().occlusion = v;
+            texturePaintState().occlusion = v;
             changed();
         });
         connect(mMirror, &QCheckBox::toggled, this, [this](bool v) {
-            settings().stroke.mirror = v;
+            texturePaintState().stroke.mirror = v;
             changed();
         });
         sync();
@@ -580,7 +566,7 @@ public:
 
     void sync()
     {
-        const Settings& s = settings();
+        const TexturePaintSettings& s = texturePaintState();
         const QSignalBlocker b0(mTool), b1(mBlend), b2(mTilt), b3(mRadius), b4(mStrength), b5(mFalloff), b6(mOcclusion), b7(mMirror);
         const QSignalBlocker b8(mMaterial), b9(mMaterialScale), b10(mFlow), b11(mNormalMode), b12(mIntensity), b13(mStamp), b14(mFilterRadius);
         const QSignalBlocker b15(mAmount), b16(mFillBy), b17(mParticles), b18(mBufferBrush), b19(mBufferScale), b20(mTransform), b21(mWarp);
@@ -665,15 +651,15 @@ private:
 
     void showForTool()
     {
-        const std::string& t = settings().tool;
+        const std::string& t = texturePaintState().tool;
         const bool values = t == "paint" || t == "fill" || t == "project";
         for (QCheckBox* on : mOn)
             on->setEnabled(values || filterTool(t));
         mMaterial->setEnabled(values);
-        mMaterialScale->setEnabled(values && !settings().material.empty());
+        mMaterialScale->setEnabled(values && !texturePaintState().material.empty());
         showRow(mDirRow, t == "direction");
         showRow(mNormalRow, t == "normal");
-        showRow(mStampRow, t == "normal" && settings().normalMode == "stamp");
+        showRow(mStampRow, t == "normal" && texturePaintState().normalMode == "stamp");
         showRow(mFilterRow, filterTool(t));
         showRow(mFillRow, t == "fill");
         showRow(mParticleRow, t == "paint");
@@ -695,7 +681,7 @@ private:
 
     void changed()
     {
-        save();
+        saveTexturePaintSettings();
         showForTool();
         if (onChanged)
             onChanged();
@@ -707,7 +693,7 @@ private:
         const QString name = QInputDialog::getText(this, "Save Brush Preset", "Name", QLineEdit::Normal, {}, &ok);
         if (!ok || name.isEmpty())
             return;
-        const Settings& s = settings();
+        const TexturePaintSettings& s = texturePaintState();
         json payload = payloadFor(s, false).toJson();
         payload.erase("triangles");
         json call = {{"args", {name.toStdString()}}, {"brush", s.stroke.toJson()}, {"payload", payload}, {"category", "User"}};
@@ -874,7 +860,7 @@ public:
             return true;
         if (e->button() != Qt::LeftButton)
             return false;
-        const std::string& tool = settings().tool;
+        const std::string& tool = texturePaintState().tool;
         if (tool == "project")
             return bufferPress(e, view);
         std::optional<Target> t = pick(e->position(), view);
@@ -945,7 +931,7 @@ public:
     {
         if (mControls.keyPress(e))
             return true;
-        if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && settings().tool == "project")
+        if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && texturePaintState().tool == "project")
         {
             commitBuffer();
             return true;
@@ -954,7 +940,7 @@ public:
         {
             if (mStroking)
                 cancelStroke();
-            else if (settings().tool == "project" && !mBuffer.empty())
+            else if (texturePaintState().tool == "project" && !mBuffer.empty())
             {
                 mBuffer.clear();
                 viewportTools::requestRedraw();
@@ -970,7 +956,7 @@ public:
     {
         LILA_ZONE();
 
-        const Settings& st = settings();
+        const TexturePaintSettings& st = texturePaintState();
         mLastView = view;
         const Target* t = mStroking ? &mTarget : (mOver ? &*mOver : nullptr);
         QString msg;
@@ -1167,14 +1153,14 @@ private:
         if (!set)
             return;
         const std::string layer = layerFor(*set);
-        tp::Payload p = payloadFor(settings(), false);
+        tp::Payload p = payloadFor(texturePaintState(), false);
         json payload = p.toJson();
         payload.erase("triangles");
         payload["triangle"] = t.hit.triangle;
         try
         {
             ops::execute("texPaintStroke",
-                         {{"args", {set->name(), layer}}, {"stroke", {{"mesh", t.meshPath}, {"brush", settings().stroke.toJson()}, {"payload", payload}}}},
+                         {{"args", {set->name(), layer}}, {"stroke", {{"mesh", t.meshPath}, {"brush", texturePaintState().stroke.toJson()}, {"payload", payload}}}},
                          CallSource::UI);
         }
         catch (const std::exception& e)
@@ -1190,7 +1176,7 @@ private:
         scene::Node* set = g.node(t.set);
         if (!set || !t.paint)
             return;
-        const std::string tool = settings().tool;
+        const std::string tool = texturePaintState().tool;
         if ((tool == "clone" || tool == "heal") && (!mCloneUv || mCloneMesh != t.mesh))
         {
             log::warn("Texture paint: Ctrl+Alt+click the surface to set the {} source first", tool);
@@ -1209,14 +1195,14 @@ private:
                 top = std::max(top, s->id);
         header->id = top + 1;
         header->mesh = t.meshPath;
-        settings().stroke.ensureAlpha();
-        header->brush = settings().stroke.toJson();
-        header->payload = payloadFor(settings(), e->modifiers() & Qt::ControlModifier);
+        texturePaintState().stroke.ensureAlpha();
+        header->brush = texturePaintState().stroke.toJson();
+        header->payload = payloadFor(texturePaintState(), e->modifiers() & Qt::ControlModifier);
         filterChannels(header->payload, *set);
         {
             const scene::Node* meshNode = g.node(t.mesh);
             scene::MeshPtr outMesh = meshNode->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-            mSym = tp::brushSymmetry(settings().stroke, outMesh.get(), scene::paintSymmetrySpec(*meshNode));
+            mSym = tp::brushSymmetry(texturePaintState().stroke, outMesh.get(), scene::paintSymmetrySpec(*meshNode));
             header->symmetry = mSym.toJson();
         }
         if (tool == "clone" || tool == "heal")
@@ -1234,15 +1220,15 @@ private:
                 header->payload.sourceOffsets.push_back(off);
             }
         }
-        header->occlusion = settings().occlusion;
-        header->seed = settings().stroke.seed;
+        header->occlusion = texturePaintState().occlusion;
+        header->seed = texturePaintState().stroke.seed;
         header->view = strokeView(view, t.world);
         mParticles.reset();
-        if (!settings().particles.empty() && tool == "paint")
+        if (!texturePaintState().particles.empty() && tool == "paint")
             try
             {
-                json spec = settings().particleSpec;
-                spec["kind"] = settings().particles;
+                json spec = texturePaintState().particleSpec;
+                spec["kind"] = texturePaintState().particles;
                 spec["seed"] = header->seed;
                 // Down in the mesh's object space.
                 const glm::dvec3 down = glm::normalize(glm::dvec3(glm::inverse(t.world) * glm::dvec4(0.0, -1.0, 0.0, 0.0)));
@@ -1269,7 +1255,7 @@ private:
         }
         mStroking = true;
         const ViewInfo vi = view;
-        if (!mStroke.begin(settings().stroke, mControls.input(e),
+        if (!mStroke.begin(texturePaintState().stroke, mControls.input(e),
                            [this, vi](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(px, vi, out); }, *this, true))
         {
             cancelStroke();
@@ -1386,7 +1372,7 @@ private:
     /** Sizes the buffer to the view (keeping it while the view's size and the scale hold) and remembers its view. */
     void ensureBuffer(const ViewInfo& view)
     {
-        const int w = std::max(1, int(view.width * settings().bufferScale)), h = std::max(1, int(view.height * settings().bufferScale));
+        const int w = std::max(1, int(view.width * texturePaintState().bufferScale)), h = std::max(1, int(view.height * texturePaintState().bufferScale));
         if (mBuffer.width() != w || mBuffer.height() != h)
         {
             mBuffer.resize(w, h);
@@ -1395,7 +1381,7 @@ private:
         if (!sameView(view, mBufferView))
         {
             // Moving the camera leaves the buffer on the screen: project it first when asked to, else it stays to project later.
-            if (settings().autoProject && !mBuffer.empty() && mBufferDrag == BufferDrag::None)
+            if (texturePaintState().autoProject && !mBuffer.empty() && mBufferDrag == BufferDrag::None)
                 commitBuffer();
             if (mBuffer.empty())
                 mBufferView = view;
@@ -1405,7 +1391,7 @@ private:
     bool bufferPress(QMouseEvent* e, const ViewInfo& view)
     {
         ensureBuffer(view);
-        const Settings& st = settings();
+        const TexturePaintSettings& st = texturePaintState();
         const glm::vec2 at = toBuffer(e->position(), view);
         mDragStart = at;
         mDragLast = at;
@@ -1477,7 +1463,7 @@ private:
     /** The sampler's dabs onto the buffer. */
     void bufferSamples()
     {
-        const Settings& st = settings();
+        const TexturePaintSettings& st = texturePaintState();
         const brush::FalloffTable falloff(st.stroke.resolveFalloff());
         const float scale = st.bufferScale;
         glm::vec3 color(1.0f);
@@ -1592,14 +1578,14 @@ private:
         }
         const std::string layer = layerFor(*set);
         const image::Image img = mBuffer.resolved();
-        tp::Payload p = payloadFor(settings(), false);
+        tp::Payload p = payloadFor(texturePaintState(), false);
         p.kind = "project";
         json payload = p.toJson();
         payload.erase("triangles");
         try
         {
             payload["image"] = tp::PaintImage::fromRgba(img.width, img.height, img.rgba)->toJson();
-            json stroke = {{"mesh", t->meshPath}, {"brush", settings().stroke.toJson()}, {"payload", payload}, {"occlusion", settings().occlusion}};
+            json stroke = {{"mesh", t->meshPath}, {"brush", texturePaintState().stroke.toJson()}, {"payload", payload}, {"occlusion", texturePaintState().occlusion}};
             ops::execute("texPaintStroke", {{"args", {set->name(), layer}}, {"stroke", stroke}, {"view", viewJson(mBufferView)}}, CallSource::Script);
             mBuffer.clear();
             mBufferView = mLastView;
@@ -1636,7 +1622,7 @@ private:
                 img->rgba[i] = srgbToLinear(std::clamp(img->rgba[i], 0.0f, 1.0f));
         mBuffer.bake();
         mBuffer.place(*img);
-        settings().transform = true;
+        texturePaintState().transform = true;
         if (mPanel)
             mPanel->sync();
         viewportTools::requestRedraw();
@@ -1710,7 +1696,7 @@ private:
             const glm::vec2 corners[4] = {{-hw, -hh}, {hw, -hh}, {hw, hh}, {-hw, hh}};
             glm::vec2 ndc[4];
             tp::Placement place = mStencil.place;
-            place.offset /= settings().bufferScale;
+            place.offset /= texturePaintState().bufferScale;
             for (int k = 0; k < 4; ++k)
             {
                 const glm::vec2 s = place.apply(center + corners[k], center);
@@ -1723,7 +1709,7 @@ private:
             sd.depth = render::ImagePlaneDraw::Depth::Front;
             fs.imagePlanes.push_back(std::move(sd));
         }
-        if (settings().warp)
+        if (texturePaintState().warp)
         {
             const float sx = float(view.width) / float(mBuffer.width()), sy = float(view.height) / float(mBuffer.height());
             auto at = [&](int i, int j) {
@@ -1741,9 +1727,9 @@ private:
                     p.disc(at(i, j), 4.0f, ink);
                 }
         }
-        if (mCloneSource.width > 0 && settings().bufferBrush == "clone")
+        if (mCloneSource.width > 0 && texturePaintState().bufferBrush == "clone")
         {
-            const QPointF c(mClonePoint.x / settings().bufferScale, mClonePoint.y / settings().bufferScale);
+            const QPointF c(mClonePoint.x / texturePaintState().bufferScale, mClonePoint.y / texturePaintState().bufferScale);
             p.line(c - QPointF(6, 0), c + QPointF(6, 0), 1.5f, p.ink(0.85f));
             p.line(c - QPointF(0, 6), c + QPointF(0, 6), 1.5f, p.ink(0.85f));
         }
@@ -1784,13 +1770,13 @@ private:
     glm::vec2 mClonePoint{0.0f}, mCloneOffset{0.0f};
     bool mCloneOffsetSet = false;
 
-    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return texturePaintState().stroke; },
                                        [this] {
                                            if (mPanel)
                                                mPanel->sync();
                                            viewportTools::requestRedraw();
                                        },
-                                       [] { save(); }};
+                                       [] { saveTexturePaintSettings(); }};
 };
 
 /** The set and layer the layer actions act on: the selected set (or the only one) and its last painted or active layer. */
@@ -1828,7 +1814,7 @@ void startTexturePaint() { viewportTools::set(std::make_unique<TexturePaintTool>
 
 nlohmann::json texturePaintSettings()
 {
-    const Settings& s = settings();
+    const TexturePaintSettings& s = texturePaintState();
     json payload = payloadFor(s, false).toJson();
     payload.erase("triangles");
     json particles;

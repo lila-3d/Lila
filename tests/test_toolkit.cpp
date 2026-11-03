@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Mesh.h"
@@ -8,18 +10,7 @@
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json ui(const char* name, json call = json::object()) { return ops::execute(name, call, CallSource::UI); }
-int faces(const std::string& m) { return run("meshInfo", {{"args", {m}}})["faces"].get<int>(); }
-size_t selectedCount(const std::string& m, const char* kind)
-{
-    json sel = run("componentSelection");
-    return sel.contains(m) && sel[m].contains(kind) ? sel[m][kind].size() : 0;
-}
-} // namespace
+using namespace testutil;
 
 TEST_CASE("connectPoints splits faces between non-neighbouring points")
 {
@@ -65,7 +56,7 @@ TEST_CASE("polyMirror directions and world space")
     run("undo");
 
     run("select", {{"args", {cube}}});
-    ui("polyMirror", {{"axis", "z"}});
+    runUi("polyMirror", {{"axis", "z"}});
     CHECK(faces(cube) == 10);
     lo::rerun({{"direction", "both"}});
     CHECK(faces(cube) == 12);
@@ -91,7 +82,7 @@ TEST_CASE("polyMirror adjusts through every direction and space, undoing and red
     run("setAttr", {{"args", {cube + ".scale", {1.0, 2.0, 0.5}}}});
     run("select", {{"args", {cube}}});
     const json original = points(cube);
-    ui("polyMirror", {{"axis", "x"}});
+    runUi("polyMirror", {{"axis", "x"}});
     REQUIRE(lo::live());
     std::vector<json> results = {points(cube)};
     for (const char* space : {"object", "world"})
@@ -193,7 +184,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     run("newScene");
     std::string cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("selectComponents", {{"args", {cube}}, {"faces", {0}}});
-    ui("selectByAngle", {{"angle", 100}});
+    runUi("selectByAngle", {{"angle", 100}});
     REQUIRE(lo::current());
     CHECK(lo::current()->command == "selectByAngle");
     CHECK(lo::live());
@@ -215,7 +206,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     CHECK_FALSE(lo::live());
 
     run("selectComponents", {{"args", {cube}}, {"edges", {0}}});
-    ui("polyBevel", {{"offset", 1}});
+    runUi("polyBevel", {{"offset", 1}});
     int one = faces(cube);
     lo::rerun({{"segments", 3}});
     int three = faces(cube);
@@ -232,7 +223,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     run("newScene");
     cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
-    ui("polyMirror", {{"axis", "x"}});
+    runUi("polyMirror", {{"axis", "x"}});
     int mirrored = faces(cube);
     CHECK_THROWS_AS(lo::rerun({{"axis", "q"}}), CommandError);
     CHECK(faces(cube) == mirrored);
@@ -241,7 +232,7 @@ TEST_CASE("adjusting the last operation re-runs it as one undo step")
     run("newScene");
     cube = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}})[0];
     run("select", {{"args", {cube}}});
-    ui("polySubdivide");
+    runUi("polySubdivide");
     CHECK(faces(cube) == 24);
     CHECK(lo::modifierEquivalent("polySubdivide") == "subdivision");
     lo::makeNonDestructive();
@@ -263,7 +254,7 @@ TEST_CASE("adjust-last-op edits are undo steps of their own")
     auto points = [&] { return run("meshData", {{"args", {cube}}})["points"]; };
     auto thickness = [] { return lo::current()->call["thickness"].get<double>(); };
 
-    ui("polyInset", {{"thickness", 5}});
+    runUi("polyInset", {{"thickness", 5}});
     json p5 = points();
     lo::rerun({{"thickness", 10}});
     CHECK(undo.undoLabel() == "Adjust Inset: thickness");

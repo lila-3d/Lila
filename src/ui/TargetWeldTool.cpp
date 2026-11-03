@@ -10,7 +10,9 @@
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
+#include "ui/ToolColors.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QTimer>
 
@@ -25,21 +27,9 @@ namespace
 using geo::Index;
 using geo::kInvalid;
 
-constexpr double kPickRadius = 14.0; // px
+constexpr double kWeldPickRadius = 14.0; // px
 
-const glm::vec4 kRim(0.08f, 0.08f, 0.08f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kSource(0.75f, 0.75f, 0.75f, 1.0f);
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
-
-double segmentDistPx(QPointF p, QPointF a, QPointF b)
-{
-    const QPointF ab = b - a;
-    const double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-    const double u = len2 > 0.0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0.0;
-    return distPx(p, a + ab * u);
-}
 
 class TargetWeldTool final : public ViewportTool
 {
@@ -125,12 +115,12 @@ public:
                 return;
             if (edgeMode())
             {
-                p.line(*sa, *sb, 4.5f, kRim);
+                p.line(*sa, *sb, 4.5f, kHandleRim);
                 p.line(*sa, *sb, 2.5f, color);
             }
             else
             {
-                p.disc(*sa, 6.0f, kRim, 16);
+                p.disc(*sa, 6.0f, kHandleRim, 16);
                 p.disc(*sa, 4.0f, color, 16);
             }
         };
@@ -152,10 +142,10 @@ public:
                 to = view.project(center ? (a + b + c + d) * 0.25 : (c + d) * 0.5);
             }
             if (from && to)
-                p.dashedLine(*from, *to, 1.5f, 6.0f, kHot);
+                p.dashedLine(*from, *to, 1.5f, 6.0f, kHotColor);
         }
         if (valid && mHover && view.camera == mCursorView)
-            mark(*mHover, kHot);
+            mark(*mHover, kHotColor);
         drawToolMessage(p, view,
                         QString("Target Weld: drag from a %1 onto another to weld it there, Shift: meet halfway, Esc: exit")
                             .arg(edgeMode() ? "edge" : "vertex"));
@@ -238,7 +228,7 @@ private:
         LILA_ZONE();
 
         std::optional<Pick> out;
-        double best = kPickRadius;
+        double best = kWeldPickRadius;
         for (const auto& [id, t] : mTargets)
         {
             if (!t.mesh || (source && source->node != id))

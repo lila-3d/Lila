@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
@@ -7,18 +9,7 @@
 
 using namespace lila;
 using json = nlohmann::json;
-
-namespace
-{
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-const geo::Mesh& meshOf(const std::string& name)
-{
-    auto& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-} // namespace
+using namespace testutil;
 
 TEST_CASE("transfer attributes copies uvs and positions")
 {

@@ -18,7 +18,7 @@ namespace lila::geo
 {
 namespace
 {
-using Points = std::vector<glm::dvec3>;
+using PointList = std::vector<glm::dvec3>;
 constexpr double kTau = glm::two_pi<double>();
 
 glm::dvec3 centroidOf(std::span<const glm::dvec3> pts)
@@ -61,7 +61,7 @@ void symmetricEigen(glm::dmat3 a, glm::dvec3& values, glm::dmat3& vectors)
 }
 
 /** Principal axes of the points about their centroid: column 0 the longest spread, column 2 the plane normal. */
-glm::dmat3 principalAxes(std::span<const glm::dvec3> pts, glm::dvec3* spread = nullptr)
+glm::dmat3 sortedPrincipalAxes(std::span<const glm::dvec3> pts, glm::dvec3* spread = nullptr)
 {
     glm::dvec3 c = centroidOf(pts);
     glm::dmat3 cov(0.0);
@@ -122,11 +122,11 @@ PlaneFrame loopFrame(std::span<const glm::dvec3> pts, bool closed)
     double scale = extentOf(pts);
     if (glm::length(nw) > 1e-9 * scale * scale)
         return PlaneFrame(c, nw);
-    return PlaneFrame(c, principalAxes(pts)[2]);
+    return PlaneFrame(c, sortedPrincipalAxes(pts)[2]);
 }
 
 /** Least-squares (Kasa) circle through 2D points. False when they are near collinear. */
-bool fitCircle(std::span<const glm::dvec2> q, glm::dvec2& center, double& radius)
+bool fitCircle2d(std::span<const glm::dvec2> q, glm::dvec2& center, double& radius)
 {
     if (q.size() < 3)
         return false;
@@ -168,7 +168,7 @@ bool fitSphere(std::span<const glm::dvec3> pts, glm::dvec3& center, double& radi
     if (pts.size() < 4)
         return false;
     glm::dvec3 spread;
-    principalAxes(pts, &spread);
+    sortedPrincipalAxes(pts, &spread);
     if (spread[2] < 1e-8 * spread[0])
         return false;
     glm::dvec3 mean = centroidOf(pts);
@@ -197,9 +197,9 @@ bool fitSphere(std::span<const glm::dvec3> pts, glm::dvec3& center, double& radi
     return true;
 }
 
-Points positionsOf(const Mesh& mesh, std::span<const Index> ids)
+PointList positionsOf(const Mesh& mesh, std::span<const Index> ids)
 {
-    Points out;
+    PointList out;
     out.reserve(ids.size());
     for (Index p : ids)
         out.push_back(mesh.position(p));
@@ -251,7 +251,7 @@ glm::dvec2 onPolygon(double theta, double start, int sides, const glm::dvec2& c,
     return glm::mix(p0, p1, t);
 }
 
-Points circleOfLoop(const Points& pts, const CircleOptions& o, std::vector<double>* radii)
+PointList circleOfLoop(const PointList& pts, const CircleOptions& o, std::vector<double>* radii)
 {
     const size_t n = pts.size();
     if (n < 3)
@@ -262,7 +262,7 @@ Points circleOfLoop(const Points& pts, const CircleOptions& o, std::vector<doubl
         q[i] = frame.flat(pts[i]);
     glm::dvec2 c(0.0);
     double fitted = 0.0;
-    if (!fitCircle(q, c, fitted))
+    if (!fitCircle2d(q, c, fitted))
     {
         for (const glm::dvec2& p : q)
             c += p;
@@ -281,7 +281,7 @@ Points circleOfLoop(const Points& pts, const CircleOptions& o, std::vector<doubl
     std::vector<double> f = chainFractions(pts, true, o.spacing == Spacing::Even ? Spacing::Even : Spacing::Keep);
     const double rot = glm::radians(o.rotation);
     const double start = bestStart(phi, f) + rot;
-    Points out(n);
+    PointList out(n);
     for (size_t i = 0; i < n; ++i)
     {
         double theta = o.spacing == Spacing::Project ? phi[i] + rot : start + kTau * f[i];
@@ -292,18 +292,18 @@ Points circleOfLoop(const Points& pts, const CircleOptions& o, std::vector<doubl
 }
 
 /** An open chain onto the arc of its best-fit circle between its ends; unchanged when it is straight. */
-Points circleOfArc(const Points& pts, const CircleOptions& o, std::vector<double>* radii)
+PointList circleOfArc(const PointList& pts, const CircleOptions& o, std::vector<double>* radii)
 {
     const size_t n = pts.size();
     if (n < 3)
         return pts;
-    PlaneFrame frame(centroidOf(pts), principalAxes(pts)[2]);
+    PlaneFrame frame(centroidOf(pts), sortedPrincipalAxes(pts)[2]);
     std::vector<glm::dvec2> q(n);
     for (size_t i = 0; i < n; ++i)
         q[i] = frame.flat(pts[i]);
     glm::dvec2 c;
     double fitted;
-    if (!fitCircle(q, c, fitted))
+    if (!fitCircle2d(q, c, fitted))
         return pts;
     const double r = o.radius > 0.0 ? o.radius : fitted;
     if (radii)
@@ -317,7 +317,7 @@ Points circleOfArc(const Points& pts, const CircleOptions& o, std::vector<double
         phi[i] = phi[i - 1] + d;
     }
     std::vector<double> f = chainFractions(pts, false, o.spacing);
-    Points out(n);
+    PointList out(n);
     for (size_t i = 0; i < n; ++i)
     {
         double theta = o.spacing == Spacing::Project ? phi[i] : phi[0] + (phi[n - 1] - phi[0]) * f[i];
@@ -329,8 +329,8 @@ Points circleOfArc(const Points& pts, const CircleOptions& o, std::vector<double
 /** Loose points ordered by their angle about their centroid in their best-fit plane, as a loop. */
 std::vector<Index> angleOrder(const Mesh& mesh, std::span<const Index> ids)
 {
-    Points pts = positionsOf(mesh, ids);
-    PlaneFrame frame(centroidOf(pts), principalAxes(pts)[2]);
+    PointList pts = positionsOf(mesh, ids);
+    PlaneFrame frame(centroidOf(pts), sortedPrincipalAxes(pts)[2]);
     std::vector<std::pair<double, Index>> keyed;
     for (size_t i = 0; i < ids.size(); ++i)
     {
@@ -344,13 +344,13 @@ std::vector<Index> angleOrder(const Mesh& mesh, std::span<const Index> ids)
     return out;
 }
 
-void addMoves(PointMoves& moves, std::span<const Index> ids, const Points& to)
+void addMoves(PointMoves& moves, std::span<const Index> ids, const PointList& to)
 {
     for (size_t i = 0; i < ids.size(); ++i)
         moves.push_back({ids[i], to[i]});
 }
 
-Points rectangleOfLoop(const Points& pts, const RectangleOptions& o)
+PointList rectangleOfLoop(const PointList& pts, const RectangleOptions& o)
 {
     const size_t n = pts.size();
     if (n < 4)
@@ -407,12 +407,12 @@ Points rectangleOfLoop(const Points& pts, const RectangleOptions& o)
         for (int k = 1; k < 4; ++k)
             at[k] = (at[0] + size_t(std::lround(double(k) * double(n) / 4.0))) % n;
 
-    Points out(n);
+    PointList out(n);
     for (int k = 0; k < 4; ++k)
     {
         const size_t from = at[k], count = (at[(k + 1) % 4] + n - from) % n;
         const glm::dvec2 a = corner[k], b = corner[(k + 1) % 4];
-        Points side;
+        PointList side;
         for (size_t i = 0; i <= count; ++i)
             side.push_back(pts[(from + i) % n]);
         std::vector<double> f = chainFractions(side, false, o.spacing == Spacing::Even ? Spacing::Even : Spacing::Keep);
@@ -435,11 +435,11 @@ Points rectangleOfLoop(const Points& pts, const RectangleOptions& o)
 /** A polyline with its cumulative lengths, for walking along a loop. */
 struct Polyline
 {
-    Points p;
+    PointList p;
     std::vector<double> cum; // cum[i]: length to point i; cum.back(): whole length
     bool closed = false;
 
-    Polyline(Points pts, bool isClosed) : p(std::move(pts)), closed(isClosed)
+    Polyline(PointList pts, bool isClosed) : p(std::move(pts)), closed(isClosed)
     {
         const size_t steps = closed ? p.size() : p.size() - 1;
         cum.assign(steps + 1, 0.0);
@@ -550,10 +550,10 @@ glm::dvec3 nearestOnEdges(const Mesh& target, const glm::dvec3& x)
 }
 
 /** Closed chain points spread onto a loop: one to one when the counts match, else by spacing at the best offset and direction. */
-Points ontoLoop(const Points& src, const Polyline& loop, Spacing spacing)
+PointList ontoLoop(const PointList& src, const Polyline& loop, Spacing spacing)
 {
     const size_t n = src.size(), m = loop.p.size();
-    Points out(n);
+    PointList out(n);
     if (spacing == Spacing::Project)
     {
         for (size_t i = 0; i < n; ++i)
@@ -590,7 +590,7 @@ Points ontoLoop(const Points& src, const Polyline& loop, Spacing spacing)
         for (size_t i = 0; i < n; ++i)
             phi[i] = kTau * along[i] / len, g[i] = dir * f[i];
         const double start = bestStart(phi, g) / kTau * len;
-        Points cand(n);
+        PointList cand(n);
         double cost = 0.0;
         for (size_t i = 0; i < n; ++i)
         {
@@ -603,7 +603,7 @@ Points ontoLoop(const Points& src, const Polyline& loop, Spacing spacing)
     return out;
 }
 
-double meanDistance(const Points& pts, const Polyline& loop)
+double meanDistance(const PointList& pts, const Polyline& loop)
 {
     double sum = 0.0;
     for (const glm::dvec3& p : pts)
@@ -717,11 +717,11 @@ PointMoves straighten(const Mesh& mesh, const ShapeSelection& sel, const Straigh
     {
         if (c.closed || c.points.size() < 3)
             continue;
-        Points pts = positionsOf(mesh, c.points);
+        PointList pts = positionsOf(mesh, c.points);
         glm::dvec3 a = pts.front(), b = pts.back();
         if (opts.fitLine)
         {
-            glm::dvec3 o = centroidOf(pts), d = principalAxes(pts)[0];
+            glm::dvec3 o = centroidOf(pts), d = sortedPrincipalAxes(pts)[0];
             a = o + d * glm::dot(a - o, d);
             b = o + d * glm::dot(b - o, d);
         }
@@ -729,8 +729,8 @@ PointMoves straighten(const Mesh& mesh, const ShapeSelection& sel, const Straigh
     }
     if (sel.loose.size() >= 2)
     {
-        Points pts = positionsOf(mesh, sel.loose);
-        glm::dvec3 o = centroidOf(pts), d = principalAxes(pts)[0];
+        PointList pts = positionsOf(mesh, sel.loose);
+        glm::dvec3 o = centroidOf(pts), d = sortedPrincipalAxes(pts)[0];
         std::vector<std::pair<double, Index>> keyed;
         for (size_t i = 0; i < pts.size(); ++i)
             keyed.push_back({glm::dot(pts[i] - o, d), sel.loose[i]});
@@ -738,7 +738,7 @@ PointMoves straighten(const Mesh& mesh, const ShapeSelection& sel, const Straigh
         std::vector<Index> ids;
         for (auto& [t, p] : keyed)
             ids.push_back(p);
-        Points ordered = positionsOf(mesh, ids);
+        PointList ordered = positionsOf(mesh, ids);
         const glm::dvec3 a = o + d * keyed.front().first, b = o + d * keyed.back().first;
         std::vector<double> f(ids.size());
         for (size_t i = 0; i < ids.size(); ++i)
@@ -756,7 +756,7 @@ PointMoves circularize(const Mesh& mesh, const ShapeSelection& sel, const Circle
     PointMoves moves;
     for (const EdgePath& c : sel.chains)
     {
-        Points pts = positionsOf(mesh, c.points);
+        PointList pts = positionsOf(mesh, c.points);
         addMoves(moves, c.points, c.closed ? circleOfLoop(pts, opts, radii) : circleOfArc(pts, opts, radii));
     }
     if (sel.loose.size() >= 3)
@@ -787,13 +787,13 @@ PointMoves spherize(const Mesh& mesh, std::span<const Index> points, const Spher
 {
     LILA_ZONE();
 
-    Points pts = positionsOf(mesh, points);
+    PointList pts = positionsOf(mesh, points);
     if (pts.size() < 2)
         return {};
     const glm::dvec3 s = glm::max(glm::abs(opts.scale), glm::dvec3(1e-6));
     const glm::dmat3 toUnit = glm::dmat3(glm::dvec3(1.0 / s.x, 0, 0), glm::dvec3(0, 1.0 / s.y, 0), glm::dvec3(0, 0, 1.0 / s.z)) * glm::transpose(opts.frame);
     const glm::dmat3 fromUnit = opts.frame * glm::dmat3(glm::dvec3(s.x, 0, 0), glm::dvec3(0, s.y, 0), glm::dvec3(0, 0, s.z));
-    Points unit(pts.size());
+    PointList unit(pts.size());
     for (size_t i = 0; i < pts.size(); ++i)
         unit[i] = toUnit * pts[i];
 
@@ -866,7 +866,7 @@ PointMoves cylinderize(const Mesh& mesh, std::span<const Index> points, int axis
 {
     LILA_ZONE();
 
-    Points pts = positionsOf(mesh, points);
+    PointList pts = positionsOf(mesh, points);
     if (pts.size() < 3)
         return {};
     std::vector<glm::dvec3> axes;
@@ -878,7 +878,7 @@ PointMoves cylinderize(const Mesh& mesh, std::span<const Index> points, int axis
     }
     else
     {
-        glm::dmat3 pa = principalAxes(pts);
+        glm::dmat3 pa = sortedPrincipalAxes(pts);
         axes = {pa[0], pa[1], pa[2]};
     }
     const glm::dvec3 o = centroidOf(pts);
@@ -894,7 +894,7 @@ PointMoves cylinderize(const Mesh& mesh, std::span<const Index> points, int axis
             q[i] = frame.flat(pts[i]);
         glm::dvec2 c;
         double r;
-        if (!fitCircle(q, c, r))
+        if (!fitCircle2d(q, c, r))
             continue;
         double residual = 0.0, mean = 0.0;
         for (const glm::dvec2& p : q)
@@ -924,10 +924,10 @@ PointMoves flattenToPlane(const Mesh& mesh, std::span<const Index> points)
 {
     LILA_ZONE();
 
-    Points pts = positionsOf(mesh, points);
+    PointList pts = positionsOf(mesh, points);
     if (pts.size() < 3)
         return {};
-    const glm::dvec3 o = centroidOf(pts), n = principalAxes(pts)[2];
+    const glm::dvec3 o = centroidOf(pts), n = sortedPrincipalAxes(pts)[2];
     PointMoves moves;
     for (size_t i = 0; i < pts.size(); ++i)
         moves.push_back({points[i], pts[i] - n * glm::dot(pts[i] - o, n)});
@@ -938,10 +938,10 @@ PointMoves alignToLine(const Mesh& mesh, std::span<const Index> points)
 {
     LILA_ZONE();
 
-    Points pts = positionsOf(mesh, points);
+    PointList pts = positionsOf(mesh, points);
     if (pts.size() < 2)
         return {};
-    const glm::dvec3 o = centroidOf(pts), d = principalAxes(pts)[0];
+    const glm::dvec3 o = centroidOf(pts), d = sortedPrincipalAxes(pts)[0];
     PointMoves moves;
     for (size_t i = 0; i < pts.size(); ++i)
         moves.push_back({points[i], o + d * glm::dot(pts[i] - o, d)});
@@ -1039,14 +1039,14 @@ PointMoves conformToMesh(const Mesh& mesh, const ShapeSelection& sel, const Mesh
     std::vector<uint8_t> done(mesh.pointCapacity(), 0);
     for (const EdgePath& c : sel.chains)
     {
-        Points pts = positionsOf(mesh, c.points);
+        PointList pts = positionsOf(mesh, c.points);
         const Polyline* best = nullptr;
         double bestD = std::numeric_limits<double>::max();
         for (const Polyline& l : loops)
             // Equal counts break ties, so a ring picks the target ring it can land on one to one.
             if (double d = meanDistance(pts, l) * (l.p.size() == pts.size() ? 1.0 : 1.0 + 1e-6); d < bestD)
                 bestD = d, best = &l;
-        Points to = c.closed ? ontoLoop(pts, *best, opts.spacing) : Points{};
+        PointList to = c.closed ? ontoLoop(pts, *best, opts.spacing) : PointList{};
         if (!c.closed)
             for (const glm::dvec3& p : pts)
                 to.push_back(best->nearest(p));

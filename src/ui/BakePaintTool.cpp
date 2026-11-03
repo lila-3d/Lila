@@ -20,6 +20,7 @@
 #include "ui/Actions.h"
 #include "ui/BakeCageView.h"
 #include "ui/MeshCache.h"
+#include "ui/UiCommon.h"
 #include "ui/UvTools.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportDisplay.h"
@@ -54,9 +55,9 @@ namespace
 using scene::kNoNode;
 using scene::NodeId;
 
-constexpr const char* kPrefix = "/bakePaint";
+constexpr const char* kBakePaintPrefix = "/bakePaint";
 
-struct Settings
+struct BakePaintSettings
 {
     std::string attr = bake::kOffsetAttr;
     bake::PaintOp op = bake::PaintOp::Add;
@@ -73,17 +74,17 @@ struct Settings
     }();
 };
 
-Settings& settings()
+BakePaintSettings& bakePaintSettings()
 {
-    static Settings s = [] {
-        Settings out;
-        out.stroke.loadPrefs(kPrefix);
+    static BakePaintSettings s = [] {
+        BakePaintSettings out;
+        out.stroke.loadPrefs(kBakePaintPrefix);
         return out;
     }();
     return s;
 }
 
-void save() { settings().stroke.savePrefs(kPrefix); }
+void saveBakePaintSettings() { bakePaintSettings().stroke.savePrefs(kBakePaintPrefix); }
 
 constexpr const char* kFalloffNames[] = {"bell", "linear", "constant"};
 
@@ -97,14 +98,6 @@ bake::PaintFalloff paintFalloff(const std::string& name)
 }
 
 const char* kOps[] = {"Add", "Subtract", "Smooth", "Set"};
-
-QMainWindow* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (auto* mw = qobject_cast<QMainWindow*>(w))
-            return mw;
-    return nullptr;
-}
 
 /** The bake group holding mesh as its low, or null. */
 scene::Node* groupOfLow(scene::Graph& g, NodeId mesh)
@@ -170,7 +163,7 @@ public:
         mSymmetry->addItems({"Off", "X", "Y", "Z"});
         form->addRow("Symmetry", mSymmetry);
         col->addLayout(form);
-        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return settings().stroke; }, [this] { changed(); });
+        mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return bakePaintSettings().stroke; }, [this] { changed(); });
         col->addWidget(mStrokeOptions);
 
         auto* buttons = new QHBoxLayout;
@@ -198,31 +191,31 @@ public:
 
         syncFromSettings();
         connect(mAttr, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().attr = mAttr->itemData(i).toString().toStdString();
+            bakePaintSettings().attr = mAttr->itemData(i).toString().toStdString();
             changed();
         });
         connect(mOp, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().op = bake::PaintOp(i);
+            bakePaintSettings().op = bake::PaintOp(i);
             changed();
         });
         connect(mValue, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().value = v;
+            bakePaintSettings().value = v;
             changed();
         });
         connect(mRadius, &QSpinBox::valueChanged, this, [this](int v) {
-            settings().stroke.radius = v;
+            bakePaintSettings().stroke.radius = v;
             changed();
         });
         connect(mStrength, &QDoubleSpinBox::valueChanged, this, [this](double v) {
-            settings().stroke.strength = v;
+            bakePaintSettings().stroke.strength = v;
             changed();
         });
         connect(mSymmetry, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().symmetry = i - 1;
+            bakePaintSettings().symmetry = i - 1;
             changed();
         });
         connect(mFalloff, &QComboBox::currentIndexChanged, this, [this](int i) {
-            settings().stroke.falloff = kFalloffNames[std::clamp(i, 0, 2)];
+            bakePaintSettings().stroke.falloff = kFalloffNames[std::clamp(i, 0, 2)];
             changed();
         });
         connect(flood, &QPushButton::clicked, this, [this] {
@@ -236,7 +229,7 @@ public:
 
     void syncFromSettings()
     {
-        const Settings& s = settings();
+        const BakePaintSettings& s = bakePaintSettings();
         const QSignalBlocker b0(mAttr), b1(mOp), b2(mValue), b3(mRadius), b4(mStrength), b5(mSymmetry), b6(mFalloff);
         mFalloff->setCurrentIndex(int(paintFalloff(s.stroke.falloff)));
         mAttr->setCurrentIndex(s.attr == bake::kSkewAttr ? 1 : 0);
@@ -260,7 +253,7 @@ protected:
 private:
     void changed()
     {
-        save();
+        saveBakePaintSettings();
         if (onChanged)
             onChanged();
     }
@@ -355,7 +348,7 @@ public:
         mStroking = true;
         mMods = e->modifiers();
         const ViewInfo v = view;
-        mStroke.begin(settings().stroke, mControls.input(e),
+        mStroke.begin(bakePaintSettings().stroke, mControls.input(e),
                       [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return surfaceQuery(QPointF(px.x, px.y), v, out); }, *this, false);
         return true;
     }
@@ -451,7 +444,7 @@ public:
             return;
         }
         addDisplay(s);
-        const Settings& st = settings();
+        const BakePaintSettings& st = bakePaintSettings();
         geo::BvhHit hit;
         const bool over = raycast(mHover, view, hit);
         QString under;
@@ -561,19 +554,19 @@ private:
             return false;
         if (mPaint)
         {
-            mPaint->paint->setSymmetry(settings().symmetry);
-            mPaint->paint->setFalloff(paintFalloff(settings().stroke.falloff));
+            mPaint->paint->setSymmetry(bakePaintSettings().symmetry);
+            mPaint->paint->setFalloff(paintFalloff(bakePaintSettings().stroke.falloff));
             return true;
         }
         scene::MeshPtr m = base();
-        const auto attr = bake::paintAttr(settings().attr);
+        const auto attr = bake::paintAttr(bakePaintSettings().attr);
         if (!m || !attr || !m->numFaces())
             return false;
         mPaint = std::make_unique<Working>();
         mPaint->meshPtr = m;
         mPaint->paint = std::make_unique<bake::PointPaint>(m, *attr);
-        mPaint->paint->setSymmetry(settings().symmetry);
-        mPaint->paint->setFalloff(paintFalloff(settings().stroke.falloff));
+        mPaint->paint->setSymmetry(bakePaintSettings().symmetry);
+        mPaint->paint->setFalloff(paintFalloff(bakePaintSettings().stroke.falloff));
         mShellFor = nullptr;
         return true;
     }
@@ -620,9 +613,9 @@ private:
 
         if (!mPaint)
             return;
-        const brush::Falloff falloff = settings().stroke.resolveFalloff();
+        const brush::Falloff falloff = bakePaintSettings().stroke.resolveFalloff();
         std::vector<std::pair<geo::Index, float>> pts;
-        for (brush::Dab copy : brush::radialDabs(d, settings().stroke.radial))
+        for (brush::Dab copy : brush::radialDabs(d, bakePaintSettings().stroke.radial))
         {
             geo::Index tri = geo::kInvalid;
             if (brush::SurfaceWalk::snap(mPaint->paint->bvh(), copy, tri))
@@ -631,14 +624,14 @@ private:
                 pts.insert(pts.end(), more.begin(), more.end());
             }
         }
-        if (settings().stroke.radial.any())
+        if (bakePaintSettings().stroke.radial.any())
             brush::mergeHits(pts);
         applyDab(pts, mMods, float(d.opacity * d.flow));
     }
 
     static bake::PaintOp opFor(Qt::KeyboardModifiers mods)
     {
-        bake::PaintOp op = settings().op;
+        bake::PaintOp op = bakePaintSettings().op;
         if (mods & Qt::ShiftModifier)
             op = bake::PaintOp::Smooth;
         else if ((mods & Qt::ControlModifier) && op == bake::PaintOp::Add)
@@ -650,7 +643,7 @@ private:
 
     void applyDab(const std::vector<std::pair<geo::Index, float>>& pts, Qt::KeyboardModifiers mods, float amount = 1.0f)
     {
-        mPaint->paint->apply(pts, opFor(mods), float(settings().value), float(settings().stroke.strength) * amount);
+        mPaint->paint->apply(pts, opFor(mods), float(bakePaintSettings().value), float(bakePaintSettings().stroke.strength) * amount);
         mShellFor = nullptr;
         if (mPaint->paint->attr().name == std::string(bake::kOffsetAttr))
             bakeCage::setWorkingOffsets(mMesh, mPaint->paint->values(), true);
@@ -660,12 +653,12 @@ private:
 
     // UV editor painting: the same brush, its footprint taken in uv0 under the cursor.
 
-    double uvRadius(const uvTools::Canvas& c) const { return settings().stroke.radius / std::max(1e-9, c.pixelsPerUv); }
+    double uvRadius(const uvTools::Canvas& c) const { return bakePaintSettings().stroke.radius / std::max(1e-9, c.pixelsPerUv); }
 
     /** UV dabs for the sampler's new samples, sized and weighted by their pressure like the viewport's. */
     void uvDabs(const uvTools::Canvas& c, Qt::KeyboardModifiers mods)
     {
-        const brush::BrushSettings& s = settings().stroke;
+        const brush::BrushSettings& s = bakePaintSettings().stroke;
         for (const brush::StrokeSample& sample : mUvSampler.take())
         {
             const double size = std::max(0.05, s.pressureSize.map(sample.pressure)) * sample.size;
@@ -680,7 +673,7 @@ private:
             return false;
         mUvHover = e->position();
         mStroking = true;
-        mUvSampler.begin(settings().stroke, mControls.input(e), settings().stroke.radius);
+        mUvSampler.begin(bakePaintSettings().stroke, mControls.input(e), bakePaintSettings().stroke.radius);
         uvDabs(c, e->modifiers());
         return true;
     }
@@ -749,7 +742,7 @@ private:
         {
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(QColor(240, 240, 240), 1.5));
-            p.drawEllipse(*mUvHover, settings().stroke.radius, settings().stroke.radius);
+            p.drawEllipse(*mUvHover, bakePaintSettings().stroke.radius, bakePaintSettings().stroke.radius);
         }
         p.restore();
     }
@@ -766,7 +759,7 @@ private:
     {
         if (!ensurePaint())
             return;
-        mPaint->paint->flood(settings().op, float(settings().value), float(settings().stroke.strength));
+        mPaint->paint->flood(bakePaintSettings().op, float(bakePaintSettings().value), float(bakePaintSettings().stroke.strength));
         commit("Bake Paint Flood");
     }
 
@@ -835,14 +828,14 @@ private:
     brush::Stroke mStroke;
     brush::StrokeSampler mUvSampler;
     brush::SurfaceWalk mWalk;
-    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; },
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return bakePaintSettings().stroke; },
                                        [this] {
                                            if (mPanel)
                                                mPanel->syncFromSettings();
                                            viewportTools::requestRedraw();
                                            uvTools::requestRedraw();
                                        },
-                                       [] { save(); }};
+                                       [] { saveBakePaintSettings(); }};
 
     const Working* mShellFor = nullptr;
     glm::dmat4 mDrawnWorld{0.0};

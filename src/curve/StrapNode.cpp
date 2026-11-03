@@ -1,4 +1,4 @@
-#include "curve/EnvAttrs.h"
+#include "curve/NodeHelpers.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/StrapNode.h"
 #include "curve/StripUvAttrs.h"
@@ -21,21 +21,21 @@ using T = ArgType;
 
 namespace strapnode
 {
-using env::attrFlags;
-using env::b;
-using env::bAttr;
-using env::bake;
-using env::dataIn;
-using env::dataOut;
-using env::eAttr;
-using env::f;
-using env::fAttr;
-using env::i;
-using env::iAttr;
-using env::idx;
-using env::stringOut;
-using env::v;
-using env::vAttr;
+using helpers::attrFlags;
+using helpers::b;
+using helpers::bAttr;
+using helpers::bake;
+using helpers::dataIn;
+using helpers::dataOut;
+using helpers::eAttr;
+using helpers::f;
+using helpers::fAttr;
+using helpers::i;
+using helpers::iAttr;
+using helpers::idx;
+using helpers::stringOut;
+using helpers::v;
+using helpers::vAttr;
 
 namespace
 {
@@ -302,7 +302,7 @@ void registerTypes()
         t.ownAttrs.push_back({.name = "meshMatrices", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
                               .flags = AttrInput | AttrHidden | AttrArray, .doc = "Each mesh's world matrix, by the same element.",
                               .fileAlias = "meshMatrix"});
-        t.ownAttrs.push_back({.name = "faces", .type = PlugType::String, .defaultValue = std::string(), .flags = env::kIn | AttrHidden,
+        t.ownAttrs.push_back({.name = "faces", .type = PlugType::String, .defaultValue = std::string(), .flags = helpers::kIn | AttrHidden,
                               .doc = "Faces that count per inMeshes element, as JSON: [[ids] or null, ...]; empty is every face."});
         for (AttrDef a : {hidden(vAttr("start", D3(0.0), "A point on the ray through the slash's start.")),
                           hidden(vAttr("startDir", D3(0, 0, -1), "That ray's direction.")),
@@ -327,7 +327,7 @@ void registerTypes()
     t.doc = "A strap along path curves lying on a surface: a flat band (with a bevel) or twisted rope, its underside on the path, "
             "with an optional buckle.";
     t.ownAttrs = {
-        dataIn("path", "Path curves, world space."),
+        dataIn("path", "Path curves, world space.", false),
         hidden(vAttr("up", D3(0.0), "Open paths: tangent x up is the outside. Zero takes the path's plane.")),
         eAttr("style", {"band", "rope"}, 0, "A flat band, or rope of twisted strands."),
         fAttr("width", 4.0, "Width across, cm (rope: its diameter).", 0.0),

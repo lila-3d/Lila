@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Primitives.h"
@@ -15,6 +16,7 @@
 #include <map>
 
 using namespace lila;
+using namespace retopotest;
 using geo::Index;
 
 namespace
@@ -37,13 +39,6 @@ scene::Node* meshNode(const std::string& name, geo::Mesh mesh)
     scene::Node* n = g.createNode(*scene::types::find("mesh"), name, scene::kNoNode, false);
     g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
     return n;
-}
-
-const geo::Mesh& outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
 }
 
 json P(double x, double y, double z) { return json::array({x, y, z}); }

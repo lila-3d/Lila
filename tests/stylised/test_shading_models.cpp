@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "render/Renderer.h"
 #include "ui/Camera.h"
 
@@ -12,19 +13,11 @@
 
 using namespace lila;
 using namespace lila::render;
+using namespace stylisedtest;
 
 namespace
 {
-constexpr int kSize = 96;
-
-bool gpu()
-{
-    Renderer& r = Renderer::get();
-    if (r.running() || r.start())
-        return true;
-    MESSAGE("no GPU for stylised shading tests");
-    return false;
-}
+constexpr int kShadeSize = 96;
 
 /** A UV sphere of radius 50 at the origin, with tangents. */
 std::shared_ptr<RenderMesh> sphere()
@@ -97,21 +90,13 @@ FrameState frame(const Material& mat, int msaa = 1)
     return s;
 }
 
-std::vector<uint8_t> renderFrame(const FrameState& s)
+std::vector<uint8_t> renderShaded(const FrameState& s)
 {
     std::vector<uint8_t> bgra;
     std::string err;
-    REQUIRE_MESSAGE(Renderer::get().renderOffscreen(s, kSize, kSize, bgra, &err), err);
-    REQUIRE(bgra.size() == size_t(kSize) * kSize * 4);
+    REQUIRE_MESSAGE(Renderer::get().renderOffscreen(s, kShadeSize, kShadeSize, bgra, &err), err);
+    REQUIRE(bgra.size() == size_t(kShadeSize) * kShadeSize * 4);
     return bgra;
-}
-
-int maxDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
-{
-    int m = 0;
-    for (size_t i = 0; i < a.size(); ++i)
-        m = std::max(m, std::abs(int(a[i]) - int(b[i])));
-    return m;
 }
 
 double meanDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
@@ -125,7 +110,7 @@ double meanDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
 /** BGRA at (x, y). */
 glm::ivec4 at(const std::vector<uint8_t>& bgra, int x, int y)
 {
-    const uint8_t* p = &bgra[(size_t(y) * kSize + size_t(x)) * 4];
+    const uint8_t* p = &bgra[(size_t(y) * kShadeSize + size_t(x)) * 4];
     return {p[0], p[1], p[2], p[3]};
 }
 
@@ -173,65 +158,65 @@ TEST_CASE("Packed style blocks put each model's inputs where mesh.slang reads th
 
 TEST_CASE("Painterly at strength 0 shades exactly like default lit")
 {
-    if (!gpu())
+    if (!gpu("stylised shading"))
         return;
-    const auto lit = renderFrame(frame(base()));
-    REQUIRE(litPixels(lit) > kSize * kSize / 4);
-    const auto zero = renderFrame(frame(painterly(0.0f)));
+    const auto lit = renderShaded(frame(base()));
+    REQUIRE(litPixels(lit) > kShadeSize * kShadeSize / 4);
+    const auto zero = renderShaded(frame(painterly(0.0f)));
     CHECK(maxDiff(lit, zero) <= 1);
-    const auto full = renderFrame(frame(painterly(1.0f)));
+    const auto full = renderShaded(frame(painterly(1.0f)));
     CHECK(meanDiff(lit, full) > 1.0);
-    CHECK(litPixels(full) > kSize * kSize / 4);
+    CHECK(litPixels(full) > kShadeSize * kShadeSize / 4);
 
     SUBCASE("with multisampling")
     {
-        CHECK(maxDiff(renderFrame(frame(base(), 4)), renderFrame(frame(painterly(0.0f), 4))) <= 1);
+        CHECK(maxDiff(renderShaded(frame(base(), 4)), renderShaded(frame(painterly(0.0f), 4))) <= 1);
     }
 }
 
 TEST_CASE("Painterly strokes follow the mapping and boil with the offset")
 {
-    if (!gpu())
+    if (!gpu("stylised shading"))
         return;
-    const auto object = renderFrame(frame(painterly(1.0f)));
+    const auto object = renderShaded(frame(painterly(1.0f)));
     // World mapping matches object mapping while the object sits at the origin; moved, only object strokes follow it.
     {
         Material world = painterly(1.0f);
         world.style.strokeMapping = 1;
         FrameState a = frame(painterly(1.0f)), b = frame(world);
         a.meshes.edit()[0].world = b.meshes.edit()[0].world = glm::mat4(1.0f, 0, 0, 0, 0, 1.0f, 0, 0, 0, 0, 1.0f, 0, 7.0f, 3.0f, 0, 1.0f);
-        CHECK(meanDiff(renderFrame(a), renderFrame(b)) > 0.2);
+        CHECK(meanDiff(renderShaded(a), renderShaded(b)) > 0.2);
     }
     for (uint32_t mapping : {2u, 3u})
     {
         Material m = painterly(1.0f);
         m.style.strokeMapping = mapping;
-        const auto other = renderFrame(frame(m));
-        CHECK(litPixels(other) > kSize * kSize / 4);
+        const auto other = renderShaded(frame(m));
+        CHECK(litPixels(other) > kShadeSize * kShadeSize / 4);
         CHECK(meanDiff(object, other) > 0.2);
     }
     Material boiled = painterly(1.0f);
     boiled.style.boilOffset = {0.37f, 0.61f};
-    CHECK(meanDiff(object, renderFrame(frame(boiled))) > 0.2);
+    CHECK(meanDiff(object, renderShaded(frame(boiled))) > 0.2);
     // Same offset, same frame: boiling is deterministic.
-    CHECK(maxDiff(renderFrame(frame(boiled)), renderFrame(frame(boiled))) == 0);
+    CHECK(maxDiff(renderShaded(frame(boiled)), renderShaded(frame(boiled))) == 0);
 }
 
 TEST_CASE("Toon shading tints its shadow and differs from default lit")
 {
-    if (!gpu())
+    if (!gpu("stylised shading"))
         return;
-    const auto lit = renderFrame(frame(base()));
+    const auto lit = renderShaded(frame(base()));
     Material m = base();
     m.style.model = ShadingModel::Toon;
     m.style.toonSoftness = 0.01f;
     m.style.rimStrength = 0.0f;
-    const auto toon = renderFrame(frame(m));
+    const auto toon = renderShaded(frame(m));
     CHECK(meanDiff(lit, toon) > 2.0);
     // The default shadow colour is blue-grey: somewhere on the sphere blue clearly beats red.
     int bluish = 0;
-    for (int y = 0; y < kSize; ++y)
-        for (int x = 0; x < kSize; ++x)
+    for (int y = 0; y < kShadeSize; ++y)
+        for (int x = 0; x < kShadeSize; ++x)
         {
             glm::ivec4 p = at(toon, x, y);
             bluish += p.x > p.z + 15;
@@ -241,18 +226,18 @@ TEST_CASE("Toon shading tints its shadow and differs from default lit")
 
 TEST_CASE("Foliage grades the base colour from bottom to top")
 {
-    if (!gpu())
+    if (!gpu("stylised shading"))
         return;
     Material m = base();
     m.style.model = ShadingModel::Foliage;
     m.style.foliageGradient = 1.0f;
     m.style.foliageBottomColor = glm::vec3(0.02f, 0.05f, 0.02f);
     m.style.foliageTopColor = glm::vec3(0.2f, 0.8f, 0.1f);
-    const auto leaf = renderFrame(frame(m));
-    CHECK(meanDiff(renderFrame(frame(base())), leaf) > 2.0);
+    const auto leaf = renderShaded(frame(m));
+    CHECK(meanDiff(renderShaded(frame(base())), leaf) > 2.0);
     int green = 0;
-    for (int y = 0; y < kSize / 3; ++y)
-        for (int x = 0; x < kSize; ++x)
+    for (int y = 0; y < kShadeSize / 3; ++y)
+        for (int x = 0; x < kShadeSize; ++x)
         {
             glm::ivec4 p = at(leaf, x, y);
             green += p.y > p.z + 10 && p.y > p.x + 10;
@@ -262,17 +247,17 @@ TEST_CASE("Foliage grades the base colour from bottom to top")
 
 TEST_CASE("Viewport post: Kuwahara and outlines change the shaded view, with and without MSAA")
 {
-    if (!gpu())
+    if (!gpu("stylised shading"))
         return;
     for (int msaa : {1, 4})
     {
         CAPTURE(msaa);
         FrameState s = frame(painterly(1.0f), msaa);
-        const auto plain = renderFrame(s);
+        const auto plain = renderShaded(s);
         s.kuwahara = true;
-        const auto filtered = renderFrame(s);
+        const auto filtered = renderShaded(s);
         CHECK(meanDiff(plain, filtered) > 0.05);
-        CHECK(litPixels(filtered) > kSize * kSize / 4);
+        CHECK(litPixels(filtered) > kShadeSize * kShadeSize / 4);
 
         s.kuwahara = false;
         s.outline = true;
@@ -280,8 +265,8 @@ TEST_CASE("Viewport post: Kuwahara and outlines change the shaded view, with and
         s.background = glm::vec3(0.5f);
         FrameState grey = s;
         grey.outline = false;
-        const auto noLines = renderFrame(grey);
-        const auto lines = renderFrame(s);
+        const auto noLines = renderShaded(grey);
+        const auto lines = renderShaded(s);
         // The silhouette against the grey background turns near-black.
         int dark = 0, darkBefore = 0;
         for (size_t i = 0; i < lines.size(); i += 4)

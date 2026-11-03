@@ -1,23 +1,16 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "rig/RigMath.h"
 
 #include <tuple>
 
 using namespace puppeteer::math;
+using puptest::near;
 using Approx = doctest::Approx;
 
 namespace
 {
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-9) { return glm::length(a - b) <= eps; }
-bool near(const glm::dmat4& a, const glm::dmat4& b, double eps = 1e-9)
-{
-    for (int c = 0; c < 4; ++c)
-        for (int r = 0; r < 4; ++r)
-            if (std::abs(a[c][r] - b[c][r]) > eps)
-                return false;
-    return true;
-}
 glm::dvec3 apply(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 
 FootPivots leftFoot()

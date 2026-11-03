@@ -40,7 +40,6 @@ namespace fs = std::filesystem;
 namespace
 {
 const char* kSlots[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-const QPointF kDirs[8] = {{0, -1}, {0.71, -0.71}, {1, 0}, {0.71, 0.71}, {0, 1}, {-0.71, 0.71}, {-1, 0}, {-0.71, -0.71}};
 
 fs::path defaultsDir()
 {
@@ -173,8 +172,8 @@ std::vector<RadialPreview::Box> RadialPreview::layoutBoxes() const
         Box b{i, {}, has ? itemLabel(mLevel[kSlots[i]]) : QString(kSlots[i]), !has,
               has && mLevel[kSlots[i]].contains("children") && mLevel[kSlots[i]]["children"].is_object()};
         double w = std::max(56.0, fm.horizontalAdvance(b.label) + 22 + (b.submenu ? 12 : 0));
-        QPointF p = center + kDirs[i] * radius;
-        double x = kDirs[i].x() > 0.1 ? p.x() - 12 : kDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
+        QPointF p = center + kCompassDirs[i] * radius;
+        double x = kCompassDirs[i].x() > 0.1 ? p.x() - 12 : kCompassDirs[i].x() < -0.1 ? p.x() - w + 12 : p.x() - w / 2;
         b.rect = QRectF(x, p.y() - h / 2, w, h);
         boxes.push_back(b);
     }
@@ -220,7 +219,7 @@ void RadialPreview::paintEvent(QPaintEvent*)
     p.drawEllipse(center, 5, 5);
     p.setPen(QPen(themeShade(70), 1, Qt::DotLine));
     for (int i = 0; i < 8; ++i)
-        p.drawLine(center + kDirs[i] * 14, boxes[i].rect.center());
+        p.drawLine(center + kCompassDirs[i] * 14, boxes[i].rect.center());
 
     for (const Box& b : boxes)
     {

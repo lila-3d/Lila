@@ -9,9 +9,11 @@
 #include "geo/ObjIO.h"
 #include "geo/Primitives.h"
 #include "math/MathCore.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 #include "scene/LastOp.h"
 #include "scene/Modifiers.h"
+#include "scene/RigUtil.h"
 
 #include <glm/gtx/quaternion.hpp>
 #include <tbb/blocked_range.h>
@@ -25,14 +27,10 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
-AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
-
 /** A size whose default for new primitives (sized to fit a 10 cm cube) differs from what scene files leaving it out mean. */
 AttrDef sizeAttr(std::string name, double def, double fileDefault, std::string doc)
 {
@@ -48,14 +46,14 @@ AttrDef intAttr(std::string name, int64_t def, std::string doc, double lo = 1.0,
             .doc = std::move(doc), .minValue = lo, .maxValue = hi, .softMax = std::min(hi, 100.0)};
 }
 
-AttrDef boolAttr(std::string name, bool def, std::string doc)
+AttrDef keyableBoolAttr(std::string name, bool def, std::string doc)
 {
     return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = AttrInput | AttrStorable | AttrKeyable,
             .doc = std::move(doc)};
 }
 
 double f(const Node& n, const char* attr) { return n.as<double>(n.type().attrIndex(attr)); }
-int i(const Node& n, const char* attr, int lo = 1) { return std::max(lo, int(n.as<int64_t>(n.type().attrIndex(attr)))); }
+int count(const Node& n, const char* attr, int lo = 1) { return std::max(lo, int(n.as<int64_t>(n.type().attrIndex(attr)))); }
 bool b(const Node& n, const char* attr) { return n.as<bool>(n.type().attrIndex(attr)); }
 
 AttrDef heightFraction()
@@ -68,7 +66,7 @@ AttrDef sweepFraction()
     return floatAttr("fraction", 1.0, "Portion of a full turn swept around the up axis: 1 is whole, 0.5 half.", 0.01, 1.0);
 }
 
-AttrDef cutCaps() { return boolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
+AttrDef cutCaps() { return keyableBoolAttr("cutCaps", true, "Close the flat ends a partial sweep leaves."); }
 
 AttrDef capTypeAttr()
 {
@@ -140,98 +138,90 @@ std::vector<Primitive> primitives()
          {sizeAttr("width", 10, 100, "Size along X, cm."), sizeAttr("height", 10, 100, "Size along the up axis, cm."),
           sizeAttr("depth", 10, 100, "Size along Z, cm."), intAttr("subdivisionsX", 1, "Segments across."),
           intAttr("subdivisionsY", 1, "Segments up."), intAttr("subdivisionsZ", 1, "Segments deep."),
-          boolAttr("baseAtOrigin", false, "Sit on the ground instead of centring.")},
+          keyableBoolAttr("baseAtOrigin", false, "Sit on the ground instead of centring.")},
          [](const Node& n) {
-             return geo::makeCube({f(n, "width"), f(n, "height"), f(n, "depth"), i(n, "subdivisionsX"), i(n, "subdivisionsY"),
-                                   i(n, "subdivisionsZ"), b(n, "baseAtOrigin")});
+             return geo::makeCube({f(n, "width"), f(n, "height"), f(n, "depth"), count(n, "subdivisionsX"), count(n, "subdivisionsY"),
+                                   count(n, "subdivisionsZ"), b(n, "baseAtOrigin")});
          }},
         {"polySphere", "Sphere",
          {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
-          intAttr("subdivisionsHeight", 20, "Segments pole to pole.", 2.0), boolAttr("baseAtOrigin", false, "Sit on the ground."),
+          intAttr("subdivisionsHeight", 20, "Segments pole to pole.", 2.0), keyableBoolAttr("baseAtOrigin", false, "Sit on the ground."),
           heightFraction()},
          [](const Node& n) {
              return geo::makeSphere(
-                 {f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 2), b(n, "baseAtOrigin"), frac(n)});
+                 {f(n, "radius"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsHeight", 2), b(n, "baseAtOrigin"), frac(n)});
          },
          true},
         {"polyCylinder", "Cylinder",
          {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
           intAttr("subdivisionsHeight", 1, "Segments up."),
           intAttr("subdivisionsCaps", 0, "Rings of quads around each cap's fill; 0 and 1 both leave just the fill.", 0.0), capTypeAttr(),
-          boolAttr("caps", true, "Close the ends; off leaves them open whatever capType says."), boolAttr("baseAtOrigin", false, "Sit on the ground."),
+          keyableBoolAttr("caps", true, "Close the ends; off leaves them open whatever capType says."), keyableBoolAttr("baseAtOrigin", false, "Sit on the ground."),
           sweepFraction(), cutCaps()},
          [](const Node& n) {
-             return geo::makeCylinder({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                       i(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
+             return geo::makeCylinder({f(n, "radius"), f(n, "height"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsHeight"),
+                                       count(n, "subdivisionsCaps", 0), b(n, "caps"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n)});
          }},
         {"polyCapsule", "Capsule",
          {sizeAttr("radius", 2.5, 50, "cm."), sizeAttr("height", 10, 200, "End to end, caps included, cm."),
           intAttr("subdivisionsAxis", 20, "Segments around.", 3.0), intAttr("subdivisionsHeight", 1, "Segments along the straight part."),
-          intAttr("subdivisionsCaps", 6, "Rings on each rounded end."), boolAttr("baseAtOrigin", false, "Sit on the ground.")},
+          intAttr("subdivisionsCaps", 6, "Rings on each rounded end."), keyableBoolAttr("baseAtOrigin", false, "Sit on the ground.")},
          [](const Node& n) {
-             return geo::makeCapsule({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                      i(n, "subdivisionsCaps"), b(n, "baseAtOrigin")});
+             return geo::makeCapsule({f(n, "radius"), f(n, "height"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsHeight"),
+                                      count(n, "subdivisionsCaps"), b(n, "baseAtOrigin")});
          }},
         {"polyCone", "Cone",
          {sizeAttr("radius", 5, 50, "cm."), sizeAttr("height", 10, 100, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
           intAttr("subdivisionsHeight", 1, "Segments up."),
           intAttr("subdivisionsCap", 0, "Rings of quads around the base's fill; 0 and 1 both leave just the fill.", 0.0), capTypeAttr(),
-          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps(),
-          boolAttr("capTip", false, "Cut the point off at tipRadius and fill it as capType, so quads leave no triangles at the tip."),
+          keyableBoolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps(),
+          keyableBoolAttr("capTip", false, "Cut the point off at tipRadius and fill it as capType, so quads leave no triangles at the tip."),
           floatAttr("tipRadius", 0.05, "Radius of the capped tip, cm; small keeps it looking pointed.", 0.0)},
          [](const Node& n) {
-             return geo::makeCone({f(n, "radius"), f(n, "height"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight"),
-                                   i(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n), b(n, "capTip"),
+             return geo::makeCone({f(n, "radius"), f(n, "height"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsHeight"),
+                                   count(n, "subdivisionsCap", 0), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps"), capFill(n), b(n, "capTip"),
                                    f(n, "tipRadius")});
          }},
         {"polyPlane", "Plane",
          {sizeAttr("width", 10, 100, "Size along X, cm."), sizeAttr("depth", 10, 100, "Size along Z, cm."),
           intAttr("subdivisionsX", 1, "Segments across."), intAttr("subdivisionsZ", 1, "Segments deep.")},
-         [](const Node& n) { return geo::makePlane({f(n, "width"), f(n, "depth"), i(n, "subdivisionsX"), i(n, "subdivisionsZ")}); }},
+         [](const Node& n) { return geo::makePlane({f(n, "width"), f(n, "depth"), count(n, "subdivisionsX"), count(n, "subdivisionsZ")}); }},
         {"polyTorus", "Torus",
          {sizeAttr("radius", 3.5, 50, "Ring radius, cm."), sizeAttr("sectionRadius", 1.5, 20, "Tube radius, cm."),
           intAttr("subdivisionsAxis", 20, "Segments around the ring.", 3.0), intAttr("subdivisionsHeight", 20, "Segments around the tube.", 3.0),
           sweepFraction(), cutCaps()},
          [](const Node& n) {
-             return geo::makeTorus({f(n, "radius"), f(n, "sectionRadius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsHeight", 3), frac(n),
+             return geo::makeTorus({f(n, "radius"), f(n, "sectionRadius"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsHeight", 3), frac(n),
                                     b(n, "cutCaps")});
          }},
         {"polyDisc", "Disc",
          {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisionsAxis", 20, "Segments around.", 3.0),
           intAttr("subdivisionsRings", 1, "Rings; 0 is one n-gon.", 0.0), sweepFraction(), discCapTypeAttr()},
          [](const Node& n) {
-             return geo::makeDisc({f(n, "radius"), i(n, "subdivisionsAxis", 3), i(n, "subdivisionsRings", 0), frac(n), capFill(n)});
+             return geo::makeDisc({f(n, "radius"), count(n, "subdivisionsAxis", 3), count(n, "subdivisionsRings", 0), frac(n), capFill(n)});
          }},
         {"polyPipe", "Pipe",
          {sizeAttr("radius", 5, 50, "Outer radius, cm."), sizeAttr("thickness", 1, 10, "Wall thickness, cm."),
           sizeAttr("height", 20, 100, "cm."),
           intAttr("subdivisionsAxis", 20, "Segments around.", 3.0), intAttr("subdivisionsHeight", 1, "Segments up."),
-          boolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
+          keyableBoolAttr("baseAtOrigin", false, "Sit on the ground."), sweepFraction(), cutCaps()},
          [](const Node& n) {
-             return geo::makePipe({f(n, "radius"), f(n, "thickness"), f(n, "height"), i(n, "subdivisionsAxis", 3),
-                                   i(n, "subdivisionsHeight"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
+             return geo::makePipe({f(n, "radius"), f(n, "thickness"), f(n, "height"), count(n, "subdivisionsAxis", 3),
+                                   count(n, "subdivisionsHeight"), b(n, "baseAtOrigin"), frac(n), b(n, "cutCaps")});
          }},
         {"polyQuadSphere", "QuadSphere",
          {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "Segments per cube face edge."), heightFraction()},
-         [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), i(n, "subdivisions"), frac(n)}); },
+         [](const Node& n) { return geo::makeQuadSphere({f(n, "radius"), count(n, "subdivisions"), frac(n)}); },
          true},
         {"polyIcoSphere", "IcoSphere",
          {sizeAttr("radius", 5, 50, "cm."), intAttr("subdivisions", 3, "1 is an icosahedron; each level splits every triangle in four.", 1.0, 7.0),
-          boolAttr("baseAtOrigin", false, "Sit on the ground."), heightFraction()},
-         [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), i(n, "subdivisions", 1), b(n, "baseAtOrigin"), frac(n)}); },
+          keyableBoolAttr("baseAtOrigin", false, "Sit on the ground."), heightFraction()},
+         [](const Node& n) { return geo::makeIcoSphere({f(n, "radius"), count(n, "subdivisions", 1), b(n, "baseAtOrigin"), frac(n)}); },
          true},
     };
 }
 
-Graph& graph() { return Graph::current(); }
-
-Node& nodeNamed(const std::string& name)
-{
-    Node* n = graph().find(name);
-    if (!n)
-        throw CommandError("no node named '" + name + "'");
-    return *n;
-}
+using rigutil::nodeNamed;
 
 json vecToJson(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 
@@ -459,7 +449,7 @@ glm::dvec3 sceneUp()
 
 std::vector<std::string> meshObjects(const Args& a, const char* cmd)
 {
-    Graph& g = graph();
+    Graph& g = Graph::current();
     const bool named = !a.positional.empty();
     std::vector<std::string> out;
     std::unordered_set<NodeId> seen;
@@ -545,7 +535,7 @@ void registerMeshCommands()
             .doc = std::string("Create a ") + p.display + " mesh. Returns [mesh, generator] (generator is None with generator=False).",
             .flags = flags,
             .run = [type, display](const Args& a) -> json {
-                Graph& g = graph();
+                Graph& g = Graph::current();
                 const std::string up = a.get<std::string>("upAxis", math::upAxis() == math::UpAxis::Z ? "z" : "y");
                 if (std::ranges::find(kUpAxes, up) == kUpAxes.end())
                     throw CommandError(type + ": upAxis must be x, y, z, -x, -y or -z");
@@ -605,7 +595,7 @@ void registerMeshCommands()
                 bool was;
                 ~Restore() { undo.setEnabled(was); }
             } restore{undo, was};
-            Graph& g = graph();
+            Graph& g = Graph::current();
             std::vector<NodeId> ids;
             for (const std::string& name : a.objects())
             {
@@ -655,8 +645,8 @@ void registerMeshCommands()
             Node& n = nodeNamed(objs.back());
             if (!n.type().isA("mesh"))
                 throw CommandError("meshData: " + objs.back() + " is not a mesh");
-            graph().evaluate();
-            MeshPtr m = a.get<bool>("base") ? modifiers::cage(graph(), n.id()) : n.as<MeshPtr>(MeshNode::kOutMesh);
+            Graph::current().evaluate();
+            MeshPtr m = a.get<bool>("base") ? modifiers::cage(Graph::current(), n.id()) : n.as<MeshPtr>(MeshNode::kOutMesh);
             json points = json::array(), faces = json::array();
             if (!m)
                 return {{"points", points}, {"faces", faces}};
@@ -705,7 +695,7 @@ void registerMeshCommands()
             Node& n = nodeNamed(objs.back());
             if (!n.type().isA("mesh"))
                 throw CommandError("setMeshPoints: " + objs.back() + " is not a mesh");
-            Graph& g = graph();
+            Graph& g = Graph::current();
             PlugRef base = modifiers::editPlug(g, n.id());
             g.evaluate();
             const MeshPtr& cur = std::get<MeshPtr>(g.storedValue(base));
@@ -770,9 +760,9 @@ void registerMeshCommands()
                         uv[c] = glm::vec2(uvs[at].at(0).get<float>(), uvs[at].at(1).get<float>());
                 }
             }
-            Node* n = graph().createNode(*types::find("mesh"), a.get<std::string>("name", "Mesh"), kNoNode, true);
-            graph().setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(mesh)));
-            graph().select({n->id()});
+            Node* n = Graph::current().createNode(*types::find("mesh"), a.get<std::string>("name", "Mesh"), kNoNode, true);
+            Graph::current().setValue({n->id(), MeshNode::kInMesh, -1}, MeshPtr(std::move(mesh)));
+            Graph::current().select({n->id()});
             return n->path();
         },
     });
@@ -793,7 +783,7 @@ void registerMeshCommands()
             }
             if (!r.ok())
                 throw CommandError("importObj: " + r.error);
-            Graph& g = graph();
+            Graph& g = Graph::current();
             Graph::Batch batch(g);
             json names = json::array();
             std::vector<NodeId> ids;
@@ -823,9 +813,9 @@ void registerMeshCommands()
             for (size_t k = 1; k < a.positional.size(); ++k)
                 names.push_back(a.positional[k].get<std::string>());
             if (names.empty())
-                for (NodeId id : graph().selection())
-                    names.push_back(graph().node(id)->path());
-            Graph& g = graph();
+                for (NodeId id : Graph::current().selection())
+                    names.push_back(Graph::current().node(id)->path());
+            Graph& g = Graph::current();
             g.evaluate();
             std::vector<geo::ObjObject> objects;
             for (const std::string& name : names)

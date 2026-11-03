@@ -98,9 +98,9 @@ protected:
 
         const int x = iconRect.right() + pad;
         const int w = kWidth - x - pad;
-        QFont small = font();
-        small.setPointSizeF(small.pointSizeF() * 0.85);
-        p.setFont(small);
+        QFont smallFont = font();
+        smallFont.setPointSizeF(smallFont.pointSizeF() * 0.85);
+        p.setFont(smallFont);
         p.setPen(themeColor("dimText"));
         p.drawText(QRect(x, pad, w, 18), Qt::AlignLeft | Qt::AlignVCenter,
                    unlocked ? QStringLiteral("Achievement unlocked") : QString("%1 / %2").arg(mShown.progress).arg(mShown.goal));
@@ -112,7 +112,7 @@ protected:
         p.drawText(QRect(x, pad + 18, w, 22), Qt::AlignLeft | Qt::AlignVCenter,
                    p.fontMetrics().elidedText(QString::fromStdString(mShown.name), Qt::ElideRight, w));
 
-        p.setFont(small);
+        p.setFont(smallFont);
         p.setPen(themeColor("dimText"));
         QRect desc(x, pad + 40, w, kHeight - pad - (pad + 40));
         if (unlocked)

@@ -21,8 +21,8 @@ namespace
 using namespace scene::material;
 
 const std::string& str(const scene::Node& n, int attr) { return n.as<std::string>(attr); }
-float num(const scene::Node& n, int attr) { return float(n.as<double>(attr)); }
-glm::vec3 color(const scene::Node& n, int attr) { return glm::vec3(n.as<glm::dvec3>(attr)); }
+float floatAttr(const scene::Node& n, int attr) { return float(n.as<double>(attr)); }
+glm::vec3 colorAttr(const scene::Node& n, int attr) { return glm::vec3(n.as<glm::dvec3>(attr)); }
 std::string file(const scene::Node& n, int attr) { return scene::materials::resolvePath(str(n, attr)); }
 
 /** A stepped pseudo-random offset per boil frame, so strokes jump between frames and scrub deterministically. */
@@ -41,48 +41,48 @@ render::MaterialStyle style(const scene::Node& n)
     s.model = render::ShadingModel(std::clamp<int64_t>(n.as<int64_t>(kShadingModel), 0, int64_t(render::ShadingModel::Eye)));
     if (s.model == render::ShadingModel::DefaultLit || s.model == render::ShadingModel::Unlit)
         return s;
-    s.painterlyStrength = num(n, kPainterlyStrength);
-    s.strokeNormal = num(n, kStrokeNormal);
-    s.strokeScale = num(n, kStrokeScale);
-    s.strokeLayerRatio = num(n, kStrokeLayerRatio);
+    s.painterlyStrength = floatAttr(n, kPainterlyStrength);
+    s.strokeNormal = floatAttr(n, kStrokeNormal);
+    s.strokeScale = floatAttr(n, kStrokeScale);
+    s.strokeLayerRatio = floatAttr(n, kStrokeLayerRatio);
     s.strokeMapping = uint32_t(std::clamp<int64_t>(n.as<int64_t>(kStrokeMapping), 0, 3));
     s.paletteCount = int(n.as<int64_t>(kPaletteCount));
-    s.paletteShadow = color(n, kPaletteShadow);
-    s.paletteLight = color(n, kPaletteLight);
-    s.paletteAccent = color(n, kPaletteAccent);
-    s.paletteContrast = num(n, kPaletteContrast);
-    s.paletteSpread = num(n, kPaletteSpread);
-    s.specularTint = num(n, kSpecularTint);
+    s.paletteShadow = colorAttr(n, kPaletteShadow);
+    s.paletteLight = colorAttr(n, kPaletteLight);
+    s.paletteAccent = colorAttr(n, kPaletteAccent);
+    s.paletteContrast = floatAttr(n, kPaletteContrast);
+    s.paletteSpread = floatAttr(n, kPaletteSpread);
+    s.specularTint = floatAttr(n, kSpecularTint);
     if (n.as<bool>(kBoil))
         s.boilOffset = boilOffset(scene::Graph::current().time(), n.as<double>(kBoilFps));
-    s.toonShadowColor = color(n, kToonShadowColor);
-    s.toonLightTint = color(n, kToonLightTint);
-    s.toonThreshold = num(n, kToonThreshold);
-    s.toonSoftness = num(n, kToonSoftness);
-    s.toonOuterOffset = num(n, kToonOuterOffset);
-    s.toonOuterColor = color(n, kToonOuterColor);
-    s.rimColor = color(n, kRimColor);
-    s.rimWidth = num(n, kRimWidth);
-    s.rimStrength = num(n, kRimStrength);
-    s.foliageBottomColor = color(n, kFoliageBottomColor);
-    s.foliageTopColor = color(n, kFoliageTopColor);
-    s.foliageGradient = num(n, kFoliageGradient);
-    s.foliageBottomShadow = num(n, kFoliageBottomShadow);
-    s.foliageTopHighlight = num(n, kFoliageTopHighlight);
-    s.foliageTranslucency = num(n, kFoliageTranslucency);
-    s.foliageWrap = num(n, kFoliageWrap);
-    s.subsurfaceColor = color(n, kSubsurfaceColor);
-    s.subsurfaceAmount = num(n, kSubsurfaceAmount);
-    s.sheenColor = color(n, kSheenColor);
-    s.sheenRoughness = num(n, kSheenRoughness);
-    s.clearcoat = num(n, kClearcoat);
-    s.clearcoatRoughness = num(n, kClearcoatRoughness);
-    s.anisotropy = num(n, kAnisotropy);
-    s.anisotropyRotation = num(n, kAnisotropyRotation);
-    s.hairShift = num(n, kHairShift);
-    s.irisRadius = num(n, kIrisRadius);
-    s.irisDepth = num(n, kIrisDepth);
-    s.limbalRing = num(n, kLimbalRing);
+    s.toonShadowColor = colorAttr(n, kToonShadowColor);
+    s.toonLightTint = colorAttr(n, kToonLightTint);
+    s.toonThreshold = floatAttr(n, kToonThreshold);
+    s.toonSoftness = floatAttr(n, kToonSoftness);
+    s.toonOuterOffset = floatAttr(n, kToonOuterOffset);
+    s.toonOuterColor = colorAttr(n, kToonOuterColor);
+    s.rimColor = colorAttr(n, kRimColor);
+    s.rimWidth = floatAttr(n, kRimWidth);
+    s.rimStrength = floatAttr(n, kRimStrength);
+    s.foliageBottomColor = colorAttr(n, kFoliageBottomColor);
+    s.foliageTopColor = colorAttr(n, kFoliageTopColor);
+    s.foliageGradient = floatAttr(n, kFoliageGradient);
+    s.foliageBottomShadow = floatAttr(n, kFoliageBottomShadow);
+    s.foliageTopHighlight = floatAttr(n, kFoliageTopHighlight);
+    s.foliageTranslucency = floatAttr(n, kFoliageTranslucency);
+    s.foliageWrap = floatAttr(n, kFoliageWrap);
+    s.subsurfaceColor = colorAttr(n, kSubsurfaceColor);
+    s.subsurfaceAmount = floatAttr(n, kSubsurfaceAmount);
+    s.sheenColor = colorAttr(n, kSheenColor);
+    s.sheenRoughness = floatAttr(n, kSheenRoughness);
+    s.clearcoat = floatAttr(n, kClearcoat);
+    s.clearcoatRoughness = floatAttr(n, kClearcoatRoughness);
+    s.anisotropy = floatAttr(n, kAnisotropy);
+    s.anisotropyRotation = floatAttr(n, kAnisotropyRotation);
+    s.hairShift = floatAttr(n, kHairShift);
+    s.irisRadius = floatAttr(n, kIrisRadius);
+    s.irisDepth = floatAttr(n, kIrisDepth);
+    s.limbalRing = floatAttr(n, kLimbalRing);
     if (s.model == render::ShadingModel::Painterly)
         s.strokeMap = textures::get(scene::materials::strokeSheetPath(str(n, kStrokeMap)), false);
     return s;
@@ -115,7 +115,7 @@ void applyTextureSet(const scene::Node& n, render::Material& m)
     {
         m.emissiveMap = live->emissive;
         m.flags |= render::MatEmissiveMap;
-        m.emissive = glm::vec3(num(n, kEmissiveIntensity));
+        m.emissive = glm::vec3(floatAttr(n, kEmissiveIntensity));
     }
 }
 
@@ -143,13 +143,13 @@ uint32_t samplingOf(const scene::Node& n)
 render::Material convert(const scene::Node& n)
 {
     render::Material m;
-    m.baseColor = color(n, kBaseColor);
-    m.metallic = num(n, kMetallic);
-    m.roughness = num(n, kRoughness);
-    m.specular = num(n, kSpecular);
-    m.bevelRadius = num(n, kBevelRadius);
-    m.opacity = num(n, kOpacity);
-    m.opacityClip = num(n, kOpacityMaskClip);
+    m.baseColor = colorAttr(n, kBaseColor);
+    m.metallic = floatAttr(n, kMetallic);
+    m.roughness = floatAttr(n, kRoughness);
+    m.specular = floatAttr(n, kSpecular);
+    m.bevelRadius = floatAttr(n, kBevelRadius);
+    m.opacity = floatAttr(n, kOpacity);
+    m.opacityClip = floatAttr(n, kOpacityMaskClip);
     m.flags = 0;
     m.sampling = samplingOf(n);
 
@@ -174,14 +174,14 @@ render::Material convert(const scene::Node& n)
                        (metal.empty() ? 0u : uint32_t(render::MatMetallicMap));
     }
 
-    float intensity = num(n, kEmissiveIntensity);
+    float intensity = floatAttr(n, kEmissiveIntensity);
     if ((m.emissiveMap = textures::get(file(n, kEmissiveMap), true, true)))
     {
         m.flags |= render::MatEmissiveMap;
         m.emissive = glm::vec3(intensity);
     }
     else
-        m.emissive = color(n, kEmissiveColor) * intensity;
+        m.emissive = colorAttr(n, kEmissiveColor) * intensity;
     applyTextureSet(n, m);
 
     switch (BlendMode(n.as<int64_t>(kBlendMode)))

@@ -10,10 +10,10 @@
 
 namespace masonry
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 glm::dvec3 flatUnit(glm::dvec3 d)
 {
     d.y = 0.0;

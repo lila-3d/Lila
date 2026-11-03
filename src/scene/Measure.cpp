@@ -4,6 +4,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "geo/Mesh.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Components.h"
 #include "scene/MeasureMath.h"
 #include "scene/MeshNodes.h"
@@ -15,25 +16,11 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace attrdefs;
 
 namespace
 {
-const uint32_t kStored = AttrInput | AttrStorable;
 const uint32_t kOut = AttrOutput;
-
-AttrDef vec3Attr(std::string name, uint32_t flags, std::string doc)
-{
-    AttrDef a{.name = name, .type = PlugType::Vec3, .defaultValue = glm::dvec3(0.0), .flags = flags, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-        a.childNames[i] = name + char('X' + i);
-    return a;
-}
-
-AttrDef matrixAttr(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0), .flags = kStored | AttrHidden,
-            .doc = std::move(doc)};
-}
 
 AttrDef floatOut(std::string name, std::string doc)
 {
@@ -179,12 +166,12 @@ void registerMeasureTypes()
     d.base = transform;
     d.dag = true;
     d.ownAttrs = {
-        matrixAttr("startMatrix", "World matrix of the start point, usually a locator's worldMatrix."),
-        matrixAttr("endMatrix", "World matrix of the end point."),
-        vec3Attr("startPoint", kOut, "World position of the start, cm."),
-        vec3Attr("endPoint", kOut, "World position of the end, cm."),
+        matrixAttr("startMatrix", kStoredFlags | AttrHidden, "World matrix of the start point, usually a locator's worldMatrix."),
+        matrixAttr("endMatrix", kStoredFlags | AttrHidden, "World matrix of the end point."),
+        vec3Attr("startPoint", glm::dvec3(0.0), kOut, "World position of the start, cm."),
+        vec3Attr("endPoint", glm::dvec3(0.0), kOut, "World position of the end, cm."),
         floatOut("distance", "Distance between the points, cm."),
-        vec3Attr("delta", kOut, "End minus start, cm."),
+        vec3Attr("delta", glm::dvec3(0.0), kOut, "End minus start, cm."),
     };
     d.create = [] { return std::make_unique<DistanceMeasure>(); };
     types::registerType(std::move(d));
@@ -195,9 +182,9 @@ void registerMeasureTypes()
     a.base = transform;
     a.dag = true;
     a.ownAttrs = {
-        matrixAttr("point1Matrix", "World matrix of the first arm's end."),
-        matrixAttr("vertexMatrix", "World matrix of the angle's vertex."),
-        matrixAttr("point2Matrix", "World matrix of the second arm's end."),
+        matrixAttr("point1Matrix", kStoredFlags | AttrHidden, "World matrix of the first arm's end."),
+        matrixAttr("vertexMatrix", kStoredFlags | AttrHidden, "World matrix of the angle's vertex."),
+        matrixAttr("point2Matrix", kStoredFlags | AttrHidden, "World matrix of the second arm's end."),
         floatOut("angle", "Angle at the vertex, degrees."),
     };
     a.create = [] { return std::make_unique<AngleMeasure>(); };
@@ -211,19 +198,19 @@ void registerMeasureTypes()
     r.ownAttrs = {
         {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden,
          .doc = "Mesh whose vertices are fitted, connected from a mesh's outMesh."},
-        matrixAttr("meshMatrix", "World matrix of the mesh."),
-        {.name = "vertices", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored,
+        matrixAttr("meshMatrix", kStoredFlags | AttrHidden, "World matrix of the mesh."),
+        {.name = "vertices", .type = PlugType::String, .defaultValue = std::string(), .flags = kStoredFlags,
          .doc = "Vertex ids on inMesh, space separated."},
-        {.name = "points", .type = PlugType::String, .defaultValue = std::string("[]"), .flags = kStored,
+        {.name = "points", .type = PlugType::String, .defaultValue = std::string("[]"), .flags = kStoredFlags,
          .doc = "Fixed world points as a JSON list of [x, y, z], used when no mesh is connected."},
-        {.name = "display", .type = PlugType::Enum, .defaultValue = int64_t(RadiusMeasure::kShowBoth), .flags = kStored,
+        {.name = "display", .type = PlugType::Enum, .defaultValue = int64_t(RadiusMeasure::kShowBoth), .flags = kStoredFlags,
          .enumNames = {"radius", "diameter", "both"}, .doc = "What the viewport label shows."},
         {.name = "valid", .type = PlugType::Bool, .defaultValue = false, .flags = kOut, .doc = "False when the points don't define a circle."},
         floatOut("radius", "Best-fit radius, cm."),
         floatOut("diameter", "Best-fit diameter, cm."),
         floatOut("circumference", "Circumference of the fitted circle, cm."),
-        vec3Attr("center", kOut, "World centre of the circle."),
-        vec3Attr("normal", kOut, "Normal of the circle's plane."),
+        vec3Attr("center", glm::dvec3(0.0), kOut, "World centre of the circle."),
+        vec3Attr("normal", glm::dvec3(0.0), kOut, "Normal of the circle's plane."),
         floatOut("planarity", "Largest distance of a point from the circle's plane, cm."),
         floatOut("fitError", "RMS radial distance of the points from the circle, cm."),
     };
@@ -233,8 +220,6 @@ void registerMeasureTypes()
 
 namespace
 {
-using T = ArgType;
-
 PlugRef worldPlug(NodeId id) { return {id, Transform::kWorldMatrix, -1}; }
 
 /** A world-space point picked from components, remembering the mesh it sits on so its locator can follow it. */
@@ -268,7 +253,7 @@ std::vector<Picked> pickedComponentPoints()
     return out;
 }
 
-NodeId makeLocator(const std::string& name, const glm::dvec3& world, NodeId parent)
+NodeId measureLocator(const std::string& name, const glm::dvec3& world, NodeId parent)
 {
     Graph& g = graph();
     Node* loc = guarded([&] { return g.createNode(*types::find("locator"), name, parent); });
@@ -297,7 +282,7 @@ NodeId endpoint(const json& spec, const json& parent, const std::string& locName
     NodeId p = kNoNode;
     if (parent.is_string() && !parent.get<std::string>().empty())
         p = nodeNamed(parent.get<std::string>(), cmd).id();
-    return makeLocator(locName, vec3Of(spec), p);
+    return measureLocator(locName, vec3Of(spec), p);
 }
 
 /** Endpoints from the selection: picked components (locators attached to their meshes) or the selected objects. */
@@ -311,7 +296,7 @@ std::vector<NodeId> endpointsFromSelection(const Args& a, size_t want, const std
         if (picked.size() != want)
             throw CommandError(std::string(cmd) + ": select " + std::to_string(want) + " vertices, not " + std::to_string(picked.size()));
         for (size_t i = 0; i < want; ++i)
-            out.push_back(makeLocator(prefix + std::to_string(i + 1), picked[i].world, attach ? picked[i].mesh : kNoNode));
+            out.push_back(measureLocator(prefix + std::to_string(i + 1), picked[i].world, attach ? picked[i].mesh : kNoNode));
         return out;
     }
     std::vector<std::string> objs = a.objects();
@@ -344,7 +329,7 @@ json finish(Node& n, const Args& a)
     return n.path();
 }
 
-std::vector<glm::dvec3> pointsArg(const json& j, const char* cmd)
+std::vector<glm::dvec3> positionsArg(const json& j, const char* cmd)
 {
     if (!j.is_array())
         throw CommandError(std::string(cmd) + ": points must be a list of [x, y, z]");
@@ -356,6 +341,7 @@ std::vector<glm::dvec3> pointsArg(const json& j, const char* cmd)
 
 void registerCreateCommands()
 {
+    using T = ArgType;
     ops::registerCommand({
         .name = "distanceMeasure",
         .doc = "Live distance between two points. Each point is an object name or [x, y, z] (a locator is made there); with "
@@ -474,7 +460,7 @@ void registerCreateCommands()
             std::vector<uint32_t> verts;
             std::vector<glm::dvec3> fixed;
             if (a.has("points"))
-                fixed = pointsArg(a.flags["points"], cmd);
+                fixed = positionsArg(a.flags["points"], cmd);
             else if (a.has("mesh"))
             {
                 mesh = nodeNamed(a.get<std::string>("mesh"), cmd).id();

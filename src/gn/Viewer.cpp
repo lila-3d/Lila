@@ -9,43 +9,43 @@ namespace lila::gn
 {
 namespace
 {
-struct Store
+struct ViewerStore
 {
     std::mutex mutex;
     std::map<scene::NodeId, ViewerPtr> data;
 };
 
-Store& store()
+ViewerStore& viewerStore()
 {
     // Never destroyed: the scene graph's static nodes clear their entries during exit, after this would be gone.
-    static Store* s = new Store;
+    static ViewerStore* s = new ViewerStore;
     return *s;
 }
 } // namespace
 
 void setViewerData(scene::NodeId modifier, ViewerPtr data)
 {
-    std::lock_guard lock(store().mutex);
-    store().data[modifier] = std::move(data);
+    std::lock_guard lock(viewerStore().mutex);
+    viewerStore().data[modifier] = std::move(data);
 }
 
 void clearViewerData(scene::NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    store().data.erase(modifier);
+    std::lock_guard lock(viewerStore().mutex);
+    viewerStore().data.erase(modifier);
 }
 
 ViewerPtr viewerData(scene::NodeId modifier)
 {
-    std::lock_guard lock(store().mutex);
-    auto it = store().data.find(modifier);
-    return it == store().data.end() ? nullptr : it->second;
+    std::lock_guard lock(viewerStore().mutex);
+    auto it = viewerStore().data.find(modifier);
+    return it == viewerStore().data.end() ? nullptr : it->second;
 }
 
 std::vector<std::pair<scene::NodeId, ViewerPtr>> viewerSnapshots()
 {
-    std::lock_guard lock(store().mutex);
-    return {store().data.begin(), store().data.end()};
+    std::lock_guard lock(viewerStore().mutex);
+    return {viewerStore().data.begin(), viewerStore().data.end()};
 }
 
 glm::vec3 viewerColor(const ViewerData& d, const glm::dvec4& v)

@@ -23,7 +23,7 @@ using scene::Graph;
 using scene::MeshNode;
 using scene::MeshPtr;
 using scene::Node;
-using Ids = scene::components::Ids;
+using scene::components::Ids;
 
 std::string setArg(const Args& a)
 {

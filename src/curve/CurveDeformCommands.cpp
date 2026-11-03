@@ -106,7 +106,7 @@ D3 vec3Flag(const Args& a, const char* flag)
     return {v[0], v[1], v[2]};
 }
 
-void registerOptionLayouts()
+void registerDeformOptionLayouts()
 {
     namespace opt = ops::options;
     opt::Override bend;
@@ -191,6 +191,6 @@ void registerCurveDeformCommands()
         },
         .adjustable = true,
     });
-    registerOptionLayouts();
+    registerDeformOptionLayouts();
 }
 } // namespace lila::curve

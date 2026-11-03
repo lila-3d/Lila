@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "SettlementCore.h"
 
 #include "extensions/ExtensionManager.h"
@@ -13,11 +14,10 @@
 
 using namespace lila;
 using namespace settlement;
+using namespace settlementtest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 Polygon square(double lo, double hi) { return makePolygon({{lo, lo}, {hi, lo}, {hi, hi}, {lo, hi}}, 2); }
 
 Site squareSite(double size)

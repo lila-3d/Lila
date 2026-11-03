@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -10,25 +11,11 @@
 #include <thread>
 
 using namespace lila;
+using namespace uvtest;
 using geo::Index;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::MeshPtr meshOf(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-}
-
-std::vector<glm::vec2> uvsOf(const std::string& name)
-{
-    auto uv = meshOf(name)->cornerAttrs().get<glm::vec2>("uv0");
-    return {uv.begin(), uv.end()};
-}
-
 /** Edges of a plane on the line x = 0. */
 std::vector<Index> middleLine(const geo::Mesh& m)
 {

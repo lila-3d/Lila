@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
@@ -11,30 +13,12 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace surfaceSnap = lila::ui::surfaceSnap;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::NodeId idOf(const std::string& path) { return scene::Graph::current().find(path)->id(); }
-
-/** World positions of a mesh's points. */
-std::vector<glm::dvec3> worldPoints(const std::string& path)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    scene::Node* n = g.find(path);
-    const geo::Mesh& m = *n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
-    glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-    std::vector<glm::dvec3> out;
-    for (geo::Index p = 0; p < m.pointCapacity(); ++p)
-        if (m.pointValid(p))
-            out.push_back(glm::dvec3(w * glm::dvec4(m.position(p), 1.0)));
-    return out;
-}
-
-void checkOrthonormal(const glm::dmat3& r)
+void checkOrthonormalRotation(const glm::dmat3& r)
 {
     for (int i = 0; i < 3; ++i)
     {
@@ -51,7 +35,7 @@ TEST_CASE("alignUp turns the up axis onto the normal by the shortest arc")
     {
         glm::dvec3 n = glm::normalize(glm::dvec3(1, 1, 0.3));
         glm::dmat3 r = surfaceSnap::alignUp(glm::dmat3(1.0), up, n);
-        checkOrthonormal(r);
+        checkOrthonormalRotation(r);
         glm::dvec3 got = r * up;
         CHECK(got.x == doctest::Approx(n.x));
         CHECK(got.y == doctest::Approx(n.y));
@@ -65,14 +49,14 @@ TEST_CASE("alignUp turns the up axis onto the normal by the shortest arc")
         glm::dmat3 start = glm::dmat3(glm::rotate(glm::dmat4(1.0), 0.7, glm::dvec3(0, 0, 1)));
         glm::dvec3 n(0, 0, 1);
         glm::dmat3 r = surfaceSnap::alignUp(start, up, n);
-        checkOrthonormal(r);
+        checkOrthonormalRotation(r);
         CHECK(glm::length(r * up - n) == doctest::Approx(0.0));
     }
     SUBCASE("already aligned and opposite")
     {
         CHECK(surfaceSnap::alignUp(glm::dmat3(1.0), up, up) == glm::dmat3(1.0));
         glm::dmat3 r = surfaceSnap::alignUp(glm::dmat3(1.0), up, -up);
-        checkOrthonormal(r);
+        checkOrthonormalRotation(r);
         CHECK(glm::length(r * up + up) == doctest::Approx(0.0));
     }
 }

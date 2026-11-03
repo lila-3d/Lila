@@ -11,7 +11,7 @@ namespace lila::scene
 {
 namespace
 {
-geo::Mesh worldMesh(Node& n)
+geo::Mesh worldMeshOf(Node& n)
 {
     geo::Mesh m = *n.as<MeshPtr>(MeshNode::kOutMesh);
     const glm::dmat4 w = n.as<glm::dmat4>(Transform::kWorldMatrix);
@@ -67,7 +67,7 @@ void registerSmartJoinCommands()
                 if (!nodes[i] || !nodes[i]->type().isA("mesh") || !nodes[i]->as<MeshPtr>(MeshNode::kOutMesh))
                     throw CommandError("smartJoin: " + names[size_t(i)] + " is not a mesh");
             }
-            geo::Mesh meshes[2] = {worldMesh(*nodes[0]), worldMesh(*nodes[1])};
+            geo::Mesh meshes[2] = {worldMeshOf(*nodes[0]), worldMeshOf(*nodes[1])};
             // The smaller mesh is the limb.
             int limb = glm::length(meshes[0].bounds().size()) <= glm::length(meshes[1].bounds().size()) ? 0 : 1;
             if (a.get<bool>("flip"))

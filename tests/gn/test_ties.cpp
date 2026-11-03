@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "gn/Clipboard.h"
 #include "gn/Gn.h"
@@ -10,17 +11,13 @@
 #include <string>
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
-gn::Group group(const char* name) { return gn::readGroup(*gn::findGroupNode(scene::Graph::current(), name)); }
-
 /** Grid and Combine XYZ both feed Set Position, which feeds the output; Combine XYZ's y is exposed as "height". */
-void build(const char* name)
+void buildTiedGrid(const char* name)
 {
     run("gnCreateGroup", args({name}));
     run("gnAddNode", {{"args", {name, "MeshGrid"}}, {"position", {0, 0}}});
@@ -48,7 +45,7 @@ const json kOut = {"SetPosition", "geometry", "GroupOutput", "geometry"};
 TEST_CASE("zip ties round trip through the group definition and undo")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     CHECK(run("gnSetTies", args({"T", json::array({tie({kGrid, kXyz}, 150, 60, 30, "teal")})})) == 1);
     gn::Group g = group("T");
     REQUIRE(g.ties.size() == 1);
@@ -80,7 +77,7 @@ TEST_CASE("zip ties round trip through the group definition and undo")
 TEST_CASE("removing or reconnecting a tied link drops it, and a tie under two links dissolves")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     run("gnSetTies", args({"T", json::array({tie({kGrid, kXyz, kOut}), tie({kGrid, kXyz}, 250)})}));
     REQUIRE(group("T").ties.size() == 2);
 
@@ -104,7 +101,7 @@ TEST_CASE("removing or reconnecting a tied link drops it, and a tie under two li
 TEST_CASE("renaming an exposed input keeps the tie on its link")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     json fromInput = {"GroupInput", "height", "CombineXYZ", "y"};
     run("gnSetTies", args({"T", json::array({tie({fromInput, kXyz})})}));
     REQUIRE(group("T").ties.size() == 1);
@@ -117,7 +114,7 @@ TEST_CASE("renaming an exposed input keeps the tie on its link")
 TEST_CASE("ties copy, paste and duplicate with their nodes")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     run("gnSetTies", args({"T", json::array({tie({kGrid, kXyz}, 150, 50), tie({kXyz, kOut}, 400, 50)})}));
 
     // Only the tie whose links both have their ends among the copied nodes travels.
@@ -153,7 +150,7 @@ TEST_CASE("ties copy, paste and duplicate with their nodes")
 TEST_CASE("frames store, lose deleted members, copy, duplicate and undo")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     json frames = json::array({{{"label", "Shape"}, {"position", {-20, -40}}, {"size", {400, 300}}, {"color", "blue"},
                                 {"nodes", {"MeshGrid", "SetPosition", "Nope"}}},
                                {{"label", "Empty"}, {"position", {800, 0}}, {"size", {200, 100}}, {"collapsed", true}, {"nodes", json::array()}}});
@@ -191,7 +188,7 @@ TEST_CASE("frames store, lose deleted members, copy, duplicate and undo")
 TEST_CASE("collapsed and hide-unused flags store, copy and undo")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     run("gnSetNodeFlags", {{"args", {"T", "MeshGrid", "CombineXYZ"}}, {"collapsed", true}});
     run("gnSetNodeFlags", {{"args", {"T", "CombineXYZ"}}, {"hideUnused", true}});
     gn::Group g = group("T");
@@ -214,7 +211,7 @@ TEST_CASE("collapsed and hide-unused flags store, copy and undo")
 TEST_CASE("bookmarks store with the group and undo")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     CHECK(run("gnSetBookmarks", args({"T", {{"1", {10, 20, 1.5}}, {"2", "bad"}, {"3", {0, 0, -1}}}})) == 1);
     gn::Group g = group("T");
     CHECK(g.bookmarks == json{{"1", {10, 20, 1.5}}});
@@ -226,7 +223,7 @@ TEST_CASE("bookmarks store with the group and undo")
 TEST_CASE("ties never change what the group computes")
 {
     run("newScene");
-    build("T");
+    buildTiedGrid("T");
     run("gnSetValue", args({"T", "MeshGrid.verticesX", 5}));
     std::string mesh = run("polyPlane", {{"name", "P"}})[0].get<std::string>();
     run("gnApply", args({mesh, "T"}));

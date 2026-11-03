@@ -28,6 +28,17 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
+    enum Column
+    {
+        kV,
+        kP,
+        kType,
+        kSwatch,
+        kName,
+        kEmpty,
+        kColumnCount,
+    };
+
     void scheduleRefresh();
     void refresh();
     void clicked(QTreeWidgetItem* item, int column);

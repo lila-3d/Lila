@@ -32,7 +32,7 @@ QString formatBytes(size_t bytes)
     return QString("%1 MB").arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 1);
 }
 
-QToolButton* toolButton(QWidget* parent, const char* iconName, const QString& tip)
+QToolButton* smallToolButton(QWidget* parent, const char* iconName, const QString& tip)
 {
     auto* b = new QToolButton(parent);
     b->setIcon(icon(iconName));
@@ -73,10 +73,10 @@ UndoHistoryPanel::UndoHistoryPanel(QWidget* parent) : QWidget(parent)
     mFooter->setEnabled(false);
     footer->addWidget(mFooter, 1);
     const bool only = PrefStore::get().value<bool>("general", kOnlySelectionPref, false);
-    mShowSelection = toolButton(this, "pointer", "Show selection steps only (the current step always shows)");
+    mShowSelection = smallToolButton(this, "pointer", "Show selection steps only (the current step always shows)");
     mShowSelection->setCheckable(true);
     mShowSelection->setChecked(only);
-    mHideSelection = toolButton(this, "pointer-off", "Hide selection steps (the current step always shows)");
+    mHideSelection = smallToolButton(this, "pointer-off", "Hide selection steps (the current step always shows)");
     mHideSelection->setCheckable(true);
     mHideSelection->setChecked(!only && PrefStore::get().value<bool>("general", kHideSelectionPref, false));
     // Both on would show nothing, so turning one on turns the other off; both off shows every step.
@@ -105,7 +105,7 @@ UndoHistoryPanel::UndoHistoryPanel(QWidget* parent) : QWidget(parent)
              std::tuple{"edit.flushAll", "trash", "Flush All: clears the whole undo and redo history"},
          })
     {
-        QToolButton* b = toolButton(this, iconName, tip);
+        QToolButton* b = smallToolButton(this, iconName, tip);
         connect(b, &QToolButton::clicked, this, [action = std::string(id)] { actions::run(nlohmann::json(action)); });
         footer->addWidget(b);
     }

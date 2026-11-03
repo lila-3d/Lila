@@ -8,9 +8,6 @@ using namespace textest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-
 tex::Graph graph(const char* set) { return tex::readGraph(*tex::findSet(scene::Graph::current(), set)); }
 
 void build()

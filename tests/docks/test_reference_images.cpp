@@ -47,7 +47,7 @@ void freshSet()
     UndoStack::get().clear();
 }
 
-bool near(glm::dvec2 a, glm::dvec2 b)
+bool near2d(glm::dvec2 a, glm::dvec2 b)
 {
     return glm::length(a - b) < 1e-6;
 }
@@ -85,7 +85,7 @@ TEST_CASE("reference set: json round trip keeps images, overlays, windows and bo
     CHECK(back.overlays[0].depth == refs::Depth::Behind);
     CHECK(back.overlays[0].bound.set);
     CHECK(back.overlays[0].bound.yaw == doctest::Approx(30.0));
-    CHECK(near(back.overlays[0].offset, {-0.2, 0.3}));
+    CHECK(near2d(back.overlays[0].offset, {-0.2, 0.3}));
     REQUIRE(back.window("window1"));
     CHECK(back.window("window1")->onTop);
     CHECK(back.window("window1")->opacity == doctest::Approx(0.5));
@@ -124,8 +124,8 @@ TEST_CASE("reference overlay crop keeps the image where it is on screen")
     // Keep the right third, as for the back view of a model sheet.
     refs::setCrop(o, nullptr, 2.0, view, {2.0 / 3.0, 0.0, 1.0, 1.0});
     auto c = refs::overlayCorners(o, nullptr, 2.0, view);
-    CHECK(near(c[1], before));
-    CHECK(near(c[0], {500, 150}));
+    CHECK(near2d(c[1], before));
+    CHECK(near2d(c[0], {500, 150}));
     CHECK(o.scale == doctest::Approx(0.5));
     CHECK(refs::overlayImageUv(o, nullptr, 2.0, view, {600, 300}).x == doctest::Approx(5.0 / 6.0));
 
@@ -137,7 +137,7 @@ TEST_CASE("reference overlay crop keeps the image where it is on screen")
     refs::setCrop(o, nullptr, 2.0, view, {2.0 / 3.0, 0.0, 1.0, 0.5});
     CHECK(o.scale == doctest::Approx(0.25));
     c = refs::overlayCorners(o, nullptr, 2.0, view);
-    CHECK(near(c[1], before));
+    CHECK(near2d(c[1], before));
 
     refs::Set s;
     s.images.push_back({.id = "ref1", .path = "sheet.png"});
@@ -155,8 +155,8 @@ TEST_CASE("reference overlay layout: anchors, aspect, quarter turns, flips and h
     refs::Overlay o;
     o.scale = 0.5; // 300 px tall, 600 wide
     auto c = refs::overlayCorners(o, nullptr, 2.0, view);
-    CHECK(near(c[0], {100, 150}));
-    CHECK(near(c[2], {700, 450}));
+    CHECK(near2d(c[0], {100, 150}));
+    CHECK(near2d(c[2], {700, 450}));
     CHECK(refs::overlayContains(o, nullptr, 2.0, view, {400, 300}));
     CHECK_FALSE(refs::overlayContains(o, nullptr, 2.0, view, {50, 300}));
     CHECK_FALSE(refs::overlayContains(o, nullptr, 2.0, view, {400, 470}));
@@ -172,7 +172,7 @@ TEST_CASE("reference overlay layout: anchors, aspect, quarter turns, flips and h
     o.anchor = refs::Anchor::TopRight;
     o.offset = {-0.5, 0.25};
     c = refs::overlayCorners(o, nullptr, 1.0, view);
-    CHECK(near((c[0] + c[2]) * 0.5, {500, 150}));
+    CHECK(near2d((c[0] + c[2]) * 0.5, {500, 150}));
 
     refs::Image flipped{.id = "f", .flipH = true};
     CHECK(refs::overlayUv(refs::Overlay{}, &flipped) == glm::dvec4(1, 0, 0, 1));
@@ -181,7 +181,7 @@ TEST_CASE("reference overlay layout: anchors, aspect, quarter turns, flips and h
     refs::Overlay r = o;
     refs::reanchor(r, refs::Anchor::BottomLeft, view);
     auto rc = refs::overlayCorners(r, nullptr, 1.0, view);
-    CHECK(near((rc[0] + rc[2]) * 0.5, {500, 150}));
+    CHECK(near2d((rc[0] + rc[2]) * 0.5, {500, 150}));
 }
 
 TEST_CASE("reference overlay bound view: full at its own view, gone past the fade angle")

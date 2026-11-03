@@ -1,16 +1,17 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "io/SceneFile.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 json getAttr(const std::string& plug) { return run("getAttr", {{"args", {plug}}}); }
 } // namespace
 

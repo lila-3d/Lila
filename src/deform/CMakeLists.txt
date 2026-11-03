@@ -3,6 +3,8 @@ find_package(Eigen3 CONFIG REQUIRED)
 lila_module(lila_deform Scene
     Deform.cpp
     Deform.h
+    DeformUtil.h
+    EigenGlm.h
     Handles.cpp
     Handles.h
     Shape.cpp

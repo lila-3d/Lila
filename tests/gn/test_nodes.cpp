@@ -1,20 +1,17 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
 #include "geo/Mesh.h"
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-int faces(const std::string& m) { return run("meshInfo", args({m}))["faces"].get<int>(); }
-json bounds(const std::string& m) { return run("meshInfo", args({m})); }
-
 /** A group with the given nodes and links, evaluated. */
 gn::GeometryPtr evalNodes(std::vector<gn::GNode> nodes, std::vector<gn::GLink> links, const gn::ExecEnv& env = {})
 {

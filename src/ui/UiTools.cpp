@@ -3,6 +3,7 @@
 #include "core/Paths.h"
 #include "mcp/McpServer.h"
 #include "ops/Command.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QCursor>
@@ -27,14 +28,6 @@ namespace lila::ui
 {
 namespace
 {
-QWidget* mainWindow()
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-        if (qobject_cast<QMainWindow*>(w))
-            return w;
-    return nullptr;
-}
-
 /** Window contents including native Vulkan children, even when covered by other windows. */
 QImage captureWindow(QWidget* w)
 {

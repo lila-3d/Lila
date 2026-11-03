@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "curve/CurveDeform.h"
+#include "curve/CurveMath.h"
 #include "curve/Internal.h"
 #include "curve/Tessellate.h"
 
@@ -15,17 +16,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
-
-constexpr double kEps = 1e-12;
-
-D3 unit(const D3& v)
-{
-    double l = glm::length(v);
-    return l > kEps ? v / l : D3(0.0);
-}
-
 Piece cubic(const D3& a, const D3& b, const D3& c, const D3& d)
 {
     Piece p;

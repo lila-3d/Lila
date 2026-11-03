@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/PrefStore.h"
 
 #include "render/FrameState.h"
 #include "scene/Camera.h"
@@ -70,6 +71,7 @@ inline constexpr const char* kOutlineWidth = "/viewport/post/outlineWidth"; // d
 
 /** Full monotone: no hue anywhere, overriding every accent toggle below. Off by default. */
 inline constexpr const char* kMonotone = "/ui/monotone";
+inline bool monotone() { return PrefStore::get().value<bool>("general", kMonotone, false); }
 /** Selective colour: the few displays that read better with hue, each on by default. */
 inline constexpr const char* kViewAxisColors = "/viewport/viewAxisColors";
 inline constexpr const char* kManipulatorAxisColors = "/manipulator/axisColors";

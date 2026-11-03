@@ -10,6 +10,8 @@
 #include "scene/Modifiers.h"
 #include "scene/Transform.h"
 #include "ui/Actions.h"
+#include "ui/ToolColors.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QTimer>
@@ -26,7 +28,7 @@ namespace
 using geo::Index;
 using geo::kInvalid;
 using geo::KnifePoint;
-using Kind = KnifePoint::Kind;
+using PointKind = KnifePoint::Kind;
 
 constexpr double kVertexRadius = 12.0; // px
 constexpr double kEdgeRadius = 10.0;   // px
@@ -35,19 +37,7 @@ constexpr double kEdgeRadius = 10.0;   // px
 const glm::vec4 kCut(0.95f, 0.95f, 0.95f, 1.0f);
 const glm::vec4 kMirror(0.6f, 0.6f, 0.6f, 0.85f);
 const glm::vec4 kFailed(0.55f, 0.55f, 0.55f, 0.8f);
-const glm::vec4 kRim(0.08f, 0.08f, 0.08f, 1.0f);
 const glm::vec4 kNewVertex(0.85f, 0.85f, 0.85f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
-
-double segmentDistPx(QPointF p, QPointF a, QPointF b)
-{
-    const QPointF ab = b - a;
-    const double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-    const double u = len2 > 0.0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0.0;
-    return distPx(p, a + ab * u);
-}
 
 /** Parameter along the segment p0-p1 of its closest point to the ray. */
 double raySegmentParam(const glm::dvec3& o, const glm::dvec3& d, const glm::dvec3& p0, const glm::dvec3& p1)
@@ -67,10 +57,10 @@ double snapStepFraction()
 }
 
 /** Keys reach the hotkeys before the viewport, so the tool's own keys are taken here first. */
-class KeyFilter : public QObject
+class KnifeKeyFilter : public QObject
 {
 public:
-    explicit KeyFilter(KnifeTool* tool) : mTool(tool) {}
+    explicit KnifeKeyFilter(KnifeTool* tool) : mTool(tool) {}
 
     bool eventFilter(QObject* obj, QEvent* e) override
     {
@@ -117,17 +107,17 @@ json pointJson(const KnifePoint& k, const glm::dvec3& world)
 {
     switch (k.kind)
     {
-    case Kind::Point: return {{"vertex", k.id}};
-    case Kind::Edge: return {{"edge", k.id}, {"t", k.t}};
-    case Kind::Face: return {{"face", k.id}, {"position", {world.x, world.y, world.z}}};
+    case PointKind::Point: return {{"vertex", k.id}};
+    case PointKind::Edge: return {{"edge", k.id}, {"t", k.t}};
+    case PointKind::Face: return {{"face", k.id}, {"position", {world.x, world.y, world.z}}};
     }
     return nullptr;
 }
 
 bool samePoint(const KnifePoint& a, const KnifePoint& b)
 {
-    return a.kind == b.kind && a.id == b.id && (a.kind != Kind::Edge || std::abs(a.t - b.t) < 1e-6) &&
-           (a.kind != Kind::Face || glm::distance(a.position, b.position) < 1e-9);
+    return a.kind == b.kind && a.id == b.id && (a.kind != PointKind::Edge || std::abs(a.t - b.t) < 1e-6) &&
+           (a.kind != PointKind::Face || glm::distance(a.position, b.position) < 1e-9);
 }
 
 /** The direction the view looks along: the ray through its centre. */
@@ -145,7 +135,7 @@ KnifeTool::~KnifeTool() = default;
 
 void KnifeTool::activate()
 {
-    mFilter = std::make_unique<KeyFilter>(this);
+    mFilter = std::make_unique<KnifeKeyFilter>(this);
     qApp->installEventFilter(mFilter.get());
     refresh();
     log::info("Knife: click points to cut, Enter or RMB finishes, Ctrl+click an edge inserts a loop, Ctrl+Alt+click an edge deletes it, "
@@ -371,7 +361,7 @@ void KnifeTool::finish(bool closed)
 {
     scene::Graph& g = scene::Graph::current();
     scene::Node* n = g.node(mNode);
-    const bool edgePoint = mPoints.size() == 1 && mPoints[0].point.kind == Kind::Edge;
+    const bool edgePoint = mPoints.size() == 1 && mPoints[0].point.kind == PointKind::Edge;
     if ((mPoints.size() < 2 && !edgePoint) || !n)
     {
         cancel();
@@ -403,7 +393,7 @@ void KnifeTool::finish(bool closed)
 void KnifeTool::deleteEdge(const Spot& spot)
 {
     mHistory.clear();
-    if (spot.point.kind != Kind::Edge)
+    if (spot.point.kind != PointKind::Edge)
         return;
     scene::Node* n = scene::Graph::current().node(mHover->first);
     if (!n)
@@ -423,7 +413,7 @@ void KnifeTool::deleteEdge(const Spot& spot)
 void KnifeTool::insertLoop(const Spot& spot)
 {
     mHistory.clear();
-    if (spot.point.kind != Kind::Edge)
+    if (spot.point.kind != PointKind::Edge)
         return;
     scene::Node* n = scene::Graph::current().node(mNode != scene::kNoNode ? mNode : mHover->first);
     if (!n)
@@ -460,7 +450,7 @@ bool KnifeTool::mousePress(QMouseEvent* e, const ViewInfo& view)
     {
         const bool del = mods & Qt::AltModifier;
         if (mPoints.empty())
-            if (auto h = pick(e->position(), view, false, del); h && h->second.point.kind == Kind::Edge)
+            if (auto h = pick(e->position(), view, false, del); h && h->second.point.kind == PointKind::Edge)
             {
                 mHover = h;
                 del ? deleteEdge(h->second) : insertLoop(h->second);
@@ -566,7 +556,7 @@ void KnifeTool::stepForward()
 
 bool KnifeTool::key(int key, Qt::KeyboardModifiers mods)
 {
-    if (!KeyFilter::owns(key, mods))
+    if (!KnifeKeyFilter::owns(key, mods))
         return false;
     switch (key)
     {
@@ -611,7 +601,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
         const geo::Mesh& m = *t->mesh;
         const bool hoverUsable = here && mHover && mHover->first == node && !mHoverFirst;
         geo::KnifePlan plan;
-        if (ctrl && !del && mPoints.empty() && hoverUsable && mHover->second.point.kind == Kind::Edge)
+        if (ctrl && !del && mPoints.empty() && hoverUsable && mHover->second.point.kind == PointKind::Edge)
             plan = geo::knifeLoopPlan(m, mHover->second.point.id, mHover->second.point.t, t->symmetry ? &*t->symmetry : nullptr);
         else if (!ctrl)
         {
@@ -641,7 +631,7 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
                 continue;
             p.line(*sa, *sb, seg.mirrored ? 1.5f : 2.0f, seg.mirrored ? kMirror : kCut);
             for (const KnifePoint* k : {&seg.a, &seg.b})
-                if (k->kind == Kind::Edge)
+                if (k->kind == PointKind::Edge)
                     p.disc(k == &seg.a ? *sa : *sb, 3.0f, seg.mirrored ? kMirror : kNewVertex, 12);
         }
 
@@ -649,22 +639,22 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
         if (hoverUsable)
         {
             const KnifePoint& k = mHover->second.point;
-            if (k.kind == Kind::Edge && m.edgeValid(k.id))
+            if (k.kind == PointKind::Edge && m.edgeValid(k.id))
             {
                 auto a = view.project(toWorld(m.position(m.edgePoint(k.id, 0)))), b = view.project(toWorld(m.position(m.edgePoint(k.id, 1))));
                 if (a && b && del)
                 {
-                    p.line(*a, *b, 6.0f, kRim);
-                    p.line(*a, *b, 3.5f, kHot);
+                    p.line(*a, *b, 6.0f, kHandleRim);
+                    p.line(*a, *b, 3.5f, kHotColor);
                 }
                 else if (a && b)
-                    p.line(*a, *b, 2.5f, kHot);
+                    p.line(*a, *b, 2.5f, kHotColor);
             }
             if (auto s = view.project(mHover->second.world); s && !del)
             {
-                p.disc(*s, k.kind == Kind::Face ? 3.5f : 5.5f, kRim, 16);
-                p.disc(*s, k.kind == Kind::Face ? 2.0f : 3.5f, kHot, 16);
-                if (k.kind == Kind::Edge)
+                p.disc(*s, k.kind == PointKind::Face ? 3.5f : 5.5f, kHandleRim, 16);
+                p.disc(*s, k.kind == PointKind::Face ? 2.0f : 3.5f, kHotColor, 16);
+                if (k.kind == PointKind::Edge)
                     p.label(*s + QPointF(12, -10), QString("%1%").arg(k.t * 100.0, 0, 'f', 0));
             }
         }
@@ -674,8 +664,8 @@ void KnifeTool::draw(render::FrameState&, OverlayPainter& p, const ViewInfo& vie
         if (auto s = view.project(mPoints[i].world))
         {
             const bool hot = i == 0 && mHoverFirst;
-            p.disc(*s, hot ? 8.0f : 6.0f, kRim, 16);
-            p.disc(*s, hot ? 6.0f : 4.0f, kHot, 16);
+            p.disc(*s, hot ? 8.0f : 6.0f, kHandleRim, 16);
+            p.disc(*s, hot ? 6.0f : 4.0f, kHotColor, 16);
         }
 
     QString help = "Knife: click to cut, Enter/RMB finish, Ctrl+click edge: loop, Ctrl+Alt+click edge: delete, Shift: snap %1%, Z/Backspace: remove point, Shift+Z: restore it, Esc: cancel";

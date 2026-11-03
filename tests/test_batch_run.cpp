@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "app/Host.h"
 #include "batch/BatchCommands.h"
 #include "batch/BatchJob.h"
@@ -21,6 +23,7 @@
 
 using namespace lila;
 using namespace lila::batch;
+using namespace testutil;
 
 namespace
 {
@@ -44,20 +47,12 @@ void touch(const fs::path& p, const std::string& text = "x")
     std::ofstream(p) << text;
 }
 
-std::vector<std::string> names(const std::vector<Item>& items, const fs::path& base)
+std::vector<std::string> relativeNames(const std::vector<Item>& items, const fs::path& base)
 {
     std::vector<std::string> out;
     for (const Item& i : items)
         out.push_back(paths::toUtf8(paths::relativeTo(i.path, base)));
     return out;
-}
-
-std::string slurp(const fs::path& p)
-{
-    std::ifstream f(p, std::ios::binary);
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
 }
 
 /** Workers that act out a behaviour per file name, writing their result like a real one, from threads of their own. */
@@ -173,28 +168,28 @@ TEST_CASE("batch gather walks, filters and de-duplicates")
     Spec s;
     s.inputs = {paths::toUtf8(d)};
     s.extensions = {"lila", ".lilaa", "MA"};
-    CHECK(names(gather(s), d) == std::vector<std::string>{"a.lila", "b.lilaa", "c.ma", "hero_old.lila", "skip_me.lila"});
+    CHECK(relativeNames(gather(s), d) == std::vector<std::string>{"a.lila", "b.lilaa", "c.ma", "hero_old.lila", "skip_me.lila"});
 
     s.depth = 1;
-    CHECK(names(gather(s), d).size() == 6);
+    CHECK(relativeNames(gather(s), d).size() == 6);
     s.depth = -1;
-    std::vector<std::string> all = names(gather(s), d);
+    std::vector<std::string> all = relativeNames(gather(s), d);
     CHECK(all.size() == 7);
     CHECK(std::find(all.begin(), all.end(), ".lila/autosave/x.lila") == all.end());
 
     s.excludePrefix = "SKIP";
     s.excludeSuffix = "_old";
     s.exclude = {"sub/deep/*"};
-    CHECK(names(gather(s), d) == std::vector<std::string>{"a.lila", "b.lilaa", "c.ma", "sub/d.lila"});
+    CHECK(relativeNames(gather(s), d) == std::vector<std::string>{"a.lila", "b.lilaa", "c.ma", "sub/d.lila"});
     s.include = {"*.lila"};
-    CHECK(names(gather(s), d) == std::vector<std::string>{"a.lila", "sub/d.lila"});
+    CHECK(relativeNames(gather(s), d) == std::vector<std::string>{"a.lila", "sub/d.lila"});
     s.excludeContains = "a";
-    CHECK(names(gather(s), d) == std::vector<std::string>{"sub/d.lila"});
+    CHECK(relativeNames(gather(s), d) == std::vector<std::string>{"sub/d.lila"});
 
     Spec g;
     g.inputs = {paths::toUtf8(d) + "/**/*.lila", paths::toUtf8(d / "a.lila"), paths::toUtf8(d / "missing.lila")};
     std::vector<std::string> warnings;
-    std::vector<std::string> got = names(gather(g, &warnings), d);
+    std::vector<std::string> got = relativeNames(gather(g, &warnings), d);
     CHECK(got == std::vector<std::string>{"a.lila", "hero_old.lila", "skip_me.lila", "sub/d.lila", "sub/deep/e.lila", "missing.lila"});
     REQUIRE(warnings.size() == 1);
     CHECK(warnings[0].find("missing.lila") != std::string::npos);
@@ -202,7 +197,7 @@ TEST_CASE("batch gather walks, filters and de-duplicates")
     Spec rel;
     rel.workspace = paths::toUtf8(d);
     rel.inputs = {"sub/*.lila"};
-    CHECK(names(gather(rel), d) == std::vector<std::string>{"sub/d.lila"});
+    CHECK(relativeNames(gather(rel), d) == std::vector<std::string>{"sub/d.lila"});
 }
 
 TEST_CASE("batch output paths and the plan")

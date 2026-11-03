@@ -22,6 +22,7 @@
 #include "ui/RetopoDrawTool.h"
 #include "ui/SpinScrub.h"
 #include "ui/Tools.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportContext.h"
 #include "ui/ViewportDisplay.h"
 #include "ui/ViewportHud.h"
@@ -72,11 +73,6 @@ constexpr int kHeight = 24;
 constexpr int kIcon = 16;
 constexpr int kSpacing = 1;
 constexpr const char* kViews[] = {"persp", "top", "front", "right", "left", "back", "bottom"};
-
-bool pref(const char* key, bool fallback)
-{
-    return PrefStore::get().value<bool>("general", key, fallback);
-}
 
 QString labelOf(const std::string& id)
 {
@@ -157,7 +153,7 @@ std::optional<bool> toolActionState(const std::string& id)
         if (id == std::string("tool.") + tools::name(t))
             return !viewportTool && tools::current() == t;
     if (id == "select.marqueeTool" || id == "select.lassoTool")
-        return !viewportTool && tools::current() == Tool::Select && pref(paintSelect::kLassoPref, false) == (id == "select.lassoTool");
+        return !viewportTool && tools::current() == Tool::Select && generalPref(paintSelect::kLassoPref, false) == (id == "select.lassoTool");
     if (id == "select.paintTool")
         return viewportTools::activeId() == paintSelect::kToolId;
     using scene::ComponentMode;
@@ -180,7 +176,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
     if (id == "viewport.textured")
         return !wire && materialsShown();
     if (id == "rig.xrayJoints")
-        return pref("/rig/xrayJoints", false);
+        return generalPref("/rig/xrayJoints", false);
     if (id == "retopo.toggleSnapSpace")
         return RetopoDrawTool::snapObjectSpace();
     if (std::optional<bool> tool = toolActionState(id))
@@ -223,7 +219,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
     };
     for (const Toggle& t : toggles)
         if (id == t.id)
-            return pref(t.key, t.fallback);
+            return generalPref(t.key, t.fallback);
     if (id.starts_with("select.mask."))
         for (scene::selectionMask::Kind k : scene::selectionMask::kAll)
             if (id.substr(12) == scene::selectionMask::name(k))
@@ -233,7 +229,7 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
             if (id.substr(14) == scene::selectionMask::name(k))
                 return scene::selectionMask::shown(k);
     if (id.starts_with("viewport.aaSamples"))
-        return pref(vd::kAaEnabled, true) && PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(id.substr(18));
+        return generalPref(vd::kAaEnabled, true) && PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(id.substr(18));
     if (id == "viewport.toggleVertexColors")
         return PrefStore::get().value<std::string>("general", vd::kVertexColors, "off") != "off";
     if (id.starts_with("viewport.vertexColors."))
@@ -808,14 +804,14 @@ void ViewportToolbar::refresh()
             a->setEnabled(lilaDraws);
         b->setEnabled(lilaDraws);
     }
-    mSamplesButton->setEnabled(lilaDraws && pref(vd::kAaEnabled, true));
+    mSamplesButton->setEnabled(lilaDraws && generalPref(vd::kAaEnabled, true));
     if (refreshRelevance())
         layoutItems();
 }
 
 bool ViewportToolbar::refreshRelevance()
 {
-    const uint32_t present = pref(vd::kHideUnusedItems, true) ? viewportContext::present() : ~0u;
+    const uint32_t present = generalPref(vd::kHideUnusedItems, true) ? viewportContext::present() : ~0u;
     bool changed = false;
     for (Item& item : mItems)
     {
@@ -1475,7 +1471,7 @@ void ViewportBottomBar::refresh()
 
 bool ViewportBottomBar::refreshRelevance()
 {
-    const uint32_t present = pref(vd::kHideUnusedItems, true) ? viewportContext::present() : ~0u;
+    const uint32_t present = generalPref(vd::kHideUnusedItems, true) ? viewportContext::present() : ~0u;
     bool changed = false;
     for (const Relevant& r : mRelevant)
     {
@@ -1634,8 +1630,8 @@ ViewportPanel::ViewportPanel(QWidget* parent) : QWidget(parent)
     v->addWidget(mBottomBar);
     imagePlanes::acceptDrops(mView);
     auto showBars = [this] {
-        mToolbar->setVisible(pref(vd::kToolbar, true));
-        mBottomBar->setVisible(pref(vd::kBottomBar, true));
+        mToolbar->setVisible(generalPref(vd::kToolbar, true));
+        mBottomBar->setVisible(generalPref(vd::kBottomBar, true));
     };
     showBars();
     mPrefListener = PrefStore::get().onChanged([showBars](const std::string& file) {

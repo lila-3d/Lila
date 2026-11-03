@@ -11,47 +11,6 @@ using namespace lila::usdtest;
 
 namespace
 {
-bool listed(const json& list, const std::string& part)
-{
-    for (const json& s : list)
-        if (s.get<std::string>().find(part) != std::string::npos)
-            return true;
-    return false;
-}
-
-std::map<std::string, json> materialValues(const std::string& name)
-{
-    std::map<std::string, json> out;
-    Node* n = materials::find(graph(), name);
-    REQUIRE_MESSAGE(n, name);
-    for (size_t a = 0; a < n->type().attrs.size(); ++a)
-        out[n->type().attrs[a].name] = scene::toJson(n->value(int(a)));
-    return out;
-}
-
-void compareMaterial(const std::string& name, const std::map<std::string, json>& a)
-{
-    const auto b = materialValues(name);
-    for (const auto& [key, value] : a)
-    {
-        INFO(name << "." << key);
-        const json& other = b.at(key);
-        if (value.is_string() && !value.get<std::string>().empty())
-        {
-            REQUIRE(other.is_string());
-            std::error_code ec;
-            CHECK(fs::equivalent(fs::path(value.get<std::string>()), fs::path(other.get<std::string>()), ec));
-        }
-        else if (value.is_number_float())
-            CHECK(other.get<double>() == doctest::Approx(value.get<double>()).epsilon(1e-5));
-        else if (value.is_array())
-            for (size_t i = 0; i < value.size(); ++i)
-                CHECK(other[i].get<double>() == doctest::Approx(value[i].get<double>()).epsilon(1e-5));
-        else
-            CHECK(value == other);
-    }
-}
-
 /** Materials covering what the networks carry: constants, every map kind, packing, DirectX normals, UV set 1, unlit. */
 std::vector<std::string> buildMaterials()
 {

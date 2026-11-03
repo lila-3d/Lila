@@ -8,6 +8,7 @@
 #include "ui/SurfaceSnap.h"
 #include "ui/Tools.h"
 #include "ui/ViewInfo.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QKeyEvent>
 #include <QPointF>
@@ -33,7 +34,6 @@ inline const glm::vec4 kDot(0.85f, 0.85f, 0.85f, 1.0f);
 
 /** A key pressed without Ctrl, Alt, Shift or Meta, which a draw tool may claim ahead of the app's hotkeys. */
 inline bool plainKey(const QKeyEvent& e) { return (e.modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier; }
-inline double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 inline PrefStore& prefs() { return PrefStore::get(); }
 inline D3 upAxis() { return math::upAxis() == math::UpAxis::Z ? D3(0, 0, 1) : D3(0, 1, 0); }
 

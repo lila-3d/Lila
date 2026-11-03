@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "uv/Unwrap.h"
+#include "uv/UvCommon.h"
 
 #include <Eigen/Sparse>
 #include <Eigen/SparseCholesky>
@@ -17,7 +18,9 @@ namespace lila::uv
 {
 namespace
 {
-double cross2(const glm::dvec2& o, const glm::dvec2& a, const glm::dvec2& b)
+using detail::edgeKey;
+
+double orient2d(const glm::dvec2& o, const glm::dvec2& a, const glm::dvec2& b)
 {
     return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
 }
@@ -25,11 +28,6 @@ double cross2(const glm::dvec2& o, const glm::dvec2& a, const glm::dvec2& b)
 glm::dvec2 rotate(const glm::dvec2& p, double c, double s)
 {
     return {p.x * c - p.y * s, p.x * s + p.y * c};
-}
-
-uint64_t edgeKey(Index a, Index b)
-{
-    return (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
 }
 
 bool validUvs(const Chart& ch)
@@ -284,13 +282,13 @@ std::vector<glm::dvec2> convexHull(std::vector<glm::dvec2> pts)
     size_t k = 0;
     for (size_t i = 0; i < pts.size(); ++i)
     {
-        while (k >= 2 && cross2(hull[k - 2], hull[k - 1], pts[i]) <= 0.0)
+        while (k >= 2 && orient2d(hull[k - 2], hull[k - 1], pts[i]) <= 0.0)
             --k;
         hull[k++] = pts[i];
     }
     for (size_t i = pts.size() - 1, t = k + 1; i > 0; --i)
     {
-        while (k >= t && cross2(hull[k - 2], hull[k - 1], pts[i - 1]) <= 0.0)
+        while (k >= t && orient2d(hull[k - 2], hull[k - 1], pts[i - 1]) <= 0.0)
             --k;
         hull[k++] = pts[i - 1];
     }

@@ -14,8 +14,6 @@ namespace settlement
 {
 namespace
 {
-constexpr double kWalkPi = 3.14159265358979323846;
-
 int64_t walkKey(int x, int y, int z) { return (int64_t(x & 0x1FFFFF) << 42) | (int64_t(y & 0x1FFFFF) << 21) | int64_t(z & 0x1FFFFF); }
 
 double pointLine3(const glm::dvec3& q, const glm::dvec3& a, const glm::dvec3& b)
@@ -52,7 +50,7 @@ WalkSurface WalkSurface::fromMesh(const geo::Mesh& mesh, const WalkOptions& o)
     LILA_ZONE();
 
     WalkSurface w;
-    const double minUp = std::cos(std::clamp(o.maxSlope, 0.0, 89.0) * kWalkPi / 180.0);
+    const double minUp = std::cos(std::clamp(o.maxSlope, 0.0, 89.0) * kPi / 180.0);
     std::vector<geo::Index> faces;
     double edgeLength = 0.0;
     for (geo::Index f = 0; f < mesh.faceCapacity(); ++f)

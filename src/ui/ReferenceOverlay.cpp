@@ -996,10 +996,10 @@ bool pressDrag(QMouseEvent* e, const ViewInfo& view)
     if (inAdjust && e->button() == Qt::LeftButton)
     {
         const auto c = cornersOf(*o, size);
-        auto near = [&](glm::dvec2 at) { return glm::length(at - px) < 9.0; };
-        if (near(knobOf(c)))
+        auto isNear = [&](glm::dvec2 at) { return glm::length(at - px) < 9.0; };
+        if (isNear(knobOf(c)))
             st.drag = DragKind::RotateKnob;
-        else if (std::ranges::any_of(c, near))
+        else if (std::ranges::any_of(c, isNear))
             st.drag = DragKind::ScaleCorner;
         else if (const int edge = edgeAt(c, px); edge >= 0)
         {

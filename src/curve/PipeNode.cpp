@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
+#include "curve/NodeHelpers.h"
 #include "curve/StripUvAttrs.h"
 #include "geo/Conform.h"
 #include "geo/Ops.h"
@@ -18,68 +19,17 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-constexpr uint32_t kIn = AttrInput | AttrStorable;
-constexpr uint32_t kKey = AttrInput | AttrStorable | AttrKeyable;
-
 const std::vector<std::string> kCaps = {"none", "ngon", "grid", "round"};
 const std::vector<std::string> kCouplings = {"none", "flange", "collar", "clamp", "elbowCollar", "mesh"};
 const std::vector<std::string> kFasteners = {"none", "boltAndNut", "bolt", "nut", "mesh"};
-const std::vector<std::string> kPresets = {"pipe", "hose", "cable", "conduit"};
-
-AttrDef fAttr(std::string name, double def, std::string doc, std::string cat, std::optional<double> lo = std::nullopt, std::optional<double> hi = std::nullopt)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.maxValue = hi;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef iAttr(std::string name, int64_t def, std::string doc, std::string cat, double lo = 0.0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Int, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.minValue = lo;
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef bAttr(std::string name, bool def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kKey, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef eAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc, std::string cat)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kIn, .enumNames = std::move(names), .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef sAttr(std::string name, std::string doc, std::string cat, uint32_t extra = 0)
-{
-    AttrDef a{.name = std::move(name), .type = PlugType::String, .defaultValue = std::string(), .flags = kIn | extra, .doc = std::move(doc)};
-    a.category = std::move(cat);
-    return a;
-}
-
-AttrDef meshIn(std::string name, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
-
-int idx(const Node& n, const char* a) { return n.type().attrIndex(a); }
-double f(const Node& n, const char* a) { return n.as<double>(idx(n, a)); }
-int64_t i(const Node& n, const char* a) { return n.as<int64_t>(idx(n, a)); }
-bool b(const Node& n, const char* a) { return n.as<bool>(idx(n, a)); }
-const std::string& s(const Node& n, const char* a) { return n.as<std::string>(idx(n, a)); }
+const std::vector<std::string> kPipePresets = {"pipe", "hose", "cable", "conduit"};
 
 std::vector<D3> loopFromJson(const std::string& text)
 {
@@ -143,33 +93,6 @@ public:
     }
 };
 
-/** Option flags for every editable attr of the pipe node (enums by name), with no defaults so only given ones apply. */
-std::vector<FlagDef> attrFlags()
-{
-    std::vector<FlagDef> out;
-    for (const AttrDef& d : types::find("curvePipe")->ownAttrs)
-    {
-        if (!(d.flags & AttrInput) || (d.flags & AttrHidden))
-            continue;
-        FlagDef fd{d.name, "", T::Float, nullptr, d.doc};
-        fd.min = d.minValue;
-        fd.max = d.maxValue;
-        switch (d.type)
-        {
-        case PlugType::Bool: fd.type = T::Bool; break;
-        case PlugType::Int: fd.type = T::Int; break;
-        case PlugType::String: fd.type = T::String; break;
-        case PlugType::Enum:
-            fd.type = T::String;
-            fd.choices = d.enumNames;
-            break;
-        default: break;
-        }
-        out.push_back(std::move(fd));
-    }
-    return out;
-}
-
 void applyValues(Graph& g, Node& n, const json& values, const char* cmd)
 {
     for (const AttrDef& d : n.type().ownAttrs)
@@ -208,22 +131,6 @@ json presetBase()
         if (std::ranges::find(keys, d.name) != keys.end())
             j[d.name] = d.type == PlugType::Enum ? json(d.enumNames[size_t(std::get<int64_t>(d.defaultValue))]) : toJson(d.defaultValue);
     return j;
-}
-
-Node& curveNamed(Graph& g, const std::string& name)
-{
-    Node* n = g.find(name);
-    if (!n || !n->type().isA("curve"))
-        throw CommandError("pipe: " + name + " is not a curve");
-    return *n;
-}
-
-Node& meshNamed(Graph& g, const std::string& name, const char* cmd)
-{
-    Node* n = g.find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return *n;
 }
 
 /** A selected or given loop on a mesh: its points (ordered), the faces inside it, and the mesh. */
@@ -338,15 +245,6 @@ void attachToMesh(Graph& g, const StartLoop& loop, const Spline& worldPath, cons
     g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
 }
 
-void bake(Graph& g, Node& op, const PlugRef& dst)
-{
-    g.evaluate();
-    PlugValue v = g.value(dst);
-    g.disconnect(dst);
-    g.setValue(dst, v);
-    g.deleteNode(op.id());
-}
-
 Node* createPathCurve(Graph& g, const Args& a)
 {
     Splines given;
@@ -379,18 +277,6 @@ Node* createPathCurve(Graph& g, const Args& a)
     return c;
 }
 
-std::vector<Node*> pathCurves(Graph& g, const Args& a)
-{
-    std::vector<Node*> out;
-    for (const json& p : a.positional)
-        out.push_back(&curveNamed(g, p.get<std::string>()));
-    if (out.empty())
-        for (NodeId id : g.selection())
-            if (Node* n = g.node(id); n && n->type().isA("curve"))
-                out.push_back(n);
-    return out;
-}
-
 /** A pipe node on one path curve, its settings and mesh inputs set. */
 Node* makeNode(Graph& g, const Args& a, const json& values, Node* path, const StartLoop* loop)
 {
@@ -407,7 +293,7 @@ Node* makeNode(Graph& g, const Args& a, const json& values, Node* path, const St
     return op;
 }
 
-void registerOptionLayout()
+void registerPipeOptionLayout()
 {
     namespace opt = ops::options;
     opt::Override o;
@@ -564,9 +450,9 @@ void registerPipeType()
 
 void registerPipeCommands()
 {
-    std::vector<FlagDef> flags = attrFlags();
+    std::vector<FlagDef> flags = attrFlags("curvePipe");
     for (FlagDef fd : std::vector<FlagDef>{
-             {"preset", "", T::String, nullptr, "Starting settings: pipe, hose, cable or conduit (flags given as well win).", kPresets},
+             {"preset", "", T::String, nullptr, "Starting settings: pipe, hose, cable or conduit (flags given as well win).", kPipePresets},
              {"points", "p", T::List, nullptr, "[[x, y, z], ...] world points of a new poly path curve, instead of path curves."},
              {"splines", "", T::List, nullptr, "Whole path splines (curveData format), instead of path curves."},
              {"symmetry", "", T::String, "off", "Mirror the new path curve (points or splines) live across the world plane facing this axis.",
@@ -597,7 +483,7 @@ void registerPipeCommands()
             if (Node* made = createPathCurve(g, a))
                 paths.push_back(made);
             else
-                paths = pathCurves(g, a);
+                paths = givenOrSelectedCurves(g, a, "pipe");
             if (paths.empty())
                 throw CommandError("pipe: select path curves, or give points=");
             json values = json::object();
@@ -659,7 +545,7 @@ void registerPipeCommands()
         .name = "pipePreset",
         .doc = "Apply a pipe preset (pipe, hose, cable or conduit) to pipe nodes, or the pipes feeding the given or selected meshes.",
         .positionalDoc = "pipes",
-        .flags = {{"preset", "", T::String, "pipe", "pipe, hose, cable or conduit.", kPresets}},
+        .flags = {{"preset", "", T::String, "pipe", "pipe, hose, cable or conduit.", kPipePresets}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             json values = pipePreset(a.get<std::string>("preset", "pipe"));
@@ -689,6 +575,6 @@ void registerPipeCommands()
             return names;
         },
     });
-    registerOptionLayout();
+    registerPipeOptionLayout();
 }
 } // namespace lila::curve

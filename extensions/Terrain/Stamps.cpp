@@ -24,9 +24,10 @@ using namespace lila;
 
 namespace terrain
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
 template <class E> const char* nameOf(const std::vector<std::string>& names, E e) { return names[size_t(e)].c_str(); }

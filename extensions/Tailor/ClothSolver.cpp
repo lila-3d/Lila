@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -163,7 +164,7 @@ bool dihedral(const vec3& a, const vec3& b, const vec3& c, const vec3& d, float&
 
 float wrapAngle(float a)
 {
-    constexpr float kPi = 3.14159265358979f;
+    constexpr float kPi = std::numbers::pi_v<float>;
     while (a > kPi)
         a -= 2.f * kPi;
     while (a < -kPi)

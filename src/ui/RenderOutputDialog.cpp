@@ -34,7 +34,7 @@ namespace lila::ui
 {
 namespace
 {
-QPointer<RenderOutputDialog> gDialog;
+QPointer<RenderOutputDialog> gRenderOutputDialog;
 
 const nlohmann::json& output()
 {
@@ -57,7 +57,7 @@ template <class T> T value(const char* key, T fallback)
     }
 }
 
-QDoubleSpinBox* number(QWidget* parent, double lo, double hi, double step, int decimals)
+QDoubleSpinBox* doubleSpin(QWidget* parent, double lo, double hi, double step, int decimals)
 {
     auto* s = new QDoubleSpinBox(parent);
     s->setRange(lo, hi);
@@ -101,7 +101,7 @@ RenderOutputDialog::RenderOutputDialog(QWidget* parent) : QDialog(parent)
     lf->setLabelAlignment(Qt::AlignRight);
     mCamera = new QComboBox(look);
     lf->addRow("Camera", mCamera);
-    mScale = number(look, 5.0, 800.0, 25.0, 0);
+    mScale = doubleSpin(look, 5.0, 800.0, 25.0, 0);
     mScale->setSuffix(" %");
     mSize = new QLabel(look);
     auto* scaleRow = new QWidget(look);
@@ -127,9 +127,9 @@ RenderOutputDialog::RenderOutputDialog(QWidget* parent) : QDialog(parent)
     auto* range = new QWidget(out);
     auto* rh = new QHBoxLayout(range);
     rh->setContentsMargins(0, 0, 0, 0);
-    mStart = number(range, -1e6, 1e6, 1.0, 0);
-    mEnd = number(range, -1e6, 1e6, 1.0, 0);
-    mStep = number(range, 0.01, 1000.0, 1.0, 2);
+    mStart = doubleSpin(range, -1e6, 1e6, 1.0, 0);
+    mEnd = doubleSpin(range, -1e6, 1e6, 1.0, 0);
+    mStep = doubleSpin(range, 0.01, 1000.0, 1.0, 2);
     rh->addWidget(mStart);
     rh->addWidget(new QLabel("to", range));
     rh->addWidget(mEnd);
@@ -149,7 +149,7 @@ RenderOutputDialog::RenderOutputDialog(QWidget* parent) : QDialog(parent)
     mCodec = new QComboBox(codecRow);
     mCodec->addItem("H.264", "h264");
     mCodec->addItem("HEVC", "hevc");
-    mQuality = number(codecRow, 0.0, 1.0, 0.1, 2);
+    mQuality = doubleSpin(codecRow, 0.0, 1.0, 0.1, 2);
     ch->addWidget(mCodec);
     ch->addWidget(new QLabel("Quality", codecRow));
     ch->addWidget(mQuality, 1);
@@ -261,8 +261,8 @@ std::string RenderOutputDialog::renderFrame()
     {
         std::string path = ops::execute("render", nlohmann::json::object(), CallSource::UI).get<std::string>();
         log::info("Rendered {}", path);
-        if (gDialog)
-            gDialog->showImage(QString::fromStdString(path));
+        if (gRenderOutputDialog)
+            gRenderOutputDialog->showImage(QString::fromStdString(path));
         return path;
     }
     catch (const CommandError& e)
@@ -281,8 +281,8 @@ void RenderOutputDialog::renderSequence()
         {
             const std::string last = r["path"].back().get<std::string>();
             log::info("Rendered {} frames to {}", r.value("frames", 0), last);
-            if (gDialog)
-                gDialog->showImage(QString::fromStdString(last));
+            if (gRenderOutputDialog)
+                gRenderOutputDialog->showImage(QString::fromStdString(last));
         }
         if (const std::string video = r.value("video", std::string()); !video.empty())
             log::info("Rendered video {}", video);
@@ -295,14 +295,14 @@ void RenderOutputDialog::renderSequence()
 
 void RenderOutputDialog::open(QWidget* parent)
 {
-    if (!gDialog)
+    if (!gRenderOutputDialog)
     {
-        gDialog = new RenderOutputDialog(parent);
-        gDialog->setAttribute(Qt::WA_DeleteOnClose);
+        gRenderOutputDialog = new RenderOutputDialog(parent);
+        gRenderOutputDialog->setAttribute(Qt::WA_DeleteOnClose);
     }
-    gDialog->show();
-    gDialog->raise();
-    gDialog->activateWindow();
-    flashLocate(gDialog);
+    gRenderOutputDialog->show();
+    gRenderOutputDialog->raise();
+    gRenderOutputDialog->activateWindow();
+    flashLocate(gRenderOutputDialog);
 }
 } // namespace lila::ui

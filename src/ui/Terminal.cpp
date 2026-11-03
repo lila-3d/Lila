@@ -9,6 +9,7 @@
 #include "ui/AgentSetup.h"
 #include "ui/PythonBridge.h"
 #include "ui/Theme.h"
+#include "ui/UiCommon.h"
 #include "ui/editor/EditorPalette.h"
 #include "ui/terminal/VtInput.h"
 
@@ -80,11 +81,6 @@ constexpr term::Rgb kAnsiLight[16] = {
     {0x05, 0x98, 0xbc}, {0x55, 0x55, 0x55}, {0x66, 0x66, 0x66}, {0xcd, 0x31, 0x31}, {0x14, 0xce, 0x14}, {0xb5, 0xba, 0x00},
     {0x04, 0x51, 0xa5}, {0xbc, 0x05, 0xbc}, {0x05, 0x98, 0xbc}, {0xa5, 0xa5, 0xa5},
 };
-
-bool pref(const char* key, bool fallback)
-{
-    return PrefStore::get().value<bool>("general", key, fallback);
-}
 
 #ifdef _WIN32
 // Resolved at runtime so the build doesn't depend on the SDK's NTDDI level, and old Windows fails cleanly.
@@ -535,7 +531,7 @@ void TerminalView::onOutput(const QByteArray& bytes)
     mScreen.feed(std::string_view(bytes.constData(), size_t(bytes.size())));
     if (std::string reply = mScreen.takeResponses(); !reply.empty())
         send(QByteArray::fromStdString(reply));
-    if (pref("/terminal/scrollOnOutput", false))
+    if (generalPref("/terminal/scrollOnOutput", false))
         mViewOffset = 0;
     // Hold the view still while the user is reading history.
     if (mViewOffset > 0)
@@ -1024,7 +1020,7 @@ void TerminalView::keyPressEvent(QKeyEvent* e)
         mSelAnchor = mSelEnd = {};
         viewport()->update();
     }
-    if (pref("/terminal/scrollOnInput", true))
+    if (generalPref("/terminal/scrollOnInput", true))
         scrollToBottom();
     send(bytes);
 }

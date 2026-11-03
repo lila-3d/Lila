@@ -23,7 +23,7 @@ const layouts::Entry* entry(const std::vector<layouts::Entry>& all, const std::s
     return nullptr;
 }
 
-void ensureCommands()
+void ensureLayoutCommands()
 {
     if (!ops::find("applyLayout"))
         layouts::registerCommands();
@@ -132,7 +132,7 @@ TEST_CASE("layouts save to user and workspace and read back")
 
 TEST_CASE("layout commands need the UI for apply and save")
 {
-    ensureCommands();
+    ensureLayoutCommands();
     layouts::setGuiHooks({});
     CHECK_THROWS_AS(ops::execute("applyLayout", {{"name", "Modeling"}}), CommandError);
     CHECK_THROWS_AS(ops::execute("saveLayout", {{"args", {"X"}}}), CommandError);

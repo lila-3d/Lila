@@ -5,6 +5,7 @@
 #include "scene/RenderSettings.h"
 #include "ui/SpinScrub.h"
 #include "ui/LocateFlash.h"
+#include "ui/UiCommands.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -23,18 +24,6 @@ namespace lila::ui
 {
 namespace
 {
-void runUi(const char* command, const json& call)
-{
-    try
-    {
-        ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-}
-
 const char* kCameras[] = {"persp", "top", "front", "right", "left", "back", "bottom"};
 } // namespace
 

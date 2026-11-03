@@ -103,8 +103,6 @@ private:
     anim::Curve mCurve;
 };
 
-Graph& g() { return Graph::current(); }
-
 PlugRef plugNamed(Graph& graph, const std::string& path, const char* cmd)
 {
     try
@@ -486,7 +484,7 @@ void registerCommands()
                   {"rest", "", T::Vec3, json::array({0, 0, 0}), "The rest rotate, degrees."},
                   {"name", "n", T::String, nullptr, "Name for the driver."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("poseDriver: give a joint");
@@ -505,7 +503,7 @@ void registerCommands()
         .positionalDoc = "driver",
         .flags = {{"rest", "", T::Bool, false, "Capture the rest instead of the target."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("setPoseDriverTarget: no driver");
@@ -527,7 +525,7 @@ void registerCommands()
                "multipliedBy, drives, output}].",
         .undoable = false,
         .run = [](const Args&) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             graph.evaluate();
             json out = json::array();
             for (NodeId id : poseDrivers(graph))
@@ -552,7 +550,7 @@ void registerCommands()
                   {"force", "f", T::Bool, false, "Replace an existing connection (keys) on the driven plug."},
                   {"name", "n", T::String, nullptr, "Name for the channel."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             PlugRef driver;
             if (a.has("driver"))
             {
@@ -602,7 +600,7 @@ void registerCommands()
                   {"value", "v", T::Float, nullptr, "Driven value of the key."},
                   {"interpolation", "i", T::String, nullptr, "Key interpolation; default the neighbouring keys'."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty() || !a.has("value"))
                 throw CommandError("setDrivenKey: give the channel and value=");
@@ -632,7 +630,7 @@ void registerCommands()
         .positionalDoc = "channel",
         .flags = {{"index", "", T::Int, 0, "Key index.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("removeDrivenKey: no channel");
@@ -658,7 +656,7 @@ void registerCommands()
                   {"curveName", "", T::String, nullptr, "Unreal curve to bake into; empty for none."},
                   {"driver", "d", T::String, nullptr, "A new driving plug; empty disconnects it."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("editDrivenChannel: no channel");
@@ -701,7 +699,7 @@ void registerCommands()
         .positionalDoc = "nodes or plugs?",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             graph.evaluate();
             std::vector<std::string> filter;
             for (const json& p : a.positional)
@@ -736,7 +734,7 @@ void registerCommands()
         .doc = "Delete driven channels; each driven plug keeps the value it has now.",
         .positionalDoc = "channels",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             graph.evaluate();
             for (const std::string& name : a.objects())
             {
@@ -763,7 +761,7 @@ void registerCommands()
         .positionalDoc = "path",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             json data = describe(graph);
             if (!a.positional.empty())
             {

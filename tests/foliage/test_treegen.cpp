@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "TreeBuild.h"
 #include "TreeSchema.h"
 
@@ -21,26 +22,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace foliagetest;
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-void ensureLoaded()
-{
-    auto& em = extensions::ExtensionManager::get();
-    if (!em.isLoaded("Foliage"))
-        REQUIRE(em.load(LILA_TEST_FOLIAGE_PACKAGE) == "Foliage");
-}
-
-void fresh()
-{
-    ensureLoaded();
-    run("newScene");
-}
-
 fs::path scratch(const char* name)
 {
     fs::path p = fs::temp_directory_path() / "lila_foliage_tests" / name;

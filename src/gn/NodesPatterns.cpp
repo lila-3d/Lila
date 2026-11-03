@@ -6,7 +6,6 @@
 namespace lila::gn::nodes::patterns
 {
 using D2 = glm::dvec2;
-using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 
 constexpr double kTwoPi = 2.0 * kPi;

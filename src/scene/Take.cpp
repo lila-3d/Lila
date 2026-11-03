@@ -6,6 +6,7 @@
 #include "scene/Anim.h"
 #include "scene/AnimLayer.h"
 #include "scene/Graph.h"
+#include "scene/RigUtil.h"
 #include "scene/RotationCurve.h"
 #include "scene/Transform.h"
 
@@ -498,8 +499,6 @@ void registerTakeTypes()
 
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
 NodeId takeNamed(Graph& g, const std::string& name, const char* cmd)
 {
     Node* n = g.find(name);
@@ -539,17 +538,7 @@ json takeJson(Graph& g, NodeId t)
             {"media", mediaNames(g, t)}};
 }
 
-template <class F> auto guarded(F&& f)
-{
-    try
-    {
-        return f();
-    }
-    catch (const std::invalid_argument& e)
-    {
-        throw CommandError(e.what());
-    }
-}
+using rigutil::guarded;
 } // namespace
 
 void registerTakeCommands()
@@ -573,7 +562,7 @@ void registerTakeCommands()
                "and is active; later ones start empty. Returns its name.",
         .flags = createFlags,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             TakeSettings s;
             s.root = a.get<std::string>("root");
             if (!s.root.empty() && !g.find(s.root))
@@ -596,7 +585,7 @@ void registerTakeCommands()
         .doc = "Delete a take and its animation.",
         .positionalDoc = "take",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             deleteTake(g, takeNamed(g, onlyArg(a, "deleteTake"), "deleteTake"));
             return nullptr;
         },
@@ -607,7 +596,7 @@ void registerTakeCommands()
         .doc = "Rename a take. Returns the name it got.",
         .positionalDoc = "take, newName",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             if (a.positional.size() != 2)
                 throw CommandError("renameTake: give the take and its new name");
             NodeId t = takeNamed(g, a.positional[0].get<std::string>(), "renameTake");
@@ -621,7 +610,7 @@ void registerTakeCommands()
         .positionalDoc = "take",
         .flags = {{"name", "n", T::String, nullptr, "Name of the copy."}},
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId t = takeNamed(g, onlyArg(a, "duplicateTake"), "duplicateTake");
             return g.node(guarded([&] { return duplicateTake(g, t, a.get<std::string>("name")); }))->path();
         },
@@ -633,7 +622,7 @@ void registerTakeCommands()
                "become the playback settings.",
         .positionalDoc = "take",
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId t = takeNamed(g, onlyArg(a, "setActiveTake"), "setActiveTake");
             setActiveTake(g, t);
             return g.node(t)->path();
@@ -646,7 +635,7 @@ void registerTakeCommands()
         .positionalDoc = "take",
         .flags = settings,
         .run = [](const Args& a) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             NodeId t = takeNamed(g, onlyArg(a, "editTake"), "editTake");
             if (a.has("start"))
                 g.setValue({t, TakeNode::kStart}, a.get<double>("start"));
@@ -677,7 +666,7 @@ void registerTakeCommands()
         .doc = "Every take: name, root, start, end, fps, loop, active and how many channels it animates.",
         .undoable = false,
         .run = [](const Args&) -> json {
-            Graph& g = graph();
+            Graph& g = Graph::current();
             json out = json::array();
             for (NodeId t : takes(g))
                 out.push_back(takeJson(g, t));

@@ -15,7 +15,10 @@
 #include "ui/GizmoMath.h"
 #include "ui/Manipulator.h"
 #include "ui/Overlay.h"
+#include "ui/ToolColors.h"
 #include "ui/Tools.h"
+#include "ui/UiCommon.h"
+#include "ui/ViewportToolMath.h"
 
 #include <cmath>
 #include <map>
@@ -26,11 +29,9 @@ namespace lila::ui
 namespace
 {
 namespace lo = scene::lastOp;
-using H = ExtrudeHandles::Handle;
+using ExtrudeHandle = ExtrudeHandles::Handle;
 
 constexpr const char* kCommand = "polyExtrude";
-const glm::vec4 kGray(0.70f, 0.70f, 0.70f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 
 /** The selected extrudeModifier the handles work on when no polyExtrude is live, else 0. */
 scene::NodeId selectedModifier()
@@ -106,17 +107,6 @@ scene::ComponentMode extrudeKind(scene::NodeId modifier = scene::kNoNode)
     const lo::Op* op = lo::current();
     const scene::ComponentMode mode = op && extrudeLive() ? op->modeAfter : scene::components::mode();
     return mode == scene::ComponentMode::Edge ? scene::ComponentMode::Edge : scene::ComponentMode::Face;
-}
-
-double handlePixels() { return PrefStore::get().value<double>("general", "/manipulator/size", 100.0); }
-
-double segmentDistance(QPointF p, QPointF a, QPointF b)
-{
-    QPointF d = b - a;
-    double len2 = QPointF::dotProduct(d, d);
-    double t = len2 > 0 ? std::clamp(QPointF::dotProduct(p - a, d) / len2, 0.0, 1.0) : 0.0;
-    QPointF q = a + d * t;
-    return std::hypot(p.x() - q.x(), p.y() - q.y());
 }
 } // namespace
 
@@ -276,19 +266,19 @@ bool ExtrudeHandles::layout(const Frame& f, const ViewInfo& view, QPointF& base,
     return true;
 }
 
-H ExtrudeHandles::pick(QPointF px, const ViewInfo& view) const
+ExtrudeHandle ExtrudeHandles::pick(QPointF px, const ViewInfo& view) const
 {
     if (!active())
-        return H::None;
+        return ExtrudeHandle::None;
     Frame f;
     QPointF base, tip, offset;
     if (!frame(f) || !layout(f, view, base, tip, offset))
-        return H::None;
+        return ExtrudeHandle::None;
     if (std::abs(px.x() - offset.x()) <= 8 && std::abs(px.y() - offset.y()) <= 8)
-        return H::Offset;
-    if (segmentDistance(px, base, tip) <= 8 || std::hypot(px.x() - tip.x(), px.y() - tip.y()) <= 11)
-        return H::Thickness;
-    return H::None;
+        return ExtrudeHandle::Offset;
+    if (segmentDistPx(px, base, tip) <= 8 || std::hypot(px.x() - tip.x(), px.y() - tip.y()) <= 11)
+        return ExtrudeHandle::Thickness;
+    return ExtrudeHandle::None;
 }
 
 void ExtrudeHandles::draw(OverlayPainter& p, const ViewInfo& view, Handle hover) const
@@ -309,38 +299,38 @@ void ExtrudeHandles::draw(OverlayPainter& p, const ViewInfo& view, Handle hover)
     auto c = view.project(f.center);
     if (!c || !layout(f, view, base, tip, offset))
         return;
-    auto colorOf = [&](Handle h) { return (dragging() ? mDrag.handle == h : hover == h) ? kHot : kGray; };
+    auto colorOf = [&](Handle h) { return (dragging() ? mDrag.handle == h : hover == h) ? kHotColor : kHandleGray; };
 
-    glm::vec4 tc = colorOf(H::Thickness);
+    glm::vec4 tc = colorOf(ExtrudeHandle::Thickness);
     double len = std::hypot(tip.x() - c->x(), tip.y() - c->y());
     if (len > 12)
     {
         QPointF dir = (tip - *c) / len;
         QPointF n(-dir.y(), dir.x());
-        bool hot = tc == kHot;
+        bool hot = tc == kHotColor;
         p.dashedLine(*c + dir * 10.0, base, 1.0f, 4.0f, {tc.r, tc.g, tc.b, 0.5f});
         p.line(base, tip - dir * 6.0, hot ? 3.5f : 2.0f, tc);
         p.triangle(tip + dir * 9.0, tip - dir * 4.0 + n * 6.0, tip - dir * 4.0 - n * 6.0, tc);
     }
-    glm::vec4 oc = colorOf(H::Offset);
+    glm::vec4 oc = colorOf(ExtrudeHandle::Offset);
     p.dashedLine(*c, offset, 1.0f, 4.0f, {oc.r, oc.g, oc.b, 0.5f});
     QRectF box(offset.x() - 5, offset.y() - 5, 10, 10);
-    p.fill({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, {oc.r, oc.g, oc.b, oc == kHot ? 0.6f : 0.25f});
-    p.polyline({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, oc == kHot ? 2.0f : 1.5f, oc, true);
+    p.fill({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, {oc.r, oc.g, oc.b, oc == kHotColor ? 0.6f : 0.25f});
+    p.polyline({box.topLeft(), box.topRight(), box.bottomRight(), box.bottomLeft()}, oc == kHotColor ? 2.0f : 1.5f, oc, true);
 
     if (dragging())
     {
-        bool thickness = mDrag.handle == H::Thickness;
+        bool thickness = mDrag.handle == ExtrudeHandle::Thickness;
         p.label(mDrag.lastPx + QPointF(18, -14), QString("%1 %2 cm").arg(thickness ? "Thickness" : "Offset").arg(mDrag.value, 0, 'f', 2));
     }
-    else if (hover != H::None)
-        p.text((hover == H::Thickness ? tip : offset) + QPointF(14, 4), hover == H::Thickness ? "thickness" : "offset", kGray);
+    else if (hover != ExtrudeHandle::None)
+        p.text((hover == ExtrudeHandle::Thickness ? tip : offset) + QPointF(14, 4), hover == ExtrudeHandle::Thickness ? "thickness" : "offset", kHandleGray);
 }
 
 void ExtrudeHandles::begin(Handle h, QPointF px, const ViewInfo& view)
 {
     Drag d;
-    if (h == H::None || !frame(d.frame))
+    if (h == ExtrudeHandle::None || !frame(d.frame))
         return;
     d.modifier = extrudeLive() ? scene::kNoNode : selectedModifier();
     if (!d.modifier)
@@ -348,11 +338,11 @@ void ExtrudeHandles::begin(Handle h, QPointF px, const ViewInfo& view)
     d.handle = h;
     d.startThickness = flag("thickness");
     d.startOffset = flag("offset");
-    d.value = h == H::Thickness ? d.startThickness : d.startOffset;
+    d.value = h == ExtrudeHandle::Thickness ? d.startThickness : d.startOffset;
     d.lastPx = px;
     glm::dvec3 o, dir;
     view.ray(px, o, dir);
-    d.startParam = gizmo::lineParam(d.frame.center, h == H::Thickness ? d.frame.normal : d.frame.side, o, dir);
+    d.startParam = gizmo::lineParam(d.frame.center, h == ExtrudeHandle::Thickness ? d.frame.normal : d.frame.side, o, dir);
     mDrag = d;
 }
 
@@ -363,7 +353,7 @@ void ExtrudeHandles::drag(QPointF px, const ViewInfo& view)
     mDrag.lastPx = px;
     glm::dvec3 o, dir;
     view.ray(px - mDrag.warp, o, dir);
-    bool thickness = mDrag.handle == H::Thickness;
+    bool thickness = mDrag.handle == ExtrudeHandle::Thickness;
     const Frame& f = mDrag.frame;
     double moved = (gizmo::lineParam(f.center, thickness ? f.normal : f.side, o, dir) - mDrag.startParam) / f.worldPerLocal;
     // Pulling the offset square toward the centre insets the cap further.
@@ -397,7 +387,7 @@ void ExtrudeHandles::end()
         return;
     if (const Drag d = std::exchange(mDrag, {}); d.modifier)
     {
-        const bool thickness = d.handle == H::Thickness;
+        const bool thickness = d.handle == ExtrudeHandle::Thickness;
         const char* name = thickness ? "thickness" : "offset";
         setQuietly(d.modifier, name, thickness ? d.startThickness : d.startOffset);
         try

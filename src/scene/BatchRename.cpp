@@ -16,7 +16,6 @@ namespace
 {
 char asciiLower(char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; }
 char asciiUpper(char c) { return c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c; }
-bool isDigit(char c) { return c >= '0' && c <= '9'; }
 
 std::string expand(std::string_view text, int number, std::string_view name, std::string_view parent, std::string_view type)
 {

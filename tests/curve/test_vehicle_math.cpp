@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/Blend.h"
 #include "curve/BorderBlend.h"
 #include "curve/Fair.h"
@@ -19,19 +21,11 @@
 using namespace lila;
 using namespace lila::curve;
 using D3 = glm::dvec3;
+using namespace curvetest;
 
 namespace
 {
-Spline poly(std::vector<D3> pts, bool closed = false)
-{
-    Spline s;
-    s.kind = Kind::Poly;
-    s.closed = closed;
-    s.points = std::move(pts);
-    return s;
-}
-
-Spline line(const D3& a, const D3& b) { return poly({a, b}); }
+Spline rawSegment(const D3& a, const D3& b) { return poly({a, b}); }
 
 D3 endPoint(const Spline& s, bool atEnd) { return pointAt(s, atEnd ? spanCount(s) : 0.0); }
 
@@ -63,7 +57,7 @@ Spline surfaceLine(bool alongX, double fixed)
 }
 
 /** A flat grid of quads in the xz plane at height y, nx by nz quads of size h, from (x0, z0). */
-geo::Mesh grid(double x0, double z0, double y, int nx, int nz, double h)
+geo::Mesh gridMesh(double x0, double z0, double y, int nx, int nz, double h)
 {
     geo::Mesh m;
     std::vector<geo::Index> idx;
@@ -96,13 +90,13 @@ geo::EdgePath borderAtX(const geo::Mesh& m, double at)
 
 TEST_CASE("curve intersections: 3D, projected, circles and Beziers")
 {
-    Spline a = line(D3(0, 0, 0), D3(10, 0, 0)), b = line(D3(4, -5, 0), D3(4, 5, 0));
+    Spline a = rawSegment(D3(0, 0, 0), D3(10, 0, 0)), b = rawSegment(D3(4, -5, 0), D3(4, 5, 0));
     std::vector<CurveHit> h = intersect(a, b);
     REQUIRE(h.size() == 1);
     CHECK(h[0].ua == doctest::Approx(0.4));
     CHECK(h[0].ub == doctest::Approx(0.5));
     // Skew lines meet only when seen along z.
-    Spline lifted = line(D3(4, -5, 3), D3(4, 5, 3));
+    Spline lifted = rawSegment(D3(4, -5, 3), D3(4, 5, 3));
     CHECK(intersect(a, lifted).empty());
     IntersectOptions view;
     view.direction = D3(0, 0, 1);
@@ -110,7 +104,7 @@ TEST_CASE("curve intersections: 3D, projected, circles and Beziers")
     CHECK(intersect(a, lifted, view)[0].pa.x == doctest::Approx(4.0));
 
     Spline c = circle(D3(0), D3(0, 0, 1), 5.0);
-    std::vector<CurveHit> hc = intersect(line(D3(-10, 0, 0), D3(10, 0, 0)), c);
+    std::vector<CurveHit> hc = intersect(rawSegment(D3(-10, 0, 0), D3(10, 0, 0)), c);
     REQUIRE(hc.size() == 2);
     CHECK(hc[0].pa.x == doctest::Approx(-5.0).epsilon(1e-6));
     CHECK(hc[1].pa.x == doctest::Approx(5.0).epsilon(1e-6));
@@ -119,7 +113,7 @@ TEST_CASE("curve intersections: 3D, projected, circles and Beziers")
 
     // Two Bezier waves crossing several times: every hit is a true crossing.
     Spline w1 = catmullRom(std::vector<D3>{D3(0, 0, 0), D3(5, 4, 0), D3(10, -4, 0), D3(15, 4, 0), D3(20, 0, 0)}, false);
-    Spline w2 = line(D3(-1, 0.5, 0), D3(21, 0.5, 0));
+    Spline w2 = rawSegment(D3(-1, 0.5, 0), D3(21, 0.5, 0));
     std::vector<CurveHit> hw = intersect(w1, w2);
     CHECK(hw.size() == 4);
     for (const CurveHit& x : hw)
@@ -133,8 +127,8 @@ TEST_CASE("curve intersections: 3D, projected, circles and Beziers")
 
 TEST_CASE("trim, split and sub-curves")
 {
-    Spline a = line(D3(0, 0, 0), D3(10, 0, 0));
-    Splines cutters = {line(D3(3, -1, 0), D3(3, 1, 0)), line(D3(7, -1, 0), D3(7, 1, 0))};
+    Spline a = rawSegment(D3(0, 0, 0), D3(10, 0, 0));
+    Splines cutters = {rawSegment(D3(3, -1, 0), D3(3, 1, 0)), rawSegment(D3(7, -1, 0), D3(7, 1, 0))};
     std::vector<double> cuts = intersectionParams(a, cutters);
     REQUIRE(cuts.size() == 2);
     Splines left = trimAt(a, cuts, 0.5);
@@ -153,7 +147,7 @@ TEST_CASE("trim, split and sub-curves")
 
     // A closed circle cut twice leaves one open arc; split gives both arcs.
     Spline c = circle(D3(0), D3(0, 0, 1), 5.0);
-    std::vector<double> cc = intersectionParams(c, {line(D3(-10, 0, 0), D3(10, 0, 0))});
+    std::vector<double> cc = intersectionParams(c, {rawSegment(D3(-10, 0, 0), D3(10, 0, 0))});
     REQUIRE(cc.size() == 2);
     D3 top;
     double uTop = closestParam(c, D3(0, 5, 0), &top);
@@ -189,8 +183,8 @@ TEST_CASE("trim, split and sub-curves")
 
 TEST_CASE("extend to a boundary: line, arc and smooth")
 {
-    Spline a = line(D3(0, 0, 0), D3(5, 0, 0));
-    Spline wall = line(D3(10, -5, 0), D3(10, 5, 0));
+    Spline a = rawSegment(D3(0, 0, 0), D3(5, 0, 0));
+    Spline wall = rawSegment(D3(10, -5, 0), D3(10, 5, 0));
     ExtendOptions o;
     o.mode = ExtendMode::Line;
     ExtendResult r = extendTo(a, true, {wall}, o);
@@ -199,11 +193,11 @@ TEST_CASE("extend to a boundary: line, arc and smooth")
     CHECK(glm::distance(endPoint(r.curve, true), D3(10, 0, 0)) < 1e-6);
     CHECK(glm::distance(endPoint(r.curve, false), D3(0, 0, 0)) < 1e-9);
     // The start extends backward to a wall behind it.
-    ExtendResult back = extendTo(a, false, {line(D3(-4, -5, 0), D3(-4, 5, 0))}, o);
+    ExtendResult back = extendTo(a, false, {rawSegment(D3(-4, -5, 0), D3(-4, 5, 0))}, o);
     REQUIRE(back.hit);
     CHECK(glm::distance(endPoint(back.curve, false), D3(-4, 0, 0)) < 1e-6);
     // Nothing in reach: unchanged.
-    ExtendResult miss = extendTo(a, true, {line(D3(10, 5, 0), D3(10, 9, 0))}, o);
+    ExtendResult miss = extendTo(a, true, {rawSegment(D3(10, 5, 0), D3(10, 9, 0))}, o);
     CHECK(!miss.hit);
     CHECK(length(miss.curve) == doctest::Approx(5.0));
 
@@ -211,7 +205,7 @@ TEST_CASE("extend to a boundary: line, arc and smooth")
     Spline quarter = arc(D3(0), D3(0, 0, 1), D3(10, 0, 0), glm::half_pi<double>());
     ExtendOptions ao;
     ao.mode = ExtendMode::Arc;
-    ExtendResult ra = extendTo(quarter, true, {line(D3(-20, 0, 0), D3(0, 0, 0))}, ao);
+    ExtendResult ra = extendTo(quarter, true, {rawSegment(D3(-20, 0, 0), D3(0, 0, 0))}, ao);
     REQUIRE(ra.hit);
     CHECK(glm::distance(endPoint(ra.curve, true), D3(-10, 0, 0)) < 1e-5);
     for (int i = 0; i <= 20; ++i)
@@ -221,7 +215,7 @@ TEST_CASE("extend to a boundary: line, arc and smooth")
     Spline n = interpolate(std::vector<D3>{D3(0), D3(4, 3, 0), D3(8, 2, 0), D3(12, 4, 0)}, 3, false);
     ExtendOptions so;
     so.mode = ExtendMode::Smooth;
-    ExtendResult rs = extendTo(n, true, {line(D3(18, -20, 0), D3(18, 20, 0))}, so);
+    ExtendResult rs = extendTo(n, true, {rawSegment(D3(18, -20, 0), D3(18, 20, 0))}, so);
     REQUIRE(rs.hit);
     CHECK(rs.curve.kind == Kind::Nurbs);
     CHECK(endPoint(rs.curve, true).x == doctest::Approx(18.0).epsilon(1e-6));
@@ -260,7 +254,7 @@ TEST_CASE("blend curves are exactly G0 to G3")
     CHECK_THROWS_AS(blendCurve(BlendEnd{endGeometry(a, true)}, BlendEnd{endGeometry(a, true)}), std::invalid_argument);
 
     // A mesh border: the blend leaves square to the edge within the face's plane.
-    geo::Mesh m = grid(0, 0, 0, 3, 3, 2.0);
+    geo::Mesh m = gridMesh(0, 0, 0, 3, 3, 2.0);
     geo::EdgePath border = borderAtX(m, 6.0);
     std::optional<Geometry> g = borderGeometry(m, border.edges[1], 0.5);
     REQUIRE(g);
@@ -411,7 +405,7 @@ TEST_CASE("curve network: families, order, smooth Gordon surface and poles")
     }
 
     // A three-sided patch: two V curves meeting at the top over two U curves.
-    Splines tri = {line(D3(0, 0, 0), D3(10, 0, 0)), line(D3(1, 5, 0), D3(9, 5, 0)), line(D3(0, 0, 0), D3(5, 10, 0)), line(D3(10, 0, 0), D3(5, 10, 0))};
+    Splines tri = {rawSegment(D3(0, 0, 0), D3(10, 0, 0)), rawSegment(D3(1, 5, 0), D3(9, 5, 0)), rawSegment(D3(0, 0, 0), D3(5, 10, 0)), rawSegment(D3(10, 0, 0), D3(5, 10, 0))};
     NetworkOptions to;
     to.spansU = 2;
     to.spansV = 2;
@@ -426,18 +420,18 @@ TEST_CASE("curve network: families, order, smooth Gordon surface and poles")
 
     // A stray curve is left out with a warning; a non-grid throws.
     Splines stray = tri;
-    stray.push_back(line(D3(50, 50, 0), D3(60, 50, 0)));
+    stray.push_back(rawSegment(D3(50, 50, 0), D3(60, 50, 0)));
     NetworkResult s = curveNetwork(stray, to);
     CHECK(s.family.back() == -1);
     CHECK(!s.warnings.empty());
-    Splines bad = {line(D3(0, 0, 0), D3(10, 0, 0)), line(D3(5, -5, 0), D3(5, 5, 0)), line(D3(0, -3, 0), D3(10, 3, 0))};
+    Splines bad = {rawSegment(D3(0, 0, 0), D3(10, 0, 0)), rawSegment(D3(5, -5, 0), D3(5, 5, 0)), rawSegment(D3(0, -3, 0), D3(10, 3, 0))};
     CHECK_THROWS_AS(curveNetwork(bad, to), std::invalid_argument);
 }
 
 TEST_CASE("profile blend between mesh borders")
 {
-    geo::Mesh a = grid(0, 0, 0, 3, 5, 2.0);     // border at x = 6, six points
-    geo::Mesh b = grid(16, 0, 5, 3, 3, 10.0 / 3.0); // border at x = 16, four points
+    geo::Mesh a = gridMesh(0, 0, 0, 3, 5, 2.0);     // border at x = 6, six points
+    geo::Mesh b = gridMesh(16, 0, 5, 3, 3, 10.0 / 3.0); // border at x = 16, four points
     BorderSide sa = borderSide(a, borderAtX(a, 6.0), D3(16, 5, 5));
     BorderSide sb = borderSide(b, borderAtX(b, 16.0), D3(6, 0, 5));
     for (const D3& d : sa.out)

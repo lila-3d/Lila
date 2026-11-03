@@ -2,12 +2,32 @@
 
 #include "Stagehand.h"
 
+#include <lila/Undo.h>
+
 #include <functional>
 #include <memory>
 #include <random>
 
 namespace stagehand
 {
+/** Runs fn with undo recording off, restoring it after. */
+template <class Fn> void unrecorded(Fn&& fn)
+{
+    lila::UndoStack& u = lila::UndoStack::get();
+    const bool was = u.enabled();
+    u.setEnabled(false);
+    try
+    {
+        fn();
+    }
+    catch (...)
+    {
+        u.setEnabled(was);
+        throw;
+    }
+    u.setEnabled(was);
+}
+
 /**
  * Live physics over the scene for interactive tools: the world steps in real time while a hand grabs, pushes,
  * wiggles, drops and shakes things, and the transforms follow without filling the undo stack. commit() keeps the

@@ -1,6 +1,7 @@
 #include <Arrange.h>
 #include <RigidScene.h>
 
+#include "TestUtil.h"
 #include "extensions/ExtensionManager.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
@@ -14,27 +15,16 @@
 #include <string>
 
 using namespace lila;
+using namespace stagehandtest;
 using json = nlohmann::json;
 namespace physics = lila::physics;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 void loadStagehand()
 {
     if (!ops::registry().find("settle"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_STAGEHAND_PACKAGE) == "Stagehand");
-}
-
-physics::BodyDesc box(const glm::dvec3& at, const glm::dvec3& half, physics::Role role = physics::Role::Dynamic)
-{
-    physics::BodyDesc b;
-    b.shape.kind = physics::Shape::Kind::Box;
-    b.shape.halfExtents = half;
-    b.position = at;
-    b.role = role;
-    return b;
 }
 
 /** A row of upright books on the floor, 2 cm apart, along X. */
@@ -42,13 +32,6 @@ void bookRow(physics::RigidScene& s, int count)
 {
     for (int k = 0; k < count; ++k)
         s.add(box({k * 6.0, 12.0, 0.0}, {2.0, 12.0, 8.0}));
-}
-
-std::string cube(const char* name, const glm::dvec3& at, const glm::dvec3& size)
-{
-    return run("polyCube", {{"name", name}, {"position", json::array({at.x, at.y, at.z})}, {"width", size.x}, {"height", size.y}, {"depth", size.z},
-                            {"baseAtOrigin", true}, {"generator", false}})[0]
-        .get<std::string>();
 }
 
 double worldY(const std::string& node) { return run("xform", {{"args", {node}}, {"query", true}, {"worldSpace", true}, {"translation", true}})[1].get<double>(); }

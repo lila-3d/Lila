@@ -34,7 +34,7 @@ using scene::MeshNode;
 using scene::MeshPtr;
 using scene::Node;
 using scene::NodeId;
-using Ids = scene::components::Ids;
+using scene::components::Ids;
 
 Graph& graph() { return Graph::current(); }
 
@@ -333,7 +333,7 @@ AutoSeamOptions seamArgs(const Args& a)
     return o;
 }
 
-std::vector<FlagDef> seamFlags()
+std::vector<FlagDef> seamFlagDefs()
 {
     using T = ArgType;
     return {{"hardAngle", "", T::Float, 60.0, "Edges sharper than this always get a seam, degrees.", {}, {}, 0.0, 180.0},
@@ -349,11 +349,6 @@ std::vector<FlagDef> seamFlags()
             {"seamWeight", "", T::Float, 0.5, "optcuts: price of seam length against stretch; higher keeps seams shorter.", {}, {}, 0.0},
             {"useViews", "", T::Bool, true, "Keep seams out of sight of the seam views (uvSeamView)."},
             {"views", "", T::List, nullptr, "Cameras or locators seams hide from; every seam view in the scene when not given."}};
-}
-
-FlagDef uvSetFlag()
-{
-    return {"uvSet", "", ArgType::String, nullptr, "UV set; the current one (uvSetCurrent) when not given."};
 }
 
 template <class... L> std::vector<FlagDef> join(std::vector<FlagDef> a, L... rest)
@@ -899,7 +894,7 @@ void registerCommands()
         .name = "uvAutoSeams",
         .doc = "Place seams for game assets on the selected faces: hard edges, then cuts that open each island along hidden, creased paths and "
                "split it where it would stretch.",
-        .flags = seamFlags(),
+        .flags = seamFlagDefs(),
         .run = [](const Args& a) -> json {
             AutoSeamOptions o = seamArgs(a);
             return editUv("UV Auto Seams", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
@@ -918,7 +913,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "uvAuto",
         .doc = "Automatic uvs: seams, low-stretch unwrap and pack, in one step.",
-        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0}}, seamFlags(), packFlags()),
+        .flags = join({uvSetFlag(), {"iterations", "", T::Int, 12, "SLIM iterations.", {}, {}, 0.0, 200.0}}, seamFlagDefs(), packFlags()),
         .run = [](const Args& a) -> json {
             AutoUvOptions o;
             o.seams = seamArgs(a);

@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "bake/Backend.h"
 #include "bake/Bake.h"
 #include "bake/BakeInputs.h"
@@ -23,96 +24,17 @@
 #include <set>
 
 using namespace lila;
+using namespace baketest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-fs::path tempDir(const char* name)
-{
-    fs::path d = fs::temp_directory_path() / ("lila_bakemaps_" + std::string(name));
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
-}
-
-scene::Graph& graph() { return scene::Graph::current(); }
-
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Graph& g = graph();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    return n->path();
-}
-
-/** A 100 cm plane in XZ facing +Y; uv0 spans [uvMin, uvMax] (u along +x, v along -z). */
-geo::Mesh plane(int subdiv = 1, glm::vec2 uvMin = {0.0f, 0.0f}, glm::vec2 uvMax = {1.0f, 1.0f}, double size = 100.0)
-{
-    geo::PlaneOptions o;
-    o.width = o.depth = size;
-    o.subdivX = o.subdivZ = subdiv;
-    geo::Mesh m = geo::makePlane(o);
-    for (glm::vec2& uv : m.cornerAttrs().get<glm::vec2>("uv0"))
-        uv = uvMin + uv * (uvMax - uvMin);
-    return m;
-}
-
 template <class F> geo::Mesh transformed(geo::Mesh m, F f)
 {
     for (geo::Index p = 0; p < m.pointCapacity(); ++p)
         m.setPosition(p, f(m.position(p)));
     return m;
-}
-
-template <class F> geo::Mesh displaced(int subdiv, F f)
-{
-    return transformed(plane(subdiv), [&](glm::dvec3 q) { return glm::dvec3(q.x, f(q.x, q.z), q.z); });
-}
-
-geo::Mesh lifted(geo::Mesh m, double y)
-{
-    return transformed(std::move(m), [&](glm::dvec3 q) { return q + glm::dvec3(0.0, y, 0.0); });
-}
-
-image::Image readImage(const json& out)
-{
-    std::string err;
-    image::Image img = image::read(fs::path(out["file"].get<std::string>()), &err);
-    INFO(err);
-    REQUIRE(img.width > 0);
-    return img;
-}
-
-glm::vec4 texel(const image::Image& img, int x, int y)
-{
-    const float* p = &img.rgba[(size_t(y) * size_t(img.width) + size_t(x)) * 4];
-    return {p[0], p[1], p[2], p[3]};
-}
-
-const json& outputFor(const json& result, const std::string& map)
-{
-    for (const json& o : result["outputs"])
-        if (o["map"] == map)
-            return o;
-    FAIL("no output for " << map);
-    static json none;
-    return none;
-}
-
-void newScene()
-{
-    ops::execute("newScene", json::object());
-    UndoStack::get().clear();
-}
-
-std::string project(const fs::path& dir, int res, int ss = 1, const std::string& format = "exr", const std::string& name = "{group}_{map}")
-{
-    const std::string p = ops::execute("createBakeProject", {{"name", "P"}}).get<std::string>();
-    ops::execute("setBakeOutput", {{"project", p},         {"folder", dir.generic_string()}, {"resolution", res},
-                                   {"supersampling", ss}, {"format", format},                {"name", name},
-                                   {"padding", 4}});
-    return p;
 }
 
 void group(const std::string& p, const std::string& name, const std::string& low, const std::vector<std::string>& highs, double frontal = 3.0,
@@ -125,8 +47,6 @@ void setMap(const std::string& p, const std::string& map, const json& options)
 {
     ops::execute("setBakeMap", {{"args", {map}}, {"project", p}, {"options", options}});
 }
-
-float angleDeg(glm::vec3 a, glm::vec3 b) { return glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(a), glm::normalize(b)), -1.0f, 1.0f))); }
 
 /** World xz of texel (x, y) on the 100 cm plane with uv 0-1. */
 glm::dvec2 planeXz(int x, int y, int res)
@@ -144,7 +64,7 @@ double decodeCurvature(const image::Image& img, const json& out, int x, int y)
 TEST_CASE("curvature: 0.5 on flat, and the bump's mean curvature from the mesh and from the normals")
 {
     newScene();
-    const fs::path dir = tempDir("curv");
+    const fs::path dir = tempDir("lila_bakemaps_curv");
     const double A = 3.0, k = glm::two_pi<double>() / 100.0;
     auto f = [&](double x, double z) { return A * std::cos(k * x) + A * std::cos(k * z); };
     const std::string low = addMesh("bump_low", plane(1));
@@ -202,7 +122,7 @@ TEST_CASE("curvature: 0.5 on flat, and the bump's mean curvature from the mesh a
 TEST_CASE("sphere: curvature 1/r, convexity and cavity, thickness 2r normalised")
 {
     newScene();
-    const fs::path dir = tempDir("sphere");
+    const fs::path dir = tempDir("lila_bakemaps_sphere");
     geo::SphereOptions so;
     so.subdivAxis = so.subdivHeight = 32;
     const std::string low = addMesh("ball_low", geo::makeSphere(so));
@@ -253,7 +173,7 @@ TEST_CASE("sphere: curvature 1/r, convexity and cavity, thickness 2r normalised"
 TEST_CASE("bent normals lean away from a wall and stay put in the open")
 {
     newScene();
-    const fs::path dir = tempDir("bent");
+    const fs::path dir = tempDir("lila_bakemaps_bent");
     const std::string low = addMesh("floor_low", plane(1));
     const std::string high = addMesh("floor_high", lifted(plane(4), 0.5));
     // A huge wall at x = -60 facing +x: it hides almost exactly the -x half of every floor point's hemisphere.
@@ -284,7 +204,7 @@ TEST_CASE("bent normals lean away from a wall and stay put in the open")
 TEST_CASE("rounded edges bevel a hard cube within the radius only")
 {
     newScene();
-    const fs::path dir = tempDir("rounded");
+    const fs::path dir = tempDir("lila_bakemaps_rounded");
     const std::string low = addMesh("box_low", geo::makeCube());
     const std::string p = project(dir, 128);
     ops::execute("bakeGroup", {{"args", {"box"}}, {"project", p}, {"lows", {low}}, {"self", true}, {"frontal", 2.0}, {"rear", 2.0}});
@@ -333,7 +253,7 @@ TEST_CASE("rounded edges bevel a hard cube within the radius only")
 TEST_CASE("vertex colour bakes a named colour set, as its own map or as base colour")
 {
     newScene();
-    const fs::path dir = tempDir("vcol");
+    const fs::path dir = tempDir("lila_bakemaps_vcol");
     geo::Mesh hi = lifted(plane(8), 1.0);
     for (const char* set : {"first", "paint"})
     {
@@ -364,7 +284,7 @@ TEST_CASE("vertex colour bakes a named colour set, as its own map or as base col
 TEST_CASE("material transfer: constants, textures, the high's normal map and ORM packing")
 {
     newScene();
-    const fs::path dir = tempDir("material");
+    const fs::path dir = tempDir("lila_bakemaps_material");
     // A 4 x 4 base colour texture, red on the left half and green on the right.
     image::Image tex{4, 4, {}};
     for (int y = 0; y < 4; ++y)
@@ -459,7 +379,7 @@ TEST_CASE("material transfer: constants, textures, the high's normal map and ORM
 TEST_CASE("UV wireframe skips diagonals; island borders mark seams")
 {
     newScene();
-    const fs::path dir = tempDir("wire");
+    const fs::path dir = tempDir("lila_bakemaps_wire");
     geo::Mesh a = plane(4, {0.0f, 0.0f}, {0.5f, 1.0f});
     geo::Mesh b = plane(1, {0.5f, 0.0f}, {1.0f, 1.0f});
     a.append(transformed(std::move(b), [](glm::dvec3 q) { return q + glm::dvec3(200.0, 0.0, 0.0); }));
@@ -488,7 +408,7 @@ TEST_CASE("UV wireframe skips diagonals; island borders mark seams")
 TEST_CASE("error map: misses, back faces, surfaces beyond the rays and degenerate frames")
 {
     newScene();
-    const fs::path dir = tempDir("error");
+    const fs::path dir = tempDir("lila_bakemaps_error");
     // Left quarter: a good high. Next: a back-facing one. Next: one too deep for the rear distance. Right: nothing.
     auto strip = [](double x0, double x1, double y, bool flip) {
         geo::Mesh m = plane(2);
@@ -546,7 +466,7 @@ TEST_CASE("error map: misses, back faces, surfaces beyond the rays and degenerat
 TEST_CASE("derived maps: gradient, normal to height and edge wear")
 {
     newScene();
-    const fs::path dir = tempDir("derived");
+    const fs::path dir = tempDir("lila_bakemaps_derived");
     const double A = 3.0, k = glm::two_pi<double>() / 100.0;
     auto f = [&](double x, double z) { return A * std::cos(k * x) + A * std::cos(k * z); };
     const std::string low = addMesh("bump_low", plane(1));
@@ -597,7 +517,7 @@ TEST_CASE("Painter and Unreal targets bake every map they name")
 TEST_CASE("links: a self high projects only onto its own low; unlinked meshes stop occluding")
 {
     newScene();
-    const fs::path dir = tempDir("links");
+    const fs::path dir = tempDir("lila_bakemaps_links");
     // A floor and a smaller lid 0.5 cm above it, both baking onto themselves with rays starting 2 cm out.
     const std::string floor = addMesh("floor", plane(1));
     const std::string lid = addMesh("lid", lifted(plane(1, {0.0f, 0.0f}, {1.0f, 1.0f}, 50.0), 0.5));
@@ -630,7 +550,7 @@ TEST_CASE("links: a self high projects only onto its own low; unlinked meshes st
 TEST_CASE("material slots of one low with overlapping UVs each fill their own texture")
 {
     newScene();
-    const fs::path dir = tempDir("matoverlap");
+    const fs::path dir = tempDir("lila_bakemaps_matoverlap");
     // Four quads, two per material, every quad's UVs covering the whole tile: each texture set overlaps the other.
     geo::Mesh m = plane(2);
     auto uvs = m.cornerAttrs().get<glm::vec2>("uv0");
@@ -668,7 +588,7 @@ TEST_CASE("material slots of one low with overlapping UVs each fill their own te
 TEST_CASE("per-material output: each texture set bakes at its own resolution in one bake")
 {
     newScene();
-    const fs::path dir = tempDir("permat");
+    const fs::path dir = tempDir("lila_bakemaps_permat");
     geo::Mesh a = plane(1);
     scene::materials::assign(a, "M_A", {});
     geo::Mesh b = plane(1);

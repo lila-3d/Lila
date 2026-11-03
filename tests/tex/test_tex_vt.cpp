@@ -1,4 +1,4 @@
-#include "TexTest.h"
+#include "TexPaintTest.h"
 
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
@@ -52,11 +52,7 @@ bool gpuVt()
     return true;
 }
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::Graph& sg() { return scene::Graph::current(); }
-
-void newScene()
+void newSceneWithoutLive()
 {
     ui::texLive::shutdown();
     run("newScene");
@@ -149,13 +145,6 @@ std::vector<uint8_t> settle(const FrameState& s, int w, int h, int maxFrames = 6
     return draw(s, w, h);
 }
 
-std::string addMesh(const std::string& name, geo::Mesh m)
-{
-    scene::Node* n = sg().createNode(*scene::types::find("mesh"), name);
-    sg().setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
-    return n->path();
-}
-
 /** cols x rows quads of size units in the XZ plane facing +Y, quad (c, r) covering UDIM tile 1001 + r * 10 + c. */
 geo::Mesh tileGrid(int cols, int rows, double size)
 {
@@ -188,7 +177,7 @@ TEST_CASE("virtual texture: pages sample like the whole image")
 {
     if (!gpuVt())
         return;
-    newScene();
+    newSceneWithoutLive();
     run("texCreateSet", {{"args", {"Rock"}}, {"resolution", 1024}});
     scene::Node& set = *tex::findSet(sg(), "Rock");
     tex::Graph g = tex::Graph::makeMaterial("Rock");
@@ -239,7 +228,7 @@ TEST_CASE("virtual texture: feedback asks only for visible pages, and memory fol
 {
     if (!gpuVt())
         return;
-    newScene();
+    newSceneWithoutLive();
     run("texCreateSet",
         {{"args", {"Wall"}}, {"settings", {{"width", 4096}, {"height", 4096}, {"tiles", {1001, 1002, 1011, 1012}}}}});
     scene::Node& set = *tex::findSet(sg(), "Wall");
@@ -307,7 +296,7 @@ TEST_CASE("virtual texture: a 60-tile 8K set opens and paints within its budget"
 {
     if (!gpuVt())
         return;
-    newScene();
+    newSceneWithoutLive();
     const size_t budget = size_t(256) << 20;
     vt::setBudget(budget);
     const std::string meshPath = addMesh("HeroMesh", tileGrid(10, 6, 100.0));
@@ -383,7 +372,7 @@ TEST_CASE("texture evaluation: painting re-evaluates only the region the stroke 
     Renderer& r = Renderer::get();
     if (!r.running() && !r.start())
         return;
-    newScene();
+    newSceneWithoutLive();
     setMode("off");
     const std::string meshPath = addMesh("PanelMesh", tileGrid(1, 1, 100.0));
     run("texCreateSet", {{"args", {"Panel"}}, {"resolution", 1024}});
@@ -464,7 +453,7 @@ TEST_CASE("page store: flattened paint lives beside the scene, and a save rewrit
     Renderer& r = Renderer::get();
     if (!r.running() && !r.start())
         return;
-    newScene();
+    newSceneWithoutLive();
     const std::string meshPath = addMesh("PanelMesh", tileGrid(1, 1, 100.0));
     run("texCreateSet", {{"args", {"Panel"}}, {"resolution", 4096}});
     scene::Node* set = tex::findSet(sg(), "Panel");
@@ -521,7 +510,7 @@ TEST_CASE("page store: flattened paint lives beside the scene, and a save rewrit
     const auto repainted = render::paint::pageBytes(set->id(), "P");
 
     // Reopened, the pixels come back from the store.
-    newScene();
+    newSceneWithoutLive();
     run("openScene", {{"args", {file.generic_string()}}, {"force", true}});
     mainq::drain();
     set = tex::findSet(sg(), "Panel");
@@ -531,7 +520,7 @@ TEST_CASE("page store: flattened paint lives beside the scene, and a save rewrit
 
     // Old scenes kept pixels inline: a document written outside a save still loads.
     const json doc = io::serialize(dir, false);
-    newScene();
+    newSceneWithoutLive();
     io::deserialize(doc, dir);
     mainq::drain();
     set = tex::findSet(sg(), "Panel");

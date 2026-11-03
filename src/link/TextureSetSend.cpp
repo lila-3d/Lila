@@ -18,8 +18,6 @@ namespace lila::link
 {
 namespace
 {
-constexpr const char* kSetPrefFile = "unreal";
-
 scene::Node* findNode(scene::Graph& g, const std::string& path)
 {
     try
@@ -58,7 +56,7 @@ void mappedUsers(scene::Graph& g, const std::string& slot, json& slotMeshes, jso
     }
 }
 
-json rememberedSets() { return PrefStore::get().value<json>(kSetPrefFile, "/textureSets", json::array()); }
+json rememberedSets() { return PrefStore::get().value<json>(kUnrealPrefFile, "/textureSets", json::array()); }
 
 void rememberSet(const std::string& name)
 {
@@ -68,7 +66,7 @@ void rememberSet(const std::string& name)
     if (std::ranges::find(sets, json(name)) == sets.end())
     {
         sets.push_back(name);
-        PrefStore::get().set(kSetPrefFile, "/textureSets", sets);
+        PrefStore::get().set(kUnrealPrefFile, "/textureSets", sets);
     }
 }
 
@@ -92,8 +90,8 @@ Prepared prepare(scene::Graph& g, scene::Node& set, const json& flags, bool all)
     const std::string slot = slotOf(set);
     PrefStore& prefs = PrefStore::get();
     json options = json::object();
-    options["folder"] = flags.contains("folder") ? flags["folder"] : json(prefs.value<std::string>(kSetPrefFile, "/textureFolder", "/Game/Textures"));
-    options["materialParent"] = flags.contains("materialParent") ? flags["materialParent"] : json(prefs.value<std::string>(kSetPrefFile, "/materialParent", ""));
+    options["folder"] = flags.contains("folder") ? flags["folder"] : json(prefs.value<std::string>(kUnrealPrefFile, "/textureFolder", "/Game/Textures"));
+    options["materialParent"] = flags.contains("materialParent") ? flags["materialParent"] : json(prefs.value<std::string>(kUnrealPrefFile, "/materialParent", ""));
     for (const char* k : {"materialFolder", "save"})
         if (flags.contains(k))
             options[k] = flags[k];

@@ -7,6 +7,8 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "ui/Actions.h"
+#include "ui/ToolColors.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QApplication>
 #include <QTimer>
@@ -19,23 +21,16 @@ namespace lila::ui
 namespace
 {
 using geo::Index;
-using json = nlohmann::json;
 
-constexpr double kPickRadius = 12.0; // px
-constexpr const char* kPrefs = "general";
 constexpr const char* kFacesPref = "/retopoPoles/targetFaces";
 
 // Overlay colours are sRGB; the 3D streams take linear. Poles are data, so they are coloured by valence.
 const glm::vec4 kThree(0.25f, 0.72f, 0.95f, 1.0f);
 const glm::vec4 kFive(0.98f, 0.58f, 0.2f, 1.0f);
 const glm::vec4 kOther(0.9f, 0.35f, 0.9f, 1.0f);
-const glm::vec4 kRim(0.08f, 0.08f, 0.08f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kPreviewLinear(0.3f, 0.3f, 0.3f, 1.0f);
 
 glm::vec4 poleColor(int valence) { return valence == 3 ? kThree : valence == 5 ? kFive : kOther; }
-
-double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 
 glm::dvec3 transformPoint(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 } // namespace
@@ -48,9 +43,9 @@ RetopoPolesTool::~RetopoPolesTool()
         mJob.wait();
 }
 
-int RetopoPolesTool::targetFaces() { return std::clamp(PrefStore::get().value<int>(kPrefs, kFacesPref, 500), 50, 200000); }
+int RetopoPolesTool::targetFaces() { return std::clamp(PrefStore::get().value<int>("general", kFacesPref, 500), 50, 200000); }
 
-void RetopoPolesTool::setTargetFaces(int faces) { PrefStore::get().set(kPrefs, kFacesPref, std::clamp(faces, 50, 200000)); }
+void RetopoPolesTool::setTargetFaces(int faces) { PrefStore::get().set("general", kFacesPref, std::clamp(faces, 50, 200000)); }
 
 void RetopoPolesTool::activate()
 {
@@ -212,7 +207,7 @@ bool RetopoPolesTool::visible(const glm::dvec3& p, const ViewInfo& view) const
 int RetopoPolesTool::pick(QPointF px, const ViewInfo& view) const
 {
     int best = -1;
-    double bestD = kPickRadius;
+    double bestD = kPickRadiusPx;
     for (size_t i = 0; i < mPoles.size(); ++i)
         if (auto s = view.project(mPoles[i].position); s && distPx(*s, px) < bestD && visible(mPoles[i].position, view))
         {
@@ -447,7 +442,7 @@ void RetopoPolesTool::draw(render::FrameState& s, OverlayPainter& p, const ViewI
         if (auto sp = view.project(pole.position))
         {
             bool hot = int(i) == mHover || int(i) == mDrag || int(i) == mDragMirror;
-            p.disc(*sp, hot ? 8.0f : 6.5f, hot ? kHot : kRim, 20);
+            p.disc(*sp, hot ? 8.0f : 6.5f, hot ? kHotColor : kHandleRim, 20);
             p.disc(*sp, hot ? 6.0f : 4.5f, poleColor(pole.valence), 20);
         }
     }

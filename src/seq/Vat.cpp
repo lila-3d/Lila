@@ -56,15 +56,8 @@ void dropDebris(geo::Mesh& m)
         m = geo::extractFaces(m, keep);
 }
 
-std::string fileSafe(std::string s)
-{
-    for (char& c : s)
-        if (c == ':' || c == '|' || c == '/' || c == '\\')
-            c = '_';
-    return s;
-}
 
-std::string baseName(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const std::string& pattern)
+std::string patternedBaseName(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const std::string& pattern)
 {
     const scene::Node* n = meshes.empty() ? nullptr : g.node(meshes.front());
     std::string name = n ? n->name() : std::string("mesh");
@@ -239,7 +232,7 @@ std::string base(const VatResult& r) { return r.metadata.value("name", std::stri
 VatResult planned(scene::Graph& g, const std::vector<scene::NodeId>& meshes, const VatOptions& o)
 {
     checkOptions(o);
-    const std::string base = baseName(g, meshes, o.name);
+    const std::string base = patternedBaseName(g, meshes, o.name);
     const fs::path folder(o.folder);
     VatResult r;
     r.mesh = folder / (base + ".fbx");

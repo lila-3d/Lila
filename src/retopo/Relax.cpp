@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Normals.h"
+#include "retopo/Internal.h"
 
 #include <tbb/parallel_for.h>
 
@@ -177,26 +178,6 @@ Crease classify(const geo::Mesh& m, const std::vector<glm::dvec3>& fn, const Rel
     return out;
 }
 
-glm::dvec3 closestOnSegments(const glm::dvec3& x, const std::vector<std::array<glm::dvec3, 2>>& segs)
-{
-    glm::dvec3 best = x;
-    double bestD = std::numeric_limits<double>::max();
-    for (const auto& [a, b] : segs)
-    {
-        const glm::dvec3 ab = b - a;
-        const double len2 = glm::dot(ab, ab);
-        const double t = len2 > 0.0 ? std::clamp(glm::dot(x - a, ab) / len2, 0.0, 1.0) : 0.0;
-        const glm::dvec3 q = a + ab * t;
-        const double d = glm::dot(x - q, x - q);
-        if (d < bestD)
-        {
-            bestD = d;
-            best = q;
-        }
-    }
-    return best;
-}
-
 /** Puts back the points of faces that a step folded over or collapsed, until none are left. */
 void undoFolds(geo::Mesh& mesh, const std::vector<glm::dvec3>& before, const std::vector<uint8_t>& moved,
                const std::vector<glm::dvec3>& startNormal)
@@ -291,7 +272,7 @@ void relaxMesh(geo::Mesh& mesh, const geo::MeshBvh* target, const RelaxOptions& 
                 const glm::dvec3 t = vb / std::max(lb, 1e-300) - va / std::max(la, 1e-300);
                 const double lt = glm::length(t);
                 if (lt > 0.0)
-                    next[p] = closestOnSegments(at + t / lt * (0.5 * (lb - la) * strength), crease.segments[p]);
+                    next[p] = detail::closestOnSegments(at + t / lt * (0.5 * (lb - la) * strength), crease.segments[p]);
                 return;
             }
             const glm::dvec3 nn(normals[p]);

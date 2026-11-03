@@ -13,8 +13,6 @@
 
 namespace lila::gn::nodes::data
 {
-using D3 = glm::dvec3;
-
 /** Geometry read once per path, reader and modification time. Throws ExecError naming the node when the file is missing. */
 GeometryPtr cachedRead(const std::string& label, const std::string& path, const std::string& kind, const std::function<GeometryPtr()>& read)
 {

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/Mesh.h"
 #include "scene/Components.h"
@@ -16,17 +18,12 @@
 using namespace lila;
 using namespace lila::scene;
 using hud::PolyCount;
+using namespace testutil;
 
 namespace
 {
-json run(const std::string& name, const json& call = json::object()) { return ops::execute(name, call); }
-
-NodeId idOf(const std::string& name) { return Graph::current().find(name)->id(); }
-
-std::string made(const json& r) { return (r.is_array() ? r[0] : r).get<std::string>(); }
-
 /** Two quads sharing an edge, uv0 laid out side by side; seam splits the shared edge's uvs. */
-std::shared_ptr<geo::Mesh> twoQuads(bool seam)
+std::shared_ptr<geo::Mesh> sharedTwoQuads(bool seam)
 {
     auto m = std::make_shared<geo::Mesh>();
     for (int i = 0; i < 3; ++i)
@@ -48,7 +45,7 @@ std::shared_ptr<geo::Mesh> twoQuads(bool seam)
     return m;
 }
 
-PolyCount cube() { return {8, 12, 6, 12, 0}; }
+PolyCount cubeCounts() { return {8, 12, 6, 12, 0}; }
 
 PolyCount withoutUvs(PolyCount c)
 {
@@ -59,10 +56,10 @@ PolyCount withoutUvs(PolyCount c)
 
 TEST_CASE("hud uv count: one per point per distinct uv")
 {
-    CHECK(hud::countUvs(*twoQuads(false), "uv0") == 6);
-    CHECK(hud::countUvs(*twoQuads(true), "uv0") == 8);
-    CHECK(hud::countUvs(*twoQuads(false), "uv1") == 0);
-    PolyCount c = hud::countMesh(*twoQuads(true), "uv0");
+    CHECK(hud::countUvs(*sharedTwoQuads(false), "uv0") == 6);
+    CHECK(hud::countUvs(*sharedTwoQuads(true), "uv0") == 8);
+    CHECK(hud::countUvs(*sharedTwoQuads(false), "uv1") == 0);
+    PolyCount c = hud::countMesh(*sharedTwoQuads(true), "uv0");
     CHECK(c == PolyCount{6, 7, 2, 4, 8});
 }
 
@@ -78,7 +75,7 @@ TEST_CASE("hud poly count: scene, selected objects and selected components")
     hud::PolyStats s = hud::polyStats(g);
     CHECK(withoutUvs(s.scene) == PolyCount{24, 36, 18, 36, 0});
     CHECK(s.scene.uvs == 3 * cubeUvs);
-    CHECK(withoutUvs(s.objects) == cube());
+    CHECK(withoutUvs(s.objects) == cubeCounts());
     CHECK(s.components == PolyCount{});
 
     SUBCASE("hidden objects leave every column, also when hidden through a parent")
@@ -131,7 +128,7 @@ TEST_CASE("hud poly count: scene, selected objects and selected components")
     SUBCASE("a mesh isolated by components counts only the faces shown, and only the selected components on them")
     {
         NodeId plane = g.createNode(*types::find("mesh"), "TwoQuads")->id();
-        g.setValue({plane, MeshNode::kInMesh, -1}, MeshPtr(twoQuads(true)));
+        g.setValue({plane, MeshNode::kInMesh, -1}, MeshPtr(sharedTwoQuads(true)));
         g.evaluate();
         isolation::Set iso;
         iso.nodes.insert(plane);
@@ -169,7 +166,7 @@ TEST_CASE("hud poly count: instances count once each; a reshaped snapshot carrie
     Graph& g = Graph::current();
     std::string a = made(run("createNode", {{"args", {"mesh"}}}));
     std::string b = made(run("createNode", {{"args", {"mesh"}}}));
-    std::shared_ptr<geo::Mesh> shared = twoQuads(false);
+    std::shared_ptr<geo::Mesh> shared = sharedTwoQuads(false);
     for (const std::string& n : {a, b})
         g.setValue({idOf(n), MeshNode::kInMesh, -1}, MeshPtr(shared));
     g.evaluate();
@@ -178,7 +175,7 @@ TEST_CASE("hud poly count: instances count once each; a reshaped snapshot carrie
     CHECK_FALSE(s.pending);
 
     // Same element counts, new uvs: shown provisionally (as during a drag), exact once the snapshot holds still.
-    g.setValue({idOf(a), MeshNode::kInMesh, -1}, MeshPtr(twoQuads(true)));
+    g.setValue({idOf(a), MeshNode::kInMesh, -1}, MeshPtr(sharedTwoQuads(true)));
     g.evaluate();
     s = hud::polyStats(g);
     CHECK(s.pending);

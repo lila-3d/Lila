@@ -2,6 +2,8 @@
 
 #include <atomic>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -12,16 +14,7 @@
 
 using namespace lila;
 using namespace lila::scene;
-
-namespace
-{
-json run(const char* name, json call = json::object())
-{
-    return ops::execute(name, call);
-}
-
-glm::dvec3 vec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
-} // namespace
+using namespace testutil;
 
 TEST_CASE("names are unique and undo restores them")
 {

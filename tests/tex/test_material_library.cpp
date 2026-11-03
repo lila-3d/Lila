@@ -20,20 +20,10 @@ namespace
 {
 namespace fs = std::filesystem;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 void registerLibrary()
 {
     if (!ops::find("materialLibrary"))
         lib::registerCommands();
-}
-
-fs::path tempDir(const std::string& name)
-{
-    fs::path d = fs::temp_directory_path() / "lila_tex_tests" / name;
-    fs::remove_all(d);
-    fs::create_directories(d);
-    return d;
 }
 
 /** A material graph with constant channel values on its Material Output. */

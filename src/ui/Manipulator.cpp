@@ -22,7 +22,11 @@
 #include "ui/Isolate.h"
 #include "ui/SurfaceSnap.h"
 #include "ui/Theme.h"
+#include "ui/ToolColors.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ViewportDisplay.h"
+#include "ui/ViewportToolMath.h"
 
 #include <QKeyEvent>
 
@@ -42,18 +46,13 @@ using scene::NodeId;
 using scene::Transform;
 using H = Manipulator::Handle;
 
-constexpr double kPi = std::numbers::pi;
 constexpr int kSavedAttrs[] = {Transform::kTranslate,           Transform::kRotate,     Transform::kScale,
                                Transform::kRotatePivot,         Transform::kRotatePivotTranslate, Transform::kScalePivot,
                                Transform::kScalePivotTranslate, Transform::kPivotOrient};
 constexpr int kSavedCount = int(std::size(kSavedAttrs));
 
-const glm::vec4 kGray(0.70f, 0.70f, 0.70f, 1.0f);
-const glm::vec4 kHot(1.0f, 1.0f, 1.0f, 1.0f);
 const glm::vec4 kTrail(0.95f, 0.95f, 0.95f, 0.8f);
 const glm::vec4 kLocked(0.42f, 0.42f, 0.42f, 0.55f);
-
-double pref(const char* key, double fallback) { return PrefStore::get().value<double>("general", key, fallback); }
 
 scene::Space spaceFor(Tool t)
 {
@@ -98,7 +97,7 @@ struct ComponentPivotAction final : UndoAction
     void redo() override { gComponentPivot = after; }
 };
 
-int axisOf(H h)
+int handleAxis(H h)
 {
     switch (h)
     {
@@ -121,14 +120,6 @@ Tool pivotTool(bool pivotEdit, Tool t)
 
 double dist(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 
-double segmentDistance(QPointF p, QPointF a, QPointF b)
-{
-    QPointF d = b - a;
-    double len2 = QPointF::dotProduct(d, d);
-    double t = len2 > 0 ? std::clamp(QPointF::dotProduct(p - a, d) / len2, 0.0, 1.0) : 0.0;
-    return dist(p, a + d * t);
-}
-
 bool insideConvex(QPointF p, const std::vector<QPointF>& poly)
 {
     int sign = 0;
@@ -150,10 +141,10 @@ double screenAngle(QPointF center, QPointF p) { return std::atan2(-(p.y() - cent
 
 double wrapPi(double a)
 {
-    while (a > kPi)
-        a -= 2 * kPi;
-    while (a < -kPi)
-        a += 2 * kPi;
+    while (a > std::numbers::pi)
+        a -= 2 * std::numbers::pi;
+    while (a < -std::numbers::pi)
+        a += 2 * std::numbers::pi;
     return a;
 }
 
@@ -162,7 +153,7 @@ using gizmo::rayPlane;
 /** The frame axes a handle moves along: one for an axis, two for a plane, all three for the center. */
 glm::dvec3 moveMask(H h)
 {
-    int ai = axisOf(h);
+    int ai = handleAxis(h);
     glm::dvec3 mask(1.0);
     if (h >= H::X && h <= H::Z)
         mask = glm::dvec3(0.0), mask[ai] = 1.0;
@@ -206,13 +197,7 @@ uint8_t channelsAlong(Graph& g, NodeId id, Tool t, const glm::dvec3& dir, int fr
     return bits;
 }
 
-json vecJson(const glm::dvec3& v) { return json::array({tidy(v.x), tidy(v.y), tidy(v.z)}); }
-
-std::string nameOf(NodeId id)
-{
-    scene::Node* n = Graph::current().node(id);
-    return n ? n->path() : std::string();
-}
+json tidyVecJson(const glm::dvec3& v) { return json::array({tidy(v.x), tidy(v.y), tidy(v.z)}); }
 
 /** The pivot's axes are off the object's own, and Bake Pivot can make them the object's without touching shared data. */
 bool canBakePivot(Graph& g, NodeId id)
@@ -423,7 +408,7 @@ void Manipulator::refreshLocks(Tool t)
 
 bool Manipulator::handleLocked(H h) const
 {
-    int ai = axisOf(h);
+    int ai = handleAxis(h);
     if (h >= H::X && h <= H::Z)
         return mLockedAxes[ai];
     if (isPlane(h))
@@ -454,7 +439,7 @@ bool Manipulator::visible()
 
 double Manipulator::handleLength() const
 {
-    return pref("/manipulator/size", 100.0) * mView.unitsPerPixel(mPivot);
+    return generalPref("/manipulator/size", 100.0) * mView.unitsPerPixel(mPivot);
 }
 
 // ------------------------------------------------------------------- picking
@@ -470,7 +455,7 @@ std::vector<QPointF> Manipulator::ringPoints(int i, bool frontOnly) const
     const int n = 72;
     for (int k = 0; k <= n; ++k)
     {
-        double t = 2 * kPi * k / n;
+        double t = 2 * std::numbers::pi * k / n;
         glm::dvec3 dir = u * std::cos(t) + v * std::sin(t);
         if (frontOnly && glm::dot(dir, toEye) < -0.02)
         {
@@ -498,7 +483,7 @@ H Manipulator::pick(QPointF px) const
         if (std::abs(px.x() - c->x()) <= 8 && std::abs(px.y() - c->y()) <= 8)
             return H::Center;
         for (int i = 0; i < 3; ++i)
-            if (auto tip = mView.project(mPivot + axis(i) * L); tip && segmentDistance(px, *c, *tip) < grab)
+            if (auto tip = mView.project(mPivot + axis(i) * L); tip && segmentDistPx(px, *c, *tip) < grab)
                 return H(int(H::X) + i);
         return H::None;
     }
@@ -526,7 +511,7 @@ H Manipulator::pick(QPointF px) const
             auto tip = mView.project(mPivot + axis(i) * L);
             if (!tip || dist(*tip, *c) < 12)
                 continue;
-            double d = segmentDistance(px, *c, *tip);
+            double d = segmentDistPx(px, *c, *tip);
             if (d < bestD)
             {
                 bestD = d;
@@ -546,7 +531,7 @@ H Manipulator::pick(QPointF px) const
         {
             if (std::isnan(pts[k].x()) || std::isnan(pts[k + 1].x()))
                 continue;
-            double d = segmentDistance(px, pts[k], pts[k + 1]);
+            double d = segmentDistPx(px, pts[k], pts[k + 1]);
             if (d < bestD)
             {
                 bestD = d;
@@ -556,7 +541,7 @@ H Manipulator::pick(QPointF px) const
     }
     if (best != H::None)
         return best;
-    double ringPx = 0.85 * pref("/manipulator/size", 100.0);
+    double ringPx = 0.85 * generalPref("/manipulator/size", 100.0);
     double r = dist(px, *c);
     if (std::abs(r - ringPx * 1.18) < grab)
         return H::ViewRing;
@@ -642,7 +627,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     // Ctrl on an axis isolates it away, like Maya: move or scale in the plane of the other two.
     const bool ctrlPlane = (mods & Qt::ControlModifier) && h >= H::X && h <= H::Z && effectiveTool() != Tool::Rotate;
     if (ctrlPlane)
-        h = H(int(H::PlaneYZ) + axisOf(h));
+        h = H(int(H::PlaneYZ) + handleAxis(h));
     if (axisFromDrag)
         h = effectiveTool() == Tool::Rotate ? H::Free : H::Center;
     else if (button == Qt::MiddleButton)
@@ -762,7 +747,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
     Tool t = pivotTool(d.pivotEdit, d.tool);
     if (t == Tool::Move)
     {
-        int ai = axisOf(h);
+        int ai = handleAxis(h);
         if (h >= H::X && h <= H::Z)
             d.startHit.x = lineParam(mPivot, axis(ai), o, dir);
         else
@@ -780,7 +765,7 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
         if (h >= H::X && h <= H::Z)
         {
             // Remember where on the ring we grabbed, for edge-on drags that pull along its tangent.
-            auto pts = ringPoints(axisOf(h), true);
+            auto pts = ringPoints(handleAxis(h), true);
             double best = 1e30;
             int bestK = 0;
             for (size_t k = 0; k < pts.size(); ++k)
@@ -789,8 +774,8 @@ bool Manipulator::press(QPointF px, Qt::MouseButton button, Qt::KeyboardModifier
                     best = dist(pts[k], px);
                     bestK = int(k);
                 }
-            double tparam = 2 * kPi * bestK / 72.0;
-            int i = axisOf(h);
+            double tparam = 2 * std::numbers::pi * bestK / 72.0;
+            int i = handleAxis(h);
             d.startHit = mPivot + (axis((i + 1) % 3) * std::cos(tparam) + axis((i + 2) % 3) * std::sin(tparam)) * handleLength() * 0.85;
         }
     }
@@ -852,7 +837,7 @@ void Manipulator::pickAxisFromDrag(QPointF px)
 
 glm::dvec3 Manipulator::snapGrid(const glm::dvec3& p, const glm::dvec3& mask) const
 {
-    double step = pref("/grid/spacing", 10.0);
+    double step = generalPref("/grid/spacing", 10.0);
     glm::dvec3 out = p;
     for (int i = 0; i < 3; ++i)
         if (mask[i] != 0.0)
@@ -884,7 +869,7 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
     mView.ray(cur, o, dir);
     Tool t = pivotTool(d.pivotEdit, d.tool);
     H h = d.handle;
-    int ai = axisOf(h);
+    int ai = handleAxis(h);
     bool worldFrame = d.frame == glm::dmat3(1.0);
 
     if (t == Tool::Move)
@@ -990,7 +975,7 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
                     {
                         QPointF sd = *g1 - *g0;
                         double len = std::hypot(sd.x(), sd.y());
-                        double ringPx = 0.85 * pref("/manipulator/size", 100.0);
+                        double ringPx = 0.85 * generalPref("/manipulator/size", 100.0);
                         if (len > 1e-6)
                             theta = QPointF::dotProduct(cur - d.pressPx, sd / len) / ringPx;
                     }
@@ -1004,7 +989,7 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
             double deg = glm::degrees(unwrapped);
             if (gridSnap)
             {
-                double step = pref("/manipulator/rotateStep", 15.0);
+                double step = generalPref("/manipulator/rotateStep", 15.0);
                 deg = std::round(deg / step) * step;
             }
             else if (inc.enabled)
@@ -1327,18 +1312,18 @@ void Manipulator::commit()
     {
         if (d.components)
         {
-            json pivot = vecJson(d.startPivot);
+            json pivot = tidyVecJson(d.startPivot);
             if (d.alongNormal)
             {
                 const glm::dvec3 uvn = glm::transpose(d.frame) * d.moveDelta;
                 if (std::abs(uvn.x) <= 1e-9 && std::abs(uvn.y) <= 1e-9 && std::abs(uvn.z) > 1e-9)
                     ops::execute("moveComponents", {{"normal", tidy(uvn.z)}}, CallSource::UI);
                 else if (glm::length(uvn) > 1e-9)
-                    ops::execute("moveComponents", {{"uvn", vecJson(uvn)}}, CallSource::UI);
+                    ops::execute("moveComponents", {{"uvn", tidyVecJson(uvn)}}, CallSource::UI);
             }
             else if (t == Tool::Move && glm::length(d.moveDelta) > 1e-9)
             {
-                json args = {{"by", vecJson(d.moveDelta)}};
+                json args = {{"by", tidyVecJson(d.moveDelta)}};
                 if (d.conform)
                 {
                     args["onto"] = json::array();
@@ -1355,13 +1340,13 @@ void Manipulator::commit()
             else if (t == Tool::Rotate && std::abs(d.angle) > 1e-9)
             {
                 glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.rotation), scene::RotateOrder::XYZ);
-                ops::execute("rotateComponents", {{"by", vecJson(euler)}, {"pivot", pivot}}, CallSource::UI);
+                ops::execute("rotateComponents", {{"by", tidyVecJson(euler)}, {"pivot", pivot}}, CallSource::UI);
             }
             else if (t == Tool::Scale && glm::length(d.scale - glm::dvec3(1.0)) > 1e-9)
             {
-                json args = {{"by", vecJson(d.scale)}, {"pivot", pivot}};
+                json args = {{"by", tidyVecJson(d.scale)}, {"pivot", pivot}};
                 if (glm::length(glm::dvec3(d.frame[0]) - glm::dvec3(1, 0, 0)) + glm::length(glm::dvec3(d.frame[1]) - glm::dvec3(0, 1, 0)) > 1e-9)
-                    args["orient"] = vecJson(scene::matrixToEuler(d.frame, scene::RotateOrder::XYZ));
+                    args["orient"] = tidyVecJson(scene::matrixToEuler(d.frame, scene::RotateOrder::XYZ));
                 ops::execute("scaleComponents", args, CallSource::UI);
             }
             return;
@@ -1378,13 +1363,13 @@ void Manipulator::commit()
                 NodeId id = d.saved[i].id;
                 if (scene::rig::isJoint(*g.node(id)))
                 {
-                    ops::execute("setPivot", {{"args", {names[i]}}, {"orient", vecJson(scene::rig::turnedJointOrient(g, id, r))}}, CallSource::UI);
+                    ops::execute("setPivot", {{"args", {names[i]}}, {"orient", tidyVecJson(scene::rig::turnedJointOrient(g, id, r))}}, CallSource::UI);
                     continue;
                 }
                 glm::dmat3 local = glm::transpose(scene::xformops::frame(g, id, scene::Space::Object)) * r * d.startPivotFrames[i];
                 glm::dvec3 hint = g.node(id)->as<glm::dvec3>(Transform::kPivotOrient);
                 glm::dvec3 euler = scene::xformops::closestEuler(local, scene::RotateOrder::XYZ, hint);
-                ops::execute("setPivot", {{"args", {names[i]}}, {"orient", vecJson(euler)}}, CallSource::UI);
+                ops::execute("setPivot", {{"args", {names[i]}}, {"orient", tidyVecJson(euler)}}, CallSource::UI);
             }
         }
         else if (d.pivotEdit)
@@ -1393,7 +1378,7 @@ void Manipulator::commit()
                 return;
             UndoChunk chunk("Move Pivot");
             for (size_t i = 0; i < d.saved.size(); ++i)
-                ops::execute("setPivot", {{"args", {names[i]}}, {"position", vecJson(d.startPivots[i] + d.moveDelta)}}, CallSource::UI);
+                ops::execute("setPivot", {{"args", {names[i]}}, {"position", tidyVecJson(d.startPivots[i] + d.moveDelta)}}, CallSource::UI);
         }
         else if (t == Tool::Move)
         {
@@ -1406,12 +1391,12 @@ void Manipulator::commit()
             std::optional<UndoChunk> chunk;
             if (!centred.empty() || !d.alignRotations.empty())
                 chunk.emplace("Move");
-            ops::execute("move", {{"args", names}, {"by", vecJson(d.moveDelta)}}, CallSource::UI);
+            ops::execute("move", {{"args", names}, {"by", tidyVecJson(d.moveDelta)}}, CallSource::UI);
             for (size_t i = 0; i < d.alignRotations.size() && i < names.size(); ++i)
                 if (glm::angle(d.alignRotations[i]) > 1e-9)
                 {
                     glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.alignRotations[i]), scene::RotateOrder::XYZ);
-                    ops::execute("rotate", {{"args", {names[i]}}, {"by", vecJson(euler)}}, CallSource::UI);
+                    ops::execute("rotate", {{"args", {names[i]}}, {"by", tidyVecJson(euler)}}, CallSource::UI);
                 }
             if (!centred.empty())
                 ops::execute("centerJoint", {{"args", centred}}, CallSource::UI);
@@ -1421,13 +1406,13 @@ void Manipulator::commit()
             if (std::abs(d.angle) < 1e-9)
                 return;
             glm::dvec3 euler = scene::matrixToEuler(glm::mat3_cast(d.rotation), scene::RotateOrder::XYZ);
-            ops::execute("rotate", {{"args", names}, {"by", vecJson(euler)}}, CallSource::UI);
+            ops::execute("rotate", {{"args", names}, {"by", tidyVecJson(euler)}}, CallSource::UI);
         }
         else
         {
             if (glm::length(d.scale - glm::dvec3(1.0)) < 1e-9)
                 return;
-            ops::execute("scale", {{"args", names}, {"by", vecJson(d.scale)}}, CallSource::UI);
+            ops::execute("scale", {{"args", names}, {"by", tidyVecJson(d.scale)}}, CallSource::UI);
         }
     }
     catch (const CommandError& e)
@@ -1499,7 +1484,7 @@ bool Manipulator::keyPress(QKeyEvent* e)
         if (!ok)
             return true;
         Tool t = pivotTool(d.pivotEdit, d.tool);
-        int ai = axisOf(d.handle);
+        int ai = handleAxis(d.handle);
         if (t == Tool::Move)
         {
             glm::dvec3 dir = ai >= 0 && !isPlane(d.handle) ? d.frame[ai] : glm::length(d.moveDelta) > 1e-9 ? glm::normalize(d.moveDelta) : d.frame[0];
@@ -1539,9 +1524,9 @@ glm::vec4 Manipulator::handleColor(H h, int axisIndex) const
     if (axisIndex >= 0 && viewportDisplay::accentColors(viewportDisplay::kManipulatorAxisColors))
     {
         glm::vec4 c(viewportDisplay::axisColor(axisIndex), 1.0f);
-        return hot ? glm::mix(c, themeSrgb("manipActive", kHot), 0.55f) : c;
+        return hot ? glm::mix(c, themeSrgb("manipActive", kHotColor), 0.55f) : c;
     }
-    return hot ? themeSrgb("manipActive", kHot) : themeSrgb("manipNeutral", kGray);
+    return hot ? themeSrgb("manipActive", kHotColor) : themeSrgb("manipNeutral", kHandleGray);
 }
 
 void Manipulator::draw(OverlayPainter& p)
@@ -1617,7 +1602,7 @@ void Manipulator::drawMove(OverlayPainter& p)
         H h = H(int(H::X) + i);
         if (active != H::None && active != h && active != H::Center && !isPlane(active))
             continue;
-        if (isPlane(active) && axisOf(active) == i)
+        if (isPlane(active) && handleAxis(active) == i)
             continue;
         auto tip = mView.project(mPivot + axis(i) * L);
         if (!tip || dist(*tip, *c) < 12)
@@ -1643,7 +1628,7 @@ void Manipulator::drawMove(OverlayPainter& p)
         p.polyline({*c + QPointF(0, -7), *c + QPointF(0, 7)}, 1.5f, centerCol);
         std::vector<QPointF> ring;
         for (int k = 0; k < 24; ++k)
-            ring.push_back(*c + QPointF(std::cos(k * kPi / 12), std::sin(k * kPi / 12)) * 9.0);
+            ring.push_back(*c + QPointF(std::cos(k * std::numbers::pi / 12), std::sin(k * std::numbers::pi / 12)) * 9.0);
         p.polyline(ring, 1.5f, centerCol, true);
     }
     else
@@ -1659,7 +1644,7 @@ void Manipulator::drawRotate(OverlayPainter& p)
     if (!c)
         return;
     H active = mDrag ? mDrag->handle : H::None;
-    double ringPx = 0.85 * pref("/manipulator/size", 100.0);
+    double ringPx = 0.85 * generalPref("/manipulator/size", 100.0);
     bool pivotMode = mDrag ? mDrag->pivotEdit : tools::pivotEdit();
     auto stroke = [&](const std::vector<QPointF>& pts, float w, const glm::vec4& col, bool closed) {
         if (pivotMode)
@@ -1670,7 +1655,7 @@ void Manipulator::drawRotate(OverlayPainter& p)
 
     std::vector<QPointF> circle;
     for (int k = 0; k < 64; ++k)
-        circle.push_back(*c + QPointF(std::cos(k * kPi / 32), std::sin(k * kPi / 32)) * ringPx);
+        circle.push_back(*c + QPointF(std::cos(k * std::numbers::pi / 32), std::sin(k * std::numbers::pi / 32)) * ringPx);
     if (active == H::None || active == H::Free)
         stroke(circle, mHover == H::Free || active == H::Free ? 1.5f : 1.0f, {0.6f, 0.6f, 0.6f, 0.35f}, true);
 
@@ -1702,7 +1687,7 @@ void Manipulator::drawRotate(OverlayPainter& p)
     {
         std::vector<QPointF> outer;
         for (int k = 0; k < 64; ++k)
-            outer.push_back(*c + QPointF(std::cos(k * kPi / 32), std::sin(k * kPi / 32)) * ringPx * 1.18);
+            outer.push_back(*c + QPointF(std::cos(k * std::numbers::pi / 32), std::sin(k * std::numbers::pi / 32)) * ringPx * 1.18);
         stroke(outer, mHover == H::ViewRing || active == H::ViewRing ? 3.0f : 1.5f, handleColor(H::ViewRing, -1), true);
     }
 
@@ -1738,7 +1723,7 @@ void Manipulator::drawScale(OverlayPainter& p)
     for (int i = 0; i < 3; ++i)
     {
         H h = H(int(H::X) + i);
-        if (active != H::None && active != h && active != H::Center && !(isPlane(active) && axisOf(active) != i))
+        if (active != H::None && active != h && active != H::Center && !(isPlane(active) && handleAxis(active) != i))
             continue;
         auto tip = mView.project(mPivot + axis(i) * L * std::clamp(s[i], 0.05, 20.0));
         if (!tip || dist(*tip, *c) < 12)
@@ -1763,7 +1748,7 @@ QString Manipulator::readout() const
     QString text;
     if (t == Tool::Move)
     {
-        int ai = axisOf(d.handle);
+        int ai = handleAxis(d.handle);
         if (d.handle >= H::X && d.handle <= H::Z)
         {
             double signedLen = glm::dot(d.moveDelta, d.frame[ai]);

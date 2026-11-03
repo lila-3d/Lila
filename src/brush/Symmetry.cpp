@@ -2,13 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace lila::brush
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-
 glm::dvec3 reflectVector(const geo::SymmetryPlane& plane, const glm::dvec3& v) { return v - 2.0 * glm::dot(v, plane.normal) * plane.normal; }
 
 glm::dvec3 rotate(const glm::dvec3& v, const glm::dvec3& axis, double c, double s)
@@ -55,7 +54,7 @@ std::vector<Dab> radialDabs(const Dab& d, const Radial& radial)
     axis[std::clamp(radial.axis, 0, 2)] = 1.0;
     for (int k = 1; k < radial.count; ++k)
     {
-        out.push_back(rotateDab(d, axis, 2.0 * kPi * k / radial.count));
+        out.push_back(rotateDab(d, axis, 2.0 * std::numbers::pi * k / radial.count));
         out.back().copy = uint32_t(k);
     }
     return out;

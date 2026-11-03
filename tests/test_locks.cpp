@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "io/SceneFile.h"
@@ -14,15 +16,12 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-glm::dvec3 vec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
-
-fs::path freshDir(const char* name)
+fs::path lockDir(const char* name)
 {
     fs::path dir = fs::temp_directory_path() / "lila_tests" / "locks" / name;
     std::error_code ec;
@@ -98,7 +97,7 @@ TEST_CASE("rotatedEuler: an object-space turn about X changes only rotateX in XY
 
 TEST_CASE("locks survive save and load, binary and ASCII, and duplicate")
 {
-    fs::path dir = freshDir("roundtrip");
+    fs::path dir = lockDir("roundtrip");
     for (const char* file : {"locked.lila", "locked.lilaa"})
     {
         run("newScene");
@@ -151,7 +150,7 @@ TEST_CASE("flushUndo drops the past, the future or both")
 
 TEST_CASE("flushing the past keeps a saved scene unmodified and undo back to it clean")
 {
-    fs::path scene = freshDir("flushpast") / "shot.lila";
+    fs::path scene = lockDir("flushpast") / "shot.lila";
     run("newScene");
     run("spaceLocator", {{"name", "A"}});
     run("saveScene", {{"args", {scene.generic_string()}}});
@@ -168,7 +167,7 @@ TEST_CASE("flushing the past keeps a saved scene unmodified and undo back to it 
 
 TEST_CASE("saveScene ifModified skips an unchanged file unless it is missing")
 {
-    fs::path scene = freshDir("noop") / "shot.lila";
+    fs::path scene = lockDir("noop") / "shot.lila";
     run("newScene");
     run("spaceLocator", {{"name", "A"}});
     run("saveScene", {{"args", {scene.generic_string()}}});
@@ -198,7 +197,7 @@ TEST_CASE("saveScene ifModified skips an unchanged file unless it is missing")
 
 TEST_CASE("autosave skips a scene that matches its file or the last autosave")
 {
-    fs::path scene = freshDir("autosave") / "auto.lila";
+    fs::path scene = lockDir("autosave") / "auto.lila";
     run("newScene");
     run("spaceLocator", {{"name", "A"}});
     run("saveScene", {{"args", {scene.generic_string()}}});

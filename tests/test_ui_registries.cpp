@@ -46,7 +46,7 @@ std::vector<size_t> sizes()
 
 TEST_CASE("a registry lists its entries in registration order")
 {
-    Registry<int> r;
+    lila::Registry<int> r;
     r.add("b", 1);
     r.add("a", 2);
     r.add("c", 3);

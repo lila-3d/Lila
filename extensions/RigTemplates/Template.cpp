@@ -18,7 +18,7 @@ constexpr double kEps = 1e-9;
 json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
 json quat(const glm::dquat& q) { return json::array({q.x, q.y, q.z, q.w}); }
 
-glm::dvec3 vecOf(const json& j, const char* what)
+glm::dvec3 checkedVec(const json& j, const char* what)
 {
     if (!j.is_array() || j.size() != 3)
         throw std::invalid_argument(std::string(what) + " must be [x, y, z]");
@@ -90,18 +90,11 @@ void validateLimits(const Template& t)
             if (l.contains(k) && !l[k].is_number())
                 throw std::invalid_argument(where + ": " + k + " should be a number");
         if (l.contains("preferredAngle"))
-            vecOf(l["preferredAngle"], (where + " preferredAngle").c_str());
+            checkedVec(l["preferredAngle"], (where + " preferredAngle").c_str());
         for (const auto& [k, v] : l.items())
             if (k != "type" && k != "axis" && k != "min" && k != "max" && k != "cone" && k != "stiffness" && k != "preferredAngle")
                 throw std::invalid_argument(where + ": unknown key " + k);
     }
-}
-
-std::string lower(std::string s)
-{
-    for (char& c : s)
-        c = char(std::tolower(static_cast<unsigned char>(c)));
-    return s;
 }
 
 std::string stripNamespace(const std::string& s)
@@ -390,7 +383,7 @@ Template Template::fromJson(const json& j)
     t.version = j.value("version", 1);
     t.source = j.value("source", json::object());
     if (j.contains("lateral"))
-        t.lateral = vecOf(j["lateral"], "lateral");
+        t.lateral = checkedVec(j["lateral"], "lateral");
     if (!j.contains("markers") || !j["markers"].is_array() || j["markers"].empty())
         throw std::invalid_argument("'markers' must be a non-empty array");
     for (const json& o : j["markers"])
@@ -407,7 +400,7 @@ Template Template::fromJson(const json& j)
         m.mirror = o.value("mirror", "");
         m.limb = o.value("limb", "");
         m.flags = o.value("flags", std::vector<std::string>{});
-        m.position = vecOf(o.value("position", json::array({0.0, 0.0, 0.0})), ctx("position").c_str());
+        m.position = checkedVec(o.value("position", json::array({0.0, 0.0, 0.0})), ctx("position").c_str());
         if (o.contains("orientation"))
             m.orientation = quatOf(o["orientation"], ctx("orientation").c_str());
         m.radius = o.value("radius", 2.0);
@@ -417,14 +410,14 @@ Template Template::fromJson(const json& j)
         m.to = o.value("to", "");
         m.t = o.value("t", 0.0);
         if (o.contains("localOffset"))
-            m.localOffset = vecOf(o["localOffset"], ctx("localOffset").c_str());
+            m.localOffset = checkedVec(o["localOffset"], ctx("localOffset").c_str());
         m.orient = valueOf(kOrients, o.value("orient", "aim"), ctx("orient").c_str());
         m.aimAt = o.value("aimAt", "");
         m.aim = o.value("aim", "z");
         m.up = o.value("up", "y");
         m.upType = valueOf(kUpTypes, o.value("upType", "world"), ctx("upType").c_str());
         if (o.contains("upVector"))
-            m.upVector = vecOf(o["upVector"], ctx("upVector").c_str());
+            m.upVector = checkedVec(o["upVector"], ctx("upVector").c_str());
         if (o.contains("offset"))
             m.offset = quatOf(o["offset"], ctx("offset").c_str());
         if (m.orient == Orient::Aim)

@@ -105,8 +105,6 @@ template <class W> W* row(QWidget& w, const QString& label)
     return nullptr;
 }
 
-bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
-
 bool labelled(QWidget& w, const QString& part)
 {
     for (QLabel* l : w.findChildren<QLabel*>())

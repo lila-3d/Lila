@@ -1,6 +1,8 @@
 #include "uv/Project.h"
 
 #include "core/Profile.h"
+#include "uv/Layout.h"
+#include "uv/UvCommon.h"
 
 #include <Eigen/Eigenvalues>
 
@@ -16,8 +18,9 @@ namespace lila::uv
 {
 namespace
 {
+using detail::kTwoPi;
+
 constexpr double kPi = glm::pi<double>();
-constexpr double kTwoPi = glm::two_pi<double>();
 
 double wrapAngle(double a)
 {
@@ -244,33 +247,6 @@ glm::dmat3 boxAxes(const glm::dmat3& pca, const glm::dvec3& vals)
     else
         m = orthonormal(pca);
     return alignTo(m, id);
-}
-
-std::vector<glm::dvec2> convexHull(std::vector<glm::dvec2> p)
-{
-    std::sort(p.begin(), p.end(), [](const glm::dvec2& a, const glm::dvec2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
-    p.erase(std::unique(p.begin(), p.end()), p.end());
-    if (p.size() < 3)
-        return p;
-    auto cross = [](const glm::dvec2& o, const glm::dvec2& a, const glm::dvec2& b) {
-        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-    };
-    std::vector<glm::dvec2> h(2 * p.size());
-    size_t k = 0;
-    for (size_t i = 0; i < p.size(); ++i)
-    {
-        while (k >= 2 && cross(h[k - 2], h[k - 1], p[i]) <= 0.0)
-            --k;
-        h[k++] = p[i];
-    }
-    for (size_t i = p.size() - 1, t = k + 1; i > 0; --i)
-    {
-        while (k >= t && cross(h[k - 2], h[k - 1], p[i - 1]) <= 0.0)
-            --k;
-        h[k++] = p[i - 1];
-    }
-    h.resize(k - 1);
-    return h;
 }
 
 /**

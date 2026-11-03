@@ -41,7 +41,6 @@ namespace lila::link
 {
 namespace
 {
-constexpr const char* kPrefFile = "unreal";
 /** Hidden user attr holding a node's mapping as JSON. */
 constexpr const char* kMappingAttr = "unrealMapping";
 constexpr int kHelloTimeoutMs = 3000;
@@ -453,7 +452,7 @@ std::vector<Instance> readPortFiles(const std::vector<fs::path>& projectDirs)
 std::vector<fs::path> configuredProjects()
 {
     std::vector<fs::path> out;
-    json list = PrefStore::get().value(kPrefFile, "/projects", json::array());
+    json list = PrefStore::get().value(kUnrealPrefFile, "/projects", json::array());
     if (!list.is_array())
         return out;
     for (const json& p : list)
@@ -544,7 +543,7 @@ void adoptWorkspaceMappings()
 {
     LILA_ZONE();
 
-    json legacy = PrefStore::get().value(kPrefFile, "/mappings", json::array());
+    json legacy = PrefStore::get().value(kUnrealPrefFile, "/mappings", json::array());
     if (!legacy.is_array() || legacy.empty())
         return;
     scene::Graph& g = scene::Graph::current();
@@ -570,7 +569,7 @@ void adoptWorkspaceMappings()
 
 void pruneWorkspaceMappings()
 {
-    json legacy = PrefStore::get().value(kPrefFile, "/mappings", json::array());
+    json legacy = PrefStore::get().value(kUnrealPrefFile, "/mappings", json::array());
     if (!legacy.is_array() || legacy.empty())
         return;
     json kept = json::array();
@@ -580,9 +579,9 @@ void pruneWorkspaceMappings()
     if (kept.size() == legacy.size())
         return;
     if (kept.empty())
-        PrefStore::get().remove(kPrefFile, "/mappings", PrefScope::Workspace);
+        PrefStore::get().remove(kUnrealPrefFile, "/mappings", PrefScope::Workspace);
     else
-        PrefStore::get().set(kPrefFile, "/mappings", kept, PrefScope::Workspace);
+        PrefStore::get().set(kUnrealPrefFile, "/mappings", kept, PrefScope::Workspace);
 }
 
 /** Tension curves go out as plain animation curves; the plugin flags them as material curves on the skeleton. */
@@ -607,7 +606,7 @@ json importParams(const fs::path& file, const json& mapping, const json& materia
     if (kind == "static" && mapping.contains("socket") && mapping["socket"].is_object())
         options["socket"] = mapping["socket"];
     if ((kind == "skeletal" || kind == "animation") && !options.contains("facing"))
-        options["facing"] = PrefStore::get().value<std::string>(kPrefFile, "/facing", "x");
+        options["facing"] = PrefStore::get().value<std::string>(kUnrealPrefFile, "/facing", "x");
     json params = {{"file", file.generic_string()},
                    {"contentPath", mapping.value("contentPath", std::string())},
                    {"kind", kind},
@@ -681,13 +680,13 @@ json materialInputs(scene::Graph& g, const std::string& slot)
 CallOptions importCallOptions()
 {
     PrefStore& prefs = PrefStore::get();
-    return {.timeoutMs = prefs.value<int>(kPrefFile, "/importTimeoutMs", kImportTimeoutMs),
-            .idleTimeoutMs = prefs.value<int>(kPrefFile, "/importIdleTimeoutMs", kImportIdleTimeoutMs)};
+    return {.timeoutMs = prefs.value<int>(kUnrealPrefFile, "/importTimeoutMs", kImportTimeoutMs),
+            .idleTimeoutMs = prefs.value<int>(kUnrealPrefFile, "/importIdleTimeoutMs", kImportIdleTimeoutMs)};
 }
 
 fs::path cacheDir()
 {
-    std::string custom = PrefStore::get().value<std::string>(kPrefFile, "/cacheDir", "");
+    std::string custom = PrefStore::get().value<std::string>(kUnrealPrefFile, "/cacheDir", "");
     if (!custom.empty())
         return paths::resolvePath(custom, {});
     fs::path base = Workspace::get().isOpen() ? Workspace::get().stateDir() : paths::userConfigDir();
@@ -932,7 +931,7 @@ int syncMappings(bool force, const std::vector<std::string>& only, bool unrealCh
 {
     LILA_ZONE();
 
-    if (!force && !PrefStore::get().value<bool>(kPrefFile, "/autoSync", true))
+    if (!force && !PrefStore::get().value<bool>(kUnrealPrefFile, "/autoSync", true))
         return 0;
     // The worker reads the evaluated meshes after this returns, so the scope lasts until it is done, then ends on the main thread.
     std::shared_ptr<scene::viewState::FinalScope> forOutput(new scene::viewState::FinalScope,

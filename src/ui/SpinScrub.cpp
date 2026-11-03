@@ -31,7 +31,7 @@ namespace
 {
 constexpr double kPixelsPerStep = 6.0;
 
-int64_t nowMs()
+int64_t steadyNowMs()
 {
     static QElapsedTimer clock = [] {
         QElapsedTimer t;
@@ -77,7 +77,7 @@ protected:
             if (QWidget* choice = labelDrag ? nullptr : choiceOf(obj))
             {
                 mChoice = choice;
-                mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
+                mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs());
                 return true;
             }
             QAbstractSpinBox* box = spinBoxOf(obj);
@@ -87,7 +87,7 @@ protected:
             mButton = m->button();
             mLastX = m->globalPosition().x();
             mCarry = 0.0;
-            mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
+            mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs());
             QApplication::setOverrideCursor(Qt::SizeHorCursor);
             UndoStack::get().openChunk("Drag Value");
             return true;
@@ -124,7 +124,7 @@ protected:
             {
                 QPointer<QWidget> choice = mChoice;
                 mChoice = nullptr;
-                if (mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
+                if (mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs()))
                     resetChoice(choice);
                 return true;
             }
@@ -132,7 +132,7 @@ protected:
                 return false;
             QPointer<QAbstractSpinBox> box = mBox;
             endDrag();
-            if (m->button() == Qt::MiddleButton && mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
+            if (m->button() == Qt::MiddleButton && mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs()))
                 resetToDefault(box);
             return true;
         }
@@ -325,7 +325,7 @@ protected:
         {
         case QEvent::MouseButtonPress:
             if (auto* m = static_cast<QMouseEvent*>(e); m->button() == Qt::MiddleButton)
-                mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs());
+                mClick.press(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs());
             return false;
         case QEvent::MouseMove:
         {
@@ -338,7 +338,7 @@ protected:
             auto* m = static_cast<QMouseEvent*>(e);
             if (m->button() != Qt::MiddleButton || !mClick.down())
                 return false;
-            if (!mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), nowMs()))
+            if (!mClick.release(int(m->globalPosition().x()), int(m->globalPosition().y()), steadyNowMs()))
                 return false;
             QPointer<QWidget> flash = mFlash;
             mReset();

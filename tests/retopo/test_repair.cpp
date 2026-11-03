@@ -1,3 +1,4 @@
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "geo/Attribute.h"
@@ -12,6 +13,7 @@
 #include <doctest/doctest.h>
 
 using namespace lila;
+using namespace retopotest;
 using geo::Index;
 using retopo::MeshIssue;
 
@@ -42,21 +44,6 @@ void repairs(geo::Mesh& m, MeshIssue issue, Index expect)
     CHECK(r.fixed[size_t(issue)] == expect);
     CHECK(found(m, issue) == 0);
     CHECK(geo::test::isValid(m));
-}
-
-scene::Node* makeMeshNode(const std::string& name, geo::Mesh mesh)
-{
-    scene::Graph& g = scene::Graph::current();
-    scene::Node* n = g.createNode(*scene::types::find("mesh"), name, scene::kNoNode, false);
-    g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
-    return n;
-}
-
-const geo::Mesh& outMesh(const std::string& name)
-{
-    scene::Graph& g = scene::Graph::current();
-    g.evaluate();
-    return *g.find(name)->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
 }
 
 /** A quad fan around the edge (0,0,0)-(0,1,0) with three faces on it. */

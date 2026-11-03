@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Triangulate.h"
+#include "uv/UvCommon.h"
 
 #include <tbb/enumerable_thread_specific.h>
 #include <tbb/parallel_for.h>
@@ -13,7 +14,7 @@ namespace lila::uv
 {
 namespace
 {
-using Tri2 = std::array<glm::dvec2, 3>;
+using detail::Tri2;
 
 bool separated(const Tri2& a, const Tri2& b, double eps)
 {

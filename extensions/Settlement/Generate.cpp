@@ -31,9 +31,6 @@ double bankDistance(Vec2 q, std::span<const WaterLine> water)
 
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kM2 = 1.0e4; // cm2 per m2
-
 /** Stable random numbers: the same seed and stream give the same sequence on every machine. */
 struct Rng
 {
@@ -49,10 +46,6 @@ Vec2 rotate(Vec2 d, double radians)
     const double c = std::cos(radians), s = std::sin(radians);
     return {d.x * c - d.y * s, d.x * s + d.y * c};
 }
-
-Vec2 leftNormal(Vec2 d) { return {-d.y, d.x}; }
-
-double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
 
 /** Where the ray from o along d leaves the polygon, or o when it never does. */
 Vec2 exitPoint(const Polygon& poly, Vec2 o, Vec2 d)

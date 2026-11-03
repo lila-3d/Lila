@@ -1,6 +1,7 @@
 // Masonry bonds, chipped stones, paving, groin vaults, blockouts, plaster and ivy, the ruin brush, the structural pass,
 // ruined shells, destruction links, wedges and the commands around them.
 
+#include "TestUtil.h"
 #include "Masonry.h"
 #include "MasonryBake.h"
 #include "MasonryBuilding.h"
@@ -20,19 +21,16 @@
 
 using namespace lila;
 using namespace masonry;
+using namespace masonrytest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 void load(const char* package, const char* node)
 {
     if (!gn::findDecl(node))
         REQUIRE(!extensions::ExtensionManager::get().load(package).empty());
 }
-
-Footprint line(std::initializer_list<glm::dvec3> pts, bool closed = false) { return {std::vector<glm::dvec3>(pts), closed, {}}; }
 
 double volume(const geo::Mesh& m)
 {
@@ -53,14 +51,6 @@ geo::Mesh box(const glm::dvec3& lo, const glm::dvec3& hi)
     for (int i = 0; i < 8; ++i)
         c[size_t(i)] = {(i & 1) ? hi.x : lo.x, (i & 2) ? hi.y : lo.y, (i & 4) ? hi.z : lo.z};
     return hexMesh(c);
-}
-
-json pts(std::initializer_list<std::array<double, 3>> p)
-{
-    json out = json::array();
-    for (const auto& q : p)
-        out.push_back({q[0], q[1], q[2]});
-    return out;
 }
 } // namespace
 

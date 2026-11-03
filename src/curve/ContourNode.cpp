@@ -1,5 +1,5 @@
 #include "curve/Contour.h"
-#include "curve/EnvAttrs.h"
+#include "curve/NodeHelpers.h"
 #include "curve/EnvironmentNodes.h"
 
 #include "core/Log.h"
@@ -12,14 +12,13 @@
 namespace lila::curve
 {
 using namespace scene;
-using namespace env;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-
 /** Slices the connected meshes: contours along an axis, or one section through a plane. */
 class ContourNode final : public Node
 {
@@ -131,7 +130,7 @@ json build(const Args& a, const char* cmd, int64_t mode, const std::function<voi
     return json::array({curve->path(), opName});
 }
 
-void registerOptionLayout()
+void registerContourOptionLayout()
 {
     namespace opt = ops::options;
     opt::Override o;
@@ -227,6 +226,6 @@ void registerContourCommands()
             });
         },
     });
-    registerOptionLayout();
+    registerContourOptionLayout();
 }
 } // namespace lila::curve

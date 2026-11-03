@@ -1,5 +1,6 @@
 #include "ops/Command.h"
 #include "core/Profile.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 #include "scene/MeshBoolean.h"
 #include "scene/MeshNodes.h"
@@ -7,15 +8,10 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
-AttrDef param(std::string name, PlugType type, PlugValue def, std::string doc, std::vector<std::string> options = {},
-              std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .enumNames = std::move(options), .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
-
 const std::vector<std::string> kOperations = {"difference", "union", "intersection"};
 
 geo::Mesh run(const geo::Mesh& in, const Node& self)
@@ -69,11 +65,11 @@ void registerBooleanModifier()
         param("cleanup", PlugType::Bool, true, "Weld slivers and stray points along the seam."),
         param("splitNgons", PlugType::Bool, true, "Cut the n-gons along the seam into quads that carry on the edge loops."),
         param("quadBand", PlugType::Bool, false, "Remesh a band around the seam into quads that follow it. Slower: it reruns as the cutter moves."),
-        param("bandRings", PlugType::Int, int64_t(1), "Rings of faces past the seam the quad band takes in.", {}, 0.0, 8.0),
-        param("timeout", PlugType::Float, 2.0, "Seconds the quad band may take before the n-gon split runs instead.", {}, 0.0),
-        param("filletWidth", PlugType::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp.", {}, 0.0),
-        param("filletSegments", PlugType::Int, int64_t(2), "Rows of faces across the fillet.", {}, 1.0, 64.0),
-        param("hardAngle", PlugType::Float, 30.0, "New edges sharper than this many degrees are marked hard.", {}, 0.0, 180.0),
+        param("bandRings", PlugType::Int, int64_t(1), "Rings of faces past the seam the quad band takes in.", 0.0, 8.0),
+        param("timeout", PlugType::Float, 2.0, "Seconds the quad band may take before the n-gon split runs instead.", 0.0),
+        param("filletWidth", PlugType::Float, 0.0, "Width of a rounded strip along the seam, cm; 0 keeps it sharp.", 0.0),
+        param("filletSegments", PlugType::Int, int64_t(2), "Rows of faces across the fillet.", 1.0, 64.0),
+        param("hardAngle", PlugType::Float, 30.0, "New edges sharper than this many degrees are marked hard.", 0.0, 180.0),
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden},
     };
     const int out = int(t.ownAttrs.size()) - 1;

@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "ui/Panels.h"
+#include "ui/UiCommon.h"
 
 #include <QAbstractTableModel>
 #include <QComboBox>
@@ -18,11 +19,8 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
 
 constexpr int kPage = 2000;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
 
 QString cellText(const json& v)
 {

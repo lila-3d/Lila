@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "io/SceneFile.h"
@@ -14,11 +16,10 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 Node& newCamera()
 {
     run("newScene");
@@ -36,13 +37,11 @@ glm::dvec3 ndc(const glm::dmat4& proj, const glm::dvec3& viewPos)
     return glm::dvec3(c) / c.w;
 }
 
-glm::dmat4 worldOf(const Node& n)
+glm::dmat4 worldOfNode(const Node& n)
 {
     Graph::current().evaluate();
     return n.as<glm::dmat4>(Transform::kWorldMatrix);
 }
-
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::distance(a, b) < eps; }
 } // namespace
 
 TEST_CASE("camera lens: angle of view per film fit")
@@ -146,7 +145,7 @@ TEST_CASE("viewPlace poses a camera node")
     Graph& g = Graph::current();
 
     run("viewPlace", {{"args", {name}}, {"eye", {100, 0, 0}}, {"lookAt", {0, 0, 0}}, {"up", {0, 1, 0}}});
-    glm::dmat4 w = worldOf(cam);
+    glm::dmat4 w = worldOfNode(cam);
     CHECK(near(glm::dvec3(w[3]), {100, 0, 0}));
     CHECK(near(-glm::normalize(glm::dvec3(w[2])), {-1, 0, 0}));
     CHECK(near(glm::normalize(glm::dvec3(w[1])), {0, 1, 0}));
@@ -156,13 +155,13 @@ TEST_CASE("viewPlace poses a camera node")
         run("viewPlace", {{"args", {name}}, {"eye", {0, 50, 50}}, {"lookAt", {0, 0, 0}}, {"orthographicWidth", 12.0}});
         CHECK(cam.as<double>(Camera::kOrthographicWidth) == doctest::Approx(12.0));
         UndoStack::get().undo();
-        CHECK(near(glm::dvec3(worldOf(cam)[3]), {100, 0, 0}));
+        CHECK(near(glm::dvec3(worldOfNode(cam)[3]), {100, 0, 0}));
         CHECK(cam.as<double>(Camera::kOrthographicWidth) == doctest::Approx(30.0));
     }
     SUBCASE("eye alone moves without turning")
     {
         run("viewPlace", {{"args", {name}}, {"eye", {100, 10, 0}}});
-        glm::dmat4 m = worldOf(cam);
+        glm::dmat4 m = worldOfNode(cam);
         CHECK(near(glm::dvec3(m[3]), {100, 10, 0}));
         CHECK(near(-glm::normalize(glm::dvec3(m[2])), {-1, 0, 0}));
     }
@@ -175,7 +174,7 @@ TEST_CASE("viewPlace poses a camera node")
         run("parent", {{"args", {name, grp}}});
         g.setValue({cam.id(), Transform::kScale, -1}, glm::dvec3(2.0));
         run("viewPlace", {{"args", {name}}, {"eye", {0, 0, 300}}, {"lookAt", {0, 0, 0}}, {"up", {0, 1, 0}}});
-        glm::dmat4 m = worldOf(cam);
+        glm::dmat4 m = worldOfNode(cam);
         CHECK(near(glm::dvec3(m[3]), {0, 0, 300}, 1e-6));
         CHECK(near(-glm::normalize(glm::dvec3(m[2])), {0, 0, -1}));
         CHECK(glm::length(glm::dvec3(m[0])) == doctest::Approx(2.0));
@@ -184,7 +183,7 @@ TEST_CASE("viewPlace poses a camera node")
     {
         set(cam, Camera::kLocked, true);
         CHECK_THROWS_AS(run("viewPlace", {{"args", {name}}, {"eye", {0, 0, 0}}}), CommandError);
-        CHECK(near(glm::dvec3(worldOf(cam)[3]), {100, 0, 0}));
+        CHECK(near(glm::dvec3(worldOfNode(cam)[3]), {100, 0, 0}));
     }
     CHECK_THROWS_AS(run("viewPlace", {{"args", {"nothing"}}, {"eye", {0, 0, 0}}}), CommandError);
 }

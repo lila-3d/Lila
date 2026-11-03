@@ -1,16 +1,17 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 void faceMode(const std::string& mesh)
 {
     run("selectComponents", {{"args", {mesh}}, {"faces", {0}}});

@@ -10,16 +10,6 @@ using namespace lila::scene;
 
 namespace puppeteer
 {
-namespace
-{
-json forwarded(const Args& a)
-{
-    json call = a.flags;
-    call["args"] = objectArgs(a);
-    return call;
-}
-} // namespace
-
 void registerControllers(ext::Context& ctx)
 {
     using T = ArgType;

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "curve/CurveNodes.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
@@ -9,26 +11,10 @@ using namespace lila;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using curve::PointRole;
+using namespace curvetest;
 
 namespace
 {
-json run(const char* cmd, json call = json::object()) { return ops::execute(cmd, call); }
-
-json pts(std::initializer_list<D3> list)
-{
-    json a = json::array();
-    for (const D3& p : list)
-        a.push_back({p.x, p.y, p.z});
-    return a;
-}
-
-scene::NodeId idOf(const std::string& name)
-{
-    scene::Node* n = scene::Graph::current().find(name);
-    REQUIRE(n);
-    return n->id();
-}
-
 const curve::Splines& splines(const std::string& name) { return curve::shapeSplines(scene::Graph::current(), idOf(name)); }
 
 D3 positionOf(const std::string& name, uint32_t id)

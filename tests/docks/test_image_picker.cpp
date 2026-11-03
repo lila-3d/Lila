@@ -15,7 +15,7 @@ using namespace lila::ui;
 
 namespace
 {
-QListWidgetItem* row(QListWidget* list, const QString& text)
+QListWidgetItem* itemNamed(QListWidget* list, const QString& text)
 {
     for (int i = 0; i < list->count(); ++i)
         if (list->item(i)->text() == text)
@@ -60,8 +60,8 @@ TEST_CASE("image picker: dome texture lists the HDRIs with thumbnails, filters a
             search = e;
     REQUIRE(list);
     REQUIRE(search);
-    CHECK(row(list, "Browse..."));
-    CHECK(row(list, "None"));
+    CHECK(itemNamed(list, "Browse..."));
+    CHECK(itemNamed(list, "None"));
     // The current HDRI is highlighted.
     REQUIRE(list->currentItem());
     CHECK(list->currentItem()->text() == shownName);
@@ -70,11 +70,11 @@ TEST_CASE("image picker: dome texture lists the HDRIs with thumbnails, filters a
     const int before = list->count();
     search->setText("zzzz-no-such-image");
     CHECK(list->count() < before);
-    CHECK_FALSE(row(list, shownName));
+    CHECK_FALSE(itemNamed(list, shownName));
     search->clear();
 
     const QString otherName = QString::fromStdString(environments::displayName(shipped.back()));
-    QListWidgetItem* other = row(list, otherName);
+    QListWidgetItem* other = itemNamed(list, otherName);
     REQUIRE(other);
     Q_EMIT list->itemClicked(other);
     REQUIRE(chosen.size() == 1);

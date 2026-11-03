@@ -1,5 +1,7 @@
 #include "curve/Internal.h"
 
+#include "geo/Attribute.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -103,5 +105,36 @@ std::vector<double> chordParams(const std::vector<glm::dvec3>& pts, bool closed,
         for (size_t i = 0; i < t.size(); ++i)
             t[i] = t.size() > 1 ? double(i) / double(t.size() - 1) : 0.0;
     return t;
+}
+
+geo::Index addFaceUv(geo::Mesh& m, std::span<const geo::Index> pts, std::span<const glm::vec2> uvs, bool flip)
+{
+    std::vector<geo::Index> p(pts.begin(), pts.end());
+    std::vector<glm::vec2> u(uvs.begin(), uvs.end());
+    if (flip)
+    {
+        std::reverse(p.begin(), p.end());
+        std::reverse(u.begin(), u.end());
+    }
+    geo::Index f = m.addFace(p);
+    if (f == geo::kInvalid || u.empty())
+        return f;
+    auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+    size_t i = 0;
+    m.forEachFaceCorner(f, [&](geo::Index c) {
+        if (i < u.size())
+            uv[c] = u[i];
+        ++i;
+    });
+    return f;
+}
+
+void setFaceInt(geo::Mesh& m, std::string_view name, geo::Index f, int value)
+{
+    if (f == geo::kInvalid)
+        return;
+    auto v = m.faceAttrs().getOrAdd<int32_t>(name);
+    if (f < v.size())
+        v[f] = value;
 }
 } // namespace lila::curve::detail

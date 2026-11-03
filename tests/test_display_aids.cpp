@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "ui/DisplayAids.h"
@@ -9,6 +11,7 @@
 
 using namespace lila;
 using namespace lila::ui;
+using namespace testutil;
 namespace da = lila::ui::displayAids;
 
 namespace
@@ -32,11 +35,6 @@ geo::Mesh twoQuads(bool seam)
             uv[c] = glm::vec2(float(p.x) + (seam && f == 1 ? 0.5f : 0.0f), float(p.y));
         }
     return m;
-}
-
-bool has(const std::vector<geo::Index>& v, geo::Index i)
-{
-    return std::find(v.begin(), v.end(), i) != v.end();
 }
 } // namespace
 

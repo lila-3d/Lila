@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include "ops/Command.h"
 #include "retarget/Retarget.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -15,6 +16,8 @@
 namespace rtest
 {
 using namespace lila::retarget;
+
+inline nlohmann::json run(const char* name, nlohmann::json call = nlohmann::json::object()) { return lila::ops::execute(name, call); }
 
 struct Spec
 {

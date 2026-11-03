@@ -10,6 +10,8 @@
 #include "ui/DockSidebar.h"
 #include "ui/Icons.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -37,38 +39,8 @@ namespace lila::ui
 {
 namespace
 {
-constexpr const char* kPrefFile = "gameExporter";
-constexpr const char* kLastPref = "/last";
-
-json runUi(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-        return nullptr;
-    }
-}
-
-void addChoices(QComboBox* box, std::initializer_list<std::pair<const char*, const char*>> items)
-{
-    for (auto [label, value] : items)
-        box->addItem(label, QString(value));
-}
-
-void setChoice(QComboBox* box, const json& value)
-{
-    if (!value.is_string())
-        return;
-    int i = box->findData(QString::fromStdString(value.get<std::string>()));
-    if (i >= 0)
-        box->setCurrentIndex(i);
-}
-
-std::string choice(const QComboBox* box) { return box->currentData().toString().toStdString(); }
+constexpr const char* kGameExporterPrefs = "gameExporter";
+constexpr const char* kLastExportPref = "/last";
 } // namespace
 
 GameExporter::GameExporter(QWidget* parent) : QDialog(parent)
@@ -172,7 +144,7 @@ GameExporter::GameExporter(QWidget* parent) : QDialog(parent)
     bottom->addWidget(close);
     v->addLayout(bottom);
 
-    json last = PrefStore::get().value(kPrefFile, kLastPref, json::object());
+    json last = PrefStore::get().value(kGameExporterPrefs, kLastExportPref, json::object());
     json defaults = ops::execute("gameExportPresets", json::object())["defaults"];
     if (last.is_object())
         for (auto& [k, val] : last.items())
@@ -196,7 +168,7 @@ GameExporter::GameExporter(QWidget* parent) : QDialog(parent)
     for (QLineEdit* e : {mPath, mFilename})
         connect(e, &QLineEdit::textChanged, this, changed);
     connect(mFileType, &QComboBox::currentIndexChanged, this, [this] {
-        const bool fbx = choice(mFileType) == "fbx";
+        const bool fbx = currentChoice(mFileType) == "fbx";
         for (QWidget* w : std::initializer_list<QWidget*>{mProfile, mUnits, mTriangulate, mSmoothing, mTangents})
             w->setEnabled(fbx);
     });
@@ -268,16 +240,16 @@ json GameExporter::settings() const
     return {
         {"path", mPath->text().trimmed().toStdString()},
         {"filename", mFilename->text().trimmed().toStdString()},
-        {"fileType", choice(mFileType)},
+        {"fileType", currentChoice(mFileType)},
         {"mode", mSets->isChecked() ? "sets" : mSelection->isChecked() ? "selection" : "all"},
         {"sets", sets},
-        {"separate", choice(mSeparate)},
+        {"separate", currentChoice(mSeparate)},
         {"moveToOrigin", mMoveToOrigin->isChecked()},
-        {"profile", choice(mProfile)},
+        {"profile", currentChoice(mProfile)},
         {"triangulate", mTriangulate->isChecked()},
         {"smoothingGroups", mSmoothing->isChecked()},
         {"tangents", mTangents->isChecked()},
-        {"units", choice(mUnits)},
+        {"units", currentChoice(mUnits)},
         {"embedMedia", false},
     };
 }
@@ -382,7 +354,7 @@ void GameExporter::updatePreview()
 void GameExporter::exportNow()
 {
     const json s = settings();
-    PrefStore::get().set(kPrefFile, kLastPref, s);
+    PrefStore::get().set(kGameExporterPrefs, kLastExportPref, s);
     json written = runUi("gameExport", s);
     if (written.is_array())
         log::info("Game export wrote {} file(s){}", written.size(), written.empty() ? "" : ": " + written.dump());

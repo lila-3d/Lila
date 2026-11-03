@@ -32,7 +32,7 @@ double meshVolume(const geo::Mesh& m)
 }
 
 /** Every edge has exactly two faces and the winding agrees. */
-bool closedManifold(const geo::Mesh& m)
+bool isClosedSolid(const geo::Mesh& m)
 {
     if (!m.validate(geo::kValidateDefault).empty())
         return false;
@@ -105,7 +105,7 @@ void checkPieces(const fr::FractureResult& r, double sourceVolume, double tolera
     int open = 0;
     for (const fr::Piece& p : r.pieces)
     {
-        open += !closedManifold(p.mesh);
+        open += !isClosedSolid(p.mesh);
         reported += p.volume;
         measured += meshVolume(p.mesh);
         CHECK(p.volume > 0.0);

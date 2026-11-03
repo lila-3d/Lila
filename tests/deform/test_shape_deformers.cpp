@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "geo/ColorSets.h"
 #include "geo/Mesh.h"
@@ -15,44 +17,11 @@
 using namespace lila;
 using namespace lila::scene;
 using json = nlohmann::json;
+using namespace deformtest;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json v3(double x, double y, double z) { return json::array({x, y, z}); }
-
-Graph& graph() { return Graph::current(); }
-
-MeshPtr outMesh(const std::string& mesh)
-{
-    Graph& g = graph();
-    g.evaluate();
-    Node* n = g.find(mesh);
-    REQUIRE(n);
-    MeshPtr m = n->as<MeshPtr>(MeshNode::kOutMesh);
-    REQUIRE(m);
-    return m;
-}
-
-std::vector<glm::dvec3> points(const std::string& mesh)
-{
-    MeshPtr m = outMesh(mesh);
-    return {m->positions().begin(), m->positions().end()};
-}
-
-bool near(const glm::dvec3& a, const glm::dvec3& b, double eps = 1e-6) { return glm::length(a - b) <= eps; }
-
-bool samePoints(const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b, double eps = 1e-6)
-{
-    if (a.size() != b.size())
-        return false;
-    for (size_t i = 0; i < a.size(); ++i)
-        if (!near(a[i], b[i], eps))
-            return false;
-    return true;
-}
-
 size_t nearestTo(const std::vector<glm::dvec3>& pts, const glm::dvec3& at)
 {
     size_t best = 0;
@@ -68,13 +37,6 @@ std::string error(const std::string& node)
     return modifiers::asModifier(graph().find(node))->error();
 }
 
-fs::path tempFile(const std::string& name)
-{
-    fs::path dir = fs::temp_directory_path() / "lila_deform_tests";
-    fs::create_directories(dir);
-    return dir / name;
-}
-
 void reload(const std::string& name)
 {
     std::string path = tempFile(name).string();
@@ -83,7 +45,7 @@ void reload(const std::string& name)
     run("openScene", {{"args", {path}}});
 }
 
-double maxEdgeError(const std::string& mesh, const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b)
+double meshEdgeError(const std::string& mesh, const std::vector<glm::dvec3>& a, const std::vector<glm::dvec3>& b)
 {
     MeshPtr m = outMesh(mesh);
     double worst = 0.0;
@@ -172,7 +134,7 @@ TEST_CASE("arap and laplacianDeform: anchors stay, handles drag their regions, r
         run("setAttr", {{"args", {handle + ".rotateZ", 40.0}}});
         std::vector<glm::dvec3> turned = points(mesh);
         if (std::string(cmd) == "arap")
-            CHECK(maxEdgeError(mesh, rest, turned) < 1e-5);
+            CHECK(meshEdgeError(mesh, rest, turned) < 1e-5);
         CHECK_FALSE(samePoints(turned, rest, 1e-3));
         reload(std::string(cmd) + ".lila");
         CHECK(samePoints(points(mesh), turned, 1e-6));

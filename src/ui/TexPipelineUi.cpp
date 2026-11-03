@@ -13,6 +13,8 @@
 #include "ui/Menus.h"
 #include "ui/TextureGraphUi.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -28,22 +30,6 @@ namespace lila::ui
 {
 namespace
 {
-using json = nlohmann::json;
-
-QString qs(const std::string& s) { return QString::fromStdString(s); }
-
-json runUi(const std::string& name, const json& call)
-{
-    try
-    {
-        return ops::execute(name, call, CallSource::UI);
-    }
-    catch (const std::exception& e)
-    {
-        log::warn("{}", e.what());
-        return nullptr;
-    }
-}
 
 std::string needSet(const char* what)
 {

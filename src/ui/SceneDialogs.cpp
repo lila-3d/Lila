@@ -237,15 +237,15 @@ public:
         int badgeWidth = 0;
         if (const QString format = index.data(kFormatRole).toString(); !format.isEmpty())
         {
-            QFont small = opt.font;
-            small.setPointSizeF(opt.font.pointSizeF() * 0.8);
-            const QFontMetrics sm(small);
+            QFont smallFont = opt.font;
+            smallFont.setPointSizeF(opt.font.pointSizeF() * 0.8);
+            const QFontMetrics sm(smallFont);
             badgeWidth = sm.horizontalAdvance(format) + 10;
             const QRectF pill(top.right() - badgeWidth, top.center().y() - (sm.height() + 2) / 2.0, badgeWidth, sm.height() + 2);
             p->setPen(QPen(dim, 1.0));
             p->setBrush(Qt::NoBrush);
             p->drawRoundedRect(pill.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
-            p->setFont(small);
+            p->setFont(smallFont);
             p->drawText(pill, Qt::AlignCenter, format);
             badgeWidth += 8;
         }
@@ -326,7 +326,7 @@ QString relativeWhen(const QDateTime& t, const QDateTime& now)
     return QLocale().toString(t.date(), t.date().year() == now.date().year() ? "MMM d" : "MMM d, yyyy");
 }
 
-QString kindLabel(history::Kind k)
+QString historyKindLabel(history::Kind k)
 {
     switch (k)
     {
@@ -459,7 +459,7 @@ RecoveryDialog::RecoveryDialog(const std::vector<io::recovery::Candidate>& candi
         auto* item = new QTreeWidgetItem(mList);
         item->setText(0, c.scene.empty() ? QString("untitled") : qpath(c.scene.filename()));
         item->setText(1, c.scene.empty() ? QString() : qpath(c.scene.parent_path()));
-        item->setText(2, kindLabel(c.kind));
+        item->setText(2, historyKindLabel(c.kind));
         item->setText(3, when(c.fileTime));
         item->setText(4, c.savedTime ? when(c.savedTime) : QString("never saved"));
         item->setToolTip(2, qpath(c.file));
@@ -1397,7 +1397,7 @@ void VersionsDialog::populate()
     for (const history::Version& v : history::list(mScene))
     {
         auto* item = new QTreeWidgetItem(mList);
-        item->setText(0, kindLabel(v.kind));
+        item->setText(0, historyKindLabel(v.kind));
         item->setText(1, when(v.time));
         item->setText(2, QLocale().formattedDataSize(qint64(v.size)));
         item->setText(3, qpath(v.path.filename()));
@@ -1444,7 +1444,7 @@ void VersionsDialog::addRevisions(const json& revisions)
         std::string desc = r.value("description", "");
         if (size_t nl = desc.find('\n'); nl != std::string::npos)
             desc.resize(nl);
-        item->setText(0, kindLabel(history::Kind::Revision));
+        item->setText(0, historyKindLabel(history::Kind::Revision));
         item->setText(1, when(r.value("time", int64_t(0))));
         item->setText(3, QString::fromStdString((change.empty() ? "#" + rev : change) + "  " + r.value("user", "") + ": " + desc));
         item->setData(0, kKindRole, int(history::Kind::Revision));
@@ -1460,7 +1460,7 @@ void VersionsDialog::act(bool restore)
     if (!item || !item->data(0, kKindRole).isValid())
         return;
     auto kind = history::Kind(item->data(0, kKindRole).toInt());
-    QString label = kindLabel(kind).toLower() + " " + item->text(1).simplified();
+    QString label = historyKindLabel(kind).toLower() + " " + item->text(1).simplified();
     if (restore)
     {
         QString text = "Replace the current scene with the " + label + "?\n\nThe scene file is only changed when you save; "

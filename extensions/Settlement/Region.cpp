@@ -12,10 +12,6 @@ namespace settlement
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-
-double cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
-
 double segmentDistance(Vec2 q, Vec2 a, Vec2 b)
 {
     const Vec2 d = b - a;

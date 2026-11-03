@@ -1334,7 +1334,7 @@ Mesh carried(const Mesh& wedge, const RadialSymmetry& radial, int g)
  * Pairs the fundamental wedge's points on its far boundary with those on its near one, turned back by a wedge, nearest
  * first. Empty when the two seams hold different numbers of points.
  */
-std::vector<std::pair<Index, Index>> seamPairs(const Mesh& wedge, const RadialSymmetry& radial, double tolerance)
+std::vector<std::pair<Index, Index>> wedgeSeamPairs(const Mesh& wedge, const RadialSymmetry& radial, double tolerance)
 {
     const glm::dvec3 a = radial.axis(), u = radial.reference(), v = glm::cross(a, u), o = radial.origin();
     const double t = radial.wedgeAngle();
@@ -1422,7 +1422,7 @@ SymmetryMap symmetrizeRadialTopology(Mesh& mesh, const RadialSymmetry& radial, i
     // Turns alone meet a copy's far seam against the next copy's near one, which need not lie at the same spots: pair
     // them up, the near seam's points surviving. Reflections meet each seam against its own mirror image.
     if (!radial.mirror() && radial.count() > 1)
-        for (auto [far, nearPoint] : seamPairs(wedge, radial, tolerance))
+        for (auto [far, nearPoint] : wedgeSeamPairs(wedge, radial, tolerance))
             for (int g = 0; g < n; ++g)
                 sets.unite(offsets[size_t(radial.compose(1, g))] + nearPoint, offsets[size_t(g)] + far);
 

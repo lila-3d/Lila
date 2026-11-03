@@ -22,8 +22,6 @@ namespace lila::gn
 {
 namespace
 {
-using namespace nodes;
-
 std::mutex gCaptureMutex;
 Capture* gCapture = nullptr;
 
@@ -85,6 +83,7 @@ std::filesystem::path bakedFile(const GNode& n, double time)
 
 void bakeNode()
 {
+    using namespace nodes;
     registerDecl({
         .type = "Bake",
         .label = "Bake",

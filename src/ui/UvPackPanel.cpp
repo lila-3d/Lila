@@ -66,7 +66,7 @@ std::string valueOf(const QComboBox* c)
     return c->currentData().toString().toStdString();
 }
 
-QDoubleSpinBox* number(QWidget* parent, double lo, double hi, double value, int decimals, const QString& tip)
+QDoubleSpinBox* numberSpin(QWidget* parent, double lo, double hi, double value, int decimals, const QString& tip)
 {
     auto* s = new QDoubleSpinBox(parent);
     s->setRange(lo, hi);
@@ -159,7 +159,7 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
                     "Normalize: even texel density across islands and objects. Keep relative: islands keep their size ratios. "
                     "Lock size: islands keep their exact uv size and are only moved");
     fit->addRow("Scale", mScale);
-    mDensity = number(this, 0.0, 100000.0, 0.0, 3, "Pack at this texel density instead of filling the tiles; Fill packs as large as fits");
+    mDensity = numberSpin(this, 0.0, 100000.0, 0.0, 3, "Pack at this texel density instead of filling the tiles; Fill packs as large as fits");
     mDensity->setSpecialValueText("Fill");
     mDensity->setSuffix(" px/cm");
     fit->addRow("Density", mDensity);
@@ -184,12 +184,12 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     const char* regionTips[] = {"Region left, in tile uvs", "Region bottom", "Region right", "Region top"};
     for (int i = 0; i < 4; ++i)
     {
-        mRegion[i] = number(this, 0.0, 1.0, i < 2 ? 0.0 : 1.0, 3, regionTips[i]);
+        mRegion[i] = numberSpin(this, 0.0, 1.0, i < 2 ? 0.0 : 1.0, 3, regionTips[i]);
         mRegion[i]->setPrefix(regionPrefix[i]);
     }
     space->addRow("Region from", row({mRegion[0], mRegion[1]}));
     space->addRow("Region to", row({mRegion[2], mRegion[3]}));
-    mMargin = number(this, -1.0, 512.0, -1.0, 1, "Texels from the tile border; Auto is half the padding");
+    mMargin = numberSpin(this, -1.0, 512.0, -1.0, 1, "Texels from the tile border; Auto is half the padding");
     mMargin->setSpecialValueText("Auto");
     mMargin->setSuffix(" px");
     space->addRow("Border", mMargin);
@@ -200,7 +200,7 @@ UvPackPanel::UvPackPanel(QWidget* parent) : QWidget(parent)
     mEffort = choice(this, {{"Fast", "0"}, {"Normal", "1"}, {"High", "2"}, {"Max", "3"}},
                      "Search effort: more island orders and a finer search grid pack denser and take longer");
     search->addRow("Effort", mEffort);
-    mTimeLimit = number(this, 0.0, 600.0, 0.0, 1, "Stop refining after this many seconds (results can then vary between runs)");
+    mTimeLimit = numberSpin(this, 0.0, 600.0, 0.0, 1, "Stop refining after this many seconds (results can then vary between runs)");
     mTimeLimit->setSpecialValueText("None");
     mTimeLimit->setSuffix(" s");
     search->addRow("Time limit", mTimeLimit);

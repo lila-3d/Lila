@@ -4,6 +4,7 @@
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
 #include "curve/EdgeCurve.h"
+#include "curve/NodeHelpers.h"
 #include "geo/Conform.h"
 #include "geo/Topology.h"
 #include "ops/Command.h"
@@ -19,6 +20,7 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -26,7 +28,6 @@ using T = ArgType;
 namespace
 {
 constexpr const char* kType = "polyEdgeToCurve";
-constexpr uint32_t kIn = AttrInput | AttrStorable;
 const std::vector<std::string> kKinds = {"poly", "bezier", "nurbs"};
 
 std::string idsToString(const std::vector<geo::Index>& ids)

@@ -32,10 +32,10 @@ using namespace lila::ui;
 
 namespace trims
 {
-namespace
-{
 using json = nlohmann::json;
 
+namespace
+{
 void run(const char* command, const json& call)
 {
     try

@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "scene/Node.h"
@@ -11,12 +13,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace dockstest;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-QTreeWidgetItem* row(ui::Outliner& o, const char* name)
+QTreeWidgetItem* outlinerRow(ui::Outliner& o, const char* name)
 {
     auto found = o.findItems(name, Qt::MatchExactly | Qt::MatchRecursive);
     return found.isEmpty() ? nullptr : found.front();
@@ -43,38 +44,38 @@ TEST_CASE("outliner rows: icons, hidden dimming, reveal and kept collapse state"
     o.expandEverything();
     QApplication::processEvents();
     REQUIRE(ui::actions::find("outliner.revealSelected"));
-    QTreeWidgetItem* loc = row(o, "loc");
+    QTreeWidgetItem* loc = outlinerRow(o, "loc");
     REQUIRE(loc);
     CHECK(style(loc) == "crosshair");
-    CHECK(style(row(o, "grp")) == "box-multiple");
+    CHECK(style(outlinerRow(o, "grp")) == "box-multiple");
 
     run("toggleVisibility", {{"args", {"grp"}}});
     QApplication::processEvents();
-    loc = row(o, "loc");
+    loc = outlinerRow(o, "loc");
     CHECK(style(loc) == "crosshair/h");
     CHECK(loc->foreground(0).color() == QColor(100, 100, 100));
     run("undo");
     QApplication::processEvents();
-    CHECK(style(row(o, "loc")) == "crosshair");
+    CHECK(style(outlinerRow(o, "loc")) == "crosshair");
 
     o.collapseEverything();
-    CHECK_FALSE(row(o, "grp")->isExpanded());
+    CHECK_FALSE(outlinerRow(o, "grp")->isExpanded());
     run("spaceLocator", {{"name", "other"}});
     QApplication::processEvents();
-    CHECK_FALSE(row(o, "grp")->isExpanded());
+    CHECK_FALSE(outlinerRow(o, "grp")->isExpanded());
 
     run("select", {{"args", {"loc"}}});
     QApplication::processEvents();
     o.revealSelected();
-    CHECK(row(o, "grp")->isExpanded());
-    CHECK(row(o, "loc")->isSelected());
+    CHECK(outlinerRow(o, "grp")->isExpanded());
+    CHECK(outlinerRow(o, "loc")->isSelected());
     // The selection's ancestor chain is shaded, the selected row and unrelated rows are not.
-    CHECK(row(o, "grp")->data(0, Qt::BackgroundRole).isValid());
-    CHECK_FALSE(row(o, "loc")->data(0, Qt::BackgroundRole).isValid());
-    CHECK_FALSE(row(o, "other")->data(0, Qt::BackgroundRole).isValid());
+    CHECK(outlinerRow(o, "grp")->data(0, Qt::BackgroundRole).isValid());
+    CHECK_FALSE(outlinerRow(o, "loc")->data(0, Qt::BackgroundRole).isValid());
+    CHECK_FALSE(outlinerRow(o, "other")->data(0, Qt::BackgroundRole).isValid());
     run("select", {{"args", {"other"}}});
     QApplication::processEvents();
-    CHECK_FALSE(row(o, "grp")->data(0, Qt::BackgroundRole).isValid());
+    CHECK_FALSE(outlinerRow(o, "grp")->data(0, Qt::BackgroundRole).isValid());
 }
 
 TEST_CASE("outliner lists object sets after the hierarchy, members under them, click selects the members")
@@ -95,7 +96,7 @@ TEST_CASE("outliner lists object sets after the hierarchy, members under them, c
 
     run("addToSet", {{"args", {"Props", "b"}}});
     QApplication::processEvents();
-    set = row(o, "Props");
+    set = outlinerRow(o, "Props");
     REQUIRE(set);
     CHECK(set->childCount() == 2);
 

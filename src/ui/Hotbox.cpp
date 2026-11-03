@@ -28,7 +28,7 @@ namespace lila::ui
 namespace
 {
 constexpr double kRowHeight = 22.0;
-constexpr double kRowGap = 6.0;
+constexpr double kHotboxRowGap = 6.0;
 constexpr double kButtonGap = 2.0;
 // The centre "Lila" button is a big target, as Maya's is, so a flick from the key press lands on it easily.
 constexpr double kCenterHeight = 42.0;
@@ -224,7 +224,7 @@ void Hotbox::layoutButtons()
             const int order = sets.empty() ? 0 : sets.front() == "Rigging" ? 0 : sets.front() == "Animation" ? 1 : 2;
             rows[r].push_back({order, {a->text().remove('&'), {}, [m] { return m.data(); }}});
         }
-        double y = mCenter.y() - kCenterHeight / 2 - kRowGap - kRowHeight / 2;
+        double y = mCenter.y() - kCenterHeight / 2 - kHotboxRowGap - kRowHeight / 2;
         for (auto& row : rows)
         {
             if (row.empty())
@@ -234,7 +234,7 @@ void Hotbox::layoutButtons()
             for (auto& [order, button] : row)
                 buttons.push_back(std::move(button));
             makeRow(std::move(buttons), y);
-            y -= kRowHeight + kRowGap;
+            y -= kRowHeight + kHotboxRowGap;
         }
     }
     makeRow({{"Recent Commands", {}, [this] { return recentMenu(); }},
@@ -251,7 +251,7 @@ void Hotbox::layoutButtons()
         std::vector<Button> row;
         for (QMenu* m : mPanelMenus)
             row.push_back({m->title().remove('&'), {}, [m] { return m; }});
-        makeRow(std::move(row), mCenter.y() + kCenterHeight / 2 + kRowGap + kRowHeight / 2);
+        makeRow(std::move(row), mCenter.y() + kCenterHeight / 2 + kHotboxRowGap + kRowHeight / 2);
     }
 
     // Kept inside the window, so a hotbox opened near an edge shifts rather than clipping.

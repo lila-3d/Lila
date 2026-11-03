@@ -38,7 +38,7 @@ namespace
 using scene::Graph;
 using scene::PlugType;
 
-json runCommand(const char* name, const json& call) { return ops::execute(name, call, CallSource::UI); }
+json runUiOrThrow(const char* name, const json& call) { return ops::execute(name, call, CallSource::UI); }
 
 /** Scalar plugs (numbers and Vec3 components) can feed each other; a whole Vec3 or matrix only its own kind. */
 bool compatible(const scene::AttrDef& src, int srcComponent, const scene::AttrDef& dst, int dstComponent)
@@ -112,7 +112,7 @@ DrivePopover::DrivePopover(std::string target, QWidget* parent)
     connect(mJump, &QToolButton::clicked, this, [this] {
         Graph& g = Graph::current();
         if (auto src = g.source(g.plug(mTarget)))
-            runCommand("select", {{"args", {g.node(src->node)->path()}}});
+            runUiOrThrow("select", {{"args", {g.node(src->node)->path()}}});
     });
 
     mTabs = new QTabBar(this);
@@ -408,7 +408,7 @@ bool DrivePopover::connectFrom(const std::string& source)
 {
     try
     {
-        runCommand("connectAttr", {{"args", {source, mTarget}}, {"force", true}});
+        runUiOrThrow("connectAttr", {{"args", {source, mTarget}}, {"force", true}});
     }
     catch (const CommandError& e)
     {
@@ -427,11 +427,11 @@ bool DrivePopover::breakSource()
     try
     {
         if (scene::anim::curveFor(g, p))
-            runCommand("cutKey", {{"args", {mTarget}}, {"clear", true}});
+            runUiOrThrow("cutKey", {{"args", {mTarget}}, {"clear", true}});
         else if (g.source(p))
-            runCommand("disconnectAttr", {{"args", {mTarget}}});
+            runUiOrThrow("disconnectAttr", {{"args", {mTarget}}});
         else if (p.component >= 0 && g.source({p.node, p.attr, -1, p.element}))
-            runCommand("disconnectAttr", {{"args", {g.plugName({p.node, p.attr, -1, p.element})}}});
+            runUiOrThrow("disconnectAttr", {{"args", {g.plugName({p.node, p.attr, -1, p.element})}}});
     }
     catch (const CommandError& e)
     {
@@ -490,7 +490,7 @@ bool DrivePopover::applyDrivenKey()
         call["keys"] = keys;
     try
     {
-        runCommand("driveChannel", call);
+        runUiOrThrow("driveChannel", call);
     }
     catch (const CommandError& e)
     {
@@ -514,7 +514,7 @@ bool DrivePopover::applyExpression()
     }
     try
     {
-        runCommand("expression", {{"args", {mTarget}}, {"string", text.toStdString()}});
+        runUiOrThrow("expression", {{"args", {mTarget}}, {"string", text.toStdString()}});
     }
     catch (const CommandError& e)
     {
@@ -541,13 +541,13 @@ std::string DrivePopover::addMath(const std::string& nodeType)
     try
     {
         UndoChunk chunk("Drive with " + nodeType);
-        const json created = runCommand("createNode", {{"args", {nodeType}}});
+        const json created = runUiOrThrow("createNode", {{"args", {nodeType}}});
         const std::string node = created.is_array() ? created[0].get<std::string>() : created.get<std::string>();
         const scene::Node* n = g.find(node);
         for (const scene::AttrDef& d : n->type().attrs)
             if ((d.flags & scene::AttrOutput) && compatible(d, -1, mine, me.component))
             {
-                runCommand("connectAttr", {{"args", {node + "." + d.name, mTarget}}, {"force", true}});
+                runUiOrThrow("connectAttr", {{"args", {node + "." + d.name, mTarget}}, {"force", true}});
                 out = node;
                 break;
             }

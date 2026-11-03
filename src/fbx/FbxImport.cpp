@@ -291,14 +291,14 @@ struct NodeFrame
  * Post-multiplied onto a camera's local matrix in Lila axes: FBX cameras look down their local +X with +Y up, Lila
  * cameras down -Z. `fileToLila` is the file to Lila axis rotation.
  */
-glm::dmat4 cameraFrame(const glm::dmat3& fileToLila)
+glm::dmat4 importCameraFrame(const glm::dmat3& fileToLila)
 {
     const glm::dmat3 lilaFromFbx(glm::dvec3(0, 0, -1), glm::dvec3(0, 1, 0), glm::dvec3(1, 0, 0));
     return glm::dmat4(fileToLila * glm::transpose(lilaFromFbx));
 }
 
 /** The same for lights: FBX lights shine down their local -Y with -Z up, Lila lights down -Z with +Y up. */
-glm::dmat4 lightFrame(const glm::dmat3& fileToLila)
+glm::dmat4 importLightFrame(const glm::dmat3& fileToLila)
 {
     const glm::dmat3 lilaFromFbx(glm::dvec3(1, 0, 0), glm::dvec3(0, 0, 1), glm::dvec3(0, -1, 0));
     return glm::dmat4(fileToLila * glm::transpose(lilaFromFbx));
@@ -906,14 +906,14 @@ ImportResult importFbx(scene::Graph& graph, const fs::path& path, const ImportOp
         nf.joint = isJoint;
         if (isCamera)
         {
-            nf.after = cameraFrame(C3);
+            nf.after = importCameraFrame(C3);
             applyCamera(graph, n->id(), *fn->camera, unitScale);
             cameras.push_back({fn->camera, n->id()});
             r.cameras.push_back(n->id());
         }
         if (isLight)
         {
-            nf.after = lightFrame(C3);
+            nf.after = importLightFrame(C3);
             scene::lights::setSettings(graph, n->id(), lightSettings(*fn->light, unitScale));
             r.lights.push_back(n->id());
         }

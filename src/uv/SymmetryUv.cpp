@@ -6,6 +6,7 @@
 #include "uv/Metrics.h"
 #include "uv/Pack.h"
 #include "uv/Seams.h"
+#include "uv/UvCommon.h"
 
 #include <tbb/parallel_for.h>
 
@@ -19,11 +20,7 @@ namespace lila::uv
 {
 namespace
 {
-bool usable(const Chart& ch)
-{
-    double a = std::abs(ch.areaUv());
-    return std::isfinite(a) && a > 1e-14 * std::max(1.0, ch.area3d()) && foldedTriangles(ch) == 0;
-}
+using detail::usable;
 
 /** Seams of the faces copied across the plane, so the islands can pair up. Returns how many were added. */
 Index mirrorSeams(geo::Mesh& mesh, const geo::SymmetryMap& map, std::span<const Index> faces)

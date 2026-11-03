@@ -1,6 +1,7 @@
 #include "curve/CurveBoolean.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 
 #ifdef _MSC_VER
@@ -17,9 +18,6 @@ namespace lila::curve
 {
 namespace
 {
-using D2 = glm::dvec2;
-using D3 = glm::dvec3;
-using D4 = glm::dvec4;
 namespace c2 = Clipper2Lib;
 
 /** Where a clip vertex lies on the source curves: curve index and span parameter. */

@@ -30,6 +30,13 @@ protected:
     void showEvent(QShowEvent* e) override;
 
 private:
+    enum Scope
+    {
+        kSelection,
+        kSelectionOutliner,
+        kHierarchy,
+    };
+
     nlohmann::json call(bool preview) const;
     void scheduleRefresh();
     void refresh();

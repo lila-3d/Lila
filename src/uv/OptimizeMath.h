@@ -2,14 +2,18 @@
 
 #include "uv/Chart.h"
 
+#include <Eigen/SparseCore>
 #include <glm/glm.hpp>
 
 #include <cmath>
 #include <vector>
 
-/** Per-triangle geometry shared by the uv optimisers: local frames, Jacobians and 2x2 SVDs. */
+/** Per-triangle geometry and sparse types shared by the uv solvers: local frames, Jacobians and 2x2 SVDs. */
 namespace lila::uv::detail
 {
+using Triplet = Eigen::Triplet<double>;
+using SpMat = Eigen::SparseMatrix<double>;
+
 /** Gradient basis of a triangle in its own plane: grad f = sum f_j * g[j]. */
 struct TriFrame
 {

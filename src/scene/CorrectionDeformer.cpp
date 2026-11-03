@@ -3,6 +3,7 @@
 #include "deform/Deform.h"
 #include "geo/Mesh.h"
 #include "ops/Command.h"
+#include "scene/DeformerUtil.h"
 #include "scene/Deformers.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -18,6 +19,7 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace deformutil;
 
 namespace
 {
@@ -101,8 +103,6 @@ AttrDef attrDef(std::string name, PlugType type, PlugValue def, uint32_t flags, 
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = flags, .doc = std::move(doc)};
 }
 
-Graph& g() { return Graph::current(); }
-
 DeformerNode& correctionNamed(const std::string& name, const char* cmd)
 {
     Node& n = nodeNamed(name, cmd);
@@ -137,13 +137,6 @@ std::shared_ptr<CorrectionDeltas> deltasTo(const geo::Mesh& in, std::span<const 
     }
     return out;
 }
-
-void setVisible(Graph& graph, NodeId id, bool on)
-{
-    PlugRef v{id, Transform::kVisibility, -1};
-    if (!graph.source(v) && std::get<bool>(graph.storedValue(v)) != on)
-        graph.setValue(v, on);
-}
 } // namespace
 
 namespace correction
@@ -175,7 +168,7 @@ void registerCommands()
         .flags = {{"belowSkin", "", T::Bool, false, "Put it just under the skinCluster instead of on top."},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes;
             for (const std::string& o : a.objects())
             {
@@ -204,7 +197,7 @@ void registerCommands()
         .positionalDoc = "correction",
         .flags = {{"on", "", T::Bool, nullptr, "Default: toggle."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("editCorrection: give a correction deformer");
@@ -257,7 +250,7 @@ void registerCommands()
                "shape to the target's (matched in world space), stored in tangent space.",
         .positionalDoc = "correction, target",
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.size() < 2)
                 throw CommandError("setCorrection: give a correction and a target mesh");
@@ -285,7 +278,7 @@ void registerCommands()
         .positionalDoc = "correction",
         .flags = {{"points", "", T::List, nullptr, "Point ids to clear."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("resetCorrection: give a correction deformer");

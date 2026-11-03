@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/TransformOps.h"
@@ -12,11 +14,7 @@
 
 using namespace lila::ui;
 using doctest::Approx;
-
-namespace
-{
-bool near(const glm::dvec3& a, const glm::dvec3& b) { return glm::length(a - b) < 1e-9; }
-} // namespace
+using namespace testutil;
 
 TEST_CASE("increment snapping rounds to the nearest step, negatives included")
 {
@@ -35,14 +33,14 @@ TEST_CASE("relative move snap steps from the drag start along the frame's masked
 {
     glm::dmat3 world(1.0);
     // An X axis drag: only X snaps, and Y/Z (zero anyway for an axis drag) pass through.
-    CHECK(near(gizmo::snapRelative({13.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {10.0, 0.0, 0.0}));
-    CHECK(near(gizmo::snapRelative({-16.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {-20.0, 0.0, 0.0}));
+    CHECK(nearTight(gizmo::snapRelative({13.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {10.0, 0.0, 0.0}));
+    CHECK(nearTight(gizmo::snapRelative({-16.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {-20.0, 0.0, 0.0}));
     // A YZ plane drag snaps both plane axes and leaves the isolated one alone.
-    CHECK(near(gizmo::snapRelative({0.3, 4.0, -6.0}, world, {0, 1, 1}, 5.0), {0.3, 5.0, -5.0}));
+    CHECK(nearTight(gizmo::snapRelative({0.3, 4.0, -6.0}, world, {0, 1, 1}, 5.0), {0.3, 5.0, -5.0}));
     // A rotated frame snaps along its own axes: 13 along a 45 degree X lands on 10 along it.
     glm::dmat3 frame = glm::dmat3(glm::rotate(glm::dmat4(1.0), glm::radians(45.0), glm::dvec3(0, 0, 1)));
     glm::dvec3 snapped = gizmo::snapRelative(frame[0] * 13.0, frame, {1, 0, 0}, 10.0);
-    CHECK(near(snapped, frame[0] * 10.0));
+    CHECK(nearTight(snapped, frame[0] * 10.0));
 }
 
 TEST_CASE("absolute move snap lands the moved point on the grid")
@@ -50,12 +48,12 @@ TEST_CASE("absolute move snap lands the moved point on the grid")
     glm::dmat3 world(1.0);
     glm::dvec3 start(3.0, 7.0, -2.0);
     // Start at x=3, drag 13: 16 rounds to 20 on a 10 grid, so the delta is 17.
-    CHECK(near(gizmo::snapAbsolute(start, {13.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {17.0, 0.0, 0.0}));
+    CHECK(nearTight(gizmo::snapAbsolute(start, {13.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {17.0, 0.0, 0.0}));
     // Negative side: 3 - 9 = -6 rounds to -10.
-    CHECK(near(gizmo::snapAbsolute(start, {-9.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {-13.0, 0.0, 0.0}));
+    CHECK(nearTight(gizmo::snapAbsolute(start, {-9.0, 0.0, 0.0}, world, {1, 0, 0}, 10.0), {-13.0, 0.0, 0.0}));
     // Unmasked axes keep the start coordinate even though it is off grid.
     glm::dvec3 d = gizmo::snapAbsolute(start, {1.0, 1.0, 1.0}, world, {1, 0, 1}, 5.0);
-    CHECK(near(start + d, {5.0, 8.0, 0.0}));
+    CHECK(nearTight(start + d, {5.0, 8.0, 0.0}));
 }
 
 TEST_CASE("rotate snap keeps counting past a half turn")
@@ -79,11 +77,11 @@ TEST_CASE("scale snap measures from the start factor of 1")
 TEST_CASE("plane constraint drops the isolated axis")
 {
     glm::dvec3 x(1, 0, 0);
-    CHECK(near(gizmo::constrainToPlane({3, 4, 5}, x), {0, 4, 5}));
+    CHECK(nearTight(gizmo::constrainToPlane({3, 4, 5}, x), {0, 4, 5}));
     glm::dvec3 diag = glm::normalize(glm::dvec3(1, 1, 0));
     glm::dvec3 d = gizmo::constrainToPlane({2, 0, 1}, diag);
     CHECK(glm::dot(d, diag) == Approx(0.0));
-    CHECK(near(d, {1, -1, 1}));
+    CHECK(nearTight(d, {1, -1, 1}));
 }
 
 TEST_CASE("a ray hits the drag plane, or reports it parallel")
@@ -91,10 +89,10 @@ TEST_CASE("a ray hits the drag plane, or reports it parallel")
     glm::dvec3 hit;
     // Looking down -Y at the XZ plane (Ctrl+Y on the move gizmo) through the point (2, 10, 3).
     REQUIRE(gizmo::rayPlane({2, 10, 3}, {0, -1, 0}, {0, 0, 0}, {0, 1, 0}, hit));
-    CHECK(near(hit, {2, 0, 3}));
+    CHECK(nearTight(hit, {2, 0, 3}));
     // Oblique ray at a plane offset from the origin.
     REQUIRE(gizmo::rayPlane({0, 0, 0}, glm::normalize(glm::dvec3(1, 1, 0)), {0, 5, 0}, {0, 1, 0}, hit));
-    CHECK(near(hit, {5, 5, 0}));
+    CHECK(nearTight(hit, {5, 5, 0}));
     CHECK_FALSE(gizmo::rayPlane({0, 1, 0}, {1, 0, 0}, {0, 0, 0}, {0, 1, 0}, hit));
 }
 
@@ -167,13 +165,13 @@ TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
     g.evaluate();
     glm::dmat4 before = g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
     glm::dmat3 object = scene::xformops::frame(g, id, scene::Space::Object);
-    CHECK(near(scene::xformops::pivotFrame(g, id)[0], object[0]));
+    CHECK(nearTight(scene::xformops::pivotFrame(g, id)[0], object[0]));
 
     // Turn the pivot 30 degrees about world Y, as the rotate tool does in pivot edit mode.
     glm::dmat3 turn(glm::rotate(glm::dmat4(1.0), glm::radians(30.0), glm::dvec3(0, 1, 0)));
     scene::xformops::setWorldPivotFrame(g, id, turn * object);
     g.evaluate();
-    CHECK(near(scene::xformops::pivotFrame(g, id)[0], turn * object[0]));
+    CHECK(nearTight(scene::xformops::pivotFrame(g, id)[0], turn * object[0]));
     CHECK(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient).y == Approx(30.0));
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 
@@ -183,7 +181,7 @@ TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
     ops::execute("undo", nlohmann::json::object());
     CHECK(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient).y == Approx(30.0));
     ops::execute("resetPivot", {{"args", {cube}}});
-    CHECK(near(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient), glm::dvec3(0.0)));
+    CHECK(nearTight(g.node(id)->as<glm::dvec3>(scene::Transform::kPivotOrient), glm::dvec3(0.0)));
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 }
 

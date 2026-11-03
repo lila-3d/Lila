@@ -1,4 +1,4 @@
-#include "TexTest.h"
+#include "TexPaintTest.h"
 
 #include "core/MainQueue.h"
 #include "geo/Attribute.h"
@@ -24,19 +24,6 @@ namespace tp = lila::tex::paint;
 
 namespace
 {
-bool gpu()
-{
-    Renderer& r = Renderer::get();
-    if (r.running() || r.start())
-        return true;
-    MESSAGE("no GPU for texture painting tests");
-    return false;
-}
-
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
-scene::Graph& sg() { return scene::Graph::current(); }
-
 /**
  * Two quads mirrored across x = 0, 100 units across, facing +Y. Each is its own UV island; flipped mirrors the right
  * island's u (mirrored UVs), otherwise both islands run u along +x (the mirrored texels sit elsewhere in uv).
@@ -78,18 +65,12 @@ scene::Node& setup(bool flipped, int res = 256)
     return *tex::findSet(sg(), "Panel");
 }
 
-const float* at(const image::Image& img, glm::vec2 uv)
-{
-    const int x = std::clamp(int(uv.x * img.width), 0, img.width - 1), y = std::clamp(int((1.0f - uv.y) * img.height), 0, img.height - 1);
-    return &img.rgba[(size_t(y) * img.width + x) * 4];
-}
-
 json mirrorBrush()
 {
     return {{"falloff", "smooth"}, {"strength", 1.0}, {"flow", 1.0}, {"spacing", 0.15}, {"mirror", true}};
 }
 
-json surfaceStroke(std::vector<glm::dvec3> points, double radius, json payload)
+json mirrorStroke(std::vector<glm::dvec3> points, double radius, json payload)
 {
     json dabs = json::array();
     for (const glm::dvec3& p : points)
@@ -121,7 +102,7 @@ TEST_CASE("texture paint symmetry: a mirrored stroke paints the mirrored texels 
         return;
     scene::Node& set = setup(false);
     run("texPaintStroke", {{"args", {"Panel", "P"}},
-                           {"stroke", surfaceStroke({{-30, 0, 5}, {-25, 0, 8}, {-20, 0, 12}}, 8.0, {{"channels", {{"roughness", 1.0}}}})}});
+                           {"stroke", mirrorStroke({{-30, 0, 5}, {-25, 0, 8}, {-20, 0, 12}}, 8.0, {{"channels", {{"roughness", 1.0}}}})}});
     const tp::PaintPtr data = tp::readPaint(set);
     const tp::Stroke& s = *data->buffer("P")->strokes.front();
     CHECK(s.dabs.size() == 6);
@@ -182,7 +163,7 @@ TEST_CASE("texture paint symmetry: a mirrored direction stroke tilts the mirrore
         scene::Node& set = setup(flipped);
         // Along +x on the left: the copy runs along -x on the right.
         run("texPaintStroke", {{"args", {"Panel", "X"}},
-                               {"stroke", surfaceStroke({{-40, 0, 20}, {-35, 0, 20}, {-30, 0, 20}, {-25, 0, 20}, {-20, 0, 20}}, 5.0,
+                               {"stroke", mirrorStroke({{-40, 0, 20}, {-35, 0, 20}, {-30, 0, 20}, {-25, 0, 20}, {-20, 0, 20}}, 5.0,
                                                         {{"kind", "direction"}, {"tilt", 0.8}})}});
         const image::Image nx = gp::readChannel(set.id(), "X", "normal");
         const float* l = at(nx, panelUv(-30, 20, flipped));
@@ -201,7 +182,7 @@ TEST_CASE("texture paint symmetry: a mirrored direction stroke tilts the mirrore
 
         // Along +z: the copy runs along +z too, tilting along +v on both islands.
         run("texPaintStroke", {{"args", {"Panel", "Z"}},
-                               {"stroke", surfaceStroke({{-30, 0, -20}, {-30, 0, -15}, {-30, 0, -10}, {-30, 0, -5}, {-30, 0, 0}}, 5.0,
+                               {"stroke", mirrorStroke({{-30, 0, -20}, {-30, 0, -15}, {-30, 0, -10}, {-30, 0, -5}, {-30, 0, 0}}, 5.0,
                                                         {{"kind", "direction"}, {"tilt", 0.8}})}});
         const image::Image nz = gp::readChannel(set.id(), "Z", "normal");
         const float* lz = at(nz, panelUv(-30, -10, flipped));
@@ -220,11 +201,11 @@ TEST_CASE("texture paint symmetry: clones, particles and stamps copy with the st
     if (!gpu())
         return;
     scene::Node& set = setup(false);
-    json base = surfaceStroke({{-30, 0, -20}}, 8.0, {{"channels", {{"baseColor", {0.0, 0.0, 1.0}}}}});
+    json base = mirrorStroke({{-30, 0, -20}}, 8.0, {{"channels", {{"baseColor", {0.0, 0.0, 1.0}}}}});
     base["brush"]["mirror"] = false;
     run("texPaintStroke", {{"args", {"Panel", "P"}}, {"stroke", base}});
     // A mirrored clone from the blue spot: the right side clones from the spot's mirror, which is empty.
-    json clone = surfaceStroke({{-30, 0, 20}}, 8.0, {{"kind", "clone"}, {"cloneFrom", {-30.0, 0.0, -20.0}}, {"channels", {{"baseColor", 0.0}}}});
+    json clone = mirrorStroke({{-30, 0, 20}}, 8.0, {{"kind", "clone"}, {"cloneFrom", {-30.0, 0.0, -20.0}}, {"channels", {{"baseColor", 0.0}}}});
     run("texPaintStroke", {{"args", {"Panel", "P"}}, {"stroke", clone}});
     const tp::PaintPtr data = tp::readPaint(set);
     const tp::Payload& cp = data->buffer("P")->strokes.back()->payload;
@@ -235,7 +216,7 @@ TEST_CASE("texture paint symmetry: clones, particles and stamps copy with the st
     CHECK(at(img, panelUv(30, 20, false))[3] < 0.05f);
 
     // Particles: every particle dab has its mirror.
-    json drips = surfaceStroke({{-30, 0, 0}}, 4.0, {{"channels", {{"roughness", 1.0}}}});
+    json drips = mirrorStroke({{-30, 0, 0}}, 4.0, {{"channels", {{"roughness", 1.0}}}});
     drips["particles"] = {{"kind", "drips"}, {"rate", 1.0}, {"count", 2}, {"down", {0.0, 0.0, 1.0}}, {"seed", 2}};
     run("texPaintStroke", {{"args", {"Panel", "D"}}, {"stroke", drips}});
     const tp::Stroke& ds = *tp::readPaint(set)->buffer("D")->strokes.front();

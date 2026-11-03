@@ -2,6 +2,7 @@
 
 #include "bake/AutoDistance.h"
 #include "bake/Backend.h"
+#include "bake/BakeCommon.h"
 #include "bake/BakeInputs.h"
 #include "bake/BakeNodes.h"
 #include "bake/Cage.h"
@@ -29,7 +30,10 @@ namespace lila::bake
 {
 namespace
 {
-template <class T> T mix3(const T* v, const glm::dvec3& w) { return v[0] * float(w.x) + v[1] * float(w.y) + v[2] * float(w.z); }
+using detail::edgeFunction;
+using detail::meshByName;
+using detail::mix3;
+using detail::worldOf;
 
 /** The ray direction a bake's auto cage uses at w in triangle t (TexelRaster's), pointing out of the low. */
 glm::vec3 cageDirection(const LowInput& low, size_t t, const glm::dvec3& w, float groupSkew)
@@ -54,17 +58,15 @@ glm::vec3 cageDirection(const LowInput& low, size_t t, const glm::dvec3& w, floa
     return n;
 }
 
-double edge(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
-
 /** Barycentric weights of a raster sample in its low triangle, from its UV. */
 glm::dvec3 sampleBary(const LowInput& low, const TexelSample& s)
 {
     const glm::vec2* uv = &low.soup.uvs[size_t(s.lowTriangle) * 3];
     const glm::dvec2 a(uv[0]), b(uv[1]), c(uv[2]), p(s.uv[0], s.uv[1]);
-    const double area = edge(a, b, c);
+    const double area = edgeFunction(a, b, c);
     if (std::abs(area) < 1e-18)
         return glm::dvec3(1.0 / 3.0);
-    glm::dvec3 w(edge(b, c, p) / area, edge(c, a, p) / area, edge(a, b, p) / area);
+    glm::dvec3 w(edgeFunction(b, c, p) / area, edgeFunction(c, a, p) / area, edgeFunction(a, b, p) / area);
     w = glm::max(w, glm::dvec3(0.0));
     return w / std::max(1e-12, w.x + w.y + w.z);
 }
@@ -230,32 +232,13 @@ void smoothUp(LowState& s)
     s.push = std::move(next);
 }
 
-float percentile(std::vector<float> v, double q)
+float quantile(std::vector<float> v, double q)
 {
     if (v.empty())
         return 0.0f;
     const size_t i = std::min(v.size() - 1, size_t(double(v.size() - 1) * q));
     std::nth_element(v.begin(), v.begin() + std::ptrdiff_t(i), v.end());
     return v[i];
-}
-
-scene::Node* meshNode(scene::Graph& g, const std::string& name)
-{
-    try
-    {
-        scene::Node* n = g.find(name);
-        return n && n->type().isA("mesh") ? n : nullptr;
-    }
-    catch (const std::exception&)
-    {
-        return nullptr;
-    }
-}
-
-glm::dmat4 worldOf(scene::Graph& g, scene::NodeId id)
-{
-    const scene::PlugValue v = g.value({id, scene::Transform::kWorldMatrix, -1});
-    return std::holds_alternative<glm::dmat4>(v) ? std::get<glm::dmat4>(v) : glm::dmat4(1.0);
 }
 
 /** The group's inputs with highs, a prepared CPU backend and its Auto distances measured, as a bake starts. */
@@ -477,7 +460,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
     for (const LowState& s : states)
         for (const Constraint& c : s.constraints)
             all.push_back(c.need);
-    const float clampAt = 2.0f * percentile(all, 0.995);
+    const float clampAt = 2.0f * quantile(all, 0.995);
     for (LowState& s : states)
     {
         for (Constraint& c : s.constraints)
@@ -486,7 +469,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
         smoothUp(s);
         clampToClearance(s);
     }
-    est.rear = std::max(2.0 * margin, double(percentile(inward, 0.999)) * 1.1 + margin);
+    est.rear = std::max(2.0 * margin, double(quantile(inward, 0.999)) * 1.1 + margin);
 
     // Frontal puts the typical push at offset 1, and the largest within the attribute's 0-10.
     auto fit = [&] {
@@ -499,7 +482,7 @@ CageEstimate estimateCage(std::span<const CageLow> lows, const GroupSettings& se
                     pushes.push_back(s.push[p]);
                     most = std::max(most, s.push[p]);
                 }
-        double f = std::max(double(margin), double(percentile(pushes, 0.9)));
+        double f = std::max(double(margin), double(quantile(pushes, 0.9)));
         f = std::max(f, double(most) / 10.0);
         est.frontal = f / est.cageOffset;
         est.offsets.clear();
@@ -632,7 +615,7 @@ json estimateGroupCage(scene::Graph& g, scene::NodeId group, const CageEstimateO
     std::vector<scene::NodeId> lowIds;
     for (const std::string& name : s.lows)
     {
-        scene::Node* n = meshNode(g, name);
+        scene::Node* n = meshByName(g, name);
         if (!n)
             throw std::runtime_error(grp->name() + ": low " + name + " is not a mesh in the scene");
         scene::MeshPtr m = scene::modifiers::exportMesh(g, n->id());

@@ -12,7 +12,7 @@ namespace lila::geo
 {
 namespace
 {
-constexpr Index kGrain = 2048;
+constexpr Index kRefineGrain = 2048;
 
 /**
  * The subdivided mesh built in parallel: every face's quads laid out in source order and built at once, then their
@@ -31,7 +31,7 @@ std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& p
         firstQuad[f + 1] = firstQuad[f] + (fId[f] != kInvalid ? Index(src.faceSize(f)) : 0);
     const Index quads = firstQuad[fc];
     std::vector<Index> sizes(quads, 4), corners(size_t(quads) * 4);
-    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         for (Index f = r.begin(); f < r.end(); ++f)
         {
             if (fId[f] == kInvalid)
@@ -71,7 +71,7 @@ std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& p
             const float w[2] = {0.5f, 0.5f};
             pa.mixFrom(src.pointAttrs(), eId[e], s, w);
         });
-        tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+        tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
             std::vector<Index> s;
             std::vector<float> w;
             for (Index f = r.begin(); f < r.end(); ++f)
@@ -91,7 +91,7 @@ std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& p
         map->faces.assign(out.faceCapacity(), kInvalid);
     }
     const bool hasCornerAttrs = out.cornerAttrs().layerCount() > 0, hasEdgeAttrs = out.edgeAttrs().layerCount() > 0;
-    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         std::vector<Index> faceCorners;
         std::vector<float> avg;
         for (Index f = r.begin(); f < r.end(); ++f)
@@ -171,12 +171,12 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
     std::vector<glm::dvec3> pos(next);
 
     std::vector<glm::dvec3> facePt(fc);
-    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         for (Index f = r.begin(); f < r.end(); ++f)
             if (src.faceValid(f))
                 pos[fId[f]] = facePt[f] = src.faceCentroid(f);
     });
-    tbb::parallel_for(tbb::blocked_range<Index>(0, ec, kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, ec, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         for (Index e = r.begin(); e < r.end(); ++e)
         {
             if (!src.edgeValid(e))
@@ -193,7 +193,7 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
             pos[eId[e]] = glm::mix(smooth, mid, s);
         }
     });
-    tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         for (Index p = r.begin(); p < r.end(); ++p)
         {
             if (!src.pointValid(p))
@@ -390,7 +390,7 @@ std::vector<glm::dvec3> PointStencil::apply(std::span<const glm::dvec3> in) cons
     LILA_ZONE();
 
     std::vector<glm::dvec3> out(rows());
-    tbb::parallel_for(tbb::blocked_range<Index>(0, rows(), kGrain), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, rows(), kRefineGrain), [&](const tbb::blocked_range<Index>& r) {
         for (Index i = r.begin(); i < r.end(); ++i)
         {
             glm::dvec3 sum(0.0);

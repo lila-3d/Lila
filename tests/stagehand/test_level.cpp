@@ -1,6 +1,7 @@
 // Stagehand at level scale: terrain colliders, convex parts, reach, settle caps, instances to objects, the starter
 // library and what goes to Unreal.
 
+#include "TestUtil.h"
 #include "extensions/ExtensionManager.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
@@ -17,12 +18,11 @@
 #include <vector>
 
 using namespace lila;
+using namespace stagehandtest;
 using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 void load()
 {
     if (!ops::registry().find("settle"))
@@ -34,13 +34,6 @@ void loadTerrain()
     load();
     if (!ops::registry().find("terrainCreate"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_TERRAIN_PACKAGE) == "Terrain");
-}
-
-std::string cube(const char* name, const glm::dvec3& at, const glm::dvec3& size)
-{
-    return run("polyCube", {{"name", name}, {"position", json::array({at.x, at.y, at.z})}, {"width", size.x}, {"height", size.y}, {"depth", size.z},
-                            {"baseAtOrigin", true}, {"generator", false}})[0]
-        .get<std::string>();
 }
 
 glm::dvec3 worldPos(const std::string& node)

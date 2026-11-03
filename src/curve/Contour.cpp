@@ -1,6 +1,7 @@
 #include "curve/Contour.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 
 #include <algorithm>
@@ -13,8 +14,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
 D3 inPlaneAxis(const D3& n)
 {
     D3 ref = std::abs(n.x) < 0.9 ? D3(1, 0, 0) : D3(0, 1, 0);
@@ -22,7 +21,7 @@ D3 inPlaneAxis(const D3& n)
 }
 
 /** Drops repeats (and a closed chain's copy of its start at the end). */
-void dedupe(std::vector<D3>& pts, bool closed, double eps)
+void removeRepeats(std::vector<D3>& pts, bool closed, double eps)
 {
     std::vector<D3> out;
     out.reserve(pts.size());
@@ -38,7 +37,7 @@ void dedupe(std::vector<D3>& pts, bool closed, double eps)
 std::optional<Spline> chainCurve(std::vector<D3> pts, bool closed, const D3& n, const SliceOptions& o)
 {
     const D3 u = inPlaneAxis(n);
-    dedupe(pts, closed, 1e-9);
+    removeRepeats(pts, closed, 1e-9);
     if (pts.size() < (closed ? 3u : 2u))
         return std::nullopt;
     if (o.tolerance > 0.0)

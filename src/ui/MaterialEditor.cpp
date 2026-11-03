@@ -24,6 +24,8 @@
 #include "ui/SpinScrub.h"
 #include "ui/TextureCache.h"
 #include "ui/TexturePicker.h"
+#include "ui/UiCommands.h"
+#include "ui/UiCommon.h"
 #include "ui/ValueReset.h"
 
 #include <QGuiApplication>
@@ -61,36 +63,12 @@ namespace
 using namespace scene::material;
 namespace fs = std::filesystem;
 
-constexpr int kThumb = 40;
-constexpr int kPreview = 112;
-
-float toSrgb(float v)
-{
-    v = std::clamp(v, 0.0f, 1.0f);
-    return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
-}
-
-float toLinear(float v)
-{
-    return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
-}
+constexpr int kPreviewThumb = 40;
+constexpr int kPreviewSize = 112;
 
 QColor displayColor(const glm::dvec3& linear)
 {
-    return QColor::fromRgbF(toSrgb(float(linear.x)), toSrgb(float(linear.y)), toSrgb(float(linear.z)));
-}
-
-json run(const char* command, const json& call)
-{
-    try
-    {
-        return ops::execute(command, call, CallSource::UI);
-    }
-    catch (const CommandError& e)
-    {
-        log::error("{}", e.what());
-    }
-    return nullptr;
+    return QColor::fromRgbF(linearToSrgb(float(linear.x)), linearToSrgb(float(linear.y)), linearToSrgb(float(linear.z)));
 }
 
 /** assignMaterial with no objects would find something to assign to: faces in face mode, else selected meshes. */
@@ -115,9 +93,9 @@ bool hasAssignTargets()
 json createAndAssign(bool always)
 {
     UndoChunk chunk("New Material");
-    json name = run("createMaterial", {{"args", json::array({"M_Material"})}});
+    json name = runUi("createMaterial", {{"args", json::array({"M_Material"})}});
     if (name.is_string() && (always || hasAssignTargets()))
-        run("assignMaterial", {{"args", json::array({name})}});
+        runUi("assignMaterial", {{"args", json::array({name})}});
     return name;
 }
 
@@ -158,7 +136,7 @@ void assignByName(const scene::Node& material, std::vector<std::string> files)
             skipped += paths::toUtf8(paths::fromUtf8(file).filename());
             continue;
         }
-        run("setMaterialTexture", {{"args", json::array({material.path()})}, {"channel", channel}, {"path", file}});
+        runUi("setMaterialTexture", {{"args", json::array({material.path()})}, {"channel", channel}, {"path", file}});
     }
     if (!skipped.empty())
         log::warn("Textures not assigned (no channel in the name, or the channel was already taken): {}", skipped);
@@ -226,15 +204,15 @@ QPixmap previewBall(const scene::Node& n)
     float metal = float(n.as<double>(kMetallic)), rough = std::clamp(float(n.as<double>(kRoughness)), 0.04f, 1.0f);
     glm::vec3 emissive = glm::vec3(n.as<glm::dvec3>(kEmissiveColor)) * float(n.as<double>(kEmissiveIntensity));
     QImage map = textures::thumbnail(scene::materials::resolvePath(n.as<std::string>(kBaseColorMap)), 128);
-    QImage img(kPreview, kPreview, QImage::Format_ARGB32_Premultiplied);
+    QImage img(kPreviewSize, kPreviewSize, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     const glm::vec3 l = glm::normalize(glm::vec3(-0.5f, 0.7f, 0.6f)), v(0, 0, 1);
     const glm::vec3 h = glm::normalize(l + v);
-    float r = kPreview * 0.5f - 2.0f;
-    for (int y = 0; y < kPreview; ++y)
-        for (int x = 0; x < kPreview; ++x)
+    float r = kPreviewSize * 0.5f - 2.0f;
+    for (int y = 0; y < kPreviewSize; ++y)
+        for (int x = 0; x < kPreviewSize; ++x)
         {
-            float px = (x + 0.5f - kPreview * 0.5f) / r, py = (kPreview * 0.5f - y - 0.5f) / r;
+            float px = (x + 0.5f - kPreviewSize * 0.5f) / r, py = (kPreviewSize * 0.5f - y - 0.5f) / r;
             float d2 = px * px + py * py;
             if (d2 > 1.0f)
                 continue;
@@ -244,7 +222,7 @@ QPixmap previewBall(const scene::Node& n)
             {
                 float u = 0.5f + std::atan2(nrm.x, nrm.z) / (2.0f * 3.14159265f), t = 0.5f - std::asin(nrm.y) / 3.14159265f;
                 QRgb c = map.pixel(std::clamp(int(u * map.width()), 0, map.width() - 1), std::clamp(int(t * map.height()), 0, map.height() - 1));
-                albedo = {toLinear(qRed(c) / 255.0f), toLinear(qGreen(c) / 255.0f), toLinear(qBlue(c) / 255.0f)};
+                albedo = {srgbToLinear(qRed(c) / 255.0f), srgbToLinear(qGreen(c) / 255.0f), srgbToLinear(qBlue(c) / 255.0f)};
             }
             glm::vec3 f0 = glm::mix(glm::vec3(0.04f), albedo, metal);
             float nl = std::max(glm::dot(nrm, l), 0.0f), nh = std::max(glm::dot(nrm, h), 0.0f);
@@ -255,7 +233,7 @@ QPixmap previewBall(const scene::Node& n)
             c += (albedo * (1.0f - metal) + f0 * 0.5f) * (0.18f + 0.1f * nrm.y) + emissive;
             c = c / (c + glm::vec3(0.6f)) * 1.25f;
             float edge = std::clamp((1.0f - std::sqrt(d2)) * r, 0.0f, 1.0f);
-            img.setPixel(x, y, qPremultiply(qRgba(int(toSrgb(c.r) * 255), int(toSrgb(c.g) * 255), int(toSrgb(c.b) * 255), int(edge * 255))));
+            img.setPixel(x, y, qPremultiply(qRgba(int(linearToSrgb(c.r) * 255), int(linearToSrgb(c.g) * 255), int(linearToSrgb(c.b) * 255), int(edge * 255))));
         }
     return QPixmap::fromImage(img);
 }
@@ -264,18 +242,6 @@ QPointer<MaterialEditor>& floatingEditor()
 {
     static QPointer<MaterialEditor> e;
     return e;
-}
-
-QDockWidget* findDock(const char* name)
-{
-    for (QWidget* w : QApplication::topLevelWidgets())
-    {
-        if (auto* d = qobject_cast<QDockWidget*>(w); d && w->objectName() == name)
-            return d;
-        if (auto* d = w->findChild<QDockWidget*>(name))
-            return d;
-    }
-    return nullptr;
 }
 
 MaterialEditor* showEditor()
@@ -335,7 +301,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     buttons->addStretch();
     top->addLayout(buttons);
     mPreview = new QLabel(this);
-    mPreview->setFixedSize(kPreview, kPreview);
+    mPreview->setFixedSize(kPreviewSize, kPreviewSize);
     top->addWidget(mPreview);
     root->addLayout(top);
 
@@ -364,18 +330,18 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     });
     auto deleteMaterial = [this] {
         if (scene::Node* n = current())
-            run("delete", {{"args", json::array({n->path()})}});
+            runUi("delete", {{"args", json::array({n->path()})}});
     };
     connect(del, &QPushButton::clicked, this, deleteMaterial);
     deletion::claim(mList, deleteMaterial);
     connect(mAssign, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
-            run("assignMaterial", {{"args", json::array({n->path()})}});
+            runUi("assignMaterial", {{"args", json::array({n->path()})}});
     });
     connect(showAssigned, &QPushButton::clicked, this, [this] { followSelection(); });
     connect(selectUsers, &QPushButton::clicked, this, [this] {
         if (scene::Node* n = current())
-            run("selectByMaterial", {{"args", json::array({n->path()})}});
+            runUi("selectByMaterial", {{"args", json::array({n->path()})}});
     });
     connect(mList, &QListWidget::currentTextChanged, this, [this](const QString& name) {
         scene::Node* n = scene::materials::find(scene::Graph::current(), name.toStdString());
@@ -390,7 +356,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
         scene::Node* n = current();
         std::string wanted = item->text().toStdString();
         if (n && wanted != n->name())
-            run("renameMaterial", {{"args", json::array({n->path(), wanted})}});
+            runUi("renameMaterial", {{"args", json::array({n->path(), wanted})}});
         scheduleRefresh();
     });
 
@@ -504,7 +470,7 @@ void MaterialEditor::setAttr(int attr, const json& value)
     scene::Node* n = current();
     if (!n)
         return;
-    run("setAttr", {{"args", json::array({n->path() + "." + n->type().attrs[size_t(attr)].name, value})}});
+    runUi("setAttr", {{"args", json::array({n->path() + "." + n->type().attrs[size_t(attr)].name, value})}});
 }
 
 void MaterialEditor::rebuild()
@@ -688,7 +654,7 @@ void MaterialEditor::rebuild()
         grid->addWidget(box, row++, 1, 1, 2);
         auto apply = [this, channel](const std::string& p) {
             if (scene::Node* m = current())
-                run("setMaterialTexture", {{"args", json::array({m->path()})}, {"channel", channel}, {"path", p}});
+                runUi("setMaterialTexture", {{"args", json::array({m->path()})}, {"channel", channel}, {"path", p}});
         };
         box->setResolver([](const std::string& p) { return paths::fromUtf8(scene::materials::resolvePath(p)); });
         box->setProblem([](const std::filesystem::path& f) { return textures::error(paths::toUtf8(f)); });
@@ -708,7 +674,7 @@ void MaterialEditor::rebuild()
             // Wrap U, wrap V and filter on a row of their own, shown while the map is set.
             auto* opts = new QWidget(mBody);
             auto* oh = new QHBoxLayout(opts);
-            oh->setContentsMargins(kThumb + 6, 0, 0, 0);
+            oh->setContentsMargins(kPreviewThumb + 6, 0, 0, 0);
             const char* tips[3] = {"What the map shows past its edges along U.", "What the map shows past its edges along V.",
                                    "Linear: smooth, mipmapped. Nearest: hard texels, for pixel art."};
             for (int k = 0; k < 3; ++k)
@@ -953,7 +919,7 @@ void registerMaterialUi()
                   .doc = "Create a material and assign it to the selected objects or faces.",
                   .python = "assignMaterial(createMaterial('M_Material'))"});
     actions::add({.id = "material.assignDefault", .label = "Assign Default Material", .category = "Materials",
-                  .run = [] { run("assignMaterial", {{"args", json::array({scene::materials::kDefaultSlot})}}); },
+                  .run = [] { runUi("assignMaterial", {{"args", json::array({scene::materials::kDefaultSlot})}}); },
                   .enabled = actions::hasSelection,
                   .doc = "Put the selected objects or faces back on the neutral default material.",
                   .python = "assignMaterial('Default')"});

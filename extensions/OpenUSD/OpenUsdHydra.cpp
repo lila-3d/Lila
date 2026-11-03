@@ -18,12 +18,11 @@
 #include <sstream>
 
 using namespace lila;
-
-namespace
-{
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+namespace
+{
 struct Delegate
 {
     std::string plugin;

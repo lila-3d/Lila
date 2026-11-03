@@ -12,7 +12,6 @@ using namespace lila::scene;
 namespace
 {
 double attr(const std::string& plug) { return std::get<double>(graph().value(graph().plug(plug))); }
-NodeId id(const std::string& name) { return node(name).id(); }
 
 /** Degrees between two world orientations. */
 double turned(const glm::dmat4& a, const glm::dmat4& b)
@@ -21,7 +20,7 @@ double turned(const glm::dmat4& a, const glm::dmat4& b)
     return glm::degrees(2.0 * std::acos(std::min(1.0, std::abs(glm::dot(qa, qb)))));
 }
 
-void arm()
+void armChain()
 {
     run("newScene");
     run("autoKeyframe", {{"state", false}});
@@ -46,7 +45,7 @@ TEST_CASE("rig elements: twist angle is the rotation's share about the axis")
 
 TEST_CASE("rig elements: an IK controller poses FK rotations, undoably, and keys them when animated")
 {
-    arm();
+    armChain();
     const std::string chain = run("ikChain", {{"args", {"shoulder", "wrist"}}}).get<std::string>();
     const std::string handle = run("getAttr", {{"args", {chain + ".handle"}}}).get<std::string>();
     CHECK(graph().selection() == std::vector<NodeId>{id(handle)});
@@ -80,7 +79,7 @@ TEST_CASE("rig elements: an IK controller poses FK rotations, undoably, and keys
 
 TEST_CASE("rig elements: the controller sits on the FK pose and a lock holds it between keys")
 {
-    arm();
+    armChain();
     const std::string chain = run("ikChain", {{"args", {"shoulder", "wrist"}}}).get<std::string>();
     const std::string handle = run("getAttr", {{"args", {chain + ".handle"}}}).get<std::string>();
     run("setKeyframe", {{"args", {"chest.translate", "shoulder.rotate", "elbow.rotate", "wrist.rotate"}}, {"time", 0.0}});
@@ -112,7 +111,7 @@ TEST_CASE("rig elements: the controller sits on the FK pose and a lock holds it 
 
 TEST_CASE("rig elements: twist drivers counter the parent's twist or follow the hand's")
 {
-    arm();
+    armChain();
     run("joint", {{"position", v3(29.33, 140, -1.33)}, {"name", "upper_twist"}, {"parent", "shoulder"}});
     run("joint", {{"position", v3(66, 140, -1.33)}, {"name", "fore_twist"}, {"parent", "elbow"}});
     const json counter = run("twistDriver", {{"args", {"upper_twist"}}});
@@ -144,7 +143,7 @@ TEST_CASE("rig elements: twist drivers counter the parent's twist or follow the 
 
 TEST_CASE("rig elements: deform flags default on")
 {
-    arm();
+    armChain();
     CHECK(node("elbow").as<bool>(Joint::kDeform));
     run("setAttr", {{"args", {"elbow.deform", false}}});
     CHECK_FALSE(rigel::isDeform(node("elbow")));
@@ -153,7 +152,7 @@ TEST_CASE("rig elements: deform flags default on")
 
 TEST_CASE("rig elements: a looker's axes are choices that read old string values")
 {
-    arm();
+    armChain();
     const std::string looker = run("looker", {{"args", {"wrist"}}, {"aimAxis", "-z"}, {"upAxis", "+y"}}).get<std::string>();
     const AttrDef& def = node(looker).type().attrs[size_t(node(looker).type().attrIndex("aimAxis"))];
     CHECK(def.type == PlugType::Enum);

@@ -13,9 +13,6 @@ namespace settlement
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kM2 = 1.0e4;
-
 json xz(Vec2 p) { return json::array({p.x, p.y}); }
 
 json ring(const Polygon& p)

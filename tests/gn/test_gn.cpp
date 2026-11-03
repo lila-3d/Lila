@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "gn/Exec.h"
 #include "gn/Gn.h"
@@ -12,18 +13,12 @@
 #include <filesystem>
 
 using namespace lila;
+using namespace gntest;
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
-int faces(const std::string& m) { return run("meshInfo", args({m}))["faces"].get<int>(); }
-json bounds(const std::string& m) { return run("meshInfo", args({m})); }
-
-std::string add(const std::string& g, const char* type) { return run("gnAddNode", args({g, type})).get<std::string>(); }
-void link(const std::string& g, const std::string& from, const std::string& to) { run("gnConnect", args({g, from, to})); }
 void set(const std::string& g, const std::string& plug, json v) { run("gnSetValue", args({g, plug, v})); }
 
 /** Positions of a mesh's evaluated outMesh. */

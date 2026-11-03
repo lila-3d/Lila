@@ -1,6 +1,7 @@
 #include "curve/PipeRoute.h"
 
 #include "core/Profile.h"
+#include "curve/CurveMath.h"
 
 #include <algorithm>
 #include <array>
@@ -13,7 +14,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
 using I3 = glm::i64vec3;
 
 constexpr int kNoDir = 6;

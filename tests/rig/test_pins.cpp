@@ -61,8 +61,6 @@ std::string locator(const char* name, const D3& at)
     run("move", {{"args", {l}}, {"by", v3(at.x, at.y, at.z)}});
     return l;
 }
-
-void key(const std::string& plug, double t, double v) { run("setKeyframe", {{"args", {plug}}, {"time", t}, {"value", v}}); }
 } // namespace
 
 TEST_CASE("pin rides a curve by fraction, length and parameter, framed by the rail, an up object and roll")

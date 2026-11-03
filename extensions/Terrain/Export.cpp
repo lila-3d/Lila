@@ -21,9 +21,10 @@ using namespace lila;
 
 namespace terrain
 {
+using json = nlohmann::json;
+
 namespace
 {
-using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 void writeRaw(const fs::path& path, const void* data, size_t bytes)

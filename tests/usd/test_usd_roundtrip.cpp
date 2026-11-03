@@ -177,38 +177,6 @@ void compareFaces(const std::vector<FaceData>& a, const std::vector<FaceData>& b
         }
     }
 }
-
-std::map<std::string, json> materialValues(const std::string& name)
-{
-    std::map<std::string, json> out;
-    Node* n = materials::find(graph(), name);
-    REQUIRE_MESSAGE(n, name);
-    for (size_t a = 0; a < n->type().attrs.size(); ++a)
-        out[n->type().attrs[a].name] = scene::toJson(n->value(int(a)));
-    return out;
-}
-
-void compareMaterial(const std::map<std::string, json>& a, const std::map<std::string, json>& b)
-{
-    for (const auto& [key, value] : a)
-    {
-        INFO(key);
-        const json& other = b.at(key);
-        if (value.is_string() && !value.get<std::string>().empty())
-        {
-            REQUIRE(other.is_string());
-            std::error_code ec;
-            CHECK(fs::equivalent(fs::path(value.get<std::string>()), fs::path(other.get<std::string>()), ec));
-        }
-        else if (value.is_number_float())
-            CHECK(other.get<double>() == doctest::Approx(value.get<double>()).epsilon(1e-5));
-        else if (value.is_array())
-            for (size_t i = 0; i < value.size(); ++i)
-                CHECK(other[i].get<double>() == doctest::Approx(value[i].get<double>()).epsilon(1e-5));
-        else
-            CHECK(value == other);
-    }
-}
 } // namespace
 
 TEST_CASE("usd round trip: hierarchy, transforms, n-gons, normals, UV and color sets, slots, creases and materials")

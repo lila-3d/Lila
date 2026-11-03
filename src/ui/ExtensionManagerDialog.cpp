@@ -6,6 +6,7 @@
 #include "ui/Icons.h"
 #include "ui/LocateFlash.h"
 #include "ui/FileDialog.h"
+#include "ui/UiCommon.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -27,7 +28,7 @@ namespace
 using extensions::ExtensionInfo;
 using extensions::ExtensionManager;
 
-enum Column
+enum ExtensionColumn
 {
     Name,
     Version,
@@ -38,11 +39,6 @@ enum Column
     Status,
     ColumnCount,
 };
-
-QString qs(const std::string& s)
-{
-    return QString::fromStdString(s);
-}
 
 /** A checkbox centred in its cell. */
 QWidget* centredCheck(QTableWidget* table, bool on, bool enabled, const QString& tip, std::function<void(bool)> changed)

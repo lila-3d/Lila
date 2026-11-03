@@ -39,6 +39,7 @@
 #include "ui/SpinScrub.h"
 #include "ui/Theme.h"
 #include "ui/Tools.h"
+#include "ui/UiCommon.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -78,23 +79,6 @@ double currentNumber(Graph& g, const scene::PlugRef& p)
     if (auto* b = std::get_if<bool>(&v))
         return *b ? 1.0 : 0.0;
     return 0.0;
-}
-
-/** "translateX" -> "Translate X". */
-QString niceName(const std::string& name)
-{
-    QString out;
-    for (size_t i = 0; i < name.size(); ++i)
-    {
-        char c = name[i];
-        if (i == 0)
-            out += QChar(c).toUpper();
-        else if (std::isupper(static_cast<unsigned char>(c)))
-            out += QString(' ') + QChar(c);
-        else
-            out += QChar(c);
-    }
-    return out;
 }
 
 /** An enum channel's choices: the node's spaces for its space channel, else the attr's names. */
@@ -1191,11 +1175,11 @@ void ChannelBox::showSettings(QWidget* anchor)
         markPreset(v);
     });
     f->addRow("Scrub speed", speedRow);
-    auto* hyper = new QCheckBox("Faster drags go further", pop);
-    hyper->setObjectName("cbHyperbolic");
-    hyper->setChecked(attrView::hyperbolicScrub());
-    connect(hyper, &QCheckBox::toggled, pop, [](bool on) { attrView::setHyperbolicScrub(on); });
-    f->addRow("Hyperbolic", hyper);
+    auto* hyperCheck = new QCheckBox("Faster drags go further", pop);
+    hyperCheck->setObjectName("cbHyperbolic");
+    hyperCheck->setChecked(attrView::hyperbolicScrub());
+    connect(hyperCheck, &QCheckBox::toggled, pop, [](bool on) { attrView::setHyperbolicScrub(on); });
+    f->addRow("Hyperbolic", hyperCheck);
     auto* viewport = new QComboBox(pop);
     viewport->setObjectName("cbViewportScrub");
     viewport->addItem("Always", "always");
@@ -1254,7 +1238,6 @@ void ChannelBox::jumpToSource(int row)
             log::error("{}", e.what());
         }
 }
-
 
 std::vector<ChannelBox::Row> ChannelBox::buildRows(scene::NodeId lead) const
 {

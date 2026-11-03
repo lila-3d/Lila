@@ -84,7 +84,6 @@ const char* resultText(cgltf_result r)
     }
 }
 
-std::string str(const char* s) { return s ? std::string(s) : std::string(); }
 
 /** EXT_meshopt_compression: each compressed view is decoded into its own memory, which cgltf then reads instead of the buffer. */
 void decodeMeshopt(cgltf_data& data, ImportResult& r)
@@ -388,7 +387,7 @@ std::shared_ptr<BuiltMesh> buildMesh(const cgltf_data& data, const cgltf_mesh& g
                     prim.weights[size_t(at.index)] = read(acc);
                 }
                 break;
-            case cgltf_attribute_type_custom: customAttrs.insert(str(at.name)); break;
+            case cgltf_attribute_type_custom: customAttrs.insert(orEmpty(at.name)); break;
             default: break;
             }
         }
@@ -726,7 +725,7 @@ void Importer::instances(const cgltf_node* gn, NodeId id, const MeshPtr& mesh)
     for (size_t a = 0; a < gi.attributes_count; ++a)
     {
         const cgltf_attribute& at = gi.attributes[a];
-        const std::string name = str(at.name);
+        const std::string name = orEmpty(at.name);
         if (!at.data)
             continue;
         count = std::max(count, at.data->count);
@@ -789,7 +788,7 @@ void Importer::create(const cgltf_node* gn, NodeId parent)
                            : isCamera ? *cameraType
                            : isLight  ? *lightType
                                       : *types::find("transform");
-    std::string raw = str(gn->name);
+    std::string raw = orEmpty(gn->name);
     if (raw.empty() && gn->mesh && gn->mesh->name)
         raw = gn->mesh->name;
     if (raw.empty() && gn->camera && gn->camera->name)
@@ -917,7 +916,7 @@ void Importer::buildSkins()
             if (it == frames.end())
             {
                 r.warnings.push_back(std::format("{}: skin joint {} is not in the imported scene; its weights are dropped", meshName,
-                                                 str(skin->joints[j]->name)));
+                                                 orEmpty(skin->joints[j]->name)));
                 continue;
             }
             const uint32_t index = skin::addInfluence(graph, skinId, it->second.id);
@@ -1166,7 +1165,7 @@ void Importer::importAnimation(const cgltf_animation& anim, const std::vector<do
         if (it == frames.end() || !ch.sampler)
         {
             if (ch.target_path == cgltf_animation_path_type_invalid)
-                r.skipped.push_back(std::format("animation '{}' channel {}: unsupported target (KHR_animation_pointer?)", str(anim.name), ci));
+                r.skipped.push_back(std::format("animation '{}' channel {}: unsupported target (KHR_animation_pointer?)", orEmpty(anim.name), ci));
             continue;
         }
         const NodeFrame& nf = it->second;
@@ -1304,7 +1303,7 @@ void Importer::importAnimation(const cgltf_animation& anim, const std::vector<do
         {
             const size_t n = std::min(tr.comps, nf.targets.size());
             if (tr.comps != nf.targets.size())
-                r.warnings.push_back(std::format("animation '{}': {} morph weights for {} targets on {}", str(anim.name), tr.comps, nf.targets.size(),
+                r.warnings.push_back(std::format("animation '{}': {} morph weights for {} targets on {}", orEmpty(anim.name), tr.comps, nf.targets.size(),
                                                  graph.path(nf.id)));
             for (size_t t = 0; t < n; ++t)
             {
@@ -1336,7 +1335,7 @@ void Importer::importAnimation(const cgltf_animation& anim, const std::vector<do
             break;
         }
         default:
-            r.skipped.push_back(std::format("animation '{}' channel {}: unsupported target path", str(anim.name), ci));
+            r.skipped.push_back(std::format("animation '{}' channel {}: unsupported target path", orEmpty(anim.name), ci));
             break;
         }
     }
@@ -1355,7 +1354,7 @@ void Importer::importAnimations()
     for (size_t a = 0; a < data.animations_count; ++a)
     {
         const cgltf_animation& anim = data.animations[a];
-        if (opts.take.empty() || str(anim.name) == opts.take || std::to_string(a) == opts.take)
+        if (opts.take.empty() || orEmpty(anim.name) == opts.take || std::to_string(a) == opts.take)
             chosen.push_back(&anim);
     }
     if (chosen.empty())
@@ -1477,7 +1476,7 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
     }
     decodeMeshopt(*data, r);
 
-    r.generator = str(data->asset.generator);
+    r.generator = orEmpty(data->asset.generator);
     static const std::set<std::string> kHandled = {
         "KHR_texture_transform",        "KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_mesh_quantization",
         "EXT_meshopt_compression",      "KHR_materials_ior",               "KHR_materials_specular", "KHR_lights_punctual",
@@ -1487,13 +1486,13 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
         "KHR_texture_basisu"};
     for (size_t i = 0; i < data->extensions_used_count; ++i)
     {
-        std::string ext = str(data->extensions_used[i]);
+        std::string ext = orEmpty(data->extensions_used[i]);
         r.extensionsUsed.push_back(ext);
         if (!kHandled.count(ext))
             r.skipped.push_back(std::format("extension {} (not supported)", ext));
     }
     for (size_t i = 0; i < data->extensions_required_count; ++i)
-        if (std::string ext = str(data->extensions_required[i]); !kHandled.count(ext))
+        if (std::string ext = orEmpty(data->extensions_required[i]); !kHandled.count(ext))
             r.warnings.push_back(std::format("the file requires {}, which Lila doesn't read; it may import incompletely", ext));
 
     Graph::Batch batch(graph);
@@ -1521,7 +1520,7 @@ ImportResult importGltf(scene::Graph& graph, const fs::path& path, const ImportO
                 roots.push_back(&data->nodes[i]);
     for (size_t i = 0; i < data->scenes_count; ++i)
         if (&data->scenes[i] != scene)
-            r.skipped.push_back(std::format("scene '{}' (only the default scene is imported)", str(data->scenes[i].name)));
+            r.skipped.push_back(std::format("scene '{}' (only the default scene is imported)", orEmpty(data->scenes[i].name)));
 
     {
         progress::Scope build("Building " + utf8(path.filename()), double(data->nodes_count), progress::None, 7.0);

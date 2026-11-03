@@ -1,8 +1,10 @@
 #include "scene/ImagePlane.h"
 
+#include "core/TextMatch.h"
 #include "ops/Command.h"
 #include "core/Profile.h"
 #include "core/Paths.h"
+#include "scene/AttrBuilders.h"
 #include "scene/Graph.h"
 
 #include <algorithm>
@@ -12,9 +14,10 @@
 
 namespace lila::scene
 {
+using namespace attrdefs;
+
 namespace
 {
-using T = ArgType;
 namespace ip = imagePlane;
 
 constexpr uint32_t kPlaneStored = AttrInput | AttrStorable;
@@ -23,23 +26,6 @@ const std::vector<std::string> kDisplayModeNames = {"lookingThrough", "allViews"
 const std::vector<std::string> kDisplayColorNames = {"color", "grayscale"};
 const std::vector<std::string> kPlacementNames = {"behind", "inScene", "inFront"};
 const char* const kViews[] = {"persp", "top", "bottom", "front", "back", "left", "right"};
-
-AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kPlaneStored | AttrKeyable, .doc = std::move(doc),
-            .minValue = lo, .maxValue = hi};
-}
-
-AttrDef boolAttr(std::string name, bool def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kPlaneStored, .doc = std::move(doc)};
-}
-
-AttrDef enumAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc)
-{
-    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kPlaneStored, .enumNames = std::move(names),
-            .doc = std::move(doc)};
-}
 
 std::vector<AttrDef> imagePlaneAttrs()
 {
@@ -83,12 +69,6 @@ std::vector<AttrDef> imagePlaneAttrs()
     return a;
 }
 
-std::string lower(std::string s)
-{
-    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
-
 /** Index of an enum flag given by name (case-insensitive) or number. */
 int64_t enumValue(const std::vector<std::string>& names, const json& v, const std::string& flag)
 {
@@ -96,7 +76,7 @@ int64_t enumValue(const std::vector<std::string>& names, const json& v, const st
         return v.get<int64_t>();
     if (v.is_string())
         for (size_t i = 0; i < names.size(); ++i)
-            if (lower(names[i]) == lower(v.get<std::string>()))
+            if (textMatch::lower(names[i]) == textMatch::lower(v.get<std::string>()))
                 return int64_t(i);
     std::string all;
     for (const std::string& n : names)
@@ -274,7 +254,7 @@ std::string frameFile(const std::string& path, int64_t frame)
 
 std::string cameraName(const std::string& value)
 {
-    std::string v = lower(value);
+    std::string v = textMatch::lower(value);
     if (v == "side")
         return "right";
     // Camera node names keep their case; only the views' names are case blind.
@@ -307,6 +287,7 @@ void registerImagePlaneTypes()
 
 void registerImagePlaneCommands()
 {
+    using T = ArgType;
     if (ops::find("imagePlane"))
         return;
     std::vector<FlagDef> flags = {

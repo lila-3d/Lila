@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "curve/Along.h"
+#include "curve/CurveMath.h"
 #include "curve/Fit.h"
 #include "curve/Tessellate.h"
 
@@ -17,10 +18,6 @@ namespace lila::curve
 {
 namespace
 {
-using D3 = glm::dvec3;
-
-constexpr double kEps = 1e-12;
-
 TessOptions fineTess()
 {
     TessOptions t;
@@ -30,13 +27,6 @@ TessOptions fineTess()
 }
 
 bool masked(std::span<const uint8_t> mask, size_t i) { return mask.empty() || (i < mask.size() && mask[i]); }
-
-D3 perp(const D3& v, const D3& t)
-{
-    D3 r = v - t * glm::dot(v, t);
-    double l = glm::length(r);
-    return l > 1e-9 ? r / l : D3(0.0);
-}
 
 /** Moves each masked point (and a Bezier point's handles) through fn(position, point index), then refreshes handles. */
 Spline mapPoints(const Spline& s, std::span<const uint8_t> mask, const std::function<D3(const D3&, size_t)>& fn)
@@ -180,18 +170,18 @@ Spline bendCurve(const Spline& s, const BendCurveOptions& o, std::span<const uin
     }
     if (chord < 1e-9)
         return s;
-    D3 axis = perp(o.axis, d);
+    D3 axis = perpUnit(o.axis, d, 1e-9);
     if (glm::length(axis) < 0.5)
     {
         D3 pn = planeNormal(pl.points);
         if (glm::dot(pn, D3(0, 1, 0)) < 0.0)
             pn = -pn;
-        axis = perp(pn, d);
+        axis = perpUnit(pn, d, 1e-9);
     }
     if (glm::length(axis) < 0.5)
-        axis = perp(D3(0, 1, 0), d);
+        axis = perpUnit(D3(0, 1, 0), d, 1e-9);
     if (glm::length(axis) < 0.5)
-        axis = perp(D3(0, 0, 1), d);
+        axis = perpUnit(D3(0, 0, 1), d, 1e-9);
     D3 k = glm::cross(axis, d);
     if (o.fromCenter)
         origin += d * (chord * 0.5);

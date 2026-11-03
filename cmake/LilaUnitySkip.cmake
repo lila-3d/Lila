@@ -1,332 +1,35 @@
 set(LILA_UNITY_SKIP
-    src/io/FileTypes.cpp
-    src/media/AudioEngine.cpp
-    src/media/Decode.cpp
-    src/media/DecodeMF.cpp
-    src/scene/AttrCommands.cpp
-    src/ui/WeightPaintTool.cpp
-    src/scene/AttrComponents.cpp
-    src/scene/AutoBevel.cpp
-    src/scene/LightingChannels.cpp
-    src/scene/SceneGraphCommands.cpp
-    src/rigmath/Expressions.cpp
-    src/ui/AttrAuthoring.cpp
-    src/ui/AttrView.cpp
-    src/ui/DrivePopover.cpp
-    src/ui/ConnectPopover.cpp
-    src/scene/ComponentValues.cpp
-    src/ui/ComponentSheet.cpp
-    src/ui/RelationshipsPanel.cpp
-    extensions/Destruction/RigidWorld.cpp
-    extensions/Foliage/TreeUi.cpp
-    extensions/Masonry/Commands.cpp
-    extensions/PhysicsAnimation/World.cpp
-    extensions/Puppeteer/gizmo/Spinner.cpp
-    extensions/Puppeteer/gizmo/SpinnerOps.cpp
-    extensions/Puppeteer/rig/Controllers.cpp
-    extensions/Puppeteer/rig/FullBody.cpp
-    extensions/Puppeteer/rig/JointTools.cpp
-    extensions/Puppeteer/rig/Modes.cpp
-    extensions/RigTemplates/Template.cpp
-    src/render/DeformGpu.cpp
-    src/render/SharedMemory.cpp
     extensions/OpenUSD/UsdHydraInterop.cpp
-    src/ui/StrapTool.cpp
-    extensions/RigTemplates/Ui.cpp
-    extensions/Settlement/Commands.cpp
-    extensions/Settlement/Generate.cpp
-    extensions/Settlement/Output.cpp
-    extensions/Settlement/Region.cpp
-    extensions/Settlement/StreetGraph.cpp
-    extensions/Stagehand/ArrangeCommands.cpp
-    extensions/Stagehand/Commands.cpp
-    extensions/Stagehand/LevelKit.cpp
-    extensions/Stagehand/Place.cpp
-    extensions/Stagehand/WearNodes.cpp
-    extensions/Terrain/Commands.cpp
-    src/bake/BakeGroupCommands.cpp
-    src/bake/BakeInputs.cpp
-    src/bake/BakePipeline.cpp
-    src/bake/CageEstimate.cpp
-    src/bake/Lint.cpp
-    src/batch/BatchWorker.cpp
-    src/brush/Symmetry.cpp
     src/core/ImageIO.cpp
     src/core/PrefStore.cpp
-    src/curve/Blend.cpp
-    src/curve/BorderBlend.cpp
-    src/curve/CableNode.cpp
-    src/curve/ContourNode.cpp
-    src/curve/CurveCommands.cpp
-    src/curve/CurveDeform.cpp
-    src/curve/CurveDeformCommands.cpp
-    src/curve/CurveNodes.cpp
-    src/curve/EdgeToCurve.cpp
-    src/curve/Fair.cpp
-    src/curve/Fit.cpp
-    src/curve/GroomCommands.cpp
-    src/curve/Network.cpp
-    src/curve/Ops.cpp
-    src/curve/Pipe.cpp
-    src/curve/PipeNode.cpp
-    src/curve/PipeToolsNodes.cpp
-    src/ui/PipeLevelTools.cpp
-    tests/docks/test_pipe_level_ui.cpp
-    src/curve/PipeRoute.cpp
-    src/curve/PipeSupport.cpp
-    src/curve/Carve.cpp
-    src/curve/Channel.cpp
-    src/curve/StripUvAttrs.cpp
-    src/curve/WorldMeshes.cpp
-    src/curve/Planar.cpp
-    src/curve/PlanarNodes.cpp
-    src/curve/Roof.cpp
-    src/curve/Skeleton.cpp
-    src/curve/SketchCommands.cpp
-    src/curve/Spline.cpp
-    src/curve/Sweep.cpp
-    src/curve/Tessellate.cpp
-    src/curve/VehicleCommands.cpp
-    src/curve/VehicleNodes.cpp
-    src/deform/Shape.cpp
-    src/deform/Skinning.cpp
-    src/deform/Surface.cpp
     src/fbx/FbxImport.cpp
     src/fbx/ImportCommon.cpp
-    src/geo/Conform.cpp
-    src/geo/OpsExtrude.cpp
-    src/geo/OpsKnife.cpp
-    src/geo/PlyIO.cpp
-    src/geo/StlIO.cpp
-    src/geo/Subdivide.cpp
-    src/geo/SymmetryRadial.cpp
-    src/gltf/GltfMaterials.cpp
-    src/gn/Commands.cpp
-    src/gn/InstanceView.cpp
     src/gn/NodeLib.cpp
-    src/gn/NodesMesh.cpp
-    src/gn/Viewer.cpp
-    src/link/UnrealLink.cpp
-    src/python/ExtensionBindings.cpp
-    src/python/RegistryBindings.cpp
-    src/retopo/TopologyCommands.cpp
-    src/scene/AnimLayer.cpp
-    src/scene/BooleanModifier.cpp
-    src/scene/CenterInMesh.cpp
-    src/scene/CorrectionDeformer.cpp
+    src/scene/AttrCommands.cpp
     src/scene/Drivers.cpp
-    src/scene/Light.cpp
-    src/scene/Materials.cpp
-    src/scene/Measure.cpp
-    src/scene/MeasureSelection.cpp
-    src/scene/MeshEdit.cpp
-    src/scene/MeshFileCommands.cpp
-    src/scene/MeshNodes.cpp
-    src/scene/Modifiers.cpp
     src/scene/Morphs.cpp
-    src/scene/ObjectOps.cpp
-    src/scene/RotationCommands.cpp
-    src/scene/SceneCommands.cpp
-    src/scene/SelectAs.cpp
-    src/scene/ShapeDeformers.cpp
-    src/scene/Skin.cpp
-    src/scene/TextureDeformers.cpp
-    src/scene/TransformCommands.cpp
-    src/scene/TransformOps.cpp
-    src/seq/Vat.cpp
-    src/tex/Natives.cpp
-    src/ui/AnimLayersPanel.cpp
+    src/scene/SceneGraphCommands.cpp
     src/ui/ArrayTool.cpp
-    src/ui/BakePaintTool.cpp
     src/ui/BakerPanel.cpp
     src/ui/BakerPanelRefresh.cpp
     src/ui/BakerPanelWidgets.cpp
     src/ui/BatchRunPanel.cpp
-    src/ui/CableTool.cpp
-    src/ui/ControlPicker.cpp
-    src/ui/GameExporter.cpp
-    src/ui/DeformHandles.cpp
-    src/ui/Editors.cpp
-    src/ui/ExtensionManagerDialog.cpp
-    src/ui/ExtrudeHandles.cpp
-    src/ui/HotkeyEditor.cpp
-    src/ui/KnifeTool.cpp
     src/ui/MarkingMenuEditor.cpp
-    src/ui/MeshSequenceExporter.cpp
     src/ui/ModifierStack.cpp
-    src/ui/MorphPanel.cpp
-    src/ui/OffsetsPanel.cpp
-    src/ui/Outliner.cpp
-    src/ui/PerfTrace.cpp
-    src/ui/PoseLibrary.cpp
-    src/ui/RetopoPolesTool.cpp
     src/ui/SculptPanel.cpp
-    src/ui/SetsUi.cpp
-    src/ui/TargetWeldTool.cpp
-    src/ui/TexGraphBackend.cpp
-    src/ui/SceneGraphBackend.cpp
-    src/ui/TexPipelineUi.cpp
-    src/ui/Texture2DView.cpp
-    src/ui/TexturePaintTool.cpp
-    src/ui/TextureSetPanel.cpp
-    src/ui/ThemeEditor.cpp
-    src/ui/TimeSlider.cpp
     src/ui/TopologyModes.cpp
-    src/ui/TopologyTool.cpp
-    src/ui/TopologyToolkit.cpp
-    src/ui/TrimCurveTool.cpp
-    src/ui/UvEditor.cpp
-    src/ui/UvEditorDraw.cpp
     src/ui/UvEditorEdit.cpp
     src/ui/UvEditorPick.cpp
     src/ui/UvEditorView.cpp
-    src/uv/Layout.cpp
-    src/uv/LiveCommands.cpp
-    src/uv/OptCuts.cpp
-    src/uv/Optimize.cpp
-    src/uv/OptimizeCommands.cpp
-    src/uv/Project.cpp
-    src/uv/Seams.cpp
-    src/uv/Unwrap.cpp
-    src/uv/Uv.cpp
-    src/vcs/PerforceProvider.cpp
-    tests/anim/test_layers.cpp
-    tests/anim/test_rotation.cpp
-    tests/bake/test_bake_groups.cpp
-    tests/bake/test_bake_maps.cpp
-    tests/bake/test_bake_pipeline.cpp
-    tests/bake/test_cage.cpp
-    tests/bake/test_live_maps.cpp
-    tests/curve/test_array_inputs.cpp
-    tests/curve/test_curve_frames.cpp
-    tests/curve/test_curve_objects.cpp
-    tests/curve/test_curve_scene.cpp
-    tests/curve/test_dxf.cpp
-    tests/curve/test_edge_to_curve.cpp
-    tests/curve/test_environment.cpp
-    tests/curve/test_groom.cpp
-    tests/curve/test_pipe.cpp
-    tests/curve/test_pipe_tools.cpp
-    tests/curve/test_planar_robust.cpp
-    tests/curve/test_planar_scene.cpp
-    tests/curve/test_roof.cpp
-    tests/curve/test_sketch.cpp
-    tests/curve/test_svg.cpp
-    tests/curve/test_text.cpp
-    tests/curve/test_vehicle_math.cpp
-    tests/curve/test_vehicle_scene.cpp
-    tests/deform/test_deformers.cpp
-    tests/deform/test_fields.cpp
-    tests/deform/test_mesh_cache.cpp
-    tests/deform/test_morphs.cpp
-    tests/deform/test_shape.cpp
-    tests/deform/test_shape_deformers.cpp
-    tests/deform/test_skin_bake.cpp
-    tests/deform/test_surface.cpp
-    tests/deform/test_texture_deformers.cpp
-    tests/docks/test_material_browser.cpp
-    tests/docks/test_node_editor.cpp
-    tests/docks/test_progress_overlay.cpp
-    tests/docks/test_texture_graph.cpp
-    tests/docks/test_texture_sets.cpp
-    tests/docks/test_topology_tool.cpp
-    tests/extensions/test_scene_points.cpp
-    tests/fbx/test_clean_bake.cpp
-    tests/fbx/test_fbx_camera.cpp
-    tests/fbx/test_fbx_instances.cpp
-    tests/fbx/test_fbx_light.cpp
-    tests/fbx/test_fbx_lod.cpp
-    tests/fbx/test_fbx_rotation.cpp
-    tests/fbx/test_game_export.cpp
-    tests/foliage/test_treegen.cpp
-    tests/gn/test_gn.cpp
-    tests/gn/test_gn_groups.cpp
-    tests/gn/test_gn_sim.cpp
-    tests/gn/test_nodes.cpp
-    tests/gn/test_routing.cpp
-    tests/gn/test_ties.cpp
-    tests/link/test_placements.cpp
-    tests/link/test_spline.cpp
-    tests/maya/test_maya_blendshape.cpp
-    tests/puppeteer/test_puppeteer_rig.cpp
-    tests/puppeteer/test_spinner.cpp
-    tests/retopo/test_repair.cpp
-    tests/retopo/test_topology.cpp
-    tests/rig/test_edit_skeleton.cpp
-    tests/rig/test_offsets.cpp
-    tests/rig/test_select_as.cpp
-    tests/sim/test_destruction.cpp
-    tests/sim/test_overlap.cpp
-    tests/sim/test_physics.cpp
-    tests/stylised/test_shading_models.cpp
-    tests/test_array_group.cpp
-    tests/test_array_modifier.cpp
-    tests/test_autobevel.cpp
-    tests/test_batch_rename.cpp
-    tests/test_boolean.cpp
     tests/test_camera.cpp
-    tests/test_change_stream.cpp
-    tests/test_component_query.cpp
-    tests/test_conform.cpp
-    tests/test_display_layers.cpp
-    tests/test_duplicate.cpp
-    tests/test_extrude.cpp
-    tests/test_geometry_snap.cpp
-    tests/test_history.cpp
     tests/test_imageplane.cpp
-    tests/test_instancing.cpp
-    tests/test_isolation.cpp
-    tests/test_knife.cpp
-    tests/test_light.cpp
-    tests/test_locks.cpp
-    tests/test_measure.cpp
-    tests/test_meshes.cpp
-    tests/test_modeling.cpp
-    tests/test_modifiers.cpp
-    tests/test_modstack.cpp
-    tests/test_node_paths.cpp
     tests/test_normal_frames.cpp
-    tests/test_object_sets.cpp
-    tests/test_orient_pivot.cpp
-    tests/test_outliner.cpp
     tests/test_outliner_filter.cpp
-    tests/test_primitive_axis.cpp
-    tests/test_progress.cpp
-    tests/test_radial_symmetry.cpp
-    tests/test_references.cpp
-    tests/test_select_paths.cpp
-    tests/test_smart_join.cpp
-    tests/test_surface_snap.cpp
-    tests/test_symmetry.cpp
-    tests/test_themes.cpp
-    tests/test_toolkit.cpp
-    tests/test_transfer.cpp
-    tests/test_user_attrs.cpp
-    tests/test_value_reset.cpp
     tests/test_viewport_ext.cpp
-    tests/test_visibility.cpp
     tests/tex/test_material_library.cpp
     tests/tex/test_tex_files.cpp
-    tests/tex/test_tex_gpu.cpp
-    tests/tex/test_tex_layers.cpp
     tests/tex/test_tex_library.cpp
-    tests/tex/test_tex_paint.cpp
-    tests/tex/test_tex_paint_symmetry.cpp
-    tests/tex/test_tex_paint_tools.cpp
     tests/tex/test_tex_pipeline.cpp
     tests/tex/test_tex_plan.cpp
     tests/tex/test_tex_routing.cpp
-    tests/tex/test_tex_ties.cpp
-    tests/tex/test_tex_vt.cpp
-    tests/usd/test_usd_fixtures.cpp
-    tests/usd/test_usd_hydra.cpp
-    tests/usd/test_usd_materialx.cpp
-    tests/usd/test_usd_panels.cpp
-    tests/usd/test_usd_roundtrip.cpp
-    tests/usd/test_usd_stage.cpp
-    tests/uv/test_live_commands.cpp
-    tests/uv/test_pack.cpp
-    tests/uv/test_uv_opt.cpp
-    tests/uv/test_uv_opt_commands.cpp
-    tests/uv/test_uv_symmetry.cpp
 )

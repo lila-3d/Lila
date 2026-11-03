@@ -1,6 +1,7 @@
 #include "scene/Rig.h"
 
 #include "core/Profile.h"
+#include "scene/AttrBuilders.h"
 #include "scene/CenterInMesh.h"
 #include "scene/DominantInfluence.h"
 #include "scene/FullBodyIk.h"
@@ -22,6 +23,7 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace attrdefs;
 
 namespace
 {
@@ -34,23 +36,6 @@ const char* kDrawStyleNames[] = {"bone", "box", "none"};
 const char* kLimitNames[] = {"none", "hinge", "cone"};
 const char* kAxisNames[] = {"x", "y", "z"};
 
-AttrDef inCategory(AttrDef a, std::string category)
-{
-    a.category = std::move(category);
-    return a;
-}
-
-AttrDef vec3Attr(std::string name, std::string shortName, glm::dvec3 def, uint32_t flags, std::string doc)
-{
-    AttrDef a{.name = name, .shortName = shortName, .type = PlugType::Vec3, .defaultValue = def, .flags = flags, .doc = std::move(doc)};
-    for (int i = 0; i < 3; ++i)
-    {
-        a.childNames[i] = name + char('X' + i);
-        a.childShort[i] = shortName + char('x' + i);
-    }
-    return a;
-}
-
 std::vector<NodeId> jointChildren(Graph& g, NodeId id)
 {
     std::vector<NodeId> out;
@@ -58,14 +43,6 @@ std::vector<NodeId> jointChildren(Graph& g, NodeId id)
         if (rig::isJoint(*g.node(c)))
             out.push_back(c);
     return out;
-}
-
-int depthOf(Graph& g, NodeId id)
-{
-    int d = 0;
-    for (NodeId p = g.parent(id); p != kNoNode; p = g.parent(p))
-        ++d;
-    return d;
 }
 
 Node& jointNamed(const std::string& name, const char* cmd)

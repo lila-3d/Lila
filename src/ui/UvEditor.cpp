@@ -3,6 +3,7 @@
 #include "ops/CommandOptions.h"
 #include "ui/OptionBox.h"
 #include "ui/Panels.h"
+#include "ui/ToolkitLayout.h"
 
 #include <QApplication>
 #include <QGridLayout>
@@ -53,14 +54,13 @@ void setPickMode(const std::string& m)
 
 namespace
 {
-constexpr const char* kCollapsedPref = "/uvEditor/collapsed";
+constexpr const char* kUvCollapsed = "/uvEditor/collapsed";
 constexpr const char* kToolkitPref = "/uvEditor/toolkitShown";
 constexpr const char* kToolkitWidthPref = "/uvEditor/toolkitWidth";
 constexpr const char* kToolkitHeightPref = "/uvEditor/toolkitHeight";
 /** Sections in the left column when the toolkit sits below the view; the rest go right. */
 constexpr size_t kLeftSections = 4;
-constexpr int kColumnGap = 8;
-constexpr int kColumns = 4;
+constexpr int kPanelColumnGap = 8;
 
 QToolButton* button(const QString& text, const QString& tip, QWidget* parent, const char* iconName = nullptr)
 {
@@ -87,47 +87,6 @@ QDoubleSpinBox* spin(double lo, double hi, double value, int decimals, QWidget* 
     s->setMinimumWidth(s->minimumSizeHint().width() * 2 / 3);
     return s;
 }
-/** Collapsible section, Maya frameLayout style; whether it is open is remembered per title. */
-QWidget* section(const QString& title, QWidget* content, QWidget* parent, QToolButton** headerOut = nullptr, bool openByDefault = true)
-{
-    auto* box = new QWidget(parent);
-    auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
-    auto* header = new QToolButton(box);
-    header->setText(title);
-    header->setCheckable(true);
-    header->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    header->setStyleSheet("QToolButton { text-align: left; font-weight: 600; padding: 3px; }");
-    std::string key = std::string(kCollapsedPref) + "/" + title.toStdString();
-    bool open = !PrefStore::get().value<bool>("general", key, !openByDefault);
-    header->setChecked(open);
-    header->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
-    content->setParent(box);
-    content->setVisible(open);
-    QObject::connect(header, &QToolButton::toggled, content, [header, content, key](bool on) {
-        content->setVisible(on);
-        header->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-        PrefStore::get().set("general", key, !on);
-    });
-    v->addWidget(header);
-    v->addWidget(content);
-    if (headerOut)
-        *headerOut = header;
-    return box;
-}
-
-/** A box of controls in fixed rows; with columns, a uniform grid that lines buttons up across the rows. */
-QWidget* rowBox(QWidget* parent, FixedRowLayout** layout, int columns = 0)
-{
-    auto* w = new QWidget(parent);
-    *layout = new FixedRowLayout(columns, 3);
-    (*layout)->setContentsMargins(2, 0, 2, 2);
-    w->setLayout(*layout);
-    return w;
-}
-
 /** Parts stacked in one section. */
 QWidget* stacked(QWidget* parent, std::initializer_list<QWidget*> parts)
 {
@@ -345,7 +304,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     auto addSection = [this](QWidget* s) { mSections.push_back(s); };
 
     auto packCall = [this] { return json{{"resolution", mResolution->value()}, {"padding", mPadding->value()}}; };
-    QWidget* unwrapBox = rowBox(body, &into, kColumns);
+    QWidget* unwrapBox = rowBox(body, &into, kToolkitColumns);
     op("wand", "Auto", "Seams, unwrap and pack in one step (uvAuto)", [this, packCall] { runCommand("uvAuto", packCall()); });
     op("line-dashed", "Seams", "Place seams automatically (uvAutoSeams)", [this] { runCommand("uvAutoSeams"); });
     menuOp("route", "Smart Seams", "Auto Seams 2: seams and stretch optimised together, short and hidden (uvAutoSeams method=optcuts)",
@@ -376,7 +335,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     projectBtn->setPopupMode(QToolButton::InstantPopup);
     setRightClickAction(projectBtn, projectMenu->actions().front());
     op("bulb", "Lightmap", "Generate Unreal lightmap uvs in uv1 (uvLightmap)", [this] { runCommand("uvLightmap"); });
-    addSection(section("Unwrap", unwrapBox, body));
+    addSection(collapsibleSection("Unwrap", unwrapBox, body, kUvCollapsed));
 
     // Cut and sew re-solve the islands they touch straight away in live mode.
     auto cutOrSew = [this](const char* action, const char* command, json call) {
@@ -388,17 +347,17 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         }
         mView->invalidate();
     };
-    QWidget* seamBox = rowBox(body, &into, kColumns);
+    QWidget* seamBox = rowBox(body, &into, kToolkitColumns);
     op("scissors", "Cut", "Cut the uvs along the selected edges and let the cut open (uvCut)", [cutOrSew] { cutOrSew("uv.cut", "uvCut", json::object()); });
     op("needle-thread", "Sew", "Move and Sew: weld the selected seams, the smaller island travelling to meet the other (uvSew). In edge mode you "
        "can also drag a border edge onto its partner",
        [cutOrSew] { cutOrSew("uv.sew", "uvSew", json{{"move", true}}); });
     op("link", "Weld", "Weld the selected seams where they are, both sides meeting halfway (uvSew move=False)",
        [cutOrSew] { cutOrSew("uv.weld", "uvSew", json{{"move", false}}); });
-    addSection(section("Cut and Sew", seamBox, body));
+    addSection(collapsibleSection("Cut and Sew", seamBox, body, kUvCollapsed));
 
     // Relaxing: live solving, one-shot solves, pins, the stretch/compress balance and the brushes.
-    QWidget* relaxGrid = rowBox(body, &into, kColumns);
+    QWidget* relaxGrid = rowBox(body, &into, kToolkitColumns);
     QToolButton* live = toggle("Live", "Live mode: drag uvs and the island relaxes around them (Ctrl on release pins them); cuts, sews and pins "
                                "re-solve as they happen",
                                "bolt", uvLive::liveMode());
@@ -439,9 +398,9 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     brushCombo->setToolTip("Brush for the Brush tool here and the UV brush on the mesh (uv.brush3d)");
     into->addWidget(brushCombo);
     op("cube", "On Mesh", "Paint the brush on the mesh in the viewport (uv.brush3d)", [] { uvLive::startBrushTool3d(); });
-    addSection(section("Relax", stacked(body, {relaxGrid, balanceBox, brushBox}), body));
+    addSection(collapsibleSection("Relax", stacked(body, {relaxGrid, balanceBox, brushBox}), body, kUvCollapsed));
 
-    QWidget* arrangeBox = rowBox(body, &into, kColumns);
+    QWidget* arrangeBox = rowBox(body, &into, kToolkitColumns);
     op("layout-grid", "Straighten", "Rectify islands into grids and rectangles (uvStraighten)", [this] { runCommand("uvStraighten"); });
     menuOp("align-left", "Align", "Straighten selected edges, align island sides to U or V (uvStraightenEdges, uvAlignToEdge)",
            {{"Straighten edges", "uvStraightenEdges", json::object()},
@@ -459,7 +418,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
                                        {"flip-vertical", "Flip V", "Mirror each selected island top to bottom",
                                         json{{"scale", {1.0, -1.0}}, {"perIsland", true}}}})
         op(ic, text, tip, [this, call] { runCommand("uvTransform", call); });
-    addSection(section("Arrange", arrangeBox, body));
+    addSection(collapsibleSection("Arrange", arrangeBox, body, kUvCollapsed));
 
     // Numeric transforms, one row each, the fields lined up in columns.
     auto* xformBox = new QWidget(body);
@@ -494,10 +453,10 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
         ++xformRow;
     }
     xform->setColumnStretch(4, 1);
-    addSection(section("Transform", xformBox, body));
+    addSection(collapsibleSection("Transform", xformBox, body, kUvCollapsed));
 
     // Packing: the texture size and padding it packs for, with its options folded beneath.
-    QWidget* packGrid = rowBox(body, &into, kColumns);
+    QWidget* packGrid = rowBox(body, &into, kToolkitColumns);
     op("packages", "Pack", "Pack islands with padding for the texture size and the Pack options (uvPack). Shift+click opens the options",
        [this] {
            if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier)
@@ -521,8 +480,8 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     into->addWidget(mPadding);
     mPackPanel = new UvPackPanel(body);
     mPackPanel->onShowStacks = [this](bool on) { mView->setShowStacks(on); };
-    QWidget* packOptions = section("Pack Options", mPackPanel, body, &mPackOptions, false);
-    addSection(section("Pack", stacked(body, {packGrid, sizeBox, packOptions}), body, &mPackSection));
+    QWidget* packOptions = collapsibleSection("Pack Options", mPackPanel, body, kUvCollapsed, false, &mPackOptions);
+    addSection(collapsibleSection("Pack", stacked(body, {packGrid, sizeBox, packOptions}), body, kUvCollapsed, &mPackSection));
 
     QWidget* densityBox = rowBox(body, &into);
     into->addWidget(new QLabel("Density", densityBox));
@@ -532,7 +491,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     into->addWidget(mDensity);
     QToolButton* getTd = op("color-picker", "Get", "Measure texel density of the selection", [] {});
     QToolButton* setTd = op("ruler-measure", "Set", "Scale each selected island to the density", [] {});
-    addSection(section("Texel Density", densityBox, body));
+    addSection(collapsibleSection("Texel Density", densityBox, body, kUvCollapsed));
 
     QWidget* viewportBox = rowBox(body, &into);
     QToolButton* checker = toggle("Checker", "Checker texture on the meshes in the viewport", "chess", uvLive::checker3d());
@@ -546,7 +505,7 @@ UvEditor::UvEditor(QWidget* parent) : QWidget(parent)
     into->addWidget(tiling);
     QToolButton* seams = toggle("Seams", "Draw the uv seams over the meshes in the viewport", "line-dashed", uvLive::seams3d());
     into->addWidget(seams);
-    addSection(section("In the Viewport", viewportBox, body));
+    addSection(collapsibleSection("In the Viewport", viewportBox, body, kUvCollapsed));
     for (size_t i = 0; i < mSections.size(); ++i)
         mSectionColumn[0]->insertWidget(int(i), mSections[i]);
     mSectionRow->setStretch(0, 1);
@@ -665,7 +624,7 @@ void UvEditor::placeToolkit()
             w = std::max(w, mSections[i]->minimumSizeHint().width());
         return to > kLeftSections ? std::max(w, mPackPanel->minimumSizeHint().width()) : w;
     };
-    const int twoWide = columnWidth(0, kLeftSections) + columnWidth(kLeftSections, mSections.size()) + kColumnGap +
+    const int twoWide = columnWidth(0, kLeftSections) + columnWidth(kLeftSections, mSections.size()) + kPanelColumnGap +
                         mToolkitScroll->widget()->layout()->contentsMargins().left() + mToolkitScroll->verticalScrollBar()->sizeHint().width();
     const int columns = below && area.width() >= twoWide ? 2 : 1;
     if (columns != mSectionColumns)
@@ -679,7 +638,7 @@ void UvEditor::placeToolkit()
             mSectionColumn[1]->removeWidget(mSections[i]);
             column->insertWidget(column->count() - 1, mSections[i]);
         }
-        mSectionRow->setSpacing(columns == 2 ? kColumnGap : 0);
+        mSectionRow->setSpacing(columns == 2 ? kPanelColumnGap : 0);
         mSectionRow->setStretch(1, columns == 2 ? 1 : 0);
     }
     if (mToolkitSized && below == mToolkitBelow)

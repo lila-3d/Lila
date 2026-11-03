@@ -1,21 +1,20 @@
 #include "deform/Deform.h"
 
 #include "core/Profile.h"
+#include "deform/DeformUtil.h"
 #include "geo/Bvh.h"
 #include "geo/Triangulate.h"
 
-#include <glm/gtc/constants.hpp>
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace lila::deform
 {
 namespace
 {
-constexpr double kPi = glm::pi<double>();
-
 double smoothstep01(double t)
 {
     t = std::clamp(t, 0.0, 1.0);
@@ -27,69 +26,6 @@ double along(double y, double low, double high)
 {
     double span = high - low;
     return std::abs(span) < 1e-12 ? 0.0 : std::clamp((y - low) / span, 0.0, 1.0);
-}
-
-template <class F> void parallelPoints(size_t n, F&& fn)
-{
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 256), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i)
-            fn(i);
-    });
-}
-
-glm::dvec3 closestOnTriangle(const glm::dvec3& p, const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c, glm::dvec3& bary)
-{
-    // Ericson, Real-Time Collision Detection 5.1.5.
-    glm::dvec3 ab = b - a, ac = c - a, ap = p - a;
-    double d1 = glm::dot(ab, ap), d2 = glm::dot(ac, ap);
-    if (d1 <= 0.0 && d2 <= 0.0)
-        return bary = {1, 0, 0}, a;
-    glm::dvec3 bp = p - b;
-    double d3 = glm::dot(ab, bp), d4 = glm::dot(ac, bp);
-    if (d3 >= 0.0 && d4 <= d3)
-        return bary = {0, 1, 0}, b;
-    double vc = d1 * d4 - d3 * d2;
-    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0)
-    {
-        double v = d1 / (d1 - d3);
-        bary = {1 - v, v, 0};
-        return a + ab * v;
-    }
-    glm::dvec3 cp = p - c;
-    double d5 = glm::dot(ab, cp), d6 = glm::dot(ac, cp);
-    if (d6 >= 0.0 && d5 <= d6)
-        return bary = {0, 0, 1}, c;
-    double vb = d5 * d2 - d1 * d6;
-    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0)
-    {
-        double w = d2 / (d2 - d6);
-        bary = {1 - w, 0, w};
-        return a + ac * w;
-    }
-    double va = d3 * d6 - d5 * d4;
-    if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0)
-    {
-        double w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        bary = {0, 1 - w, w};
-        return b + (c - b) * w;
-    }
-    double denom = 1.0 / (va + vb + vc);
-    double v = vb * denom, w = vc * denom;
-    bary = {1 - v - w, v, w};
-    return a + ab * v + ac * w;
-}
-
-/** Rigid frame of a triangle: x along ab, z along the normal. */
-glm::dmat3 triangleFrame(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c)
-{
-    glm::dvec3 x = b - a;
-    glm::dvec3 n = glm::cross(b - a, c - a);
-    double lx = glm::length(x), ln = glm::length(n);
-    if (lx < 1e-15 || ln < 1e-15)
-        return glm::dmat3(1.0);
-    x /= lx;
-    n /= ln;
-    return {x, glm::cross(n, x), n};
 }
 } // namespace
 
@@ -183,7 +119,7 @@ glm::dvec3 twist(const glm::dvec3& p, const TwistParams& o)
 glm::dvec3 taper(const glm::dvec3& p, const TaperParams& o)
 {
     double t = along(p.y, o.low, o.high);
-    double s = o.startScale + (o.endScale - o.startScale) * t + o.curve * std::sin(kPi * t);
+    double s = o.startScale + (o.endScale - o.startScale) * t + o.curve * std::sin(std::numbers::pi * t);
     return {p.x * s, p.y, p.z * s};
 }
 
@@ -217,7 +153,7 @@ glm::dvec3 sine(const glm::dvec3& p, const SineParams& o)
     double ext = std::max(std::abs(low), std::abs(high));
     double wl = std::abs(o.wavelength) < 1e-9 ? 1e-9 : o.wavelength;
     double amp = o.amplitude * dropoffScale(o.dropoff, ext > 0.0 ? std::abs(yc) / ext : 0.0);
-    return {p.x + amp * std::sin(2.0 * kPi * (yc / wl + o.offset)), p.y, p.z};
+    return {p.x + amp * std::sin(2.0 * std::numbers::pi * (yc / wl + o.offset)), p.y, p.z};
 }
 
 glm::dvec3 wave(const glm::dvec3& p, const WaveParams& o)
@@ -227,7 +163,7 @@ glm::dvec3 wave(const glm::dvec3& p, const WaveParams& o)
         return p;
     double wl = std::abs(o.wavelength) < 1e-9 ? 1e-9 : o.wavelength;
     double amp = o.amplitude * dropoffScale(o.dropoff, o.maxRadius > 0.0 ? r / o.maxRadius : 0.0);
-    return {p.x, p.y + amp * std::sin(2.0 * kPi * (r / wl - o.offset)), p.z};
+    return {p.x, p.y + amp * std::sin(2.0 * std::numbers::pi * (r / wl - o.offset)), p.z};
 }
 
 // ------------------------------------------------------------------------------------------------ lattice
@@ -554,7 +490,7 @@ void meanValueCoordinates(std::span<const glm::dvec3> cage, std::span<const uint
             h += theta[i];
         }
         h *= 0.5;
-        if (kPi - h < 1e-8)
+        if (std::numbers::pi - h < 1e-8)
         {
             // x lies on this triangle: plain 2D barycentric weights.
             std::fill(out.begin(), out.end(), 0.0);

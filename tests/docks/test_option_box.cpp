@@ -32,7 +32,7 @@ QDialog* optionsDialog()
     return nullptr;
 }
 
-void click(QMenu& menu, QPoint at, Qt::KeyboardModifiers mods)
+void clickMenu(QMenu& menu, QPoint at, Qt::KeyboardModifiers mods)
 {
     QMouseEvent press(QEvent::MouseButtonPress, at, menu.mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, mods);
     QApplication::sendEvent(&menu, &press);
@@ -78,7 +78,7 @@ TEST_CASE("menu rows of commands with flags get an option box that opens the gen
 
     // Shift+click opens the options instead of running.
     QRect r = menu.actionGeometry(row);
-    click(menu, QPoint(r.left() + 20, r.center().y()), Qt::ShiftModifier);
+    clickMenu(menu, QPoint(r.left() + 20, r.center().y()), Qt::ShiftModifier);
     QApplication::processEvents();
     QDialog* d = optionsDialog();
     REQUIRE(d);
@@ -92,7 +92,7 @@ TEST_CASE("menu rows of commands with flags get an option box that opens the gen
     menu.popup(QPoint(100, 100));
     QApplication::processEvents();
     r = menu.actionGeometry(row);
-    click(menu, QPoint(r.right() - 22, r.center().y()), Qt::NoModifier);
+    clickMenu(menu, QPoint(r.right() - 22, r.center().y()), Qt::NoModifier);
     QApplication::processEvents();
     CHECK(optionsDialog());
     CHECK(probeRuns == 1);

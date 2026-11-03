@@ -25,7 +25,6 @@ namespace physanim
 {
 namespace
 {
-constexpr double kPi = 3.14159265358979323846;
 constexpr double kDeg = kPi / 180.0;
 
 glm::dquat quatOf(const glm::dmat4& m)

@@ -1,5 +1,6 @@
 #include "scene/RenderSettings.h"
 
+#include "core/TextMatch.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Camera.h"
@@ -26,12 +27,6 @@ State& state()
     return s;
 }
 
-std::string lower(std::string s)
-{
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
-
 json resolutionJson()
 {
     const RenderSettings& r = renderSettings();
@@ -54,7 +49,7 @@ const char* filmFitName(FilmFit f)
 std::optional<FilmFit> parseFilmFit(const std::string& s)
 {
     for (FilmFit f : {FilmFit::Fill, FilmFit::Horizontal, FilmFit::Vertical, FilmFit::Overscan})
-        if (lower(s) == filmFitName(f))
+        if (textMatch::lower(s) == filmFitName(f))
             return f;
     return std::nullopt;
 }
@@ -202,9 +197,9 @@ void registerRenderSettingsCommands()
             int w = r.width, h = r.height;
             if (a.has("preset"))
             {
-                std::string name = lower(a.get<std::string>("preset"));
+                std::string name = textMatch::lower(a.get<std::string>("preset"));
                 auto& ps = resolutionPresets();
-                auto it = std::find_if(ps.begin(), ps.end(), [&](const ResolutionPreset& p) { return lower(p.name) == name; });
+                auto it = std::find_if(ps.begin(), ps.end(), [&](const ResolutionPreset& p) { return textMatch::lower(p.name) == name; });
                 if (it == ps.end())
                     throw CommandError("setRenderResolution: unknown preset '" + a.get<std::string>("preset") + "'");
                 w = it->width;

@@ -154,7 +154,7 @@ json preset(std::vector<std::string> open, std::vector<std::string> raise, json 
             {"viewport", {{"quad", false}, {"camera", "persp"}}}};
 }
 
-void registerActions(ext::Context& ctx)
+void registerModeActions(ext::Context& ctx)
 {
     const char* rigCat = "Puppeteer Rig";
     const char* animCat = "Puppeteer Animate";
@@ -307,7 +307,7 @@ void registerModeBundles(ext::Context& ctx)
 
 void registerModes(ext::Context& ctx)
 {
-    registerActions(ctx);
+    registerModeActions(ctx);
     registerMenus(ctx);
     registerModeBundles(ctx);
     registerShelf(ctx);

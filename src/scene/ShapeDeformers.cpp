@@ -12,6 +12,7 @@
 #include "scene/Components.h"
 #include "scene/DeformEval.h"
 #include "scene/DeformWeights.h"
+#include "scene/DeformerUtil.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/ObjectSets.h"
@@ -30,37 +31,11 @@
 namespace lila::scene
 {
 using namespace rigutil;
+using namespace deformutil;
 
 namespace
 {
 // ------------------------------------------------------------------------------------------------ data kinds
-
-template <class V> void readArray(const json& j, const char* key, std::vector<V>& out)
-{
-    out.clear();
-    if (!j.contains(key) || !j[key].is_array())
-        return;
-    out.reserve(j[key].size());
-    for (const json& x : j[key])
-        out.push_back(V(x.get<double>()));
-}
-
-std::vector<double> flatten(std::span<const glm::dvec3> v)
-{
-    std::vector<double> out;
-    out.reserve(v.size() * 3);
-    for (const glm::dvec3& p : v)
-        out.insert(out.end(), {p.x, p.y, p.z});
-    return out;
-}
-
-std::vector<glm::dvec3> unflatten(const std::vector<double>& f)
-{
-    std::vector<glm::dvec3> out(f.size() / 3);
-    for (size_t i = 0; i < out.size(); ++i)
-        out[i] = {f[i * 3], f[i * 3 + 1], f[i * 3 + 2]};
-    return out;
-}
 
 /** Point id lists: handle regions indexed by handle link index, or one list of anchors. */
 struct PointGroups final : Data
@@ -173,57 +148,13 @@ struct CageCoordinates final : Data
 
 // ------------------------------------------------------------------------------------------------ attr helpers
 
-AttrDef keyable(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
-            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
-}
-AttrDef stored(std::string name, PlugType type, PlugValue def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable, .doc = std::move(doc),
-            .minValue = lo, .maxValue = hi};
-}
-AttrDef hiddenStored(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrHidden,
-            .doc = std::move(doc)};
-}
-AttrDef connected(std::string name, PlugType type, PlugValue def, std::string doc)
-{
-    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrHidden, .doc = std::move(doc)};
-}
 AttrDef output(std::string name, PlugType type, PlugValue def, std::string doc)
 {
     return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrOutput, .doc = std::move(doc)};
 }
-AttrDef enumAttr(std::string name, int64_t def, std::vector<std::string> names, std::string doc, bool key = false)
-{
-    AttrDef a = key ? keyable(std::move(name), PlugType::Enum, def, std::move(doc)) : stored(std::move(name), PlugType::Enum, def, std::move(doc));
-    a.enumNames = std::move(names);
-    return a;
-}
-
-AttrDef geomMatrixAttr() { return hiddenStored("geomMatrix", PlugType::Matrix, glm::dmat4(1.0), "The mesh's world matrix when the deformer was made."); }
 AttrDef handleMatrixAttr() { return connected("handleMatrix", PlugType::Matrix, glm::dmat4(1.0), "The handle's worldMatrix."); }
 AttrDef handlesAttr() { return connected("handles", PlugType::Data, DataPtr(), "The last handle link (a skinInfluence per handle)."); }
 AttrDef restAttr() { return hiddenStored("rest", PlugType::Data, DataPtr(), "The input shape captured at bind time."); }
-
-template <class F> void parallelPoints(size_t n, F&& fn)
-{
-    tbb::parallel_for(tbb::blocked_range<size_t>(0, n, 512), [&](const tbb::blocked_range<size_t>& r) {
-        for (size_t i = r.begin(); i != r.end(); ++i)
-            fn(i);
-    });
-}
-
-glm::dmat4 safeInverse(const glm::dmat4& m, const char* what)
-{
-    if (std::abs(glm::determinant(m)) < 1e-18)
-        throw std::runtime_error(std::string(what) + " has zero scale");
-    return glm::inverse(m);
-}
-
-glm::dvec3 xform(const glm::dmat4& m, const glm::dvec3& p) { return glm::dvec3(m * glm::dvec4(p, 1.0)); }
 
 const ShapeRest& restOf(const DeformerNode& d, size_t points)
 {
@@ -693,34 +624,6 @@ std::vector<glm::dvec3> cageWorld(const geo::Mesh& cage, const glm::dmat4& m)
 
 // ------------------------------------------------------------------------------------------------ command helpers
 
-Graph& g() { return Graph::current(); }
-
-Node& meshNamed(const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (!n.type().isA("mesh") || n.type().isA("lattice"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return n;
-}
-
-std::vector<NodeId> meshesOf(const std::vector<std::string>& names, const char* cmd)
-{
-    std::vector<NodeId> out;
-    for (const std::string& name : names)
-        out.push_back(meshNamed(name, cmd).id());
-    if (out.empty())
-        throw CommandError(std::string(cmd) + ": give or select at least one mesh");
-    return out;
-}
-
-DeformerNode& deformerNamed(const std::string& name, const char* cmd)
-{
-    Node& n = nodeNamed(name, cmd);
-    if (!deformers::isDeformer(n))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a deformer");
-    return static_cast<DeformerNode&>(n);
-}
-
 bool isHandleDeformer(const Node& n) { return n.type().name == "arap" || n.type().name == "laplacianDeform" || n.type().name == "bbw"; }
 
 /** A handle deformer by name, or the topmost one in a mesh's stack when given the mesh. */
@@ -731,69 +634,18 @@ DeformerNode& handleDeformerNamed(const std::string& name, const char* cmd)
         return static_cast<DeformerNode&>(n);
     if (n.type().isA("mesh"))
     {
-        std::vector<NodeId> list = deformers::list(g(), n.id());
+        std::vector<NodeId> list = deformers::list(Graph::current(), n.id());
         for (auto it = list.rbegin(); it != list.rend(); ++it)
-            if (isHandleDeformer(*g().node(*it)))
-                return static_cast<DeformerNode&>(*g().node(*it));
+            if (isHandleDeformer(*Graph::current().node(*it)))
+                return static_cast<DeformerNode&>(*Graph::current().node(*it));
     }
     throw CommandError(std::string(cmd) + ": " + name + " is not an arap, laplacianDeform or bbw deformer, nor a mesh with one");
-}
-
-geo::Bounds worldBounds(Graph& graph, const std::vector<NodeId>& meshes)
-{
-    graph.evaluate();
-    geo::Bounds b;
-    for (NodeId id : meshes)
-    {
-        Node* n = graph.node(id);
-        MeshPtr m = n->as<MeshPtr>(MeshNode::kOutMesh);
-        if (!m)
-            continue;
-        glm::dmat4 w = worldOf(*n);
-        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
-            if (m->pointValid(p))
-                b.extend(xform(w, m->position(p)));
-    }
-    if (!b.valid())
-        b.extend(glm::dvec3(0.0));
-    return b;
 }
 
 DeformerNode& addOne(Graph& graph, const char* type, NodeId mesh, const Args& a, const char* label)
 {
     std::vector<NodeId> made = deformers::addDeformer(graph, type, {mesh}, a.has("name") ? a.get<std::string>("name") : label);
     return static_cast<DeformerNode&>(*graph.node(made.at(0)));
-}
-
-void setPlug(Graph& graph, NodeId node, const char* attr, PlugValue v)
-{
-    int a = graph.node(node)->type().attrIndex(attr);
-    if (a < 0)
-        throw CommandError(std::string("no attribute ") + attr + " on " + graph.node(node)->name());
-    guarded([&] {
-        graph.setValue({node, a, -1}, std::move(v));
-        return 0;
-    });
-}
-
-void connectPlug(Graph& graph, NodeId src, const char* srcAttr, NodeId dst, const char* dstAttr)
-{
-    graph.connect({src, graph.node(src)->type().attrIndex(srcAttr), -1}, {dst, graph.node(dst)->type().attrIndex(dstAttr), -1}, true);
-}
-
-void applyParams(Graph& graph, Node& n, const json& params)
-{
-    if (!params.is_object())
-        return;
-    for (auto& [k, val] : params.items())
-        guarded([&] {
-            PlugRef p = graph.plug(n.name() + "." + k);
-            AttrDef def = graph.attr(p);
-            if (p.component >= 0)
-                def.type = PlugType::Float;
-            graph.setValue(p, fromJson(def, val));
-            return 0;
-        });
 }
 
 Node* makeLocator(Graph& graph, const std::string& name, const glm::dvec3& pos, double scale = 1.0)
@@ -820,17 +672,6 @@ Node* makeAxisHandle(Graph& graph, const std::string& name, const geo::Bounds& b
     graph.setValue({h->id(), Transform::kRotate, -1}, rot);
     graph.evaluate();
     return h;
-}
-
-int axisIndex(const std::string& a, const char* cmd)
-{
-    if (a == "x")
-        return 0;
-    if (a == "y")
-        return 1;
-    if (a == "z")
-        return 2;
-    throw CommandError(std::string(cmd) + ": axis must be x, y or z");
 }
 
 /** The deformer's input, evaluated now. */
@@ -971,7 +812,7 @@ std::vector<uint32_t> pointsFromItems(Graph& graph, NodeId mesh, const json& ite
 }
 
 /** Point ids from a flag when given, else the selected components of the mesh. */
-std::vector<uint32_t> pointsArg(Graph& graph, NodeId mesh, const Args& a, const char* flag, const char* cmd)
+std::vector<uint32_t> pointIdsArg(Graph& graph, NodeId mesh, const Args& a, const char* flag, const char* cmd)
 {
     if (a.has(flag))
         return pointsFromItems(graph, mesh, a.flags[flag], cmd);
@@ -1062,14 +903,9 @@ void bindBbw(Graph& graph, DeformerNode& d)
 
 // ------------------------------------------------------------------------------------------------ bbw skin weights
 
-struct Bone
-{
-    uint32_t index;
-    std::vector<std::pair<glm::dvec3, glm::dvec3>> segments;
-};
 
 /** Distance from p to the bone, and where along its nearest segment (0..1, 0.5 for a point bone). */
-double boneDistance(const Bone& b, const glm::dvec3& p, double* along)
+double boneDistance(const SkinBone& b, const glm::dvec3& p, double* along)
 {
     double best = 1e300;
     for (const auto& [a, c] : b.segments)
@@ -1092,7 +928,7 @@ double boneDistance(const Bone& b, const glm::dvec3& p, double* along)
  * The points each bone holds at weight 1: of the points nearest to it, those about as close as its closest one and
  * away from its ends, so the joints in between are left to the weights.
  */
-std::vector<std::vector<uint32_t>> boneRegions(const std::vector<Bone>& bones, const std::vector<glm::dvec3>& world, const geo::Mesh& m)
+std::vector<std::vector<uint32_t>> boneRegions(const std::vector<SkinBone>& bones, const std::vector<glm::dvec3>& world, const geo::Mesh& m)
 {
     const size_t n = world.size();
     std::vector<int> nearest(n, -1);
@@ -1568,7 +1404,7 @@ void registerShapeCommands()
                   {"falloff", "", T::String, "single", "single | biScale | triScale", {"single", "biScale", "triScale"}},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes = meshesOf(a.objects(), "kelvinlet");
             geo::Bounds b = worldBounds(graph, meshes);
             glm::dvec3 pos = a.has("position") ? vec3Of(a.flags["position"]) : b.center();
@@ -1596,7 +1432,7 @@ void registerShapeCommands()
 
     auto handleCommand = [](const char* cmd, const char* type, const char* label) {
         return [cmd, type, label](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes = meshesOf(a.objects(), cmd);
             if (meshes.size() != 1)
                 throw CommandError(std::string(cmd) + ": give one mesh");
@@ -1607,7 +1443,7 @@ void registerShapeCommands()
                 for (const json& h : a.flags["handles"])
                     handles.push_back(pointsFromItems(graph, mesh, h, cmd));
             }
-            else if (std::vector<uint32_t> sel = pointsArg(graph, mesh, a, "points", cmd); !sel.empty())
+            else if (std::vector<uint32_t> sel = pointIdsArg(graph, mesh, a, "points", cmd); !sel.empty())
                 handles.push_back(std::move(sel));
             std::vector<uint32_t> anchors = a.has("anchors") ? pointsFromItems(graph, mesh, a.flags["anchors"], cmd) : std::vector<uint32_t>{};
 
@@ -1665,7 +1501,7 @@ void registerShapeCommands()
                   {"handle", "", T::String, nullptr, "bbw: an existing transform to use as the handle. Default: a new locator at position=."},
                   {"position", "", T::Vec3, nullptr, "bbw: where the new handle goes, world."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.positional.empty() ? a.objects() : std::vector<std::string>{a.positional[0].get<std::string>()};
             if (objs.empty())
                 throw CommandError("addDeformHandle: no deformer");
@@ -1686,7 +1522,7 @@ void registerShapeCommands()
             }
             if (mesh == kNoNode)
                 throw CommandError("addDeformHandle: " + d.name() + " deforms no mesh");
-            NodeId h = addRegionHandle(graph, d, mesh, pointsArg(graph, mesh, a, "points", "addDeformHandle"), "addDeformHandle");
+            NodeId h = addRegionHandle(graph, d, mesh, pointIdsArg(graph, mesh, a, "points", "addDeformHandle"), "addDeformHandle");
             graph.select({h});
             return graph.node(h)->name();
         },
@@ -1700,7 +1536,7 @@ void registerShapeCommands()
         .flags = {{"points", "", T::List, nullptr, "Ids, components or set names. Default: the selected components."},
                   {"add", "", T::Bool, false, "Add to the anchors instead of replacing them."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.positional.empty() ? a.objects() : std::vector<std::string>{a.positional[0].get<std::string>()};
             if (objs.empty())
                 throw CommandError("setDeformAnchors: no deformer");
@@ -1710,7 +1546,7 @@ void registerShapeCommands()
             NodeId mesh = modifiers::meshOf(graph, d.id());
             if (mesh == kNoNode)
                 throw CommandError("setDeformAnchors: " + d.name() + " deforms no mesh");
-            std::vector<uint32_t> pts = pointsArg(graph, mesh, a, "points", "setDeformAnchors");
+            std::vector<uint32_t> pts = pointIdsArg(graph, mesh, a, "points", "setDeformAnchors");
             auto anchors = std::make_shared<PointGroups>();
             if (a.get<bool>("add"))
                 anchors = groupsOf(d, "anchors");
@@ -1731,7 +1567,7 @@ void registerShapeCommands()
         .positionalDoc = "deformer or mesh",
         .undoable = false,
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("deformHandles: no deformer");
@@ -1758,7 +1594,7 @@ void registerShapeCommands()
                   {"radius", "", T::Float, 0.0, "Points this close to a handle (cm) move fully with it; 0: just the nearest point.", {}, {}, 0.0},
                   {"name", "", T::String, nullptr, "Name for the deformer."}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes, handles;
             for (const std::string& name : a.objects())
             {
@@ -1801,7 +1637,7 @@ void registerShapeCommands()
         .positionalDoc = "skinCluster or mesh",
         .flags = {{"maxInfluences", "", T::Int, nullptr, "Influences kept per point. Default: the skinCluster's maxInfluences.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             auto objs = a.objects();
             if (objs.empty())
                 throw CommandError("bbwSkinWeights: no skinCluster");
@@ -1813,20 +1649,7 @@ void registerShapeCommands()
             const glm::dmat4 geom = graph.node(skinId)->as<glm::dmat4>(SkinClusterNode::kGeomMatrix);
             const std::vector<glm::dvec3> world = worldPoints(*in, geom);
             std::vector<skin::Influence> infs = skin::influences(graph, skinId);
-            std::vector<Bone> bones;
-            for (const skin::Influence& inf : infs)
-            {
-                if (inf.joint == kNoNode)
-                    continue;
-                Bone b{inf.index, {}};
-                glm::dvec3 at = positionOf(*graph.node(inf.joint));
-                for (NodeId c : graph.children(inf.joint))
-                    if (rig::isJoint(*graph.node(c)))
-                        b.segments.push_back({at, positionOf(*graph.node(c))});
-                if (b.segments.empty())
-                    b.segments.push_back({at, at});
-                bones.push_back(std::move(b));
-            }
+            std::vector<SkinBone> bones = skinBones(graph, infs);
             if (bones.empty())
                 throw CommandError("bbwSkinWeights: the skinCluster has no joints");
             std::vector<float> w = deform::boundedBiharmonicWeights(*in, world, boneRegions(bones, world, *in));
@@ -1852,7 +1675,7 @@ void registerShapeCommands()
 
     auto simple = [](const char* cmd, const char* type, const char* label, std::function<void(Graph&, DeformerNode&, const Args&)> setup) {
         return [cmd, type, label, setup](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             json out = json::array();
             for (NodeId mesh : meshesOf(a.objects(), cmd))
             {
@@ -1946,7 +1769,7 @@ void registerShapeCommands()
         .positionalDoc = "meshes",
         .flags = {{"axis", "", T::String, "y", "World axis the handle's Y lies along.", {"x", "y", "z"}}, paramsFlag, nameFlag},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes = meshesOf(a.objects(), "shear");
             Node* h = makeAxisHandle(graph, "ShearHandle", worldBounds(graph, meshes), axisIndex(a.get<std::string>("axis"), "shear"));
             json out = json::array({h->name()});
@@ -1973,7 +1796,7 @@ void registerShapeCommands()
                   {"radius", "", T::Float, 0.0, "Shape size, cm; 0 uses the mesh's mean size.", {}, {}, 0.0},
                   paramsFlag, nameFlag},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes = meshesOf(a.objects(), "cast");
             std::string s = a.get<std::string>("shape");
             int64_t shape = s == "sphere" ? 0 : s == "cylinder" ? 1 : s == "box" ? 2 : -1;
@@ -2006,7 +1829,7 @@ void registerShapeCommands()
                   {"radius", "", T::Float, nullptr, "Falloff radius, cm. Default: a quarter of the meshes' size.", {}, {}, 0.0},
                   paramsFlag, nameFlag},
         .run = [](const Args& a) -> json {
-            Graph& graph = g();
+            Graph& graph = Graph::current();
             std::vector<NodeId> meshes = meshesOf(a.objects(), "warp");
             geo::Bounds b = worldBounds(graph, meshes);
             glm::dvec3 pos = a.has("position") ? vec3Of(a.flags["position"]) : b.center();

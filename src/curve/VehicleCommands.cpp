@@ -5,6 +5,7 @@
 #include "curve/CurveNodes.h"
 #include "curve/Fair.h"
 #include "curve/Intersect.h"
+#include "curve/NodeHelpers.h"
 #include "curve/Tessellate.h"
 #include "geo/Ops.h"
 #include "geo/Topology.h"
@@ -23,55 +24,20 @@
 namespace lila::curve
 {
 using namespace scene;
+using namespace helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
 
 namespace
 {
-Graph& graph() { return Graph::current(); }
-
-const std::vector<std::string> kContinuity = {"g0", "g1", "g2", "g3"};
 const std::vector<std::string> kEnds = {"nearest", "start", "end"};
-
-Node& curveNamed(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n)
-        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
-    if (!n->type().isA("curve"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a curve");
-    return *n;
-}
-
-Node& meshNamed(const std::string& name, const char* cmd)
-{
-    Node* n = graph().find(name);
-    if (!n || !n->type().isA("mesh"))
-        throw CommandError(std::string(cmd) + ": " + name + " is not a mesh");
-    return *n;
-}
-
-/** The given curves, or the selected ones in selection order. */
-std::vector<Node*> curvesOf(const Args& a, const char* cmd)
-{
-    std::vector<Node*> out;
-    for (const json& p : a.positional)
-        out.push_back(&curveNamed(p.get<std::string>(), cmd));
-    if (out.empty())
-        for (NodeId id : graph().selection())
-            if (Node* n = graph().node(id); n && n->type().isA("curve"))
-                out.push_back(n);
-    if (out.empty())
-        throw CommandError(std::string(cmd) + ": select a curve");
-    return out;
-}
 
 std::vector<Node*> namedCurves(const Args& a, const char* flag, const char* cmd)
 {
     std::vector<Node*> out;
     for (const json& p : a.flags.value(flag, json::array()))
-        out.push_back(&curveNamed(p.get<std::string>(), cmd));
+        out.push_back(&curveNamed(graph(), p.get<std::string>(), cmd));
     return out;
 }
 
@@ -116,20 +82,6 @@ void setWorldSplines(Node& c, Splines s)
     g.setValue(create, makeCurveData(std::move(s)));
 }
 
-Node* createCurve(Splines s, const std::string& name)
-{
-    for (const Spline& sp : s)
-    {
-        std::string why;
-        if (!isValid(sp, &why))
-            throw CommandError("curve: " + why);
-    }
-    Graph& g = graph();
-    Node* n = g.createNode(*types::find("curve"), name.empty() ? "Curve" : name, kNoNode, true);
-    g.setValue({n->id(), CurveShape::kCreate, -1}, makeCurveData(std::move(s)));
-    return n;
-}
-
 D3 vec3(const Args& a, const char* flag)
 {
     const json& v = a.flags[flag];
@@ -162,27 +114,10 @@ int choice(const Args& a, const char* flag, const std::vector<std::string>& name
     return int(it - names.begin());
 }
 
-void bake(Graph& g, Node& op, const PlugRef& dst)
-{
-    g.evaluate();
-    PlugValue v = g.value(dst);
-    g.disconnect(dst);
-    g.setValue(dst, v);
-    g.deleteNode(op.id());
-}
-
-FlagDef chFlag() { return {"constructionHistory", "ch", T::Bool, true, "Keep the history node so the result stays live."}; }
-
 std::vector<FlagDef> intersectFlags()
 {
     return {{"tolerance", "tol", T::Float, 0.01, "Curves closer than this meet, cm.", {}, {}, 1e-5},
             {"direction", "dir", T::Vec3, nullptr, "Intersect as seen along this direction (the view), for curves that only cross on screen."}};
-}
-
-std::vector<FlagDef> withFlags(std::vector<FlagDef> base, const std::vector<FlagDef>& extra)
-{
-    base.insert(base.end(), extra.begin(), extra.end());
-    return base;
 }
 
 /** The spline of a curve a world point is nearest, and the span parameter there. */
@@ -210,9 +145,9 @@ std::vector<std::pair<Node*, std::vector<geo::Index>>> edgeSides(const Args& a, 
     std::vector<std::pair<Node*, std::vector<geo::Index>>> out;
     if (a.has("meshA"))
     {
-        out.push_back({&meshNamed(a.get<std::string>("meshA"), cmd), a.flags.value("edgesA", json::array()).get<std::vector<geo::Index>>()});
+        out.push_back({&meshNamed(graph(), a.get<std::string>("meshA"), cmd), a.flags.value("edgesA", json::array()).get<std::vector<geo::Index>>()});
         if (a.has("meshB"))
-            out.push_back({&meshNamed(a.get<std::string>("meshB"), cmd), a.flags.value("edgesB", json::array()).get<std::vector<geo::Index>>()});
+            out.push_back({&meshNamed(graph(), a.get<std::string>("meshB"), cmd), a.flags.value("edgesB", json::array()).get<std::vector<geo::Index>>()});
         return out;
     }
     Graph& g = graph();
@@ -236,8 +171,8 @@ json runBlend(const Args& a)
 {
     const char* cmd = "blendCurve";
     Graph& g = graph();
-    std::vector<Node*> cs = curvesOf(a, cmd);
-    Node* mesh = a.has("mesh") ? &meshNamed(a.get<std::string>("mesh"), cmd) : nullptr;
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
+    Node* mesh = a.has("mesh") ? &meshNamed(graph(), a.get<std::string>("mesh"), cmd) : nullptr;
     if (!mesh && cs.size() < 2)
         throw CommandError("blendCurve: give two curves, or a curve and mesh= with edge=");
     Node* ca = cs[0];
@@ -345,8 +280,8 @@ json runBlend(const Args& a)
 json runMatch(const Args& a)
 {
     const char* cmd = "matchCurve";
-    std::vector<Node*> cs = curvesOf(a, cmd);
-    Node* mesh = a.has("mesh") ? &meshNamed(a.get<std::string>("mesh"), cmd) : nullptr;
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
+    Node* mesh = a.has("mesh") ? &meshNamed(graph(), a.get<std::string>("mesh"), cmd) : nullptr;
     if (!mesh && cs.size() < 2)
         throw CommandError("matchCurve: give the curve to change and the curve to match it to (or mesh= with edge=)");
     Node* c = cs[0];
@@ -460,7 +395,7 @@ json runTrim(const Args& a)
 {
     const char* cmd = "trimCurve";
     Graph& g = graph();
-    std::vector<Node*> cs = curvesOf(a, cmd);
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
     Node* c = cs[0];
     std::vector<Node*> cutters = a.has("cutters") ? namedCurves(a, "cutters", cmd) : otherCurves({c});
     std::erase(cutters, c);
@@ -499,14 +434,14 @@ json runTrim(const Args& a)
         names.push_back(c->path());
     }
     for (size_t k = 1; k < left.size(); ++k)
-        names.push_back(createCurve({left[k]}, c->name())->path());
+        names.push_back(createCurve(graph(), {left[k]}, c->name())->path());
     return names;
 }
 
 json runExtend(const Args& a)
 {
     const char* cmd = "extendCurve";
-    std::vector<Node*> cs = curvesOf(a, cmd);
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
     double byLength = a.get<double>("length", 0.0);
     std::vector<Node*> bounds = a.has("boundaries") ? namedCurves(a, "boundaries", cmd) : (byLength > 0.0 ? std::vector<Node*>{} : otherCurves(cs));
     ExtendOptions o;
@@ -569,7 +504,7 @@ json runSplit(const Args& a)
 {
     const char* cmd = "splitCurves";
     Graph& g = graph();
-    std::vector<Node*> cs = curvesOf(a, cmd);
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
     std::vector<Node*> extra = namedCurves(a, "cutters", cmd);
     if (cs.size() < 2 && extra.empty())
         throw CommandError("splitCurves: give at least two curves, or cutters=");
@@ -602,7 +537,7 @@ json runSplit(const Args& a)
         sel.push_back(cs[k]->id());
         for (Spline& m : made)
         {
-            Node* n = createCurve({m}, cs[k]->name());
+            Node* n = createCurve(graph(), {m}, cs[k]->name());
             names.push_back(n->path());
             sel.push_back(n->id());
         }
@@ -621,7 +556,7 @@ json runFair(const Args& a)
     o.keepCorners = a.get<bool>("keepCorners", true);
     o.iterations = std::clamp(a.get<int>("iterations", 200), 1, 10000);
     json out = json::array();
-    for (Node* c : curvesOf(a, "fairCurve"))
+    for (Node* c : curvesArg(graph(), a, "fairCurve"))
     {
         Splines all = worldSplines(*c);
         double worst = 0.0, before = 0.0, after = 0.0;
@@ -647,7 +582,7 @@ json runNetwork(const Args& a)
 {
     const char* cmd = "curveNetwork";
     Graph& g = graph();
-    std::vector<Node*> cs = curvesOf(a, cmd);
+    std::vector<Node*> cs = curvesArg(graph(), a, cmd);
     std::vector<Node*> us = namedCurves(a, "uCurves", cmd), vs = namedCurves(a, "vCurves", cmd);
     for (Node* n : us)
         if (std::ranges::find(cs, n) == cs.end())
@@ -862,7 +797,7 @@ json runBorderBlend(const Args& a)
     return json::array({mesh->path(), opName});
 }
 
-void registerOptionLayouts()
+void registerVehicleOptionLayouts()
 {
     namespace opt = ops::options;
     opt::Override blend;
@@ -1033,6 +968,6 @@ void registerVehicleCommands()
                   {"name", "n", T::String, nullptr, "Mesh name."}},
         .run = runBorderBlend,
     });
-    registerOptionLayouts();
+    registerVehicleOptionLayouts();
 }
 } // namespace lila::curve

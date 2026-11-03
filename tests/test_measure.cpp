@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
+
 #include "ops/Command.h"
 #include "core/PrefStore.h"
 #include "scene/MeasureMath.h"
@@ -11,12 +13,11 @@
 
 using namespace lila;
 using json = nlohmann::json;
+using namespace testutil;
 namespace measure = lila::scene::measure;
 
 namespace
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-
 /** Points on a tilted circle from a0 to a1 degrees. */
 std::vector<glm::dvec3> arc(glm::dvec3 c, double r, double a0, double a1, int n)
 {
