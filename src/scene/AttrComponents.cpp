@@ -445,7 +445,7 @@ std::vector<std::pair<std::string, json>> exportProperties(Graph& g, NodeId node
                     value.push_back(std::move(e));
         }
         else
-            value = payloadValue(d, g.value({node, int(i), -1}));
+            value = payloadValue(d, n->value(int(i)));
         if (!value.is_null())
             out.emplace_back(d.category.empty() ? d.name : d.category + "." + d.name, std::move(value));
     }
