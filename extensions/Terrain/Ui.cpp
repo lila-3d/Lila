@@ -9,6 +9,7 @@
 #include <lila/LevelToolkit.h>
 #include <lila/Log.h>
 #include <lila/Menus.h>
+#include <lila/ViewportTool.h>
 
 #include <QApplication>
 
@@ -51,10 +52,18 @@ void registerUi(ext::Context& ctx)
                        .doc = "Make a terrain from a DEM tile or a painted height image.",
                        .python = "terrainImport('dem/N46E007.hgt')"});
 
-    menus::addItem(ctx, {.id = "terrain.menu", .menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
+    registerSculptTool(ctx);
+    actions::add(ctx, {.id = "terrain.sculpt",
+                       .label = "Sculpt Terrain",
+                       .category = "Terrain",
+                       .run = [] { viewportTools::activate("terrain.sculptTool"); },
+                       .doc = "Brush the selected terrain: raise, lower, smooth, flatten and noise, before or after erosion.",
+                       .python = "terrainSculpt('Terrain', op='raise', points=[[0, 0]], radius=3000, strength=300)"});
+
+    menus::addItem(ctx, {.id = "terrain.menu",.menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
                          .after = levelToolkit::kBuildSection});
     int separators = 0;
-    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "", "terrain.toMesh", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
+    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "", "terrain.toMesh", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("terrain.menu.") + a, .menu = "Level/Terrain", .action = a});
@@ -64,7 +73,7 @@ void registerUi(ext::Context& ctx)
 
     levelToolkit::add(ctx, {.id = "terrain",
                             .title = "Terrain",
-                            .items = {{"terrain.create", "mountain", "Create", "Terrain"}, {"terrain.import", "file-import", "Import"}, {"terrain.erode", "droplet", "Erode", "Erode"}, {},
+                            .items = {{"terrain.create", "mountain", "Create", "Terrain"}, {"terrain.import", "file-import", "Import"}, {"terrain.erode", "droplet", "Erode", "Erode"}, {"terrain.sculpt", "brush", "Sculpt"}, {},
                                       {"terrain.toMesh", "grid-dots", "To Mesh"}, {"terrain.bake", "file-zip", "Bake"}, {"terrain.export", "file-export", "Export"},
                                       {"terrain.sendToUnreal", "send", "Unreal"}},
                             .order = 10});

@@ -78,4 +78,6 @@ Heightfield loadHeightfield(const std::filesystem::path& path, glm::dvec2 center
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** The Sculpt Terrain viewport tool (terrain.sculptTool). */
+void registerSculptTool(lila::ext::Context& ctx);
 } // namespace terrain

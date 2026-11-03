@@ -2,6 +2,7 @@
 // from meshes. Every terrain command builds a group out of these.
 
 #include "Erosion.h"
+#include "Analysis.h"
 #include "ErosionGpu.h"
 #include "Inputs.h"
 #include "Stamps.h"
@@ -895,13 +896,217 @@ gn::NodeDecl sculptDecl()
             },
     };
 }
+
+/** Curves from JSON point lists ([[x, y, z], ...]), with named float attributes per point taken from the same rows. */
+struct CurveBuilder
+{
+    gn::CurveSet set;
+    std::map<std::string, std::vector<float>> point, curve;
+
+    void add(const nlohmann::json& pts, bool closed, const nlohmann::json& rows = nullptr, const std::vector<std::string>& keys = {},
+             const std::map<std::string, float>& perCurve = {})
+    {
+        std::vector<glm::dvec3> p;
+        for (const nlohmann::json& q : pts)
+            p.push_back({q[0].get<double>(), q[1].get<double>(), q[2].get<double>()});
+        if (p.size() < 2)
+            return;
+        set.addCurve(p, closed);
+        for (const std::string& k : keys)
+            for (size_t i = 0; i < p.size(); ++i)
+                point[k].push_back(rows.is_array() && i < rows.size() && rows[i].contains(k) ? rows[i][k].get<float>() : 0.0f);
+        for (const auto& [k, v] : perCurve)
+            curve[k].push_back(v);
+    }
+
+    GeometryPtr finish()
+    {
+        set.syncSizes();
+        for (const auto& [k, v] : point)
+            if (v.size() == set.numPoints())
+                std::copy(v.begin(), v.end(), set.pointAttrs.getOrAdd<float>(k).begin());
+        for (const auto& [k, v] : curve)
+            if (v.size() == set.numCurves())
+                std::copy(v.begin(), v.end(), set.curveAttrs.getOrAdd<float>(k).begin());
+        return gn::curveGeometry(std::move(set));
+    }
+};
+
+GeometryPtr scoredPoints(const nlohmann::json& list)
+{
+    geo::Mesh m;
+    std::vector<float> score;
+    for (const nlohmann::json& s : list)
+    {
+        const nlohmann::json& p = s["position"];
+        m.addPoint({p[0].get<double>(), p[1].get<double>(), p[2].get<double>()});
+        score.push_back(s.value("score", 1.0f));
+    }
+    auto layer = m.pointAttrs().getOrAdd<float>("score");
+    std::copy(score.begin(), score.end(), layer.begin());
+    return gn::pointGeometry(std::move(m));
+}
+
+AnalysisParams analysisFrom(const ExecContext& c)
+{
+    AnalysisParams p;
+    p.riverArea = std::max(1.0, c.f("riverArea"));
+    if (c.b("hasSea"))
+        p.seaLevel = c.f("seaLevel");
+    return p;
+}
+
+std::vector<SocketDecl> analysisInputs()
+{
+    return {in("riverArea", T::Float, 250000.0, "Drainage area, m2, past which water is a river.", 1.0),
+            in("hasSea", T::Bool, false, "There is a sea."), in("seaLevel", T::Float, 0.0, "Sea level, cm.")};
+}
+
+gn::NodeDecl fieldDecl()
+{
+    std::vector<SocketDecl> inputs = {geoIn("heightfield")};
+    for (SocketDecl& s : analysisInputs())
+        inputs.push_back(std::move(s));
+    return {
+        .type = "TerrainField",
+        .label = "Terrain Field",
+        .category = kCategory,
+        .doc = "Writes an analysis field into a mask of the heightfield: slope, aspect, curvature, roughness, flow, flowDir, "
+               "basinId, streamOrder, wet, hand, floodRisk, distanceToWater, nearestWaterId, waterDepth, rockHardness, soilDepth, "
+               "excavationCost, slopeClass, buildability, prominence, viewshedScore, solar or windExposure (see terrainField). "
+               "Sample Heightfield reads it back per point.",
+        .props = {prop("field", Analysis::fieldNames(), "buildability", "Which field."), prop("mask", {}, "", "Mask to write; empty is the field's name.")},
+        .sockets = {.inputs = inputs, .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                auto h = std::make_shared<const Heightfield>(requireHeightfield(c, g));
+                const std::string field = c.prop("field");
+                const auto an = analyse(h, analysisFrom(c));
+                Heightfield out = *h;
+                const std::string name = c.prop("mask").empty() ? field : c.prop("mask");
+                out.mask(name) = an->field(field);
+                c.out("heightfield", withHeightfield(g, std::move(out)));
+            },
+    };
+}
+
+gn::NodeDecl waterDecl()
+{
+    std::vector<SocketDecl> inputs = {geoIn("heightfield")};
+    for (SocketDecl& s : analysisInputs())
+        inputs.push_back(std::move(s));
+    return {
+        .type = "TerrainWater",
+        .label = "Terrain Water",
+        .category = kCategory,
+        .doc = "The water on a heightfield as geometry: rivers as curves with width, depth, waterLevel, bedHeight, discharge and "
+               "flowSpeed per point and streamOrder per curve; lake and sea shorelines as closed curves with waterLevel; and the "
+               "sites (springs, fords, bridge sites, confluences, rapids, waterfalls) as points with a score. See terrainWaterInfo.",
+        .sockets = {.inputs = inputs, .outputs = {geoOut("rivers"), geoOut("shorelines"), geoOut("sites")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                auto h = std::make_shared<const Heightfield>(requireHeightfield(c, c.geometry("heightfield")));
+                const nlohmann::json w = waterGraph(*analyse(h, analysisFrom(c)), WorldMap{});
+                CurveBuilder rivers, shores;
+                const std::vector<std::string> keys = {"width", "depth", "waterLevel", "bedHeight", "discharge", "flowSpeed"};
+                for (const nlohmann::json& r : w["rivers"])
+                {
+                    nlohmann::json pts = nlohmann::json::array();
+                    for (const nlohmann::json& p : r["points"])
+                        pts.push_back(p["position"]);
+                    rivers.add(pts, false, r["points"], keys, {{"streamOrder", r["streamOrder"].get<float>()}});
+                }
+                auto addShores = [&](const nlohmann::json& lake) {
+                    for (const nlohmann::json& ring : lake["shoreline"])
+                        shores.add(ring, true, nullptr, {}, {{"waterLevel", lake["waterLevel"].get<float>()}});
+                };
+                for (const nlohmann::json& l : w["lakes"])
+                    addShores(l);
+                if (w["sea"].is_object())
+                    addShores(w["sea"]);
+                nlohmann::json all = nlohmann::json::array();
+                for (const char* k : {"springs", "fords", "bridgeSites", "confluences", "rapids", "waterfalls"})
+                    for (const nlohmann::json& p : w[k])
+                        all.push_back(p);
+                c.out("rivers", rivers.finish());
+                c.out("shorelines", shores.finish());
+                c.out("sites", scoredPoints(all));
+            },
+    };
+}
+
+gn::NodeDecl buildableDecl()
+{
+    std::vector<SocketDecl> inputs = {geoIn("heightfield"), in("minArea", T::Float, 2000.0, "Smallest region, m2.", 0.0),
+                                      in("maxSlope", T::Float, 15.0, "Steepest ground, degrees.", 0.0, 90.0), in("avoidFlood", T::Bool, true, "Leave out ground that floods."),
+                                      in("floodTolerance", T::Float, 0.3, "Flood risk counted as flooding.", 0.0, 1.0)};
+    for (SocketDecl& s : analysisInputs())
+        inputs.push_back(std::move(s));
+    return {
+        .type = "BuildableRegions",
+        .label = "Buildable Regions",
+        .category = kCategory,
+        .doc = "Outlines of contiguous buildable land (see terrainBuildable) as closed curves, with area (m2), meanSlope and "
+               "meanBuildability per curve; holes are their own curves with hole = 1.",
+        .sockets = {.inputs = inputs, .outputs = {geoOut("regions")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                auto h = std::make_shared<const Heightfield>(requireHeightfield(c, c.geometry("heightfield")));
+                const nlohmann::json regions =
+                    buildableRegions(*analyse(h, analysisFrom(c)), WorldMap{}, c.f("minArea"), c.f("maxSlope"), c.b("avoidFlood"), c.f("floodTolerance"));
+                CurveBuilder b;
+                for (const nlohmann::json& r : regions)
+                {
+                    const std::map<std::string, float> attrs = {{"area", r["area"].get<float>()}, {"meanSlope", r["meanSlope"].get<float>()},
+                                                                {"meanBuildability", r["meanBuildability"].get<float>()}, {"hole", 0.0f}};
+                    b.add(r["outline"], true, nullptr, {}, attrs);
+                    for (const nlohmann::json& hole : r["holes"])
+                    {
+                        std::map<std::string, float> ha = attrs;
+                        ha["hole"] = 1.0f;
+                        b.add(hole, true, nullptr, {}, ha);
+                    }
+                }
+                c.out("regions", b.finish());
+            },
+    };
+}
+
+gn::NodeDecl sitesDecl()
+{
+    std::vector<SocketDecl> inputs = {geoIn("heightfield"), in("count", T::Int, 5, "How many.", 1, 1000), in("spacing", T::Float, 20000.0, "Least distance between them, cm.", 0.0)};
+    for (SocketDecl& s : analysisInputs())
+        inputs.push_back(std::move(s));
+    return {
+        .type = "TerrainSites",
+        .label = "Terrain Sites",
+        .category = kCategory,
+        .doc = "Scored places for a kind of site (see terrainSites) as points with a score attribute, best first.",
+        .props = {prop("kind", siteKinds(), "townCentre", "Kind of site.")},
+        .sockets = {.inputs = inputs, .outputs = {geoOut("sites")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                auto h = std::make_shared<const Heightfield>(requireHeightfield(c, c.geometry("heightfield")));
+                c.out("sites", scoredPoints(sites(*analyse(h, analysisFrom(c)), WorldMap{}, c.prop("kind"), int(c.i("count")), c.f("spacing"))));
+            },
+    };
+}
 } // namespace
 
 bool registerNodes(ext::Context& ctx)
 {
     for (gn::NodeDecl d : {gridDecl(), noiseDecl(), setHeightDecl(), setMaskDecl(), sampleDecl(), toMeshDecl(), fromMeshDecl(), blendDecl(),
                            resampleDecl(), infoDecl(), readDecl(), textureGraphDecl(), erodeDecl(), flowDecl(), thermalDecl(), elevationDecl(), imageDecl(),
-                           stampsDecl(), sculptDecl()})
+                           stampsDecl(), sculptDecl(), fieldDecl(), waterDecl(), buildableDecl(), sitesDecl()})
         if (!gn::registerDecl(ctx, std::move(d)))
             return false;
     return true;

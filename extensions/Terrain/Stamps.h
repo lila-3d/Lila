@@ -23,6 +23,8 @@ struct Footprint
     std::vector<std::vector<glm::dvec2>> outline;
     /** Lowest Y of the source geometry (level=object); NaN when it has none. */
     double lowestY;
+    /** Open polylines, for line features: a path, or each curve (closed ones end where they start). */
+    std::vector<std::vector<glm::dvec2>> lines;
 
     Footprint();
     bool empty() const { return rings.empty(); }
@@ -98,6 +100,23 @@ struct Stamp
     std::vector<glm::dvec2> polygon;
     std::string object;
 
+    /**
+     * Line features (kind street, canal, moat, quay, levee, embankment, seawall, bridge, culvert, tunnel) run along path
+     * (or the object's first curve), width wide. depth: canal and moat depth below the water, quay dredge depth, dredge
+     * (a region kind) depth. rise: levee, embankment and seawall height above the ground. side: which side of the line a
+     * quay, embankment or seawall holds land on (left or right of travel). maxGrade: street grade limit, percent.
+     * clearance: bridge deck height over the ground below it.
+     */
+    std::vector<glm::dvec2> path;
+    double width = 600.0;
+    double depth = 200.0;
+    double rise = 200.0;
+    std::string side = "left";
+    double maxGrade = 8.0;
+    double clearance = 500.0;
+
+    bool isLine() const;
+
     nlohmann::json toJson() const;
     /** Throws std::invalid_argument on unknown names. */
     static Stamp fromJson(const nlohmann::json& j);
@@ -130,7 +149,32 @@ struct StampResult
     std::vector<Pile> piles;
     /** Terraced: each step's level. */
     std::vector<double> levels;
+
+    /** Line features: the graded centreline (x, surface height, z), its steepest grade (percent) and its length. */
+    std::vector<glm::dvec3> centreline;
+    double maxGrade = 0.0;
+    double length = 0.0;
+    /** Runs along the centreline (indices into it) the terrain was left alone under: bridges over hollows, tunnels through rises. */
+    struct Span
+    {
+        size_t from = 0, to = 0;
+        std::string kind;
+    };
+    std::vector<Span> spans;
+    /** Where a street crosses a stream too small for a bridge. */
+    std::vector<glm::dvec2> culverts;
+    /** Canals and moats: their water level. */
+    double waterLevel = 0.0;
 };
+
+/** Mask names a kind writes when the caller names none. */
+std::vector<std::string> defaultMasks(const std::string& kind);
+const std::vector<std::string>& lineKinds();
+
+/** Every sample the footprint covers (with the cells its edges cross), over the whole grid. */
+std::vector<uint8_t> footprintMask(const Heightfield& h, const Footprint& f);
+/** Squared distances, in samples, from each sample of a w by d grid to the nearest set one (exact Euclidean). */
+std::vector<float> squaredDistances(const std::vector<uint8_t>& set, int w, int d);
 
 /** Applies a stamp to the heightfield, writing its masks; the result describes what it did. */
 StampResult applyStamp(Heightfield& h, const Stamp& s, const Footprint& f);

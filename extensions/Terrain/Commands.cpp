@@ -2,6 +2,7 @@
 // read what it made (in world space, whatever the mesh's placement and the scene's up axis), stamp, sculpt and route on
 // it, and bake and export it.
 
+#include "Analysis.h"
 #include "Erosion.h"
 #include "ErosionGpu.h"
 #include "Export.h"
@@ -150,6 +151,8 @@ std::string identifier(const std::string& s)
 
 json vec2(glm::dvec2 v) { return json::array({v.x, v.y}); }
 
+void remember(const struct Found& f, const std::string& rev);
+
 /** What a terrain is, for agents: grid, area, height range and masks, in world units on the scene's ground plane. */
 json describe(const Found& f)
 {
@@ -170,13 +173,15 @@ json describe(const Found& f)
     {
         if (values.empty())
             continue;
-        auto [lo, hi] = std::minmax_element(values.begin(), values.end());
+        auto [least, most] = std::minmax_element(values.begin(), values.end());
         double sum = 0.0;
         for (float v : values)
             sum += v;
-        masks[name] = {{"min", *lo}, {"max", *hi}, {"mean", sum / double(values.size())}};
+        masks[name] = {{"min", *least}, {"max", *most}, {"mean", sum / double(values.size())}};
     }
     const glm::dvec3 c0(f.frame.m[0]), c2(f.frame.m[2]);
+    const std::string rev = revision(h);
+    remember(f, rev);
     return {{"mesh", f.mesh ? f.mesh->path() : std::string()},
             {"modifier", f.modifier ? f.modifier->path() : std::string()},
             {"resolution", json::array({h.nx, h.nz})},
@@ -189,11 +194,11 @@ json describe(const Found& f)
             {"upAxis", zUp() ? "z" : "y"},
             {"samples", int64_t(h.size())},
             {"masks", masks},
-            {"revision", revision(h)}};
+            {"revision", rev}};
 }
 
 /** The surface under a world point: ground coordinates, height along the scene's up, world normal and slope. */
-json sampleAt(const Found& f, const glm::dvec3& at, const std::vector<std::string>& masks)
+json sampleAt(const Found& f, const glm::dvec3& at, const std::vector<std::string>& masks, const Analysis* an = nullptr)
 {
     const Heightfield& h = *f.local;
     const glm::dvec2 q = f.frame.local(at);
@@ -209,7 +214,7 @@ json sampleAt(const Found& f, const glm::dvec3& at, const std::vector<std::strin
               {"slope", std::acos(std::clamp(glm::dot(n, upVector()), -1.0, 1.0)) * 57.29577951308232},
               {"inside", h.contains(q.x, q.y)}};
     for (const std::string& m : masks)
-        s[m] = h.maskAt(m, q.x, q.y);
+        s[m] = h.findMask(m) || !an ? h.maskAt(m, q.x, q.y) : an->sample(m, q.x, q.y);
     return s;
 }
 
@@ -232,6 +237,36 @@ std::vector<glm::dvec3> worldPoints(const json& list, const std::string& cmd)
 }
 
 json worldJson(const glm::dvec3& p) { return json::array({p.x, p.y, p.z}); }
+
+/** The flags every analysis read takes: what counts as a river, the sea level, and how big floods get. */
+std::vector<FlagDef> withAnalysisFlags(std::vector<FlagDef> flags)
+{
+    flags.push_back({"riverArea", "ra", T::Float, 250000.0, "Drainage area, m2, past which water is a river.", {}, {}, 1.0});
+    flags.push_back({"seaLevel", "sea", T::Float, nullptr, "Sea level along the up axis, cm; ground below it joined to the edge is sea. Default no sea."});
+    flags.push_back({"floodReturn", "fr", T::String, "rare", "Flood size for floodRisk: frequent, rare or extreme.", {"frequent", "rare", "extreme"}});
+    return flags;
+}
+
+AnalysisParams analysisParams(const Args& a)
+{
+    AnalysisParams p;
+    p.riverArea = std::max(1.0, a.get<double>("riverArea", 250000.0));
+    if (a.has("seaLevel"))
+        p.seaLevel = a.get<double>("seaLevel", 0.0);
+    const std::string fr = a.get<std::string>("floodReturn", "rare");
+    p.floodScale = fr == "frequent" ? 1.0 : fr == "extreme" ? 4.0 : 2.0;
+    return p;
+}
+
+WorldMap worldMapOf(const Found& f)
+{
+    WorldMap w;
+    w.m = f.frame.m;
+    w.up = upVector();
+    w.across = f.frame.across();
+    w.vertical = f.frame.vertical();
+    return w;
+}
 
 fs::path bakeDir()
 {
@@ -480,7 +515,7 @@ json stampJson(const Found& f, const Stamp& s, const StampResult& r, const std::
     json levels = json::array();
     for (double l : r.levels)
         levels.push_back(upAt(r.centroid, l));
-    return {{"id", s.id},
+    json out = {{"id", s.id},
             {"layer", layer},
             {"kind", s.kind},
             {"mode", stampModeNames()[size_t(s.mode)]},
@@ -499,6 +534,29 @@ json stampJson(const Found& f, const Stamp& s, const StampResult& r, const std::
             {"levels", levels},
             {"walls", walls},
             {"piles", piles}};
+    if (s.isLine())
+    {
+        json line = json::array(), spans = json::array(), culverts = json::array();
+        for (const glm::dvec3& p : r.centreline)
+            line.push_back(worldJson(fr.world(p.x, p.y, p.z)));
+        for (const StampResult::Span& sp : r.spans)
+        {
+            json pts = json::array();
+            for (size_t k = sp.from; k <= sp.to && k < r.centreline.size(); ++k)
+                pts.push_back(line[k]);
+            spans.push_back({{"kind", sp.kind}, {"points", pts}, {"length", double(sp.to - sp.from) * r.length / double(std::max<size_t>(1, r.centreline.size() - 1)) * a}});
+        }
+        for (const glm::dvec2& c : r.culverts)
+            culverts.push_back(worldJson(fr.world(c.x, r.padHeight, c.y)));
+        out["centreline"] = line;
+        out["maxGrade"] = r.maxGrade * v / a;
+        out["length"] = r.length * a;
+        out["spans"] = spans;
+        out["culverts"] = culverts;
+        if (s.kind == "canal" || s.kind == "moat")
+            out["waterLevel"] = upAt(r.centroid, r.waterLevel);
+    }
+    return out;
 }
 
 std::vector<FlagDef> stampFlags(bool region)
@@ -508,8 +566,8 @@ std::vector<FlagDef> stampFlags(bool region)
         {"object", "obj", T::String, nullptr, "A mesh (its faces seen from above) or closed curve the stamp follows live."},
         {"id", "id", T::String, "", "Stable id; stamping an id again replaces that stamp. Empty makes one."},
         {"layer", "ly", T::String, "Stamps", "Stamp layer (a Terrain Stamps node after erosion); the city uses City."},
-        {"mode", "m", T::String, "flatten", region ? "flatten, carve, raise or blend." : "flatten, carve, raise, blend, plinth (no grading, a raised base), terraced (steps along the slope) or stilts (no grading, piles).",
-         region ? std::vector<std::string>{"flatten", "carve", "raise", "blend"} : stampModeNames()},
+        {"mode", "m", T::String, "flatten", region ? "flatten, carve, raise, blend, or dredge (lowered by depth)." : "flatten, carve, raise, blend, plinth (no grading, a raised base), terraced (steps along the slope) or stilts (no grading, piles).",
+         region ? std::vector<std::string>{"flatten", "carve", "raise", "blend", "dredge"} : stampModeNames()},
         {"level", "lv", T::String, "", "Target height from the ground under it: mean, min, max, median, or object (the source's lowest point). Default mean; max for plinth and stilts.",
          {"", "mean", "min", "max", "median", "object"}},
         {"height", "h", T::Float, nullptr, "Target height along the scene's up axis, cm; overrides level."},
@@ -525,6 +583,7 @@ std::vector<FlagDef> stampFlags(bool region)
         flags.push_back({"direction", "dir", T::List, nullptr, "Downhill [x, z] (x, y on Z-up); default the ground's own fall."});
         flags.push_back({"edge", "ed", T::String, "slope", "slope (blend over falloff), wall (sheer edge, reported as walls) or steps.", stampEdgeNames()});
         flags.push_back({"stepHeight", "sh", T::Float, 150.0, "Steps edge: riser height, cm.", {}, {}, 1.0});
+        flags.push_back({"depth", "dp", T::Float, 200.0, "Dredge: how far it lowers the ground, cm.", {}, {}, 0.0});
     }
     else
     {
@@ -534,7 +593,7 @@ std::vector<FlagDef> stampFlags(bool region)
     return flags;
 }
 
-json runStamp(const Args& a, bool region, const std::string& cmd)
+json runStamp(const Args& a, bool region, const std::string& cmd, const std::string& lineKind = {})
 {
     LILA_ZONE();
 
@@ -548,9 +607,10 @@ json runStamp(const Args& a, bool region, const std::string& cmd)
 
     Stamp s;
     s.kind = region ? "region" : "pad";
+    const bool dredge = region && a.get<std::string>("mode", "flatten") == "dredge";
     try
     {
-        json spec = {{"mode", a.get<std::string>("mode", "flatten")}};
+        json spec = {{"mode", lineKind.empty() && !dredge ? a.get<std::string>("mode", "flatten") : std::string("carve")}};
         if (region)
             spec["edge"] = a.get<std::string>("edge", "slope");
         s = Stamp::fromJson(spec);
@@ -559,7 +619,16 @@ json runStamp(const Args& a, bool region, const std::string& cmd)
     {
         throw CommandError(cmd + ": " + e.what());
     }
-    s.kind = region ? "region" : "pad";
+    s.kind = !lineKind.empty() ? lineKind : dredge ? "dredge" : region ? "region" : "pad";
+    if (!lineKind.empty() || dredge)
+    {
+        s.width = std::max(1.0, a.get<double>("width", 600.0)) / fr.across();
+        s.depth = std::max(0.0, a.get<double>("depth", 200.0)) / fr.vertical();
+        s.rise = a.get<double>("rise", 200.0) / fr.vertical();
+        s.side = a.get<std::string>("side", "left");
+        s.maxGrade = std::max(0.0, a.get<double>("maxGrade", 8.0)) * fr.across() / fr.vertical();
+        s.clearance = std::max(0.0, a.get<double>("clearance", 500.0)) / fr.vertical();
+    }
     std::string level = a.get<std::string>("level", "");
     if (level.empty())
         level = s.mode == StampMode::Plinth || s.mode == StampMode::Stilts ? "max" : "mean";
@@ -572,7 +641,7 @@ json runStamp(const Args& a, bool region, const std::string& cmd)
     s.wallHeight = std::max(0.0, a.get<double>("wallHeight", 50.0)) / fr.vertical();
     s.maskValue = std::clamp(a.get<double>("maskValue", 1.0), 0.0, 1.0);
     s.masks.clear();
-    const json masks = a.flags.value("masks", json::array({"cityFootprint"}));
+    const json masks = a.has("masks") ? a.flags["masks"] : json(defaultMasks(s.kind));
     if (masks.is_string())
         s.masks.push_back(masks.get<std::string>());
     else
@@ -605,7 +674,18 @@ json runStamp(const Args& a, bool region, const std::string& cmd)
     s.id = id;
 
     glm::dvec2 centroid(0.0);
-    if (a.has("footprint"))
+    if (!lineKind.empty() && a.has("path"))
+    {
+        for (const glm::dvec3& p : worldPoints(a.flags["path"], cmd))
+            s.path.push_back(fr.local(p));
+        if (s.path.size() < 2)
+            throw CommandError(cmd + ": path needs at least two points");
+        for (const glm::dvec2& p : s.path)
+            centroid += p / double(s.path.size());
+    }
+    else if (!lineKind.empty() && !a.has("object"))
+        throw CommandError(cmd + ": give path= or object= (a curve)");
+    else if (a.has("footprint"))
     {
         for (const glm::dvec3& p : worldPoints(a.flags["footprint"], cmd))
             s.polygon.push_back(fr.local(p));
@@ -843,7 +923,9 @@ void registerStampCommands(ext::Context& ctx)
                   {"noiseSize", "ns", T::Float, 1000.0, "Noise: feature size, cm.", {}, {}, 1.0},
                   {"seed", "sd", T::Int, int64_t(0), "Noise: seed."},
                   {"stage", "sg", T::String, "base", "base (before erosion) or final (after it).", {"base", "final"}},
-                  {"clear", "cl", T::Bool, false, "Remove every stroke of this stage instead of adding one."}},
+                  {"clear", "cl", T::Bool, false, "Remove every stroke of this stage instead of adding one."},
+                  {"replaceLast", "rl", T::Bool, false, "Replace the stage's last stroke instead of adding one (a stroke growing as it is drawn)."},
+                  {"removeLast", "rm", T::Bool, false, "Remove the stage's last stroke instead of adding one."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -867,8 +949,15 @@ void registerStampCommands(ext::Context& ctx)
             json list = listOf(ensureLayer(t.group, "TerrainSculpt", nodeName, skip, "terrainSculpt"), "strokes");
             if (a.get<bool>("clear", false))
                 list = json::array();
+            else if (a.get<bool>("removeLast", false))
+            {
+                if (!list.empty())
+                    list.erase(list.end() - 1);
+            }
             else
             {
+                if (a.get<bool>("replaceLast", false) && !list.empty())
+                    list.erase(list.end() - 1);
                 SculptStroke s;
                 const std::string op = a.get<std::string>("op", "raise");
                 s.op = SculptOp(std::find(sculptOpNames().begin(), sculptOpNames().end(), op) - sculptOpNames().begin());
@@ -1036,6 +1125,851 @@ void registerStampCommands(ext::Context& ctx)
         .examples = {"r = terrainRoute('Terrain', start=[-40000, 0], end=[40000, 5000], maxGrade=8, weights={'water': 100})\nr['length'], r['maxGrade']"},
     });
 }
+
+std::vector<FlagDef> lineFlags(bool waterfront)
+{
+    std::vector<FlagDef> flags = {
+        {"path", "pa", T::List, nullptr, "The line [[x, z] or [x, y, z], ...] in world space (x, y on a Z-up scene)."},
+        {"object", "obj", T::String, nullptr, "A curve the feature follows live."},
+        {"id", "id", T::String, "", "Stable id; the same id again replaces it. Empty makes one."},
+        {"layer", "ly", T::String, "Stamps", "Stamp layer; the city uses City."},
+        {"width", "w", T::Float, 600.0, "Width across the line, cm.", {}, {}, 1.0},
+        {"falloff", "fo", T::Float, 300.0, "Skirt back to the ground, cm.", {}, {}, 0.0},
+        {"height", "h", T::Float, nullptr, "Level along the up axis, cm: quay top, canal water level, bridge deck."},
+        {"offset", "of", T::Float, 0.0, "Added to the level, cm."},
+        {"masks", "mk", T::List, nullptr, "Masks its coverage is written to; each kind has its own default."},
+        {"maskValue", "mv", T::Float, 1.0, "Mask value on it.", {}, {}, 0.0, 1.0}};
+    if (waterfront)
+    {
+        flags.push_back({"kind", "k", T::String, "quay", "quay (vertical bank, dredged on the water side), levee (raised bank), embankment (one-sided bank) or seawall.",
+                         {"quay", "levee", "embankment", "seawall"}});
+        flags.push_back({"side", "sd", T::String, "left", "Which side of travel the land is on.", {"left", "right"}});
+        flags.push_back({"depth", "dp", T::Float, 200.0, "Quay: dredged depth on the water side, cm.", {}, {}, 0.0});
+        flags.push_back({"rise", "rs", T::Float, 200.0, "Levee, embankment, seawall: height above the ground, cm."});
+    }
+    else
+    {
+        flags.push_back({"kind", "k", T::String, "street", "street (graded, bridges and tunnels left as spans, culverts found), canal or moat "
+                                                           "(carved water), bridge (registered, ground cut to the clearance), culvert or tunnel (registered).",
+                         {"street", "canal", "moat", "bridge", "culvert", "tunnel"}});
+        flags.push_back({"depth", "dp", T::Float, 200.0, "Canal and moat: depth below the water, cm.", {}, {}, 0.0});
+        flags.push_back({"maxGrade", "mg", T::Float, 8.0, "Street: steepest grade, percent.", {}, {}, 0.0});
+        flags.push_back({"clearance", "cl", T::Float, 500.0, "Bridge: deck height over the ground below; street: how far above the ground it bridges.", {}, {}, 0.0});
+    }
+    return flags;
+}
+
+/** Per-field min, max, mean and percentiles over the samples set in cover. */
+json fieldStats(const Analysis& an, const std::vector<uint8_t>& cover, const std::vector<std::string>& fields, double scale)
+{
+    json out = json::object();
+    for (const std::string& name : fields)
+    {
+        const std::vector<float>& v = an.field(name);
+        if (v.empty())
+            continue;
+        std::vector<float> vals;
+        for (size_t i = 0; i < v.size(); ++i)
+            if (cover[i])
+                vals.push_back(v[i]);
+        if (vals.empty())
+            continue;
+        std::sort(vals.begin(), vals.end());
+        auto pct = [&](double p) { return double(vals[std::min(vals.size() - 1, size_t(p * double(vals.size() - 1) + 0.5))]); };
+        const double mean = std::accumulate(vals.begin(), vals.end(), 0.0) / double(vals.size());
+        const double s = name == "height" ? scale : 1.0;
+        out[name] = {{"min", vals.front() * s}, {"max", vals.back() * s}, {"mean", mean * s}, {"p10", pct(0.1) * s}, {"p50", pct(0.5) * s}, {"p90", pct(0.9) * s}};
+    }
+    return out;
+}
+
+/** Heightfields seen by terrain reads, by terrain and revision, so terrainDirtyRegions can tell what changed. */
+struct Seen
+{
+    std::string revision;
+    std::shared_ptr<const Heightfield> h;
+};
+
+std::map<std::string, std::deque<Seen>>& seenRevisions()
+{
+    static std::map<std::string, std::deque<Seen>> s;
+    return s;
+}
+
+void remember(const Found& f, const std::string& rev)
+{
+    auto& list = seenRevisions()[pathOf(f, "")];
+    if (!list.empty() && list.front().revision == rev)
+        return;
+    list.push_front({rev, f.local});
+    while (list.size() > 8)
+        list.pop_back();
+}
+
+/** Stamps in every layer of a terrain, with their last results. */
+struct StampEntry
+{
+    Stamp stamp;
+    StampResult result;
+    std::string layer;
+};
+
+std::vector<StampEntry> allStamps(Graph& g, const Found& f, const std::string& cmd)
+{
+    std::vector<StampEntry> out;
+    TerrainGroup t = terrainGroup(g, f, cmd);
+    for (const gn::GNode& n : t.group.nodes)
+    {
+        if (n.type != "TerrainStamps")
+            continue;
+        const auto results = stampResults(f.modifier->id(), n.name);
+        for (const json& j : listOf(n, "stamps"))
+        {
+            StampEntry e;
+            e.stamp = Stamp::fromJson(j);
+            e.layer = n.name;
+            if (auto it = results.find(e.stamp.id); it != results.end())
+                e.result = it->second;
+            out.push_back(std::move(e));
+        }
+    }
+    return out;
+}
+
+std::shared_ptr<const Analysis> analysisOf(const Found& f, const Args& a) { return analyse(f.local, analysisParams(a)); }
+
+Found oneTerrain(const Args& a, const std::string& cmd)
+{
+    std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(cmd + ": give one terrain");
+    Found f = findTerrain(Graph::current(), names[0], cmd);
+    remember(f, revision(*f.local));
+    return f;
+}
+
+void registerContractCommands(ext::Context& ctx)
+{
+    ctx.registerCommand({
+        .name = "terrainStampQuay",
+        .doc = "Build a waterfront along a line: quay (a vertical bank, the land side levelled, the water side dredged by depth), "
+               "levee (a raised bank rise cm above the ground), embankment (raised on the land side only) or seawall (land side "
+               "raised to rise above the highest ground along it, sheer to the water). side names the land side of travel. Lives "
+               "in a stamp layer like terrainStampPad, follows a curve with object=, and returns cut and fill, the centreline "
+               "and the revision.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = lineFlags(true),
+        .run = [](const Args& a) -> json { return runStamp(a, false, "terrainStampQuay", a.get<std::string>("kind", "quay")); },
+        .examples = {"terrainStampQuay('Terrain', id='harbourQuay', path=[[0, 0], [8000, 0]], side='left', depth=400)"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainAddFeature",
+        .doc = "Add a line feature to a terrain. street: graded along its length to maxGrade, levelled across width with a skirt; "
+               "where it would sit far above the ground it becomes a bridge span and far below a tunnel span, left ungraded, and "
+               "small streams it crosses are returned as culverts. canal and moat: carved depth below their water level (height=, "
+               "else the lowest ground along them), added to terrainWaterInfo. bridge: a deck from end to end (or at height=), "
+               "the ground cut to clearance below it. culvert and tunnel: registered (masks culvert, tunnel) for the water graph "
+               "and exporters. Returns the centreline, maxGrade, spans, culverts, cut and fill, and the revision.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = lineFlags(false),
+        .run = [](const Args& a) -> json { return runStamp(a, false, "terrainAddFeature", a.get<std::string>("kind", "street")); },
+        .examples = {"terrainAddFeature('Terrain', kind='street', id='mainStreet', path=[[-20000, 0], [0, 3000], [20000, 0]], width=800, maxGrade=6, layer='City')",
+                     "terrainAddFeature('Terrain', kind='moat', object='CastleRing', width=1200, depth=300)"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainField",
+        .doc = "An analysis field over the whole terrain: its min, max and mean, and with resolution= the grid itself (as "
+               "terrainCostField returns it); file= writes it as a float EXR. Fields: height, slope (deg), aspect (deg from north, "
+               "-Z), curvature, roughness, flow, flowDir, basinId, streamOrder, wet, hand (height above the drainage, cm), "
+               "floodRisk (0 to 1), distanceToWater (cm, negative in water), nearestWaterId (river id, lakes 100000 + id), "
+               "waterDepth, rockHardness, soilDepth, excavationCost, slopeClass (0 flat <5%, 1 gentle, 2 terraced, 3 steep, 4 "
+               "unbuildable >35%), buildability (0 to 1), prominence, viewshedScore, solar, windExposure, or any mask.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"field", "f", T::String, "buildability", "Field name."},
+                                    {"resolution", "r", T::Int, int64_t(0), "Return the grid with this many samples along the longer side.", {}, {}, 0.0, 4097.0},
+                                    {"file", "fi", T::String, "", "Write the full grid to this .exr."}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainField");
+            const auto an = analysisOf(f, a);
+            const std::string name = a.get<std::string>("field", "buildability");
+            const std::vector<float>& v = an->field(name);
+            if (v.empty())
+                throw CommandError("terrainField: no field or mask named " + name);
+            auto [lo, hi] = std::minmax_element(v.begin(), v.end());
+            double sum = 0.0;
+            for (float x : v)
+                sum += x;
+            json out = {{"field", name}, {"min", *lo}, {"max", *hi}, {"mean", sum / double(v.size())}, {"revision", revision(*f.local)}};
+            if (const int64_t res = a.get<int64_t>("resolution", 0); res > 0)
+                out["grid"] = gridJson(f, v, int(res));
+            if (const std::string file = a.get<std::string>("file", ""); !file.empty())
+            {
+                std::vector<float> rgba(v.size() * 4);
+                for (size_t k = 0; k < v.size(); ++k)
+                {
+                    rgba[k * 4] = rgba[k * 4 + 1] = rgba[k * 4 + 2] = v[k];
+                    rgba[k * 4 + 3] = 1.0f;
+                }
+                image::WriteOptions o;
+                o.bits = 32;
+                image::write(fs::path(file), {f.local->nx, f.local->nz, std::move(rgba)}, o);
+                out["file"] = file;
+            }
+            return out;
+        },
+        .examples = {"terrainField('Terrain', field='floodRisk', resolution=64)['grid']['values']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainProfile",
+        .doc = "A profile along a path every step cm: distance, height, the terrain's slope (deg), grade along the path and "
+               "cross-slope across it (percent), any fields= read there, and the water it crosses (rivers with their id, width "
+               "and water level; lakes and sea).",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"path", "pa", T::List, nullptr, "Polyline [[x, z] or [x, y, z], ...]."},
+                                    {"step", "st", T::Float, 0.0, "Spacing, cm; 0 is the cell size.", {}, {}, 0.0},
+                                    {"fields", "fl", T::List, json::array(), "Fields to read along it."}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainProfile");
+            if (!a.has("path"))
+                throw CommandError("terrainProfile: give path=");
+            const auto an = analysisOf(f, a);
+            const Heightfield& h = *f.local;
+            std::vector<glm::dvec2> pts;
+            for (const glm::dvec3& p : worldPoints(a.flags["path"], "terrainProfile"))
+                pts.push_back(groundOf(p));
+            if (pts.size() < 2)
+                throw CommandError("terrainProfile: path takes at least two points");
+            std::vector<std::string> fields;
+            for (const json& j : a.flags.value("fields", json::array()))
+                fields.push_back(j.get<std::string>());
+            const double step = a.get<double>("step", 0.0) > 0.0 ? a.get<double>("step", 0.0) : h.cell * f.frame.across();
+            json samples = json::array(), crossings = json::array();
+            double travelled = 0.0, prevH = 0.0;
+            int prevWater = -2;
+            for (size_t k = 1; k < pts.size(); ++k)
+            {
+                const glm::dvec2 a0 = pts[k - 1], b0 = pts[k];
+                const double len = glm::length(b0 - a0);
+                const glm::dvec2 dir = len > 1e-9 ? (b0 - a0) / len : glm::dvec2(1.0, 0.0);
+                const int n = std::max(1, int(std::ceil(len / step)));
+                for (int s = (k == 1 ? 0 : 1); s <= n; ++s)
+                {
+                    const glm::dvec2 g = a0 + (b0 - a0) * (double(s) / double(n));
+                    const double d = travelled + len * double(s) / double(n);
+                    json smp = sampleAt(f, fromGround(g), fields, an.get());
+                    const double hgt = smp["height"].get<double>();
+                    smp["distance"] = d;
+                    smp["grade"] = samples.empty() ? 0.0 : (hgt - prevH) / std::max(1e-9, d - samples.back()["distance"].get<double>()) * 100.0;
+                    const glm::dvec2 side(-dir.y, dir.x);
+                    const double hl = sampleAt(f, fromGround(g + side * step), {})["height"].get<double>();
+                    const double hr = sampleAt(f, fromGround(g - side * step), {})["height"].get<double>();
+                    smp["crossSlope"] = (hl - hr) / (2.0 * step) * 100.0;
+                    const glm::dvec2 q = f.frame.local(fromGround(g));
+                    const int x = std::clamp(int(std::lround((q.x - h.origin.x) / h.cell)), 0, h.nx - 1);
+                    const int z = std::clamp(int(std::lround((q.y - h.origin.y) / h.cell)), 0, h.nz - 1);
+                    const size_t i = h.index(x, z);
+                    const int water = an->reachOf()[i] >= 0 ? an->reachOf()[i] : an->lakeOf()[i] >= 0 ? 100000 + an->lakeOf()[i] : -1;
+                    if (water >= 0 && water != prevWater)
+                    {
+                        json c = {{"distance", d}, {"position", smp["position"]}};
+                        if (water < 100000)
+                        {
+                            const double q2 = an->discharge(uint32_t(i));
+                            c["river"] = water;
+                            c["width"] = 300.0 * std::sqrt(q2) * f.frame.across();
+                            c["waterLevel"] = hgt + 30.0 * std::pow(q2, 0.4) * f.frame.vertical();
+                        }
+                        else
+                        {
+                            const Lake& lk = an->lakes()[size_t(water - 100000)];
+                            c[lk.sea ? "sea" : "lake"] = lk.id;
+                        }
+                        crossings.push_back(c);
+                    }
+                    prevWater = water;
+                    prevH = hgt;
+                    samples.push_back(std::move(smp));
+                }
+                travelled += len;
+            }
+            return {{"samples", samples}, {"water", crossings}, {"length", travelled}, {"revision", revision(h)}};
+        },
+        .examples = {"p = terrainProfile('Terrain', path=[[-20000, 0], [20000, 0]], step=500)\nmax(abs(s['grade']) for s in p['samples']), p['water']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainRegionStats",
+        .doc = "Statistics of fields over a footprint polygon: min, max, mean and the 10th, 50th and 90th percentiles of each "
+               "field (height by default, also slope, floodRisk, buildability, any mask), the area in m2 and the revision. A "
+               "building's foundation depth is height max - min plus a margin.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"polygon", "pg", T::List, nullptr, "Footprint [[x, z] or [x, y, z], ...]."},
+                                    {"fields", "fl", T::List, json::array({"height", "slope"}), "Fields to summarise."}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainRegionStats");
+            if (!a.has("polygon"))
+                throw CommandError("terrainRegionStats: give polygon=");
+            std::vector<glm::dvec2> ring;
+            for (const glm::dvec3& p : worldPoints(a.flags["polygon"], "terrainRegionStats"))
+                ring.push_back(f.frame.local(p));
+            const std::vector<uint8_t> cover = footprintMask(*f.local, footprintFromPolygon(ring));
+            std::vector<std::string> fields;
+            for (const json& j : a.flags.value("fields", json::array({"height", "slope"})))
+                fields.push_back(j.get<std::string>());
+            const auto an = analysisOf(f, a);
+            const size_t n = size_t(std::count(cover.begin(), cover.end(), uint8_t(1)));
+            json stats = fieldStats(*an, cover, fields, f.frame.vertical());
+            if (stats.contains("height"))
+                for (const char* k : {"min", "max", "mean", "p10", "p50", "p90"})
+                    stats["height"][k] = stats["height"][k].get<double>() + upOf(f.frame.world(0.0, 0.0, 0.0));
+            return {{"fields", stats},
+                    {"samples", n},
+                    {"area", double(n) * f.local->cell * f.local->cell * f.frame.across() * f.frame.across() * 1e-4},
+                    {"revision", revision(*f.local)}};
+        },
+        .examples = {"s = terrainRegionStats('Terrain', polygon=[[0, 0], [2000, 0], [2000, 1500], [0, 1500]])\ns['fields']['height']['max'] - s['fields']['height']['min']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainWaterInfo",
+        .doc = "All the water as one graph. rivers: reaches downstream-ordered with points (position, width, depth, bedHeight, "
+               "waterLevel, flowSpeed, discharge, bankHeightL/R, bankTypeL/R: low, steep, cliff or gravelBar, floodplainWidthL/R), "
+               "streamOrder, navigable, downstream, tributaries and mouth. lakes and sea: waterLevel, shoreline, depth, outlet, "
+               "inlets, shore segments (beach, cliff, marsh, rocky) and harbourSites. Plus springs, wetlands, fords, bridgeSites "
+               "(scored), confluences, rapids and waterfalls, and the canals, moats, culverts and bridges added as features. "
+               "World space, cm; discharge m3/s.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainWaterInfo");
+            json g = waterGraph(*analysisOf(f, a), worldMapOf(f));
+            json canals = json::array(), culverts = json::array(), bridges = json::array();
+            for (const StampEntry& e : allStamps(Graph::current(), f, "terrainWaterInfo"))
+            {
+                if (!e.stamp.isLine())
+                    continue;
+                const json j = stampJson(f, e.stamp, e.result, e.layer);
+                if (e.stamp.kind == "canal" || e.stamp.kind == "moat")
+                    canals.push_back({{"id", e.stamp.id},
+                                      {"kind", e.stamp.kind},
+                                      {"points", j["centreline"]},
+                                      {"waterLevel", j.value("waterLevel", 0.0)},
+                                      {"width", e.stamp.width * f.frame.across()},
+                                      {"depth", e.stamp.depth * f.frame.vertical()}});
+                else if (e.stamp.kind == "culvert")
+                    culverts.push_back({{"id", e.stamp.id}, {"points", j["centreline"]}});
+                else if (e.stamp.kind == "bridge")
+                    bridges.push_back({{"id", e.stamp.id}, {"deck", j["centreline"]}, {"span", j["length"]}});
+                for (const json& c : j.value("culverts", json::array()))
+                    culverts.push_back({{"street", e.stamp.id}, {"position", c}});
+                for (const json& sp : j.value("spans", json::array()))
+                    if (sp["kind"] == "bridge")
+                        bridges.push_back({{"street", e.stamp.id}, {"deck", sp["points"]}, {"span", sp["length"]}});
+            }
+            g["canals"] = canals;
+            g["culverts"] = culverts;
+            g["bridges"] = bridges;
+            g["revision"] = revision(*f.local);
+            return g;
+        },
+        .examples = {"w = terrainWaterInfo('Terrain', seaLevel=0)\n[r['id'] for r in w['rivers'] if r['navigable']], w['bridgeSites'][:3]"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainBuildable",
+        .doc = "Polygons of contiguous buildable land: no steeper than maxSlope degrees, buildable (not water, cliff or unstable "
+               "talus) and, with avoidFlood, under floodTolerance flood risk. Each has its outline, holes, area (m2), centroid, "
+               "mean slope, height and buildability; largest first.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"minArea", "ma", T::Float, 2000.0, "Smallest region, m2.", {}, {}, 0.0},
+                                    {"maxSlope", "ms", T::Float, 15.0, "Steepest ground, degrees.", {}, {}, 0.0, 90.0},
+                                    {"avoidFlood", "af", T::Bool, true, "Leave out ground that floods."},
+                                    {"floodTolerance", "ft", T::Float, 0.3, "Flood risk counted as flooding, 0 to 1.", {}, {}, 0.0, 1.0}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainBuildable");
+            return {{"regions", buildableRegions(*analysisOf(f, a), worldMapOf(f), a.get<double>("minArea", 2000.0), a.get<double>("maxSlope", 15.0),
+                                                 a.get<bool>("avoidFlood", true), a.get<double>("floodTolerance", 0.3))},
+                    {"revision", revision(*f.local)}};
+        },
+        .examples = {"r = terrainBuildable('Terrain', minArea=5000, maxSlope=10)['regions']\nr[0]['area'], r[0]['centroid']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainSites",
+        .doc = "Scored places for a kind of site, best first: townCentre (flat, buildable, near water and a river crossing, out of "
+               "flood), harbour (sheltered, deep inshore, flat land behind, a river mouth), bridge and ford (from the rivers), mill "
+               "(waterfalls and rapids), castle (prominent and defensible), temple (prominent and seen from afar), farmland "
+               "(gentle, wet, deep soil) or quarry (exposed hard rock). Each has its position and score.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"kind", "k", T::String, "townCentre", "Kind of site.", siteKinds()},
+                                    {"count", "n", T::Int, int64_t(5), "How many.", {}, {}, 1.0, 1000.0},
+                                    {"spacing", "sp", T::Float, 20000.0, "Least distance between them, cm.", {}, {}, 0.0}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainSites");
+            try
+            {
+                return {{"sites", sites(*analysisOf(f, a), worldMapOf(f), a.get<std::string>("kind", "townCentre"), int(a.get<int64_t>("count", 5)),
+                                        a.get<double>("spacing", 20000.0) / f.frame.across())},
+                        {"revision", revision(*f.local)}};
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw CommandError(std::string("terrainSites: ") + e.what());
+            }
+        },
+        .examples = {"terrainSites('Terrain', kind='castle', count=3)['sites'][0]['position']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainContours",
+        .doc = "Contour lines every interval cm of height, from base, optionally only inside region (a polygon). Returns levels "
+               "with their lines as world-space point lists; closed lines end where they start.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"interval", "i", T::Float, 1000.0, "Height between contours, cm.", {}, {}, 1.0},
+                  {"base", "b", T::Float, 0.0, "A height every contour is a whole number of intervals from."},
+                  {"region", "rg", T::List, nullptr, "Polygon to keep them inside."},
+                  {"curves", "cv", T::Bool, false, "Also make poly curves of them."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainContours");
+            const Heightfield& h = *f.local;
+            const double interval = std::max(1.0, a.get<double>("interval", 1000.0)) / f.frame.vertical();
+            const double base = f.frame.localHeight(a.get<double>("base", 0.0), h.origin);
+            std::vector<uint8_t> inside;
+            if (a.has("region"))
+            {
+                std::vector<glm::dvec2> ring;
+                for (const glm::dvec3& p : worldPoints(a.flags["region"], "terrainContours"))
+                    ring.push_back(f.frame.local(p));
+                inside = footprintMask(h, footprintFromPolygon(ring));
+            }
+            std::vector<float> grid = h.heights;
+            const glm::dvec2 r = h.range();
+            json levels = json::array();
+            int made = 0;
+            for (double lv = base + std::ceil((r.x - base) / interval) * interval; lv <= r.y && made < 2000; lv += interval, ++made)
+            {
+                json lines = json::array();
+                for (const auto& line : contourLines(grid, h.nx, h.nz, float(lv)))
+                {
+                    json pts = json::array();
+                    for (const glm::dvec2& g : line)
+                    {
+                        const glm::dvec2 p = h.origin + g * h.cell;
+                        const bool keep = inside.empty() || inside[h.index(std::clamp(int(std::lround(g.x)), 0, h.nx - 1), std::clamp(int(std::lround(g.y)), 0, h.nz - 1))];
+                        if (!keep)
+                        {
+                            if (pts.size() >= 2)
+                                lines.push_back(pts);
+                            pts = json::array();
+                            continue;
+                        }
+                        pts.push_back(worldJson(f.frame.world(p.x, lv, p.y)));
+                    }
+                    if (pts.size() >= 2)
+                        lines.push_back(pts);
+                }
+                if (lines.empty())
+                    continue;
+                if (a.get<bool>("curves", false))
+                    for (const json& l : lines)
+                        ops::execute("curve", {{"points", l}, {"type", "poly"}, {"name", "Contour"}});
+                levels.push_back({{"height", upOf(f.frame.world(h.origin.x, lv, h.origin.y))}, {"lines", lines}});
+            }
+            return {{"levels", levels}, {"revision", revision(h)}};
+        },
+        .examples = {"c = terrainContours('Terrain', interval=500)\nlen(c['levels'])"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainContourStreets",
+        .doc = "A hillside street layout inside region: streets along contours spacing cm apart, and cross streets every "
+               "crossSpacing cm joining them; a cross street steeper than maxGrade percent is returned as stairs, or as a "
+               "switchback when allowSwitchbacks. Returns streets (kind contour, cross, stairs or switchback, with points and "
+               "grade) for terrainAddFeature.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"region", "rg", T::List, nullptr, "Polygon of the hillside."},
+                  {"spacing", "sp", T::Float, 3000.0, "Between contour streets across the slope, cm.", {}, {}, 100.0},
+                  {"crossSpacing", "cs", T::Float, 8000.0, "Between cross streets along the contours, cm.", {}, {}, 100.0},
+                  {"maxGrade", "mg", T::Float, 10.0, "Steepest street, percent.", {}, {}, 0.0},
+                  {"allowSwitchbacks", "sw", T::Bool, true, "Zigzag steep cross streets instead of stairs."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const Found f = oneTerrain(a, "terrainContourStreets");
+            if (!a.has("region"))
+                throw CommandError("terrainContourStreets: give region=");
+            const Heightfield& h = *f.local;
+            std::vector<glm::dvec2> ring;
+            for (const glm::dvec3& p : worldPoints(a.flags["region"], "terrainContourStreets"))
+                ring.push_back(f.frame.local(p));
+            const std::vector<uint8_t> inside = footprintMask(h, footprintFromPolygon(ring));
+            const auto an = analyse(f.local);
+            const std::vector<float>& slope = an->field("slope");
+            double slopeSum = 0.0, hlo = 1e30, hhi = -1e30;
+            size_t n = 0;
+            for (size_t i = 0; i < h.size(); ++i)
+                if (inside[i])
+                {
+                    slopeSum += std::tan(slope[i] / 57.29577951308232);
+                    hlo = std::min(hlo, double(h.heights[i]));
+                    hhi = std::max(hhi, double(h.heights[i]));
+                    ++n;
+                }
+            if (n == 0)
+                throw CommandError("terrainContourStreets: the region misses the terrain");
+            const double spacing = a.get<double>("spacing", 3000.0) / f.frame.across();
+            const double interval = std::max(1.0, spacing * slopeSum / double(n));
+            const double maxGrade = a.get<double>("maxGrade", 10.0) * 0.01;
+            json streets = json::array();
+            std::vector<std::vector<glm::dvec2>> rows;
+            for (double lv = hlo + interval * 0.5; lv < hhi; lv += interval)
+                for (const auto& line : contourLines(h.heights, h.nx, h.nz, float(lv)))
+                {
+                    std::vector<glm::dvec2> run;
+                    auto flush = [&] {
+                        if (run.size() >= 2)
+                        {
+                            json pts = json::array();
+                            for (const glm::dvec2& p : run)
+                                pts.push_back(worldJson(f.frame.world(p.x, lv, p.y)));
+                            streets.push_back({{"kind", "contour"}, {"points", pts}, {"grade", 0.0}});
+                            rows.push_back(run);
+                        }
+                        run.clear();
+                    };
+                    for (const glm::dvec2& g : line)
+                    {
+                        const int x = std::clamp(int(std::lround(g.x)), 0, h.nx - 1), z = std::clamp(int(std::lround(g.y)), 0, h.nz - 1);
+                        if (inside[h.index(x, z)])
+                            run.push_back(h.origin + g * h.cell);
+                        else
+                            flush();
+                    }
+                    flush();
+                }
+            // Cross streets: from points along each contour street straight downhill to the next row.
+            const double crossSpacing = a.get<double>("crossSpacing", 8000.0) / f.frame.across();
+            for (const auto& row : rows)
+            {
+                double carry = 0.0;
+                for (size_t k = 1; k < row.size(); ++k)
+                {
+                    carry += glm::length(row[k] - row[k - 1]);
+                    if (carry < crossSpacing)
+                        continue;
+                    carry = 0.0;
+                    const glm::dvec2 p = row[k];
+                    const glm::dvec3 nrm = h.normalAt(p.x, p.y);
+                    glm::dvec2 down(nrm.x, nrm.z);
+                    if (glm::length(down) < 1e-9)
+                        continue;
+                    down = glm::normalize(down);
+                    const glm::dvec2 q = p + down * spacing;
+                    if (!h.contains(q.x, q.y) || !inside[h.index(std::clamp(int(std::lround((q.x - h.origin.x) / h.cell)), 0, h.nx - 1),
+                                                                 std::clamp(int(std::lround((q.y - h.origin.y) / h.cell)), 0, h.nz - 1))])
+                        continue;
+                    const double rise = std::abs(h.heightAt(p.x, p.y) - h.heightAt(q.x, q.y));
+                    const double grade = rise / spacing;
+                    std::vector<glm::dvec2> pts{p, q};
+                    std::string kind = "cross";
+                    if (grade > maxGrade && maxGrade > 0.0)
+                    {
+                        if (a.get<bool>("allowSwitchbacks", true))
+                        {
+                            // Zigzag across the fall line until each leg holds the grade.
+                            const int legs = int(std::ceil(grade / maxGrade));
+                            const glm::dvec2 across(-down.y, down.x);
+                            const double run = rise / maxGrade / double(legs);
+                            pts.clear();
+                            for (int l = 0; l <= legs; ++l)
+                                pts.push_back(p + down * (spacing * double(l) / double(legs)) + across * ((l % 2) ? 1.0 : 0.0) * std::sqrt(std::max(0.0, run * run - (spacing / legs) * (spacing / legs))));
+                            kind = "switchback";
+                        }
+                        else
+                            kind = "stairs";
+                    }
+                    json jp = json::array();
+                    for (const glm::dvec2& c : pts)
+                        jp.push_back(worldJson(f.frame.world(c.x, h.heightAt(c.x, c.y), c.y)));
+                    streets.push_back({{"kind", kind}, {"points", jp}, {"grade", grade * 100.0 * f.frame.vertical() / f.frame.across()}});
+                }
+            }
+            return {{"streets", streets}, {"revision", revision(h)}};
+        },
+        .examples = {"s = terrainContourStreets('Terrain', region=[[0, 0], [40000, 0], [40000, 30000], [0, 30000]], maxGrade=8)['streets']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainRaycast",
+        .doc = "Where a ray from origin along direction first meets the terrain: hit, position and distance (cm). isSolid=points "
+               "instead says for each point whether it is underground.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"origin", "o", T::Vec3, json::array({0.0, 100000.0, 0.0}), "Start, world space."},
+                  {"direction", "d", T::Vec3, json::array({0.0, -1.0, 0.0}), "Direction, world space."},
+                  {"isSolid", "is", T::List, nullptr, "Points [[x, y, z], ...] to test instead."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const Found f = oneTerrain(a, "terrainRaycast");
+            const Frame& fr = f.frame;
+            if (a.has("isSolid"))
+            {
+                json out = json::array();
+                for (const glm::dvec3& p : worldPoints(a.flags["isSolid"], "terrainRaycast"))
+                {
+                    const glm::dvec3 q(fr.inv * glm::dvec4(p, 1.0));
+                    out.push_back(f.local->contains(q.x, q.z) && q.y < f.local->heightAt(q.x, q.z));
+                }
+                return out;
+            }
+            const json o = a.flags["origin"], d = a.flags["direction"];
+            const glm::dvec3 ow(o[0].get<double>(), o[1].get<double>(), o[2].get<double>()), dw(d[0].get<double>(), d[1].get<double>(), d[2].get<double>());
+            const glm::dvec3 ol(fr.inv * glm::dvec4(ow, 1.0)), dl(fr.inv * glm::dvec4(dw, 0.0));
+            glm::dvec3 hit;
+            if (!raycast(*f.local, ol, dl, &hit))
+                return {{"hit", false}};
+            const glm::dvec3 hw = fr.world(hit.x, hit.y, hit.z);
+            return {{"hit", true}, {"position", worldJson(hw)}, {"distance", glm::length(hw - ow)}};
+        },
+        .examples = {"terrainRaycast('Terrain', origin=[0, 100000, 0], direction=[0, -1, 0])['position']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainCheck",
+        .doc = "What is wrong with a terrain and what sits on it: pads moving more than cutFillLimit m3, streets steeper than "
+               "maxGrade, pads, regions and buildings in flood (risk over floodTolerance) with no levee, embankment or seawall "
+               "near, buildings over water, buildings floating (the ground under their footprint lower than their base by more "
+               "than floatTolerance cm anywhere), stamps and streets across a river with no bridge or culvert, and canals that "
+               "reach no water. Returns ok and the issues, each with its type, what it is about, where and a message.",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = withAnalysisFlags({{"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."},
+                                    {"cutFillLimit", "cf", T::Float, 500.0, "Largest cut plus fill per pad, m3.", {}, {}, 0.0},
+                                    {"maxGrade", "mg", T::Float, 12.0, "Steepest street, percent.", {}, {}, 0.0},
+                                    {"floodTolerance", "ft", T::Float, 0.5, "Flood risk counted as flooding.", {}, {}, 0.0, 1.0},
+                                    {"floatTolerance", "flt", T::Float, 10.0, "Gap under a building counted as floating, cm.", {}, {}, 0.0}}),
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            const Found f = oneTerrain(a, "terrainCheck");
+            const Heightfield& h = *f.local;
+            const auto an = analysisOf(f, a);
+            const double tol = a.get<double>("floodTolerance", 0.5);
+            json issues = json::array();
+            auto issue = [&](const char* type, const std::string& about, const json& at, const std::string& msg) {
+                issues.push_back({{"type", type}, {"about", about}, {"position", at}, {"message", msg}});
+            };
+            const std::vector<StampEntry> stamps = allStamps(g, f, "terrainCheck");
+            std::vector<std::pair<glm::dvec2, double>> protection;
+            for (const StampEntry& e : stamps)
+                if (e.stamp.kind == "levee" || e.stamp.kind == "embankment" || e.stamp.kind == "seawall")
+                    for (const glm::dvec3& p : e.result.centreline)
+                        protection.push_back({{p.x, p.z}, e.stamp.width * 4.0 + 5000.0 / f.frame.across()});
+            auto protectedAt = [&](glm::dvec2 p) {
+                return std::any_of(protection.begin(), protection.end(), [&](const auto& q) { return glm::length(q.first - p) < q.second; });
+            };
+            auto floodAt = [&](glm::dvec2 p) { return an->sample("floodRisk", p.x, p.y); };
+            auto riverAt = [&](glm::dvec2 p) {
+                const int x = std::clamp(int(std::lround((p.x - h.origin.x) / h.cell)), 0, h.nx - 1);
+                const int z = std::clamp(int(std::lround((p.y - h.origin.y) / h.cell)), 0, h.nz - 1);
+                const int32_t r = an->reachOf()[h.index(x, z)];
+                return r >= 0 && an->reaches()[size_t(r)].order >= 2 ? r : -1;
+            };
+            const double limit = a.get<double>("cutFillLimit", 500.0);
+            const double maxGrade = a.get<double>("maxGrade", 12.0);
+            for (const StampEntry& e : stamps)
+            {
+                const json j = stampJson(f, e.stamp, e.result, e.layer);
+                const json at = j["center"];
+                const std::string about = e.layer + "/" + e.stamp.id;
+                if ((e.stamp.kind == "pad" || e.stamp.kind == "region") && j["cutM3"].get<double>() + j["fillM3"].get<double>() > limit)
+                    issue("cutFill", about, at, std::format("moves {:.0f} m3, over {:.0f}", j["cutM3"].get<double>() + j["fillM3"].get<double>(), limit));
+                if (e.stamp.kind == "street" && j.value("maxGrade", 0.0) > maxGrade)
+                    issue("streetGrade", about, at, std::format("grade {:.1f}% over {:.1f}%", j["maxGrade"].get<double>(), maxGrade));
+                if ((e.stamp.kind == "pad" || e.stamp.kind == "region") && e.result.samples > 0 && floodAt(e.result.centroid) > tol && !protectedAt(e.result.centroid))
+                    issue("flood", about, at, std::format("flood risk {:.2f} with no levee near", floodAt(e.result.centroid)));
+                // Blocking water: pads over rivers, streets crossing them outside a bridge span or culvert.
+                if (e.stamp.kind == "pad" || e.stamp.kind == "region")
+                {
+                    if (!e.stamp.polygon.empty())
+                    {
+                        const std::vector<uint8_t> cover = footprintMask(h, footprintFromPolygon(e.stamp.polygon));
+                        for (size_t i = 0; i < cover.size(); ++i)
+                            if (cover[i] && an->reachOf()[i] >= 0 && an->reaches()[size_t(an->reachOf()[i])].order >= 2)
+                            {
+                                issue("blocksFlow", about, at, "stands in river " + std::to_string(an->reachOf()[i]));
+                                break;
+                            }
+                    }
+                }
+                else if (e.stamp.kind == "street")
+                {
+                    for (size_t k = 0; k < e.result.centreline.size(); ++k)
+                    {
+                        const glm::dvec2 p(e.result.centreline[k].x, e.result.centreline[k].z);
+                        if (riverAt(p) < 0)
+                            continue;
+                        const bool spanned = std::any_of(e.result.spans.begin(), e.result.spans.end(), [&](const auto& s) { return s.kind == "bridge" && k >= s.from && k <= s.to; });
+                        const bool culverted = std::any_of(e.result.culverts.begin(), e.result.culverts.end(), [&](glm::dvec2 c) { return glm::length(c - p) < 3.0 * h.cell; });
+                        const bool bridged = std::any_of(stamps.begin(), stamps.end(), [&](const StampEntry& b) {
+                            return b.stamp.kind == "bridge" && std::any_of(b.result.centreline.begin(), b.result.centreline.end(),
+                                                                            [&](const glm::dvec3& q) { return glm::length(glm::dvec2(q.x, q.z) - p) < 3.0 * h.cell; });
+                        });
+                        if (!spanned && !culverted && !bridged)
+                        {
+                            issue("blocksFlow", about, worldJson(f.frame.world(p.x, h.heightAt(p.x, p.y), p.y)), "crosses river " + std::to_string(riverAt(p)) + " with no bridge or culvert");
+                            break;
+                        }
+                    }
+                }
+                else if ((e.stamp.kind == "canal" || e.stamp.kind == "moat") && e.result.centreline.size() >= 2 && e.stamp.kind == "canal")
+                {
+                    auto wet = [&](const glm::dvec3& p) {
+                        const glm::dvec2 q(p.x, p.z);
+                        for (int dz = -2; dz <= 2; ++dz)
+                            for (int dx = -2; dx <= 2; ++dx)
+                            {
+                                const glm::dvec2 s2 = q + glm::dvec2(dx, dz) * h.cell;
+                                const int x = std::clamp(int(std::lround((s2.x - h.origin.x) / h.cell)), 0, h.nx - 1);
+                                const int z = std::clamp(int(std::lround((s2.y - h.origin.y) / h.cell)), 0, h.nz - 1);
+                                if (an->reachOf()[h.index(x, z)] >= 0 || an->lakeOf()[h.index(x, z)] >= 0)
+                                    return true;
+                            }
+                        return false;
+                    };
+                    if (!wet(e.result.centreline.front()) && !wet(e.result.centreline.back()))
+                        issue("canalDisconnected", about, at, "neither end reaches a river, lake or the sea");
+                }
+            }
+            for (const json& b : a.flags.value("buildings", json::array()))
+            {
+                const std::string name = b.get<std::string>();
+                Node* n = g.find(name);
+                if (!n || !n->type().isA("mesh"))
+                {
+                    issue("missing", name, nullptr, "no mesh named " + name);
+                    continue;
+                }
+                const auto mesh = std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+                if (!mesh || mesh->empty())
+                    continue;
+                const glm::dmat4 m = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+                // The base: the lowest points of the mesh, in the terrain's space.
+                std::vector<glm::dvec3> local;
+                double base = 1e30;
+                for (geo::Index p = 0; p < mesh->pointCapacity(); ++p)
+                    if (mesh->pointValid(p))
+                    {
+                        const glm::dvec3 q(f.frame.inv * (m * glm::dvec4(mesh->position(p), 1.0)));
+                        local.push_back(q);
+                        base = std::min(base, q.y);
+                    }
+                double worstGap = 0.0;
+                glm::dvec2 c(0.0), worstAt(0.0);
+                for (const glm::dvec3& q : local)
+                {
+                    c += glm::dvec2(q.x, q.z) / double(local.size());
+                    if (q.y > base + 1.0 / f.frame.vertical())
+                        continue;
+                    const double gap = base - h.heightAt(q.x, q.z);
+                    if (gap > worstGap)
+                    {
+                        worstGap = gap;
+                        worstAt = {q.x, q.z};
+                    }
+                }
+                const json at = worldJson(f.frame.world(c.x, base, c.y));
+                if (worstGap * f.frame.vertical() > a.get<double>("floatTolerance", 10.0))
+                    issue("floating", name, worldJson(f.frame.world(worstAt.x, base, worstAt.y)), std::format("base {:.0f} cm above the ground", worstGap * f.frame.vertical()));
+                if (an->sample("waterDepth", c.x, c.y) > 0.0)
+                    issue("overWater", name, at, "stands over water");
+                else if (floodAt(c) > tol && !protectedAt(c))
+                    issue("flood", name, at, std::format("flood risk {:.2f} with no levee near", floodAt(c)));
+            }
+            return {{"ok", issues.empty()}, {"issues", issues}, {"revision", revision(h)}};
+        },
+        .examples = {"c = terrainCheck('Terrain', buildings=['House1', 'House2'])\nc['ok'], c['issues']"},
+    });
+
+    ctx.registerCommand({
+        .name = "terrainDirtyRegions",
+        .doc = "What changed on a terrain since a revision another terrain command returned: rectangles on the ground plane "
+               "(min and max) where heights or masks differ, so a city re-plans only the blocks they touch. known is false when "
+               "that revision is too old to compare (treat everything as changed).",
+        .positionalDoc = "terrain mesh or its modifier",
+        .flags = {{"since", "s", T::String, "", "The revision to compare with."}, {"tile", "t", T::Int, int64_t(64), "Tile size, samples.", {}, {}, 4.0, 1024.0}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("terrainDirtyRegions: give one terrain");
+            const Found f = findTerrain(Graph::current(), names[0], "terrainDirtyRegions");
+            const std::string now = revision(*f.local);
+            const std::string since = a.get<std::string>("since", "");
+            std::shared_ptr<const Heightfield> old;
+            for (const Seen& s : seenRevisions()[pathOf(f, "")])
+                if (s.revision == since)
+                    old = s.h;
+            remember(f, now);
+            if (since == now)
+                return {{"known", true}, {"revision", now}, {"regions", json::array()}};
+            const Heightfield& h = *f.local;
+            if (!old || old->nx != h.nx || old->nz != h.nz)
+                return {{"known", false}, {"revision", now}, {"regions", json::array()}};
+            const int tile = int(a.get<int64_t>("tile", 64));
+            json regions = json::array();
+            for (int tz = 0; tz < h.nz; tz += tile)
+                for (int tx = 0; tx < h.nx; tx += tile)
+                {
+                    bool dirty = false;
+                    for (int z = tz; z < std::min(h.nz, tz + tile) && !dirty; ++z)
+                        for (int x = tx; x < std::min(h.nx, tx + tile) && !dirty; ++x)
+                        {
+                            const size_t i = h.index(x, z);
+                            dirty = h.heights[i] != old->heights[i];
+                            for (const auto& [name, v] : h.masks)
+                                if (!dirty)
+                                {
+                                    const std::vector<float>* o = old->findMask(name);
+                                    dirty = !o || o->size() != v.size() || (*o)[i] != v[i];
+                                }
+                        }
+                    if (!dirty)
+                        continue;
+                    const glm::dvec2 lo = h.samplePos(tx, tz), hi = h.samplePos(std::min(h.nx, tx + tile) - 1, std::min(h.nz, tz + tile) - 1);
+                    const glm::dvec3 a0 = f.frame.world(lo.x, 0.0, lo.y), a1 = f.frame.world(hi.x, 0.0, hi.y);
+                    regions.push_back({{"min", vec2(glm::min(groundOf(a0), groundOf(a1)))}, {"max", vec2(glm::max(groundOf(a0), groundOf(a1)))}});
+                }
+            return {{"known", true}, {"revision", now}, {"regions", regions}};
+        },
+        .examples = {"r0 = terrainInfo('Terrain')['revision']\n# ... edits ...\nterrainDirtyRegions('Terrain', since=r0)['regions']"},
+    });
+}
 } // namespace
 
 void registerCommands(ext::Context& ctx)
@@ -1146,10 +2080,12 @@ void registerCommands(ext::Context& ctx)
                "Z-up scene), height along the up axis, position, normal, slope (degrees), inside, and the masks named by masks=. "
                "World space, cm, for terrains in any placement.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"points", "p", T::List, nullptr, "[[x, z] or [x, y, z], ...]; [x, y] on a Z-up scene."},
+        .flags = withAnalysisFlags({{"points", "p", T::List, nullptr, "[[x, z] or [x, y, z], ...]; [x, y] on a Z-up scene."},
                   {"path", "pa", T::List, nullptr, "Polyline of points like points= to profile."},
                   {"step", "st", T::Float, 0.0, "Spacing along path, cm; 0 uses the terrain's cell size.", {}, {}, 0.0},
-                  {"masks", "m", T::List, json::array(), "Mask names to read."}},
+                  {"masks", "m", T::List, json::array(), "Mask names to read."},
+                  {"fields", "fl", T::List, json::array(), "Analysis fields to read (hand, floodRisk, buildability, slopeClass, solar, ... see terrainField)."},
+                  }),
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1161,10 +2097,16 @@ void registerCommands(ext::Context& ctx)
             std::vector<std::string> masks;
             for (const json& m : a.flags.value("masks", json::array()))
                 masks.push_back(m.get<std::string>());
+            for (const json& m : a.flags.value("fields", json::array()))
+                masks.push_back(m.get<std::string>());
+            std::shared_ptr<const Analysis> an;
+            for (const std::string& m : masks)
+                if (!f.local->findMask(m) && std::ranges::find(Analysis::fieldNames(), m) != Analysis::fieldNames().end())
+                    an = analyse(f.local, analysisParams(a));
             json out = json::array();
             if (a.has("points"))
                 for (const json& p : a.flags["points"])
-                    out.push_back(sampleAt(f, worldPoint(p, "terrainSample"), masks));
+                    out.push_back(sampleAt(f, worldPoint(p, "terrainSample"), masks, an.get()));
             else if (a.has("path"))
             {
                 std::vector<glm::dvec2> pts;
@@ -1189,7 +2131,7 @@ void registerCommands(ext::Context& ctx)
                         ++seg;
                     const double len = at[seg] - at[seg - 1];
                     const glm::dvec2 q = len > 1e-12 ? pts[seg - 1] + (pts[seg] - pts[seg - 1]) * ((d - at[seg - 1]) / len) : pts[seg];
-                    json smp = sampleAt(f, fromGround(q), masks);
+                    json smp = sampleAt(f, fromGround(q), masks, an.get());
                     const double h = smp["height"].get<double>();
                     smp["distance"] = d;
                     smp["grade"] = i == 0 || d - prevAlong < 1e-9 ? 0.0 : (h - prevHeight) / (d - prevAlong) * 100.0;
@@ -1559,5 +2501,6 @@ void registerCommands(ext::Context& ctx)
     });
 
     registerStampCommands(ctx);
+    registerContractCommands(ctx);
 }
 } // namespace terrain

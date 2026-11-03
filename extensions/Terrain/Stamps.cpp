@@ -436,6 +436,12 @@ Footprint footprintFromCurves(const gn::CurveSet& c, const glm::dmat4& toLocal)
             lowest = std::min(lowest, q.y);
             ring.push_back({q.x, q.z});
         }
+        if (ring.size() >= 2)
+        {
+            f.lines.push_back(ring);
+            if (e.cyclic[k] && ring.front() != ring.back())
+                f.lines.back().push_back(ring.front());
+        }
         if (ring.size() >= 2 && ring.front() == ring.back())
             ring.pop_back();
         if (ring.size() >= 2)
@@ -448,6 +454,18 @@ Footprint footprintFromCurves(const gn::CurveSet& c, const glm::dmat4& toLocal)
         f.lowestY = lowest;
     return f;
 }
+
+std::vector<uint8_t> footprintMask(const Heightfield& h, const Footprint& f)
+{
+    Region r;
+    r.x0 = 0;
+    r.z0 = 0;
+    r.x1 = h.nx - 1;
+    r.z1 = h.nz - 1;
+    return rasterize(h, r, f);
+}
+
+std::vector<float> squaredDistances(const std::vector<uint8_t>& set, int w, int d) { return distanceTransform(set, w, d); }
 
 const std::vector<std::string>& stampModeNames()
 {
@@ -487,9 +505,41 @@ json Stamp::toJson() const
               {"wallHeight", wallHeight}};
     if (!object.empty())
         j["object"] = object;
+    else if (isLine())
+        j["path"] = ringJson(path);
     else
         j["polygon"] = ringJson(polygon);
+    if (isLine() || kind == "dredge")
+    {
+        j["width"] = width;
+        j["depth"] = depth;
+        j["rise"] = rise;
+        j["side"] = side;
+        j["maxGrade"] = maxGrade;
+        j["clearance"] = clearance;
+    }
     return j;
+}
+
+bool Stamp::isLine() const { return std::find(lineKinds().begin(), lineKinds().end(), kind) != lineKinds().end(); }
+
+const std::vector<std::string>& lineKinds()
+{
+    static const std::vector<std::string> k = {"street", "canal", "moat", "quay", "levee", "embankment", "seawall", "bridge", "culvert", "tunnel"};
+    return k;
+}
+
+std::vector<std::string> defaultMasks(const std::string& kind)
+{
+    if (kind == "street" || kind == "quay")
+        return {"cityFootprint", "paved"};
+    if (kind == "canal" || kind == "moat")
+        return {"water"};
+    if (kind == "bridge")
+        return {};
+    if (kind == "culvert" || kind == "tunnel")
+        return {kind};
+    return {"cityFootprint"};
 }
 
 Stamp Stamp::fromJson(const json& j)
@@ -515,15 +565,258 @@ Stamp Stamp::fromJson(const json& j)
     s.wallHeight = std::max(0.0, j.value("wallHeight", 50.0));
     s.object = j.value("object", std::string());
     s.polygon = ringFrom(j.value("polygon", json::array()));
+    s.path = ringFrom(j.value("path", json::array()));
+    s.width = std::max(1.0, j.value("width", 600.0));
+    s.depth = std::max(0.0, j.value("depth", 200.0));
+    s.rise = j.value("rise", 200.0);
+    s.side = j.value("side", std::string("left"));
+    s.maxGrade = std::max(0.0, j.value("maxGrade", 8.0));
+    s.clearance = std::max(0.0, j.value("clearance", 500.0));
     return s;
 }
+
+namespace
+{
+/** Points every step along a polyline, with their distance along it. */
+void resample(const std::vector<glm::dvec2>& line, double step, std::vector<glm::dvec2>& pts, std::vector<double>& along)
+{
+    pts.clear();
+    along.clear();
+    if (line.empty())
+        return;
+    pts.push_back(line[0]);
+    along.push_back(0.0);
+    double total = 0.0;
+    for (size_t k = 1; k < line.size(); ++k)
+    {
+        const glm::dvec2 a = line[k - 1], b = line[k];
+        const double len = glm::length(b - a);
+        if (len < 1e-9)
+            continue;
+        const int n = std::max(1, int(std::ceil(len / step)));
+        for (int s = 1; s <= n; ++s)
+        {
+            pts.push_back(a + (b - a) * (double(s) / double(n)));
+            along.push_back(total + len * double(s) / double(n));
+        }
+        total += len;
+    }
+}
+
+/**
+ * A line feature: the target surface along the line from its graded centreline, laid across width (on one side for
+ * quays, embankments and seawalls), with a skirt of falloff back to the ground.
+ */
+StampResult applyLine(Heightfield& h, const Stamp& s, const std::vector<glm::dvec2>& line)
+{
+    StampResult res;
+    std::vector<glm::dvec2> pts;
+    std::vector<double> along;
+    resample(line, h.cell * 0.5, pts, along);
+    const size_t m = pts.size();
+    if (m < 2)
+        return res;
+    res.length = along.back();
+    std::vector<double> ground(m), deck(m);
+    for (size_t k = 0; k < m; ++k)
+        ground[k] = h.heightAt(pts[k].x, pts[k].y);
+    const std::string& kind = s.kind;
+    double level = s.level == StampLevel::Value ? s.height : 0.0;
+    if (kind == "street")
+    {
+        // Smooth the ground along the line, then hold it to the grade both ways.
+        const double window = std::max(s.width * 2.0, h.cell * 5.0);
+        size_t lo = 0, hi = 0;
+        double sum = 0.0;
+        for (size_t k = 0; k < m; ++k)
+        {
+            while (hi < m && along[hi] <= along[k] + window * 0.5)
+                sum += ground[hi++];
+            while (along[lo] < along[k] - window * 0.5)
+                sum -= ground[lo++];
+            deck[k] = sum / double(hi - lo);
+        }
+        const double g = s.maxGrade * 0.01;
+        for (int pass = 0; pass < 4; ++pass)
+        {
+            for (size_t k = 1; k < m; ++k)
+                deck[k] = std::clamp(deck[k], deck[k - 1] - g * (along[k] - along[k - 1]), deck[k - 1] + g * (along[k] - along[k - 1]));
+            for (size_t k = m - 1; k-- > 0;)
+                deck[k] = std::clamp(deck[k], deck[k + 1] - g * (along[k + 1] - along[k]), deck[k + 1] + g * (along[k + 1] - along[k]));
+        }
+        for (size_t k = 0; k < m; ++k)
+            deck[k] += s.offset;
+    }
+    else if (kind == "canal" || kind == "moat")
+    {
+        if (s.level != StampLevel::Value)
+            level = *std::min_element(ground.begin(), ground.end()) + s.offset;
+        res.waterLevel = level;
+        std::fill(deck.begin(), deck.end(), level - s.depth);
+    }
+    else if (kind == "quay" || kind == "seawall")
+    {
+        if (s.level != StampLevel::Value)
+            level = std::accumulate(ground.begin(), ground.end(), 0.0) / double(m) + s.offset;
+        if (kind == "seawall")
+            level = std::max(level, *std::max_element(ground.begin(), ground.end()) + s.rise);
+        std::fill(deck.begin(), deck.end(), level);
+    }
+    else if (kind == "levee" || kind == "embankment")
+    {
+        for (size_t k = 0; k < m; ++k)
+            deck[k] = ground[k] + s.rise;
+    }
+    else if (kind == "bridge")
+    {
+        // A straight deck between the ends' ground (or at the given height), the ground cut below it to the clearance.
+        for (size_t k = 0; k < m; ++k)
+            deck[k] = (s.level == StampLevel::Value ? level : ground[0] + (ground[m - 1] - ground[0]) * along[k] / res.length) - s.clearance;
+    }
+    else
+        deck = ground;
+
+    // Streets leave hollows to bridges and rises to tunnels, rather than filling or cutting them.
+    std::vector<uint8_t> keep(m, 0);
+    if (kind == "street")
+    {
+        for (size_t k = 0; k < m; ++k)
+        {
+            const char* span = deck[k] - ground[k] > std::max(s.clearance, 300.0) ? "bridge" : ground[k] - deck[k] > 1500.0 ? "tunnel" : nullptr;
+            if (span)
+            {
+                keep[k] = 1;
+                if (res.spans.empty() || res.spans.back().kind != span || res.spans.back().to + 1 != k)
+                    res.spans.push_back({k, k, span});
+                else
+                    res.spans.back().to = k;
+            }
+        }
+        if (const std::vector<float>* flow = h.findMask("flow"); flow && flow->size() == h.size())
+            for (size_t k = 1; k < m; ++k)
+            {
+                const double a = h.maskAt("flow", pts[k - 1].x, pts[k - 1].y), b = h.maskAt("flow", pts[k].x, pts[k].y);
+                if (!keep[k] && a < 0.55 && b >= 0.55 && b < 0.75)
+                    res.culverts.push_back(pts[k]);
+            }
+    }
+    for (size_t k = 0; k < m; ++k)
+    {
+        res.centreline.push_back({pts[k].x, keep[k] ? deck[k] : deck[k] + (kind == "bridge" ? s.clearance : 0.0), pts[k].y});
+        if (k > 0 && along[k] > along[k - 1])
+            res.maxGrade = std::max(res.maxGrade, std::abs(deck[k] - deck[k - 1]) / (along[k] - along[k - 1]) * 100.0);
+    }
+    const bool registerOnly = kind == "culvert" || kind == "tunnel";
+    const bool oneSided = kind == "quay" || kind == "seawall" || kind == "embankment";
+    const double sideSign = s.side == "right" ? -1.0 : 1.0;
+    const double half = s.width * 0.5;
+    const double reach = half + s.falloff + h.cell;
+
+    // Nearest centreline point per sample, segment by segment over each one's box.
+    glm::dvec2 bl(std::numeric_limits<double>::infinity()), bh(-std::numeric_limits<double>::infinity());
+    for (const glm::dvec2& p : pts)
+    {
+        bl = glm::min(bl, p);
+        bh = glm::max(bh, p);
+    }
+    const Region r = regionAround(h, bl, bh, reach + h.cell);
+    if (r.empty())
+        return res;
+    std::vector<float> dist(r.size(), std::numeric_limits<float>::infinity()), cross(r.size(), 0.0f);
+    std::vector<uint32_t> nearestK(r.size(), 0);
+    for (size_t k = 0; k + 1 < m; ++k)
+    {
+        const glm::dvec2 a = pts[k], b = pts[k + 1], ab = b - a;
+        const double len2 = std::max(1e-12, glm::dot(ab, ab));
+        const Region sr = regionAround(h, glm::min(a, b), glm::max(a, b), reach);
+        for (int z = std::max(sr.z0, r.z0); z <= std::min(sr.z1, r.z1); ++z)
+            for (int x = std::max(sr.x0, r.x0); x <= std::min(sr.x1, r.x1); ++x)
+            {
+                const glm::dvec2 p = h.samplePos(x, z);
+                const double t = std::clamp(glm::dot(p - a, ab) / len2, 0.0, 1.0);
+                const glm::dvec2 q = a + ab * t;
+                const double d = glm::length(p - q);
+                const size_t i = r.at(x, z);
+                if (d < dist[i])
+                {
+                    dist[i] = float(d);
+                    cross[i] = float(ab.x * (p - a).y - ab.y * (p - a).x);
+                    nearestK[i] = uint32_t(t < 0.5 ? k : k + 1);
+                }
+            }
+    }
+    std::vector<std::vector<float>*> masks;
+    for (const std::string& name : s.masks)
+        if (!name.empty())
+            masks.push_back(&h.mask(name));
+    double cut = 0.0, fill = 0.0;
+    size_t covered = 0;
+    for (int z = r.z0; z <= r.z1; ++z)
+        for (int x = r.x0; x <= r.x1; ++x)
+        {
+            const size_t i = r.at(x, z);
+            const double d = dist[i];
+            if (!(d < reach))
+                continue;
+            // Counterclockwise in (X, Z): positive cross is to the left of travel.
+            const bool landSide = (cross[i] * sideSign) >= 0.0;
+            double w = d <= half ? 1.0 : (s.falloff > 0.0 ? 1.0 - smoothstep(0.0, s.falloff, d - half) : 0.0);
+            if (oneSided && !landSide)
+                w = kind == "quay" && d <= half ? 1.0 : 0.0;
+            if (w <= 0.0)
+                continue;
+            if (d <= half)
+                ++covered;
+            const size_t hi = h.index(x, z);
+            for (std::vector<float>* mk : masks)
+                (*mk)[hi] = std::max((*mk)[hi], float(w * s.maskValue));
+            const uint32_t k = nearestK[i];
+            if (registerOnly || keep[k])
+                continue;
+            const double old = h.heights[hi];
+            double t = deck[k];
+            if (kind == "quay" && !landSide)
+                t = deck[k] - s.depth;
+            if (kind == "levee" || kind == "embankment")
+                t = deck[k] - (oneSided ? 0.0 : std::max(0.0, d - half * 0.5) / std::max(half, 1.0) * s.rise);
+            double v = old;
+            if (kind == "canal" || kind == "moat" || kind == "bridge" || (kind == "quay" && !landSide))
+                v = old + (std::min(old, t) - old) * w;
+            else if (kind == "levee" || kind == "embankment" || kind == "seawall")
+                v = old + (std::max(old, t) - old) * w;
+            else
+                v = old + (t - old) * w;
+            h.heights[hi] = float(v);
+            cut += std::max(0.0, old - v);
+            fill += std::max(0.0, v - old);
+        }
+    res.samples = covered;
+    res.area = double(covered) * h.cell * h.cell;
+    res.cut = cut * h.cell * h.cell;
+    res.fill = fill * h.cell * h.cell;
+    res.centroid = pts[m / 2];
+    res.padHeight = deck[m / 2];
+    res.groundMin = *std::min_element(ground.begin(), ground.end());
+    res.groundMax = *std::max_element(ground.begin(), ground.end());
+    res.groundMean = std::accumulate(ground.begin(), ground.end(), 0.0) / double(m);
+    return res;
+}
+} // namespace
 
 StampResult applyStamp(Heightfield& h, const Stamp& s, const Footprint& f)
 {
     LILA_ZONE();
 
     StampResult res;
-    if (f.empty() || h.empty())
+    if (h.empty())
+        return res;
+    if (s.isLine())
+    {
+        if (!s.path.empty())
+            return applyLine(h, s, s.path);
+        return f.lines.empty() ? res : applyLine(h, s, f.lines.front());
+    }
+    if (f.empty())
         return res;
     glm::dvec2 lo(std::numeric_limits<double>::infinity()), hi(-std::numeric_limits<double>::infinity());
     for (const auto& ring : f.rings)
@@ -645,6 +938,8 @@ StampResult applyStamp(Heightfield& h, const Stamp& s, const Footprint& f)
             case StampMode::Blend: v = old + (t - old) * w * s.strength; break;
             default: v = old + (t - old) * w; break;
             }
+            if (s.kind == "dredge")
+                v = old - s.depth * w;
             if (s.edge == StampEdge::Steps && !core[k])
                 v = t + std::round((v - t) / s.stepHeight) * s.stepHeight;
             h.heights[i] = float(v);
