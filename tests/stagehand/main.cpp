@@ -4,6 +4,8 @@
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "extensions/ExtensionManager.h"
+#include "fbx/Fbx.h"
+#include "link/UnrealLink.h"
 #include "gltf/Gltf.h"
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
@@ -35,6 +37,8 @@ int main(int argc, char** argv)
     lila::extensions::registerCommands();
     lila::gn::registerCommands();
     lila::gltf::registerCommands();
+    lila::fbx::registerCommands();
+    lila::link::registerCommands();
     lila::io::translators::registerBuiltins();
     lila::io::translators::registerCommands();
 

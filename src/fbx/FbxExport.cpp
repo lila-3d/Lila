@@ -1,5 +1,7 @@
 #include "fbx/Fbx.h"
 
+#include "core/ExtensionContext.h"
+#include "core/Log.h"
 #include "core/Profile.h"
 #include "fbx/FbxAxes.h"
 #include "fbx/FbxBinary.h"
@@ -1968,6 +1970,56 @@ void gatherMaterials(scene::Graph& graph, ExportScene& out)
 }
 } // namespace
 
+namespace
+{
+/** The collision sources' convex meshes beside each exported mesh, named the way Unreal pairs them with it. */
+void addCollision(scene::Graph& graph, ExportScene& out)
+{
+    const std::vector<std::string> ids = collisionSources().idsInOrder();
+    if (ids.empty())
+        return;
+    const size_t count = out.nodes.size();
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (!out.nodes[i].mesh || out.nodes[i].source == scene::kNoNode || out.nodes[i].joint)
+            continue;
+        std::vector<geo::Mesh> hulls;
+        for (const std::string& id : ids)
+            if (const CollisionSource* s = collisionSources().find(id); s && *s)
+                for (geo::Mesh& m : (*s)(graph, out.nodes[i].source))
+                    hulls.push_back(std::move(m));
+        for (size_t k = 0; k < hulls.size(); ++k)
+        {
+            const ExportNode& owner = out.nodes[i];
+            ExportNode c;
+            c.name = std::format("UCX_{}_{:02}", owner.name, k + 1);
+            c.parent = owner.parent;
+            c.local = owner.local;
+            c.bake = owner.bake;
+            c.mesh = std::make_shared<const geo::Mesh>(std::move(hulls[k]));
+            out.nodes.push_back(std::move(c));
+        }
+    }
+}
+} // namespace
+
+Registry<CollisionSource>& collisionSources()
+{
+    static Registry<CollisionSource> r;
+    return r;
+}
+
+bool addCollisionSource(ext::Context& ctx, const std::string& id, CollisionSource source)
+{
+    if (collisionSources().contains(id))
+    {
+        log::error("extension {}: collision source '{}' is already registered", ctx.owner(), id);
+        return false;
+    }
+    ctx.add(collisionSources(), "collisionSource", id, std::move(source));
+    return true;
+}
+
 ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& roots, const ExportOptions& opts)
 {
     LILA_ZONE();
@@ -2012,6 +2064,8 @@ ExportScene gatherExport(scene::Graph& graph, const std::vector<scene::NodeId>& 
     warnDuplicateNames(graph, out);
     if (opts.textures)
         gatherMaterials(graph, out);
+    if (opts.collision && opts.kind == ExportKind::Static)
+        addCollision(graph, out);
 
     if (opts.kind == ExportKind::Static || opts.kind == ExportKind::Sequence)
     {

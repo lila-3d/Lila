@@ -209,6 +209,12 @@ bool boundsUnder(Graph& g, NodeId root, glm::dvec3& lo, glm::dvec3& hi);
 bool registerKitNodes(lila::ext::Context& ctx);
 void registerKitCommands(lila::ext::Context& ctx);
 void registerKitUi(lila::ext::Context& ctx);
+/**
+ * The stagehandAssembly node type; body shapes as UCX_ collision in Unreal exports, body settings on Unreal placements,
+ * assemblyCreate and unrealPlaceAssembly (UnrealExport.cpp).
+ */
+bool registerUnrealNodes(lila::ext::Context& ctx);
+void registerUnrealExport(lila::ext::Context& ctx);
 /** instancesToObjects (Realize.cpp). */
 void registerRealizeCommands(lila::ext::Context& ctx);
 /** fillShelf, scatterProps, pileProps, stackProps (ArrangeCommands.cpp). */

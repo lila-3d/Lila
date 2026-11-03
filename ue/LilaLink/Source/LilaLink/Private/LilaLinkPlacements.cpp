@@ -3,6 +3,7 @@
 #include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -23,7 +24,12 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "LevelInstance/LevelInstanceInterface.h"
+#include "LevelInstance/LevelInstanceSubsystem.h"
+#include "LevelInstance/LevelInstanceTypes.h"
 #include "Misc/PackageName.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
 
@@ -35,6 +41,7 @@ const TCHAR* GroupPrefix = TEXT("LilaGroup:");
 const TCHAR* NodePrefix = TEXT("LilaNode:");
 const FName InstancedTag(TEXT("LilaInstanced"));
 const FName LightTag(TEXT("LilaLight"));
+const TCHAR* AssemblyPrefix = TEXT("LilaAssembly:");
 
 TSharedPtr<FJsonValue> Obj(const TSharedRef<FJsonObject>& O) { return MakeShared<FJsonValueObject>(O); }
 
@@ -193,6 +200,107 @@ void ApplyPlacementComponents(AActor* Actor, const TSharedPtr<FJsonObject>& Plac
 	}
 }
 
+/** The physical material for a Lila body material, made beside the meshes the first time: PM_<material>. */
+UPhysicalMaterial* PhysicalMaterialFor(const TSharedPtr<FJsonObject>& Physics, const FString& Folder)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PhysicalMaterialFor);
+
+	FString Material;
+	if (!Physics->TryGetStringField(TEXT("material"), Material) || Material.IsEmpty())
+	{
+		return nullptr;
+	}
+	const FString Name = TEXT("PM_") + Material;
+	const FString PackageName = Folder / TEXT("PhysicalMaterials") / Name;
+	UPhysicalMaterial* PM = LoadObject<UPhysicalMaterial>(nullptr, *(PackageName + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!PM)
+	{
+		UPackage* Package = CreatePackage(*PackageName);
+		PM = NewObject<UPhysicalMaterial>(Package, *Name, RF_Public | RF_Standalone | RF_Transactional);
+		FAssetRegistryModule::AssetCreated(PM);
+	}
+	double Friction = PM->Friction, Restitution = PM->Restitution, Density = PM->Density * 1000.0;
+	Physics->TryGetNumberField(TEXT("friction"), Friction);
+	Physics->TryGetNumberField(TEXT("restitution"), Restitution);
+	Physics->TryGetNumberField(TEXT("density"), Density);
+	PM->Modify();
+	PM->Friction = static_cast<float>(Friction);
+	PM->Restitution = static_cast<float>(Restitution);
+	// Lila's density is kg/m3, Unreal's g/cm3.
+	PM->Density = static_cast<float>(Density / 1000.0);
+	PM->MarkPackageDirty();
+	return PM;
+}
+
+/**
+ * A placement's body settings on its component: the physical material, and for an actor of its own whether it
+ * simulates and its mass. Instances share one component, which can't simulate per instance.
+ */
+void ApplyPhysics(UPrimitiveComponent* Component, const TSharedPtr<FJsonObject>& Placement, const FString& Folder, bool bInstanced, const FString& Label,
+	FComponentSink& Sink)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::ApplyPhysics);
+
+	const TSharedPtr<FJsonObject>* Physics = nullptr;
+	if (!Placement->TryGetObjectField(TEXT("physics"), Physics))
+	{
+		return;
+	}
+	if (UPhysicalMaterial* PM = PhysicalMaterialFor(*Physics, Folder))
+	{
+		Component->SetPhysMaterialOverride(PM);
+	}
+	bool bSimulate = false;
+	(*Physics)->TryGetBoolField(TEXT("simulate"), bSimulate);
+	if (bInstanced)
+	{
+		if (bSimulate)
+		{
+			Sink.Warnings.Add(FString::Printf(TEXT("%s: instanced members can't simulate physics; send it as actors"), *Label));
+		}
+		return;
+	}
+	if (bSimulate)
+	{
+		Component->SetMobility(EComponentMobility::Movable);
+	}
+	Component->SetSimulatePhysics(bSimulate);
+	double Mass = 0.0;
+	if ((*Physics)->TryGetNumberField(TEXT("mass"), Mass) && Mass > 0.0)
+	{
+		Component->SetMassOverrideInKg(NAME_None, static_cast<float>(Mass), true);
+	}
+}
+
+/** The mesh collides with its UCX_ hulls, or with its own triangles when the body is a static triangle mesh. */
+void ApplyMeshCollision(UStaticMesh* Mesh, const TArray<TSharedPtr<FJsonValue>>& Placements)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::ApplyMeshCollision);
+
+	const TSharedPtr<FJsonObject>* First = nullptr;
+	const TSharedPtr<FJsonObject>* Physics = nullptr;
+	FString Collision;
+	if (Placements.IsEmpty() || !Placements[0].IsValid() || !Placements[0]->TryGetObject(First) || !(*First)->TryGetObjectField(TEXT("physics"), Physics) ||
+		!(*Physics)->TryGetStringField(TEXT("collision"), Collision))
+	{
+		return;
+	}
+	UBodySetup* Body = Mesh->GetBodySetup();
+	if (!Body)
+	{
+		return;
+	}
+	const ECollisionTraceFlag Flag = Collision == TEXT("complexAsSimple") ? CTF_UseComplexAsSimple : CTF_UseDefault;
+	if (Body->CollisionTraceFlag != Flag)
+	{
+		Body->Modify();
+		Body->CollisionTraceFlag = Flag;
+		Body->InvalidatePhysicsData();
+		Body->CreatePhysicsMeshes();
+		Mesh->MarkPackageDirty();
+	}
+}
+
 /** An actor per placement, matched to the existing ones by node id. */
 void PlaceActors(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing,
 	int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
@@ -260,6 +368,7 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 			Actor->GetStaticMeshComponent()->SetLightingChannels(Channels->bChannel0, Channels->bChannel1, Channels->bChannel2);
 		}
 		ApplyPlacementComponents(Actor, *P, Sink);
+		ApplyPhysics(Actor->GetStaticMeshComponent(), *P, Sink.Folder, false, Label, Sink);
 	}
 	for (const TPair<FString, AStaticMeshActor*>& Pair : ByNode)
 	{
@@ -390,6 +499,7 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	{
 		ApplyPlacementComponents(Holder, *First, Sink);
 		ApplyInstancedChannels(Component, *First, Placements, Label, Sink);
+		ApplyPhysics(Component, *First, Sink.Folder, true, Label, Sink);
 	}
 }
 
@@ -432,6 +542,7 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	FComponentSink Sink;
 	Sink.Folder = FPackageName::GetLongPackagePath(Mesh->GetPackage()->GetName());
 	TArray<AActor*> Existing = TaggedActors(World, GroupTag(Group));
+	ApplyMeshCollision(Mesh, *Placements);
 	if (Mode == TEXT("actors"))
 	{
 		PlaceActors(World, Group, Label, Mesh, *Placements, Existing, Spawned, Updated, Removed, Sink);
@@ -723,6 +834,84 @@ TSharedPtr<FJsonValue> RemovePlacements(const TSharedPtr<FJsonObject>& Params, F
 	return Obj(Out);
 }
 
+/** A package name not taken yet: the path itself, else with _2, _3, ... after it. */
+FString FreePackageName(const FString& Path)
+{
+	FString Candidate = Path;
+	for (int32 K = 2; FPackageName::DoesPackageExist(Candidate) || FindPackage(nullptr, *Candidate); ++K)
+	{
+		Candidate = FString::Printf(TEXT("%s_%d"), *Path, K);
+	}
+	return Candidate;
+}
+
+TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::MakeLevelInstance);
+
+	FString Key, Name, Kind = TEXT("levelInstance"), Level;
+	const TArray<TSharedPtr<FJsonValue>>* Groups = nullptr;
+	if (!Params->TryGetStringField(TEXT("key"), Key) || !Params->TryGetStringField(TEXT("level"), Level) || !Params->TryGetArrayField(TEXT("groups"), Groups))
+	{
+		OutError = TEXT("makeLevelInstance: give key, level and groups");
+		return nullptr;
+	}
+	Params->TryGetStringField(TEXT("name"), Name);
+	Params->TryGetStringField(TEXT("kind"), Kind);
+	UWorld* World = EditorWorld();
+	ULevelInstanceSubsystem* Subsystem = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!Subsystem)
+	{
+		OutError = TEXT("makeLevelInstance: no level is open");
+		return nullptr;
+	}
+	TArray<AActor*> Actors;
+	for (const TSharedPtr<FJsonValue>& G : *Groups)
+	{
+		Actors.Append(TaggedActors(World, GroupTag(G->AsString())));
+	}
+	if (Actors.IsEmpty())
+	{
+		OutError = TEXT("makeLevelInstance: none of the groups' actors are in the level");
+		return nullptr;
+	}
+
+	FScopedTransaction Transaction(LOCTEXT("MakeLevelInstance", "Lila: Make Level Instance"));
+	const FName Tag(*(FString(AssemblyPrefix) + Key));
+	TArray<AActor*> Previous = TaggedActors(World, Tag);
+	for (AActor* Old : Previous)
+	{
+		World->EditorDestroyActor(Old, true);
+	}
+	FNewLevelInstanceParams Create;
+	Create.Type = Kind == TEXT("packedLevelActor") ? ELevelInstanceCreationType::PackedLevelActor : ELevelInstanceCreationType::LevelInstance;
+	Create.PivotType = ELevelInstancePivotType::CenterMinZ;
+	Create.bAlwaysShowDialog = false;
+	Create.LevelPackageName = FreePackageName(Level);
+	ILevelInstanceInterface* Made = Subsystem->CreateLevelInstanceFrom(Actors, Create);
+	AActor* Actor = Made ? Cast<AActor>(Made) : nullptr;
+	if (!Actor)
+	{
+		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not make %s"), *Create.LevelPackageName);
+		return nullptr;
+	}
+	Actor->Tags.Add(Tag);
+	if (!Name.IsEmpty())
+	{
+		Actor->SetActorLabel(Name);
+	}
+	Actor->SetFolderPath(FName(TEXT("Lila/Assemblies")));
+	UE_LOG(LogLilaLink, Log, TEXT("makeLevelInstance %s: %d actors into %s (%s)"), *Name, Actors.Num(), *Create.LevelPackageName, *Kind);
+
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("actor"), Actor->GetActorLabel());
+	Out->SetStringField(TEXT("level"), Create.LevelPackageName);
+	Out->SetStringField(TEXT("kind"), Kind);
+	Out->SetNumberField(TEXT("actors"), Actors.Num());
+	Out->SetNumberField(TEXT("replaced"), Previous.Num());
+	return Obj(Out);
+}
+
 TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>&, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::ListPlacements);
@@ -764,6 +953,7 @@ void LilaLink::AddPlacementMethods(TMap<FString, FLilaLinkMethod>& Methods)
 	Methods.Add(TEXT("placeLights"), LilaLink::Sync(&PlaceLights));
 	Methods.Add(TEXT("removePlacements"), LilaLink::Sync(&RemovePlacements));
 	Methods.Add(TEXT("listPlacements"), LilaLink::Sync(&ListPlacements));
+	Methods.Add(TEXT("makeLevelInstance"), LilaLink::Sync(&MakeLevelInstance));
 }
 
 #undef LOCTEXT_NAMESPACE

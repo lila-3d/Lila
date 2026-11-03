@@ -1,7 +1,9 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/Registry.h"
 
+#include "geo/Mesh.h"
 #include "math/MathCore.h"
 #include "scene/AnimCurve.h"
 #include "scene/Light.h"
@@ -12,6 +14,7 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -24,6 +27,11 @@
 namespace lila::scene
 {
 class Graph;
+}
+
+namespace lila::ext
+{
+class Context;
 }
 
 /**
@@ -144,6 +152,11 @@ struct ExportOptions
      * modes). Off writes plain named materials, which Unreal binds to its own assets by name.
      */
     bool textures = false;
+    /**
+     * Static kind: write each mesh's simple collision from the collision sources (collisionSources) as UCX_<mesh>_NN
+     * meshes beside it, which Unreal's importer turns into the static mesh's collision.
+     */
+    bool collision = false;
 };
 
 /** A material texture as an FBX file texture: its file and wrap modes (FBX has only repeat and clamp). */
@@ -304,6 +317,15 @@ LILA_SCENE_API bool exportForUnreal(const std::vector<scene::NodeId>& nodes, con
  * export's range; throws CommandError naming the joint Unreal can't match. Other kinds pass.
  */
 LILA_SCENE_API void unrealCheck(scene::Graph& g, const std::vector<scene::NodeId>& ids, const ExportOptions& opts, const std::string& command);
+
+/**
+ * A mesh node's simple collision as convex meshes in its object space, empty when it has none: how an extension (a
+ * physics body) gives exported meshes their UCX_ collision. Main thread.
+ */
+using CollisionSource = std::function<std::vector<geo::Mesh>(scene::Graph& g, scene::NodeId mesh)>;
+LILA_SCENE_API Registry<CollisionSource>& collisionSources();
+/** For extensions: owned by ctx and removed when it unloads. False when the id is taken. */
+LILA_SCENE_API bool addCollisionSource(ext::Context& ctx, const std::string& id, CollisionSource source);
 
 struct ImportOptions
 {

@@ -109,6 +109,7 @@ bool exportForUnreal(const std::vector<scene::NodeId>& nodes, const fs::path& pa
     }
     opts.atOrigin = atOrigin;
     opts.children = children;
+    opts.collision = true;
     if (!take.empty())
         opts.takes = {take};
 
@@ -258,6 +259,8 @@ void registerCommands()
                   {"textures", "", T::Bool, false,
                    "Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes "
                    "(repeat or clamp). Off writes plain named materials."},
+                  {"collision", "col", T::Bool, false,
+                   "Static kind: write each mesh's simple collision (a Stagehand body's shape) as UCX_<mesh>_NN meshes for Unreal."},
                   {"units", "u", T::String, "cm", "File units: cm, m, mm, in or ft. Lengths are scaled to them.", {"cm", "m", "mm", "in", "ft"}},
                   {"selectionOnly", "sl", T::Bool, true, "Without objects: the selection, or every root when False."},
                   {"unrealCheck", "uc", T::Bool, true,
@@ -285,6 +288,7 @@ void registerCommands()
                 throw CommandError("exportFbx: units must be cm, m, mm, in or ft");
             opts.maxInfluences = a.get<int>("maxInfluences", 8);
             opts.textures = a.get<bool>("textures", false);
+            opts.collision = a.get<bool>("collision", false);
             opts.animation = a.get<bool>("animation", true);
             opts.bakeAnimation = a.get<bool>("bakeAnimation", true);
             opts.deformOnly = a.get<bool>("deformOnly", true);

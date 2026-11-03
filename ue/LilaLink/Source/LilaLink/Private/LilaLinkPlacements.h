@@ -20,6 +20,15 @@ namespace LilaLink
  *   Returns {spawned, updated, warnings}.
  * removePlacements {groups?: [...], ids?: [...]} removes what placeInstances made for those groups or nodes. Returns {removed}.
  * listPlacements {} lists them: [{actor, group, node?, instances?}].
+ *
+ * A placement's physics {simulate, role, material, density, friction, restitution, mass?, collision: simple |
+ *   complexAsSimple} sets its component's physical material (PM_<material>, made beside the mesh), and on an actor its
+ *   Simulate Physics (Movable when it simulates) and mass; the first placement's collision sets the mesh's collision
+ *   complexity, so UCX_ hulls or its own triangles are what it collides with.
+ * makeLevelInstance {key, name, kind: levelInstance | packedLevelActor, level, groups: [...]} moves the actors those
+ *   placement groups made into a new level (level, or level_2, ... when taken) and places it as a Level Instance or
+ *   Packed Level Actor tagged with the key; one made earlier for the key is removed first. Returns {actor, level, kind,
+ *   actors, replaced}.
  */
 void AddPlacementMethods(TMap<FString, FLilaLinkMethod>& Methods);
 } // namespace LilaLink

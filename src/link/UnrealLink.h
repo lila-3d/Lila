@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
+#include "core/Registry.h"
 
 #include "link/RpcClient.h"
 #include "scene/Node.h"
@@ -16,6 +17,11 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace lila::ext
+{
+class Context;
+}
 
 namespace lila::link
 {
@@ -219,6 +225,16 @@ struct PlacementOptions
  * they sit. Throws CommandError for an unknown mode.
  */
 LILA_SCENE_API json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o);
+
+/**
+ * More of what a placement carries: an extension returns a JSON object whose fields are merged into the placement of the
+ * mesh (Stagehand's "physics"), or null for none. A placement whose physics.simulate is true needs an actor of its own,
+ * so mode auto never puts its group into an (H)ISM. Main thread.
+ */
+using PlacementExtra = std::function<json(scene::Graph& g, scene::NodeId mesh)>;
+LILA_SCENE_API Registry<PlacementExtra>& placementExtras();
+/** For extensions: owned by ctx and removed when it unloads. False when the id is taken. */
+LILA_SCENE_API bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra);
 
 /** unrealPlaceInstances and unrealRemovePlacements. */
 LILA_SCENE_API void registerPlacementCommands();

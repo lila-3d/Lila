@@ -113,7 +113,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")),
 		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters")), Str(TEXT("components")), Str(TEXT("lights")), Str(TEXT("lightingChannels")),
-		Str(TEXT("geometryCollection")), Str(TEXT("settlement")), Str(TEXT("trimDecals"))});
+		Str(TEXT("geometryCollection")), Str(TEXT("settlement")), Str(TEXT("trimDecals")), Str(TEXT("physics")), Str(TEXT("levelInstances"))});
 	TArray<TSharedPtr<FJsonValue>> Exporters;
 	for (const FString& Name : LilaLink::ComponentExporterNames())
 	{

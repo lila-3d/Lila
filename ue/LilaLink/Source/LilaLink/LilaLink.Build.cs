@@ -45,6 +45,7 @@ public class LilaLink : ModuleRules
 			"ChaosClothAsset",
 			"ChaosClothAssetEngine",
 			"Chaos",
+			"PhysicsCore",
 			"GeometryCore",
 			"GeometryCollectionEngine",
 			"ChaosSolverEngine",

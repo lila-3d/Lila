@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/Undo.h"
+#include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
@@ -110,7 +111,21 @@ json placement(scene::Graph& g, scene::NodeId id, const std::string& key)
 {
     json p = placementAt(std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1})), key, g.node(id)->path());
     p["customData"] = json::array({stableRandom(key)});
+    for (const std::string& extraId : placementExtras().idsInOrder())
+        if (const PlacementExtra* extra = placementExtras().find(extraId); extra && *extra)
+            if (const json more = (*extra)(g, id); more.is_object())
+                for (const auto& [k, v] : more.items())
+                    p[k] = v;
     return p;
+}
+
+/** Simulated members need actors: instances of an (H)ISM can't each simulate. */
+bool simulates(const json& placements)
+{
+    for (const json& p : placements)
+        if (p.contains("physics") && p["physics"].is_object() && p["physics"].value("simulate", false))
+            return true;
+    return false;
 }
 
 /**
@@ -176,6 +191,23 @@ std::vector<json> arrayPlacements(scene::Graph& g, scene::NodeId id, const std::
     return out;
 }
 } // namespace
+
+Registry<PlacementExtra>& placementExtras()
+{
+    static Registry<PlacementExtra> r;
+    return r;
+}
+
+bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra)
+{
+    if (placementExtras().contains(id))
+    {
+        log::error("extension {}: placement extra '{}' is already registered", ctx.owner(), id);
+        return false;
+    }
+    ctx.add(placementExtras(), "placementExtra", id, std::move(extra));
+    return true;
+}
 
 json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o)
 {
@@ -251,11 +283,16 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
             for (size_t p = first; p < list.size(); ++p)
             {
                 list[p]["components"] = components;
+                // Array copies are the member again, so they carry what extras gave it.
+                if (p > first)
+                    for (const auto& [field, value] : list[first].items())
+                        if (!list[p].contains(field))
+                            list[p][field] = value;
                 if (o.lightingChannels)
                     list[p]["lightingChannels"] = channelBits(lc::unrealBits(*g.node(id), unreal));
             }
         }
-        const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold ? "hism" : "actors";
+        const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold && !simulates(list) ? "hism" : "actors";
         groups.push_back({{"key", keys(src)},
                           {"source", n->fullPath()},
                           {"sourceId", src},

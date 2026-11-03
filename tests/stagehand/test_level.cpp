@@ -293,3 +293,90 @@ TEST_CASE("library: the starter props are built on first use, found by words and
     CHECK(run("dressInfo", {{"args", {crateMesh}}})[0]["material"] == "wood");
     CHECK(run("dressInfo", {{"args", {beam[0]["meshes"][0]}}})[0]["shape"] == "compound");
 }
+
+TEST_CASE("unreal: body shapes export as UCX_ collision beside their meshes, only for meshes with bodies")
+{
+    load();
+    run("newScene");
+    const std::string a = arch("Gate");
+    run("physicsBody", {{"args", {a}}, {"material", "stone"}, {"role", "dynamic"}});
+    const std::string plain = cube("Plain", {500, 0, 0}, {50, 50, 50});
+    const auto path = scratchFile("gate_collision.fbx");
+    run("exportFbx", {{"args", {path.string(), a, plain}}, {"collision", true}, {"kind", "static"}});
+    run("newScene");
+    run("importFbx", {{"args", {path.string()}}});
+    CHECK(run("objExists", {{"args", {"UCX_Gate_01"}}}).get<bool>());
+    CHECK(run("objExists", {{"args", {"UCX_Gate_03"}}}).get<bool>());
+    CHECK_FALSE(run("objExists", {{"args", {"UCX_Plain_01"}}}).get<bool>());
+
+    // Without collision=True the file holds only the meshes.
+    run("newScene");
+    const std::string b = arch("Gate");
+    run("physicsBody", {{"args", {b}}, {"material", "stone"}});
+    const auto bare = scratchFile("gate_bare.fbx");
+    run("exportFbx", {{"args", {bare.string(), b}}, {"kind", "static"}});
+    run("newScene");
+    run("importFbx", {{"args", {bare.string()}}});
+    CHECK_FALSE(run("objExists", {{"args", {"UCX_Gate_01"}}}).get<bool>());
+}
+
+TEST_CASE("unreal: placements carry body settings, and simulated groups stay actors")
+{
+    load();
+    run("newScene");
+    const std::string crate = cube("Crate", {0, 0, 0}, {100, 100, 100});
+    run("physicsBody", {{"args", {crate}}, {"material", "wood"}, {"role", "dynamic"}});
+    run("duplicate", {{"args", {crate}}, {"count", 4}, {"mode", "instance"}, {"translate", json::array({150, 0, 0})}});
+    const std::string floor = cube("Floor", {0, -10, 0}, {2000, 10, 2000});
+    run("physicsBody", {{"args", {floor}}, {"role", "static"}});
+    const json plan = run("unrealPlaceInstances", {{"args", {crate, floor}}, {"dryRun", true}, {"threshold", 2}});
+    json crates, floors;
+    for (const json& g : plan["groups"])
+        (g["source"].get<std::string>().find("Crate") != std::string::npos ? crates : floors) = g;
+    REQUIRE(crates.is_object());
+    CHECK(crates["placements"].size() == 5);
+    CHECK(crates["mode"] == "actors");
+    const json p = crates["placements"][0]["physics"];
+    CHECK(p["simulate"].get<bool>());
+    CHECK(p["material"] == "wood");
+    CHECK(p["collision"] == "simple");
+    CHECK(p["mass"].get<double>() == doctest::Approx(600.0).epsilon(0.02)); // 1 m3 of wood
+    REQUIRE(floors.is_object());
+    const json f = floors["placements"][0]["physics"];
+    CHECK_FALSE(f["simulate"].get<bool>());
+    CHECK(f["collision"] == "complexAsSimple");
+    CHECK_FALSE(f.contains("mass"));
+}
+
+TEST_CASE("unreal: an assembly goes as one Level Instance and keeps its settings through save and reopen")
+{
+    load();
+    run("newScene");
+    const std::string l = cube("PostLeft", {-100, 0, 0}, {30, 200, 30});
+    const std::string r = cube("PostRight", {100, 0, 0}, {30, 200, 30});
+    const std::string top = cube("Lintel", {0, 200, 0}, {260, 30, 30});
+    const std::string group = run("assemblyCreate", {{"args", {l, r, top}}, {"name", "Gate"}, {"kind", "packedLevelActor"}}).get<std::string>();
+    const json dry = run("unrealPlaceAssembly", {{"args", {group}}, {"dryRun", true}, {"folder", "/Game/Kits"}});
+    CHECK(dry["levelInstance"]["kind"] == "packedLevelActor");
+    CHECK(dry["levelInstance"]["level"] == "/Game/Kits/LI_Gate");
+    CHECK(dry["levelInstance"]["groups"].size() == 3);
+    CHECK(dry["plan"]["groups"].size() == 3);
+    const std::string key = dry["levelInstance"]["key"].get<std::string>();
+    CHECK(key.size() == 16);
+    // Anything inside the assembly names it too.
+    CHECK(run("unrealPlaceAssembly", {{"args", {l}}, {"dryRun", true}})["levelInstance"]["key"] == key);
+    CHECK_THROWS(run("unrealPlaceAssembly", {{"args", {cube("Loose", {900, 0, 0}, {10, 10, 10})}}, {"dryRun", true}}));
+
+    const auto path = scratchFile("assembly.lila");
+    run("saveScene", {{"args", {path.string()}}});
+    run("openScene", {{"args", {path.string()}}});
+    const json again = run("unrealPlaceAssembly", {{"args", {"Gate"}}, {"dryRun", true}});
+    CHECK(again["levelInstance"]["key"] == key);
+    CHECK(again["levelInstance"]["kind"] == "packedLevelActor");
+
+    run("newScene");
+    const std::string c = cube("Crate", {0, 0, 0}, {50, 50, 50});
+    run("assemblyCreate", {{"args", {c}}, {"name", "Pile"}});
+    run("undo");
+    CHECK_FALSE(run("objExists", {{"args", {"Pile"}}}).get<bool>());
+}
