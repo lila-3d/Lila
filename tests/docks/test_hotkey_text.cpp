@@ -10,6 +10,7 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QElapsedTimer>
+#include <QResizeEvent>
 #include <QKeyEvent>
 #include <QWidget>
 
@@ -243,6 +244,30 @@ TEST_CASE("the cheat sheet filters by action, key and category, sorted with Othe
     CHECK_FALSE(sheet.pinned());
     sheet.pin();
     CHECK(sheet.pinned());
+}
+
+TEST_CASE("the cheat sheet keeps readable rows and scrolls when they do not fit")
+{
+    QWidget host;
+    host.resize(1400, 900);
+    HotkeyCheatSheet sheet(&host, nullptr);
+    sheet.resize(host.size());
+    REQUIRE(sheet.shownRows() > 1);
+    CHECK(sheet.lineHeight() >= 22);
+    CHECK(sheet.columns() >= 3);
+
+    // An unshown widget only gets its resize event when shown.
+    sheet.resize(520, 360);
+    QResizeEvent resized(sheet.size(), host.size());
+    QApplication::sendEvent(&sheet, &resized);
+    CHECK(sheet.lineHeight() == 22);
+    CHECK(sheet.columns() == 1);
+    REQUIRE(sheet.maxScroll() > 0);
+    sheet.scrollTo(1e9);
+    CHECK(sheet.scroll() == sheet.maxScroll());
+    sheet.filter()->setText("f10");
+    CHECK(sheet.scroll() == 0);
+    CHECK(sheet.maxScroll() == 0);
 }
 
 TEST_CASE("the cheat sheet peeks only while F1 is held; a tap, the menu or a script leaves it open to filter")

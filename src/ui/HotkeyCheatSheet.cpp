@@ -11,10 +11,12 @@
 #include <QCursor>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QLinearGradient>
 #include <QMainWindow>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointer>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <map>
@@ -29,6 +31,38 @@ QPointer<HotkeyCheatSheet> gSheet;
 constexpr qint64 kTapMs = 300;
 constexpr double kTitleHeight = 30;
 constexpr double kFilterHeight = 26;
+/** Row heights the layout tries, largest first; past the smallest the list scrolls rather than shrinking. */
+constexpr double kLineMax = 26;
+constexpr double kLineMin = 22;
+constexpr double kMinColumnWidth = 300;
+constexpr int kMaxColumns = 5;
+constexpr double kColumnGap = 36;
+/** A category shorter than this moves whole to the next column instead of splitting. */
+constexpr int kMinSplitRows = 6;
+
+double headerHeight(double line)
+{
+    return line + 8;
+}
+
+double groupGap(double line)
+{
+    return line * 0.8;
+}
+
+QFont keyFont(double line)
+{
+    QFont f = monoFont();
+    f.setPixelSize(qRound(line * 0.54));
+    return f;
+}
+
+QFont labelFont(const QFont& base, double line)
+{
+    QFont f = base;
+    f.setPixelSize(qRound(line * 0.58));
+    return f;
+}
 
 /** The main window that owns w, so tool windows (the floating shelf, floating panels) never host the sheet. */
 QWidget* mainWindowOf(QWidget* w)
@@ -121,6 +155,7 @@ HotkeyCheatSheet::HotkeyCheatSheet(QWidget* host, QWidget* focus)
     mFilter->setClearButtonEnabled(true);
     mFilter->setFocusPolicy(Qt::ClickFocus);
     connect(mFilter, &QLineEdit::textChanged, this, [this] {
+        mScroll = 0;
         applyFilter();
         update();
     });
@@ -217,6 +252,114 @@ void HotkeyCheatSheet::applyFilter()
         if (!shown.rows.empty())
             mShown.push_back(std::move(shown));
     }
+    relayout();
+}
+
+void HotkeyCheatSheet::relayout()
+{
+    const QRectF list = listRect();
+    mLayout = {};
+    if (mShown.empty() || list.width() <= 0)
+        return;
+
+    const int columns = std::clamp(int((list.width() + kColumnGap) / (kMinColumnWidth + kColumnGap)), 1, kMaxColumns);
+    const double colWidth = (list.width() - kColumnGap * (columns - 1)) / columns;
+
+    // Pours the categories down columns of height h; false when they need more columns than there are.
+    auto pour = [&](double line, double h, std::vector<Placed>* out, double* used) {
+        const double hdr = headerHeight(line);
+        int col = 0;
+        double y = 0, tallest = 0;
+        auto nextColumn = [&] {
+            tallest = std::max(tallest, y);
+            y = 0;
+            return ++col < columns;
+        };
+        auto place = [&](const Group& g, int row, bool cont) {
+            if (out)
+                out->push_back({&g, row, col, cont, QPointF(col * (colWidth + kColumnGap), y)});
+            y += row < 0 ? hdr : line;
+        };
+        for (const Group& g : mShown)
+        {
+            const int n = int(g.rows.size());
+            const double start = hdr + (n < kMinSplitRows ? n : 2) * line;
+            if (y > 0 && y + start > h && !nextColumn())
+                return false;
+            place(g, -1, false);
+            for (int i = 0; i < n; ++i)
+            {
+                if (y + line > h)
+                {
+                    if (!nextColumn())
+                        return false;
+                    place(g, -1, true);
+                }
+                place(g, i, false);
+            }
+            y += groupGap(line);
+        }
+        if (used)
+            *used = std::max(tallest, y - groupGap(line));
+        return true;
+    };
+    auto balancedHeight = [&](double line) {
+        double total = 0, tallestStart = 0;
+        for (const Group& g : mShown)
+        {
+            const int n = int(g.rows.size());
+            total += headerHeight(line) + n * line + groupGap(line);
+            tallestStart = std::max(tallestStart, headerHeight(line) + (n < kMinSplitRows ? n : 2) * line);
+        }
+        double lo = std::max(total / columns, tallestStart), hi = std::max(total, tallestStart);
+        for (int i = 0; i < 24 && hi - lo > 1; ++i)
+        {
+            const double mid = (lo + hi) / 2;
+            (pour(line, mid, nullptr, nullptr) ? hi : lo) = mid;
+        }
+        return hi;
+    };
+
+    double line = kLineMax, h = balancedHeight(line);
+    while (h > list.height() && line > kLineMin)
+        h = balancedHeight(--line);
+
+    mLayout.line = line;
+    mLayout.columns = columns;
+    mLayout.colWidth = colWidth;
+    pour(line, h, &mLayout.items, &mLayout.height);
+
+    QFontMetricsF keyFm(keyFont(line));
+    mLayout.keyWidth.assign(columns, 0.0);
+    for (const Placed& item : mLayout.items)
+        if (item.row >= 0)
+        {
+            double& w = mLayout.keyWidth[item.column];
+            w = std::max(w, keyFm.horizontalAdvance(item.group->rows[item.row].key) + 16);
+        }
+    for (double& w : mLayout.keyWidth)
+        w = std::min(w, colWidth * 0.45);
+    mScroll = std::clamp(mScroll, 0.0, maxScroll());
+}
+
+double HotkeyCheatSheet::maxScroll() const
+{
+    return std::max(0.0, mLayout.height - listRect().height());
+}
+
+void HotkeyCheatSheet::scrollTo(double y)
+{
+    const double clamped = std::clamp(y, 0.0, maxScroll());
+    if (clamped == mScroll)
+        return;
+    mScroll = clamped;
+    update();
+}
+
+void HotkeyCheatSheet::wheelEvent(QWheelEvent* e)
+{
+    scrollTo(mScroll - e->angleDelta().y() / 120.0 * mLayout.line * 3);
+    e->accept();
 }
 
 QRectF HotkeyCheatSheet::panelRect() const
@@ -224,11 +367,19 @@ QRectF HotkeyCheatSheet::panelRect() const
     return QRectF(rect()).adjusted(28, 28, -28, -28);
 }
 
+QRectF HotkeyCheatSheet::listRect() const
+{
+    QRectF list = panelRect().adjusted(28, 22, -28, -22);
+    list.setTop(list.top() + kTitleHeight + kFilterHeight + 16);
+    return list;
+}
+
 void HotkeyCheatSheet::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
     const QRectF content = panelRect().adjusted(28, 22, -28, -22);
     mFilter->setGeometry(QRectF(content.left(), content.top() + kTitleHeight, std::min(360.0, content.width()), kFilterHeight).toRect());
+    relayout();
 }
 
 bool HotkeyCheatSheet::eventFilter(QObject* obj, QEvent* e)
@@ -258,6 +409,15 @@ bool HotkeyCheatSheet::eventFilter(QObject* obj, QEvent* e)
             dismiss();
             return true;
         }
+        const double page = listRect().height() - mLayout.line * 2;
+        switch (k->key())
+        {
+        case Qt::Key_Down: scrollTo(mScroll + mLayout.line * 3); return true;
+        case Qt::Key_Up: scrollTo(mScroll - mLayout.line * 3); return true;
+        case Qt::Key_PageDown: scrollTo(mScroll + page); return true;
+        case Qt::Key_PageUp: scrollTo(mScroll - page); return true;
+        default: break;
+        }
         break;
     }
     default: break;
@@ -282,121 +442,123 @@ void HotkeyCheatSheet::paintEvent(QPaintEvent*)
     p.setFont(titleFont);
     p.setPen(themeShade(235));
     p.drawText(content, Qt::AlignLeft | Qt::AlignTop, mTitle);
+    const bool overflows = maxScroll() > 0;
     QFont hintFont = font();
-    hintFont.setPixelSize(12);
+    hintFont.setPixelSize(13);
     p.setFont(hintFont);
-    p.setPen(themeShade(130));
-    p.drawText(content, Qt::AlignRight | Qt::AlignTop, mPinned ? "F1 or Esc to close" : "release F1 to close, tap to search");
-    content.setTop(content.top() + kTitleHeight + kFilterHeight + 16);
+    p.setPen(themeShade(150));
+    QString hint = mPinned ? (overflows ? "scroll for more   F1 or Esc to close" : "F1 or Esc to close")
+                           : (overflows ? "release F1 to close, tap to scroll and search" : "release F1 to close, tap to search");
+    p.drawText(content, Qt::AlignRight | Qt::AlignTop, hint);
 
+    const QRectF list = listRect();
     if (mShown.empty())
     {
         QFont empty = font();
-        empty.setPixelSize(14);
+        empty.setPixelSize(15);
         p.setFont(empty);
-        p.setPen(themeShade(140));
-        p.drawText(content.adjusted(0, 40, 0, 0), Qt::AlignHCenter | Qt::AlignTop,
+        p.setPen(themeShade(150));
+        p.drawText(list.adjusted(0, 40, 0, 0), Qt::AlignHCenter | Qt::AlignTop,
                    mGroups.empty() ? QString("No hotkeys here") : QString("No hotkeys match \"%1\"").arg(mFilter->text()));
         return;
     }
 
-    int columns = content.width() > 1150 ? 3 : 2;
-    double colGap = 32;
-    double colWidth = (content.width() - colGap * (columns - 1)) / columns;
-
-    // Shrink the line height until the tallest column fits.
-    int totalRows = 0;
-    for (const Group& g : mShown)
-        totalRows += int(g.rows.size()) + 2;
-    double line = 22;
-    std::vector<std::vector<const Group*>> cols;
-    for (; line >= 11; line -= 1)
-    {
-        cols.assign(columns, {});
-        double target = totalRows * line / columns;
-        int col = 0;
-        double used = 0, tallest = 0;
-        for (const Group& g : mShown)
-        {
-            double h = (g.rows.size() + 2) * line;
-            if (used > 0 && used + h > target + line * 2 && col + 1 < columns)
-            {
-                tallest = std::max(tallest, used);
-                ++col;
-                used = 0;
-            }
-            cols[col].push_back(&g);
-            used += h;
-        }
-        tallest = std::max(tallest, used);
-        if (tallest <= content.height())
-            break;
-    }
-
-    QFont mono = monoFont();
-    mono.setPixelSize(int(line * 0.6));
-    QFont label = font();
-    label.setPixelSize(int(line * 0.62));
+    const double line = mLayout.line;
+    const double colWidth = mLayout.colWidth;
+    const QFont key = keyFont(line);
+    const QFont label = labelFont(font(), line);
     QFont header = label;
+    header.setPixelSize(qRound(line * 0.5));
     header.setBold(true);
     header.setCapitalization(QFont::AllUppercase);
     header.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
     QFont count = label;
-    count.setPixelSize(int(line * 0.55));
-    QFontMetricsF monoFm(mono);
-    double keyWidth = 0;
-    for (const Group& g : mShown)
-        for (const Row& r : g.rows)
-            keyWidth = std::max(keyWidth, monoFm.horizontalAdvance(r.key) + 14);
-    keyWidth = std::min(keyWidth, colWidth * 0.45);
+    count.setPixelSize(qRound(line * 0.5));
+    const QFontMetricsF keyFm(key), labelFm(label);
     const QColor accent = themeColor("accent");
 
-    for (int c = 0; c < columns; ++c)
+    p.save();
+    p.setClipRect(list);
+    p.translate(list.left(), list.top() - mScroll);
+    for (const Placed& item : mLayout.items)
     {
-        double x = content.left() + c * (colWidth + colGap);
-        double y = content.top();
-        for (const Group* g : cols[c])
+        const double x = item.pos.x(), y = item.pos.y();
+        if (y + line < mScroll || y > mScroll + list.height())
+            continue;
+        if (item.row < 0)
         {
-            QRectF band(x, y, colWidth, line);
+            QRectF band(x, y, colWidth, line + 2);
             p.setPen(Qt::NoPen);
             p.setBrush(themeShade(34, 235));
             p.drawRoundedRect(band, 3, 3);
             p.setBrush(accent);
-            p.drawRoundedRect(QRectF(band.left(), band.top() + 3, 3, band.height() - 6), 1.5, 1.5);
+            p.drawRoundedRect(QRectF(band.left(), band.top() + 4, 3, band.height() - 8), 1.5, 1.5);
             p.setFont(header);
-            p.setPen(themeShade(225));
-            p.drawText(band.adjusted(10, 0, -8, 0), Qt::AlignLeft | Qt::AlignVCenter, g->title);
+            p.setPen(themeShade(230));
+            p.drawText(band.adjusted(12, 0, -10, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                       item.cont ? item.group->title + "  (cont.)" : item.group->title);
             p.setFont(count);
-            p.setPen(themeShade(140));
-            p.drawText(band.adjusted(10, 0, -8, 0), Qt::AlignRight | Qt::AlignVCenter, QString::number(g->rows.size()));
-            y += line + 4;
-            for (const Row& r : g->rows)
-            {
-                QRectF keyRect(x + keyWidth - monoFm.horizontalAdvance(r.key) - 12, y + 2, monoFm.horizontalAdvance(r.key) + 10, line - 4);
-                p.setPen(QPen(themeShade(105), 1));
-                p.setBrush(themeShade(44, 235));
-                p.drawRoundedRect(keyRect, 3, 3);
-                p.setFont(mono);
-                p.setPen(themeShade(230));
-                p.drawText(keyRect, Qt::AlignCenter, r.key);
+            p.setPen(themeShade(155));
+            p.drawText(band.adjusted(12, 0, -10, 0), Qt::AlignRight | Qt::AlignVCenter, QString::number(item.group->rows.size()));
+            continue;
+        }
 
-                QRectF textRect(x + keyWidth + 6, y, colWidth - keyWidth - 6, line);
-                p.setFont(label);
-                p.setPen(themeShade(205));
-                QFontMetricsF fm(label);
-                QString suffix = r.context.isEmpty() ? QString() : "  " + r.context;
-                double suffixW = fm.horizontalAdvance(suffix);
-                QString text = fm.elidedText(r.label, Qt::ElideRight, textRect.width() - suffixW);
-                p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, text);
-                if (!suffix.isEmpty())
-                {
-                    p.setPen(themeShade(120));
-                    p.drawText(textRect.adjusted(fm.horizontalAdvance(text), 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, suffix);
-                }
-                y += line;
-            }
-            y += line * 0.6;
+        const Row& r = item.group->rows[item.row];
+        const double keyWidth = mLayout.keyWidth[item.column];
+        const double keyW = keyFm.horizontalAdvance(r.key);
+        QRectF keyRect(x + keyWidth - keyW - 14, y + 3, keyW + 12, line - 6);
+        p.setPen(QPen(themeShade(105), 1));
+        p.setBrush(themeShade(44, 235));
+        p.drawRoundedRect(keyRect, 3, 3);
+        p.setFont(key);
+        p.setPen(themeShade(235));
+        p.drawText(keyRect, Qt::AlignCenter, r.key);
+
+        QRectF textRect(x + keyWidth + 6, y, colWidth - keyWidth - 6, line);
+        p.setFont(label);
+        p.setPen(themeShade(215));
+        QString suffix = r.context.isEmpty() ? QString() : "  " + r.context;
+        double suffixW = labelFm.horizontalAdvance(suffix);
+        // The context tag gives way before the label is cut.
+        if (labelFm.horizontalAdvance(r.label) + suffixW > textRect.width())
+        {
+            suffix.clear();
+            suffixW = 0;
+        }
+        QString text = labelFm.elidedText(r.label, Qt::ElideRight, textRect.width() - suffixW);
+        p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, text);
+        if (!suffix.isEmpty())
+        {
+            p.setPen(themeShade(150));
+            p.drawText(textRect.adjusted(labelFm.horizontalAdvance(text), 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, suffix);
         }
     }
+    p.restore();
+
+    if (!overflows)
+        return;
+    // Fade the cut edges into the panel and draw a thumb in the right margin.
+    const QColor bg = themeShade(14, 222);
+    const double fade = line * 1.5;
+    auto edge = [&](QRectF r, bool bottom) {
+        QLinearGradient g(r.topLeft(), r.bottomLeft());
+        QColor clear = bg;
+        clear.setAlpha(0);
+        g.setColorAt(bottom ? 0 : 1, clear);
+        g.setColorAt(bottom ? 1 : 0, bg);
+        p.fillRect(r, g);
+    };
+    if (mScroll > 0)
+        edge(QRectF(list.left(), list.top(), list.width(), fade), false);
+    if (mScroll < maxScroll())
+        edge(QRectF(list.left(), list.bottom() - fade, list.width(), fade), true);
+    const double trackX = panel.right() - 14;
+    const double thumbH = std::max(24.0, list.height() * list.height() / mLayout.height);
+    const double thumbY = list.top() + (list.height() - thumbH) * (mScroll / maxScroll());
+    p.setPen(Qt::NoPen);
+    p.setBrush(themeShade(60, 200));
+    p.drawRoundedRect(QRectF(trackX, list.top(), 4, list.height()), 2, 2);
+    p.setBrush(themeShade(150, 230));
+    p.drawRoundedRect(QRectF(trackX, thumbY, 4, thumbH), 2, 2);
 }
 } // namespace lila::ui
