@@ -54,7 +54,7 @@ namespace
 namespace library = tex::library;
 using json = nlohmann::json;
 
-constexpr int kIdRole = Qt::UserRole;
+constexpr int kMaterialIdRole = Qt::UserRole;
 constexpr int kFilterRole = Qt::UserRole + 1;
 constexpr int kThumb = 96;
 
@@ -138,7 +138,7 @@ protected:
         if (items.isEmpty())
             return nullptr;
         auto* m = new QMimeData();
-        const QString id = items.front()->data(kIdRole).toString();
+        const QString id = items.front()->data(kMaterialIdRole).toString();
         m->setData(kMaterialMime, id.toUtf8());
         m->setText(id);
         return m;
@@ -282,7 +282,7 @@ struct MaterialBrowser::Impl
         for (const library::Entry& e : found)
         {
             auto* it = new QListWidgetItem(qs(e.meta.name), list);
-            it->setData(kIdRole, qs(e.id));
+            it->setData(kMaterialIdRole, qs(e.id));
             it->setToolTip(tooltipOf(e));
             if (library::isFavourite(e.id))
                 it->setText(QString::fromUtf8("★ ") + qs(e.meta.name));
@@ -357,7 +357,7 @@ struct MaterialBrowser::Impl
         QListWidgetItem* it = list->itemAt(pos);
         if (!it)
             return;
-        const std::string id = it->data(kIdRole).toString().toStdString();
+        const std::string id = it->data(kMaterialIdRole).toString().toStdString();
         QMenu menu(list);
         menu.addAction(icon("check"), "Apply to Selection", [this] { self->applySelected(); });
         const std::string set = currentTextureSet();
@@ -497,14 +497,14 @@ QStringList MaterialBrowser::shownIds() const
 {
     QStringList out;
     for (int i = 0; i < d->list->count(); ++i)
-        out << d->list->item(i)->data(kIdRole).toString();
+        out << d->list->item(i)->data(kMaterialIdRole).toString();
     return out;
 }
 
 std::string MaterialBrowser::selectedId() const
 {
     QListWidgetItem* it = d->list->currentItem();
-    return it ? it->data(kIdRole).toString().toStdString() : std::string();
+    return it ? it->data(kMaterialIdRole).toString().toStdString() : std::string();
 }
 
 void MaterialBrowser::select(const std::string& id)

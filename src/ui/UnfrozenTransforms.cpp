@@ -45,7 +45,7 @@ enum Column
     kScale,
 };
 
-constexpr int kIdRole = Qt::UserRole;
+constexpr int kUnfrozenIdRole = Qt::UserRole;
 
 QPointer<UnfrozenTransformsPanel> sPanel;
 
@@ -316,7 +316,7 @@ void UnfrozenTransformsPanel::refresh()
         const std::string name = r["name"].get<std::string>();
         auto* item = new QTreeWidgetItem(mList, {QString::fromStdString(name), triple(r["translate"]), triple(r["rotate"]), triple(r["scale"])});
         if (const scene::Node* n = g.find(name))
-            item->setData(kName, kIdRole, QVariant::fromValue<qulonglong>(n->id()));
+            item->setData(kName, kUnfrozenIdRole, QVariant::fromValue<qulonglong>(n->id()));
         // Channels that didn't put the object on the list read dimmer, so the reason stands out.
         const nlohmann::json& unfrozen = r["unfrozen"];
         for (auto [column, channel] : {std::pair{kTranslate, "translate"}, {kRotate, "rotate"}, {kScale, "scale"}})
@@ -360,7 +360,7 @@ void UnfrozenTransformsPanel::syncFromScene()
     for (int i = 0; i < mList->topLevelItemCount(); ++i)
     {
         QTreeWidgetItem* item = mList->topLevelItem(i);
-        const QVariant id = item->data(kName, kIdRole);
+        const QVariant id = item->data(kName, kUnfrozenIdRole);
         item->setSelected(id.isValid() && selected.contains(id.toULongLong()));
     }
     mSyncing = false;
