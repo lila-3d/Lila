@@ -110,6 +110,19 @@ int handleAxis(H h)
 
 bool isPlane(H h) { return h == H::PlaneYZ || h == H::PlaneXZ || h == H::PlaneXY; }
 
+/**
+ * Signed pixels of a plane-scale drag, summing its horizontal and vertical parts so it works in both screen
+ * directions and stays continuous. Each part grows the scale when it heads the way the plane's diagonal points on
+ * screen (right and up when the diagonal is edge-on along that screen axis).
+ */
+double planeScaleDrag(QPointF drag, QPointF diagonal)
+{
+    constexpr double kEdgeOn = 4.0;
+    const double sx = diagonal.x() < -kEdgeOn ? -1.0 : 1.0;
+    const double sy = diagonal.y() > kEdgeOn ? 1.0 : -1.0;
+    return sx * drag.x() + sy * drag.y();
+}
+
 /** Pivot editing moves the pivot with the move tool and orients it with the rotate tool. */
 Tool pivotTool(bool pivotEdit, Tool t)
 {
@@ -1014,14 +1027,19 @@ void Manipulator::update(QPointF px, Qt::KeyboardModifiers mods)
         {
             // A plane scales its two axes together, pulled along their diagonal.
             glm::dvec3 along = isPlane(h) ? d.frame[(ai + 1) % 3] + d.frame[(ai + 2) % 3] : d.frame[ai];
-            double f = 1.0 + (cur.x() - d.pressPx.x()) / 100.0;
+            const QPointF drag = cur - d.pressPx;
+            double f = 1.0 + drag.x() / 100.0;
             if (auto tip = mView.project(d.startPivot + along * handleLength()))
             {
                 QPointF sd = *tip - *c;
                 double len = std::hypot(sd.x(), sd.y());
-                if (len > 1e-6)
-                    f = 1.0 + QPointF::dotProduct(cur - d.pressPx, sd / len) / len;
+                if (isPlane(h))
+                    f = 1.0 + planeScaleDrag(drag, sd) / std::max(len, 40.0);
+                else if (len > 1e-6)
+                    f = 1.0 + QPointF::dotProduct(drag, sd / len) / len;
             }
+            else if (isPlane(h))
+                f = 1.0 + planeScaleDrag(drag, QPointF()) / 100.0;
             if (isPlane(h))
                 s[(ai + 1) % 3] = s[(ai + 2) % 3] = f;
             else
