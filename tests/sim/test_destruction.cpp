@@ -24,7 +24,6 @@ using json = nlohmann::json;
 
 namespace
 {
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 std::string add(const std::string& g, const char* type) { return run("gnAddNode", args({g, type})).get<std::string>(); }
 void link(const std::string& g, const std::string& from, const std::string& to) { run("gnConnect", args({g, from, to})); }
 void set(const std::string& g, const std::string& plug, json v) { run("gnSetValue", args({g, plug, v})); }
@@ -34,8 +33,6 @@ void loadDestruction()
     if (!gn::findDecl("RigidBodySolver"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_DESTRUCTION_PACKAGE) == "Destruction");
 }
-
-double frameTime(int frame) { return double(frame) / 24.0; }
 
 /** A key holding its value until the next one. */
 void keyStep(const std::string& plug, int frame, double value)

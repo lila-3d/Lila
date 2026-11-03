@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "TestUtil.h"
 #include "ops/Command.h"
 #include "extensions/ExtensionManager.h"
 #include "geo/Mesh.h"
@@ -16,20 +17,17 @@
 
 using namespace lila;
 using namespace lila::scene;
+using namespace simtest;
 using json = nlohmann::json;
 
 namespace dressing_test
 {
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
 void load()
 {
     if (!gn::findDecl("RigidBodySolver"))
         REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_DESTRUCTION_PACKAGE) == "Destruction");
 }
-
-double frameTime(int frame) { return double(frame) / 24.0; }
 
 MeshPtr evaluated(const std::string& mesh)
 {
@@ -116,10 +114,6 @@ std::string wall(const char* name, double y = 50.0)
     run("move", {{"args", {w}}, {"to", json::array({0, y, 0})}});
     return w;
 }
-} // namespace dressing_test
-
-using namespace dressing_test;
-
 TEST_CASE("freezeDestruction: the pieces at rest become static meshes with collision; undo, objects and save + reopen")
 {
     load();
@@ -425,3 +419,4 @@ TEST_CASE("exportChaos writes the pieces and their motion for a Geometry Collect
     std::error_code ec;
     std::filesystem::remove_all(folder, ec);
 }
+} // namespace dressing_test

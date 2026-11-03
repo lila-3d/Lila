@@ -215,7 +215,7 @@ int brightIn(const std::vector<uint8_t>& bgra, int x0, int x1, int y0, int y1)
     return n;
 }
 
-bool near(glm::ivec3 got, glm::ivec3 want, int tolerance = 3)
+bool closeTo(glm::ivec3 got, glm::ivec3 want, int tolerance = 3)
 {
     const glm::ivec3 d = glm::abs(got - want);
     return std::max({d.x, d.y, d.z}) <= tolerance;
@@ -242,8 +242,8 @@ TEST_CASE("viewport renderer: its pixels replace Lila's shading and Lila's overl
     CHECK(pr.probe.renders == 1);
     const auto img = draw(s, "overlays");
 
-    CHECK(near(at(img, 64, 64), {0, 0, 255}));
-    CHECK(near(at(img, 4, 120), {0, 0, 255}));
+    CHECK(closeTo(at(img, 64, 64), {0, 0, 255}));
+    CHECK(closeTo(at(img, 4, 120), {0, 0, 255}));
     CHECK(at(img, 64, 16).g > 200);
     CHECK(at(img, 64, 16).b < 60);
 }
@@ -264,7 +264,7 @@ TEST_CASE("viewport renderer: its depth hides depth-tested lines and wires behin
     REQUIRE(vr::apply(kPanel, requestFor(s), s));
     const auto img = draw(s, "depth");
 
-    CHECK(near(at(img, 20, 20), {255, 0, 0}));
+    CHECK(closeTo(at(img, 20, 20), {255, 0, 0}));
     CHECK(brightIn(img, 0, kSize / 2 - 2, 0, kSize) == 0);
     // The line's right half and the selected box's right edges.
     CHECK(brightIn(img, kSize / 2 + 2, kSize, 60, 68) > 40);
@@ -296,7 +296,7 @@ TEST_CASE("viewport renderer: switching back to Lila draws Lila's shading again"
     FrameState s = baseFrame();
     addBox(s, DrawShaded);
     REQUIRE(vr::apply(kPanel, requestFor(s), s));
-    CHECK(near(at(draw(s, "switched"), 64, 64), {0, 255, 0}));
+    CHECK(closeTo(at(draw(s, "switched"), 64, 64), {0, 255, 0}));
 
     REQUIRE(vr::select(kPanel, vr::kLila));
     CHECK(vr::selected(kPanel) == vr::kLila);
@@ -304,7 +304,7 @@ TEST_CASE("viewport renderer: switching back to Lila draws Lila's shading again"
     addBox(back, DrawShaded);
     CHECK_FALSE(vr::apply(kPanel, requestFor(back), back));
     CHECK_FALSE(back.externalScene);
-    CHECK(near(at(draw(back, "back"), 64, 64), shaded, 1));
+    CHECK(closeTo(at(draw(back, "back"), 64, 64), shaded, 1));
 }
 
 TEST_CASE("viewport renderer: a late frame shows once it arrives, and a stale one never does")
@@ -321,7 +321,7 @@ TEST_CASE("viewport renderer: a late frame shows once it arrives, and a stale on
     REQUIRE(vr::apply(kPanel, requestFor(s), s));
     CHECK(s.externalScene);
     CHECK_FALSE(s.externalColor);
-    CHECK(near(at(draw(s, "waiting"), 64, 64), {0, 0, 0}));
+    CHECK(closeTo(at(draw(s, "waiting"), 64, 64), {0, 0, 0}));
     REQUIRE(pr.probe.renders == 1);
     const vr::Request first = pr.probe.requests.back();
 
@@ -334,7 +334,7 @@ TEST_CASE("viewport renderer: a late frame shows once it arrives, and a stale on
     addBox(again, DrawShaded);
     REQUIRE(vr::apply(kPanel, requestFor(again), again));
     CHECK(pr.probe.renders == 1); // the same view: no new request
-    CHECK(near(at(draw(again, "arrived"), 64, 64), {0, 0, 255}));
+    CHECK(closeTo(at(draw(again, "arrived"), 64, 64), {0, 0, 255}));
 
     // The camera moves: a new request; its frame arrives, then the old request's frame, which is dropped.
     FrameState moved = baseFrame();
@@ -349,13 +349,13 @@ TEST_CASE("viewport renderer: a late frame shows once it arrives, and a stale on
     FrameState shown = moved;
     REQUIRE(vr::apply(kPanel, requestFor(moved), shown));
     CHECK(pr.probe.renders == 2);
-    CHECK(near(at(draw(shown, "stale"), 64, 64), {0, 255, 0}));
+    CHECK(closeTo(at(draw(shown, "stale"), 64, 64), {0, 255, 0}));
 
     // A progressive renderer refines the same request: the newer delivery wins.
     second.deliver(solid(kSize, kSize, {255, 255, 0, 255}, {}, second.serial));
     FrameState refined = moved;
     REQUIRE(vr::apply(kPanel, requestFor(moved), refined));
-    CHECK(near(at(draw(refined, "refined"), 64, 64), {255, 255, 0}));
+    CHECK(closeTo(at(draw(refined, "refined"), 64, 64), {255, 255, 0}));
 
     vr::setRedraw(kPanel, {});
 }
@@ -383,7 +383,7 @@ TEST_CASE("viewport renderer: GPU images, linear float pixels and frames of anot
         return f;
     };
     REQUIRE(vr::apply(kPanel, requestFor(s), s));
-    CHECK(near(at(draw(s, "gpuimage"), 64, 64), {255, 0, 255}));
+    CHECK(closeTo(at(draw(s, "gpuimage"), 64, 64), {255, 0, 255}));
 
     // Linear floats: 0.5 shows as its sRGB encoding.
     pr.probe.answer = [](const vr::Request& r) {
@@ -401,7 +401,7 @@ TEST_CASE("viewport renderer: GPU images, linear float pixels and frames of anot
     FrameState linear = baseFrame();
     linear.view = glm::translate(linear.view, glm::dvec3(1.0, 0.0, 0.0));
     REQUIRE(vr::apply(kPanel, requestFor(linear), linear));
-    CHECK(near(at(draw(linear, "linear"), 64, 64), {188, 0, 0}));
+    CHECK(closeTo(at(draw(linear, "linear"), 64, 64), {188, 0, 0}));
 
     // Half the size, left red and right blue: stretched over the whole view.
     pr.probe.answer = [](const vr::Request&) {
@@ -419,8 +419,8 @@ TEST_CASE("viewport renderer: GPU images, linear float pixels and frames of anot
     half.view = glm::translate(half.view, glm::dvec3(2.0, 0.0, 0.0));
     REQUIRE(vr::apply(kPanel, requestFor(half), half));
     const auto img = draw(half, "stretched");
-    CHECK(near(at(img, 20, 64), {255, 0, 0}));
-    CHECK(near(at(img, 108, 64), {0, 0, 255}));
+    CHECK(closeTo(at(img, 20, 64), {255, 0, 0}));
+    CHECK(closeTo(at(img, 108, 64), {0, 0, 255}));
 
     // A frame whose buffers don't match its size is dropped, keeping what was shown.
     pr.probe.answer = [](const vr::Request&) {
@@ -433,7 +433,7 @@ TEST_CASE("viewport renderer: GPU images, linear float pixels and frames of anot
     FrameState bad = baseFrame();
     bad.view = glm::translate(bad.view, glm::dvec3(3.0, 0.0, 0.0));
     REQUIRE(vr::apply(kPanel, requestFor(bad), bad));
-    CHECK(near(at(draw(bad, "malformed"), 20, 64), {255, 0, 0}));
+    CHECK(closeTo(at(draw(bad, "malformed"), 20, 64), {255, 0, 0}));
 }
 
 TEST_CASE("viewport renderer: buffers as a renderer keeps them, bottom up, premultiplied, unexposed, with OpenGL window depth")
@@ -476,8 +476,8 @@ TEST_CASE("viewport renderer: buffers as a renderer keeps them, bottom up, premu
     REQUIRE(vr::apply(kPanel, requestFor(s), s));
     const auto img = draw(s, "raw");
     // Red 1 at alpha 0.5, halved by the exposure, over black: 0.25 linear.
-    CHECK(near(at(img, 20, 20), {137, 0, 0}));
-    CHECK(near(at(img, 20, 108), {0, 0, 188}));
+    CHECK(closeTo(at(img, 20, 20), {137, 0, 0}));
+    CHECK(closeTo(at(img, 20, 108), {0, 0, 188}));
     CHECK(brightIn(img, 0, kSize / 2 - 2, 60, 68) == 0);
     CHECK(brightIn(img, kSize / 2 + 2, kSize, 60, 68) > 40);
 }
@@ -514,8 +514,8 @@ TEST_CASE("viewport renderer: the example extension rasterises the scene on its 
     const auto img = draw(shown, "example");
 
     // The cube's front face faces the camera: tinted by its +Z normal at full brightness. The background stays Lila's.
-    CHECK(near(at(img, 64, 50), {128, 128, 255}, 4));
-    CHECK(near(at(img, 4, 4), {0, 0, 0}));
+    CHECK(closeTo(at(img, 64, 50), {128, 128, 255}, 4));
+    CHECK(closeTo(at(img, 4, 4), {0, 0, 0}));
     // The line 600 cm away passes behind the cube's front face (550 cm) and shows either side of it.
     CHECK(brightIn(img, 54, 74, 60, 68) == 0);
     CHECK(brightIn(img, 0, 30, 60, 68) > 20);

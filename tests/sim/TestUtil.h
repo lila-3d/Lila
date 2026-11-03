@@ -13,6 +13,8 @@ using namespace lila;
 using json = nlohmann::json;
 
 inline json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
+inline json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
+inline double frameTime(int frame) { return double(frame) / 24.0; }
 inline json v3(double x, double y, double z) { return json::array({x, y, z}); }
 
 /** Keys of every curve on a layer, as text, in member order. */
