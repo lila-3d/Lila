@@ -32,6 +32,8 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_sort.h>
 
 #include <algorithm>
 #include <cctype>
@@ -248,6 +250,36 @@ std::string slotName(const std::vector<std::string>& names, int32_t id)
     return names.empty() && id == 0 ? std::string("Default") : "Material" + std::to_string(id);
 }
 
+/**
+ * Ids for keys in the order each distinct key first appears, as a map handing out ids on insertion would give them,
+ * built with a parallel sort. firsts gets the position of each key's first appearance, in id order.
+ */
+std::vector<int32_t> firstSeenIds(const std::vector<uint64_t>& keys, std::vector<uint32_t>& firsts)
+{
+    const size_t n = keys.size();
+    std::vector<uint32_t> order(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t i) { order[i] = uint32_t(i); });
+    tbb::parallel_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return keys[a] != keys[b] ? keys[a] < keys[b] : a < b; });
+    std::vector<uint32_t> head(n);
+    for (size_t i = 0; i < n;)
+    {
+        const uint32_t first = order[i];
+        for (; i < n && keys[order[i]] == keys[first]; ++i)
+            head[order[i]] = first;
+    }
+    std::vector<int32_t> rank(n, -1);
+    firsts.clear();
+    for (size_t k = 0; k < n; ++k)
+        if (head[k] == k)
+        {
+            rank[k] = int32_t(firsts.size());
+            firsts.push_back(uint32_t(k));
+        }
+    std::vector<int32_t> ids(n);
+    tbb::parallel_for(size_t(0), n, [&](size_t k) { ids[k] = rank[head[k]]; });
+    return ids;
+}
+
 Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const ExportOptions& opts)
 {
     LILA_ZONE();
@@ -309,59 +341,70 @@ Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const Expor
 
     const size_t polyCount = polyStart.size() - 1;
     g.polygonVertexIndex.resize(corners.size());
-    for (size_t i = 0; i < polyCount; ++i)
+    // Each corner's next around its polygon; the last wraps to the polygon's start.
+    std::vector<uint32_t> nextCorner(corners.size());
+    tbb::parallel_for(size_t(0), polyCount, [&](size_t i) {
         for (uint32_t k = polyStart[i]; k < polyStart[i + 1]; ++k)
         {
-            int32_t idx = pointIndex[m.cornerPoint(corners[k])];
-            g.polygonVertexIndex[k] = k + 1 == polyStart[i + 1] ? ~idx : idx;
+            const int32_t idx = pointIndex[m.cornerPoint(corners[k])];
+            const bool last = k + 1 == polyStart[i + 1];
+            g.polygonVertexIndex[k] = last ? ~idx : idx;
+            nextCorner[k] = last ? polyStart[i] : k + 1;
         }
+    });
 
     // One Edges entry per unique point pair, pointing at the polygon vertex that starts it.
     std::span<const bool> hard = m.edgeAttrs().get<bool>(geo::attr::kHard);
-    std::unordered_map<uint64_t, int32_t> seen;
-    seen.reserve(corners.size());
-    for (size_t i = 0; i < polyCount; ++i)
-        for (uint32_t k = polyStart[i]; k < polyStart[i + 1]; ++k)
-        {
-            Index a = corners[k];
-            Index b = corners[k + 1 == polyStart[i + 1] ? polyStart[i] : k + 1];
-            uint32_t pa = uint32_t(pointIndex[m.cornerPoint(a)]), pb = uint32_t(pointIndex[m.cornerPoint(b)]);
-            uint64_t key = (uint64_t(std::min(pa, pb)) << 32) | std::max(pa, pb);
-            if (!seen.emplace(key, int32_t(g.edges.size())).second)
-                continue;
-            g.edges.push_back(int32_t(k));
-            Index e = polygonEdge(m, a, b);
-            bool isHard = e != kInvalid && (hard.empty() ? normalsSplit(m, e, normals) : hard[e]);
-            g.smoothing.push_back(isHard ? 0 : 1);
-        }
+    {
+        std::vector<uint64_t> pairs(corners.size());
+        tbb::parallel_for(size_t(0), corners.size(), [&](size_t k) {
+            const uint32_t pa = uint32_t(pointIndex[m.cornerPoint(corners[k])]);
+            const uint32_t pb = uint32_t(pointIndex[m.cornerPoint(corners[nextCorner[k]])]);
+            pairs[k] = (uint64_t(std::min(pa, pb)) << 32) | std::max(pa, pb);
+        });
+        std::vector<uint32_t> firsts;
+        firstSeenIds(pairs, firsts);
+        g.edges.resize(firsts.size());
+        g.smoothing.resize(firsts.size());
+        tbb::parallel_for(size_t(0), firsts.size(), [&](size_t i) {
+            const uint32_t k = firsts[i];
+            g.edges[i] = int32_t(k);
+            const Index e = polygonEdge(m, corners[k], corners[nextCorner[k]]);
+            const bool isHard = e != kInvalid && (hard.empty() ? normalsSplit(m, e, normals) : hard[e]);
+            g.smoothing[i] = isHard ? 0 : 1;
+        });
+    }
     if (!opts.smoothingGroups)
         g.smoothing.clear();
 
-    g.normals.reserve(corners.size() * 3);
-    for (Index c : corners)
-    {
-        glm::dvec3 n = glm::normalize(normalMat * glm::dvec3(normals[c]));
-        g.normals.insert(g.normals.end(), {n.x, n.y, n.z});
-    }
+    g.normals.resize(corners.size() * 3);
+    tbb::parallel_for(size_t(0), corners.size(), [&](size_t k) {
+        const glm::dvec3 n = glm::normalize(normalMat * glm::dvec3(normals[corners[k]]));
+        g.normals[k * 3] = n.x;
+        g.normals[k * 3 + 1] = n.y;
+        g.normals[k * 3 + 2] = n.z;
+    });
 
     if (wantTangents)
     {
         std::vector<glm::vec4> tan = geo::cornerTangents(m, tris, normals);
         if (tan.size() == m.cornerCapacity())
         {
-            g.tangents.reserve(corners.size() * 3);
-            g.binormals.reserve(corners.size() * 3);
-            for (size_t k = 0; k < corners.size(); ++k)
-            {
+            g.tangents.resize(corners.size() * 3);
+            g.binormals.resize(corners.size() * 3);
+            tbb::parallel_for(size_t(0), corners.size(), [&](size_t k) {
                 const glm::vec4& t4 = tan[corners[k]];
                 glm::dvec3 n(g.normals[k * 3], g.normals[k * 3 + 1], g.normals[k * 3 + 2]);
                 glm::dvec3 t = lin * glm::dvec3(t4);
                 t = glm::length(t) > 0.0 ? glm::normalize(t) : t;
                 double w = (t4.w < 0.0f ? -1.0 : 1.0) * (mirrored ? -1.0 : 1.0);
                 glm::dvec3 b = w * glm::cross(n, t);
-                g.tangents.insert(g.tangents.end(), {t.x, t.y, t.z});
-                g.binormals.insert(g.binormals.end(), {b.x, b.y, b.z});
-            }
+                for (int i = 0; i < 3; ++i)
+                {
+                    g.tangents[k * 3 + i] = t[i];
+                    g.binormals[k * 3 + i] = b[i];
+                }
+            });
         }
     }
     if (!opts.normals)
@@ -375,15 +418,18 @@ Geometry buildGeometry(const geo::Mesh& m, const glm::dmat4& toFile, const Expor
             continue;
         Geometry::Uv layer;
         layer.name = name;
-        std::unordered_map<glm::vec2, int32_t, BitsHash<glm::vec2>, BitsEq<glm::vec2>> ids;
-        layer.index.reserve(corners.size());
-        for (Index c : corners)
-        {
-            auto [it, added] = ids.emplace(uv[c], int32_t(ids.size()));
-            if (added)
-                layer.values.insert(layer.values.end(), {double(uv[c].x), double(uv[c].y)});
-            layer.index.push_back(it->second);
-        }
+        // Equal bits share an entry, as a hash on the bits would.
+        std::vector<uint64_t> bits(corners.size());
+        tbb::parallel_for(size_t(0), corners.size(), [&](size_t k) { std::memcpy(&bits[k], &uv[corners[k]], sizeof(uint64_t)); });
+        std::vector<uint32_t> firsts;
+        const std::vector<int32_t> ids = firstSeenIds(bits, firsts);
+        layer.index.assign(ids.begin(), ids.end());
+        layer.values.resize(firsts.size() * 2);
+        tbb::parallel_for(size_t(0), firsts.size(), [&](size_t i) {
+            const glm::vec2 v = uv[corners[firsts[i]]];
+            layer.values[i * 2] = double(v.x);
+            layer.values[i * 2 + 1] = double(v.y);
+        });
         g.uvs.push_back(std::move(layer));
     }
 
