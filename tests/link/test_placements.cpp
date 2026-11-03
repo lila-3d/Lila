@@ -5,6 +5,8 @@
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
+#include "gn/Gn.h"
+#include "gn/InstanceView.h"
 #include "io/SceneFile.h"
 #include "link/Exporters.h"
 #include "link/UnrealLink.h"
@@ -17,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <set>
 
 using namespace lila;
 using namespace lila::link;
@@ -454,4 +457,176 @@ TEST_CASE("placement timeouts scale with the count; a km-wide grid of thousands 
     for (const json& p : grp["placements"])
         far = std::max(far, std::hypot(p["location"][0].get<double>(), p["location"][1].get<double>()));
     CHECK(far == doctest::Approx(std::hypot(590000.0, 590000.0)));
+}
+
+namespace
+{
+std::string gnAdd(const std::string& grp, const char* type) { return run("gnAddNode", {{"args", {grp, type}}}).get<std::string>(); }
+void gnLink(const std::string& grp, const std::string& from, const std::string& to) { run("gnConnect", {{"args", {grp, from, to}}}); }
+void gnSet(const std::string& grp, const std::string& plug, json v) { run("gnSetValue", {{"args", {grp, plug, v}}}); }
+
+/** A km-wide ground scattering two sizes of boulder as geometry nodes instances, nothing realized. */
+void buildScatter()
+{
+    run("newScene");
+    run("polyPlane", {{"width", 100.0}, {"depth", 100.0}, {"name", "Ground"}});
+    run("gnCreateGroup", {{"args", {"Boulders"}}});
+    const std::string grid = gnAdd("Boulders", "MeshGrid"), dist = gnAdd("Boulders", "DistributePointsOnFaces"),
+                      big = gnAdd("Boulders", "MeshCube"), small = gnAdd("Boulders", "MeshCube"), a = gnAdd("Boulders", "InstanceOnPoints"),
+                      b = gnAdd("Boulders", "InstanceOnPoints"), join = gnAdd("Boulders", "JoinGeometry");
+    // 1 km square at one boulder per 10000 m2.
+    gnSet("Boulders", grid + ".sizeX", 100000);
+    gnSet("Boulders", grid + ".sizeY", 100000);
+    gnSet("Boulders", dist + ".density", 0.0001);
+    gnSet("Boulders", dist + ".seed", 7);
+    gnSet("Boulders", big + ".size", json::array({400, 300, 400}));
+    gnSet("Boulders", small + ".size", json::array({80, 60, 80}));
+    gnLink("Boulders", grid + ".mesh", dist + ".mesh");
+    gnLink("Boulders", dist + ".points", a + ".points");
+    gnLink("Boulders", dist + ".points", b + ".points");
+    gnLink("Boulders", big + ".mesh", a + ".instance");
+    gnLink("Boulders", small + ".mesh", b + ".instance");
+    gnLink("Boulders", a + ".instances", join + ".geometry");
+    gnLink("Boulders", b + ".instances", join + ".geometry");
+    gnLink("Boulders", join + ".geometry", "GroupOutput.geometry");
+    run("gnApply", {{"args", {"Ground", "Boulders"}}});
+}
+} // namespace
+
+TEST_CASE("geometry nodes instances: one asset per referenced mesh, placed per instance, keyed stably")
+{
+    setup();
+    if (!ops::find("gnAddNode"))
+    {
+        gn::registerTypes();
+        gn::registerCommands();
+    }
+    buildScatter();
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const gn::InstanceViewPtr view = gn::instanceViewFor(g, g.find("Ground")->id());
+    REQUIRE(view);
+    REQUIRE(view->parts.size() == 2);
+    const size_t each = view->parts[0].transforms->size();
+    REQUIRE(each > 50);
+
+    PlacementOptions o;
+    o.assignIds = true;
+    json plan = placementPlan(g, {g.find("Ground")->id()}, o);
+    REQUIRE(plan["groups"].size() == 3);
+    const json& own = plan["groups"][0];
+    const std::string key = own["key"];
+    // The ground itself is all instances, so its own placements go.
+    CHECK(own["remove"] == true);
+    CHECK(own["placements"].empty());
+    std::set<std::string> assets;
+    for (size_t k = 1; k < 3; ++k)
+    {
+        const json& grp = plan["groups"][k];
+        const std::string gk = grp["key"];
+        CHECK(gk.starts_with(key + ":gn:"));
+        CHECK(gk.size() == key.size() + 4 + 8);
+        CHECK(grp["contentPath"] == "/Game/Lila/Instances/SM_Ground_" + gk.substr(gk.size() - 8));
+        CHECK(grp["mode"] == "hism");
+        CHECK(grp["placements"].size() == each);
+        CHECK(grp.contains("gnMesh"));
+        assets.insert(grp["contentPath"].get<std::string>());
+    }
+    CHECK(assets.size() == 2);
+    REQUIRE(plan["gnSources"].size() == 1);
+    CHECK(plan["gnSources"][0]["prefix"] == key + ":gn:");
+    CHECK(plan["gnSources"][0]["keep"].size() == 2);
+
+    // Instance 0 of the first part sits where the viewport draws it, in Unreal space, km out.
+    const json& first = plan["groups"][1]["placements"][0];
+    const glm::dvec3 at = glm::dvec3(glm::dmat4(view->parts[0].transforms->front())[3]);
+    const math::Vector ue = math::toUnreal(math::Vector(at));
+    CHECK(first["location"][0].get<double>() == doctest::Approx(ue.x).epsilon(1e-6));
+    CHECK(first["location"][1].get<double>() == doctest::Approx(ue.y).epsilon(1e-6));
+    CHECK(first["id"] == plan["groups"][1]["placements"][0]["id"]);
+    CHECK(first["customData"].size() == 1);
+
+    // Same scene, same keys: evaluating again or moving the ground keeps every group and instance key.
+    run("move", {{"args", {"Ground"}}, {"by", {0, 500, 0}}});
+    json again = placementPlan(g, {g.find("Ground")->id()}, o);
+    REQUIRE(again["groups"].size() == 3);
+    for (size_t k = 1; k < 3; ++k)
+    {
+        CHECK(again["groups"][k]["key"] == plan["groups"][k]["key"]);
+        CHECK(again["groups"][k]["placements"][5]["id"] == plan["groups"][k]["placements"][5]["id"]);
+    }
+
+    // Joining the input back in gives the ground a base mesh of its own to place.
+    const std::string join = "JoinGeometry";
+    gnLink("Boulders", "GroupInput.geometry", join + ".geometry");
+    json based = placementPlan(g, {g.find("Ground")->id()}, o);
+    CHECK_FALSE(based["groups"][0].contains("remove"));
+    CHECK(based["groups"][0]["placements"].size() == 1);
+    CHECK(based["groups"][0].contains("gnMesh"));
+}
+
+TEST_CASE("geometry nodes instances reach Unreal: their meshes written and imported, stale meshes removed")
+{
+    setup();
+    if (!ops::find("gnAddNode"))
+    {
+        gn::registerTypes();
+        gn::registerCommands();
+    }
+    buildScatter();
+    fs::path dir = fs::temp_directory_path() / "lila_link_gn_placements";
+    fs::remove_all(dir);
+    PrefStore::get().set("unreal", "/cacheDir", dir.generic_string());
+    registerExporter("fbx:instanceSource", [](const std::vector<scene::NodeId>&, const fs::path& path, std::string*) {
+        std::ofstream(path) << "fbx";
+        return true;
+    });
+    FakeServer server([](const json& req) -> std::optional<json> {
+        const std::string m = req["method"];
+        if (m == "hello")
+            return FakeServer::reply(req, {{"project", "TestGame"}, {"features", {"progress", "placements"}}});
+        if (m == "importAsset")
+            return FakeServer::reply(req, {{"assets", {req["params"]["contentPath"]}}, {"warnings", json::array()}, {"errors", json::array()}});
+        if (m == "placeInstances")
+            return FakeServer::reply(req, {{"spawned", req["params"]["placements"].size()}, {"updated", 0}, {"removed", 0}});
+        if (m == "removePlacements")
+            return FakeServer::reply(req, {{"removed", 0}});
+        return std::nullopt;
+    });
+    Link::ConnectOptions o;
+    o.port = server.port();
+    Link::get().connect(o);
+
+    json done = run("unrealPlaceInstances", {{"args", {"Ground"}}, {"wait", true}});
+    REQUIRE(done["groups"].size() == 3);
+    std::vector<json> imports, places, removals;
+    for (const json& r : server.requests())
+    {
+        if (r["method"] == "importAsset")
+            imports.push_back(r["params"]);
+        if (r["method"] == "placeInstances")
+            places.push_back(r["params"]);
+        if (r["method"] == "removePlacements")
+            removals.push_back(r["params"]);
+    }
+    REQUIRE(imports.size() == 2);
+    for (const json& i : imports)
+    {
+        // A real FBX of the referenced mesh, not the realized scatter.
+        const fs::path file = i["file"].get<std::string>();
+        REQUIRE(fs::exists(file));
+        CHECK(fs::file_size(file) > 1000);
+        CHECK(fs::file_size(file) < 100000);
+    }
+    REQUIRE(places.size() == 2);
+    CHECK(places[0]["mode"] == "hism");
+    CHECK(places[0]["label"].get<std::string>().starts_with("|Ground_"));
+    REQUIRE(removals.size() == 2);
+    CHECK(removals[0]["groups"] == json::array({done["groups"][0]["key"]}));
+    CHECK(removals[1]["prefixes"] == json::array({done["groups"][0]["key"].get<std::string>() + ":gn:"}));
+    CHECK(removals[1]["keep"].size() == 2);
+
+    unregisterExporter("fbx:instanceSource");
+    Link::get().disconnect();
+    fs::remove_all(dir);
 }

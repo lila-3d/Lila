@@ -226,6 +226,12 @@ struct PlacementOptions
  * (plan.skipped). plan.lightingChannels is lightingChannels::report with the Unreal slots and what was dropped. Groups and placements are keyed by the nodes'
  * linkId, which survives renames and reopening the scene. A group lists its root and every instance of it, wherever
  * they sit. Throws CommandError for an unknown mode.
+ *
+ * A source whose geometry nodes end in instances gets a group per mesh they reference, keyed "<source key>:gn:<mesh
+ * hash>" with an instance's placements keyed "<member key>:<instance id>" (the "id" instance attribute, else its index),
+ * and a gnMesh index into the meshes sent. Its own group then holds only the geometry beside the instances (gnMesh), or
+ * has remove set when there is none. plan.gnSources lists {prefix, keep} per such source, so Unreal can drop the meshes
+ * it no longer instances.
  */
 LILA_SCENE_API json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o);
 

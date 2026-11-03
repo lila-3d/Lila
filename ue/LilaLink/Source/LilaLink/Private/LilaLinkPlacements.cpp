@@ -833,15 +833,38 @@ TSharedPtr<FJsonValue> RemovePlacements(const TSharedPtr<FJsonObject>& Params, F
 			Tags.Add(NodeTag(V->Type == EJson::Number ? FString::Printf(TEXT("%lld"), static_cast<long long>(V->AsNumber())) : V->AsString()));
 		}
 	}
-	if (Tags.IsEmpty())
+	// Groups whose key starts with a prefix go too, unless kept: a source's geometry nodes meshes it no longer instances.
+	TArray<FString> Prefixes;
+	TSet<FString> Keep;
+	if (Params->TryGetArrayField(TEXT("prefixes"), Values))
 	{
-		OutError = TEXT("removePlacements: give groups or ids");
+		for (const TSharedPtr<FJsonValue>& V : *Values)
+		{
+			Prefixes.Add(V->AsString());
+		}
+	}
+	if (Params->TryGetArrayField(TEXT("keep"), Values))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Values)
+		{
+			Keep.Add(V->AsString());
+		}
+	}
+	if (Tags.IsEmpty() && Prefixes.IsEmpty())
+	{
+		OutError = TEXT("removePlacements: give groups, ids or prefixes");
 		return nullptr;
 	}
 	FScopedTransaction Transaction(LOCTEXT("RemovePlacements", "Lila: Remove Placements"));
 	TArray<AActor*> Doomed;
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
+		const FString Group = Prefixes.IsEmpty() ? FString() : TagValue(*It, GroupPrefix);
+		if (!Group.IsEmpty() && !Keep.Contains(Group) && Prefixes.ContainsByPredicate([&Group](const FString& P) { return Group.StartsWith(P); }))
+		{
+			Doomed.Add(*It);
+			continue;
+		}
 		for (const FName& Tag : It->Tags)
 		{
 			if (Tags.Contains(Tag))

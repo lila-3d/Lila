@@ -7,6 +7,11 @@
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
+#include "fbx/Fbx.h"
+#include "gn/Geometry.h"
+#include "gn/Gn.h"
+#include "gn/InstanceView.h"
+#include "math/MathCore.h"
 #include "link/Exporters.h"
 #include "math/Matrix.h"
 #include "math/Transform.h"
@@ -17,6 +22,7 @@
 #include "scene/Instancing.h"
 #include "scene/Light.h"
 #include "scene/LightingChannels.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
 
@@ -178,16 +184,16 @@ double stableRandom(const std::string& key)
     return double(h >> 11) / double(1ull << 53);
 }
 
-json placement(scene::Graph& g, scene::NodeId id, const std::string& key)
+/** What the registered extras add to a member's placements (Stagehand's physics), merged into one object. */
+json extrasOf(scene::Graph& g, scene::NodeId id)
 {
-    json p = placementAt(std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1})), key, g.node(id)->path());
-    p["customData"] = json::array({stableRandom(key)});
+    json out = json::object();
     for (const std::string& extraId : placementExtras().idsInOrder())
         if (const PlacementExtra* extra = placementExtras().find(extraId); extra && *extra)
             if (const json more = (*extra)(g, id); more.is_object())
                 for (const auto& [k, v] : more.items())
-                    p[k] = v;
-    return p;
+                    out[k] = v;
+    return out;
 }
 
 /** Simulated members need actors: instances of an (H)ISM can't each simulate. */
@@ -251,36 +257,160 @@ bool hasFeature(const char* feature)
     return features.is_array() && std::ranges::find(features, json(feature)) != features.end();
 }
 
-/** The node's array copies, keyed "<node key>:<copy>" so Unreal tracks each one. */
-std::vector<json> arrayPlacements(scene::Graph& g, scene::NodeId id, const std::string& key)
+/** One instance of a geometry nodes result, nested instances flattened: object-space transform and a stable id. */
+struct GnInstance
 {
-    std::vector<json> out;
-    const glm::dmat4 world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
-    const std::vector<scene::arrays::Copy> copies = scene::arrays::copiesOf(g, id);
-    for (size_t k = 0; k < copies.size(); ++k)
-        out.push_back(placementAt(copies[k].transform * world, std::format("{}:{}", key, k + 1), std::format("{}_{}", g.node(id)->path(), k + 1)));
-    return out;
-}
-} // namespace
+    glm::dmat4 xf{1.0};
+    /** The top-level instance it comes from, for its attributes. */
+    size_t top = 0;
+    std::string id;
+};
 
-Registry<PlacementExtra>& placementExtras()
+/** Every instance of one referenced mesh. */
+struct GnPart
 {
-    static Registry<PlacementExtra> r;
+    scene::MeshPtr mesh;
+    std::string hash;
+    std::vector<GnInstance> instances;
+};
+
+struct GnResult
+{
+    gn::GeometryPtr geometry;
+    /** The geometry beside the instances, realized; null when there is none. */
+    scene::MeshPtr base;
+    std::vector<GnPart> parts;
+};
+
+/** 16 hex digits of the mesh's points and topology: the same mesh hashes the same in every session. */
+std::string meshHash(const geo::Mesh& m)
+{
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void* data, size_t size) {
+        for (const auto* p = static_cast<const uint8_t*>(data); size--; ++p)
+            h = (h ^ *p) * 1099511628211ull;
+    };
+    const std::array<geo::Index, 3> counts{m.numPoints(), m.numFaces(), m.numCorners()};
+    mix(counts.data(), sizeof(counts));
+    mix(m.positions().data(), m.positions().size_bytes());
+    for (geo::Index f = 0; f < m.numFaces(); ++f)
+    {
+        const std::vector<geo::Index> corners = m.faceCorners(f);
+        mix(corners.data(), corners.size() * sizeof(geo::Index));
+    }
+    return std::format("{:016x}", h);
+}
+
+scene::MeshPtr cleanedMesh(const std::shared_ptr<const geo::Mesh>& m)
+{
+    geo::Mesh copy = *m;
+    gn::stripAnonymous(copy);
+    copy.compact();
+    return std::make_shared<const geo::Mesh>(std::move(copy));
+}
+
+void collectGn(const gn::Instances& inst, const glm::dmat4& xf, size_t top, const std::string& prefix, std::map<const geo::Mesh*, size_t>& index,
+               std::vector<GnPart>& parts, int depth)
+{
+    // Instances nest but never cycle; the cap only guards a malformed geometry.
+    if (depth > 32)
+        return;
+    const std::span<const int32_t> ids = depth == 0 ? inst.attrs.get<int32_t>("id") : std::span<const int32_t>{};
+    for (size_t k = 0; k < inst.size(); ++k)
+    {
+        const int r = inst.reference[k];
+        if (r < 0 || size_t(r) >= inst.references.size() || !inst.references[size_t(r)])
+            continue;
+        const gn::Geometry& ref = *inst.references[size_t(r)];
+        const glm::dmat4 m = xf * inst.transforms[k];
+        const size_t t = depth == 0 ? k : top;
+        const std::string id = prefix + std::to_string(k < ids.size() ? int64_t(ids[k]) : int64_t(k));
+        if (ref.mesh && ref.mesh->numFaces() > 0)
+        {
+            auto [it, added] = index.try_emplace(ref.mesh.get(), parts.size());
+            if (added)
+            {
+                scene::MeshPtr clean = cleanedMesh(ref.mesh);
+                parts.push_back({clean, meshHash(*clean), {}});
+            }
+            parts[it->second].instances.push_back({m, t, id});
+        }
+        if (ref.instances)
+            collectGn(*ref.instances, m, t, id + ".", index, parts, depth + 1);
+    }
+}
+
+/**
+ * The geometry nodes result the mesh shows, its instances grouped by the mesh they reference (identical meshes from
+ * different references merged by hash), when a gn modifier's instances are what the node shows. Nullopt otherwise.
+ */
+std::optional<GnResult> gnResultOf(scene::Graph& g, scene::NodeId mesh)
+{
+    gn::InstanceViewPtr view = gn::instanceViewFor(g, mesh);
+    if (!view)
+        return std::nullopt;
+    auto src = g.source({mesh, scene::MeshNode::kInMesh, -1});
+    gn::GeometryPtr geometry = src ? gn::modifierGeometry(src->node) : nullptr;
+    if (!geometry || !geometry->instances)
+        return std::nullopt;
+    GnResult r{geometry, view->base, {}};
+    std::map<const geo::Mesh*, size_t> index;
+    std::vector<GnPart> parts;
+    collectGn(*geometry->instances, glm::dmat4(1.0), 0, "", index, parts, 0);
+    for (GnPart& p : parts)
+    {
+        auto same = std::ranges::find(r.parts, p.hash, &GnPart::hash);
+        if (same == r.parts.end())
+            r.parts.push_back(std::move(p));
+        else
+            same->instances.insert(same->instances.end(), p.instances.begin(), p.instances.end());
+    }
+    if (r.parts.empty())
+        return std::nullopt;
     return r;
 }
 
-bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra)
+/** materialParams for one mesh: its slots but the default one. */
+json meshMaterials(scene::Graph& g, const geo::Mesh& mesh)
 {
-    if (placementExtras().contains(id))
-    {
-        log::error("extension {}: placement extra '{}' is already registered", ctx.owner(), id);
-        return false;
-    }
-    ctx.add(placementExtras(), "placementExtra", id, std::move(extra));
-    return true;
+    json out = json::array();
+    for (const auto& [slot, count] : scene::materials::slotUsage(mesh))
+        if (count > 0 && slot != scene::materials::kDefaultSlot)
+            out.push_back(materialInputs(g, slot));
+    return out;
 }
 
-json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o)
+/** Writes a mesh alone at the origin as an FBX for Unreal. Any thread. */
+bool writeMeshFbx(const scene::MeshPtr& mesh, const std::string& name, const fs::path& path, std::string* err)
+{
+    fbx::ExportScene scene;
+    scene.upAxis = math::upAxis();
+    fbx::ExportNode node;
+    node.name = name;
+    node.mesh = mesh;
+    scene.nodes.push_back(std::move(node));
+    return fbx::writeFbx(scene, path, fbx::ExportOptions{}, err);
+}
+
+/** Where a member is placed: itself, then each of its array copies keyed "<node key>:<copy>". */
+struct Spot
+{
+    glm::dmat4 world;
+    std::string key, name;
+};
+
+std::vector<Spot> spotsOf(scene::Graph& g, scene::NodeId id, const std::string& key)
+{
+    const glm::dmat4 world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
+    std::vector<Spot> out{{world, key, g.node(id)->path()}};
+    const std::vector<scene::arrays::Copy> copies = scene::arrays::copiesOf(g, id);
+    for (size_t k = 0; k < copies.size(); ++k)
+        out.push_back({copies[k].transform * world, std::format("{}:{}", key, k + 1), std::format("{}_{}", g.node(id)->path(), k + 1)});
+    return out;
+}
+
+/** placementPlan, with the meshes geometry nodes groups and bases export kept in meshes (a group's gnMesh indexes it). */
+json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o, std::vector<scene::MeshPtr>& meshes)
 {
     LILA_ZONE();
 
@@ -336,47 +466,97 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
         note = "Unreal has three lighting channels: " + note + " dropped; lights and objects left in none of the three go on channel 0";
     }
     json groups = json::array();
+    json gnSources = json::array();
+    auto group = [&](const std::string& key, const scene::Node& n, const std::string& asset, json list) {
+        const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold && !simulates(list) ? "hism" : "actors";
+        return json{{"key", key},
+                    {"source", n.fullPath()},
+                    {"sourceId", n.id()},
+                    {"contentPath", folder + "/" + asset},
+                    {"objectPath", folder + "/" + asset + "." + asset},
+                    {"mode", mode},
+                    {"collision", o.collision},
+                    {"nanite", o.nanite},
+                    {"placements", std::move(list)}};
+    };
     for (size_t k = 0; k < sources.size(); ++k)
     {
         const scene::NodeId src = sources[k];
-        const std::vector<scene::NodeId>& placed = placedOf[k];
         const scene::Node* n = g.node(src);
         const std::string groupKey = keys(src);
         const std::string asset = assetNames(src, groupKey);
-        json list = json::array();
+        // Hidden members stay out of the level: a library asset's master only supplies the mesh.
+        std::vector<scene::NodeId> placed;
+        for (scene::NodeId id : placedOf[k])
+            if (scene::effectivelyVisible(g, id))
+                placed.push_back(id);
+        std::vector<std::vector<Spot>> spots;
+        std::vector<json> components;
+        std::vector<json> bits;
+        std::vector<json> extras;
         for (scene::NodeId id : placed)
         {
-            // Hidden members stay out of the level: a library asset's master only supplies the mesh.
-            if (!scene::effectivelyVisible(g, id))
-                continue;
-            const std::string key = keys(id);
-            const size_t first = list.size();
-            list.push_back(placement(g, id, key));
-            for (json& copy : arrayPlacements(g, id, key))
-                list.push_back(std::move(copy));
-            const json components = scene::attrComponents::unrealPayload(g, id);
-            for (size_t p = first; p < list.size(); ++p)
-            {
-                list[p]["components"] = components;
-                // Array copies are the member again, so they carry what extras gave it.
-                if (p > first)
-                    for (const auto& [field, value] : list[first].items())
-                        if (!list[p].contains(field))
-                            list[p][field] = value;
-                if (o.lightingChannels)
-                    list[p]["lightingChannels"] = channelBits(lc::unrealBits(*g.node(id), unreal));
-            }
+            spots.push_back(spotsOf(g, id, keys(id)));
+            components.push_back(scene::attrComponents::unrealPayload(g, id));
+            bits.push_back(o.lightingChannels ? channelBits(lc::unrealBits(*g.node(id), unreal)) : json());
+            extras.push_back(extrasOf(g, id));
         }
-        const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold && !simulates(list) ? "hism" : "actors";
-        groups.push_back({{"key", groupKey},
-                          {"source", n->fullPath()},
-                          {"sourceId", src},
-                          {"contentPath", folder + "/" + asset},
-                          {"objectPath", folder + "/" + asset + "." + asset},
-                          {"mode", mode},
-                          {"collision", o.collision},
-                          {"nanite", o.nanite},
-                          {"placements", std::move(list)}});
+        auto finish = [&](json& p, size_t member) {
+            p["components"] = components[member];
+            if (o.lightingChannels)
+                p["lightingChannels"] = bits[member];
+        };
+
+        const std::optional<GnResult> gnr = gnResultOf(g, src);
+        json list = json::array();
+        if (!gnr || gnr->base)
+            for (size_t m = 0; m < placed.size(); ++m)
+                for (const Spot& s : spots[m])
+                {
+                    json p = placementAt(s.world, s.key, s.name);
+                    p["customData"] = json::array({stableRandom(s.key)});
+                    // Array copies are the member again, so they carry what extras gave it.
+                    for (const auto& [field, value] : extras[m].items())
+                        p[field] = value;
+                    finish(p, m);
+                    list.push_back(std::move(p));
+                }
+        json own = group(groupKey, *n, asset, std::move(list));
+        if (gnr && gnr->base)
+        {
+            own["gnMesh"] = meshes.size();
+            meshes.push_back(gnr->base);
+        }
+        else if (gnr)
+            own["remove"] = true;
+        groups.push_back(std::move(own));
+        if (!gnr)
+            continue;
+
+        // Each mesh the geometry nodes instance is an asset of its own, its instances keyed by node, copy and instance id.
+        json keep = json::array();
+        for (const GnPart& part : gnr->parts)
+        {
+            const std::string partKey = groupKey + ":gn:" + part.hash.substr(0, 8);
+            json gl = json::array();
+            for (size_t m = 0; m < placed.size(); ++m)
+                for (const Spot& s : spots[m])
+                    for (const GnInstance& inst : part.instances)
+                    {
+                        const std::string id = s.key + ":" + inst.id;
+                        json p = placementAt(s.world * inst.xf, id, s.name + "_" + inst.id);
+                        p["customData"] = json::array({stableRandom(id)});
+                        finish(p, m);
+                        gl.push_back(std::move(p));
+                    }
+            json pg = group(partKey, *n, asset + "_" + part.hash.substr(0, 8), std::move(gl));
+            pg["label"] = n->fullPath() + "_" + part.hash.substr(0, 8);
+            pg["gnMesh"] = meshes.size();
+            meshes.push_back(part.mesh);
+            groups.push_back(std::move(pg));
+            keep.push_back(partKey);
+        }
+        gnSources.push_back({{"prefix", groupKey + ":gn:"}, {"keep", std::move(keep)}});
     }
     json lightList = json::array();
     json skipped = json::array();
@@ -393,9 +573,35 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
         lightList.push_back(std::move(l));
     }
     return {{"groups", std::move(groups)},
+            {"gnSources", std::move(gnSources)},
             {"lights", std::move(lightList)},
             {"skipped", std::move(skipped)},
             {"lightingChannels", lc::report(g, use, o.lightingChannels && !use.empty(), note, &unreal)}};
+}
+
+} // namespace
+
+Registry<PlacementExtra>& placementExtras()
+{
+    static Registry<PlacementExtra> r;
+    return r;
+}
+
+bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra)
+{
+    if (placementExtras().contains(id))
+    {
+        log::error("extension {}: placement extra '{}' is already registered", ctx.owner(), id);
+        return false;
+    }
+    ctx.add(placementExtras(), "placementExtra", id, std::move(extra));
+    return true;
+}
+
+json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const PlacementOptions& o)
+{
+    std::vector<scene::MeshPtr> meshes;
+    return buildPlan(g, roots, o, meshes);
 }
 
 int placementTimeoutMs(size_t count)
@@ -454,9 +660,10 @@ void registerPlacementCommands()
             o.collision = a.get<std::string>("collision", o.collision);
             o.nanite = a.get<bool>("nanite", false);
             json plan;
+            std::vector<scene::MeshPtr> meshes;
             {
                 UndoChunk chunk("Unreal Link Ids");
-                plan = placementPlan(g, roots, o);
+                plan = buildPlan(g, roots, o, meshes);
             }
             if (plan["groups"].empty() && plan["lights"].empty())
                 throw CommandError("unrealPlaceInstances: select meshes or lights to send");
@@ -472,7 +679,8 @@ void registerPlacementCommands()
             if (!exporter)
                 throw CommandError("unrealPlaceInstances: no FBX exporter is registered");
             for (json& grp : plan["groups"])
-                grp["materials"] = materialParams(g, {scene::NodeId(grp["sourceId"].get<uint64_t>())});
+                grp["materials"] = grp.contains("gnMesh") ? meshMaterials(g, *meshes[grp["gnMesh"].get<size_t>()])
+                                                          : materialParams(g, {scene::NodeId(grp["sourceId"].get<uint64_t>())});
             try
             {
                 Link::get().ensureConnected();
@@ -487,7 +695,7 @@ void registerPlacementCommands()
                 plan["lights"] = json::array();
             }
 
-            auto job = [plan, exporter, dir = cacheDir()]() mutable {
+            auto job = [plan, meshes, exporter, dir = cacheDir()]() mutable {
                 LILA_ZONE_N("Unreal placements");
                 std::shared_ptr<RpcClient> client = Link::get().client();
                 if (!client)
@@ -497,9 +705,20 @@ void registerPlacementCommands()
                 for (json& grp : plan["groups"])
                 {
                     const std::string source = grp["source"].get<std::string>();
-                    const fs::path file = dir / (assetSafe(source) + "_instance.fbx");
+                    if (grp.value("remove", false))
+                    {
+                        // Its geometry nodes instance everything, so the source itself has nothing left to place.
+                        RpcResult removed = client->call("removePlacements", {{"groups", {grp["key"]}}}, placementTimeoutMs(0));
+                        grp["placed"] = removed.ok ? removed.result : json{{"error", removed.error}};
+                        continue;
+                    }
+                    const std::string asset = grp["contentPath"].get<std::string>();
+                    const fs::path file = dir / (assetSafe(asset.substr(asset.rfind('/') + 1)) + "_instance.fbx");
                     std::string err;
-                    if (!exporter({scene::NodeId(grp["sourceId"].get<uint64_t>())}, file, &err))
+                    const bool written = grp.contains("gnMesh")
+                                             ? writeMeshFbx(meshes[grp["gnMesh"].get<size_t>()], asset.substr(asset.rfind('/') + 1), file, &err)
+                                             : exporter({scene::NodeId(grp["sourceId"].get<uint64_t>())}, file, &err);
+                    if (!written)
                     {
                         grp["error"] = "export failed: " + err;
                         continue;
@@ -514,13 +733,19 @@ void registerPlacementCommands()
                     if (json assets = imported.result.value("assets", json::array()); assets.is_array() && !assets.empty() && assets[0].is_string())
                         mesh = assets[0].get<std::string>();
                     RpcResult placed = client->call("placeInstances", {{"group", grp["key"]},
-                                                                       {"label", source},
+                                                                       {"label", grp.value("label", source)},
                                                                        {"mesh", mesh},
                                                                        {"mode", grp["mode"]},
                                                                        {"collision", grp["collision"]},
                                                                        {"placements", grp["placements"]}},
                                                        placementTimeoutMs(grp["placements"].size()));
                     grp["placed"] = placed.ok ? placed.result : json{{"error", placed.error}};
+                }
+                // Meshes a source's geometry nodes no longer instance leave the level.
+                for (json& src : plan["gnSources"])
+                {
+                    RpcResult r = client->call("removePlacements", {{"prefixes", {src["prefix"]}}, {"keep", src["keep"]}}, placementTimeoutMs(0));
+                    src["removed"] = r.ok ? r.result : json{{"error", r.error}};
                 }
                 if (!plan["lights"].empty())
                 {
@@ -583,6 +808,9 @@ void registerPlacementCommands()
             }
             for (const json& l : plan["lights"])
                 ids.push_back(l["id"]);
+            json prefixes = json::array();
+            for (const json& src : plan["gnSources"])
+                prefixes.push_back(src["prefix"]);
             if (groups.empty() && ids.empty())
                 throw CommandError("unrealRemovePlacements: select meshes or lights whose placements to remove");
             try
@@ -596,7 +824,7 @@ void registerPlacementCommands()
             std::shared_ptr<RpcClient> client = Link::get().client();
             if (!client)
                 throw CommandError("not connected to Unreal");
-            RpcResult r = client->call("removePlacements", {{"groups", groups}, {"ids", ids}}, placementTimeoutMs(count));
+            RpcResult r = client->call("removePlacements", {{"groups", groups}, {"ids", ids}, {"prefixes", prefixes}}, placementTimeoutMs(count));
             if (!r.ok)
                 throw CommandError("unrealRemovePlacements: " + r.error);
             return r.result;
