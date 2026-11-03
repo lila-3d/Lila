@@ -21,7 +21,7 @@ using json = nlohmann::json;
 
 namespace
 {
-json run(const char* name, const json& call = json::object())
+json runMorphCmd(const char* name, const json& call = json::object())
 {
     return ops::execute(name, call);
 }
@@ -68,13 +68,13 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
         scene::registerCommands();
         ui::actions::registerBuiltins();
     }
-    run("newScene");
-    std::string base = run("polyCube", {{"name", "Base"}})[0];
-    std::string smile = run("polyCube", {{"name", "Smile"}})[0];
-    std::string morph = run("morph", {{"args", {smile, base}}});
-    std::string target = run("morphTargets", {{"args", {morph}}})[0]["node"];
-    run("select", {{"args", {base}}});
-    run("setAttr", {{"args", {target + ".weight", 0.6}}});
+    runMorphCmd("newScene");
+    std::string base = runMorphCmd("polyCube", {{"name", "Base"}})[0];
+    std::string smile = runMorphCmd("polyCube", {{"name", "Smile"}})[0];
+    std::string morph = runMorphCmd("morph", {{"args", {smile, base}}});
+    std::string target = runMorphCmd("morphTargets", {{"args", {morph}}})[0]["node"];
+    runMorphCmd("select", {{"args", {base}}});
+    runMorphCmd("setAttr", {{"args", {target + ".weight", 0.6}}});
     UndoStack::get().clear();
 
     ui::MorphTargetsPanel panel;
@@ -84,7 +84,7 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     auto* tree = panel.findChild<QTreeWidget*>();
     REQUIRE(tree);
     REQUIRE(tree->topLevelItemCount() == 1);
-    auto weight = [&] { return run("getAttr", {{"args", {target + ".weight"}}}).get<double>(); };
+    auto weight = [&] { return runMorphCmd("getAttr", {{"args", {target + ".weight"}}}).get<double>(); };
     auto slider = [&] { return panel.findChild<QSlider*>(); };
     REQUIRE(slider());
     CHECK(slider()->minimum() == 0);
@@ -104,12 +104,12 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     REQUIRE(find(&menu, "-1 to 1"));
     find(&menu, "-1 to 1")->trigger();
     settle();
-    CHECK(run("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == -1.0);
+    CHECK(runMorphCmd("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == -1.0);
     CHECK(slider()->minimum() == -1000);
     CHECK(slider()->maximum() == 1000);
     UndoStack::get().undo();
     settle();
-    CHECK(run("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == 0.0);
+    CHECK(runMorphCmd("getAttr", {{"args", {target + ".sliderMin"}}}).get<double>() == 0.0);
     CHECK(slider()->minimum() == 0);
 
     QMenu again;
@@ -117,6 +117,6 @@ TEST_CASE("morph panel: middle click resets a weight, and each target's slider r
     REQUIRE(find(&again, "Reset Weight"));
     find(&again, "Reset Weight")->trigger();
     CHECK(weight() == doctest::Approx(0.0));
-    run("newScene");
+    runMorphCmd("newScene");
     UndoStack::get().clear();
 }
