@@ -237,3 +237,59 @@ TEST_CASE("stagehand: scattered copies of one mesh become scene instances of it"
     CHECK(u["count"] == r["count"]);
     CHECK(run("selectInstances", {{"args", {u["objects"][0]}}}).size() == 1);
 }
+
+TEST_CASE("library: the starter props are built on first use, found by words and tags, and placed with their physics")
+{
+    load();
+    run("newScene");
+    const json built = run("libraryStarter");
+    const std::vector<std::string> ids = built["assets"].get<std::vector<std::string>>();
+    CHECK(ids.size() >= 30);
+    for (const char* id : {"Industrial/Crate", "Industrial/Barrel", "Industrial/Pallet", "Industrial/Beam", "Industrial/IBeam", "Industrial/PipeSegment",
+                           "Industrial/Panel", "Industrial/CableSpool", "Industrial/ScaffoldFrame", "Debris/StoneChunkS1", "Debris/StoneChunkXL3",
+                           "Debris/RubblePile", "Debris/BrokenSlab", "Debris/Rebar", "Facility/Locker", "Facility/Console", "Facility/SupplyCrate",
+                           "Facility/CableTray"})
+        CHECK(std::find(ids.begin(), ids.end(), id) != ids.end());
+    CHECK(std::filesystem::exists(std::filesystem::path(built["dir"].get<std::string>()) / "Industrial" / "Barrel" / "asset.json"));
+    // Built once: asking again finds them current.
+    CHECK_FALSE(run("libraryStarter")["built"].get<bool>());
+
+    const json rebar = run("librarySearch", {{"args", {"rebar"}}, {"tier", "starter"}});
+    REQUIRE(rebar.size() >= 2);
+    CHECK(rebar[0]["collection"] == "Debris");
+    // Small debris by tag and size: only the S and M stone chunks.
+    const json small = run("librarySearch", {{"tags", json::array({"debris", "stone"})}, {"maxSize", 50.0}, {"tier", "starter"}});
+    CHECK(small.size() == 6);
+    for (const json& a : small)
+        CHECK(a["physics"]["material"] == "stone");
+    const json hangar = run("librarySearch", {{"args", {"starfighter"}}, {"tier", "starter"}});
+    CHECK(hangar.size() >= 2);
+
+    const std::string floor = cube("Floor", {0, 0, 0}, {2000, 10, 2000});
+    const json crates = run("place", {{"args", {"Industrial/Crate"}}, {"on", floor}, {"count", 3}, {"spacing", json::array({100, 0, 0})}});
+    REQUIRE(crates.size() == 3);
+    const std::string crateMesh = crates[0]["meshes"][0].get<std::string>();
+    const json info = run("dressInfo", {{"args", {crateMesh}}})[0];
+    CHECK(info["role"] == "dynamic");
+    CHECK(info["material"] == "wood");
+    CHECK(info["shape"] == "box");
+    CHECK(info["boundsMax"][1].get<double>() - info["boundsMin"][1].get<double>() == doctest::Approx(80.0).epsilon(0.01));
+    CHECK(info["boundsMin"][1].get<double>() == doctest::Approx(10.0).epsilon(0.01));
+
+    // An I-beam and a scaffold frame collide as their parts.
+    const json beam = run("place", {{"args", {"Industrial/IBeam"}}, {"at", json::array({0, 300, 400})}, {"snap", false}});
+    const json beamInfo = run("dressInfo", {{"args", {beam[0]["meshes"][0]}}})[0];
+    CHECK(beamInfo["shape"] == "compound");
+    CHECK(beamInfo["parts"].get<int64_t>() >= 3);
+    CHECK(beamInfo["material"] == "metal");
+    const json r = run("settle", {{"args", {beam[0]["meshes"][0]}}});
+    CHECK(r["atRest"].get<bool>());
+    CHECK(r["movers"][0]["restsOn"][0] == floor);
+
+    const auto path = std::filesystem::temp_directory_path() / "lila_stagehand_level" / "starter_props.lila";
+    std::filesystem::create_directories(path.parent_path());
+    run("saveScene", {{"args", {path.string()}}});
+    run("openScene", {{"args", {path.string()}}});
+    CHECK(run("dressInfo", {{"args", {crateMesh}}})[0]["material"] == "wood");
+    CHECK(run("dressInfo", {{"args", {beam[0]["meshes"][0]}}})[0]["shape"] == "compound");
+}

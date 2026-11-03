@@ -152,6 +152,17 @@ void ensureScanned()
     LILA_ZONE();
 
     gScan = {};
+    if (starterEnabled())
+    {
+        try
+        {
+            buildStarter(false);
+        }
+        catch (const std::exception& e)
+        {
+            gScan.errors.push_back(starterDir().generic_string() + ": " + e.what());
+        }
+    }
     std::map<std::string, Asset> byId;
     std::vector<std::string> order;
     for (const Root& r : roots())
@@ -236,6 +247,8 @@ std::vector<Root> roots(bool existingOnly)
         for (const std::string& p : splitPaths(env))
             add("studio", utf8Path(p));
     add("user", tierDir("user"));
+    if (starterEnabled())
+        add("starter", starterDir());
     return out;
 }
 
@@ -245,6 +258,8 @@ fs::path tierDir(const std::string& tier)
         return lila::Workspace::get().isOpen() ? lila::Workspace::get().root() / "Library" : fs::path();
     if (tier == "user")
         return lila::PrefStore::get().userDir() / "library";
+    if (tier == "starter")
+        return starterDir();
     if (tier.empty() || tier == "studio")
         return {};
     return utf8Path(tier);

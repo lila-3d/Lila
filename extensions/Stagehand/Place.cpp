@@ -179,6 +179,8 @@ void applyPhysics(Graph& g, NodeId root, const json& physics)
     for (const char* k : {"role", "material", "shape"})
         if (physics.contains(k) && physics[k].is_string())
             call[k] = physics[k];
+    if (physics.contains("maxParts") && physics["maxParts"].is_number_integer())
+        call["maxParts"] = physics["maxParts"];
     ops::execute("physicsBody", call);
 }
 
@@ -272,7 +274,9 @@ std::optional<physics::RayHit> surfaceBelow(Graph& g, const glm::dvec3& point, c
     LILA_ZONE();
 
     g.evaluate();
-    physics::RigidScene s;
+    physics::Settings settings;
+    settings.origin = point;
+    physics::RigidScene s(settings);
     std::vector<NodeId> bodies;
     for (NodeId id : only != scene::kNoNode ? std::vector<NodeId>{only} : g.nodes())
     {
@@ -284,15 +288,8 @@ std::optional<physics::RayHit> surfaceBelow(Graph& g, const glm::dvec3& point, c
             continue;
         // Only meshes whose footprint is under the point.
         const glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-        glm::dvec3 lo(1e300), hi(-1e300);
-        for (geo::Index p = 0; p < mesh->pointCapacity(); ++p)
-            if (mesh->pointValid(p))
-            {
-                const glm::dvec3 q(w * glm::dvec4(mesh->position(p), 1.0));
-                lo = glm::min(lo, q);
-                hi = glm::max(hi, q);
-            }
-        if (point.x < lo.x || point.x > hi.x || point.z < lo.z || point.z > hi.z)
+        glm::dvec3 lo, hi;
+        if (!worldBoundsOf(g, id, lo, hi) || point.x < lo.x || point.x > hi.x || point.z < lo.z || point.z > hi.z)
             continue;
         physics::BodyDesc b;
         b.role = physics::Role::Static;
@@ -434,7 +431,7 @@ void registerLibraryCommands(ext::Context& ctx)
     const std::vector<FlagDef> queryFlags = {
         {"tags", "t", T::List, nullptr, "Only assets with every one of these tags."},
         {"collection", "c", T::String, nullptr, "Only this collection or the ones under it."},
-        {"tier", "", T::String, nullptr, "workspace, studio or user."},
+        {"tier", "", T::String, nullptr, "workspace, studio, user or starter."},
         {"maxSize", "mx", T::Float, nullptr, "Largest side at most this, cm.", {}, {}, 0.0},
         {"minSize", "mn", T::Float, nullptr, "Largest side at least this, cm.", {}, {}, 0.0},
         {"limit", "l", T::Int, int64_t(50), "At most this many; 0 for all.", {}, {}, 0.0},
@@ -491,6 +488,24 @@ void registerLibraryCommands(ext::Context& ctx)
             library::reload();
             return int64_t(library::all().size());
         },
+    });
+
+    ctx.registerCommand({
+        .name = "libraryStarter",
+        .doc = "The starter props: industrial (crates, barrels, pallets, beams, I-beams, pipes, panels, cable spools, scaffolding), "
+               "debris (stone chunks S to XL, a rubble pile, a broken slab, rebar) and facility (lockers, consoles, supply crates, "
+               "cable trays), each with physics and tags. Built from code into the user's config folder the first time the "
+               "library is used; rebuild=True writes them again. Returns dir, built and assets (ids for place).",
+        .flags = {{"rebuild", "rb", T::Bool, false, "Write the props again even if they are there."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            if (!library::starterEnabled())
+                throw CommandError("libraryStarter: the starter library is off (pref stagehand /library/starter)");
+            const json out = library::buildStarter(a.get<bool>("rebuild", false));
+            library::reload();
+            return out;
+        },
+        .examples = {"libraryStarter()['assets']", "place('Industrial/Barrel', on='Floor', count=6, spacing=[70, 0, 0])"},
     });
 
     ctx.registerCommand({

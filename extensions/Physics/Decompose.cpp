@@ -279,7 +279,11 @@ std::vector<std::vector<glm::dvec3>> decompose(const std::vector<glm::dvec3>& t,
         return out;
 
     Grid g;
-    g.h = longest / std::clamp(o.resolution, 4, 256);
+    // Slender things (a beam, a pipe) get cells fine enough across their width as well, within a budget of cells.
+    double sides[3] = {size.x, size.y, size.z};
+    std::sort(sides, sides + 3);
+    g.h = std::min(longest / std::clamp(o.resolution, 4, 256), sides[1] / 12.0);
+    g.h = std::max(g.h, std::cbrt((size.x + g.h) * (size.y + g.h) * (size.z + g.h) / 2e6));
     // Half a cell of margin all round, so surface samples on the bounds land inside the grid.
     g.lo = lo - glm::dvec3(g.h * 0.5);
     for (int k = 0; k < 3; ++k)

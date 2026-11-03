@@ -16,6 +16,8 @@
  *   workspace   <workspace>/Library/          checked in with the project
  *   studio      each folder in pref stagehand library.paths, then env LILA_LIBRARY_PATH (';' or ':' separated)
  *   user        <user prefs folder>/library/, beside the material library
+ *   starter     <user prefs folder>/starter-library/: industrial, debris and facility props built from code on first
+ *               use (pref stagehand library.starter turns it off)
  *
  * An asset is a folder <Library>/<Collection>/<Asset>/ holding asset.json, the model it names (.glb by default; .gltf,
  * .fbx, .obj and .lila load too) and thumb.png. Its id is "<Collection>/<Asset>".
@@ -56,6 +58,11 @@ struct Root
 std::vector<Root> roots(bool existingOnly = true);
 /** The folder of a writable tier: "workspace" (needs a workspace open), "user", or a studio folder by path. */
 std::filesystem::path tierDir(const std::string& tier);
+/** Where the starter props are built, and whether they are in use. */
+std::filesystem::path starterDir();
+bool starterEnabled();
+/** Builds the starter props unless they are there at the current version (or force). Returns dir, built and assets (ids). */
+json buildStarter(bool force);
 /** A path from UTF-8 text. */
 std::filesystem::path utf8Path(std::string_view utf8);
 

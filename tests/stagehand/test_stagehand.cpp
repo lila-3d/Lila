@@ -231,11 +231,11 @@ TEST_CASE("library: a saved asset is found by words, placed as instances on a su
     CHECK(added["size"][1].get<double>() == doctest::Approx(30.0));
     CHECK(added["physics"]["material"] == "wood");
 
-    // Words, prefixes and a typo all find it; a size limit rules it out.
-    CHECK(run("librarySearch", {{"args", {"crate"}}}).size() == 1);
-    CHECK(run("librarySearch", {{"args", {"wood cra"}}}).size() == 1);
-    CHECK(run("librarySearch", {{"args", {"crste"}}}).size() == 1);
-    CHECK(run("librarySearch", {{"args", {"crate"}}, {"maxSize", 20.0}}).empty());
+    // Words, prefixes and a typo all find it; a size limit rules it out. The starter props are a tier of their own.
+    CHECK(run("librarySearch", {{"args", {"crate"}}, {"tier", "studio"}}).size() == 1);
+    CHECK(run("librarySearch", {{"args", {"wood cra"}}, {"tier", "studio"}}).size() == 1);
+    CHECK(run("librarySearch", {{"args", {"crste"}}, {"tier", "studio"}}).size() == 1);
+    CHECK(run("librarySearch", {{"args", {"crate"}}, {"tier", "studio"}, {"maxSize", 20.0}}).empty());
 
     const std::string table = cube("Table", {0, 0, 0}, {120, 75, 80});
     const json placed = run("place", {{"args", {"Props/Storage/Crate"}}, {"on", table}, {"count", 2}, {"spacing", json::array({45, 0, 0})}});
