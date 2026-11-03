@@ -80,7 +80,7 @@ const std::vector<std::pair<std::string, json>>& presets()
                          {"levelToolkit"}, {{"levelToolkit", {{"width", "fit"}}}, {"stagehand.library", {{"height", 0.35}}}}, {"stagehand.library"}, "Level")},
         {"UV Editing", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "uvEditor", "channelBox", "attributeEditor", "displayLayers"},
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
-        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "channelBox", "attributeEditor"},
+        {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "channelBox", "attributeEditor", "displayLayers"},
                           {"baker", "channelBox"}, {{"baker", {{"width", 0.21}}}}, {}, {},
                           json::array({{"baker"}, {"channelBox"}}))},
         {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "scriptOutput",
