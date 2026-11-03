@@ -17,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
 
 using namespace lila;
 
@@ -29,16 +30,6 @@ using Arg = ArgType;
 // ---------------------------------------------------------------------------------------------------------------------
 // Grading through the terrain contract
 
-/** The first of the names the command takes as a flag; empty when it takes none of them. */
-std::string flagOf(const CommandDef& def, std::initializer_list<const char*> names)
-{
-    for (const char* n : names)
-        for (const FlagDef& f : def.flags)
-            if (f.name == n)
-                return n;
-    return {};
-}
-
 json xzRing(std::span<const Vec2> pts)
 {
     json a = json::array();
@@ -47,15 +38,7 @@ json xzRing(std::span<const Vec2> pts)
     return a;
 }
 
-json xyz(std::span<const glm::dvec3> pts)
-{
-    json a = json::array();
-    for (const glm::dvec3& q : pts)
-        a.push_back(json::array({q.x, q.y, q.z}));
-    return a;
-}
-
-/** Calls a contract command with the flags it declares; what it does not take is left out. Records failures. */
+/** Calls a terrain contract command on the terrain, counting the calls and keeping the first failures. */
 struct Stamper
 {
     const CommandDef* def = nullptr;
@@ -100,48 +83,70 @@ json grade(const Rebuilt& r, const Args& a, const char* cmd)
 {
     LILA_ZONE();
 
-    const std::string terrain = a.get<std::string>("terrain", "");
+    std::string terrain = a.get<std::string>("terrain", "");
+    if (terrain.empty())
+        terrain = r.values.value("ground", std::string());
+    if (terrain.empty())
+        throw CommandError(std::string(cmd) + ": give terrain= (the settlement stands on flat ground)");
     const std::string padMode = a.get<std::string>("padMode", "flatten");
     const std::string key = r.mesh.empty() ? r.modifier : r.mesh;
-    Stamper road = stamper("terrainAddFeature", terrain), pad = stamper("terrainStampPad", terrain),
-            region = stamper("terrainStampRegion", terrain);
+    Stamper pad = stamper("terrainStampPad", terrain), region = stamper("terrainStampRegion", terrain),
+            list = stamper("terrainStamps", terrain), remove = stamper("terrainStampRemove", terrain);
+    if (!pad.def || !region.def)
+        throw CommandError(std::string(cmd) + ": the terrain stamp commands (terrainStampPad, terrainStampRegion) are not available; "
+                                              "load the Terrain extension");
     const bool streets = a.get<bool>("streets", true), lots = a.get<bool>("lots", true), plazas = a.get<bool>("plazas", true);
-    if ((streets && !road.def) || (lots && !pad.def) || (plazas && !region.def))
-        throw CommandError(std::string(cmd) + ": the terrain grading commands (terrainAddFeature, terrainStampPad, "
-                                              "terrainStampRegion) are not available; load the Terrain extension");
+    const std::string layer = "City";
+    std::set<std::string> made;
     json out = json::object();
     if (streets)
     {
-        const std::string pts = flagOf(*road.def, {"points", "curve", "centreline", "centerline", "path"});
-        const std::string kind = flagOf(*road.def, {"kind", "type", "feature"});
-        const std::string width = flagOf(*road.def, {"width"});
-        const std::string cls = flagOf(*road.def, {"roadClass", "streetClass", "class"});
-        const std::string id = flagOf(*road.def, {"id", "key"});
-        if (pts.empty())
-            throw CommandError(std::string(cmd) + ": terrainAddFeature takes no points flag this settlement knows");
-        // Keyed by each street's stable id, so grading again after an edit updates the same road feature.
+        // Each street in pieces of at most a segment, each a strip graded along the road toward its lower end. Keyed by
+        // the street's stable id, so grading again after an edit replaces the same stamps.
+        const double piece = std::max(500.0, a.get<double>("segment", 5000.0));
         std::map<uint64_t, int> parts;
         for (const StreetLine& line : streetLines(r.layout, r.ground))
         {
-            if (line.surface)
+            if (line.surface || line.pts.size() < 2)
                 continue;
-            const int part = parts[line.street]++;
-            const std::string name = key + "/street/" + std::to_string(line.street) + (part ? "." + std::to_string(part) : std::string());
-            json f = {{pts, xyz(line.pts)}, {width, line.width}, {cls, className(line.cls)}, {id, name}};
-
-            if (!kind.empty())
-                f[kind] = line.cls == StreetClass::Path ? (line.profile >= 0 && r.layout.roads[size_t(line.profile)].name == "stairs" ? "stairs" : "path") : "street";
-            road.run(f);
+            std::vector<glm::dvec3> pts = {line.pts.front()};
+            for (size_t k = 0; k + 1 < line.pts.size(); ++k)
+            {
+                const glm::dvec3 a0 = line.pts[k], b0 = line.pts[k + 1];
+                const int n = std::max(1, int(std::ceil(glm::length(b0 - a0) / piece)));
+                for (int i = 1; i <= n; ++i)
+                    pts.push_back(a0 + (b0 - a0) * (double(i) / n));
+            }
+            const double half = 0.5 * line.width + 50.0;
+            for (size_t k = 0; k + 1 < pts.size(); ++k)
+            {
+                const Vec2 p0(pts[k].x, pts[k].z), p1(pts[k + 1].x, pts[k + 1].z);
+                const double len = glm::length(p1 - p0);
+                if (len < 1.0)
+                    continue;
+                const Vec2 d = (p1 - p0) / len, n(-d.y, d.x);
+                const double h0 = r.ground.height(p0), h1 = r.ground.height(p1);
+                const Vec2 down = h1 <= h0 ? d : -d;
+                const Vec2 quad[] = {p0 + n * half, p0 - n * half, p1 - n * half, p1 + n * half};
+                const std::string id = key + "/street/" + std::to_string(line.street) + "/" + std::to_string(parts[line.street]++);
+                made.insert(id);
+                region.run({{"footprint", xzRing(quad)},
+                            {"id", id},
+                            {"layer", layer},
+                            {"mode", "flatten"},
+                            {"level", "mean"},
+                            {"grade", std::abs(h1 - h0) / len * 100.0},
+                            {"direction", json::array({down.x, down.y})},
+                            {"edge", "slope"},
+                            {"falloff", std::max(300.0, half)},
+                            {"masks", json::array({"cityFootprint", "paved"})}});
+            }
         }
-        out["streets"] = road.calls;
+        out["streets"] = region.calls;
     }
+    const int streetCalls = region.calls;
     if (lots)
     {
-        const std::string fp = flagOf(*pad.def, {"footprint", "polygon", "outline", "region", "points"});
-        const std::string mode = flagOf(*pad.def, {"mode"});
-        const std::string id = flagOf(*pad.def, {"id", "key"});
-        if (fp.empty())
-            throw CommandError(std::string(cmd) + ": terrainStampPad takes no footprint flag this settlement knows");
         std::map<int, const Envelope*> byLot;
         for (const Envelope& e : r.layout.envelopes)
             byLot[e.lot] = &e;
@@ -151,27 +156,40 @@ json grade(const Rebuilt& r, const Args& a, const char* cmd)
                 continue;
             auto it = byLot.find(lot.id);
             const Polygon& shape = it != byLot.end() ? it->second->footprint : lot.outline;
-            pad.run({{fp, xzRing(shape.pts)}, {mode, padMode}, {id, key + "/lot/" + std::to_string(lot.id)}});
+            const std::string id = key + "/lot/" + std::to_string(lot.id);
+            made.insert(id);
+            pad.run({{"footprint", xzRing(shape.pts)}, {"id", id}, {"layer", layer}, {"mode", padMode}, {"masks", json::array({"cityFootprint"})}});
         }
         out["pads"] = pad.calls;
     }
     if (plazas)
     {
-        const std::string rg = flagOf(*region.def, {"region", "polygon", "outline", "footprint", "points"});
-        const std::string id = flagOf(*region.def, {"id", "key"});
-        if (rg.empty())
-            throw CommandError(std::string(cmd) + ": terrainStampRegion takes no region flag this settlement knows");
         for (const Lot& lot : r.layout.lots)
             if (lot.use == Use::Plaza)
-                region.run({{rg, xzRing(lot.outline.pts)}, {id, key + "/plaza/" + std::to_string(lot.id)}});
-        out["regions"] = region.calls;
+            {
+                const std::string id = key + "/plaza/" + std::to_string(lot.id);
+                made.insert(id);
+                region.run({{"footprint", xzRing(lot.outline.pts)}, {"id", id}, {"layer", layer}, {"mode", "flatten"},
+                            {"masks", json::array({"cityFootprint", "paved"})}});
+            }
+        out["regions"] = region.calls - streetCalls;
     }
+    // Stamps this settlement made before for parts it no longer has go.
+    json stale = json::array();
+    if (list.def && remove.def && list.run(json::object()))
+        for (const json& s : list.last.value("layers", json::object()).value(layer, json::array()))
+            if (const std::string id = s.value("id", std::string()); id.starts_with(key + "/") && !made.contains(id))
+                stale.push_back(id);
+    if (!stale.empty())
+        remove.run({{"ids", stale}, {"layer", layer}});
+    out["removed"] = stale.size();
     json errors = json::array();
-    for (const Stamper* s : {&road, &pad, &region})
+    for (const Stamper* s : {&pad, &region, &list, &remove})
         for (const json& e : s->errors)
             errors.push_back(e);
     out["errors"] = errors;
-    for (const Stamper* s : {&road, &pad, &region})
+    out["terrain"] = terrain;
+    for (const Stamper* s : {&pad, &region})
         if (s->last.is_object() && s->last.contains("revision"))
             out["revision"] = s->last["revision"];
     return out;
@@ -548,17 +566,19 @@ void registerUnrealCommands(ext::Context& ctx)
 {
     ctx.registerCommand({
         .name = "settlementGrade",
-        .doc = "Shapes a Terrain under the settlement through the terrain contract: streets as road features (graded, banked, "
-               "bridged by the terrain's road solver), lots as building pads (padMode flatten, plinth, terraced or stilts) and "
-               "squares as region stamps, each keyed by the settlement and the part, so grading again updates them. Paths on "
-               "the walkable mesh are left alone. Needs the Terrain extension. Returns the calls made per kind, the terrain "
-               "revision and any errors.",
+        .doc = "Shapes a Terrain under the settlement in its City stamp layer: streets as strips graded along the road (pieces "
+               "of at most segment), lots as building pads (padMode), squares as flat paved regions, each keyed by the "
+               "settlement and the part's stable id, so grading again replaces them and removes the stamps of parts that are "
+               "gone. Paths on the walkable mesh are left alone. Needs the Terrain extension. Returns the stamps made per kind, "
+               "those removed, the terrain revision and any errors.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"terrain", "tr", Arg::String, nullptr, "The terrain to shape (default: the one the terrain commands pick)."},
+        .flags = {{"terrain", "tr", Arg::String, nullptr, "The terrain mesh to shape (default the settlement's ground)."},
+                  {"segment", "sg", Arg::Float, 5000.0, "Longest street piece graded as one strip, cm.", {}, {}, 500.0},
                   {"streets", "st", Arg::Bool, true, "Streets as road features."},
                   {"lots", "lt", Arg::Bool, true, "Lots as building pads (the envelope's footprint where there is one)."},
                   {"plazas", "pz", Arg::Bool, true, "Squares as region stamps."},
-                  {"padMode", "pm", Arg::String, "flatten", "How pads meet the slope.", {"flatten", "plinth", "terraced", "stilts"}}},
+                  {"padMode", "pm", Arg::String, "flatten", "How pads meet the slope.",
+                   {"flatten", "carve", "raise", "blend", "plinth", "terraced", "stilts"}}},
         .run = [](const Args& a) -> json {
             const char* cmd = "settlementGrade";
             std::vector<std::string> names = a.objects();

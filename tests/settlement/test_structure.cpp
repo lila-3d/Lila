@@ -551,39 +551,39 @@ TEST_CASE("settlement: edit commands route, change and delete, undo, and survive
     CHECK(on["walkableNodes"].get<int>() > 0);
 }
 
-TEST_CASE("settlement: grading goes through the terrain contract's commands")
+TEST_CASE("settlement: grading stamps streets, lots and squares into the terrain's City layer, and again after edits")
 {
     loadSettlementPackage();
-    if (ops::find("terrainStampPad") || ops::find("terrainAddFeature") || ops::find("terrainStampRegion"))
-    {
-        MESSAGE("terrain contract commands are registered; grading is checked against the Terrain extension's own tests");
-        return;
-    }
-    CHECK_THROWS(run("settlementGrade", {{"args", {"Nothing"}}}));
-    json calls = json::object();
-    auto fake = [&](const char* name, std::vector<FlagDef> flags) {
-        ops::registerCommand({.name = name, .doc = "test stand-in", .flags = std::move(flags), .run = [&calls, name](const Args& a) -> json {
-                                  calls[name].push_back(a.flags);
-                                  return {{"revision", "r1"}};
-                              }});
-    };
-    using T = ArgType;
-    fake("terrainAddFeature", {{"kind", "", T::String, nullptr, ""}, {"points", "", T::List, nullptr, ""}, {"width", "", T::Float, nullptr, ""},
-                               {"id", "", T::String, nullptr, ""}});
-    fake("terrainStampPad", {{"footprint", "", T::List, nullptr, ""}, {"mode", "", T::String, nullptr, ""}, {"id", "", T::String, nullptr, ""}});
-    fake("terrainStampRegion", {{"region", "", T::List, nullptr, ""}, {"id", "", T::String, nullptr, ""}});
+    if (!ops::find("terrainStampPad"))
+        REQUIRE(extensions::ExtensionManager::get().load(LILA_TEST_TERRAIN_PACKAGE) == "Terrain");
     run("newScene");
-    const json made = run("settlementCreate", {{"profile", "medievalTown"}, {"size", 40000.0}, {"seed", 2}});
-    const json graded = run("settlementGrade", {{"args", {made["mesh"]}}, {"padMode", "terraced"}});
+    const json terrain = run("terrainCreate", {{"size", json::array({60000.0, 60000.0})}, {"resolution", 129}, {"amplitude", 1500.0}, {"seed", 3}});
+    const std::string ground = terrain["mesh"].get<std::string>();
+    const json made = run("settlementCreate", {{"profile", "hamlet"}, {"size", 30000.0}, {"seed", 2}, {"ground", ground}});
+    const std::string mesh = made["mesh"].get<std::string>();
+    CHECK_FALSE(run("settlementGrade", {{"args", {mesh}}, {"terrain", "NoSuchTerrain"}, {"lots", false}, {"plazas", false}})["errors"].empty());
+
+    const json graded = run("settlementGrade", {{"args", {mesh}}, {"padMode", "terraced"}, {"segment", 4000.0}});
     CAPTURE(graded.dump());
     CHECK(graded["errors"].empty());
+    CHECK(graded["terrain"] == ground);
     CHECK(graded["streets"].get<int>() > 0);
     CHECK(graded["pads"].get<int>() > 0);
-    CHECK(graded["revision"] == "r1");
-    REQUIRE(calls.contains("terrainStampPad"));
-    CHECK(calls["terrainStampPad"][0]["mode"] == "terraced");
-    CHECK(calls["terrainStampPad"][0]["footprint"].size() >= 3);
-    CHECK(calls["terrainAddFeature"][0]["points"][0].size() == 3);
-    for (const char* n : {"terrainAddFeature", "terrainStampPad", "terrainStampRegion"})
-        ops::unregisterCommand(n);
+    CHECK(graded.contains("revision"));
+    const json stamps = run("terrainStamps", {{"args", {ground}}});
+    const json city = stamps["layers"]["City"];
+    CHECK(int(city.size()) == graded["streets"].get<int>() + graded["pads"].get<int>() + graded.value("regions", 0));
+    int terraced = 0;
+    for (const json& s : city)
+        terraced += s.value("mode", std::string()) == "terraced";
+    CHECK(terraced == graded["pads"].get<int>());
+
+    // Without the buildings, grading again replaces the street stamps and removes every pad.
+    run("setAttr", {{"args", {made["modifier"].get<std::string>() + ".blocks", false}}});
+    const json again = run("settlementGrade", {{"args", {mesh}}});
+    CAPTURE(again.dump());
+    CHECK(again["errors"].empty());
+    CHECK(again["pads"].get<int>() == 0);
+    CHECK(again["removed"].get<int>() >= graded["pads"].get<int>());
+    CHECK(run("terrainStamps", {{"args", {ground}}})["layers"]["City"].size() == size_t(again["streets"].get<int>()));
 }
