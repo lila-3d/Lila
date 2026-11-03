@@ -408,6 +408,25 @@ void choiceField(Page& p, const char* label, const char* key, std::vector<std::p
     addRow(p, label, box, k, fallback);
 }
 
+/** A combo of whole-number values. A stored value that isn't among them (set from a script) joins the list. */
+void intChoiceField(Page& p, const char* label, const char* key, std::vector<std::pair<QString, int>> options, int fallback)
+{
+    auto* box = new QComboBox;
+    const int current = PrefStore::get().value<int>(p.file, key, fallback);
+    if (std::none_of(options.begin(), options.end(), [&](const auto& o) { return o.second == current; }))
+        options.emplace_back(QString::number(current), current);
+    for (auto& [text, value] : options)
+    {
+        box->addItem(text, value);
+        if (value == current)
+            box->setCurrentIndex(box->count() - 1);
+    }
+    std::string file = p.file, k = key;
+    QObject::connect(box, &QComboBox::currentIndexChanged, box, [box, file, k](int) { PrefStore::get().set(file, k, box->currentData().toInt()); });
+    setComboDefault(box, box->findData(fallback));
+    addRow(p, label, box, k, fallback);
+}
+
 void toggleField(Page& p, const char* label, const char* key, bool fallback)
 {
     auto* c = new QCheckBox;
@@ -782,6 +801,14 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         }
         toggleField(viewport, "Temporal (smooths shading shimmer)", vd::kTaa, true);
         numberField(viewport, "Still frames averaged", vd::kAccumulate, 16.0, 1.0, 256.0, 1.0, 0);
+        sectionHeader(viewport, "Frame Rate");
+        intChoiceField(viewport, "Max frame rate", vd::kFrameCap,
+                       {{"Display refresh", render::kFrameCapRefresh}, {"30", 30}, {"60", 60}, {"75", 75}, {"90", 90}, {"120", 120}, {"144", 144},
+                        {"165", 165}, {"240", 240}, {"Unlimited", 0}},
+                       render::kFrameCapRefresh);
+        intChoiceField(viewport, "In background", vd::kBackgroundFrameCap,
+                       {{"Same as above", 0}, {"10", 10}, {"15", 15}, {"30", 30}, {"60", 60}}, vd::kDefaultBackgroundFrameCap);
+        toggleField(viewport, "VSync", vd::kVsync, false);
         sectionHeader(viewport, "Grid");
         toggleField(viewport, "Show grid", vd::kGrid, true);
         numberField(viewport, "Spacing (cm)", "/grid/spacing", 10.0, 0.1, 10000.0, 1.0, 1);

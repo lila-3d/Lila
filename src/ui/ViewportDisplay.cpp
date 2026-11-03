@@ -17,6 +17,9 @@
 #include "ui/Theme.h"
 #include "scene/SceneIndex.h"
 
+#include <QGuiApplication>
+#include <QScreen>
+
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -31,6 +34,8 @@ void apply(render::FrameState& s)
     s.msaaSamples = render::msaaSamples(p.value<bool>("general", kAaEnabled, true), p.value<int>("general", kAaSamples, kDefaultSamples), 0xFFu);
     s.taa = p.value<bool>("general", kTaa, true);
     s.accumulate = std::clamp(p.value<int>("general", kAccumulate, 16), 1, 256);
+    s.frameCap = frameCap();
+    s.vsync = p.value<bool>("general", kVsync, false);
     s.grid = p.value<bool>("general", kGrid, true);
     s.backfaceCulling = p.value<bool>("general", kBackfaceCulling, false);
     s.xray = p.value<bool>("general", kXray, false);
@@ -56,6 +61,28 @@ void apply(render::FrameState& s)
     applyPostProcess(s, p.value<bool>("general", kPostEffects, true));
     applyLights(s);
     s.rtShadows = p.value<bool>("general", kRtShadows, true);
+}
+
+int frameCap()
+{
+    const PrefStore& p = PrefStore::get();
+    const int cap = std::max(p.value<int>("general", kFrameCap, render::kFrameCapRefresh), render::kFrameCapRefresh);
+    const int background = std::max(p.value<int>("general", kBackgroundFrameCap, kDefaultBackgroundFrameCap), 0);
+    if (background == 0 || QGuiApplication::applicationState() == Qt::ApplicationActive)
+        return cap;
+    // A foreground cap already below the background one stays.
+    return cap > 0 && cap < background ? cap : background;
+}
+
+double frameInterval()
+{
+    const int cap = frameCap();
+    if (cap > 0)
+        return 1.0 / cap;
+    if (cap == render::kFrameCapRefresh)
+        if (QScreen* screen = QGuiApplication::primaryScreen(); screen && screen->refreshRate() > 1.0)
+            return 1.0 / screen->refreshRate();
+    return cap == 0 ? 0.0 : 1.0 / 60.0;
 }
 
 namespace

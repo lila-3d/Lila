@@ -12,6 +12,9 @@
 
 namespace lila::render
 {
+/** FrameState::frameCap: draw at the display's refresh rate. */
+inline constexpr int kFrameCapRefresh = -1;
+
 struct LineVertex
 {
     glm::vec3 pos;
@@ -227,6 +230,10 @@ struct FrameState
     bool taa = true;
     /** Jittered frames a still view keeps drawing and averaging after it changes, for a supersampled result; 1 stops at once. */
     int accumulate = 16;
+    /** Most frames a second the view draws: kFrameCapRefresh for the display's refresh rate, 0 for no limit. */
+    int frameCap = kFrameCapRefresh;
+    /** Presents in FIFO, waiting for each vblank; otherwise mailbox where the surface offers it. */
+    bool vsync = false;
     PostSettings post;
     /**
      * Depth of field: the camera's aperture radius (cm; 0 for none) and focus distance along the view. With temporal

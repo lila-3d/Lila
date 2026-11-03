@@ -11,6 +11,7 @@
 #include "ui/GraphEditor.h"
 #include "ui/UiCommands.h"
 #include "ui/UiCommon.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QApplication>
 #include <QDockWidget>
@@ -76,6 +77,8 @@ struct Player
     anim::PlaybackSpeed speed = anim::PlaybackSpeed::RealTime;
     double customSpeed = 1.0;
     int direction = 0;
+    /** When the every-frame speeds last stepped. */
+    double lastStep = -1.0;
 
     double now() const { return double(wall.nsecsElapsed()) * 1e-9; }
 
@@ -94,6 +97,7 @@ struct Player
             t = dir > 0 ? p.minTime : p.maxTime;
         setTime(t);
         wall.start();
+        lastStep = -1.0;
         clock.reset(std::llround(anim::frameOf(t)), now());
         startTimer();
         audio::playbackStarted(t, dir, soundSpeed(p));
@@ -107,7 +111,7 @@ struct Player
         speed = anim::playback().speed;
         customSpeed = anim::playback().customSpeed;
         // Free playback ticks whenever the event loop is idle; the clocked speeds poll often enough to hit each frame.
-        timer->start(speed == anim::PlaybackSpeed::EveryFrame ? 0 : 2);
+        timer->start(speed == anim::PlaybackSpeed::EveryFrame && viewportDisplay::frameInterval() <= 0.0 ? 0 : 2);
     }
 
     void stop()
@@ -149,8 +153,17 @@ struct Player
                 return;
             clock.frame = next;
         }
-        else if (!clock.advance(p.speed, p.fps, direction, now(), p.customSpeed))
-            return;
+        else
+        {
+            // Every-frame speeds step no faster than the viewport's frame cap draws, or the frames between draws never show.
+            const double interval = viewportDisplay::frameInterval();
+            if (anim::playsEveryFrame(p.speed) && now() - lastStep < interval)
+                return;
+            if (!clock.advance(p.speed, p.fps, direction, now(), p.customSpeed))
+                return;
+            // On the cap's schedule, so the timer's late ticks don't add up to a rate under it.
+            lastStep = now() - lastStep < 2.0 * interval ? lastStep + interval : now();
+        }
         int64_t frame = clock.frame;
         bool wrapped = false;
         if (frame > last || frame < first)

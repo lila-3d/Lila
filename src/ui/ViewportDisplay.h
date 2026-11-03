@@ -19,6 +19,13 @@ inline constexpr const char* kAaSamples = "/viewport/aa/samples"; // 1, 2, 4 or 
 /** Temporal antialiasing, and how many jittered frames a still view averages after each change. */
 inline constexpr const char* kTaa = "/viewport/aa/temporal";
 inline constexpr const char* kAccumulate = "/viewport/aa/accumulate";
+/** Most frames a second a view draws: render::kFrameCapRefresh (the display's rate, default), 0 for no limit, or fps. */
+inline constexpr const char* kFrameCap = "/viewport/frameCap";
+/** The cap while another app has focus; 0 keeps the foreground cap. */
+inline constexpr const char* kBackgroundFrameCap = "/viewport/backgroundFrameCap";
+inline constexpr int kDefaultBackgroundFrameCap = 30;
+/** FIFO presentation: waits for each vblank instead of mailbox's newest-frame-wins. */
+inline constexpr const char* kVsync = "/viewport/vsync";
 /** Inside the resolution gate: broadcast action and title safe frames, and rule-of-thirds lines. */
 inline constexpr const char* kSafeFrames = "/viewport/safeFrames";
 /** Shadows traced against the scene for up to four lights: exact contacts, soft by each light's size, on GPUs with ray tracing. */
@@ -137,6 +144,11 @@ LILA_UI_API glm::vec3 keyTickColor();
 
 /** Copies the prefs above onto a frame. */
 LILA_UI_API void apply(render::FrameState& s);
+
+/** The frame cap in force now: the background cap while another app has focus. render::kFrameCapRefresh, 0 (none) or fps. */
+LILA_UI_API int frameCap();
+/** Seconds between frames under frameCap(), at the primary screen's refresh rate for kFrameCapRefresh; 0 uncapped. */
+LILA_UI_API double frameInterval();
 
 /** Shaded meshes ignore their materials and draw the plain default one. */
 LILA_UI_API bool defaultMaterial();

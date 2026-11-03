@@ -555,6 +555,9 @@ struct Viewport
     std::chrono::steady_clock::time_point convergeAt{};
     std::chrono::duration<double> refreshInterval{1.0 / 60.0};
     std::chrono::steady_clock::time_point refreshCheck{}; // the monitor's rate is read again after this, as windows move
+    /** A new state waits until this to draw, which holds the view to its frame cap. */
+    std::chrono::steady_clock::time_point drawAt{};
+    bool vsync = false; // the present mode the swapchain was made with
     VkDescriptorSet rtaoSet = VK_NULL_HANDLE, bevelSet = VK_NULL_HANDLE, shadowSet = VK_NULL_HANDLE;
     uint64_t rtaoGeneration = 0, bevelGeneration = 0, shadowGeneration = 0; // Impl::tlasGeneration the sets point at
     Image bevel;    // rounded normals from the bevel pass
@@ -1016,7 +1019,7 @@ struct Renderer::Impl
         sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         sci.preTransform = caps.currentTransform;
         sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        sci.presentMode = presentMode(v.surface);
+        sci.presentMode = presentMode(v.surface, v.vsync);
         sci.clipped = VK_TRUE;
         sci.oldSwapchain = old;
         if (VkResult r = vkCreateSwapchainKHR(vk.device, &sci, nullptr, &v.swapchain); r != VK_SUCCESS)
@@ -4158,24 +4161,46 @@ struct Renderer::Impl
     /**
      * Mailbox where the surface has it: the display takes the newest finished frame at each vblank, so a camera drag
      * shows within a vblank of the input instead of behind FIFO's queue of older frames, and a view never blocks the
-     * render thread (and the other views) waiting for its vblank. Drawing is on demand, so the GPU only runs ahead
-     * while something changes.
+     * render thread (and the other views) waiting for its vblank. Drawing is on demand and held to the frame cap, so
+     * the GPU only runs while something changes. VSync asks for FIFO, which always exists.
      */
-    VkPresentModeKHR presentMode(VkSurfaceKHR surface)
+    VkPresentModeKHR presentMode(VkSurfaceKHR surface, bool vsync)
     {
         uint32_t n = 0;
         vkGetPhysicalDeviceSurfacePresentModesKHR(vk.physical, surface, &n, nullptr);
         std::vector<VkPresentModeKHR> modes(n);
         vkGetPhysicalDeviceSurfacePresentModesKHR(vk.physical, surface, &n, modes.data());
-        bool mailbox = std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end();
-        if (!presentModeLogged)
+        bool mailbox = !vsync && std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end();
+        const VkPresentModeKHR mode = mailbox ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+        if (mode != loggedPresentMode)
         {
-            presentModeLogged = true;
+            loggedPresentMode = mode;
             log::info("render: {} presentation", mailbox ? "mailbox" : "fifo");
         }
-        return mailbox ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR;
+        return mode;
     }
-    bool presentModeLogged = false;
+    VkPresentModeKHR loggedPresentMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
+
+    /** The display's refresh period, read again each second as windows move between monitors. */
+    std::chrono::duration<double> refreshPeriod(Viewport& v)
+    {
+        if (v.refreshCheck <= std::chrono::steady_clock::now())
+        {
+            v.refreshInterval = std::chrono::duration<double>(1.0 / refreshHz(v.window));
+            v.refreshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        }
+        return v.refreshInterval;
+    }
+
+    /** The shortest time between two of the view's frames under its frame cap; zero when uncapped. */
+    std::chrono::steady_clock::duration frameInterval(Viewport& v)
+    {
+        const int cap = v.state.frameCap;
+        const std::chrono::duration<double> d = cap == kFrameCapRefresh ? refreshPeriod(v)
+                                                : cap > 0               ? std::chrono::duration<double>(1.0 / cap)
+                                                                        : std::chrono::duration<double>(0.0);
+        return std::chrono::duration_cast<std::chrono::steady_clock::duration>(d);
+    }
 
     /** Per-frame numbers for a performance trace, from the last frame the GPU finished. */
     void plotFrame(const Renderer::FrameStats& t)
@@ -4232,6 +4257,11 @@ struct Renderer::Impl
         applyMsaa(s);
         if (v.msaaGeneration != msaaGeneration)
             v.needsRecreate = true;
+        if (v.vsync != s.vsync && !v.offscreen)
+        {
+            v.vsync = s.vsync;
+            v.needsRecreate = true;
+        }
 
         // Not every driver reports a child window's resize through OUT_OF_DATE, so compare against the window itself.
         if (v.swapchain && !v.needsRecreate && !v.offscreen)
@@ -6022,6 +6052,12 @@ struct Renderer::Impl
         task.reset();
     }
 
+    /** A new state once its frame cap allows, or the next frame of an accumulation. */
+    static bool due(const Viewport& v, std::chrono::steady_clock::time_point now)
+    {
+        return v.hasState && ((v.pending && now >= v.drawAt) || (v.converging && now >= v.convergeAt));
+    }
+
     void loop()
     {
         LILA_THREAD_NAME("Render");
@@ -6037,26 +6073,36 @@ struct Renderer::Impl
             // A viewport with no frame state yet can't draw, and waking for it would spin with the mutex held.
             const auto now = std::chrono::steady_clock::now();
             for (auto& [id, v] : viewports)
-                if (v->hasState && (v->pending || (v->converging && now >= v->convergeAt)))
+                if (due(*v, now))
                     return true;
             return false;
         };
-        auto nextConverge = [&] {
+        auto nextWake = [&] {
             std::optional<std::chrono::steady_clock::time_point> next;
+            auto consider = [&](std::chrono::steady_clock::time_point t) {
+                if (!next || t < *next)
+                    next = t;
+            };
             for (auto& [id, v] : viewports)
-                if (v->converging && v->hasState && (!next || v->convergeAt < *next))
-                    next = v->convergeAt;
+            {
+                if (!v->hasState)
+                    continue;
+                if (v->converging)
+                    consider(v->convergeAt);
+                if (v->pending)
+                    consider(v->drawAt);
+            }
             return next;
         };
         while (true)
         {
             // Big uploads leave big staging buffers, slow to free: they go once the GPU is done with them, while the
             // thread is idle, instead of in front of the next frame drawn into the same slot.
-            const auto converge = nextConverge();
+            const auto wake = nextWake();
             if (reclaimStaging())
                 cv.wait_for(lock, std::chrono::milliseconds(20), ready);
-            else if (converge)
-                cv.wait_until(lock, *converge, ready);
+            else if (wake)
+                cv.wait_until(lock, *wake, ready);
             else
                 cv.wait(lock, ready);
             if (quit)
@@ -6104,10 +6150,17 @@ struct Renderer::Impl
             for (auto& [id, vp] : viewports)
             {
                 Viewport& v = *vp;
-                if (!v.hasState || !(v.pending || (v.converging && std::chrono::steady_clock::now() >= v.convergeAt)))
+                if (!due(v, std::chrono::steady_clock::now()))
                     continue;
                 v.pending = false;
                 v.converging = false;
+                {
+                    // Waits wake late on Windows, so frames keep to the cap's schedule instead of restarting it from
+                    // each late wake, which would land well under the cap. A view idle for longer starts afresh.
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto interval = frameInterval(v);
+                    v.drawAt = now - v.drawAt < interval ? v.drawAt + interval : now + interval;
+                }
                 if (!v.surface)
                 {
                     v.surface = createSurface(vk.instance, v.window);
@@ -6141,19 +6194,18 @@ struct Renderer::Impl
                 ++v.timing.frames;
                 v.stats = v.timing;
                 if (retry && v.retries++ < 3)
+                {
                     v.pending = true;
-                // Still converging on the same state: draw it again a refresh later, unless a new state comes first.
-                // Mailbox presentation never blocks, so without this the same image redraws thousands of times a second.
+                    v.drawAt = {};
+                }
+                // Still converging on the same state: draw it again a refresh (or the cap, if longer) later, unless a
+                // new state comes first. Mailbox presentation never blocks, so without this the same image redraws
+                // thousands of times a second.
                 else if (v.wantsMore && !retry)
                 {
-                    if (v.refreshCheck <= std::chrono::steady_clock::now())
-                    {
-                        v.refreshInterval = std::chrono::duration<double>(1.0 / refreshHz(v.window));
-                        v.refreshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-                    }
                     v.converging = true;
                     v.convergeAt = std::chrono::steady_clock::now() +
-                                   std::chrono::duration_cast<std::chrono::steady_clock::duration>(v.refreshInterval);
+                                   std::max(std::chrono::duration_cast<std::chrono::steady_clock::duration>(refreshPeriod(v)), frameInterval(v));
                 }
             }
         }
