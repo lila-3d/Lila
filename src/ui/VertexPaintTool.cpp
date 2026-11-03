@@ -1216,8 +1216,7 @@ private:
                 if (geo::Index v = mCornerVertex[c]; v != geo::kInvalid && v < dv.vertices.size())
                     dv.vertices[v].color = colors[c];
             });
-            dv.allDirty = true;
-            dv.dirty.clear();
+            dv.markAllDirty();
         }
         else
             for (geo::Index c : changed)

@@ -213,8 +213,7 @@ void restoreLive(const render::RenderMesh& built)
     LILA_ZONE();
     std::scoped_lock lock(built.dynamic->mutex);
     built.dynamic->vertices.assign(built.vertices.begin(), built.vertices.end());
-    built.dynamic->allDirty = true;
-    built.dynamic->dirty.clear();
+    built.dynamic->markAllDirty();
     it->second = &built;
 }
 
@@ -305,8 +304,7 @@ Entry rebuildPositions(const scene::MeshPtr& source, const Entry& from, uint64_t
         {
             std::scoped_lock lock(live.vertices->mutex);
             live.vertices->vertices.assign(out->vertices.begin(), out->vertices.end());
-            live.vertices->allDirty = true;
-            live.vertices->dirty.clear();
+            live.vertices->markAllDirty();
         }
         out->dynamic = live.vertices;
         out->key = live.key;

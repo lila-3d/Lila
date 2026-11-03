@@ -1,6 +1,7 @@
 #include "ui/ViewportDisplay.h"
 
 #include "core/Paths.h"
+#include "core/Profile.h"
 #include "core/PrefStore.h"
 #include "render/CubeLut.h"
 #include "render/DisplayOptions.h"
@@ -118,6 +119,7 @@ void applyDome(render::FrameState& s, const scene::lights::Settings& l, const gl
 
 void applyLights(render::FrameState& s)
 {
+    LILA_ZONE();
     namespace lights = scene::lights;
     s.lights.clear();
     const scene::Graph& cg = scene::Graph::current();
@@ -227,6 +229,7 @@ void applyLens(render::FrameState& s, const scene::camera::Lens& lens)
 
 void applyPostProcess(render::FrameState& s, bool effects)
 {
+    LILA_ZONE();
     namespace pp = scene::postProcess;
     s.post = {};
     const scene::Graph& g = scene::Graph::current();

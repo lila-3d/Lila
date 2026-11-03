@@ -2502,6 +2502,8 @@ struct Renderer::Impl
                 continue;
             }
             DynamicVertices& dv = *d.mesh->dynamic;
+            if (!dv.pending.exchange(false, std::memory_order_acquire) && it->second.keep == d.mesh)
+                continue;
             regions.clear();
             data.clear();
             {
@@ -2634,9 +2636,15 @@ struct Renderer::Impl
         for (auto& [key, t] : textures)
             if (key < kFlatNormalKey && stale(t.lastUsed))
                 deadTextures.push_back(key);
+        // Kept records bind their sets without looking them up again, so lastUsed alone can't tell they are in use.
+        std::unordered_set<VkDescriptorSet> recorded;
+        for (auto& [id, v] : viewports)
+            if (v->keptRecordsValid)
+                for (const SectionRecord& r : v->keptRecords)
+                    recorded.insert(r.set);
         std::vector<std::array<uint64_t, kMaterialBindings>> deadSets;
         for (auto& [keys, set] : materialSets)
-            if (stale(set.lastUsed) || std::ranges::any_of(keys, [&](uint64_t k) { return std::ranges::find(deadTextures, k) != deadTextures.end(); }))
+            if ((stale(set.lastUsed) && !recorded.contains(set.set)) || std::ranges::any_of(keys, [&](uint64_t k) { return std::ranges::find(deadTextures, k) != deadTextures.end(); }))
                 deadSets.push_back(keys);
         if (deadTextures.empty() && deadSets.empty())
             return;

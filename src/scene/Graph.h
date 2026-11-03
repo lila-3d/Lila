@@ -261,6 +261,11 @@ public:
      * keyed on it never mistake one graph for another.
      */
     uint64_t structure() const { return mStructure; }
+    /**
+     * Bumped by every change that can alter which nodes are hidden: hierarchy edits, visibility and display layer plugs
+     * on DAG nodes, and any edit to a non-DAG node (layers among them). Moving a camera or an object leaves it alone.
+     */
+    uint64_t visibilityVersion() const { return mVisibilityVersion; }
 
     // Selection
     const std::vector<NodeId>& selection() const { return mSelection; }
@@ -359,6 +364,7 @@ private:
     /** The most a node's parent and sources computed this pass (Node::mPlayback): any recompute upstream invalidates a restore. */
     uint8_t upstreamPlayback(const Node& n, uint64_t pass) const;
     void changed(Change c, NodeId id, const PlugRef* plug = nullptr);
+    bool changesVisibility(Change c, NodeId id, const PlugRef* plug) const;
     /** Node and selection changes of the current graph, to the event bus. */
     void forwardEvent(Change c, NodeId id);
     std::vector<NodeId>& siblings(NodeId parent);
@@ -391,6 +397,7 @@ private:
     NamingPolicy mNaming;
     std::atomic<uint64_t> mVersion{1};
     uint64_t mStructure = 0;
+    uint64_t mVisibilityVersion = 0;
     void restructured();
     /** nodes() sorted, kept until the next structure change; filled by whichever thread asks first. */
     mutable std::mutex mSortedMutex;

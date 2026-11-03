@@ -71,11 +71,10 @@ uint64_t passStamp(const Graph& g, std::string_view typeName)
 
 namespace
 {
-/** Every node's recompute pass, folded: the hierarchy is the same until it changes. */
-uint64_t allPasses(const Graph& g)
+uint64_t passesOf(const Graph& g, const std::vector<NodeId>& ids)
 {
-    uint64_t h = g.structure() * 0x9E3779B97F4A7C15ull;
-    for (NodeId id : g.nodes())
+    uint64_t h = 0x9E3779B97F4A7C15ull;
+    for (NodeId id : ids)
         if (const Node* n = g.node(id))
             h = (h ^ (n->evaluatedPass() + id * 0xC2B2AE3D27D4EB4Full)) * 0x100000001B3ull;
     return h;
@@ -86,27 +85,26 @@ const Hierarchy& hierarchy(const Graph& g, bool inherit)
 {
     struct Cached
     {
-        uint64_t structure = 0, version = 0, passes = 0;
-        bool inherit = false;
+        uint64_t structure = 0, visibility = 0, driven = 0;
+        bool valid = false;
         int playing = 0;
+        // Nodes whose hiding can change by evaluation alone, without an edit: driven visibility, display layers.
+        std::vector<NodeId> evaluated;
         Hierarchy h;
     };
     // Views and the light fit may ask with different inherit settings in one frame; each keeps its own walk.
     static std::map<std::pair<const Graph*, bool>, Cached> cache;
     Cached& c = cache[{&g, inherit}];
     const int playing = anim::playDirection();
-    if (c.structure == g.structure() && c.version == g.version() && c.inherit == inherit && c.playing == playing)
-        return c.h;
-    // An edit that recomputed nothing (or only nodes whose visibility it can't change) leaves the walk as it was.
-    const uint64_t passes = allPasses(g);
-    c.version = g.version();
-    if (c.structure == g.structure() && c.passes == passes && c.inherit == inherit && c.playing == playing)
+    if (c.valid && c.structure == g.structure() && c.visibility == g.visibilityVersion() && c.playing == playing &&
+        c.driven == passesOf(g, c.evaluated))
         return c.h;
     LILA_ZONE();
+    c.valid = true;
     c.structure = g.structure();
-    c.passes = passes;
-    c.inherit = inherit;
+    c.visibility = g.visibilityVersion();
     c.playing = playing;
+    c.evaluated.clear();
 
     const std::vector<NodeId> ids = g.nodes();
     const size_t size = ids.empty() ? 0 : size_t(ids.back()) + 1;
@@ -147,8 +145,14 @@ const Hierarchy& hierarchy(const Graph& g, bool inherit)
             stack.emplace_back(child, id);
     }
     for (NodeId id : ids)
+    {
         if (!seen[id])
             h.shown[id] = effectivelyVisible(g, id, inherit);
+        if (const Node* n = g.node(id);
+            n && (displayLayers::isLayer(*n) || (n->type().dag && g.source({id, Transform::kVisibility, -1}))))
+            c.evaluated.push_back(id);
+    }
+    c.driven = passesOf(g, c.evaluated);
     if (anyArray)
         h.arrays = std::move(arrays);
     return h;

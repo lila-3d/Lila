@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "scene/SceneIndex.h"
 
 #include <algorithm>
 #include <cmath>
@@ -105,9 +106,9 @@ int firstAttr()
 NodeId active(const Graph& g)
 {
     const int first = firstAttr();
-    for (NodeId id : g.nodes())
-        if (const Node* n = g.node(id); n && n->type().isA("postProcess") && n->as<bool>(first + kEnabled))
-            return id;
+    for (const Node* n : sceneIndex::ofType(g, "postProcess"))
+        if (n->as<bool>(first + kEnabled))
+            return n->id();
     return kNoNode;
 }
 

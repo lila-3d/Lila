@@ -218,6 +218,7 @@ protected:
             p.fillRect(QRectF(xOf(fr) - capW, h - 3, capW, 2), tick);
         }
 
+        mDrewCache = false;
         if (Graph::current().cachedPlayback())
         {
             const QColor cached = viewportDisplay::accentColors(viewportDisplay::kTimeKeyColors) ? QColor(70, 130, 200) : gray(110);
@@ -225,7 +226,10 @@ protected:
             {
                 double fr = anim::frameOf(t);
                 if (fr >= first - 0.5 && fr <= last + 0.5)
+                {
                     p.fillRect(QRectF(xOf(fr) - ppf / 2, h - 3, ppf, 3), cached);
+                    mDrewCache = true;
+                }
             }
         }
 
@@ -315,6 +319,10 @@ private:
     bool mKeysValid = false;
     bool mScrubbing = false;
     int mPrefListener = 0;
+
+public:
+    /** The last paint showed cached frames, which any edit clears. */
+    bool mDrewCache = false;
 };
 
 /** Outer animation range with the playback range as a draggable bar inside it. */
@@ -593,9 +601,19 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
             runUi("autoKeyframe", {{"state", on}});
     });
 
-    mGraphListener = Graph::current().addListener([this](scene::Change c, scene::NodeId) {
-        if (c != scene::Change::Renamed && c != scene::Change::Reparented)
-            mRuler->invalidateKeys();
+    mGraphListener = Graph::current().addListener([this](scene::Change c, scene::NodeId id) {
+        if (c == scene::Change::Renamed || c == scene::Change::Reparented)
+            return;
+        // Ticks come from the selection and its curves (non-DAG nodes): an orbiting camera's values change neither.
+        const Graph& g = Graph::current();
+        if (c == scene::Change::Value)
+            if (const scene::Node* n = g.node(id); n && n->type().dag && !g.isSelected(id))
+            {
+                if (mRuler->mDrewCache)
+                    mRuler->update();
+                return;
+            }
+        mRuler->invalidateKeys();
     });
     mPlaybackListener = anim::addPlaybackListener([this] { refreshOptions(); });
     onTimeChanged(this, [this] { refreshTime(); });

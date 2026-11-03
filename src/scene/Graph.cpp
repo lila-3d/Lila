@@ -2139,9 +2139,23 @@ void Graph::removeListener(int id)
     mListeners.erase(id);
 }
 
+bool Graph::changesVisibility(Change c, NodeId id, const PlugRef* plug) const
+{
+    if (c == Change::Selection || c == Change::Renamed)
+        return false;
+    if (c != Change::Value && c != Change::Connection)
+        return true;
+    const Node* n = node(id);
+    if (!plug || !n || !n->type().dag)
+        return true;
+    return plug->attr == Transform::kVisibility || plug->attr == Transform::kDisplayLayer;
+}
+
 void Graph::changed(Change c, NodeId id, const PlugRef* plug)
 {
     mVersion.fetch_add(1, std::memory_order_relaxed);
+    if (changesVisibility(c, plug ? plug->node : id, plug))
+        ++mVisibilityVersion;
     if (c != Change::Selection && !sim::sampling())
         clearPlaybackCache();
     const PlugRef* outer = std::exchange(mChangedPlug, plug);

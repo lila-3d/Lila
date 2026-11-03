@@ -41,6 +41,9 @@ struct Hierarchy
     std::vector<NodeId> arrays;  // by node id, empty when no node sits under an array
 };
 
-/** Recomputed only when the graph, the inherit setting or the playback direction (layers hiding on playback) changed. */
+/**
+ * Recomputed only when Graph::visibilityVersion(), the structure, the playback direction (layers hiding on playback) or a
+ * node whose hiding evaluates (driven visibility, a display layer) changed; moving cameras and objects reuses the walk.
+ */
 LILA_SCENE_API const Hierarchy& hierarchy(const Graph& g, bool inherit);
 } // namespace lila::scene::sceneIndex

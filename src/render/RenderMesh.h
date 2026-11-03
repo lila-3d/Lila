@@ -50,12 +50,22 @@ struct DynamicVertices
     std::vector<uint32_t> dirty;
     /** Every vertex changed (or the renderer has not uploaded them yet). */
     bool allDirty = true;
+    /** Something changed since the renderer last looked; read without the mutex, so unchanged meshes cost no lock. */
+    std::atomic<bool> pending{true};
 
     void write(uint32_t v, const MeshVertex& value)
     {
         vertices[v] = value;
         if (!allDirty)
             dirty.push_back(v);
+        pending.store(true, std::memory_order_release);
+    }
+    /** Every vertex changed. Under the mutex. */
+    void markAllDirty()
+    {
+        allDirty = true;
+        dirty.clear();
+        pending.store(true, std::memory_order_release);
     }
 };
 
