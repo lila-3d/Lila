@@ -11,9 +11,11 @@
 #include "link/Exporters.h"
 #include "link/SplineSend.h"
 #include "link/TextureSetSend.h"
+#include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/AttrComponents.h"
 #include "scene/Deformers.h"
+#include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 #include "scene/LodGroup.h"
 #include "scene/Materials.h"
@@ -32,6 +34,7 @@
 #include <format>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <stdexcept>
 
 namespace lila::link
@@ -874,6 +877,43 @@ void onSceneSaved()
 {
     pruneWorkspaceMappings();
     syncMappings(false);
+}
+
+json preflight(scene::Graph& g, const std::vector<scene::NodeId>& nodes, const std::string& command, bool runValidators)
+{
+    LILA_ZONE();
+
+    namespace dg = scene::diagnostics;
+    if (runValidators)
+        dg::validate();
+    std::set<scene::NodeId> sent;
+    for (scene::NodeId id : nodes)
+    {
+        sent.insert(id);
+        for (scene::NodeId d : g.descendants(id))
+            sent.insert(d);
+    }
+    json issues = json::array();
+    std::string stops;
+    for (const dg::Issue& i : dg::issues())
+    {
+        const bool scene = i.node == scene::kNoNode && i.object.empty();
+        if (!scene && !sent.contains(i.node))
+            continue;
+        const bool blocks = std::ranges::any_of(i.blocks, [&](const std::string& b) { return b == command || b == "unreal" || b == "*"; });
+        if (blocks)
+        {
+            stops += (stops.empty() ? "" : "; ") + (i.target.empty() ? std::string("scene") : i.target) + ": " + i.message;
+            continue;
+        }
+        json j = {{"target", i.target}, {"severity", dg::severityName(i.severity)}, {"message", i.message}};
+        if (!i.blocks.empty())
+            j["blocks"] = i.blocks;
+        issues.push_back(std::move(j));
+    }
+    if (!stops.empty())
+        throw CommandError(command + ": blocked by validation: " + stops);
+    return issues;
 }
 
 int syncMappings(bool force, const std::vector<std::string>& only, bool unrealCheck)

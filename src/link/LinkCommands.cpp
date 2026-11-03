@@ -375,13 +375,34 @@ void registerCommands()
         .doc = "Export and reimport every mapped node now, as saving does, or only the given nodes. Skeletal and animation "
                "mappings whose skeleton fails unrealCheck are refused (logged) unless unrealCheck=False. Returns how many were queued.",
         .positionalDoc = "nodes (default every mapping)",
-        .flags = {{"unrealCheck", "uc", T::Bool, true, "Refuse skeletons that fail unrealCheck (sampled over the range). False sends anyway."}},
+        .flags = {{"unrealCheck", "uc", T::Bool, true, "Refuse skeletons that fail unrealCheck (sampled over the range). False sends anyway."},
+                  {"validate", "va", T::Bool, true,
+                   "Run the validators first: an issue blocking unrealSync, \"unreal\" or \"*\" on a mapped node stops the sync; "
+                   "others are logged."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::vector<std::string> only;
             for (const json& n : a.positional)
                 if (n.is_string())
                     only.push_back(n.get<std::string>());
+            scene::Graph& g = scene::Graph::current();
+            std::vector<scene::NodeId> sent;
+            for (const json& m : mappings())
+            {
+                const std::string node = m.value("node", std::string());
+                scene::Node* n = nullptr;
+                try
+                {
+                    n = g.find(node);
+                }
+                catch (const std::exception&)
+                {
+                }
+                if (n && (only.empty() || std::ranges::any_of(only, [&](const std::string& o) { return g.find(o) == n; })))
+                    sent.push_back(n->id());
+            }
+            for (const json& i : preflight(g, sent, "unrealSync", a.get<bool>("validate", true)))
+                log::warn("unrealSync: {}: {}", i["target"].get<std::string>(), i["message"].get<std::string>());
             return syncMappings(true, only, a.get<bool>("unrealCheck", true));
         },
     });

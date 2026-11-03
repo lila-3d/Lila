@@ -221,6 +221,9 @@ void registerSplineCommands()
                   {"width", "w", T::Float, nullptr, "mode=landscape: half-width of the spline at radius 1, cm (default 200).", {}, {}, 0.0},
                   {"deformTerrain", "dt", T::Bool, nullptr, "mode=landscape: the splines raise and lower the terrain (default on)."},
                   {"remove", "rm", T::Bool, false, "Unmap the curves and delete what they made in Unreal instead."},
+                  {"validate", "va", T::Bool, true,
+                   "Run the validators first: an issue blocking unrealSendCurve, \"unreal\" or \"*\" on a curve stops the send; "
+                   "others are logged."},
                   {"wait", "wt", T::Bool, false, "Block until Unreal answers and return its replies."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -234,6 +237,14 @@ void registerSplineCommands()
             if (curves.empty())
                 throw CommandError("unrealSendCurve: select curves to send");
             const bool remove = a.get<bool>("remove", false), wait = a.get<bool>("wait", false);
+            if (!remove)
+            {
+                std::vector<scene::NodeId> ids;
+                for (scene::Node* c : curves)
+                    ids.push_back(c->id());
+                for (const json& i : preflight(g, ids, "unrealSendCurve", a.get<bool>("validate", true)))
+                    log::warn("unrealSendCurve: {}: {}", i["target"].get<std::string>(), i["message"].get<std::string>());
+            }
             std::shared_ptr<RpcClient> client = requireClient("unrealSendCurve");
             json replies = json::array();
             for (scene::Node* c : curves)

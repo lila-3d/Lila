@@ -801,6 +801,7 @@ void registerPlacementCommands()
                "scene order) 1 and 2; any more are dropped, with a warning naming them, and what is left in none goes on 0. "
                "Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending "
                "a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. "
+               "Validators run first: a blocking issue stops the send, others come back in issues. "
                "Returns the plan, with each group's import and placement results when wait=True.",
         .positionalDoc = "objects",
         .flags = {{"folder", "f", T::String, "/Game/Lila/Instances", "Content folder the assets go in; each is SM_<source name>, with part of the source's link id appended when another mesh in the scene has the same name. The name is saved on the source, so it never changes."},
@@ -817,6 +818,9 @@ void registerPlacementCommands()
                    "with it; its other children go into the asset too).",
                    {"none", "box", "convex", "complexAsSimple", "ucx"}},
                   {"nanite", "na", T::Bool, false, "Build Nanite data for the assets."},
+                  {"validate", "va", T::Bool, true,
+                   "Run the validators first: an issue blocking unrealPlaceInstances, \"unreal\" or \"*\" on what is sent stops "
+                   "the send; other issues come back in the result's issues."},
                   {"dryRun", "", T::Bool, false, "Return the plan without exporting or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -846,6 +850,13 @@ void registerPlacementCommands()
             }
             if (plan["groups"].empty() && plan["lights"].empty())
                 throw CommandError("unrealPlaceInstances: select meshes or lights to send");
+            std::vector<scene::NodeId> sent = roots;
+            for (const json& grp : plan["groups"])
+                for (scene::NodeId m : scene::instancing::members(g, scene::NodeId(grp["sourceId"].get<uint64_t>())))
+                    sent.push_back(m);
+            plan["issues"] = preflight(g, sent, "unrealPlaceInstances", a.get<bool>("validate", true));
+            for (const json& i : plan["issues"])
+                log::warn("unrealPlaceInstances: {}: {}", i["target"].get<std::string>(), i["message"].get<std::string>());
             logChannels(plan["lightingChannels"]);
             if (a.get<bool>("dryRun"))
                 return plan;
@@ -962,7 +973,7 @@ void registerPlacementCommands()
                 });
             });
             return {{"queued", true}, {"groups", plan["groups"].size()}, {"lights", plan["lights"].size()},
-                    {"lightingChannels", plan["lightingChannels"]}};
+                    {"lightingChannels", plan["lightingChannels"]}, {"issues", plan["issues"]}};
         },
         .examples = {"unrealPlaceInstances(\"Bolt\", folder=\"/Game/Kit\")", "unrealPlaceInstances(mode=\"hism\", wait=True)"},
     });

@@ -11,6 +11,7 @@
 #include "link/Exporters.h"
 #include "link/UnrealLink.h"
 #include "math/Unreal.h"
+#include "scene/Diagnostics.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
@@ -732,4 +733,61 @@ TEST_CASE("instanced groups: the holder takes the components every member shares
     CHECK((*b)["components"][1]["attrs"]["hp"] == 25.0);
     // Actors carry their own components; the group has none to share.
     CHECK_FALSE(placementPlan(g, {g.find("Bolt")->id()}, PlacementOptions{})["groups"][0].contains("components"));
+}
+
+TEST_CASE("validation gates Unreal sends: blocking issues stop them, the rest come back as issues")
+{
+    setup();
+    buildKit();
+    namespace dg = scene::diagnostics;
+    int runs = 0;
+    bool block = true;
+    dg::validators().put("testUnrealGate", {"test", [&] {
+                                                ++runs;
+                                                dg::Issue i;
+                                                i.target = "BoltA";
+                                                i.message = "no collision proxy";
+                                                if (block)
+                                                    i.blocks = {"unreal"};
+                                                dg::report(std::move(i));
+                                                dg::Issue other;
+                                                other.target = "Crate";
+                                                other.message = "not sent, so not reported";
+                                                other.blocks = {"unreal"};
+                                                dg::report(std::move(other));
+                                            }});
+    try
+    {
+        run("unrealPlaceInstances", {{"args", {"Bolt"}}, {"dryRun", true}});
+        FAIL("the blocking issue let the send through");
+    }
+    catch (const CommandError& e)
+    {
+        CHECK(std::string(e.what()).find("no collision proxy") != std::string::npos);
+    }
+    CHECK(runs == 1);
+
+    block = false;
+    json plan = run("unrealPlaceInstances", {{"args", {"Bolt"}}, {"dryRun", true}});
+    CHECK(runs == 2);
+    REQUIRE(plan["issues"].size() == 1);
+    CHECK(plan["issues"][0]["target"] == "BoltA");
+    CHECK(plan["issues"][0]["severity"] == "warning");
+    // validate=False keeps the issues already reported without running the validators again.
+    plan = run("unrealPlaceInstances", {{"args", {"Bolt"}}, {"dryRun", true}, {"validate", false}});
+    CHECK(runs == 2);
+    CHECK(plan["issues"].size() == 1);
+
+    // An issue blocking only another command is reported, not obeyed.
+    dg::clear();
+    dg::Issue save;
+    save.target = "Bolt";
+    save.message = "unsaved texture";
+    save.blocks = {"exportFbx"};
+    dg::report(std::move(save));
+    plan = run("unrealPlaceInstances", {{"args", {"Bolt"}}, {"dryRun", true}, {"validate", false}});
+    REQUIRE(plan["issues"].size() == 1);
+    CHECK(plan["issues"][0]["blocks"] == json::array({"exportFbx"}));
+    dg::validators().remove("testUnrealGate");
+    dg::clear();
 }

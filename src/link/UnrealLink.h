@@ -201,6 +201,13 @@ LILA_SCENE_API void onSceneSaved();
  */
 LILA_SCENE_API int syncMappings(bool force, const std::vector<std::string>& only = {}, bool unrealCheck = true);
 
+/**
+ * Before a send: runs every validator (unless runValidators is false), then checks the issues on what the send carries
+ * (nodes and their descendants) and on the scene itself. An issue that blocks `command`, "unreal" or "*" throws
+ * CommandError naming each; the rest come back as [{target, severity, message, blocks?}].
+ */
+LILA_SCENE_API json preflight(scene::Graph& g, const std::vector<scene::NodeId>& nodes, const std::string& command, bool runValidators = true);
+
 /** How unrealPlaceInstances sends instance groups to the open level. */
 struct PlacementOptions
 {
