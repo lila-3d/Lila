@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <queue>
+#include <unordered_map>
 #include <stdexcept>
 
 namespace settlement
@@ -1456,6 +1457,93 @@ void layPaths(Layout& l, const Site& site, const Ground& g, const Options& o, co
 }
 } // namespace
 
+namespace
+{
+/** The user's changes to generated streets, by stable id. */
+void applyOverrides(Layout& l, const Site& site)
+{
+    StreetGraph& g = l.graph;
+    for (const StreetOverride& o : site.overrides)
+    {
+        std::vector<int> edges;
+        for (size_t e = 0; e < g.edges.size(); ++e)
+            if (g.isStreet(int(e)) && g.edges[e].street == o.street)
+                edges.push_back(int(e));
+        if (edges.empty())
+        {
+            l.staleOverrides.push_back(o.street);
+            continue;
+        }
+        const int profile = o.profile.empty() ? -2 : roadIndex(l, site, o.profile);
+        for (int e : edges)
+        {
+            if (o.remove)
+            {
+                g.removeEdge(e);
+                continue;
+            }
+            StreetEdge& x = g.edges[size_t(e)];
+            if (o.hasClass)
+                x.cls = o.cls;
+            if (profile >= 0)
+                x.profile = profile;
+            if (o.width > 0.0)
+                x.width = o.width;
+        }
+    }
+}
+} // namespace
+
+void assignStreetIds(Layout& l)
+{
+    LILA_ZONE();
+
+    StreetGraph& g = l.graph;
+    std::vector<char> used(g.edges.size(), 0);
+    std::unordered_map<uint64_t, int> seen;
+    auto through = [&](int node, int e) {
+        if (g.degree(node) != 2)
+            return -1;
+        for (int x : g.incident(node))
+            if (x != e && g.isStreet(x) && g.edges[size_t(x)].path == g.edges[size_t(e)].path)
+                return x;
+        return -1;
+    };
+    auto walk = [&](int start, int e) {
+        std::vector<int> chain;
+        int node = start;
+        double length = 0.0;
+        while (e >= 0 && !used[size_t(e)])
+        {
+            used[size_t(e)] = 1;
+            chain.push_back(e);
+            length += g.length(e);
+            const StreetEdge& x = g.edges[size_t(e)];
+            node = x.a == node ? x.b : x.a;
+            e = through(node, e);
+        }
+        // Keyed by where it runs, not by how it was found: the same street gets the same id from either end.
+        auto q = [](Vec2 p) { return std::pair<int64_t, int64_t>{std::llround(p.x / 10.0), std::llround(p.y / 10.0)}; };
+        const auto ends = std::minmax(q(g.nodes[size_t(start)].p), q(g.nodes[size_t(node)].p));
+        uint64_t h = hash64(uint64_t(ends.first.first));
+        for (int64_t v : {ends.first.second, ends.second.first, ends.second.second, int64_t(std::llround(length / 100.0)),
+                          int64_t(g.edges[size_t(chain.front())].path)})
+            h = hash64(h ^ uint64_t(v));
+        uint64_t id = (h & (kStreetIdBit - 1)) | kStreetIdBit;
+        while (seen[id]++ > 0)
+            id = (hash64(id) & (kStreetIdBit - 1)) | kStreetIdBit;
+        for (int c : chain)
+            g.edges[size_t(c)].street = id;
+    };
+    for (size_t n = 0; n < g.nodes.size(); ++n)
+        for (int e : std::vector<int>(g.incident(int(n))))
+            if (g.isStreet(e) && !used[size_t(e)] && through(int(n), e) < 0)
+                walk(int(n), e);
+    for (size_t e = 0; e < g.edges.size(); ++e)
+        if (g.isStreet(int(e)) && !used[e])
+            walk(g.edges[e].a, int(e));
+}
+
 Layout build(const Site& site, const Ground& g, const Options& in, const WalkSurface* walk)
 {
     LILA_ZONE();
@@ -1559,6 +1647,8 @@ Layout build(const Site& site, const Ground& g, const Options& in, const WalkSur
     pullBackFromWater(l);
     if (p.pattern != Pattern::None)
         joinComponents(l, g);
+    assignStreetIds(l);
+    applyOverrides(l, site);
     for (size_t n = 0; n < l.graph.nodes.size(); ++n)
     {
         if (onWater(l.graph, int(n)) && l.graph.degree(int(n)) > 0)

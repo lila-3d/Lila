@@ -217,6 +217,7 @@ json checks(const Layout& l, const Ground& ground, const Options& o)
             {"badEnvelopes", emptyEnvelopes},
             {"inExclusions", inExclusions},
             {"failedPaths", failed},
+            {"staleOverrides", l.staleOverrides},
             {"ok", components <= 1 && crossings == 0 && emptyEnvelopes == 0 && inExclusions == 0 && failed.empty() &&
                        (!o.blocks || !l.lots.empty())}};
 }
@@ -302,6 +303,7 @@ json toJson(const Layout& l)
                            {"width", edgeWidth(l, int(e))},
                            {"profile", edgeProfile(l, int(e)).name},
                            {"path", x.path},
+                           {"street", x.street},
                            {"era", x.era}});
     }
     json blocks = json::array();
@@ -548,6 +550,7 @@ std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground)
         line.profile = first.profile >= 0 ? first.profile : int(std::min(first.cls, StreetClass::Path));
         line.width = edgeWidth(l, e);
         line.path = first.path;
+        line.street = first.street;
         line.startNode = start;
         int node = start;
         line.pts.push_back({g.nodes[size_t(node)].p.x, ground.surfaceHeight(g.nodes[size_t(node)].p), g.nodes[size_t(node)].p.y});
@@ -597,6 +600,112 @@ json pathResults(const Layout& l)
     }
     return out;
 }
+
+const char* controlName(Control c)
+{
+    switch (c)
+    {
+    case Control::None: return "none";
+    case Control::Yield: return "yield";
+    case Control::Stop: return "stop";
+    case Control::Signal: return "signal";
+    }
+    return "none";
+}
+
+namespace
+{
+/**
+ * How a junction is controlled, its signal phases and crosswalks: lights where an arterial meets another vehicle road or
+ * two collectors cross, stop lines where four or more meet, yield otherwise. Opposite approaches share a phase.
+ */
+void controlJunction(Junction& j, const RoadNetwork& net)
+{
+    int vehicles = 0, arterials = 0, collectors = 0;
+    for (const RoadEnd& e : j.ends)
+    {
+        if (!e.vehicle)
+            continue;
+        ++vehicles;
+        const StreetClass c = net.lines[size_t(e.line)].cls;
+        arterials += c == StreetClass::Arterial;
+        collectors += c == StreetClass::Collector;
+    }
+    if (vehicles < 2)
+        j.control = Control::None;
+    else if (vehicles >= 3 && (arterials >= 1 && arterials + collectors >= 2))
+        j.control = Control::Signal;
+    else if (vehicles >= 4 || collectors >= 2)
+        j.control = Control::Stop;
+    else
+        j.control = Control::Yield;
+    if (j.control == Control::Signal)
+    {
+        std::vector<char> used(j.ends.size(), 0);
+        for (size_t a = 0; a < j.ends.size(); ++a)
+        {
+            if (used[a] || !j.ends[a].vehicle)
+                continue;
+            used[a] = 1;
+            std::vector<int> phase = {int(a)};
+            // The approach most nearly opposite this one goes with it.
+            int best = -1;
+            double opposite = 0.7;
+            for (size_t b = 0; b < j.ends.size(); ++b)
+                if (!used[b] && j.ends[b].vehicle)
+                    if (const double d = -glm::dot(j.ends[a].out, j.ends[b].out); d > opposite)
+                    {
+                        opposite = d;
+                        best = int(b);
+                    }
+            if (best >= 0)
+            {
+                used[size_t(best)] = 1;
+                phase.push_back(best);
+            }
+            j.phases.push_back(std::move(phase));
+        }
+    }
+    if (j.control == Control::Signal || j.control == Control::Stop)
+        for (size_t k = 0; k < j.ends.size(); ++k)
+        {
+            const RoadEnd& e = j.ends[k];
+            if (!e.vehicle)
+                continue;
+            const double half = 0.5 * net.lines[size_t(e.line)].width;
+            const glm::dvec3 side = glm::normalize(glm::dvec3(-e.out.z, 0.0, e.out.x)) * half;
+            j.crosswalks.push_back({int(k), e.p - side, e.p + side});
+        }
+}
+
+/** Parking spaces along both kerbs of roads whose profile has a parking lane. */
+void parkAlong(RoadNetwork& net, const Layout& l)
+{
+    for (size_t k = 0; k < net.lines.size(); ++k)
+    {
+        const StreetLine& s = net.lines[k];
+        const RoadProfile& p = l.roads[size_t(s.profile)];
+        if (p.parking <= 0.0 || s.surface)
+            continue;
+        const double offset = 0.5 * (p.lanes * p.laneWidth + p.median) + 0.5 * p.parking;
+        const double bay = 600.0;
+        for (size_t i = 0; i + 1 < s.pts.size(); ++i)
+        {
+            const glm::dvec3 a = s.pts[i], b = s.pts[i + 1];
+            const double len = glm::length(b - a);
+            if (len < bay)
+                continue;
+            const glm::dvec3 dir = (b - a) / len;
+            const glm::dvec3 side = glm::normalize(glm::dvec3(-dir.z, 0.0, dir.x));
+            const int n = int(len / bay);
+            const double start = 0.5 * (len - n * bay);
+            for (int m = 0; m < n; ++m)
+                for (double sign : {-1.0, 1.0})
+                    net.parking.push_back({a + dir * (start + (m + 0.5) * bay) + side * (sign * offset), dir * sign, bay, p.parking, int(k)});
+        }
+    }
+}
+} // namespace
 
 RoadNetwork roadNetwork(const Layout& l, const Ground& ground)
 {
@@ -649,11 +758,14 @@ RoadNetwork roadNetwork(const Layout& l, const Ground& ground)
             if (pts.size() >= 2)
                 pts[0] += glm::normalize(pts[1] - pts[0]) * left;
             const glm::dvec3 out = pts.size() >= 2 ? glm::normalize(pts[1] - pts[0]) : glm::dvec3(1, 0, 0);
-            j.ends.push_back({int(k), end == 0, pts[0], out});
+            j.ends.push_back({int(k), end == 0, pts[0], out, l.roads[size_t(line.profile)].lanes > 0 && line.cls != StreetClass::Path});
             if (end == 1)
                 std::reverse(pts.begin(), pts.end());
         }
     }
+    for (Junction& j : net.junctions)
+        controlJunction(j, net);
+    parkAlong(net, l);
     return net;
 }
 } // namespace settlement

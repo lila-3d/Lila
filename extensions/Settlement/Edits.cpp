@@ -103,6 +103,24 @@ void applyEdits(Site& site, const json& edits)
             throw std::runtime_error("exclusion " + std::to_string(e.id) + " needs three or more points");
         site.exclusions.push_back(std::move(e));
     }
+    for (const json& o : edits.value("streetOverrides", json::array()))
+    {
+        if (!o.is_object() || !o.contains("street") || !o["street"].is_number_integer())
+            throw std::runtime_error("street overrides are objects with an integer street id");
+        StreetOverride so;
+        so.street = o["street"].get<uint64_t>();
+        so.remove = o.value("remove", false);
+        if (o.contains("class"))
+        {
+            const std::string c = o["class"].get<std::string>();
+            if (!parseClass(c, &so.cls) || so.cls >= StreetClass::Boundary)
+                throw std::runtime_error("street override " + std::to_string(so.street) + ": unknown class '" + c + "'");
+            so.hasClass = true;
+        }
+        so.profile = o.value("profile", std::string());
+        so.width = std::max(0.0, o.value("width", 0.0));
+        site.overrides.push_back(std::move(so));
+    }
     if (const json profiles = edits.value("roadProfiles", json::object()); profiles.is_object())
         for (const auto& [name, value] : profiles.items())
         {

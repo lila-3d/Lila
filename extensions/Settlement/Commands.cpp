@@ -19,6 +19,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 
 using namespace lila;
 
@@ -487,6 +489,53 @@ json pointList(const json& pts, const char* cmd, const char* what)
     return pts;
 }
 
+bool hasStreet(const Layout& l, uint64_t id)
+{
+    for (size_t e = 0; e < l.graph.edges.size(); ++e)
+        if (l.graph.isStreet(int(e)) && l.graph.edges[e].street == id)
+            return true;
+    return false;
+}
+
+/** The streets a layout makes, by stable id, with what they are and where they run. */
+json streetsJson(const Rebuilt& r, const std::function<bool(const StreetLine&)>& keep)
+{
+    std::map<uint64_t, json> byId;
+    for (const StreetLine& s : streetLines(r.layout, r.ground))
+    {
+        if (s.surface || !keep(s))
+            continue;
+        json& j = byId[s.street];
+        if (j.is_null())
+            j = {{"id", s.street},
+                 {"class", className(s.cls)},
+                 {"profile", r.layout.roads[size_t(s.profile)].name},
+                 {"width", s.width},
+                 {"path", s.path},
+                 {"lengthM", 0.0},
+                 {"points", json::array()}};
+        double len = 0.0;
+        for (size_t k = 0; k + 1 < s.pts.size(); ++k)
+            len += glm::length(s.pts[k + 1] - s.pts[k]);
+        j["lengthM"] = j["lengthM"].get<double>() + len / 100.0;
+        for (const glm::dvec3& p : s.pts)
+            j["points"].push_back(json::array({p.x, p.y, p.z}));
+    }
+    json out = json::array();
+    for (auto& [id, j] : byId)
+        out.push_back(std::move(j));
+    return out;
+}
+
+json& overrideFor(json& edits, uint64_t id)
+{
+    for (json& o : edits["streetOverrides"])
+        if (o.value("street", uint64_t(0)) == id)
+            return o;
+    edits["streetOverrides"].push_back({{"street", id}});
+    return edits["streetOverrides"].back();
+}
+
 std::vector<FlagDef> pathFlags(const char* defaultClass)
 {
     return {{"streetClass", "c", T::String, defaultClass, "Street class.", {"arterial", "collector", "local", "alley", "path"}},
@@ -938,7 +987,7 @@ void registerCommands(ext::Context& ctx)
     });
 
     std::vector<FlagDef> editFlags = {
-        {"id", "i", T::Int, nullptr, "The street or route to change."},
+        {"id", "i", T::Int, nullptr, "The street or route to change: an edit id, or a generated street's stable id."},
         {"points", "p", T::List, nullptr, "New points (a street) or stops (a route)."}};
     for (FlagDef& f : pathFlags("local"))
     {
@@ -948,7 +997,8 @@ void registerCommands(ext::Context& ctx)
     ctx.registerCommand({
         .name = "settlementEditStreet",
         .doc = "Changes a street or route added by settlementAddStreet or settlementRoute: its points (or stops), class, road "
-               "profile, width, mode or name. Only the flags given change. Returns the outcome as settlementRoute does.",
+               "profile, width, mode or name; or a generated street by its stable id (settlementStreets lists them): its class, "
+               "profile or width, kept through re-runs. Only the flags given change. Returns the outcome as settlementRoute does.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = editFlags,
         .run = [](const Args& a) -> json {
@@ -959,7 +1009,36 @@ void registerCommands(ext::Context& ctx)
             EditTarget t = editTarget(g, a, cmd);
             if (!a.has("id"))
                 throw CommandError(std::string(cmd) + ": id= required");
-            const int id = int(a.get<int64_t>("id", -1));
+            const int64_t rawId = a.get<int64_t>("id", -1);
+            if (rawId > 0 && uint64_t(rawId) >= kStreetIdBit)
+            {
+                // A generated street: the change rides on its stable id and is applied each time the layout makes it.
+                const uint64_t street = uint64_t(rawId);
+                if (!hasStreet(rebuild(g, t.modifier->path(), cmd).layout, street))
+                    throw CommandError(std::string(cmd) + ": no street with id " + std::to_string(street) + " (settlementStreets lists them)");
+                if (a.has("points"))
+                    throw CommandError(std::string(cmd) + ": a generated street runs where the layout puts it; delete it and add a street instead");
+                json& o = overrideFor(t.edits, street);
+                if (a.has("streetClass"))
+                {
+                    const std::string cls = a.get<std::string>("streetClass");
+                    if (StreetClass c; !parseClass(cls, &c) || c >= StreetClass::Boundary)
+                        throw CommandError(std::string(cmd) + ": unknown class '" + cls + "'");
+                    o["class"] = cls;
+                }
+                if (a.has("profile"))
+                    o["profile"] = a.get<std::string>("profile");
+                if (a.has("width"))
+                    o["width"] = a.get<double>("width");
+                setEdits(t);
+                const Rebuilt r = rebuild(g, t.modifier->path(), cmd);
+                json out = {{"ids", json::array({street})}, {"modifier", r.modifier}, {"mesh", r.mesh}};
+                out["streets"] = streetsJson(r, [&](const StreetLine& s) { return s.street == street; });
+                out["checks"] = checks(r.layout, r.ground, r.options);
+                out["stats"] = stats(r.layout);
+                return out;
+            }
+            const int id = int(rawId);
             json* item = nullptr;
             const char* pointsKey = "points";
             for (const char* list : {"streets", "routes"})
@@ -1039,8 +1118,9 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "settlementDelete",
-        .doc = "Removes streets, routes and exclusions added by the edit commands, by id. Returns the ids removed, the checks "
-               "and the counts.",
+        .doc = "Removes streets, routes and exclusions added by the edit commands, by id, and generated streets by their "
+               "stable id (settlementStreets lists them; the removal holds through re-runs while the layout still makes that "
+               "street). Returns the ids removed, the checks and the counts.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = {{"ids", "i", T::List, nullptr, "Edit ids to remove."}},
         .run = [](const Args& a) -> json {
@@ -1050,9 +1130,30 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             EditTarget t = editTarget(g, a, cmd);
             std::vector<int> gone, wanted;
+            json goneStreets = json::array();
+            Layout current;
+            bool built = false;
             for (const json& v : a.flags.value("ids", json::array()))
-                if (v.is_number())
+            {
+                if (!v.is_number_integer())
+                    continue;
+                if (v.get<int64_t>() > 0 && uint64_t(v.get<int64_t>()) >= kStreetIdBit)
+                {
+                    // A generated street: removed by its stable id.
+                    const uint64_t street = v.get<uint64_t>();
+                    if (!built)
+                    {
+                        current = rebuild(g, t.modifier->path(), cmd).layout;
+                        built = true;
+                    }
+                    if (!hasStreet(current, street))
+                        throw CommandError(std::string(cmd) + ": no street with id " + std::to_string(street));
+                    overrideFor(t.edits, street) = {{"street", street}, {"remove", true}};
+                    goneStreets.push_back(street);
+                }
+                else
                     wanted.push_back(v.get<int>());
+            }
             for (const char* list : {"streets", "routes", "exclusions"})
             {
                 json kept = json::array();
@@ -1072,9 +1173,51 @@ void registerCommands(ext::Context& ctx)
             setEdits(t);
             json out = editResult(g, t, {}, cmd);
             out["ids"] = gone;
+            out["streets"] = goneStreets;
             return out;
         },
         .examples = {"settlementDelete('Settlement', ids=[4, 5])"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementStreets",
+        .doc = "The streets a settlement lays, each with its stable id (the same street keeps it through unrelated edits and "
+               "re-runs), class, road profile, width, length, the edit it came from (path, -1 when generated) and its points "
+               "[x, y, z]. near= and radius= keep those passing close to a point; streetClass= one class. Pass an id to "
+               "settlementEditStreet or settlementDelete to change or remove a generated street. Changes nothing.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"near", "nr", T::List, nullptr, "[x, z]: only streets passing within radius of it."},
+                  {"radius", "r", T::Float, 2000.0, "cm.", {}, {}, 0.0},
+                  {"streetClass", "c", T::String, nullptr, "Only this class.", {"arterial", "collector", "local", "alley", "path"}}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const char* cmd = "settlementStreets";
+            std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError(std::string(cmd) + ": give one settlement");
+            const Rebuilt r = rebuild(Graph::current(), names[0], cmd);
+            const bool useNear = a.has("near");
+            const std::vector<Vec2> near = useNear ? pointsFromJson(json::array({a.flags["near"]}), cmd, "near") : std::vector<Vec2>{};
+            const double radius = a.get<double>("radius", 2000.0);
+            StreetClass only = StreetClass::Local;
+            const bool useClass = a.has("streetClass") && parseClass(a.get<std::string>("streetClass"), &only);
+            return streetsJson(r, [&](const StreetLine& s) {
+                if (useClass && s.cls != only)
+                    return false;
+                if (!useNear)
+                    return true;
+                for (size_t k = 0; k + 1 < s.pts.size(); ++k)
+                {
+                    const Vec2 p(s.pts[k].x, s.pts[k].z), q(s.pts[k + 1].x, s.pts[k + 1].z), d = q - p;
+                    const double t = std::clamp(glm::dot(near[0] - p, d) / std::max(glm::dot(d, d), 1e-12), 0.0, 1.0);
+                    if (glm::length(p + d * t - near[0]) <= radius)
+                        return true;
+                }
+                return false;
+            });
+        },
+        .examples = {"main = settlementStreets('Settlement', near=[1200, -800], streetClass='arterial')[0]['id']\n"
+                     "settlementEditStreet('Settlement', id=main, profile='highway')"},
     });
 
     ctx.registerCommand({

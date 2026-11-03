@@ -203,6 +203,7 @@ struct StreetEdge
     double width = 0.0; // overrides the class's width when above 0 (rivers, given widths)
     int profile = -1;   // road profile (Layout::roads), -1 for the class's
     int path = -1;      // the edit (street or route) it was laid for, -1 when generated
+    uint64_t street = 0; // stable id of the street it is part of (streetId), 0 until the layout is finished
 };
 
 /** Planar street network: inserting a street splits every street it crosses and snaps its ends to what is near. */
@@ -332,13 +333,14 @@ struct RoadProfile
     double median = 0.0;
     double sidewalk = 0.0;
     double verge = 0.0;
+    double parking = 0.0; // a parking lane each side, between the driving lanes and the sidewalk
     bool oneWay = false;
     double speed = 50.0;
 
-    double width() const { return lanes * laneWidth + median + 2.0 * (sidewalk + verge); }
+    double width() const { return lanes * laneWidth + median + 2.0 * (parking + sidewalk + verge); }
 };
 
-/** highway, avenue, street, lane, alley, serviceRoad, track, footpath, stairs. */
+/** highway, avenue, street, parkedStreet, lane, alley, serviceRoad, track, footpath, stairs. */
 std::vector<std::string> roadProfileNames();
 bool builtinRoadProfile(std::string_view name, RoadProfile* out);
 /** The profile streets of a class take when they name none. */
@@ -346,6 +348,28 @@ const char* defaultRoadProfile(StreetClass c);
 json toJson(const RoadProfile& p);
 /** Applies the fields present in j over p. Throws std::runtime_error for an unknown field or a bad value. */
 void applyJson(RoadProfile& p, const json& j);
+
+/**
+ * A cross-section as the slots of a road shape grammar, left to right looking along the road: Verge, Sidewalk,
+ * Parking, Lane (one per lane), Median, then the same back out. Widths cm; zero-width slots are left out.
+ */
+struct CrossSlot
+{
+    std::string symbol;
+    double size = 0.0;
+};
+
+std::vector<CrossSlot> crossSection(const RoadProfile& p);
+/** The grammar string for the slots, as PCG's Subdivide Segment reads it: [Verge,Sidewalk,Lane,Lane,Sidewalk,Verge]. */
+std::string grammarOf(std::span<const CrossSlot> slots);
+/** The symbols a grammar string lays out, in order, with [A,B]N repeats expanded (* repeats count once). */
+std::vector<std::string> grammarSymbols(std::string_view grammar);
+/**
+ * A profile from the slots of an existing road definition, by what each symbol says it is (lane, drive, carriageway;
+ * median, divider; parking; sidewalk, pavement, footway, curb; verge, grass, planter, shoulder). Symbols it cannot place
+ * count as verge and are listed in unknown.
+ */
+RoadProfile profileFromSlots(std::string name, std::span<const CrossSlot> slots, std::vector<std::string>* unknown = nullptr);
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Layout
@@ -392,6 +416,23 @@ struct SitePath
     PathMode mode = PathMode::Auto;
 };
 
+/**
+ * A change to a generated street, found by its stable id (streetId): removed, or another class, profile or width. A
+ * street the layout no longer makes leaves the override unused (checks report it as staleOverrides).
+ */
+struct StreetOverride
+{
+    uint64_t street = 0;
+    bool remove = false;
+    bool hasClass = false;
+    StreetClass cls = StreetClass::Local;
+    std::string profile;
+    double width = 0.0;
+};
+
+/** Generated street ids carry this bit, so they never collide with edit ids. */
+inline constexpr uint64_t kStreetIdBit = 1ull << 48;
+
 /** What the user gives: an outline, fixed streets and roads, water, a centre and attractors, exclusions and edits. */
 struct Site
 {
@@ -405,13 +446,14 @@ struct Site
     std::vector<Exclusion> exclusions;
     std::vector<SitePath> paths;
     std::vector<RoadProfile> roadProfiles; // custom profiles paths may name, besides the built-in ones
+    std::vector<StreetOverride> overrides;
 };
 
 /**
  * The edits a settlement carries as JSON (its edits input): {"next": id, "streets": [...], "routes": [...],
- * "exclusions": [...], "roadProfiles": {name: profile}}. Each street {id, name, points, class, profile, width, mode};
- * each route the same with stops for points; each exclusion {id, name, polygon, margin, source}. Throws
- * std::runtime_error naming what is wrong.
+ * "exclusions": [...], "streetOverrides": [...], "roadProfiles": {name: profile}}. Each street {id, name, points, class,
+ * profile, width, mode}; each route the same with stops for points; each exclusion {id, name, polygon, margin, source};
+ * each override {street, remove, class, profile, width}. Throws std::runtime_error naming what is wrong.
  */
 void applyEdits(Site& site, const json& edits);
 
@@ -514,7 +556,15 @@ struct Layout
     std::vector<RoadProfile> roads; // the classes' profiles first (index = class), then the ones paths name
     std::vector<SurfacePath> surfacePaths;
     std::vector<PathResult> pathResults;
+    std::vector<uint64_t> staleOverrides; // overrides naming a street this layout does not make
 };
+
+/**
+ * Gives every street edge the stable id of its street: a run of edges through plain (two-street) junctions, keyed by
+ * its end points, length and the edit it came from. The same street gets the same id whenever the layout makes it again,
+ * whatever else changed; a street split or joined by an edit gets a new one.
+ */
+void assignStreetIds(Layout& l);
 
 /** An edge's width: its own (rivers, given widths), else its profile's when a path named one, else its class's. */
 double edgeWidth(const Layout& l, int edge);
@@ -584,6 +634,7 @@ struct StreetLine
     int path = -1;
     bool surface = false;
     int startNode = -1, endNode = -1; // street graph nodes at the ends; -1 on surface paths
+    uint64_t street = 0;              // stable id (0 on surface paths: they go by path)
 };
 std::vector<StreetLine> streetLines(const Layout& l, const Ground& ground);
 
@@ -598,6 +649,24 @@ struct RoadEnd
     bool start = true;      // the line's start touches the junction
     glm::dvec3 p{0.0};      // where the trimmed road ends
     glm::dvec3 out{1, 0, 0}; // unit, from the junction along the road
+    bool vehicle = true;    // has driving lanes
+};
+
+enum class Control : uint8_t
+{
+    None,   // paths only
+    Yield,  // minor streets meeting
+    Stop,   // a stop line on every approach
+    Signal, // traffic lights, in phases
+};
+
+const char* controlName(Control c);
+
+/** A crossing for people over one approach, at the stop line. */
+struct Crosswalk
+{
+    int end = 0; // RoadEnd index
+    glm::dvec3 a{0.0}, b{0.0};
 };
 
 struct Junction
@@ -605,12 +674,26 @@ struct Junction
     glm::dvec3 p{0.0};
     double radius = 0.0;
     std::vector<RoadEnd> ends;
+    Control control = Control::None;
+    /** Signalised: groups of ends that get green together (opposite approaches), never two that cross. */
+    std::vector<std::vector<int>> phases;
+    std::vector<Crosswalk> crosswalks;
+};
+
+/** An on-street parking space beside a road with a parking lane. */
+struct ParkingSpot
+{
+    glm::dvec3 p{0.0};
+    glm::dvec3 dir{1, 0, 0}; // along the kerb
+    double length = 600.0, width = 220.0;
+    int line = 0;
 };
 
 struct RoadNetwork
 {
     std::vector<StreetLine> lines; // trimmed back at junctions
     std::vector<Junction> junctions;
+    std::vector<ParkingSpot> parking;
 };
 
 RoadNetwork roadNetwork(const Layout& l, const Ground& ground);

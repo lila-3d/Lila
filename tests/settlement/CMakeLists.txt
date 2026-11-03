@@ -1,6 +1,6 @@
 # The Settlement extension: its layout compiled in directly, and the package driven through its commands.
 set(_settlement ${CMAKE_SOURCE_DIR}/extensions/Settlement)
-add_executable(lila_settlement_tests main.cpp test_settlement.cpp test_structure.cpp
+add_executable(lila_settlement_tests main.cpp test_settlement.cpp test_structure.cpp test_streets.cpp
     ${_settlement}/Geometry.cpp ${_settlement}/StreetGraph.cpp ${_settlement}/Profiles.cpp ${_settlement}/Generate.cpp
     ${_settlement}/Output.cpp ${_settlement}/Region.cpp
     ${_settlement}/Footprint.cpp ${_settlement}/Walk.cpp ${_settlement}/Edits.cpp)

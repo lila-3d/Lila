@@ -2,6 +2,9 @@
 
 #include "SettlementCore.h"
 
+#include <algorithm>
+#include <cctype>
+#include <functional>
 #include <stdexcept>
 
 namespace settlement
@@ -284,12 +287,19 @@ RoadProfile road(const char* name, int lanes, double laneWidth, double median, d
     return r;
 }
 
+RoadProfile parked(RoadProfile r, double parking)
+{
+    r.parking = parking;
+    return r;
+}
+
 const std::vector<RoadProfile>& roadBuiltins()
 {
     static const std::vector<RoadProfile> all = {
         road("highway", 4, 365.0, 300.0, 0.0, 300.0, 100.0),
         road("avenue", 4, 325.0, 200.0, 300.0, 0.0, 50.0),
         road("street", 2, 300.0, 0.0, 200.0, 0.0, 40.0),
+        parked(road("parkedStreet", 2, 300.0, 0.0, 200.0, 0.0, 40.0), 220.0),
         road("lane", 2, 250.0, 0.0, 100.0, 0.0, 30.0),
         road("alley", 1, 300.0, 0.0, 0.0, 0.0, 15.0),
         road("serviceRoad", 2, 300.0, 0.0, 0.0, 50.0, 30.0),
@@ -308,7 +318,7 @@ struct RoadField
 
 constexpr RoadField kRoadFields[] = {{"laneWidth", &RoadProfile::laneWidth}, {"median", &RoadProfile::median},
                                      {"sidewalk", &RoadProfile::sidewalk},   {"verge", &RoadProfile::verge},
-                                     {"speed", &RoadProfile::speed}};
+                                     {"parking", &RoadProfile::parking},     {"speed", &RoadProfile::speed}};
 } // namespace
 
 std::vector<std::string> roadProfileNames()
@@ -377,5 +387,123 @@ void applyJson(RoadProfile& p, const json& j)
         else
             throw std::runtime_error("unknown or mistyped road profile field '" + k + "'");
     }
+}
+
+std::vector<CrossSlot> crossSection(const RoadProfile& p)
+{
+    std::vector<CrossSlot> side;
+    for (const auto& [symbol, size] : {std::pair{"Verge", p.verge}, std::pair{"Sidewalk", p.sidewalk}, std::pair{"Parking", p.parking}})
+        if (size > 0.0)
+            side.push_back({symbol, size});
+    std::vector<CrossSlot> out = side;
+    const int back = p.oneWay ? 0 : p.lanes / 2;
+    for (int k = 0; k < back; ++k)
+        out.push_back({"Lane", p.laneWidth});
+    if (p.median > 0.0)
+        out.push_back({"Median", p.median});
+    for (int k = back; k < p.lanes; ++k)
+        out.push_back({"Lane", p.laneWidth});
+    out.insert(out.end(), side.rbegin(), side.rend());
+    return out;
+}
+
+std::string grammarOf(std::span<const CrossSlot> slots)
+{
+    std::string g = "[";
+    for (size_t k = 0; k < slots.size(); ++k)
+        g += (k ? "," : "") + slots[k].symbol;
+    return g + "]";
+}
+
+std::vector<std::string> grammarSymbols(std::string_view grammar)
+{
+    // A small recursive reader: sequence := item*, item := symbol | '[' sequence (',' sequence)* ']' count?
+    size_t at = 0;
+    std::function<std::vector<std::string>()> sequence = [&]() {
+        std::vector<std::string> out;
+        while (at < grammar.size())
+        {
+            const char c = grammar[at];
+            if (c == ']')
+                break;
+            if (c == ',' || std::isspace(static_cast<unsigned char>(c)))
+            {
+                ++at;
+                continue;
+            }
+            std::vector<std::string> item;
+            if (c == '[')
+            {
+                ++at;
+                item = sequence();
+                if (at < grammar.size() && grammar[at] == ']')
+                    ++at;
+            }
+            else
+            {
+                std::string symbol;
+                while (at < grammar.size() && std::string_view(",[]* \t\r\n").find(grammar[at]) == std::string_view::npos)
+                    symbol += grammar[at++];
+                item = {symbol};
+            }
+            int repeat = 1;
+            if (at < grammar.size() && grammar[at] == '*')
+                ++at;
+            else if (at < grammar.size() && std::isdigit(static_cast<unsigned char>(grammar[at])) && c == '[')
+            {
+                repeat = 0;
+                while (at < grammar.size() && std::isdigit(static_cast<unsigned char>(grammar[at])))
+                    repeat = repeat * 10 + (grammar[at++] - '0');
+                repeat = std::clamp(repeat, 1, 64);
+            }
+            for (int r = 0; r < repeat; ++r)
+                out.insert(out.end(), item.begin(), item.end());
+        }
+        return out;
+    };
+    return sequence();
+}
+
+RoadProfile profileFromSlots(std::string name, std::span<const CrossSlot> slots, std::vector<std::string>* unknown)
+{
+    auto has = [](const std::string& s, std::initializer_list<const char*> words) {
+        std::string lower;
+        for (char c : s)
+            lower += char(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* w : words)
+            if (lower.find(w) != std::string::npos)
+                return true;
+        return false;
+    };
+    RoadProfile p;
+    p.name = std::move(name);
+    p.lanes = 0;
+    double lanes = 0.0, sidewalk = 0.0, verge = 0.0, parking = 0.0, median = 0.0;
+    for (const CrossSlot& s : slots)
+    {
+        if (has(s.symbol, {"median", "divider", "island", "reserve"}))
+            median += s.size;
+        else if (has(s.symbol, {"park"}))
+            parking += s.size;
+        else if (has(s.symbol, {"sidewalk", "pavement", "footway", "walk", "curb", "kerb", "gutter", "ped"}))
+            sidewalk += s.size;
+        else if (has(s.symbol, {"lane", "drive", "carriage", "road", "bus", "tram", "bike", "cycle", "traffic"}))
+        {
+            lanes += s.size;
+            ++p.lanes;
+        }
+        else
+        {
+            if (unknown && !has(s.symbol, {"verge", "grass", "planter", "tree", "shoulder", "lawn"}))
+                unknown->push_back(s.symbol);
+            verge += s.size;
+        }
+    }
+    p.laneWidth = p.lanes > 0 ? lanes / p.lanes : 0.0;
+    p.median = median;
+    p.sidewalk = 0.5 * sidewalk;
+    p.verge = 0.5 * verge;
+    p.parking = 0.5 * parking;
+    return p;
 }
 } // namespace settlement

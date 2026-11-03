@@ -119,12 +119,16 @@ json grade(const Rebuilt& r, const Args& a, const char* cmd)
         const std::string id = flagOf(*road.def, {"id", "key"});
         if (pts.empty())
             throw CommandError(std::string(cmd) + ": terrainAddFeature takes no points flag this settlement knows");
-        int k = 0;
+        // Keyed by each street's stable id, so grading again after an edit updates the same road feature.
+        std::map<uint64_t, int> parts;
         for (const StreetLine& line : streetLines(r.layout, r.ground))
         {
             if (line.surface)
                 continue;
-            json f = {{pts, xyz(line.pts)}, {width, line.width}, {cls, className(line.cls)}, {id, key + "/street/" + std::to_string(k++)}};
+            const int part = parts[line.street]++;
+            const std::string name = key + "/street/" + std::to_string(line.street) + (part ? "." + std::to_string(part) : std::string());
+            json f = {{pts, xyz(line.pts)}, {width, line.width}, {cls, className(line.cls)}, {id, name}};
+
             if (!kind.empty())
                 f[kind] = line.cls == StreetClass::Path ? (line.profile >= 0 && r.layout.roads[size_t(line.profile)].name == "stairs" ? "stairs" : "path") : "street";
             road.run(f);
@@ -236,7 +240,12 @@ std::shared_ptr<link::RpcClient> client(const char* cmd, std::initializer_list<c
     const json have = link::Link::get().status().value("features", json::array());
     for (const char* f : features)
         if (!have.is_array() || std::ranges::find(have, json(f)) == have.end())
+        {
+            if (std::string_view(f) == "settlement")
+                throw CommandError(std::string(cmd) + ": enable the LilaLinkSettlement plugin in the Unreal project (copy Lila's "
+                                                      "ue/LilaLinkSettlement next to LilaLink); it brings PCG and ZoneGraph");
             throw CommandError(std::string(cmd) + ": the LilaLink plugin in Unreal predates '" + f + "'; rebuild it from Lila's ue/LilaLink");
+        }
     return c;
 }
 
@@ -261,12 +270,14 @@ json lanesOf(const RoadProfile& p)
         lanes.push_back({{"width", w}, {"direction", dir}, {"tags", t}});
     };
     lane(p.sidewalk, "forward", {"Pedestrian"});
+    lane(p.parking, "none", {"Parking"});
     const int back = p.oneWay ? 0 : p.lanes / 2, fwd = p.lanes - back;
     for (int k = 0; k < back; ++k)
         lane(p.laneWidth, "backward", {"Vehicle"});
     lane(p.median, "none", {});
     for (int k = 0; k < fwd; ++k)
         lane(p.laneWidth, "forward", {"Vehicle"});
+    lane(p.parking, "none", {"Parking"});
     lane(p.sidewalk, "forward", {"Pedestrian"});
     if (lanes.empty())
         lane(std::max(p.width(), 100.0), "forward", {"Pedestrian"});
@@ -328,11 +339,22 @@ json pcgData(const Rebuilt& r, const RoadNetwork& net)
                          {"profile", p.name},
                          {"width", s.width},
                          {"lanes", p.lanes},
+                         {"street", s.street},
                          {"surface", s.surface},
                          {"path", s.path},
                          {"points", uePoints(s.pts)}});
     }
-    return {{"lots", lots}, {"envelopes", envelopes}, {"roads", roads}};
+    json intersections = json::array();
+    for (const Junction& j : net.junctions)
+        intersections.push_back({{"center", ue(j.p)},
+                                 {"control", controlName(j.control)},
+                                 {"approaches", int64_t(j.ends.size())},
+                                 {"phases", int64_t(j.phases.size())},
+                                 {"radius", j.radius}});
+    json parking = json::array();
+    for (const ParkingSpot& p : net.parking)
+        parking.push_back({{"position", ue(p.p)}, {"forward", ue(p.dir)}, {"length", p.length}, {"width", p.width}});
+    return {{"lots", lots}, {"envelopes", envelopes}, {"roads", roads}, {"intersections", intersections}, {"parking", parking}};
 }
 
 /** ZoneGraph shapes: a spline per road with its lane profile, a polygon per junction joining the road ends. */
@@ -360,10 +382,35 @@ json zoneData(const Rebuilt& r, const RoadNetwork& net)
             // ZoneGraph's lane profile points face into the shape, so the polygon's points point at the junction.
             ends.push_back({{"position", ue(e.p)}, {"forward", ue(-e.out)}, {"profile", l.roads[size_t(s.profile)].name}});
         }
-        if (ends.size() >= 2)
-            junctions.push_back({{"center", ue(j.p)}, {"points", ends}, {"tags", json::array({"Vehicle", "Crossing"})}});
+        if (ends.size() < 2)
+            continue;
+        json tags = json::array({"Intersection"});
+        if (j.control != Control::None)
+            tags.push_back("Vehicle");
+        if (j.control == Control::Signal)
+            tags.push_back("TrafficLight");
+        if (j.control == Control::Stop || j.control == Control::Yield)
+            tags.push_back("StopSign");
+        json crosswalks = json::array();
+        for (const Crosswalk& c : j.crosswalks)
+        {
+            crosswalks.push_back({{"a", ue(c.a)}, {"b", ue(c.b)}, {"end", c.end}});
+            // People cross on a lane of their own, which MassCrowd and the signal phases both see.
+            const glm::dvec3 ab[] = {c.a, c.b};
+            roads.push_back({{"points", uePoints(ab)}, {"profile", "crosswalk"}, {"tags", json::array({"Pedestrian", "Crossing"})}});
+            profiles["crosswalk"] = {{"lanes", json::array({{{"width", 300.0}, {"direction", "forward"}, {"tags", json::array({"Pedestrian", "Crossing"})}}})}};
+        }
+        junctions.push_back({{"center", ue(j.p)},
+                             {"points", ends},
+                             {"tags", tags},
+                             {"control", controlName(j.control)},
+                             {"phases", j.phases},
+                             {"crosswalks", crosswalks}});
     }
-    return {{"profiles", profiles}, {"roads", roads}, {"junctions", junctions}};
+    json parking = json::array();
+    for (const ParkingSpot& p : net.parking)
+        parking.push_back({{"position", ue(p.p)}, {"forward", ue(p.dir)}, {"length", p.length}, {"width", p.width}});
+    return {{"profiles", profiles}, {"roads", roads}, {"junctions", junctions}, {"parking", parking}};
 }
 
 std::string assetName(const std::string& s)
@@ -581,6 +628,117 @@ void registerUnrealCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"settlementSendToUnreal('Settlement', roads='landscape', pcg=True, zoneGraph=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementRoadProfileToUnreal",
+        .doc = "Writes a road profile to Unreal as a road shape grammar: a PCG data asset with a ModulesInfo pin (Symbol, Size, "
+               "Scalable per slot: Verge, Sidewalk, Parking, Lane, Median) and a Grammar pin holding the grammar string, ready "
+               "for Subdivide Segment and Duplicate Cross Sections on road splines. The profile is a built-in one, or one of "
+               "the settlement's own when a settlement is given. Returns the asset, slots and grammar.",
+        .positionalDoc = "settlement mesh (optional, for its own road profiles)",
+        .flags = {{"profile", "pf", Arg::String, "street", "Road profile name."},
+                  {"asset", "as", Arg::String, nullptr, "Content path (default /Game/Lila/Settlement/RoadGrammar_<profile>)."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const char* cmd = "settlementRoadProfileToUnreal";
+            const std::string name = a.get<std::string>("profile", "street");
+            RoadProfile p;
+            bool found = builtinRoadProfile(name, &p);
+            if (!found && !a.objects().empty())
+            {
+                Site site;
+                const Rebuilt r = rebuildSettlement(scene::Graph::current(), a.objects()[0], cmd);
+                for (const RoadProfile& own : r.layout.roads)
+                    if (own.name == name)
+                    {
+                        p = own;
+                        found = true;
+                    }
+                if (!found)
+                    try
+                    {
+                        applyEdits(site, parseEdits(r.values.value("edits", std::string())));
+                    }
+                    catch (const std::exception&)
+                    {
+                    }
+                for (const RoadProfile& own : site.roadProfiles)
+                    if (own.name == name)
+                    {
+                        p = own;
+                        found = true;
+                    }
+            }
+            if (!found)
+                throw CommandError(std::string(cmd) + ": no road profile '" + name + "'");
+            const std::vector<CrossSlot> slots = crossSection(p);
+            json modules = json::array();
+            for (const CrossSlot& s : slots)
+                modules.push_back({{"symbol", s.symbol}, {"size", s.size}, {"scalable", s.symbol == "Verge"}});
+            const std::string asset = a.get<std::string>("asset", "/Game/Lila/Settlement/RoadGrammar_" + assetName(name));
+            std::shared_ptr<link::RpcClient> c = client(cmd, {"settlement"});
+            json out = call(*c, "setRoadGrammar", {{"asset", asset}, {"label", name}, {"modules", modules}, {"grammar", grammarOf(slots)}}, cmd);
+            out["slots"] = modules;
+            out["grammar"] = grammarOf(slots);
+            return out;
+        },
+        .examples = {"settlementRoadProfileToUnreal(profile='avenue')"},
+    });
+
+    ctx.registerCommand({
+        .name = "settlementRoadProfileFromUnreal",
+        .doc = "Reads a road definition in Unreal (a PCG data asset with ModulesInfo, or any asset holding slots with a name and "
+               "a size, such as a City Sample shape grammar definition) and adds it to the settlement as a road profile, so "
+               "streets laid with it match the road kit exactly. Slots are placed by their names (lane, median, parking, "
+               "sidewalk or curb, verge); others count as verge and are listed. Returns the profile and the slots read.",
+        .positionalDoc = "settlement mesh or its modifier",
+        .flags = {{"asset", "as", Arg::String, nullptr, "Content path of the definition."},
+                  {"name", "n", Arg::String, nullptr, "Profile name (default the asset's name)."}},
+        .run = [](const Args& a) -> json {
+            const char* cmd = "settlementRoadProfileFromUnreal";
+            if (a.objects().size() != 1)
+                throw CommandError(std::string(cmd) + ": give one settlement");
+            if (!a.has("asset"))
+                throw CommandError(std::string(cmd) + ": asset= required");
+            const std::string asset = a.get<std::string>("asset");
+            std::shared_ptr<link::RpcClient> c = client(cmd, {"settlement"});
+            const json read = call(*c, "readRoadGrammar", {{"asset", asset}}, cmd);
+            std::vector<CrossSlot> modules;
+            for (const json& m : read.value("modules", json::array()))
+                modules.push_back({m.value("symbol", std::string()), m.value("size", 0.0)});
+            // The grammar orders and repeats the modules; without one each module is one slot.
+            std::vector<CrossSlot> slots;
+            const std::vector<std::string> symbols = grammarSymbols(read.value("grammar", std::string()));
+            for (const std::string& s : symbols)
+                for (const CrossSlot& m : modules)
+                    if (m.symbol == s)
+                    {
+                        slots.push_back(m);
+                        break;
+                    }
+            if (slots.empty())
+                slots = modules;
+            if (slots.empty())
+                throw CommandError(std::string(cmd) + ": " + asset + " holds no slots with a name and a size");
+            std::string name = a.get<std::string>("name", "");
+            if (name.empty())
+                name = assetName(asset.substr(asset.find_last_of('/') + 1));
+            std::vector<std::string> unknown;
+            const RoadProfile p = profileFromSlots(name, slots, &unknown);
+            const std::string modifier = rebuildSettlement(scene::Graph::current(), a.objects()[0], cmd).modifier;
+            json edits = parseEdits(lila::ops::execute("getAttr", {{"args", {modifier + ".edits"}}}).get<std::string>());
+            json fields = toJson(p);
+            fields.erase("name");
+            fields.erase("width");
+            edits["roadProfiles"][name] = fields;
+            lila::ops::execute("setAttr", {{"args", {modifier + ".edits", edits.dump()}}});
+            json slotsOut = json::array();
+            for (const CrossSlot& s : slots)
+                slotsOut.push_back({{"symbol", s.symbol}, {"size", s.size}});
+            return {{"profile", toJson(p)}, {"slots", slotsOut}, {"unknown", unknown}};
+        },
+        .examples = {"settlementRoadProfileFromUnreal('Settlement', asset='/Game/CitySample/Roads/SG_Avenue')"},
     });
 }
 } // namespace settlement
