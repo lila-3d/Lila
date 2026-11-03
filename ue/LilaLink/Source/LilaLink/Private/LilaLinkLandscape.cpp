@@ -577,8 +577,7 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 		{
 			if (Infos[Index])
 			{
-				Edit.SetAlphaData(Infos[Index], 0, 0, SizeX - 1, SizeY - 1, Weights[Index].GetData(), 0, ELandscapeLayerPaintingRestriction::None,
-					/*bWeightAdjust=*/false, /*bTotalWeightAdjust=*/false);
+				Edit.SetAlphaData(Infos[Index], 0, 0, SizeX - 1, SizeY - 1, Weights[Index].GetData(), 0);
 			}
 		}
 	}

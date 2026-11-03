@@ -454,11 +454,10 @@ struct FVatGraph
 	UMaterialExpression* Binary(TSubclassOf<UMaterialExpression> Class, UMaterialExpression* A, int32 AOut, UMaterialExpression* B, int32 BOut)
 	{
 		UMaterialExpression* E = Make(Class);
-		TArrayView<FExpressionInput*> Inputs = E->GetInputsView();
-		Inputs[0]->Connect(AOut, A);
+		E->GetInput(0)->Connect(AOut, A);
 		if (B)
 		{
-			Inputs[1]->Connect(BOut, B);
+			E->GetInput(1)->Connect(BOut, B);
 		}
 		return E;
 	}
