@@ -18,7 +18,7 @@ namespace lila::geo
 {
 namespace
 {
-struct CellHash
+struct SymmetryCellHash
 {
     size_t operator()(const glm::i64vec3& c) const
     {
@@ -90,7 +90,7 @@ SymmetryMap SymmetryMap::build(const Mesh& mesh, const SymmetryPlane& plane, dou
 
     const double cell = std::max(tolerance * 2.0, 1e-9);
     auto key = [&](const glm::dvec3& p) { return glm::i64vec3(glm::floor(p / cell)); };
-    std::unordered_map<glm::i64vec3, std::vector<Index>, CellHash> grid;
+    std::unordered_map<glm::i64vec3, std::vector<Index>, SymmetryCellHash> grid;
     grid.reserve(mesh.numPoints());
     for (Index p = 0; p < pc; ++p)
         if (mesh.pointValid(p))
@@ -539,7 +539,7 @@ SymmetryMap SymmetryMap::persistent(Mesh& mesh, int axis, double tolerance, Symm
         const double tol = std::max(map.mTolerance, 1e-12);
         const double cell = tol * 2.0;
         auto key = [&](const glm::dvec3& p) { return glm::i64vec3(glm::floor(p / cell)); };
-        std::unordered_map<glm::i64vec3, std::vector<Index>, CellHash> grid;
+        std::unordered_map<glm::i64vec3, std::vector<Index>, SymmetryCellHash> grid;
         for (Index p : fresh)
             if (map.mMirror[p] == kInvalid)
                 grid[key(pos(p))].push_back(p);

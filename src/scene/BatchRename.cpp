@@ -14,8 +14,8 @@ namespace lila::scene
 {
 namespace
 {
-char lower(char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; }
-char upper(char c) { return c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c; }
+char asciiLower(char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; }
+char asciiUpper(char c) { return c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c; }
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 
 std::string expand(std::string_view text, int number, std::string_view name, std::string_view parent, std::string_view type)
@@ -52,7 +52,7 @@ std::string expand(std::string_view text, int number, std::string_view name, std
 
 std::string replacePlain(const std::string& s, const std::string& find, const std::string& with, bool matchCase)
 {
-    auto eq = [matchCase](char a, char b) { return matchCase ? a == b : lower(a) == lower(b); };
+    auto eq = [matchCase](char a, char b) { return matchCase ? a == b : asciiLower(a) == asciiLower(b); };
     std::string out;
     size_t i = 0;
     while (i < s.size())
@@ -118,9 +118,9 @@ std::string batchRenamed(const BatchRename& r, std::string_view shortName, int i
     if (r.stripEnd > 0)
         s.resize(s.size() - std::min(s.size(), size_t(r.stripEnd)));
     if (r.caseStyle == "lower")
-        std::ranges::transform(s, s.begin(), lower);
+        std::ranges::transform(s, s.begin(), asciiLower);
     else if (r.caseStyle == "UPPER")
-        std::ranges::transform(s, s.begin(), upper);
+        std::ranges::transform(s, s.begin(), asciiUpper);
     else if (!r.caseStyle.empty())
         s = applyCase(s, parseCaseStyle(r.caseStyle), r.underscores);
     return tokens(r.prefix) + s + tokens(r.suffix);
@@ -157,7 +157,7 @@ void registerBatchRenameCommands()
                   {"stripStart", "", T::Int, 0, "Characters to drop from the front.", {}, {}, 0.0},
                   {"stripEnd", "", T::Int, 0, "Characters to drop from the back.", {}, {}, 0.0},
                   {"stripDigits", "", T::Bool, false, "Drop the trailing number and the separator before it."},
-                  {"case", "", T::String, "", "PascalCase, camelCase, snake_case, UPPER_SNAKE, lower or UPPER; empty keeps it."},
+                  {"case", "", T::String, "", "PascalCase, camelCase, snake_case, UPPER_SNAKE, asciiLower or UPPER; empty keeps it."},
                   {"prefix", "", T::String, "", "Added in front."},
                   {"suffix", "", T::String, "", "Added at the end."},
                   {"start", "", T::Int, 1, "The number '#' gives the first object.", {}, {}, 0.0},

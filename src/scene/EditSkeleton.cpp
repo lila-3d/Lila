@@ -48,8 +48,8 @@ struct Layout
     RotateOrder order = RotateOrder::XYZ;
 };
 
-json vec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
-glm::dvec3 vec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
+json jsonVec(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
+glm::dvec3 jsonVec(const json& j) { return {j[0].get<double>(), j[1].get<double>(), j[2].get<double>()}; }
 
 Layout layoutOf(Graph& g, NodeId id)
 {
@@ -61,13 +61,13 @@ Layout layoutOf(Graph& g, NodeId id)
 
 json toJson(const Layout& l)
 {
-    return {{"jo", vec(l.jo)}, {"ra", vec(l.ra)}, {"rp", vec(l.rp)}, {"rpt", vec(l.rpt)},
-            {"sp", vec(l.sp)}, {"spt", vec(l.spt)}, {"order", int64_t(l.order)}};
+    return {{"jo", jsonVec(l.jo)}, {"ra", jsonVec(l.ra)}, {"rp", jsonVec(l.rp)}, {"rpt", jsonVec(l.rpt)},
+            {"sp", jsonVec(l.sp)}, {"spt", jsonVec(l.spt)}, {"order", int64_t(l.order)}};
 }
 
 Layout layoutFrom(const json& j)
 {
-    return {.jo = vec(j["jo"]), .ra = vec(j["ra"]), .rp = vec(j["rp"]), .rpt = vec(j["rpt"]), .sp = vec(j["sp"]), .spt = vec(j["spt"]),
+    return {.jo = jsonVec(j["jo"]), .ra = jsonVec(j["ra"]), .rp = jsonVec(j["rp"]), .rpt = jsonVec(j["rpt"]), .sp = jsonVec(j["sp"]), .spt = jsonVec(j["spt"]),
             .order = RotateOrder(j["order"].get<int64_t>())};
 }
 
@@ -196,7 +196,7 @@ void enter(Graph& g, const std::vector<std::string>& targets)
     std::set<NodeId> inSet(joints.begin(), joints.end());
     for (NodeId id : joints)
     {
-        auto v = [&](int a) { return vec(std::get<glm::dvec3>(g.value({id, a, -1}))); };
+        auto v = [&](int a) { return jsonVec(std::get<glm::dvec3>(g.value({id, a, -1}))); };
         js.push_back({{"name", g.node(id)->path()}, {"layout", toJson(layoutOf(g, id))},
                       {"pose", {{"t", v(Transform::kTranslate)}, {"r", v(Transform::kRotate)}, {"s", v(Transform::kScale)}}}});
     }
@@ -228,8 +228,8 @@ void enter(Graph& g, const std::vector<std::string>& targets)
     g.evaluate();
     for (size_t i = 0; i < joints.size(); ++i)
     {
-        js[i]["bindT"] = vec(g.node(joints[i])->as<glm::dvec3>(Transform::kTranslate));
-        js[i]["bindPos"] = vec(positionOf(*g.node(joints[i])));
+        js[i]["bindT"] = jsonVec(g.node(joints[i])->as<glm::dvec3>(Transform::kTranslate));
+        js[i]["bindPos"] = jsonVec(positionOf(*g.node(joints[i])));
     }
     st["joints"] = std::move(js);
     st["connections"] = std::move(conns);
@@ -360,12 +360,12 @@ void exit(Graph& g, bool preserveWorld)
         r.id = n->id();
         r.oldLayout = layoutFrom(j["layout"]);
         r.newLayout = layoutOf(g, r.id);
-        r.poseT = vec(j["pose"]["t"]);
-        r.poseR = vec(j["pose"]["r"]);
-        r.poseS = vec(j["pose"]["s"]);
+        r.poseT = jsonVec(j["pose"]["t"]);
+        r.poseR = jsonVec(j["pose"]["r"]);
+        r.poseS = jsonVec(j["pose"]["s"]);
         // A joint whose bind position moved takes the move into its translate; the others keep their world placement.
-        r.moved = glm::length(positionOf(*n) - vec(j["bindPos"])) > 1e-6;
-        r.delta = n->as<glm::dvec3>(Transform::kTranslate) - vec(j["bindT"]);
+        r.moved = glm::length(positionOf(*n) - jsonVec(j["bindPos"])) > 1e-6;
+        r.delta = n->as<glm::dvec3>(Transform::kTranslate) - jsonVec(j["bindT"]);
         index[r.id] = int(recs.size());
         recs.push_back(r);
     }

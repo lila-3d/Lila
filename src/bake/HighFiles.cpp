@@ -28,16 +28,16 @@ namespace
 /** Files kept in memory; a dense high can be gigabytes, so only the most recent few. */
 constexpr size_t kCacheEntries = 3;
 
-struct Cache
+struct HighCache
 {
     std::mutex mutex;
     std::list<std::pair<std::string, std::vector<FileMesh>>> entries;
     HighFileStats stats;
 };
 
-Cache& cache()
+HighCache& cache()
 {
-    static Cache c;
+    static HighCache c;
     return c;
 }
 
@@ -158,7 +158,7 @@ std::vector<FileMesh> loadHighFile(const HighEntry& e)
     const std::string key = highFileKey(e);
     if (key.empty())
         throw std::runtime_error("high file " + paths::toUtf8(path) + " doesn't exist");
-    Cache& c = cache();
+    HighCache& c = cache();
     {
         std::lock_guard lock(c.mutex);
         auto it = std::ranges::find_if(c.entries, [&](const auto& kv) { return kv.first == key; });

@@ -13,19 +13,19 @@ namespace
 {
 constexpr double kTwoPi = glm::two_pi<double>();
 
-double cross2(const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; }
+double ngonCross2(const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; }
 
 /** Counter-clockwise angle from a to b, in [0, 2pi). */
 double ccwAngle(const glm::dvec2& a, const glm::dvec2& b)
 {
-    double t = std::atan2(cross2(a, b), glm::dot(a, b));
+    double t = std::atan2(ngonCross2(a, b), glm::dot(a, b));
     return t < 0.0 ? t + kTwoPi : t;
 }
 
 bool segmentsCross(const glm::dvec2& a, const glm::dvec2& b, const glm::dvec2& c, const glm::dvec2& d, double eps)
 {
-    double d1 = cross2(b - a, c - a), d2 = cross2(b - a, d - a);
-    double d3 = cross2(d - c, a - c), d4 = cross2(d - c, b - c);
+    double d1 = ngonCross2(b - a, c - a), d2 = ngonCross2(b - a, d - a);
+    double d3 = ngonCross2(d - c, a - c), d4 = ngonCross2(d - c, b - c);
     return ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps));
 }
 
@@ -47,7 +47,7 @@ double shapeQuality(std::span<const glm::dvec2> p)
         double la = glm::length(a), lb = glm::length(b);
         if (la < 1e-300 || lb < 1e-300)
             return 0.0;
-        double s = cross2(b, a) / (la * lb);
+        double s = ngonCross2(b, a) / (la * lb);
         if (s <= 0.0)
             return 0.0;
         q = std::min(q, s);

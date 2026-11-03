@@ -27,7 +27,7 @@ std::vector<Index> liveFaces(const Mesh& m)
     return out;
 }
 
-Index findRoot(std::vector<Index>& parent, Index x)
+Index reduceFindRoot(std::vector<Index>& parent, Index x)
 {
     while (parent[x] != x)
         x = parent[x] = parent[parent[x]];
@@ -52,12 +52,12 @@ std::vector<Index> smoothFans(const Mesh& m, bool useHardEdges)
             const Index p = m.cornerPoint(c), q = m.cornerNextPoint(c);
             const Index atP = m.cornerPoint(other) == p ? other : m.cornerNext(other);
             const Index atQ = m.cornerPoint(other) == q ? other : m.cornerNext(other);
-            parent[findRoot(parent, c)] = findRoot(parent, atP);
-            parent[findRoot(parent, m.cornerNext(c))] = findRoot(parent, atQ);
+            parent[reduceFindRoot(parent, c)] = reduceFindRoot(parent, atP);
+            parent[reduceFindRoot(parent, m.cornerNext(c))] = reduceFindRoot(parent, atQ);
         });
     }
     for (Index c = 0; c < Index(parent.size()); ++c)
-        parent[c] = findRoot(parent, c);
+        parent[c] = reduceFindRoot(parent, c);
     return parent;
 }
 

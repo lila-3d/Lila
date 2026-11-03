@@ -17,7 +17,7 @@ namespace
 using T = ArgType;
 namespace ip = imagePlane;
 
-constexpr uint32_t kStored = AttrInput | AttrStorable;
+constexpr uint32_t kPlaneStored = AttrInput | AttrStorable;
 const std::vector<std::string> kFitNames = {"fill", "best", "horizontal", "vertical", "toSize"};
 const std::vector<std::string> kDisplayModeNames = {"lookingThrough", "allViews"};
 const std::vector<std::string> kDisplayColorNames = {"color", "grayscale"};
@@ -26,18 +26,18 @@ const char* const kViews[] = {"persp", "top", "bottom", "front", "back", "left",
 
 AttrDef floatAttr(std::string name, double def, std::string doc, std::optional<double> lo = {}, std::optional<double> hi = {})
 {
-    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kStored | AttrKeyable, .doc = std::move(doc),
+    return {.name = std::move(name), .type = PlugType::Float, .defaultValue = def, .flags = kPlaneStored | AttrKeyable, .doc = std::move(doc),
             .minValue = lo, .maxValue = hi};
 }
 
 AttrDef boolAttr(std::string name, bool def, std::string doc)
 {
-    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kStored, .doc = std::move(doc)};
+    return {.name = std::move(name), .type = PlugType::Bool, .defaultValue = def, .flags = kPlaneStored, .doc = std::move(doc)};
 }
 
 AttrDef enumAttr(std::string name, std::vector<std::string> names, int64_t def, std::string doc)
 {
-    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kStored, .enumNames = std::move(names),
+    return {.name = std::move(name), .type = PlugType::Enum, .defaultValue = def, .flags = kPlaneStored, .enumNames = std::move(names),
             .doc = std::move(doc)};
 }
 
@@ -45,14 +45,14 @@ std::vector<AttrDef> imagePlaneAttrs()
 {
     std::vector<AttrDef> a(size_t(int(ImagePlane::kCount) - int(Transform::kCount)));
     auto at = [&](int attr) -> AttrDef& { return a[size_t(attr - Transform::kCount)]; };
-    at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored | AttrFile | AttrImage,
+    at(ImagePlane::kImageName) = {.name = "imageName", .type = PlugType::String, .defaultValue = std::string(), .flags = kPlaneStored | AttrFile | AttrImage,
                                   .doc = "Image file (PNG, JPG, TGA, HDR, BMP) or video (MP4, MOV, MKV, WEBM, AVI). Relative paths resolve from the "
                                          "workspace root, then the scene folder."};
     at(ImagePlane::kUseFrameExtension) =
         boolAttr("useFrameExtension", false, "Image sequence: the file name's frame number follows the time slider.");
-    at(ImagePlane::kFrameOffset) = {.name = "frameOffset", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kStored,
+    at(ImagePlane::kFrameOffset) = {.name = "frameOffset", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kPlaneStored,
                                     .doc = "Added to the current frame to pick the sequence file."};
-    at(ImagePlane::kCamera) = {.name = "camera", .type = PlugType::String, .defaultValue = std::string(), .flags = kStored,
+    at(ImagePlane::kCamera) = {.name = "camera", .type = PlugType::String, .defaultValue = std::string(), .flags = kPlaneStored,
                                .doc = "View the plane follows (persp, front, side, top, ...). Empty: free in the world, placed by its transform."};
     at(ImagePlane::kDisplayMode) =
         enumAttr("displayMode", kDisplayModeNames, 0, "Attached planes: only when looking through the camera, or in every view.");
@@ -74,10 +74,10 @@ std::vector<AttrDef> imagePlaneAttrs()
     at(ImagePlane::kPlacement) =
         enumAttr("placement", kPlacementNames, 0, "Draw behind all geometry, depth tested in the scene, or in front of everything.");
     at(ImagePlane::kLocked) = boolAttr("locked", false, "Reference mode: the plane can't be picked in the viewport, only from the outliner.");
-    at(ImagePlane::kStartFrame) = {.name = "startFrame", .type = PlugType::Float, .defaultValue = 0.0, .flags = kStored,
+    at(ImagePlane::kStartFrame) = {.name = "startFrame", .type = PlugType::Float, .defaultValue = 0.0, .flags = kPlaneStored,
                                    .doc = "Video: the frame its first picture shows on; counted from the take's start while it belongs to takes."};
     at(ImagePlane::kFps) = floatAttr("fps", 0.0, "Video: frames per second to play it at; 0 uses the file's own rate.", 0.0);
-    at(ImagePlane::kFps).flags = kStored;
+    at(ImagePlane::kFps).flags = kPlaneStored;
     at(ImagePlane::kMedia) = {.name = "media", .type = PlugType::Bool, .defaultValue = false, .flags = AttrOutput | AttrHidden,
                               .doc = "Connected to the media of the takes it belongs to."};
     return a;

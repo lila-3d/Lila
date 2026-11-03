@@ -19,7 +19,7 @@ namespace lila::scene
 {
 namespace
 {
-using T = ArgType;
+using A = ArgType;
 
 struct Job
 {
@@ -325,21 +325,21 @@ void registerBoundingMeshCommands()
                "Works on objects (every mesh at or under them) or on selected components. Returns the new meshes.",
         .positionalDoc = "objects",
         .flags = {
-            {"shape", "s", T::String, "box", "box, sphere, capsule, cylinder or hull.", {"box", "sphere", "capsule", "cylinder", "hull"}},
-            {"offset", "o", T::Float, 0.0, "Padding pushed out on every side, cm."},
-            {"axisOffset", "ao", T::Vec3, nullptr, "Extra padding per box axis, added to offset, cm."},
-            {"orient", "or", T::String, "fit", "fit (tightest box from the points), world or object (the owner's axes).",
+            {"shape", "s", A::String, "box", "box, sphere, capsule, cylinder or hull.", {"box", "sphere", "capsule", "cylinder", "hull"}},
+            {"offset", "o", A::Float, 0.0, "Padding pushed out on every side, cm."},
+            {"axisOffset", "ao", A::Vec3, nullptr, "Extra padding per box axis, added to offset, cm."},
+            {"orient", "or", A::String, "fit", "fit (tightest box from the points), world or object (the owner's axes).",
              {"fit", "world", "object"}},
-            {"axis", "ax", T::String, "auto", "Axis a capsule or cylinder runs along: auto (smallest), x, y or z of the box.",
+            {"axis", "ax", A::String, "auto", "Axis a capsule or cylinder runs along: auto (smallest), x, y or z of the box.",
              {"auto", "x", "y", "z"}},
-            {"perObject", "po", T::Bool, false, "One shape per mesh instead of one around everything."},
-            {"nameFromSelection", "ns", T::Bool, true, "Name after the mesh it wraps, so Unreal pairs it as that mesh's collision."},
-            {"name", "n", T::String, "Collision", "Base name when not named from the selection."},
-            {"prefix", "p", T::String, "auto", "Put before the name; auto picks Unreal's: UBX_, USP_, UCP_, or UCX_ for cylinders and hulls."},
-            {"parent", "pa", T::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
-            {"segments", "sg", T::Int, 16, "Segments around a sphere, capsule or cylinder.", {}, {}, 3.0},
-            {"maxHullPoints", "mh", T::Int, 32, "Most points a hull keeps.", {}, {}, 4.0},
-            {"generator", "g", T::Bool, false, "Keep the primitive's generator so its size stays editable."},
+            {"perObject", "po", A::Bool, false, "One shape per mesh instead of one around everything."},
+            {"nameFromSelection", "ns", A::Bool, true, "Name after the mesh it wraps, so Unreal pairs it as that mesh's collision."},
+            {"name", "n", A::String, "Collision", "Base name when not named from the selection."},
+            {"prefix", "p", A::String, "auto", "Put before the name; auto picks Unreal's: UBX_, USP_, UCP_, or UCX_ for cylinders and hulls."},
+            {"parent", "pa", A::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
+            {"segments", "sg", A::Int, 16, "Segments around a sphere, capsule or cylinder.", {}, {}, 3.0},
+            {"maxHullPoints", "mh", A::Int, 32, "Most points a hull keeps.", {}, {}, 4.0},
+            {"generator", "g", A::Bool, false, "Keep the primitive's generator so its size stays editable."},
         },
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -397,20 +397,20 @@ void registerBoundingMeshCommands()
                "back as JSON. Returns the new meshes with the box count, average fill and coverage.",
         .positionalDoc = "objects",
         .flags = {
-            {"maxBoxes", "mb", T::Int, 8, "Most shapes per mesh.", {}, {}, 1.0},
-            {"minFill", "mf", T::Float, 0.85, "Occupied volume over box volume a chunk should reach before it stops being split and may be merged.", {}, {}, 0.05, 1.0},
-            {"minBoxSize", "ms", T::Float, 0.0, "Smallest extent a split may leave, cm; 0 is two voxels.", {}, {}, 0.0},
-            {"resolution", "res", T::Int, 48, "Voxels along the longest side of the mesh.", {}, {}, 8.0, 256.0},
-            {"oriented", "or", T::Bool, true, "Fit each chunk with its own minimum-volume frame; off keeps every box on the world axes."},
-            {"padding", "pd", T::Float, 0.0, "Pushed out on every side of each shape, cm."},
-            {"shape", "s", T::String, "auto", "box, hull, or auto (a box unless the chunk's convex hull is clearly smaller).", {"box", "hull", "auto"}},
-            {"maxHullPoints", "mh", T::Int, 32, "Most points a hull keeps.", {}, {}, 4.0},
-            {"preview", "pv", T::Bool, false, "Create nothing and return the boxes as JSON."},
-            {"nameFromSelection", "ns", T::Bool, true, "Name after the mesh it wraps, so Unreal pairs the shapes as that mesh's collision."},
-            {"name", "n", T::String, "Collision", "Base name when not named from the selection."},
-            {"prefix", "p", T::String, "UCX_", "Put before the name."},
-            {"parent", "pa", T::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
-            {"generator", "g", T::Bool, false, "Keep each box's polyCube generator so its size stays editable."},
+            {"maxBoxes", "mb", A::Int, 8, "Most shapes per mesh.", {}, {}, 1.0},
+            {"minFill", "mf", A::Float, 0.85, "Occupied volume over box volume a chunk should reach before it stops being split and may be merged.", {}, {}, 0.05, 1.0},
+            {"minBoxSize", "ms", A::Float, 0.0, "Smallest extent a split may leave, cm; 0 is two voxels.", {}, {}, 0.0},
+            {"resolution", "res", A::Int, 48, "Voxels along the longest side of the mesh.", {}, {}, 8.0, 256.0},
+            {"oriented", "or", A::Bool, true, "Fit each chunk with its own minimum-volume frame; off keeps every box on the world axes."},
+            {"padding", "pd", A::Float, 0.0, "Pushed out on every side of each shape, cm."},
+            {"shape", "s", A::String, "auto", "box, hull, or auto (a box unless the chunk's convex hull is clearly smaller).", {"box", "hull", "auto"}},
+            {"maxHullPoints", "mh", A::Int, 32, "Most points a hull keeps.", {}, {}, 4.0},
+            {"preview", "pv", A::Bool, false, "Create nothing and return the boxes as JSON."},
+            {"nameFromSelection", "ns", A::Bool, true, "Name after the mesh it wraps, so Unreal pairs the shapes as that mesh's collision."},
+            {"name", "n", A::String, "Collision", "Base name when not named from the selection."},
+            {"prefix", "p", A::String, "UCX_", "Put before the name."},
+            {"parent", "pa", A::Bool, true, "Parent under the mesh it wraps, keeping it in place."},
+            {"generator", "g", A::Bool, false, "Keep each box's polyCube generator so its size stays editable."},
         },
         .run = [](const Args& a) -> json {
             LILA_ZONE();

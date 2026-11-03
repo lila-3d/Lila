@@ -282,8 +282,8 @@ struct CornerTri
     }
 };
 
-/** Side of a vertex mesh between two of its boundary points. */
-struct Side
+/** BevelSide of a vertex mesh between two of its boundary points. */
+struct BevelSide
 {
     enum Type : uint8_t
     {
@@ -300,7 +300,7 @@ struct Side
 struct Hole
 {
     std::vector<Index> nodes;
-    std::vector<Side> sides;
+    std::vector<BevelSide> sides;
 };
 
 enum class Fill : uint8_t
@@ -928,10 +928,10 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         const size_t kv = size_t(std::find(h.nodes.begin(), h.nodes.end(), v.point) - h.nodes.begin());
         if (kv >= 3)
             return false;
-        const Side& toA = h.sides[kv];
-        const Side& arc = h.sides[(kv + 1) % 3];
-        const Side& fromB = h.sides[(kv + 2) % 3];
-        if (toA.type != Side::Straight || arc.type != Side::Arc || fromB.type != Side::Straight)
+        const BevelSide& toA = h.sides[kv];
+        const BevelSide& arc = h.sides[(kv + 1) % 3];
+        const BevelSide& fromB = h.sides[(kv + 2) % 3];
+        if (toA.type != BevelSide::Straight || arc.type != BevelSide::Arc || fromB.type != BevelSide::Straight)
             return false;
         const Index a = h.nodes[(kv + 1) % 3], b = h.nodes[(kv + 2) % 3];
         std::vector<Index> full{a};
@@ -989,7 +989,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             stop = seg + 1;
             cut = seg + 1;
         }
-        auto insert = [&](const Side& side, size_t from, size_t to) {
+        auto insert = [&](const BevelSide& side, size_t from, size_t to) {
             Insert ins{vi, side.face, side.at, {}};
             const Index c = v.corners[side.face];
             const Index src = v.chain[side.face][side.at].srcEdge;
@@ -1008,7 +1008,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         const Vert& v = verts[vi];
         Hole& h = vmesh[vi].hole;
         const size_t n = v.size();
-        std::optional<Side> pending;
+        std::optional<BevelSide> pending;
         for (size_t step = 0; step < n; ++step)
         {
             const size_t i = n - 1 - step;
@@ -1016,7 +1016,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             for (size_t k = ch.size(); k-- > 0;)
             {
                 if (k + 1 < ch.size())
-                    h.sides.push_back({Side::Straight, 0, i, k});
+                    h.sides.push_back({BevelSide::Straight, 0, i, k});
                 else if (pending)
                 {
                     h.sides.push_back(*pending);
@@ -1027,9 +1027,9 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 h.nodes.push_back(ch[k].point);
             }
             if (bev[v.inEdge(i)])
-                pending = Side{Side::Arc, v.profileAt[i], 0, 0};
+                pending = BevelSide{BevelSide::Arc, v.profileAt[i], 0, 0};
             else if (i == 0 && !v.closed)
-                pending = Side{Side::Open};
+                pending = BevelSide{BevelSide::Open};
         }
         if (pending)
             h.sides.push_back(*pending);
@@ -1041,7 +1041,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         {
             changed = false;
             const size_t K = h.nodes.size();
-            if (K == 2 && h.sides[0].type == Side::Arc && h.sides[1].type == Side::Arc && h.sides[0].profile == h.sides[1].profile)
+            if (K == 2 && h.sides[0].type == BevelSide::Arc && h.sides[1].type == BevelSide::Arc && h.sides[0].profile == h.sides[1].profile)
             {
                 h.nodes.clear();
                 h.sides.clear();
@@ -1050,11 +1050,11 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             for (size_t k = 0; k < K && K > 2; ++k)
             {
                 const size_t k1 = (k + 1) % K, k2 = (k + 2) % K;
-                if (h.sides[k].type != Side::Arc || h.sides[k1].type != Side::Arc || h.sides[k].profile != h.sides[k1].profile
+                if (h.sides[k].type != BevelSide::Arc || h.sides[k1].type != BevelSide::Arc || h.sides[k].profile != h.sides[k1].profile
                     || h.nodes[k] != h.nodes[k2])
                     continue;
                 std::vector<Index> nodes;
-                std::vector<Side> sides;
+                std::vector<BevelSide> sides;
                 for (size_t q = 0; q < K; ++q)
                 {
                     if (q == k1 || q == k2)
@@ -1074,10 +1074,10 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         if (K < 2)
             continue;
         size_t arcs = 0, opens = 0;
-        for (const Side& s : h.sides)
+        for (const BevelSide& s : h.sides)
         {
-            arcs += s.type == Side::Arc;
-            opens += s.type == Side::Open;
+            arcs += s.type == BevelSide::Arc;
+            opens += s.type == BevelSide::Open;
         }
         if (K == 2)
         {
@@ -1085,9 +1085,9 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             if (arcs == 1 && opens == 0)
             {
                 // Terminal edge: the profile replaces the straight cut in the face beside it.
-                const size_t s = h.sides[0].type == Side::Straight ? 0 : 1;
-                const Side& st = h.sides[s];
-                const Side& arc = h.sides[1 - s];
+                const size_t s = h.sides[0].type == BevelSide::Straight ? 0 : 1;
+                const BevelSide& st = h.sides[s];
+                const BevelSide& arc = h.sides[1 - s];
                 const Index from = h.nodes[(1 - s)];
                 Insert ins{vi, st.face, st.at, {}};
                 const ChainPoint& lo = v.chain[st.face][st.at];
@@ -1118,11 +1118,11 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             vm.sideIds.resize(K);
             for (size_t k = 0; k < K; ++k)
             {
-                const Side& s = h.sides[k];
+                const BevelSide& s = h.sides[k];
                 const Index a = h.nodes[k], b = h.nodes[(k + 1) % K];
                 std::vector<Index>& ids = vm.sideIds[k];
                 ids.push_back(a);
-                if (s.type == Side::Arc)
+                if (s.type == BevelSide::Arc)
                 {
                     const std::vector<Index> mid = arcIds(s.profile, a);
                     ids.insert(ids.end(), mid.begin(), mid.end());
@@ -1135,7 +1135,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                         ids.push_back(np);
                     }
                 ids.push_back(b);
-                if (s.type == Side::Straight)
+                if (s.type == BevelSide::Straight)
                 {
                     Insert ins{vi, s.face, s.at, {}};
                     const Index c = v.corners[s.face];
@@ -1306,8 +1306,8 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         // The patch takes the uvs of its wedge: from strips and fan faces in it, unfolded from the rest.
         const FanFrame& rf = fans[vi][lowestFace(vi)];
         const int W = wedge[vi][lowestFace(vi)];
-        auto stripOf = [&](const Side& sd, Index a, Index b) -> const StripEnd* {
-            if (sd.type != Side::Arc)
+        auto stripOf = [&](const BevelSide& sd, Index a, Index b) -> const StripEnd* {
+            if (sd.type != BevelSide::Arc)
                 return nullptr;
             const StripEnd* se = endOfProfile[sd.profile];
             auto has = [&](Index p) { return se && (se->a == p || se->b == p); };
@@ -1348,7 +1348,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
         for (size_t k = 0; k < K; ++k)
             pm.emplace(h.nodes[k], nodeVal[k]);
         for (size_t k = 0; k < K; ++k)
-            if (h.sides[k].type == Side::Arc)
+            if (h.sides[k].type == BevelSide::Arc)
             {
                 const std::vector<Index> mid = arcIds(h.sides[k].profile, h.nodes[k]);
                 for (size_t j = 0; j < mid.size(); ++j)
@@ -1370,7 +1370,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             for (size_t k = 0; k < K; ++k)
             {
                 all.push_back(h.nodes[k]);
-                if (h.sides[k].type == Side::Arc)
+                if (h.sides[k].type == BevelSide::Arc)
                 {
                     const std::vector<Index> mid = arcIds(h.sides[k].profile, h.nodes[k]);
                     all.insert(all.end(), mid.begin(), mid.end());
@@ -1443,7 +1443,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 for (int j = 0; j <= n2; ++j)
                 {
                     const double s = double(j) / n2;
-                    half[k][size_t(j)] = h.sides[k].type == Side::Arc ? arcAt(h.sides[k].profile, a, s)
+                    half[k][size_t(j)] = h.sides[k].type == BevelSide::Arc ? arcAt(h.sides[k].profile, a, s)
                                                                        : glm::mix(mesh.position(a), mesh.position(b), s);
                 }
                 half[k][0] = mesh.position(a);
@@ -1497,9 +1497,9 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
             glm::dmat3 axes(1.0), inv(1.0);
             std::vector<std::vector<glm::dvec3>> idealHalf;
             glm::dvec3 idealZ(0.0);
-            if (K == 3 && std::all_of(h.sides.begin(), h.sides.end(), [](const Side& s) { return s.type == Side::Arc; }))
+            if (K == 3 && std::all_of(h.sides.begin(), h.sides.end(), [](const BevelSide& s) { return s.type == BevelSide::Arc; }))
             {
-                for (const Side& s : h.sides)
+                for (const BevelSide& s : h.sides)
                     C += profiles[s.profile].linear ? glm::dvec3(0.0) : profiles[s.profile].o;
                 C /= 3.0;
                 double shortest = 1e300;
@@ -1510,7 +1510,7 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 }
                 double spread = 0.0;
                 bool curved = true;
-                for (const Side& s : h.sides)
+                for (const BevelSide& s : h.sides)
                 {
                     curved &= !profiles[s.profile].linear;
                     spread = std::max(spread, glm::distance(profiles[s.profile].o, C));
@@ -1569,9 +1569,9 @@ std::vector<Index> bevel(Mesh& mesh, std::span<const Index> edgesIn, const Bevel
                 for (const auto& sd : half)
                     size = std::max(size, glm::distance(sd.front(), sd.back()));
                 double best = 0.25 * size;
-                for (const Side& sd : h.sides)
+                for (const BevelSide& sd : h.sides)
                 {
-                    if (sd.type != Side::Arc || profiles[sd.profile].linear)
+                    if (sd.type != BevelSide::Arc || profiles[sd.profile].linear)
                         continue;
                     const Profile& pr = profiles[sd.profile];
                     // The section square to the edge: the same surface, but points move straight onto it.

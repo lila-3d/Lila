@@ -23,7 +23,7 @@ namespace
 {
 constexpr const char* kKindNames[] = {"slang", "graph", "native", "buffer", "output", "groupInput", "groupOutput", "group", "route"};
 
-std::optional<double> getOpt(const json& o, const char* key)
+std::optional<double> readOptNumber(const json& o, const char* key)
 {
     auto it = o.find(key);
     if (it == o.end() || !it->is_number())
@@ -31,7 +31,7 @@ std::optional<double> getOpt(const json& o, const char* key)
     return it->get<double>();
 }
 
-void putOpt(json& o, const char* key, const std::optional<double>& v)
+void writeOptNumber(json& o, const char* key, const std::optional<double>& v)
 {
     if (v)
         o[key] = *v;
@@ -117,11 +117,11 @@ ParamDecl paramFromJson(const json& j, const std::string& type)
     p.label = j.value("label", std::string());
     p.doc = j.value("doc", std::string());
     p.panel = j.value("panel", std::string());
-    p.min = getOpt(j, "min");
-    p.max = getOpt(j, "max");
-    p.softMin = getOpt(j, "softMin");
-    p.softMax = getOpt(j, "softMax");
-    p.step = getOpt(j, "step");
+    p.min = readOptNumber(j, "min");
+    p.max = readOptNumber(j, "max");
+    p.softMin = readOptNumber(j, "softMin");
+    p.softMax = readOptNumber(j, "softMax");
+    p.step = readOptNumber(j, "step");
     return p;
 }
 
@@ -136,11 +136,11 @@ json paramJson(const ParamDecl& p)
         o["panel"] = p.panel;
     if (!p.options.empty())
         o["options"] = p.options;
-    putOpt(o, "min", p.min);
-    putOpt(o, "max", p.max);
-    putOpt(o, "softMin", p.softMin);
-    putOpt(o, "softMax", p.softMax);
-    putOpt(o, "step", p.step);
+    writeOptNumber(o, "min", p.min);
+    writeOptNumber(o, "max", p.max);
+    writeOptNumber(o, "softMin", p.softMin);
+    writeOptNumber(o, "softMax", p.softMax);
+    writeOptNumber(o, "step", p.step);
     return o;
 }
 

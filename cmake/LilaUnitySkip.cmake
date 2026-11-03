@@ -6,6 +6,7 @@ set(LILA_UNITY_SKIP
     src/scene/AttrCommands.cpp
     src/ui/WeightPaintTool.cpp
     src/scene/AttrComponents.cpp
+    src/scene/AutoBevel.cpp
     src/scene/LightingChannels.cpp
     src/scene/SceneGraphCommands.cpp
     src/rigmath/Expressions.cpp

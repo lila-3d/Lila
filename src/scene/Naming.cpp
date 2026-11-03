@@ -13,8 +13,8 @@ namespace
 bool isUpper(char c) { return c >= 'A' && c <= 'Z'; }
 bool isLower(char c) { return c >= 'a' && c <= 'z'; }
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
-char lower(char c) { return char(std::tolower(static_cast<unsigned char>(c))); }
-char upper(char c) { return char(std::toupper(static_cast<unsigned char>(c))); }
+char lowerChar(char c) { return char(std::tolower(static_cast<unsigned char>(c))); }
+char upperChar(char c) { return char(std::toupper(static_cast<unsigned char>(c))); }
 
 /** Sides and positions: left, right, centre, middle, front, back, top, and the corners. */
 constexpr const char* kDefaultSuffixes = "L, R, C, M, F, B, T, LF, RF, LB, RB, FL, FR, BL, BR";
@@ -97,7 +97,7 @@ std::string applyCase(std::string_view name, CaseStyle style, const Underscores&
         }
         auto listed = [&](size_t i) -> std::optional<std::string> {
             for (const std::string& s : underscores.suffixes)
-                if (s.size() == parts[i].size() && std::ranges::equal(s, parts[i], {}, lower, lower))
+                if (s.size() == parts[i].size() && std::ranges::equal(s, parts[i], {}, lowerChar, lowerChar))
                     return s;
             return std::nullopt;
         };
@@ -142,9 +142,9 @@ std::string applyCase(std::string_view name, CaseStyle style, const Underscores&
     {
         std::string w = words[i];
         for (char& c : w)
-            c = style == CaseStyle::UpperSnake ? upper(c) : lower(c);
+            c = style == CaseStyle::UpperSnake ? upperChar(c) : lowerChar(c);
         if (style == CaseStyle::Pascal || (style == CaseStyle::Camel && i > 0))
-            w[0] = upper(w[0]);
+            w[0] = upperChar(w[0]);
         if ((style == CaseStyle::Snake || style == CaseStyle::UpperSnake) && i > 0 && !isDigit(w[0]))
             out += '_';
         out += w;

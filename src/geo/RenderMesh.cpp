@@ -14,7 +14,7 @@ namespace lila::geo
 {
 namespace
 {
-constexpr Index kGrain = 4096;
+constexpr Index kRenderGrain = 4096;
 
 struct CornerData
 {
@@ -88,7 +88,7 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
         LILA_ZONE_N("RenderMesh::assignSlots");
 
         tbb::enumerable_thread_specific<std::vector<Index>> scratch;
-        tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+        tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kRenderGrain), [&](const tbb::blocked_range<Index>& r) {
             std::vector<Index>& reps = scratch.local();
             for (Index p = r.begin(); p < r.end(); ++p)
             {
@@ -141,7 +141,7 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
     {
         LILA_ZONE_N("RenderMesh::fillVertices");
 
-        tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+        tbb::parallel_for(tbb::blocked_range<Index>(0, pc, kRenderGrain), [&](const tbb::blocked_range<Index>& r) {
             for (Index p = r.begin(); p < r.end(); ++p)
             {
                 if (!mesh.pointValid(p))
@@ -207,7 +207,7 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
     out.indices.resize(size_t(triCount) * 3);
     out.triangleFaces.resize(triCount);
     out.triangleSides.resize(triCount);
-    tbb::parallel_for(tbb::blocked_range<Index>(0, triCount, kGrain * 4), [&](const tbb::blocked_range<Index>& r) {
+    tbb::parallel_for(tbb::blocked_range<Index>(0, triCount, kRenderGrain * 4), [&](const tbb::blocked_range<Index>& r) {
         for (Index i = r.begin(); i < r.end(); ++i)
         {
             const Index t = order[i];
@@ -245,7 +245,7 @@ RenderMesh buildRenderMesh(const Mesh& mesh, const RenderMeshOptions& opts)
             std::plus<Index>());
         out.lineIndices.resize(size_t(lineSlot[ec]) * 2);
         out.lineEdges.resize(lineSlot[ec]);
-        tbb::parallel_for(tbb::blocked_range<Index>(0, ec, kGrain * 4), [&](const tbb::blocked_range<Index>& r) {
+        tbb::parallel_for(tbb::blocked_range<Index>(0, ec, kRenderGrain * 4), [&](const tbb::blocked_range<Index>& r) {
             for (Index e = r.begin(); e < r.end(); ++e)
             {
                 if (lineSlot[e + 1] == lineSlot[e])

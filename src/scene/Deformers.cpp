@@ -618,7 +618,7 @@ template <NonlinearKind K> std::unique_ptr<DeformerNode> makeNonlinear() { retur
 
 Graph& g() { return Graph::current(); }
 
-Node& meshNamed(const std::string& name, const char* cmd)
+Node& deformerMesh(const std::string& name, const char* cmd)
 {
     Node& n = nodeNamed(name, cmd);
     if (!n.type().isA("mesh") || n.type().isA("lattice"))
@@ -630,7 +630,7 @@ std::vector<NodeId> meshesOf(const std::vector<std::string>& names, const char* 
 {
     std::vector<NodeId> out;
     for (const std::string& name : names)
-        out.push_back(meshNamed(name, cmd).id());
+        out.push_back(deformerMesh(name, cmd).id());
     if (out.empty())
         throw CommandError(std::string(cmd) + ": give or select at least one mesh");
     return out;
@@ -1282,7 +1282,7 @@ void registerCommands()
             std::vector<std::string> objs = a.objects();
             if (objs.size() < 2)
                 throw CommandError(std::string(cmd) + ": give the meshes to deform, then the driver last");
-            Node& driver = meshNamed(objs.back(), cmd);
+            Node& driver = deformerMesh(objs.back(), cmd);
             objs.pop_back();
             json out = json::array();
             for (NodeId mesh : meshesOf(objs, cmd))

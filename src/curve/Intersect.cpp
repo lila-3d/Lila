@@ -17,7 +17,7 @@ namespace
 using D3 = glm::dvec3;
 using D4 = glm::dvec4;
 
-constexpr double kEps = 1e-12;
+constexpr double kIntersectEps = 1e-12;
 
 /** Flattens along a direction (unit, or zero for none). */
 struct Projector
@@ -26,7 +26,7 @@ struct Projector
 
     explicit Projector(const D3& dir)
     {
-        if (glm::length(dir) > kEps)
+        if (glm::length(dir) > kIntersectEps)
             n = glm::normalize(dir);
     }
     D3 operator()(const D3& p) const { return p - n * glm::dot(p, n); }
@@ -37,15 +37,15 @@ std::pair<double, double> segmentClosest(const D3& p0, const D3& p1, const D3& q
 {
     D3 d1 = p1 - p0, d2 = q1 - q0, r = p0 - q0;
     double a = glm::dot(d1, d1), e = glm::dot(d2, d2), f = glm::dot(d2, r);
-    if (a <= kEps && e <= kEps)
+    if (a <= kIntersectEps && e <= kIntersectEps)
         return {0.0, 0.0};
-    if (a <= kEps)
+    if (a <= kIntersectEps)
         return {0.0, std::clamp(f / e, 0.0, 1.0)};
     double c = glm::dot(d1, r);
-    if (e <= kEps)
+    if (e <= kIntersectEps)
         return {std::clamp(-c / a, 0.0, 1.0), 0.0};
     double b = glm::dot(d1, d2), den = a * e - b * b;
-    double s = den > kEps * a * e ? std::clamp((b * f - c * e) / den, 0.0, 1.0) : 0.0;
+    double s = den > kIntersectEps * a * e ? std::clamp((b * f - c * e) / den, 0.0, 1.0) : 0.0;
     double t = (b * s + f) / e;
     if (t < 0.0)
         return {std::clamp(-c / a, 0.0, 1.0), 0.0};
@@ -141,7 +141,7 @@ double distanceTo(const Flat& f, const D3& p)
     {
         D3 d = f.pts[i + 1] - f.pts[i];
         double len2 = glm::dot(d, d);
-        double t = len2 > kEps ? std::clamp(glm::dot(p - f.pts[i], d) / len2, 0.0, 1.0) : 0.0;
+        double t = len2 > kIntersectEps ? std::clamp(glm::dot(p - f.pts[i], d) / len2, 0.0, 1.0) : 0.0;
         best = std::min(best, glm::distance(f.pts[i] + d * t, p));
     }
     return best;
@@ -236,7 +236,7 @@ Spline joinNurbs(const Spline& a, Spline b)
     const double shift = Ua.back() - Ub[size_t(p)];
     for (size_t i = size_t(p) + 1; i < Ub.size(); ++i)
         out.knots.push_back(Ub[i] + shift);
-    const double scale = a.weight(a.size() - 1) / std::max(b.weight(0), kEps);
+    const double scale = a.weight(a.size() - 1) / std::max(b.weight(0), kIntersectEps);
     const bool rational = a.rational() || b.rational() || std::abs(scale - 1.0) > 1e-12;
     if (rational && out.weights.empty())
         out.weights.assign(a.size(), 1.0);
@@ -552,7 +552,7 @@ std::optional<Spline> extension(const Spline& src, bool atEnd, ExtendMode mode, 
     std::vector<Piece> ext;
     D3 bend = e.d2 - T * glm::dot(e.d2, T);
     double speed2 = glm::dot(e.d1, e.d1);
-    double kappa = speed2 > kEps ? glm::length(bend) / speed2 : 0.0;
+    double kappa = speed2 > kIntersectEps ? glm::length(bend) / speed2 : 0.0;
     if (mode == ExtendMode::Arc && kappa * len > 1e-6)
     {
         double r = 1.0 / kappa;
@@ -566,7 +566,7 @@ std::optional<Spline> extension(const Spline& src, bool atEnd, ExtendMode mode, 
         double tmax = 2.0;
         auto ok = [&](double t) {
             Piece q = continued(last, t);
-            return std::ranges::all_of(q.cv, [](const D4& c) { return c.w > kEps; });
+            return std::ranges::all_of(q.cv, [](const D4& c) { return c.w > kIntersectEps; });
         };
         while (tmax < 256.0 && ok(tmax * 2.0) && pieceChordLength(continued(last, tmax)) < len * 1.05)
             tmax *= 2.0;

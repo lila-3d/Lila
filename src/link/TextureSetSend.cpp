@@ -18,7 +18,7 @@ namespace lila::link
 {
 namespace
 {
-constexpr const char* kPrefFile = "unreal";
+constexpr const char* kSetPrefFile = "unreal";
 
 scene::Node* findNode(scene::Graph& g, const std::string& path)
 {
@@ -58,7 +58,7 @@ void mappedUsers(scene::Graph& g, const std::string& slot, json& slotMeshes, jso
     }
 }
 
-json rememberedSets() { return PrefStore::get().value<json>(kPrefFile, "/textureSets", json::array()); }
+json rememberedSets() { return PrefStore::get().value<json>(kSetPrefFile, "/textureSets", json::array()); }
 
 void rememberSet(const std::string& name)
 {
@@ -68,7 +68,7 @@ void rememberSet(const std::string& name)
     if (std::ranges::find(sets, json(name)) == sets.end())
     {
         sets.push_back(name);
-        PrefStore::get().set(kPrefFile, "/textureSets", sets);
+        PrefStore::get().set(kSetPrefFile, "/textureSets", sets);
     }
 }
 
@@ -92,8 +92,8 @@ Prepared prepare(scene::Graph& g, scene::Node& set, const json& flags, bool all)
     const std::string slot = slotOf(set);
     PrefStore& prefs = PrefStore::get();
     json options = json::object();
-    options["folder"] = flags.contains("folder") ? flags["folder"] : json(prefs.value<std::string>(kPrefFile, "/textureFolder", "/Game/Textures"));
-    options["materialParent"] = flags.contains("materialParent") ? flags["materialParent"] : json(prefs.value<std::string>(kPrefFile, "/materialParent", ""));
+    options["folder"] = flags.contains("folder") ? flags["folder"] : json(prefs.value<std::string>(kSetPrefFile, "/textureFolder", "/Game/Textures"));
+    options["materialParent"] = flags.contains("materialParent") ? flags["materialParent"] : json(prefs.value<std::string>(kSetPrefFile, "/materialParent", ""));
     for (const char* k : {"materialFolder", "save"})
         if (flags.contains(k))
             options[k] = flags[k];
@@ -108,7 +108,7 @@ Prepared prepare(scene::Graph& g, scene::Node& set, const json& flags, bool all)
     return p;
 }
 
-void report(const std::string& what, const RpcResult& r)
+void reportSetSend(const std::string& what, const RpcResult& r)
 {
     if (!r.ok)
         return log::error("Unreal: sending {} failed: {}", what, r.error);
@@ -230,7 +230,7 @@ int syncTextureSets()
             }
             RpcResult r = client->call("importTextures", p.params, importCallOptions());
             const std::string what = p.set + " textures";
-            mainq::post([what, r] { report(what, r); });
+            mainq::post([what, r] { reportSetSend(what, r); });
         }
     });
     return count;
@@ -307,7 +307,7 @@ void registerTextureSetCommands()
                 return r.result;
             }
             const std::string what = set->name() + " textures";
-            client->callOnMain("importTextures", p.params, importCallOptions(), [what](RpcResult r) { report(what, r); });
+            client->callOnMain("importTextures", p.params, importCallOptions(), [what](RpcResult r) { reportSetSend(what, r); });
             return {{"queued", true}, {"textures", p.params["textures"].size()}, {"materials", p.params["materials"].size()}};
         },
     });

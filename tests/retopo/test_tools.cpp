@@ -56,7 +56,7 @@ scene::Node* makeMeshNode(const std::string& name, geo::Mesh mesh)
     return n;
 }
 
-const geo::Mesh& outMesh(const std::string& name)
+const geo::Mesh& toolOutMesh(const std::string& name)
 {
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
@@ -198,7 +198,7 @@ TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly"
     std::string name = r["name"].get<std::string>();
     CHECK(r["metrics"]["quadPercent"].get<double>() > 95.0);
     REQUIRE(scene::Graph::current().find(name));
-    CHECK(outMesh(name).cornerAttrs().has("uv0"));
+    CHECK(toolOutMesh(name).cornerAttrs().has("uv0"));
     ops::execute("relaxMesh", {{"args", {name}}, {"target", "src"}, {"iterations", 3}});
     ops::execute("shrinkwrap", {{"args", {name}}, {"target", "src"}});
     ops::execute("meshRepair", {{"args", {name}}});
@@ -216,17 +216,17 @@ TEST_CASE("commands: retopo draw edits")
     // Shares the first quad's right edge in the same winding, so it gets flipped to match.
     ops::execute("retopoDrawAddFace", {{"mesh", "retopo"}, {"points", {P(10, 10), P(20, 10), P(20, 0), P(10, 0)}}, {"weld", 0.5}});
     {
-        const geo::Mesh& m = outMesh("retopo");
+        const geo::Mesh& m = toolOutMesh("retopo");
         CHECK(m.numPoints() == 6);
         CHECK(m.numFaces() == 2);
         CHECK(geo::test::isValid(m));
     }
-    ops::execute("retopoDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(outMesh("retopo").findEdge(0, 3))}});
-    CHECK(outMesh("retopo").numFaces() == 4);
+    ops::execute("retopoDrawInsertLoop", {{"mesh", "retopo"}, {"edge", int(toolOutMesh("retopo").findEdge(0, 3))}});
+    CHECK(toolOutMesh("retopo").numFaces() == 4);
     ops::execute("retopoDrawMove", {{"mesh", "retopo"}, {"points", {0}}, {"positions", {P(-1, -1)}}});
-    CHECK(outMesh("retopo").position(0) == glm::dvec3(-1, -1, 0));
+    CHECK(toolOutMesh("retopo").position(0) == glm::dvec3(-1, -1, 0));
     ops::execute("retopoDrawDelete", {{"mesh", "retopo"}, {"faces", {0}}});
-    CHECK(outMesh("retopo").numFaces() == 3);
+    CHECK(toolOutMesh("retopo").numFaces() == 3);
 
     // With x symmetry each new face gets a welded mirror image.
     scene::Graph& g = scene::Graph::current();
@@ -234,7 +234,7 @@ TEST_CASE("commands: retopo draw edits")
     g.setValue({g.find("sym")->id(), scene::MeshNode::kSymmetry, -1}, int64_t(1));
     ops::execute("retopoDrawAddFace", {{"mesh", "sym"}, {"points", {P(10, 0), P(20, 0), P(20, 10), P(10, 10)}}});
     {
-        const geo::Mesh& m = outMesh("sym");
+        const geo::Mesh& m = toolOutMesh("sym");
         CHECK(m.numFaces() == 3);
         CHECK(geo::test::isValid(m));
     }
@@ -294,10 +294,10 @@ TEST_CASE("commands: retopo draw dots undo, and fill consumes dots in one step")
                                           {"points", J({P(10, 0), P(20, 0), P(20, 10), P(10, 10)})}});
         setDots({P(40, 40)});
     }
-    CHECK(outMesh("ref_retopo").numFaces() == 2); // with its x mirror
+    CHECK(toolOutMesh("ref_retopo").numFaces() == 2); // with its x mirror
     CHECK(dots().size() == 1);
     UndoStack::get().undo();
-    CHECK(outMesh("ref_retopo").numFaces() == 0);
+    CHECK(toolOutMesh("ref_retopo").numFaces() == 0);
     CHECK(dots().size() == 5);
 
     // Undoing back past the first dot removes the mesh again.
@@ -331,7 +331,7 @@ TEST_CASE("retopo draw resumes on its retopo mesh after save and load")
         g.evaluate();
 
         scene::NodeId body = g.find("body")->id(), topo = g.find("topo")->id(), other = g.find("other")->id();
-        CHECK(outMesh("topo").numFaces() == 1);
+        CHECK(toolOutMesh("topo").numFaces() == 1);
         REQUIRE(retopo::retopoDrawDots(*g.find("topo")).size() == 1);
         CHECK(retopo::retopoDrawDots(*g.find("topo"))[0] == glm::dvec3(30, 0, 0));
 
@@ -408,10 +408,10 @@ TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, dec
     g.clear();
     UndoStack::get().clear();
     makeMeshNode("ball", sphere(32));
-    const Index before = outMesh("ball").numFaces();
+    const Index before = toolOutMesh("ball").numFaces();
     ops::execute("setSymmetry", {{"args", {"ball"}}, {"axis", "x"}});
     ops::execute("polyReduce", {{"args", {"ball"}}, {"ratio", 0.3}});
-    const geo::Mesh reduced = outMesh("ball");
+    const geo::Mesh reduced = toolOutMesh("ball");
     CHECK(reduced.numFaces() < before);
     CHECK(reduced.numFaces() > before / 4);
     CHECK(geo::test::boundaryEdgeCount(reduced) == 0);
@@ -423,16 +423,16 @@ TEST_CASE("commands: polyReduce, relaxMesh flags, polyTriangulate quadSplit, dec
                                 {"pinBoundary", false}});
     g.select({g.find("ball")->id()});
     ops::execute("polyTriangulate", {{"quadSplit", "first"}});
-    for (Index f = 0; f < outMesh("ball").faceCapacity(); ++f)
-        if (outMesh("ball").faceValid(f))
-            CHECK(outMesh("ball").faceSize(f) == 3);
+    for (Index f = 0; f < toolOutMesh("ball").faceCapacity(); ++f)
+        if (toolOutMesh("ball").faceValid(f))
+            CHECK(toolOutMesh("ball").faceSize(f) == 3);
     // Triangulate, select, relax, reduce.
     for (int i = 0; i < 4; ++i)
         UndoStack::get().undo();
-    CHECK(outMesh("ball").numFaces() == before);
+    CHECK(toolOutMesh("ball").numFaces() == before);
 
     ops::execute("addModifier", {{"args", {"ball"}}, {"kind", "decimate"}, {"params", {{"ratio", 0.2}, {"symmetry", 1}, {"keepHardEdges", true}}}});
-    const geo::Mesh modded = outMesh("ball");
+    const geo::Mesh modded = toolOutMesh("ball");
     CHECK(modded.numFaces() < before / 2);
     CHECK(modded.cornerAttrs().has("uv0"));
 }

@@ -15,7 +15,7 @@ glm::dvec3 onSurface(const geo::MeshBvh* surface, const glm::dvec3& p)
     return surface && !surface->empty() && surface->closestPoint(p, c) ? c.point : p;
 }
 
-double turnDegrees(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c)
+double strokeTurnDegrees(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& c)
 {
     glm::dvec3 u = b - a, v = c - b;
     double lu = glm::length(u), lv = glm::length(v);
@@ -121,7 +121,7 @@ std::vector<int> findCorners(std::span<const glm::dvec3> points, bool closed, do
             a = std::max(a, 0);
             b = std::min(b, n - 1);
         }
-        turn[i] = turnDegrees(points[((a % n) + n) % n], points[i], points[((b % n) + n) % n]);
+        turn[i] = strokeTurnDegrees(points[((a % n) + n) % n], points[i], points[((b % n) + n) % n]);
     }
     // One corner per run of points above the angle: the sharpest.
     std::vector<uint8_t> sharp(n, 0);

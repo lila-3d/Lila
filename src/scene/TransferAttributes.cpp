@@ -21,7 +21,7 @@ namespace
 {
 using geo::Index;
 
-enum class Space
+enum class TransferSpace
 {
     World,
     Object,
@@ -47,7 +47,7 @@ struct Options
     bool colors = false;
     bool positions = false;
     std::vector<std::string> attributes;
-    Space space = Space::World;
+    TransferSpace space = TransferSpace::World;
     Search search = Search::Closest;
     double maxDistance = -1.0;
     int flipAxis = -1; // mirror sample points across this object-space axis of the source
@@ -207,9 +207,9 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
     LILA_ZONE();
 
     // Target positions expressed in the source's object space.
-    glm::dmat4 toSource = o.space == Space::World || o.space == Space::Guided ? glm::inverse(srcWorld) * dstWorld : glm::dmat4(1.0);
+    glm::dmat4 toSource = o.space == TransferSpace::World || o.space == TransferSpace::Guided ? glm::inverse(srcWorld) * dstWorld : glm::dmat4(1.0);
     GuidedStats guided;
-    if (o.space == Space::Guided)
+    if (o.space == TransferSpace::Guided)
     {
         // Similar shapes anywhere in the scene: fit the target onto the source, then sample as in world space.
         guided.align = uv::alignShapes(dst, src, toSource);
@@ -225,7 +225,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
     const auto colorPairs = colorSetPairs(src, o);
     prepareColorSets(src, dst, colorPairs);
 
-    if (o.space == Space::Component)
+    if (o.space == TransferSpace::Component)
     {
         // Same topology: copy by id. Layers line up as long as both meshes are compacted the same way.
         for (Index p = 0; p < std::min(dst.pointCapacity(), src.pointCapacity()); ++p)
@@ -268,8 +268,8 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
     }
 
     std::optional<Sampler> own;
-    if (!cached || cached->uvSpace() != (o.space == Space::Uv))
-        own.emplace(src, o.space == Space::Uv);
+    if (!cached || cached->uvSpace() != (o.space == TransferSpace::Uv))
+        own.emplace(src, o.space == TransferSpace::Uv);
     const Sampler& sampler = own ? *own : *cached;
     auto dstNormals = o.positions ? geo::pointNormals(dst) : std::vector<glm::vec3>{};
     auto dstUv = dst.cornerAttrs().get<glm::vec2>("uv0");
@@ -283,7 +283,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         glm::dvec3 n = dst.faceNormal(f);
         dst.forEachFaceCorner(f, [&](Index c) {
             glm::dvec3 p;
-            if (o.space == Space::Uv)
+            if (o.space == TransferSpace::Uv)
             {
                 glm::vec2 t = c < dstUv.size() ? dstUv[c] : glm::vec2(0.0f);
                 p = glm::dvec3(t.x, t.y, 0.0);
@@ -294,7 +294,7 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         });
     });
 
-    if (o.uvs && o.space == Space::Guided)
+    if (o.uvs && o.space == TransferSpace::Guided)
     {
         // The guide set (the one chosen, or the first) is rebuilt island by island; any other sets are sampled.
         const int from = std::max(o.sourceUvSet, 0);
@@ -374,9 +374,9 @@ void transfer(const geo::Mesh& src, const glm::dmat4& srcWorld, geo::Mesh& dst, 
         *stats = guided;
 }
 
-Space spaceFrom(const std::string& s)
+TransferSpace spaceFrom(const std::string& s)
 {
-    return s == "object" ? Space::Object : s == "component" ? Space::Component : s == "uv" ? Space::Uv : s == "guided" ? Space::Guided : Space::World;
+    return s == "object" ? TransferSpace::Object : s == "component" ? TransferSpace::Component : s == "uv" ? TransferSpace::Uv : s == "guided" ? TransferSpace::Guided : TransferSpace::World;
 }
 
 int flipFrom(const std::string& s) { return s == "x" ? 0 : s == "y" ? 1 : s == "z" ? 2 : -1; }
@@ -434,9 +434,9 @@ public:
             else
                 mCompacted = source;
         }
-        if (o.space != Space::Component && (!mSampler || mSampler->uvSpace() != (o.space == Space::Uv)))
+        if (o.space != TransferSpace::Component && (!mSampler || mSampler->uvSpace() != (o.space == TransferSpace::Uv)))
         {
-            mSampler = std::make_shared<Sampler>(*mCompacted, o.space == Space::Uv);
+            mSampler = std::make_shared<Sampler>(*mCompacted, o.space == TransferSpace::Uv);
             ++mBuilds;
         }
         geo::Mesh out = in;
@@ -456,7 +456,7 @@ private:
         o.colors = as<bool>(attr("colors"));
         o.positions = as<bool>(attr("positions"));
         o.attributes = splitNames(as<std::string>(attr("attributes")));
-        o.space = Space(std::clamp<int64_t>(as<int64_t>(attr("sampleSpace")), 0, 4));
+        o.space = TransferSpace(std::clamp<int64_t>(as<int64_t>(attr("sampleSpace")), 0, 4));
         o.search = as<int64_t>(attr("searchMethod")) == 1 ? Search::AlongNormal : Search::Closest;
         o.maxDistance = as<double>(attr("maxDistance"));
         o.flipAxis = int(std::clamp<int64_t>(as<int64_t>(attr("flip")), 0, 3)) - 1;
@@ -548,7 +548,7 @@ void softFoliageNormals(geo::Mesh& mesh, double mix, bool dome, int up)
     Options o;
     o.uvs = false;
     o.normals = true;
-    o.space = Space::Object;
+    o.space = TransferSpace::Object;
     geo::Mesh proxy = foliageProxy(lo, hi, dome, up);
     transfer(proxy, glm::dmat4(1.0), mesh, glm::dmat4(1.0), o);
     auto normals = mesh.cornerAttrs().get<glm::vec3>(geo::attr::kNormal);
@@ -745,7 +745,7 @@ void registerTransferCommands()
                 geo::Mesh target = *current;
                 GuidedStats stats;
                 transfer(source, srcWorld, target, dstNode.as<glm::dmat4>(Transform::kWorldMatrix), o, nullptr, &stats);
-                if (o.space == Space::Guided)
+                if (o.space == TransferSpace::Guided)
                     report.push_back({{"target", dstNode.path()},
                                       {"fitError", stats.align.residual},
                                       {"reoriented", stats.align.searched},
@@ -759,7 +759,7 @@ void registerTransferCommands()
                 g.setValue(base, MeshPtr(std::make_shared<geo::Mesh>(std::move(target))));
                 if (skinWeights)
                     ops::execute("copySkinWeights", {{"args", {objs.front(), objs[i]}},
-                                                      {"surfaceAssociation", o.space == Space::Component ? "pointIndex" : "closestPoint"}});
+                                                      {"surfaceAssociation", o.space == TransferSpace::Component ? "pointIndex" : "closestPoint"}});
             }
             return report.empty() ? json(nullptr) : report;
         },

@@ -37,7 +37,7 @@ Index faceFacing(const Mesh& m, const glm::dvec3& dir)
     return best;
 }
 
-Index edgeBetween(const Mesh& m, const glm::dvec3& a, const glm::dvec3& b)
+Index opsEdgeBetween(const Mesh& m, const glm::dvec3& a, const glm::dvec3& b)
 {
     for (Index e = 0; e < m.edgeCapacity(); ++e)
         if (m.edgeValid(e))
@@ -244,7 +244,7 @@ TEST_CASE("ops: inset clamp leaves insets with room unchanged")
 TEST_CASE("ops: bevel")
 {
     Mesh cube = makeCube();
-    const Index e = edgeBetween(cube, {50, 50, 50}, {50, 50, -50});
+    const Index e = opsEdgeBetween(cube, {50, 50, 50}, {50, 50, -50});
     REQUIRE(e != kInvalid);
     BevelOptions bo;
     bo.offset = 10.0;
@@ -297,7 +297,7 @@ TEST_CASE("ops: bevel")
 
     Mesh single = makeCube();
     bo.segments = 4;
-    made = bevelEdges(single, std::vector<Index>{edgeBetween(single, {50, 50, 50}, {50, 50, -50})}, bo);
+    made = bevelEdges(single, std::vector<Index>{opsEdgeBetween(single, {50, 50, 50}, {50, 50, -50})}, bo);
     checkClosed(single);
     CHECK(made.size() == 4);
     CHECK(single.numFaces() == 6 + 4);
@@ -312,14 +312,14 @@ TEST_CASE("ops: bevel")
 
     // Two edges meeting at a corner.
     Mesh two = makeCube();
-    std::vector<Index> pair = {edgeBetween(two, {50, 50, 50}, {50, 50, -50}), edgeBetween(two, {50, 50, 50}, {-50, 50, 50})};
+    std::vector<Index> pair = {opsEdgeBetween(two, {50, 50, 50}, {50, 50, -50}), opsEdgeBetween(two, {50, 50, 50}, {-50, 50, 50})};
     bo.segments = 2;
     made = bevelEdges(two, pair, bo);
     checkClosed(two);
 
     // Open mesh, edge reaching the border.
     Mesh plane = makePlane({100, 100, 2, 2});
-    const Index mid = edgeBetween(plane, {0, 0, 50}, {0, 0, 0});
+    const Index mid = opsEdgeBetween(plane, {0, 0, 50}, {0, 0, 0});
     REQUIRE(mid != kInvalid);
     bo.segments = 1;
     made = bevelEdges(plane, std::vector<Index>{mid}, bo);
@@ -345,7 +345,7 @@ TEST_CASE("ops: edge loops")
     Mesh plane = makePlane({100, 100, 3, 1});
     lo.count = 1;
     lo.fraction = 0.25;
-    loop = insertEdgeLoop(plane, edgeBetween(plane, {-50, 0, 50}, {-50, 0, -50}), lo);
+    loop = insertEdgeLoop(plane, opsEdgeBetween(plane, {-50, 0, 50}, {-50, 0, -50}), lo);
     CHECK(isValid(plane));
     CHECK(loop.size() == 3);
     CHECK(plane.numFaces() == 6);
@@ -379,7 +379,7 @@ TEST_CASE("ops: merge, collapse, dissolve")
     CHECK(isValid(m3));
 
     Mesh grid = makePlane({100, 100, 2, 1});
-    std::vector<Index> faces = dissolveEdges(grid, std::vector<Index>{edgeBetween(grid, {0, 0, 50}, {0, 0, -50})});
+    std::vector<Index> faces = dissolveEdges(grid, std::vector<Index>{opsEdgeBetween(grid, {0, 0, 50}, {0, 0, -50})});
     CHECK(isValid(grid));
     CHECK(grid.numFaces() == 1);
     CHECK(grid.numPoints() == 4);
@@ -505,7 +505,7 @@ TEST_CASE("ops: poke, spin, fill, flip, conform, triangulate, quadrangulate")
     checkClosed(cube);
 
     Mesh grid = makePlane({100, 100, 2, 2});
-    const Index mid = edgeBetween(grid, {0, 0, 0}, {0, 0, 50});
+    const Index mid = opsEdgeBetween(grid, {0, 0, 0}, {0, 0, 50});
     std::vector<Index> spun = spinEdges(grid, std::vector<Index>{mid});
     REQUIRE(spun.size() == 1);
     CHECK(isValid(grid));

@@ -21,8 +21,8 @@ using N = gn::GNode;
 using L = gn::GLink;
 using T = gn::SocketType;
 
-json run(const char* name, json call = json::object()) { return ops::execute(name, call); }
-json args(std::initializer_list<json> a) { return {{"args", json(a)}}; }
+json zoneRun(const char* name, json call = json::object()) { return ops::execute(name, call); }
+json zoneArgs(std::initializer_list<json> a) { return {{"args", json(a)}}; }
 
 gn::PlanPtr compiled(const gn::Group& g)
 {
@@ -122,54 +122,54 @@ TEST_CASE("a for-each zone runs per face")
 TEST_CASE("a simulation zone steps its state frame by frame")
 {
     using namespace canvaszones;
-    run("newScene");
-    run("playbackOptions", {{"minTime", 0.0}, {"maxTime", 10.0}, {"fps", 24.0}});
-    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
-    run("gnCreateGroup", args({"Sim"}));
-    std::string in = run("gnAddNode", args({"Sim", "SimulationInput"})).get<std::string>();
-    std::string out = run("gnGroupInfo", args({"Sim"}))["zones"][0]["output"].get<std::string>();
-    std::string move = run("gnAddNode", args({"Sim", "TransformGeometry"})).get<std::string>();
-    run("gnSetValue", args({"Sim", move + ".translation", json::array({0, 1, 0})}));
-    run("gnDisconnect", args({"Sim", "GroupOutput.geometry"}));
-    run("gnDisconnect", args({"Sim", out + ".geometry"}));
-    run("gnConnect", args({"Sim", "GroupInput.geometry", in + ".geometry"}));
-    run("gnConnect", args({"Sim", in + ".geometry", move + ".geometry"}));
-    run("gnConnect", args({"Sim", move + ".geometry", out + ".geometry"}));
-    run("gnConnect", args({"Sim", out + ".geometry", "GroupOutput.geometry"}));
-    run("gnApply", args({mesh, "Sim"}));
-    auto topY = [&] { return run("meshInfo", args({mesh}))["boundsMax"][1].get<double>(); };
-    run("currentTime", args({1.0 / 24.0}));
+    zoneRun("newScene");
+    zoneRun("playbackOptions", {{"minTime", 0.0}, {"maxTime", 10.0}, {"fps", 24.0}});
+    const std::string mesh = zoneRun("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
+    zoneRun("gnCreateGroup", zoneArgs({"Sim"}));
+    std::string in = zoneRun("gnAddNode", zoneArgs({"Sim", "SimulationInput"})).get<std::string>();
+    std::string out = zoneRun("gnGroupInfo", zoneArgs({"Sim"}))["zones"][0]["output"].get<std::string>();
+    std::string move = zoneRun("gnAddNode", zoneArgs({"Sim", "TransformGeometry"})).get<std::string>();
+    zoneRun("gnSetValue", zoneArgs({"Sim", move + ".translation", json::array({0, 1, 0})}));
+    zoneRun("gnDisconnect", zoneArgs({"Sim", "GroupOutput.geometry"}));
+    zoneRun("gnDisconnect", zoneArgs({"Sim", out + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"Sim", "GroupInput.geometry", in + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"Sim", in + ".geometry", move + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"Sim", move + ".geometry", out + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"Sim", out + ".geometry", "GroupOutput.geometry"}));
+    zoneRun("gnApply", zoneArgs({mesh, "Sim"}));
+    auto topY = [&] { return zoneRun("meshInfo", zoneArgs({mesh}))["boundsMax"][1].get<double>(); };
+    zoneRun("currentTime", zoneArgs({1.0 / 24.0}));
     CHECK(topY() == doctest::Approx(50.0));
-    run("currentTime", args({11.0 / 24.0}));
+    zoneRun("currentTime", zoneArgs({11.0 / 24.0}));
     CHECK(topY() == doctest::Approx(60.0));
-    run("currentTime", args({5.0 / 24.0}));
+    zoneRun("currentTime", zoneArgs({5.0 / 24.0}));
     CHECK(topY() == doctest::Approx(54.0));
 }
 
 TEST_CASE("a Bake node saves what reaches it and reads it back")
 {
     using namespace canvaszones;
-    run("newScene");
-    const std::string mesh = run("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
-    run("gnCreateGroup", args({"B"}));
-    std::string move = run("gnAddNode", args({"B", "TransformGeometry"})).get<std::string>();
-    std::string bake = run("gnAddNode", args({"B", "Bake"})).get<std::string>();
-    run("gnSetItems", args({"B", bake, "items", items({{"height", "float"}})}));
-    run("gnSetValue", args({"B", bake + ".height", 7.0}));
-    run("gnSetValue", args({"B", move + ".translation", json::array({0, 10, 0})}));
-    run("gnDisconnect", args({"B", "GroupOutput.geometry"}));
-    run("gnConnect", args({"B", "GroupInput.geometry", move + ".geometry"}));
-    run("gnConnect", args({"B", move + ".geometry", bake + ".geometry"}));
-    run("gnConnect", args({"B", bake + ".geometry", "GroupOutput.geometry"}));
-    run("gnApply", args({mesh, "B"}));
-    auto topY = [&] { return run("meshInfo", args({mesh}))["boundsMax"][1].get<double>(); };
+    zoneRun("newScene");
+    const std::string mesh = zoneRun("polyCube", {{"width", 100.0}, {"height", 100.0}, {"depth", 100.0}, {"name", "Box"}})[0];
+    zoneRun("gnCreateGroup", zoneArgs({"B"}));
+    std::string move = zoneRun("gnAddNode", zoneArgs({"B", "TransformGeometry"})).get<std::string>();
+    std::string bake = zoneRun("gnAddNode", zoneArgs({"B", "Bake"})).get<std::string>();
+    zoneRun("gnSetItems", zoneArgs({"B", bake, "items", items({{"height", "float"}})}));
+    zoneRun("gnSetValue", zoneArgs({"B", bake + ".height", 7.0}));
+    zoneRun("gnSetValue", zoneArgs({"B", move + ".translation", json::array({0, 10, 0})}));
+    zoneRun("gnDisconnect", zoneArgs({"B", "GroupOutput.geometry"}));
+    zoneRun("gnConnect", zoneArgs({"B", "GroupInput.geometry", move + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"B", move + ".geometry", bake + ".geometry"}));
+    zoneRun("gnConnect", zoneArgs({"B", bake + ".geometry", "GroupOutput.geometry"}));
+    zoneRun("gnApply", zoneArgs({mesh, "B"}));
+    auto topY = [&] { return zoneRun("meshInfo", zoneArgs({mesh}))["boundsMax"][1].get<double>(); };
     CHECK(topY() == doctest::Approx(60.0));
-    std::string dir = run("gnBake", args({"B", bake})).get<std::string>();
+    std::string dir = zoneRun("gnBake", zoneArgs({"B", bake})).get<std::string>();
     CHECK(std::filesystem::exists(std::filesystem::path(dir) / "still.lnb"));
     // Upstream changes no longer reach the output while baked.
-    run("gnSetValue", args({"B", move + ".translation", json::array({0, 30, 0})}));
+    zoneRun("gnSetValue", zoneArgs({"B", move + ".translation", json::array({0, 30, 0})}));
     CHECK(topY() == doctest::Approx(60.0));
-    run("gnDeleteBake", args({"B", bake}));
+    zoneRun("gnDeleteBake", zoneArgs({"B", bake}));
     CHECK(topY() == doctest::Approx(80.0));
     CHECK_FALSE(std::filesystem::exists(dir));
 }
@@ -286,29 +286,29 @@ TEST_CASE("geometry survives a round trip through bytes")
 TEST_CASE("zone commands add, pair, copy and edit items")
 {
     using namespace canvaszones;
-    run("newScene");
-    run("gnCreateGroup", args({"Z"}));
-    std::string in = run("gnAddNode", args({"Z", "RepeatInput"})).get<std::string>();
-    json info = run("gnGroupInfo", args({"Z"}));
+    zoneRun("newScene");
+    zoneRun("gnCreateGroup", zoneArgs({"Z"}));
+    std::string in = zoneRun("gnAddNode", zoneArgs({"Z", "RepeatInput"})).get<std::string>();
+    json info = zoneRun("gnGroupInfo", zoneArgs({"Z"}));
     REQUIRE(info["zones"].size() == 1);
     std::string out = info["zones"][0]["output"].get<std::string>();
-    run("gnSetItems", args({"Z", in, "items", items({{"count", "float"}})}));
-    run("gnConnect", args({"Z", in + ".count", out + ".count"}));
-    json call = args({"Z", out, "items", items({{"total", "float"}})});
+    zoneRun("gnSetItems", zoneArgs({"Z", in, "items", items({{"count", "float"}})}));
+    zoneRun("gnConnect", zoneArgs({"Z", in + ".count", out + ".count"}));
+    json call = zoneArgs({"Z", out, "items", items({{"total", "float"}})});
     call["renames"] = {{"count", "total"}};
-    run("gnSetItems", call);
-    info = run("gnGroupInfo", args({"Z"}));
+    zoneRun("gnSetItems", call);
+    info = zoneRun("gnGroupInfo", zoneArgs({"Z"}));
     bool relinked = false;
     for (const json& l : info["definition"]["links"])
         relinked = relinked || (l[0] == in && l[1] == "total" && l[2] == out && l[3] == "total");
     CHECK(relinked);
-    CHECK_THROWS(run("gnSetItems", args({"Z", out, "items", items({{"geometry", "float"}})})));
+    CHECK_THROWS(zoneRun("gnSetItems", zoneArgs({"Z", out, "items", items({{"geometry", "float"}})})));
 
-    json copies = run("gnDuplicateNodes", args({"Z", in}));
+    json copies = zoneRun("gnDuplicateNodes", zoneArgs({"Z", in}));
     CHECK(copies.size() == 2);
-    CHECK(run("gnGroupInfo", args({"Z"}))["zones"].size() == 2);
-    run("gnDeleteNode", args({"Z", copies[1].get<std::string>()}));
-    info = run("gnGroupInfo", args({"Z"}));
+    CHECK(zoneRun("gnGroupInfo", zoneArgs({"Z"}))["zones"].size() == 2);
+    zoneRun("gnDeleteNode", zoneArgs({"Z", copies[1].get<std::string>()}));
+    info = zoneRun("gnGroupInfo", zoneArgs({"Z"}));
     CHECK(info["zones"].size() == 1);
     CHECK_FALSE(info.contains("error"));
 }

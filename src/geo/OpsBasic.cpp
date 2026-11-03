@@ -592,7 +592,7 @@ struct UnionFind
     }
 };
 
-struct CellHash
+struct WeldCellHash
 {
     size_t operator()(const glm::i64vec3& c) const { return size_t(c.x * 73856093ll ^ c.y * 19349663ll ^ c.z * 83492791ll); }
 };
@@ -638,7 +638,7 @@ std::vector<Index> mergeByDistance(Mesh& mesh, std::span<const Index> points, co
 
     const double cell = std::max(opts.distance, 1e-12);
     const double d2max = opts.distance * opts.distance;
-    std::unordered_map<glm::i64vec3, std::vector<Index>, CellHash> grid;
+    std::unordered_map<glm::i64vec3, std::vector<Index>, WeldCellHash> grid;
     for (Index p : sel)
         grid[glm::i64vec3(glm::floor(mesh.position(p) / cell))].push_back(p);
     UnionFind uf(mesh.pointCapacity());

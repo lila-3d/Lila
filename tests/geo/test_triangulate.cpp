@@ -35,7 +35,7 @@ std::vector<Index> allFaces(const Mesh& m)
     return out;
 }
 
-std::vector<Index> allEdges(const Mesh& m)
+std::vector<Index> triangulatedEdges(const Mesh& m)
 {
     std::vector<Index> out;
     for (Index e = 0; e < m.edgeCapacity(); ++e)
@@ -386,7 +386,7 @@ TEST_CASE("triangulate: beveled cube and primitives")
     {
         bo.segments = seg;
         Mesh all = makeCube();
-        bevelEdges(all, allEdges(all), bo);
+        bevelEdges(all, triangulatedEdges(all), bo);
         checkMeshTriangulation(all, "all edges");
 
         // The edges around one face and one corner leave n-gons with collinear bevel points on the neighbours.
@@ -426,7 +426,7 @@ TEST_CASE("triangulate: attributes")
     std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(attr::kHard);
     std::span<bool> seam = m.edgeAttrs().getOrAdd<bool>(attr::kSeam);
     std::map<std::pair<Index, Index>, std::tuple<float, float, bool, bool>> edgeFlags;
-    for (Index e : allEdges(m))
+    for (Index e : triangulatedEdges(m))
     {
         crease[e] = float(e % 5) * 0.25f;
         weight[e] = float(e % 3) * 0.5f;
@@ -478,7 +478,7 @@ TEST_CASE("triangulate: attributes")
     std::span<const bool> nhard = std::as_const(m).edgeAttrs().get<bool>(attr::kHard);
     std::span<const bool> nseam = std::as_const(m).edgeAttrs().get<bool>(attr::kSeam);
     int kept = 0, wrong = 0, diagonalsFlagged = 0;
-    for (Index e : allEdges(m))
+    for (Index e : triangulatedEdges(m))
     {
         const Index a = m.edgePoint(e, 0), b = m.edgePoint(e, 1);
         auto it = edgeFlags.find({std::min(a, b), std::max(a, b)});
