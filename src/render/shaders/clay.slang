@@ -108,10 +108,11 @@ float shapeDistance(uint prim, float3 world)
 
 float smin(float a, float b, float k)
 {
-    if (k <= 0.0)
+    // Apart by more than k the nearer wins outright; lerp's b + h (a - b) would cancel against kEmpty to 0.
+    if (k <= 0.0 || abs(a - b) >= k)
         return min(a, b);
     float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return lerp(b, a, h) - k * h * (1.0 - h);
+    return b * (1.0 - h) + a * h - k * h * (1.0 - h);
 }
 
 float combine(float acc, float d, int op, float k)
