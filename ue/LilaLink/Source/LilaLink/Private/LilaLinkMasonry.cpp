@@ -17,6 +17,7 @@
 #include "IAssetTools.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpressionAppendVector.h"
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionCustom.h"
 #include "Materials/MaterialExpressionDivide.h"
@@ -241,7 +242,14 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	}
 	Inputs.Add(TEXT("LocalPos"), G.Make(UMaterialExpressionLocalPosition::StaticClass(), -1200));
 	Inputs.Add(TEXT("NormalWS"), G.Make(UMaterialExpressionVertexNormalWS::StaticClass(), -1200));
-	Inputs.Add(TEXT("VColor"), G.Make(UMaterialExpressionVertexColor::StaticClass(), -1200));
+	{
+		// The vertex colour node has no RGBA output: its RGB and A outputs are appended for the Custom nodes' float4.
+		UMaterialExpression* Color = G.Make(UMaterialExpressionVertexColor::StaticClass(), -1300);
+		auto* Rgba = G.New<UMaterialExpressionAppendVector>(-1200);
+		Rgba->A.Connect(0, Color);
+		Rgba->B.Connect(4, Color);
+		Inputs.Add(TEXT("VColor"), Rgba);
+	}
 	InstanceData(TEXT("InstRandom"), 0, 0.5f);
 	InstanceData(TEXT("InstHeight"), 1, 0.5f);
 	InstanceData(TEXT("InstAge"), 2, 0.0f);
