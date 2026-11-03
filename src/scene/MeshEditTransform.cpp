@@ -15,12 +15,15 @@
 #include "scene/Transform.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <queue>
 #include <set>
 #include <unordered_map>
 #include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace lila::scene
@@ -399,15 +402,44 @@ glm::dvec3 selectionNormal()
         glm::dmat3 toWorld = glm::inverseTranspose(glm::dmat3(n->as<glm::dmat4>(Transform::kWorldMatrix)));
         const Ids side = drivingSide(node, kind, ids, cage);
         // Runs on every manipulator refresh, so only the selection's own faces are visited.
-        glm::dvec3 local(0.0);
-        if (kind == ComponentMode::Face)
-            for (Index f : side)
-                local += m.faceValid(f) ? m.faceAreaVector(f) : glm::dvec3(0.0);
-        else
-            for (Index p : components::convert(m, kind, side, ComponentMode::Vertex))
-                if (m.pointValid(p))
-                    for (Index f : m.pointFaces(p))
-                        local += m.faceAreaVector(f);
+        const bool faces = kind == ComponentMode::Face;
+        const Ids points = faces ? Ids() : components::convert(m, kind, side, ComponentMode::Vertex);
+        const Ids& visit = faces ? side : points;
+        const glm::dvec3 local = tbb::parallel_deterministic_reduce(
+            tbb::blocked_range<size_t>(0, visit.size(), 4096), glm::dvec3(0.0),
+            [&](const tbb::blocked_range<size_t>& r, glm::dvec3 acc) {
+                for (size_t i = r.begin(); i < r.end(); ++i)
+                {
+                    const Index id = visit[i];
+                    if (faces)
+                        acc += m.faceValid(id) ? m.faceAreaVector(id) : glm::dvec3(0.0);
+                    else if (m.pointValid(id))
+                    {
+                        // Each face once, as pointFaces gives them, without its allocation for the usual handful.
+                        std::array<Index, 32> seen;
+                        size_t count = 0;
+                        bool many = false;
+                        m.forEachPointCorner(id, [&](Index c) {
+                            const Index f = m.cornerFace(c);
+                            if (std::find(seen.begin(), seen.begin() + count, f) != seen.begin() + count)
+                                return;
+                            if (count == seen.size())
+                                many = true;
+                            else
+                            {
+                                seen[count++] = f;
+                                acc += m.faceAreaVector(f);
+                            }
+                        });
+                        if (many)
+                            for (Index f : m.pointFaces(id))
+                                if (std::find(seen.begin(), seen.end(), f) == seen.end())
+                                    acc += m.faceAreaVector(f);
+                    }
+                }
+                return acc;
+            },
+            [](const glm::dvec3& a, const glm::dvec3& b) { return a + b; });
         sum += toWorld * local;
     }
     double len = glm::length(sum);
@@ -550,6 +582,22 @@ std::vector<glm::dmat3> componentFrames(const geo::Mesh& m, ComponentMode kind, 
     return frames;
 }
 
+namespace
+{
+/** worldFrame(f, linear)[0], with linear's inverse transpose worked out once by the caller. */
+glm::dvec3 worldTangent(const glm::dmat3& f, const glm::dmat3& linear, const glm::dmat3& normals)
+{
+    glm::dvec3 n = normals * f[2];
+    if (glm::length(n) < 1e-12)
+        return glm::dvec3(0.0);
+    n = glm::normalize(n);
+    glm::dvec3 u = linear * f[0];
+    u -= n * glm::dot(u, n);
+    const double len = glm::length(u);
+    return len < 1e-12 ? glm::dvec3(0.0) : u / len;
+}
+} // namespace
+
 glm::dmat3 selectionNormalFrame()
 {
     LILA_ZONE();
@@ -577,9 +625,18 @@ glm::dmat3 selectionNormalFrame()
             // Only the selection's own points, since this runs on every manipulator refresh.
             const Ids side = drivingSide(node, kind, ids, cage);
             const FrameContext x = frameContext(m, kind, side, glm::inverse(linear) * ref);
-            for (Index p : components::convert(m, kind, side, ComponentMode::Vertex))
-                if (m.pointValid(p))
-                    sum += worldFrame(pointFrame(x, p), linear)[0];
+            const Ids points = components::convert(m, kind, side, ComponentMode::Vertex);
+            const glm::dmat3 normals = glm::inverseTranspose(linear);
+            // Deterministic, so the same selection always gets the same frame.
+            sum += tbb::parallel_deterministic_reduce(
+                tbb::blocked_range<size_t>(0, points.size(), 4096), glm::dvec3(0.0),
+                [&](const tbb::blocked_range<size_t>& r, glm::dvec3 acc) {
+                    for (size_t i = r.begin(); i < r.end(); ++i)
+                        if (const Index p = points[i]; m.pointValid(p))
+                            acc += worldTangent(pointFrame(x, p), linear, normals);
+                    return acc;
+                },
+                [](const glm::dvec3& a, const glm::dvec3& b) { return a + b; });
         }
     glm::dvec3 u = sum - n * glm::dot(sum, n);
     if (glm::length(u) < 1e-6)
