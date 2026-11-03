@@ -1,0 +1,40 @@
+{
+  "format": "lilagroom",
+  "version": 1,
+  "name": "Chunky",
+  "doc": "Painted chunks of chunks with a few strays.",
+  "lock": {
+    "profile": "ribbon",
+    "thickness": 0.35,
+    "widthRamp": "0:0.55 0.12:1 0.7:0.8 1:0.08"
+  },
+  "stack": [
+    {
+      "style": "split",
+      "attrs": {
+        "count": 3,
+        "spread": 1.5
+      }
+    },
+    {
+      "style": "clump",
+      "attrs": {
+        "amount": 0.4
+      }
+    },
+    {
+      "style": "noise",
+      "attrs": {
+        "amount": 0.8,
+        "frequency": 0.06
+      }
+    },
+    {
+      "style": "flyaways",
+      "attrs": {
+        "amount": 0.15,
+        "spread": 2.5
+      }
+    }
+  ]
+}

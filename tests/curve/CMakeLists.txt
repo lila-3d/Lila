@@ -13,7 +13,6 @@ add_executable(lila_curve_tests
     test_edge_to_curve.cpp
     test_bevel.cpp
     test_environment.cpp
-    test_groom.cpp
     test_pipe.cpp
     test_pipe_tools.cpp
     test_planar.cpp

@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -63,6 +64,11 @@ struct LILA_SCENE_API Spline
     std::vector<double> tilt;         // radians around the tangent, default 0
     std::vector<double> radius;       // sweep scale, default 1
     std::vector<double> cornerRadius; // fillet radius at the point, cm, default 0 (none)
+
+    /** Named values of the whole curve (groom: lock id, width scale, profile), carried through edits and conversions. */
+    std::map<std::string, double> attrs;
+    /** Named per-point arrays, each empty or one value per point like tilt (groom: painted curl, frizz, clump). */
+    std::map<std::string, std::vector<double>> pointAttrs;
 
     size_t size() const { return points.size(); }
     double weight(size_t i) const { return i < weights.size() ? weights[i] : 1.0; }

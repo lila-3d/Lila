@@ -1841,6 +1841,9 @@ void registerBuiltins()
     registerWorldAttrs("curveRevolve", {.points = {"axisOrigin"}, .directions = {"axis"}, .worldData = {"profile"}, .worldOutput = true});
     registerWorldAttrs("curveSweep", {.directions = {"upVector"}, .worldData = {"path", "profile"}, .worldOutput = true});
     registerWorldAttrs("hairCards", {.directions = {"upVector"}, .worldData = {"inCurve", "guideCurve"}, .worldOutput = true});
+    for (const char* t : {"groom", "groomSplit", "groomClump", "groomCurl", "groomWave", "groomFrizz", "groomNoise", "groomLength", "groomCut",
+                          "groomFlyaways", "groomShell"})
+        registerWorldAttrs(t, {.worldData = {"inCurve"}, .worldOutput = true});
     registerWorldAttrs("curveStrapPath", {.matrices = {"meshMatrices"}, .points = {"start", "end"}, .directions = {"startDir", "endDir"}, .worldOutput = true});
     registerWorldAttrs("curveStrap", {.directions = {"up"}, .worldData = {"path"}});
     registerWorldAttrs("curvePipeRoute", {.points = {"start", "end"}, .directions = {"startDir", "endDir"}, .worldOutput = true});

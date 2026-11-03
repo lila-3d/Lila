@@ -1,4 +1,8 @@
-#include "curve/Groom.h"
+#include "groom/Groom.h"
+
+#include "groom/Attrs.h"
+#include "groom/Locks.h"
+#include "groom/Settle.h"
 
 #include "core/Profile.h"
 #include "geo/ColorSets.h"
@@ -11,11 +15,12 @@
 #include <map>
 #include <numeric>
 
-namespace lila::curve::groom
+namespace lila::groom
 {
 namespace
 {
-const char* const kBrushNames[] = {"comb", "smooth", "length", "puff", "add", "delete", "density", "cut", "pinch", "slide"};
+const char* const kBrushNames[] = {"comb", "smooth", "length",  "puff", "add",   "delete", "density", "cut",   "pinch", "slide",
+                                   "grab", "twist",  "widen", "flatten", "curl", "frizz", "clump",   "split", "merge", "settle"};
 static_assert(std::size(kBrushNames) == size_t(Brush::Count));
 
 double smoothFalloff(double t)
@@ -221,6 +226,285 @@ int plant(Splines& s, Settings& o, const Dab& d, const Surface& surface, std::mt
         ++added;
     }
     return added;
+}
+
+/** Largest brush weight over the curve's points. */
+double peakWeight(const Weigher& weigh, const Spline& sp)
+{
+    double w = 0.0;
+    for (const D3& p : sp.points)
+        w = std::max(w, weigh(p));
+    return w;
+}
+
+/** Locks near a grab settle a couple of steps around the grabbed ones, which hold still. */
+void makeRoom(Splines& s, const Settings& o, const Dab& d, const Surface* surface)
+{
+    SettleOptions so;
+    so.gravity = o.gravity;
+    so.steps = 2;
+    so.bend = o.bend;
+    so.holdShape = std::max(o.holdShape, 0.3);
+    Splines sub;
+    std::vector<size_t> which;
+    std::vector<std::vector<double>> radii;
+    bool anyFree = false;
+    const double reach = d.radius * 3.0;
+    for (size_t si = 0; si < s.size(); ++si)
+    {
+        if (s[si].size() < 2)
+            continue;
+        const bool grabbed = si < o.grab.size() && std::ranges::any_of(o.grab[si], [](double w) { return w > 0.0; });
+        const bool near = std::ranges::any_of(s[si].points, [&](const D3& p) { return glm::distance(p, d.center) < reach; });
+        if (!grabbed && (!near || !editable(o, si)))
+            continue;
+        which.push_back(si);
+        sub.push_back(s[si]);
+        radii.push_back(si < o.radii.size() ? o.radii[si] : std::vector<double>(s[si].size(), 0.2));
+        so.weights.push_back(std::vector<double>(s[si].size(), grabbed ? 0.0 : 1.0));
+        anyFree = anyFree || !grabbed;
+    }
+    if (!anyFree)
+        return;
+    settle(sub, radii, surface, so);
+    for (size_t k = 0; k < which.size(); ++k)
+        if (so.weights[k].front() > 0.0)
+            s[which[k]] = std::move(sub[k]);
+}
+
+void applyLockDab(Splines& s, Settings& o, const Dab& d, const Surface* surface, const Weigher& weigh, Stats* stats)
+{
+    const double sign = o.invert ? -1.0 : 1.0;
+    auto changed = [&] {
+        if (stats)
+            ++stats->changed;
+    };
+    switch (o.brush)
+    {
+    case Brush::Grab:
+    {
+        if (o.grab.size() != s.size())
+        {
+            o.grab.assign(s.size(), {});
+            for (size_t si = 0; si < s.size(); ++si)
+                if (editable(o, si))
+                {
+                    o.grab[si].assign(s[si].size(), 0.0);
+                    // The root stays planted and the first points ease in.
+                    for (size_t i = 1; i < s[si].size(); ++i)
+                        o.grab[si][i] = weigh(s[si].points[i]) * std::min(1.0, double(i) / 2.0);
+                }
+        }
+        for (size_t si = 0; si < s.size(); ++si)
+        {
+            Spline& sp = s[si];
+            if (o.grab[si].size() != sp.size() || std::ranges::all_of(o.grab[si], [](double w) { return w <= 0.0; }))
+                continue;
+            const std::vector<D3> before = sp.points;
+            const std::vector<double> lengths = segmentLengths(sp);
+            for (size_t i = 1; i < sp.size(); ++i)
+                sp.points[i] += d.delta * o.grab[si][i];
+            if (o.keepLength)
+                restoreLengths(sp, lengths);
+            settleHandles(sp, before);
+            changed();
+        }
+        if (o.settleWhileGrabbing)
+            makeRoom(s, o, d, surface);
+        break;
+    }
+    case Brush::Twist:
+    case Brush::Widen:
+    case Brush::Curl:
+    case Brush::Frizz:
+    case Brush::Clump:
+    {
+        for (size_t si = 0; si < s.size(); ++si)
+        {
+            Spline& sp = s[si];
+            if (sp.size() < 2 || !editable(o, si) || peakWeight(weigh, sp) <= 0.0)
+                continue;
+            std::vector<double>* target = nullptr;
+            double lo = -4.0, hi = 4.0;
+            switch (o.brush)
+            {
+            case Brush::Twist:
+                if (sp.tilt.size() != sp.size())
+                    sp.tilt.assign(sp.size(), 0.0);
+                target = &sp.tilt;
+                lo = -1e3;
+                hi = 1e3;
+                break;
+            case Brush::Widen:
+                if (sp.radius.size() != sp.size())
+                    sp.radius.assign(sp.size(), 1.0);
+                target = &sp.radius;
+                break;
+            case Brush::Curl: target = &attr::points(sp, attr::kCurl, 0.0); break;
+            case Brush::Frizz: target = &attr::points(sp, attr::kFrizz, 0.0); break;
+            default: target = &attr::points(sp, attr::kClumpWeight, 0.0); break;
+            }
+            for (size_t i = 0; i < sp.size(); ++i)
+            {
+                const double w = weigh(sp.points[i]);
+                if (w <= 0.0)
+                    continue;
+                double& v = (*target)[i];
+                if (o.brush == Brush::Widen)
+                    v = std::clamp(v * (1.0 + sign * w * 0.08), 0.02, 20.0);
+                else
+                    v = std::clamp(v + sign * w * 0.15, lo, hi);
+            }
+            changed();
+        }
+        break;
+    }
+    case Brush::Flatten:
+    {
+        if (!surface || surface->empty())
+            break;
+        for (size_t si = 0; si < s.size(); ++si)
+        {
+            Spline& sp = s[si];
+            if (sp.size() < 2 || !editable(o, si))
+                continue;
+            const std::vector<D3> before = sp.points;
+            bool any = false;
+            for (size_t i = 1; i < sp.size(); ++i)
+            {
+                const double w = weigh(sp.points[i]);
+                if (w <= 0.0)
+                    continue;
+                const auto h = surface->closest(sp.points[i]);
+                if (!h)
+                    continue;
+                const double r = si < o.radii.size() && i < o.radii[si].size() ? o.radii[si][i] : 0.2;
+                // Inverted lifts the lock off the scalp along its normal instead.
+                const D3 target = o.invert ? sp.points[i] + h->normal * (r * 2.0) : h->point + h->normal * r;
+                sp.points[i] += (target - sp.points[i]) * (w * 0.5);
+                any = true;
+            }
+            if (any)
+            {
+                settleHandles(sp, before);
+                changed();
+            }
+        }
+        break;
+    }
+    case Brush::Split:
+    {
+        if (o.acted)
+            break;
+        size_t best = s.size();
+        double bestW = 0.0;
+        for (size_t si = 0; si < s.size(); ++si)
+            if (editable(o, si))
+                if (double w = peakWeight(weigh, s[si]); w > bestW)
+                {
+                    bestW = w;
+                    best = si;
+                }
+        if (best == s.size() || s[best].size() < 2)
+            break;
+        const Spline lock = attr::resampled(s[best], int(std::max<size_t>(s[best].size(), 8)));
+        const Frames f = lockFrames(lock, surface, 1.0);
+        const double width = attr::get(lock, attr::kWidth, 1.0);
+        const double r = (best < o.radii.size() && !o.radii[best].empty() ? o.radii[best].front() : 0.3) * 1.5;
+        Spline a = lock, b = lock;
+        for (size_t i = 1; i < lock.size(); ++i)
+        {
+            const double t = double(i) / double(lock.size() - 1);
+            const D3 off = f.side[i] * (r * (0.4 + 0.6 * t));
+            a.points[i] -= off;
+            b.points[i] += off;
+        }
+        attr::set(a, attr::kWidth, width * 0.6);
+        attr::set(b, attr::kWidth, width * 0.6);
+        attr::set(b, attr::kId, double(attr::nextId(s)));
+        s[best] = std::move(a);
+        s.insert(s.begin() + ptrdiff_t(best) + 1, std::move(b));
+        if (!o.mask.empty())
+            o.mask.insert(o.mask.begin() + ptrdiff_t(best) + 1, 1);
+        o.acted = true;
+        if (stats)
+        {
+            ++stats->changed;
+            ++stats->added;
+        }
+        break;
+    }
+    case Brush::Merge:
+    {
+        if (o.acted)
+            break;
+        std::vector<size_t> picked;
+        for (size_t si = 0; si < s.size(); ++si)
+            if (editable(o, si) && s[si].size() >= 2 && peakWeight(weigh, s[si]) > 0.0)
+                picked.push_back(si);
+        if (picked.size() < 2)
+            break;
+        const int n = int(std::max<size_t>(s[picked[0]].size(), 8));
+        Spline merged = attr::resampled(s[picked[0]], n);
+        std::vector<D3> sum(size_t(n), D3(0.0));
+        double width2 = 0.0, id = 1e300;
+        for (size_t si : picked)
+        {
+            const Spline r = attr::resampled(s[si], n);
+            for (int i = 0; i < n; ++i)
+                sum[size_t(i)] += r.points[size_t(i)];
+            const double w = attr::get(s[si], attr::kWidth, 1.0);
+            width2 += w * w;
+            id = std::min(id, attr::get(s[si], attr::kId, 1e300));
+        }
+        for (int i = 0; i < n; ++i)
+            merged.points[size_t(i)] = sum[size_t(i)] / double(picked.size());
+        attr::set(merged, attr::kWidth, std::sqrt(width2));
+        if (id < 1e299)
+            attr::set(merged, attr::kId, id);
+        std::vector<char> remove(s.size(), 0);
+        for (size_t k = 1; k < picked.size(); ++k)
+            remove[picked[k]] = 1;
+        s[picked[0]] = std::move(merged);
+        eraseSplines(s, o, remove, stats);
+        o.acted = true;
+        if (stats)
+            ++stats->changed;
+        break;
+    }
+    case Brush::Settle:
+    {
+        SettleOptions so;
+        so.gravity = o.gravity;
+        so.steps = 4;
+        so.bend = o.bend;
+        so.holdShape = o.holdShape;
+        Splines sub;
+        std::vector<size_t> which;
+        std::vector<std::vector<double>> radii;
+        for (size_t si = 0; si < s.size(); ++si)
+        {
+            if (!editable(o, si) || s[si].size() < 2 || peakWeight(weigh, s[si]) <= 0.0)
+                continue;
+            std::vector<double> w(s[si].size(), 0.0);
+            for (size_t i = 0; i < w.size(); ++i)
+                w[i] = std::min(1.0, weigh(s[si].points[i]) * 3.0);
+            which.push_back(si);
+            sub.push_back(s[si]);
+            radii.push_back(si < o.radii.size() ? o.radii[si] : std::vector<double>(s[si].size(), 0.2));
+            so.weights.push_back(std::move(w));
+        }
+        if (sub.empty())
+            break;
+        settle(sub, radii, surface, so);
+        for (size_t k = 0; k < which.size(); ++k)
+            s[which[k]] = std::move(sub[k]);
+        if (stats)
+            stats->changed += int(which.size());
+        break;
+    }
+    default: break;
+    }
 }
 } // namespace
 
@@ -601,7 +885,7 @@ void applyDab(Splines& s, Settings& o, const Dab& d, const Surface* surface, std
         }
         break;
     }
-    default: break;
+    default: applyLockDab(s, o, d, surface, weigh, stats); break;
     }
 }
 
@@ -697,4 +981,4 @@ Splines guides(const Surface& surface, const GuideOptions& o, std::vector<std::s
         warnings->push_back("only " + std::to_string(out.size()) + " guides fit at that spacing");
     return out;
 }
-} // namespace lila::curve::groom
+} // namespace lila::groom

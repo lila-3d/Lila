@@ -15,13 +15,20 @@
 #include <vector>
 
 /**
- * Grooming: sculpt brushes for curve nodes holding many curves (hair, fur, grass) and the scalp they grow from. A
+ * Grooming: one toolkit for stylized locks, strands, cards and fur grown from a scalp. Guide curves (a curve node) carry
+ * the groom's per-curve and per-point attributes (groom/Attrs.h); style modifiers, the lock and shell generators, the
+ * settle solver and the brushes all read and write them.
+ *
+ * Strand brushes: sculpt brushes for curve nodes holding many curves (hair, fur, grass) and the scalp they grow from. A
  * curve's first point is its root; brushes keep roots where they are, on the scalp when there is one, except Slide
  * (moves them along it) and Add (plants new ones on it). Works on points, so poly, Bezier and NURBS curves all comb.
  */
-namespace lila::curve::groom
+namespace lila::groom
 {
 using D3 = glm::dvec3;
+using curve::Kind;
+using curve::Spline;
+using curve::Splines;
 
 enum class Brush : uint8_t
 {
@@ -35,8 +42,22 @@ enum class Brush : uint8_t
     Cut,
     Pinch,
     Slide,
+    // Lock brushes: whole locks under the brush, roots pinned.
+    Grab,    // moves the locks under the brush with the cursor, weights caught at the stroke's start
+    Twist,   // turns the lock about itself (adds to tilt)
+    Widen,   // wider or, inverted, thinner (scales radius)
+    Flatten, // presses the lock onto the scalp
+    Curl,    // paints curl onto the points (the Curl modifier's amount)
+    Frizz,   // paints frizz
+    Clump,   // paints clump weight
+    Split,   // one lock into two, once per stroke
+    Merge,   // the locks under the brush into one, once per stroke
+    Settle,  // settles the locks under the brush under gravity
     Count
 };
+
+inline constexpr Brush kFirstLockBrush = Brush::Grab;
+inline bool isLockBrush(Brush b) { return b >= kFirstLockBrush && b < Brush::Count; }
 
 LILA_SCENE_API const char* brushName(Brush b);
 LILA_SCENE_API bool parseBrush(std::string_view name, Brush* out);
@@ -113,6 +134,18 @@ struct Settings
 
     /** Per spline, 1 where the brush may change it; empty for all. Kept in step as curves come and go. */
     std::vector<char> mask;
+
+    /** Lock brushes: collision radius per point of each curve (settle, flatten), from the groom's lock settings. */
+    std::vector<std::vector<double>> radii;
+    /** Settle: gravity in the curves' space, cm/s^2, and the solver's stiffness. */
+    D3 gravity{0.0, -981.0, 0.0};
+    double bend = 0.5;
+    double holdShape = 0.15;
+    /** Grab: each point's weight, caught at the stroke's first dab. Split and merge: set once they acted. */
+    std::vector<std::vector<double>> grab;
+    bool acted = false;
+    /** Grab: locks near the grabbed ones settle a few steps each dab, so they make room. */
+    bool settleWhileGrabbing = false;
 };
 
 struct Stats
@@ -146,4 +179,4 @@ LILA_SCENE_API Splines guides(const Surface& surface, const GuideOptions& o, std
 
 /** Points of a curve resampled to n evenly spaced along its length (its control points for NURBS). */
 LILA_SCENE_API std::vector<D3> resample(const std::vector<D3>& pts, int n);
-} // namespace lila::curve::groom
+} // namespace lila::groom

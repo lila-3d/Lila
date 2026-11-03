@@ -5,10 +5,11 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
-#include "curve/Groom.h"
-#include "curve/GroomNode.h"
+#include "groom/Groom.h"
+#include "groom/GroomNodes.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "ops/Undo.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
@@ -26,6 +27,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QTimer>
@@ -38,7 +40,7 @@ namespace lila::ui
 namespace
 {
 using D3 = glm::dvec3;
-namespace groom = curve::groom;
+
 
 constexpr const char* kCurveSculptPrefix = "/curveSculpt";
 
@@ -55,6 +57,7 @@ struct CurveSculptSettings
     double density = 1.0;
     bool keepLength = true;
     bool frontOnly = true;
+    bool settleWhileGrabbing = true;
 };
 
 CurveSculptSettings& curveSculptSettings()
@@ -75,6 +78,7 @@ CurveSculptSettings& curveSculptSettings()
         c.density = std::max(1e-4, p.value<double>("general", key("density"), c.density));
         c.keepLength = p.value<bool>("general", key("keepLength"), c.keepLength);
         c.frontOnly = p.value<bool>("general", key("frontOnly"), c.frontOnly);
+        c.settleWhileGrabbing = p.value<bool>("general", key("settleWhileGrabbing"), c.settleWhileGrabbing);
         return c;
     }();
     return s;
@@ -95,6 +99,8 @@ void saveSettings()
     p.set("general", key("density"), c.density);
     p.set("general", key("keepLength"), c.keepLength);
     p.set("general", key("frontOnly"), c.frontOnly);
+    p.set("general", key("settleWhileGrabbing"), c.settleWhileGrabbing);
+    syncGroomPalette();
     viewportTools::requestRedraw();
 }
 
@@ -108,7 +114,8 @@ D3 xform(const glm::dmat4& m, const D3& p, double w) { return D3(m * glm::dvec4(
 
 /**
  * Sculpt Curves: brushes for curve nodes holding many curves (hair, fur). 1 to 0 pick comb, smooth, length, puff, add,
- * delete, density, cut, pinch and slide; Shift smooths and Ctrl inverts the next stroke. B-drag or Ctrl+scroll sets the
+ * delete, density, cut, pinch and slide; Tab swaps to the lock brushes (grab, twist, widen, flatten, curl, frizz, clump,
+ * split, merge, settle) on the same keys. Shift smooths and Ctrl inverts the next stroke. B-drag or Ctrl+scroll sets the
  * radius, M-drag or Shift+scroll the strength. The stroke plays live on a copy and lands as one undoable command.
  */
 class CurveSculptTool final : public ViewportTool, public brush::DabSink
@@ -137,13 +144,13 @@ public:
                     break;
                 }
         // A mesh selected with the curves becomes their surface when they have none.
-        if (scene::Node* n = g.node(mNode); n && !mesh.empty() && curve::groomSurfaceOf(*n).empty())
+        if (scene::Node* n = g.node(mNode); n && !mesh.empty() && groom::groomSurfaceOf(*n).empty())
             runUiWithOptions("groomSurface", {{"args", {n->path()}}, {"mesh", mesh}, {"attach", false}});
         mControls.activate({}, {});
         const scene::NodeId* target = &mNode;
         const bool* stroking = &mStroking;
         viewportHooks::setHideHook("lila.curveSculpt", [target, stroking](scene::NodeId id) { return *stroking && id == *target; });
-        log::info("Sculpt Curves: 1-0 brushes, Shift smooth, Ctrl invert, B-drag/Ctrl+scroll radius, M-drag/Shift+scroll strength");
+        showGroomPalette(false);
     }
 
     void deactivate() override
@@ -151,6 +158,7 @@ public:
         if (mStroking)
             endStroke();
         mControls.deactivate();
+        hideGroomPalette();
         viewportHooks::removeHideHook("lila.curveSculpt");
         viewportTools::requestRedraw();
     }
@@ -226,14 +234,6 @@ public:
         return key(e->key(), e->modifiers());
     }
 
-    bool hotkey(const QKeyEvent& e, std::string_view) override
-    {
-        // Number keys pick brushes here rather than whatever they are bound to.
-        if (e.modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
-            return false;
-        return e.key() >= Qt::Key_0 && e.key() <= Qt::Key_9 && key(e.key(), e.modifiers());
-    }
-
     void draw(render::FrameState& f, OverlayPainter& p, const ViewInfo& view) override
     {
         LILA_ZONE();
@@ -254,7 +254,7 @@ public:
         const Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
         const groom::Brush b = mStroking ? mBrush : (mods & Qt::ShiftModifier) ? groom::Brush::Smooth : st.brush;
         const bool invert = mStroking ? mInvert : (mods & Qt::ControlModifier) != 0;
-        QString surface = n ? QString::fromStdString(curve::groomSurfaceOf(*n)) : QString();
+        QString surface = n ? QString::fromStdString(groom::groomSurfaceOf(*n)) : QString();
         drawToolStatus(p, view,
                        {.tool = "Sculpt Curves",
                         .subject = n ? QString::fromStdString(n->name()) : QString(),
@@ -265,9 +265,10 @@ public:
                                    {"surface", surface.isEmpty() ? QString("none") : surface}},
                         .flags = {{"invert", invert}},
                         .prompt = !n ? QString("select a curve") : surface.isEmpty() ? QString("add and density need a surface") : QString(),
-                        .keys = {{"1-0", "brush"}, {"Shift", "smooth"}, {"Ctrl", "invert"},
-                                 {"B-drag", "radius"}, {"M-drag", "strength"}, {"Esc", "exit"}}});
-        drawPalette(p, view, b);
+                        .symmetry = n && curve::symmetryAxis(*n) >= 0 ? std::optional<ToolSymmetry>(ToolSymmetry{true, QString("XYZ").mid(curve::symmetryAxis(*n), 1)})
+                                                                     : std::nullopt});
+        if (groomKeysShown())
+            drawKeyList(p, QPointF(16.0, view.height - 84.0), curveSculptKeys());
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> cs;
         brush::SurfaceHit hit;
@@ -296,15 +297,19 @@ public:
         const glm::dmat4 inv = glm::inverse(w);
         const glm::dmat3 nrm = glm::transpose(glm::dmat3(w));
         const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
-        g.center = xform(inv, d.center, 1.0);
-        const D3 nn = nrm * d.normal;
+        // Brushing the mirrored copies edits the guides they mirror, as the command does.
+        D3 wc = d.center, wn = d.normal, wd = d.direction, wv = d.viewDir;
+        groom::mirrorDabToSource(*n, mWork, wc, wn, wd, wv);
+        g.center = xform(inv, wc, 1.0);
+        const D3 nn = nrm * wn;
         g.normal = glm::length(nn) > 1e-12 ? glm::normalize(nn) : D3(0, 1, 0);
         g.radius = d.radius / scale;
         g.strength = j["strength"].get<double>();
-        g.delta = xform(inv, d.direction, 0.0);
-        const D3 v = xform(inv, d.viewDir, 0.0);
+        g.delta = xform(inv, wd, 0.0);
+        const D3 v = xform(inv, wv, 0.0);
         g.viewDir = glm::length(v) > 1e-12 ? glm::normalize(v) : D3(0.0);
         groom::applyDab(mWork, mApply, g, mSurfaceLocal.get(), mRng);
+        showLive(false);
         viewportTools::requestRedraw();
     }
 
@@ -317,16 +322,6 @@ private:
 
     bool key(int k, Qt::KeyboardModifiers)
     {
-        if (k >= Qt::Key_0 && k <= Qt::Key_9)
-        {
-            const int i = k == Qt::Key_0 ? 9 : k - Qt::Key_1;
-            if (i < int(groom::Brush::Count))
-            {
-                curveSculptSettings().brush = groom::Brush(i);
-                saveSettings();
-            }
-            return true;
-        }
         if (k == Qt::Key_Escape)
         {
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
@@ -339,7 +334,7 @@ private:
     void syncSurface(scene::Node& curve)
     {
         scene::Graph& g = scene::Graph::current();
-        const std::string name = curve::groomSurfaceOf(curve);
+        const std::string name = groom::groomSurfaceOf(curve);
         scene::Node* mesh = name.empty() ? nullptr : g.find(name);
         if (!mesh || !mesh->type().isA("mesh"))
         {
@@ -423,6 +418,36 @@ private:
         return true;
     }
 
+    /**
+     * On a groom's guides the stroke shows on the locks as it goes: the guides hold the work in progress with undo off,
+     * and get their start value back before the stroke lands as one command.
+     */
+    void showLive(bool force)
+    {
+        if (!mLive || (!force && mLiveClock.isValid() && mLiveClock.elapsed() < 33))
+            return;
+        mLiveClock.start();
+        scene::Graph& g = scene::Graph::current();
+        UndoStack& u = UndoStack::get();
+        const bool was = u.enabled();
+        u.setEnabled(false);
+        g.setValue({mNode, curve::CurveShape::kCreate, -1}, curve::makeCurveData(mWork));
+        u.setEnabled(was);
+    }
+
+    void endLive()
+    {
+        if (!mLive)
+            return;
+        mLive = false;
+        UndoStack& u = UndoStack::get();
+        const bool was = u.enabled();
+        u.setEnabled(false);
+        scene::Graph::current().setValue({mNode, curve::CurveShape::kCreate, -1}, mLiveStart);
+        u.setEnabled(was);
+        mLiveStart = {};
+    }
+
     void beginStroke(const QMouseEvent* e, const ViewInfo& view)
     {
         scene::Node* n = target();
@@ -448,6 +473,9 @@ private:
         mApply.interpolate = st.interpolate;
         mApply.minDistance = st.minDistance;
         mApply.density = st.density;
+        mApply.settleWhileGrabbing = st.settleWhileGrabbing;
+        if (groom::isLockBrush(mBrush))
+            groom::lockBrushSettings(g, *n, mWork, glm::inverse(n->as<glm::dmat4>(scene::Transform::kWorldMatrix)), mApply);
         // As the command does: with points of the curve selected, only the curves holding them change.
         const auto& sel = scene::components::selected(mNode, scene::ComponentMode::Vertex);
         if (!sel.empty())
@@ -463,6 +491,13 @@ private:
             }
         }
         syncSurface(*n);
+        // Live only on guides that store their own splines, so putting the start value back restores them exactly.
+        mLive = groom::groomOf(g, *n) && !g.source({mNode, curve::CurveShape::kCreate, -1});
+        if (mLive)
+        {
+            mLiveStart = g.value({mNode, curve::CurveShape::kCreate, -1});
+            mLiveClock.invalidate();
+        }
         mDabs = json::array();
         mStroking = true;
         brush::BrushSettings stroke = st.stroke;
@@ -477,6 +512,7 @@ private:
     {
         mStroke.end();
         mStroking = false;
+        endLive();
         scene::Node* n = target();
         if (n && !mDabs.empty())
         {
@@ -495,6 +531,7 @@ private:
                          {"interpolate", st.interpolate},
                          {"minDistance", st.minDistance},
                          {"density", st.density},
+                         {"settleWhileGrabbing", st.settleWhileGrabbing},
                          {"seed", int64_t(mSeed)}};
             try
             {
@@ -509,24 +546,6 @@ private:
         mDabs = json::array();
         mWork.clear();
         viewportTools::requestRedraw();
-    }
-
-    void drawPalette(OverlayPainter& p, const ViewInfo& view, groom::Brush current)
-    {
-        const double w = 58.0, h = 20.0, gap = 3.0;
-        const int count = int(groom::Brush::Count);
-        double x = view.width * 0.5 - (count * (w + gap)) * 0.5;
-        const double y = view.height - h - 14.0;
-        for (int i = 0; i < count; ++i)
-        {
-            const QRectF r(x, y, w, h);
-            const bool on = groom::Brush(i) == current;
-            p.rect(r, on ? glm::vec4(0.93f, 0.93f, 0.93f, 0.95f) : glm::vec4(0.08f, 0.08f, 0.08f, 0.88f));
-            const QString label = QString("%1 %2").arg((i + 1) % 10).arg(brushLabel(groom::Brush(i)));
-            p.text(QPointF(r.center().x(), r.bottom() - 6.0), label, on ? glm::vec4(0.08f, 0.08f, 0.08f, 1.0f) : glm::vec4(0.9f, 0.9f, 0.9f, 1.0f),
-                   OverlayPainter::Center);
-            x += w + gap;
-        }
     }
 
     struct SurfaceKey
@@ -547,6 +566,9 @@ private:
     groom::Settings mApply;
     curve::Splines mWork;
     json mDabs = json::array();
+    bool mLive = false;
+    scene::PlugValue mLiveStart;
+    QElapsedTimer mLiveClock;
     QPointF mHover;
     std::string mHoverView;
     std::unique_ptr<groom::Surface> mSurfaceWorld, mSurfaceLocal;
@@ -596,6 +618,7 @@ void openOptions()
     QDoubleSpinBox* density = spin(st.density, 0.0001, 1e4, 0.1, " /cm\xc2\xb2");
     QCheckBox* keepLength = check(st.keepLength);
     QCheckBox* frontOnly = check(st.frontOnly);
+    QCheckBox* settleGrab = check(st.settleWhileGrabbing);
     form->addRow("Brush", brushBox);
     form->addRow("Strength", strength);
     form->addRow("Falloff", falloff);
@@ -607,6 +630,7 @@ void openOptions()
     form->addRow("Density", density);
     form->addRow("Keep Segment Lengths", keepLength);
     form->addRow("Front Only", frontOnly);
+    form->addRow("Settle While Grabbing", settleGrab);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -624,9 +648,33 @@ void openOptions()
     st.density = density->value();
     st.keepLength = keepLength->isChecked();
     st.frontOnly = frontOnly->isChecked();
+    st.settleWhileGrabbing = settleGrab->isChecked();
     saveSettings();
 }
 } // namespace
+
+int curveSculptBrush() { return int(curveSculptSettings().brush); }
+
+void setCurveSculptBrush(int brush)
+{
+    curveSculptSettings().brush = groom::Brush(std::clamp(brush, 0, int(groom::Brush::Count) - 1));
+    saveSettings();
+}
+
+bool curveSculptSettleGrab() { return curveSculptSettings().settleWhileGrabbing; }
+
+void setCurveSculptSettleGrab(bool on)
+{
+    curveSculptSettings().settleWhileGrabbing = on;
+    saveSettings();
+}
+
+std::vector<KeyHint> curveSculptKeys()
+{
+    std::vector<KeyHint> keys = {{"Drag", brushLabel(curveSculptSettings().brush)}, {"Shift+drag", "Smooth"}, {"Ctrl+drag", "Invert"}};
+    keys.insert(keys.end(), {{"B+drag", "Radius"}, {"M+drag", "Strength"}, {"[  ]", "Smaller, larger"}, {"Esc", "Exit"}});
+    return keys;
+}
 
 void registerCurveSculptTool()
 {
@@ -642,7 +690,8 @@ void registerCurveSculptTool()
                          "with brushes; roots stay on its groom surface. Select a mesh too to make it the surface.",
                   .python = "lila.ui.run_action(\"curve.sculptCurves\")"});
     optionBox::addCustom("curve.sculptCurves", openOptions);
-    for (const char* b : {"comb", "smooth", "length", "puff", "add", "delete", "density", "cut", "pinch", "slide"})
+    for (const char* b : {"comb", "smooth", "length", "puff", "add", "delete", "density", "cut", "pinch", "slide", "grab", "twist", "widen", "flatten", "curl",
+                          "frizz", "clump", "split", "merge", "settle"})
     {
         groom::Brush br;
         groom::parseBrush(b, &br);

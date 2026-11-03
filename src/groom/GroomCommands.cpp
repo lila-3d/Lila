@@ -1,10 +1,10 @@
-#include "curve/GroomNode.h"
+#include "groom/GroomNodes.h"
 
 #include "brush/Brush.h"
+#include "groom/Attrs.h"
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
-#include "curve/HairCards.h"
 #include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "ops/Command.h"
@@ -17,10 +17,11 @@
 #include <map>
 #include <set>
 
-namespace lila::curve
+namespace lila::groom
 {
 using namespace scene;
-using namespace helpers;
+using namespace curve;
+using namespace curve::helpers;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using T = ArgType;
@@ -184,6 +185,23 @@ void storeSplines(Graph& g, Node& n, Splines s)
     g.setValue(create, makeCurveData(std::move(s)));
 }
 
+} // namespace
+
+void lockBrushSettings(Graph& g, Node& guides, const Splines& s, const glm::dmat4& worldToCurve, Settings& o)
+{
+    Node* groom = groomOf(g, guides);
+    const LockOptions lo = groom ? lockOptionsOf(*groom) : LockOptions{};
+    // Radii in the curve's object space: the lock settings are world sizes.
+    const double scale = std::cbrt(std::abs(glm::determinant(glm::dmat3(worldToCurve))));
+    o.radii = collisionRadii(s, lo);
+    for (auto& r : o.radii)
+        for (double& v : r)
+            v *= scale;
+    o.gravity = D3(worldToCurve * glm::dvec4(0.0, -981.0, 0.0, 0.0));
+}
+
+namespace
+{
 void registerGroomOptionLayout()
 {
     namespace opt = ops::options;
@@ -201,12 +219,6 @@ void registerGroomOptionLayout()
     opt::setOverride("hairCards", std::move(o));
 }
 } // namespace
-
-std::string groomSurfaceOf(const Node& curve)
-{
-    const int a = curve.type().attrIndex("groomSurface");
-    return a < 0 ? std::string() : curve.as<std::string>(a);
-}
 
 CardOptions cardOptionsOf(const Node& n)
 {
@@ -236,7 +248,7 @@ CardOptions cardOptionsOf(const Node& n)
     return o;
 }
 
-void registerGroomType()
+void registerHairCardsType()
 {
     if (types::find("hairCards"))
         return;
@@ -280,8 +292,11 @@ void registerGroomType()
     types::registerType(std::move(t));
 }
 
-void registerGroomCommands()
+void registerLockCommands();
+
+void registerCommands()
 {
+    registerLockCommands();
     std::vector<std::string> brushes;
     for (int k = 0; k < int(groom::Brush::Count); ++k)
         brushes.push_back(groom::brushName(groom::Brush(k)));
@@ -289,7 +304,7 @@ void registerGroomCommands()
     ops::registerCommand({
         .name = "curveSculptStroke",
         .doc = "One curve sculpting stroke on a curve holding many curves (hair): comb, smooth, length, puff, add, delete, density, cut, "
-               "pinch or slide. dabs is a list of {center, normal, radius, strength, delta, view} in world space, as the Sculpt Curves "
+               "pinch or slide, and on a groom's guides the lock brushes grab, twist, widen, flatten, curl, frizz, clump, split, merge and settle. dabs is a list of {center, normal, radius, strength, delta, view} in world space, as the Sculpt Curves "
                "tool records them. Roots stay put (on the groom surface) except under slide and add. Returns {changed, added, removed, curves}.",
         .positionalDoc = "curve",
         .flags = {{"brush", "b", T::String, "comb", "The brush.", brushes},
@@ -308,11 +323,12 @@ void registerGroomCommands()
                   {"densitySet", "", T::String, nullptr, "Vertex color set of the surface used as the density map."},
                   {"seed", "", T::Int, 0, "Random seed for add, delete and density."},
                   {"surface", "", T::String, nullptr, "Mesh the roots grow from; default the curve's groomSurface."},
-                  {"selectedOnly", "", T::Bool, true, "With points of the curve selected, only the curves holding them change."}},
+                  {"selectedOnly", "", T::Bool, true, "With points of the curve selected, only the curves holding them change."},
+                  {"settleWhileGrabbing", "", T::Bool, false, "Grab: the locks near the grabbed ones settle as it moves, making room."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& c = *curvesOrPointSelection(g, a, "curveSculptStroke").front();
-            groom::Settings o;
+            Settings o;
             if (!groom::parseBrush(a.get<std::string>("brush", "comb"), &o.brush))
                 throw CommandError("curveSculptStroke: unknown brush '" + a.get<std::string>("brush") + "'");
             const brush::Falloff falloff = brush::Falloff::fromName(a.get<std::string>("falloff", "smooth"));
@@ -327,6 +343,7 @@ void registerGroomCommands()
             o.interpolate = a.get<bool>("interpolate", true);
             o.minDistance = std::max(0.0, a.get<double>("minDistance", 0.0));
             o.density = std::max(1e-6, a.get<double>("density", 1.0));
+            o.settleWhileGrabbing = a.get<bool>("settleWhileGrabbing");
             g.evaluate();
             Splines s = splinesOf(g.value({c.id(), CurveShape::kLocal, -1}));
             if (a.get<bool>("selectedOnly", true))
@@ -347,6 +364,9 @@ void registerGroomCommands()
             }
             std::unique_ptr<groom::Surface> surface = surfaceFor(g, c, a.get<std::string>("surface"), a.get<std::string>("densitySet"), "curveSculptStroke");
             const glm::dmat4 w = c.as<glm::dmat4>(Transform::kWorldMatrix), inv = glm::inverse(w);
+            if (groom::isLockBrush(o.brush))
+                lockBrushSettings(g, c, s, inv, o);
+            attr::ensureIds(s);
             const glm::dmat3 nrm = glm::transpose(glm::dmat3(w));
             const double scale = std::max(1e-12, std::cbrt(std::abs(glm::determinant(glm::dmat3(w)))));
             std::mt19937 rng(uint32_t(a.get<int64_t>("seed", 0)));
@@ -354,13 +374,16 @@ void registerGroomCommands()
             for (const json& j : a.flags.value("dabs", json::array()))
             {
                 groom::Dab d;
-                d.center = D3(inv * glm::dvec4(v3(j.value("center", json())), 1.0));
-                const D3 n = nrm * v3(j.value("normal", json()), D3(0, 1, 0));
+                D3 wc = v3(j.value("center", json())), wn = v3(j.value("normal", json()), D3(0, 1, 0)), wd = v3(j.value("delta", json())),
+                   wv = v3(j.value("view", json()));
+                mirrorDabToSource(c, s, wc, wn, wd, wv);
+                d.center = D3(inv * glm::dvec4(wc, 1.0));
+                const D3 n = nrm * wn;
                 d.normal = glm::length(n) > 1e-12 ? glm::normalize(n) : D3(0, 1, 0);
                 d.radius = j.value("radius", 1.0) / scale;
                 d.strength = j.value("strength", j.value("pressure", 1.0) * j.value("opacity", 1.0));
-                d.delta = D3(inv * glm::dvec4(v3(j.value("delta", json())), 0.0));
-                const D3 view = D3(inv * glm::dvec4(v3(j.value("view", json())), 0.0));
+                d.delta = D3(inv * glm::dvec4(wd, 0.0));
+                const D3 view = D3(inv * glm::dvec4(wv, 0.0));
                 d.viewDir = glm::length(view) > 1e-12 ? glm::normalize(view) : D3(0.0);
                 groom::applyDab(s, o, d, surface.get(), rng, &stats);
             }
@@ -527,4 +550,4 @@ void registerGroomCommands()
     });
     registerGroomOptionLayout();
 }
-} // namespace lila::curve
+} // namespace lila::groom

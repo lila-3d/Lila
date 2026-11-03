@@ -1,0 +1,20 @@
+{
+  "format": "lilagroom",
+  "version": 1,
+  "name": "Sleek",
+  "doc": "Flat, smooth locks that hug the head.",
+  "lock": {
+    "profile": "ribbon",
+    "thickness": 0.2,
+    "flatten": 1.0
+  },
+  "stack": [
+    {
+      "style": "noise",
+      "attrs": {
+        "amount": 0.3,
+        "frequency": 0.05
+      }
+    }
+  ]
+}

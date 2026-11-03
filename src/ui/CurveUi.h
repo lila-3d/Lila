@@ -1,6 +1,9 @@
 #pragma once
 
 #include "core/Export.h"
+#include "ui/ViewportTool.h"
+
+#include <vector>
 
 namespace lila::ui
 {
@@ -36,6 +39,21 @@ void registerTrimCurveTool();
 void registerSketchTool();
 /** The Sculpt Curves tool and grooming actions (CurveSculptTool.cpp); called by registerCurveUi. */
 void registerCurveSculptTool();
+/** The Draw Hair tool, groom actions and the groom Attribute Editor section (GroomTool.cpp); called by registerCurveUi. */
+void registerGroomUi();
+/** Sculpt Curves' brush (groom::Brush) and its Settle While Grabbing, for the Groom palette. */
+int curveSculptBrush();
+void setCurveSculptBrush(int brush);
+bool curveSculptSettleGrab();
+void setCurveSculptSettleGrab(bool on);
+/** The Sculpt Curves keys that matter now, for the key list. */
+std::vector<KeyHint> curveSculptKeys();
+/** The Groom palette: shown while Draw Hair or Sculpt Curves is active, on that tool's page; synced when settings change. */
+void showGroomPalette(bool drawHair);
+void hideGroomPalette();
+void syncGroomPalette();
+/** Whether the tools list their keys in the corner of the view. */
+bool groomKeysShown();
 /** Text, Bevel Plus, curve booleans, region offsets and the straight skeleton tools (PlanarCurveUi.cpp); called by registerCurveUi. */
 void registerPlanarCurveUi();
 } // namespace lila::ui

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/Export.h"
-#include "curve/Groom.h"
+#include "groom/Groom.h"
 #include "curve/Spline.h"
 #include "geo/Mesh.h"
 
@@ -10,7 +10,7 @@
 #include <vector>
 
 /** Hair cards: textured strips along hair curves or clumps of them, laid out in a texture atlas, for game hair. */
-namespace lila::curve
+namespace lila::groom
 {
 enum class CardSource : uint8_t
 {
@@ -70,4 +70,4 @@ struct CardResult
 
 /** Cards for the curves (and guides for CardSource::Guides); scalp optional, for facing and attaching. Quads, uv0. */
 LILA_SCENE_API CardResult hairCards(const Splines& curves, const Splines& guides, const groom::Surface* scalp, const CardOptions& o);
-} // namespace lila::curve
+} // namespace lila::groom

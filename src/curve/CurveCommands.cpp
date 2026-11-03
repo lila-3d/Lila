@@ -7,7 +7,6 @@
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
-#include "curve/GroomNode.h"
 #include "curve/NodeHelpers.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
@@ -912,7 +911,6 @@ void registerCommands()
     registerEzCurveCommand();
     registerVehicleCommands();
     registerSketchCommands();
-    registerGroomCommands();
     registerTurntableBaseCommand();
     registerCurveControlCommands();
 }

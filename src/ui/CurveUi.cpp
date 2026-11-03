@@ -467,6 +467,7 @@ void registerCurveUi()
     registerVehicleCurveUi();
     registerSketchTool();
     registerCurveSculptTool();
+    registerGroomUi();
     registerPlanarCurveUi();
 }
 } // namespace lila::ui

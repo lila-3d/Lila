@@ -1,10 +1,10 @@
 #include <doctest/doctest.h>
 
-#include "TestUtil.h"
+#include "curve/TestUtil.h"
 
 #include "curve/CurveNodes.h"
-#include "curve/Groom.h"
-#include "curve/HairCards.h"
+#include "groom/Groom.h"
+#include "groom/HairCards.h"
 #include "curve/Pipe.h"
 #include "geo/Attribute.h"
 #include "geo/ColorSets.h"
@@ -17,6 +17,7 @@
 
 using namespace lila;
 using namespace lila::curve;
+using namespace lila::groom;
 using json = nlohmann::json;
 using D3 = glm::dvec3;
 using namespace curvetest;

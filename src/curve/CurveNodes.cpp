@@ -10,7 +10,6 @@
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
-#include "curve/GroomNode.h"
 #include "curve/Ops.h"
 #include "curve/PipeNode.h"
 #include "curve/SurfaceConform.h"
@@ -97,6 +96,10 @@ json splineToJson(const Spline& s)
         j["radius"] = s.radius;
     if (!s.cornerRadius.empty())
         j["cornerRadius"] = s.cornerRadius;
+    if (!s.attrs.empty())
+        j["attrs"] = s.attrs;
+    if (!s.pointAttrs.empty())
+        j["pointAttrs"] = s.pointAttrs;
     return j;
 }
 
@@ -135,6 +138,10 @@ Spline splineFromJson(const json& j)
         s.radius = j["radius"].get<std::vector<double>>();
     if (j.contains("cornerRadius"))
         s.cornerRadius = j["cornerRadius"].get<std::vector<double>>();
+    if (j.contains("attrs"))
+        s.attrs = j["attrs"].get<std::map<std::string, double>>();
+    if (j.contains("pointAttrs"))
+        s.pointAttrs = j["pointAttrs"].get<std::map<std::string, std::vector<double>>>();
     bool bezierGiven = s.kind == Kind::Bezier && s.handleL.size() == s.size() && s.handleR.size() == s.size();
     if (s.kind == Kind::Bezier && bezierGiven && (s.typeL.size() != s.size() || s.typeR.size() != s.size()))
     {
@@ -158,7 +165,11 @@ size_t CurveData::bytes() const
 {
     size_t n = sizeof(*this);
     for (const Spline& s : splines)
+    {
         n += s.size() * (sizeof(D3) * 3 + 64);
+        for (const auto& [name, v] : s.pointAttrs)
+            n += v.size() * sizeof(double) + 48;
+    }
     return n;
 }
 
@@ -953,7 +964,6 @@ void registerTypes()
     registerCableType();
     registerStrapTypes();
     registerVehicleTypes();
-    registerGroomType();
     registerProvider();
 }
 } // namespace lila::curve

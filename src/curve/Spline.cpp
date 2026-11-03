@@ -160,6 +160,8 @@ void Spline::normalize()
     fit(tilt);
     fit(radius);
     fit(cornerRadius);
+    for (auto& [name, v] : pointAttrs)
+        fit(v);
     if (kind != Kind::Bezier)
     {
         handleL.clear();
@@ -207,6 +209,9 @@ void Spline::erasePoint(size_t i)
         erase(radius, i);
     if (cornerRadius.size() == n)
         erase(cornerRadius, i);
+    for (auto& [name, v] : pointAttrs)
+        if (v.size() == n)
+            erase(v, i);
     knots.clear();
 }
 
@@ -222,6 +227,8 @@ void Spline::insertPoint(size_t i, const glm::dvec3& p)
     insertCopy(tilt, i, n);
     insertCopy(radius, i, n);
     insertCopy(cornerRadius, i, n);
+    for (auto& [name, v] : pointAttrs)
+        insertCopy(v, i, n);
     points.insert(points.begin() + ptrdiff_t(i), p);
     if (kind == Kind::Bezier && handleL.size() == points.size())
     {
@@ -899,10 +906,8 @@ Spline toBezier(const Spline& s, double tolerance)
     return out;
 }
 
-Spline convert(const Spline& s, Kind kind, double tolerance)
+static Spline convertShape(const Spline& s, Kind kind, double tolerance)
 {
-    if (s.kind == kind)
-        return s;
     switch (kind)
     {
     case Kind::Nurbs: return toNurbs(s);
@@ -924,10 +929,26 @@ Spline convert(const Spline& s, Kind kind, double tolerance)
                 if (!s.radius.empty())
                     out.radius.push_back(pointValueAt(s, s.radius, 1.0, u));
             }
+        for (const auto& [name, v] : s.pointAttrs)
+            if (v.size() == s.size())
+                for (double u : pl.params)
+                    out.pointAttrs[name].push_back(pointValueAt(s, v, 0.0, u));
         return out;
     }
     }
     return s;
+}
+
+Spline convert(const Spline& s, Kind kind, double tolerance)
+{
+    if (s.kind == kind)
+        return s;
+    Spline out = convertShape(s, kind, tolerance);
+    out.attrs = s.attrs;
+    if (out.size() == s.size())
+        for (const auto& [name, v] : s.pointAttrs)
+            out.pointAttrs.try_emplace(name, v);
+    return out;
 }
 
 std::vector<Piece> arcPieces(const glm::dvec3& center, const glm::dvec3& axis, const glm::dvec3& start, double angle)
@@ -1116,6 +1137,8 @@ void reverse(Spline& s)
     std::ranges::reverse(s.tilt);
     std::ranges::reverse(s.radius);
     std::ranges::reverse(s.cornerRadius);
+    for (auto& [name, v] : s.pointAttrs)
+        std::ranges::reverse(v);
     if (s.kind == Kind::Bezier)
     {
         std::ranges::reverse(s.handleL);

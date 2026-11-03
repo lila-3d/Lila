@@ -1,4 +1,4 @@
-#include "curve/HairCards.h"
+#include "groom/HairCards.h"
 
 #include "core/Profile.h"
 #include "curve/CurveMath.h"
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <random>
 
-namespace lila::curve
+namespace lila::groom
 {
 namespace
 {
@@ -287,4 +287,4 @@ CardResult hairCards(const Splines& curves, const Splines& guides, const groom::
     }
     return out;
 }
-} // namespace lila::curve
+} // namespace lila::groom
