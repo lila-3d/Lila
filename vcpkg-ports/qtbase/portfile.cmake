@@ -75,7 +75,8 @@ foreach(_input IN LISTS input_vars)
     else()
         list(APPEND INPUT_OPTIONS -DINPUT_${_input}:STRING=)
     endif()
-    if("${_input}" IN_LIST FEATURES)
+    # Lila: md4c is an unconditional dependency, so the Markdown reader always uses it.
+    if("${_input}" IN_LIST FEATURES OR _input STREQUAL "md4c")
         string(APPEND INPUT_OPTIONS system)
     elseif(_input STREQUAL "libb2" AND NOT VCPKG_TARGET_IS_WINDOWS)
         string(APPEND INPUT_OPTIONS system)
@@ -110,9 +111,8 @@ INVERTED_FEATURES
     )
 
 list(APPEND FEATURE_OPTIONS -DCMAKE_DISABLE_FIND_PACKAGE_Libudev:BOOL=ON)
-# Lila: modules and Gui parts Lila never uses, left out to shorten the first build.
-list(APPEND FEATURE_OPTIONS -DFEATURE_xml:BOOL=OFF -DFEATURE_printsupport:BOOL=OFF -DFEATURE_pdf:BOOL=OFF
-    -DFEATURE_textodfwriter:BOOL=OFF -DFEATURE_textmarkdownreader:BOOL=OFF -DFEATURE_textmarkdownwriter:BOOL=OFF)
+# Lila: the ODF writer is left out to shorten the first build; the bundled PySide6 needs everything else.
+list(APPEND FEATURE_OPTIONS -DFEATURE_textodfwriter:BOOL=OFF)
 
 if("dbus" IN_LIST FEATURES AND VCPKG_TARGET_IS_LINUX)
   list(APPEND FEATURE_OPTIONS -DINPUT_dbus=linked)

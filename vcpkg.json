@@ -16,10 +16,21 @@
         "doubleconversion",
         "pcre2",
         "thread",
-        "zstd"
+        "zstd",
+        "future",
+        "opengl",
+        "sessionmanager",
+        "dnslookup",
+        "openssl",
+        "sql",
+        "sql-sqlite"
       ]
     },
     "qtsvg",
+    {
+      "name": "qttools",
+      "default-features": false
+    },
     "tbb",
     "alembic",
     "glm",

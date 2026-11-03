@@ -4,7 +4,7 @@
 set(LILA_QT_PLUGINS
     QWindowsIntegrationPlugin QOffscreenIntegrationPlugin QModernWindowsStylePlugin
     QSvgIconPlugin QSvgPlugin QJpegPlugin QICOPlugin QGifPlugin
-    QSchannelBackendPlugin QTlsBackendCertOnlyPlugin QNLMNIPlugin)
+    QSchannelBackendPlugin QTlsBackendOpenSSLPlugin QTlsBackendCertOnlyPlugin QNLMNIPlugin)
 
 function(lila_deploy_qt target)
     if(NOT WIN32)
@@ -23,10 +23,11 @@ function(lila_deploy_qt target)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:Qt6::${_plugin}> ${_dir}/${_type})
         endif()
     endforeach()
-    # The JPEG plugin's libjpeg: nothing Lila links pulls it in, so applocal never copies it.
+    # The JPEG and OpenSSL plugins' libraries: nothing Lila links pulls them in, so applocal never copies them.
     if(VCPKG_INSTALLED_DIR)
+        set(_bin ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/$<$<CONFIG:Debug>:debug/>bin)
         list(APPEND _cmds COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/$<$<CONFIG:Debug>:debug/>bin/jpeg62.dll ${_dir})
+            ${_bin}/jpeg62.dll ${_bin}/libssl-3-x64.dll ${_bin}/libcrypto-3-x64.dll ${_dir})
     endif()
     add_custom_command(TARGET ${target} POST_BUILD ${_cmds} COMMENT "Deploying Qt for ${target}")
 endfunction()
