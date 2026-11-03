@@ -31,6 +31,7 @@
 #include "EngineUtils.h"
 #include "FileHelpers.h"
 #include "GameFramework/WorldSettings.h"
+#include "HAL/FileManager.h"
 #include "LevelInstance/LevelInstanceActor.h"
 #include "LevelInstance/LevelInstanceInterface.h"
 #include "LevelInstance/LevelInstanceTypes.h"
@@ -990,18 +991,12 @@ FVector AssemblyPivot(const TArray<AActor*>& Actors)
 	return FVector(Center.X, Center.Y, Bounds.Min.Z);
 }
 
-/**
- * Moves the actors into a new level saved as PackageName, placed relative to Pivot, and takes that level out of the world again.
- * ULevelInstanceSubsystem::CreateLevelInstanceFrom always asks for the file name in a modal dialog, so the level is made here.
- */
-bool SaveActorsAsLevel(UWorld* World, const TArray<AActor*>& Actors, const FString& PackageName, const FVector& Pivot, FString& OutError)
+/** A new level saved as PackageName and streamed into World, made without the Save As dialog. */
+ULevel* CreateAssemblyLevel(UWorld* World, const FString& PackageName)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::SaveActorsAsLevel);
-
 	EditorLevelUtils::FCreateNewStreamingLevelForWorldParams Create(ULevelStreamingDynamic::StaticClass(),
 		FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetMapPackageExtension()));
 	Create.bUseSaveAs = false;
-	Create.ActorsToMove = &Actors;
 	Create.bCreateWorldPartition = World->IsPartitionedWorld();
 	Create.bUseExternalActors = World->IsPartitionedWorld();
 	Create.bEnableWorldPartitionStreaming = false;
@@ -1018,26 +1013,93 @@ bool SaveActorsAsLevel(UWorld* World, const TArray<AActor*>& Actors, const FStri
 		}
 	};
 	ULevelStreaming* Streaming = UEditorLevelUtils::CreateNewStreamingLevelForWorld(*World, Create);
+	return Streaming ? Streaming->GetLoadedLevel() : nullptr;
+}
+
+/** The assembly's existing level streamed into World, emptied of what LilaLink put in it last time; their external packages go in OutStale. */
+ULevel* ReopenAssemblyLevel(UWorld* World, const FString& PackageName, TArray<FString>& OutStale)
+{
+	ULevelStreaming* Streaming = UEditorLevelUtils::AddLevelToWorld(World, *PackageName, ULevelStreamingDynamic::StaticClass());
 	ULevel* Level = Streaming ? Streaming->GetLoadedLevel() : nullptr;
+	if (!Level)
+	{
+		return nullptr;
+	}
+	TArray<AActor*> Stale;
+	for (AActor* Actor : Level->Actors)
+	{
+		if (Actor && !TagValue(Actor, GroupPrefix).IsEmpty())
+		{
+			Stale.Add(Actor);
+		}
+	}
+	for (AActor* Actor : Stale)
+	{
+		if (UPackage* External = Actor->GetExternalPackage())
+		{
+			OutStale.Add(External->GetName());
+		}
+		World->EditorDestroyActor(Actor, false);
+	}
+	return Level;
+}
+
+/**
+ * Moves the actors into the level saved as PackageName, placed relative to Pivot, and takes that level out of the world again.
+ * An existing level of that name is reused, so a resend keeps its file. ULevelInstanceSubsystem::CreateLevelInstanceFrom
+ * always asks for the file name in a modal dialog, so the level is made here.
+ */
+bool SaveActorsAsLevel(UWorld* World, const TArray<AActor*>& Actors, const FString& PackageName, const FVector& Pivot, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::SaveActorsAsLevel);
+
+	TArray<UPackage*> Packages;
+	TArray<FString> Stale;
+	ULevel* Level = FPackageName::DoesPackageExist(PackageName) ? ReopenAssemblyLevel(World, PackageName, Stale) : CreateAssemblyLevel(World, PackageName);
 	if (!Level)
 	{
 		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not make %s"), *PackageName);
 		return false;
 	}
-	TArray<UPackage*> Packages{Level->GetPackage()};
-	for (AActor* Actor : Level->Actors)
+	// Moving copies the actors, and the copies' labels can come back numbered; each keeps its Lila node tag.
+	TMap<FString, FString> Labels;
+	for (const AActor* Actor : Actors)
 	{
-		if (Actor && !Actor->IsA<AWorldSettings>() && Actor != Level->GetDefaultBrush() && !Actor->GetAttachParentActor())
+		Labels.Add(TagValue(Actor, NodePrefix), Actor->GetActorLabel());
+	}
+	TArray<AActor*> Moved;
+	UEditorLevelUtils::MoveActorsToLevel(Actors, Level, /*bWarnAboutReferences=*/false, /*bWarnAboutRenaming=*/false, /*bMoveAllOrFail=*/false, &Moved);
+	Packages.Add(Level->GetPackage());
+	for (AActor* Actor : Moved)
+	{
+		if (!Actor)
+		{
+			continue;
+		}
+		if (const FString* Label = Labels.Find(TagValue(Actor, NodePrefix)); Label && Actor->GetActorLabel() != *Label)
+		{
+			Actor->SetActorLabel(*Label);
+		}
+		if (!Actor->GetAttachParentActor())
 		{
 			Actor->SetFolderPath_Recursively(NAME_None);
 			Actor->SetActorLocation(Actor->GetActorLocation() - Pivot);
 		}
-		if (UPackage* External = Actor ? Actor->GetExternalPackage() : nullptr)
+		if (UPackage* External = Actor->GetExternalPackage())
 		{
 			Packages.Add(External);
 		}
 	}
 	const bool bSaved = UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty=*/false);
+	// Saving skips the emptied packages of the actors removed from a reused level, so their files are deleted here.
+	for (const FString& Name : Stale)
+	{
+		FString File;
+		if (FPackageName::DoesPackageExist(Name, &File) && IFileManager::Get().Delete(*File, false, true))
+		{
+			IAssetRegistry::GetChecked().ScanModifiedAssetFiles({File});
+		}
+	}
 	World->SetCurrentLevel(World->PersistentLevel);
 	UEditorLevelUtils::RemoveLevelFromWorld(Level, /*bClearSelection=*/true, /*bResetTransBuffer=*/false);
 	if (!bSaved)
@@ -1079,6 +1141,15 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 
 	const FName Tag(*(FString(AssemblyPrefix) + Key));
 	TArray<AActor*> Previous = TaggedActors(World, Tag);
+	// A resend refills the level the assembly was sent as before, so its file and name stay.
+	FString PackageName;
+	for (AActor* Old : Previous)
+	{
+		if (const ILevelInstanceInterface* OldInstance = Cast<ILevelInstanceInterface>(Old); OldInstance && PackageName.IsEmpty())
+		{
+			PackageName = OldInstance->GetWorldAsset().GetLongPackageName();
+		}
+	}
 	{
 		FScopedTransaction Transaction(LOCTEXT("ReplaceLevelInstance", "Lila: Replace Level Instance"));
 		for (AActor* Old : Previous)
@@ -1086,7 +1157,10 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 			World->EditorDestroyActor(Old, true);
 		}
 	}
-	const FString PackageName = FreePackageName(Level);
+	if (PackageName.IsEmpty())
+	{
+		PackageName = FreePackageName(Level);
+	}
 	const FVector Pivot = AssemblyPivot(Actors);
 	if (!SaveActorsAsLevel(World, Actors, PackageName, Pivot, OutError))
 	{
@@ -1103,8 +1177,12 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 	{
 		const FString Blueprint = FString::Format(TEXT("{0}/{1}{2}.{1}{2}"), {FPackageName::GetLongPackagePath(PackageName), FPackedLevelActorBuilder::GetPackedBPPrefix(), AssetName});
 		const TSoftObjectPtr<UBlueprint> BlueprintAsset{FSoftObjectPath(Blueprint)};
-		UBlueprint* Packed = FPackedLevelActorBuilder::CreatePackedLevelActorBlueprint(BlueprintAsset, WorldAsset, true);
-		// The new Blueprint is empty: packing the level's meshes into it is a second step.
+		UBlueprint* Packed = BlueprintAsset.LoadSynchronous();
+		if (!Packed)
+		{
+			Packed = FPackedLevelActorBuilder::CreatePackedLevelActorBlueprint(BlueprintAsset, WorldAsset, true);
+		}
+		// A new Blueprint is empty and a reused one holds the last send: packing the level's meshes into it is a second step.
 		if (Packed && !FPackedLevelActorBuilder::CreateDefaultBuilder()->CreateOrUpdateBlueprint(WorldAsset, BlueprintAsset, false, false))
 		{
 			Packed = nullptr;
