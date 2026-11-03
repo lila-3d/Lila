@@ -1752,43 +1752,103 @@ geo::Mesh drumMesh(const StoneShape& s)
 
 namespace
 {
-/** Chips knocked out of a worn stone's edges and corners: small tilted boxes subtracted, more and bigger with s.chips. */
+/** Every edge between exactly two faces and every face with real area. */
+bool watertight(const geo::Mesh& m)
+{
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.edgeFaceCount(e) != 2)
+            return false;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const std::vector<geo::Index> p = m.facePoints(f);
+        glm::dvec3 n(0.0);
+        for (size_t k = 1; k + 1 < p.size(); ++k)
+            n += glm::cross(m.position(p[k]) - m.position(p[0]), m.position(p[k + 1]) - m.position(p[0]));
+        if (glm::length(n) * 0.5 <= 1e-4)
+            return false;
+    }
+    return m.validate().empty();
+}
+
+/**
+ * The frame of one chip's cut: z is the facet's outward normal, the bisector of the faces meeting at the edge or corner
+ * tilted by up to 20 degrees, so the facet never runs nearly parallel to a face (which leaves a step or a sliver). x runs
+ * along the edge, twisted up to 25 degrees about z so the chip's ends are angled. The origin is `depth` inside the edge.
+ */
+glm::dmat4 chipFrame(const glm::dvec3& at, const glm::dvec3& out, int along, bool edge, double size, double r0, double r1, double r2)
+{
+    const double tilt = glm::radians(20.0), twist = glm::radians(25.0);
+    glm::dvec3 x(0.0);
+    x[edge ? along : (along + 1) % 3] = 1.0;
+    glm::dvec3 n = glm::normalize(out);
+    const glm::dvec3 side = glm::normalize(glm::cross(n, x));
+    n = glm::normalize(n + glm::tan((r0 * 2.0 - 1.0) * tilt) * side + glm::tan((r1 * 2.0 - 1.0) * tilt) * glm::normalize(x - glm::dot(x, n) * n));
+    x = glm::normalize(x - glm::dot(x, n) * n);
+    const double t = (r2 * 2.0 - 1.0) * twist;
+    x = glm::normalize(glm::cos(t) * x + glm::sin(t) * glm::cross(n, x));
+    const glm::dvec3 y = glm::cross(n, x);
+    const double depth = size * 0.7;
+    glm::dmat4 m(1.0);
+    m[0] = glm::dvec4(x, 0.0);
+    m[1] = glm::dvec4(y, 0.0);
+    m[2] = glm::dvec4(n, 0.0);
+    m[3] = glm::dvec4(at - n * depth, 1.0);
+    return m;
+}
+
+/** Chips knocked out of a worn stone's edges and corners: one angled facet cut per chip, more and bigger with s.chips. */
 geo::Mesh chipped(geo::Mesh m, const glm::dvec3& e, const StoneShape& s)
 {
     const double amount = std::clamp(s.chips, 0.0, 1.0);
     const int count = int(std::lround(2.0 + 10.0 * amount));
     const double minE = std::min({e.x, e.y, e.z});
     std::vector<geo::Mesh> cutters;
-    std::vector<lila::scene::BooleanOperand> ops = {{&m, glm::dmat4(1.0)}};
     cutters.reserve(size_t(count));
     for (int k = 0; k < count; ++k)
     {
         auto rnd = [&](int n) { return unitRandom(mixKey(s.seed, uint64_t(k), uint64_t(n), 733)); };
         // On an edge (two axes at their extremes) or a corner (three), chosen by seed.
-        glm::dvec3 at;
+        glm::dvec3 at, out(0.0);
         const int along = int(rnd(0) * 3.0) % 3;
+        const bool edge = rnd(1) < 0.7;
         for (int a = 0; a < 3; ++a)
-            at[a] = (a == along && rnd(1) < 0.7) ? (rnd(2) * 2.0 - 1.0) * e[a] * 0.8 : (rnd(3 + a) < 0.5 ? -e[a] : e[a]);
+        {
+            if (a == along && edge)
+                at[a] = (rnd(2) * 2.0 - 1.0) * e[a] * 0.8;
+            else
+            {
+                const double side = rnd(3 + a) < 0.5 ? -1.0 : 1.0;
+                at[a] = side * e[a];
+                out[a] = side;
+            }
+        }
         const double size = minE * (0.12 + 0.35 * amount) * (0.5 + rnd(6));
-        const double ax = rnd(7) * kPi, ay = rnd(8) * kPi;
-        glm::dmat4 xf = glm::translate(glm::dmat4(1.0), at);
-        xf = glm::rotate(xf, ax, glm::dvec3(1, 0, 0));
-        xf = glm::rotate(xf, ay, glm::dvec3(0, 1, 0));
-        const glm::dvec3 hs(size * (0.7 + 0.6 * rnd(9)), size * (0.5 + 0.5 * rnd(10)), size * (0.7 + 0.6 * rnd(11)));
+        const glm::dmat4 xf = chipFrame(at, out, along, edge, size, rnd(7), rnd(8), rnd(9));
+        // The facet's face sits at z = 0; the box reaches outward past the stone and well beyond the chip's ends.
+        const double wide = size * 4.0, len = edge ? size * (1.2 + 1.2 * rnd(10)) : wide;
         std::array<glm::dvec3, 8> box;
+        // The ends lean out, so a chip runs out in a ramp rather than stopping at a wall.
         for (int i = 0; i < 8; ++i)
-            box[size_t(i)] = glm::dvec3(xf * glm::dvec4((i & 1) ? hs.x : -hs.x, (i & 2) ? hs.y : -hs.y, (i & 4) ? hs.z : -hs.z, 1.0));
+        {
+            const double z = (i & 4) ? wide * 2.0 : 0.0, x = len + (edge ? z * 1.5 : 0.0);
+            box[size_t(i)] = glm::dvec3(xf * glm::dvec4((i & 1) ? x : -x, (i & 2) ? wide : -wide, z, 1.0));
+        }
         cutters.push_back(hexMesh(box));
     }
-    for (const geo::Mesh& c : cutters)
-        ops.push_back({&c, glm::dmat4(1.0)});
     lila::scene::BooleanOptions bo;
     bo.op = lila::scene::BooleanOp::Difference;
     bo.splitNgons = false;
-    lila::scene::BooleanResult r = lila::scene::meshBoolean(ops, glm::dmat4(1.0), bo);
-    if (!r.ok() || r.mesh.numFaces() < 6)
-        return m;
-    return std::move(r.mesh);
+    // One cut at a time, each kept only if the stone stays watertight: a hole shows as a black gap in Unreal.
+    for (const geo::Mesh& c : cutters)
+    {
+        const std::vector<lila::scene::BooleanOperand> one = {{&m, glm::dmat4(1.0)}, {&c, glm::dmat4(1.0)}};
+        lila::scene::BooleanResult r = lila::scene::meshBoolean(one, glm::dmat4(1.0), bo);
+        if (r.ok() && r.mesh.numFaces() >= 6 && watertight(r.mesh))
+            m = std::move(r.mesh);
+    }
+    return m;
 }
 } // namespace
 

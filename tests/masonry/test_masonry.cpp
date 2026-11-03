@@ -218,6 +218,37 @@ TEST_CASE("masonry: layout is the same every time")
     CHECK(differs);
 }
 
+TEST_CASE("masonry: chipped stones stay closed, outward and free of slivers")
+{
+    int failed = 0;
+    for (uint32_t seed = 0; seed < 64; ++seed)
+        for (const glm::dvec3 size : {glm::dvec3(21.5, 6.5, 10.25), glm::dvec3(10.25, 6.5, 21.5), glm::dvec3(40.0, 25.0, 30.0)})
+        {
+            StoneShape s;
+            s.size = size;
+            s.seed = seed;
+            s.wear = 0.9;
+            s.chips = 1.0;
+            const geo::Mesh m = stoneMesh(s);
+            bool ok = closedManifold(m) && signedVolume(m) > 0.5 * size.x * size.y * size.z;
+            for (geo::Index f = 0; ok && f < m.faceCapacity(); ++f)
+            {
+                if (!m.faceValid(f))
+                    continue;
+                // Every face has real area and its normal agrees with its own winding: no folded or zero-area pieces.
+                const std::vector<geo::Index> p = m.facePoints(f);
+                glm::dvec3 n(0.0);
+                for (size_t k = 1; k + 1 < p.size(); ++k)
+                    n += glm::cross(m.position(p[k]) - m.position(p[0]), m.position(p[k + 1]) - m.position(p[0]));
+                ok = glm::length(n) * 0.5 > 1e-4;
+            }
+            failed += ok ? 0 : 1;
+            CAPTURE(seed);
+            CHECK(ok);
+        }
+    CHECK(failed == 0);
+}
+
 TEST_CASE("masonry: stone meshes are closed, outward and fill their box")
 {
     for (Detail d : {Detail::Worn, Detail::Clean, Detail::Box})
