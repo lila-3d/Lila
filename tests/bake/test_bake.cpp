@@ -78,6 +78,22 @@ TEST_CASE("auto grouping pairs _low/_high, _lo/_hi and _LP/_HP names")
     CHECK(std::set<std::string>(unmatched.begin(), unmatched.end()) == std::set<std::string>{"lonely_low", "tree"});
 }
 
+TEST_CASE("a kept sculpt's _high pairs with the mesh named its stem")
+{
+    std::vector<std::string> unmatched;
+    auto child = bake::matchAutoGroups({"|grp|Tree", "|grp|Tree|Tree_high"}, &unmatched);
+    REQUIRE(child.size() == 1);
+    CHECK(child[0].lows == std::vector<std::string>{"|grp|Tree"});
+    auto groups = bake::matchAutoGroups({"Rock", "Rock_high", "crate_low", "crate_low_high"}, &unmatched);
+    REQUIRE(groups.size() == 2);
+    CHECK(groups[0].base == "Rock");
+    CHECK(groups[0].lows == std::vector<std::string>{"Rock"});
+    CHECK(groups[1].base == "crate_low");
+    CHECK(groups[1].lows == std::vector<std::string>{"crate_low"});
+    CHECK(groups[1].highs == std::vector<std::string>{"crate_low_high"});
+    CHECK(unmatched.empty());
+}
+
 TEST_CASE("image files round trip: png 8/16, exr half, tga")
 {
     const fs::path dir = tempDir("lila_bake_io");

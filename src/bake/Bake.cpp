@@ -1454,6 +1454,37 @@ std::vector<AutoGroup> matchAutoGroups(const std::vector<std::string>& names, st
         if (!matched)
             rest.push_back(name);
     }
+    // A high with no _low partner pairs with the mesh named exactly its stem, as Exit Sculpt keeps "<mesh>_high".
+    for (AutoGroup& a : groups)
+    {
+        if (a.highs.empty() || !a.lows.empty())
+            continue;
+        // A child path "Rock|Rock_high" has the stem "Rock|Rock": its mesh is the parent.
+        std::string parent;
+        if (const size_t bar = a.base.rfind('|'); bar != std::string::npos && bar > 0)
+        {
+            const std::string up = a.base.substr(0, bar);
+            const size_t upBar = up.rfind('|');
+            if (up.substr(upBar == std::string::npos ? 0 : upBar + 1) == a.base.substr(bar + 1))
+                parent = up;
+        }
+        auto it = std::ranges::find(rest, a.base);
+        if (it == rest.end() && !parent.empty())
+            it = std::ranges::find(rest, parent);
+        if (it != rest.end())
+        {
+            a.lows.push_back(*it);
+            rest.erase(it);
+            continue;
+        }
+        for (AutoGroup& other : groups)
+            if (auto it = std::ranges::find(other.lows, a.base); &other != &a && it != other.lows.end())
+            {
+                a.lows.push_back(*it);
+                other.lows.erase(it);
+                break;
+            }
+    }
     std::vector<AutoGroup> out;
     for (AutoGroup& a : groups)
     {
