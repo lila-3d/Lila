@@ -145,7 +145,8 @@ void panels::placeFloating(QDockWidget* dock)
     if (!screen)
         return;
     const QRect avail = screen->availableGeometry();
-    QRect r(0, 0, std::min(1000, avail.width() * 9 / 10), std::min(750, avail.height() * 9 / 10));
+    const Panel* p = registry().find(dock->objectName().toStdString());
+    QRect r(0, 0, std::min(p ? p->floatWidth : 1000, avail.width() * 9 / 10), std::min(p ? p->floatHeight : 750, avail.height() * 9 / 10));
     r.moveCenter(window && window->isVisible() ? window->frameGeometry().center() : avail.center());
     r.moveLeft(std::clamp(r.left(), avail.left(), avail.right() - r.width()));
     r.moveTop(std::clamp(r.top(), avail.top(), avail.bottom() - r.height()));

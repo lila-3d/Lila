@@ -18,6 +18,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lila::scene
 {
@@ -427,6 +428,83 @@ void registerObjectCommands()
             }
             return nullptr;
         },
+    });
+
+    ops::registerCommand({
+        .name = "unfrozenTransforms",
+        .doc = "List the objects whose translate, rotate or scale is not identity (0, 0, 0 and 1, 1, 1), with their values.\n\n"
+               "Checks the objects given or selected, or with scene every mesh, curve and group (joints, cameras, lights and "
+               "locators are placed by their transforms and are left out). With rotateStep, rotations that are whole "
+               "multiples of the step count as frozen; invert lists only rotations on the step instead. Returns one "
+               "{name, translate, rotate, scale, unfrozen} per object listed, unfrozen naming the channels that put it there.",
+        .positionalDoc = "objects",
+        .flags = {{"scene", "", T::Bool, false, "Check the whole scene instead of the objects."},
+                  {"hierarchy", "", T::Bool, false, "Also check everything parented under the objects."},
+                  {"translate", "", T::Bool, true, "List objects with translation."},
+                  {"rotate", "", T::Bool, true, "List objects with rotation."},
+                  {"scale", "", T::Bool, true, "List objects with scale."},
+                  {"rotateStep", "", T::Float, 0.0, "Degrees: rotations on whole multiples of it count as frozen. 0 is off."},
+                  {"invert", "", T::Bool, false, "With rotateStep, list rotations on the step rather than off it."},
+                  {"tolerance", "", T::Float, 1e-4, "How far from identity, or from the step, still counts as on it."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = graph();
+            g.evaluate();
+            const double tol = a.get<double>("tolerance", 1e-4);
+            const double step = a.get<double>("rotateStep", 0.0);
+            const bool invert = step > 0.0 && a.get<bool>("invert", false);
+            // What a scene-wide or hierarchy check takes in: the things whose transforms are meant to be frozen.
+            auto checkable = [&](const Node& n) {
+                return n.type().isA("transform") && !rig::isJoint(n) && !n.type().isA("locator") && !n.type().isA("light");
+            };
+            std::vector<NodeId> ids;
+            if (a.get<bool>("scene", false))
+            {
+                for (NodeId id : g.nodes())
+                    if (checkable(*g.node(id)))
+                        ids.push_back(id);
+            }
+            else
+            {
+                for (const std::string& name : a.objects())
+                {
+                    Node& n = nodeNamed(name, "unfrozenTransforms");
+                    if (n.type().isA("transform"))
+                        ids.push_back(n.id());
+                    if (a.get<bool>("hierarchy", false))
+                        for (NodeId d : g.descendants(n.id()))
+                            if (checkable(*g.node(d)))
+                                ids.push_back(d);
+                }
+            }
+
+            auto near = [tol](const glm::dvec3& v, const glm::dvec3& to) { return glm::all(glm::lessThanEqual(glm::abs(v - to), glm::dvec3(tol))); };
+            auto onStep = [&](const glm::dvec3& r) { return near(r, glm::round(r / step) * step); };
+            auto vec = [](const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); };
+            json out = json::array();
+            std::unordered_set<NodeId> seen;
+            for (NodeId id : ids)
+            {
+                if (!seen.insert(id).second)
+                    continue;
+                const Node& n = *g.node(id);
+                const glm::dvec3 t = n.as<glm::dvec3>(Transform::kTranslate);
+                const glm::dvec3 r = n.as<glm::dvec3>(Transform::kRotate);
+                const glm::dvec3 s = n.as<glm::dvec3>(Transform::kScale);
+                json unfrozen = json::array();
+                if (a.get<bool>("translate", true) && !near(t, glm::dvec3(0.0)))
+                    unfrozen.push_back("translate");
+                // Zero is on every step, so invert never lists an unrotated object.
+                if (a.get<bool>("rotate", true) && !near(r, glm::dvec3(0.0)) && (step <= 0.0 || onStep(r) == invert))
+                    unfrozen.push_back("rotate");
+                if (a.get<bool>("scale", true) && !near(s, glm::dvec3(1.0)))
+                    unfrozen.push_back("scale");
+                if (!unfrozen.empty())
+                    out.push_back({{"name", n.path()}, {"translate", vec(t)}, {"rotate", vec(r)}, {"scale", vec(s)}, {"unfrozen", unfrozen}});
+            }
+            return out;
+        },
+        .examples = {"unfrozenTransforms()", "unfrozenTransforms(scene=True, translate=False, rotateStep=90)"},
     });
 }
 } // namespace lila::scene

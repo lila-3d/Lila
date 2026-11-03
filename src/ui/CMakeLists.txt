@@ -166,6 +166,7 @@ lila_module(lila_ui UI
     TimeSlider.cpp TimeSlider.h
     UiTools.cpp
     UndoHistory.cpp UndoHistory.h
+    UnfrozenTransforms.cpp UnfrozenTransforms.h
     UvEditor.cpp UvEditorView.cpp UvEditorDraw.cpp UvEditorPick.cpp UvEditorEdit.cpp UvEditor.h UvEditorInternal.h
     UvTexturePaint.cpp UvTexturePaint.h
     UvTools.cpp UvTools.h

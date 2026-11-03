@@ -45,6 +45,7 @@
 #include "ui/OffsetsPanel.h"
 #include "ui/RetargetUi.h"
 #include "ui/RenamePanel.h"
+#include "ui/UnfrozenTransforms.h"
 #include "ui/DisplayAids.h"
 #include "ui/LodDisplay.h"
 #include "ui/DockDragCancel.h"

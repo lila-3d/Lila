@@ -9182,6 +9182,28 @@ def undoJump(position: int | None = None, *, p: int | None = None) -> Any:
         position: Undo steps left afterwards: 0 undoes everything. Short form p.
     """
 
+def unfrozenTransforms(*objects: Any, scene: bool | None = None, hierarchy: bool | None = None, translate: bool | None = None, rotate: bool | None = None, scale: bool | None = None, rotateStep: float | None = None, invert: bool | None = None, tolerance: float | None = None) -> Any:
+    """List the objects whose translate, rotate or scale is not identity (0, 0, 0 and 1, 1, 1), with their values.
+
+    Checks the objects given or selected, or with scene every mesh, curve and group (joints, cameras, lights and locators are placed by their transforms and are left out). With rotateStep, rotations that are whole multiples of the step count as frozen; invert lists only rotations on the step instead. Returns one {name, translate, rotate, scale, unfrozen} per object listed, unfrozen naming the channels that put it there.
+
+    Args:
+        objects: objects.
+        scene: Check the whole scene instead of the objects. Default False.
+        hierarchy: Also check everything parented under the objects. Default False.
+        translate: List objects with translation. Default True.
+        rotate: List objects with rotation. Default True.
+        scale: List objects with scale. Default True.
+        rotateStep: Degrees: rotations on whole multiples of it count as frozen. 0 is off. Default 0.0.
+        invert: With rotateStep, list rotations on the step rather than off it. Default False.
+        tolerance: How far from identity, or from the step, still counts as on it. Default 0.0001.
+
+    Examples:
+        unfrozenTransforms()
+
+        unfrozenTransforms(scene=True, translate=False, rotateStep=90)
+    """
+
 def ungroup(*objects: Any) -> Any:
     """Move each group's children up to the group's parent, keeping where they are, then delete the group. Defaults to the selection; returns the children.
 

@@ -8,6 +8,8 @@
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
+#include <algorithm>
+
 using namespace lila;
 using json = nlohmann::json;
 
@@ -436,4 +438,48 @@ TEST_CASE("freeze keeps the pivot's world position and oriented axes")
     const glm::dmat3 now = xformops::pivotFrame(g, id);
     for (int c = 0; c < 3; ++c)
         CHECK(glm::length(glm::normalize(now[c]) - glm::normalize(axes[c])) < 1e-6);
+}
+
+TEST_CASE("unfrozenTransforms lists non-identity objects and filters rotations by step")
+{
+    run("newScene");
+    const std::string frozen = run("polyCube", {{"name", "Frozen"}})[0];
+    const std::string moved = run("polyCube", {{"name", "Moved"}, {"position", {10, 0, 0}}})[0];
+    const std::string quarter = run("polyCube", {{"name", "Quarter"}})[0];
+    const std::string tilted = run("polyCube", {{"name", "Tilted"}})[0];
+    const std::string scaled = run("polyCube", {{"name", "Scaled"}})[0];
+    run("rotate", {{"args", {quarter}}, {"by", {0, 90, 0}}});
+    run("rotate", {{"args", {tilted}}, {"by", {0, 37.5, 0}}});
+    run("scale", {{"args", {scaled}}, {"by", {2, 2, 2}}});
+    run("createNode", {{"args", {"camera"}}, {"name", "Cam"}});
+    run("move", {{"args", {"Cam"}}, {"by", {0, 5, 0}}});
+
+    auto names = [](const json& rows) {
+        std::vector<std::string> out;
+        for (const json& r : rows)
+            out.push_back(r["name"]);
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+    const json all = {{"args", {frozen, moved, quarter, tilted, scaled}}};
+    CHECK(names(run("unfrozenTransforms", all)) == std::vector<std::string>{moved, quarter, scaled, tilted});
+
+    json offStep = all;
+    offStep["translate"] = false;
+    offStep["scale"] = false;
+    offStep["rotateStep"] = 45.0;
+    CHECK(names(run("unfrozenTransforms", offStep)) == std::vector<std::string>{tilted});
+    offStep["invert"] = true;
+    CHECK(names(run("unfrozenTransforms", offStep)) == std::vector<std::string>{quarter});
+
+    const json rows = run("unfrozenTransforms", {{"args", {tilted}}});
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0]["unfrozen"] == json::array({"rotate"}));
+    CHECK(rows[0]["rotate"][1].get<double>() == doctest::Approx(37.5));
+
+    // The scene check leaves out the camera, which its transform places.
+    CHECK(names(run("unfrozenTransforms", {{"scene", true}})) == std::vector<std::string>{moved, quarter, scaled, tilted});
+
+    run("freezeTransforms", {{"args", {moved, quarter, tilted, scaled}}});
+    CHECK(run("unfrozenTransforms", {{"scene", true}}).empty());
 }

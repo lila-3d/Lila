@@ -51,10 +51,13 @@ struct Panel
     /** An action that shows or tucks away the panel, registered with it under the same owner; empty for none. */
     std::string toggleAction;
     /**
-     * Opens as a floating window, about 1000x750 and centred on the main window, whatever a saved layout says, until the
+     * Opens as a floating window, floatWidth x floatHeight and centred on the main window, whatever a saved layout says, until the
      * user docks it themselves; from then on it opens wherever they put it.
      */
     bool floatFirst = false;
+    /** The size floatFirst opens it at. */
+    int floatWidth = 1000;
+    int floatHeight = 750;
     /** A docs page ("topology", "essentials?id=filter-the-outliner") for a help button in the dock's title bar; empty for none. */
     std::string docs;
 };

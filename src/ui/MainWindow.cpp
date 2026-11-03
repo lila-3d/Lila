@@ -161,6 +161,7 @@ void MainWindow::registerPanels()
     registerRetargetUi();
     registerNotesPanel();
     registerRenamePanel();
+    registerUnfrozenTransformsPanel();
     registerBatchRunPanel();
     registerBakerPanel();
     registerTextureGraphUi();
