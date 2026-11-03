@@ -6,12 +6,143 @@
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <optional>
 
 namespace lila::geo
 {
 namespace
 {
 constexpr Index kGrain = 2048;
+
+/**
+ * The subdivided mesh built in parallel: every face's quads laid out in source order and built at once, then their
+ * attributes copied face by face. Null when the builder dropped a face, for the face-by-face build to handle.
+ */
+std::optional<Mesh> buildQuads(const Mesh& src, const std::vector<glm::dvec3>& pos, const std::vector<Index>& pId,
+                               const std::vector<Index>& eId, const std::vector<Index>& fId, std::span<const float> crease,
+                               SubdivideMap* map)
+{
+    LILA_ZONE();
+
+    const Index pc = src.pointCapacity(), ec = src.edgeCapacity(), fc = src.faceCapacity();
+    // The first quad of each source face: one per corner.
+    std::vector<Index> firstQuad(size_t(fc) + 1, 0);
+    for (Index f = 0; f < fc; ++f)
+        firstQuad[f + 1] = firstQuad[f] + (fId[f] != kInvalid ? Index(src.faceSize(f)) : 0);
+    const Index quads = firstQuad[fc];
+    std::vector<Index> sizes(quads, 4), corners(size_t(quads) * 4);
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+        for (Index f = r.begin(); f < r.end(); ++f)
+        {
+            if (fId[f] == kInvalid)
+                continue;
+            Index* out = corners.data() + size_t(firstQuad[f]) * 4;
+            const Index first = src.faceCorner(f);
+            Index c = first;
+            do
+            {
+                *out++ = pId[src.cornerPoint(c)];
+                *out++ = eId[src.cornerEdge(c)];
+                *out++ = fId[f];
+                *out++ = eId[src.cornerEdge(src.cornerPrev(c))];
+                c = src.cornerNext(c);
+            } while (c != first);
+        }
+    });
+    Mesh out = Mesh::fromPolygons(pos, sizes, corners);
+    if (out.faceCapacity() != quads)
+        return std::nullopt;
+    for (size_t d = 0; d < size_t(Domain::Count); ++d)
+        out.attributes(Domain(d)).mergeLayout(src.attributes(Domain(d)));
+    out.materialNames() = src.materialNames();
+    out.colorSetInfo() = src.colorSetInfo();
+
+    AttributeSet& pa = out.pointAttrs();
+    if (pa.layerCount())
+    {
+        tbb::parallel_for(Index(0), pc, [&](Index p) {
+            if (pId[p] != kInvalid)
+                pa.copyFrom(src.pointAttrs(), pId[p], p);
+        });
+        tbb::parallel_for(Index(0), ec, [&](Index e) {
+            if (eId[e] == kInvalid)
+                return;
+            const Index s[2] = {src.edgePoint(e, 0), src.edgePoint(e, 1)};
+            const float w[2] = {0.5f, 0.5f};
+            pa.mixFrom(src.pointAttrs(), eId[e], s, w);
+        });
+        tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+            std::vector<Index> s;
+            std::vector<float> w;
+            for (Index f = r.begin(); f < r.end(); ++f)
+                if (fId[f] != kInvalid)
+                {
+                    s = src.facePoints(f);
+                    w.assign(s.size(), 1.0f / float(s.size()));
+                    pa.mixFrom(src.pointAttrs(), fId[f], s, w);
+                }
+        });
+    }
+    if (map)
+    {
+        map->points = pId;
+        map->facePoints = fId;
+        map->edges.assign(out.edgeCapacity(), kInvalid);
+        map->faces.assign(out.faceCapacity(), kInvalid);
+    }
+    const bool hasCornerAttrs = out.cornerAttrs().layerCount() > 0, hasEdgeAttrs = out.edgeAttrs().layerCount() > 0;
+    tbb::parallel_for(tbb::blocked_range<Index>(0, fc, kGrain), [&](const tbb::blocked_range<Index>& r) {
+        std::vector<Index> faceCorners;
+        std::vector<float> avg;
+        for (Index f = r.begin(); f < r.end(); ++f)
+        {
+            if (fId[f] == kInvalid)
+                continue;
+            faceCorners = src.faceCorners(f);
+            const size_t n = faceCorners.size();
+            avg.assign(n, 1.0f / float(n));
+            for (size_t i = 0; i < n; ++i)
+            {
+                const Index c = faceCorners[i];
+                const Index cp = faceCorners[(i + n - 1) % n];
+                const Index cn = faceCorners[(i + 1) % n];
+                const Index nf = firstQuad[f] + Index(i);
+                out.faceAttrs().copyFrom(src.faceAttrs(), nf, f);
+                const Index oc = out.faceCorner(nf);
+                // Each half of a source edge sits in a quad of every face on that edge; the edge's own first face writes it.
+                auto outer = [&](Index outEdge, Index srcEdge) {
+                    if (src.cornerFace(src.edgeCorner(srcEdge)) != f)
+                        return;
+                    if (hasEdgeAttrs)
+                        out.edgeAttrs().copyFrom(src.edgeAttrs(), outEdge, srcEdge);
+                    if (map)
+                        map->edges[outEdge] = srcEdge;
+                };
+                outer(out.cornerEdge(oc), src.cornerEdge(c));
+                outer(out.cornerEdge(out.cornerPrev(oc)), src.cornerEdge(cp));
+                if (map)
+                    map->faces[nf] = f;
+                if (hasCornerAttrs)
+                {
+                    out.cornerAttrs().copyFrom(src.cornerAttrs(), oc, c);
+                    const Index a[2] = {c, cn};
+                    const Index b[2] = {cp, c};
+                    const float half[2] = {0.5f, 0.5f};
+                    out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(oc), a, half);
+                    out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerNext(out.cornerNext(oc)), faceCorners, avg);
+                    out.cornerAttrs().mixFrom(src.cornerAttrs(), out.cornerPrev(oc), b, half);
+                }
+            }
+        }
+    });
+    if (!crease.empty())
+    {
+        std::span<float> cr = out.edgeAttrs().get<float>(attr::kCrease);
+        for (float& v : cr)
+            v = std::max(0.0f, v - 1.0f);
+    }
+    return out;
+}
 
 Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* map = nullptr)
 {
@@ -102,6 +233,9 @@ Mesh subdivideOnce(const Mesh& src, const SubdivideOptions& opts, SubdivideMap* 
             pos[pId[p]] = result;
         }
     });
+
+    if (std::optional<Mesh> built = buildQuads(src, pos, pId, eId, fId, crease, map))
+        return std::move(*built);
 
     Mesh out;
     for (size_t d = 0; d < size_t(Domain::Count); ++d)
