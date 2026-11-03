@@ -233,7 +233,6 @@ ClaySettings& claySettings()
 
 constexpr const char* kPaletteId = "clayPalette";
 constexpr const char* kClayKeysPref = "/clay/keys";
-constexpr const char* kPalettePlacedPref = "/clay/palettePlaced";
 
 void settingsChanged();
 
@@ -531,13 +530,13 @@ QDockWidget* paletteDock()
 
 void showPalette()
 {
+    QDockWidget* before = paletteDock();
+    const bool wasFloating = before && before->isFloating() && before->isVisible();
     panels::show(kPaletteId);
     QDockWidget* d = paletteDock();
-    if (!d || PrefStore::get().value<bool>("general", kPalettePlacedPref, false))
+    if (!d || wasFloating || !d->isFloating())
         return;
-    // The first time: floating at the viewport's top-left, out of the way of the model.
-    PrefStore::get().set("general", kPalettePlacedPref, true);
-    d->setFloating(true);
+    // Floated by floatFirst: sized to its content at the viewport's top-left, out of the way of the model.
     d->resize(d->sizeHint());
     if (QWidget* window = d->parentWidget() ? d->parentWidget()->window() : nullptr)
         d->move(window->geometry().topLeft() + QPoint(80, 160));
@@ -1133,7 +1132,8 @@ void registerClayTool()
                  .area = Qt::LeftDockWidgetArea,
                  .icon = "brush",
                  .open = false,
-                 .place = [](QDockWidget* d) { d->setProperty(panels::kOwnSizeProperty, true); }});
+                 .place = [](QDockWidget* d) { d->setProperty(panels::kOwnSizeProperty, true); },
+                 .floatFirst = true});
     if (!viewportTools::registry().find("clay.tool"))
         viewportTools::add({.id = "clay.tool", .label = "Clay Tool", .icon = "brush", .create = [] { return std::make_unique<ClayTool>(); }});
     actions::add({.id = "clay.tool",
