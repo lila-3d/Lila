@@ -157,6 +157,7 @@ def addModifier(*objects: Any, kind: str | None = None, params: Any | None = Non
     - autoBevel: Bevels the fold edges it finds live on its input by angle, side and length rules, plus edges picked by hand. Use it for game-art bevels that keep following the mesh as you edit it.
     - bevel: Bevels every edge sharper than an angle so hard corners catch the light. A quick live bevel; Auto Bevel has finer edge rules and hand-picked edges.
     - boolean: A boolean kept live: cuts, joins or intersects this mesh with a cutter mesh, so moving or editing the cutter updates the result. Stack one per cutter. Apply bakes it.
+    - channel: A channel carved along curves, kept live: a U channel, V groove, half round or stepped profile swept along the path curves and cut into this mesh, open surfaces such as terrain included. Moving the curve or editing the profile recuts it.
     - curveArray: Repeats the mesh along a curve: by count or spacing, fitted to its length, optional start and end pieces, each copy placed on the curve's frame or bent along it, with random turn, scale and offset. Follows curve edits.
     - curveDeform: Bends the mesh along a curve, its forward axis running along it (Curve Warp, Path Deform): offset, stretch to fit, roll, twist and scale ramps, the curve's tilt and radius. Editing or moving the curve updates it.
     - decimate: Reduces the triangle count while keeping the shape, silhouette, UVs and normals. Use it for LODs or to lighten scans and sculpts.
@@ -1351,7 +1352,7 @@ def brushPresets(tool: str | None = None) -> Any:
         tool: Only presets for this tool (sculpt).
     """
 
-def cable(*objects: Any, sagMode: str | None = None, slack: float | None = None, sag: float | None = None, gravity: Sequence[float] | None = None, count: int | None = None, spread: float | None = None, sagVariation: float | None = None, seed: int | None = None, drape: bool | None = None, clearance: float | None = None, iterations: int | None = None, samples: int | None = None, tolerance: float | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, colliders: Sequence[Any] | None = None, pipe: bool | None = None, pipeRadius: float | None = None, pipeSides: int | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, c: bool | None = None, col: Sequence[Any] | None = None, pr: float | None = None, ps: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def cable(*objects: Any, sagMode: str | None = None, slack: float | None = None, sag: float | None = None, gravity: Sequence[float] | None = None, count: int | None = None, spread: float | None = None, sagVariation: float | None = None, seed: int | None = None, drape: bool | None = None, clearance: float | None = None, iterations: int | None = None, samples: int | None = None, tolerance: float | None = None, points: Sequence[Any] | None = None, closed: bool | None = None, colliders: Sequence[Any] | None = None, pipe: bool | None = None, pipeRadius: float | None = None, pipeSides: int | None = None, pipeOptions: Any | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, c: bool | None = None, col: Sequence[Any] | None = None, pr: float | None = None, ps: int | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Hang cables between anchor points: true catenaries by slack (extra length) or sag depth under gravity, bundles of several with seeded spread and sag variation, optionally draped over meshes, optionally piped. Live: moving the anchor curve's points or editing the settings updates them. Returns [cable curve, curveCable, anchor curve, pipe mesh or None] per anchor curve.
 
     Args:
@@ -1375,6 +1376,7 @@ def cable(*objects: Any, sagMode: str | None = None, slack: float | None = None,
         pipe: Also build pipe geometry along the cables (the cable pipe preset, live). Default False.
         pipeRadius: Pipe radius, cm. Short form pr. Default 0.6.
         pipeSides: Pipe sides. Short form ps. Default 6.
+        pipeOptions: {flag: value} for the pipe command, over the cable preset (uvLayout, texelDensity, vMin ...).
         constructionHistory: Keep the cable node so moving anchors or editing slack updates the cables. Short form ch. Default True.
         name: Cable curve name; made unique. Short form n.
     """
@@ -1454,6 +1456,39 @@ def captureView(view: str | None = None, lookThrough: str | None = None, yaw: fl
         samples: Jittered frames averaged into the image: 16 or more gives a supersampled still. Default 1.
         label: Write the view's name in the top-left corner. Default True.
         path: PNG file to write. Short form p.
+    """
+
+def carveChannel(*objects: Any, shape: str | None = None, width: float | None = None, depth: float | None = None, cornerRound: float | None = None, steps: int | None = None, floorWidth: float | None = None, segments: int | None = None, lift: float | None = None, bendRadius: float | None = None, followSurface: bool | None = None, up: Sequence[float] | None = None, material: str | None = None, hardAngle: float | None = None, uvLayout: str | None = None, texelDensity: float | None = None, uMin: float | None = None, vMin: float | None = None, uMax: float | None = None, vMax: float | None = None, capUMin: float | None = None, capVMin: float | None = None, capUMax: float | None = None, capVMax: float | None = None, surface: str | None = None, points: Sequence[Any] | None = None, constructionHistory: bool | None = None, p: Sequence[Any] | None = None, ch: bool | None = None) -> Any:
+    """Carve a channel into a mesh along path curves: a U channel, V groove, half round or stepped profile swept along the path and cut out of the mesh, terrain and other open surfaces included, at any scale. Live: a channelModifier on the mesh's stack recuts as the curve or settings change. The walls take the strip UVs (uvLayout along by default, tiling every 1 / texelDensity cm). Returns [mesh, channelModifier, path curve].
+
+    Args:
+        objects: path curves (default: the selected curves).
+        shape: Cross-section: U channel, V groove, half round or stepped terraces. One of 'uChannel', 'vGroove', 'halfRound', 'stepped'.
+        width: Width at the surface, cm.
+        depth: Depth below the path, cm.
+        cornerRound: U channel: bottom corner radius, as a fraction of half the width.
+        steps: Stepped: terraces from the rim to the floor.
+        floorWidth: Stepped: floor width, as a fraction of the width.
+        segments: Points on each rounded part of the profile.
+        lift: How far the cutter rises above the path, cm; 0 is the larger of the depth and half the width.
+        bendRadius: Rounds the path's sharp corners, cm; 0 mitres them.
+        followSurface: Drop the path onto this mesh along up, so a curve drawn in plan follows the ground.
+        up: Up at the path: the channel goes down from it, and only faces turned this way are cut.
+        material: Material slot for the channel's walls and floor; empty takes the mesh's first.
+        hardAngle: New edges sharper than this many degrees are marked hard.
+        uvLayout: around: U around the profile, V along the path. along: U along the path, V around it (a trim strip). One of 'around', 'along'.
+        texelDensity: UV units per cm along the path; 0 fits each part to the rectangle.
+        uMin: Low U edge of the UV rectangle the swept surface's UVs land in.
+        vMin: Low V edge of the UV rectangle the swept surface's UVs land in.
+        uMax: High U edge of the UV rectangle the swept surface's UVs land in.
+        vMax: High V edge of the UV rectangle the swept surface's UVs land in.
+        capUMin: Low U edge of the UV rectangle caps land in.
+        capVMin: Low V edge of the UV rectangle caps land in.
+        capUMax: High U edge of the UV rectangle caps land in.
+        capVMax: High V edge of the UV rectangle caps land in.
+        surface: Mesh to carve (default: the selected mesh).
+        points: [[x, y, z], ...] world points of a new path curve, instead of path curves. Short form p.
+        constructionHistory: Keep the channel live; off applies it. Short form ch. Default True.
     """
 
 def cast(*objects: Any, shape: str | None = None, factor: float | None = None, radius: float | None = None, params: Any | None = None, name: str | None = None) -> Any:
@@ -1611,14 +1646,15 @@ def collision(*objects: Any, colliders: Sequence[Any] | None = None, offset: flo
         name: Name for the deformer.
     """
 
-def componentExport(*objects: Any, component: str | None = None, mode: str | None = None, unrealClass: str | None = None, query: bool | None = None, c: str | None = None, m: str | None = None, uc: str | None = None, q: bool | None = None) -> Any:
-    """How a component on objects reaches Unreal: actorTags, assetUserData (the default), component (an actor component of unrealClass with matching properties), dataAsset (of unrealClass), custom (a registered exporter named by unrealClass) or none. With query=True, returns the setting.
+def componentExport(*objects: Any, component: str | None = None, mode: str | None = None, unrealClass: str | None = None, tags: str | None = None, query: bool | None = None, c: str | None = None, m: str | None = None, uc: str | None = None, tg: str | None = None, q: bool | None = None) -> Any:
+    """How a component on objects reaches Unreal: actorTags, assetUserData (the default), component (an actor component of unrealClass with matching properties), dataAsset (of unrealClass), custom (a registered exporter named by unrealClass) or none. actorTags tags the actor "Component.attr=value", or with tags="value" the bare values (a string attr holding whale-architecture tags whale-architecture; each element of a list; a true bool its attr's name). With query=True, returns the setting.
 
     Args:
         objects: objects.
         component: The component (heading). Short form c.
         mode: none, actorTags, assetUserData, component, dataAsset or custom. Short form m. One of 'none', 'actorTags', 'assetUserData', 'component', 'dataAsset', 'custom'.
         unrealClass: The UE class (component, dataAsset) or exporter (custom). Short form uc.
+        tags: actorTags: keyValue (Component.attr=value, the default) or value (bare values). Short form tg. One of 'keyValue', 'value'.
         query: Return {mode, class}. Short form q. Default False.
     """
 
@@ -2827,7 +2863,7 @@ def exportDxf(*objects: Any, unit: str | None = None, upAxis: str | None = None,
         tolerance: cm, for curves written as polylines. Short form tol. Default 0.01.
     """
 
-def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, textures: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, unrealCheck: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, u: str | None = None, sl: bool | None = None, uc: bool | None = None) -> Any:
+def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None, maxInfluences: int | None = None, animation: bool | None = None, bakeAnimation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, triangulate: bool | None = None, tangents: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, smoothingGroups: bool | None = None, compress: bool | None = None, textures: bool | None = None, collision: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, unrealCheck: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, bake: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, sg: bool | None = None, col: bool | None = None, u: str | None = None, sl: bool | None = None, uc: bool | None = None) -> Any:
     """Export the evaluated meshes and transforms to a binary FBX 7.4 file. Objects default to the selection (or the whole scene with selectionOnly=False). Names go out intact, so UCX_/UBX_/USP_/UCP_ collision and SOCKET_ empties work in Unreal. kind=skeletal writes joints, skins (bind pose mesh, clusters, BindPose), morph targets (in-betweens as their own targets) with their weight curves, driven channel curveNames as named curves on the root joint, and the animation baked over the range; kind=animation writes only the skeleton and its curves. kind=sequence writes cameras and transforms with their animation and no meshes, for Unreal Sequencer's Import FBX: cameras go out as FBX cameras (focal length aperture mode, film back, clipping, focal length and clipping curves) and arrive as CineCameras. Cameras are written as FBX cameras in every kind. start/end are frames. Returns the path.
 
     Args:
@@ -2850,6 +2886,7 @@ def exportFbx(*objects: Any, profile: str | None = None, kind: str | None = None
         smoothingGroups: Write edge smoothing (hard and soft edges). Short form sg. Default True.
         compress: Deflate the larger arrays as the FBX SDK does; False writes them raw. Default True.
         textures: Write the materials' colors and base color, normal and emissive maps as file textures with their wrap modes (repeat or clamp). Off writes plain named materials. Default False.
+        collision: Static kind: write each mesh's simple collision (a Stagehand body's shape) as UCX_<mesh>_NN meshes for Unreal. Short form col. Default False.
         units: File units: cm, m, mm, in or ft. Lengths are scaled to them. Short form u. One of 'cm', 'm', 'mm', 'in', 'ft'. Default 'cm'.
         selectionOnly: Without objects: the selection, or every root when False. Short form sl. Default True.
         unrealCheck: Skeletal and animation kinds: refuse when a skeleton fails unrealCheck over the range (sampled). False exports anyway. Short form uc. Default True.
@@ -3122,7 +3159,7 @@ def extractMorphTarget(*objects: Any, inBetween: float | None = None) -> Any:
         inBetween: The in-between's weight; default the full shape.
     """
 
-def extrude(*objects: Any, profileShape: str | None = None, radius: float | None = None, sides: int | None = None, width: float | None = None, height: float | None = None, alignProfile: bool | None = None, twist: float | None = None, scaleStart: float | None = None, scaleEnd: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, frameMode: str | None = None, upVector: Sequence[float] | None = None, miter: bool | None = None, texelDensity: float | None = None, splitEvery: float | None = None, flip: bool | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, profileCurve: str | None = None, constructionHistory: bool | None = None, name: str | None = None, pc: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def extrude(*objects: Any, profileShape: str | None = None, radius: float | None = None, sides: int | None = None, width: float | None = None, height: float | None = None, alignProfile: bool | None = None, twist: float | None = None, scaleStart: float | None = None, scaleEnd: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, frameMode: str | None = None, upVector: Sequence[float] | None = None, miter: bool | None = None, splitEvery: float | None = None, flip: bool | None = None, uvLayout: str | None = None, texelDensity: float | None = None, uMin: float | None = None, vMin: float | None = None, uMax: float | None = None, vMax: float | None = None, capUMin: float | None = None, capVMin: float | None = None, capUMax: float | None = None, capVMax: float | None = None, tessellation: str | None = None, segments: int | None = None, chordError: float | None = None, maxAngle: float | None = None, profileCurve: str | None = None, constructionHistory: bool | None = None, name: str | None = None, pc: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Sweep a profile along path curves into a quad mesh with live history: a circle or rectangle, or the profile curve given second (or with profile=). Returns [mesh, curveSweep].
 
     Args:
@@ -3142,9 +3179,18 @@ def extrude(*objects: Any, profileShape: str | None = None, radius: float | None
         frameMode: How the profile turns along the path: rotation minimising (no twist), toward the up vector, or Frenet. One of 'rmf', 'fixedUp', 'surfaceNormal', 'frenet'.
         upVector: Up for fixedUp frames, and the start orientation of others.
         miter: At corners, set the profile in the bisector plane so walls keep their width.
-        texelDensity: V per cm along the path; 0 fits each part to 0..1.
         splitEvery: Split the body into parts (own UV island and part id) every this many cm; 0 is none.
         flip: Flip the faces.
+        uvLayout: around: U around the profile, V along the path. along: U along the path, V around it (a trim strip). One of 'around', 'along'.
+        texelDensity: UV units per cm along the path; 0 fits each part to the rectangle.
+        uMin: Low U edge of the UV rectangle the swept surface's UVs land in.
+        vMin: Low V edge of the UV rectangle the swept surface's UVs land in.
+        uMax: High U edge of the UV rectangle the swept surface's UVs land in.
+        vMax: High V edge of the UV rectangle the swept surface's UVs land in.
+        capUMin: Low U edge of the UV rectangle caps land in.
+        capVMin: Low V edge of the UV rectangle caps land in.
+        capUMax: High U edge of the UV rectangle caps land in.
+        capVMax: High V edge of the UV rectangle caps land in.
         tessellation: How curves become points: fixed segments per span, adaptive to the error and angle, or game (straight spans one segment, curved ones by angle, corners exact). One of 'fixed', 'adaptive', 'game'.
         segments: Segments per curved span (fixed).
         chordError: Largest gap from the true curve, cm (adaptive).
@@ -5390,7 +5436,7 @@ def pin(*objects: Any, source: str | None = None, follow: str | None = None, mai
         pin("Bead", "Wire", curveMode="fraction", along=0.25)
     """
 
-def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = None, sides: int | None = None, wallThickness: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, autoFillet: bool | None = None, bendRadius: float | None = None, minBendRadius: float | None = None, tessellation: str | None = None, segments: int | None = None, maxAngle: float | None = None, texelDensity: float | None = None, flip: bool | None = None, splitEvery: float | None = None, splitAtBends: bool | None = None, splitAt: str | None = None, partAtStart: bool | None = None, partAtEnd: bool | None = None, segmentMaterials: bool | None = None, coupling: str | None = None, couplingScale: float | None = None, couplingLength: float | None = None, couplingSides: int | None = None, scaleToRadius: bool | None = None, meshAxis: str | None = None, meshScale: float | None = None, fasteners: str | None = None, boltCount: int | None = None, boltCircle: float | None = None, boltPhase: float | None = None, boltSize: float | None = None, corrugationDepth: float | None = None, corrugationPeriod: float | None = None, corrugationRings: int | None = None, preset: str | None = None, points: Sequence[Any] | None = None, splines: Sequence[Any] | None = None, symmetry: str | None = None, fromLoop: bool | None = None, loopMesh: str | None = None, loopFaces: Sequence[Any] | None = None, loopEdges: Sequence[Any] | None = None, attach: bool | None = None, couplingMeshNode: str | None = None, boltMeshNode: str | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = None, sides: int | None = None, wallThickness: float | None = None, startCap: str | None = None, endCap: str | None = None, roundSegments: int | None = None, autoFillet: bool | None = None, bendRadius: float | None = None, minBendRadius: float | None = None, tessellation: str | None = None, segments: int | None = None, maxAngle: float | None = None, flip: bool | None = None, splitEvery: float | None = None, splitAtBends: bool | None = None, splitAt: str | None = None, partAtStart: bool | None = None, partAtEnd: bool | None = None, segmentMaterials: bool | None = None, coupling: str | None = None, couplingScale: float | None = None, couplingLength: float | None = None, couplingSides: int | None = None, scaleToRadius: bool | None = None, meshAxis: str | None = None, meshScale: float | None = None, fasteners: str | None = None, boltCount: int | None = None, boltCircle: float | None = None, boltPhase: float | None = None, boltSize: float | None = None, corrugationDepth: float | None = None, corrugationPeriod: float | None = None, corrugationRings: int | None = None, uvLayout: str | None = None, texelDensity: float | None = None, uMin: float | None = None, vMin: float | None = None, uMax: float | None = None, vMax: float | None = None, capUMin: float | None = None, capVMin: float | None = None, capUMax: float | None = None, capVMax: float | None = None, innerUMin: float | None = None, innerVMin: float | None = None, innerUMax: float | None = None, innerVMax: float | None = None, preset: str | None = None, points: Sequence[Any] | None = None, splines: Sequence[Any] | None = None, symmetry: str | None = None, fromLoop: bool | None = None, loopMesh: str | None = None, loopFaces: Sequence[Any] | None = None, loopEdges: Sequence[Any] | None = None, attach: bool | None = None, couplingMeshNode: str | None = None, boltMeshNode: str | None = None, constructionHistory: bool | None = None, name: str | None = None, p: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Build a pipe or hose mesh along path curves with live history: radius (and a ramp), sides, wall thickness, rounded bends, caps, segments with couplings (flange, collar, clamp, elbow collar or any mesh), bolt rings and hose corrugation. fromLoop starts it on a selected face's border; attach builds it into that mesh. Returns [mesh, curvePipe].
 
     Args:
@@ -5408,7 +5454,6 @@ def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = No
         tessellation: How the path becomes rings: fixed per span, adaptive, or game (straight spans one ring, bends by angle). One of 'fixed', 'adaptive', 'game'.
         segments: Rings per curved span (fixed).
         maxAngle: Largest turn between rings, degrees (adaptive and game).
-        texelDensity: V per cm along the path; 0 fits each segment to 0..1.
         flip: Flip the faces.
         splitEvery: Split into segments every this many cm (0: none); couplings go at the splits.
         splitAtBends: Also split at each bend.
@@ -5431,6 +5476,20 @@ def pipe(*objects: Any, radius: float | None = None, radiusRamp: str | None = No
         corrugationDepth: Hose ribs: how far the radius dips, as a fraction of it; 0 is smooth.
         corrugationPeriod: Rib spacing, cm.
         corrugationRings: Rings per rib.
+        uvLayout: around: U around the profile, V along the path. along: U along the path, V around it (a trim strip). One of 'around', 'along'.
+        texelDensity: UV units per cm along the path; 0 fits each part to the rectangle.
+        uMin: Low U edge of the UV rectangle the swept surface's UVs land in.
+        vMin: Low V edge of the UV rectangle the swept surface's UVs land in.
+        uMax: High U edge of the UV rectangle the swept surface's UVs land in.
+        vMax: High V edge of the UV rectangle the swept surface's UVs land in.
+        capUMin: Low U edge of the UV rectangle caps land in.
+        capVMin: Low V edge of the UV rectangle caps land in.
+        capUMax: High U edge of the UV rectangle caps land in.
+        capVMax: High V edge of the UV rectangle caps land in.
+        innerUMin: Low U edge of the UV rectangle a tube's inner surface land in.
+        innerVMin: Low V edge of the UV rectangle a tube's inner surface land in.
+        innerUMax: High U edge of the UV rectangle a tube's inner surface land in.
+        innerVMax: High V edge of the UV rectangle a tube's inner surface land in.
         preset: Starting settings: pipe, hose, cable or conduit (flags given as well win). One of 'pipe', 'hose', 'cable', 'conduit'.
         points: [[x, y, z], ...] world points of a new poly path curve, instead of path curves. Short form p.
         splines: Whole path splines (curveData format), instead of path curves.
@@ -5452,6 +5511,50 @@ def pipePreset(*objects: Any, preset: str | None = None) -> Any:
     Args:
         objects: pipes.
         preset: pipe, hose, cable or conduit. One of 'pipe', 'hose', 'cable', 'conduit'. Default 'pipe'.
+    """
+
+def pipeRoute(start: Sequence[float] | None = None, end: Sequence[float] | None = None, startDir: Sequence[float] | None = None, endDir: Sequence[float] | None = None, clearance: float | None = None, cellSize: float | None = None, axisCost: Sequence[float] | None = None, bendCost: float | None = None, margin: float | None = None, obstacles: Sequence[Any] | None = None, pipe: bool | None = None, pipeOptions: Any | None = None, name: str | None = None, *, n: str | None = None) -> Any:
+    """Route a pipe from start to end around obstacle meshes: orthogonal runs on a grid with clearance, preferred axes (axisCost) and few bends (bendCost). Live: moving the obstacles or the ends reroutes, and a pipe on the route follows. Returns [route curve, curvePipeRoute, pipe mesh or None].
+
+    Args:
+        start: Where the run starts, world cm.
+        end: Where the run ends, world cm.
+        startDir: The run leaves the start along this axis (zero: any).
+        endDir: The run arrives at the end moving along this axis (zero: any).
+        clearance: Least distance from the centreline to any obstacle, cm: the pipe radius plus a gap.
+        cellSize: Grid step, cm; 0 picks one from the clearance and the distance.
+        axisCost: Cost per cm along x, y and z: raise one to keep runs off that axis.
+        bendCost: Cost of each bend, in cm of run.
+        margin: How far the search reaches past the box around the ends, cm; 0 is a quarter of the distance.
+        obstacles: Meshes to keep clear of (default: the selected meshes).
+        pipe: Also build a live pipe along the run. Default False.
+        pipeOptions: {flag: value} for the pipe command (radius, preset, uvLayout ...).
+        name: Route curve name; made unique. Short form n.
+    """
+
+def pipeSupports(*objects: Any, style: str | None = None, target: str | None = None, spacing: float | None = None, startOffset: float | None = None, endClearance: float | None = None, pipeRadius: float | None = None, bendRadius: float | None = None, maxReach: float | None = None, ringThickness: float | None = None, ringWidth: float | None = None, rodSize: float | None = None, sides: int | None = None, up: Sequence[float] | None = None, meshScale: float | None = None, stretch: bool | None = None, surfaces: Sequence[Any] | None = None, supportMeshNode: str | None = None, name: str | None = None, n: str | None = None) -> Any:
+    """Place supports along pipes: hangers, wall brackets, floor stands, clamps or your own mesh, every spacing cm, each reaching to the nearest wall, floor or ceiling by ray cast. Given a pipe mesh, the supports follow its path, radius and bends live. Returns [supports mesh, curvePipeSupports] per pipe or path curve.
+
+    Args:
+        objects: pipe meshes or path curves (default: the selection).
+        style: auto picks a hanger, bracket or stand by the direction it reaches; or one style for all. One of 'auto', 'hanger', 'bracket', 'stand', 'clamp', 'mesh'.
+        target: Which surface to reach for: the nearest, or only floors, ceilings or walls. One of 'nearest', 'floor', 'ceiling', 'wall'.
+        spacing: Distance between supports along the run, cm.
+        startOffset: First support's distance from the start, cm; negative is half the spacing.
+        endClearance: Keep supports this far from the ends and off bends, cm; 0 is twice the pipe radius.
+        pipeRadius: Radius of the pipe held, cm.
+        bendRadius: Bend radius the pipe rounds corners with, cm; 0 is twice the radius.
+        maxReach: Farthest a support reaches, cm; stations farther from any surface get none.
+        ringThickness: Clamp ring thickness, cm; 0 sizes it from the pipe.
+        ringWidth: Clamp ring width along the pipe, cm; 0 sizes it from the pipe.
+        rodSize: Rod, arm or post thickness, cm; 0 sizes it from the pipe.
+        sides: Sides around the rings.
+        up: World up: floors are below, ceilings above.
+        meshScale: Scale of the support mesh.
+        stretch: Stretch the support mesh along its +y to reach the surface.
+        surfaces: Meshes supports reach to (default: the selected meshes that aren't the pipe).
+        supportMeshNode: Mesh to place as each support (sets style = mesh).
+        name: Supports mesh name; made unique. Short form n.
     """
 
 def pivot(*objects: Any) -> Any:
@@ -8384,7 +8487,7 @@ def splitRingsEditSelection(*objects: Any) -> Any:
 def stop() -> Any:
     """Stop playback."""
 
-def strap(*objects: Any, style: str | None = None, width: float | None = None, thickness: float | None = None, bevel: float | None = None, strands: int | None = None, strandSides: int | None = None, lay: float | None = None, buckle: bool | None = None, buckleAt: float | None = None, buckleLength: float | None = None, buckleScale: float | None = None, flip: bool | None = None, texelDensity: float | None = None, gap: float | None = None, bridge: float | None = None, taut: bool | None = None, tolerance: float | None = None, preset: str | None = None, faces: Sequence[Any] | None = None, start: Sequence[float] | None = None, end: Sequence[float] | None = None, view: Sequence[float] | None = None, startDir: Sequence[float] | None = None, endDir: Sequence[float] | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+def strap(*objects: Any, style: str | None = None, width: float | None = None, thickness: float | None = None, bevel: float | None = None, strands: int | None = None, strandSides: int | None = None, lay: float | None = None, buckle: bool | None = None, buckleAt: float | None = None, buckleLength: float | None = None, buckleScale: float | None = None, flip: bool | None = None, uvLayout: str | None = None, texelDensity: float | None = None, uMin: float | None = None, vMin: float | None = None, uMax: float | None = None, vMax: float | None = None, capUMin: float | None = None, capVMin: float | None = None, capUMax: float | None = None, capVMax: float | None = None, gap: float | None = None, bridge: float | None = None, taut: bool | None = None, tolerance: float | None = None, preset: str | None = None, faces: Sequence[Any] | None = None, start: Sequence[float] | None = None, end: Sequence[float] | None = None, view: Sequence[float] | None = None, startDir: Sequence[float] | None = None, endDir: Sequence[float] | None = None, constructionHistory: bool | None = None, name: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
     """Strap meshes: the slash from start to end, seen along view, cuts them in its plane, and a band or rope goes round the loops it crosses (several are bundled into one), sitting on the surface. The path curve and the strap stay live while history is on. Returns [mesh, curve, curveStrap, curveStrapPath].
 
     Args:
@@ -8401,7 +8504,16 @@ def strap(*objects: Any, style: str | None = None, width: float | None = None, t
         buckleLength: Buckle length along the strap, cm.
         buckleScale: Buckle width over the strap's.
         flip: Put the strap on the other side of the path.
-        texelDensity: V per cm along the strap; 0 fits it to 0..1.
+        uvLayout: around: U around the profile, V along the path. along: U along the path, V around it (a trim strip). One of 'around', 'along'.
+        texelDensity: UV units per cm along the path; 0 fits each part to the rectangle.
+        uMin: Low U edge of the UV rectangle the swept surface's UVs land in.
+        vMin: Low V edge of the UV rectangle the swept surface's UVs land in.
+        uMax: High U edge of the UV rectangle the swept surface's UVs land in.
+        vMax: High V edge of the UV rectangle the swept surface's UVs land in.
+        capUMin: Low U edge of the UV rectangle caps land in.
+        capVMin: Low V edge of the UV rectangle caps land in.
+        capUMax: High U edge of the UV rectangle caps land in.
+        capVMax: High V edge of the UV rectangle caps land in.
         gap: cm between the surface and the strap.
         bridge: Span hollows narrower than twice this many cm, as a stiff strap would; 0 follows every dip.
         taut: Pulled tight: span every hollow (the convex hull of what the strap goes around).
@@ -9335,6 +9447,25 @@ def unloadReference(*objects: Any) -> Any:
         objects: namespace.
     """
 
+def unrealAssetInfo(*objects: Any) -> Any:
+    """An Unreal asset's class, material slots, LODs, vertex and triangle counts, Nanite and collision (simple shape count, complexAsSimple), as {ok, ...} or {ok: False, error}.
+
+    Args:
+        objects: asset path (/Game/Lila/Instances/SM_Wall).
+    """
+
+def unrealCall(*objects: Any, params: Any | None = None, timeoutMs: int | None = None, p: Any | None = None, to: int | None = None) -> Any:
+    """Call any LilaLink method in the connected Unreal editor and return its reply as {ok, result}, or {ok: False, error, code} when it fails or Unreal is not connected. runPython takes {code, mode: exec|evaluate} and returns {ok, result, log}.
+
+    Args:
+        objects: method.
+        params: The method's params, a dict (default empty). Short form p.
+        timeoutMs: Fail the call after this long. Short form to. Default 60000.
+
+    Examples:
+        unrealCall("runPython", params={"code": "unreal.EditorLevelLibrary.get_all_level_actors()", "mode": "evaluate"})
+    """
+
 def unrealCheck(*objects: Any, start: float | None = None, end: float | None = None, fps: float | None = None, tolerance: float | None = None, suffix: str | None = None, report: bool | None = None, st: float | None = None, et: float | None = None, tol: float | None = None, sfx: str | None = None, rp: bool | None = None) -> Any:
     """Evaluate skeletons (default all) as they export, under Unreal's transform rules (scale handed down per axis, no shear), and compare their skins with Lila's deformed meshes every frame of the range. Each joint past the tolerance becomes an error on that joint; exportFbx, exportGltf and unrealSync run the same check and refuse while a joint fails. Returns the worst drift and the mismatched joints.
 
@@ -9359,7 +9490,19 @@ def unrealConnect(project: str | None = None, port: int | None = None, host: str
         disconnect: Drop the current connection instead. Short form d. Default False.
     """
 
-def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, f: str | None = None, w: bool | None = None) -> Any:
+def unrealCustomData(*objects: Any, data: Any | None = None, query: bool | None = None, d: Any | None = None, q: bool | None = None) -> Any:
+    """Name what unrealPlaceInstances sends as each placement's custom primitive data, in slot order, on the instance sources of the given meshes: random (a stable 0 to 1 per placement), or a number, bool or vector attribute on the members (a vector takes 3 slots), or for geometry nodes instances their instance attribute of that name. A material reads slot n with PerInstanceCustomData (ISM/HISM) or CustomPrimitiveData (actors). With query=True, returns the names. Default ["random"].
+
+    Args:
+        objects: objects.
+        data: The names, a list: ["random", "wear", "tint"]. An empty list sends none. Short form d.
+        query: Return the names of the first object's source. Short form q. Default False.
+
+    Examples:
+        unrealCustomData("Boulder", data=["random", "wear", "tint"])
+    """
+
+def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, collision: str | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, col: str | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, f: str | None = None, w: bool | None = None) -> Any:
     """Import (or reimport) a file into the connected Unreal project. Connects first if needed. Returns {assets, warnings, errors} with wait=True; otherwise queues it and logs the result.
 
     Args:
@@ -9374,6 +9517,7 @@ def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None
         importTextures: Import textures the materials use (default on). Short form it.
         combineMeshes: Merge every mesh into one static mesh (default on). Short form cm.
         autoCollision: Generate simple collision when there is no UCX_ mesh (default off). Short form ac.
+        collision: static: the asset's collision, replacing what the import made: none, box, convex (auto convex decomposition), complexAsSimple (the render mesh) or ucx (only the file's UCX_ meshes). Unset, autoCollision decides. Short form col. One of 'none', 'box', 'convex', 'complexAsSimple', 'ucx'.
         generateLightmapUVs: Let Unreal build a lightmap UV channel (default off). Short form glu.
         normals: import | compute. Short form nm.
         lodGroup: Static mesh LOD group, like LargeProp. Short form lg.
@@ -9385,7 +9529,14 @@ def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None
         wait: Block until Unreal finishes and return its reply. Short form w. Default False.
     """
 
-def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None, vat: Any | None = None, splineType: str | None = None, splineMesh: str | None = None, splineMeshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, sq: Any | None = None, ns: str | None = None, ne: str | None = None, nr: int | None = None, va: Any | None = None, st: str | None = None, sm: str | None = None, sma: str | None = None, ls: str | None = None, wd: float | None = None, dt: bool | None = None) -> Any:
+def unrealListPlacements(*objects: Any) -> Any:
+    """What unrealPlaceInstances placed in Unreal's open level: [{actor, group, node or instances, mesh, location}], only the instance groups of the given meshes when any are given. Returns {ok, placements} or {ok: False, error}.
+
+    Args:
+        objects: objects (default every group).
+    """
+
+def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, collision: str | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, sequence: Any | None = None, niagaraSystem: str | None = None, niagaraEmitter: str | None = None, niagaraRenderer: int | None = None, vat: Any | None = None, splineType: str | None = None, splineMesh: str | None = None, splineMeshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, col: str | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, sq: Any | None = None, ns: str | None = None, ne: str | None = None, nr: int | None = None, va: Any | None = None, st: str | None = None, sm: str | None = None, sma: str | None = None, ls: str | None = None, wd: float | None = None, dt: bool | None = None) -> Any:
     """Map a node to an Unreal asset so saving the scene re-exports and reimports it. Stored on the node in the scene: it follows renames, goes with deletes and duplicates don't inherit it. Static and skeletal mappings need a mesh under the node. Replaces any existing mapping for the node. An object set maps its members as one asset, exported together where they sit. kind meshSequence sends an animated mesh as a static mesh per frame (<contentPath>_000, ...; reimported in place, frames past the end deleted) and can point a Niagara mesh renderer at them; geometryCache sends it as one Alembic Geometry Cache; vertexAnimation bakes it to Vertex Animation Textures and sends the rest mesh, the textures and a material instance that plays them (sequence for the range, vat for the bake).
 
     Args:
@@ -9400,6 +9551,7 @@ def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = 
         importTextures: Import textures the materials use (default on). Short form it.
         combineMeshes: Merge every mesh into one static mesh (default on). Short form cm.
         autoCollision: Generate simple collision when there is no UCX_ mesh (default off). Short form ac.
+        collision: static: the asset's collision, replacing what the import made: none, box, convex (auto convex decomposition), complexAsSimple (the render mesh) or ucx (only the file's UCX_ meshes). Unset, autoCollision decides. Short form col. One of 'none', 'box', 'convex', 'complexAsSimple', 'ucx'.
         generateLightmapUVs: Let Unreal build a lightmap UV channel (default off). Short form glu.
         normals: import | compute. Short form nm.
         lodGroup: Static mesh LOD group, like LargeProp. Short form lg.
@@ -9423,15 +9575,18 @@ def unrealMap(*objects: Any, contentPath: str | None = None, kind: str | None = 
 def unrealMappings() -> Any:
     """Every node -> Unreal asset mapping in this scene."""
 
-def unrealPlaceInstances(*objects: Any, folder: str | None = None, mode: str | None = None, threshold: int | None = None, lightingChannels: bool | None = None, dryRun: bool | None = None, wait: bool | None = None, f: str | None = None, m: str | None = None, t: int | None = None, lc: bool | None = None, w: bool | None = None) -> Any:
-    """Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. Lights among them go as light actors (point, spot, directional, rect; discs as square rect lights, domes skipped). Lighting channels map onto Unreal's three: default is channel 0, the next two channels the sent nodes use (in scene order) 1 and 2; any more are dropped, with a warning naming them, and what is left in none goes on 0. Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. Returns the plan, with each group's import and placement results when wait=True.
+def unrealPlaceInstances(*objects: Any, folder: str | None = None, mode: str | None = None, threshold: int | None = None, lightingChannels: bool | None = None, collision: str | None = None, nanite: bool | None = None, validate: bool | None = None, dryRun: bool | None = None, wait: bool | None = None, f: str | None = None, m: str | None = None, t: int | None = None, lc: bool | None = None, col: str | None = None, na: bool | None = None, va: bool | None = None, w: bool | None = None) -> Any:
+    """Send meshes to Unreal as one static mesh asset per instance source, placed in the open level: an actor per member referencing that asset, or one instanced static mesh component (ISM or HISM) for a large group. Lights among them go as light actors (point, spot, directional, rect; discs as square rect lights, domes skipped). Lighting channels map onto Unreal's three: default is channel 0, the next two channels the sent nodes use (in scene order) 1 and 2; any more are dropped, with a warning naming them, and what is left in none goes on 0. Placements are keyed by each node's linkId, given on the first send and saved with the scene, so sending a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. Validators run first: a blocking issue stops the send, others come back in issues. Returns the plan, with each group's import and placement results when wait=True.
 
     Args:
         objects: objects.
-        folder: Content folder the assets go in; each is SM_<source name>. Short form f. Default '/Game/Lila/Instances'.
+        folder: Content folder the assets go in; each is SM_<source name>, with part of the source's link id appended when another mesh in the scene has the same name. The name is saved on the source, so it never changes. Short form f. Default '/Game/Lila/Instances'.
         mode: How members are placed: actors, ism, hism, or auto (actors up to threshold members, then hism). Short form m. One of 'auto', 'actors', 'ism', 'hism'. Default 'auto'.
         threshold: auto switches to hism above this many members (default the unreal pref /instanceThreshold, 50). Short form t.
         lightingChannels: Set the actors' and lights' Lighting Channels from Lila's channels. The plan's lightingChannels lists the channels, lights and objects, the Unreal slot of each channel and any dropped. Short form lc. Default True.
+        collision: Collision the assets get: auto (ucx for a source with UCX_ children or a Stagehand body's hulls, else complexAsSimple), none (the placed actors and instances don't collide either), box, convex (Unreal's auto convex decomposition), complexAsSimple (the render mesh) or ucx (the hulls only; a source's UCX_ child meshes go with it, and its other children into the asset too). Short form col. One of 'auto', 'none', 'box', 'convex', 'complexAsSimple', 'ucx'. Default 'auto'.
+        nanite: Build Nanite data for the assets. Short form na. Default False.
+        validate: Run the validators first: an issue blocking unrealPlaceInstances, "unreal" or "*" on what is sent stops the send; other issues come back in the result's issues. Short form va. Default True.
         dryRun: Return the plan without exporting or contacting Unreal. Default False.
         wait: Block until Unreal has imported and placed everything. Short form w. Default False.
 
@@ -9448,7 +9603,16 @@ def unrealRemovePlacements(*objects: Any) -> Any:
         objects: objects.
     """
 
-def unrealSendCurve(*objects: Any, mode: str | None = None, mesh: str | None = None, meshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, remove: bool | None = None, wait: bool | None = None, md: str | None = None, m: str | None = None, ma: str | None = None, ls: str | None = None, w: float | None = None, dt: bool | None = None, rm: bool | None = None, wt: bool | None = None) -> Any:
+def unrealSaveAssets(*objects: Any, level: bool | None = None, dirty: bool | None = None, lv: bool | None = None, d: bool | None = None) -> Any:
+    """Save assets in Unreal: the given paths, the open level, or every unsaved package. Returns {ok, saved, errors}, or {ok: False, error} when Unreal can't be reached.
+
+    Args:
+        objects: asset paths.
+        level: Save the open level (where placements live). Short form lv. Default False.
+        dirty: Save every unsaved level and asset. Short form d. Default False.
+    """
+
+def unrealSendCurve(*objects: Any, mode: str | None = None, mesh: str | None = None, meshAxis: str | None = None, landscape: str | None = None, width: float | None = None, deformTerrain: bool | None = None, remove: bool | None = None, validate: bool | None = None, wait: bool | None = None, md: str | None = None, m: str | None = None, ma: str | None = None, ls: str | None = None, w: float | None = None, dt: bool | None = None, rm: bool | None = None, va: bool | None = None, wt: bool | None = None) -> Any:
     """Send curves to the connected Unreal editor as splines: an actor with a spline component per curve (Bezier tangents, closed loops, roll from tilt and scale from radius), or with mode=landscape control points and segments on the landscape's splines, optionally with spline meshes of a sent mesh along them. The curves stay mapped, so every save sends them again and updates the same actor. Returns the setSpline replies with wait=True.
 
     Args:
@@ -9460,6 +9624,7 @@ def unrealSendCurve(*objects: Any, mode: str | None = None, mesh: str | None = N
         width: mode=landscape: half-width of the spline at radius 1, cm (default 200). Short form w.
         deformTerrain: mode=landscape: the splines raise and lower the terrain (default on). Short form dt.
         remove: Unmap the curves and delete what they made in Unreal instead. Short form rm. Default False.
+        validate: Run the validators first: an issue blocking unrealSendCurve, "unreal" or "*" on a curve stops the send; others are logged. Short form va. Default True.
         wait: Block until Unreal answers and return its replies. Short form wt. Default False.
     """
 
@@ -9503,12 +9668,13 @@ def unrealStatus(scan: bool | None = None, *, s: bool | None = None) -> Any:
         scan: Also list running editors (port files and default ports). Short form s. Default False.
     """
 
-def unrealSync(*objects: Any, unrealCheck: bool | None = None, uc: bool | None = None) -> Any:
+def unrealSync(*objects: Any, unrealCheck: bool | None = None, validate: bool | None = None, uc: bool | None = None, va: bool | None = None) -> Any:
     """Export and reimport every mapped node now, as saving does, or only the given nodes. Skeletal and animation mappings whose skeleton fails unrealCheck are refused (logged) unless unrealCheck=False. Returns how many were queued.
 
     Args:
         objects: nodes (default every mapping).
         unrealCheck: Refuse skeletons that fail unrealCheck (sampled over the range). False sends anyway. Short form uc. Default True.
+        validate: Run the validators first: an issue blocking unrealSync, "unreal" or "*" on a mapped node stops the sync; others are logged. Short form va. Default True.
     """
 
 def unrealUnmap(*objects: Any) -> Any:
@@ -9620,7 +9786,7 @@ def uvDelete(uvSet: str | None = None) -> Any:
     """
 
 def uvLayout(uvSet: str | None = None, resolution: int | None = None) -> Any:
-    """UV report for the selection: islands, overlapping and folded faces, distortion and texel density.
+    """UV report for the selection: islands, overlapping and folded faces, distortion and texel density. Faces mapped onto a trim sheet share texels on purpose: their overlaps count in trimOverlapFaces, not overlappingFaces (trimCheck checks them against their sheet).
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
@@ -9834,14 +10000,15 @@ def uvStraightenEdges(uvSet: str | None = None, iterations: int | None = None) -
         iterations: SLIM iterations for the re-solve. Default 12.
     """
 
-def uvTexelDensity(uvSet: str | None = None, resolution: int | None = None, density: float | None = None, worldSpace: bool | None = None) -> Any:
-    """Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space).
+def uvTexelDensity(uvSet: str | None = None, resolution: int | None = None, density: float | None = None, worldSpace: bool | None = None, trims: str | None = None) -> Any:
+    """Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space). Faces mapped onto a trim sheet take their density from the sheet: trims='skip' (the default) leaves their islands on their trims and reports how many were skipped, 'rescale' scales them too and clears their trim mapping.
 
     Args:
         uvSet: UV set; the current one (uvSetCurrent) when not given.
         resolution: Texture size, px. Default 1024.
         density: Set to this many px/cm.
         worldSpace: Measure world size, with the mesh's scale. Default True.
+        trims: Trim-mapped faces: skip keeps them on their trims, rescale scales them off. One of 'skip', 'rescale'. Default 'skip'.
     """
 
 def uvTransform(uvSet: str | None = None, translate: Sequence[Any] | None = None, rotate: float | None = None, scale: Sequence[Any] | None = None, pivot: Sequence[Any] | None = None, perIsland: bool | None = None) -> Any:
