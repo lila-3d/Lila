@@ -671,5 +671,20 @@ void registerPipeToolCommands()
     ch.ranges["width"] = {0.0, 1e7, 10.0, " cm"};
     ch.ranges["depth"] = {0.0, 1e7, 5.0, " cm"};
     opt::setOverride("carveChannel", std::move(ch));
+
+    opt::Override rt;
+    rt.order = {"clearance", "cellSize", "bendCost", "axisCost", "pipe"};
+    rt.hidden = {"start", "end", "startDir", "endDir", "obstacles", "pipeOptions", "name"};
+    rt.ranges["clearance"] = {0.0, 1e5, 1.0, " cm"};
+    rt.ranges["cellSize"] = {0.0, 1e5, 1.0, " cm"};
+    rt.ranges["margin"] = {0.0, 1e7, 10.0, " cm"};
+    opt::setOverride("pipeRoute", std::move(rt));
+
+    opt::Override sp;
+    sp.order = {"style", "target", "spacing", "maxReach"};
+    sp.hidden = {"surfaces", "supportMeshNode", "name", "pipeRadius", "bendRadius"};
+    sp.ranges["spacing"] = {1.0, 1e6, 10.0, " cm"};
+    sp.ranges["maxReach"] = {0.0, 1e6, 10.0, " cm"};
+    opt::setOverride("pipeSupports", std::move(sp));
 }
 } // namespace lila::curve

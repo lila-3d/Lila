@@ -111,6 +111,8 @@ const std::vector<std::pair<const char*, std::vector<Item>>>& curveSections()
           {"curve.patchFill", "square-plus", "Patch"}, {"curve.network", "grid-pattern", "Network"}, {"curve.borderBlend", "border-outer", "Border"}}},
         {"Pipes, Cables and Straps",
          {{"curve.pipeTool", "route-2", "Pipe Tool"}, {"curve.pipe", "route-2", "Pipe"}, {"curve.cableTool", "plug", "Cable Tool"}, {"curve.cable", "plug-connected", "Cable"},
+          {"curve.pipeRouteTool", "route-alt-left", "Route Tool"}, {"curve.pipeSupports", "building-bridge", "Supports"},
+          {"curve.carveChannel", "shovel", "Channel"},
           {"curve.pipePresetPipe", "cylinder", "Pipe Preset"}, {"curve.pipePresetHose", "wave-saw-tool", "Hose Preset"},
           {"curve.pipePresetCable", "bolt", "Cable Preset"}, {"curve.pipePresetConduit", "line-dashed", "Conduit Preset"}, kRow,
           {"curve.strapTool", "gift", "Strap Tool"}, {"curve.strapPresetStrap", "gift", "Strap Preset"}, {"curve.strapPresetRope", "lasso", "Rope Preset"},

@@ -169,7 +169,8 @@ void MainWindow::buildMenus()
     menus::addActions("Curves", {"window.curveToolkit", "#Create", "curve.ezCurve", "curve.bezierPen", "curve.cvTool", "curve.epTool", "curve.pencil", "curve.catmullRom", "curve.kappa",
                                  "curve.circle", "curve.fromEdges", "curve.sketchTool", "#Surfaces", "curve.extrude", "curve.revolve", "curve.loft",
                                  "curve.patchFill", "curve.network", "curve.borderBlend", "#Pipes, Cables and Straps", "curve.pipeTool", "curve.pipe",
-                                 "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable", "curve.pipePresetConduit", "curve.cableTool",
+                                 "curve.pipePresetPipe", "curve.pipePresetHose", "curve.pipePresetCable", "curve.pipePresetConduit", "curve.pipeRouteTool",
+                                 "curve.pipeSupports", "curve.carveChannel", "curve.cableTool",
                                  "curve.cable", "curve.strapTool", "curve.strapPresetStrap", "curve.strapPresetRope", "curve.strapPresetTape",
                                  "curve.strapPresetMetalBand", "curve.strapPresetZipTie", "#Edit", "curve.fillet", "curve.offset", "curve.rebuild", "curve.evenSpacing", "curve.fit", "curve.project",
                                  "curve.attach", "curve.detach", "curve.reverse", "curve.close", "curve.open", "curve.deletePoints", "#Blend and Trim",
@@ -280,6 +281,8 @@ void MainWindow::buildMenus()
     menu(levelToolkit::kMenu, "Level", Area::MenuBar, {}, "", {"Level"});
     menus::addActions(levelToolkit::kMenu, {"window.levelToolkit"});
     addItem({.id = levelToolkit::kBuildSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Build"});
+    addItem({.id = "curves.pipesMenu", .menu = levelToolkit::kMenu, .kind = Kind::Submenu, .label = "Pipes and Channels"});
+    menus::addActions("Level/Pipes and Channels", {"curve.pipeTool", "curve.pipeRouteTool", "curve.pipeSupports", "curve.cableTool", "", "curve.carveChannel"});
     addItem({.id = levelToolkit::kDressSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Dress"});
     addItem({.id = levelToolkit::kAssetsSection, .menu = levelToolkit::kMenu, .kind = Kind::Section, .label = "Assets"});
 

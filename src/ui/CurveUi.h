@@ -20,6 +20,8 @@ void registerEzCurveTool();
 void registerPipeTool();
 /** The cable tool and cable action (CableTool.cpp); called by registerCurveUi. */
 void registerCableTool();
+/** Pipe Route tool, Pipe Supports and Carve Channel actions, and their Level Toolkit section. */
+void registerPipeLevelTools();
 /** The section tool and contour action (SectionTool.cpp); called by registerCurveUi. */
 void registerSectionTool();
 /** The strap tool and strap preset actions (StrapTool.cpp); called by registerCurveUi. */
