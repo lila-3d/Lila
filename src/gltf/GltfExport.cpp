@@ -1136,6 +1136,8 @@ bool writeGltf(const ExportSnapshot& snap, const fs::path& path, const ExportOpt
     {
         const ExportNode& n = scene.nodes[i];
         json node = {{"name", n.name}};
+        for (const auto& [prop, value] : n.properties)
+            node["extras"][prop] = value;
         const glm::dmat4 local = w.fileLocal(i, n.local);
         const FileTrs trs = fileTrs(local);
         if (trs.sheared)

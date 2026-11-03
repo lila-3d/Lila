@@ -250,6 +250,8 @@ struct ExportNode
     std::vector<double> lodScreenSizes;
     /** A pinned prop's joint to attach to (scene/Pin.h), written as the string user property UnrealSocket. */
     std::string unrealSocket;
+    /** The node's added attrs (attrComponents::exportProperties): FBX user properties, glTF node extras. */
+    std::vector<std::pair<std::string, nlohmann::json>> properties;
 };
 
 /** Sampled (or keyed) animation of the exported nodes over one range. */

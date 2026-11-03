@@ -424,6 +424,34 @@ json unrealPayload(Graph& g, NodeId node)
     return out;
 }
 
+std::vector<std::pair<std::string, json>> exportProperties(Graph& g, NodeId node)
+{
+    std::vector<std::pair<std::string, json>> out;
+    const Node* n = g.node(node);
+    if (!n)
+        return out;
+    const std::vector<AttrDef>& defs = n->type().attrs;
+    for (size_t i = 0; i < defs.size(); ++i)
+    {
+        const AttrDef& d = defs[i];
+        if (!(d.flags & AttrUser) || (d.flags & AttrHidden) || d.name == kSchemasAttr || d.name == kExportAttr)
+            continue;
+        json value;
+        if (d.flags & AttrArray)
+        {
+            value = json::array();
+            for (const auto& [index, v] : n->elements(int(i)))
+                if (json e = payloadValue(d, v); !e.is_null())
+                    value.push_back(std::move(e));
+        }
+        else
+            value = payloadValue(d, g.value({node, int(i), -1}));
+        if (!value.is_null())
+            out.emplace_back(d.category.empty() ? d.name : d.category + "." + d.name, std::move(value));
+    }
+    return out;
+}
+
 Registry<std::string>& unrealExporters()
 {
     static Registry<std::string> r;

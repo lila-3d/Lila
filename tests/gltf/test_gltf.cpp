@@ -614,3 +614,25 @@ TEST_CASE("lights round-trip through KHR_lights_punctual in Y-up and Z-up scenes
     }
     math::setUpAxis(math::UpAxis::Y);
 }
+
+TEST_CASE("added attributes export as glTF node extras named Component.attr")
+{
+    run("newScene");
+    run("polyCube", {{"name", "Crate"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "style"}, {"dataType", "string"}, {"category", "Prop"}});
+    run("setAttr", {{"args", {"Crate.style", "whale-architecture"}}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "hp"}, {"defaultValue", 150.5}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "tint"}, {"attributeType", "double3"}, {"category", "Look"}});
+    run("setAttr", {{"args", {"Crate.tint", 0.25, 0.5, 1.0}}});
+    const fs::path file = tempDir("extras") / "extras.gltf";
+    run("exportGltf", {{"args", {file.string(), "Crate"}}});
+    const json doc = json::parse(readAll(file));
+    const json* crate = nullptr;
+    for (const json& n : doc["nodes"])
+        if (n.value("name", "") == "Crate")
+            crate = &n;
+    REQUIRE(crate);
+    CHECK((*crate)["extras"]["Prop.style"] == "whale-architecture");
+    CHECK((*crate)["extras"]["hp"] == 150.5);
+    CHECK((*crate)["extras"]["Look.tint"] == json::array({0.25, 0.5, 1.0}));
+}

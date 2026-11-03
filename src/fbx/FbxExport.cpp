@@ -10,6 +10,7 @@
 #include "geo/Normals.h"
 #include "geo/Triangulate.h"
 #include "scene/Anim.h"
+#include "scene/AttrComponents.h"
 #include "scene/ArrayGroup.h"
 #include "scene/Camera.h"
 #include "scene/Deformers.h"
@@ -584,8 +585,34 @@ struct ModelInfo
     scene::RotateOrder order = scene::RotateOrder::XYZ;
 };
 
+/**
+ * An added attr as an FBX user property: numbers, bools and strings as themselves, a 3-number list as a vector, any
+ * other list as comma-separated text.
+ */
+void writeAttrProperty(Record& props, const std::string& name, const nlohmann::json& v)
+{
+    if (v.is_boolean())
+        props.addP(name, "bool", "", "A+U").i32(v.get<bool>() ? 1 : 0);
+    else if (v.is_number_integer())
+        props.addP(name, "int", "Integer", "A+U").i32(int32_t(std::clamp<int64_t>(v.get<int64_t>(), std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max())));
+    else if (v.is_number())
+        props.addP(name, "double", "Number", "A+U").f64(v.get<double>());
+    else if (v.is_string())
+        props.addP(name, "KString", "", "U").str(v.get<std::string>());
+    else if (v.is_array() && v.size() == 3 && std::ranges::all_of(v, [](const nlohmann::json& x) { return x.is_number(); }))
+        p3(props, name, "Vector3D", "Vector", "A+U", {v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
+    else if (v.is_array())
+    {
+        std::string text;
+        for (const nlohmann::json& x : v)
+            text += (text.empty() ? "" : ",") + (x.is_string() ? x.get<std::string>() : x.dump());
+        props.addP(name, "KString", "", "U").str(text);
+    }
+}
+
 void writeModel(Record& objects, int64_t id, const std::string& name, const ModelInfo& info,
-                const std::vector<std::pair<std::string, double>>& userProps = {}, const std::string& socket = {})
+                const std::vector<std::pair<std::string, double>>& userProps = {}, const std::string& socket = {},
+                const std::vector<std::pair<std::string, nlohmann::json>>& attrProps = {})
 {
     Record& model = objects.add("Model");
     model.i64(id).str(bin::objectName(name, "Model")).str(info.type);
@@ -607,6 +634,8 @@ void writeModel(Record& objects, int64_t id, const std::string& name, const Mode
         props.addP(prop, "double", "Number", "A+U").f64(value);
     if (!socket.empty())
         props.addP("UnrealSocket", "KString", "", "U").str(socket);
+    for (const auto& [prop, value] : attrProps)
+        writeAttrProperty(props, prop, value);
     model.add("Shading").boolean(true);
     model.add("Culling").str("CullingOff");
 }
@@ -1230,6 +1259,7 @@ struct Gather
         e.name = n->name();
         e.source = id;
         e.unrealSocket = scene::pins::socketOf(*n);
+        e.properties = scene::attrComponents::exportProperties(graph, id);
         if (n->type().isA("mesh") && !n->type().isA("lattice") && opts.kind != ExportKind::Sequence)
             e.mesh = exportMeshOf(id);
         e.camera = cameraOf(*n);
@@ -1310,6 +1340,7 @@ struct Gather
         e.name = n->name() + suffix;
         e.source = id;
         e.unrealSocket = scene::pins::socketOf(*n);
+        e.properties = scene::attrComponents::exportProperties(graph, id);
         if (n->type().isA("mesh") && !n->type().isA("lattice"))
             e.mesh = exportMeshOf(id);
         const glm::dmat4 w = xf * world(id);
@@ -2287,7 +2318,7 @@ std::string encodeFbx(const ExportScene& sceneIn, const ExportOptions& opts)
                 userProps.push_back({scene.curveNames[c], take && c < take->namedCurves.size() && !take->namedCurves[c].empty()
                                                               ? take->namedCurves[c].front()
                                                               : 0.0});
-        writeModel(objects, modelIds[i], n.name, mi, userProps, n.unrealSocket);
+        writeModel(objects, modelIds[i], n.name, mi, userProps, n.unrealSocket, n.properties);
         connect(modelIds[i], n.parent >= 0 ? modelIds[size_t(n.parent)] : 0);
         if (!isMesh)
         {

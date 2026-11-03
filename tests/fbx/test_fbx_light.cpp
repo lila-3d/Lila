@@ -189,3 +189,40 @@ TEST_CASE("lights round trip through FBX with their settings, placement and chil
         CHECK(maxDiff(worldOf("kid"), kidWorld) < 1e-6);
     }
 }
+
+TEST_CASE("added attributes export as FBX user properties named Component.attr")
+{
+    run("newScene");
+    run("polyCube", {{"name", "Crate"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "style"}, {"dataType", "string"}, {"category", "Prop"}});
+    run("setAttr", {{"args", {"Crate.style", "whale-architecture"}}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "hp"}, {"defaultValue", 150.5}, {"category", "Health"}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "lives"}, {"attributeType", "long"}, {"defaultValue", 3}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "breakable"}, {"attributeType", "bool"}, {"defaultValue", true}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "tint"}, {"attributeType", "double3"}, {"category", "Look"}});
+    run("setAttr", {{"args", {"Crate.tint", 0.25, 0.5, 1.0}}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "tags"}, {"dataType", "stringArray"}, {"category", "Look"}});
+    run("setAttr", {{"args", {"Crate.tags", json::array({"metal", "heavy"})}}});
+    run("addAttr", {{"args", {"Crate"}}, {"longName", "secret"}, {"hidden", true}});
+    const fs::path file = tempFile("props.fbx");
+    run("exportFbx", {{"args", {file.generic_string(), "Crate"}}, {"kind", "static"}});
+
+    UfbxScene s(file);
+    REQUIRE(s.scene);
+    const ufbx_node* n = nodeNamed(*s.scene, "Crate");
+    REQUIRE(n);
+    auto prop = [&](const char* name) { return ufbx_find_prop(&n->props, name); };
+    REQUIRE(prop("Prop.style"));
+    CHECK(std::string(prop("Prop.style")->value_str.data) == "whale-architecture");
+    REQUIRE(prop("Health.hp"));
+    CHECK(prop("Health.hp")->value_real == doctest::Approx(150.5));
+    REQUIRE(prop("lives"));
+    CHECK(prop("lives")->value_int == 3);
+    REQUIRE(prop("breakable"));
+    CHECK(prop("breakable")->value_int == 1);
+    REQUIRE(prop("Look.tint"));
+    CHECK(near(vec(prop("Look.tint")->value_vec3), {0.25, 0.5, 1.0}));
+    REQUIRE(prop("Look.tags"));
+    CHECK(std::string(prop("Look.tags")->value_str.data) == "metal,heavy");
+    CHECK_FALSE(prop("secret"));
+}

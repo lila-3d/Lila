@@ -107,6 +107,13 @@ LILA_SCENE_API void setExportSettings(Graph& g, NodeId node, const std::string& 
 LILA_SCENE_API json unrealPayload(Graph& g, NodeId node);
 
 /**
+ * The object's added attrs as file formats carry them (FBX user properties, glTF extras): ("Component.attr" or the attr's
+ * name when it has no component, value as in unrealPayload), in attr order. Hidden attrs and usdApiSchemas are left
+ * out; every component counts, whatever its Unreal export.
+ */
+LILA_SCENE_API std::vector<std::pair<std::string, json>> exportProperties(Graph& g, NodeId node);
+
+/**
  * The component exporters Custom can name, by name, each holding its description: the ones the connected Unreal
  * editor lists (owner "lila.unreal") and those extensions register.
  */
