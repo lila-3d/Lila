@@ -84,6 +84,10 @@ public:
         case QEvent::TabletMove:
             mControls->tablet(static_cast<QTabletEvent*>(e)->pressure());
             return false;
+        case QEvent::ApplicationDeactivate:
+            mControls->mArmed = Adjust::None;
+            mControls->mArmedKey = 0;
+            return false;
         case QEvent::KeyPress:
         case QEvent::KeyRelease:
         case QEvent::ShortcutOverride: break;
@@ -95,12 +99,12 @@ public:
             lila::ui::viewportTools::requestRedraw();
         QWidget* focus = QApplication::focusWidget();
         if (obj != focus || !isViewport(focus))
-            return false;
+            return disarmOnRelease(e, k);
         const int key = k->key();
         const bool ours = key == Qt::Key_F || key == Qt::Key_B || key == Qt::Key_M ||
                           std::find(mControls->mExtraKeys.begin(), mControls->mExtraKeys.end(), key) != mControls->mExtraKeys.end();
         if (!ours || (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier)))
-            return false;
+            return disarmOnRelease(e, k);
         if (e->type() == QEvent::ShortcutOverride)
         {
             e->accept();
@@ -112,6 +116,17 @@ public:
     }
 
 private:
+    /** The held key's release still disarms when focus left the viewport or Ctrl/Alt went down, or the adjust sticks. */
+    bool disarmOnRelease(const QEvent* e, const QKeyEvent* k)
+    {
+        if (e->type() == QEvent::KeyRelease && !k->isAutoRepeat() && k->key() == mControls->mArmedKey)
+        {
+            mControls->mArmed = Adjust::None;
+            mControls->mArmedKey = 0;
+        }
+        return false;
+    }
+
     BrushControls* mControls;
 };
 
@@ -211,6 +226,14 @@ bool BrushControls::mouseMove(const QMouseEvent* e)
 {
     if (mAdjusting == Adjust::None)
         return false;
+    // The button came up outside the viewport, so its release never reached the tool.
+    if (e->buttons() == Qt::NoButton)
+    {
+        mAdjusting = Adjust::None;
+        if (mFinished)
+            mFinished();
+        return false;
+    }
     BrushSettings& s = mSettings();
     const double dx = e->position().x() - mStart.x();
     // Strength follows both axes: right or up raises it, left or down lowers it.
