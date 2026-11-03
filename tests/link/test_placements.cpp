@@ -5,6 +5,7 @@
 #include "ops/Command.h"
 #include "core/MainQueue.h"
 #include "core/PrefStore.h"
+#include "io/SceneFile.h"
 #include "link/Exporters.h"
 #include "link/UnrealLink.h"
 #include "math/Unreal.h"
@@ -29,17 +30,20 @@ json run(const char* name, json call = json::object()) { return ops::execute(nam
 /** The same registries test_link.cpp sets up; whichever file runs first does it. */
 void setup()
 {
-    if (ops::find("unrealPlaceInstances"))
-        return;
-    static bool done = [] {
-        mainq::init();
-        ops::registerBuiltins();
-        scene::types::registerBuiltins();
-        scene::registerCommands();
-        link::registerCommands();
-        return true;
-    }();
-    (void)done;
+    if (!ops::find("unrealPlaceInstances"))
+    {
+        static bool done = [] {
+            mainq::init();
+            ops::registerBuiltins();
+            scene::types::registerBuiltins();
+            scene::registerCommands();
+            link::registerCommands();
+            return true;
+        }();
+        (void)done;
+    }
+    if (!ops::find("saveScene"))
+        io::registerCommands();
 }
 
 /** A bolt and two instances, one moved and one turned, plus a plain cube with no instances. */
@@ -295,4 +299,46 @@ TEST_CASE("placement keys: link ids survive renames, and copies get their own")
     const std::string boltC = std::get<std::string>(g.find("BoltC")->value(scene::Transform::kLinkId));
     CHECK(boltC.size() == 16);
     CHECK(boltC != boltA);
+}
+
+TEST_CASE("placement assets: names unique across same-named sources, saved and kept after reopening")
+{
+    setup();
+    run("newScene");
+    run("group", {{"empty", true}, {"name", "North"}});
+    run("group", {{"empty", true}, {"name", "South"}});
+    run("polyCube", {{"name", "Wall"}});
+    run("parent", {{"args", {"Wall", "North"}}});
+    run("polyCube", {{"name", "Gate"}});
+    scene::Graph& g = scene::Graph::current();
+    PlacementOptions o;
+    o.assignIds = true;
+    json first = placementPlan(g, {g.find("Wall")->id(), g.find("Gate")->id()}, o);
+    REQUIRE(first["groups"].size() == 2);
+    CHECK(first["groups"][0]["contentPath"] == "/Game/Lila/Instances/SM_Wall");
+    CHECK(first["groups"][1]["contentPath"] == "/Game/Lila/Instances/SM_Gate");
+
+    // A second Wall elsewhere gets its own asset; the first keeps its name.
+    run("polyCube", {{"name", "Wall"}});
+    run("parent", {{"args", {"|Wall", "South"}}});
+    const scene::NodeId south = g.find("|South|Wall")->id();
+    json both = placementPlan(g, {g.find("|North|Wall")->id(), south}, o);
+    REQUIRE(both["groups"].size() == 2);
+    CHECK(both["groups"][0]["contentPath"] == "/Game/Lila/Instances/SM_Wall");
+    const std::string key = both["groups"][1]["key"];
+    const std::string second = both["groups"][1]["contentPath"];
+    CHECK(second == "/Game/Lila/Instances/SM_Wall_" + key.substr(0, 8));
+    CHECK(both["groups"][1]["objectPath"] == second + "." + second.substr(second.rfind('/') + 1));
+
+    const fs::path path = fs::temp_directory_path() / "lila_link_asset_names.lila";
+    run("saveScene", {{"args", {path.generic_string()}}});
+    run("newScene");
+    run("openScene", {{"args", {path.generic_string()}}});
+    json again = placementPlan(g, {g.find("|North|Wall")->id(), g.find("|South|Wall")->id()}, o);
+    CHECK(again["groups"][0]["contentPath"] == "/Game/Lila/Instances/SM_Wall");
+    CHECK(again["groups"][1]["contentPath"] == second);
+    // Renaming the source keeps the asset it was sent as.
+    run("rename", {{"args", {"|South|Wall", "Rampart"}}});
+    CHECK(placementPlan(g, {g.find("Rampart")->id()}, o)["groups"][0]["contentPath"] == second);
+    fs::remove(path);
 }

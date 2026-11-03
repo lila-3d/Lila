@@ -98,6 +98,71 @@ private:
     std::unordered_map<std::string, scene::NodeId> mOwner;
 };
 
+constexpr const char* kAssetAttr = "unrealAsset";
+
+/**
+ * Asset names by instance source: the one a previous send saved on it, else SM_<name>, with the first eight characters of
+ * its key appended when another source in the scene has the same name. A name a source saved stays its own (an older
+ * node wins a copied one), so adding a second "Wall" later never renames the first one's asset.
+ */
+class AssetNames
+{
+public:
+    AssetNames(scene::Graph& g, bool assign) : mGraph(g), mAssign(assign)
+    {
+        for (scene::NodeId id : g.nodes())
+        {
+            const scene::Node* n = g.node(id);
+            if (!placeable(n) || scene::instancing::root(g, id) != id)
+                continue;
+            ++mBaseCount[base(*n)];
+            if (std::string s = stored(*n); !s.empty())
+                if (auto [it, fresh] = mOwner.try_emplace(s, id); !fresh && id < it->second)
+                    it->second = id;
+        }
+    }
+
+    std::string operator()(scene::NodeId src, const std::string& key)
+    {
+        const scene::Node& n = *mGraph.node(src);
+        if (std::string s = stored(n); !s.empty() && mOwner.at(s) == src)
+            return s;
+        const std::string b = base(n);
+        std::string name = b;
+        if (mBaseCount[b] > 1 || mOwner.contains(b))
+            name = b + "_" + assetSafe(key.substr(0, 8));
+        while (mOwner.contains(name) && mOwner[name] != src)
+            name += "_";
+        mOwner[name] = src;
+        if (mAssign)
+        {
+            int i = n.type().attrIndex(kAssetAttr);
+            if (i < 0)
+                i = mGraph.addAttr(src, scene::AttrDef{.name = kAssetAttr, .type = scene::PlugType::String, .defaultValue = std::string(),
+                                                       .flags = scene::AttrHidden, .doc = "The Unreal asset unrealPlaceInstances sends this mesh as."});
+            mGraph.setValue({src, i, -1}, name);
+        }
+        return name;
+    }
+
+private:
+    static std::string base(const scene::Node& n) { return "SM_" + assetSafe(n.name()); }
+
+    static std::string stored(const scene::Node& n)
+    {
+        const int i = n.type().attrIndex(kAssetAttr);
+        if (i < 0)
+            return {};
+        const std::string* s = std::get_if<std::string>(&n.value(i));
+        return s ? *s : std::string();
+    }
+
+    scene::Graph& mGraph;
+    bool mAssign;
+    std::map<std::string, int> mBaseCount;
+    std::map<std::string, scene::NodeId> mOwner;
+};
+
 /** 0 to 1, the same for a key every send: per-instance variation (colour, wear) a material reads as custom primitive data 0. */
 double stableRandom(const std::string& key)
 {
@@ -241,6 +306,7 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
     while (folder.size() > 1 && folder.back() == '/')
         folder.pop_back();
     LinkKeys keys(g, o.assignIds);
+    AssetNames assetNames(g, o.assignIds);
     std::vector<std::vector<scene::NodeId>> placedOf;
     std::vector<scene::NodeId> carried = lightNodes;
     for (scene::NodeId src : sources)
@@ -267,7 +333,8 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
         const scene::NodeId src = sources[k];
         const std::vector<scene::NodeId>& placed = placedOf[k];
         const scene::Node* n = g.node(src);
-        const std::string asset = "SM_" + assetSafe(n->name());
+        const std::string groupKey = keys(src);
+        const std::string asset = assetNames(src, groupKey);
         json list = json::array();
         for (scene::NodeId id : placed)
         {
@@ -293,7 +360,7 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
             }
         }
         const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold && !simulates(list) ? "hism" : "actors";
-        groups.push_back({{"key", keys(src)},
+        groups.push_back({{"key", groupKey},
                           {"source", n->fullPath()},
                           {"sourceId", src},
                           {"contentPath", folder + "/" + asset},
@@ -336,7 +403,7 @@ void registerPlacementCommands()
                "a group again moves, adds and removes its actors to match, also after a rename or reopening the scene. "
                "Returns the plan, with each group's import and placement results when wait=True.",
         .positionalDoc = "objects",
-        .flags = {{"folder", "f", T::String, "/Game/Lila/Instances", "Content folder the assets go in; each is SM_<source name>."},
+        .flags = {{"folder", "f", T::String, "/Game/Lila/Instances", "Content folder the assets go in; each is SM_<source name>, with part of the source's link id appended when another mesh in the scene has the same name. The name is saved on the source, so it never changes."},
                   {"mode", "m", T::String, "auto",
                    "How members are placed: actors, ism, hism, or auto (actors up to threshold members, then hism).",
                    {"auto", "actors", "ism", "hism"}},
