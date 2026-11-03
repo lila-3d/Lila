@@ -949,7 +949,7 @@ def batchRename(*objects: Any, name: str | None = None, find: str | None = None,
         stripStart: Characters to drop from the front. Default 0.
         stripEnd: Characters to drop from the back. Default 0.
         stripDigits: Drop the trailing number and the separator before it. Default False.
-        case: PascalCase, camelCase, snake_case, UPPER_SNAKE, lower or UPPER; empty keeps it.
+        case: PascalCase, camelCase, snake_case, UPPER_SNAKE, asciiLower or UPPER; empty keeps it.
         prefix: Added in front.
         suffix: Added at the end.
         start: The number '#' gives the first object. Default 1.
