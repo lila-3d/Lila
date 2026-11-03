@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace lila::render
@@ -372,5 +373,59 @@ struct MeshDraw
     uint64_t node = 0;
     /** Lighting channel bits: lights whose bits share none with these leave it unlit. */
     uint32_t lightingChannels = 1;
+};
+
+/**
+ * The frame's mesh draws, shared copy-on-write: a frame that draws what the last one did hands the same list over
+ * without copying it, and the renderer tells it is the same list without comparing it. Reading never copies; edit()
+ * and the appending calls copy first while another frame still holds the list.
+ */
+class DrawList
+{
+public:
+    using value_type = MeshDraw;
+    using const_iterator = std::vector<MeshDraw>::const_iterator;
+
+    DrawList() = default;
+    DrawList(std::vector<MeshDraw> v) : mList(v.empty() ? nullptr : std::make_shared<std::vector<MeshDraw>>(std::move(v))) {}
+    DrawList(std::initializer_list<MeshDraw> l) : DrawList(std::vector<MeshDraw>(l)) {}
+
+    size_t size() const { return mList ? mList->size() : 0; }
+    bool empty() const { return size() == 0; }
+    const MeshDraw& operator[](size_t i) const { return (*mList)[i]; }
+    const MeshDraw& front() const { return mList->front(); }
+    const MeshDraw& back() const { return mList->back(); }
+    const_iterator begin() const { return list().begin(); }
+    const_iterator end() const { return list().end(); }
+    const std::vector<MeshDraw>& list() const { return mList ? *mList : empty_(); }
+    const MeshDraw* data() const { return list().data(); }
+    /** Both hold the same shared list (or both none), so they are equal without comparing a draw. */
+    bool sameList(const DrawList& o) const { return mList == o.mList; }
+
+    /** The list to change, copied first when shared. */
+    std::vector<MeshDraw>& edit()
+    {
+        if (!mList)
+            mList = std::make_shared<std::vector<MeshDraw>>();
+        else if (mList.use_count() > 1)
+            mList = std::make_shared<std::vector<MeshDraw>>(*mList);
+        return *mList;
+    }
+    MeshDraw& push_back(MeshDraw d) { return edit().emplace_back(std::move(d)); }
+    template <typename... Args>
+    MeshDraw& emplace_back(Args&&... args)
+    {
+        return edit().emplace_back(std::forward<Args>(args)...);
+    }
+    void reserve(size_t n) { edit().reserve(n); }
+    void clear() { mList.reset(); }
+
+private:
+    static const std::vector<MeshDraw>& empty_()
+    {
+        static const std::vector<MeshDraw> e;
+        return e;
+    }
+    std::shared_ptr<std::vector<MeshDraw>> mList;
 };
 } // namespace lila::render

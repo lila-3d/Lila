@@ -200,7 +200,7 @@ struct FrameState
     glm::vec4 wirePreselect{0.75f, 0.75f, 0.75f, 1.0f};
     glm::vec4 wireUnderSelected{0.55f, 0.55f, 0.55f, 1.0f};
     glm::vec4 wireDefault{0.02f, 0.02f, 0.02f, 1.0f};
-    std::vector<MeshDraw> meshes;
+    DrawList meshes;
     float exposure = 1.0f; // linear multiplier
     float gamma = 1.0f;    // display gamma on top of the tonemap, like Maya's viewport gamma
     /** Requested MSAA count (1, 2, 4, 8); the renderer clamps it to the device and rebuilds its targets on change. */

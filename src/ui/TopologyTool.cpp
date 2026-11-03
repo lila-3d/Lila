@@ -1076,7 +1076,7 @@ void TopologyTool::removeOwnDraw(render::FrameState& s) const
     geo::Bounds b = out->bounds();
     glm::mat4 world(mRetopoWorld);
     float tol = float(std::max(1e-4, glm::length(b.max - b.min) * 1e-4));
-    std::erase_if(s.meshes, [&](const render::MeshDraw& d) {
+    std::erase_if(s.meshes.edit(), [&](const render::MeshDraw& d) {
         if (!d.mesh || d.world != world)
             return false;
         return glm::length(d.mesh->boundsMin - glm::vec3(b.min)) < tol && glm::length(d.mesh->boundsMax - glm::vec3(b.max)) < tol;

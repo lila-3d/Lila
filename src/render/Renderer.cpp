@@ -535,7 +535,7 @@ struct Viewport
     int msaaGeneration = -1; // Impl::msaaGeneration the targets were made for
     FrameState state;
     /** The last frame's mesh draws and their batches, reused while a new frame draws the same list. Render thread only. */
-    std::vector<MeshDraw> keptMeshes;
+    DrawList keptMeshes;
     DrawBatches keptBatches;
     bool keptShaderWire = false;
     std::vector<uint32_t> keptDynamic; // indices of the kept draws whose meshes deform
@@ -2287,7 +2287,7 @@ struct Renderer::Impl
 
         if (kept && reuse)
         {
-            rebind(*kept, s.meshes);
+            rebind(*kept, s.meshes.list());
             frameBatches = *kept;
         }
         else
@@ -4188,7 +4188,7 @@ struct Renderer::Impl
         LILA_GPU_SECTION(gpuPass, "Uploads");
         ++frameCounter;
         const bool shaderWire = meshWirePipeline != VK_NULL_HANDLE;
-        const bool sameMeshes = !v.offscreen && v.keptShaderWire == shaderWire && sameDraws(s.meshes, v.keptMeshes);
+        const bool sameMeshes = !v.offscreen && v.keptShaderWire == shaderWire && (s.meshes.sameList(v.keptMeshes) || sameDraws(s.meshes.list(), v.keptMeshes.list()));
         if (!sameMeshes && !v.offscreen)
         {
             LILA_ZONE_N("Keep mesh draws");
@@ -5084,13 +5084,14 @@ struct Renderer::Impl
      */
     static void handOverScene(FrameState& s)
     {
-        for (MeshDraw& d : s.meshes)
+        std::vector<MeshDraw>& meshes = s.meshes.edit();
+        for (MeshDraw& d : meshes)
         {
             d.flags &= ~uint32_t(DrawShaded);
             if (drawsWire(d))
                 d.flags |= DrawWireDepth;
         }
-        std::erase_if(s.meshes, [](const MeshDraw& d) { return !drawsWire(d); });
+        std::erase_if(meshes, [](const MeshDraw& d) { return !drawsWire(d); });
         s.envBackground = false;
         s.ambientOcclusion = false;
         s.kuwahara = s.outline = false;

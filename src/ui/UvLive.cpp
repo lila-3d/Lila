@@ -248,7 +248,7 @@ void draw3d(render::FrameState& s, OverlayPainter&, const ViewInfo& view)
         {
             int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
             auto rm = renderMeshFor(smoothedFor(out, smooth), false);
-            for (render::MeshDraw& d : s.meshes)
+            for (render::MeshDraw& d : s.meshes.edit())
                 if (d.mesh && (d.mesh == rm || d.mesh->shareVertices == rm))
                 {
                     uint32_t slotCount = 1;

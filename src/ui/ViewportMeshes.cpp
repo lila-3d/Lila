@@ -119,7 +119,7 @@ void buildEntry(MeshEntry& e, scene::Graph& g, const MeshSettings& set, const sc
     {
         render::FrameState parts;
         pushInstanceDraws(parts, d, *instanced, textured);
-        e.draws = std::move(parts.meshes);
+        e.draws = parts.meshes.list();
     }
     else
         e.draws.push_back(std::move(d));
@@ -148,6 +148,18 @@ MeshSettings meshSettings(scene::Graph& g, const ViewportWidget::RenderView* rv,
 }
 } // namespace
 
+namespace
+{
+/** One draw a frame emits: which entry's which draw, with this frame's highlight flags. */
+struct EmittedDraw
+{
+    uint32_t entry = 0, draw = 0, flags = 0;
+    bool snap = false;
+
+    bool operator==(const EmittedDraw&) const = default;
+};
+} // namespace
+
 struct ViewportWidget::MeshDrawCache
 {
     uint64_t structure = 0;
@@ -155,6 +167,10 @@ struct ViewportWidget::MeshDrawCache
     MeshSettings settings;
     uint64_t settingsId = 0;
     std::unordered_map<const scene::NodeType*, bool> overridden;
+    /** The last frame's draws and what they were made from: handed over again while a frame emits the same. */
+    render::DrawList emitted;
+    std::vector<EmittedDraw> emittedFrom;
+    glm::vec4 emittedSnapColor{0.0f};
 };
 
 void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, const std::unordered_set<scene::NodeId>& lodHidden,
@@ -209,7 +225,9 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
     const viewportDisplay::SelectionOrderColors order = viewportDisplay::selectionOrderColors(g);
     const glm::vec4 snapColor = themeLinear("wireSnapSurface", kSnapSurfaceWireColor);
     const std::vector<scene::NodeId> snaps = rv ? std::vector<scene::NodeId>() : surfaceSnap::surfaces();
-    s.meshes.reserve(s.meshes.size() + meshes.size());
+    std::vector<EmittedDraw> from;
+    from.reserve(meshes.size());
+    bool rebuilt = false;
     const bool preselecting = !rv && mPreselect.mode == scene::ComponentMode::Object && !componentMode && mPreselect.node != scene::kNoNode;
 
     for (size_t i = 0; i < meshes.size(); ++i)
@@ -228,6 +246,7 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
             LILA_ZONE_N("buildFrame rebuild mesh node");
             buildEntry(e, g, set, hierarchy, iso, hot);
             e.settings = cache.settingsId;
+            rebuilt = true;
         }
         if (e.draws.empty())
             continue;
@@ -241,17 +260,40 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
         else if (!componentMode && underSelection.contains(id))
             flags = render::DrawUnderSelected;
         const bool snap = !snaps.empty() && std::ranges::find(snaps, id) != snaps.end();
-        for (const render::MeshDraw& base : e.draws)
+        for (uint32_t k = 0; k < e.draws.size(); ++k)
+            from.push_back({uint32_t(i), k, flags, snap});
+    }
+
+    // The same draws as last frame: hand its list over rather than copying every draw again.
+    const bool share = !rv && s.meshes.empty();
+    if (share && !rebuilt && from == c.emittedFrom && snapColor == c.emittedSnapColor)
+    {
+        s.meshes = c.emitted;
+        return;
+    }
+    std::vector<render::MeshDraw> out;
+    out.reserve(from.size());
+    for (const EmittedDraw& f : from)
+    {
+        const MeshEntry& e = cache.entries[f.entry];
+        render::MeshDraw& d = out.emplace_back(e.draws[f.draw]);
+        d.flags |= f.flags;
+        if (f.snap)
         {
-            render::MeshDraw& d = s.meshes.emplace_back(base);
-            d.flags |= flags;
-            if (snap)
-            {
-                d.flags |= render::DrawWire;
-                if (!hot || set.componentWire.a <= 0.0f)
-                    d.wireColor = snapColor;
-            }
+            d.flags |= render::DrawWire;
+            if (!e.hilite || set.componentWire.a <= 0.0f)
+                d.wireColor = snapColor;
         }
     }
+    if (!share)
+    {
+        std::vector<render::MeshDraw>& all = s.meshes.edit();
+        all.insert(all.end(), std::make_move_iterator(out.begin()), std::make_move_iterator(out.end()));
+        return;
+    }
+    c.emitted = render::DrawList(std::move(out));
+    c.emittedFrom = std::move(from);
+    c.emittedSnapColor = snapColor;
+    s.meshes = c.emitted;
 }
 } // namespace lila::ui

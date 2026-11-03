@@ -381,7 +381,7 @@ std::optional<Preview> trial(const Resolved& r)
 void swapResults(render::FrameState& s)
 {
     std::unordered_set<NodeId> placed;
-    for (render::MeshDraw& d : s.meshes)
+    for (render::MeshDraw& d : s.meshes.edit())
     {
         auto it = gPreview->results.find(NodeId(d.node));
         if (it == gPreview->results.end())
@@ -394,7 +394,7 @@ void swapResults(render::FrameState& s)
         }
         placed.insert(it->first);
     }
-    std::erase_if(s.meshes, [](const render::MeshDraw& d) {
+    std::erase_if(s.meshes.edit(), [](const render::MeshDraw& d) {
         return std::find(gPreview->gone.begin(), gPreview->gone.end(), NodeId(d.node)) != gPreview->gone.end();
     });
     for (const auto& [id, shot] : gPreview->results)

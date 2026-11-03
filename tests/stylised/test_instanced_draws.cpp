@@ -167,7 +167,7 @@ TEST_CASE("Instanced draws: placements read their own world matrix")
     d.world = glm::translate(glm::mat4(1.0f), glm::vec3(20.0f, 0.0f, 0.0f));
     s.meshes.push_back(d);
     const double right = litCentroidX(renderFrame(s));
-    s.meshes[0].world = glm::translate(glm::mat4(1.0f), glm::vec3(-20.0f, 0.0f, 0.0f));
+    s.meshes.edit()[0].world = glm::translate(glm::mat4(1.0f), glm::vec3(-20.0f, 0.0f, 0.0f));
     const double left = litCentroidX(renderFrame(s));
     REQUIRE(right >= 0.0);
     REQUIRE(left >= 0.0);
@@ -201,7 +201,7 @@ TEST_CASE("Instanced draws: a live mesh's wire follows each new snapshot of its 
         moved->dynamic->vertices.assign(moved->vertices.begin(), moved->vertices.end());
         moved->dynamic->allDirty = true;
     }
-    s.meshes[0].mesh = moved;
+    s.meshes.edit()[0].mesh = moved;
     const double after = litCentroidX(renderFrame(s));
     REQUIRE(before >= 0.0);
     REQUIRE(after >= 0.0);
@@ -213,20 +213,21 @@ TEST_CASE("Instanced draws: wire, selection and translucency per placement")
     if (!gpu())
         return;
     FrameState s = gridOfBoxes(3, true);
-    for (MeshDraw& d : s.meshes)
+    for (MeshDraw& d : s.meshes.edit())
         d.flags = DrawShaded | DrawWire;
-    s.meshes[4].flags |= DrawSelected;
+    s.meshes.edit()[4].flags |= DrawSelected;
     const auto shaded = renderFrame(s);
     // The same frame drawn per mesh copy matches, once its selected draw comes last as batches order highlighted wires.
     FrameState unique = gridOfBoxes(3, false);
     for (size_t i = 0; i < unique.meshes.size(); ++i)
-        unique.meshes[i].flags = s.meshes[i].flags;
-    std::rotate(unique.meshes.begin() + 4, unique.meshes.begin() + 5, unique.meshes.end());
+        unique.meshes.edit()[i].flags = s.meshes[i].flags;
+    std::vector<MeshDraw>& rotated = unique.meshes.edit();
+    std::rotate(rotated.begin() + 4, rotated.begin() + 5, rotated.end());
     CHECK(maxDiff(shaded, renderFrame(unique)) == 0);
 
     // Translucent placements sort one by one, so they match the per-copy frame too.
     for (FrameState* f : {&s, &unique})
-        for (MeshDraw& d : f->meshes)
+        for (MeshDraw& d : f->meshes.edit())
         {
             Material m;
             m.flags |= MatTranslucent;

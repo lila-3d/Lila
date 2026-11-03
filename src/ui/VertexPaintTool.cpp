@@ -1234,7 +1234,7 @@ private:
     {
         ensureLive();
         auto shown = renderMeshFor(smoothedFor(n.as<MeshPtr>(scene::MeshNode::kOutMesh), int(n.as<int64_t>(scene::MeshNode::kSmoothPreview))));
-        for (render::MeshDraw& d : s.meshes)
+        for (render::MeshDraw& d : s.meshes.edit())
         {
             if (!d.mesh || (d.mesh != shown && d.mesh != mLiveBuilt))
                 continue;

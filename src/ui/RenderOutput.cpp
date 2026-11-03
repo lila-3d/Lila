@@ -143,7 +143,7 @@ void makeIdPass(render::FrameState& s, const scene::Graph& g)
     s.ambientOcclusion = false;
     s.groundShadow = 0.0f;
     s.lensRadius = 0.0f;
-    for (render::MeshDraw& d : s.meshes)
+    for (render::MeshDraw& d : s.meshes.edit())
     {
         const scene::Node* n = d.node ? g.node(scene::NodeId(d.node)) : nullptr;
         d.baseColor = idColor(n ? n->path() : std::string());
@@ -278,7 +278,7 @@ Frame render(const Options& o, double seconds)
         if (o.pass == "id")
             makeIdPass(s, g);
         else if (o.pass == "wireframe")
-            for (render::MeshDraw& d : s.meshes)
+            for (render::MeshDraw& d : s.meshes.edit())
             {
                 d.flags |= render::DrawWire;
                 d.wireColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f);

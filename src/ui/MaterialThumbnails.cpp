@@ -348,7 +348,7 @@ Result execute(Job& job)
         throw std::runtime_error("the GPU renderer could not start");
     tex::EvalResult res = tex::evaluate(job.plan, tex::EvalOptions{}, job.backend);
     render::Material mat = materialFrom(res, job.plan.width, job.plan.height);
-    job.frame.meshes.front().materials.assign(job.slotCount, mat);
+    job.frame.meshes.edit().front().materials.assign(job.slotCount, mat);
     std::vector<uint8_t> bgra;
     std::string err;
     if (!rend.renderOffscreen(std::move(job.frame), job.size, job.size, bgra, &err))

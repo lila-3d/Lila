@@ -199,7 +199,7 @@ TEST_CASE("Painterly strokes follow the mapping and boil with the offset")
         Material world = painterly(1.0f);
         world.style.strokeMapping = 1;
         FrameState a = frame(painterly(1.0f)), b = frame(world);
-        a.meshes[0].world = b.meshes[0].world = glm::mat4(1.0f, 0, 0, 0, 0, 1.0f, 0, 0, 0, 0, 1.0f, 0, 7.0f, 3.0f, 0, 1.0f);
+        a.meshes.edit()[0].world = b.meshes.edit()[0].world = glm::mat4(1.0f, 0, 0, 0, 0, 1.0f, 0, 0, 0, 0, 1.0f, 0, 7.0f, 3.0f, 0, 1.0f);
         CHECK(meanDiff(renderFrame(a), renderFrame(b)) > 0.2);
     }
     for (uint32_t mapping : {2u, 3u})
