@@ -102,6 +102,12 @@ target_link_libraries(lila_tests PRIVATE miniz::miniz)
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)
+# Fails when a Qt bump leaves the bundled PySide6 behind or it starts loading its own Qt.
+if(LILA_PYSIDE AND WIN32)
+    add_test(NAME lila_pyside_python COMMAND lilabatch --batch ${CMAKE_SOURCE_DIR}/python/tests/test_pyside.py
+             CONFIGURATIONS Release RelWithDebInfo)
+    set_tests_properties(lila_pyside_python PROPERTIES ENVIRONMENT "LILA_CONFIG_DIR=${CMAKE_CURRENT_BINARY_DIR}/pyside_cfg")
+endif()
 # The telemetry Worker's credits rules; needs Node 22.5+ for node:sqlite.
 find_program(LILA_NODE node)
 if(LILA_NODE)
