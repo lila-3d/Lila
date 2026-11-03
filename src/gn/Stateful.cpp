@@ -340,6 +340,10 @@ void beforeEvaluate(Graph& g)
 /** After each evaluation: brings every simulating modifier's published state to the current frame. */
 void afterEvaluate(Graph& g)
 {
+    // The framework is moving time itself (a command asked for a frame's state directly): simulating from here would
+    // step the same simulation again in the middle of a step.
+    if (sim::sampling())
+        return;
     std::vector<NodeId> ids;
     {
         std::lock_guard lock(store().mutex);
