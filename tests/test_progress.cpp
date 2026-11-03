@@ -350,27 +350,42 @@ TEST_CASE("commands: an undoable command aborted midway leaves nothing behind")
     CHECK(UndoStack::get().undoCount() == undos);
 }
 
-TEST_CASE("scene load: aborting while the scene is built leaves an empty scene")
+TEST_CASE("scene load: aborting at any point of the build puts the previous scene back")
 {
     run("newScene");
-    const json empty = io::serialize()["nodes"];
     for (int i = 0; i < 20; ++i)
         run("polyCube", {{"name", "Box" + std::to_string(i)}});
-    std::string path = tempPath("abort_build.lila");
+    const std::string path = tempPath("abort_build.lila");
     run("saveScene", {{"args", {path}}});
-    run("newScene");
-    run("polyCube", {{"name", "Keep"}});
 
-    // Cancels once the file's nodes start to appear.
-    progress::setPump([] {
-        if (!Graph::current().find("Box0"))
-            return;
-        for (const progress::Snapshot& s : progress::snapshot())
-            if (s.cancellable)
-                progress::cancel(s.id);
-    }, 0);
-    CHECK_THROWS_AS(run("openScene", {{"args", {path}}, {"force", true}}), CommandCancelled);
-    progress::setPump(nullptr);
-    CHECK(io::serialize()["nodes"] == empty);
-    CHECK(io::currentPath().empty());
+    // Once right after the file is read (the scene just cleared), once with the file's nodes half built.
+    for (bool midBuild : {false, true})
+    {
+        CAPTURE(midBuild);
+        run("newScene");
+        run("polyCube", {{"name", "Keep"}});
+        const std::string keep = tempPath("keep.lila");
+        run("saveScene", {{"args", {keep}}});
+        run("spaceLocator", {{"name", "Unsaved"}});
+        run("select", {{"args", {"Unsaved"}}});
+        const json before = io::serialize();
+        REQUIRE(io::modified());
+
+        progress::setPump([midBuild] {
+            const bool cleared = !Graph::current().find("Keep") && !Graph::current().find("Unsaved");
+            if (!(midBuild ? Graph::current().find("Box0") != nullptr : cleared))
+                return;
+            for (const progress::Snapshot& s : progress::snapshot())
+                if (s.cancellable)
+                    progress::cancel(s.id);
+        }, 0);
+        CHECK_THROWS_AS(run("openScene", {{"args", {path}}, {"force", true}}), CommandCancelled);
+        progress::setPump(nullptr);
+        const json after = io::serialize();
+        CHECK(after["nodes"] == before["nodes"]);
+        CHECK(after["selection"] == before["selection"]);
+        CHECK(std::filesystem::equivalent(io::currentPath(), keep));
+        CHECK(io::modified());
+        CHECK_FALSE(Graph::current().find("Box0"));
+    }
 }

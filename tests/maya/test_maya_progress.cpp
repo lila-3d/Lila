@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "core/Progress.h"
 #include "io/SceneFile.h"
+#include "scene/Graph.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -79,4 +80,24 @@ TEST_CASE("maya progress: cancelling while the file is parsed leaves the scene a
     progress::setPump(nullptr);
     CHECK(error == "mayaOpen: cancelled");
     CHECK(io::serialize()["nodes"] == before["nodes"]);
+}
+
+TEST_CASE("maya progress: aborting while the scene is built puts the previous scene back")
+{
+    run("newScene");
+    run("spaceLocator", {{"name", "Keep"}});
+    const json before = io::serialize();
+
+    // Cancels once the converter has cleared the scene and started building.
+    progress::setPump([] {
+        if (scene::Graph::current().find("Keep"))
+            return;
+        for (const progress::Snapshot& s : progress::snapshot())
+            if (s.cancellable)
+                progress::cancel(s.id);
+    }, 0);
+    CHECK_THROWS_AS(run("mayaOpen", {{"args", {utf8(fs::path(LILA_MAYA_TEST_DATA) / "generated" / "rich.mb")}}, {"force", true}}), CommandCancelled);
+    progress::setPump(nullptr);
+    CHECK(io::serialize()["nodes"] == before["nodes"]);
+    CHECK(io::modified());
 }

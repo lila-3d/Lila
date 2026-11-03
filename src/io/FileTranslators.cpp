@@ -210,9 +210,19 @@ json run(Op op, const fs::path& path, const json& options, CallSource source, st
     if (!openByImport)
         return invoke(o, path, options, source);
 
+    SceneSnapshot previous;
     ops::execute("newScene", json::object(), source);
     setCurrentPath({});
-    json result = invoke(o, path, options, source);
+    json result;
+    try
+    {
+        result = invoke(o, path, options, source);
+    }
+    catch (const CommandCancelled&)
+    {
+        previous.restore();
+        throw;
+    }
     // Like any open: no undo back into the empty scene, and unsaved until it is saved as a .lila.
     UndoStack::get().clear();
     markClean();

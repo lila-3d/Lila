@@ -99,11 +99,29 @@ LILA_SCENE_API bool unregisterUiSection(const std::string& key);
 LILA_SCENE_API void save(const std::filesystem::path& path);
 /** Writes the scene to path without making it the current file, marking it clean or taking a backup. */
 LILA_SCENE_API void saveCopy(const std::filesystem::path& path);
-/**
- * Can be cancelled (progress::Cancelled): while the file is read that leaves the current scene alone, after that an
- * empty scene.
- */
+/** Can be cancelled (progress::Cancelled) at any point, which leaves the current scene as it was (see SceneSnapshot). */
 LILA_SCENE_API void load(const std::filesystem::path& path);
+
+/**
+ * The open scene held in memory, for an open that replaces it to put it back when aborted: its nodes, references,
+ * selection, UI sections, file, title and unsaved state. The undo history can't come back, since restored nodes get
+ * new ids; it is left empty.
+ */
+class LILA_SCENE_API SceneSnapshot
+{
+public:
+    SceneSnapshot();
+    /** Replaces the scene with the captured one, even inside a cancelled progress scope. */
+    void restore();
+
+private:
+    nlohmann::json mDoc;
+    std::filesystem::path mPath;
+    std::filesystem::path mDir; // what the document's relative paths resolve against
+    std::string mTitle;
+    SceneOrigin mOrigin;
+    bool mModified = false;
+};
 
 /** What a scene load shows instead of "Loading": one of a dozen verbs, picked at random ("Unfurling"). */
 LILA_SCENE_API std::string loadingVerb();

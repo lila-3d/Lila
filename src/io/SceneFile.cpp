@@ -475,7 +475,7 @@ void deserialize(const nlohmann::json& doc, const fs::path& sceneDir, double own
     {
         UndoStack::get().setEnabled(true);
         s.loading = false;
-        // An aborted load leaves an empty scene, never part of one.
+        // Never part of a scene: an aborted load's caller puts the previous one back.
         if (progress::cancelRequested())
         {
             g.clear();
@@ -528,6 +528,51 @@ SceneOrigin noteOrigin(const json& doc, const std::string& name)
     else if (o.age == SceneOrigin::Age::Older)
         log::info("{} was saved by {}; saving updates it to Lila {}", name, by, version::number());
     return o;
+}
+} // namespace
+
+SceneSnapshot::SceneSnapshot()
+{
+    const State& s = state();
+    mPath = s.path;
+    mTitle = s.title;
+    mOrigin = s.origin;
+    mModified = s.modified;
+    mDir = paths::currentSceneDir();
+    mDoc = serialize(mDir, true);
+}
+
+void SceneSnapshot::restore()
+{
+    // Out from under the cancelled operation's scope, whose cancel would stop the rebuild too.
+    progress::Adopt detached(nullptr);
+    deserialize(mDoc, mDir);
+    State& s = state();
+    setCurrentPath(mPath);
+    s.title = mTitle;
+    s.origin = mOrigin;
+    markClean();
+    if (mModified)
+        markModified();
+    log::info("open aborted; {} is back", displayName());
+}
+
+namespace
+{
+/** Runs build, which replaces the scene; when it is cancelled the scene as it was before comes back. */
+void restoreIfCancelled(const std::function<void()>& build)
+{
+    SceneSnapshot previous;
+    try
+    {
+        build();
+    }
+    catch (...)
+    {
+        if (progress::cancelRequested())
+            previous.restore();
+        throw;
+    }
 }
 } // namespace
 
@@ -656,7 +701,7 @@ void load(const fs::path& path)
         std::error_code ec;
         const auto size = fs::file_size(path, ec);
         progress::Scope build("", 0.0, progress::None, 7.0);
-        deserialize(doc, path.parent_path(), ec ? 0.0 : double(size));
+        restoreIfCancelled([&] { deserialize(doc, path.parent_path(), ec ? 0.0 : double(size)); });
         // The document holds a copy of every mesh array, slow enough to free that it goes on its own thread.
         std::thread([d = std::move(doc)] {}).detach();
     }
@@ -815,7 +860,7 @@ void loadVersion(const fs::path& file, const fs::path& scene, bool keepPath, con
         std::error_code ec;
         const auto size = fs::file_size(file, ec);
         progress::Scope build("", 0.0, progress::None, 7.0);
-        deserialize(doc, scene.empty() ? file.parent_path() : scene.parent_path(), ec ? 0.0 : double(size));
+        restoreIfCancelled([&] { deserialize(doc, scene.empty() ? file.parent_path() : scene.parent_path(), ec ? 0.0 : double(size)); });
     }
     setCurrentPath(keepPath ? scene : fs::path());
     state().origin = origin;

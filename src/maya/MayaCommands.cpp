@@ -124,10 +124,11 @@ std::string convertingTitle(const fs::path& path)
     return "Converting " + utf8(path.filename()) + "...";
 }
 
-/** Replaces the scene with a Maya file, like opening a .lila: not undoable, untitled afterwards. */
+/** Replaces the scene with a Maya file, like opening a .lila: not undoable, untitled afterwards, the old scene back if aborted. */
 ImportResult openAsScene(const fs::path& path, const File& file, const ImportOptions& opts)
 {
     Graph& g = Graph::current();
+    io::SceneSnapshot previous;
     progress::Scope convert("", 0.0, progress::None, 8.0);
     io::refs::clear();
     g.clear();
@@ -142,12 +143,16 @@ ImportResult openAsScene(const fs::path& path, const File& file, const ImportOpt
     {
         UndoStack::get().setEnabled(true);
         if (progress::cancelRequested())
-            g.clear();
+            previous.restore();
         throw;
     }
     UndoStack::get().setEnabled(true);
+    // The converter reports a cancel as a failed import rather than throwing.
     if (progress::cancelRequested())
-        g.clear();
+    {
+        previous.restore();
+        return r;
+    }
     UndoStack::get().clear();
     return r;
 }
