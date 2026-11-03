@@ -46,6 +46,16 @@ LilaLink::FMaterialPair LilaLink::FindOrCreateMaterialPair(const FString& Folder
 	return Pair;
 }
 
+UMaterialFunction* LilaLink::FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated)
+{
+	return FindOrCreate<UMaterialFunction>(Folder, Name, NewObject<UMaterialFunctionFactoryNew>(GetTransientPackage()), bOutCreated);
+}
+
+UMaterial* LilaLink::FindOrCreateMaterial(const FString& Folder, const FString& Name, bool& bOutCreated)
+{
+	return FindOrCreate<UMaterial>(Folder, Name, NewObject<UMaterialFactoryNew>(GetTransientPackage()), bOutCreated);
+}
+
 LilaLink::FFunctionGraph::FFunctionGraph(UMaterialFunction* InFunction, const TCHAR* Description)
 	: Function(InFunction)
 {

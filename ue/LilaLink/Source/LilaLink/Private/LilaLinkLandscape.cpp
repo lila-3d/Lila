@@ -1,15 +1,36 @@
 #include "LilaLinkLandscape.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMaterialFunction.h"
+#include "LilaLinkMaterials.h"
 
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Editor.h"
+#include "Engine/Texture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Landscape.h"
 #include "LandscapeEdit.h"
 #include "LandscapeEditLayer.h"
 #include "LandscapeInfo.h"
+#include "LandscapeLayerInfoObject.h"
+#include "LandscapeProxy.h"
 #include "LandscapeSubsystem.h"
+#include "LandscapeUtils.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+#include "Materials/MaterialExpressionCustom.h"
+#include "Materials/MaterialExpressionDivide.h"
+#include "Materials/MaterialExpressionFmod.h"
+#include "Materials/MaterialExpressionLandscapeLayerSample.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionScalarParameter.h"
+#include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionWorldPosition.h"
+#include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
@@ -19,6 +40,282 @@
 namespace
 {
 const FName LilaLayerName(TEXT("Lila"));
+const TCHAR* LayerFunctionName = TEXT("MF_LilaLandscapeLayer");
+const TCHAR* LayerVersionTag = TEXT("Lila Landscape Layer v");
+constexpr int32 LayerFunctionVersion = 1;
+const TCHAR* LandscapeFolder = TEXT("/Game/LilaLink/Landscapes");
+
+/** One paint layer of a send: its name in Unreal and the 8-bit weightmap file in the landscape's vertex layout. */
+struct FLayerSend
+{
+	FName Name;
+	FString Mask;
+	FString Weightmap;
+};
+
+const TCHAR* LayerColorCode = TEXT(R"(
+float3 c = Tint.rgb * Texture2DSample(Texture, TextureSampler, WorldTile.xy).rgb;
+return lerp(Under, c, saturate(Weight));
+)");
+
+const TCHAR* LayerRoughnessCode = TEXT(R"(
+return lerp(UnderRoughness, Roughness, saturate(Weight));
+)");
+
+int32 VersionOf(const UMaterialFunction* Function)
+{
+	for (UMaterialExpression* E : Function->GetExpressions())
+	{
+		if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(LayerVersionTag))
+		{
+			return FCString::Atoi(*C->Description.RightChop(FCString::Strlen(LayerVersionTag)));
+		}
+	}
+	return 0;
+}
+
+/**
+ * MF_LilaLandscapeLayer: one paint layer over what is under it. Under and UnderRoughness come in, the layer's tinted
+ * texture (projected from above, TileSize cm per repeat) and roughness go on top by Weight (a Landscape Layer Sample).
+ * Chain one call per layer; the parameter inputs default to parameters of their name.
+ */
+void BuildLayerFunction(UMaterialFunction* Function)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkLandscape::BuildLayerFunction);
+
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila landscape layer: a tinted, top-projected texture and roughness laid over Under by Weight."));
+	auto* UnderDefault = G.New<UMaterialExpressionConstant3Vector>(-1500);
+	UnderDefault->Constant = FLinearColor(0.25f, 0.22f, 0.18f);
+	auto* RoughDefault = G.New<UMaterialExpressionConstant>(-1500);
+	RoughDefault->R = 0.9f;
+	auto* WeightDefault = G.New<UMaterialExpressionConstant>(-1500);
+	WeightDefault->R = 1.0f;
+	TMap<FString, UMaterialExpression*> In;
+	In.Add(TEXT("Under"), G.Input(TEXT("Under"), FunctionInput_Vector3, UnderDefault, TEXT("Colour under this layer: the ground, or the previous layer's call.")));
+	In.Add(TEXT("UnderRoughness"), G.Input(TEXT("UnderRoughness"), FunctionInput_Scalar, RoughDefault, TEXT("Roughness under this layer.")));
+	In.Add(TEXT("Weight"), G.Input(TEXT("Weight"), FunctionInput_Scalar, WeightDefault, TEXT("The layer's weight: a Landscape Layer Sample of its name.")));
+	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+	In.Add(TEXT("Tint"), G.VectorInput(TEXT("LayerTint"), FLinearColor(0.5f, 0.5f, 0.5f), TEXT("Layer"), TEXT("Layer colour, multiplied with Texture.")));
+	In.Add(TEXT("Roughness"), G.ScalarInput(TEXT("LayerRoughness"), 0.8f, TEXT("Layer"), TEXT("Layer roughness.")));
+	In.Add(TEXT("Texture"), G.TextureInput(TEXT("LayerTexture"), White, SAMPLERTYPE_Color, TEXT("Layer"), TEXT("Layer colour texture, projected from above.")));
+	UMaterialExpressionFunctionInput* TileSize = G.ScalarInput(TEXT("LayerTileSize"), 400.0f, TEXT("Layer"), TEXT("Texture repeat, cm."));
+	// World position is large-world (double); divide and wrap it before the Custom node, which takes floats.
+	UMaterialExpression* World = G.Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
+	auto* Divide = G.New<UMaterialExpressionDivide>(-1400);
+	UMaterialEditingLibrary::ConnectMaterialExpressions(World, TEXT(""), Divide, TEXT("A"));
+	UMaterialEditingLibrary::ConnectMaterialExpressions(TileSize, TEXT(""), Divide, TEXT("B"));
+	auto* Wrap = G.New<UMaterialExpressionFmod>(-1300);
+	UMaterialEditingLibrary::ConnectMaterialExpressions(Divide, TEXT(""), Wrap, TEXT("A"));
+	auto* Period = G.New<UMaterialExpressionConstant>(-1400);
+	Period->R = 256.0f;
+	UMaterialEditingLibrary::ConnectMaterialExpressions(Period, TEXT(""), Wrap, TEXT("B"));
+	In.Add(TEXT("WorldTile"), Wrap);
+
+	auto Custom = [&](const FString& Description, const TCHAR* Code, ECustomMaterialOutputType Type, std::initializer_list<const TCHAR*> Names) {
+		auto* E = G.New<UMaterialExpressionCustom>(-400);
+		E->Description = Description;
+		E->Code = Code;
+		E->OutputType = Type;
+		E->Inputs.Reset();
+		for (const TCHAR* Name : Names)
+		{
+			E->Inputs.AddDefaulted_GetRef().InputName = Name;
+		}
+		for (const TCHAR* Name : Names)
+		{
+			UMaterialEditingLibrary::ConnectMaterialExpressions(In[Name], TEXT(""), E, Name);
+		}
+		return E;
+	};
+	const FString Version = FString::Printf(TEXT("%s%d"), LayerVersionTag, LayerFunctionVersion);
+	auto* Color = Custom(Version + TEXT(" colour"), LayerColorCode, CMOT_Float3, {TEXT("Under"), TEXT("Weight"), TEXT("Tint"), TEXT("Texture"), TEXT("WorldTile")});
+	auto* Rough = Custom(Version + TEXT(" roughness"), LayerRoughnessCode, CMOT_Float1, {TEXT("UnderRoughness"), TEXT("Roughness"), TEXT("Weight")});
+	G.Output(Color, TEXT("BaseColor"), TEXT("Under with this layer on top."));
+	G.Output(Rough, TEXT("Roughness"), TEXT("Roughness with this layer on top."));
+	G.Finish();
+}
+
+/** MF_LilaLandscapeLayer in the masters folder, built when new or older than this plugin's version. */
+UMaterialFunction* LayerFunction(TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkLandscape::LayerFunction);
+
+	bool bCreated = false;
+	UMaterialFunction* Function = LilaLink::FindOrCreateMaterialFunction(LilaLink::MastersFolderPath(), LayerFunctionName, bCreated);
+	if (!Function)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not create %s in %s"), LayerFunctionName, LilaLink::MastersFolderPath()));
+		return nullptr;
+	}
+	if (bCreated || VersionOf(Function) < LayerFunctionVersion)
+	{
+		BuildLayerFunction(Function);
+	}
+	return Function;
+}
+
+/** A distinct, muted colour per layer so a fresh landscape shows where each mask lies. */
+FLinearColor LayerColor(int32 Index)
+{
+	const float Hue = FMath::Fmod(37.0f + 67.0f * float(Index), 360.0f);
+	return FLinearColor(Hue, 0.45f, 0.6f).HSVToLinearRGB();
+}
+
+/** The layer names a generated material samples, in order, or empty when it isn't one. */
+TArray<FName> SampledLayers(const UMaterial* Material)
+{
+	TArray<FName> Names;
+	for (UMaterialExpression* E : Material->GetExpressions())
+	{
+		if (const UMaterialExpressionLandscapeLayerSample* S = Cast<UMaterialExpressionLandscapeLayerSample>(E))
+		{
+			Names.Add(S->ParameterName);
+		}
+	}
+	return Names;
+}
+
+/**
+ * M_<Label>: the landscape's material, a Landscape Layer Sample per paint layer feeding a chain of MF_LilaLandscapeLayer
+ * calls over a ground colour, each layer with its own tint, roughness, texture and tile size parameters. Rebuilt only when
+ * the layer set changes.
+ */
+UMaterial* LandscapeMaterial(const FString& Label, const TArray<FLayerSend>& Layers, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkLandscape::LandscapeMaterial);
+
+	UMaterialFunction* Function = LayerFunction(OutWarnings);
+	if (!Function)
+	{
+		return nullptr;
+	}
+	const FString Folder = FString(LandscapeFolder) / Label;
+	bool bCreated = false;
+	UMaterial* Material = LilaLink::FindOrCreateMaterial(Folder, TEXT("M_") + Label, bCreated);
+	if (!Material)
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not create M_%s in %s"), *Label, *Folder));
+		return nullptr;
+	}
+	TArray<FName> Wanted;
+	for (const FLayerSend& L : Layers)
+	{
+		Wanted.Add(L.Name);
+	}
+	if (!bCreated && SampledLayers(Material) == Wanted)
+	{
+		return Material;
+	}
+	Material->Modify();
+	UMaterialEditingLibrary::DeleteAllMaterialExpressions(Material);
+	int32 Row = 0;
+	auto Make = [&](TSubclassOf<UMaterialExpression> Class, int32 X) {
+		return UMaterialEditingLibrary::CreateMaterialExpression(Material, Class, X, (Row++) * 140);
+	};
+	auto* Ground = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -1200));
+	Ground->ParameterName = TEXT("GroundColor");
+	Ground->DefaultValue = FLinearColor(0.25f, 0.22f, 0.18f);
+	auto* GroundRough = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -1200));
+	GroundRough->ParameterName = TEXT("GroundRoughness");
+	GroundRough->DefaultValue = 0.9f;
+	UMaterialExpression* Color = Ground;
+	UMaterialExpression* Rough = GroundRough;
+	FString ColorOut, RoughOut;
+	UTexture* White = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+	for (int32 Index = 0; Index < Layers.Num(); ++Index)
+	{
+		const FString Name = Layers[Index].Name.ToString();
+		auto* Sample = Cast<UMaterialExpressionLandscapeLayerSample>(Make(UMaterialExpressionLandscapeLayerSample::StaticClass(), -900));
+		Sample->ParameterName = Layers[Index].Name;
+		Sample->PreviewWeight = 0.0f;
+		auto* Tint = Cast<UMaterialExpressionVectorParameter>(Make(UMaterialExpressionVectorParameter::StaticClass(), -900));
+		Tint->ParameterName = *(Name + TEXT("Tint"));
+		Tint->DefaultValue = LayerColor(Index);
+		Tint->Group = *Name;
+		auto* LayerRough = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -900));
+		LayerRough->ParameterName = *(Name + TEXT("Roughness"));
+		LayerRough->DefaultValue = 0.8f;
+		LayerRough->Group = *Name;
+		auto* Texture = Cast<UMaterialExpressionTextureObjectParameter>(Make(UMaterialExpressionTextureObjectParameter::StaticClass(), -900));
+		Texture->ParameterName = *(Name + TEXT("Texture"));
+		Texture->Texture = White;
+		Texture->Group = *Name;
+		auto* Tile = Cast<UMaterialExpressionScalarParameter>(Make(UMaterialExpressionScalarParameter::StaticClass(), -900));
+		Tile->ParameterName = *(Name + TEXT("TileSize"));
+		Tile->DefaultValue = 400.0f;
+		Tile->Group = *Name;
+
+		auto* Call = Cast<UMaterialExpressionMaterialFunctionCall>(Make(UMaterialExpressionMaterialFunctionCall::StaticClass(), -400 + Index * 300));
+		Call->SetMaterialFunction(Function);
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Color, ColorOut, Call, TEXT("Under"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Rough, RoughOut, Call, TEXT("UnderRoughness"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Sample, TEXT(""), Call, TEXT("Weight"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Tint, TEXT(""), Call, TEXT("LayerTint"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(LayerRough, TEXT(""), Call, TEXT("LayerRoughness"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Texture, TEXT(""), Call, TEXT("LayerTexture"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Tile, TEXT(""), Call, TEXT("LayerTileSize"));
+		Color = Call;
+		Rough = Call;
+		ColorOut = TEXT("BaseColor");
+		RoughOut = TEXT("Roughness");
+	}
+	UMaterialEditingLibrary::ConnectMaterialProperty(Color, ColorOut, MP_BaseColor);
+	UMaterialEditingLibrary::ConnectMaterialProperty(Rough, RoughOut, MP_Roughness);
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+	UMaterialEditingLibrary::RecompileMaterial(Material);
+	OutCreated.AddUnique(Material->GetPathName());
+	OutCreated.AddUnique(Function->GetPathName());
+	return Material;
+}
+
+/** LI_<Layer> next to the landscape's material, made when missing, with weight blending off so masks stay independent. */
+ULandscapeLayerInfoObject* LayerInfo(const FString& Label, FName Layer, TArray<FString>& OutCreated)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkLandscape::LayerInfo);
+
+	const FString Folder = FString(LandscapeFolder) / Label;
+	const FString Name = TEXT("LI_") + Layer.ToString();
+	const FAssetData Data = IAssetRegistry::GetChecked().GetAssetByObjectPath(FSoftObjectPath(Folder / Name + TEXT(".") + Name));
+	ULandscapeLayerInfoObject* Info = Data.IsValid() ? Cast<ULandscapeLayerInfoObject>(Data.GetAsset()) : nullptr;
+	if (!Info)
+	{
+		Info = UE::Landscape::CreateTargetLayerInfo(Layer, Folder, Name);
+		if (Info)
+		{
+			OutCreated.AddUnique(Info->GetPathName());
+		}
+	}
+	if (Info && Info->GetBlendMethod() != ELandscapeTargetLayerBlendMethod::None)
+	{
+		Info->SetBlendMethod(ELandscapeTargetLayerBlendMethod::None, /*bInModify=*/true);
+	}
+	return Info;
+}
+
+TArray<FLayerSend> ReadLayers(const TSharedPtr<FJsonObject>& Params)
+{
+	TArray<FLayerSend> Out;
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (!Params->TryGetArrayField(TEXT("layers"), Values))
+	{
+		return Out;
+	}
+	for (const TSharedPtr<FJsonValue>& V : *Values)
+	{
+		const TSharedPtr<FJsonObject> O = V->AsObject();
+		FString Name;
+		if (!O.IsValid() || !O->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty())
+		{
+			continue;
+		}
+		FLayerSend& L = Out.AddDefaulted_GetRef();
+		L.Name = FName(*Name);
+		O->TryGetStringField(TEXT("mask"), L.Mask);
+		O->TryGetStringField(TEXT("weightmap"), L.Weightmap);
+	}
+	return Out;
+}
 
 FName TagFor(const FString& Id)
 {
@@ -82,8 +379,8 @@ FGuid LilaLayer(ALandscape* Landscape)
 	return Layer ? Layer->GetGuid() : FGuid();
 }
 
-ALandscape* CreateLandscape(UWorld* World, const FString& Label, const FVector& Location, const FVector& Scale, int32 SizeX, int32 SizeY,
-	int32 QuadsPerSection, int32 SectionsPerComponent)
+ALandscape* CreateLandscape(UWorld* World, const FString& Label, const FVector& Location, const FRotator& Rotation, const FVector& Scale, int32 SizeX,
+	int32 SizeY, int32 QuadsPerSection, int32 SectionsPerComponent)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkLandscape::CreateLandscape);
 
@@ -95,7 +392,7 @@ ALandscape* CreateLandscape(UWorld* World, const FString& Label, const FVector& 
 	TMap<FGuid, TArray<FLandscapeImportLayerInfo>> MaterialLayerDataPerLayers;
 	MaterialLayerDataPerLayers.Add(FGuid(), TArray<FLandscapeImportLayerInfo>());
 
-	ALandscape* Landscape = World->SpawnActor<ALandscape>(Location, FRotator::ZeroRotator);
+	ALandscape* Landscape = World->SpawnActor<ALandscape>(Location, Rotation);
 	if (!Landscape)
 	{
 		return nullptr;
@@ -168,11 +465,28 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 	FString Label = FPackageName::GetShortName(Id), MaterialPath;
 	Params->TryGetStringField(TEXT("label"), Label);
 	Params->TryGetStringField(TEXT("material"), MaterialPath);
-	FVector Location = FVector::ZeroVector, Scale(100.0, 100.0, 100.0);
+	FVector Location = FVector::ZeroVector, Scale(100.0, 100.0, 100.0), PitchYawRoll = FVector::ZeroVector;
 	ReadVector(Params, TEXT("location"), Location);
 	ReadVector(Params, TEXT("scale"), Scale);
+	ReadVector(Params, TEXT("rotation"), PitchYawRoll);
+	const FRotator Rotation(PitchYawRoll.X, PitchYawRoll.Y, PitchYawRoll.Z);
 	int32 GridSize = 0;
 	Params->TryGetNumberField(TEXT("gridSize"), GridSize);
+	bool bMakeMaterial = false;
+	Params->TryGetBoolField(TEXT("makeMaterial"), bMakeMaterial);
+
+	// Every weightmap is read and checked before anything in the level changes.
+	const TArray<FLayerSend> Layers = ReadLayers(Params);
+	TArray<TArray<uint8>> Weights;
+	for (const FLayerSend& L : Layers)
+	{
+		TArray<uint8>& W = Weights.AddDefaulted_GetRef();
+		if (!FFileHelper::LoadFileToArray(W, *L.Weightmap) || W.Num() != SizeX * SizeY)
+		{
+			OutError = FString::Printf(TEXT("setLandscape: layer %s: %s isn't a %dx%d 8-bit weightmap"), *L.Name.ToString(), *L.Weightmap, SizeX, SizeY);
+			return nullptr;
+		}
+	}
 
 	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetLandscape", "Lila: Update Landscape"));
 	const FName Tag = TagFor(Id);
@@ -185,7 +499,7 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 	}
 	if (!Landscape)
 	{
-		Landscape = CreateLandscape(World, Label, Location, Scale, SizeX, SizeY, QuadsPerSection, SectionsPerComponent);
+		Landscape = CreateLandscape(World, Label, Location, Rotation, Scale, SizeX, SizeY, QuadsPerSection, SectionsPerComponent);
 		if (!Landscape)
 		{
 			Transaction.Cancel();
@@ -198,18 +512,53 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 	else
 	{
 		Landscape->Modify();
-		Landscape->SetActorLocation(Location);
+		Landscape->SetActorLocationAndRotation(Location, Rotation);
 		Landscape->SetActorRelativeScale3D(Scale);
 	}
+	TArray<FString> Created, Warnings;
+	UMaterialInterface* Material = nullptr;
 	if (!MaterialPath.IsEmpty())
 	{
 		const FString ObjectPath = MaterialPath.Contains(TEXT(".")) ? MaterialPath : MaterialPath + TEXT(".") + FPackageName::GetShortName(MaterialPath);
-		if (UMaterialInterface* Material = LoadObject<UMaterialInterface>(nullptr, *ObjectPath))
+		Material = LoadObject<UMaterialInterface>(nullptr, *ObjectPath);
+		if (!Material)
 		{
-			Landscape->LandscapeMaterial = Material;
-			FPropertyChangedEvent Changed(FindFProperty<FProperty>(ALandscapeProxy::StaticClass(), GET_MEMBER_NAME_CHECKED(ALandscapeProxy, LandscapeMaterial)));
-			Landscape->PostEditChangeProperty(Changed);
+			Warnings.Add(TEXT("no material ") + MaterialPath);
 		}
+	}
+	else if (bMakeMaterial && Layers.Num() > 0)
+	{
+		Material = LandscapeMaterial(Label, Layers, Created, Warnings);
+	}
+	if (Material && Landscape->LandscapeMaterial != Material)
+	{
+		Landscape->LandscapeMaterial = Material;
+		FPropertyChangedEvent Changed(FindFProperty<FProperty>(ALandscapeProxy::StaticClass(), GET_MEMBER_NAME_CHECKED(ALandscapeProxy, LandscapeMaterial)));
+		Landscape->PostEditChangeProperty(Changed);
+	}
+
+	// Paint layers: a layer info per layer, registered as a target layer, so the weightmaps have somewhere to go.
+	TArray<ULandscapeLayerInfoObject*> Infos;
+	for (const FLayerSend& L : Layers)
+	{
+		ULandscapeLayerInfoObject* LayerInfoObject = LayerInfo(Label, L.Name, Created);
+		if (!LayerInfoObject)
+		{
+			Warnings.Add(TEXT("could not make a layer info for ") + L.Name.ToString());
+		}
+		else if (!Landscape->HasTargetLayer(L.Name))
+		{
+			Landscape->AddTargetLayer(L.Name, FLandscapeTargetLayerSettings(LayerInfoObject));
+		}
+		else
+		{
+			Landscape->UpdateTargetLayer(L.Name, FLandscapeTargetLayerSettings(LayerInfoObject));
+		}
+		Infos.Add(LayerInfoObject);
+	}
+	if (ULandscapeInfo* LayerMapInfo = Landscape->GetLandscapeInfo(); LayerMapInfo && Layers.Num() > 0)
+	{
+		LayerMapInfo->UpdateLayerInfoMap(Landscape);
 	}
 
 	const FGuid LayerGuid = LilaLayer(Landscape);
@@ -224,6 +573,14 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 		FScopedSetLandscapeEditingLayer Scope(Landscape, LayerGuid, [Landscape] { Landscape->RequestLayersContentUpdateForceAll(); });
 		FLandscapeEditDataInterface Edit(Info, LayerGuid);
 		Edit.SetHeightData(0, 0, SizeX - 1, SizeY - 1, Heights.GetData(), 0, true);
+		for (int32 Index = 0; Index < Layers.Num(); ++Index)
+		{
+			if (Infos[Index])
+			{
+				Edit.SetAlphaData(Infos[Index], 0, 0, SizeX - 1, SizeY - 1, Weights[Index].GetData(), 0, ELandscapeLayerPaintingRestriction::None,
+					/*bWeightAdjust=*/false, /*bTotalWeightAdjust=*/false);
+			}
+		}
 	}
 	if (GridSize > 0)
 	{
@@ -238,7 +595,27 @@ TSharedPtr<FJsonValue> SetLandscape(const TSharedPtr<FJsonObject>& Params, FStri
 	Out->SetBoolField(TEXT("created"), bCreated);
 	Out->SetArrayField(TEXT("resolution"), {MakeShared<FJsonValueNumber>(SizeX), MakeShared<FJsonValueNumber>(SizeY)});
 	Out->SetStringField(TEXT("editLayer"), LilaLayerName.ToString());
-	UE_LOG(LogLilaLink, Log, TEXT("setLandscape: %s %dx%d (%s)"), *Label, SizeX, SizeY, bCreated ? TEXT("created") : TEXT("updated"));
+	TArray<TSharedPtr<FJsonValue>> LayerNames, CreatedValues, WarningValues;
+	for (int32 Index = 0; Index < Layers.Num(); ++Index)
+	{
+		if (Infos[Index])
+		{
+			LayerNames.Add(MakeShared<FJsonValueString>(Layers[Index].Name.ToString()));
+		}
+	}
+	for (const FString& C : Created)
+	{
+		CreatedValues.Add(MakeShared<FJsonValueString>(C));
+	}
+	for (const FString& W : Warnings)
+	{
+		WarningValues.Add(MakeShared<FJsonValueString>(W));
+	}
+	Out->SetArrayField(TEXT("layers"), LayerNames);
+	Out->SetStringField(TEXT("material"), Landscape->LandscapeMaterial ? Landscape->LandscapeMaterial->GetPathName() : FString());
+	Out->SetArrayField(TEXT("assets"), CreatedValues);
+	Out->SetArrayField(TEXT("warnings"), WarningValues);
+	UE_LOG(LogLilaLink, Log, TEXT("setLandscape: %s %dx%d, %d layers (%s)"), *Label, SizeX, SizeY, LayerNames.Num(), bCreated ? TEXT("created") : TEXT("updated"));
 	return MakeShared<FJsonValueObject>(Out);
 }
 

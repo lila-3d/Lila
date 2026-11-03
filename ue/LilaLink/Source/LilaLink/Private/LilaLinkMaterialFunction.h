@@ -29,6 +29,10 @@ struct FMaterialPair
  */
 FMaterialPair FindOrCreateMaterialPair(const FString& Folder, const FString& FunctionName, const FString& MaterialName, FString& OutError);
 
+/** Folder/Name, created when missing (bOutCreated set); null when it can't be made. */
+UMaterialFunction* FindOrCreateMaterialFunction(const FString& Folder, const FString& Name, bool& bOutCreated);
+UMaterial* FindOrCreateMaterial(const FString& Folder, const FString& Name, bool& bOutCreated);
+
 /**
  * A material function's graph, cleared and rebuilt down columns. Its parameter inputs default to a parameter of the same
  * name, so a material that calls the function and leaves a pin empty still has that parameter for its instances to set,
