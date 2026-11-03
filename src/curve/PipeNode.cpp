@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Profile.h"
 #include "curve/CurveNodes.h"
+#include "curve/StripUvAttrs.h"
 #include "geo/Conform.h"
 #include "geo/Ops.h"
 #include "ops/Command.h"
@@ -441,7 +442,8 @@ PipeOptions pipeOptionsOf(const Node& n)
     o.endCap = caps[std::clamp<int64_t>(i(n, "endCap"), 0, 3)];
     o.roundSegments = int(std::max<int64_t>(1, i(n, "roundSegments")));
     o.flip = b(n, "flip");
-    o.vPerCm = std::max(0.0, f(n, "texelDensity"));
+    o.uv = stripUvOf(n, PipeOptions{}.uv);
+    o.innerUv = uvRectOf(n, "inner");
     o.autoFillet = b(n, "autoFillet");
     o.bendRadius = std::max(0.0, f(n, "bendRadius"));
     o.minBendRadius = std::max(0.0, f(n, "minBendRadius"));
@@ -525,7 +527,6 @@ void registerPipeType()
               "How the path becomes rings: fixed per span, adaptive, or game (straight spans one ring, bends by angle).", body),
         iAttr("segments", 8, "Rings per curved span (fixed).", body, 1),
         fAttr("maxAngle", 10.0, "Largest turn between rings, degrees (adaptive and game).", body, 0.1, 90.0),
-        fAttr("texelDensity", 0.0, "V per cm along the path; 0 fits each segment to 0..1.", body, 0.0),
         bAttr("flip", false, "Flip the faces.", body),
         fAttr("splitEvery", 0.0, "Split into segments every this many cm (0: none); couplings go at the splits.", seg, 0.0),
         bAttr("splitAtBends", false, "Also split at each bend.", seg),
@@ -552,6 +553,10 @@ void registerPipeType()
         {.name = "partCount", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrOutput, .doc = "Parts placed (couplings and bolts)."},
         {.name = "warning", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Problems with the last build (tight bends)."},
     };
+    for (AttrDef& a : stripUvAttrs(PipeOptions{}.uv, true, "UVs"))
+        t.ownAttrs.push_back(std::move(a));
+    for (AttrDef& a : uvRectAttrs("inner", PipeOptions{}.innerUv, "a tube's inner surface", "UVs"))
+        t.ownAttrs.push_back(std::move(a));
     t.retiredAttrs = {"partsAtEnds"};
     t.create = [] { return std::make_unique<PipeNode>(); };
     types::registerType(std::move(t));

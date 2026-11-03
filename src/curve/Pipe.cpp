@@ -404,6 +404,22 @@ geo::Mesh userPart(const geo::Mesh& src, int axis, double scale)
     return m;
 }
 
+/**
+ * Moves a built-in part's uvs into the pipe's layout: lathe sides (0 to 1 around, 0 to 1 along) into the body rect, lathe
+ * ends (u from 1.1) into the caps rect.
+ */
+void partUvs(geo::Mesh& part, const StripUv& uv)
+{
+    auto c = part.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    for (glm::vec2& t : c)
+    {
+        if (t.x >= 1.05f)
+            t = uv.caps.at(t.x - 1.1, t.y);
+        else
+            t = uv.layout == UvLayout::Along ? uv.rect.at(t.y, t.x) : uv.rect.at(t.x, t.y);
+    }
+}
+
 double hexHeadRadius(double size) { return size * 0.866; }
 double nutHeight(double size) { return size * 0.8; }
 } // namespace
@@ -824,7 +840,7 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
     so.startCap = hollow ? CapMode::None : o.startCap;
     so.endCap = hollow ? CapMode::None : o.endCap;
     so.roundSegments = std::max(1, o.roundSegments);
-    so.vPerCm = o.vPerCm;
+    so.uv = o.uv;
     so.splits = splits;
     so.flip = o.flip;
     if (o.segmentMaterials)
@@ -859,7 +875,7 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
             p = D3(c + (D2(p) - c) * k, p.z);
         SweepOptions si = so;
         si.flip = !o.flip;
-        si.uRange = {1.1, 2.1};
+        si.uv.rect = o.innerUv;
         SweepResult in = sweep(inner, P, si);
         Index off = m.append(in.mesh);
         if (!P.closed)
@@ -875,11 +891,11 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
                 {
                     Index j1 = Index((j + 1) % np);
                     double a0 = glm::two_pi<double>() * double(j) / double(np), a1 = glm::two_pi<double>() * double(j + 1) / double(np);
-                    float u = float(2.3 + end * 1.2);
-                    std::vector<glm::vec2> uv = {{u + 0.5f + 0.5f * float(std::cos(a0)), 0.5f + 0.5f * float(std::sin(a0))},
-                                                 {u + 0.5f + 0.5f * float(std::cos(a1)), 0.5f + 0.5f * float(std::sin(a1))},
-                                                 {u + 0.5f + 0.5f * float(k * std::cos(a1)), 0.5f + 0.5f * float(k * std::sin(a1))},
-                                                 {u + 0.5f + 0.5f * float(k * std::cos(a0)), 0.5f + 0.5f * float(k * std::sin(a0))}};
+                    const UvRect& cr = o.uv.caps;
+                    std::vector<glm::vec2> uv = {cr.at(0.5 + 0.5 * std::cos(a0), 0.5 + 0.5 * std::sin(a0)),
+                                                 cr.at(0.5 + 0.5 * std::cos(a1), 0.5 + 0.5 * std::sin(a1)),
+                                                 cr.at(0.5 + 0.5 * k * std::cos(a1), 0.5 + 0.5 * k * std::sin(a1)),
+                                                 cr.at(0.5 + 0.5 * k * std::cos(a0), 0.5 + 0.5 * k * std::sin(a0))};
                     // Counter-clockwise about +t at the end ring; the start rim faces back.
                     Index f = addFaceUv(m, {O + Index(j), O + j1, I + j1, I + Index(j)}, uv, (end == 0) != o.flip);
                     setFaceInt(m, "part", f, ro.part);
@@ -914,6 +930,7 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
             {
                 SweepOptions eo;
                 eo.startCap = eo.endCap = CapMode::Grid;
+                eo.uv = o.uv;
                 geo::Mesh sleeve = sweep(circleProfile(cSides, ro), sub, eo).mesh;
                 place(m, std::move(sleeve), D3(0.0), Frame{D3(0, 0, 1), D3(1, 0, 0), D3(0, 1, 0)}, PipePart::Coupling, seg, partMaterial);
                 r.placements.push_back({sl.s, st.origin, st.frame, radiusHere, PipePart::Coupling, true});
@@ -933,6 +950,8 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
         }
         if (part.numFaces() == 0)
             continue;
+        if (o.coupling != CouplingKind::Mesh)
+            partUvs(part, o.uv);
         place(m, std::move(part), st.origin, st.frame, PipePart::Coupling, seg, partMaterial);
         r.placements.push_back({sl.s, st.origin, st.frame, radiusHere, PipePart::Coupling, sl.bend});
 
@@ -982,6 +1001,8 @@ PipeResult makePipe(const Spline& input, const PipeOptions& o)
         }
         if (fastener.numFaces() == 0)
             continue;
+        if (o.fasteners != FastenerKind::Mesh)
+            partUvs(fastener, o.uv);
         for (int b = 0; b < o.boltCount; ++b)
         {
             double a = o.boltPhase + glm::two_pi<double>() * b / o.boltCount;

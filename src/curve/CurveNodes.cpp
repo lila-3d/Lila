@@ -4,6 +4,7 @@
 #include "core/Profile.h"
 #include "curve/AlongNodes.h"
 #include "curve/CurveControls.h"
+#include "curve/StripUvAttrs.h"
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/Fit.h"
@@ -608,7 +609,7 @@ PlugValue sweepRun(const Node& n)
     so.endCap = caps[std::clamp<int64_t>(i(n, "endCap"), 0, 3)];
     so.roundSegments = int(std::max<int64_t>(1, i(n, "roundSegments")));
     so.miter = b(n, "miter");
-    so.vPerCm = std::max(0.0, f(n, "texelDensity"));
+    so.uv = stripUvOf(n, {});
     so.flip = b(n, "flip");
     double every = f(n, "splitEvery");
     int64_t shape = i(n, "profileShape");
@@ -821,9 +822,10 @@ void registerHistoryTypes()
                                         "How the profile turns along the path: rotation minimising (no twist), toward the up vector, or Frenet."),
                                   vAttr("upVector", D3(0, 1, 0), "Up for fixedUp frames, and the start orientation of others."),
                                   bAttr("miter", true, "At corners, set the profile in the bisector plane so walls keep their width."),
-                                  fAttr("texelDensity", 0.0, "V per cm along the path; 0 fits each part to 0..1.", 0.0),
                                   fAttr("splitEvery", 0.0, "Split the body into parts (own UV island and part id) every this many cm; 0 is none.", 0.0),
                                   bAttr("flip", false, "Flip the faces.")};
+    for (AttrDef& a : stripUvAttrs({}, true))
+        sweep.push_back(std::move(a));
     for (AttrDef& a : tessAttrs(2))
         sweep.push_back(a);
     sweep.push_back(meshOut());

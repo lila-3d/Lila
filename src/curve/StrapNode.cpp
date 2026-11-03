@@ -1,6 +1,7 @@
 #include "curve/EnvAttrs.h"
 #include "curve/EnvironmentNodes.h"
 #include "curve/StrapNode.h"
+#include "curve/StripUvAttrs.h"
 
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -127,7 +128,7 @@ StrapOptions strapOptionsOf(const Node& n)
     o.buckleScale = std::max(1.0, f(n, "buckleScale"));
     o.up = v(n, "up");
     o.flip = b(n, "flip");
-    o.vPerCm = std::max(0.0, f(n, "texelDensity"));
+    o.uv = stripUvOf(n, {});
     return o;
 }
 
@@ -169,7 +170,7 @@ json presetValues(std::string_view name)
 {
     json j = json::object();
     for (const AttrDef& d : types::find("curveStrap")->ownAttrs)
-        if ((d.flags & AttrInput) && !(d.flags & AttrHidden) && d.name != "flip" && d.name != "texelDensity" && d.name != "buckleAt")
+        if ((d.flags & AttrInput) && !(d.flags & AttrHidden) && d.name != "flip" && !isUvAttr(d.name) && d.name != "buckleAt")
             j[d.name] = d.type == PlugType::Enum ? json(d.enumNames[size_t(std::get<int64_t>(d.defaultValue))]) : toJson(d.defaultValue);
     j["gap"] = 0.0;
     if (name == "strap")
@@ -340,10 +341,11 @@ void registerTypes()
         fAttr("buckleLength", 4.0, "Buckle length along the strap, cm.", 0.0),
         fAttr("buckleScale", 1.3, "Buckle width over the strap's.", 1.0),
         bAttr("flip", false, "Put the strap on the other side of the path."),
-        fAttr("texelDensity", 0.0, "V per cm along the strap; 0 fits it to 0..1.", 0.0),
         {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The strap mesh."},
         stringOut("warning", "Problems with the last build."),
     };
+    for (AttrDef& a : stripUvAttrs({}, true, "UVs"))
+        t.ownAttrs.push_back(std::move(a));
     t.create = [] { return std::make_unique<StrapNode>(); };
     types::registerType(std::move(t));
 }
@@ -591,6 +593,7 @@ StrapOptions strapOptionsFrom(const json& values)
     o.buckleLength = std::max(0.0, num("buckleLength", 4.0));
     o.buckleScale = std::max(1.0, num("buckleScale", 1.3));
     o.flip = flag("flip", false);
+    o.uv = stripUvFrom(values, {});
     return o;
 }
 } // namespace lila::curve

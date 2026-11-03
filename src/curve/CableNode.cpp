@@ -212,6 +212,7 @@ void registerCableCommands()
              {"pipe", "", T::Bool, false, "Also build pipe geometry along the cables (the cable pipe preset, live)."},
              {"pipeRadius", "pr", T::Float, 0.6, "Pipe radius, cm.", {}, {}, 0.0},
              {"pipeSides", "ps", T::Int, 6, "Pipe sides.", {}, {}, 3.0},
+             {"pipeOptions", "", T::Any, nullptr, "{flag: value} for the pipe command, over the cable preset (uvLayout, texelDensity, vMin ...)."},
              {"constructionHistory", "ch", T::Bool, true, "Keep the cable node so moving anchors or editing slack updates the cables."},
              {"name", "n", T::String, nullptr, "Cable curve name; made unique."}})
         flags.push_back(std::move(fd));
@@ -292,11 +293,15 @@ void registerCableCommands()
                 json pipeMesh = nullptr;
                 if (a.get<bool>("pipe", false))
                 {
-                    json r = ops::execute("pipe", {{"args", {curve->path()}},
-                                                   {"preset", "cable"},
-                                                   {"radius", a.get<double>("pipeRadius", 0.6)},
-                                                   {"sides", a.get<int>("pipeSides", 6)},
-                                                   {"name", curve->name() + "Pipe"}});
+                    json call = {{"args", {curve->path()}},
+                                 {"preset", "cable"},
+                                 {"radius", a.get<double>("pipeRadius", 0.6)},
+                                 {"sides", a.get<int>("pipeSides", 6)},
+                                 {"name", curve->name() + "Pipe"}};
+                    if (a.has("pipeOptions") && a.flags["pipeOptions"].is_object())
+                        for (auto& [k, val] : a.flags["pipeOptions"].items())
+                            call[k] = val;
+                    json r = ops::execute("pipe", call);
                     if (r.is_array() && !r.empty())
                         pipeMesh = r[0];
                 }

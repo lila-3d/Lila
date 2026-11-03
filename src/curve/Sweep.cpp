@@ -78,15 +78,15 @@ D3 perpUnit(const D3& v, const D3& t)
     return l > 1e-12 ? r / l : D3(0.0);
 }
 
-/** Planar uvs for a loop of points in the frame plane, packed into the unit box at u offset. */
+/** Planar uvs for a loop of points in the frame plane, a disc of radius extent filling the rect. */
 std::vector<glm::vec2> planarUvs(const geo::Mesh& m, std::span<const Index> pts, const D3& origin, const D3& ax, const D3& ay, double extent,
-                                 double uOffset)
+                                 const UvRect& rect)
 {
     std::vector<glm::vec2> out;
     for (Index p : pts)
     {
         D3 d = m.position(p) - origin;
-        out.push_back(glm::vec2(float(uOffset + 0.5 + glm::dot(d, ax) / (2.0 * extent)), float(0.5 + glm::dot(d, ay) / (2.0 * extent))));
+        out.push_back(rect.at(0.5 + glm::dot(d, ax) / (2.0 * extent), 0.5 + glm::dot(d, ay) / (2.0 * extent)));
     }
     return out;
 }
@@ -224,6 +224,8 @@ bool parseCapMode(std::string_view name, CapMode* out)
     return false;
 }
 
+const char* uvLayoutName(UvLayout l) { return l == UvLayout::Along ? "along" : "around"; }
+
 std::vector<geo::Index> gridFill(geo::Mesh& m, std::span<const geo::Index> loop, bool flip,
                                  const std::function<glm::dvec3(const glm::dvec3& p, double u, double v)>& lift)
 {
@@ -283,23 +285,35 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
     Profile prof = input;
     if (prof.hard.size() != prof.size())
         prof.hard.assign(prof.size(), 0);
+    const size_t np = prof.size();
+    const bool pc = prof.closed && np >= 3;
+    const size_t around = pc ? np : np - 1;
+    const bool given = prof.around.size() == (pc ? np + 1 : np);
+    std::vector<double> pu(np + 1, 0.0);
+    if (given)
+        std::copy(prof.around.begin(), prof.around.end(), pu.begin());
     if (prof.closed && prof.signedArea() < 0.0)
     {
         std::reverse(prof.points.begin() + 1, prof.points.end());
         std::reverse(prof.hard.begin() + 1, prof.hard.end());
+        if (given)
+            std::reverse(pu.begin(), pu.end());
     }
-    const size_t np = prof.size();
-    const bool pc = prof.closed && np >= 3;
-    const size_t around = pc ? np : np - 1;
 
     // U across the profile.
-    std::vector<double> pu(np + 1, 0.0);
-    for (size_t j = 1; j <= np; ++j)
-        pu[j] = pu[j - 1] + (j < np || pc ? glm::distance(prof.points[j - 1], prof.points[j % np]) : 0.0);
-    double plen = pc ? pu[np] : pu[np - 1];
-    for (double& x : pu)
-        x = plen > kEps ? x / plen : 0.0;
-    auto U = [&](size_t j) { return float(o.uRange.x + (o.uRange.y - o.uRange.x) * pu[j]); };
+    if (!given)
+    {
+        for (size_t j = 1; j <= np; ++j)
+            pu[j] = pu[j - 1] + (j < np || pc ? glm::distance(prof.points[j - 1], prof.points[j % np]) : 0.0);
+        double plen = pc ? pu[np] : pu[np - 1];
+        for (double& x : pu)
+            x = plen > kEps ? x / plen : 0.0;
+    }
+    const bool uAlong = o.uv.layout == UvLayout::Along;
+    const int aroundAxis = uAlong ? 1 : 0, alongAxis = 1 - aroundAxis;
+    const UvRect& rect = o.uv.rect;
+    auto U = [&](size_t j) { return rect.lo[aroundAxis] + (rect.hi[aroundAxis] - rect.lo[aroundAxis]) * pu[j]; };
+    auto uvOf = [&](size_t j, double along) { return uAlong ? glm::vec2(float(along), float(U(j))) : glm::vec2(float(U(j)), float(along)); };
 
     struct Station
     {
@@ -371,12 +385,13 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
     std::vector<double> partEnd(size_t(parts), L);
     for (int k = 0; k + 1 < parts; ++k)
         partEnd[size_t(k)] = partStart[size_t(k) + 1];
-    auto V = [&](double s, int part) {
-        double s0 = partStart[size_t(part)], s1 = partEnd[size_t(part)];
-        if (o.vPerCm > 0.0)
-            return float((s - s0) * o.vPerCm);
-        return float(s1 - s0 > kEps ? (s - s0) / (s1 - s0) : 0.0);
+    const double alongLo = rect.lo[alongAxis], alongSpan = rect.hi[alongAxis] - rect.lo[alongAxis];
+    // Along units per cm in a part: the density, or the rect's span over the part's length.
+    auto perCm = [&](int part) {
+        double len = partEnd[size_t(part)] - partStart[size_t(part)];
+        return o.uv.perCm > 0.0 ? o.uv.perCm : len > kEps ? alongSpan / len : 0.0;
     };
+    auto V = [&](double s, int part) { return alongLo + (s - partStart[size_t(part)]) * perCm(part); };
 
     geo::Mesh& m = r.mesh;
     EdgeMarks marks;
@@ -432,12 +447,12 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
         int part = partAfter[i];
         Index A = ringAfter[i], B = ringBefore[i1];
         double s0 = st[i].s, s1 = i1 == 0 ? L : st[i1].s;
-        float v0 = V(s0, part), v1 = V(s1, part);
+        double v0 = V(s0, part), v1 = V(s1, part);
         for (size_t j = 0; j < around; ++j)
         {
             size_t j1 = (j + 1) % np;
             Index q[4] = {A + Index(j), A + Index(j1), B + Index(j1), B + Index(j)};
-            glm::vec2 uv[4] = {{U(j), v0}, {U(j + 1), v0}, {U(j + 1), v1}, {U(j), v1}};
+            glm::vec2 uv[4] = {uvOf(j, v0), uvOf(j + 1, v0), uvOf(j + 1, v1), uvOf(j, v1)};
             Index f = addFaceUv(m, q, uv, o.flip);
             setFaceInt(m, "part", f, part);
             if (size_t(part) < o.partMaterials.size())
@@ -489,7 +504,6 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
                 rad = std::max(rad, glm::distance(m.position(p), centre));
             int part = partAfter[si];
             double extent = std::max(rad, 1e-9);
-            double uOff = 1.1 + end * 1.1;
             if (mode == CapMode::Round && o.roundSegments > 1)
             {
                 int R = o.roundSegments;
@@ -501,21 +515,20 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
                 std::vector<D3> base;
                 for (Index p : loop)
                     base.push_back(m.position(p));
-                float vBase = V(end ? L : 0.0, part);
-                double vStep = (o.vPerCm > 0.0 ? o.vPerCm : 1.0 / std::max(partEnd[size_t(part)] - partStart[size_t(part)], kEps)) * meanR *
-                               glm::half_pi<double>() / R;
+                double vBase = V(end ? L : 0.0, part);
+                double vStep = perCm(part) * meanR * glm::half_pi<double>() / R;
                 for (int k = 1; k < R; ++k)
                 {
                     double a = glm::half_pi<double>() * k / R;
                     std::vector<Index> ringPts;
                     for (const D3& b : base)
                         ringPts.push_back(m.addPoint(centre + (b - centre) * std::cos(a) + dir * meanR * std::sin(a)));
-                    float va = vBase + float((end ? 1.0 : -1.0) * vStep * (k - 1)), vb = vBase + float((end ? 1.0 : -1.0) * vStep * k);
+                    double va = vBase + (end ? 1.0 : -1.0) * vStep * (k - 1), vb = vBase + (end ? 1.0 : -1.0) * vStep * k;
                     for (size_t j = 0; j < np; ++j)
                     {
                         size_t j1 = (j + 1) % np;
                         Index q[4] = {prev[j], prev[j1], ringPts[j1], ringPts[j]};
-                        glm::vec2 uv[4] = {{U(j), va}, {U(j + 1), va}, {U(j + 1), vb}, {U(j), vb}};
+                        glm::vec2 uv[4] = {uvOf(j, va), uvOf(j + 1, va), uvOf(j + 1, vb), uvOf(j, vb)};
                         Index f = addFaceUv(m, q, uv, flip);
                         setFaceInt(m, "part", f, part);
                         if (size_t(part) < o.partMaterials.size())
@@ -535,7 +548,7 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
                 for (Index f : fs)
                 {
                     std::vector<Index> pts = m.facePoints(f);
-                    auto uvs = planarUvs(m, pts, cLast, ring.frame.n, ring.frame.b, extent, uOff);
+                    auto uvs = planarUvs(m, pts, cLast, ring.frame.n, ring.frame.b, extent, o.uv.caps);
                     auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
                     size_t c = 0;
                     m.forEachFaceCorner(f, [&](Index cc) { uv[cc] = uvs[c++]; });
@@ -557,7 +570,7 @@ SweepResult sweep(const Profile& input, const Path& path, const SweepOptions& o)
             for (Index f : fs)
             {
                 std::vector<Index> pts = m.facePoints(f);
-                auto uvs = planarUvs(m, pts, centre, ring.frame.n, ring.frame.b, extent, uOff);
+                auto uvs = planarUvs(m, pts, centre, ring.frame.n, ring.frame.b, extent, o.uv.caps);
                 auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
                 size_t c = 0;
                 m.forEachFaceCorner(f, [&](Index cc) { uv[cc] = uvs[c++]; });
@@ -674,7 +687,7 @@ geo::Mesh revolve(const Polyline& prof, const RevolveOptions& o)
                     ext = std::max(ext, glm::distance(m.position(p), c));
                 D3 x = glm::normalize(m.position(loop[0]) - c);
                 D3 y = glm::cross(ax, x);
-                auto uvs = planarUvs(m, pts, c, x, y, ext, 1.1 + end * 1.1);
+                auto uvs = planarUvs(m, pts, c, x, y, ext, UvRect{{1.1 + end * 1.1, 0.0}, {2.1 + end * 1.1, 1.0}});
                 auto uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
                 size_t k = 0;
                 m.forEachFaceCorner(f, [&](Index cc) { uv[cc] = uvs[k++]; });
@@ -1062,7 +1075,7 @@ geo::Mesh loft(const std::vector<Spline>& sections, const LoftOptions& o, const 
             for (Index f : fs)
             {
                 std::vector<Index> pts = m.facePoints(f);
-                auto uvs = planarUvs(m, pts, c, x, y, ext, 1.1 + end * 1.1);
+                auto uvs = planarUvs(m, pts, c, x, y, ext, UvRect{{1.1 + end * 1.1, 0.0}, {2.1 + end * 1.1, 1.0}});
                 auto uvl = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
                 size_t k = 0;
                 m.forEachFaceCorner(f, [&](Index cc) { uvl[cc] = uvs[k++]; });

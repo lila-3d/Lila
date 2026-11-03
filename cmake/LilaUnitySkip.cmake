@@ -69,6 +69,7 @@ set(LILA_UNITY_SKIP
     src/curve/Ops.cpp
     src/curve/Pipe.cpp
     src/curve/PipeNode.cpp
+    src/curve/StripUvAttrs.cpp
     src/curve/Planar.cpp
     src/curve/PlanarNodes.cpp
     src/curve/Roof.cpp
@@ -197,6 +198,7 @@ set(LILA_UNITY_SKIP
     tests/curve/test_environment.cpp
     tests/curve/test_groom.cpp
     tests/curve/test_pipe.cpp
+    tests/curve/test_pipe_tools.cpp
     tests/curve/test_planar_robust.cpp
     tests/curve/test_planar_scene.cpp
     tests/curve/test_roof.cpp

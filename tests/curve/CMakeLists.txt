@@ -15,6 +15,7 @@ add_executable(lila_curve_tests
     test_environment.cpp
     test_groom.cpp
     test_pipe.cpp
+    test_pipe_tools.cpp
     test_planar.cpp
     test_planar_robust.cpp
     test_planar_scene.cpp

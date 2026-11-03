@@ -590,7 +590,7 @@ TEST_CASE("sweep topology and uvs")
     // Parts: a split adds a ring and a second part with its own V range.
     o = {};
     o.splits = {60.0};
-    o.vPerCm = 0.0;
+    o.uv.perCm = 0.0;
     r = sweep(prof, p, o);
     CHECK(r.parts == 2);
     CHECK(r.rings.size() == 6);

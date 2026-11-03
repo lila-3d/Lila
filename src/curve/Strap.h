@@ -87,7 +87,8 @@ struct StrapOptions
     glm::dvec3 up{0.0};
     /** The other side of the path is outside. */
     bool flip = false;
-    double vPerCm = 0.0;
+    /** Band, strands and buckle share the strip; the ends go into its caps rectangle. */
+    StripUv uv;
 };
 
 /** Face attr "strapPart" values. */

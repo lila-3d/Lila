@@ -21,6 +21,11 @@ struct LILA_SCENE_API Profile
     bool closed = true;
     /** Per point (may be empty): a crease runs along the sweep from this point. */
     std::vector<uint8_t> hard;
+    /**
+     * Where each point sits around the profile, 0 to 1 across the UV strip (may be empty: arc length, normalised). A
+     * closed profile has one more, for its first point again at the end of the loop.
+     */
+    std::vector<double> around;
 
     size_t size() const { return points.size(); }
     /** Signed area in the xy plane; positive is counter-clockwise seen from +z. */
@@ -68,6 +73,37 @@ enum class CapMode : uint8_t
 LILA_SCENE_API const char* capModeName(CapMode m);
 LILA_SCENE_API bool parseCapMode(std::string_view name, CapMode* out);
 
+enum class UvLayout : uint8_t
+{
+    Around, // U around the profile, V along the path
+    Along,  // U along the path, V around the profile: the trim strip convention
+};
+LILA_SCENE_API const char* uvLayoutName(UvLayout l);
+
+/** A rectangle of UV space, (min u, min v) to (max u, max v). */
+struct UvRect
+{
+    glm::dvec2 lo{0.0, 0.0};
+    glm::dvec2 hi{1.0, 1.0};
+
+    /** The point at fractions (u, v) across the rectangle. */
+    glm::vec2 at(double u, double v) const { return glm::vec2(lo + (hi - lo) * glm::dvec2(u, v)); }
+};
+
+/**
+ * Where a swept surface's UVs land. The coordinate around the profile fills its side of `rect`; the one along the path
+ * fills the other side, or with `perCm` starts at its low edge and runs on at world scale (a trim strip tiling along
+ * its length). Caps are mapped flat into `caps`.
+ */
+struct StripUv
+{
+    UvLayout layout = UvLayout::Around;
+    UvRect rect;
+    /** UV units per cm along the path; 0 fits each part to the rect. */
+    double perCm = 0.0;
+    UvRect caps{{1.1, 0.0}, {2.1, 1.0}};
+};
+
 struct SweepOptions
 {
     /** Profile scale at arc length s (cm along the path); null is 1. Multiplies the path's own scale. */
@@ -82,10 +118,8 @@ struct SweepOptions
     /** Rings at kinks sharper than this (radians) get hard edges. */
     double hardKinkAngle = 0.5236;
 
-    /** V per cm along the path (texel density); 0 normalises each part to [0, 1]. */
-    double vPerCm = 0.0;
-    /** U across the profile is its arc length normalised to this range (a trim sheet strip). */
-    glm::dvec2 uRange{0.0, 1.0};
+    /** Around the profile is its arc length, normalised. */
+    StripUv uv;
 
     /** Arc lengths where the body splits into parts: each starts a new UV island and part id. */
     std::vector<double> splits;

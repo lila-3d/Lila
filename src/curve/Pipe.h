@@ -54,7 +54,12 @@ struct PipeOptions
     CapMode endCap = CapMode::None;
     int roundSegments = 3;
     bool flip = false;
-    double vPerCm = 0.0;
+    /**
+     * Body UVs. The inner surface of a tube goes into innerUv with the same layout; caps, rims and the ends of built-in
+     * parts into uv.caps, the sides of built-in parts into uv.rect.
+     */
+    StripUv uv{.caps = {{2.2, 0.0}, {3.2, 1.0}}};
+    UvRect innerUv{{1.1, 0.0}, {2.1, 1.0}};
 
     /** Round the path's corners (tangent breaks) with arcs of bendRadius (0: twice the radius). */
     bool autoFillet = true;

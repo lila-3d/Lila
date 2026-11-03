@@ -498,7 +498,7 @@ StrapResult makeStrap(const Spline& path, const StrapOptions& o)
     r.length = p.length;
 
     SweepOptions so;
-    so.vPerCm = o.vPerCm;
+    so.uv = o.uv;
     if (!pl.closed)
         so.startCap = so.endCap = CapMode::Ngon;
 
@@ -547,7 +547,7 @@ StrapResult makeStrap(const Spline& path, const StrapOptions& o)
         Path bp = makePath(bl, frames(bl, fo));
         SweepOptions bo;
         bo.startCap = bo.endCap = CapMode::Ngon;
-        bo.vPerCm = o.vPerCm;
+        bo.uv = o.uv;
         geo::Mesh block = sweep(rope ? circleProfile(std::clamp(o.strandSides * 2, 6, 64), width * 0.5 * scale) : strapimpl::bandProfile(width * scale, height, o.bevel), bp, bo).mesh;
         strapimpl::tagFaces(block, StrapPart::Buckle);
         r.mesh.append(block);
