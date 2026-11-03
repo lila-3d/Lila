@@ -334,7 +334,8 @@ public:
             status.fields.push_back({"level", QString("%1/%2").arg(s->level).arg(s->stack->top())});
         status.fields.push_back({"radius", QString("%1 px").arg(int(std::lround(st.stroke.radius)))});
         status.fields.push_back({"strength", QString::number(st.stroke.strength, 'f', 2)});
-        status.flags = {{"invert", invert}, {"symmetry", s->sculpt.symmetric()}};
+        status.flags = {{"invert", invert}};
+        status.symmetry = ToolSymmetry{s->sculpt.symmetric()};
         status.keys = {{"Shift", "smooth"}, {"Ctrl", "invert"}, {"B-drag", "radius"}, {"M-drag", "strength"}};
         drawToolStatus(p, view, status);
 

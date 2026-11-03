@@ -15,6 +15,7 @@
 #include "ui/LocateFlash.h"
 #include "ui/MeshCache.h"
 #include "ui/OptionBox.h"
+#include "ui/ViewportTool.h"
 #include "ui/ViewportWidget.h"
 #include "uv/Metrics.h"
 #include "uv/Uv.h"
@@ -64,7 +65,7 @@ bool itemDefault(std::string_view item)
 {
     if (item == "polyCount")
         return PrefStore::get().value<bool>("general", "/viewport/polyCount", true);
-    return item == "cameraNames" || item == "viewAxis" || item == "viewCube";
+    return item == "cameraNames" || item == "viewAxis" || item == "viewCube" || item == "symmetry";
 }
 
 /** Whether a part of the item being built is on, by part id. */
@@ -378,20 +379,24 @@ Block objectBlock(scene::Graph& g, const Context& ctx, const PartOn& on)
     return b;
 }
 
-Block symmetryBlock(scene::Graph& g)
+/** The selected meshes' shared symmetry, nullopt with none selected. Mixed axes read as on, "Mixed". */
+std::optional<ToolSymmetry> selectionSymmetry(scene::Graph& g)
 {
     std::optional<QString> label;
     bool mixed = false;
     for (scene::Node* n : selectedMeshes(g))
     {
         const std::optional<geo::SymmetrySpec> spec = scene::symmetrySpec(*n);
-        const QString a = !spec ? QString("Off") : spec->radial ? "Radial " + QString::number(spec->radial->count()) + (spec->radial->mirror() ? " + mirror" : "")
-                                                                : "Object " + QString(QChar('X' + spec->axis));
+        const QString a = !spec ? QString() : spec->radial ? "Radial " + QString::number(spec->radial->count()) + (spec->radial->mirror() ? " + mirror" : "")
+                                                           : "Object " + QString(QChar('X' + spec->axis));
         mixed = mixed || (label && *label != a);
         label = a;
     }
-    QString text = !label ? QString("-") : mixed ? QString("Mixed") : *label;
-    return {{"Symmetry:", {text}}};
+    if (!label)
+        return std::nullopt;
+    if (mixed)
+        return ToolSymmetry{true, "Mixed"};
+    return ToolSymmetry{!label->isEmpty(), *label};
 }
 
 Block softSelectBlock(const PartOn& on)
@@ -676,7 +681,8 @@ bool draw(OverlayPainter& p, const Context& ctx)
     if (!right.empty())
         rightBlocks.push_back(std::move(right));
     if (on("symmetry"))
-        rightBlocks.push_back(symmetryBlock(g));
+        if (std::optional<ToolSymmetry> sym = selectionSymmetry(g); sym && sym->on)
+            drawSelectionSymmetry(*sym);
     if (on("softSelect"))
         rightBlocks.push_back(softSelectBlock(parts("softSelect")));
     // Shown whenever it is set, so nobody reads display-relative numbers as world ones.

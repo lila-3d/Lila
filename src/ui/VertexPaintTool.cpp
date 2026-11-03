@@ -1000,8 +1000,8 @@ public:
                                    {"channels", QString::fromStdString(st.channels).toUpper()},
                                    {"radius", QString("%1 px").arg(int(std::lround(st.stroke.radius)))},
                                    {"strength", QString::number(st.stroke.strength, 'f', 2)}},
-                        .flags = {{"mirror", mSymmetryOn}},
-                        .keys = {{"Shift", "blur"}}});
+                        .keys = {{"Shift", "blur"}},
+                        .symmetry = ToolSymmetry{mSymmetryOn}});
         if (mGradientDrag)
         {
             auto a = view.project(mGradientFrom), b = view.project(mGradientTo);

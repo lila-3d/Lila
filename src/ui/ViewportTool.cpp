@@ -2,12 +2,15 @@
 
 #include "core/Events.h"
 #include "core/Log.h"
+#include "ui/Theme.h"
+#include "ui/ViewportDisplay.h"
 
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPixmap>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 
 namespace lila::ui
@@ -204,6 +207,48 @@ const QCursor& deleteCursor()
     return cursor;
 }
 
+namespace
+{
+std::optional<ToolSymmetry> gSelectionSymmetry;
+
+/** The symmetry chip centred at top; returns its bottom. Lit and tinted when on, so the state reads at a glance. */
+double drawSymmetry(OverlayPainter& p, const ViewInfo& view, const ToolSymmetry& sym, double top, std::vector<QRectF>& occupied)
+{
+    static double widest = 0.0;
+    constexpr double dot = 14.0;
+    const QString value = !sym.on ? QString("off") : sym.axis.isEmpty() ? QString("on") : sym.axis;
+    const double labelWidth = OverlayPainter::textWidth("Symmetry");
+    widest = std::max(widest, dot + labelWidth + kStatusPairGap + OverlayPainter::textWidth(value));
+    QRectF plate((view.width - widest) / 2.0 - kStatusPadX, top, widest + 2.0 * kStatusPadX, kStatusRow + 2.0 * kStatusPadY);
+    plate = clearOf(plate, occupied);
+    const bool colored = viewportDisplay::accentColors(viewportDisplay::kComponentColors);
+    const glm::vec4 accent = colored ? themeSrgb("accent", glm::vec4(0.3f, 0.75f, 1.0f, 1.0f)) : gray(kStatusBright);
+    p.rect(plate, kStatusPlate);
+    if (sym.on && colored)
+        p.rect(plate, {accent.r, accent.g, accent.b, 0.18f});
+
+    double x = plate.left() + kStatusPadX;
+    const double baseline = plate.top() + kStatusPadY + kStatusBaseline;
+    const QPointF centre(x + 4.0, baseline - 4.5);
+    if (sym.on)
+        p.disc(centre, 3.5f, accent);
+    else
+    {
+        std::vector<QPointF> ring;
+        for (int k = 0; k < 16; ++k)
+            ring.push_back(centre + QPointF(std::cos(k * 0.3927), std::sin(k * 0.3927)) * 3.0);
+        p.polyline(ring, 1.0f, gray(kStatusOff), true);
+    }
+    x += dot;
+    x += p.text(QPointF(x, baseline), "Symmetry", gray(sym.on ? kStatusBright : kStatusLabel));
+    p.text(QPointF(x + kStatusPairGap, baseline), value, sym.on ? accent : gray(kStatusOff));
+    occupied.push_back(plate);
+    return plate.bottom();
+}
+} // namespace
+
+void drawSelectionSymmetry(const ToolSymmetry& symmetry) { gSelectionSymmetry = symmetry; }
+
 void drawToolStatus(OverlayPainter&, const ViewInfo&, const ToolStatus& status) { gStatuses.push_back(status); }
 
 void drawToolMessage(OverlayPainter&, const ViewInfo&, const QString& text, const glm::vec4& color)
@@ -215,6 +260,16 @@ void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vecto
 {
     std::vector<QRectF> occupied = hud;
     double top = 8.0;
+    std::optional<ToolSymmetry> sym = gSelectionSymmetry;
+    for (const ToolStatus& s : gStatuses)
+        if (s.symmetry)
+        {
+            sym = s.symmetry;
+            break;
+        }
+    gSelectionSymmetry.reset();
+    if (sym)
+        top = drawSymmetry(p, view, *sym, top, occupied) + 4.0;
     for (const ToolStatus& s : gStatuses)
         top = drawStatus(p, view, s, top, occupied) + 4.0;
     gStatuses.clear();

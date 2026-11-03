@@ -361,13 +361,13 @@ public:
                         .mode = *preset ? QString(preset) : QString("no preset"),
                         .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 2)},
                                    {"sides", QString::number(mSides)},
-                                   {"wall", mWall > 0.0 ? QString("%1 cm").arg(mWall, 0, 'f', 2) : QString("solid")},
-                                   {"symmetry", symmetryName(symmetryPref())}},
+                                   {"wall", mWall > 0.0 ? QString("%1 cm").arg(mWall, 0, 'f', 2) : QString("solid")}},
                         .flags = {{"surfaces", mSurface}, {"from loop", mFromLoop}, {"attach", mAttach}},
                         .prompt = mStart ? QString("from the selected loop") : QString(),
                         .keys = {{"B-drag", "radius"}, {"+/-", "sides"}, {"P", "preset"}, {"T", "wall"}, {"S", "surfaces"}, {"F", "from loop"},
                                  {"A", "attach"}, {"Y", "symmetry"}, {"Z", "undo point"}, {"Shift+Z", "redo point"}, {"Enter", "build"},
-                                 {"Esc", "exit"}}});
+                                 {"Esc", "exit"}},
+                        .symmetry = curveSymmetry()});
     }
 
 private:

@@ -269,9 +269,9 @@ public:
             p.disc(s, 3.5f, colour);
         drawToolStatus(p, view,
                        {.tool = name(),
-                        .flags = {{"mirror", mMirror}},
                         .prompt = "click around the panel on the body",
-                        .keys = {{"Enter", "make"}, {"Backspace", "undo point"}, {"M", "mirror"}}});
+                        .keys = {{"Enter", "make"}, {"Backspace", "undo point"}, {"M", "mirror"}},
+                        .symmetry = ToolSymmetry{mMirror}});
     }
 
     std::optional<QCursor> cursor() const override { return QCursor(Qt::CrossCursor); }

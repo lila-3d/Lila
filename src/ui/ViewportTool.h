@@ -82,6 +82,14 @@ struct ToolFlag
     bool on = false;
 };
 
+/** Symmetry as a tool applies it, drawn on its own at the top centre of the view. */
+struct ToolSymmetry
+{
+    bool on = false;
+    /** The axis or kind when on, e.g. "X", "Object X", "Radial 6"; empty shows just "on". */
+    QString axis;
+};
+
 /**
  * A tool's readout along the top of the view: what the tool is working on and with, then how to drive it. Each part
  * keeps the widest width it has shown for this tool, so the readout holds still while values change.
@@ -99,13 +107,17 @@ struct ToolStatus
     /** What to do next, in a few words: "select a mesh", "click the start, then the end". */
     QString prompt;
     std::vector<KeyHint> keys;
+    /** Set by tools that mirror their edits; shown above the readout, not in it. */
+    std::optional<ToolSymmetry> symmetry;
 };
 
 /** Queues a tool's readout for flushToolMessages. */
 LILA_UI_API void drawToolStatus(OverlayPainter& p, const ViewInfo& view, const ToolStatus& status);
 /** A one-off line under the tool readout, for warnings and notices. Queued and drawn by flushToolMessages once the HUD is placed. */
 LILA_UI_API void drawToolMessage(OverlayPainter& p, const ViewInfo& view, const QString& text, const glm::vec4& color = {0.95f, 0.95f, 0.95f, 1.0f});
-/** Draws the queued readouts and messages, moved down past any of the occupied HUD rects they would cover. */
+/** The selected meshes' symmetry, shown at the top centre when no tool reports its own. */
+LILA_UI_API void drawSelectionSymmetry(const ToolSymmetry& symmetry);
+/** Draws the symmetry indicator, the queued readouts and messages, moved down past any of the occupied HUD rects they would cover. */
 LILA_UI_API void flushToolMessages(OverlayPainter& p, const ViewInfo& view, const std::vector<QRectF>& occupied);
 /** Height drawKeyList gives the hints. */
 LILA_UI_API double keyListHeight(size_t rows);

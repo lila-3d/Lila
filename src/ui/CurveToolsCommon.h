@@ -46,6 +46,12 @@ void drawSpline(render::FrameState& f, const curve::Spline& s, const glm::vec4& 
 /** /curveTools/symmetry: the axis new curves are mirrored across (1 x, 2 y, 3 z), 0 for none. Y in the draw tools cycles it. */
 inline int symmetryPref() { return std::clamp(prefs().value<int>("general", "/curveTools/symmetry", 0), 0, 3); }
 inline const char* symmetryName(int pref) { return pref == 1 ? "x" : pref == 2 ? "y" : pref == 3 ? "z" : "off"; }
+/** The curve tools' symmetry pref for a ToolStatus. */
+inline ToolSymmetry curveSymmetry()
+{
+    const int pref = symmetryPref();
+    return {pref != 0, pref == 1 ? "X" : pref == 2 ? "Y" : pref == 3 ? "Z" : ""};
+}
 /** drawSpline, plus its mirror across the world plane while drawing with symmetry. */
 void drawSymmetric(render::FrameState& f, const curve::Spline& s, const glm::vec4& color);
 /** A faint red world plane across the symmetry axis, while symmetry is on. */
@@ -209,7 +215,7 @@ public:
     {
         if (mOn)
             s.fields.push_back({"offset", QString("%1 cm").arg(mOffset, 0, 'f', 2)});
-        s.fields.push_back({"symmetry", symmetryName(symmetryPref())});
+        s.symmetry = curveSymmetry();
         s.flags.push_back({"surfaces", mOn});
         s.flags.push_back({"keep on surface", mConform});
         s.keys.push_back({"S", "surfaces"});

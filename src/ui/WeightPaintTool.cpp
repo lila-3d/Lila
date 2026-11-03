@@ -399,7 +399,8 @@ public:
                         .subject = QString::fromStdString(g.node(mMesh)->name()),
                         .mode = kModeNames[int(mode)],
                         .fields = {{mapMode() ? "map" : "influence", infName}},
-                        .keys = {{"Shift", "smooth"}}});
+                        .keys = {{"Shift", "smooth"}},
+                        .symmetry = ToolSymmetry{weightPaintSettings().stroke.mirror, QString(QChar('X' + weightPaintSettings().mirrorAxis))}});
 
         const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
         std::optional<brush::ui::CursorSurface> surface;

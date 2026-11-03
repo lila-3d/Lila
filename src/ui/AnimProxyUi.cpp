@@ -418,10 +418,10 @@ public:
         drawToolStatus(p, view,
                        {.tool = name(),
                         .fields = {{"pieces", QString::number(mPieces.size())}},
-                        .flags = {{"symmetry", mSymmetryOn}},
                         .prompt = "drag across the mesh to add a plane",
                         .keys = {{"Rim-drag", "move"}, {"Ctrl-drag", "turn"}, {"Wheel", "size"}, {"Delete", "remove"}, {"S", "suggest at joints"},
-                                 {"X", "symmetry"}, {"Enter", mAnimProxy ? "make proxy" : "split"}, {"Esc", "cancel"}}});
+                                 {"X", "symmetry"}, {"Enter", mAnimProxy ? "make proxy" : "split"}, {"Esc", "cancel"}},
+                        .symmetry = ToolSymmetry{mSymmetryOn}});
     }
 
 private:

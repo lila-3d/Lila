@@ -159,17 +159,18 @@ public:
         else if (adjusting())
             drawToolStatus(p, view,
                            {.tool = "EZ Curve",
-                            .fields = {{"points", QString::number(value("points").get<int>())}, {"symmetry", symmetryName(symmetryPref())}},
+                            .fields = {{"points", QString::number(value("points").get<int>())}},
                             .flags = {{"follow surface", value("follow").get<bool>()}, {"keep out of meshes", value("clearance").get<bool>()}},
                             .keys = {{"Drag up/down", "bend"}, {"Drag sideways", "twist"}, {"Shift", "sag"}, {"Ctrl", "lift"}, {"Shift+scroll", "points"},
                                      {"F", "follow surface"}, {"O", "keep out of meshes"}, {"Y", "symmetry"}, {"R", "reset"}, {"Enter", "done"},
-                                     {"Click", "next curve"}}});
+                                     {"Click", "next curve"}},
+                            .symmetry = curveSymmetry()});
         else
             drawToolStatus(p, view,
                            {.tool = "EZ Curve",
-                            .fields = {{"symmetry", symmetryName(symmetryPref())}},
                             .prompt = "click the start point",
-                            .keys = {{"Y", "symmetry"}, {"Esc", "exit"}}});
+                            .keys = {{"Y", "symmetry"}, {"Esc", "exit"}},
+                            .symmetry = curveSymmetry()});
     }
 
 private:
