@@ -230,6 +230,32 @@ std::vector<Stone> vaultStones(const VaultSpec& v, const Units& stone, uint64_t 
 {
     std::vector<Stone> out;
     const double j = std::max(0.0, stone.joint);
+    if (v.groin)
+    {
+        // Each barrel keeps its web where it is the higher of the two: across its own axis nearer the middle than along it.
+        const double half = v.profile.span * 0.5;
+        VaultSpec x = v, z = v;
+        x.groin = z.groin = false;
+        x.from = v.centre - glm::dvec3(half, 0.0, 0.0);
+        x.to = v.centre + glm::dvec3(half, 0.0, 0.0);
+        z.from = v.centre - glm::dvec3(0.0, 0.0, half);
+        z.to = v.centre + glm::dvec3(0.0, 0.0, half);
+        for (const Stone& s : vaultStones(x, stone, seed))
+            if (std::abs(s.center.z - v.centre.z) <= std::abs(s.center.x - v.centre.x))
+                out.push_back(s);
+        const size_t fromX = out.size();
+        for (const Stone& s : vaultStones(z, stone, seed + 1))
+        {
+            if (std::abs(s.center.x - v.centre.x) > std::abs(s.center.z - v.centre.z))
+                continue;
+            bool clash = false;
+            for (size_t k = 0; k < fromX && !clash; ++k)
+                clash = glm::length(out[k].center - s.center) < glm::length(s.size) && overlaps(out[k], s, 0.01);
+            if (!clash)
+                out.push_back(s);
+        }
+        return out;
+    }
     if (!v.dome)
     {
         const glm::dvec3 axis = v.to - v.from;
@@ -306,6 +332,91 @@ std::vector<Stone> vaultStones(const VaultSpec& v, const Units& stone, uint64_t 
     return out;
 }
 
+std::vector<Stone> pavingStones(const PavingSpec& p, double joint, uint64_t seed)
+{
+    std::vector<Stone> out;
+    if (p.outline.size() < 3)
+        return out;
+    const double j = std::max(0.0, joint), size = std::max(1.0, p.size);
+    auto inside = [&](double x, double z) {
+        bool in = false;
+        for (size_t i = 0, k = p.outline.size() - 1; i < p.outline.size(); k = i++)
+            if ((p.outline[i].z > z) != (p.outline[k].z > z) &&
+                x < (p.outline[k].x - p.outline[i].x) * (z - p.outline[i].z) / (p.outline[k].z - p.outline[i].z) + p.outline[i].x)
+                in = !in;
+        return in;
+    };
+    const bool tiles = p.kind == "tiles";
+    const glm::dvec3 d = tiles ? flatUnit(p.uphill) : glm::dvec3(1, 0, 0);
+    const glm::dvec3 a = glm::cross(kUp, d); // across the rows
+    double lo = 1e300, hi = -1e300, alo = 1e300, ahi = -1e300;
+    for (const glm::dvec3& q : p.outline)
+    {
+        lo = std::min(lo, glm::dot(q, d));
+        hi = std::max(hi, glm::dot(q, d));
+        alo = std::min(alo, glm::dot(q, a));
+        ahi = std::max(ahi, glm::dot(q, a));
+    }
+    if (tiles)
+    {
+        // Rows up the slope, each overlapping the one below by a third and lifted at its foot by the one below.
+        const double theta = glm::radians(std::clamp(p.pitch, 5.0, 75.0));
+        const glm::dvec3 up = d * std::cos(theta) + kUp * std::sin(theta), normal = kUp * std::cos(theta) - d * std::sin(theta);
+        const double width = size, length = size * 1.5, thick = std::max(0.5, size * 0.08), step = length * (2.0 / 3.0);
+        const double lift = std::atan((thick + j) / step);
+        const glm::dvec3 tz = up * std::cos(lift) - normal * std::sin(lift), ty = normal * std::cos(lift) + up * std::sin(lift);
+        const double run = (hi - lo) / std::cos(theta);
+        const int rows = std::max(1, int(std::ceil((run - length) / step)) + 1);
+        for (int r = 0; r < rows; ++r)
+        {
+            const double s0 = r * step;
+            const double off = (r & 1) ? (width + j) * 0.5 : 0.0;
+            for (double x = alo + off; x < ahi; x += width + j)
+            {
+                const double mid = s0 + length * 0.5;
+                const glm::dvec3 plan = d * (lo + mid * std::cos(theta)) + a * (x + width * 0.5);
+                if (!inside(plan.x, plan.z))
+                    continue;
+                Stone s;
+                s.center = glm::dvec3(plan.x, p.y, plan.z) + kUp * (mid * std::sin(theta)) + normal * (length * 0.5 * std::tan(lift) + thick * 0.5);
+                s.frame = glm::dmat3(glm::cross(ty, tz), ty, tz);
+                s.size = {width, thick, length};
+                s.role = Role::Paving;
+                s.face = Face::Through;
+                s.course = r;
+                out.push_back(s);
+            }
+        }
+        return out;
+    }
+    const bool flags = p.kind == "flags";
+    const double rowW = flags ? size : size * 0.7, thick = flags ? std::max(1.0, size * 0.12) : size * 0.6;
+    int row = 0;
+    for (double z = alo; z < ahi; z += rowW + j, ++row)
+    {
+        double x = lo + ((row & 1) ? -size * 0.5 : 0.0);
+        for (int k = 0; x < hi; ++k)
+        {
+            const double r = unitRandom(mixKey(seed, uint64_t(row), uint64_t(k), 91));
+            const double len = flags ? size * (0.8 + 1.0 * r) : size * (0.85 + 0.3 * r);
+            const glm::dvec3 plan = d * (x + len * 0.5) + a * (z + rowW * 0.5);
+            x += len + j;
+            if (!inside(plan.x, plan.z))
+                continue;
+            Stone s;
+            s.center = glm::dvec3(plan.x, p.y + thick * 0.5, plan.z);
+            s.frame = glm::dmat3(d, kUp, glm::cross(d, kUp));
+            s.size = {len, thick, rowW};
+            s.role = Role::Paving;
+            s.face = Face::Through;
+            s.course = row;
+            s.grounded = true;
+            out.push_back(s);
+        }
+    }
+    return out;
+}
+
 Plan planWalls(std::span<const Footprint> footprints, const BuildOptions& o)
 {
     Plan p;
@@ -354,7 +465,7 @@ Plan planBuilding(const json& spec, const BuildOptions& lookIn)
     look.wall.stone.depth *= scale;
     look.wall.stone.joint *= scale;
     if (spec.contains("bond") && (!spec["bond"].is_string() || !parseBond(spec["bond"].get<std::string>(), &look.wall.bond)))
-        fail("bond is one of running, stack, english, flemish, header, gardenWall");
+        fail("bond is one of running, stack, english, flemish, header, gardenWall, herringbone, ashlar, rubble, dryStone");
     if (spec.contains("look"))
     {
         const json& l = spec["look"];
@@ -563,10 +674,19 @@ Plan planBuilding(const json& spec, const BuildOptions& lookIn)
             checkKeys(vj, "a vault", {"name", "kind", "from", "to", "span", "profile", "rise", "ring", "at", "radius", "oculus"});
             VaultSpec v;
             const std::string kind = vj.value("kind", std::string("barrel"));
-            if (kind != "barrel" && kind != "dome")
-                fail("a vault's kind is barrel or dome");
+            if (kind != "barrel" && kind != "dome" && kind != "groin")
+                fail("a vault's kind is barrel, groin or dome");
             v.dome = kind == "dome";
-            if (v.dome)
+            v.groin = kind == "groin";
+            if (v.groin)
+            {
+                v.centre = point(vj.value("at", json::array({0, 0, 0})), "a groin vault's at", scale);
+                v.profile.kind = archOf(vj, "profile", ArchKind::Round);
+                v.profile.span = num(vj, "span", 600.0) * scale;
+                v.profile.rise = num(vj, "rise", 0.0) * scale;
+                v.profile.ring = num(vj, "ring", std::max(u.depth, v.profile.span * 0.06) / scale) * scale;
+            }
+            else if (v.dome)
             {
                 v.centre = point(vj.value("at", json::array({0, 0, 0})), "a dome's at", scale);
                 v.radius = num(vj, "radius", 300.0) * scale;
@@ -611,7 +731,7 @@ Plan planBuilding(const json& spec, const BuildOptions& lookIn)
         for (size_t k = 0; k < spec["floors"].size(); ++k)
         {
             const json& fj = spec["floors"][k];
-            checkKeys(fj, "a floor", {"name", "points", "y", "thickness"});
+            checkKeys(fj, "a floor", {"name", "points", "y", "thickness", "surface", "size", "pitch", "uphill"});
             SlabPlan s;
             if (!fj.contains("points") || fj["points"].size() < 3)
                 fail("a floor's points are at least three [x, y, z] round its outline");
@@ -623,6 +743,20 @@ Plan planBuilding(const json& spec, const BuildOptions& lookIn)
             s.y0 = s.y1 - std::max(1.0, num(fj, "thickness", 30.0) * scale);
             s.region = region(nameOf(fj, "floor_" + std::to_string(k + 1)));
             plan.slabs.push_back(s);
+            if (const std::string surface = fj.value("surface", std::string("slab")); surface != "slab")
+            {
+                if (surface != "cobbles" && surface != "flags" && surface != "tiles")
+                    fail("a floor's surface is slab, cobbles, flags or tiles");
+                PavingSpec pv;
+                pv.outline = s.outline;
+                pv.y = s.y1 + j;
+                pv.kind = surface;
+                pv.size = num(fj, "size", surface == "flags" ? 60.0 : (surface == "tiles" ? 25.0 : 12.0)) * scale;
+                pv.pitch = num(fj, "pitch", 35.0);
+                if (fj.contains("uphill"))
+                    pv.uphill = point(fj["uphill"], "a floor's uphill", 1.0);
+                addElements(pavingStones(pv, j, mixKey(look.wall.seed, 14, k)), s.region);
+            }
         }
     return plan;
 }
@@ -662,7 +796,7 @@ json specSchema()
          {{"scale", p("number", 1, "Multiplies every length in the spec, stone sizes included: 8 makes a building for creatures eight times human size.")},
           {"seed", p("integer", 1, "Random seed for wander, wear and cut positions.")},
           {"stone", {{"type", "object"}, {"properties", {{"length", p("number", 21.5, "cm")}, {"height", p("number", 6.5, "cm")}, {"depth", p("number", 10.25, "cm")}, {"joint", p("number", 1, "cm")}}}}},
-          {"bond", p("string", "running", "running, stack, english, flemish, header or gardenWall.")},
+          {"bond", p("string", "running", "running, stack, english, flemish, header, gardenWall, herringbone, ashlar, rubble or dryStone.")},
           {"look", {{"type", "object"}, {"properties", {{"bevel", p("number", 0.5, "cm")}, {"wear", p("number", 0.5, "0 to 1")}, {"variants", p("integer", 6, "1 to 64")},
                                                         {"tile", p("number", 100, "cm of stone per UV unit")}, {"jitter", p("number", 1, "0 to 1")}, {"protrude", p("number", 0.3, "cm")}}}}},
           {"walls",
@@ -708,7 +842,7 @@ json specSchema()
            {{"type", "array"},
             {"items",
              {{"name", p("string", "barrel_1", "Region name.")},
-              {"kind", p("string", "barrel", "barrel or dome.")},
+              {"kind", p("string", "barrel", "barrel, groin (two barrels crossing over a square bay at at, span wide) or dome.")},
               {"from", p("array", nullptr, "Barrel: the axis start at springing height.")},
               {"to", p("array", nullptr, "Barrel: the axis end.")},
               {"span", p("number", 600, "Barrel: intrados width, cm.")},
@@ -735,6 +869,10 @@ json specSchema()
              {{"name", p("string", "floor_1", "Region name; roofs are floors at the top.")},
               {"points", p("array", nullptr, "Outline [[x, y, z], ...], y ignored.")},
               {"y", p("number", 300, "Top of the slab, cm.")},
-              {"thickness", p("number", 30, "cm")}}}}}}}};
+              {"thickness", p("number", 30, "cm")},
+              {"surface", p("string", "slab", "slab, cobbles, flags or tiles (a pitched roof of overlapping tiles on the slab).")},
+              {"size", p("number", nullptr, "Cobble length, flag row width or tile width, cm.")},
+              {"pitch", p("number", 35, "Tiles: roof slope, degrees.")},
+              {"uphill", p("array", json::array({0, 0, 1}), "Tiles: the way the roof rises.")}}}}}}}};
 }
 } // namespace masonry

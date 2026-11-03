@@ -27,6 +27,18 @@ struct SlabPlan
     int region = 0;
 };
 
+/** What lies on a floor: cobbles (setts in staggered rows), flags (flagstones of many lengths) or tiles (a pitched roof of overlapping tiles). */
+struct PavingSpec
+{
+    std::vector<glm::dvec3> outline; // Y ignored
+    double y = 0.0;                  // the surface it lies on (tiles: the eaves)
+    std::string kind = "cobbles";
+    double size = 12.0;              // cm: a cobble's length, a flag's row width, a tile's width
+    double pitch = 35.0;             // tiles: roof slope, degrees
+    glm::dvec3 uphill{0.0, 0.0, 1.0}; // tiles: the way the roof rises, horizontal
+};
+std::vector<Stone> pavingStones(const PavingSpec& p, double joint, uint64_t seed);
+
 /** Everything a masonry node lays out, before it is laid: walls, loose elements, slabs, and the named regions. */
 struct Plan
 {
@@ -79,6 +91,7 @@ std::vector<Stone> stairStones(const StairSpec& s, double stoneLength, double jo
 struct VaultSpec
 {
     bool dome = false;
+    bool groin = false;                          // two barrels crossing over a square bay centred on centre, span wide
     glm::dvec3 from{0.0}, to{1000.0, 0.0, 0.0}; // barrel: the axis at springing height
     ArchSpec profile;                            // barrel: the cross section; span, ring
     glm::dvec3 centre{0.0};                      // dome
