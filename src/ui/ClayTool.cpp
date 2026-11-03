@@ -307,7 +307,6 @@ std::vector<KeyHint> clayKeys()
     std::vector<KeyHint> keys = {{"Drag", s.stroke ? (s.cut ? "Cut stroke" : "Stroke") : s.cut ? "Cut" : "Add"},
                                  {"Ctrl+drag", s.cut ? "Add" : "Cut"},
                                  {"Shift+click", "Select a shape"},
-                                 {"1-7", "Shape"},
                                  {"S", "Strokes"}};
     if (s.stroke)
         keys.push_back({"T", s.taper ? "Taper off" : "Taper on"});
@@ -321,13 +320,13 @@ struct ShapeButton
     const char* label;
     const char* key;
 };
-constexpr std::array<ShapeButton, 8> kShapeButtons = {{{"sphere", "Sphere", "1"},
-                                                       {"oval", "Ellipsoid", "2"},
-                                                       {"cube", "Box", "3"},
-                                                       {"capsule", "Capsule", "4"},
-                                                       {"cylinder", "Cylinder", "5"},
-                                                       {"cone", "Cone", "6"},
-                                                       {"lifebuoy", "Torus", "7"},
+constexpr std::array<ShapeButton, 8> kShapeButtons = {{{"sphere", "Sphere", nullptr},
+                                                       {"oval", "Ellipsoid", nullptr},
+                                                       {"cube", "Box", nullptr},
+                                                       {"capsule", "Capsule", nullptr},
+                                                       {"cylinder", "Cylinder", nullptr},
+                                                       {"cone", "Cone", nullptr},
+                                                       {"lifebuoy", "Torus", nullptr},
                                                        {"scribble", "Stroke", "S"}}};
 
 /** The Clay tool's palette: what the next click places, and the selected clay's mirror. Shown only while the tool is. */
@@ -372,7 +371,7 @@ public:
             b->setFixedSize(36, 36);
             b->setCheckable(true);
             b->setAutoRaise(true);
-            b->setToolTip(QString("%1  (%2)").arg(def.label, def.key));
+            b->setToolTip(def.key ? QString("%1  (%2)").arg(def.label, def.key) : QString(def.label));
             connect(b, &QToolButton::clicked, this, [i] {
                 ClaySettings& s = settings();
                 s.stroke = i == kToolShapes.size();
@@ -697,12 +696,7 @@ public:
     {
         const int k = e->key();
         ClaySettings& s = settings();
-        if (k >= Qt::Key_1 && k <= Qt::Key_7)
-        {
-            s.shape = k - Qt::Key_1;
-            s.stroke = false;
-        }
-        else if (k == Qt::Key_S)
+        if (k == Qt::Key_S)
             s.stroke = !s.stroke;
         else if (k == Qt::Key_T)
             s.taper = !s.taper;
@@ -729,7 +723,7 @@ public:
 
     bool hotkey(const QKeyEvent& e, std::string_view) override
     {
-        // The tool's keys are app hotkeys too (1-3 smooth preview, S, T); it takes them while active.
+        // The tool's keys are app hotkeys too (S, T); it takes them while active.
         if (e.modifiers() & (Qt::ControlModifier | Qt::AltModifier))
             return false;
         return keyPress(const_cast<QKeyEvent*>(&e), ViewInfo{});
