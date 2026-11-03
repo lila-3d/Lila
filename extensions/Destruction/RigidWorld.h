@@ -6,11 +6,12 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 /**
- * The scene a rigid-body simulation runs, read from its node's inputs without Jolt, and the Jolt world that steps it.
- * Lila works in centimetres and Jolt in metres; the descriptions are in centimetres.
+ * The scene a rigid-body simulation runs, read from its node's inputs, and the world that steps it on lila_physics.
+ * Everything here is centimetres.
  */
 namespace destruction
 {
@@ -92,12 +93,15 @@ struct SceneDesc
     Settings settings;
 };
 
-/** A Jolt world for one simulation. Not thread-safe; the framework calls it from the main thread. */
+/** One simulation's physics scene. Not thread-safe; the framework calls it from the main thread. */
 class RigidWorld
 {
 public:
-    /** Builds the world from the scene at the start frame. */
-    explicit RigidWorld(const SceneDesc& start);
+    /**
+     * Builds the world from the scene at the start frame. origin is the point the physics scene is centred on, so pieces
+     * kilometres from the node's origin keep their precision; by default the pieces' centre to the nearest 100 m.
+     */
+    explicit RigidWorld(const SceneDesc& start, std::optional<glm::dvec3> origin = std::nullopt);
     ~RigidWorld();
     RigidWorld(const RigidWorld&) = delete;
     RigidWorld& operator=(const RigidWorld&) = delete;
@@ -105,6 +109,7 @@ public:
     bool matches(const SceneDesc& s) const;
     uint64_t serial() const;
     int64_t step() const;
+    glm::dvec3 origin() const;
 
     /** Puts the world in the saved state exactly. */
     void restore(const StateView& state);
@@ -121,8 +126,4 @@ public:
 private:
     std::unique_ptr<Impl> mImpl;
 };
-
-/** Registers Jolt's types and its job system; idempotent. shutdownJolt runs at library unload. */
-void initJolt();
-void shutdownJolt();
 } // namespace destruction

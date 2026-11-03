@@ -26,11 +26,6 @@ namespace
 /** Speed lost between frames below this (cm/s) is solver jitter or resting contact, not a hit. */
 constexpr double kMinImpact = 5.0;
 
-glm::dvec3 soundBodyPosition(const BodyRecord& b)
-{
-    return glm::dvec3(b.position[0], b.position[1], b.position[2]) / kM;
-}
-
 glm::dvec3 soundBodyVelocity(const BodyRecord& b)
 {
     return glm::dvec3(b.velocity[0], b.velocity[1], b.velocity[2]) / kM;
@@ -75,7 +70,7 @@ void soundEventsOf(scene::Graph& g, scene::NodeId mesh, scene::NodeId modifier, 
                 e.strength = now.impulse;
                 e.piece = k < firstPiece.size() ? firstPiece[k] : -1;
                 if (e.piece >= 0 && uint32_t(e.piece) < cur.header().bodies)
-                    e.position = glm::dvec3(world * glm::dvec4(soundBodyPosition(cur.body(uint32_t(e.piece))), 1.0));
+                    e.position = glm::dvec3(world * glm::dvec4(cur.position(uint32_t(e.piece)), 1.0));
                 out.push_back(e);
             }
             for (uint32_t k = 0; k < cur.header().bodies; ++k)
@@ -92,7 +87,7 @@ void soundEventsOf(scene::Graph& g, scene::NodeId mesh, scene::NodeId modifier, 
                 e.object = object;
                 e.piece = int(k);
                 e.strength = lost;
-                e.position = glm::dvec3(world * glm::dvec4(soundBodyPosition(b), 1.0));
+                e.position = glm::dvec3(world * glm::dvec4(cur.position(k), 1.0));
                 out.push_back(e);
             }
         }

@@ -184,10 +184,7 @@ void drawLinks(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
             if (state.valid() && state.header().bodies == inst.size())
                 for (size_t k = 0; k < inst.size(); ++k)
                 {
-                    const BodyRecord b = state.body(k);
-                    const glm::dvec3 pos = glm::dvec3(b.position[0], b.position[1], b.position[2]) / kM;
-                    const glm::dquat q = glm::normalize(glm::dquat(b.rotation[3], b.rotation[0], b.rotation[1], b.rotation[2]));
-                    delta[k] = compose(pos, q, decompose(inst.transforms[k]).scale) * glm::inverse(inst.transforms[k]);
+                    delta[k] = compose(state.position(k), state.rotation(k), decompose(inst.transforms[k]).scale) * glm::inverse(inst.transforms[k]);
                 }
             const glm::dmat4 world = g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
             const gn::CurveSet& c = *links->curves;

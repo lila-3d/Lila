@@ -5,6 +5,8 @@
 #include "PieceTransform.h"
 #include "RigidWorld.h"
 
+#include <RigidScene.h>
+
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Log.h>
@@ -248,10 +250,10 @@ public:
         SceneDesc d = describe(in, false);
         if (!mWorld || view.header().serial != mWorld->serial() || view.header().step != mWorld->step())
         {
-            if (!mWorld || !mWorld->matches(d))
+            if (!mWorld || !mWorld->matches(d) || mWorld->origin() != view.origin())
             {
                 d = describe(in, true);
-                mWorld = std::make_unique<RigidWorld>(d);
+                mWorld = std::make_unique<RigidWorld>(d, view.origin());
             }
             mWorld->restore(view);
         }
@@ -288,9 +290,7 @@ void solverOutput(ExecContext& c, const std::vector<uint8_t>* state)
     {
         const BodyRecord b = view.body(k);
         const Decomposed t = decompose(in.transforms[k]);
-        const glm::dvec3 p = glm::dvec3(b.position[0], b.position[1], b.position[2]) / kM;
-        const glm::dquat q = glm::normalize(glm::dquat(b.rotation[3], b.rotation[0], b.rotation[1], b.rotation[2]));
-        moved->transforms[k] = compose(p, q, t.scale);
+        moved->transforms[k] = compose(view.position(k), view.rotation(k), t.scale);
         delta[k] = moved->transforms[k] * glm::inverse(in.transforms[k]);
         velocity[k] = glm::vec3(b.velocity[0], b.velocity[1], b.velocity[2]) / float(kM);
         active[k] = b.active;
@@ -413,7 +413,7 @@ gn::NodeDecl solverDecl()
 
 bool registerNodes(ext::Context& ctx)
 {
-    initJolt();
+    lila::physics::initJolt();
     return gn::registerDecl(ctx, solverDecl()) != nullptr;
 }
 } // namespace destruction

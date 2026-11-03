@@ -1,5 +1,9 @@
 #pragma once
 
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -11,13 +15,14 @@
  *   Header | Body x bodies | Link x links | Jolt's own snapshot (joltBytes)
  *
  * The leading records are everything the node's outputs need, readable without Jolt. Positions are the bodies' shape
- * origins in metres, rotations quaternions xyzw, velocities m/s and rad/s, all as Jolt holds them, so writing them back
- * is exact. The Jolt snapshot carries the rest (contacts, warm starting, sleep) for a restore that matches a straight run.
+ * origins in metres from the header's origin (so pieces kilometres out keep float precision), rotations quaternions
+ * xyzw, velocities m/s and rad/s, all as Jolt holds them, so writing them back is exact. The Jolt snapshot carries the
+ * rest (contacts, warm starting, sleep) for a restore that matches a straight run.
  */
 namespace destruction
 {
 inline constexpr uint32_t kStateMagic = 0x4252444c; // "LDRB"
-inline constexpr uint32_t kStateVersion = 1;
+inline constexpr uint32_t kStateVersion = 2;
 
 struct StateHeader
 {
@@ -33,6 +38,8 @@ struct StateHeader
     /** 1 between the substeps of a frame: no Jolt snapshot, as only the live world carries on from it. */
     uint32_t partial = 0;
     uint64_t joltBytes = 0;
+    /** cm: where the simulation's own origin sits in the node's space. */
+    double origin[3] = {};
 };
 
 struct BodyRecord
@@ -82,6 +89,18 @@ public:
         LinkRecord r;
         std::memcpy(&r, mBytes.data() + sizeof(StateHeader) + mHeader.bodies * sizeof(BodyRecord) + i * sizeof(LinkRecord), sizeof r);
         return r;
+    }
+    glm::dvec3 origin() const { return {mHeader.origin[0], mHeader.origin[1], mHeader.origin[2]}; }
+    /** A body's shape origin in the node's space, cm, and its rotation. */
+    glm::dvec3 position(size_t i) const
+    {
+        const BodyRecord b = body(i);
+        return origin() + glm::dvec3(b.position[0], b.position[1], b.position[2]) * 100.0;
+    }
+    glm::dquat rotation(size_t i) const
+    {
+        const BodyRecord b = body(i);
+        return glm::normalize(glm::dquat(b.rotation[3], b.rotation[0], b.rotation[1], b.rotation[2]));
     }
     std::span<const uint8_t> jolt() const
     {

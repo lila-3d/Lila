@@ -11,8 +11,8 @@
 #include <vector>
 
 /**
- * Jolt behind a small interface, so the rest of the extension never includes it. Lila works in centimetres and Jolt in
- * metres; everything here crosses that boundary in centimetres.
+ * A ragdoll's world on lila_physics, the rigid-body scene every physics extension shares. Everything here is in
+ * centimetres except BodyState, which is Jolt's own floats.
  */
 namespace physanim
 {
@@ -25,9 +25,8 @@ struct BodyState
     glm::vec3 angularVelocity{0.0f};
 };
 
-/** Registers Jolt's types and allocator; idempotent. shutdownJolt undoes it once nothing of Jolt's is left. */
+/** Registers Jolt's types, allocator and job system; idempotent, torn down when the extension unloads. */
 void initJolt();
-void shutdownJolt();
 
 /** The collision shapes of a rig, made once and shared by every world built from it. */
 class Shapes
@@ -79,7 +78,7 @@ struct WorldOptions
     double previousStep = 0.0;
 };
 
-/** A Jolt physics system holding a rig's bodies, constraints and colliders, stepped single-threaded. */
+/** A physics scene holding a rig's bodies, joints and colliders, stepped single-threaded. */
 class World
 {
 public:

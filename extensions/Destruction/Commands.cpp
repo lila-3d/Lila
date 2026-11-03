@@ -372,11 +372,8 @@ std::vector<Break> breaksOf(Graph& g, scene::NodeId modifier, scene::NodeId mesh
             const StateView at(bytes);
             if (at.valid() && size_t(b.a) < at.header().bodies)
             {
-                const BodyRecord body = at.body(size_t(b.a));
                 const Decomposed rest = decompose(inst.transforms[size_t(b.a)]);
-                const glm::dvec3 p = glm::dvec3(body.position[0], body.position[1], body.position[2]) / kM;
-                const glm::dquat q = glm::normalize(glm::dquat(body.rotation[3], body.rotation[0], body.rotation[1], body.rotation[2]));
-                anchor = glm::dvec3(compose(p, q, rest.scale) * glm::inverse(inst.transforms[size_t(b.a)]) * glm::dvec4(anchor, 1.0));
+                anchor = glm::dvec3(compose(at.position(size_t(b.a)), at.rotation(size_t(b.a)), rest.scale) * glm::inverse(inst.transforms[size_t(b.a)]) * glm::dvec4(anchor, 1.0));
             }
         }
         b.position = glm::dvec3(world * glm::dvec4(anchor, 1.0));

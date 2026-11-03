@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -28,6 +29,9 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/TransformedShape.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/StateRecorderImpl.h>
@@ -37,6 +41,7 @@
 #include <tbb/task_group.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -57,6 +62,7 @@ namespace layers
 {
 constexpr JPH::ObjectLayer kMoving = 0;
 constexpr JPH::ObjectLayer kStatic = 1;
+constexpr JPH::ObjectLayer kNone = 2; // collides with nothing
 } // namespace layers
 
 class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface
@@ -72,13 +78,19 @@ public:
 class ObjectVsBroadPhase final : public JPH::ObjectVsBroadPhaseLayerFilter
 {
 public:
-    bool ShouldCollide(JPH::ObjectLayer l, JPH::BroadPhaseLayer bp) const override { return l == layers::kStatic ? bp == JPH::BroadPhaseLayer(0) : true; }
+    bool ShouldCollide(JPH::ObjectLayer l, JPH::BroadPhaseLayer bp) const override
+    {
+        return l != layers::kNone && (l == layers::kStatic ? bp == JPH::BroadPhaseLayer(0) : true);
+    }
 };
 
 class LayerPairs final : public JPH::ObjectLayerPairFilter
 {
 public:
-    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override { return a == layers::kMoving || b == layers::kMoving; }
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override
+    {
+        return a != layers::kNone && b != layers::kNone && (a == layers::kMoving || b == layers::kMoving);
+    }
 };
 
 /**
@@ -284,9 +296,9 @@ JPH::RefConst<JPH::Shape> shapeOf(const BodyDesc& b)
         break;
     }
     }
-    if (s.center == glm::dvec3(0.0))
+    if (s.center == glm::dvec3(0.0) && s.rotation == glm::dquat(1, 0, 0, 0))
         return inner;
-    JPH::RotatedTranslatedShapeSettings rt(toJ(s.center * kM), JPH::Quat::sIdentity(), inner);
+    JPH::RotatedTranslatedShapeSettings rt(toJ(s.center * kM), toJ(s.rotation), inner);
     return create(rt, "offset shape");
 }
 
@@ -329,6 +341,10 @@ struct RigidScene::Impl final : public JPH::ContactListener
     std::vector<BodyDesc> descs;
     std::vector<JPH::BodyID> ids;
     JPH::BodyID ground;
+    JPH::Ref<JPH::GroupFilterTable> groups;
+    std::vector<JPH::Ref<JPH::TwoBodyConstraint>> joints;
+    std::vector<JointKind> jointKinds;
+    JPH::uint maxBodies = kMaxBodies;
     int64_t stepCount = 0;
     bool addedSinceOptimize = false;
     double dt = 1.0 / 60.0;
@@ -417,25 +433,32 @@ RigidScene::RigidScene(const Settings& s) : mImpl(std::make_unique<Impl>())
     initJolt();
     Impl& w = *mImpl;
     const char* threads = std::getenv("LILA_PHYSICS_THREADS");
-    w.jobs = threads && std::atoi(threads) == 1 ? gRuntime.serialJobs.get() : gRuntime.jobs.get();
+    w.jobs = s.serial || (threads && std::atoi(threads) == 1) ? gRuntime.serialJobs.get() : gRuntime.jobs.get();
     w.settings = s;
-    w.system.Init(kMaxBodies, 0, kMaxBodies, kMaxBodies, w.bp, w.objectVsBp, w.pairs);
+    w.maxBodies = s.maxBodies > 0 ? JPH::uint(s.maxBodies) : kMaxBodies;
+    const JPH::uint maxPairs = s.maxPairs > 0 ? JPH::uint(s.maxPairs) : kMaxBodies;
+    w.system.Init(w.maxBodies, 0, maxPairs, maxPairs, w.bp, w.objectVsBp, w.pairs);
     JPH::PhysicsSettings ps;
     ps.mDeterministicSimulation = true;
     ps.mAllowSleeping = s.sleep;
-    // Jolt's defaults suit metre-sized things: 2 cm of resting overlap is a book sunk into the shelf. Props are small.
-    ps.mPenetrationSlop = 0.0005f;
-    ps.mSpeculativeContactDistance = 0.005f;
-    // Asleep below 1 cm/s, not Jolt's 3 cm/s, which stops a book still sliding off a shelf.
-    ps.mPointVelocitySleepThreshold = 0.01f;
+    ps.mPenetrationSlop = float(std::max(s.penetrationSlop, 0.0) * kM);
+    ps.mSpeculativeContactDistance = float(std::max(s.speculativeDistance, 0.0) * kM);
+    ps.mPointVelocitySleepThreshold = float(std::max(s.sleepSpeed, 0.0) * kM);
+    if (s.velocitySteps > 0)
+        ps.mNumVelocitySteps = JPH::uint(std::clamp(s.velocitySteps, 2, 64));
+    if (s.positionSteps > 0)
+        ps.mNumPositionSteps = JPH::uint(std::clamp(s.positionSteps, 1, 32));
+    ps.mUseLargeIslandSplitter = s.largeIslandSplitter;
     w.system.SetPhysicsSettings(ps);
+    if (s.pairFilter > 0)
+        w.groups = new JPH::GroupFilterTable(JPH::uint(s.pairFilter));
     w.system.SetGravity(toJ(s.gravity * kM));
     w.system.SetContactListener(&w);
     if (s.ground)
     {
         JPH::BodyCreationSettings g(create(JPH::PlaneShapeSettings(JPH::Plane(JPH::Vec3(0, 1, 0), float(-s.groundHeight * kM)), nullptr, 1000.0f), "ground"),
                                     JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, layers::kStatic);
-        g.mFriction = 0.7f;
+        g.mFriction = float(s.groundFriction);
         g.mUserData = 0;
         w.ground = w.bi().CreateAndAddBody(g, JPH::EActivation::DontActivate);
     }
@@ -447,6 +470,8 @@ RigidScene::~RigidScene()
         return;
     Impl& w = *mImpl;
     w.system.SetContactListener(nullptr);
+    for (auto& j : w.joints)
+        w.system.RemoveConstraint(j);
     JPH::BodyInterface& bi = w.bi();
     auto drop = [&](JPH::BodyID id) {
         if (id.IsInvalid())
@@ -462,11 +487,12 @@ RigidScene::~RigidScene()
 int RigidScene::add(const BodyDesc& b)
 {
     Impl& w = *mImpl;
-    if (w.ids.size() + 1 >= kMaxBodies)
-        throw std::invalid_argument("too many bodies (" + std::to_string(kMaxBodies) + " at most)");
+    if (w.ids.size() + 1 >= w.maxBodies)
+        throw std::invalid_argument("too many bodies (" + std::to_string(w.maxBodies) + " at most)");
     const bool fixed = b.role == Role::Static;
     const JPH::EMotionType motion = fixed ? JPH::EMotionType::Static : b.role == Role::Kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
-    JPH::BodyCreationSettings bs(shapeOf(b), JPH::RVec3(toJ(b.position * kM)), toJ(b.rotation), motion, fixed ? layers::kStatic : layers::kMoving);
+    JPH::BodyCreationSettings bs(shapeOf(b), JPH::RVec3(toJ(b.position * kM)), toJ(b.rotation), motion,
+                                 !b.collides ? layers::kNone : fixed ? layers::kStatic : layers::kMoving);
     // Anything may change role later: a pinned book let go, a shelf shaken by hand. setRole keeps meshes from going dynamic.
     bs.mAllowDynamicOrKinematic = true;
     bs.mLinearVelocity = toJ(b.velocity * kM);
@@ -474,9 +500,16 @@ int RigidScene::add(const BodyDesc& b)
     bs.mFriction = float(b.friction);
     bs.mRestitution = float(b.bounce);
     bs.mLinearDamping = float(b.damping);
-    bs.mAngularDamping = float(b.damping);
-    bs.mAllowSleeping = w.settings.sleep;
-    bs.mMotionQuality = JPH::EMotionQuality::LinearCast;
+    bs.mAngularDamping = float(b.angularDamping < 0.0 ? b.damping : b.angularDamping);
+    bs.mAllowSleeping = w.settings.sleep && b.canSleep;
+    bs.mMotionQuality = b.continuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+    if (b.mass > 0.0)
+    {
+        bs.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        bs.mMassPropertiesOverride.mMass = float(b.mass);
+    }
+    if (w.groups && w.ids.size() < size_t(w.settings.pairFilter))
+        bs.mCollisionGroup = JPH::CollisionGroup(w.groups, 0, JPH::CollisionGroup::SubGroupID(w.ids.size()));
     bs.mUserData = JPH::uint64(w.ids.size() + 1);
     w.ids.push_back(w.bi().CreateAndAddBody(bs, fixed ? JPH::EActivation::DontActivate : JPH::EActivation::Activate));
     w.descs.push_back(b);
@@ -551,7 +584,7 @@ void RigidScene::setRole(int body, Role role)
     if (role != Role::Static && d.shape.kind == Shape::Kind::Mesh && role == Role::Dynamic)
         throw std::invalid_argument("a triangle mesh body can't be dynamic");
     JPH::BodyInterface& bi = w.bi();
-    bi.SetObjectLayer(id, role == Role::Static ? layers::kStatic : layers::kMoving);
+    bi.SetObjectLayer(id, !d.collides ? layers::kNone : role == Role::Static ? layers::kStatic : layers::kMoving);
     bi.SetMotionType(id,
                      role == Role::Static      ? JPH::EMotionType::Static
                      : role == Role::Kinematic ? JPH::EMotionType::Kinematic
@@ -723,5 +756,278 @@ void RigidScene::restore(const std::vector<uint8_t>& state)
     rec.Rewind();
     if (!mImpl->system.RestoreState(rec))
         throw std::runtime_error("the physics state couldn't be restored");
+}
+int RigidScene::addJoint(const JointDesc& j)
+{
+    Impl& w = *mImpl;
+    const JPH::BodyID ia = w.id(j.a);
+    JPH::Body* ba = nullptr;
+    JPH::Body* bb = &JPH::Body::sFixedToWorld;
+    {
+        JPH::BodyLockWrite la(w.system.GetBodyLockInterfaceNoLock(), ia);
+        ba = la.Succeeded() ? &la.GetBody() : nullptr;
+    }
+    if (j.b >= 0)
+    {
+        if (j.b == j.a)
+            throw std::invalid_argument("a joint needs two different bodies");
+        JPH::BodyLockWrite lb(w.system.GetBodyLockInterfaceNoLock(), w.id(j.b));
+        bb = lb.Succeeded() ? &lb.GetBody() : nullptr;
+    }
+    if (!ba || !bb)
+        throw std::invalid_argument("a joint's body is missing");
+    const JPH::RVec3 p1(toJ(j.pointA * kM)), p2(toJ(j.pointB * kM));
+    JPH::Ref<JPH::TwoBodyConstraint> c;
+    switch (j.kind)
+    {
+    case JointKind::Fixed:
+    {
+        JPH::FixedConstraintSettings fs;
+        fs.mSpace = JPH::EConstraintSpace::WorldSpace;
+        fs.mAutoDetectPoint = false;
+        fs.mPoint1 = p1;
+        fs.mPoint2 = p2;
+        c = static_cast<JPH::TwoBodyConstraint*>(fs.Create(*ba, *bb));
+        break;
+    }
+    case JointKind::Distance:
+    {
+        JPH::DistanceConstraintSettings ds;
+        ds.mSpace = JPH::EConstraintSpace::WorldSpace;
+        ds.mPoint1 = p1;
+        ds.mPoint2 = p2;
+        ds.mMinDistance = float(std::max(j.minDistance, 0.0) * kM);
+        ds.mMaxDistance = float(std::max(j.maxDistance, j.minDistance) * kM);
+        ds.mLimitsSpringSettings.mFrequency = float(std::max(j.frequency, 0.0));
+        ds.mLimitsSpringSettings.mDamping = float(std::max(j.damping, 0.0));
+        c = static_cast<JPH::TwoBodyConstraint*>(ds.Create(*ba, *bb));
+        break;
+    }
+    case JointKind::SwingTwist:
+    {
+        JPH::SwingTwistConstraintSettings st;
+        st.mSpace = JPH::EConstraintSpace::WorldSpace;
+        st.mPosition1 = p1;
+        st.mPosition2 = p2;
+        st.mTwistAxis1 = toJ(j.twistAxisA).Normalized();
+        st.mPlaneAxis1 = toJ(j.planeAxisA).Normalized();
+        st.mTwistAxis2 = toJ(j.twistAxisB).Normalized();
+        st.mPlaneAxis2 = toJ(j.planeAxisB).Normalized();
+        st.mPlaneHalfConeAngle = float(j.planeHalfCone);
+        st.mNormalHalfConeAngle = float(j.normalHalfCone);
+        st.mTwistMinAngle = float(j.twistMin);
+        st.mTwistMaxAngle = float(j.twistMax);
+        c = static_cast<JPH::TwoBodyConstraint*>(st.Create(*ba, *bb));
+        break;
+    }
+    }
+    if (!c)
+        throw std::invalid_argument("the joint couldn't be made");
+    w.system.AddConstraint(c);
+    w.joints.push_back(c);
+    w.jointKinds.push_back(j.kind);
+    return int(w.joints.size() - 1);
+}
+
+size_t RigidScene::joints() const { return mImpl->joints.size(); }
+
+namespace
+{
+JPH::TwoBodyConstraint& jointAt(RigidScene::Impl& w, int joint)
+{
+    if (joint < 0 || size_t(joint) >= w.joints.size())
+        throw std::out_of_range("no joint " + std::to_string(joint));
+    return *w.joints[size_t(joint)];
+}
+} // namespace
+
+void RigidScene::setJointEnabled(int joint, bool on) { jointAt(*mImpl, joint).SetEnabled(on); }
+
+bool RigidScene::jointEnabled(int joint) const { return jointAt(*mImpl, joint).GetEnabled(); }
+
+JointLoad RigidScene::jointLoad(int joint) const
+{
+    JPH::TwoBodyConstraint& c = jointAt(*mImpl, joint);
+    JointLoad l;
+    switch (mImpl->jointKinds[size_t(joint)])
+    {
+    case JointKind::Fixed:
+    {
+        const auto& f = static_cast<const JPH::FixedConstraint&>(c);
+        l.linear = double(f.GetTotalLambdaPosition().Length());
+        l.angular = double(f.GetTotalLambdaRotation().Length());
+        break;
+    }
+    case JointKind::Distance: l.linear = std::abs(double(static_cast<const JPH::DistanceConstraint&>(c).GetTotalLambdaPosition())); break;
+    case JointKind::SwingTwist:
+    {
+        const auto& s = static_cast<const JPH::SwingTwistConstraint&>(c);
+        l.linear = double(s.GetTotalLambdaPosition().Length());
+        const double t = s.GetTotalLambdaTwist(), y = s.GetTotalLambdaSwingY(), z = s.GetTotalLambdaSwingZ();
+        l.angular = std::sqrt(t * t + y * y + z * z) + double(s.GetTotalLambdaMotor().Length());
+        break;
+    }
+    }
+    return l;
+}
+
+void RigidScene::setJointMotor(int joint, const glm::dquat& target, double frequency, double damping)
+{
+    if (mImpl->jointKinds.at(size_t(joint)) != JointKind::SwingTwist)
+        throw std::invalid_argument("only swing-twist joints have motors");
+    auto& s = static_cast<JPH::SwingTwistConstraint&>(jointAt(*mImpl, joint));
+    const bool on = frequency > 0.0;
+    const JPH::EMotorState state = on ? JPH::EMotorState::Position : JPH::EMotorState::Off;
+    s.SetSwingMotorState(state);
+    s.SetTwistMotorState(state);
+    if (!on)
+        return;
+    s.SetTargetOrientationCS(toJ(target));
+    const JPH::MotorSettings ms(float(frequency), float(std::max(damping, 0.0)));
+    s.GetSwingMotorSettings() = ms;
+    s.GetTwistMotorSettings() = ms;
+}
+
+std::vector<uint8_t> RigidScene::saveJoint(int joint) const
+{
+    JPH::StateRecorderImpl rec;
+    jointAt(*mImpl, joint).SaveState(rec);
+    const std::string data = rec.GetData();
+    return std::vector<uint8_t>(data.begin(), data.end());
+}
+
+void RigidScene::restoreJoint(int joint, const std::vector<uint8_t>& state)
+{
+    JPH::StateRecorderImpl rec;
+    rec.WriteBytes(state.data(), state.size());
+    rec.Rewind();
+    jointAt(*mImpl, joint).RestoreState(rec);
+}
+
+size_t RigidScene::jointStateSize(JointKind kind)
+{
+    static const std::array<size_t, 3> sizes = [] {
+        initJolt();
+        std::array<size_t, 3> out{};
+        JPH::FixedConstraintSettings f;
+        JPH::DistanceConstraintSettings d;
+        JPH::SwingTwistConstraintSettings s;
+        const JPH::TwoBodyConstraintSettings* all[3] = {&f, &d, &s};
+        for (size_t k = 0; k < 3; ++k)
+        {
+            JPH::Ref<JPH::TwoBodyConstraint> c = all[k]->Create(JPH::Body::sFixedToWorld, JPH::Body::sFixedToWorld);
+            JPH::StateRecorderImpl rec;
+            c->SaveState(rec);
+            out[k] = rec.GetData().size();
+        }
+        return out;
+    }();
+    return sizes[size_t(kind)];
+}
+
+void RigidScene::primeStep(double dt)
+{
+    JPH::StateRecorderImpl rec;
+    rec.Write(JPH::EStateRecorderState::Global);
+    rec.Write(float(dt));
+    rec.Write(mImpl->system.GetGravity());
+    rec.Rewind();
+    mImpl->system.RestoreState(rec);
+}
+
+void RigidScene::setCollides(int a, int b, bool on)
+{
+    Impl& w = *mImpl;
+    if (!w.groups || a < 0 || b < 0 || a >= w.settings.pairFilter || b >= w.settings.pairFilter)
+        throw std::out_of_range("setCollides: bodies outside Settings::pairFilter");
+    if (a == b)
+        return;
+    if (on)
+        w.groups->EnableCollision(JPH::CollisionGroup::SubGroupID(a), JPH::CollisionGroup::SubGroupID(b));
+    else
+        w.groups->DisableCollision(JPH::CollisionGroup::SubGroupID(a), JPH::CollisionGroup::SubGroupID(b));
+}
+
+double RigidScene::overlap(int a, int b) const
+{
+    const JPH::BodyInterface& bi = mImpl->bi();
+    const JPH::TransformedShape ta = bi.GetTransformedShape(mImpl->id(a));
+    const JPH::TransformedShape tb = bi.GetTransformedShape(mImpl->id(b));
+    if (!ta.GetWorldSpaceBounds().Overlaps(tb.GetWorldSpaceBounds()))
+        return 0.0;
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    tb.CollideShape(ta.mShape, ta.GetShapeScale(), ta.GetCenterOfMassTransform(), settings, JPH::RVec3::sZero(), hits);
+    double deepest = 0.0;
+    for (const JPH::CollideShapeResult& h : hits.mHits)
+        deepest = std::max(deepest, double(h.mPenetrationDepth));
+    return deepest / kM;
+}
+
+glm::dvec3 RigidScene::angularVelocity(int body) const { return fromJ(mImpl->bi().GetAngularVelocity(mImpl->id(body))); }
+
+glm::dvec3 RigidScene::pointVelocity(int body, const glm::dvec3& at) const
+{
+    return fromJ(mImpl->bi().GetPointVelocity(mImpl->id(body), JPH::RVec3(toJ(at * kM)))) / kM;
+}
+
+RawState RigidScene::raw(int body) const
+{
+    const JPH::BodyID id = mImpl->id(body);
+    const JPH::BodyInterface& bi = mImpl->bi();
+    const JPH::Vec3 p(bi.GetPosition(id)), v = bi.GetLinearVelocity(id), a = bi.GetAngularVelocity(id);
+    const JPH::Quat q = bi.GetRotation(id);
+    return {{p.GetX(), p.GetY(), p.GetZ()}, {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}, {v.GetX(), v.GetY(), v.GetZ()}, {a.GetX(), a.GetY(), a.GetZ()}};
+}
+
+void RigidScene::accelerate(int body, const glm::dvec3& linear, const glm::dvec3& angular)
+{
+    Impl& w = *mImpl;
+    const JPH::BodyID id = w.id(body);
+    JPH::Vec3 force, torque;
+    {
+        JPH::BodyLockRead lock(w.system.GetBodyLockInterfaceNoLock(), id);
+        if (!lock.Succeeded() || !lock.GetBody().IsDynamic())
+            return;
+        const JPH::Body& b = lock.GetBody();
+        const JPH::MotionProperties* mp = b.GetMotionProperties();
+        const double mass = 1.0 / std::max(double(mp->GetInverseMass()), 1e-12);
+        force = toJ(linear * (kM * mass));
+        torque = mp->GetInverseInertiaForRotation(JPH::Mat44::sRotation(b.GetRotation())).Inversed3x3().Multiply3x3(toJ(angular));
+    }
+    w.bi().AddForce(id, force, JPH::EActivation::Activate);
+    if (angular != glm::dvec3(0.0))
+        w.bi().AddTorque(id, torque, JPH::EActivation::Activate);
+}
+
+void RigidScene::push(int body, const glm::dvec3& force, const glm::dvec3& at)
+{
+    mImpl->bi().AddForce(mImpl->id(body), toJ(force * kM), JPH::RVec3(toJ(at * kM)), JPH::EActivation::Activate);
+}
+
+std::vector<glm::dvec3> hullTriangles(const std::vector<glm::dvec3>& points)
+{
+    std::vector<glm::dvec3> out;
+    if (points.size() < 4)
+        return out;
+    initJolt();
+    JPH::Array<JPH::Vec3> pts;
+    for (const glm::dvec3& p : points)
+        pts.push_back(toJ(p));
+    JPH::ConvexHullShapeSettings settings(pts, 0.0f);
+    JPH::ShapeSettings::ShapeResult r = settings.Create();
+    if (r.HasError())
+        return out;
+    const auto* hull = static_cast<const JPH::ConvexHullShape*>(r.Get().GetPtr());
+    std::vector<JPH::uint> face(64);
+    for (JPH::uint f = 0; f < hull->GetNumFaces(); ++f)
+    {
+        face.resize(std::max<size_t>(face.size(), hull->GetNumVerticesInFace(f)));
+        const JPH::uint count = hull->GetFaceVertices(f, JPH::uint(face.size()), face.data());
+        for (JPH::uint k = 1; k + 1 < count; ++k)
+            for (JPH::uint v : {face[0], face[k], face[k + 1]})
+                out.push_back(fromJ(hull->GetPoint(v) + hull->GetCenterOfMass()));
+    }
+    return out;
 }
 } // namespace lila::physics
