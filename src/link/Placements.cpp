@@ -175,6 +175,9 @@ private:
     std::map<std::string, scene::NodeId> mOwner;
 };
 
+constexpr const char* kCustomDataAttr = "unrealCustomData";
+constexpr const char* kRandomData = "random";
+
 /** 0 to 1, the same for a key every send: per-instance variation (colour, wear) a material reads as custom primitive data 0. */
 double stableRandom(const std::string& key)
 {
@@ -203,6 +206,130 @@ bool simulates(const json& placements)
         if (p.contains("physics") && p["physics"].is_object() && p["physics"].value("simulate", false))
             return true;
     return false;
+}
+
+/** One custom primitive data entry of a group: a name, the first slot it fills and how many floats. */
+struct DataSlot
+{
+    std::string name;
+    int slot = 0;
+    int width = 1;
+};
+
+/** Floats a node attr gives: 3 for a vector, 1 for a number, bool or enum, 0 for a missing or non-numeric attr. */
+int attrWidth(const scene::Node& n, const std::string& name)
+{
+    const int i = n.type().attrIndex(name);
+    if (i < 0)
+        return 0;
+    switch (n.type().attrs[size_t(i)].type)
+    {
+    case scene::PlugType::Vec3:
+        return 3;
+    case scene::PlugType::Float:
+    case scene::PlugType::Int:
+    case scene::PlugType::Bool:
+    case scene::PlugType::Enum:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/** The group's custom data slots: the declared names, each as wide as its attribute, in order from slot 0. */
+std::vector<DataSlot> dataSlots(const scene::Node& source, const gn::Instances* inst)
+{
+    std::vector<DataSlot> out;
+    int slot = 0;
+    for (const std::string& name : customDataNames(source))
+    {
+        int width = name == kRandomData ? 1 : 0;
+        if (const geo::Attribute* a = inst && width == 0 ? inst->attrs.find(name) : nullptr)
+            width = geo::attrTypeComponents(a->type());
+        if (width == 0)
+            width = std::max(1, attrWidth(source, name));
+        out.push_back({name, slot, width});
+        slot += width;
+    }
+    return out;
+}
+
+/** A node attr's floats, padded or cut to width; zeros when the node has no such attr. */
+void nodeFloats(scene::Graph& g, scene::NodeId id, const std::string& name, int width, json& out)
+{
+    const scene::Node& n = *g.node(id);
+    std::vector<double> v;
+    if (const int i = n.type().attrIndex(name); i >= 0)
+        std::visit(
+            [&v](const auto& x) {
+                using T = std::decay_t<decltype(x)>;
+                if constexpr (std::is_same_v<T, glm::dvec3>)
+                    v = {x.x, x.y, x.z};
+                else if constexpr (std::is_same_v<T, double> || std::is_same_v<T, int64_t> || std::is_same_v<T, bool>)
+                    v = {double(x)};
+            },
+            g.value({id, i, -1}));
+    v.resize(size_t(width), 0.0);
+    for (double d : v)
+        out.push_back(d);
+}
+
+/** The top-level instance's floats of a gn instance attribute; false when the instances have no such attribute. */
+bool instanceFloats(const gn::Instances& inst, const std::string& name, size_t top, int width, json& out)
+{
+    const geo::Attribute* a = inst.attrs.find(name);
+    if (!a || top >= a->size())
+        return false;
+    std::vector<double> v;
+    switch (a->type())
+    {
+    case geo::AttrType::Float: v = {a->values<float>()[top]}; break;
+    case geo::AttrType::Float2: v = {a->values<glm::vec2>()[top].x, a->values<glm::vec2>()[top].y}; break;
+    case geo::AttrType::Float3:
+    {
+        const glm::vec3 c = a->values<glm::vec3>()[top];
+        v = {c.x, c.y, c.z};
+        break;
+    }
+    case geo::AttrType::Float4:
+    {
+        const glm::vec4 c = a->values<glm::vec4>()[top];
+        v = {c.x, c.y, c.z, c.w};
+        break;
+    }
+    case geo::AttrType::Int: v = {double(a->values<int32_t>()[top])}; break;
+    case geo::AttrType::Bool: v = {a->values<bool>()[top] ? 1.0 : 0.0}; break;
+    }
+    v.resize(size_t(width), 0.0);
+    for (double d : v)
+        out.push_back(d);
+    return true;
+}
+
+/**
+ * A placement's custom data: per slot the stable random of its key, the gn instance's attribute (inst, top) or else the
+ * member's attr of that name.
+ */
+json customData(scene::Graph& g, const std::vector<DataSlot>& slots, scene::NodeId member, const std::string& key, const gn::Instances* inst = nullptr,
+                size_t top = 0)
+{
+    json out = json::array();
+    for (const DataSlot& d : slots)
+    {
+        if (d.name == kRandomData)
+            out.push_back(stableRandom(key));
+        else if (!inst || !instanceFloats(*inst, d.name, top, d.width, out))
+            nodeFloats(g, member, d.name, d.width, out);
+    }
+    return out;
+}
+
+json slotsJson(const std::vector<DataSlot>& slots)
+{
+    json out = json::array();
+    for (const DataSlot& d : slots)
+        out.push_back({{"name", d.name}, {"slot", d.slot}, {"width", d.width}});
+    return out;
 }
 
 /**
@@ -501,6 +628,7 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
             bits.push_back(o.lightingChannels ? channelBits(lc::unrealBits(*g.node(id), unreal)) : json());
             extras.push_back(extrasOf(g, id));
         }
+        const std::vector<DataSlot> slots = dataSlots(*n, nullptr);
         auto finish = [&](json& p, size_t member) {
             p["components"] = components[member];
             if (o.lightingChannels)
@@ -514,7 +642,7 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                 for (const Spot& s : spots[m])
                 {
                     json p = placementAt(s.world, s.key, s.name);
-                    p["customData"] = json::array({stableRandom(s.key)});
+                    p["customData"] = customData(g, slots, placed[m], s.key);
                     // Array copies are the member again, so they carry what extras gave it.
                     for (const auto& [field, value] : extras[m].items())
                         p[field] = value;
@@ -522,6 +650,7 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                     list.push_back(std::move(p));
                 }
         json own = group(groupKey, *n, asset, std::move(list));
+        own["customData"] = slotsJson(slots);
         if (gnr && gnr->base)
         {
             own["gnMesh"] = meshes.size();
@@ -535,6 +664,8 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
 
         // Each mesh the geometry nodes instance is an asset of its own, its instances keyed by node, copy and instance id.
         json keep = json::array();
+        const gn::Instances& top = *gnr->geometry->instances;
+        const std::vector<DataSlot> gnSlots = dataSlots(*n, &top);
         for (const GnPart& part : gnr->parts)
         {
             const std::string partKey = groupKey + ":gn:" + part.hash.substr(0, 8);
@@ -545,12 +676,13 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                     {
                         const std::string id = s.key + ":" + inst.id;
                         json p = placementAt(s.world * inst.xf, id, s.name + "_" + inst.id);
-                        p["customData"] = json::array({stableRandom(id)});
+                        p["customData"] = customData(g, gnSlots, placed[m], id, &top, inst.top);
                         finish(p, m);
                         gl.push_back(std::move(p));
                     }
             json pg = group(partKey, *n, asset + "_" + part.hash.substr(0, 8), std::move(gl));
             pg["label"] = n->fullPath() + "_" + part.hash.substr(0, 8);
+            pg["customData"] = slotsJson(gnSlots);
             pg["gnMesh"] = meshes.size();
             meshes.push_back(part.mesh);
             groups.push_back(std::move(pg));
@@ -602,6 +734,33 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
 {
     std::vector<scene::MeshPtr> meshes;
     return buildPlan(g, roots, o, meshes);
+}
+
+std::vector<std::string> customDataNames(const scene::Node& source)
+{
+    const int i = source.type().attrIndex(kCustomDataAttr);
+    if (i < 0)
+        return {kRandomData};
+    const std::string* s = std::get_if<std::string>(&source.value(i));
+    const json j = s ? json::parse(*s, nullptr, false) : json();
+    std::vector<std::string> out;
+    if (j.is_array())
+        for (const json& n : j)
+            if (n.is_string() && !n.get<std::string>().empty())
+                out.push_back(n.get<std::string>());
+    return out;
+}
+
+void setCustomDataNames(scene::Graph& g, scene::NodeId source, const std::vector<std::string>& names)
+{
+    const scene::Node* n = g.node(source);
+    if (!n)
+        throw std::invalid_argument("no such node");
+    int i = n->type().attrIndex(kCustomDataAttr);
+    if (i < 0)
+        i = g.addAttr(source, scene::AttrDef{.name = kCustomDataAttr, .type = scene::PlugType::String, .defaultValue = std::string(),
+                                             .flags = scene::AttrHidden, .doc = "What unrealPlaceInstances sends as custom primitive data, as JSON."});
+    g.setValue({source, i, -1}, json(names).dump());
 }
 
 int placementTimeoutMs(size_t count)
@@ -784,6 +943,49 @@ void registerPlacementCommands()
                     {"lightingChannels", plan["lightingChannels"]}};
         },
         .examples = {"unrealPlaceInstances(\"Bolt\", folder=\"/Game/Kit\")", "unrealPlaceInstances(mode=\"hism\", wait=True)"},
+    });
+
+    ops::registerCommand({
+        .name = "unrealCustomData",
+        .doc = "Name what unrealPlaceInstances sends as each placement's custom primitive data, in slot order, on the instance "
+               "sources of the given meshes: random (a stable 0 to 1 per placement), or a number, bool or vector attribute on "
+               "the members (a vector takes 3 slots), or for geometry nodes instances their instance attribute of that name. "
+               "A material reads slot n with PerInstanceCustomData (ISM/HISM) or CustomPrimitiveData (actors). "
+               "With query=True, returns the names. Default [\"random\"].",
+        .positionalDoc = "objects",
+        .flags = {{"data", "d", T::Any, nullptr, "The names, a list: [\"random\", \"wear\", \"tint\"]. An empty list sends none."},
+                  {"query", "q", T::Bool, false, "Return the names of the first object's source."}},
+        .run = [](const Args& a) -> json {
+            scene::Graph& g = scene::Graph::current();
+            std::vector<scene::NodeId> sources;
+            for (const std::string& name : a.objects())
+            {
+                scene::Node* n = g.find(name);
+                if (!n || !placeable(n))
+                    throw CommandError("unrealCustomData: '" + name + "' is not a mesh");
+                const scene::NodeId src = scene::instancing::root(g, n->id());
+                if (std::ranges::find(sources, src) == sources.end())
+                    sources.push_back(src);
+            }
+            if (sources.empty())
+                throw CommandError("unrealCustomData: give meshes");
+            if (a.get<bool>("query"))
+                return customDataNames(*g.node(sources.front()));
+            const json data = a.has("data") ? a.flags.at("data") : json();
+            std::vector<std::string> names;
+            if (!data.is_array())
+                throw CommandError("unrealCustomData: data is a list of names");
+            for (const json& d : data)
+            {
+                if (!d.is_string() || d.get<std::string>().empty())
+                    throw CommandError("unrealCustomData: data holds names, not " + d.dump());
+                names.push_back(d.get<std::string>());
+            }
+            for (scene::NodeId src : sources)
+                setCustomDataNames(g, src, names);
+            return names;
+        },
+        .examples = {"unrealCustomData(\"Boulder\", data=[\"random\", \"wear\", \"tint\"])"},
     });
 
     ops::registerCommand({

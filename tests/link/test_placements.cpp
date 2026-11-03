@@ -630,3 +630,78 @@ TEST_CASE("geometry nodes instances reach Unreal: their meshes written and impor
     Link::get().disconnect();
     fs::remove_all(dir);
 }
+
+TEST_CASE("custom primitive data: names declared on the source map member attrs to slots, saved and undoable")
+{
+    setup();
+    buildKit();
+    scene::Graph& g = scene::Graph::current();
+    run("addAttr", {{"args", {"BoltA"}}, {"longName", "wear"}, {"defaultValue", 0.75}});
+    run("addAttr", {{"args", {"BoltA"}}, {"longName", "tint"}, {"attributeType", "double3"}});
+    run("setAttr", {{"args", {"BoltA.tint", 0.1, 0.2, 0.3}}});
+    run("addAttr", {{"args", {"Bolt"}}, {"longName", "tint"}, {"attributeType", "double3"}});
+    CHECK(run("unrealCustomData", {{"args", {"BoltB"}}, {"query", true}}) == json::array({"random"}));
+    run("unrealCustomData", {{"args", {"BoltB"}}, {"data", {"wear", "random", "tint"}}});
+    // Declared on the group's source, whichever member was named.
+    CHECK(customDataNames(*g.find("Bolt")) == std::vector<std::string>{"wear", "random", "tint"});
+
+    json plan = placementPlan(g, {g.find("Bolt")->id()}, PlacementOptions{});
+    const json& bolt = plan["groups"][0];
+    CHECK(bolt["customData"] == json::parse(R"([{"name":"wear","slot":0,"width":1},{"name":"random","slot":1,"width":1},{"name":"tint","slot":2,"width":3}])"));
+    const json* a = placementOf(bolt, "BoltA");
+    const json* b = placementOf(bolt, "BoltB");
+    REQUIRE(a);
+    REQUIRE(b);
+    REQUIRE((*a)["customData"].size() == 5);
+    CHECK((*a)["customData"][0].get<double>() == doctest::Approx(0.75));
+    CHECK((*a)["customData"][1].get<double>() >= 0.0);
+    CHECK((*a)["customData"][3].get<double>() == doctest::Approx(0.2));
+    // A member without the attr sends zeros in its slots.
+    CHECK((*b)["customData"][0] == 0.0);
+    CHECK((*b)["customData"][4] == 0.0);
+
+    run("undo");
+    CHECK(customDataNames(*g.find("Bolt")) == std::vector<std::string>{"random"});
+    run("redo");
+    const fs::path path = fs::temp_directory_path() / "lila_link_custom_data.lila";
+    run("saveScene", {{"args", {path.generic_string()}}});
+    run("newScene");
+    run("openScene", {{"args", {path.generic_string()}}});
+    CHECK(run("unrealCustomData", {{"args", {"Bolt"}}, {"query", true}}) == json::array({"wear", "random", "tint"}));
+    run("unrealCustomData", {{"args", {"Bolt"}}, {"data", json::array()}});
+    CHECK(placementPlan(g, {g.find("Bolt")->id()}, PlacementOptions{})["groups"][0]["placements"][0]["customData"].empty());
+    CHECK_THROWS_AS(run("unrealCustomData", {{"args", {"Bolt"}}, {"data", {1, 2}}}), CommandError);
+    fs::remove(path);
+}
+
+TEST_CASE("custom primitive data: geometry nodes instances send their instance attributes")
+{
+    setup();
+    if (!ops::find("gnAddNode"))
+    {
+        gn::registerTypes();
+        gn::registerCommands();
+    }
+    buildScatter();
+    // Store each instance's index as "wear" on the instance domain, after joining.
+    const std::string store = gnAdd("Boulders", "StoreNamedAttribute"), index = gnAdd("Boulders", "Index");
+    gnSet("Boulders", store + ".domain", "instance");
+    gnSet("Boulders", store + ".name", "wear");
+    run("gnDisconnect", {{"args", {"Boulders", "GroupOutput.geometry"}}});
+    gnLink("Boulders", "JoinGeometry.geometry", store + ".geometry");
+    gnLink("Boulders", index + ".value", store + ".value");
+    gnLink("Boulders", store + ".geometry", "GroupOutput.geometry");
+    run("unrealCustomData", {{"args", {"Ground"}}, {"data", {"wear", "random"}}});
+
+    scene::Graph& g = scene::Graph::current();
+    json plan = placementPlan(g, {g.find("Ground")->id()}, PlacementOptions{});
+    REQUIRE(plan["groups"].size() == 3);
+    const json& part = plan["groups"][1];
+    CHECK(part["customData"][0]["width"] == 1);
+    REQUIRE(part["placements"].size() > 10);
+    // Instance k of the first joined part is top-level instance k.
+    for (size_t k : {0u, 5u, 10u})
+        CHECK(part["placements"][k]["customData"][0].get<double>() == doctest::Approx(double(k)));
+    const size_t each = part["placements"].size();
+    CHECK(plan["groups"][2]["placements"][3]["customData"][0].get<double>() == doctest::Approx(double(each + 3)));
+}

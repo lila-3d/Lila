@@ -245,6 +245,16 @@ LILA_SCENE_API Registry<PlacementExtra>& placementExtras();
 /** For extensions: owned by ctx and removed when it unloads. False when the id is taken. */
 LILA_SCENE_API bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra);
 
+/**
+ * What an instance source's placements carry as custom primitive data, in slot order: "random" is a stable 0 to 1 per
+ * placement, any other name a number, bool or vector attr on each member (a vector fills 3 slots) or, for geometry nodes
+ * instances, the instance attribute of that name (as wide as its type), else the member's attr. Saved on the source;
+ * ["random"] when none is set.
+ */
+LILA_SCENE_API std::vector<std::string> customDataNames(const scene::Node& source);
+/** Sets them, undoably. An empty list sends no custom data. */
+LILA_SCENE_API void setCustomDataNames(scene::Graph& g, scene::NodeId source, const std::vector<std::string>& names);
+
 /** RPC timeout for a placement call carrying count placements: 30 s plus 20 ms each, at most 30 minutes. */
 LILA_SCENE_API int placementTimeoutMs(size_t count);
 
