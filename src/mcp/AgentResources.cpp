@@ -145,6 +145,9 @@ constexpr Doc kDocs[] = {
     {"lila://guide/set-dressing", "guide-set-dressing.md", "Set dressing guide",
      "Dressing scenes with props: library search and placement, physics settle/push/drop, shelf fills, scatters and piles, "
      "modular kit snapping, and dressCheck to verify. Read before placing or arranging props."},
+    {"lila://guide/terrain", "guide-terrain.md", "Terrain guide",
+     "Building terrain from code: create, import and erode, sample and route, sculpt strokes, building pads and plaza stamps "
+     "(cut and fill, walls, piles), and sending the landscape with its paint layers to Unreal. Read before any terrain work."},
     {"lila://examples/low-poly-dog", "examples/low_poly_dog.py", "Example: low-poly dog",
      "A complete script: a very low-poly dog as one closed symmetric mesh (legs, head, snout, nose, eyes, floppy ears, tail "
      "all extruded), checked with meshCheck and captures."},
@@ -187,9 +190,9 @@ void registerAgentResources()
         .name = "read_guide",
         .description = "Lila's agent guides, for clients that cannot read MCP resources. topic: modeling (read before modeling), api, "
                        "geometryNodes (read before building node groups: spec format and node catalogue), setDressing (read before "
-                       "placing or arranging props), or example (a complete low-poly dog script).",
+                       "placing or arranging props), terrain (read before terrain work), or example (a complete low-poly dog script).",
         .inputSchema = {{"type", "object"},
-                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "geometryNodes", "setDressing", "example"}}}}}},
+                        {"properties", {{"topic", {{"type", "string"}, {"enum", {"modeling", "api", "geometryNodes", "setDressing", "terrain", "example"}}}}}},
                         {"required", {"topic"}}},
         .run = [](const json& args) {
             std::string topic = args.value("topic", "modeling");
@@ -199,6 +202,8 @@ void registerAgentResources()
                 return readFile(agentsDir() / "guide-geometry-nodes.md") + nodeCatalogue();
             if (topic == "setDressing")
                 return readFile(agentsDir() / "guide-set-dressing.md");
+            if (topic == "terrain")
+                return readFile(agentsDir() / "guide-terrain.md");
             if (topic == "example")
                 return readFile(agentsDir() / "examples" / "low_poly_dog.py");
             return readFile(agentsDir() / "guide-modeling.md");
