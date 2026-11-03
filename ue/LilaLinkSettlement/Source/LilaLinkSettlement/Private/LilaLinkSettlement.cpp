@@ -1,6 +1,6 @@
 #include "LilaLinkSettlement.h"
 
-#include "LilaLinkLog.h"
+#include "LilaLinkMethodRegistry.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/SplineComponent.h"
@@ -13,16 +13,22 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Metadata/PCGMetadata.h"
+#include "PCGParamData.h"
+#include "UObject/UObjectIterator.h"
 #include "Metadata/PCGMetadataAttributeTpl.h"
 #include "PCGDataAsset.h"
 #include "Polygon2.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
+#include "Misc/PackageName.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #include "ZoneGraphDelegates.h"
 #include "ZoneGraphSettings.h"
 #include "ZoneGraphTypes.h"
 #include "ZoneShapeComponent.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogLilaLinkSettlement, Log, All);
 
 namespace
 {
@@ -193,6 +199,67 @@ UPCGPointArrayData* MakeEnvelopePoints(UObject* Outer, const TArray<TSharedPtr<F
 	return Points;
 }
 
+/**
+ * A point per entry at its position field, turned to face its forward field when it has one, bounds from length and
+ * width (or radius) when given; every other number and string field an attribute.
+ */
+UPCGPointArrayData* MakeMarkerPoints(UObject* Outer, const TArray<TSharedPtr<FJsonValue>>& Entries, const TCHAR* PositionField, const TCHAR* ForwardField)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSettlement::MakeMarkerPoints);
+
+	if (Entries.IsEmpty())
+	{
+		return nullptr;
+	}
+	UPCGPointArrayData* Points = NewObject<UPCGPointArrayData>(Outer);
+	Points->SetNumPoints(Entries.Num());
+	UPCGMetadata* Metadata = Points->MutableMetadata();
+	auto Transforms = Points->GetTransformValueRange();
+	auto BoundsMin = Points->GetBoundsMinValueRange();
+	auto BoundsMax = Points->GetBoundsMaxValueRange();
+	auto Keys = Points->GetMetadataEntryValueRange();
+	for (int32 Index = 0; Index < Entries.Num(); ++Index)
+	{
+		const TSharedPtr<FJsonObject> E = Entries[Index]->AsObject();
+		if (!E.IsValid())
+		{
+			continue;
+		}
+		FVector Forward = ForwardField ? ReadPoint(E->TryGetField(ForwardField)) : FVector::ZeroVector;
+		Forward.Z = 0.0;
+		const FQuat Rotation = Forward.IsNearlyZero() ? FQuat::Identity : FRotationMatrix::MakeFromX(Forward.GetSafeNormal()).ToQuat();
+		Transforms[Index] = FTransform(Rotation, ReadPoint(E->TryGetField(PositionField)));
+		double Length = 100.0, Width = 100.0;
+		if (E->TryGetNumberField(TEXT("radius"), Length))
+		{
+			Width = Length;
+		}
+		E->TryGetNumberField(TEXT("length"), Length);
+		E->TryGetNumberField(TEXT("width"), Width);
+		BoundsMin[Index] = FVector(-0.5 * Length, -0.5 * Width, 0.0);
+		BoundsMax[Index] = FVector(0.5 * Length, 0.5 * Width, 200.0);
+		const int64 Key = Metadata->AddEntry();
+		Keys[Index] = Key;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Field : E->Values)
+		{
+			if (!Field.Value.IsValid() || Field.Key == PositionField || (ForwardField && Field.Key == ForwardField))
+			{
+				continue;
+			}
+			const FName Name(*Field.Key);
+			if (Field.Value->Type == EJson::Number)
+			{
+				Metadata->FindOrCreateAttribute<double>(Name, 0.0, true, false)->SetValue(Key, Field.Value->AsNumber());
+			}
+			else if (Field.Value->Type == EJson::String)
+			{
+				Metadata->FindOrCreateAttribute<FString>(Name, FString(), false, false)->SetValue(Key, Field.Value->AsString());
+			}
+		}
+	}
+	return Points;
+}
+
 UPCGSplineData* MakeRoad(UObject* Outer, const TArray<FVector>& Points)
 {
 	if (Points.Num() < 2)
@@ -280,6 +347,10 @@ TSharedPtr<FJsonValue> SetSettlementData(const TSharedPtr<FJsonObject>& Params, 
 		}
 	}
 	AddTagged(Asset, MakeEnvelopePoints(Asset, Envelopes), TEXT("EnvelopePoints"), TEXT("Envelope"));
+	const TArray<TSharedPtr<FJsonValue>>& Intersections = ArrayOf(Params, TEXT("intersections"));
+	AddTagged(Asset, MakeMarkerPoints(Asset, Intersections, TEXT("center"), nullptr), TEXT("Intersections"), TEXT("Intersection"));
+	const TArray<TSharedPtr<FJsonValue>>& Parking = ArrayOf(Params, TEXT("parking"));
+	AddTagged(Asset, MakeMarkerPoints(Asset, Parking, TEXT("position"), TEXT("forward")), TEXT("ParkingSpots"), TEXT("Parking"));
 	const TArray<TSharedPtr<FJsonValue>>& Roads = ArrayOf(Params, TEXT("roads"));
 	for (const TSharedPtr<FJsonValue>& Value : Roads)
 	{
@@ -292,13 +363,15 @@ TSharedPtr<FJsonValue> SetSettlementData(const TSharedPtr<FJsonObject>& Params, 
 		}
 	}
 	Asset->MarkPackageDirty();
-	UE_LOG(LogLilaLink, Log, TEXT("setSettlementData: %s (%d lots, %d envelopes, %d roads)"), *AssetPath, Lots.Num(), Envelopes.Num(), Roads.Num());
+	UE_LOG(LogLilaLinkSettlement, Log, TEXT("setSettlementData: %s (%d lots, %d envelopes, %d roads)"), *AssetPath, Lots.Num(), Envelopes.Num(), Roads.Num());
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("asset"), Asset->GetPathName());
 	Out->SetNumberField(TEXT("lots"), Lots.Num());
 	Out->SetNumberField(TEXT("envelopes"), Envelopes.Num());
 	Out->SetNumberField(TEXT("roads"), Roads.Num());
+	Out->SetNumberField(TEXT("intersections"), Intersections.Num());
+	Out->SetNumberField(TEXT("parking"), Parking.Num());
 	return MakeShared<FJsonValueObject>(Out);
 }
 
@@ -357,14 +430,100 @@ struct FZoneSettingsAccess
 		return FZoneGraphTag::None;
 	}
 
+	/** Tags another system expects on lanes of each kind (Vehicle, Pedestrian, Intersection, Crossing, Parking). */
+	TMap<FString, FZoneGraphTagMask> Extra;
+
 	FZoneGraphTagMask Mask(const TArray<TSharedPtr<FJsonValue>>& Names, TArray<FString>& Warnings)
 	{
 		FZoneGraphTagMask Out = FZoneGraphTagMask::None;
 		for (const TSharedPtr<FJsonValue>& N : Names)
 		{
 			Out.Add(Tag(N->AsString(), Warnings));
+			if (const FZoneGraphTagMask* More = Extra.Find(N->AsString()))
+			{
+				Out.Add(*More);
+			}
 		}
 		return Out;
+	}
+
+	/**
+	 * MassTraffic (a City Sample project plugin, not a dependency) names the tags it reads in its settings. Its settings
+	 * classes are found by package, their tag properties read by reflection and sorted by what their names say they are
+	 * for. Returns what was found, by kind, for the reply; empty when the project has no MassTraffic.
+	 */
+	TSharedPtr<FJsonObject> ReadMassTraffic()
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSettlement::ReadMassTraffic);
+
+		TSharedPtr<FJsonObject> Found;
+		const UScriptStruct* FilterStruct = FZoneGraphTagFilter::StaticStruct();
+		const UScriptStruct* MaskStruct = FZoneGraphTagMask::StaticStruct();
+		const UScriptStruct* TagStruct = FZoneGraphTag::StaticStruct();
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			if (!It->GetOutermost()->GetName().Equals(TEXT("/Script/MassTraffic"), ESearchCase::IgnoreCase) || It->HasAnyClassFlags(CLASS_Abstract))
+			{
+				continue;
+			}
+			const UObject* Defaults = It->GetDefaultObject(false);
+			if (!Defaults)
+			{
+				continue;
+			}
+			for (TFieldIterator<FStructProperty> Prop(*It); Prop; ++Prop)
+			{
+				FZoneGraphTagMask Mask = FZoneGraphTagMask::None;
+				const void* Value = Prop->ContainerPtrToValuePtr<void>(Defaults);
+				if (Prop->Struct == FilterStruct)
+				{
+					const FZoneGraphTagFilter& Filter = *static_cast<const FZoneGraphTagFilter*>(Value);
+					Mask.Add(Filter.AnyTags);
+					Mask.Add(Filter.AllTags);
+				}
+				else if (Prop->Struct == MaskStruct)
+				{
+					Mask = *static_cast<const FZoneGraphTagMask*>(Value);
+				}
+				else if (Prop->Struct == TagStruct)
+				{
+					Mask = FZoneGraphTagMask(*static_cast<const FZoneGraphTag*>(Value));
+				}
+				else
+				{
+					continue;
+				}
+				if (Mask == FZoneGraphTagMask::None || Mask == FZoneGraphTagMask::All)
+				{
+					continue;
+				}
+				const FString Name = Prop->GetName().ToLower();
+				const TCHAR* Kind = Name.Contains(TEXT("intersection")) ? TEXT("Intersection")
+					: Name.Contains(TEXT("crosswalk")) || Name.Contains(TEXT("crossing")) ? TEXT("Crossing")
+					: Name.Contains(TEXT("parking")) ? TEXT("Parking")
+					: Name.Contains(TEXT("pedestrian")) || Name.Contains(TEXT("crowd")) ? TEXT("Pedestrian")
+					: Name.Contains(TEXT("vehicle")) || Name.Contains(TEXT("traffic")) || Name.Contains(TEXT("lane")) ? TEXT("Vehicle")
+					: nullptr;
+				if (!Kind)
+				{
+					continue;
+				}
+				Extra.FindOrAdd(Kind).Add(Mask);
+				if (!Found.IsValid())
+				{
+					Found = MakeShared<FJsonObject>();
+				}
+				TArray<TSharedPtr<FJsonValue>> Props;
+				const TArray<TSharedPtr<FJsonValue>>* Existing = nullptr;
+				if (Found->TryGetArrayField(Kind, Existing))
+				{
+					Props = *Existing;
+				}
+				Props.Add(MakeShared<FJsonValueString>(It->GetName() + TEXT(".") + Prop->GetName()));
+				Found->SetArrayField(Kind, Props);
+			}
+		}
+		return Found;
 	}
 };
 
@@ -397,6 +556,7 @@ TSharedPtr<FJsonValue> SetZoneGraph(const TSharedPtr<FJsonObject>& Params, FStri
 		return nullptr;
 	}
 	TArray<FString> Warnings;
+	const TSharedPtr<FJsonObject> MassTraffic = Access.ReadMassTraffic();
 	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetZoneGraph", "Lila: Update Settlement Lanes"));
 
 	// Lane profiles, matched by name so a resend keeps their ids and the shapes already referring to them.
@@ -580,12 +740,20 @@ TSharedPtr<FJsonValue> SetZoneGraph(const TSharedPtr<FJsonObject>& Params, FStri
 	}
 	Actor->MarkPackageDirty();
 	UE::ZoneGraphDelegates::OnZoneGraphRequestRebuild.Broadcast();
-	UE_LOG(LogLilaLink, Log, TEXT("setZoneGraph: %s (%d shapes, %d profiles)"), *Label, Shapes, ProfileRefs.Num());
+	UE_LOG(LogLilaLinkSettlement, Log, TEXT("setZoneGraph: %s (%d shapes, %d profiles)"), *Label, Shapes, ProfileRefs.Num());
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("actor"), Actor->GetPathName());
 	Out->SetNumberField(TEXT("shapes"), Shapes);
 	Out->SetNumberField(TEXT("profiles"), ProfileRefs.Num());
+	if (MassTraffic.IsValid())
+	{
+		Out->SetObjectField(TEXT("massTraffic"), MassTraffic);
+	}
+	else
+	{
+		Out->SetBoolField(TEXT("massTraffic"), false);
+	}
 	TArray<TSharedPtr<FJsonValue>> WarningValues;
 	for (const FString& W : Warnings)
 	{
@@ -636,9 +804,254 @@ TSharedPtr<FJsonValue> RemoveSettlement(const TSharedPtr<FJsonObject>& Params, F
 }
 } // namespace
 
-void LilaLink::AddSettlementMethods(TMap<FString, FLilaLinkMethod>& Methods)
+namespace
 {
-	Methods.Add(TEXT("setSettlementData"), LilaLink::Sync(&SetSettlementData));
-	Methods.Add(TEXT("setZoneGraph"), LilaLink::Sync(&SetZoneGraph));
-	Methods.Add(TEXT("removeSettlement"), LilaLink::Sync(&RemoveSettlement));
+// ---------------------------------------------------------------------------------------------------------------------
+// Road cross-sections as shape grammar modules
+
+TSharedPtr<FJsonValue> SetRoadGrammar(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSettlement::SetRoadGrammar);
+
+	FString AssetPath, Label, Grammar;
+	if (!Params->TryGetStringField(TEXT("asset"), AssetPath) || AssetPath.IsEmpty())
+	{
+		OutError = TEXT("setRoadGrammar: give asset");
+		return nullptr;
+	}
+	Params->TryGetStringField(TEXT("label"), Label);
+	Params->TryGetStringField(TEXT("grammar"), Grammar);
+	UPCGDataAsset* Asset = FindOrCreateDataAsset(AssetPath, OutError);
+	if (!Asset)
+	{
+		return nullptr;
+	}
+	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetRoadGrammar", "Lila: Update Road Grammar"));
+	Asset->Modify();
+	Asset->Data.TaggedData.Reset();
+	Asset->Name = Label;
+
+	// One entry per distinct symbol, as Subdivide Segment's ModulesInfo pin takes them.
+	UPCGParamData* Modules = NewObject<UPCGParamData>(Asset);
+	UPCGMetadata* Metadata = Modules->MutableMetadata();
+	FPCGMetadataAttribute<FName>* Symbol = Metadata->CreateAttribute<FName>(TEXT("Symbol"), NAME_None, false, false);
+	FPCGMetadataAttribute<double>* Size = Metadata->CreateAttribute<double>(TEXT("Size"), 100.0, false, false);
+	FPCGMetadataAttribute<bool>* Scalable = Metadata->CreateAttribute<bool>(TEXT("Scalable"), false, false, false);
+	FPCGMetadataAttribute<FVector4>* Color = Metadata->CreateAttribute<FVector4>(TEXT("DebugColor"), FVector4::One(), false, false);
+	TSet<FString> Seen;
+	for (const TSharedPtr<FJsonValue>& Value : ArrayOf(Params, TEXT("modules")))
+	{
+		const TSharedPtr<FJsonObject> Module = Value->AsObject();
+		FString Name;
+		if (!Module.IsValid() || !Module->TryGetStringField(TEXT("symbol"), Name) || Seen.Contains(Name))
+		{
+			continue;
+		}
+		Seen.Add(Name);
+		const int64 Key = Metadata->AddEntry();
+		Symbol->SetValue(Key, FName(*Name));
+		Size->SetValue(Key, Module->GetNumberField(TEXT("size")));
+		bool bScalable = false;
+		Module->TryGetBoolField(TEXT("scalable"), bScalable);
+		Scalable->SetValue(Key, bScalable);
+		const FLinearColor Debug = FLinearColor::MakeRandomSeededColor(static_cast<int32>(GetTypeHash(Name)));
+		Color->SetValue(Key, FVector4(Debug.R, Debug.G, Debug.B, 1.0));
+	}
+	AddTagged(Asset, Modules, TEXT("ModulesInfo"), TEXT("RoadModules"));
+	UPCGParamData* GrammarData = NewObject<UPCGParamData>(Asset);
+	const int64 GrammarKey = GrammarData->MutableMetadata()->AddEntry();
+	GrammarData->MutableMetadata()->CreateAttribute<FString>(TEXT("Grammar"), FString(), false, false)->SetValue(GrammarKey, Grammar);
+	AddTagged(Asset, GrammarData, TEXT("Grammar"), TEXT("RoadGrammar"));
+	Asset->MarkPackageDirty();
+
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("asset"), Asset->GetPathName());
+	Out->SetNumberField(TEXT("modules"), Seen.Num());
+	return MakeShared<FJsonValueObject>(Out);
+}
+
+/** A numeric value of any float or integer property, or false. */
+bool ReadNumber(const FProperty* Prop, const void* Container, double& Out)
+{
+	if (const FNumericProperty* Numeric = CastField<FNumericProperty>(Prop))
+	{
+		const void* Value = Numeric->ContainerPtrToValuePtr<void>(Container);
+		Out = Numeric->IsFloatingPoint() ? Numeric->GetFloatingPointPropertyValue(Value) : static_cast<double>(Numeric->GetSignedIntPropertyValue(Value));
+		return true;
+	}
+	return false;
+}
+
+bool ReadText(const FProperty* Prop, const void* Container, FString& Out)
+{
+	if (const FNameProperty* Name = CastField<FNameProperty>(Prop))
+	{
+		Out = Name->GetPropertyValue_InContainer(Container).ToString();
+		return true;
+	}
+	if (const FStrProperty* Str = CastField<FStrProperty>(Prop))
+	{
+		Out = Str->GetPropertyValue_InContainer(Container);
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Slots from any object: every array of structs whose elements have a name-like field and a size-like field, searched
+ * a few levels down; and the first string property named like a grammar.
+ */
+void ReadSlots(const UStruct* Type, const void* Container, int32 Depth, TArray<TSharedPtr<FJsonValue>>& Modules, FString& Grammar)
+{
+	if (Depth > 3)
+	{
+		return;
+	}
+	for (TFieldIterator<FProperty> It(Type); It; ++It)
+	{
+		const FString PropName = It->GetName();
+		FString Text;
+		if (Grammar.IsEmpty() && PropName.Contains(TEXT("Grammar")) && ReadText(*It, Container, Text))
+		{
+			Grammar = Text;
+			continue;
+		}
+		if (const FArrayProperty* Array = CastField<FArrayProperty>(*It))
+		{
+			const FStructProperty* Inner = CastField<FStructProperty>(Array->Inner);
+			if (!Inner)
+			{
+				continue;
+			}
+			FScriptArrayHelper Helper(Array, Array->ContainerPtrToValuePtr<void>(Container));
+			for (int32 Index = 0; Index < Helper.Num(); ++Index)
+			{
+				const void* Element = Helper.GetRawPtr(Index);
+				FString Symbol;
+				double Size = -1.0;
+				for (TFieldIterator<FProperty> Field(Inner->Struct); Field; ++Field)
+				{
+					const FString FieldName = Field->GetName();
+					FString S;
+					double D = 0.0;
+					if (Symbol.IsEmpty() && (FieldName.Contains(TEXT("Symbol")) || FieldName == TEXT("Name") || FieldName.Contains(TEXT("Slot")) || FieldName == TEXT("Id")) &&
+						ReadText(*Field, Element, S))
+					{
+						Symbol = S;
+					}
+					else if (Size < 0.0 && (FieldName.Contains(TEXT("Size")) || FieldName.Contains(TEXT("Width"))) && ReadNumber(*Field, Element, D))
+					{
+						Size = D;
+					}
+				}
+				if (!Symbol.IsEmpty() && Size >= 0.0)
+				{
+					TSharedRef<FJsonObject> Module = MakeShared<FJsonObject>();
+					Module->SetStringField(TEXT("symbol"), Symbol);
+					Module->SetNumberField(TEXT("size"), Size);
+					Modules.Add(MakeShared<FJsonValueObject>(Module));
+				}
+				else
+				{
+					ReadSlots(Inner->Struct, Element, Depth + 1, Modules, Grammar);
+				}
+			}
+		}
+		else if (const FStructProperty* Struct = CastField<FStructProperty>(*It))
+		{
+			ReadSlots(Struct->Struct, Struct->ContainerPtrToValuePtr<void>(Container), Depth + 1, Modules, Grammar);
+		}
+	}
+}
+
+TSharedPtr<FJsonValue> ReadRoadGrammar(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSettlement::ReadRoadGrammar);
+
+	FString AssetPath;
+	if (!Params->TryGetStringField(TEXT("asset"), AssetPath) || AssetPath.IsEmpty())
+	{
+		OutError = TEXT("readRoadGrammar: give asset");
+		return nullptr;
+	}
+	const FString ObjectPath = AssetPath.Contains(TEXT(".")) ? AssetPath : AssetPath + TEXT(".") + FPackageName::GetShortName(AssetPath);
+	UObject* Object = LoadObject<UObject>(nullptr, *ObjectPath);
+	if (!Object)
+	{
+		OutError = FString::Printf(TEXT("readRoadGrammar: no asset at %s"), *AssetPath);
+		return nullptr;
+	}
+	TArray<TSharedPtr<FJsonValue>> Modules;
+	FString Grammar;
+	if (const UPCGDataAsset* Data = Cast<UPCGDataAsset>(Object))
+	{
+		for (const FPCGTaggedData& Tagged : Data->Data.TaggedData)
+		{
+			const UPCGParamData* Param = Cast<UPCGParamData>(Tagged.Data);
+			const UPCGMetadata* Metadata = Param ? Param->ConstMetadata() : nullptr;
+			if (!Metadata)
+			{
+				continue;
+			}
+			const FPCGMetadataAttributeBase* SymbolBase = Metadata->GetConstAttribute(TEXT("Symbol"));
+			const FPCGMetadataAttributeBase* SizeBase = Metadata->GetConstAttribute(TEXT("Size"));
+			const FPCGMetadataAttributeBase* GrammarBase = Metadata->GetConstAttribute(TEXT("Grammar"));
+			if (GrammarBase && GrammarBase->GetTypeId() == static_cast<int16>(EPCGMetadataTypes::String) && Metadata->GetLocalItemCount() > 0)
+			{
+				Grammar = static_cast<const FPCGMetadataAttribute<FString>*>(GrammarBase)->GetValueFromItemKey(0);
+			}
+			if (!SymbolBase || !SizeBase)
+			{
+				continue;
+			}
+			for (int64 Key = 0; Key < Metadata->GetLocalItemCount(); ++Key)
+			{
+				FString Symbol;
+				if (SymbolBase->GetTypeId() == static_cast<int16>(EPCGMetadataTypes::Name))
+				{
+					Symbol = static_cast<const FPCGMetadataAttribute<FName>*>(SymbolBase)->GetValueFromItemKey(Key).ToString();
+				}
+				else if (SymbolBase->GetTypeId() == static_cast<int16>(EPCGMetadataTypes::String))
+				{
+					Symbol = static_cast<const FPCGMetadataAttribute<FString>*>(SymbolBase)->GetValueFromItemKey(Key);
+				}
+				double Size = 0.0;
+				switch (static_cast<EPCGMetadataTypes>(SizeBase->GetTypeId()))
+				{
+				case EPCGMetadataTypes::Double: Size = static_cast<const FPCGMetadataAttribute<double>*>(SizeBase)->GetValueFromItemKey(Key); break;
+				case EPCGMetadataTypes::Float: Size = static_cast<const FPCGMetadataAttribute<float>*>(SizeBase)->GetValueFromItemKey(Key); break;
+				case EPCGMetadataTypes::Integer32: Size = static_cast<const FPCGMetadataAttribute<int32>*>(SizeBase)->GetValueFromItemKey(Key); break;
+				case EPCGMetadataTypes::Integer64: Size = static_cast<double>(static_cast<const FPCGMetadataAttribute<int64>*>(SizeBase)->GetValueFromItemKey(Key)); break;
+				default: break;
+				}
+				if (!Symbol.IsEmpty())
+				{
+					TSharedRef<FJsonObject> Module = MakeShared<FJsonObject>();
+					Module->SetStringField(TEXT("symbol"), Symbol);
+					Module->SetNumberField(TEXT("size"), Size);
+					Modules.Add(MakeShared<FJsonValueObject>(Module));
+				}
+			}
+		}
+	}
+	else
+	{
+		ReadSlots(Object->GetClass(), Object, 0, Modules, Grammar);
+	}
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("asset"), Object->GetPathName());
+	Out->SetStringField(TEXT("class"), Object->GetClass()->GetName());
+	Out->SetArrayField(TEXT("modules"), Modules);
+	Out->SetStringField(TEXT("grammar"), Grammar);
+	return MakeShared<FJsonValueObject>(Out);
+}
+} // namespace
+
+void LilaLinkSettlement::RegisterMethods()
+{
+	LilaLink::RegisterMethod(TEXT("setSettlementData"), &SetSettlementData, Feature);
+	LilaLink::RegisterMethod(TEXT("setZoneGraph"), &SetZoneGraph, Feature);
+	LilaLink::RegisterMethod(TEXT("removeSettlement"), &RemoveSettlement, Feature);
+	LilaLink::RegisterMethod(TEXT("setRoadGrammar"), &SetRoadGrammar, Feature);
+	LilaLink::RegisterMethod(TEXT("readRoadGrammar"), &ReadRoadGrammar, Feature);
 }

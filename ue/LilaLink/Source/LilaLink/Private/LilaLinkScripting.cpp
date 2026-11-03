@@ -1,6 +1,7 @@
 #include "LilaLinkScripting.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMethodRegistry.h"
 #include "LilaLinkMethods.h"
 #include "LilaLinkServer.h"
 
@@ -21,7 +22,12 @@ FString ULilaLinkScripting::CallMethod(const FString& Method, const FString& Par
 		return FString::Printf(TEXT("{\"error\":{\"message\":\"%s\"}}"), *Message.ReplaceCharWithEscapedChar());
 	};
 	TMap<FString, FLilaLinkMethod> Methods = LilaLink::MakeMethods();
+	FLilaLinkMethod External;
 	FLilaLinkMethod* Fn = Methods.Find(Method);
+	if (!Fn && LilaLink::FindExternalMethod(Method, External))
+	{
+		Fn = &External;
+	}
 	if (!Fn)
 	{
 		return Fail(FString::Printf(TEXT("Unknown method %s"), *Method));

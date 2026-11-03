@@ -1,6 +1,7 @@
 #include "LilaLinkServer.h"
 
 #include "LilaLinkLog.h"
+#include "LilaLinkMethodRegistry.h"
 
 #include "Async/Async.h"
 #include "Common/TcpSocketBuilder.h"
@@ -326,7 +327,12 @@ bool FLilaLinkServer::TickGameThread(float DeltaTime)
 	{
 		--QueuedCount;
 		FLilaLinkCallRef Call = Request.Call.ToSharedRef();
+		FLilaLinkMethod External;
 		const FLilaLinkMethod* Handler = Methods.Find(Call->GetMethod());
+		if (!Handler && LilaLink::FindExternalMethod(Call->GetMethod(), External))
+		{
+			Handler = &External;
+		}
 		if (!Handler)
 		{
 			continue;
@@ -461,7 +467,12 @@ void FLilaLinkServer::HandleLine(const TSharedPtr<FLilaLinkClient, ESPMode::Thre
 		return;
 	}
 
+	FLilaLinkMethod External;
 	const FLilaLinkMethod* Handler = Methods.Find(Method);
+	if (!Handler && LilaLink::FindExternalMethod(Method, External))
+	{
+		Handler = &External;
+	}
 	if (!Handler)
 	{
 		if (bWantsReply)

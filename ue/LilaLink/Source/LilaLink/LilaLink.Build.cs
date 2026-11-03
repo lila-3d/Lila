@@ -50,8 +50,6 @@ public class LilaLink : ModuleRules
 			"GeometryCollectionEngine",
 			"ChaosSolverEngine",
 			"ChaosCaching",
-			"PCG",
-			"ZoneGraph",
 			"StaticMeshEditor",
 			"EditorSubsystem",
 			"LilaLinkRuntime",

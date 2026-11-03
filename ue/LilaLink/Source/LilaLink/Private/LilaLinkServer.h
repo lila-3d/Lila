@@ -129,4 +129,7 @@ FString MakeResponse(const TSharedPtr<FJsonValue>& Id, const TSharedPtr<FJsonVal
 
 /** Adapts a method that answers before returning. */
 FLilaLinkMethod Sync(FLilaLinkSyncMethod Fn);
+
+/** A method another plugin registered (LilaLinkMethodRegistry.h), as a server method; false when there is none. Any thread. */
+bool FindExternalMethod(const FString& Name, FLilaLinkMethod& Out);
 } // namespace LilaLink
