@@ -1517,12 +1517,14 @@ std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p
                 else
                     merged.push_back(iv);
             }
+            // To the vertex where another run meets this one; a free end stops behind the end stones like the faces do.
+            const bool freeStart = !r.cyclic && r.startCorner < 0, freeEnd = !r.cyclic && r.endCorner < 0;
             for (auto& iv : merged)
             {
                 if (iv.first < endReach || (r.cyclic && iv.first < gap))
-                    iv.first = 0.0;
+                    iv.first = freeStart ? recess : 0.0;
                 if (iv.second > total - endReach || (r.cyclic && iv.second > total - gap))
-                    iv.second = total;
+                    iv.second = freeEnd ? total - recess : total;
             }
             if (r.cyclic && merged.size() > 1 && merged.front().first <= 0.0 && merged.back().second >= total)
             {

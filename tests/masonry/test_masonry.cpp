@@ -256,7 +256,10 @@ TEST_CASE("masonry: the core is closed and recessed behind the faces")
         CHECK(core.bounds().max.y == doctest::Approx(p.height - p.stone.joint - p.recess));
     }
     const geo::Mesh straight = coreMesh(line({{0, 0, 0}, {400, 0, 0}}), p);
-    CHECK(signedVolume(straight) == doctest::Approx(400.0 * (p.thickness - 2.0 * p.recess) * (p.height - p.stone.joint - p.recess)));
+    // Free ends stop behind the end stones like the faces do.
+    CHECK(signedVolume(straight) == doctest::Approx((400.0 - 2.0 * p.recess) * (p.thickness - 2.0 * p.recess) * (p.height - p.stone.joint - p.recess)));
+    CHECK(straight.bounds().min.x == doctest::Approx(p.recess));
+    CHECK(straight.bounds().max.x == doctest::Approx(400.0 - p.recess));
 }
 
 TEST_CASE("masonry: footprints round trip through loose edges")
