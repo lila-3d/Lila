@@ -394,6 +394,9 @@ std::vector<GeometryPtr> chunkShapes(uint64_t seed, int variants, const std::str
         for (int k = 0; k < 14; ++k)
             pts.push_back(randDir(seed + uint64_t(v) * 7919, uint64_t(k)) * squash * (0.35 + 0.15 * rand01(seed, uint64_t(v) * 101 + 10 + k)));
         geo::Mesh m = geo::convexHullMesh(pts, 32);
+        // Marks the chunks so a rigid vertex animation bake leaves them out and freezeDestruction can take them alone.
+        std::span<int32_t> debris = m.pointAttrs().getOrAdd<int32_t>("debris");
+        std::fill(debris.begin(), debris.end(), 1);
         if (!material.empty())
         {
             m.materialNames() = {material};

@@ -725,8 +725,8 @@ void registerCommands(ext::Context& ctx)
         .name = "addDebris",
         .doc = "Throw off small chunks and dust where a destruction breaks: chunks (more for harder breaks) settle on the ground "
                "and the pieces and join the result as instances of a few shared rock shapes; dust points are on the Debris node's "
-               "dust output for Niagara. Chunks appear as breaks happen, so freeze the result or send it as a Chaos Geometry Collection "
-               "rather than baking rigid vertex animation. Running it again changes the settings. Returns the Debris node.",
+               "dust output for Niagara. A rigid vertex animation bake leaves the chunks out; freezeDestruction(debris='only') turns them "
+               "into their own group of instanced meshes to send alongside. Running it again changes the settings. Returns the Debris node.",
         .positionalDoc = "destruction (default the selection)",
         .flags = {{"amount", "a", AT::Float, 4.0, "Chunks per break, on average.", {}, {}, 0.0, 1000.0},
                   {"size", "s", AT::Float, 8.0, "Typical chunk size, cm.", {}, {}, 0.1},

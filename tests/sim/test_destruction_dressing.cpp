@@ -267,6 +267,20 @@ TEST_CASE("addDebris: chunks thrown off at the breaks settle as instances of a f
     for (size_t k = 12; k < total; ++k)
         CHECK(out->instances->transforms[k][3].y > -53.0);
 
+    // The chunks alone, as their own group of shared shapes, with the destruction left showing.
+    json chunks = run("freezeDestruction", {{"args", {w}}, {"frame", 40}, {"debris", "only"}, {"hide", false}});
+    CHECK(chunks["pieces"].get<size_t>() == total - 12);
+    CHECK(chunks["meshes"].get<size_t>() <= 6);
+
+    // A rigid vertex animation bake leaves the chunks out, so their coming and going doesn't stop it.
+    const auto folder = std::filesystem::temp_directory_path() / "lila_debris_vat";
+    std::filesystem::remove_all(folder);
+    json vat = run("exportVertexAnimation", {{"args", {w}}, {"start", 1.0}, {"end", 40.0}, {"folder", folder.string()}, {"name", "WallDebris"}});
+    CHECK(vat["meta"]["mode"] == "rigid");
+    CHECK(vat["meta"]["pieceCount"].get<int>() == 12);
+    std::error_code ec;
+    std::filesystem::remove_all(folder, ec);
+
     json r = run("freezeDestruction", {{"args", {w}}, {"frame", 40}});
     CHECK(r["pieces"].get<size_t>() == total);
     CHECK(r["meshes"].get<size_t>() < total);
@@ -393,6 +407,19 @@ TEST_CASE("exportChaos writes the pieces and their motion for a Geometry Collect
     CHECK(top > 50.0);
     CHECK(top < 100.0);
     CHECK(released > 0);
+
+    // Breaks carry what broke free: its velocity and mass, beside the impulse.
+    REQUIRE(m["breaks"].size() > 0);
+    bool moving = false;
+    for (const json& b : m["breaks"])
+    {
+        CHECK(b["impulse"].get<double>() >= 0.0);
+        if (b["pieceA"].get<int>() < 0)
+            continue;
+        CHECK(b["mass"].get<double>() > 1.0);
+        moving = moving || glm::length(glm::dvec3(b["velocity"][0], b["velocity"][1], b["velocity"][2])) > 1.0;
+    }
+    CHECK(moving);
     js.close();
     bf.close();
     std::error_code ec;

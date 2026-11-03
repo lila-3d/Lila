@@ -178,6 +178,8 @@ void registerFreeze(ext::Context& ctx)
                   {"collision", "c", AT::Bool, true, "A UCX_ convex hull under each piece."},
                   {"hullPoints", "", AT::Int, 32, "Most points in a collision hull.", {}, {}, 4.0, 255.0},
                   {"smallest", "", AT::Float, 0.0, "Pieces smaller across than this are left out, cm.", {}, {}, 0.0},
+                  {"debris", "", AT::String, "with", "with: pieces and addDebris chunks; only: just the chunks (a group of their own); without: just the pieces.",
+                   {"with", "only", "without"}},
                   {"name", "n", AT::String, nullptr, "The group's name. Default: the mesh's plus _Frozen."},
                   {"hide", "", AT::Bool, true, "Hide the destruction afterwards."}},
         .run = [](const Args& a) -> json {
@@ -234,17 +236,22 @@ void registerFreeze(ext::Context& ctx)
             const bool collision = a.get<bool>("collision", true);
             const int hullPoints = int(std::clamp<int64_t>(a.get<int64_t>("hullPoints", 32), 4, 255));
             const double smallest = std::max(0.0, a.get<double>("smallest", 0.0));
-            const std::string base = a.get<std::string>("name", mesh->name() + "_Frozen");
+            const std::string debris = a.get<std::string>("debris", "with");
+            const std::string base = a.get<std::string>("name", mesh->name() + (debris == "only" ? "_Debris" : "_Frozen"));
 
             Graph::Batch batch(g);
             Node* group = g.createNode(*scene::types::find("transform"), base);
             scene::Transform::setLocalMatrix(g, group->id(), mesh->as<glm::dmat4>(scene::Transform::kWorldMatrix));
-            const std::string pieceBase = mesh->name() + "_Piece";
+            const std::string pieceBase = mesh->name() + (debris == "only" ? "_Chunk" : "_Piece");
             std::map<const geo::Mesh*, std::pair<scene::NodeId, scene::NodeId>> firstOf; // mesh, its collision
             std::map<const geo::Mesh*, scene::MeshPtr> hulls;
             int64_t made = 0;
             for (const Item& it : items)
             {
+                const geo::Attribute* flag = it.mesh->pointAttrs().find("debris");
+                const bool chunk = flag && flag->type() == geo::AttrType::Int && flag->size() > 0 && flag->values<int32_t>()[0] != 0;
+                if ((debris == "only" && !chunk) || (debris == "without" && chunk))
+                    continue;
                 if (smallest > 0.0 && sizeOf(*it.mesh, it.transform) < smallest)
                     continue;
                 Node* n = g.createNode(*scene::types::find("mesh"), std::format("{}_{:03}", pieceBase, made + 1), group->id());

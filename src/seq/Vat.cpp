@@ -7,6 +7,7 @@
 #include "core/Progress.h"
 #include "fbx/Fbx.h"
 #include "geo/Normals.h"
+#include "geo/Ops.h"
 #include "geo/Triangulate.h"
 #include "math/MathCore.h"
 #include "scene/Anim.h"
@@ -29,6 +30,31 @@ namespace lila::seq
 namespace
 {
 using geo::Index;
+
+/**
+ * Leaves out the faces on points with the int "debris" attribute set (Debris From Events chunks). Debris appears as
+ * things break, so it would change the point count from frame to frame; it goes to Unreal as dressing instead.
+ */
+void dropDebris(geo::Mesh& m)
+{
+    const geo::Attribute* debris = m.pointAttrs().find("debris");
+    if (!debris || debris->type() != geo::AttrType::Int)
+        return;
+    std::span<const int32_t> flag = debris->values<int32_t>();
+    std::vector<Index> keep;
+    bool any = false;
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            const Index p = m.cornerPoint(m.faceCorner(f));
+            if (p < flag.size() && flag[p] != 0)
+                any = true;
+            else
+                keep.push_back(f);
+        }
+    if (any)
+        m = geo::extractFaces(m, keep);
+}
 
 std::string fileSafe(std::string s)
 {
@@ -512,6 +538,8 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
     std::optional<Pieces> restPieces;
     const bool positionsOnly = o.mode == "rigid";
     sample(g, meshes, so, [&](FrameMeshes& f) {
+        for (geo::Mesh& part : f.meshes)
+            dropDebris(part);
         geo::Mesh m = combine(f);
         samples.push_back(measure(m, f.frame, positionsOnly));
         if (f.index == restIndex)
@@ -529,6 +557,8 @@ VatResult exportVat(scene::Graph& g, const std::vector<scene::NodeId>& meshes, c
         one.start = one.end = o.restFrame;
         one.step = 1.0;
         sample(g, meshes, one, [&](FrameMeshes& f) {
+            for (geo::Mesh& part : f.meshes)
+                dropDebris(part);
             rest = combine(f);
             restSample = measure(*rest, f.frame, positionsOnly);
             restPieces = findRigidPieces(f.meshes);
