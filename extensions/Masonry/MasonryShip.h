@@ -40,7 +40,7 @@ bool writeLodFbx(std::span<const geo::Mesh> levels, const std::string& name, con
 
 /**
  * A USD Nanite Assembly (UE 5.8) of the plan's stones: a root with NaniteAssemblyRootAPI holding a point instancer whose
- * prototypes are parts with NaniteAssemblyExternalRefAPI pointing at the plan's stone mesh assets. Lila space (Y up, cm).
+ * prototypes are parts with NaniteAssemblyExternalRefAPI pointing at the plan's stone mesh assets. Z up, cm, placing each stone where an instanced send would.
  */
 bool writeAssemblyUsda(const Built& b, const nlohmann::json& plan, const std::filesystem::path& path, std::string* err);
 } // namespace masonry

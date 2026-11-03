@@ -221,7 +221,7 @@ bool writeAssemblyUsda(const Built& b, const json& plan, const std::filesystem::
     }
     std::ostringstream out;
     out.precision(9);
-    out << "#usda 1.0\n(\n    defaultPrim = \"" << root << "\"\n    metersPerUnit = 0.01\n    upAxis = \"Y\"\n)\n\n";
+    out << "#usda 1.0\n(\n    defaultPrim = \"" << root << "\"\n    metersPerUnit = 0.01\n    upAxis = \"Z\"\n)\n\n";
     out << "def Xform \"" << root << "\" (\n    prepend apiSchemas = [\"NaniteAssemblyRootAPI\"]\n)\n{\n";
     out << "    def PointInstancer \"Stones\"\n    {\n        rel prototypes = [";
     for (size_t r = 0; r < parts.size(); ++r)
@@ -229,17 +229,28 @@ bool writeAssemblyUsda(const Built& b, const json& plan, const std::filesystem::
     out << "]\n        int[] protoIndices = [";
     for (size_t k = 0; k < b.stones.size(); ++k)
         out << (k ? ", " : "") << b.reference[k];
+    // The transforms instanced sends place, with Y negated: Unreal's importer mirrors Y on a Z-up stage.
+    std::vector<lila::math::Transform> placed;
+    placed.reserve(b.stones.size());
+    for (const Stone& s : b.stones)
+        placed.push_back(lila::math::toUnreal(lila::math::Transform(lila::math::Matrix(stoneMatrix(s)))));
     out << "]\n        point3f[] positions = [";
-    for (size_t k = 0; k < b.stones.size(); ++k)
+    for (size_t k = 0; k < placed.size(); ++k)
     {
-        const glm::dvec3& c = b.stones[k].center;
-        out << (k ? ", " : "") << "(" << c.x << ", " << c.y << ", " << c.z << ")";
+        const lila::math::Vector& c = placed[k].translation;
+        out << (k ? ", " : "") << "(" << c.x << ", " << -c.y << ", " << c.z << ")";
     }
     out << "]\n        quath[] orientations = [";
-    for (size_t k = 0; k < b.stones.size(); ++k)
+    for (size_t k = 0; k < placed.size(); ++k)
     {
-        const glm::dquat q = glm::quat_cast(b.stones[k].frame);
-        out << (k ? ", " : "") << "(" << q.w << ", " << q.x << ", " << q.y << ", " << q.z << ")";
+        const auto& q = placed[k].rotation;
+        out << (k ? ", " : "") << "(" << q.w << ", " << -q.x << ", " << q.y << ", " << -q.z << ")";
+    }
+    out << "]\n        float3[] scales = [";
+    for (size_t k = 0; k < placed.size(); ++k)
+    {
+        const lila::math::Vector& s = placed[k].scale3d;
+        out << (k ? ", " : "") << "(" << s.x << ", " << s.y << ", " << s.z << ")";
     }
     out << "]\n        float[] primvars:lila:random = [";
     for (size_t k = 0; k < b.stones.size(); ++k)
@@ -247,7 +258,7 @@ bool writeAssemblyUsda(const Built& b, const json& plan, const std::filesystem::
     out << "] (\n            interpolation = \"varying\"\n        )\n\n        def Scope \"Parts\"\n        {\n";
     for (size_t r = 0; r < parts.size(); ++r)
         out << "            def Xform \"Part_" << r << "\" (\n                prepend apiSchemas = [\"NaniteAssemblyExternalRefAPI\"]\n            )\n"
-            << "            {\n                asset unreal:naniteAssembly:meshAssetPath = @" << parts[r] << "@\n            }\n";
+            << "            {\n                uniform token unreal:naniteAssembly:meshAssetPath = \"" << parts[r] << "\"\n            }\n";
     out << "        }\n    }\n}\n";
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);

@@ -679,6 +679,8 @@ TEST_CASE("masonry ship: assembly and Nanite are options, custom data carries ag
     CHECK(text.find("NaniteAssemblyRootAPI") != std::string::npos);
     CHECK(text.find("NaniteAssemblyExternalRefAPI") != std::string::npos);
     CHECK(text.find("SM_Chapel_Stone_0.SM_Chapel_Stone_0") != std::string::npos);
+    // Unreal's importer reads the part path only as a token or string; an asset-typed value leaves the part empty.
+    CHECK(text.find("uniform token unreal:naniteAssembly:meshAssetPath = \"/Game/") != std::string::npos);
 
     std::vector<int> all(b.stones.size());
     for (size_t k = 0; k < all.size(); ++k)
