@@ -62,6 +62,11 @@ struct FBreak
 	FVector Position = FVector::ZeroVector;
 	int32 PieceA = INDEX_NONE;
 	int32 PieceB = INDEX_NONE;
+	/** N s through the link when it broke. */
+	double Impulse = 0.0;
+	/** PieceA's velocity (cm/s) and mass (kg) as it broke free. */
+	FVector Velocity = FVector::ZeroVector;
+	double Mass = 0.0;
 };
 
 struct FBufferRef
@@ -302,6 +307,9 @@ bool LoadBake(const FString& File, FBake& Out, FString& OutError)
 			Break.Position = VectorField(B, TEXT("position"));
 			Break.PieceA = IntField(B, TEXT("pieceA"), INDEX_NONE);
 			Break.PieceB = IntField(B, TEXT("pieceB"), INDEX_NONE);
+			B->TryGetNumberField(TEXT("impulse"), Break.Impulse);
+			B->TryGetNumberField(TEXT("mass"), Break.Mass);
+			Break.Velocity = VectorField(B, TEXT("velocity"));
 		}
 		Out.Breaks.StableSort([](const FBreak& A, const FBreak& B) { return A.Frame < B.Frame; });
 	}
@@ -710,14 +718,21 @@ UChaosCacheCollection* WriteCache(const FRequest& R, const FBake& Bake, UGeometr
 	const int32 Last = Bake.FrameCount - 1;
 	auto TimeOf = [&Bake](int32 FrameIndex) { return float(FrameIndex / Bake.Fps); };
 
-	int32 Release = INDEX_NONE;
-	for (const FPiece& P : Bake.Pieces)
+	// Each piece stays in the cluster until its own release; the cluster lets go of the last one and only then ends.
+	TArray<int32> ReleaseOf;
+	ReleaseOf.Init(INDEX_NONE, NumPieces);
+	int32 LastRelease = INDEX_NONE;
+	bool bAllReleased = NumPieces > 0;
+	for (int32 Piece = 0; Piece < NumPieces; ++Piece)
 	{
-		if (P.ReleaseFrame >= 0)
+		const FPiece& P = Bake.Pieces[Piece];
+		if (P.ReleaseFrame < 0)
 		{
-			const int32 Index = FMath::Clamp(P.ReleaseFrame - Bake.StartFrame, 0, Last);
-			Release = Release == INDEX_NONE ? Index : FMath::Min(Release, Index);
+			bAllReleased = false;
+			continue;
 		}
+		ReleaseOf[Piece] = FMath::Clamp(P.ReleaseFrame - Bake.StartFrame, 0, Last);
+		LastRelease = FMath::Max(LastRelease, ReleaseOf[Piece]);
 	}
 
 	auto AddTrack = [Cache](int32 Particle) -> FParticleTransformTrack& {
@@ -738,39 +753,45 @@ UChaosCacheCollection* WriteCache(const FRequest& R, const FBake& Bake, UGeometr
 	Cache->ParticleTracks.Reserve(NumPieces + 1);
 	Cache->TrackToParticle.Reserve(NumPieces + 1);
 
-	// The root cluster holds the pieces at rest until the first release, then deactivates.
+	// The root cluster holds the unreleased pieces at rest; it ends once its last piece has gone, or plays to the end when
+	// some never leave.
 	FParticleTransformTrack& Root = AddTrack(0);
-	const int32 RootLast = Release == INDEX_NONE ? Last : Release;
+	const int32 RootLast = bAllReleased ? LastRelease : Last;
 	for (int32 F = 0; F <= RootLast; ++F)
 	{
 		AddKey(Root, TimeOf(F), FTransform::Identity);
 	}
-	Root.bDeactivateOnEnd = Release != INDEX_NONE;
+	Root.bDeactivateOnEnd = bAllReleased;
 
-	if (Release != INDEX_NONE)
+	TArray<int32> Released;
+	for (int32 Piece = 0; Piece < NumPieces; ++Piece)
 	{
-		for (int32 Piece = 0; Piece < NumPieces; ++Piece)
+		if (ReleaseOf[Piece] == INDEX_NONE)
 		{
-			FParticleTransformTrack& Track = AddTrack(Piece + 1);
-			for (int32 F = Release; F <= Last; ++F)
-			{
-				AddKey(Track, TimeOf(F), Bake.PieceTransform(F, Piece));
-			}
+			continue;
+		}
+		Released.Add(Piece);
+		FParticleTransformTrack& Track = AddTrack(Piece + 1);
+		for (int32 F = ReleaseOf[Piece]; F <= Last; ++F)
+		{
+			AddKey(Track, TimeOf(F), Bake.PieceTransform(F, Piece));
 		}
 	}
+	// Events are read in time order.
+	Released.StableSort([&ReleaseOf](int32 A, int32 B) { return ReleaseOf[A] < ReleaseOf[B]; });
 	Cache->EndRecord(Token);
 	Cache->RecordedDuration = TimeOf(Last);
 	Cache->NumRecordedFrames = uint32(Bake.FrameCount);
 
-	if (Release != INDEX_NONE)
+	if (!Released.IsEmpty())
 	{
 		// Playback reads events strictly after the previous tick's time, so none may sit exactly on 0.
-		const float ReleaseTime = FMath::Max(TimeOf(Release), 1e-3f);
-		const bool bEnable = AddCacheEvents(Cache, EnableTrackName, TEXT("EnableStateEvent"), NumPieces,
-			[ReleaseTime](int32 Index, const UScriptStruct* Struct, void* Event) {
-				SetEventField(Struct, Event, TEXT("Index"), int32(Index + 1));
+		const bool bEnable = AddCacheEvents(Cache, EnableTrackName, TEXT("EnableStateEvent"), Released.Num(),
+			[&Released, &ReleaseOf, &TimeOf](int32 Index, const UScriptStruct* Struct, void* Event) {
+				const int32 Piece = Released[Index];
+				SetEventField(Struct, Event, TEXT("Index"), int32(Piece + 1));
 				SetEventField(Struct, Event, TEXT("bEnable"), true);
-				return ReleaseTime;
+				return FMath::Max(TimeOf(ReleaseOf[Piece]), 1e-3f);
 			});
 		if (!bEnable)
 		{
@@ -789,11 +810,30 @@ UChaosCacheCollection* WriteCache(const FRequest& R, const FBake& Bake, UGeometr
 				SetEventField(Struct, Event, TEXT("Orientation"), FQuat::Identity);
 				SetEventField(Struct, Event, TEXT("BoundingBoxMin"), Bounds.Min);
 				SetEventField(Struct, Event, TEXT("BoundingBoxMax"), Bounds.Max);
+				SetEventField(Struct, Event, TEXT("Velocity"), B.Velocity);
+				SetEventField(Struct, Event, TEXT("Mass"), float(B.Mass));
 				return FMath::Max(TimeOf(B.Frame - Bake.StartFrame), 1e-3f);
 			});
 		if (!bBreaks)
 		{
 			OutWarnings.Add(TEXT("could not write the cache's GC_Breaking events; breaks are left out"));
+		}
+		// Breaking events have no impulse field: the total N s broken on each frame rides along as a stepped curve.
+		FRichCurve& Impulse = Cache->CurveData.FindOrAdd(FName(TEXT("BreakImpulse")));
+		Impulse.Reset();
+		TMap<int32, double> PerFrame;
+		for (const FBreak& B : Bake.Breaks)
+		{
+			PerFrame.FindOrAdd(B.Frame - Bake.StartFrame) += B.Impulse;
+		}
+		PerFrame.KeySort(TLess<int32>());
+		for (const TPair<int32, double>& K : PerFrame)
+		{
+			Impulse.SetKeyInterpMode(Impulse.AddKey(TimeOf(K.Key), float(K.Value)), RCIM_Constant);
+			if (K.Key + 1 <= Last && !PerFrame.Contains(K.Key + 1))
+			{
+				Impulse.SetKeyInterpMode(Impulse.AddKey(TimeOf(K.Key + 1), 0.0f), RCIM_Constant);
+			}
 		}
 	}
 
