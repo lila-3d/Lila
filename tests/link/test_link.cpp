@@ -584,6 +584,7 @@ TEST_CASE("progress keeps a slow call alive and reaches onProgress on the callin
         seen.push_back(p);
     };
     RpcResult r = client.call("importAsset", json::object(), opts);
+    INFO("code " << r.code << ": " << r.error);
     CHECK(r.ok);
     CHECK(r.result == "done");
     REQUIRE(seen.size() == 6);
