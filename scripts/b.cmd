@@ -1,5 +1,5 @@
 @echo off
-rem b [build dir] [config] [target ...]   Quiet build: errors and a summary only, full log in <build dir>\last_build.log.
+rem b [build dir] [config] [-nounity] [target ...]   Quiet build: errors and a summary only, full log in <build dir>\last_build.log.
 setlocal
 set "HERE=%~dp0"
 call "%HERE%env.cmd" >nul 2>&1

@@ -1,6 +1,6 @@
 """Builds or runs tests with the full log on disk and only errors, failures and a summary on stdout.
 
-quiet.py build <build dir> [config] [target ...]
+quiet.py build <build dir> [config] [-nounity] [target ...]   -nounity turns unity builds off in that build dir
 quiet.py test <build dir> [config] [ctest args ...]
 """
 
@@ -44,7 +44,25 @@ def config_and_rest(args):
     return "RelWithDebInfo", args
 
 
+def configure_no_unity(build_dir):
+    if os.path.exists(os.path.join(build_dir, "CMakeCache.txt")):
+        command = ["cmake", build_dir, "-DLILA_UNITY_BUILD=OFF"]
+    else:
+        command = ["cmake", "--preset", "windows", "-B", build_dir, "-DLILA_UNITY_BUILD=OFF"]
+    os.makedirs(build_dir, exist_ok=True)
+    code, lines, _ = run(command, os.path.join(build_dir, "last_configure.log"))
+    if code != 0:
+        emit(line for line in lines if BUILD_ERROR.search(line))
+        print(f"configure FAILED, log {os.path.join(build_dir, 'last_configure.log')}")
+    return code
+
+
 def build(build_dir, args):
+    if "-nounity" in args:
+        args = [a for a in args if a != "-nounity"]
+        code = configure_no_unity(build_dir)
+        if code != 0:
+            return code
     config, targets = config_and_rest(args)
     command = ["cmake", "--build", build_dir, "--config", config]
     for target in targets:

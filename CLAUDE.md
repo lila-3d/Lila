@@ -24,7 +24,7 @@ Plan: `C:\Users\Jared\.claude\plans\enumerated-watching-quilt.md` is an index; e
 
 ## Build and test
 
-- Build with `scripts\b.cmd [dir] [config] [target...]` and test with `scripts\t.cmd [dir] [config] [ctest args]`: they print only errors, failures and a summary (full logs in `<dir>\last_build.log`, `last_test.log`). Iterate on one target, then build all targets before handing back; partial builds leave extension DLLs stale.
+- Build with `scripts\b.cmd [dir] [config] [-nounity] [target...]` and test with `scripts\t.cmd [dir] [config] [ctest args]`: they print only errors, failures and a summary (full logs in `<dir>\last_build.log`, `last_test.log`). Iterate on one target, then build all targets before handing back; partial builds leave extension DLLs stale.
 - If Jared's lila.exe is running (LNK1168), never kill it: build in `build-night` instead. Never launch his lila.exe either.
 - Run executables only from `build/` or `build-night` (new paths trigger firewall prompts). No popups, ever.
 - Compiles go through sccache (shared cache in `X:\sccache`) and link with lld-link, so a fresh build dir or worktree is mostly cache hits.

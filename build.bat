@@ -1,9 +1,21 @@
 @echo off
-rem Configures if needed, then builds every target. Usage: build [build dir] [config], defaults build RelWithDebInfo.
-setlocal
-set "DIR=%~1"
+rem Configures if needed, then builds every target. Usage: build [build dir] [config] [-nounity], defaults build RelWithDebInfo.
+setlocal EnableDelayedExpansion
+set "DIR="
+set "CONFIG="
+set "UNITY=ON"
+set "BAD="
+for %%A in (%*) do (
+    if /i "%%~A"=="-nounity" (set "UNITY=OFF") else (
+        set "ARG=%%~A"
+        if "%%~A" neq "" if "!ARG:~0,1!"=="-" (set "BAD=%%~A") else if not defined DIR (set "DIR=%%~A") else if not defined CONFIG (set "CONFIG=%%~A") else (set "BAD=%%~A")
+    )
+)
+if defined BAD (
+    echo [failed] Unknown argument "%BAD%". Usage: build [build dir] [config] [-nounity]
+    exit /b 2
+)
 if "%DIR%"=="" set "DIR=build"
-set "CONFIG=%~2"
 if "%CONFIG%"=="" set "CONFIG=RelWithDebInfo"
 call "%~dp0scripts\env.cmd" || exit /b 1
 rem A build dir configured with another toolset reconfigures from scratch; its objects would not link with this one.
@@ -13,7 +25,10 @@ if exist "%~dp0%DIR%\CMakeCache.txt" findstr /c:"MSVC/%LILA_MSVC_VER%." "%~dp0%D
     rmdir /s /q "%~dp0%DIR%\CMakeFiles"
 )
 if not exist "%~dp0%DIR%\build.ninja" (
-    cmake --preset windows -S "%~dp0." -B "%~dp0%DIR%" || exit /b 1
+    cmake --preset windows -S "%~dp0." -B "%~dp0%DIR%" -DLILA_UNITY_BUILD=%UNITY% || exit /b 1
+)
+findstr /c:"LILA_UNITY_BUILD:BOOL=%UNITY%" "%~dp0%DIR%\CMakeCache.txt" >nul || (
+    cmake "%~dp0%DIR%" -DLILA_UNITY_BUILD=%UNITY% >nul || exit /b 1
 )
 cmake --build "%~dp0%DIR%" --config %CONFIG%
 set "RC=%ERRORLEVEL%"
