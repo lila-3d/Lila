@@ -886,7 +886,7 @@ TArray<FString> Place(const FBake& Bake, UGeometryCollection* Collection, UChaos
 			return Names;
 		}
 		Manager->CacheMode = ECacheMode::Play;
-		Manager->SetCacheCollection(Caches);
+		Manager->CacheCollection = Caches;
 		Manager->FindOrAddObservedComponent(Component, FName(*Bake.Name), false);
 		Manager->SetStartTime(0.0f);
 		Manager->SetActorLabel(TEXT("CM_") + Collection->GetName());
