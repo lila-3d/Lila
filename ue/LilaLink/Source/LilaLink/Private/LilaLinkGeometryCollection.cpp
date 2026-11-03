@@ -885,9 +885,11 @@ TArray<FString> Place(const FBake& Bake, UGeometryCollection* Collection, UChaos
 			OutErrors.Add(TEXT("place: could not spawn a Chaos Cache Manager"));
 			return Names;
 		}
-		Manager->CacheMode = ECacheMode::Play;
 		Manager->CacheCollection = Caches;
 		Manager->FindOrAddObservedComponent(Component, FName(*Bake.Name), false);
+		// After the component is observed: Play mode turns its physics simulation off, without which it falls as one body
+		// before the cache can take it over.
+		Manager->SetCacheMode(ECacheMode::Play);
 		Manager->SetStartTime(0.0f);
 		Manager->SetActorLabel(TEXT("CM_") + Collection->GetName());
 		Names.Add(Manager->GetName());
