@@ -664,7 +664,8 @@ std::vector<SidebarEntry> readSidebar(const fs::path& docsDir)
     while (std::getline(in, line))
     {
         size_t indent = line.find_first_not_of(' ');
-        if (indent == std::string::npos || (line[indent] != '-' && line[indent] != '*'))
+        // A list item's marker is followed by a space; that keeps a "---" rule out.
+        if (indent == std::string::npos || (line[indent] != '-' && line[indent] != '*') || indent + 1 >= line.size() || line[indent + 1] != ' ')
             continue;
         size_t open = line.find('[', indent), close = line.find("](", indent);
         if (open == std::string::npos || close == std::string::npos || close < open)
