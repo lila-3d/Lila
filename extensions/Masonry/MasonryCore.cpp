@@ -1,7 +1,9 @@
 // Masonry layout: courses of stones laid along a footprint in a chosen bond, corners turned by alternating which wall
-// runs through, overlaps cut back, then a little wander so it doesn't look machine laid.
+// runs through, openings with their arches, lintels and sills, courses stepped over sloping ground and under a sloping
+// top, overlaps cut back, then a little wander so it doesn't look machine laid.
 
 #include "MasonryCore.h"
+#include "MasonryArch.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -18,8 +20,6 @@ namespace masonry
 {
 namespace
 {
-const glm::dvec3 kUp(0.0, 1.0, 0.0);
-
 glm::dvec3 flat(const glm::dvec3& v) { return {v.x, 0.0, v.z}; }
 
 glm::dvec3 flatDir(const glm::dvec3& a, const glm::dvec3& b)
@@ -45,19 +45,11 @@ glm::dvec3 miterOffsetImpl(const glm::dvec3& dIn, const glm::dvec3& dOut, double
     return m * (dist / std::max(glm::dot(m, nIn), 0.25));
 }
 
-uint64_t key(uint64_t a, uint64_t b, uint64_t c = 0, uint64_t d = 0, uint64_t e = 0)
-{
-    uint64_t h = hash64(a);
-    h = hash64(h ^ b);
-    h = hash64(h ^ c);
-    h = hash64(h ^ d);
-    return hash64(h ^ e);
-}
-
-/** A polyline measured by length, sampled at any distance (wrapping when cyclic). */
+/** A polyline measured by ground length, sampled at any distance (wrapping when cyclic), with the ground and wall top under each point. */
 struct Line
 {
     std::vector<glm::dvec3> pts;
+    std::vector<double> tops;
     std::vector<double> at; // cumulative length at each point
     bool cyclic = false;
 
@@ -69,26 +61,65 @@ struct Line
         if (cyclic && pts.size() > 1)
         {
             pts.push_back(pts.front());
+            tops.push_back(tops.front());
             at.push_back(at.back() + glm::length(flat(pts.front() - pts[pts.size() - 2])));
         }
     }
     double length() const { return at.empty() ? 0.0 : at.back(); }
 
-    glm::dvec3 sample(double u) const
+    /** Segment and fraction along it at distance u. */
+    std::pair<size_t, double> locate(double u) const
     {
         const double total = length();
         if (pts.size() < 2 || total <= 0.0)
-            return pts.empty() ? glm::dvec3(0.0) : pts.front();
+            return {0, 0.0};
         if (cyclic)
             u = std::fmod(std::fmod(u, total) + total, total);
         if (u <= 0.0)
-            return pts.front() + flatDir(pts[0], pts[1]) * u;
+            return {0, u / std::max(at[1], 1e-9)};
         if (u >= total)
-            return pts.back() + flatDir(pts[pts.size() - 2], pts.back()) * (u - total);
-        const size_t k = size_t(std::upper_bound(at.begin(), at.end(), u) - at.begin()) - 1;
+        {
+            const size_t k = pts.size() - 2;
+            return {k, 1.0 + (u - total) / std::max(at[k + 1] - at[k], 1e-9)};
+        }
+        const size_t k = std::min(size_t(std::upper_bound(at.begin(), at.end(), u) - at.begin()) - 1, pts.size() - 2);
         const double seg = at[k + 1] - at[k];
-        const double t = seg > 0.0 ? (u - at[k]) / seg : 0.0;
-        return glm::mix(pts[k], pts[k + 1], t);
+        return {k, seg > 0.0 ? (u - at[k]) / seg : 0.0};
+    }
+    double paramAt(size_t seg, double frac) const
+    {
+        if (pts.size() < 2)
+            return 0.0;
+        seg = std::min(seg, pts.size() - 2);
+        return at[seg] + frac * (at[seg + 1] - at[seg]);
+    }
+    glm::dvec3 sample(double u) const
+    {
+        if (pts.size() < 2 || length() <= 0.0)
+            return pts.empty() ? glm::dvec3(0.0) : pts.front();
+        const auto [k, t] = locate(u);
+        return pts[k] + (pts[k + 1] - pts[k]) * t;
+    }
+    double baseAt(double u) const
+    {
+        if (pts.size() < 2)
+            return pts.empty() ? 0.0 : pts.front().y;
+        const auto [k, t] = locate(u);
+        return glm::mix(pts[k].y, pts[k + 1].y, std::clamp(t, 0.0, 1.0));
+    }
+    double topAt(double u) const
+    {
+        if (pts.size() < 2)
+            return tops.empty() ? 0.0 : tops.front();
+        const auto [k, t] = locate(u);
+        return glm::mix(tops[k], tops[k + 1], std::clamp(t, 0.0, 1.0));
+    }
+    glm::dvec3 dirAt(double u) const
+    {
+        if (pts.size() < 2)
+            return {1, 0, 0};
+        const auto [k, t] = locate(u);
+        return flatDir(pts[k], pts[k + 1]);
     }
 };
 
@@ -96,35 +127,53 @@ struct Line
 struct Run
 {
     std::vector<glm::dvec3> pts;
+    std::vector<double> tops;
     bool cyclic = false;
     int startCorner = -1, endCorner = -1; // footprint vertex, or -1 for an open end
+    size_t first = 0;                     // footprint vertex the run starts at
     glm::dvec3 before{0.0}, after{0.0};   // directions of the neighbouring runs at the corners
 };
 
 struct Clean
 {
-    std::vector<glm::dvec3> pts;
+    std::vector<glm::dvec3> pts; // y is the ground
+    std::vector<double> tops;
     bool closed = false;
-    double base = 0.0;
+    double base = 0.0;  // lowest ground
+    double top = 0.0;   // highest top
+    bool level = true;  // one ground height and one top everywhere
 };
 
-Clean clean(const Footprint& f)
+Clean clean(const Footprint& f, double height)
 {
     Clean c;
     c.closed = f.closed;
-    c.base = 1e300;
-    for (const glm::dvec3& p : f.points)
-        c.base = std::min(c.base, p.y);
-    for (const glm::dvec3& p : f.points)
+    for (size_t k = 0; k < f.points.size(); ++k)
     {
-        const glm::dvec3 q(p.x, c.base, p.z);
-        if (c.pts.empty() || glm::length(flat(q - c.pts.back())) > 1e-3)
-            c.pts.push_back(q);
+        const glm::dvec3& p = f.points[k];
+        const double h = k < f.heights.size() ? std::max(0.0, f.heights[k]) : height;
+        if (c.pts.empty() || glm::length(flat(p - c.pts.back())) > 1e-3)
+        {
+            c.pts.push_back(p);
+            c.tops.push_back(p.y + h);
+        }
     }
     if (c.closed && c.pts.size() > 2 && glm::length(flat(c.pts.front() - c.pts.back())) <= 1e-3)
+    {
         c.pts.pop_back();
+        c.tops.pop_back();
+    }
     if (c.pts.size() < 3)
         c.closed = false;
+    c.base = 1e300;
+    c.top = -1e300;
+    for (size_t k = 0; k < c.pts.size(); ++k)
+    {
+        c.base = std::min(c.base, c.pts[k].y);
+        c.top = std::max(c.top, c.tops[k]);
+    }
+    for (size_t k = 0; k < c.pts.size(); ++k)
+        c.level = c.level && std::abs(c.pts[k].y - c.base) < 1e-6 && std::abs(c.tops[k] - c.top) < 1e-6;
     return c;
 }
 
@@ -146,6 +195,7 @@ std::vector<Run> splitRuns(const Clean& c, double cornerAngleDeg)
     {
         Run r;
         r.pts = c.pts;
+        r.tops = c.tops;
         r.cyclic = true;
         runs.push_back(std::move(r));
         return runs;
@@ -162,9 +212,11 @@ std::vector<Run> splitRuns(const Clean& c, double cornerAngleDeg)
     {
         const size_t a = stops[k], b = c.closed ? stops[(k + 1) % stops.size()] : stops[k + 1];
         Run r;
+        r.first = a;
         for (size_t v = a;; v = (v + 1) % n)
         {
             r.pts.push_back(c.pts[v]);
+            r.tops.push_back(c.tops[v]);
             if (v == b && r.pts.size() > 1)
                 break;
         }
@@ -185,27 +237,32 @@ std::vector<Run> splitRuns(const Clean& c, double cornerAngleDeg)
     return runs;
 }
 
-/** The run's line offset sideways by dist (left positive), mitred at bends and at corners with the next run. */
+/** Offset of run point i sideways by dist (left positive), mitred at bends and at corners with the next run. */
+glm::dvec3 runOffset(const Run& r, size_t i, double dist)
+{
+    const size_t n = r.pts.size();
+    glm::dvec3 dIn, dOut;
+    if (r.cyclic)
+    {
+        dIn = flatDir(r.pts[(i + n - 1) % n], r.pts[i]);
+        dOut = flatDir(r.pts[i], r.pts[(i + 1) % n]);
+    }
+    else
+    {
+        dOut = i + 1 < n ? flatDir(r.pts[i], r.pts[i + 1]) : (r.endCorner >= 0 ? r.after : flatDir(r.pts[i - 1], r.pts[i]));
+        dIn = i > 0 ? flatDir(r.pts[i - 1], r.pts[i]) : (r.startCorner >= 0 ? r.before : dOut);
+    }
+    return miterOffsetImpl(dIn, dOut, dist);
+}
+
+/** The run's line offset sideways by dist (left positive); point k of the line is point k of the run. */
 Line offsetLine(const Run& r, double dist)
 {
     Line l;
     l.cyclic = r.cyclic;
-    const size_t n = r.pts.size();
-    for (size_t i = 0; i < n; ++i)
-    {
-        glm::dvec3 dIn, dOut;
-        if (r.cyclic)
-        {
-            dIn = flatDir(r.pts[(i + n - 1) % n], r.pts[i]);
-            dOut = flatDir(r.pts[i], r.pts[(i + 1) % n]);
-        }
-        else
-        {
-            dOut = i + 1 < n ? flatDir(r.pts[i], r.pts[i + 1]) : (r.endCorner >= 0 ? r.after : flatDir(r.pts[i - 1], r.pts[i]));
-            dIn = i > 0 ? flatDir(r.pts[i - 1], r.pts[i]) : (r.startCorner >= 0 ? r.before : dOut);
-        }
-        l.pts.push_back(r.pts[i] + miterOffsetImpl(dIn, dOut, dist));
-    }
+    for (size_t i = 0; i < r.pts.size(); ++i)
+        l.pts.push_back(r.pts[i] + runOffset(r, i, dist));
+    l.tops = r.tops;
     l.build();
     return l;
 }
@@ -318,34 +375,13 @@ std::vector<Interval> layCourse(const Pattern& pat, double t0, double t1, double
     return out;
 }
 
-// --- Oriented boxes ---
+// --- Oriented boxes and wedges ---
 
-glm::dvec3 halfExtentAabb(const Stone& s)
-{
-    const glm::dvec3 h = s.size * 0.5;
-    glm::dvec3 e(0.0);
-    for (int k = 0; k < 3; ++k)
-        e += glm::abs(s.frame[k]) * h[k];
-    return e;
-}
-
-std::array<glm::dvec3, 8> boxCorners(const Stone& s)
-{
-    std::array<glm::dvec3, 8> c;
-    const glm::dvec3 h = s.size * 0.5;
-    for (int i = 0; i < 8; ++i)
-    {
-        const glm::dvec3 sign((i & 1) ? 1.0 : -1.0, (i & 2) ? 1.0 : -1.0, (i & 4) ? 1.0 : -1.0);
-        c[size_t(i)] = s.center + s.frame * (sign * h);
-    }
-    return c;
-}
-
-/** Where along one of s's axes another box lies, relative to s's centre. */
+/** Where along one of s's axes another stone lies, relative to s's centre. */
 std::pair<double, double> projectOnto(const Stone& s, int axis, const Stone& other)
 {
     double lo = 1e300, hi = -1e300;
-    for (const glm::dvec3& p : boxCorners(other))
+    for (const glm::dvec3& p : stoneCorners(other))
     {
         const double t = glm::dot(p - s.center, s.frame[axis]);
         lo = std::min(lo, t);
@@ -401,17 +437,12 @@ bool trimAgainst(Stone& s, const Stone& other, double joint, double minLength, d
     return true;
 }
 
-/** Stones in a coarse grid, for finding the ones a new stone might touch. */
+/** Stones in a coarse grid, filled as they are laid, for finding the ones a new stone might touch. */
 struct Grid
 {
     double cell;
     std::unordered_map<uint64_t, std::vector<int>> cells;
 
-    static uint64_t pack(int64_t x, int64_t y, int64_t z)
-    {
-        constexpr int64_t off = 1 << 20;
-        return (uint64_t(x + off) & 0x1FFFFF) | ((uint64_t(y + off) & 0x1FFFFF) << 21) | ((uint64_t(z + off) & 0x1FFFFF) << 42);
-    }
     template <class Fn> void forCells(const Stone& s, double pad, Fn&& fn) const
     {
         const glm::dvec3 e = halfExtentAabb(s) + pad;
@@ -419,7 +450,7 @@ struct Grid
         for (int64_t x = int64_t(lo.x); x <= int64_t(hi.x); ++x)
             for (int64_t y = int64_t(lo.y); y <= int64_t(hi.y); ++y)
                 for (int64_t z = int64_t(lo.z); z <= int64_t(hi.z); ++z)
-                    fn(pack(x, y, z));
+                    fn(StoneGrid::pack(x, y, z));
     }
     void insert(const Stone& s, int index)
     {
@@ -447,6 +478,189 @@ glm::dmat3 rotationXyz(double ax, double ay, double az)
 }
 
 int faceRank(Face f) { return f == Face::Through ? 0 : (f == Face::Outer ? 1 : 2); }
+
+/** Course heights of a wall: course c sits on base + c * pitch. */
+struct Courses
+{
+    int count = 0;
+    double pitch = 0.0;
+    double h = 0.0; // stone height, pitch less the bed joint
+    double base = 0.0;
+};
+
+Courses coursesOf(const Clean& c, const WallParams& p)
+{
+    Courses k;
+    const double j = std::max(0.0, p.stone.joint);
+    const double total = c.top - c.base;
+    k.base = c.base;
+    if (total <= 0.0)
+        return k;
+    k.count = std::max(1, int(std::lround(total / (p.stone.height + j))));
+    k.pitch = total / k.count;
+    k.h = std::max(0.5, k.pitch - j);
+    return k;
+}
+
+/** Wall thickness at a height above the lowest ground, narrowed by the batter on both faces. */
+double thicknessAt(const WallParams& p, double above)
+{
+    const double t = std::max(p.thickness, 1.0);
+    if (p.batter <= 0.0)
+        return t;
+    return std::max(t * 0.25, t - 2.0 * std::max(0.0, above) * std::tan(glm::radians(std::clamp(p.batter, 0.0, 45.0))));
+}
+
+bool leftIsOuterOf(const Clean& c)
+{
+    if (!c.closed)
+        return true;
+    double area = 0.0;
+    for (size_t i = 0; i < c.pts.size(); ++i)
+    {
+        const glm::dvec3& a = c.pts[i];
+        const glm::dvec3& b = c.pts[(i + 1) % c.pts.size()];
+        area += a.x * b.z - b.x * a.z;
+    }
+    return area < 0.0;
+}
+
+/** A stretch of course to lay, on a face line, and whether its ends meet an opening. */
+struct Span
+{
+    double a, b;
+    bool jambA = false, jambB = false;
+};
+
+/** Where on a face line a course may go: above the ground, under the top, as sampled every step. */
+std::vector<Span> groundSpans(const Line& line, bool level, double y, double h, double pitch, double step, bool* loop, double* shift)
+{
+    const double total = line.length();
+    *loop = false;
+    *shift = 0.0;
+    auto valid = [&](double u) { return line.baseAt(u) < y + 0.9 * h && line.topAt(u) >= y + 0.5 * pitch; };
+    if (level)
+    {
+        if (!valid(0.0))
+            return {};
+        *loop = line.cyclic;
+        return {{0.0, total}};
+    }
+    const int n = std::max(2, int(std::ceil(total / std::max(step, 1e-3))));
+    std::vector<char> ok(size_t(n) + 1);
+    for (int k = 0; k <= n; ++k)
+        ok[size_t(k)] = valid(total * k / n);
+    std::vector<Span> out;
+    if (line.cyclic)
+    {
+        int bad = -1;
+        for (int k = 0; k < n && bad < 0; ++k)
+            if (!ok[size_t(k)])
+                bad = k;
+        if (bad < 0)
+        {
+            *loop = true;
+            return {{0.0, total}};
+        }
+        *shift = total * bad / n;
+        int start = -1;
+        for (int i = 0; i <= n; ++i)
+        {
+            const int k = (bad + i) % n;
+            const double u = total * (bad + i) / n;
+            if (ok[size_t(k)] && i < n)
+            {
+                if (start < 0)
+                    start = i;
+            }
+            else if (start >= 0)
+            {
+                out.push_back({total * (bad + start) / n, u - total / n});
+                start = -1;
+            }
+        }
+        return out;
+    }
+    int start = -1;
+    for (int k = 0; k <= n; ++k)
+    {
+        if (ok[size_t(k)])
+        {
+            if (start < 0)
+                start = k;
+            if (k == n)
+                out.push_back({total * start / n, total});
+        }
+        else if (start >= 0)
+        {
+            out.push_back({total * start / n, total * (k - 1) / n});
+            start = -1;
+        }
+    }
+    return out;
+}
+
+/** Spans less the excluded ranges (sorted or not); a cut end is a jamb. Ranges are tried as given and shifted by +-period for loops. */
+std::vector<Span> subtract(std::vector<Span> spans, const std::vector<std::pair<double, double>>& cuts, double period)
+{
+    for (const auto& cut0 : cuts)
+        for (double off : {0.0, period, -period})
+        {
+            if (off != 0.0 && period <= 0.0)
+                continue;
+            const double ca = cut0.first + off, cb = cut0.second + off;
+            std::vector<Span> next;
+            for (const Span& s : spans)
+            {
+                if (cb <= s.a || ca >= s.b)
+                {
+                    next.push_back(s);
+                    continue;
+                }
+                if (ca > s.a)
+                    next.push_back({s.a, ca, s.jambA, true});
+                if (cb < s.b)
+                    next.push_back({cb, s.b, true, s.jambB});
+            }
+            spans = std::move(next);
+        }
+    return spans;
+}
+
+/** One opening placed on a run: where its centre is on the run's centre line, and its courses. */
+struct PlacedOpening
+{
+    const Opening* o = nullptr;
+    size_t seg = 0;
+    double frac = 0.0;
+    double centre = 0.0; // centre line param
+    int sillCourse = 0, springCourse = 0, topCourse = 0, lintelCourses = 0;
+    ArchSpec arch;
+    double springY = 0.0;
+    double bearing = 0.0, sillExtra = 0.0;
+};
+
+/** Stones of a wall, before trimming. Elements (arch, lintel, sill) come first and are never trimmed. */
+struct Laid
+{
+    std::vector<Stone> elements;
+    std::vector<Stone> course;
+};
+
+Stone stoneIn(const glm::dvec3& origin, const glm::dvec3& along, const glm::dvec3& normal, const ArchStone& a, double depth, double zOffset)
+{
+    Stone s;
+    const glm::dvec3 x3 = along * a.axisX.x + kUp * a.axisX.y;
+    const glm::dvec3 y3 = along * a.axisY.x + kUp * a.axisY.y;
+    glm::dvec3 z3 = glm::cross(x3, y3);
+    s.frame = glm::dmat3(x3, y3, z3);
+    s.center = origin + along * a.center.x + kUp * a.center.y + normal * zOffset;
+    s.size = {a.top, a.height, depth};
+    s.taper = float(std::clamp(a.bottom / std::max(a.top, 1e-9), 0.02, 1.0));
+    s.shape = s.taper < 0.999f ? Shape::Wedge : Shape::Box;
+    s.role = a.role;
+    return s;
+}
 } // namespace
 
 glm::dvec3 miterOffset(const glm::dvec3& dIn, const glm::dvec3& dOut, double dist) { return miterOffsetImpl(dIn, dOut, dist); }
@@ -460,6 +674,15 @@ uint64_t hash64(uint64_t x)
 }
 
 double unitRandom(uint64_t k) { return double(hash64(k) >> 11) * (1.0 / 9007199254740992.0); }
+
+uint64_t mixKey(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e)
+{
+    uint64_t h = hash64(a);
+    h = hash64(h ^ b);
+    h = hash64(h ^ c);
+    h = hash64(h ^ d);
+    return hash64(h ^ e);
+}
 
 const char* bondName(Bond b)
 {
@@ -494,6 +717,37 @@ std::vector<std::string> bondNames()
     return out;
 }
 
+const char* roleName(Role r)
+{
+    static const char* names[] = {"stretcher", "header", "bat", "closer", "filler", "voussoir", "keystone", "lintel",
+                                  "sill", "jamb", "column", "step", "band", "slab", "rubble"};
+    return names[std::min(size_t(r), std::size(names) - 1)];
+}
+
+const char* archName(ArchKind k)
+{
+    switch (k)
+    {
+    case ArchKind::Lintel: return "lintel";
+    case ArchKind::Round: return "round";
+    case ArchKind::Pointed: return "pointed";
+    case ArchKind::Segmental: return "segmental";
+    case ArchKind::Flat: return "flat";
+    }
+    return "round";
+}
+
+bool parseArch(std::string_view name, ArchKind* out)
+{
+    for (ArchKind k : {ArchKind::Lintel, ArchKind::Round, ArchKind::Pointed, ArchKind::Segmental, ArchKind::Flat})
+        if (name == archName(k))
+        {
+            *out = k;
+            return true;
+        }
+    return false;
+}
+
 glm::dmat4 stoneMatrix(const Stone& s)
 {
     glm::dmat4 m(s.frame);
@@ -501,7 +755,33 @@ glm::dmat4 stoneMatrix(const Stone& s)
     return m;
 }
 
-bool overlaps(const Stone& a, const Stone& b, double tolerance)
+glm::dvec3 halfExtentAabb(const Stone& s)
+{
+    const glm::dvec3 h = s.size * 0.5;
+    glm::dvec3 e(0.0);
+    for (int k = 0; k < 3; ++k)
+        e += glm::abs(s.frame[k]) * h[k];
+    return e;
+}
+
+std::array<glm::dvec3, 8> stoneCorners(const Stone& s)
+{
+    std::array<glm::dvec3, 8> c;
+    const glm::dvec3 h = s.size * 0.5;
+    const double bottom = s.shape == Shape::Wedge ? double(s.taper) : 1.0;
+    for (int i = 0; i < 8; ++i)
+    {
+        glm::dvec3 sign((i & 1) ? 1.0 : -1.0, (i & 2) ? 1.0 : -1.0, (i & 4) ? 1.0 : -1.0);
+        if (!(i & 2))
+            sign.x *= bottom;
+        c[size_t(i)] = s.center + s.frame * (sign * h);
+    }
+    return c;
+}
+
+namespace
+{
+bool overlapsBoxes(const Stone& a, const Stone& b, double tolerance)
 {
     const glm::dvec3 ha = glm::max(a.size * 0.5 - tolerance * 0.5, glm::dvec3(0.0));
     const glm::dvec3 hb = glm::max(b.size * 0.5 - tolerance * 0.5, glm::dvec3(0.0));
@@ -531,133 +811,436 @@ bool overlaps(const Stone& a, const Stone& b, double tolerance)
     return true;
 }
 
+/** Face normals and edge directions of a stone's hull (a box or a wedge), world space. */
+void hullAxes(const Stone& s, std::vector<glm::dvec3>& normals, std::vector<glm::dvec3>& edges)
+{
+    const glm::dvec3 x = s.frame[0], y = s.frame[1], z = s.frame[2];
+    normals.push_back(y);
+    normals.push_back(z);
+    edges.push_back(x);
+    edges.push_back(z);
+    if (s.shape != Shape::Wedge)
+    {
+        normals.push_back(x);
+        edges.push_back(y);
+        return;
+    }
+    // The slanted sides: from a bottom corner (x * taper) up to a top corner (x).
+    const double hx = s.size.x * 0.5, hy = s.size.y * 0.5;
+    for (double side : {-1.0, 1.0})
+    {
+        const glm::dvec3 e = x * (side * hx * (1.0 - double(s.taper))) + y * (2.0 * hy);
+        edges.push_back(glm::normalize(e));
+        normals.push_back(glm::normalize(glm::cross(e, z)));
+    }
+}
+} // namespace
+
+bool overlaps(const Stone& a, const Stone& b, double tolerance)
+{
+    if (a.shape != Shape::Wedge && b.shape != Shape::Wedge)
+        return overlapsBoxes(a, b, tolerance);
+    // Shrink each hull toward its centre by half the tolerance, then a general separating axis test.
+    auto shrunk = [&](const Stone& s) {
+        std::array<glm::dvec3, 8> c = stoneCorners(s);
+        for (glm::dvec3& p : c)
+        {
+            const glm::dvec3 d = p - s.center;
+            const double len = glm::length(d);
+            if (len > 1e-12)
+                p -= d / len * std::min(len * 0.99, tolerance * 0.5);
+        }
+        return c;
+    };
+    const std::array<glm::dvec3, 8> ca = shrunk(a), cb = shrunk(b);
+    std::vector<glm::dvec3> na, ea, nb, eb;
+    hullAxes(a, na, ea);
+    hullAxes(b, nb, eb);
+    std::vector<glm::dvec3> axes = na;
+    axes.insert(axes.end(), nb.begin(), nb.end());
+    for (const glm::dvec3& u : ea)
+        for (const glm::dvec3& v : eb)
+        {
+            const glm::dvec3 c = glm::cross(u, v);
+            if (glm::dot(c, c) > 1e-12)
+                axes.push_back(glm::normalize(c));
+        }
+    for (const glm::dvec3& ax : axes)
+    {
+        double loA = 1e300, hiA = -1e300, loB = 1e300, hiB = -1e300;
+        for (const glm::dvec3& p : ca)
+        {
+            loA = std::min(loA, glm::dot(p, ax));
+            hiA = std::max(hiA, glm::dot(p, ax));
+        }
+        for (const glm::dvec3& p : cb)
+        {
+            loB = std::min(loB, glm::dot(p, ax));
+            hiB = std::max(hiB, glm::dot(p, ax));
+        }
+        if (hiA <= loB || hiB <= loA)
+            return false;
+    }
+    return true;
+}
+
+uint64_t StoneGrid::pack(int64_t x, int64_t y, int64_t z)
+{
+    constexpr int64_t off = 1 << 20;
+    return (uint64_t(x + off) & 0x1FFFFF) | ((uint64_t(y + off) & 0x1FFFFF) << 21) | ((uint64_t(z + off) & 0x1FFFFF) << 42);
+}
+
+void StoneGrid::build(std::span<const Stone> stones, double pad)
+{
+    entries.clear();
+    for (size_t k = 0; k < stones.size(); ++k)
+    {
+        const glm::dvec3 e = halfExtentAabb(stones[k]) + pad;
+        const glm::dvec3 lo = glm::floor((stones[k].center - e) / cell), hi = glm::floor((stones[k].center + e) / cell);
+        for (int64_t x = int64_t(lo.x); x <= int64_t(hi.x); ++x)
+            for (int64_t y = int64_t(lo.y); y <= int64_t(hi.y); ++y)
+                for (int64_t z = int64_t(lo.z); z <= int64_t(hi.z); ++z)
+                    entries.push_back({pack(x, y, z), int(k)});
+    }
+    std::sort(entries.begin(), entries.end());
+}
+
+std::vector<int> StoneGrid::around(const Stone& s, double pad) const
+{
+    std::vector<int> out;
+    const glm::dvec3 e = halfExtentAabb(s) + pad;
+    const glm::dvec3 lo = glm::floor((s.center - e) / cell), hi = glm::floor((s.center + e) / cell);
+    for (int64_t x = int64_t(lo.x); x <= int64_t(hi.x); ++x)
+        for (int64_t y = int64_t(lo.y); y <= int64_t(hi.y); ++y)
+            for (int64_t z = int64_t(lo.z); z <= int64_t(hi.z); ++z)
+            {
+                const uint64_t key = pack(x, y, z);
+                auto it = std::lower_bound(entries.begin(), entries.end(), std::pair<uint64_t, int>{key, INT32_MIN});
+                for (; it != entries.end() && it->first == key; ++it)
+                    out.push_back(it->second);
+            }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
 Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
 {
     Layout out;
-    const Clean c = clean(footprint);
-    if (c.pts.size() < 2 || p.height <= 0.0)
+    const Clean c = clean(footprint, std::max(0.0, p.height));
+    if (c.pts.size() < 2 || c.top <= c.base)
         return out;
     const Units& u = p.stone;
     const double j = std::max(0.0, u.joint);
-    const double T = std::max(p.thickness, 1.0);
-    const bool single = T < u.depth * 1.5;
-    const double stretcherDepth = single ? T : std::min(u.depth, (T - j) * 0.5);
-    const double headerDepth = single ? T : std::min(u.length, T);
+    const double T0 = std::max(p.thickness, 1.0);
+    const bool single = T0 < u.depth * 1.5;
     const double minLen = std::max(2.0, u.length * 0.2);
-
-    out.courses = std::max(1, int(std::lround(p.height / (u.height + j))));
-    out.pitch = p.height / out.courses;
-    const double h = std::max(0.5, out.pitch - j);
-
-    // Which side of a closed footprint faces out.
-    bool leftIsOuter = true;
-    if (c.closed)
-    {
-        double area = 0.0;
-        for (size_t i = 0; i < c.pts.size(); ++i)
-        {
-            const glm::dvec3& a = c.pts[i];
-            const glm::dvec3& b = c.pts[(i + 1) % c.pts.size()];
-            area += a.x * b.z - b.x * a.z;
-        }
-        leftIsOuter = area < 0.0;
-    }
+    const Courses K = coursesOf(c, p);
+    out.courses = K.count;
+    out.pitch = K.pitch;
+    out.base = K.base;
+    const double h = K.h;
+    const bool leftIsOuter = leftIsOuterOf(c);
+    const double batterAngle = single ? 0.0 : glm::radians(std::clamp(p.batter, 0.0, 45.0));
+    const double bandProject = p.bandProject > 0.0 ? p.bandProject : u.depth / 3.0;
+    const double corniceProject = p.corniceProject > 0.0 ? p.corniceProject : u.depth * 0.25;
 
     const std::vector<Run> runs = splitRuns(c, p.cornerAngle);
-    std::vector<Stone> laid;
+    const size_t n = c.pts.size();
+    // Footprint distance at each clean point, to find openings.
+    std::vector<double> along(n + 1, 0.0);
+    for (size_t k = 1; k <= n; ++k)
+        along[k] = along[k - 1] + glm::length(flat(c.pts[k % n] - c.pts[k - 1]));
+    const double footLength = c.closed ? along[n] : along[n - 1];
+
+    Laid laid;
     for (size_t ri = 0; ri < runs.size(); ++ri)
     {
         const Run& r = runs[ri];
+        const Line centre = offsetLine(r, 0.0);
+        const size_t segs = r.pts.size() - (r.cyclic ? 0 : 1);
+
+        // Openings on this run, with their courses snapped to the coursing.
+        std::vector<PlacedOpening> openings;
+        for (const Opening& o : p.openings)
+        {
+            if (o.width <= 0.0 || o.height <= 0.0 || footLength <= 0.0)
+                continue;
+            double at = c.closed ? std::fmod(std::fmod(o.at, footLength) + footLength, footLength) : std::clamp(o.at, 0.0, footLength);
+            size_t seg = std::min(size_t(std::upper_bound(along.begin(), along.begin() + (c.closed ? n + 1 : n), at) - along.begin()), (c.closed ? n : n - 1)) - 1;
+            const double segLen = along[seg + 1] - along[seg];
+            const double frac = segLen > 0.0 ? (at - along[seg]) / segLen : 0.0;
+            const size_t local = (seg + n - r.first) % n;
+            if (local >= segs)
+                continue;
+            PlacedOpening po;
+            po.o = &o;
+            po.seg = local;
+            po.frac = frac;
+            po.centre = centre.paramAt(local, frac);
+            const double ground = centre.baseAt(po.centre);
+            const double w = o.width;
+            po.sillCourse = std::clamp(int(std::lround((ground + std::max(0.0, o.sill) - K.base) / K.pitch)), 0, K.count - 1);
+            const double wantTop = ground + std::max(0.0, o.sill) + o.height;
+            po.arch.kind = o.arch;
+            po.arch.span = w;
+            po.arch.ring = o.ring > 0.0 ? o.ring : std::max(u.length * 0.6, u.height * 1.5);
+            po.arch.unit = u.height + j;
+            po.arch.joint = j;
+            po.arch.rise = o.rise;
+            po.bearing = std::max(u.length * 0.5, w * 0.15);
+            po.sillExtra = u.length * 0.25;
+            if (o.arch == ArchKind::Lintel)
+            {
+                po.topCourse = std::clamp(int(std::lround((wantTop - K.base) / K.pitch)), po.sillCourse + 1, K.count);
+                po.springCourse = po.topCourse;
+                po.lintelCourses = std::max(1, int(std::lround(std::max(K.pitch, w * 0.15) / K.pitch)));
+            }
+            else
+            {
+                const double rise = archRise(po.arch);
+                po.springCourse = std::clamp(int(std::lround((wantTop - rise - K.base) / K.pitch)), po.sillCourse + 1, K.count);
+                po.topCourse = po.springCourse;
+            }
+            po.springY = K.base + po.springCourse * K.pitch;
+            openings.push_back(po);
+        }
+
         const std::vector<double> sides = single ? std::vector<double>{0.0} : std::vector<double>{1.0, -1.0};
         for (double side : sides)
         {
-            const Line line = offsetLine(r, side * T * 0.5);
-            const double total = line.length();
-            // At a corner, the side that goes round the outside of the turn either runs to the corner (this run
-            // passes through the corner on this course) or stops short of the other run's stones.
-            auto cornerTrim = [&](int corner, const glm::dvec3& dIn, const glm::dvec3& dOut, bool atEnd, int course, double ownerDepth) {
-                const double s = std::max(std::abs(crossY(dIn, dOut)), 0.35);
-                const bool owner = ((course + corner) % 2 == 0) == atEnd;
-                const glm::dvec3 vertex = atEnd ? r.pts.back() : r.pts.front();
-                const glm::dvec3 miter = vertex + miterOffset(dIn, dOut, side * T * 0.5);
-                const bool convex = glm::dot(flat(miter - vertex), atEnd ? dIn : -dOut) > 1e-9 || single;
-                // Inside a turn the faces meet at the mitre, and stones pushed out of one face move into the other.
-                if (!convex)
-                    return owner ? 0.0 : j + std::max(0.0, p.protrude);
-                if (single)
-                    return owner ? -(T * 0.5) / s : (T * 0.5) / s + j;
-                return owner ? 0.0 : (ownerDepth + j) / s;
-            };
             const Face face = single ? Face::Through : ((side > 0.0) == leftIsOuter ? Face::Outer : Face::Inner);
-            for (int course = 0; course < out.courses; ++course)
+            std::map<int64_t, Line> lines; // by thickness in 1/1000 cm, so a battered wall makes one per course
+            for (int course = 0; course < K.count; ++course)
             {
-                const Pattern pat = pattern(p.bond, course, u, stretcherDepth, headerDepth);
-                double t0 = 0.0, t1 = total - (r.cyclic ? j : 0.0);
-                Pattern used = pat;
-                if (r.cyclic)
+                const double y = K.base + course * K.pitch;
+                const double T = thicknessAt(p, y + K.pitch - K.base);
+                const double Tmid = thicknessAt(p, y + K.pitch * 0.5 - K.base);
+                const double stretcherDepth = single ? T0 : std::min(u.depth, (T - j) * 0.5);
+                const double headerDepth = single ? T0 : std::min(u.length, T);
+                const int64_t tk = int64_t(std::llround(Tmid * 1000.0));
+                auto found = lines.find(tk);
+                if (found == lines.end())
+                    found = lines.emplace(tk, offsetLine(r, side * Tmid * 0.5)).first;
+                const Line& line = found->second;
+                const double total = line.length();
+
+                bool loop = false;
+                double shift = 0.0;
+                std::vector<Span> spans = groundSpans(line, c.level, y, h, K.pitch, std::max(1.0, u.length * 0.25), &loop, &shift);
+                // Openings: the face line's own params for the opening's centre.
+                std::vector<std::pair<double, double>> cuts;
+                for (const PlacedOpening& po : openings)
                 {
-                    // No ends to start from: the course starts where the bond says, round the loop.
-                    used.lead.clear();
-                    const double shift = (course & 1) ? (used.cycle[0].width + j) * 0.5 : 0.0;
-                    t0 += shift;
-                    t1 += shift;
-                }
-                else
-                {
-                    if (r.startCorner >= 0)
-                        t0 += cornerTrim(r.startCorner, r.before, flatDir(r.pts[0], r.pts[1]), false, course, pat[0].depth);
-                    if (r.endCorner >= 0)
-                        t1 -= cornerTrim(r.endCorner, flatDir(r.pts[r.pts.size() - 2], r.pts.back()), r.after, true, course, pat[0].depth);
-                }
-                const double drift = (unitRandom(key(p.seed, uint64_t(wall), ri, uint64_t(course), 17)) - 0.5) * u.length * 0.8;
-                double mid = (t0 + t1) * 0.5 + drift;
-                if (t1 - t0 > 2.0 * u.length)
-                    mid = std::clamp(mid, t0 + u.length, t1 - u.length);
-                for (const Interval& iv : layCourse(used, t0, t1, mid, j, minLen))
-                {
-                    const glm::dvec3 A = line.sample(iv.a), B = line.sample(iv.b);
-                    const double width = glm::length(flat(B - A));
-                    if (width < 1e-3)
+                    if (!po.o->through && face == Face::Inner)
                         continue;
-                    const glm::dvec3 along = flatDir(A, B);
-                    // Into the wall: away from the face this side lays.
-                    glm::dvec3 into = side > 0.0 ? -leftOf(along) : leftOf(along);
-                    glm::dvec3 x = along;
-                    if (glm::dot(glm::cross(x, kUp), into) < 0.0)
-                        x = -x;
-                    Stone s;
-                    s.frame = glm::dmat3(x, kUp, into);
-                    s.size = {width, h, iv.unit.depth};
-                    const glm::dvec3 faceMid = (A + B) * 0.5;
-                    s.center = faceMid + (side == 0.0 ? glm::dvec3(0.0) : into * (iv.unit.depth * 0.5));
-                    s.center.y = c.base + course * out.pitch + h * 0.5;
-                    s.wall = wall;
-                    s.course = course;
-                    s.run = int32_t(ri);
-                    s.role = iv.unit.role;
-                    s.face = iv.unit.depth >= T - j - 1e-6 ? Face::Through : face;
-                    laid.push_back(s);
+                    const double uc = line.paramAt(po.seg, po.frac);
+                    const double hw = po.o->width * 0.5;
+                    double half = -1.0;
+                    if (course >= po.sillCourse && course < po.springCourse)
+                        half = hw;
+                    else if (po.o->arch == ArchKind::Lintel && course >= po.topCourse && course < po.topCourse + po.lintelCourses)
+                        half = hw + po.bearing + j;
+                    else if (po.o->arch != ArchKind::Lintel && course >= po.springCourse)
+                    {
+                        const double ext = extradosHalfWidth(po.arch, y - po.springY);
+                        if (ext >= 0.0)
+                            half = ext + j;
+                    }
+                    else if (po.o->sill > 0.0 && po.o->sillStone && course == po.sillCourse - 1)
+                        half = hw + po.sillExtra + j;
+                    if (half > 0.0)
+                        cuts.push_back({uc - half, uc + half});
                 }
+                if (!cuts.empty() && loop)
+                {
+                    // A loop cut open: start the course at the first cut.
+                    loop = false;
+                    shift = cuts.front().second;
+                    spans = {{shift, shift + total}};
+                }
+                spans = subtract(std::move(spans), cuts, line.cyclic ? total : 0.0);
+
+                const Pattern pat = pattern(p.bond, course, u, stretcherDepth, headerDepth);
+                for (size_t si = 0; si < spans.size(); ++si)
+                {
+                    const Span& sp = spans[si];
+                    double t0 = sp.a, t1 = sp.b;
+                    Pattern used = pat;
+                    if (loop)
+                    {
+                        // No ends to start from: the course starts where the bond says, round the loop.
+                        used.lead.clear();
+                        const double off = (course & 1) ? (used.cycle[0].width + j) * 0.5 : 0.0;
+                        t1 = total - j;
+                        t0 += off;
+                        t1 += off;
+                    }
+                    else if (!line.cyclic)
+                    {
+                        auto cornerTrim = [&](int corner, const glm::dvec3& dIn, const glm::dvec3& dOut, bool atEnd, double ownerDepth) {
+                            const double s = std::max(std::abs(crossY(dIn, dOut)), 0.35);
+                            const bool owner = ((course + corner) % 2 == 0) == atEnd;
+                            const glm::dvec3 vertex = atEnd ? r.pts.back() : r.pts.front();
+                            const glm::dvec3 miter = vertex + miterOffset(dIn, dOut, side * Tmid * 0.5);
+                            const bool convex = glm::dot(flat(miter - vertex), atEnd ? dIn : -dOut) > 1e-9 || single;
+                            // Inside a turn the faces meet at the mitre, and stones pushed out of one face move into the other.
+                            if (!convex)
+                                return owner ? 0.0 : j + std::max(0.0, p.protrude);
+                            if (single)
+                                return owner ? -(Tmid * 0.5) / s : (Tmid * 0.5) / s + j;
+                            return owner ? 0.0 : (ownerDepth + j) / s;
+                        };
+                        if (r.startCorner >= 0 && t0 <= 1e-6)
+                            t0 += cornerTrim(r.startCorner, r.before, flatDir(r.pts[0], r.pts[1]), false, pat[0].depth);
+                        if (r.endCorner >= 0 && t1 >= total - 1e-6)
+                            t1 -= cornerTrim(r.endCorner, flatDir(r.pts[r.pts.size() - 2], r.pts.back()), r.after, true, pat[0].depth);
+                    }
+                    const double drift = (unitRandom(mixKey(p.seed, uint64_t(wall), ri, uint64_t(course), 17 + si * 31)) - 0.5) * u.length * 0.8;
+                    double mid = (t0 + t1) * 0.5 + drift;
+                    if (t1 - t0 > 2.0 * u.length)
+                        mid = std::clamp(mid, t0 + u.length, t1 - u.length);
+                    const std::vector<Interval> ivs = layCourse(used, t0, t1, mid, j, minLen);
+                    for (size_t ii = 0; ii < ivs.size(); ++ii)
+                    {
+                        const Interval& iv = ivs[ii];
+                        const glm::dvec3 A = line.sample(iv.a), B = line.sample(iv.b);
+                        const double width = glm::length(flat(B - A));
+                        if (width < 1e-3)
+                            continue;
+                        const glm::dvec3 alongDir = flatDir(A, B);
+                        // Into the wall: away from the face this side lays.
+                        glm::dvec3 into = side > 0.0 ? -leftOf(alongDir) : leftOf(alongDir);
+                        glm::dvec3 x = alongDir;
+                        if (glm::dot(glm::cross(x, kUp), into) < 0.0)
+                            x = -x;
+                        Stone s;
+                        s.frame = glm::dmat3(x, kUp, into);
+                        s.size = {width, h, iv.unit.depth};
+                        const glm::dvec3 faceMid = (A + B) * 0.5;
+                        s.center = faceMid + (side == 0.0 ? glm::dvec3(0.0) : into * (iv.unit.depth * 0.5));
+                        s.center.y = y + h * 0.5;
+                        s.wall = wall;
+                        s.course = course;
+                        s.run = int32_t(ri);
+                        s.role = iv.unit.role;
+                        s.face = iv.unit.depth >= T - j - 1e-6 ? Face::Through : face;
+                        s.grounded = line.baseAt(iv.a) >= y - K.pitch * 0.5 || line.baseAt(iv.b) >= y - K.pitch * 0.5 || course == 0;
+                        if ((ii == 0 && sp.jambA) || (ii + 1 == ivs.size() && sp.jambB))
+                            s.role = Role::Jamb;
+                        // Centre line range, through the face line's segment fractions.
+                        const auto [ka, fa] = line.locate(iv.a);
+                        const auto [kb, fb] = line.locate(iv.b);
+                        s.t0 = centre.paramAt(ka, fa);
+                        s.t1 = centre.paramAt(kb, fb);
+                        if (s.t1 < s.t0)
+                            s.t1 += centre.length();
+                        // String courses and the cornice stand out of the outer face.
+                        const double above = y - K.base;
+                        double project = 0.0;
+                        for (double band : p.bands)
+                            if (band >= above - 1e-6 && band < above + K.pitch - 1e-6)
+                                project = bandProject;
+                        if (p.cornice > 0 && course >= K.count - p.cornice)
+                            project = corniceProject * (course - (K.count - p.cornice) + 1);
+                        if (project > 0.0 && s.face != Face::Inner)
+                        {
+                            const glm::dvec3 outward = s.face == Face::Through ? (leftIsOuter ? leftOf(alongDir) : -leftOf(alongDir)) : -into;
+                            s.center += outward * (project * 0.5);
+                            s.size.z += project;
+                            s.role = Role::Band;
+                        }
+                        if (batterAngle > 0.0 && s.face != Face::Through)
+                        {
+                            const double cs = std::cos(batterAngle), sn = std::sin(batterAngle);
+                            const glm::dvec3 up = s.frame[1], in = s.frame[2];
+                            s.frame[1] = up * cs + in * sn;
+                            s.frame[2] = in * cs - up * sn;
+                        }
+                        laid.course.push_back(s);
+                    }
+                }
+            }
+        }
+
+        // The openings' own stones, laid through the wall (or in the outer face, for a niche).
+        for (const PlacedOpening& po : openings)
+        {
+            const double uc = po.centre;
+            const glm::dvec3 P = centre.sample(uc);
+            const glm::dvec3 d = centre.dirAt(uc);
+            const glm::dvec3 outerN = leftIsOuter ? leftOf(d) : -leftOf(d);
+            const double T = thicknessAt(p, po.springY - K.base);
+            const double nicheDepth = single ? T0 : std::min(u.depth, (T - j) * 0.5);
+            const double depth = po.o->through || single ? T : nicheDepth;
+            const double zOff = po.o->through || single ? 0.0 : (T - nicheDepth) * 0.5;
+            const glm::dvec3 origin(P.x, po.springY, P.z);
+            std::vector<ArchStone> pieces;
+            if (po.o->arch == ArchKind::Lintel)
+            {
+                const double hgt = po.lintelCourses * K.pitch - j;
+                ArchStone l;
+                l.center = {0.0, hgt * 0.5};
+                l.top = l.bottom = po.o->width + 2.0 * po.bearing;
+                l.height = hgt;
+                l.role = Role::Lintel;
+                pieces.push_back(l);
+            }
+            else
+                pieces = archStones(po.arch);
+            if (po.o->sill > 0.0 && po.o->sillStone && po.sillCourse > 0)
+            {
+                ArchStone sl;
+                const double sillY = K.base + (po.sillCourse - 1) * K.pitch;
+                sl.center = {0.0, sillY - po.springY + h * 0.5};
+                sl.top = sl.bottom = po.o->width + 2.0 * po.sillExtra;
+                sl.height = h;
+                sl.role = Role::Sill;
+                pieces.push_back(sl);
+            }
+            for (size_t k = 0; k < pieces.size(); ++k)
+            {
+                const ArchStone& a = pieces[k];
+                double z = zOff, dep = depth;
+                if (a.role == Role::Sill)
+                {
+                    // Sills stand out of the outer face to shed water.
+                    const double lip = u.depth * 0.2;
+                    dep += lip;
+                    z += lip * 0.5;
+                }
+                Stone s = stoneIn(origin, d, outerN, a, dep, z);
+                s.wall = wall;
+                s.run = int32_t(ri);
+                s.course = std::clamp(int(std::floor((s.center.y - K.base) / K.pitch)), 0, K.count - 1);
+                s.face = po.o->through || single ? Face::Through : Face::Outer;
+                s.region = -1 - int(po.o - p.openings.data()); // resolved by the caller into the opening's region
+                laid.elements.push_back(s);
             }
         }
     }
 
-    // Through stones and the outer face win, then the inner face fits round them.
-    std::vector<size_t> order(laid.size());
+    // Elements first and untouched, then through stones and the outer face, then the inner face fits round them.
+    std::vector<size_t> order(laid.course.size());
     for (size_t k = 0; k < order.size(); ++k)
         order[k] = k;
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        if (laid[a].course != laid[b].course)
-            return laid[a].course < laid[b].course;
-        return faceRank(laid[a].face) < faceRank(laid[b].face);
+        if (laid.course[a].course != laid.course[b].course)
+            return laid.course[a].course < laid.course[b].course;
+        return faceRank(laid.course[a].face) < faceRank(laid.course[b].face);
     });
-    Grid grid{std::max(u.length, 20.0), {}};
-    const double minDepth = std::max(1.0, stretcherDepth * 0.3);
+    Grid grid{std::max({u.length, u.height * 2.0, 20.0}), {}};
+    for (Stone& e : laid.elements)
+    {
+        grid.insert(e, int(out.stones.size()));
+        out.stones.push_back(e);
+    }
+    const double minDepth = std::max(1.0, std::min(u.depth, T0) * 0.3);
     // Most of a joint between any two stones, so the wander below can't close it.
     const double clearance = -0.75 * j;
     for (size_t k : order)
     {
-        Stone s = laid[k];
+        Stone s = laid.course[k];
         bool alive = true, trimmed = false;
         for (int pass = 0; pass < 6 && alive; ++pass)
         {
@@ -670,7 +1253,7 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                 }
             if (!hit)
                 break;
-            alive = trimAgainst(s, *hit, j, minLen, minDepth);
+            alive = s.shape == Shape::Box && trimAgainst(s, *hit, j, minLen, minDepth);
             trimmed = true;
             if (pass == 5 && alive)
                 for (int other : grid.around(s, j))
@@ -687,13 +1270,15 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
         out.stones.push_back(s);
     }
 
-    // Wander: half the joint at most per stone, split between moving and tilting, so neighbours never meet.
+    // Wander: half the joint at most per course stone, split between moving and tilting, so neighbours never meet.
     const double budget = 0.25 * j * std::clamp(p.jitter, 0.0, 1.0);
     for (size_t k = 0; k < out.stones.size(); ++k)
     {
         Stone& s = out.stones[k];
-        auto rnd = [&](uint64_t n) { return unitRandom(key(p.seed, uint64_t(wall), k, n, 91)); };
+        auto rnd = [&](uint64_t m) { return unitRandom(mixKey(p.seed, uint64_t(wall), k, m, 91)); };
         s.random = float(rnd(0));
+        if (k < laid.elements.size())
+            continue;
         const double step = budget / std::sqrt(3.0);
         const glm::dvec3 shift((rnd(1) * 2 - 1) * step, (rnd(2) * 2 - 1) * step, -rnd(3) * std::max(0.0, p.protrude));
         const double halfDiag = glm::length(s.size) * 0.5;
@@ -722,78 +1307,299 @@ size_t countOverlaps(std::span<const Stone> stones, double tolerance)
     return count;
 }
 
+geo::Mesh hexMesh(const std::array<glm::dvec3, 8>& pts)
+{
+    glm::dvec3 mid(0.0);
+    for (const glm::dvec3& q : pts)
+        mid += q / 8.0;
+    std::vector<glm::dvec3> P(pts.begin(), pts.end());
+    std::vector<geo::Index> sizes, idx;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const int i = (axis + 1) % 3, k = (axis + 2) % 3;
+        for (int side = 0; side < 2; ++side)
+        {
+            std::array<geo::Index, 4> q;
+            int n = 0;
+            for (int c : {0, 1, 3, 2})
+                q[size_t(n++)] = geo::Index((side << axis) | ((c & 1) << i) | (((c >> 1) & 1) << k));
+            glm::dvec3 nrm(0.0), centre(0.0);
+            for (size_t m = 0; m < 4; ++m)
+            {
+                nrm += glm::cross(P[q[m]], P[q[(m + 1) % 4]]);
+                centre += P[q[m]] / 4.0;
+            }
+            if (glm::dot(nrm, centre - mid) < 0.0)
+                std::reverse(q.begin(), q.end());
+            sizes.push_back(4);
+            idx.insert(idx.end(), q.begin(), q.end());
+        }
+    }
+    return geo::Mesh::fromPolygons(P, sizes, idx);
+}
+
+std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p, std::span<const Stone> stones, int wall)
+{
+    std::vector<geo::Mesh> out;
+    const Clean c = clean(footprint, std::max(0.0, p.height));
+    if (c.pts.size() < 2 || c.top <= c.base)
+        return out;
+    const Courses K = coursesOf(c, p);
+    const double j = std::max(0.0, p.stone.joint);
+    const double recess = std::max(0.0, p.recess);
+    const std::vector<Run> runs = splitRuns(c, p.cornerAngle);
+    const double gap = 2.0 * j + 1e-3 + std::max(0.0, p.protrude);
+    const double endReach = (std::max(p.stone.length, p.stone.depth) + j) * 1.5;
+    auto half = [&](double y) {
+        const double t = thicknessAt(p, y - K.base);
+        return std::max(t * 0.5 - recess, t * 0.25);
+    };
+
+    for (size_t ri = 0; ri < runs.size(); ++ri)
+    {
+        const Run& r = runs[ri];
+        const Line centre = offsetLine(r, 0.0);
+        const double total = centre.length();
+        // Per course, the stretches of centre line some stone covers.
+        std::vector<std::vector<std::pair<double, double>>> cover(size_t(K.count));
+        for (const Stone& s : stones)
+        {
+            if (s.wall != wall || s.run != int32_t(ri) || s.t1 < s.t0 || s.course < 0 || s.course >= K.count || s.role == Role::Rubble)
+                continue;
+            auto& list = cover[size_t(s.course)];
+            if (r.cyclic && s.t1 > total)
+            {
+                list.push_back({s.t0, total});
+                list.push_back({0.0, s.t1 - total});
+            }
+            else
+                list.push_back({s.t0, s.t1});
+        }
+        for (auto& list : cover)
+        {
+            std::sort(list.begin(), list.end());
+            std::vector<std::pair<double, double>> merged;
+            for (const auto& iv : list)
+            {
+                if (!merged.empty() && iv.first <= merged.back().second + gap)
+                    merged.back().second = std::max(merged.back().second, iv.second);
+                else
+                    merged.push_back(iv);
+            }
+            for (auto& iv : merged)
+            {
+                if (iv.first < endReach || (r.cyclic && iv.first < gap))
+                    iv.first = 0.0;
+                if (iv.second > total - endReach || (r.cyclic && iv.second > total - gap))
+                    iv.second = total;
+            }
+            if (r.cyclic && merged.size() > 1 && merged.front().first <= 0.0 && merged.back().second >= total)
+            {
+                // Joined across the loop's start.
+                merged.front().first = merged.back().first - total;
+                merged.pop_back();
+            }
+            list = std::move(merged);
+        }
+        auto same = [&](const std::vector<std::pair<double, double>>& a, const std::vector<std::pair<double, double>>& b) {
+            if (a.size() != b.size())
+                return false;
+            for (size_t k = 0; k < a.size(); ++k)
+                if (std::abs(a[k].first - b[k].first) > gap || std::abs(a[k].second - b[k].second) > gap)
+                    return false;
+            return true;
+        };
+        // Sections across the core at centre-line param t: left and right points on the ground plane, without y.
+        auto section = [&](double t, double hw, bool atVertex, size_t vertex) -> std::pair<glm::dvec3, glm::dvec3> {
+            glm::dvec3 P, off;
+            if (atVertex)
+            {
+                P = r.pts[vertex % r.pts.size()];
+                off = runOffset(r, vertex % r.pts.size(), hw);
+            }
+            else
+            {
+                P = centre.sample(t);
+                off = leftOf(centre.dirAt(t)) * hw;
+            }
+            return {P + off, P - off};
+        };
+        int c0 = 0;
+        while (c0 < K.count)
+        {
+            int c1 = c0;
+            if (p.batter <= 0.0)
+                while (c1 + 1 < K.count && same(cover[size_t(c0)], cover[size_t(c1 + 1)]))
+                    ++c1;
+            const double y0 = K.base + c0 * K.pitch;
+            for (const auto& iv : cover[size_t(c0)])
+            {
+                // The band's top meets the course above where that course covers this stretch, else stops under the top course's stone tops.
+                bool coveredAbove = false;
+                if (c1 + 1 < K.count)
+                    for (const auto& up : cover[size_t(c1 + 1)])
+                        coveredAbove = coveredAbove || (up.first < iv.second && up.second > iv.first);
+                const double y1 = coveredAbove ? K.base + (c1 + 1) * K.pitch : K.base + c1 * K.pitch + K.h - recess;
+                if (y1 <= y0)
+                    continue;
+                const double h0 = half(y0), h1 = half(y1);
+                const bool ring = r.cyclic && iv.second - iv.first >= total - 1e-6;
+                std::vector<std::pair<double, int>> cuts; // t, and vertex index or -1
+                const size_t np = r.pts.size();
+                if (ring)
+                    for (size_t v = 0; v <= np; ++v)
+                        cuts.push_back({centre.at[std::min(v, centre.at.size() - 1)], int(v % np)});
+                else
+                {
+                    const bool startAtCorner = !r.cyclic && iv.first <= 1e-6;
+                    const bool endAtCorner = !r.cyclic && iv.second >= total - 1e-6;
+                    cuts.push_back({iv.first, startAtCorner ? 0 : -1});
+                    for (size_t v = 1; v + (r.cyclic ? 0 : 1) < centre.at.size(); ++v)
+                        for (double off : {0.0, -total, total})
+                        {
+                            const double tv = centre.at[v] + off;
+                            if (tv > iv.first + 1e-6 && tv < iv.second - 1e-6)
+                                cuts.push_back({tv, int(v % np)});
+                        }
+                    cuts.push_back({iv.second, endAtCorner ? int(np - 1) : -1});
+                    std::sort(cuts.begin(), cuts.end());
+                }
+                for (size_t k = 0; k + 1 < cuts.size(); ++k)
+                {
+                    const auto [aL0, aR0] = section(cuts[k].first, h0, cuts[k].second >= 0, size_t(std::max(0, cuts[k].second)));
+                    const auto [bL0, bR0] = section(cuts[k + 1].first, h0, cuts[k + 1].second >= 0, size_t(std::max(0, cuts[k + 1].second)));
+                    const auto [aL1, aR1] = section(cuts[k].first, h1, cuts[k].second >= 0, size_t(std::max(0, cuts[k].second)));
+                    const auto [bL1, bR1] = section(cuts[k + 1].first, h1, cuts[k + 1].second >= 0, size_t(std::max(0, cuts[k + 1].second)));
+                    auto at = [](const glm::dvec3& q, double y) { return glm::dvec3(q.x, y, q.z); };
+                    // Corner order: bit 0 along (a, b), bit 1 up, bit 2 across (left, right).
+                    const std::array<glm::dvec3, 8> hex = {at(aL0, y0), at(bL0, y0), at(aL1, y1), at(bL1, y1),
+                                                           at(aR0, y0), at(bR0, y0), at(aR1, y1), at(bR1, y1)};
+                    geo::Mesh cell = hexMesh(hex);
+                    lila::scene::materials::assign(cell, kMortarSlot, {});
+                    out.push_back(std::move(cell));
+                }
+            }
+            c0 = c1 + 1;
+        }
+    }
+    return out;
+}
+
 geo::Mesh coreMesh(const Footprint& footprint, const WallParams& p)
 {
-    const Clean c = clean(footprint);
-    const size_t n = c.pts.size();
-    if (n < 2 || p.height <= 0.0)
-        return {};
-    const double T = std::max(p.thickness, 1.0);
-    double half = T * 0.5 - std::max(0.0, p.recess);
-    if (half < T * 0.25)
-        half = T * 0.25;
-    const double top = c.base + std::max(1.0, p.height - p.stone.joint - std::max(0.0, p.recess));
-    const size_t segs = c.closed ? n : n - 1;
-    auto dir = [&](size_t i) { return flatDir(c.pts[i % n], c.pts[(i + 1) % n]); };
-
-    std::vector<glm::dvec3> pts;
-    for (size_t i = 0; i < n; ++i)
-    {
-        glm::dvec3 dIn, dOut;
-        if (c.closed)
-        {
-            dIn = dir((i + n - 1) % n);
-            dOut = dir(i);
-        }
-        else
-        {
-            dOut = i + 1 < n ? dir(i) : dir(n - 2);
-            dIn = i > 0 ? dir(i - 1) : dOut;
-        }
-        const glm::dvec3 off = miterOffset(dIn, dOut, half);
-        for (const glm::dvec3& q : {c.pts[i] + off, c.pts[i] - off})
-        {
-            pts.push_back({q.x, c.base, q.z});
-            pts.push_back({q.x, top, q.z});
-        }
-    }
-    // Point i: left bottom 4i, left top 4i+1, right bottom 4i+2, right top 4i+3.
-    auto lb = [](size_t i) { return geo::Index(4 * i); };
-    auto lt = [](size_t i) { return geo::Index(4 * i + 1); };
-    auto rb = [](size_t i) { return geo::Index(4 * i + 2); };
-    auto rt = [](size_t i) { return geo::Index(4 * i + 3); };
-
-    std::vector<geo::Index> sizes, idx;
-    auto quad = [&](std::array<geo::Index, 4> q, const glm::dvec3& outward) {
-        glm::dvec3 nrm(0.0);
-        for (size_t k = 0; k < 4; ++k)
-            nrm += glm::cross(pts[q[k]], pts[q[(k + 1) % 4]]);
-        if (glm::dot(nrm, outward) < 0.0)
-            std::reverse(q.begin(), q.end());
-        sizes.push_back(4);
-        idx.insert(idx.end(), q.begin(), q.end());
-    };
-    for (size_t s = 0; s < segs; ++s)
-    {
-        const size_t a = s, b = (s + 1) % n;
-        const glm::dvec3 nrm = leftOf(dir(s));
-        quad({lb(a), lb(b), lt(b), lt(a)}, nrm);
-        quad({rb(a), rb(b), rt(b), rt(a)}, -nrm);
-        quad({lt(a), lt(b), rt(b), rt(a)}, kUp);
-        quad({lb(a), lb(b), rb(b), rb(a)}, -kUp);
-    }
-    if (!c.closed)
-    {
-        quad({lb(0), lt(0), rt(0), rb(0)}, -dir(0));
-        quad({lb(n - 1), lt(n - 1), rt(n - 1), rb(n - 1)}, dir(n - 2));
-    }
-    geo::Mesh core = geo::Mesh::fromPolygons(pts, sizes, idx);
-    lila::scene::materials::assign(core, kMortarSlot, {});
+    const Layout l = layoutWall(footprint, p);
+    geo::Mesh core;
+    for (geo::Mesh& m : coreCells(footprint, p, l.stones))
+        core.append(m);
+    if (core.numFaces() > 0)
+        lila::scene::materials::assign(core, kMortarSlot, {});
     return core;
 }
 
+namespace
+{
+/** A drum: a cylinder along Y with its bottom scaled by taper, chamfered top and bottom rims unless detail is Box. */
+geo::Mesh drumMesh(const StoneShape& s)
+{
+    const double r = std::max(0.05, s.size.x * 0.5), hy = std::max(0.05, s.size.y * 0.5);
+    const int sides = s.detail == Detail::Worn ? 24 : (s.detail == Detail::Clean ? 16 : 8);
+    const double b = s.detail == Detail::Box ? 0.0 : std::clamp(s.bevel, 0.0, 0.4 * std::min(r, hy));
+    // Rings from bottom to top: radius and height.
+    std::vector<std::pair<double, double>> rings;
+    const double rb = r * std::clamp(s.taper, 0.02, 1.0);
+    if (b > 0.0)
+        rings = {{rb - b, -hy}, {rb, -hy + b}, {r, hy - b}, {r - b, hy}};
+    else
+        rings = {{rb, -hy}, {r, hy}};
+    std::vector<glm::dvec3> pts;
+    for (const auto& [rad, y] : rings)
+        for (int k = 0; k < sides; ++k)
+        {
+            const double a = 2.0 * 3.14159265358979323846 * k / sides;
+            pts.push_back({rad * std::cos(a), y, rad * std::sin(a)});
+        }
+    std::vector<geo::Index> sizes, idx;
+    const geo::Index R = geo::Index(rings.size());
+    for (geo::Index ring = 0; ring + 1 < R; ++ring)
+        for (int k = 0; k < sides; ++k)
+        {
+            const geo::Index a = ring * sides + geo::Index(k), bb = ring * sides + geo::Index((k + 1) % sides);
+            sizes.push_back(4);
+            idx.insert(idx.end(), {a, a + geo::Index(sides), bb + geo::Index(sides), bb});
+        }
+    // Angles run anticlockwise seen from below, so the bottom cap in order faces down and the top cap reversed faces up.
+    sizes.push_back(geo::Index(sides));
+    for (int k = 0; k < sides; ++k)
+        idx.push_back(geo::Index(k));
+    sizes.push_back(geo::Index(sides));
+    for (int k = sides - 1; k >= 0; --k)
+        idx.push_back((R - 1) * sides + geo::Index(k));
+    geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    // Make sure the faces point out: the side quads were wound one way, the caps the other.
+    double vol = 0.0;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f))
+        {
+            const std::vector<geo::Index> fp = m.facePoints(f);
+            for (size_t k = 1; k + 1 < fp.size(); ++k)
+                vol += glm::dot(m.position(fp[0]), glm::cross(m.position(fp[k]), m.position(fp[k + 1])));
+        }
+    if (vol < 0.0)
+    {
+        for (size_t f = 0, o = 0; f < sizes.size(); o += sizes[f], ++f)
+            std::reverse(idx.begin() + std::ptrdiff_t(o), idx.begin() + std::ptrdiff_t(o + sizes[f]));
+        m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    }
+    // Cylindrical uvs on the sides, planar on the caps.
+    const double tile = std::max(s.tile, 1e-3);
+    const glm::dvec2 offset(unitRandom(uint64_t(s.seed) * 2 + 101), unitRandom(uint64_t(s.seed) * 2 + 102));
+    std::span<glm::vec2> uv = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        const bool cap = std::abs(m.faceNormal(f).y) > 0.9;
+        double firstAngle = 0.0;
+        bool haveFirst = false;
+        for (geo::Index cn : m.faceCorners(f))
+        {
+            const glm::dvec3& q = m.position(m.cornerPoint(cn));
+            if (cap)
+                uv[cn] = glm::vec2(float(q.x / tile + offset.x), float(q.z / tile + offset.y));
+            else
+            {
+                double a = std::atan2(q.z, q.x);
+                if (!haveFirst)
+                {
+                    firstAngle = a;
+                    haveFirst = true;
+                }
+                // Keep one quad on one side of the seam.
+                while (a - firstAngle > 3.14159265358979323846)
+                    a -= 2.0 * 3.14159265358979323846;
+                while (firstAngle - a > 3.14159265358979323846)
+                    a += 2.0 * 3.14159265358979323846;
+                uv[cn] = glm::vec2(float(a * r / tile + offset.x), float((q.y + hy) / tile + offset.y));
+            }
+        }
+    }
+    std::span<bool> hard = m.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
+    for (geo::Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+        {
+            const glm::dvec3 d = m.position(m.edgePoint(e, 1)) - m.position(m.edgePoint(e, 0));
+            // Rim edges (horizontal) are hard, the edges running up the side are smooth.
+            hard[e] = std::abs(d.y) < 1e-9;
+        }
+    lila::scene::materials::assign(m, kStoneSlot, {});
+    return m;
+}
+} // namespace
+
 geo::Mesh stoneMesh(const StoneShape& s)
 {
+    if (s.shape == Shape::Drum)
+        return drumMesh(s);
     const glm::dvec3 e = glm::max(s.size * 0.5, glm::dvec3(0.05));
     const double minE = std::min({e.x, e.y, e.z});
     const double b = s.detail == Detail::Box ? 0.0 : std::clamp(s.bevel, 0.0, 0.45 * minE);
@@ -875,6 +1681,13 @@ geo::Mesh stoneMesh(const StoneShape& s)
         for (int c = 0; c < 8; ++c)
             face({at(c, 0), at(c, 1), at(c, 2)}, glm::dvec3(sign(c, 0), sign(c, 1), sign(c, 2)));
     }
+    if (s.shape == Shape::Wedge)
+    {
+        // Narrow the bottom along X: every point scaled by where it sits between the bottom and top.
+        const double taper = std::clamp(s.taper, 0.02, 1.0);
+        for (glm::dvec3& q : pts)
+            q.x *= taper + (1.0 - taper) * std::clamp((q.y + e.y) / (2.0 * e.y), 0.0, 1.0);
+    }
 
     geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
     // Box-projected UVs at the given scale, offset per seed so stones read different parts of the texture.
@@ -945,9 +1758,9 @@ geo::Mesh prismMesh(const std::array<glm::dvec3, 4>& ground, double y0, double y
 std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallParams& p, int bands)
 {
     std::vector<geo::Mesh> out;
-    const Clean c = clean(footprint);
+    const Clean c = clean(footprint, std::max(0.0, p.height));
     const size_t n = c.pts.size();
-    if (n < 2 || p.height <= 0.0)
+    if (n < 2 || c.top <= c.base)
         return out;
     const double half = std::max(p.thickness, 1.0) * 0.5;
     const int count = std::clamp(bands, 1, 16);
@@ -964,9 +1777,10 @@ std::vector<geo::Mesh> collisionHulls(const Footprint& footprint, const WallPara
         const size_t a = s, b = (s + 1) % n;
         const glm::dvec3 oa = offsetAt(a), ob = offsetAt(b);
         const std::array<glm::dvec3, 4> ground = {c.pts[a] + oa, c.pts[b] + ob, c.pts[b] - ob, c.pts[a] - oa};
+        const double lo = std::min(c.pts[a].y, c.pts[b].y), hi = std::max(c.tops[a], c.tops[b]);
         for (int band = 0; band < count; ++band)
         {
-            const double y0 = c.base + p.height * band / count, y1 = c.base + p.height * (band + 1) / count;
+            const double y0 = lo + (hi - lo) * band / count, y1 = lo + (hi - lo) * (band + 1) / count;
             out.push_back(prismMesh(ground, y0, y1));
         }
     }
@@ -986,7 +1800,10 @@ geo::Mesh mergeStones(const Built& b, std::span<const int> stones, int lod, cons
         const glm::dmat4 xf = stoneMatrix(s);
         for (glm::dvec3& q : m.positions())
             q = glm::dvec3(xf * glm::dvec4(q, 1.0));
-        lila::geo::colors::add(m, kStoneColorSet, glm::vec4(s.random, float(s.course) / float(std::max(1, b.courses - 1)), 0.0f, 1.0f));
+        const float height = size_t(k) < b.heightFraction.size() ? b.heightFraction[size_t(k)] : 0.0f;
+        lila::geo::colors::add(m, kStoneColorSet, glm::vec4(s.random, height, s.moss, s.wet));
+        std::span<glm::vec2> uv2 = m.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(2));
+        std::fill(uv2.begin(), uv2.end(), glm::vec2(s.age, s.damage));
         out.append(m);
     }
     return out;
@@ -1018,6 +1835,7 @@ std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m)
             loose.push_back(e);
     if (loose.empty())
         return out;
+    std::span<const float> heights = m.pointAttrs().get<float>(kWallHeightAttr);
     std::map<geo::Index, std::vector<geo::Index>> at; // point -> loose edges
     for (geo::Index e : loose)
         for (int k = 0; k < 2; ++k)
@@ -1025,7 +1843,12 @@ std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m)
     std::map<geo::Index, bool> used;
     auto walk = [&](geo::Index start, geo::Index firstEdge) {
         Footprint f;
-        f.points.push_back(m.position(start));
+        auto addPoint = [&](geo::Index p) {
+            f.points.push_back(m.position(p));
+            if (!heights.empty())
+                f.heights.push_back(double(heights[p]));
+        };
+        addPoint(start);
         geo::Index p = start, e = firstEdge;
         while (e != geo::kInvalid && !used[e])
         {
@@ -1036,14 +1859,17 @@ std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m)
                 f.closed = true;
                 break;
             }
-            f.points.push_back(m.position(p));
+            addPoint(p);
             e = geo::kInvalid;
             const auto& next = at[p];
             if (next.size() == 2)
-                for (geo::Index n : next)
-                    if (!used[n])
-                        e = n;
+                for (geo::Index nx : next)
+                    if (!used[nx])
+                        e = nx;
         }
+        // Heights of zero everywhere mean the attribute is there but unset.
+        if (std::all_of(f.heights.begin(), f.heights.end(), [](double v) { return v <= 0.0; }))
+            f.heights.clear();
         if (f.points.size() >= 2)
             out.push_back(std::move(f));
     };
@@ -1062,17 +1888,114 @@ std::vector<Footprint> footprintsFromEdges(const geo::Mesh& m)
 geo::Mesh edgesFromFootprints(std::span<const Footprint> footprints)
 {
     geo::Mesh m;
+    bool anyHeights = false;
+    for (const Footprint& f : footprints)
+        anyHeights = anyHeights || !f.heights.empty();
+    std::vector<float> heights;
     for (const Footprint& f : footprints)
     {
         std::vector<geo::Index> ids;
-        for (const glm::dvec3& p : f.points)
-            ids.push_back(m.addPoint(p));
+        for (size_t k = 0; k < f.points.size(); ++k)
+        {
+            ids.push_back(m.addPoint(f.points[k]));
+            heights.push_back(k < f.heights.size() ? float(f.heights[k]) : 0.0f);
+        }
         for (size_t k = 0; k + 1 < ids.size(); ++k)
             m.addEdge(ids[k], ids[k + 1]);
         if (f.closed && ids.size() > 2)
             m.addEdge(ids.back(), ids.front());
     }
+    if (anyHeights)
+    {
+        std::span<float> h = m.pointAttrs().getOrAdd<float>(kWallHeightAttr);
+        for (size_t k = 0; k < h.size() && k < heights.size(); ++k)
+            h[k] = heights[k];
+    }
     return m;
+}
+
+void makeMeshes(Built& b, const BuildOptions& o)
+{
+    const int variants = std::max(1, o.variants);
+    using Key = std::tuple<int, int64_t, int64_t, int64_t, int64_t, int>;
+    std::map<Key, int> refs;
+    struct ShapeRef
+    {
+        glm::dvec3 size;
+        int variant;
+        Shape shape;
+        double taper;
+    };
+    std::vector<ShapeRef> shapes;
+    b.reference.assign(b.stones.size(), 0);
+    b.variant.assign(b.stones.size(), 0);
+    std::vector<std::pair<size_t, int>> pieceRefs; // stone, piece
+    for (size_t k = 0; k < b.stones.size(); ++k)
+    {
+        const Stone& s = b.stones[k];
+        const int v = std::min(variants - 1, int(double(s.random) * variants));
+        b.variant[k] = v;
+        if (s.mesh >= 0)
+        {
+            pieceRefs.push_back({k, s.mesh});
+            continue;
+        }
+        // Sizes rounded down to a quarter centimetre (never grown into a neighbour), so the common stones share a handful of meshes.
+        const glm::dvec3 q = glm::floor(s.size * 4.0);
+        const int64_t taper = s.shape == Shape::Box ? 1000 : int64_t(std::lround(double(s.taper) * 1000.0));
+        const Key key{int(s.shape), int64_t(q.x), int64_t(q.y), int64_t(q.z), taper, v};
+        auto [it, added] = refs.emplace(key, int(shapes.size()));
+        if (added)
+            shapes.push_back({q / 4.0, v, s.shape, double(taper) / 1000.0});
+        b.reference[k] = it->second;
+    }
+    const size_t shaped = shapes.size();
+    std::map<int, int> pieceMesh;
+    for (const auto& [k, piece] : pieceRefs)
+    {
+        auto [it, added] = pieceMesh.emplace(piece, int(shaped + pieceMesh.size()));
+        b.reference[k] = it->second;
+    }
+    b.meshes.assign(shaped + pieceMesh.size(), geo::Mesh());
+    b.lods.clear();
+    if (o.lods)
+        b.lods.resize(b.meshes.size());
+    tbb::parallel_for(size_t(0), shaped, [&](size_t r) {
+        StoneShape shape;
+        shape.size = shapes[r].size;
+        shape.bevel = o.bevel;
+        shape.wear = o.wear;
+        shape.seed = uint32_t(hash64(uint64_t(o.wall.seed) * 1000003ull + uint64_t(shapes[r].variant)));
+        shape.detail = o.detail;
+        shape.tile = o.tile;
+        shape.shape = shapes[r].shape;
+        shape.taper = shapes[r].taper;
+        b.meshes[r] = stoneMesh(shape);
+        if (o.lods)
+            b.lods[r] = stoneLods(shape);
+    });
+    for (const auto& [piece, r] : pieceMesh)
+    {
+        geo::Mesh m = size_t(piece) < b.pieces.size() ? b.pieces[size_t(piece)] : geo::Mesh();
+        lila::scene::materials::assign(m, kStoneSlot, {});
+        b.meshes[size_t(r)] = m;
+        if (o.lods)
+            b.lods[size_t(r)] = {m, m, m};
+    }
+    // Height up its wall, by course, or by position for stones off the courses.
+    std::map<int, std::pair<int, int>> courseRange;
+    for (const Stone& s : b.stones)
+    {
+        auto [it, added] = courseRange.emplace(s.wall, std::pair<int, int>{s.course, s.course});
+        it->second.first = std::min(it->second.first, s.course);
+        it->second.second = std::max(it->second.second, s.course);
+    }
+    b.heightFraction.assign(b.stones.size(), 0.0f);
+    for (size_t k = 0; k < b.stones.size(); ++k)
+    {
+        const auto& [lo, hi] = courseRange[b.stones[k].wall];
+        b.heightFraction[k] = hi > lo ? float(double(b.stones[k].course - lo) / double(hi - lo)) : 0.0f;
+    }
 }
 
 Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o)
@@ -1082,45 +2005,26 @@ Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o)
     {
         Layout l = layoutWall(footprints[w], o.wall, int(w));
         b.courses = std::max(b.courses, l.courses);
+        b.pitch = std::max(b.pitch, l.pitch);
         b.trimmed += l.trimmed;
         b.dropped += l.dropped;
+        const int wallRegion = int(b.regions.size());
+        b.regions.push_back("wall_" + std::to_string(w));
+        const int openingBase = int(b.regions.size());
+        for (const Opening& op : o.wall.openings)
+            b.regions.push_back(b.regions[size_t(wallRegion)] + "/" + (op.name.empty() ? std::string("opening") : op.name));
+        for (Stone& s : l.stones)
+            s.region = s.region < 0 ? openingBase + (-1 - s.region) : wallRegion;
+        for (geo::Mesh& cell : coreCells(footprints[w], o.wall, l.stones, int(w)))
+        {
+            b.core.append(cell);
+            b.coreHulls.push_back(std::move(cell));
+        }
         b.stones.insert(b.stones.end(), l.stones.begin(), l.stones.end());
-        b.core.append(coreMesh(footprints[w], o.wall));
     }
-    const int variants = std::max(1, o.variants);
-    using Key = std::tuple<int64_t, int64_t, int64_t, int>;
-    std::map<Key, int> refs;
-    std::vector<std::pair<glm::dvec3, int>> shapes; // size and variant per reference
-    b.reference.resize(b.stones.size());
-    b.variant.resize(b.stones.size());
-    for (size_t k = 0; k < b.stones.size(); ++k)
-    {
-        const Stone& s = b.stones[k];
-        const int v = std::min(variants - 1, int(double(s.random) * variants));
-        // Sizes rounded down to a quarter centimetre (never grown into a neighbour), so the common stones share a handful of meshes.
-        const glm::dvec3 q = glm::floor(s.size * 4.0);
-        const Key key{int64_t(q.x), int64_t(q.y), int64_t(q.z), v};
-        auto [it, added] = refs.emplace(key, int(shapes.size()));
-        if (added)
-            shapes.push_back({q / 4.0, v});
-        b.reference[k] = it->second;
-        b.variant[k] = v;
-    }
-    b.meshes.resize(shapes.size());
-    if (o.lods)
-        b.lods.resize(shapes.size());
-    tbb::parallel_for(size_t(0), shapes.size(), [&](size_t r) {
-        StoneShape shape;
-        shape.size = shapes[r].first;
-        shape.bevel = o.bevel;
-        shape.wear = o.wear;
-        shape.seed = uint32_t(hash64(uint64_t(o.wall.seed) * 1000003ull + uint64_t(shapes[r].second)));
-        shape.detail = o.detail;
-        shape.tile = o.tile;
-        b.meshes[r] = stoneMesh(shape);
-        if (o.lods)
-            b.lods[r] = stoneLods(shape);
-    });
+    if (b.core.numFaces() > 0)
+        lila::scene::materials::assign(b.core, kMortarSlot, {});
+    makeMeshes(b, o);
     return b;
 }
 } // namespace masonry
