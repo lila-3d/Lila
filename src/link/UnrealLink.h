@@ -239,6 +239,9 @@ LILA_SCENE_API Registry<PlacementExtra>& placementExtras();
 /** For extensions: owned by ctx and removed when it unloads. False when the id is taken. */
 LILA_SCENE_API bool addPlacementExtra(ext::Context& ctx, const std::string& id, PlacementExtra extra);
 
+/** RPC timeout for a placement call carrying count placements: 30 s plus 20 ms each, at most 30 minutes. */
+LILA_SCENE_API int placementTimeoutMs(size_t count);
+
 /** unrealPlaceInstances and unrealRemovePlacements. */
 LILA_SCENE_API void registerPlacementCommands();
 

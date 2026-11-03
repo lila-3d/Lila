@@ -481,31 +481,34 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	Component->SetStaticMesh(Mesh);
 	SetCollides(Component, bCollide);
 	Component->ClearInstances();
-	// Every instance gets as many custom data floats as the placement with the most.
+	// One bulk add and one custom data write: per-instance calls rebuild state each time and crawl at thousands of instances.
+	TArray<FTransform> Transforms;
+	TArray<TArray<float>> Custom;
+	Transforms.Reserve(Placements.Num());
+	Custom.Reserve(Placements.Num());
 	int32 CustomFloats = 0;
 	for (const TSharedPtr<FJsonValue>& V : Placements)
 	{
 		const TSharedPtr<FJsonObject>* P = nullptr;
 		if (V.IsValid() && V->TryGetObject(P))
 		{
-			CustomFloats = FMath::Max(CustomFloats, CustomDataOf(*P).Num());
+			Transforms.Add(TransformOf(*P));
+			CustomFloats = FMath::Max(CustomFloats, Custom.Add_GetRef(CustomDataOf(*P)).Num());
 		}
 	}
+	const int32 Count = Transforms.Num();
 	Component->SetNumCustomDataFloats(CustomFloats);
-	int32 Count = 0;
-	for (const TSharedPtr<FJsonValue>& V : Placements)
+	Component->AddInstances(Transforms, false);
+	if (CustomFloats > 0 && Count > 0)
 	{
-		const TSharedPtr<FJsonObject>* P = nullptr;
-		if (V.IsValid() && V->TryGetObject(P))
+		// Every instance gets as many floats as the placement with the most, the missing ones 0.
+		TArray<float> Flat;
+		Flat.SetNumZeroed(Count * CustomFloats);
+		for (int32 I = 0; I < Count; ++I)
 		{
-			const int32 Index = Component->AddInstance(TransformOf(*P), true);
-			const TArray<float> Custom = CustomDataOf(*P);
-			for (int32 K = 0; K < Custom.Num(); ++K)
-			{
-				Component->SetCustomDataValue(Index, K, Custom[K]);
-			}
-			++Count;
+			FMemory::Memcpy(&Flat[I * CustomFloats], Custom[I].GetData(), Custom[I].Num() * sizeof(float));
 		}
+		Component->SetCustomData(0, Count - 1, Flat, true);
 	}
 	Updated += FMath::Min(Before, Count);
 	Spawned += FMath::Max(0, Count - Before);

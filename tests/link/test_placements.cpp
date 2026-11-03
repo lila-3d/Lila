@@ -373,3 +373,26 @@ TEST_CASE("placement collision: options checked, UCX_ proxies go with their sour
     // unrealImport passes collision through as an import option.
     CHECK(importParams("C:/x.fbx", {{"contentPath", "/Game/A"}, {"collision", "convex"}})["options"]["collision"] == "convex");
 }
+
+TEST_CASE("placement timeouts scale with the count; a km-wide grid of thousands plans as one hism group")
+{
+    setup();
+    CHECK(placementTimeoutMs(0) == 30000);
+    CHECK(placementTimeoutMs(10000) == 230000);
+    CHECK(placementTimeoutMs(100000000) == 1800000);
+
+    run("newScene");
+    run("polyCube", {{"name", "Stone"}, {"width", 300.0}, {"height", 300.0}, {"depth", 300.0}});
+    // 60 x 60 stones 100 m apart: 5.9 km across.
+    run("array", {{"args", {"Stone"}}, {"mode", "grid"}, {"count", 60}, {"countY", 1}, {"countZ", 60}, {"spacing", {10000, 0, 10000}}, {"name", "Field"}});
+    scene::Graph& g = scene::Graph::current();
+    json plan = placementPlan(g, {g.find("Field")->id()}, PlacementOptions{});
+    REQUIRE(plan["groups"].size() == 1);
+    const json& grp = plan["groups"][0];
+    CHECK(grp["mode"] == "hism");
+    REQUIRE(grp["placements"].size() == 3600);
+    double far = 0.0;
+    for (const json& p : grp["placements"])
+        far = std::max(far, std::hypot(p["location"][0].get<double>(), p["location"][1].get<double>()));
+    CHECK(far == doctest::Approx(std::hypot(590000.0, 590000.0)));
+}

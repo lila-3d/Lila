@@ -398,6 +398,11 @@ json placementPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, con
             {"lightingChannels", lc::report(g, use, o.lightingChannels && !use.empty(), note, &unreal)}};
 }
 
+int placementTimeoutMs(size_t count)
+{
+    return int(std::min<size_t>(30'000 + count * 20, 30 * 60'000));
+}
+
 void registerPlacementCommands()
 {
     using T = ArgType;
@@ -513,12 +518,13 @@ void registerPlacementCommands()
                                                                        {"mesh", mesh},
                                                                        {"mode", grp["mode"]},
                                                                        {"collision", grp["collision"]},
-                                                                       {"placements", grp["placements"]}});
+                                                                       {"placements", grp["placements"]}},
+                                                       placementTimeoutMs(grp["placements"].size()));
                     grp["placed"] = placed.ok ? placed.result : json{{"error", placed.error}};
                 }
                 if (!plan["lights"].empty())
                 {
-                    RpcResult placed = client->call("placeLights", {{"lights", plan["lights"]}});
+                    RpcResult placed = client->call("placeLights", {{"lights", plan["lights"]}}, placementTimeoutMs(plan["lights"].size()));
                     plan["lightsPlaced"] = placed.ok ? placed.result : json{{"error", placed.error}};
                 }
                 return plan;
@@ -569,8 +575,12 @@ void registerPlacementCommands()
                     roots.push_back(n->id());
             const json plan = placementPlan(g, roots, PlacementOptions{});
             json groups = json::array(), ids = json::array();
+            size_t count = plan["lights"].size();
             for (const json& grp : plan["groups"])
+            {
                 groups.push_back(grp["key"]);
+                count += grp["placements"].size();
+            }
             for (const json& l : plan["lights"])
                 ids.push_back(l["id"]);
             if (groups.empty() && ids.empty())
@@ -586,7 +596,7 @@ void registerPlacementCommands()
             std::shared_ptr<RpcClient> client = Link::get().client();
             if (!client)
                 throw CommandError("not connected to Unreal");
-            RpcResult r = client->call("removePlacements", {{"groups", groups}, {"ids", ids}});
+            RpcResult r = client->call("removePlacements", {{"groups", groups}, {"ids", ids}}, placementTimeoutMs(count));
             if (!r.ok)
                 throw CommandError("unrealRemovePlacements: " + r.error);
             return r.result;
