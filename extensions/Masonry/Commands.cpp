@@ -1,6 +1,7 @@
-// masonryWall builds a wall as a geometry-nodes group anyone can open (a Masonry Wall node fed by the mesh's footprint
-// edges), with the settings that matter exposed; masonryInfo reports what a wall is made of and checks it; masonryShip
-// sends it to Unreal.
+// Masonry commands: masonryWall and masonryBuilding build geometry-nodes groups anyone can open (a Masonry Wall node fed
+// by the mesh's footprint edges, or a Masonry Building node holding a spec); ruin and age set their ruin and age inputs,
+// or ruin hand-placed stones directly; masonryInfo, masonrySpec and masonryCheck read them back; masonryShip sends them
+// to Unreal.
 
 #include "Masonry.h"
 #include "MasonryBake.h"
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <format>
 #include <fstream>
 #include <memory>
@@ -40,73 +42,77 @@ using scene::Graph;
 using scene::Node;
 using T = ArgType;
 
-/** Exposed group inputs, in the order the attribute editor shows them: name, type, panel, min, soft max, description. */
-struct Exposed
+/** Flags of a set of inputs; with noDefaults every flag is unset unless given (for commands that change only what is given). */
+std::vector<FlagDef> flagsOf(InputSet set, bool noDefaults = false)
 {
-    const char* name;
-    const char* type;
-    const char* panel;
-    double min;
-    double softMax;
-    const char* description;
-};
-
-constexpr Exposed kInputs[] = {
-    {"bond", "string", "Wall", 0, 0, "running, stack, english, flemish, header or gardenWall."},
-    {"height", "float", "Wall", 0, 1000, "Wall height, cm."},
-    {"thickness", "float", "Wall", 1, 200, "Wall thickness, cm. Under 1.5 stone depths the wall is one stone thick."},
-    {"cornerAngle", "float", "Wall", 1, 90, "Turns sharper than this, degrees, are corners; gentler ones curve the wall."},
-    {"stoneLength", "float", "Stones", 1, 100, "Stone length along the face, cm."},
-    {"stoneHeight", "float", "Stones", 0.5, 50, "Stone height, cm. Courses are fitted to the wall height."},
-    {"stoneDepth", "float", "Stones", 0.5, 50, "Stone depth into the wall, cm; also a header's width on the face."},
-    {"joint", "float", "Stones", 0, 5, "Mortar joint, cm."},
-    {"recess", "float", "Stones", 0, 3, "How far the mortar sits behind the stone faces, cm."},
-    {"bevel", "float", "Look", 0, 3, "Stone edge chamfer, cm."},
-    {"wear", "float", "Look", 0, 1, "How knocked about stone corners are, 0 to 1."},
-    {"jitter", "float", "Look", 0, 1, "How far stones wander and tilt inside their joints, 0 to 1."},
-    {"protrude", "float", "Look", 0, 2, "Stones pushed out of the face by up to this, cm."},
-    {"variants", "int", "Look", 1, 16, "How many differently worn versions of each stone size."},
-    {"detail", "int", "Look", 0, 2, "0 worn, 1 clean chamfer, 2 plain boxes (fast preview)."},
-    {"seed", "int", "Look", 0, 0, "Another seed gives other wander, wear and cut positions."},
-};
-
-std::vector<FlagDef> wallFlags()
-{
-    const Units u;
-    const WallParams w;
-    const BuildOptions o;
-    return {
-        {"bond", "b", T::String, "running", "How stones are arranged.", bondNames()},
-        {"height", "h", T::Float, w.height, "Wall height, cm.", {}, {}, 0.0},
-        {"thickness", "th", T::Float, w.thickness, "Wall thickness, cm.", {}, {}, 1.0},
-        {"cornerAngle", "ca", T::Float, w.cornerAngle, "Turns sharper than this, degrees, are corners.", {}, {}, 1.0, 179.0},
-        {"stoneLength", "sl", T::Float, u.length, "Stone length, cm.", {}, {}, 1.0},
-        {"stoneHeight", "sh", T::Float, u.height, "Stone height, cm.", {}, {}, 0.5},
-        {"stoneDepth", "sd", T::Float, u.depth, "Stone depth, cm.", {}, {}, 0.5},
-        {"joint", "j", T::Float, u.joint, "Mortar joint, cm.", {}, {}, 0.0},
-        {"recess", "r", T::Float, w.recess, "Mortar set back from the stone faces, cm.", {}, {}, 0.0},
-        {"bevel", "bv", T::Float, o.bevel, "Stone edge chamfer, cm.", {}, {}, 0.0},
-        {"wear", "w", T::Float, o.wear, "Corner wear, 0 to 1.", {}, {}, 0.0, 1.0},
-        {"jitter", "ji", T::Float, w.jitter, "Wander and tilt inside the joints, 0 to 1.", {}, {}, 0.0, 1.0},
-        {"protrude", "pr", T::Float, w.protrude, "Push out of the face, cm.", {}, {}, 0.0},
-        {"variants", "v", T::Int, int64_t(o.variants), "Worn versions per stone size.", {}, {}, 1.0, 64.0},
-        {"detail", "d", T::Int, int64_t(0), "0 worn, 1 clean chamfer, 2 plain boxes.", {}, {}, 0.0, 2.0},
-        {"seed", "s", T::Int, int64_t(w.seed), "Random seed."},
-    };
+    std::vector<FlagDef> out;
+    for (const Input* in : inputsOf(set))
+    {
+        FlagDef f;
+        f.name = in->name;
+        f.doc = in->doc;
+        switch (in->type)
+        {
+        case Input::Float:
+            f.type = T::Float;
+            f.defaultValue = in->def;
+            break;
+        case Input::Int:
+            f.type = T::Int;
+            f.defaultValue = int64_t(in->def);
+            break;
+        case Input::Bool:
+            f.type = T::Bool;
+            f.defaultValue = in->def != 0.0;
+            break;
+        case Input::String:
+            // Lists may come as JSON values as well as text.
+            f.type = std::string_view(in->name) == "bond" ? T::String : T::Any;
+            f.defaultValue = std::string(in->text ? in->text : "");
+            break;
+        }
+        if (std::string_view(in->name) == "bond")
+            f.choices = bondNames();
+        if (in->max > in->min && in->type != Input::String && in->type != Input::Bool)
+        {
+            f.min = in->min;
+            f.max = in->max;
+        }
+        if (noDefaults)
+            f.defaultValue = nullptr;
+        out.push_back(std::move(f));
+    }
+    return out;
 }
 
-BuildOptions optionsFromJson(const json& values)
+json valueOfFlag(const Input& in, const json& v)
 {
-    auto num = [&](const char* id) { return values.at(id).get<double>(); };
-    auto integer = [&](const char* id) { return int64_t(std::llround(values.at(id).get<double>())); };
-    try
+    if (in.type == Input::String && !v.is_string() && !v.is_null())
     {
-        return optionsFrom(num, integer, values.at("bond").get<std::string>());
+        if (std::string_view(in.name) == "ruinRegions" && v.is_array())
+        {
+            std::string joined;
+            for (const json& r : v)
+                joined += (joined.empty() ? "" : ",") + (r.is_string() ? r.get<std::string>() : r.dump());
+            return joined;
+        }
+        return v.dump();
     }
-    catch (const gn::ExecError& e)
-    {
-        throw CommandError(e.what());
-    }
+    return typedValue(in, v);
+}
+
+/** Every input of the set, from the flags given, else from fallback (a modifier's current values), else the default. */
+json valuesFromArgs(const Args& a, InputSet set, const json& fallback = json::object())
+{
+    json v = json::object();
+    for (const Input* in : inputsOf(set))
+        if (a.has(in->name))
+            v[in->name] = valueOfFlag(*in, a.flags[in->name]);
+        else if (fallback.contains(in->name))
+            v[in->name] = typedValue(*in, fallback[in->name]);
+        else
+            v[in->name] = typedValue(*in, json());
+    return v;
 }
 
 size_t triangles(const geo::Mesh& m)
@@ -118,40 +124,125 @@ size_t triangles(const geo::Mesh& m)
     return n;
 }
 
-/** What a wall is made of, for agents and the status line. */
-json statsOf(const Built& b, std::span<const Footprint> fps)
+/** What a build is made of, for agents and the status line. */
+json statsOf(const Result& r, size_t walls)
 {
+    const Built& b = r.built;
     size_t stoneTris = 0, uniqueTris = 0;
     std::vector<size_t> perMesh(b.meshes.size());
-    for (size_t r = 0; r < b.meshes.size(); ++r)
+    for (size_t m = 0; m < b.meshes.size(); ++m)
     {
-        perMesh[r] = triangles(b.meshes[r]);
-        uniqueTris += perMesh[r];
+        perMesh[m] = triangles(b.meshes[m]);
+        uniqueTris += perMesh[m];
     }
-    for (int r : b.reference)
-        stoneTris += perMesh[size_t(r)];
+    for (int m : b.reference)
+        stoneTris += perMesh[size_t(m)];
     json roles = json::object();
-    const char* roleNames[] = {"stretcher", "header", "bat", "closer", "filler"};
-    for (const char* n : roleNames)
-        roles[n] = 0;
+    for (int k = 0; k < kRoleCount; ++k)
+        roles[roleName(Role(k))] = 0;
     geo::Bounds bounds;
+    std::vector<int64_t> perRegion(b.regions.size(), 0);
     for (const Stone& s : b.stones)
     {
-        roles[roleNames[size_t(s.role)]] = roles[roleNames[size_t(s.role)]].get<int64_t>() + 1;
+        roles[roleName(s.role)] = roles[roleName(s.role)].get<int64_t>() + 1;
         bounds.extend(s.center);
+        if (s.region >= 0 && size_t(s.region) < perRegion.size())
+            ++perRegion[size_t(s.region)];
     }
-    return {{"walls", int64_t(fps.size())},
+    json regions = json::object();
+    for (size_t k = 0; k < b.regions.size(); ++k)
+        regions[b.regions[k]] = perRegion[k];
+    return {{"walls", int64_t(walls)},
             {"stones", int64_t(b.stones.size())},
             {"courses", b.courses},
             {"roles", roles},
+            {"regions", regions},
             {"stoneMeshes", int64_t(b.meshes.size())},
             {"trimmed", b.trimmed},
             {"dropped", b.dropped},
             {"stoneTriangles", int64_t(stoneTris)},
             {"stoneMeshTriangles", int64_t(uniqueTris)},
             {"coreTriangles", int64_t(triangles(b.core))},
+            {"collisionHulls", int64_t(b.coreHulls.size())},
+            {"ruin", r.ruin.toJson()},
             {"boundsMin", bounds.valid() ? json::array({bounds.min.x, bounds.min.y, bounds.min.z}) : json()},
             {"boundsMax", bounds.valid() ? json::array({bounds.max.x, bounds.max.y, bounds.max.z}) : json()}};
+}
+
+/** A masonry node in a mesh's stack (or the node itself): Masonry Wall or Masonry Building. */
+bool isMasonry(const Node& m) { return (m.type().attrIndex("stoneLength") >= 0 && m.type().attrIndex("bond") >= 0) || m.type().attrIndex("spec") >= 0; }
+bool isBuilding(const Node& m) { return m.type().attrIndex("spec") >= 0; }
+
+Node* findMasonry(Graph& g, const std::string& name)
+{
+    Node* n = g.find(name);
+    if (!n)
+        return nullptr;
+    if (isMasonry(*n))
+        return n;
+    for (scene::NodeId m : scene::modifiers::stack(g, n->id()))
+        if (Node* mod = g.node(m); mod && isMasonry(*mod))
+            return mod;
+    return nullptr;
+}
+
+Node* masonryModifier(Graph& g, const std::string& name, const char* cmd)
+{
+    if (!g.find(name))
+        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
+    if (Node* n = findMasonry(g, name))
+        return n;
+    throw CommandError(std::string(cmd) + ": " + g.find(name)->path() + " has no masonry (make it with masonryWall or masonryBuilding)");
+}
+
+json modifierValues(const Node& mod)
+{
+    json values = json::object();
+    for (const Input* in : inputsOf(isBuilding(mod) ? InputSet::Building : InputSet::Wall))
+        values[in->name] = typedValue(*in, ops::execute("getAttr", {{"args", {mod.path() + "." + in->name}}}));
+    return values;
+}
+
+/** A wall or building named on the command line: its modifier, the mesh holding it, its footprints and values. */
+struct WallRef
+{
+    Node* mod = nullptr;
+    Node* mesh = nullptr;
+    std::vector<Footprint> footprints;
+    json values;
+};
+
+WallRef refOf(Graph& g, const std::string& name, const char* cmd)
+{
+    WallRef w;
+    w.mod = masonryModifier(g, name, cmd);
+    const scene::NodeId meshId = scene::modifiers::meshOf(g, w.mod->id());
+    w.mesh = meshId != scene::kNoNode ? g.node(meshId) : g.find(name);
+    if (!isBuilding(*w.mod))
+        if (auto m = w.mesh ? scene::modifiers::cage(g, w.mesh->id()) : nullptr)
+            w.footprints = footprintsFromEdges(*m);
+    w.values = modifierValues(*w.mod);
+    return w;
+}
+
+WallRef wallRef(Graph& g, const Args& a, const char* cmd)
+{
+    std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError(std::string(cmd) + ": give one mesh");
+    return refOf(g, names[0], cmd);
+}
+
+std::shared_ptr<const Result> buildOf(const WallRef& w, bool lods, const char* cmd)
+{
+    try
+    {
+        return buildMasonry(w.footprints, w.values, lods);
+    }
+    catch (const std::exception& e)
+    {
+        throw CommandError(std::string(cmd) + ": " + e.what());
+    }
 }
 
 std::string uniqueGroupName(const std::string& base)
@@ -196,51 +287,6 @@ Footprint footprintFromJson(const json& points, bool closed)
 
 /** The mesh's own edges and points, under its modifiers: where the footprint lives. */
 scene::MeshPtr baseMesh(Graph& g, const Node& n) { return scene::modifiers::cage(g, n.id()); }
-
-/** The Masonry Wall modifier in a mesh's stack (the modifier itself may be named). */
-Node* wallModifier(Graph& g, const std::string& name, const char* cmd)
-{
-    Node* n = g.find(name);
-    if (!n)
-        throw CommandError(std::string(cmd) + ": no node named '" + name + "'");
-    auto isWall = [](const Node& m) { return m.type().attrIndex("stoneLength") >= 0 && m.type().attrIndex("bond") >= 0; };
-    if (isWall(*n))
-        return n;
-    for (scene::NodeId m : scene::modifiers::stack(g, n->id()))
-        if (Node* mod = g.node(m); mod && isWall(*mod))
-            return mod;
-    throw CommandError(std::string(cmd) + ": " + n->path() + " has no masonry wall (make one with masonryWall)");
-}
-
-json modifierValues(const Node& mod)
-{
-    json values = json::object();
-    for (const Exposed& e : kInputs)
-        values[e.name] = ops::execute("getAttr", {{"args", {mod.path() + "." + e.name}}});
-    return values;
-}
-
-/** A wall named on the command line: its modifier, the mesh holding it, and its footprints. */
-struct WallRef
-{
-    Node* mod = nullptr;
-    Node* mesh = nullptr;
-    std::vector<Footprint> footprints;
-};
-
-WallRef wallRef(Graph& g, const Args& a, const char* cmd)
-{
-    std::vector<std::string> names = a.objects();
-    if (names.size() != 1)
-        throw CommandError(std::string(cmd) + ": give one mesh");
-    WallRef w;
-    w.mod = wallModifier(g, names[0], cmd);
-    const scene::NodeId meshId = scene::modifiers::meshOf(g, w.mod->id());
-    w.mesh = meshId != scene::kNoNode ? g.node(meshId) : g.find(names[0]);
-    if (auto m = w.mesh ? baseMesh(g, *w.mesh) : nullptr)
-        w.footprints = footprintsFromEdges(*m);
-    return w;
-}
 
 /** The mesh's link id, given one (undoably) if it has none, so Unreal knows the wall again after a rename. */
 std::string wallKey(Graph& g, Node& mesh)
@@ -321,7 +367,7 @@ json materialInstance(const std::string& name, const std::string& slot, const js
 
 /** Imports the plan's assets and places its groups, then removes the stale groups. Runs on the link worker. */
 json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files, const json& stale, const json& materials, const json& baked,
-              json materialRequest)
+              json materialRequest, bool nanite)
 {
     LILA_ZONE_N("Masonry to Unreal");
     std::shared_ptr<link::RpcClient> client = link::Link::get().client();
@@ -333,6 +379,8 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
     {
         const json& as = plan["assets"][k];
         json mapping = {{"contentPath", as["contentPath"]}, {"kind", "static"}};
+        if (nanite && (as["kind"] == "stone" || as["kind"] == "chunk" || as["kind"] == "assembly"))
+            mapping["nanite"] = true;
         // Generated instances take the slots afterwards, so the import makes no plain materials of its own.
         if (materialRequest.is_object())
             mapping["importMaterials"] = false;
@@ -398,36 +446,213 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
     }
     return {{"imported", int64_t(files.size())}, {"placed", placed}, {"textures", textures}, {"materials", made}, {"removed", removed}, {"errors", errors}};
 }
+
+/** A group around one masonry node with every input exposed, applied to host as a modifier with the given values. */
+json applyGroup(const std::string& host, const char* nodeType, InputSet set, const json& values, const char* description)
+{
+    Graph& g = Graph::current();
+    const std::string group = uniqueGroupName(identifier(g.find(host)->name()) + "_Masonry");
+    json inputs = json::array();
+    json links = json::array();
+    if (set == InputSet::Wall)
+        links.push_back("GroupInput.geometry -> Masonry.footprint");
+    links.push_back("Masonry.geometry -> GroupOutput.geometry");
+    for (const Input* in : inputsOf(set))
+    {
+        static const char* typeNames[] = {"float", "int", "string", "bool"};
+        json gi = {{"name", in->name}, {"type", typeNames[in->type]}, {"default", values[in->name]}, {"panel", in->panel}, {"description", in->doc}};
+        if (in->type == Input::Float || in->type == Input::Int)
+        {
+            if (in->max > in->min)
+            {
+                gi["min"] = in->min;
+                gi["max"] = in->max;
+            }
+            if (in->softMax > in->min)
+                gi["softMax"] = in->softMax;
+        }
+        inputs.push_back(gi);
+        links.push_back(std::string("GroupInput.") + in->name + " -> Masonry." + in->name);
+    }
+    const json spec = {{"name", group},
+                       {"description", description},
+                       {"inputs", inputs},
+                       {"nodes", json::array({{{"name", "Masonry"}, {"type", nodeType}}})},
+                       {"links", links}};
+    ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
+    json mod = ops::execute("gnApply", {{"args", {host, group}}});
+    // Set on the modifier itself: a modifier type kept from an earlier scene's group of this name has its defaults.
+    const std::string modName = mod.is_string() ? mod.get<std::string>() : mod.at(0).get<std::string>();
+    for (const Input* in : inputsOf(set))
+        ops::execute("setAttr", {{"args", {modName + "." + in->name, values[in->name]}}});
+    return {{"group", group}, {"modifier", mod}, {"modifierPath", modName}};
+}
+
+/** An empty mesh named name, for a building or a wall to live on. */
+std::string newHost(const std::string& name)
+{
+    json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", name}});
+    return made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+}
+
+/** The footprint resampled every step cm and dropped onto a mesh (world space), so the wall stands on it. */
+Footprint dropOnto(const Footprint& f, Graph& g, const std::string& groundName, double step)
+{
+    Node* ground = g.find(groundName);
+    if (!ground || ground->type().attrIndex("outMesh") < 0)
+        throw CommandError("masonryWall: ground '" + groundName + "' is not a mesh");
+    g.evaluate();
+    const scene::MeshPtr gm = ground->as<scene::MeshPtr>(ground->type().attrIndex("outMesh"));
+    if (!gm || gm->numFaces() == 0)
+        throw CommandError("masonryWall: ground '" + groundName + "' has no faces");
+    geo::Mesh world = *gm;
+    const glm::dmat4 xf = std::get<glm::dmat4>(g.value({ground->id(), scene::Transform::kWorldMatrix, -1}));
+    for (glm::dvec3& q : world.positions())
+        q = glm::dvec3(xf * glm::dvec4(q, 1.0));
+    const geo::MeshBvh bvh(world);
+    const geo::Bounds bb = world.bounds();
+    Footprint out;
+    out.closed = f.closed;
+    const size_t n = f.points.size();
+    const size_t segs = f.closed ? n : n - 1;
+    auto heightAt = [&](size_t k) { return k < f.heights.size() ? f.heights[k] : -1.0; };
+    auto add = [&](glm::dvec3 p, double h) {
+        geo::BvhHit hit;
+        if (bvh.raycast(glm::dvec3(p.x, bb.max.y + 1.0, p.z), glm::dvec3(0, -1, 0), hit, bb.max.y - bb.min.y + 2.0))
+            p.y = bb.max.y + 1.0 - hit.t;
+        out.points.push_back(p);
+        if (h >= 0.0)
+            out.heights.push_back(h);
+    };
+    for (size_t s = 0; s < segs; ++s)
+    {
+        const glm::dvec3 a = f.points[s], b = f.points[(s + 1) % n];
+        const double len = glm::length(glm::dvec2(b.x - a.x, b.z - a.z));
+        const int pieces = std::max(1, int(std::ceil(len / std::max(step, 1.0))));
+        for (int i = 0; i < pieces; ++i)
+        {
+            const double t = double(i) / pieces;
+            const double h = heightAt(s) >= 0.0 ? glm::mix(heightAt(s), heightAt((s + 1) % n), t) : -1.0;
+            add(a + (b - a) * t, h);
+        }
+    }
+    if (!f.closed)
+        add(f.points.back(), heightAt(n - 1));
+    return out;
+}
+
+/** Hand-placed stones (any transforms with meshes) ruined in place: fallen ones moved to the heap or deleted. */
+json ruinPlaced(Graph& g, const std::vector<std::string>& names, const RuinParams& p)
+{
+    g.evaluate();
+    std::vector<Stone> stones;
+    std::vector<std::string> paths;
+    std::vector<glm::dvec3> offsets, scales;
+    for (const std::string& name : names)
+    {
+        Node* n = g.find(name);
+        if (!n || !n->type().dag)
+            throw CommandError("ruin: '" + name + "' is not an object");
+        geo::Bounds b;
+        if (int outMesh = n->type().attrIndex("outMesh"); outMesh >= 0)
+            if (const scene::MeshPtr m = n->as<scene::MeshPtr>(outMesh))
+                b = m->bounds();
+        if (!b.valid())
+        {
+            b.extend(glm::dvec3(-0.5));
+            b.extend(glm::dvec3(0.5));
+        }
+        const glm::dmat4 m = std::get<glm::dmat4>(g.value({n->id(), scene::Transform::kWorldMatrix, -1}));
+        glm::dvec3 scale;
+        glm::dvec3 axis[3];
+        for (int k = 0; k < 3; ++k)
+        {
+            scale[k] = glm::length(glm::dvec3(m[k]));
+            axis[k] = scale[k] > 1e-12 ? glm::dvec3(m[k]) / scale[k] : glm::dvec3(k == 0, k == 1, k == 2);
+        }
+        const glm::dvec3 mid = (b.min + b.max) * 0.5;
+        Stone s;
+        s.frame = glm::dmat3(axis[0], axis[1], axis[2]);
+        s.center = glm::dvec3(m * glm::dvec4(mid, 1.0));
+        s.size = glm::max((b.max - b.min) * scale, glm::dvec3(1e-3));
+        s.face = Face::Through;
+        s.random = float(unitRandom(stones.size()));
+        stones.push_back(s);
+        paths.push_back(n->path());
+        offsets.push_back(mid);
+        scales.push_back(scale);
+    }
+    std::vector<int> kept;
+    const RuinStats st = ruinStones(stones, p, 0.0, {}, &kept);
+    std::vector<char> stays(paths.size(), 0);
+    json moved = json::array();
+    for (size_t k = 0; k < kept.size(); ++k)
+    {
+        const size_t src = size_t(kept[k]);
+        stays[src] = 1;
+        const glm::dvec3& sc = scales[src];
+        const glm::dmat4 m = stoneMatrix(stones[k]) *
+                             glm::dmat4(glm::dvec4(sc.x, 0, 0, 0), glm::dvec4(0, sc.y, 0, 0), glm::dvec4(0, 0, sc.z, 0), glm::dvec4(-offsets[src] * sc, 1.0));
+        json flat = json::array();
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                flat.push_back(m[c][r]);
+        ops::execute("xform", {{"args", {paths[src]}}, {"worldSpace", true}, {"matrix", flat}});
+        if (stones[k].role == Role::Rubble || stones[k].loose)
+            moved.push_back(paths[src]);
+    }
+    json deleted = json::array();
+    for (size_t k = 0; k < paths.size(); ++k)
+        if (!stays[k])
+            deleted.push_back(paths[k]);
+    if (!deleted.empty())
+        ops::execute("delete", {{"args", deleted}});
+    json out = st.toJson();
+    out["moved"] = moved;
+    out["deleted"] = deleted;
+    return out;
+}
 } // namespace
 
 void registerCommands(ext::Context& ctx)
 {
-    std::vector<FlagDef> flags = {
-        {"points", "p", T::List, nullptr, "Footprint, [[x, y, z], ...] in cm; the wall stands on the lowest point, Y up."},
+    std::vector<FlagDef> wallFlags = {
+        {"points", "p", T::List, nullptr, "Footprint, [[x, y, z], ...] in cm; each point's y is the ground there, Y up."},
         {"closed", "c", T::Bool, false, "Join the last point back to the first."},
+        {"heights", "", T::List, nullptr, "Wall height above each point, cm (one per point): sloping tops, gables, broken walls."},
+        {"ground", "", T::String, nullptr, "A mesh to stand the wall on: the footprint is resampled and dropped onto it."},
+        {"groundStep", "", T::Float, 0.0, "Resampling step along the footprint for ground, cm; 0 is two stone lengths.", {}, {}, 0.0},
         {"name", "n", T::String, "MasonryWall", "Name of the mesh made to hold the wall."},
     };
-    for (FlagDef& f : wallFlags())
-        flags.push_back(std::move(f));
+    for (FlagDef& f : flagsOf(InputSet::Wall))
+        wallFlags.push_back(std::move(f));
 
     ctx.registerCommand({
         .name = "masonryWall",
         .doc = "Build a masonry wall along a line or loop: stones laid in courses, corners bonded, a mortar core behind them.\n\n"
-               "Give points= (a new mesh holds them as edges) or a mesh whose loose edges are the footprint. The wall is a "
-               "geometry-nodes modifier around a Masonry Wall node; every flag becomes a keyable input on it, so change the wall "
-               "later with setAttr on '<modifier>.<flag>' and check it with masonryInfo. Stones are instances of a few shared "
-               "meshes with stone, course, role, face, random and variant attributes. Returns the mesh, modifier, group and stats "
-               "(stones, courses, roles, stone meshes, trimmed, dropped, triangle counts, bounds). Lengths are cm.",
+               "Give points= (a new mesh holds them as edges) or a mesh whose loose edges are the footprint. Each point's y is the "
+               "ground: courses step over slopes, and heights= (or the footprint's point float wallHeight) slopes or breaks the top; "
+               "ground= drops the footprint onto a terrain mesh. openings= cuts doors, windows and niches with arches or lintels, "
+               "sills and jambs. The wall is a geometry-nodes modifier around a Masonry Wall node; every flag becomes a keyable input "
+               "on it, so change it later with setAttr on '<modifier>.<flag>', ruin it with ruin, weather it with age, and check it "
+               "with masonryInfo or masonryCheck. Returns the mesh, modifier, group and stats (stones, courses, roles, regions, stone "
+               "meshes, trimmed, dropped, triangle counts, collision hulls, ruin, bounds, seconds). Lengths are cm.",
         .positionalDoc = "mesh whose loose edges are the footprint (optional)",
-        .flags = flags,
+        .flags = wallFlags,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
+            const auto t0 = std::chrono::steady_clock::now();
             Graph& g = Graph::current();
-            json values = json::object();
-            for (const Exposed& e : kInputs)
-                values[e.name] = a.flags[e.name];
-            const BuildOptions o = optionsFromJson(values);
+            const json values = valuesFromArgs(a, InputSet::Wall);
+            try
+            {
+                optionsFromValues(values);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("masonryWall: ") + e.what());
+            }
 
             std::vector<Footprint> fps;
             std::string host;
@@ -436,7 +661,7 @@ void registerCommands(ext::Context& ctx)
                 Node* mesh = g.find(a.positional[0].get<std::string>());
                 if (!mesh || !mesh->type().isA("mesh"))
                     throw CommandError("masonryWall: " + a.positional[0].dump() + " is not a mesh");
-                if (auto m = baseMesh(g, *mesh))
+                if (auto m = scene::modifiers::cage(g, mesh->id()))
                     fps = footprintsFromEdges(*m);
                 if (fps.empty())
                     throw CommandError("masonryWall: " + mesh->path() + " has no loose edges to build along");
@@ -446,61 +671,174 @@ void registerCommands(ext::Context& ctx)
             {
                 if (!a.has("points"))
                     throw CommandError("masonryWall: give points= or a mesh with loose edges");
-                fps.push_back(footprintFromJson(a.flags["points"], a.get<bool>("closed", false)));
-                json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()},
-                                                        {"name", a.get<std::string>("name", "MasonryWall")}});
-                host = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
-                Node* mesh = g.find(host);
-                g.setValue({mesh->id(), scene::MeshNode::kInMesh, -1},
-                           scene::MeshPtr(std::make_shared<geo::Mesh>(edgesFromFootprints(fps))));
-            }
-
-            const std::string group = uniqueGroupName(identifier(g.find(host)->name()) + "_Masonry");
-            json inputs = json::array();
-            json links = json::array({"GroupInput.geometry -> Wall.footprint", "Wall.geometry -> GroupOutput.geometry"});
-            for (const Exposed& e : kInputs)
-            {
-                json in = {{"name", e.name}, {"type", e.type}, {"default", values[e.name]}, {"panel", e.panel}, {"description", e.description}};
-                if (std::string_view(e.type) != "string")
+                Footprint f = footprintFromJson(a.flags["points"], a.get<bool>("closed", false));
+                if (a.has("heights"))
                 {
-                    in["min"] = e.min;
-                    if (e.softMax > e.min)
-                        in["softMax"] = e.softMax;
+                    const json& hs = a.flags["heights"];
+                    if (!hs.is_array() || hs.size() != f.points.size())
+                        throw CommandError("masonryWall: heights takes one height per point");
+                    for (const json& h : hs)
+                        f.heights.push_back(h.get<double>());
                 }
-                inputs.push_back(in);
-                links.push_back(std::string("GroupInput.") + e.name + " -> Wall." + e.name);
+                if (a.has("ground"))
+                {
+                    const double step = a.get<double>("groundStep", 0.0);
+                    f = dropOnto(f, g, a.get<std::string>("ground"), step > 0.0 ? step : values["stoneLength"].get<double>() * 2.0);
+                }
+                fps.push_back(std::move(f));
+                host = newHost(a.get<std::string>("name", "MasonryWall"));
+                Node* mesh = g.find(host);
+                g.setValue({mesh->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(edgesFromFootprints(fps))));
+                // What the node will read back, so the build below is the one it finds in the cache.
+                fps = footprintsFromEdges(edgesFromFootprints(fps));
             }
-            json spec = {{"name", group},
-                         {"description", "Lays stones in courses along the mesh's loose edges, with a mortar core behind them."},
-                         {"inputs", inputs},
-                         {"nodes", json::array({{{"name", "Wall"}, {"type", "MasonryWall"}}})},
-                         {"links", links}};
-            ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
-            json mod = ops::execute("gnApply", {{"args", {host, group}}});
-            // Set on the modifier itself: a modifier type kept from an earlier scene's group of this name has its defaults.
-            const std::string modName = mod.is_string() ? mod.get<std::string>() : mod.at(0).get<std::string>();
-            for (const Exposed& e : kInputs)
-                ops::execute("setAttr", {{"args", {modName + "." + e.name, values[e.name]}}});
 
-            json out = statsOf(buildWalls(fps, o), fps);
+            const json made = applyGroup(host, "MasonryWall", InputSet::Wall, values, "Lays stones in courses along the mesh's loose edges, with a mortar core behind them.");
+            std::shared_ptr<const Result> r;
+            try
+            {
+                r = buildMasonry(fps, values, false);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("masonryWall: ") + e.what());
+            }
+            json out = statsOf(*r, fps.size());
             out["mesh"] = host;
-            out["modifier"] = mod;
-            out["group"] = group;
+            out["modifier"] = made["modifier"];
+            out["group"] = made["group"];
+            out["seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             return out;
         },
         .examples = {"masonryWall(points=[[0, 0, 0], [400, 0, 0], [400, 0, 300]], bond='flemish', height=250)",
                      "tower = masonryWall(points=[[100 * math.cos(a / 12 * math.tau), 0, 100 * math.sin(a / 12 * math.tau)] for a in range(12)],\n"
-                     "                    closed=True, thickness=40, height=600)\n"
+                     "                    closed=True, thickness=40, height=600, openings=[{'at': 50, 'width': 60, 'height': 160, 'arch': 'round'}])\n"
                      "setAttr(tower['modifier'] + '.bond', 'english')\n"
-                     "masonryInfo(tower['mesh'])"},
+                     "masonryInfo(tower['mesh'])",
+                     "masonryWall(points=[[0, 0, 0], [800, 120, 0]], heights=[300, 180], stoneLength=60, stoneHeight=30, stoneDepth=35, thickness=80, batter=3)"},
+    });
+
+    std::vector<FlagDef> buildingFlags = {
+        {"spec", "", T::Any, nullptr, "The building: a JSON object (or its text). See the lila://masonry/spec-schema resource; masonrySpec reads one back."},
+        {"name", "n", T::String, "MasonryBuilding", "Name of the mesh made to hold a new building."},
+        {"node", "", T::String, nullptr, "An existing building (its mesh or modifier) to rebuild with this spec and these flags instead of making one."},
+    };
+    for (FlagDef& f : flagsOf(InputSet::Building, true))
+        if (f.name != "spec")
+            buildingFlags.push_back(std::move(f));
+
+    ctx.registerCommand({
+        .name = "masonryBuilding",
+        .doc = "Build a whole masonry building from one JSON spec: walls (following the ground, sloped tops, batter, bands, "
+               "cornices, buttresses) with doors, windows and niches under round, pointed, segmental or flat arches or lintels, "
+               "plus columns and colonnades, stairs, barrel vaults, domes, freestanding arches and floors. Every part is a named "
+               "region (north_wall, north_wall/door_1, portico/column_3) that ruin, masonryInfo and masonryCheck address. The "
+               "spec's scale multiplies every length, stones included, for buildings far larger than human ones.\n\n"
+               "The building is a geometry-nodes modifier around a Masonry Building node holding the spec, so it saves with the "
+               "scene; change it by editing what masonrySpec returns and calling masonryBuilding again with node=. Ruin and age "
+               "flags work as on masonryWall. Returns the mesh, modifier, group and stats (stones, roles, regions, ruin, triangle "
+               "counts, collision hulls, bounds, seconds).",
+        .flags = buildingFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const auto t0 = std::chrono::steady_clock::now();
+            Graph& g = Graph::current();
+            json fallback = json::object();
+            Node* existing = nullptr;
+            if (a.has("node"))
+            {
+                existing = masonryModifier(g, a.get<std::string>("node"), "masonryBuilding");
+                if (!isBuilding(*existing))
+                    throw CommandError("masonryBuilding: " + existing->path() + " is a wall, not a building");
+                fallback = modifierValues(*existing);
+            }
+            else if (!a.has("spec"))
+                throw CommandError("masonryBuilding: give spec= (see the lila://masonry/spec-schema resource)");
+            json values = valuesFromArgs(a, InputSet::Building, fallback);
+            if (a.has("spec"))
+            {
+                const json& s = a.flags["spec"];
+                const json parsed = s.is_string() ? json::parse(s.get<std::string>(), nullptr, false) : s;
+                if (!parsed.is_object())
+                    throw CommandError("masonryBuilding: spec is a JSON object");
+                values["spec"] = parsed.dump();
+            }
+            std::shared_ptr<const Result> r;
+            try
+            {
+                r = buildMasonry({}, values, false);
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("masonryBuilding: ") + e.what());
+            }
+            json out = statsOf(*r, 0);
+            if (existing)
+            {
+                for (const Input* in : inputsOf(InputSet::Building))
+                    if (values[in->name] != fallback.value(in->name, json()))
+                        ops::execute("setAttr", {{"args", {existing->path() + "." + in->name, values[in->name]}}});
+                const scene::NodeId meshId = scene::modifiers::meshOf(g, existing->id());
+                out["mesh"] = meshId != scene::kNoNode ? g.node(meshId)->path() : std::string();
+                out["modifier"] = existing->path();
+            }
+            else
+            {
+                const std::string host = newHost(a.get<std::string>("name", "MasonryBuilding"));
+                const json made = applyGroup(host, "MasonryBuilding", InputSet::Building, values, "A masonry building from a spec.");
+                out["mesh"] = host;
+                out["modifier"] = made["modifier"];
+                out["group"] = made["group"];
+            }
+            out["seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            return out;
+        },
+        .examples = {"masonryBuilding(spec={'stone': {'length': 60, 'height': 30, 'depth': 40, 'joint': 1.5},\n"
+                     "    'walls': [{'name': 'nave', 'points': [[0, 0, 0], [2000, 0, 0], [2000, 0, 900], [0, 0, 900]], 'closed': True,\n"
+                     "               'height': 1200, 'thickness': 120, 'cornice': 2,\n"
+                     "               'openings': [{'name': 'door', 'at': 1000, 'width': 300, 'height': 600, 'arch': 'pointed'}]}],\n"
+                     "    'floors': [{'name': 'roof', 'points': [[0, 0, 0], [2000, 0, 0], [2000, 0, 900], [0, 0, 900]], 'y': 1200}]},\n"
+                     "    left=0.5, age=0.7)",
+                     "b = masonrySpec('MasonryBuilding')\nb['spec']['scale'] = 8\nmasonryBuilding(node='MasonryBuilding', spec=b['spec'])"},
+    });
+
+    ctx.registerCommand({
+        .name = "masonrySpec",
+        .doc = "A masonry building's spec and settings, to edit and pass back to masonryBuilding with node=; for a wall, its "
+               "settings and footprints. Returns {spec, settings, regions, footprints}.",
+        .positionalDoc = "mesh or its masonry modifier",
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            const WallRef w = wallRef(g, a, "masonrySpec");
+            json settings = w.values;
+            json spec = json::object();
+            if (settings.contains("spec"))
+            {
+                spec = json::parse(settings["spec"].get<std::string>(), nullptr, false);
+                settings.erase("spec");
+            }
+            json footprints = json::array();
+            for (const Footprint& f : w.footprints)
+            {
+                json pts = json::array();
+                for (const glm::dvec3& p : f.points)
+                    pts.push_back({p.x, p.y, p.z});
+                footprints.push_back({{"points", pts}, {"closed", f.closed}, {"heights", f.heights}});
+            }
+            const std::shared_ptr<const Result> r = buildOf(w, false, "masonrySpec");
+            return {{"spec", spec}, {"settings", settings}, {"regions", r->built.regions}, {"footprints", footprints}, {"modifier", w.mod->path()}};
+        },
+        .examples = {"masonrySpec('MasonryBuilding')['spec']"},
     });
 
     ctx.registerCommand({
         .name = "masonryInfo",
-        .doc = "What a masonry wall is made of, and whether it is clean.\n\n"
-               "Returns the same stats masonryWall does (stones, courses, roles, stone meshes, trimmed, dropped, triangle "
-               "counts, bounds), the current settings, and checks: overlaps (stone pairs intersecting by more than 0.01 cm, "
-               "0 when clean) and ok.",
+        .doc = "What a masonry wall or building is made of, and whether it is clean.\n\n"
+               "Returns the same stats masonryWall does (stones, courses, roles, regions with stone counts, stone meshes, trimmed, "
+               "dropped, triangle counts, collision hulls, what the ruin did, bounds), the current settings, and checks: overlaps "
+               "(standing stone pairs intersecting by more than 0.01 cm, 0 when clean) and ok.",
         .positionalDoc = "mesh or its masonry modifier (default the selection)",
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -508,57 +846,226 @@ void registerCommands(ext::Context& ctx)
 
             Graph& g = Graph::current();
             const WallRef w = wallRef(g, a, "masonryInfo");
-            Node* mod = w.mod;
-            Node* mesh = w.mesh;
-            const std::vector<Footprint>& fps = w.footprints;
-            const json values = modifierValues(*mod);
-            const Built b = buildWalls(fps, optionsFromJson(values));
-            json out = statsOf(b, fps);
-            const size_t overlapping = countOverlaps(b.stones);
-            out["settings"] = values;
-            out["checks"] = {{"overlaps", int64_t(overlapping)}, {"ok", overlapping == 0 && !b.stones.empty()}};
-            out["mesh"] = mesh ? mesh->path() : std::string();
-            out["modifier"] = mod->path();
+            const std::shared_ptr<const Result> r = buildOf(w, false, "masonryInfo");
+            json out = statsOf(*r, w.footprints.size());
+            std::vector<Stone> standing;
+            for (const Stone& s : r->built.stones)
+                if (s.role != Role::Rubble && !s.loose)
+                    standing.push_back(s);
+            const size_t overlapping = countOverlaps(standing);
+            out["settings"] = w.values;
+            out["checks"] = {{"overlaps", int64_t(overlapping)}, {"ok", overlapping == 0 && !r->built.stones.empty()}};
+            out["mesh"] = w.mesh ? w.mesh->path() : std::string();
+            out["modifier"] = w.mod->path();
             return out;
         },
         .examples = {"masonryInfo('MasonryWall')['checks']"},
     });
 
+    std::vector<FlagDef> ruinFlags = flagsOf(InputSet::Ruin, true);
+    for (FlagDef& f : ruinFlags)
+        if (f.name == "ruinRegions")
+        {
+            f.name = "regions";
+            f.doc = "Only these regions ruin: a list or comma separated (north_wall, tower_1/door_1). Empty is all.";
+        }
+        else if (f.name == "ruinSeed")
+        {
+            f.name = "seed";
+            f.doc = "Another seed breaks it differently.";
+        }
+    ctx.registerCommand({
+        .name = "ruin",
+        .doc = "Ruin masonry: stones above a ragged break fall, lower toward the collapse side and cut by gaps; a few just above it "
+               "hang on; nothing is left floating; the tops tip; a share of what fell lies heaped at the foot (settle=True drops it "
+               "with the rigid-body solver); floors break into pieces that fall where nothing holds them. left is the plain knob: "
+               "0.75, 0.5, 0.25 of the stone left standing. regions= limits it to named parts, such as the top of one wall.\n\n"
+               "On a masonry wall or building it sets the modifier's ruin inputs (only the flags given; left defaults to 0.5 when "
+               "none are), so it stays editable and saves with the scene. On other objects (stones placed by hand, any meshes) it "
+               "ruins them in place: fallen ones move to the heap or are deleted. Returns the ruin stats (removed, survivors, "
+               "loose, unsupported, rubble, slab pieces, fallen pieces, left).",
+        .positionalDoc = "a masonry mesh or modifier, or the objects to ruin (default the selection)",
+        .flags = ruinFlags,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            const std::vector<std::string> names = a.objects();
+            if (names.empty())
+                throw CommandError("ruin: give a masonry wall or building, or the stones to ruin");
+            auto ruinValue = [&](const Input* in) -> std::optional<json> {
+                const char* flag = std::string_view(in->name) == "ruinRegions" ? "regions" : (std::string_view(in->name) == "ruinSeed" ? "seed" : in->name);
+                if (!a.has(flag))
+                    return std::nullopt;
+                return valueOfFlag(*in, a.flags[flag]);
+            };
+            bool any = false;
+            for (const Input* in : inputsOf(InputSet::Ruin))
+                any = any || ruinValue(in).has_value();
+            if (Node* mod = findMasonry(g, names[0]); mod && names.size() == 1)
+            {
+                for (const Input* in : inputsOf(InputSet::Ruin))
+                {
+                    std::optional<json> v = ruinValue(in);
+                    if (!v && !any && std::string_view(in->name) == "left")
+                        v = 0.5;
+                    if (v)
+                        ops::execute("setAttr", {{"args", {mod->path() + "." + in->name, *v}}});
+                }
+                const WallRef w = refOf(g, names[0], "ruin");
+                const std::shared_ptr<const Result> r = buildOf(w, false, "ruin");
+                json out = r->ruin.toJson();
+                out["stones"] = int64_t(r->built.stones.size());
+                out["modifier"] = mod->path();
+                return out;
+            }
+            json v = json::object();
+            for (const Input* in : inputsOf(InputSet::Ruin))
+                if (std::optional<json> given = ruinValue(in))
+                    v[in->name] = *given;
+            if (!any)
+                v["left"] = 0.5;
+            return ruinPlaced(g, names, ruinFromValues(v));
+        },
+        .examples = {"ruin('MasonryWall', left=0.5, collapse=90, gaps=2)", "ruin('Chapel', regions=['north_wall'], left=0.66)",
+                     "ruin(['stone1', 'stone2', 'stone3'], left=0.4, settle=True)"},
+    });
+
+    ctx.registerCommand({
+        .name = "age",
+        .doc = "Weather masonry: sets the age inputs of a masonry wall or building (only the flags given; age defaults to 0.7 "
+               "when none are). Every stone gets age, wet (near the ground and on exposed tops) and moss (where wet and exposed), "
+               "sent to Unreal per instance for the masonry material. Returns how many stones carry moss and the averages.",
+        .positionalDoc = "masonry mesh or modifier (default the selection)",
+        .flags = flagsOf(InputSet::Age, true),
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            const std::vector<std::string> names = a.objects();
+            if (names.size() != 1)
+                throw CommandError("age: give one masonry wall or building");
+            Node* mod = masonryModifier(g, names[0], "age");
+            bool any = false;
+            for (const Input* in : inputsOf(InputSet::Age))
+                any = any || a.has(in->name);
+            for (const Input* in : inputsOf(InputSet::Age))
+                if (a.has(in->name))
+                    ops::execute("setAttr", {{"args", {mod->path() + "." + in->name, typedValue(*in, a.flags[in->name])}}});
+                else if (!any && std::string_view(in->name) == "age")
+                    ops::execute("setAttr", {{"args", {mod->path() + ".age", 0.7}}});
+            const WallRef w = refOf(g, names[0], "age");
+            const std::shared_ptr<const Result> r = buildOf(w, false, "age");
+            double age = 0.0, wet = 0.0, moss = 0.0;
+            int64_t mossy = 0;
+            for (const Stone& s : r->built.stones)
+            {
+                age += s.age;
+                wet += s.wet;
+                moss += s.moss;
+                mossy += s.moss > 0.25f ? 1 : 0;
+            }
+            const double n = double(std::max<size_t>(1, r->built.stones.size()));
+            return {{"stones", int64_t(r->built.stones.size())}, {"mossy", mossy}, {"meanAge", age / n}, {"meanWet", wet / n}, {"meanMoss", moss / n}, {"modifier", mod->path()}};
+        },
+        .examples = {"age('MasonryWall', age=0.8, moss=0.6)"},
+    });
+
+    ctx.registerCommand({
+        .name = "masonryCheck",
+        .doc = "Check a masonry wall or building before shipping it: floating stones (not on the ground and touching nothing "
+               "under them), standing stones interpenetrating by more than tolerance, missing collision, and an optional budget. "
+               "Returns {ok, issues: [text], floating, floatingStones (the first ten: region, role, at), overlaps, rubbleOverlaps, collisionHulls, stones, triangles}.",
+        .positionalDoc = "masonry mesh or modifier (default the selection)",
+        .flags = {{"tolerance", "", T::Float, 0.1, "Interpenetration allowed, and the gap a resting stone may have under it, cm.", {}, {}, 0.0},
+                  {"maxStones", "", T::Int, int64_t(0), "Budget: most stones; 0 for none.", {}, {}, 0.0},
+                  {"maxTriangles", "", T::Int, int64_t(0), "Budget: most stone triangles, instanced; 0 for none.", {}, {}, 0.0}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            const WallRef w = wallRef(g, a, "masonryCheck");
+            const std::shared_ptr<const Result> r = buildOf(w, false, "masonryCheck");
+            const Built& b = r->built;
+            const double tol = std::max(0.0, a.get<double>("tolerance", 0.1));
+            std::vector<Stone> standing, rubble;
+            for (const Stone& s : b.stones)
+                (s.role == Role::Rubble ? rubble : standing).push_back(s);
+            const size_t overlaps = countOverlaps(standing, tol);
+            const size_t rubbleOverlaps = countOverlaps(rubble, std::max(tol, 1.0));
+            std::vector<int> which;
+            const int floating = countFloating(b.stones, std::max(tol, b.pitch * 0.15), &which);
+            json floatingStones = json::array();
+            for (size_t i = 0; i < which.size() && i < 10; ++i)
+            {
+                const Stone& s = b.stones[size_t(which[i])];
+                floatingStones.push_back({{"region", s.region >= 0 && size_t(s.region) < b.regions.size() ? b.regions[size_t(s.region)] : std::string()},
+                                          {"role", roleName(s.role)},
+                                          {"at", {s.center.x, s.center.y, s.center.z}}});
+            }
+            const json stats = statsOf(*r, w.footprints.size());
+            json issues = json::array();
+            if (b.stones.empty())
+                issues.push_back("no stones");
+            if (floating > 0)
+                issues.push_back(std::format("{} stones float", floating));
+            if (overlaps > 0)
+                issues.push_back(std::format("{} pairs of standing stones interpenetrate by more than {} cm", overlaps, tol));
+            if (b.coreHulls.empty() && !b.stones.empty())
+                issues.push_back("no collision: the core is empty");
+            if (const int64_t m = a.get<int64_t>("maxStones", 0); m > 0 && int64_t(b.stones.size()) > m)
+                issues.push_back(std::format("{} stones, over the budget of {}", b.stones.size(), m));
+            if (const int64_t m = a.get<int64_t>("maxTriangles", 0); m > 0 && stats["stoneTriangles"].get<int64_t>() > m)
+                issues.push_back(std::format("{} stone triangles, over the budget of {}", stats["stoneTriangles"].get<int64_t>(), m));
+            return {{"ok", issues.empty()},
+                    {"issues", issues},
+                    {"floating", floating},
+                    {"floatingStones", floatingStones},
+                    {"overlaps", int64_t(overlaps)},
+                    {"rubbleOverlaps", int64_t(rubbleOverlaps)},
+                    {"collisionHulls", int64_t(b.coreHulls.size())},
+                    {"stones", int64_t(b.stones.size())},
+                    {"triangles", stats["stoneTriangles"]}};
+        },
+        .examples = {"masonryCheck('MasonryBuilding', maxStones=50000)['issues']"},
+    });
+
     ctx.registerCommand({
         .name = "masonryShip",
-        .doc = "Send a masonry wall to Unreal's open level, instanced: each stone mesh is imported once as a static mesh with "
-               "three LODs (worn, clean chamfer, plain box), and the stones are placed as one instanced component (HISM by "
-               "default) per stone mesh per ground chunk, so streaming and culling work per chunk. mode='merged' instead makes "
-               "each chunk's stones one static mesh with the same three LODs. The core goes as its own mesh carrying the "
-               "wall's collision as convex UCX pieces; stones have none. mode='lowPoly' sends each chunk as a box shell "
-               "with the stones and core baked onto it (normal, AO, curvature) and its own UCX collision, for background "
-               "walls and HLOD.\n\n"
-               "With textures=True (the default) the stones also get a shared atlas: every stone mesh's worn LOD0 is baked "
-               "onto its box into one normal, AO and curvature set, in uv0 of all three LODs (the tiling projection moves to "
-               "uv1), and the textures go to <folder>/<mesh>/Textures. Slots: MasonryStone (LOD0), MasonryStoneFar (LOD1 and "
-               "2, which want the atlas normal), MasonryMortar (core), MasonryShell (low poly); Unreal finds or makes "
-               "materials by these names, taking a Lila material's values when the scene has one. Instances carry custom "
-               "primitive data 0 a stable random and 1 height up the wall (0 bottom course, 1 top). Sending again replaces "
-               "the wall's chunks in place and removes the ones it no longer has.\n\n"
+        .doc = "Send a masonry wall or building to Unreal's open level, as it stands (ruin, rubble and age included), instanced: "
+               "each stone mesh is imported once as a static mesh with three LODs (worn, clean chamfer, plain box), and the stones "
+               "are placed as one instanced component (HISM by default) per stone mesh per ground chunk, so streaming and culling "
+               "work per chunk. mode='merged' instead makes each chunk's stones one static mesh with the same three LODs. The core "
+               "goes as its own mesh carrying the collision as convex UCX pieces; stones have none. mode='lowPoly' sends each chunk "
+               "as a box shell with the stones and core baked onto it (normal, AO, curvature) and its own UCX collision, for "
+               "background walls and HLOD (an intact wall's shape). Nanite is off unless asked: nanite=True builds Nanite data for "
+               "the stone meshes, and mode='assembly' (UE 5.8 Nanite Assemblies) also writes the stones as one USD assembly of "
+               "those meshes and places that instead of instanced components.\n\n"
+               "With textures=True (the default) the stones also get a shared atlas: every stone mesh's worn LOD0 is baked onto its "
+               "box into one normal, AO and curvature set, in uv0 of all three LODs (the tiling projection moves to uv1), and the "
+               "textures go to <folder>/<mesh>/Textures. Slots: MasonryStone (LOD0), MasonryStoneFar (LOD1 and 2), MasonryMortar "
+               "(core), MasonryShell (low poly); Unreal finds or makes materials by these names, taking a Lila material's values "
+               "when the scene has one. Instances carry custom primitive data 0 random, 1 height up the wall (0 bottom, 1 top), 2 age, "
+               "3 damage, 4 wet, 5 moss; merged meshes carry random, height, moss and wet as vertex colour and age and damage in uv2. "
+               "Sending again replaces the wall's chunks in place and removes the ones it no longer has.\n\n"
                "Returns stats (stones, assets, groups, chunks, average triangles per stone mesh at each LOD, collisionHulls, "
-               "atlasTexelsPerCm, shellTriangles, textures, bakeSeconds, removedGroups) plus, with wait=True, what Unreal "
-               "imported and placed. dryRun=True returns the plan without baking, writing files or connecting.",
+               "atlasTexelsPerCm, shellTriangles, textures, bakeSeconds, removedGroups) plus, with wait=True, what Unreal imported "
+               "and placed. dryRun=True returns the plan without baking, writing files or connecting.",
         .positionalDoc = "mesh or its masonry modifier (default the selection)",
         .flags = {{"folder", "f", T::String, "/Game/Lila/Masonry", "Content folder; the wall's assets go in <folder>/<mesh name>."},
                   {"chunkSize", "cs", T::Float, 400.0, "Ground cell per instanced component, cm.", {}, {}, 10.0},
                   {"mode", "m", T::String, "hism",
                    "hism or ism: stones instanced per stone mesh per chunk. merged: each chunk's stones as one static mesh with three LODs. "
-                   "lowPoly: each chunk as a box shell with the stones baked onto it.",
-                   {"hism", "ism", "merged", "lowPoly"}},
-                  {"collisionBands", "cb", T::Int, int64_t(1), "Height bands the core's convex collision is split into (UCX), 1 to 16.", {}, {}, 1.0, 16.0},
+                   "lowPoly: each chunk as a box shell with the stones baked onto it. assembly: a Nanite Assembly (UE 5.8) through USD.",
+                   {"hism", "ism", "merged", "lowPoly", "assembly"}},
+                  {"nanite", "na", T::Bool, false, "Build Nanite data for the stone meshes (always on for assembly)."},
                   {"textures", "tx", T::Bool, true,
                    "Bake and send textures: the stone atlas (instanced and merged) or each shell's maps (lowPoly, which always bakes)."},
                   {"textureSize", "ts", T::Int, int64_t(2048), "Atlas or shell texture size, texels.", {}, {}, 64.0, 8192.0},
                   {"backend", "", T::String, "auto", "Bake backend: auto (gpu when there is one), gpu or cpu.", {"auto", "gpu", "cpu"}},
                   {"material", "mt", T::String, "generate",
-                   "generate: instances of Lila's masonry master (M_LilaMasonry, built once, then yours to edit) per slot. none: materials "
-                   "matched or made by slot name. Or a material path to parent the instances to, which must have the master's parameters."},
-                  {"regenerateMaster", "", T::Bool, false, "Rebuild M_LilaMasonry's graph from this version of Lila, discarding edits to it."},
+                   "generate: instances of Lila's masonry master (M_LilaMasonry, built on MF_LilaMasonry once, then yours to edit) per slot. "
+                   "none: materials matched or made by slot name. Or a material path to parent the instances to, which must have the master's parameters."},
+                  {"regenerateMaster", "", T::Bool, false, "Rebuild M_LilaMasonry and MF_LilaMasonry from this version of Lila, discarding edits to them."},
                   {"dryRun", "", T::Bool, false, "Return the plan, placements included, without writing files or contacting Unreal."},
                   {"wait", "w", T::Bool, false, "Block until Unreal has imported and placed everything."}},
         .undoable = false,
@@ -569,24 +1076,21 @@ void registerCommands(ext::Context& ctx)
             const WallRef w = wallRef(g, a, "masonryShip");
             if (!w.mesh)
                 throw CommandError("masonryShip: the masonry modifier is on no mesh");
-            BuildOptions o = optionsFromJson(modifierValues(*w.mod));
-            o.lods = true;
-            Built b = buildWalls(w.footprints, o);
+            const std::shared_ptr<const Result> r = buildOf(w, true, "masonryShip");
+            Built b = r->built;
             if (b.stones.empty())
                 throw CommandError("masonryShip: " + w.mesh->path() + " has no stones");
+            const BuildOptions o = optionsFromValues(w.values);
 
             ShipOptions so;
             so.folder = a.get<std::string>("folder", so.folder);
             so.chunkSize = std::max(10.0, a.get<double>("chunkSize", so.chunkSize));
             so.mode = a.get<std::string>("mode", so.mode);
-            if (so.mode != "hism" && so.mode != "ism" && so.mode != "merged" && so.mode != "lowPoly")
-                throw CommandError("masonryShip: mode is hism, ism, merged or lowPoly, not '" + so.mode + "'");
+            if (so.mode != "hism" && so.mode != "ism" && so.mode != "merged" && so.mode != "lowPoly" && so.mode != "assembly")
+                throw CommandError("masonryShip: mode is hism, ism, merged, lowPoly or assembly, not '" + so.mode + "'");
+            const bool nanite = so.mode == "assembly" || a.get<bool>("nanite", false);
             g.evaluate();
             const glm::dmat4 world = std::get<glm::dmat4>(g.value({w.mesh->id(), scene::Transform::kWorldMatrix, -1}));
-            const int collisionBands = int(std::clamp<int64_t>(a.get<int64_t>("collisionBands", 1), 1, 16));
-            int64_t collisionCount = 0;
-            for (const Footprint& f : w.footprints)
-                collisionCount += int64_t(collisionHulls(f, o.wall, collisionBands).size());
             const bool dry = a.get<bool>("dryRun", false);
             const std::string key = dry ? std::string("dryRun") : wallKey(g, *w.mesh);
             const std::string name = identifier(w.mesh->name());
@@ -595,6 +1099,8 @@ void registerCommands(ext::Context& ctx)
             const int textureSize = int(std::clamp<int64_t>(a.get<int64_t>("textureSize", 2048), 64, 8192));
             constexpr int kPadding = 8;
             const double texelsPerCm = textures && !lowPoly ? atlasStones(b, textureSize, kPadding) : 0.0;
+            if (lowPoly && w.footprints.empty())
+                throw CommandError("masonryShip: lowPoly needs a wall; send a building as hism, merged or assembly");
             const std::vector<Shell> shells = lowPoly ? lowPolyShells(w.footprints, o.wall, so.chunkSize, textureSize, kPadding) : std::vector<Shell>();
             json plan = shipPlan(b, world, key, name, so, shells);
 
@@ -607,8 +1113,9 @@ void registerCommands(ext::Context& ctx)
                           {"groups", int64_t(plan["groups"].size())},
                           {"chunks", int64_t(plan["chunks"].size())},
                           {"lodTriangles", json::array()},
-                          {"collisionHulls", collisionCount},
+                          {"collisionHulls", int64_t(b.coreHulls.size())},
                           {"atlasTexelsPerCm", texelsPerCm},
+                          {"nanite", nanite},
                           {"folder", plan["folder"]},
                           {"mesh", w.mesh->path()}};
             for (size_t t : lodTris)
@@ -655,20 +1162,25 @@ void registerCommands(ext::Context& ctx)
             }
 
             const std::filesystem::path dir = link::cacheDir() / "masonry" / name;
-            std::vector<geo::Mesh> hulls;
-            for (const Footprint& f : w.footprints)
-                for (geo::Mesh& h : collisionHulls(f, o.wall, collisionBands))
-                    hulls.push_back(std::move(h));
+            std::vector<geo::Mesh> hulls = b.coreHulls;
+            for (const Stone& s : b.stones)
+                if (s.role == Role::Column || s.role == Role::Step)
+                    hulls.push_back(hexMesh(stoneCorners(s)));
             std::vector<std::filesystem::path> files;
             for (const json& as : plan["assets"])
             {
                 const std::string kind = as["kind"].get<std::string>(), assetName = as["name"].get<std::string>();
                 const size_t index = as["index"].get<size_t>();
-                const std::filesystem::path file = dir / (assetName + ".fbx");
+                std::filesystem::path file = dir / (assetName + ".fbx");
                 std::string err;
                 bool ok = false;
                 if (kind == "stone")
                     ok = writeLodFbx(b.lods[index], assetName, file, &err);
+                else if (kind == "assembly")
+                {
+                    file = dir / (assetName + ".usda");
+                    ok = writeAssemblyUsda(b, plan, file, &err);
+                }
                 else if (kind == "shell")
                 {
                     const Shell& sh = shells[index];
@@ -730,7 +1242,9 @@ void registerCommands(ext::Context& ctx)
                                        "Lila's ue/LilaLink, or send with material='none'");
                 const std::string texFolder = plan["folder"].get<std::string>() + "/Textures";
                 const json stone = link::materialInputs(g, kStoneSlot), mortar = link::materialInputs(g, kMortarSlot);
-                const double height = o.wall.height;
+                double height = 0.0;
+                for (const Stone& s : b.stones)
+                    height = std::max(height, s.center.y);
                 json instances = json::array();
                 if (lowPoly)
                 {
@@ -768,14 +1282,14 @@ void registerCommands(ext::Context& ctx)
 
             if (a.get<bool>("wait", false))
             {
-                stats["unreal"] = sendPlan(plan, files, stale, materials, baked, materialRequest);
+                stats["unreal"] = sendPlan(plan, files, stale, materials, baked, materialRequest, nanite);
                 return stats;
             }
-            link::Link::get().post([plan = std::move(plan), files, stale, materials, baked, materialRequest, name] {
+            link::Link::get().post([plan = std::move(plan), files, stale, materials, baked, materialRequest, name, nanite] {
                 json done;
                 try
                 {
-                    done = sendPlan(plan, files, stale, materials, baked, materialRequest);
+                    done = sendPlan(plan, files, stale, materials, baked, materialRequest, nanite);
                 }
                 catch (const std::exception& e)
                 {
@@ -791,7 +1305,8 @@ void registerCommands(ext::Context& ctx)
             stats["queued"] = true;
             return stats;
         },
-        .examples = {"masonryShip('MasonryWall', dryRun=True)['chunks']", "masonryShip('MasonryWall', wait=True)['unreal']"},
+        .examples = {"masonryShip('MasonryWall', dryRun=True)['chunks']", "masonryShip('MasonryWall', wait=True)['unreal']",
+                     "masonryShip('Temple', mode='assembly', wait=True)"},
     });
 }
 } // namespace masonry

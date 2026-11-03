@@ -1,5 +1,6 @@
-// Masonry: the Masonry Wall geometry node, stones laid in courses along footprint lines as instances, plus the mortar
-// core they sit in. Every tool and command builds a group around this node.
+// Masonry nodes: Masonry Wall (stones in courses along footprint lines) and Masonry Building (a whole building from a
+// spec), both ruined and aged by their inputs, plus Masonry Ruin and Masonry Age for any instances. Every tool and
+// command builds a group around these nodes and reads results through the same cached build.
 
 #include "Masonry.h"
 #include "MasonryCore.h"
@@ -9,6 +10,9 @@
 #include <lila/Profile.h>
 
 #include <algorithm>
+#include <list>
+#include <mutex>
+#include <stdexcept>
 
 using namespace lila;
 
@@ -19,87 +23,393 @@ namespace
 using gn::ExecContext;
 using gn::Geometry;
 using gn::GeometryPtr;
+using json = nlohmann::json;
 using T = gn::SocketType;
 
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc)
+// clang-format off
+const Input kWall[] = {
+    {"bond", Input::String, 0, "running", 0, 0, 0, "Wall", "running, stack, english, flemish, header or gardenWall."},
+    {"height", Input::Float, 200.0, nullptr, 0, 1e7, 1000, "Wall", "Wall height above the ground, cm, where the footprint has no per-point wallHeight."},
+    {"thickness", Input::Float, 21.5, nullptr, 1, 1e6, 200, "Wall", "Wall thickness at the base, cm. Under 1.5 stone depths the wall is one stone thick."},
+    {"cornerAngle", Input::Float, 30.0, nullptr, 1, 179, 90, "Wall", "Turns sharper than this, degrees, are corners; gentler ones curve the wall."},
+    {"batter", Input::Float, 0.0, nullptr, 0, 45, 10, "Wall", "Degrees each face leans in, so the wall thins upward."},
+    {"bands", Input::String, 0, "", 0, 0, 0, "Wall", "String course heights above the lowest ground, cm: a JSON list such as [300, 600]."},
+    {"cornice", Input::Int, 0, nullptr, 0, 16, 4, "Wall", "Top courses corbelled out, each further than the one below."},
+    {"openings", Input::String, 0, "", 0, 0, 0, "Wall",
+     "Doors, windows and niches as a JSON list: [{\"at\": cm along the footprint, \"width\", \"height\", \"sill\", \"arch\": "
+     "lintel|round|pointed|segmental|flat, \"kind\": door|window|niche, \"name\"}]."},
+    {"stoneLength", Input::Float, 21.5, nullptr, 1, 1e5, 100, "Stones", "Stone length along the face, cm."},
+    {"stoneHeight", Input::Float, 6.5, nullptr, 0.5, 1e5, 50, "Stones", "Stone height, cm. Courses are fitted to the wall height."},
+    {"stoneDepth", Input::Float, 10.25, nullptr, 0.5, 1e5, 50, "Stones", "Stone depth into the wall, cm; also a header's width on the face."},
+    {"joint", Input::Float, 1.0, nullptr, 0, 1e4, 5, "Stones", "Mortar joint, cm."},
+    {"recess", Input::Float, 0.6, nullptr, 0, 1e4, 3, "Stones", "How far the mortar sits behind the stone faces, cm."},
+};
+const Input kBuilding[] = {
+    {"spec", Input::String, 0, "{}", 0, 0, 0, "Building", "The building as a JSON spec (masonrySpec reads it back; lila://masonry/spec-schema describes it)."},
+};
+const Input kLook[] = {
+    {"bevel", Input::Float, 0.5, nullptr, 0, 1e4, 3, "Look", "Stone edge chamfer, cm."},
+    {"wear", Input::Float, 0.5, nullptr, 0, 1, 1, "Look", "How knocked about stone corners are, 0 to 1."},
+    {"jitter", Input::Float, 1.0, nullptr, 0, 1, 1, "Look", "How far stones wander and tilt inside their joints, 0 to 1."},
+    {"protrude", Input::Float, 0.3, nullptr, 0, 1e4, 2, "Look", "Stones pushed out of the face by up to this, cm."},
+    {"variants", Input::Int, 6, nullptr, 1, 64, 16, "Look", "How many differently worn versions of each stone size."},
+    {"detail", Input::Int, 0, nullptr, 0, 2, 2, "Look", "0 worn, 1 clean chamfer, 2 plain boxes (fast preview)."},
+    {"tile", Input::Float, 100.0, nullptr, 1, 1e7, 1000, "Look", "Cm of stone per UV unit of the tiling texture."},
+    {"seed", Input::Int, 1, nullptr, 0, 2147483647, 0, "Look", "Another seed gives other wander, wear and cut positions."},
+};
+const Input kRuin[] = {
+    {"left", Input::Float, 1.0, nullptr, 0, 1, 1, "Ruin", "Share of the stone left standing, 0 to 1: 1 intact, 0.75, 0.5, 0.25 a stump."},
+    {"collapse", Input::Float, 0.0, nullptr, -360, 360, 360, "Ruin", "Direction it fell toward, degrees about Y from +X; it stands lowest there and rubble lies that way."},
+    {"slope", Input::Float, 0.5, nullptr, 0, 1, 1, "Ruin", "How much lower it stands toward the collapse side, 0 to 1."},
+    {"roughness", Input::Float, 0.35, nullptr, 0, 1, 1, "Ruin", "How ragged the broken top is, 0 to 1."},
+    {"gaps", Input::Int, 0, nullptr, 0, 64, 8, "Ruin", "Breaches cut down toward the ground."},
+    {"survivors", Input::Float, 0.1, nullptr, 0, 1, 1, "Ruin", "Share of the stones just above the break that hang on."},
+    {"loose", Input::Float, 0.4, nullptr, 0, 1, 1, "Ruin", "Share of the top stones tipped or slid."},
+    {"tip", Input::Float, 40.0, nullptr, 0, 89, 89, "Ruin", "Most a loose stone tips, degrees."},
+    {"rubble", Input::Float, 0.6, nullptr, 0, 1, 1, "Ruin", "Share of the fallen stones lying at the foot; the rest are gone."},
+    {"settle", Input::Bool, 0, nullptr, 0, 0, 0, "Ruin", "Drop the rubble with the rigid-body solver (slower) instead of only heaping it."},
+    {"ruinRegions", Input::String, 0, "", 0, 0, 0, "Ruin", "Only these regions ruin, comma separated (north_wall, tower_1/door_1); empty is all."},
+    {"ruinSeed", Input::Int, 1, nullptr, 0, 2147483647, 0, "Ruin", "Another seed breaks it differently."},
+};
+const Input kAge[] = {
+    {"age", Input::Float, 0.0, nullptr, 0, 1, 1, "Age", "How old it looks, 0 to 1: moss, wear and staining in the material."},
+    {"moss", Input::Float, 0.5, nullptr, 0, 1, 1, "Age", "How much moss grows where it is wet and exposed, 0 to 1."},
+    {"wetHeight", Input::Float, 0.0, nullptr, 0, 1e6, 500, "Age", "Damp band above the ground, cm; 0 is a fifth of the height."},
+};
+// clang-format on
+
+template <size_t N> void append(std::vector<const Input*>& out, const Input (&list)[N])
 {
-    return {.id = std::move(id), .type = t, .defaultValue = std::move(def), .doc = std::move(doc)};
+    for (const Input& in : list)
+        out.push_back(&in);
 }
 
-gn::SocketDecl in(std::string id, T t, gn::json def, std::string doc, std::optional<double> lo, std::optional<double> hi = std::nullopt)
+gn::SocketDecl socketOf(const Input& in)
 {
-    gn::SocketDecl s = in(std::move(id), t, std::move(def), std::move(doc));
-    s.min = lo;
-    s.max = hi;
+    gn::SocketDecl s;
+    s.id = in.name;
+    s.doc = in.doc;
+    switch (in.type)
+    {
+    case Input::Float:
+        s.type = T::Float;
+        s.defaultValue = in.def;
+        break;
+    case Input::Int:
+        s.type = T::Int;
+        s.defaultValue = int64_t(in.def);
+        break;
+    case Input::Bool:
+        s.type = T::Bool;
+        s.defaultValue = in.def != 0.0;
+        break;
+    case Input::String:
+        s.type = T::String;
+        s.defaultValue = std::string(in.text ? in.text : "");
+        break;
+    }
+    if (in.max > in.min && in.type != Input::String && in.type != Input::Bool)
+    {
+        s.min = in.min;
+        s.max = in.max;
+    }
     return s;
 }
 
 gn::SocketDecl geoSocket(std::string id, std::string doc) { return {.id = std::move(id), .type = T::Geometry, .doc = std::move(doc)}; }
 
-void wallExec(ExecContext& c)
+json valuesOf(ExecContext& c, InputSet set)
 {
-    LILA_ZONE();
+    json v = json::object();
+    for (const Input* in : inputsOf(set))
+        switch (in->type)
+        {
+        case Input::Float: v[in->name] = typedValue(*in, c.f(in->name)); break;
+        case Input::Int: v[in->name] = typedValue(*in, c.i(in->name)); break;
+        case Input::Bool: v[in->name] = c.b(in->name); break;
+        case Input::String: v[in->name] = c.s(in->name); break;
+        }
+    return v;
+}
 
-    const std::vector<Footprint> fps = footprintsOf(*c.geometry("footprint"));
-    const BuildOptions o = optionsFrom([&](const char* id) { return c.f(id); }, [&](const char* id) { return c.i(id); }, c.s("bond"));
-    Built b = buildWalls(fps, o);
-
+GeometryPtr stonesGeometry(const Built& b)
+{
     auto inst = std::make_shared<gn::Instances>();
-    for (geo::Mesh& m : b.meshes)
-        inst->references.push_back(gn::meshGeometry(std::move(m)));
+    for (const geo::Mesh& m : b.meshes)
+        inst->references.push_back(gn::meshGeometry(m));
     for (size_t k = 0; k < b.stones.size(); ++k)
         inst->add(stoneMatrix(b.stones[k]), b.reference[k]);
     writeStoneAttrs(inst->attrs, b);
-
     Geometry stones;
     stones.instances = std::move(inst);
-    GeometryPtr stonesPtr = gn::makeGeometry(std::move(stones));
-    GeometryPtr corePtr = gn::meshGeometry(std::move(b.core));
+    return gn::makeGeometry(std::move(stones));
+}
+
+void outputBuilt(ExecContext& c, const Built& b)
+{
+    GeometryPtr stonesPtr = stonesGeometry(b);
+    GeometryPtr corePtr = gn::meshGeometry(b.core);
     c.out("stones", stonesPtr);
     c.out("core", corePtr);
     const GeometryPtr parts[] = {stonesPtr, corePtr};
     c.out("geometry", gn::makeGeometry(gn::join(parts)));
 }
 
+std::vector<gn::SocketDecl> socketsOf(InputSet set)
+{
+    std::vector<gn::SocketDecl> out;
+    for (const Input* in : inputsOf(set))
+        out.push_back(socketOf(*in));
+    return out;
+}
+
+const std::vector<gn::SocketDecl> kBuiltOutputs = {geoSocket("geometry", "Stones and core together."), geoSocket("stones", "The stones, as instances."),
+                                                   geoSocket("core", "The mortar core, a mesh.")};
+
+const char* kAttrDoc = "Stones are instances sharing a few meshes, with attributes stone, wall, course, role (0 stretcher, 1 header, 2 bat, "
+                       "3 closer, 4 filler, 5 voussoir, 6 keystone, 7 lintel, 8 sill, 9 jamb, 10 column, 11 step, 12 band, 13 slab, 14 rubble), "
+                       "face (0 outer, 1 inner, 2 through), region, random, variant, size, height, age, damage, wet, moss and loose. Lengths are cm.";
+
 gn::NodeDecl wallDecl()
 {
-    const Units u;
-    const WallParams w;
-    const BuildOptions o;
-    std::string bonds;
-    for (const std::string& n : bondNames())
-        bonds += (bonds.empty() ? "" : ", ") + n;
+    std::vector<gn::SocketDecl> ins = {geoSocket("footprint", "Lines the wall stands on: curves, or a mesh's loose edges (point float wallHeight sets the height per point). Y is up; each point's Y is the ground.")};
+    for (gn::SocketDecl& s : socketsOf(InputSet::Wall))
+        ins.push_back(std::move(s));
     return {
         .type = "MasonryWall",
         .label = "Masonry Wall",
         .category = "Masonry",
-        .doc = "Lays stones in courses along footprint lines (curves, or a mesh's loose edges) and builds the mortar core they "
-               "sit in. Corners turn by alternating which wall runs through on each course; cut stones land mid wall. Stones are "
-               "instances sharing a few meshes, with attributes stone, wall, course, role (0 stretcher, 1 header, 2 bat, 3 closer, "
-               "4 filler), face (0 outer, 1 inner, 2 through), random, variant and size. Lengths are cm.",
-        .sockets = {.inputs = {geoSocket("footprint", "Lines the wall stands on: curves, or a mesh's loose edges. Y is up."),
-                               in("bond", T::String, "running", "How stones are arranged: " + bonds + "."),
-                               in("height", T::Float, w.height, "Wall height.", 0.0),
-                               in("thickness", T::Float, w.thickness, "Wall thickness. Under 1.5 stone depths the wall is one stone thick.", 1.0),
-                               in("stoneLength", T::Float, u.length, "Stone length along the face.", 1.0),
-                               in("stoneHeight", T::Float, u.height, "Stone height; courses are fitted to the wall height.", 0.5),
-                               in("stoneDepth", T::Float, u.depth, "Stone depth into the wall, and a header's width on the face.", 0.5),
-                               in("joint", T::Float, u.joint, "Mortar joint.", 0.0),
-                               in("recess", T::Float, w.recess, "How far the mortar sits behind the stone faces.", 0.0),
-                               in("bevel", T::Float, o.bevel, "Stone edge chamfer.", 0.0),
-                               in("wear", T::Float, o.wear, "0 to 1: how knocked about stone corners are.", 0.0, 1.0),
-                               in("jitter", T::Float, w.jitter, "0 to 1: how far stones wander and tilt inside their joints.", 0.0, 1.0),
-                               in("protrude", T::Float, w.protrude, "Stones pushed out of the face by up to this.", 0.0),
-                               in("cornerAngle", T::Float, w.cornerAngle, "Turns sharper than this, degrees, are corners; gentler ones curve.", 1.0, 179.0),
-                               in("variants", T::Int, o.variants, "How many differently worn versions of each stone size.", 1, 64),
-                               in("detail", T::Int, 0, "0 worn, 1 clean chamfer, 2 plain boxes (fast preview).", 0, 2),
-                               in("seed", T::Int, w.seed, "Another seed gives other wander, wear and cut positions.")},
-                    .outputs = {geoSocket("geometry", "Stones and core together."), geoSocket("stones", "The stones, as instances."),
-                                geoSocket("core", "The mortar core, a mesh.")}},
-        .exec = wallExec,
+        .doc = std::string("Lays stones in courses along footprint lines and builds the mortar core they sit in. Corners turn by "
+                           "alternating which wall runs through; courses step over sloping ground; openings get arches or lintels, "
+                           "sills and jambs. The Ruin and Age inputs break and weather it. ") + kAttrDoc,
+        .sockets = {.inputs = ins, .outputs = kBuiltOutputs},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE_N("Masonry Wall");
+                const std::vector<Footprint> fps = footprintsOf(*c.geometry("footprint"));
+                try
+                {
+                    outputBuilt(c, buildMasonry(fps, valuesOf(c, InputSet::Wall), false)->built);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    throw gn::ExecError(std::string("Masonry Wall: ") + e.what());
+                }
+            },
     };
 }
+
+gn::NodeDecl buildingDecl()
+{
+    return {
+        .type = "MasonryBuilding",
+        .label = "Masonry Building",
+        .category = "Masonry",
+        .doc = std::string("A whole masonry building from a JSON spec: walls with openings, buttresses, bands and cornices, columns, "
+                           "stairs, vaults, domes, arches and floors, each a named region. The Ruin and Age inputs break and weather it; "
+                           "floors break into pieces that fall where nothing holds them. ") + kAttrDoc,
+        .sockets = {.inputs = socketsOf(InputSet::Building), .outputs = kBuiltOutputs},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE_N("Masonry Building");
+                try
+                {
+                    outputBuilt(c, buildMasonry({}, valuesOf(c, InputSet::Building), false)->built);
+                }
+                catch (const std::exception& e)
+                {
+                    throw gn::ExecError(std::string("Masonry Building: ") + e.what());
+                }
+            },
+    };
+}
+
+/** Instances again after a ruin or age pass: kept ones in order, their attributes copied, the new attributes set. */
+std::shared_ptr<gn::Instances> rebuiltInstances(const gn::Instances& src, const std::vector<Stone>& stones, const std::vector<int>& from,
+                                                const std::vector<glm::dvec3>& offset)
+{
+    auto out = std::make_shared<gn::Instances>();
+    out->references = src.references;
+    out->attrs = src.attrs;
+    out->attrs.resize(0);
+    out->attrs.resize(stones.size());
+    for (size_t k = 0; k < stones.size(); ++k)
+    {
+        const size_t s = size_t(from[k]);
+        // Back from the stone's box to the instance's own origin and scale.
+        const glm::dvec3 scale(glm::length(glm::dvec3(src.transforms[s][0])), glm::length(glm::dvec3(src.transforms[s][1])),
+                               glm::length(glm::dvec3(src.transforms[s][2])));
+        glm::dmat4 m = stoneMatrix(stones[k]);
+        m = m * glm::dmat4(glm::dvec4(scale.x, 0, 0, 0), glm::dvec4(0, scale.y, 0, 0), glm::dvec4(0, 0, scale.z, 0), glm::dvec4(-offset[s] * scale, 1.0));
+        out->add(m, src.reference[s]);
+        out->attrs.copyFrom(src.attrs, k, s);
+    }
+    for (const char* name : {"age", "damage", "wet", "moss", "loose"})
+        out->attrs.add(name, geo::AttrType::Float);
+    std::span<float> age = out->attrs.get<float>("age"), damage = out->attrs.get<float>("damage"), wet = out->attrs.get<float>("wet"),
+                     moss = out->attrs.get<float>("moss"), loose = out->attrs.get<float>("loose");
+    for (size_t k = 0; k < stones.size(); ++k)
+    {
+        age[k] = stones[k].age;
+        damage[k] = stones[k].damage;
+        wet[k] = stones[k].wet;
+        moss[k] = stones[k].moss;
+        loose[k] = stones[k].loose ? 1.0f : 0.0f;
+    }
+    return out;
+}
+
+gn::NodeDecl ruinDecl()
+{
+    std::vector<gn::SocketDecl> ins = {geoSocket("geometry", "Instances to ruin: stones from a masonry node, or any instances.")};
+    for (gn::SocketDecl& s : socketsOf(InputSet::Ruin))
+        ins.push_back(std::move(s));
+    return {
+        .type = "MasonryRuin",
+        .label = "Masonry Ruin",
+        .category = "Masonry",
+        .doc = "Ruins any instances as masonry: those above a ragged break fall (heaped at the foot as rubble, or gone), a few "
+               "survive, nothing is left floating, and top ones tip. Writes damage and loose. Other components pass through.",
+        .sockets = {.inputs = ins, .outputs = {geoSocket("geometry", "What is left, rubble included.")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE_N("Masonry Ruin");
+                GeometryPtr in = c.geometry("geometry");
+                if (!in->instances || in->instances->size() == 0)
+                {
+                    c.out("geometry", in);
+                    return;
+                }
+                std::vector<glm::dvec3> offset;
+                std::vector<Stone> stones = stonesFromInstances(*in->instances, &offset);
+                std::vector<int> from;
+                ruinStones(stones, ruinFromValues(valuesOf(c, InputSet::Ruin)), 0.0, {}, &from);
+                Geometry g = *in;
+                g.instances = rebuiltInstances(*in->instances, stones, from, offset);
+                c.out("geometry", gn::makeGeometry(std::move(g)));
+            },
+    };
+}
+
+gn::NodeDecl ageDecl()
+{
+    std::vector<gn::SocketDecl> ins = {geoSocket("geometry", "Instances to age: stones from a masonry node, or any instances.")};
+    for (gn::SocketDecl& s : socketsOf(InputSet::Age))
+        ins.push_back(std::move(s));
+    return {
+        .type = "MasonryAge",
+        .label = "Masonry Age",
+        .category = "Masonry",
+        .doc = "Weathers any instances as masonry: writes age, wet (near the ground and on exposed tops) and moss (where wet and "
+               "exposed) per instance, the values Unreal's masonry material reads. Damage already on the instances is kept.",
+        .sockets = {.inputs = ins, .outputs = {geoSocket("geometry", "The same instances with age, wet and moss.")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE_N("Masonry Age");
+                GeometryPtr in = c.geometry("geometry");
+                if (!in->instances || in->instances->size() == 0)
+                {
+                    c.out("geometry", in);
+                    return;
+                }
+                std::vector<glm::dvec3> offset;
+                std::vector<Stone> stones = stonesFromInstances(*in->instances, &offset);
+                if (std::span<const float> d = in->instances->attrs.get<float>("damage"); d.size() == stones.size())
+                    for (size_t k = 0; k < stones.size(); ++k)
+                        stones[k].damage = d[k];
+                ageStones(stones, ageFromValues(valuesOf(c, InputSet::Age)));
+                std::vector<int> from(stones.size());
+                for (size_t k = 0; k < from.size(); ++k)
+                    from[k] = int(k);
+                Geometry g = *in;
+                g.instances = rebuiltInstances(*in->instances, stones, from, offset);
+                c.out("geometry", gn::makeGeometry(std::move(g)));
+            },
+    };
+}
+
+std::string footprintKey(std::span<const Footprint> fps)
+{
+    std::string key;
+    for (const Footprint& f : fps)
+    {
+        key.append(reinterpret_cast<const char*>(f.points.data()), f.points.size() * sizeof(glm::dvec3));
+        key.append(reinterpret_cast<const char*>(f.heights.data()), f.heights.size() * sizeof(double));
+        key += f.closed ? "c|" : "o|";
+    }
+    return key;
+}
+
+struct CacheEntry
+{
+    std::string key;
+    std::shared_ptr<const Result> result;
+};
+std::mutex gCacheLock;
+std::list<CacheEntry> gCache;
+constexpr size_t kCacheSize = 6;
 } // namespace
+
+std::vector<const Input*> inputsOf(InputSet set)
+{
+    std::vector<const Input*> out;
+    switch (set)
+    {
+    case InputSet::Wall:
+        append(out, kWall);
+        append(out, kLook);
+        append(out, kRuin);
+        append(out, kAge);
+        break;
+    case InputSet::Building:
+        append(out, kBuilding);
+        append(out, kLook);
+        append(out, kRuin);
+        append(out, kAge);
+        break;
+    case InputSet::Ruin: append(out, kRuin); break;
+    case InputSet::Age: append(out, kAge); break;
+    }
+    return out;
+}
+
+const Input* findInput(std::string_view name)
+{
+    for (InputSet set : {InputSet::Wall, InputSet::Building})
+        for (const Input* in : inputsOf(set))
+            if (name == in->name)
+                return in;
+    return nullptr;
+}
+
+json typedValue(const Input& in, const json& v)
+{
+    switch (in.type)
+    {
+    case Input::Float:
+    {
+        double d = v.is_number() ? v.get<double>() : (v.is_boolean() ? double(v.get<bool>()) : in.def);
+        if (in.max > in.min)
+            d = std::clamp(d, in.min, in.max);
+        return d;
+    }
+    case Input::Int:
+    {
+        int64_t i = v.is_number() ? int64_t(std::llround(v.get<double>())) : int64_t(in.def);
+        if (in.max > in.min)
+            i = std::clamp<int64_t>(i, int64_t(in.min), int64_t(in.max));
+        return i;
+    }
+    case Input::Bool: return v.is_boolean() ? v.get<bool>() : (v.is_number() ? v.get<double>() != 0.0 : in.def != 0.0);
+    case Input::String:
+        if (v.is_string())
+            return v;
+        if (v.is_null())
+            return std::string(in.text ? in.text : "");
+        return v.dump();
+    }
+    return v;
+}
 
 std::vector<Footprint> footprintsOf(const gn::Geometry& g)
 {
@@ -123,49 +433,221 @@ std::vector<Footprint> footprintsOf(const gn::Geometry& g)
     return out;
 }
 
-BuildOptions optionsFrom(const std::function<double(const char*)>& f, const std::function<int64_t(const char*)>& i,
-                         const std::string& bond)
+std::vector<Opening> openingsFromJson(const json& list)
 {
+    std::vector<Opening> out;
+    if (list.is_null() || (list.is_string() && list.get<std::string>().empty()))
+        return out;
+    const json parsed = list.is_string() ? json::parse(list.get<std::string>(), nullptr, false) : list;
+    if (!parsed.is_array())
+        throw std::runtime_error("openings is a JSON list of {at, width, height, sill, arch, kind, name}");
+    for (size_t k = 0; k < parsed.size(); ++k)
+    {
+        const json& o = parsed[k];
+        if (!o.is_object() || !o.contains("at"))
+            throw std::runtime_error("each opening is an object with at (cm along the footprint)");
+        Opening op;
+        const std::string kind = o.value("kind", std::string(o.value("sill", 0.0) > 0.0 ? "window" : "door"));
+        if (kind != "door" && kind != "window" && kind != "niche")
+            throw std::runtime_error("an opening's kind is door, window or niche");
+        op.name = o.value("name", kind + "_" + std::to_string(k + 1));
+        op.at = o.value("at", 0.0);
+        op.width = o.value("width", 100.0);
+        op.height = o.value("height", 200.0);
+        op.sill = o.value("sill", kind == "window" ? 100.0 : 0.0);
+        op.rise = o.value("rise", 0.0);
+        op.ring = o.value("ring", 0.0);
+        op.through = kind != "niche";
+        op.sillStone = o.value("sillStone", true);
+        if (o.contains("arch") && (!o["arch"].is_string() || !parseArch(o["arch"].get<std::string>(), &op.arch)))
+            throw std::runtime_error("an opening's arch is lintel, round, pointed, segmental or flat");
+        out.push_back(op);
+    }
+    return out;
+}
+
+BuildOptions optionsFromValues(const json& v)
+{
+    auto f = [&](const char* name) { return typedValue(*findInput(name), v.contains(name) ? v[name] : json()).get<double>(); };
+    auto i = [&](const char* name) { return typedValue(*findInput(name), v.contains(name) ? v[name] : json()).get<int64_t>(); };
     BuildOptions o;
+    const std::string bond = v.value("bond", std::string("running"));
     if (!parseBond(bond, &o.wall.bond))
     {
         std::string names;
         for (const std::string& n : bondNames())
             names += (names.empty() ? "" : ", ") + n;
-        throw gn::ExecError("Masonry Wall: unknown bond '" + bond + "' (" + names + ")");
+        throw std::runtime_error("unknown bond '" + bond + "' (" + names + ")");
     }
-    o.wall.height = std::max(0.0, f("height"));
-    o.wall.thickness = std::max(1.0, f("thickness"));
-    o.wall.stone.length = std::max(1.0, f("stoneLength"));
-    o.wall.stone.height = std::max(0.5, f("stoneHeight"));
-    o.wall.stone.depth = std::max(0.5, f("stoneDepth"));
-    o.wall.stone.joint = std::max(0.0, f("joint"));
-    o.wall.recess = std::max(0.0, f("recess"));
-    o.wall.jitter = std::clamp(f("jitter"), 0.0, 1.0);
-    o.wall.protrude = std::max(0.0, f("protrude"));
-    o.wall.cornerAngle = std::clamp(f("cornerAngle"), 1.0, 179.0);
+    if (v.contains("height"))
+    {
+        o.wall.height = f("height");
+        o.wall.thickness = f("thickness");
+        o.wall.stone.length = f("stoneLength");
+        o.wall.stone.height = f("stoneHeight");
+        o.wall.stone.depth = f("stoneDepth");
+        o.wall.stone.joint = f("joint");
+        o.wall.recess = f("recess");
+        o.wall.cornerAngle = f("cornerAngle");
+        o.wall.batter = f("batter");
+        o.wall.cornice = int(i("cornice"));
+        const std::string bands = v.value("bands", std::string());
+        if (!bands.empty())
+        {
+            const json list = json::parse(bands.front() == '[' ? bands : "[" + bands + "]", nullptr, false);
+            if (!list.is_array())
+                throw std::runtime_error("bands is a list of heights, cm");
+            for (const json& b : list)
+                if (b.is_number())
+                    o.wall.bands.push_back(b.get<double>());
+        }
+        o.wall.openings = openingsFromJson(v.value("openings", json()));
+    }
+    o.wall.jitter = f("jitter");
+    o.wall.protrude = f("protrude");
     o.wall.seed = uint32_t(i("seed"));
-    o.bevel = std::max(0.0, f("bevel"));
-    o.wear = std::clamp(f("wear"), 0.0, 1.0);
-    o.variants = int(std::clamp<int64_t>(i("variants"), 1, 64));
-    o.detail = Detail(std::clamp<int64_t>(i("detail"), 0, 2));
+    o.bevel = f("bevel");
+    o.wear = f("wear");
+    o.variants = int(i("variants"));
+    o.detail = Detail(i("detail"));
+    o.tile = f("tile");
     return o;
+}
+
+RuinParams ruinFromValues(const json& v)
+{
+    auto f = [&](const char* name) { return typedValue(*findInput(name), v.contains(name) ? v[name] : json()).get<double>(); };
+    auto i = [&](const char* name) { return typedValue(*findInput(name), v.contains(name) ? v[name] : json()).get<int64_t>(); };
+    RuinParams r;
+    r.left = f("left");
+    r.collapse = f("collapse");
+    r.slope = f("slope");
+    r.roughness = f("roughness");
+    r.gaps = int(i("gaps"));
+    r.survivors = f("survivors");
+    r.loose = f("loose");
+    r.tip = f("tip");
+    r.rubble = f("rubble");
+    r.settle = typedValue(*findInput("settle"), v.contains("settle") ? v["settle"] : json()).get<bool>();
+    r.seed = uint32_t(i("ruinSeed"));
+    std::string regions = v.value("ruinRegions", std::string());
+    size_t start = 0;
+    while (start <= regions.size())
+    {
+        size_t end = regions.find(',', start);
+        if (end == std::string::npos)
+            end = regions.size();
+        std::string part = regions.substr(start, end - start);
+        part.erase(0, part.find_first_not_of(" \t"));
+        part.erase(part.find_last_not_of(" \t") + 1);
+        if (!part.empty())
+            r.regions.push_back(part);
+        start = end + 1;
+    }
+    return r;
+}
+
+AgeParams ageFromValues(const json& v)
+{
+    auto f = [&](const char* name) { return typedValue(*findInput(name), v.contains(name) ? v[name] : json()).get<double>(); };
+    AgeParams a;
+    a.age = f("age");
+    a.moss = f("moss");
+    a.wetHeight = f("wetHeight");
+    a.seed = uint32_t(typedValue(*findInput("ruinSeed"), v.contains("ruinSeed") ? v["ruinSeed"] : json()).get<int64_t>());
+    return a;
+}
+
+std::shared_ptr<const Result> buildMasonry(std::span<const Footprint> footprints, const json& values, bool lods)
+{
+    const std::string spec = values.value("spec", std::string());
+    const bool building = values.contains("spec");
+    const std::string key = (building ? std::string() : footprintKey(footprints)) + values.dump() + (lods ? "L" : "-");
+    {
+        std::lock_guard lock(gCacheLock);
+        for (auto it = gCache.begin(); it != gCache.end(); ++it)
+            if (it->key == key)
+            {
+                gCache.splice(gCache.begin(), gCache, it);
+                return gCache.front().result;
+            }
+    }
+    LILA_ZONE_N("Masonry build");
+    const BuildOptions look = optionsFromValues(values);
+    Plan plan;
+    if (building)
+    {
+        const json parsed = json::parse(spec.empty() ? std::string("{}") : spec, nullptr, false);
+        if (parsed.is_discarded())
+            throw std::runtime_error("the spec is not valid JSON");
+        plan = planBuilding(parsed, look);
+    }
+    else
+        plan = planWalls(footprints, look);
+    auto result = std::make_shared<Result>();
+    result->built = realizePlan(plan, ruinFromValues(values), ageFromValues(values), lods, &result->ruin);
+    std::lock_guard lock(gCacheLock);
+    gCache.push_front({key, result});
+    if (gCache.size() > kCacheSize)
+        gCache.pop_back();
+    return result;
+}
+
+std::vector<Stone> stonesFromInstances(const gn::Instances& inst, std::vector<glm::dvec3>* offset)
+{
+    std::vector<geo::Bounds> refBounds(inst.references.size());
+    for (size_t r = 0; r < inst.references.size(); ++r)
+        if (const GeometryPtr& g = inst.references[r]; g && g->mesh)
+            refBounds[r] = g->mesh->bounds();
+    std::vector<Stone> out(inst.size());
+    offset->assign(inst.size(), glm::dvec3(0.0));
+    std::span<const int32_t> region = inst.attrs.get<int32_t>("region");
+    std::span<const float> random = inst.attrs.get<float>("random");
+    for (size_t k = 0; k < inst.size(); ++k)
+    {
+        const glm::dmat4& m = inst.transforms[k];
+        glm::dvec3 axis[3];
+        glm::dvec3 scale;
+        for (int a = 0; a < 3; ++a)
+        {
+            scale[a] = glm::length(glm::dvec3(m[a]));
+            axis[a] = scale[a] > 1e-12 ? glm::dvec3(m[a]) / scale[a] : glm::dvec3(a == 0, a == 1, a == 2);
+        }
+        const int r = inst.reference[k];
+        geo::Bounds b = r >= 0 && size_t(r) < refBounds.size() && refBounds[size_t(r)].valid() ? refBounds[size_t(r)] : geo::Bounds();
+        if (!b.valid())
+        {
+            b.extend(glm::dvec3(-0.5));
+            b.extend(glm::dvec3(0.5));
+        }
+        const glm::dvec3 mid = (b.min + b.max) * 0.5;
+        Stone& s = out[k];
+        s.frame = glm::dmat3(axis[0], axis[1], axis[2]);
+        if (glm::determinant(s.frame) < 0.0)
+            s.frame[2] = -s.frame[2];
+        s.center = glm::dvec3(m * glm::dvec4(mid, 1.0));
+        s.size = glm::max((b.max - b.min) * scale, glm::dvec3(1e-3));
+        s.face = Face::Through;
+        s.region = k < region.size() ? region[k] : 0;
+        s.random = k < random.size() ? random[k] : float(unitRandom(k));
+        (*offset)[k] = mid;
+    }
+    return out;
 }
 
 void writeStoneAttrs(geo::AttributeSet& attrs, const Built& b)
 {
     // Every layer first: adding one may move the others, which would leave earlier spans dangling.
-    for (const char* name : {"stone", "wall", "course", "role", "face", "variant"})
+    for (const char* name : {"stone", "wall", "course", "role", "face", "variant", "region"})
         attrs.add(name, geo::AttrType::Int);
-    attrs.add("random", geo::AttrType::Float);
+    for (const char* name : {"random", "height", "age", "damage", "wet", "moss", "loose"})
+        attrs.add(name, geo::AttrType::Float);
     attrs.add("size", geo::AttrType::Float3);
-    std::span<int32_t> stone = attrs.get<int32_t>("stone");
-    std::span<int32_t> wall = attrs.get<int32_t>("wall");
-    std::span<int32_t> course = attrs.get<int32_t>("course");
-    std::span<int32_t> role = attrs.get<int32_t>("role");
-    std::span<int32_t> face = attrs.get<int32_t>("face");
-    std::span<int32_t> variant = attrs.get<int32_t>("variant");
-    std::span<float> random = attrs.get<float>("random");
+    std::span<int32_t> stone = attrs.get<int32_t>("stone"), wall = attrs.get<int32_t>("wall"), course = attrs.get<int32_t>("course"),
+                       role = attrs.get<int32_t>("role"), face = attrs.get<int32_t>("face"), variant = attrs.get<int32_t>("variant"),
+                       region = attrs.get<int32_t>("region");
+    std::span<float> random = attrs.get<float>("random"), height = attrs.get<float>("height"), age = attrs.get<float>("age"),
+                     damage = attrs.get<float>("damage"), wet = attrs.get<float>("wet"), moss = attrs.get<float>("moss"), loose = attrs.get<float>("loose");
     std::span<glm::vec3> size = attrs.get<glm::vec3>("size");
     for (size_t k = 0; k < b.stones.size(); ++k)
     {
@@ -176,12 +658,25 @@ void writeStoneAttrs(geo::AttributeSet& attrs, const Built& b)
         role[k] = int32_t(s.role);
         face[k] = int32_t(s.face);
         variant[k] = b.variant[k];
+        region[k] = s.region;
         random[k] = s.random;
+        height[k] = k < b.heightFraction.size() ? b.heightFraction[k] : 0.0f;
+        age[k] = s.age;
+        damage[k] = s.damage;
+        wet[k] = s.wet;
+        moss[k] = s.moss;
+        loose[k] = s.loose ? 1.0f : 0.0f;
         size[k] = glm::vec3(s.size);
     }
 }
 
-bool registerNodes(ext::Context& ctx) { return gn::registerDecl(ctx, wallDecl()) != nullptr; }
+bool registerNodes(ext::Context& ctx)
+{
+    for (gn::NodeDecl d : {wallDecl(), buildingDecl(), ruinDecl(), ageDecl()})
+        if (!gn::registerDecl(ctx, std::move(d)))
+            return false;
+    return true;
+}
 } // namespace masonry
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
@@ -190,5 +685,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     masonry::registerCommands(ctx);
     masonry::registerUi(ctx);
+    masonry::registerAgentDocs();
     return 0;
 }
