@@ -13,6 +13,7 @@
 #include <lila/Extension.h>
 #include <lila/Graph.h>
 #include <lila/Log.h>
+#include <lila/Math.h>
 #include <lila/Mesh.h>
 #include <lila/MeshOps.h>
 #include <lila/Node.h>
@@ -362,17 +363,20 @@ void ensureMaterial(const Sheet& s, const std::filesystem::path& f, const std::s
     Graph& g = Graph::current();
     const std::string name = materialName(s, palette);
     json call = {{"args", {name}}};
-    const std::pair<const char*, const char*> maps[] = {{"normal", "normalMap"}, {"ao", "ambientOcclusionMap"}};
+    const std::pair<const char*, const char*> maps[] = {{"normal", "normalMap"}, {"ao", "ambientOcclusionMap"}, {"baseColor", "baseColorMap"}};
     json sets = json::object();
     for (const auto& [map, attr] : maps)
-        if (const std::filesystem::path p = mapFile(s, f, map); std::filesystem::exists(p))
+        if (const std::filesystem::path p = mapFile(s, f, map); (s.decal || std::string_view(map) != "baseColor") && std::filesystem::exists(p))
             sets[attr] = p.generic_string();
+    // A decal's base colour carries its opacity in alpha.
+    if (s.decal)
+        call["blendMode"] = "translucent";
     if (!scene::materials::find(g, name))
     {
         // A palette's Tint and BaseRoughness show in Lila's viewport until its texture set paints it.
         const json& vectors = palette.empty() ? s.vectors : s.palette(palette)->vectors;
         const json& scalars = palette.empty() ? s.scalars : s.palette(palette)->scalars;
-        call["baseColor"] = vectors.contains("Tint") ? vectors["Tint"] : json({0.45, 0.45, 0.45});
+        call["baseColor"] = vectors.contains("Tint") ? vectors["Tint"] : s.decal ? json({1.0, 1.0, 1.0}) : json({0.45, 0.45, 0.45});
         call["roughness"] = scalars.value("BaseRoughness", 0.5);
         ops::execute("createMaterial", call);
     }
@@ -891,6 +895,87 @@ SendPlan sendPlan(const Sheet& s, const std::filesystem::path& f, const json& ba
     for (const Palette& p : s.palettes)
         instance(p.name, p.scalars, p.vectors, p.switches);
     return plan;
+}
+
+/** The decal= flag or first positional: a .lilatrim, or a decal's name under <workspace>/TrimSheets/Decals. */
+std::filesystem::path decalPath(const Args& a, const char* cmd)
+{
+    std::string p = a.has("decal") ? a.get<std::string>("decal") : !a.positional.empty() && a.positional[0].is_string() ? a.positional[0].get<std::string>() : std::string();
+    if (p.empty())
+        throw CommandError(std::string(cmd) + ": give the decal (its name or .lilatrim)");
+    std::filesystem::path f = paths::resolvePath(p);
+    if (!std::filesystem::exists(f))
+        f = defaultSheetFolder() / "Decals" / (p + kExtension);
+    if (!std::filesystem::exists(f))
+        throw CommandError(std::string(cmd) + ": no decal " + p + "; make it with trimDecalCreate");
+    return f;
+}
+
+/** The decal a placed quad shows (its trimDecal attribute, resolved), empty for other nodes. */
+std::filesystem::path decalOf(const Node& n)
+{
+    Graph& g = Graph::current();
+    try
+    {
+        const scene::PlugValue v = g.value(g.plug(n.path() + "." + kNodeDecal));
+        if (const std::string* s = std::get_if<std::string>(&v); s && !s->empty())
+            return paths::resolvePath(*s);
+    }
+    catch (const std::exception&)
+    {
+    }
+    return {};
+}
+
+/** Where a placed decal quad sits in the world: its centre, facing, the way its texture's top points and its size, cm. */
+struct DecalFrame
+{
+    glm::dvec3 centre{0.0};
+    glm::dvec3 normal{0.0, 1.0, 0.0};
+    glm::dvec3 up{0.0, 0.0, -1.0};
+    glm::dvec2 size{0.0};
+};
+
+/** The frame of the quad's first face, from its corners and uvs in world space. Nullopt without uvs or with a degenerate face. */
+std::optional<DecalFrame> decalFrame(const geo::Mesh& m, const glm::dmat4& world)
+{
+    std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    if (uv.empty())
+        return std::nullopt;
+    for (geo::Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        std::vector<glm::dvec3> p;
+        std::vector<glm::dvec2> t;
+        m.forEachFaceCorner(f, [&](geo::Index k) {
+            p.push_back(glm::dvec3(world * glm::dvec4(m.position(m.cornerPoint(k)), 1.0)));
+            t.push_back(glm::dvec2(uv[k]));
+        });
+        if (p.size() < 3)
+            return std::nullopt;
+        // dP/du and dP/dv from the first triangle: [e1 e2] = [dPdu dPdv] [duv1 duv2].
+        const glm::dvec2 d1 = t[1] - t[0], d2 = t[2] - t[0];
+        const double det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-12)
+            return std::nullopt;
+        const glm::dvec3 e1 = p[1] - p[0], e2 = p[2] - p[0];
+        const glm::dvec3 dPdu = (e1 * d2.y - e2 * d1.y) / det, dPdv = (e2 * d1.x - e1 * d2.x) / det;
+        DecalFrame out;
+        glm::dvec2 lo(1e300), hi(-1e300);
+        for (size_t i = 0; i < p.size(); ++i)
+        {
+            out.centre += p[i];
+            lo = glm::min(lo, t[i]);
+            hi = glm::max(hi, t[i]);
+        }
+        out.centre /= double(p.size());
+        out.normal = glm::normalize(glm::cross(dPdu, dPdv));
+        out.up = glm::normalize(dPdv);
+        out.size = {glm::length(dPdu) * (hi.x - lo.x), glm::length(dPdv) * (hi.y - lo.y)};
+        return out;
+    }
+    return std::nullopt;
 }
 } // namespace
 
@@ -2306,6 +2391,328 @@ void registerCommands(ext::Context& ctx)
             return {{"queued", true}, {"meshes", meshReport}};
         },
         .examples = {"trimSheetSend()", "trimSheetSend(dryRun=True)['request']['instances']", "trimSheetSend(meshes='mapped')"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimDecalCreate",
+        .doc = "Make a unique decal for what trims can't carry: an inscription, a key border, damage, or relief from your own meshes "
+               "(high=), baked at its true size into normal, AO and height maps plus an opacity mask (where the relief stands off "
+               "the flat surround, faded at the edges) and a base colour. The decal is a .lilatrim holding one trim (decal: true), "
+               "so trimSheetEdit, trimSheetBake, trimSheetTexture and trimSheetPaint work on it: texture it with a smart material or "
+               "paint it by hand. Place it with trimDecalPlace; trimDecalSend makes Unreal deferred decals of the placements. "
+               "Returns the decal's summary and its bake.",
+        .positionalDoc = "decal name",
+        .flags = {{"name", "n", AT::String, nullptr, "Decal name: letters, digits and underscores."},
+                  {"kind", "k", AT::String, "inscription", "inscription (carved glyphs), border (key pattern), damage (chips and pits) or relief (only high=).",
+                   {"inscription", "border", "damage", "relief"}},
+                  {"style", "st", AT::String, nullptr, "A profile style instead of the kind's (glyphs, meander, chipped, fluting...)."},
+                  {"width", "w", AT::Float, 200.0, "World width, cm.", {}, {}, 0.1},
+                  {"height", "h", AT::Float, 50.0, "World height, cm.", {}, {}, 0.1},
+                  {"resolution", "r", AT::Int, int64_t(1024), "Texture width, px; the height follows the aspect.", {}, {}, 16.0, 8192.0},
+                  {"depth", "d", AT::Float, nullptr, "Relief depth, cm; the kind's when not given.", {}, {}, 0.001},
+                  {"seed", "s", AT::Int, int64_t(0), "Pattern seed: other glyphs, other damage."},
+                  {"high", "hi", AT::List, nullptr, "Scene meshes baked as the decal's relief, laid on it as trimSheetGenerate shows a sheet."},
+                  {"file", "f", AT::String, nullptr, "Where to save; default <workspace>/TrimSheets/Decals/<name>.lilatrim."},
+                  {"overwrite", "", AT::Bool, false, "Replace an existing decal file."},
+                  {"bake", "b", AT::Bool, true, "Bake it now."},
+                  {"backend", "", AT::String, "auto", "Bake backend: auto, gpu or cpu.", {"auto", "gpu", "cpu"}}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            const std::string name = nameArg(a);
+            if (name.empty() || !std::ranges::all_of(name, [](unsigned char c) { return std::isalnum(c) || c == '_'; }))
+                throw CommandError("trimDecalCreate: give a decal name of letters, digits and underscores");
+            const std::string kind = a.get<std::string>("kind", "inscription");
+            if (kind == "relief" && !a.has("high"))
+                throw CommandError("trimDecalCreate: a relief decal bakes the meshes given in high=");
+            const double w = a.get<double>("width", 200.0), h = a.get<double>("height", 50.0);
+            const int resolution = int(a.get<int64_t>("resolution", 1024));
+            std::filesystem::path f = a.has("file") ? std::filesystem::path(a.get<std::string>("file")) : defaultSheetFolder() / "Decals" / (name + kExtension);
+            if (f.extension().empty())
+                f += kExtension;
+            if (std::filesystem::exists(f) && !a.get<bool>("overwrite", false))
+                throw CommandError("trimDecalCreate: " + f.generic_string() + " exists; edit it with trimSheetEdit or pass overwrite=True");
+
+            Sheet s;
+            s.decal = true;
+            s.name = "T_" + name + "Decal";
+            s.width = resolution;
+            s.height = std::max(16, int(std::lround(resolution * h / w)));
+            s.pxPerM = resolution / (w / 100.0);
+            s.padding = 2;
+            s.mipLevel = 0;
+            s.supersampling = 4;
+            s.maps = {"normal", "ao", "height"};
+            Trim t;
+            t.name = name;
+            t.min = {0, 0};
+            t.max = {s.width, s.height};
+            t.kind = uv::TrimKind::Unique;
+            t.fit = uv::TrimFit::Fill;
+            t.insetPx = 0.0;
+            t.allowRotate = false;
+            t.tags = {"decal"};
+            const double cmToPx = s.pxPerM / 100.0;
+            const Style byKind = kind == "border" ? Style::Meander : kind == "damage" ? Style::Chipped : kind == "relief" ? Style::Flat : Style::Glyphs;
+            t.profile.style = byKind;
+            if (a.has("style"))
+            {
+                const std::optional<Style> st = styleFromName(a.get<std::string>("style"));
+                if (!st)
+                    throw CommandError("trimDecalCreate: no style " + a.get<std::string>("style"));
+                t.profile.style = *st;
+            }
+            // No border bevel: the decal's surround stays flat so only its relief shows.
+            t.profile.bevelPx = 0.0;
+            t.profile.detailPx = a.get<double>("depth", kind == "damage" ? h * 0.05 : h * 0.04) * cmToPx;
+            t.profile.spacingPx = (kind == "damage" ? h * 0.12 : h * 0.5) * cmToPx;
+            t.profile.seed = uint32_t(a.get<int64_t>("seed", 0));
+            s.trims.push_back(t);
+            if (a.has("high"))
+                s.high = a.flags["high"].get<std::vector<std::string>>();
+            save(s, f);
+            json out = sheetSummary(s, f);
+            if (a.get<bool>("bake", true))
+            {
+                SheetBakeOptions o;
+                o.backend = a.get<std::string>("backend", "auto");
+                o.tile = false;
+                out["bake"] = runBake(s, f, o, "trimDecalCreate");
+                out["textures"] = sheetSummary(s, f)["textures"];
+                out["baked"] = true;
+            }
+            return out;
+        },
+        .examples = {"trimDecalCreate('TempleWords', kind='inscription', width=1200, height=180, seed=3)",
+                     "trimDecalCreate('Breach', kind='damage', width=300, height=300)"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimDecalPlace",
+        .doc = "Place a unique decal (trimDecalCreate) in the scene: a quad of the decal's world size centred at position, facing "
+               "normal with its top toward up, floating offset cm off the surface, with the decal's translucent material so it "
+               "previews in the viewport. Move, turn and scale it like any mesh; trimDecalSend sends it to Unreal as a deferred "
+               "decal projecting depth cm into the surface. Returns the node.",
+        .positionalDoc = "decal file or name",
+        .flags = {{"decal", "dc", AT::String, nullptr, "The decal's .lilatrim, or its name under <workspace>/TrimSheets/Decals."},
+                  {"position", "p", AT::List, nullptr, "Centre, cm; the origin when not given."},
+                  {"normal", "nm", AT::List, nullptr, "The way it faces; +Y (a floor) when not given."},
+                  {"up", "u", AT::List, nullptr, "The way its top points; world up, or -Z for a floor, when not given."},
+                  {"depth", "d", AT::Float, 20.0, "How far the Unreal decal projects into the surface, cm.", {}, {}, 0.1},
+                  {"offset", "of", AT::Float, 0.05, "Lift off the surface in Lila's viewport, cm.", {}, {}, 0.0},
+                  {"name", "n", AT::String, nullptr, "Node name; DC_<decal> when not given."}},
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = decalPath(a, "trimDecalPlace");
+            const Sheet s = loadOr(f, "trimDecalPlace");
+            if (!s.decal)
+                throw CommandError("trimDecalPlace: " + f.generic_string() + " is a trim sheet, not a decal; make one with trimDecalCreate");
+            auto vec3 = [&](const char* flag, glm::dvec3 fallback) {
+                if (!a.has(flag))
+                    return fallback;
+                const json v = a.flags[flag];
+                if (!v.is_array() || v.size() != 3)
+                    throw CommandError(std::format("trimDecalPlace: {} is [x, y, z]", flag));
+                return glm::dvec3(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
+            };
+            const glm::dvec3 at = vec3("position", glm::dvec3(0.0));
+            const glm::dvec3 n = glm::normalize(vec3("normal", {0.0, 1.0, 0.0}));
+            glm::dvec3 up = vec3("up", std::abs(n.y) > 0.9 ? glm::dvec3(0.0, 0.0, -1.0) : glm::dvec3(0.0, 1.0, 0.0));
+            up -= n * glm::dot(up, n);
+            if (glm::length(up) < 1e-6)
+                throw CommandError("trimDecalPlace: up runs along normal");
+            up = glm::normalize(up);
+            const glm::dvec3 right = glm::cross(up, n);
+            const glm::dvec2 size = s.worldExtent();
+            const glm::dvec3 c = at + n * a.get<double>("offset", 0.05);
+            const glm::dvec3 pts[] = {c - right * size.x * 0.5 - up * size.y * 0.5, c + right * size.x * 0.5 - up * size.y * 0.5,
+                                      c + right * size.x * 0.5 + up * size.y * 0.5, c - right * size.x * 0.5 + up * size.y * 0.5};
+            const geo::Index sizes[] = {4};
+            const geo::Index idx[] = {0, 1, 2, 3};
+            geo::Mesh quad = geo::Mesh::fromPolygons(pts, sizes, idx);
+            std::span<glm::vec2> uv = quad.cornerAttrs().getOrAdd<glm::vec2>(geo::attr::uvName(0));
+            const glm::vec2 corners[] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+            quad.forEachFaceCorner(0, [&](geo::Index k) { uv[k] = corners[quad.cornerPoint(k)]; });
+            scene::materials::assign(quad, materialName(s), {0});
+            ensureMaterial(s, f);
+
+            const std::string nodeName = a.get<std::string>("name", "DC_" + s.trims.front().name);
+            const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", nodeName}});
+            Graph& g = Graph::current();
+            Node* node = g.find(made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>());
+            g.setValue({node->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(quad))));
+            ops::execute("addAttr", {{"args", {node->path()}}, {"longName", kNodeDecal}, {"dataType", "string"}, {"doc", "Unique decal this quad places."}});
+            ops::execute("setAttr", {{"args", {node->path() + "." + kNodeDecal, paths::storedPath(f)}}});
+            ops::execute("addAttr", {{"args", {node->path()}}, {"longName", kNodeDecalDepth}, {"attributeType", "float"}, {"defaultValue", 20.0},
+                                     {"doc", "How far the Unreal decal projects into the surface, cm."}});
+            ops::execute("setAttr", {{"args", {node->path() + "." + kNodeDecalDepth, a.get<double>("depth", 20.0)}}});
+            return node->path();
+        },
+        .examples = {"trimDecalPlace('TempleWords', position=[0, 400, -2500], normal=[0, 0, 1])"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimDecalSend",
+        .doc = "Send placed unique decals to Unreal as deferred decals: each decal's maps (its painted texture set's base colour "
+               "and normal when it has one, else the baked ones, and its opacity mask) go to <folder>/Textures, the decal "
+               "master M_LilaDecal on MF_LilaDecal is generated (or rebuilt with regenerateMaster), each decal gets an instance "
+               "MI_<decal>Decal, and each placement becomes a decal actor at the quad's place, size and facing, projecting its "
+               "decalDepth into the surface. Sending again moves the same actors. Returns what Unreal made; dryRun=True returns "
+               "the plan without connecting.",
+        .positionalDoc = "decal nodes (default every placed decal)",
+        .flags = {{"folder", "f", AT::String, "/Game/Lila/Decals", "Content folder for the textures and instances."},
+                  {"regenerateMaster", "", AT::Bool, false, "Rebuild M_LilaDecal's graph from this version of Lila."},
+                  {"wait", "w", AT::Bool, true, "Block until Unreal has placed everything."},
+                  {"dryRun", "", AT::Bool, false, "Return the plan without connecting to Unreal."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            Graph& g = Graph::current();
+            std::vector<scene::NodeId> nodes;
+            for (const json& p : a.positional)
+                if (p.is_string())
+                {
+                    Node* n = g.find(p.get<std::string>());
+                    if (!n || decalOf(*n).empty())
+                        throw CommandError("trimDecalSend: " + p.get<std::string>() + " is not a placed decal (trimDecalPlace)");
+                    nodes.push_back(n->id());
+                }
+            if (nodes.empty())
+                for (scene::NodeId id : g.nodes())
+                    if (Node* n = g.node(id); n && n->type().isA("mesh") && !decalOf(*n).empty())
+                        nodes.push_back(id);
+            if (nodes.empty())
+                throw CommandError("trimDecalSend: no decals placed; use trimDecalPlace");
+
+            const std::string root = a.get<std::string>("folder", "/Game/Lila/Decals");
+            json textures = json::array(), decals = json::array();
+            std::map<std::filesystem::path, json> instances;
+            for (scene::NodeId id : nodes)
+            {
+                Node& n = *g.node(id);
+                const std::filesystem::path f = decalOf(n);
+                const Sheet s = loadOr(f, "trimDecalSend");
+                if (s.trims.empty())
+                    throw CommandError("trimDecalSend: " + f.generic_string() + " has no trim to send");
+                const std::string folder = root;
+                if (!instances.contains(f))
+                {
+                    std::ifstream rec(bakeRecord(s, f));
+                    if (!rec)
+                        throw CommandError("trimDecalSend: " + s.name + " is not baked yet; run trimSheetBake(sheet=...)");
+                    json baked;
+                    rec >> baked;
+                    auto asset = [&](const json& o) {
+                        const std::string name = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
+                        return folder + "/Textures/" + name + "." + name;
+                    };
+                    std::map<std::string, json> byMap;
+                    for (const json& o : baked.value("outputs", json::array()))
+                        byMap[o.value("map", std::string())] = o;
+                    if (const std::string set = textureSetName(s); hasTextureSet(set))
+                    {
+                        const json exported = ops::execute("texExport", {{"args", {set}},
+                                                                         {"preset", "unreal"},
+                                                                         {"folder", (textureFolder(s, f) / "Painted").generic_string()},
+                                                                         {"incremental", true}});
+                        for (const json& o : exported.value("outputs", json::array()))
+                            if (const std::string m = o.value("map", std::string()); m == "baseColor" || m == "normal")
+                                byMap[m] = o;
+                    }
+                    json tex = json::object();
+                    for (const auto& [map, param] : {std::pair{"baseColor", "DecalBaseColorMap"}, std::pair{"normal", "DecalNormalMap"}, std::pair{"opacity", "DecalOpacityMap"}})
+                        if (const auto it = byMap.find(map); it != byMap.end())
+                        {
+                            tex[param] = asset(it->second);
+                            textures.push_back(it->second);
+                        }
+                    instances[f] = {{"name", "MI_" + materialName(s).substr(2)}, {"textures", tex}, {"scalars", s.scalars}, {"vectors", s.vectors}};
+                }
+                const scene::MeshPtr m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
+                const glm::dmat4 world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
+                const std::optional<DecalFrame> frame = m ? decalFrame(*m, world) : std::nullopt;
+                if (!frame)
+                    throw CommandError("trimDecalSend: " + n.path() + " is no longer a decal quad with uvs");
+                const std::string* link = n.type().attrs.size() > size_t(scene::Transform::kLinkId) ? std::get_if<std::string>(&n.value(scene::Transform::kLinkId)) : nullptr;
+                double depth = 20.0;
+                try
+                {
+                    depth = std::get<double>(g.value(g.plug(n.path() + "." + kNodeDecalDepth)));
+                }
+                catch (const std::exception&)
+                {
+                }
+                auto ue = [](const glm::dvec3& v) {
+                    const math::Vector u = math::toUnreal(math::Vector(v));
+                    return json::array({u.x, u.y, u.z});
+                };
+                decals.push_back({{"id", link && !link->empty() ? *link : n.fullPath()},
+                                  {"name", n.name()},
+                                  {"decal", s.trims.front().name},
+                                  {"instance", instances[f]},
+                                  {"location", ue(frame->centre)},
+                                  {"forward", ue(-frame->normal)},
+                                  {"up", ue(frame->up)},
+                                  {"size", {depth, frame->size.x, frame->size.y}}});
+            }
+            const json importParams = link::textureImportParams({{"outputs", textures}}, {{"folder", root + "/Textures"}, {"materialMode", "none"}});
+            const json request = {{"folder", root + "/Materials"}, {"regenerate", a.get<bool>("regenerateMaster", false)}, {"decals", decals}};
+            if (a.get<bool>("dryRun", false))
+                return {{"request", request}, {"textures", textures}};
+
+            try
+            {
+                link::Link::get().ensureConnected();
+            }
+            catch (const std::runtime_error& e)
+            {
+                throw CommandError(std::string("trimDecalSend: not connected to Unreal: ") + e.what());
+            }
+            const json features = link::Link::get().status().value("features", json::array());
+            if (!features.is_array() || std::ranges::find(features, json("trimDecals")) == features.end())
+                throw CommandError("trimDecalSend: the LilaLink plugin in this editor is too old for decals; rebuild it from Lila's ue/LilaLink");
+            auto send = [importParams, request]() -> json {
+                std::shared_ptr<link::RpcClient> client = link::Link::get().client();
+                if (!client)
+                    throw std::runtime_error("not connected to Unreal");
+                json errors = json::array();
+                link::RpcResult t = client->call("importTextures", importParams, link::importCallOptions());
+                if (!t.ok)
+                    errors.push_back("textures: " + t.error);
+                link::RpcResult d = client->call("trimDecals", request, link::importCallOptions());
+                if (!d.ok)
+                    errors.push_back("decals: " + d.error);
+                return {{"textures", t.ok ? t.result : json()}, {"decals", d.ok ? d.result : json()}, {"errors", errors}};
+            };
+            if (a.get<bool>("wait", true))
+                try
+                {
+                    link::Link::get().waitIdle();
+                    return send();
+                }
+                catch (const std::exception& e)
+                {
+                    throw CommandError(std::string("trimDecalSend: ") + e.what());
+                }
+            link::Link::get().post([send] {
+                json done;
+                try
+                {
+                    done = send();
+                }
+                catch (const std::exception& e)
+                {
+                    done = {{"errors", json::array({e.what()})}};
+                }
+                mainq::post([done] {
+                    for (const json& e : done.value("errors", json::array()))
+                        log::error("trimDecalSend: {}", e.get<std::string>());
+                });
+            });
+            return {{"queued", true}, {"decals", decals.size()}};
+        },
+        .examples = {"trimDecalSend()", "trimDecalSend(dryRun=True)['request']['decals'][0]['size']"},
     });
 }
 } // namespace trims

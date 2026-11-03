@@ -23,6 +23,13 @@ namespace LilaLink
  * makes or updates each instance (one per sheet palette) in folder under the master and sets it on every slot of the meshes
  * named its slot. Returns {master, masterVersion, built, instances, assigned: [{mesh, slot, material, changed}], created,
  * warnings}; a mesh that isn't there is a warning "no static mesh <path>".
+ *
+ * trimDecals {folder, regenerate?, decals: [{id, name, instance: {name, textures, scalars, vectors}, location, forward, up,
+ *   size: [depth, width, height], sortOrder?}]}
+ * builds MF_LilaDecal and the deferred decal material M_LilaDecal on it (in the masters folder, like the trim master), makes
+ * or updates each decal's instance in folder and places a decal actor per entry in the open level (forward is the projection
+ * direction, up the decal's top, both in Unreal space), tagged with its id so a resend updates it. Returns {master, built,
+ * spawned, updated, decals: [{id, actor, material}], created, warnings}.
  */
 void AddTrimMethods(TMap<FString, FLilaLinkMethod>& Methods);
 

@@ -6,6 +6,7 @@
 #include "extensions/ExtensionManager.h"
 #include "geo/Mesh.h"
 #include "geo/Normals.h"
+#include "math/Unreal.h"
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
@@ -922,6 +923,66 @@ TEST_CASE("trim live: the hotspot modifier re-maps when the mesh under it or its
     // Halving the sheet's density doubles every trim's world size: Strip0 is now the metre one.
     ops::execute("trimSheetEdit", {{"values", {{"pxPerM", 256.0}}}});
     CHECK(trimOf() == 1);
+}
+
+TEST_CASE("trim decals: a unique inscription baked with an opacity mask, placed, and planned as an Unreal deferred decal")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("decals") / "Words.lilatrim";
+    const json r = ops::execute("trimDecalCreate", {{"args", {"Words"}}, {"kind", "inscription"}, {"width", 200.0}, {"height", 50.0}, {"resolution", 128},
+                                                   {"file", file.generic_string()}, {"backend", "cpu"}});
+    CHECK(r["baked"].get<bool>());
+    const Sheet s = load(file);
+    CHECK(s.decal);
+    CHECK(s.height == 32);
+    CHECK(s.pxPerM == doctest::Approx(64.0));
+    const lila::image::Image opacity = lila::image::read(mapFile(s, file, "opacity"));
+    REQUIRE(opacity.width == 128);
+    double edge = 0.0, inside = 0.0;
+    for (int y = 0; y < opacity.height; ++y)
+        for (int x = 0; x < opacity.width; ++x)
+        {
+            const float v = opacity.rgba[(size_t(y) * 128 + size_t(x)) * 4];
+            (x == 0 || y == 0 || x == 127 || y == 31 ? edge : inside) = std::max(x == 0 || y == 0 || x == 127 || y == 31 ? edge : inside, double(v));
+        }
+    // The glyph strokes show, the box around them doesn't.
+    CHECK(inside > 0.5);
+    CHECK(edge < 0.05);
+    CHECK(std::filesystem::exists(mapFile(s, file, "baseColor")));
+    CHECK_THROWS(ops::execute("trimDecalCreate", {{"args", {"Words"}}, {"file", file.generic_string()}, {"bake", false}}));
+
+    const std::string node = ops::execute("trimDecalPlace", {{"decal", file.generic_string()}, {"position", {100, 200, 300}}, {"normal", {0, 0, 1}}, {"depth", 15.0}}).get<std::string>();
+    CHECK(slotsOf(node) == std::map<std::string, uint32_t>{{"M_WordsDecal", 1}});
+    const json plan = ops::execute("trimDecalSend", {{"dryRun", true}});
+    REQUIRE(plan["request"]["decals"].size() == 1);
+    const json& d = plan["request"]["decals"][0];
+    CHECK(d["size"][0].get<double>() == doctest::Approx(15.0));
+    CHECK(d["size"][1].get<double>() == doctest::Approx(200.0));
+    CHECK(d["size"][2].get<double>() == doctest::Approx(50.0));
+    const math::Vector at = math::toUnreal(math::Vector(glm::dvec3(100.0, 200.0, 300.05)));
+    const math::Vector into = math::toUnreal(math::Vector(glm::dvec3(0.0, 0.0, -1.0))), up = math::toUnreal(math::Vector(glm::dvec3(0.0, 1.0, 0.0)));
+    CHECK(d["location"][0].get<double>() == doctest::Approx(at.x));
+    CHECK(d["location"][1].get<double>() == doctest::Approx(at.y));
+    CHECK(d["location"][2].get<double>() == doctest::Approx(at.z));
+    CHECK(d["forward"][2].get<double>() == doctest::Approx(into.z));
+    CHECK(d["up"][2].get<double>() == doctest::Approx(up.z));
+    CHECK(d["instance"]["name"] == "MI_WordsDecal");
+    for (const char* param : {"DecalBaseColorMap", "DecalNormalMap", "DecalOpacityMap"})
+        CHECK(d["instance"]["textures"].contains(param));
+    CHECK(plan["textures"].size() == 3);
+
+    // Relief from a mesh of your own, laid on the decal plane: a 20 cm boss in the middle of a metre square.
+    const json boss = ops::execute("createMesh", {{"points", {{40, 0, 40}, {60, 0, 40}, {60, 0, 60}, {40, 0, 60}, {40, 5, 40}, {60, 5, 40}, {60, 5, 60}, {40, 5, 60}}},
+                                                  {"faces", {{0, 1, 2, 3}, {4, 7, 6, 5}, {0, 4, 5, 1}, {1, 5, 6, 2}, {2, 6, 7, 3}, {3, 7, 4, 0}}},
+                                                  {"name", "CrestBoss"}});
+    const std::filesystem::path crestFile = scratch("decals") / "Crest.lilatrim";
+    ops::execute("trimDecalCreate", {{"args", {"Crest"}}, {"kind", "relief"}, {"high", {made(boss)}}, {"width", 100.0}, {"height", 100.0}, {"resolution", 64},
+                                     {"file", crestFile.generic_string()}, {"backend", "cpu"}});
+    const lila::image::Image crest = lila::image::read(mapFile(load(crestFile), crestFile, "opacity"));
+    REQUIRE(crest.width == 64);
+    CHECK(crest.rgba[(size_t(32) * 64 + 32) * 4] > 0.5f);
+    CHECK(crest.rgba[(size_t(5) * 64 + 5) * 4] < 0.05f);
+    CHECK_THROWS(ops::execute("trimDecalCreate", {{"args", {"Bare"}}, {"kind", "relief"}, {"bake", false}}));
 }
 
 TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")

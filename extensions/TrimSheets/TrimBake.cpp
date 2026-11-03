@@ -128,7 +128,7 @@ void addHigh(Generated& g, const Sheet& sheet, const SheetBakeOptions& opts)
         g.high = geo::Mesh();
     const double width = sheet.worldExtent().x;
     for (const geo::Mesh& m : opts.high)
-        for (const double dx : opts.tile ? std::vector<double>{0.0, -width, width} : std::vector<double>{0.0})
+        for (const double dx : opts.tile && !sheet.decal ? std::vector<double>{0.0, -width, width} : std::vector<double>{0.0})
         {
             geo::Mesh copy = m;
             for (geo::Index p = 0; p < copy.pointCapacity(); ++p)
@@ -139,6 +139,62 @@ void addHigh(Generated& g, const Sheet& sheet, const SheetBakeOptions& opts)
     const geo::Bounds b = g.high.bounds();
     g.above = std::max(g.above, b.max.y);
     g.below = std::max(g.below, -b.min.y);
+}
+
+/**
+ * A decal's opacity: where the baked normal tilts or the height leaves the flat surround (the median of the border texels),
+ * grown by a few texels so carved strokes keep their shoulders, and faded out toward the edges so the box never shows.
+ */
+image::Image decalOpacity(const image::Image& normal, const image::Image* height)
+{
+    const int w = normal.width, h = normal.height;
+    std::vector<float> mask(size_t(w) * size_t(h), 0.0f);
+    double flat = 0.5;
+    if (height && height->width == w && height->height == h)
+    {
+        std::vector<float> border;
+        for (int x = 0; x < w; ++x)
+            for (int y : {0, h - 1})
+                border.push_back(height->rgba[(size_t(y) * size_t(w) + size_t(x)) * 4]);
+        std::nth_element(border.begin(), border.begin() + std::ptrdiff_t(border.size() / 2), border.end());
+        flat = border[border.size() / 2];
+    }
+    auto smooth = [](double a, double b, double x) {
+        const double t = std::clamp((x - a) / (b - a), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            const size_t i = size_t(y) * size_t(w) + size_t(x);
+            const double nz = normal.rgba[i * 4 + 2] * 2.0 - 1.0;
+            double m = smooth(0.005, 0.03, 1.0 - nz);
+            if (height && height->width == w && height->height == h)
+                m = std::max(m, smooth(0.004, 0.02, std::abs(height->rgba[i * 4] - flat)));
+            mask[i] = float(m);
+        }
+    const int grow = std::max(1, std::min(w, h) / 128);
+    image::Image out;
+    out.width = w;
+    out.height = h;
+    out.rgba.assign(size_t(w) * size_t(h) * 4, 1.0f);
+    const double fade = std::max(2.0, std::min(w, h) * 0.03);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            float m = 0.0f;
+            for (int dy = -grow; dy <= grow; ++dy)
+                for (int dx = -grow; dx <= grow; ++dx)
+                {
+                    const int sx = std::clamp(x + dx, 0, w - 1), sy = std::clamp(y + dy, 0, h - 1);
+                    m = std::max(m, mask[size_t(sy) * size_t(w) + size_t(sx)]);
+                }
+            const double edge = std::min({double(x), double(w - 1 - x), double(y), double(h - 1 - y)});
+            const float v = float(m * smooth(0.0, fade, edge));
+            float* px = &out.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4];
+            px[0] = px[1] = px[2] = v;
+        }
+    return out;
 }
 
 /** Copies the trims' rectangles, grown by pad, from src into dst (same size). */
@@ -203,7 +259,7 @@ nlohmann::json bakeSheet(const Sheet& sheet, const std::filesystem::path& sheetF
 
     // Neighbours stay in the high on a partial rebake so their occlusion on the rebaked trims stays the same.
     GenerateOptions go;
-    go.tile = opts.tile;
+    go.tile = opts.tile && !sheet.decal;
     Generated g = generate(sheet, go);
     addHigh(g, sheet, opts);
     if (g.high.numFaces() == 0)
@@ -271,6 +327,38 @@ nlohmann::json bakeSheet(const Sheet& sheet, const std::filesystem::path& sheetF
                                       {"format", "exr"},
                                       {"bits", 32},
                                       {"colorSpace", "linear"}});
+    }
+    if (sheet.decal && !partial)
+    {
+        const image::Image normal = image::read(mapFile(sheet, sheetFile, "normal"));
+        if (normal.width > 0)
+        {
+            const std::filesystem::path heightFile = mapFile(sheet, sheetFile, "height"), aoFile = mapFile(sheet, sheetFile, "ao");
+            const image::Image height = std::filesystem::exists(heightFile) ? image::read(heightFile) : image::Image{};
+            const image::Image opacity = decalOpacity(normal, height.width > 0 ? &height : nullptr);
+            // Base colour: a neutral grey darkened by the baked occlusion, its alpha the opacity, for Lila's translucent preview.
+            const image::Image ao = std::filesystem::exists(aoFile) ? image::read(aoFile) : image::Image{};
+            image::Image color = opacity;
+            for (size_t i = 0; i + 3 < color.rgba.size(); i += 4)
+            {
+                const float occlusion = ao.width == normal.width && ao.height == normal.height ? ao.rgba[i] : 1.0f;
+                color.rgba[i + 3] = opacity.rgba[i];
+                color.rgba[i] = color.rgba[i + 1] = color.rgba[i + 2] = 0.5f * occlusion;
+            }
+            for (const auto& [map, img] : {std::pair<const char*, const image::Image*>{"opacity", &opacity}, {"baseColor", &color}})
+            {
+                const std::filesystem::path file = mapFile(sheet, sheetFile, map);
+                image::write(file, *img, 8);
+                out["outputs"].push_back({{"map", map},
+                                          {"file", file.generic_string()},
+                                          {"udim", 1001},
+                                          {"width", img->width},
+                                          {"height", img->height},
+                                          {"format", "png"},
+                                          {"bits", 8},
+                                          {"colorSpace", std::string_view(map) == "baseColor" ? "srgb" : "linear"}});
+            }
+        }
     }
     out["folder"] = folder.generic_string();
     out["trims"] = int64_t(partial ? opts.only.size() : sheet.trims.size());

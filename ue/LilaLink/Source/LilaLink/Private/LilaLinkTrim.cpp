@@ -7,9 +7,14 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetToolsModule.h"
+#include "Components/DecalComponent.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Editor.h"
+#include "Engine/DecalActor.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Engine/Texture.h"
 #include "Engine/Texture2D.h"
 #include "Factories/MaterialFactoryNew.h"
@@ -29,6 +34,7 @@
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "ScopedTransaction.h"
 #include "UObject/Package.h"
 
 namespace
@@ -522,6 +528,308 @@ TSharedPtr<FJsonValue> TrimMaterials(const TSharedPtr<FJsonObject>& Params, FStr
 	Out->SetArrayField(TEXT("warnings"), WarningsJson);
 	return Obj(Out);
 }
+constexpr int32 DecalVersion = 1;
+const TCHAR* DecalMasterName = TEXT("M_LilaDecal");
+const TCHAR* DecalFunctionName = TEXT("MF_LilaDecal");
+const TCHAR* DecalVersionTag = TEXT("Lila Decal v");
+const FName DecalTag(TEXT("LilaDecal"));
+const TCHAR* DecalNodePrefix = TEXT("LilaNode:");
+
+/**
+ * MF_LilaDecal: a unique decal's baked maps (base colour, tangent-space normal, opacity mask) through the decal's uvs, out
+ * as BaseColor, Normal, Roughness, Metallic and Opacity. FlipU mirrors the uvs for projectors that read them reversed.
+ */
+void BuildDecalFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildDecalFunction);
+
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Decal: a unique decal baked or painted in Lila, its normal and colour masked by its opacity."));
+	TMap<FString, UMaterialExpression*> Inputs;
+	UTexture* Flat = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineMaterials/FlatNormal.FlatNormal"));
+	UTexture* Grey = NeutralTexture(TEXT("T_LilaTrimNeutral"), 128, TC_Masks, OutCreated);
+	UTexture* White = NeutralTexture(TEXT("T_LilaTrimWhite"), 255, TC_Masks, OutCreated);
+	Inputs.Add(TEXT("DecalBaseColorMap"), G.TextureInput(TEXT("DecalBaseColorMap"), Grey, SAMPLERTYPE_Color, TEXT("Decal"), TEXT("Base colour.")));
+	Inputs.Add(TEXT("DecalNormalMap"), G.TextureInput(TEXT("DecalNormalMap"), Flat, SAMPLERTYPE_Normal, TEXT("Decal"), TEXT("Tangent-space normal.")));
+	Inputs.Add(TEXT("DecalOpacityMap"), G.TextureInput(TEXT("DecalOpacityMap"), White, SAMPLERTYPE_Masks, TEXT("Decal"), TEXT("Opacity mask in red.")));
+	Inputs.Add(TEXT("Tint"), G.VectorInput(TEXT("Tint"), FLinearColor(1.0f, 1.0f, 1.0f), TEXT("Decal"), TEXT("Multiplies the base colour.")));
+	Inputs.Add(TEXT("Roughness"), G.ScalarInput(TEXT("Roughness"), 0.7f, TEXT("Decal"), TEXT("Roughness.")));
+	Inputs.Add(TEXT("Metallic"), G.ScalarInput(TEXT("Metallic"), 0.0f, TEXT("Decal"), TEXT("Metallic.")));
+	Inputs.Add(TEXT("OpacityStrength"), G.ScalarInput(TEXT("OpacityStrength"), 1.0f, TEXT("Decal"), TEXT("Scales the opacity mask.")));
+	Inputs.Add(TEXT("NormalStrength"), G.ScalarInput(TEXT("NormalStrength"), 1.0f, TEXT("Decal"), TEXT("Scales the normal's slope.")));
+	Inputs.Add(TEXT("FlipU"), G.ScalarInput(TEXT("FlipU"), 0.0f, TEXT("Decal"), TEXT("1 mirrors the decal's U.")));
+	auto* UV0 = G.New<UMaterialExpressionTextureCoordinate>(-1700);
+	UV0->CoordinateIndex = 0;
+	Inputs.Add(TEXT("UV"), G.Input(TEXT("UVs"), FunctionInput_Vector2, UV0, TEXT("The decal uvs; UV channel 0 when unconnected.")));
+
+	const FString Version = FString::Printf(TEXT("%s%d"), DecalVersionTag, DecalVersion);
+	const FString Uv = TEXT("float2 duv = float2(FlipU > 0.5 ? 1.0 - UV.x : UV.x, UV.y);\n");
+	auto CustomOf = [&](const FString& Description, const FString& Code, ECustomMaterialOutputType Type, std::initializer_list<const TCHAR*> Names) {
+		auto* E = G.New<UMaterialExpressionCustom>(-400);
+		E->Description = Version + TEXT(" ") + Description;
+		E->Code = Uv + Code;
+		E->OutputType = Type;
+		E->Inputs.Reset();
+		for (const TCHAR* Name : Names)
+		{
+			E->Inputs.AddDefaulted_GetRef().InputName = Name;
+		}
+		for (const TCHAR* Name : Names)
+		{
+			UMaterialEditingLibrary::ConnectMaterialExpressions(Inputs[Name], TEXT(""), E, Name);
+		}
+		return E;
+	};
+	G.Output(CustomOf(TEXT("colour"), TEXT("return Texture2DSample(DecalBaseColorMap, DecalBaseColorMapSampler, duv).rgb * Tint;"), CMOT_Float3,
+				 {TEXT("UV"), TEXT("FlipU"), TEXT("DecalBaseColorMap"), TEXT("Tint")}),
+		TEXT("BaseColor"), TEXT("Base colour."));
+	G.Output(CustomOf(TEXT("normal"),
+				 TEXT("float2 xy = (Texture2DSample(DecalNormalMap, DecalNormalMapSampler, duv).xy * 2.0 - 1.0) * NormalStrength;\n"
+					  "if (FlipU > 0.5) xy.x = -xy.x;\n"
+					  "return normalize(float3(xy, sqrt(saturate(1.0 - dot(xy, xy)))));"),
+				 CMOT_Float3, {TEXT("UV"), TEXT("FlipU"), TEXT("DecalNormalMap"), TEXT("NormalStrength")}),
+		TEXT("Normal"), TEXT("Tangent-space normal."));
+	G.Output(CustomOf(TEXT("roughness"), TEXT("return Roughness;"), CMOT_Float1, {TEXT("UV"), TEXT("FlipU"), TEXT("Roughness")}), TEXT("Roughness"),
+		TEXT("Roughness."));
+	G.Output(CustomOf(TEXT("metallic"), TEXT("return Metallic;"), CMOT_Float1, {TEXT("UV"), TEXT("FlipU"), TEXT("Metallic")}), TEXT("Metallic"),
+		TEXT("Metallic."));
+	G.Output(CustomOf(TEXT("opacity"), TEXT("return saturate(Texture2DSample(DecalOpacityMap, DecalOpacityMapSampler, duv).r * OpacityStrength);"),
+				 CMOT_Float1, {TEXT("UV"), TEXT("FlipU"), TEXT("DecalOpacityMap"), TEXT("OpacityStrength")}),
+		TEXT("Opacity"), TEXT("Opacity mask."));
+	G.Finish();
+}
+
+/** M_LilaDecal: MF_LilaDecal on a deferred decal material's pins. */
+void BuildDecalMaster(UMaterial* Material, UMaterialFunction* Function, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::BuildDecalMaster);
+
+	Material->MaterialDomain = MD_DeferredDecal;
+	Material->BlendMode = BLEND_Translucent;
+	UMaterialExpressionMaterialFunctionCall* Call = LilaLink::ResetToFunctionCall(Material, Function);
+	if (!LilaLink::ConnectFunctionOutputs(Call, {{TEXT("BaseColor"), MP_BaseColor}, {TEXT("Normal"), MP_Normal}, {TEXT("Roughness"), MP_Roughness},
+			{TEXT("Metallic"), MP_Metallic}, {TEXT("Opacity"), MP_Opacity}}))
+	{
+		OutWarnings.Add(FString::Printf(TEXT("Could not wire the outputs of %s into %s"), *Function->GetName(), *Material->GetName()));
+	}
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+}
+
+UMaterial* DecalMaster(bool bRegenerate, bool& bOutBuilt, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::DecalMaster);
+
+	FString Error;
+	const LilaLink::FMaterialPair Pair = LilaLink::FindOrCreateMaterialPair(LilaLink::MastersFolderPath(), DecalFunctionName, DecalMasterName, Error);
+	if (!Pair.Material)
+	{
+		OutWarnings.Add(Error);
+		return nullptr;
+	}
+	bOutBuilt = Pair.bCreated || bRegenerate;
+	if (bOutBuilt)
+	{
+		BuildDecalFunction(Pair.Function, OutCreated);
+		BuildDecalMaster(Pair.Material, Pair.Function, OutWarnings);
+		OutCreated.AddUnique(Pair.Function->GetPathName());
+		OutCreated.AddUnique(Pair.Material->GetPathName());
+	}
+	for (UMaterialExpression* E : Pair.Function->GetExpressions())
+	{
+		if (const UMaterialExpressionCustom* C = Cast<UMaterialExpressionCustom>(E); C && C->Description.StartsWith(DecalVersionTag))
+		{
+			if (FCString::Atoi(*C->Description.RightChop(FCString::Strlen(DecalVersionTag))) < DecalVersion)
+			{
+				OutWarnings.Add(FString::Printf(TEXT("%s is older than this plugin's; it is kept as edited (regenerate rebuilds it)"), DecalMasterName));
+			}
+			break;
+		}
+	}
+	return Pair.Material;
+}
+
+FVector DecalVector(const TSharedPtr<FJsonObject>& P, const TCHAR* Field, const FVector& Fallback)
+{
+	const TArray<TSharedPtr<FJsonValue>>* V = nullptr;
+	if (!P->TryGetArrayField(Field, V) || V->Num() < 3)
+	{
+		return Fallback;
+	}
+	return FVector((*V)[0]->AsNumber(), (*V)[1]->AsNumber(), (*V)[2]->AsNumber());
+}
+
+/**
+ * trimDecals: the decal master and one instance per decal, then a decal actor per placement in the open level, keyed by
+ * the Lila node so a resend moves it instead of adding another.
+ */
+TSharedPtr<FJsonValue> TrimDecals(const TSharedPtr<FJsonObject>& Params, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::TrimDecals);
+
+	FString Folder;
+	const TArray<TSharedPtr<FJsonValue>>* Decals = nullptr;
+	if (!Params->TryGetStringField(TEXT("folder"), Folder) || !Params->TryGetArrayField(TEXT("decals"), Decals))
+	{
+		OutError = TEXT("trimDecals: give folder and decals");
+		return nullptr;
+	}
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		OutError = TEXT("trimDecals: no level is open");
+		return nullptr;
+	}
+	TArray<FString> Created, Warnings;
+	bool bRegenerate = false, bBuilt = false;
+	Params->TryGetBoolField(TEXT("regenerate"), bRegenerate);
+	UMaterial* Master = DecalMaster(bRegenerate, bBuilt, Created, Warnings);
+	if (!Master)
+	{
+		OutError = FString::Printf(TEXT("trimDecals: %s"), *FString::Join(Warnings, TEXT("; ")));
+		return nullptr;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LilaLinkTrim", "PlaceDecals", "Lila: Place Decals"));
+	TMap<FString, ADecalActor*> ByNode;
+	for (TActorIterator<ADecalActor> It(World); It; ++It)
+	{
+		if (!It->Tags.Contains(DecalTag))
+		{
+			continue;
+		}
+		for (const FName& Tag : It->Tags)
+		{
+			if (FString S = Tag.ToString(); S.StartsWith(DecalNodePrefix))
+			{
+				ByNode.Add(S.RightChop(FCString::Strlen(DecalNodePrefix)), *It);
+			}
+		}
+	}
+	TArray<TSharedPtr<FJsonValue>> Placed;
+	int32 Spawned = 0, Updated = 0;
+	for (const TSharedPtr<FJsonValue>& V : *Decals)
+	{
+		const TSharedPtr<FJsonObject> D = V.IsValid() ? V->AsObject() : nullptr;
+		FString Id, Name;
+		if (!D.IsValid() || !D->TryGetStringField(TEXT("id"), Id))
+		{
+			Warnings.Add(TEXT("a decal without an id was skipped"));
+			continue;
+		}
+		D->TryGetStringField(TEXT("name"), Name);
+
+		const TSharedPtr<FJsonObject>* InstanceJson = nullptr;
+		FString InstanceName;
+		UMaterialInstanceConstant* Instance = nullptr;
+		if (D->TryGetObjectField(TEXT("instance"), InstanceJson) && (*InstanceJson)->TryGetStringField(TEXT("name"), InstanceName))
+		{
+			Instance = AssetAt<UMaterialInstanceConstant>(Folder, InstanceName);
+			if (!Instance)
+			{
+				UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>(GetTransientPackage());
+				Factory->InitialParent = Master;
+				Instance = Cast<UMaterialInstanceConstant>(
+					FAssetToolsModule::GetModule().Get().CreateAsset(InstanceName, Folder, UMaterialInstanceConstant::StaticClass(), Factory));
+				if (Instance)
+				{
+					Created.AddUnique(Instance->GetPathName());
+				}
+			}
+			if (Instance)
+			{
+				Instance->Modify();
+				if (Instance->Parent != Master)
+				{
+					UMaterialEditingLibrary::SetMaterialInstanceParent(Instance, Master);
+				}
+				SetParameters(Instance, *InstanceJson, Warnings);
+				UMaterialEditingLibrary::UpdateMaterialInstance(Instance);
+				Instance->MarkPackageDirty();
+			}
+			else
+			{
+				Warnings.Add(FString::Printf(TEXT("Could not create %s in %s"), *InstanceName, *Folder));
+			}
+		}
+
+		// The actor's X axis projects into the surface; Z is the decal's up.
+		const FVector Forward = DecalVector(D, TEXT("forward"), -FVector::UpVector);
+		const FVector Up = DecalVector(D, TEXT("up"), FVector::ForwardVector);
+		const FVector Size = DecalVector(D, TEXT("size"), FVector(10.0, 100.0, 100.0));
+		const FTransform Transform(FRotationMatrix::MakeFromXZ(Forward, Up).ToQuat(), DecalVector(D, TEXT("location"), FVector::ZeroVector));
+		ADecalActor*& Actor = ByNode.FindOrAdd(Id);
+		if (!Actor)
+		{
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.ObjectFlags |= RF_Transactional;
+			Actor = World->SpawnActor<ADecalActor>(ADecalActor::StaticClass(), Transform, SpawnParams);
+			if (!Actor)
+			{
+				Warnings.Add(FString::Printf(TEXT("Could not place decal %s"), *Name));
+				continue;
+			}
+			Actor->Tags.Add(DecalTag);
+			Actor->Tags.Add(FName(*(FString(DecalNodePrefix) + Id)));
+			++Spawned;
+		}
+		else
+		{
+			Actor->Modify();
+			Actor->SetActorTransform(Transform);
+			++Updated;
+		}
+		Actor->SetFolderPath(FName(TEXT("Lila/Decals")));
+		if (!Name.IsEmpty())
+		{
+			Actor->SetActorLabel(Name);
+		}
+		if (UDecalComponent* Decal = Actor->GetDecal())
+		{
+			Decal->Modify();
+			// DecalSize is half the box: depth along the projection, then width and height.
+			Decal->DecalSize = Size * 0.5;
+			double Sort = 0.0;
+			if (D->TryGetNumberField(TEXT("sortOrder"), Sort))
+			{
+				Decal->SortOrder = int32(Sort);
+			}
+			if (Instance)
+			{
+				Decal->SetDecalMaterial(Instance);
+			}
+			Decal->MarkRenderStateDirty();
+		}
+		TSharedRef<FJsonObject> P = MakeShared<FJsonObject>();
+		P->SetStringField(TEXT("id"), Id);
+		P->SetStringField(TEXT("actor"), Actor->GetPathName());
+		P->SetStringField(TEXT("material"), Instance ? Instance->GetPathName() : FString());
+		Placed.Add(Obj(P));
+	}
+	if (ULevel* Level = World->GetCurrentLevel())
+	{
+		Level->MarkPackageDirty();
+	}
+
+	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
+	Out->SetStringField(TEXT("master"), Master->GetPathName());
+	Out->SetBoolField(TEXT("built"), bBuilt);
+	Out->SetNumberField(TEXT("spawned"), Spawned);
+	Out->SetNumberField(TEXT("updated"), Updated);
+	Out->SetArrayField(TEXT("decals"), Placed);
+	TArray<TSharedPtr<FJsonValue>> CreatedJson, WarningsJson;
+	for (const FString& C : Created)
+	{
+		CreatedJson.Add(Str(C));
+	}
+	for (const FString& W : Warnings)
+	{
+		WarningsJson.Add(Str(W));
+		UE_LOG(LogLilaLink, Warning, TEXT("trimDecals: %s"), *W);
+	}
+	Out->SetArrayField(TEXT("created"), CreatedJson);
+	Out->SetArrayField(TEXT("warnings"), WarningsJson);
+	return Obj(Out);
+}
 } // namespace
 
 UMaterial* LilaLink::TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVersion, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
@@ -556,4 +864,5 @@ UMaterial* LilaLink::TrimMaster(bool bRegenerate, bool& bOutBuilt, int32& OutVer
 void LilaLink::AddTrimMethods(TMap<FString, FLilaLinkMethod>& Methods)
 {
 	Methods.Add(TEXT("trimMaterials"), LilaLink::Sync(&TrimMaterials));
+	Methods.Add(TEXT("trimDecals"), LilaLink::Sync(&TrimDecals));
 }

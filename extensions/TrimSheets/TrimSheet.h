@@ -27,6 +27,9 @@ inline constexpr const char* kExtension = ".lilatrim";
 inline constexpr const char* kFaceTrim = uv::kTrimFaceAttr;
 /** Mesh node string attribute naming the .lilatrim a mesh is mapped with. */
 inline constexpr const char* kNodeSheet = "trimSheet";
+/** Mesh node string attribute naming the decal .lilatrim a placed decal quad shows, and its float projection depth, cm. */
+inline constexpr const char* kNodeDecal = "trimDecal";
+inline constexpr const char* kNodeDecalDepth = "decalDepth";
 
 /** What the generator sweeps across a trim. */
 enum class Style : uint8_t
@@ -153,6 +156,11 @@ struct Sheet
      */
     std::vector<std::string> high;
     bool highReplaces = false;
+    /**
+     * A unique decal rather than a sheet: one trim over the whole texture, baked flat around its relief, plus an opacity mask
+     * (from where the relief or high meshes stand off the plane) and a base colour, for deferred decals.
+     */
+    bool decal = false;
     std::vector<Trim> trims;
     std::vector<Palette> palettes;
     /** Unreal parameters of the default palette, as Palette's. */

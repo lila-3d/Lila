@@ -329,6 +329,7 @@ json Sheet::toJson() const
             {"supersampling", supersampling},
             {"high", high},
             {"highReplaces", highReplaces},
+            {"decal", decal},
             {"trims", t},
             {"palettes", [&] {
                  json p = json::array();
@@ -357,6 +358,7 @@ Sheet Sheet::fromJson(const json& j)
     s.supersampling = j.value("supersampling", s.supersampling);
     s.high = j.value("high", std::vector<std::string>());
     s.highReplaces = j.value("highReplaces", false);
+    s.decal = j.value("decal", false);
     for (const json& t : j.value("trims", json::array()))
         s.trims.push_back(Trim::fromJson(t));
     for (const json& p : j.value("palettes", json::array()))
