@@ -17,6 +17,7 @@
 #include <QPainterPath>
 #include <QPointer>
 #include <QWheelEvent>
+#include <QWindow>
 
 #include <algorithm>
 #include <map>
@@ -208,12 +209,14 @@ void HotkeyCheatSheet::pin()
 {
     mPinned = true;
     // A held sheet lets clicks through to the window under it; a pinned one takes input for its filter.
-    const bool shown = isVisible();
-    setWindowFlags(windowFlags() & ~(Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput));
+    const Qt::WindowFlags input = Qt::WindowDoesNotAcceptFocus | Qt::WindowTransparentForInput;
+    // QWidget::setWindowFlags recreates a shown native window, which blinks; QWindow::setFlags restyles it in place.
+    if (QWindow* w = windowHandle())
+        w->setFlags(w->flags() & ~input);
+    else
+        setWindowFlags(windowFlags() & ~input);
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_ShowWithoutActivating, false);
-    if (shown)
-        show();
     raise();
     activateWindow();
     mFilter->setFocus();
