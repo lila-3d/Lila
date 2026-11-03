@@ -35,6 +35,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_pyhome}/python3.dll ${_pyhome}/python${Python_VERSION_MAJOR}${Python_VERSION_MINOR}.dll $<TARGET_FILE_DIR:lila>
         COMMENT "Deploying the Python runtime")
     lila_deploy_qt(lila)
+    lila_bundle_pyside(lila)
     # Help > Record Performance Trace runs it against Lila over 127.0.0.1.
     if(LILA_TRACY AND VCPKG_INSTALLED_DIR)
         set(_tracy_tools ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/tracy)

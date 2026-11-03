@@ -166,6 +166,9 @@ bool init(const std::vector<std::string>& argv)
         try
         {
             nb::module_ sys = nb::module_::import_("sys");
+            // The bundled PySide6 goes ahead of every site-packages, so a stale copy a user installed can't shadow it.
+            if (std::filesystem::path site = paths::executableDir() / "python-site"; std::filesystem::exists(site))
+                sys.attr("path").attr("insert")(0, site.string());
             sys.attr("path").attr("insert")(0, paths::pythonDir().string());
             nb::module_::import_("lila._startup").attr("boot")();
         }

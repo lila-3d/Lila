@@ -6,7 +6,7 @@ Lila includes or links the following third-party components. Each is licensed un
 
 | Component | License | Copyright | Source |
 |---|---|---|---|
-| Qt 6 (Core, Gui, Widgets, Svg) | LGPL-3.0 | The Qt Company Ltd. and other contributors | https://www.qt.io |
+| Qt 6 (Core, Gui, Widgets, Svg, Network, Xml, Sql, PrintSupport, OpenGL, OpenGLWidgets, UiTools) | LGPL-3.0 | The Qt Company Ltd. and other contributors | https://www.qt.io |
 | PySide6 | LGPL-3.0 | The Qt Company Ltd. | https://www.qt.io/qt-for-python |
 | Eigen | MPL-2.0 | Eigen contributors | https://eigen.tuxfamily.org |
 
@@ -35,6 +35,10 @@ Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and
 | nlohmann/json | MIT | Niels Lohmann | https://github.com/nlohmann/json |
 | cpp-httplib | MIT | yhirose | https://github.com/yhirose/cpp-httplib |
 | Brotli | MIT | The Brotli Authors | https://github.com/google/brotli |
+| OpenSSL | Apache-2.0 | The OpenSSL Project Authors | https://www.openssl.org |
+| MD4C (Qt's Markdown reader) | MIT | Martin Mitáš | https://github.com/mity/md4c |
+| SQLite (Qt's SQLite driver) | Public domain | D. Richard Hipp and the SQLite developers | https://sqlite.org |
+| Qt.py | MIT | Marcus Ottosson and contributors | https://github.com/mottosso/Qt.py |
 | ufbx | MIT OR Unlicense | Samuli Raivio | https://github.com/ufbx/ufbx |
 | cgltf | MIT | Johannes Kuhlmann | `third_party/cgltf` (licence in `third_party/cgltf/LICENSE`), from https://github.com/jkuhlmann/cgltf at v1.15 |
 | stb_image | MIT OR Unlicense | Sean Barrett | `third_party/stb/stb_image.h` (licence at the end of the file), from https://github.com/nothings/stb, v2.30 |

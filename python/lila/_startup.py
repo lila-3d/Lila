@@ -25,7 +25,7 @@ class _LogWriter:
 
 
 def _add_site_dir():
-    """Lila's own site-packages (PySide6 matching Lila's Qt, tools installed for scripts) goes on sys.path."""
+    """The user's Lila site-packages (tools installed for scripts) goes last on sys.path, behind the bundled PySide6."""
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA", "")
     else:

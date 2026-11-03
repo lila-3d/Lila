@@ -66,6 +66,7 @@ if(VCPKG_INSTALLED_DIR)
 endif()
 find_package(Qt6 6.11 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
 include(LilaDeployQt)
+include(LilaPySide)
 # Q_SIGNALS, Q_SLOTS and Q_EMIT only: the precompiled header puts Qt in every source, where signals, slots and emit are
 # ordinary names.
 add_compile_definitions(QT_NO_KEYWORDS)
