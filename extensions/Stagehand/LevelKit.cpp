@@ -174,7 +174,7 @@ json pointJson(Graph& g, const SnapPoint& p, const std::vector<SnapPoint>& all, 
 }
 
 /** World bounds of every mesh under a node. */
-bool worldBoundsOf(Graph& g, NodeId id, glm::dvec3& lo, glm::dvec3& hi)
+bool treeWorldBounds(Graph& g, NodeId id, glm::dvec3& lo, glm::dvec3& hi)
 {
     glm::dvec3 a, b;
     if (!boundsUnder(g, id, a, b))
@@ -432,7 +432,7 @@ void registerKitCommands(ext::Context& ctx)
             {
                 const NodeId id = nodeArg(g, name, "dropToSurface");
                 glm::dvec3 lo, hi;
-                if (!worldBoundsOf(g, id, lo, hi))
+                if (!treeWorldBounds(g, id, lo, hi))
                     continue;
                 std::set<NodeId> skip;
                 for (NodeId m : meshesOf(g, id))
@@ -481,7 +481,7 @@ void registerKitCommands(ext::Context& ctx)
             {
                 glm::dvec3 lo, hi;
                 const NodeId id = nodeArg(g, n, "alignObjects");
-                if (worldBoundsOf(g, id, lo, hi))
+                if (treeWorldBounds(g, id, lo, hi))
                     objs.push_back({id, {lo, hi}});
             }
             if (objs.size() < 2)
@@ -534,7 +534,7 @@ void registerKitCommands(ext::Context& ctx)
             for (const std::string& n : a.objects())
             {
                 O o{nodeArg(g, n, "distribute")};
-                if (worldBoundsOf(g, o.id, o.lo, o.hi))
+                if (treeWorldBounds(g, o.id, o.lo, o.hi))
                     objs.push_back(o);
             }
             if (objs.size() < 2)
@@ -582,7 +582,7 @@ void registerKitCommands(ext::Context& ctx)
                 const NodeId id = nodeArg(g, n, "randomizeTransforms");
                 glm::dvec3 lo, hi;
                 const glm::dmat4 w = g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-                const glm::dvec3 c = worldBoundsOf(g, id, lo, hi) ? (lo + hi) * 0.5 : glm::dvec3(w[3]);
+                const glm::dvec3 c = treeWorldBounds(g, id, lo, hi) ? (lo + hi) * 0.5 : glm::dvec3(w[3]);
                 const glm::dvec3 move(t.x * u(rng), t.y * u(rng), t.z * u(rng));
                 const glm::dvec3 turn(r.x * u(rng), r.y * u(rng), r.z * u(rng));
                 const double s = smin + (smax - smin) * (u(rng) * 0.5 + 0.5);

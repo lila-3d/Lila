@@ -80,34 +80,14 @@ std::vector<FlagDef> worldFlags()
         {"ground", "gr", T::Bool, true, "A floor plane at groundHeight, under everything."},
         {"groundHeight", "gh", T::Float, 0.0, "Height of the floor plane, cm."},
         {"gravity", "g", T::List, json::array({0.0, -981.0, 0.0}), "Gravity, cm/s2."},
-        {"time", "ti", T::Float, 10.0, "Longest it simulates, seconds; it stops sooner once everything is at rest.", {}, {}, 0.0},
+        {"time", "ti", T::Float, 120.0, "Longest it simulates, seconds: it runs until everything is at rest, and the report says capped when "
+                                        "this stopped it first.", {}, {}, 0.0},
+        {"reach", "re", T::Float, 300.0, "Without colliders=, meshes within this many cm of a mover join as colliders (more below it, the way "
+                                         "it falls).", {}, {}, 0.0},
     };
 }
 
-/** World bounds of a mesh's output. False for an empty mesh. */
-bool boundsOf(Graph& g, NodeId id, glm::dvec3& lo, glm::dvec3& hi)
-{
-    Node* n = g.node(id);
-    const int out = n ? n->type().attrIndex("outMesh") : -1;
-    if (out < 0)
-        return false;
-    const auto mesh = n->as<scene::MeshPtr>(out);
-    if (!mesh)
-        return false;
-    const glm::dmat4 w = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
-    lo = glm::dvec3(1e300);
-    hi = glm::dvec3(-1e300);
-    bool any = false;
-    for (geo::Index p = 0; p < mesh->pointCapacity(); ++p)
-        if (mesh->pointValid(p))
-        {
-            const glm::dvec3 q(w * glm::dvec4(mesh->position(p), 1.0));
-            lo = glm::min(lo, q);
-            hi = glm::max(hi, q);
-            any = true;
-        }
-    return any;
-}
+bool boundsOf(Graph& g, NodeId id, glm::dvec3& lo, glm::dvec3& hi) { return worldBoundsOf(g, id, lo, hi); }
 
 double volumeOf(const glm::dvec3& lo, const glm::dvec3& hi)
 {
@@ -136,6 +116,7 @@ WorldOptions optionsOf(Graph& g, const Args& a, std::vector<NodeId> movers, cons
     o.ground = a.get<bool>("ground", true);
     o.groundHeight = a.get<double>("groundHeight", 0.0);
     o.gravity = vecArg(a, "gravity", o.gravity, cmd);
+    o.reach = a.get<double>("reach", o.reach);
     return o;
 }
 
@@ -167,7 +148,7 @@ json supportsOf(const World& w, int body, const std::vector<physics::Contact>& c
 }
 
 /** The report every physics command returns: per mover where it went, whether it rests, what holds it up. */
-json reportOf(Graph& g, const World& w, double seconds, const glm::dvec3& gravity)
+json reportOf(Graph& g, const World& w, double seconds, const glm::dvec3& gravity, bool capped = false)
 {
     const glm::dvec3 up = glm::length(gravity) > 1e-9 ? -glm::normalize(gravity) : glm::dvec3(0, 1, 0);
     const std::vector<physics::Contact> contacts = w.scene().contacts();
@@ -179,7 +160,8 @@ json reportOf(Graph& g, const World& w, double seconds, const glm::dvec3& gravit
         const glm::dmat4 now = w.worldMatrix(int(i)), start = w.startMatrix(int(i));
         const double pen = w.scene().penetration(int(i));
         deepest = std::max(deepest, pen);
-        const bool asleep = w.scene().asleep(int(i));
+        // Asleep, or as good as: a settle stops once everything has been this still for a while.
+        const bool asleep = w.scene().asleep(int(i)) || glm::length(w.scene().velocity(int(i))) < 1.0;
         rest = rest && asleep;
         Node* n = g.node(w.node(int(i)));
         movers.push_back({{"node", n ? n->path() : std::string()},
@@ -190,7 +172,8 @@ json reportOf(Graph& g, const World& w, double seconds, const glm::dvec3& gravit
                           {"penetration", pen},
                           {"restsOn", supportsOf(w, int(i), contacts, g, up)}});
     }
-    return {{"movers", movers}, {"seconds", seconds}, {"steps", w.scene().steps()}, {"atRest", rest}, {"deepestPenetration", deepest}};
+    return {{"movers", movers}, {"seconds", seconds}, {"steps", w.scene().steps()}, {"atRest", rest}, {"capped", capped},
+            {"deepestPenetration", deepest}, {"colliders", int64_t(w.scene().size() - w.movers())}};
 }
 
 /** A point on the target's side away from the direction, high up: where a hand pushes to topple it. */
@@ -204,7 +187,7 @@ glm::dvec3 pushPoint(const glm::dvec3& lo, const glm::dvec3& hi, const glm::dvec
 }
 
 const char* kRoleNames[] = {"dynamic", "static", "kinematic", "off"};
-const char* kShapeNames[] = {"auto", "box", "hull", "sphere", "capsule", "mesh"};
+const char* kShapeNames[] = {"auto", "box", "hull", "sphere", "capsule", "mesh", "decompose"};
 
 int64_t choiceIndex(const std::string& v, std::initializer_list<const char*> names, const char* what)
 {
@@ -294,7 +277,8 @@ void registerCommands(ext::Context& ctx)
                   {"density", "d", T::Float, nullptr, "kg/m3.", {}, {}, 1.0},
                   {"friction", "f", T::Float, nullptr, "0 to 1.", {}, {}, 0.0},
                   {"bounce", "b", T::Float, nullptr, "0 to 1.", {}, {}, 0.0, 1.0},
-                  {"shape", "s", T::String, nullptr, "auto, box, hull, sphere, capsule or mesh.", shapes},
+                  {"shape", "s", T::String, nullptr, "auto, box, hull, sphere, capsule, mesh or decompose (convex parts).", shapes},
+                  {"maxParts", "mp", T::Int, nullptr, "Most convex parts for decompose.", {}, {}, 1.0, 64.0},
                   {"rounding", "ro", T::Float, nullptr, "Collision edge rounding, cm.", {}, {}, 0.0},
                   {"remove", "rm", T::Bool, false, "Delete the body nodes instead."}},
         .run = [](const Args& a) -> json {
@@ -333,8 +317,8 @@ void registerCommands(ext::Context& ctx)
                 if (a.has("role"))
                     set("role", choiceIndex(a.get<std::string>("role"), {"dynamic", "static", "kinematic", "off"}, "role"));
                 if (a.has("shape"))
-                    set("shape", choiceIndex(a.get<std::string>("shape"), {"auto", "box", "hull", "sphere", "capsule", "mesh"}, "shape"));
-                for (const char* f : {"density", "friction", "bounce", "rounding"})
+                    set("shape", choiceIndex(a.get<std::string>("shape"), {"auto", "box", "hull", "sphere", "capsule", "mesh", "decompose"}, "shape"));
+                for (const char* f : {"density", "friction", "bounce", "rounding", "maxParts"})
                     if (a.has(f))
                         set(f, a.flags[f]);
                 out.push_back(p);
@@ -359,9 +343,9 @@ void registerCommands(ext::Context& ctx)
             Graph& g = Graph::current();
             WorldOptions o = optionsOf(g, a, meshesOf(g, a.objects(), "settle"), "settle", false);
             World w(g, o);
-            const double t = w.scene().settle(a.get<double>("time", 10.0));
+            const physics::SettleResult t = w.settle(a.get<double>("time", 120.0));
             w.write(g);
-            return reportOf(g, w, t, o.gravity);
+            return reportOf(g, w, t.seconds, o.gravity, t.capped);
         },
         .examples = {"settle(['mug', 'plate', 'book_01'])", "settle('crate', time=10, ground=False)"},
     });
@@ -399,9 +383,9 @@ void registerCommands(ext::Context& ctx)
             w.scene().bounds(0, lo, hi);
             const glm::dvec3 at = a.has("at") ? vecArg(a, "at", {}, "push") : pushPoint(lo, hi, glm::normalize(dir), up);
             w.scene().impulse(0, glm::normalize(dir) * a.get<double>("speed", 150.0) * w.scene().mass(0), at);
-            const double t = w.scene().settle(a.get<double>("time", 10.0));
+            const physics::SettleResult t = w.settle(a.get<double>("time", 120.0));
             w.write(g);
-            json r = reportOf(g, w, t, o.gravity);
+            json r = reportOf(g, w, t.seconds, o.gravity, t.capped);
             r["pushedAt"] = v3(at);
             return r;
         },
@@ -429,8 +413,9 @@ void registerCommands(ext::Context& ctx)
             std::uniform_real_distribution<double> u(-1.0, 1.0);
             const double strength = a.get<double>("strength", 40.0);
             const int64_t rounds = std::max<int64_t>(1, a.get<int64_t>("times", 3));
-            const double each = a.get<double>("time", 10.0) / double(rounds);
+            const double each = a.get<double>("time", 120.0) / double(rounds);
             double t = 0.0;
+            bool capped = false;
             for (int64_t r = 0; r < rounds; ++r)
             {
                 for (size_t i = 0; i < s.world().movers(); ++i)
@@ -441,10 +426,12 @@ void registerCommands(ext::Context& ctx)
                     const glm::dvec3 at = (lo + hi) * 0.5 + glm::dvec3(u(rng), u(rng), u(rng)) * (hi - lo) * 0.25;
                     scene.impulse(int(i), dir * strength * scene.mass(int(i)), at);
                 }
-                t += scene.settle(each);
+                const physics::SettleResult done = s.world().settle(each);
+                t += done.seconds;
+                capped = done.capped;
             }
             s.world().write(g);
-            return reportOf(g, s.world(), t, o.gravity);
+            return reportOf(g, s.world(), t, o.gravity, capped);
         },
         .examples = {"wiggle(['book_01', 'book_02', 'book_03'], strength=60)"},
     });
@@ -507,9 +494,9 @@ void registerCommands(ext::Context& ctx)
                 p.position += move;
                 scene.setPose(int(i), p);
             }
-            const double t = scene.settle(a.get<double>("time", 10.0));
+            const physics::SettleResult t = w.settle(a.get<double>("time", 120.0));
             w.write(g);
-            return reportOf(g, w, t, o.gravity);
+            return reportOf(g, w, t.seconds, o.gravity, t.capped);
         },
         .examples = {"drop('mug', onto='desk', at=[40, 0, 10])", "drop(['apple_01', 'apple_02', 'apple_03'], onto='bowl', spin=180)"},
     });
@@ -561,12 +548,13 @@ void registerCommands(ext::Context& ctx)
             o.ground = a.get<bool>("ground", true);
             o.groundHeight = a.get<double>("groundHeight", 0.0);
             o.gravity = vecArg(a, "gravity", o.gravity, "shake");
+            o.reach = a.get<double>("reach", o.reach);
             Session s(g, o);
             const int body = s.world().bodyOf(target);
             if (body < 0)
                 throw CommandError("shake: " + g.node(target)->path() + " isn't visible to physics");
             s.shake(body, vecArg(a, "amplitude", {3, 0, 0}, "shake"), a.get<double>("duration", 1.0));
-            const double total = a.get<double>("duration", 1.0) + a.get<double>("time", 10.0);
+            const double total = a.get<double>("duration", 1.0) + a.get<double>("time", 120.0);
             double t = 0.0;
             while (t < total)
             {
@@ -576,7 +564,7 @@ void registerCommands(ext::Context& ctx)
                     break;
             }
             s.world().write(g);
-            return reportOf(g, s.world(), t, o.gravity);
+            return reportOf(g, s.world(), t, o.gravity, t >= total);
         },
         .examples = {"shake('shelf', amplitude=[4, 0, 0], duration=1.5)"},
     });
@@ -593,8 +581,8 @@ void registerCommands(ext::Context& ctx)
             for (NodeId id : meshesOf(g, a.objects(), "dressInfo"))
             {
                 const BodySettings s = bodySettings(g, id);
-                const physics::Shape shape = shapeOf(g, id, s.shape, s.rounding, s.role == RoleChoice::Static && s.hasNode);
-                const char* kinds[] = {"hull", "box", "sphere", "capsule", "mesh"};
+                const physics::Shape shape = shapeOf(g, id, s.shape, s.rounding, s.role == RoleChoice::Static && s.hasNode, s.maxParts);
+                const char* kinds[] = {"hull", "box", "sphere", "capsule", "mesh", "compound", "heightfield"};
                 glm::dvec3 lo(0.0), hi(0.0);
                 boundsOf(g, id, lo, hi);
                 WorldOptions o;
@@ -611,6 +599,7 @@ void registerCommands(ext::Context& ctx)
                                {"friction", s.friction},
                                {"bounce", s.bounce},
                                {"shape", kinds[int(shape.kind)]},
+                               {"parts", shape.kind == physics::Shape::Kind::Compound ? int64_t(shape.parts.size()) : int64_t(1)},
                                {"mass", w.movers() ? w.scene().mass(0) : 0.0},
                                {"boundsMin", v3(lo)},
                                {"boundsMax", v3(hi)}});

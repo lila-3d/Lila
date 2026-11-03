@@ -24,10 +24,12 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -45,11 +47,14 @@
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <list>
 #include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace lila::physics
 {
@@ -57,6 +62,7 @@ namespace
 {
 constexpr double kM = 0.01; // cm to m
 constexpr JPH::uint kMaxBodies = 1u << 16;
+constexpr JPH::uint kMaxBodiesLimit = 1u << 18;
 
 namespace layers
 {
@@ -176,15 +182,65 @@ private:
     std::unique_ptr<tbb::task_group> mTasks = std::make_unique<tbb::task_group>();
 };
 
+/** Built shapes by key, the least recently used dropped past the limit. Bodies still holding a dropped shape keep it alive. */
+class ShapeCache
+{
+public:
+    JPH::RefConst<JPH::Shape> find(uint64_t key)
+    {
+        std::lock_guard lock(mMutex);
+        const auto it = mMap.find(key);
+        if (it == mMap.end())
+            return nullptr;
+        mOrder.splice(mOrder.begin(), mOrder, it->second.second);
+        return it->second.first;
+    }
+
+    void put(uint64_t key, JPH::RefConst<JPH::Shape> shape)
+    {
+        std::lock_guard lock(mMutex);
+        if (mMap.count(key))
+            return;
+        mOrder.push_front(key);
+        mMap.emplace(key, std::make_pair(std::move(shape), mOrder.begin()));
+        while (mMap.size() > kLimit)
+        {
+            mMap.erase(mOrder.back());
+            mOrder.pop_back();
+        }
+    }
+
+    size_t size()
+    {
+        std::lock_guard lock(mMutex);
+        return mMap.size();
+    }
+
+    void clear()
+    {
+        std::lock_guard lock(mMutex);
+        mMap.clear();
+        mOrder.clear();
+    }
+
+private:
+    static constexpr size_t kLimit = 8192;
+    std::mutex mMutex;
+    std::list<uint64_t> mOrder;
+    std::unordered_map<uint64_t, std::pair<JPH::RefConst<JPH::Shape>, std::list<uint64_t>::iterator>> mMap;
+};
+
 struct Runtime
 {
     std::unique_ptr<JPH::TempAllocatorImpl> temp;
     std::unique_ptr<JPH::JobSystem> jobs, serialJobs;
+    ShapeCache shapes;
     bool ready = false;
     ~Runtime()
     {
         if (!ready)
             return;
+        shapes.clear();
         jobs.reset();
         serialJobs.reset();
         temp.reset();
@@ -261,7 +317,48 @@ JPH::RefConst<JPH::Shape> mesh(const std::vector<glm::dvec3>& t)
     return create(JPH::MeshShapeSettings(tris), "mesh");
 }
 
-JPH::RefConst<JPH::Shape> shapeOf(const BodyDesc& b)
+/** The convex parts as one compound; a single part is just its hull. */
+JPH::RefConst<JPH::Shape> compound(const Shape& s, double density)
+{
+    std::vector<JPH::RefConst<JPH::Shape>> hulls;
+    for (const auto& part : s.parts)
+        if (part && part->size() >= 4)
+            hulls.push_back(hull(*part, s.rounding, density));
+    if (hulls.empty())
+        return hull(s.points ? *s.points : std::vector<glm::dvec3>{}, s.rounding, density);
+    if (hulls.size() == 1)
+        return hulls[0];
+    JPH::StaticCompoundShapeSettings cs;
+    for (const auto& h : hulls)
+        cs.AddShape(JPH::Vec3::sZero(), JPH::Quat::sIdentity(), h.GetPtr());
+    return create(cs, "compound");
+}
+
+/**
+ * Jolt wants a square of samples whose side over the block size is a power of two; the grid sits in its corner and the
+ * rest is padded with holes.
+ */
+JPH::RefConst<JPH::Shape> heightfield(const Shape& s)
+{
+    const int nx = s.samplesX, nz = s.samplesZ;
+    if (!s.heights || nx < 2 || nz < 2 || s.heights->size() < size_t(nx) * size_t(nz))
+        return sphere(0.001, 1000.0);
+    constexpr JPH::uint32 kBlock = 4;
+    JPH::uint32 side = kBlock * 2;
+    while (side < JPH::uint32(std::max(nx, nz)))
+        side *= 2;
+    std::vector<float> samples(size_t(side) * side, JPH::HeightFieldShapeConstants::cNoCollisionValue);
+    const std::vector<float>& h = *s.heights;
+    for (int z = 0; z < nz; ++z)
+        for (int x = 0; x < nx; ++x)
+            samples[size_t(z) * side + size_t(x)] = float(double(h[size_t(z) * size_t(nx) + size_t(x)]) * kM);
+    JPH::HeightFieldShapeSettings hs(samples.data(), JPH::Vec3(float(s.gridOrigin.x * kM), 0.0f, float(s.gridOrigin.y * kM)),
+                                     JPH::Vec3(float(s.cell * kM), 1.0f, float(s.cell * kM)), side);
+    hs.mBlockSize = kBlock;
+    return create(hs, "heightfield");
+}
+
+JPH::RefConst<JPH::Shape> buildShape(const BodyDesc& b)
 {
     static const std::vector<glm::dvec3> kNone;
     const Shape& s = b.shape;
@@ -276,6 +373,13 @@ JPH::RefConst<JPH::Shape> shapeOf(const BodyDesc& b)
         return hull(pts, s.rounding, b.density);
     case Shape::Kind::Hull:
         return hull(pts, s.rounding, b.density);
+    case Shape::Kind::Compound:
+        inner = compound(s, b.density);
+        break;
+    case Shape::Kind::Heightfield:
+        if (b.role == Role::Dynamic)
+            throw std::invalid_argument("a heightfield body can't be dynamic");
+        return heightfield(s);
     case Shape::Kind::Box:
     {
         const glm::dvec3 h = glm::max(s.halfExtents * kM, glm::dvec3(0.0005));
@@ -300,6 +404,41 @@ JPH::RefConst<JPH::Shape> shapeOf(const BodyDesc& b)
         return inner;
     JPH::RotatedTranslatedShapeSettings rt(toJ(s.center * kM), toJ(s.rotation), inner);
     return create(rt, "offset shape");
+}
+
+uint64_t mix(uint64_t h, uint64_t v)
+{
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    h ^= h >> 31;
+    h *= 0xBF58476D1CE4E5B9ull;
+    return h ^ (h >> 29);
+}
+
+uint64_t bits(double d)
+{
+    uint64_t u = 0;
+    std::memcpy(&u, &d, sizeof u);
+    return u;
+}
+
+/** The body's shape, from the cache when the shape has a key. */
+JPH::RefConst<JPH::Shape> shapeOf(const BodyDesc& b)
+{
+    const Shape& s = b.shape;
+    if (s.key == 0)
+        return buildShape(b);
+    const bool dynamicMesh = s.kind == Shape::Kind::Mesh && b.role == Role::Dynamic;
+    uint64_t key = mix(s.key, uint64_t(s.kind) * 2 + (dynamicMesh ? 1 : 0));
+    for (double d : {s.rounding, s.center.x, s.center.y, s.center.z, s.halfExtents.x, s.halfExtents.y, s.halfExtents.z, s.radius, s.halfHeight, s.rotation.w, s.rotation.x, s.rotation.y, s.rotation.z})
+        key = mix(key, bits(d));
+    // Density lives in the convex shapes; static meshes and heightfields have none.
+    if (s.kind != Shape::Kind::Heightfield && (s.kind != Shape::Kind::Mesh || dynamicMesh))
+        key = mix(key, bits(b.density));
+    if (JPH::RefConst<JPH::Shape> hit = gRuntime.shapes.find(key))
+        return hit;
+    JPH::RefConst<JPH::Shape> made = buildShape(b);
+    gRuntime.shapes.put(key, made);
+    return made;
 }
 
 /** A pair of bodies, the smaller index first; the ground is -1. */
@@ -367,6 +506,32 @@ struct RigidScene::Impl final : public JPH::ContactListener
 
     static double inverseMass(const JPH::Body& b) { return b.IsDynamic() ? double(b.GetMotionPropertiesUnchecked()->GetInverseMass()) : 0.0; }
 
+    /** A world point (cm) in Jolt's space: metres from the scene's origin. */
+    JPH::RVec3 toScene(const glm::dvec3& p) const { return JPH::RVec3(toJ((p - settings.origin) * kM)); }
+    glm::dvec3 fromScene(JPH::RVec3Arg p) const { return fromJ(JPH::Vec3(p)) / kM + settings.origin; }
+
+    /** Solves a contact between very different masses as if the heavier were only maxMassRatio times the lighter. */
+    void balance(const JPH::Body& b1, const JPH::Body& b2, JPH::ContactSettings& cs) const
+    {
+        const double r = settings.maxMassRatio;
+        if (r <= 1.0 || !b1.IsDynamic() || !b2.IsDynamic())
+            return;
+        const double i1 = inverseMass(b1), i2 = inverseMass(b2);
+        if (i1 <= 0.0 || i2 <= 0.0)
+            return;
+        const double m1 = 1.0 / i1, m2 = 1.0 / i2;
+        if (m1 > r * m2)
+        {
+            cs.mInvMassScale1 = float(m1 / (r * m2));
+            cs.mInvInertiaScale1 = cs.mInvMassScale1;
+        }
+        else if (m2 > r * m1)
+        {
+            cs.mInvMassScale2 = float(m2 / (r * m1));
+            cs.mInvInertiaScale2 = cs.mInvMassScale2;
+        }
+    }
+
     void touch(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m)
     {
         if (!settings.recordContacts)
@@ -390,7 +555,7 @@ struct RigidScene::Impl final : public JPH::ContactListener
         if (double(m.mPenetrationDepth) > t.depth)
         {
             t.depth = double(m.mPenetrationDepth);
-            t.point = fromJ(JPH::Vec3(p)) / kM;
+            t.point = fromScene(p);
             t.normal = fromJ(n);
         }
         t.speed = std::max(t.speed, normalSpeed / kM);
@@ -398,9 +563,14 @@ struct RigidScene::Impl final : public JPH::ContactListener
         t.reducedMass = std::max(t.reducedMass, inv > 0.0 ? 1.0 / inv : 0.0);
     }
 
-    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings&) override { touch(b1, b2, m); }
-    void OnContactPersisted(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings&) override
+    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings& cs) override
     {
+        balance(b1, b2, cs);
+        touch(b1, b2, m);
+    }
+    void OnContactPersisted(const JPH::Body& b1, const JPH::Body& b2, const JPH::ContactManifold& m, JPH::ContactSettings& cs) override
+    {
+        balance(b1, b2, cs);
         touch(b1, b2, m);
     }
 
@@ -435,8 +605,8 @@ RigidScene::RigidScene(const Settings& s) : mImpl(std::make_unique<Impl>())
     const char* threads = std::getenv("LILA_PHYSICS_THREADS");
     w.jobs = s.serial || (threads && std::atoi(threads) == 1) ? gRuntime.serialJobs.get() : gRuntime.jobs.get();
     w.settings = s;
-    w.maxBodies = s.maxBodies > 0 ? JPH::uint(s.maxBodies) : kMaxBodies;
-    const JPH::uint maxPairs = s.maxPairs > 0 ? JPH::uint(s.maxPairs) : kMaxBodies;
+    w.maxBodies = s.maxBodies > 0 ? std::min(JPH::uint(s.maxBodies), kMaxBodiesLimit) : kMaxBodies;
+    const JPH::uint maxPairs = s.maxPairs > 0 ? JPH::uint(s.maxPairs) : std::max(kMaxBodies, w.maxBodies);
     w.system.Init(w.maxBodies, 0, maxPairs, maxPairs, w.bp, w.objectVsBp, w.pairs);
     JPH::PhysicsSettings ps;
     ps.mDeterministicSimulation = true;
@@ -456,7 +626,9 @@ RigidScene::RigidScene(const Settings& s) : mImpl(std::make_unique<Impl>())
     w.system.SetContactListener(&w);
     if (s.ground)
     {
-        JPH::BodyCreationSettings g(create(JPH::PlaneShapeSettings(JPH::Plane(JPH::Vec3(0, 1, 0), float(-s.groundHeight * kM)), nullptr, 1000.0f), "ground"),
+        const float extent = float(std::clamp(s.groundExtent, 100.0, 1e7) * kM);
+        const JPH::Plane plane(JPH::Vec3(0, 1, 0), float(-(s.groundHeight - s.origin.y) * kM));
+        JPH::BodyCreationSettings g(create(JPH::PlaneShapeSettings(plane, nullptr, extent), "ground"),
                                     JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, layers::kStatic);
         g.mFriction = float(s.groundFriction);
         g.mUserData = 0;
@@ -491,7 +663,7 @@ int RigidScene::add(const BodyDesc& b)
         throw std::invalid_argument("too many bodies (" + std::to_string(w.maxBodies) + " at most)");
     const bool fixed = b.role == Role::Static;
     const JPH::EMotionType motion = fixed ? JPH::EMotionType::Static : b.role == Role::Kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
-    JPH::BodyCreationSettings bs(shapeOf(b), JPH::RVec3(toJ(b.position * kM)), toJ(b.rotation), motion,
+    JPH::BodyCreationSettings bs(shapeOf(b), w.toScene(b.position), toJ(b.rotation), motion,
                                  !b.collides ? layers::kNone : fixed ? layers::kStatic : layers::kMoving);
     // Anything may change role later: a pinned book let go, a shelf shaken by hand. setRole keeps meshes from going dynamic.
     bs.mAllowDynamicOrKinematic = true;
@@ -557,13 +729,50 @@ double RigidScene::settle(double seconds, double dt)
     return t;
 }
 
+SettleResult RigidScene::settleUntilRest(const SettleOptions& o)
+{
+    Impl& w = *mImpl;
+    SettleResult r;
+    const double dt = std::max(o.dt, 1e-4);
+    double quiet = 0.0;
+    while (r.seconds + dt * 0.5 < o.cap)
+    {
+        step(dt);
+        r.seconds += dt;
+        ++r.steps;
+        if (atRest())
+        {
+            r.atRest = true;
+            break;
+        }
+        bool still = o.quietTime > 0.0;
+        for (size_t i = 0; still && i < w.ids.size(); ++i)
+        {
+            if (w.descs[i].role != Role::Dynamic || !w.bi().IsActive(w.ids[i]))
+                continue;
+            still = double(w.bi().GetLinearVelocity(w.ids[i]).Length()) / kM < o.quietSpeed &&
+                    double(w.bi().GetAngularVelocity(w.ids[i]).Length()) < o.quietSpin;
+        }
+        quiet = still ? quiet + dt : 0.0;
+        if (still && quiet >= o.quietTime)
+        {
+            r.atRest = true;
+            break;
+        }
+    }
+    r.capped = !r.atRest;
+    return r;
+}
+
 int64_t RigidScene::steps() const { return mImpl->stepCount; }
+
+const Settings& RigidScene::settings() const { return mImpl->settings; }
 
 Pose RigidScene::pose(int body) const
 {
     const JPH::BodyID id = mImpl->id(body);
     const JPH::BodyInterface& bi = mImpl->bi();
-    return {fromJ(JPH::Vec3(bi.GetPosition(id))) / kM, fromJ(bi.GetRotation(id))};
+    return {mImpl->fromScene(bi.GetPosition(id)), fromJ(bi.GetRotation(id))};
 }
 
 glm::dvec3 RigidScene::velocity(int body) const { return fromJ(mImpl->bi().GetLinearVelocity(mImpl->id(body))) / kM; }
@@ -586,8 +795,8 @@ void RigidScene::setRole(int body, Role role)
     BodyDesc& d = w.descs[size_t(body)];
     if (d.role == role)
         return;
-    if (role != Role::Static && d.shape.kind == Shape::Kind::Mesh && role == Role::Dynamic)
-        throw std::invalid_argument("a triangle mesh body can't be dynamic");
+    if (role == Role::Dynamic && (d.shape.kind == Shape::Kind::Mesh || d.shape.kind == Shape::Kind::Heightfield))
+        throw std::invalid_argument("a triangle mesh or heightfield body can't be dynamic");
     JPH::BodyInterface& bi = w.bi();
     bi.SetObjectLayer(id, !d.collides ? layers::kNone : role == Role::Static ? layers::kStatic : layers::kMoving);
     bi.SetMotionType(id,
@@ -600,12 +809,12 @@ void RigidScene::setRole(int body, Role role)
 
 void RigidScene::moveTo(int body, const Pose& target, double dt)
 {
-    mImpl->bi().MoveKinematic(mImpl->id(body), JPH::RVec3(toJ(target.position * kM)), toJ(target.rotation), float(std::max(dt, 1e-6)));
+    mImpl->bi().MoveKinematic(mImpl->id(body), mImpl->toScene(target.position), toJ(target.rotation), float(std::max(dt, 1e-6)));
 }
 
 void RigidScene::setPose(int body, const Pose& p)
 {
-    mImpl->bi().SetPositionAndRotation(mImpl->id(body), JPH::RVec3(toJ(p.position * kM)), toJ(p.rotation), JPH::EActivation::Activate);
+    mImpl->bi().SetPositionAndRotation(mImpl->id(body), mImpl->toScene(p.position), toJ(p.rotation), JPH::EActivation::Activate);
 }
 
 void RigidScene::setVelocity(int body, const glm::dvec3& linear, const glm::dvec3& angular)
@@ -618,7 +827,7 @@ void RigidScene::impulse(int body, const glm::dvec3& j, const glm::dvec3& at)
     const JPH::BodyID id = mImpl->id(body);
     if (mImpl->descs[size_t(body)].role != Role::Dynamic)
         return;
-    mImpl->bi().AddImpulse(id, toJ(j * kM), JPH::RVec3(toJ(at * kM)));
+    mImpl->bi().AddImpulse(id, toJ(j * kM), mImpl->toScene(at));
 }
 
 void RigidScene::kick(int body, const glm::dvec3& v)
@@ -654,7 +863,7 @@ void RigidScene::pull(int body, const glm::dvec3& local, const glm::dvec3& targe
     const double blend = 1.0 - std::exp(-omega * dt);
     const glm::dvec3 v = fromJ(b.GetLinearVelocity()), wv = fromJ(b.GetAngularVelocity());
     const glm::dvec3 pointVel = v + glm::cross(wv, r);
-    const glm::dvec3 want = (target * kM - p) * omega;
+    const glm::dvec3 want = ((target - w.settings.origin) * kM - p) * omega;
     const glm::dvec3 dv = (want - pointVel) * blend;
 
     // The impulse at p that changes p's velocity by dv: K = m^-1 I - [r] I^-1 [r].
@@ -685,13 +894,13 @@ double RigidScene::mass(int body) const
     return inv > 0.0f ? 1.0 / double(inv) : 0.0;
 }
 
-glm::dvec3 RigidScene::centerOfMass(int body) const { return fromJ(JPH::Vec3(mImpl->bi().GetCenterOfMassPosition(mImpl->id(body)))) / kM; }
+glm::dvec3 RigidScene::centerOfMass(int body) const { return mImpl->fromScene(mImpl->bi().GetCenterOfMassPosition(mImpl->id(body))); }
 
 void RigidScene::bounds(int body, glm::dvec3& lo, glm::dvec3& hi) const
 {
     const JPH::AABox box = mImpl->bi().GetTransformedShape(mImpl->id(body)).GetWorldSpaceBounds();
-    lo = fromJ(box.mMin) / kM;
-    hi = fromJ(box.mMax) / kM;
+    lo = fromJ(box.mMin) / kM + mImpl->settings.origin;
+    hi = fromJ(box.mMax) / kM + mImpl->settings.origin;
 }
 
 std::optional<RayHit> RigidScene::raycast(const glm::dvec3& origin, const glm::dvec3& direction, double maxDistance) const
@@ -701,7 +910,7 @@ std::optional<RayHit> RigidScene::raycast(const glm::dvec3& origin, const glm::d
     if (len < 1e-12 || maxDistance <= 0.0)
         return std::nullopt;
     const glm::dvec3 d = direction / len;
-    const JPH::RRayCast ray(JPH::RVec3(toJ(origin * kM)), toJ(d * maxDistance * kM));
+    const JPH::RRayCast ray(w.toScene(origin), toJ(d * maxDistance * kM));
     JPH::RayCastResult hit;
     if (!w.system.GetNarrowPhaseQueryNoLock().CastRay(ray, hit))
         return std::nullopt;
@@ -713,7 +922,7 @@ std::optional<RayHit> RigidScene::raycast(const glm::dvec3& origin, const glm::d
     {
         const JPH::Body& b = lock.GetBody();
         out.body = Impl::indexOf(b);
-        out.normal = fromJ(b.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, JPH::RVec3(toJ(out.point * kM))));
+        out.normal = fromJ(b.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, w.toScene(out.point)));
     }
     return out;
 }
@@ -781,7 +990,7 @@ int RigidScene::addJoint(const JointDesc& j)
     }
     if (!ba || !bb)
         throw std::invalid_argument("a joint's body is missing");
-    const JPH::RVec3 p1(toJ(j.pointA * kM)), p2(toJ(j.pointB * kM));
+    const JPH::RVec3 p1 = w.toScene(j.pointA), p2 = w.toScene(j.pointB);
     JPH::Ref<JPH::TwoBodyConstraint> c;
     switch (j.kind)
     {
@@ -973,7 +1182,7 @@ glm::dvec3 RigidScene::angularVelocity(int body) const { return fromJ(mImpl->bi(
 
 glm::dvec3 RigidScene::pointVelocity(int body, const glm::dvec3& at) const
 {
-    return fromJ(mImpl->bi().GetPointVelocity(mImpl->id(body), JPH::RVec3(toJ(at * kM)))) / kM;
+    return fromJ(mImpl->bi().GetPointVelocity(mImpl->id(body), mImpl->toScene(at))) / kM;
 }
 
 RawState RigidScene::raw(int body) const
@@ -1007,7 +1216,7 @@ void RigidScene::accelerate(int body, const glm::dvec3& linear, const glm::dvec3
 
 void RigidScene::push(int body, const glm::dvec3& force, const glm::dvec3& at)
 {
-    mImpl->bi().AddForce(mImpl->id(body), toJ(force * kM), JPH::RVec3(toJ(at * kM)), JPH::EActivation::Activate);
+    mImpl->bi().AddForce(mImpl->id(body), toJ(force * kM), mImpl->toScene(at), JPH::EActivation::Activate);
 }
 
 std::vector<glm::dvec3> hullTriangles(const std::vector<glm::dvec3>& points)
@@ -1034,5 +1243,133 @@ std::vector<glm::dvec3> hullTriangles(const std::vector<glm::dvec3>& points)
                 out.push_back(fromJ(hull->GetPoint(v) + hull->GetCenterOfMass()));
     }
     return out;
+}
+int maxBodiesLimit() { return int(kMaxBodiesLimit) - 1; }
+
+double hullVolume(const std::vector<glm::dvec3>& points)
+{
+    if (points.size() < 4)
+        return 0.0;
+    initJolt();
+    glm::dvec3 c(0.0);
+    for (const glm::dvec3& p : points)
+        c += p;
+    c /= double(points.size());
+    // Centred, so far-off points keep their precision in floats.
+    JPH::Array<JPH::Vec3> pts;
+    pts.reserve(points.size());
+    for (const glm::dvec3& p : points)
+        pts.push_back(toJ(p - c));
+    JPH::ConvexHullShapeSettings hs(pts, 0.0f);
+    JPH::ShapeSettings::ShapeResult r = hs.Create();
+    return r.HasError() ? 0.0 : double(r.Get()->GetVolume());
+}
+
+namespace
+{
+ConvexMesh hullMesh(const std::vector<glm::dvec3>& points)
+{
+    ConvexMesh out;
+    if (points.size() < 4)
+        return out;
+    initJolt();
+    glm::dvec3 c(0.0);
+    for (const glm::dvec3& p : points)
+        c += p;
+    c /= double(points.size());
+    JPH::Array<JPH::Vec3> pts;
+    pts.reserve(points.size());
+    for (const glm::dvec3& p : points)
+        pts.push_back(toJ(p - c));
+    JPH::ConvexHullShapeSettings hs(pts, 0.0f);
+    JPH::ShapeSettings::ShapeResult r = hs.Create();
+    if (r.HasError())
+        return out;
+    const auto* h = static_cast<const JPH::ConvexHullShape*>(r.Get().GetPtr());
+    const glm::dvec3 com = fromJ(h->GetCenterOfMass());
+    for (JPH::uint i = 0; i < h->GetNumPoints(); ++i)
+        out.points.push_back(fromJ(h->GetPoint(i)) + com + c);
+    std::vector<JPH::uint> face(h->GetNumPoints());
+    for (JPH::uint f = 0; f < h->GetNumFaces(); ++f)
+    {
+        const JPH::uint n = h->GetFaceVertices(f, JPH::uint(face.size()), face.data());
+        if (n >= 3)
+            out.faces.emplace_back(face.begin(), face.begin() + n);
+    }
+    return out;
+}
+
+/** Points on a sphere of the radius about center, stretched into a capsule along Y when halfHeight > 0. */
+std::vector<glm::dvec3> roundPoints(const glm::dvec3& center, double radius, double halfHeight)
+{
+    std::vector<glm::dvec3> out;
+    constexpr int kRings = 8, kSides = 12;
+    constexpr double kPi = 3.14159265358979323846;
+    for (int r = 0; r <= kRings; ++r)
+    {
+        const double phi = kPi * r / kRings;
+        const double y = std::cos(phi) * radius, ring = std::sin(phi) * radius;
+        const double shift = r < kRings / 2 ? halfHeight : r > kRings / 2 ? -halfHeight : 0.0;
+        for (int k = 0; k < (r == 0 || r == kRings ? 1 : kSides); ++k)
+        {
+            const double t = 2.0 * kPi * k / kSides;
+            const glm::dvec3 p(std::cos(t) * ring, y + shift, std::sin(t) * ring);
+            out.push_back(center + p);
+            if (r == kRings / 2 && halfHeight > 0.0)
+            {
+                out.push_back(center + p + glm::dvec3(0, halfHeight, 0));
+                out.push_back(center + p - glm::dvec3(0, halfHeight, 0));
+            }
+        }
+    }
+    return out;
+}
+} // namespace
+
+std::vector<ConvexMesh> convexMeshes(const Shape& s)
+{
+    std::vector<ConvexMesh> out;
+    auto add = [&](const std::vector<glm::dvec3>& pts) {
+        ConvexMesh m = hullMesh(pts);
+        if (!m.faces.empty())
+            out.push_back(std::move(m));
+    };
+    switch (s.kind)
+    {
+    case Shape::Kind::Box:
+    {
+        std::vector<glm::dvec3> corners;
+        for (int k = 0; k < 8; ++k)
+            corners.push_back(s.center + s.halfExtents * glm::dvec3(k & 1 ? 1 : -1, k & 2 ? 1 : -1, k & 4 ? 1 : -1));
+        add(corners);
+        break;
+    }
+    case Shape::Kind::Hull:
+        if (s.points)
+            add(*s.points);
+        break;
+    case Shape::Kind::Compound:
+        for (const auto& part : s.parts)
+            if (part)
+                add(*part);
+        break;
+    case Shape::Kind::Sphere:
+        add(roundPoints(s.center, s.radius, 0.0));
+        break;
+    case Shape::Kind::Capsule:
+        add(roundPoints(s.center, s.radius, s.halfHeight));
+        break;
+    default:
+        break;
+    }
+    return out;
+}
+
+size_t shapeCacheSize() { return gRuntime.ready ? gRuntime.shapes.size() : 0; }
+
+void clearShapeCache()
+{
+    if (gRuntime.ready)
+        gRuntime.shapes.clear();
 }
 } // namespace lila::physics

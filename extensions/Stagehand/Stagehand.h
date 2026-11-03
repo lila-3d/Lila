@@ -56,6 +56,7 @@ enum class ShapeChoice : int
     Sphere = 3,
     Capsule = 4,
     Mesh = 5, // the triangles themselves; never moves
+    Decompose = 6, // convex parts following a concave mesh
 };
 
 enum class RoleChoice : int
@@ -77,6 +78,7 @@ struct BodySettings
     double bounce = 0.1;
     ShapeChoice shape = ShapeChoice::Auto;
     double rounding = 0.2; // cm
+    int maxParts = 16;
 };
 
 /** The body node under a mesh, or null. */
@@ -93,8 +95,25 @@ struct Frame
 Frame frameOf(const glm::dmat4& world);
 glm::dmat4 matrixOf(const Frame& f);
 
-/** The collision shape of a mesh's evaluated output in its own space, scale applied. */
-physics::Shape shapeOf(Graph& g, NodeId mesh, ShapeChoice choice, double rounding, bool forStatic);
+/**
+ * The collision shape of a mesh's evaluated output in its own space, scale applied. Built once per mesh content and
+ * kept in a bounded cache, so settling again (or a thousand copies of one prop) costs nothing. A static terrain mesh
+ * becomes a heightfield.
+ */
+physics::Shape shapeOf(Graph& g, NodeId mesh, ShapeChoice choice, double rounding, bool forStatic, int maxParts = 16);
+/** shapeOf for a mesh value at a scale, without a node (and so never a heightfield). */
+physics::Shape shapeOfMesh(const lila::scene::MeshPtr& mesh, const glm::dvec3& scale, ShapeChoice choice, double rounding, bool forStatic, int maxParts = 16);
+
+/** A mesh's content hash and local bounds, worked out once per evaluated mesh. */
+struct MeshFacts
+{
+    uint64_t hash = 0;
+    glm::dvec3 lo{0.0}, hi{0.0};
+    bool any = false;
+};
+MeshFacts meshFacts(const lila::scene::MeshPtr& mesh);
+/** World bounds of a mesh node's output (its local bounds' corners transformed). False for an empty mesh. */
+bool worldBoundsOf(Graph& g, NodeId id, glm::dvec3& lo, glm::dvec3& hi);
 
 /** What a world is made of: the movers simulate, the colliders only get hit. */
 struct WorldOptions
@@ -108,9 +127,12 @@ struct WorldOptions
     bool ground = true;
     double groundHeight = 0.0;
     glm::dvec3 gravity{0.0, -981.0, 0.0};
-    /** Colliders further than this from the movers' bounds are left out, cm. */
+    /** Colliders further than this from every mover are left out, cm. */
     double reach = 300.0;
     int collisionSteps = 2;
+    int velocitySteps = 12;
+    /** Contacts solve as if no body were more than this many times heavier than the other (physics::Settings). */
+    double maxMassRatio = 50.0;
 };
 
 /**
@@ -124,6 +146,9 @@ public:
 
     physics::RigidScene& scene() { return *mScene; }
     const physics::RigidScene& scene() const { return *mScene; }
+
+    /** Settles until at rest or the cap, seconds. */
+    physics::SettleResult settle(double cap);
 
     /** Bodies in order: movers first, then colliders. */
     size_t movers() const { return mMoverCount; }

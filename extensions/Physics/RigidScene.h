@@ -35,6 +35,8 @@ struct Shape
         Sphere = 2,
         Capsule = 3, // along the body's own Y
         Mesh = 4,  // triangle soup, three points each; static and kinematic bodies only
+        Compound = 5,    // convex hulls, one per entry of parts
+        Heightfield = 6, // heights on a grid over the body's XZ; static only
     };
     Kind kind = Kind::Hull;
     /** Hull points or mesh triangles in the body's own space, its scale applied. Shared between bodies with one reference. */
@@ -47,6 +49,21 @@ struct Shape
     double rounding = 0.2;
     /** Turns the shape in the body's own space, about its origin, before center places it. */
     glm::dquat rotation{1, 0, 0, 0};
+    /** Compound: the hull points of each convex part, body space. */
+    std::vector<std::shared_ptr<const std::vector<glm::dvec3>>> parts;
+    /**
+     * Heightfield: samplesX by samplesZ heights (cm), row by row along X, the sample (x, z) at body-space
+     * (gridOrigin.x + x * cell, height, gridOrigin.y + z * cell).
+     */
+    std::shared_ptr<const std::vector<float>> heights;
+    int samplesX = 0, samplesZ = 0;
+    double cell = 100.0;
+    glm::dvec2 gridOrigin{0.0};
+    /**
+     * What the shape is made of, as a hash; shapes with the same nonzero key are built once and shared, across scenes,
+     * while they stay in a bounded cache. 0 always builds afresh. The other fields, density and role are added to it here.
+     */
+    uint64_t key = 0;
 };
 
 struct BodyDesc
@@ -95,7 +112,7 @@ struct Settings
     int velocitySteps = 0;
     int positionSteps = 0;
     bool largeIslandSplitter = true;
-    /** Bodies and touching pairs the scene makes room for; 0 for 65536. */
+    /** Bodies and touching pairs the scene makes room for; 0 for 65536. At most maxBodiesLimit(). */
     uint32_t maxBodies = 0;
     uint32_t maxPairs = 0;
     /** Jolt on the calling thread only, whatever LILA_PHYSICS_THREADS says. */
@@ -103,6 +120,50 @@ struct Settings
     /** The first this many bodies get a collision filter whose pairs setCollides switches; 0 for none. */
     int pairFilter = 0;
     double groundFriction = 0.7;
+    /**
+     * Where the simulation is centred, cm. Jolt works in single precision, so a set dressed kilometres from the world
+     * origin keeps sub-millimetre precision only when this sits near it. Poses, points and contacts in and out stay in
+     * world space; RawState is relative to it.
+     */
+    glm::dvec3 origin{0.0};
+    /** Half the size of the ground plane, cm, around origin: large enough never to run out under a level. */
+    double groundExtent = 1e7;
+    /**
+     * Contacts between bodies whose masses differ by more than this are solved as if they differed by exactly this, so a
+     * tonne of stone resting on a pebble neither jitters nor crushes through it. 0 leaves masses as they are.
+     */
+    double maxMassRatio = 0.0;
+};
+
+/** settleUntilRest's stopping rules. */
+struct SettleOptions
+{
+    /** Never simulates longer than this, seconds. */
+    double cap = 120.0;
+    double dt = 1.0 / 60.0;
+    /**
+     * Also at rest once every dynamic body has moved slower than quietSpeed (cm/s) and turned slower than quietSpin
+     * (rad/s) for quietTime seconds, even if some never fall asleep (a pile that keeps trembling).
+     */
+    double quietSpeed = 0.5;
+    double quietSpin = 0.02;
+    double quietTime = 0.5;
+};
+
+struct SettleResult
+{
+    double seconds = 0.0;
+    int64_t steps = 0;
+    bool atRest = false;
+    /** Stopped by the cap with something still moving. */
+    bool capped = false;
+};
+
+/** A convex piece of a collision shape as a polyhedron: its corners and its faces (point indices, counter-clockwise from outside). */
+struct ConvexMesh
+{
+    std::vector<glm::dvec3> points;
+    std::vector<std::vector<int>> faces;
 };
 
 enum class JointKind : int
@@ -200,7 +261,10 @@ public:
     void step(double dt);
     /** Steps of dt until every dynamic body sleeps or `seconds` have passed. Returns the time taken. */
     double settle(double seconds, double dt = 1.0 / 60.0);
+    /** Steps until every dynamic body sleeps or has been quiet for a while (SettleOptions), or the cap is reached. */
+    SettleResult settleUntilRest(const SettleOptions& o = {});
     int64_t steps() const;
+    const Settings& settings() const;
 
     Pose pose(int body) const;
     glm::dvec3 velocity(int body) const;
@@ -287,4 +351,20 @@ void initJolt();
 
 /** Triangles (three points each) of the convex hull of points, in their units: for drawing and picking a hull. */
 std::vector<glm::dvec3> hullTriangles(const std::vector<glm::dvec3>& points);
+
+/** The most bodies one scene can hold. */
+int maxBodiesLimit();
+
+/** Volume of the points' convex hull, cm3; 0 when they span no volume. */
+double hullVolume(const std::vector<glm::dvec3>& points);
+
+/**
+ * The convex pieces a shape collides as, in body space: one for a box, hull, sphere or capsule (round ones as
+ * polyhedra), one per part of a compound. Meshes and heightfields have none. For exporting simple collision.
+ */
+std::vector<ConvexMesh> convexMeshes(const Shape& shape);
+
+/** Shapes held in the shared cache, and emptying it (tests, or after a huge scene). */
+size_t shapeCacheSize();
+void clearShapeCache();
 } // namespace lila::physics
