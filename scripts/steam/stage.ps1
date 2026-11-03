@@ -12,12 +12,14 @@ $repo = Resolve-Path "$PSScriptRoot\..\.."
 $bin = Join-Path $repo "build\bin\$Config"
 $out = if ($Destination) { $Destination } else { Join-Path $repo "build-steam\content" }
 if (-not (Test-Path "$bin\lila.exe")) { throw "No lila.exe in $bin. Build $Config first." }
+# python-site holds the PySide6 lila.ui needs, bound to the Qt beside lila.exe; the bin copy below carries it.
+if (-not (Test-Path "$bin\python-site\PySide6\QtWidgets.pyd")) { throw "No PySide6 in $bin\python-site. Build with LILA_PYSIDE on." }
 
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 New-Item -ItemType Directory $out | Out-Null
 
 # Test executables and build leftovers stay behind.
-robocopy $bin $out /E /NFL /NDL /NJH /NJS /NP `
+robocopy $bin $out /E /NFL /NDL /NJH /NJS /NP /XD __pycache__ `
     /XF *.pdb *.ilk *.old* *.iconbak imgui.ini *_tests.exe lila_crashtest.exe | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy bin failed" }
 

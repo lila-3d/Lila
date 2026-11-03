@@ -59,6 +59,7 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [InstallDelete]
 ; A new version replaces the bundled Python and resources wholesale, so files removed upstream don't linger.
 Type: filesandordirs; Name: "{app}\python-runtime"
+Type: filesandordirs; Name: "{app}\python-site"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\resources"
 
@@ -76,6 +77,7 @@ Filename: "{app}\lila.exe"; Parameters: "--batch -c ""unregisterFileTypes()"""; 
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python-runtime"
+Type: filesandordirs; Name: "{app}\python-site"
 Type: filesandordirs; Name: "{app}\python"
 
 [Code]
