@@ -43,8 +43,8 @@ json OutputSettings::toJson() const
     if (!materials.empty())
     {
         j["materials"] = json::object();
-        for (const auto& [name, v] : materials)
-            j["materials"][name] = v;
+        for (const auto& [material, v] : materials)
+            j["materials"][material] = v;
     }
     return j;
 }

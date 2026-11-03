@@ -66,8 +66,8 @@ bool scalarOf(const PlugValue& v, double& out)
 {
     return std::visit(
         [&](const auto& x) {
-            using T = std::decay_t<decltype(x)>;
-            if constexpr (std::is_arithmetic_v<T>)
+            using V = std::decay_t<decltype(x)>;
+            if constexpr (std::is_arithmetic_v<V>)
             {
                 out = double(x);
                 return true;

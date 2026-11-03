@@ -1175,11 +1175,11 @@ bool ComponentSheet::typeValue(const std::vector<std::pair<int, int>>& cells, co
     const double v = text.trimmed().toDouble(&ok);
     if (!ok)
         return false;
-    std::vector<std::pair<int, int>> data;
+    std::vector<std::pair<int, int>> targets;
     for (auto [r, c] : cells)
         if (r >= 0 && c >= 0 && size_t(r) < d->rowMap.size() && size_t(c) < d->colMap.size())
-            data.push_back({d->rowMap[size_t(r)], d->colMap[size_t(c)]});
-    const bool done = d->typeInto(data, v);
+            targets.push_back({d->rowMap[size_t(r)], d->colMap[size_t(c)]});
+    const bool done = d->typeInto(targets, v);
     d->refresh(true);
     return done;
 }
