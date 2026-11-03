@@ -4,6 +4,7 @@
     python scripts/discord_issues.py --solve POST_ID [--note "Fixed in abc123"]
     python scripts/discord_issues.py --unsolve POST_ID
     python scripts/discord_issues.py --dismiss POST_ID --note "Works as intended: ..."
+    python scripts/discord_issues.py --hold POST_ID [--note "..."]
     python scripts/discord_issues.py --retag POST_ID Bug
     python scripts/discord_issues.py --reply POST_ID "Which menu was open?"
 
@@ -104,6 +105,9 @@ def thread_messages(api, thread_id):
     return sorted(messages, key=lambda m: int(m["id"]))
 
 
+HOLD_TAG = "On Hold"
+
+
 def find_tag(forum, name):
     return next((t["id"] for t in forum.get("available_tags", []) if t["name"].lower() == name.lower()), None)
 
@@ -124,13 +128,13 @@ def retag(api, post_id, category, status_names):
 
 
 def set_solved(api, post_id, solved, solved_name, pending_name, note, dismissed_name="Dismissed"):
-    """Swaps a post between the pending tag and solved_name (Solved or Dismissed), optionally replying with a note."""
+    """Swaps a post between the pending tag and solved_name (Solved, Dismissed or On Hold), optionally replying with a note."""
     post = api.get(f"/channels/{post_id}")
     forum = api.get(f"/channels/{post['parent_id']}")
     solved_tag, pending_tag = find_tag(forum, solved_name), find_tag(forum, pending_name)
     if not solved_tag:
         sys.exit(f"#{forum['name']} has no '{solved_name}' tag; add it in the channel's Tags settings")
-    states = {solved_tag, pending_tag, find_tag(forum, dismissed_name), find_tag(forum, "Solved")} - {None}
+    states = {solved_tag, pending_tag, find_tag(forum, dismissed_name), find_tag(forum, "Solved"), find_tag(forum, HOLD_TAG)} - {None}
     tags = [t for t in post.get("applied_tags", []) if t not in states]
     add = solved_tag if solved else pending_tag
     if add:
@@ -188,6 +192,7 @@ def main():
     parser.add_argument("--retag", nargs=2, metavar=("POST_ID", "TAG"), help="replace a post's category tag (Bug, Request, ...), keeping Pending/Solved")
     parser.add_argument("--solve", metavar="POST_ID", help="add the solved tag to a post")
     parser.add_argument("--dismiss", metavar="POST_ID", help="tag a post Dismissed: closed without a fix")
+    parser.add_argument("--hold", metavar="POST_ID", help="tag a post On Hold: open but waiting (no repro, waiting on the reporter); --unsolve returns it to Pending")
     parser.add_argument("--unsolve", metavar="POST_ID", help="remove the solved tag from a post")
     parser.add_argument("--reply", nargs=2, metavar=("POST_ID", "TEXT"), help="reply in a post, mentioning its author, without changing its tags")
     parser.add_argument("--note", help="with --solve/--unsolve, also reply in the post with this text, mentioning its author")
@@ -201,7 +206,7 @@ def main():
         sys.exit("LILA_DISCORD_TOKEN is not set")
     api = Discord(token)
     if args.retag:
-        retag(api, args.retag[0], args.retag[1], (args.solved_tag, args.pending_tag, "Dismissed"))
+        retag(api, args.retag[0], args.retag[1], (args.solved_tag, args.pending_tag, "Dismissed", HOLD_TAG))
         return
     if args.reply:
         reply(api, args.reply[0], args.reply[1])
@@ -210,6 +215,9 @@ def main():
         sys.exit("--solve and --dismiss need --note: tell the reporter the outcome")
     if args.dismiss:
         set_solved(api, args.dismiss, True, "Dismissed", args.pending_tag, args.note)
+        return
+    if args.hold:
+        set_solved(api, args.hold, True, HOLD_TAG, args.pending_tag, args.note)
         return
     if args.solve or args.unsolve:
         set_solved(api, args.solve or args.unsolve, bool(args.solve), args.solved_tag, args.pending_tag, args.note)
@@ -221,11 +229,12 @@ def main():
     tag_names = {t["id"]: t["name"] for t in info.get("available_tags", [])}
     solved_tag, pending_tag = find_tag(info, args.solved_tag), find_tag(info, args.pending_tag)
     dismissed_tag = find_tag(info, "Dismissed")
+    hold_tag = find_tag(info, HOLD_TAG)
     if pending_tag and not args.no_pending:
         for post in posts:
             applied = post.get("applied_tags", [])
             # Archived posts are skipped: tagging one would reopen it.
-            if post.get("thread_metadata", {}).get("archived") or {pending_tag, solved_tag, dismissed_tag} & set(applied) - {None} or len(applied) >= 5:
+            if post.get("thread_metadata", {}).get("archived") or {pending_tag, solved_tag, dismissed_tag, hold_tag} & set(applied) - {None} or len(applied) >= 5:
                 continue
             post["applied_tags"] = applied + [pending_tag]
             api.request("PATCH", f"/channels/{post['id']}", {"applied_tags": post["applied_tags"]})
