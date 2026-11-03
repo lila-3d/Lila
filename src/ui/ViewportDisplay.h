@@ -23,7 +23,7 @@ inline constexpr const char* kAccumulate = "/viewport/aa/accumulate";
 inline constexpr const char* kFrameCap = "/viewport/frameCap";
 /** The cap while another app has focus; 0 keeps the foreground cap. */
 inline constexpr const char* kBackgroundFrameCap = "/viewport/backgroundFrameCap";
-inline constexpr int kDefaultBackgroundFrameCap = 30;
+inline constexpr int kDefaultBackgroundFrameCap = 0;
 /** FIFO presentation: waits for each vblank instead of mailbox's newest-frame-wins. */
 inline constexpr const char* kVsync = "/viewport/vsync";
 /** Inside the resolution gate: broadcast action and title safe frames, and rule-of-thirds lines. */
