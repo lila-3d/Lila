@@ -2,14 +2,18 @@
 
 Unity builds paste a target's sources into shared translation units, so two files that each define the same
 internal-linkage name (anonymous namespace, static, namespace-scope const/constexpr, enumerators) break the build as
-soon as a chunk boundary puts them together. A target is approximated by its source directory.
+soon as a chunk boundary puts them together. Targets come from a build dir's compile_commands.json, else each source
+directory counts as one. It cannot see a file-local name meeting a public one or a leaked using-directive; only a
+compile shows those.
 
-    python scripts/unity_clashes.py [dir ...]      default: src extensions tests
-    python scripts/unity_clashes.py --verbose      print each definition line too
+    python scripts/unity_clashes.py [dir ...]           default: src extensions tests
+    python scripts/unity_clashes.py --build <dir>       read targets from that build dir
+    python scripts/unity_clashes.py --verbose           print each definition line too
 Exit code 1 when any clash is found.
 """
 
 import collections
+import json
 import os
 import re
 import sys
@@ -20,6 +24,8 @@ TYPE_DEF = re.compile(r"^(?:template\s*<.*>\s*)?(?:struct|class|union)\s+(?:LILA
 ENUM_DEF = re.compile(r"^enum(\s+class|\s+struct)?\s+(\w+)\b(?!.*;\s*$)")
 ALIAS = re.compile(r"^using\s+(\w+)\s*=")
 CONST_VAR = re.compile(r"^(?:static\s+|inline\s+|thread_local\s+)*(?:constexpr|const)\b[^(=]*?\b(\w+)\s*(?:\[[^\]]*\])*\s*(?:=|\{)")
+CONST_CTOR = re.compile(r"^(?:static\s+|inline\s+)*(?:constexpr|const)\s+[\w:<>,\s]+?\s(\w+)\s*\((?!.*\)\s*(?:const\s*)?\{?\s*$).*\);\s*$")
+MUTABLE_VAR = re.compile(r"^(?!return\b|using\b|typedef\b|friend\b|template\b)[\w:<>,\s\*&]+?[\s\*&](\w+)\s*(?:\[[^\]]*\])*\s*(?:=.*|\{.*\})?;\s*$")
 STATIC_VAR = re.compile(r"^static\s+(?!constexpr\b|const\b)[\w:<>,\s\*&]+?\b(\w+)\s*(?:\[[^\]]*\])*\s*(?:=|\{|;)\s*")
 FUNC = re.compile(r"^(?:template\s*<.*>\s*)?(?:\[\[\w+\]\]\s*)?(?:static\s+|inline\s+|constexpr\s+)*[\w:<>,\*&\s]+?[\s\*&](\w+)\s*\(")
 KEYWORDS = {"if", "for", "while", "return", "switch", "operator", "sizeof", "decltype", "alignas", "static_assert", "catch", "else"}
@@ -78,10 +84,14 @@ def scan(path):
                 name = m.group(1)
             elif (m := CONST_VAR.match(s)) and not qualified and "extern" not in s:
                 name = m.group(1)
+            elif (m := CONST_CTOR.match(s)) and not qualified:
+                name = m.group(1)
             elif (m := STATIC_VAR.match(s)) and not qualified and "(" not in head:
                 name = m.group(1)
+            elif anon and not re.match(r"(?:namespace|using|extern)\b", s) and (m := MUTABLE_VAR.match(s)) and not qualified and "(" not in re.split(r"[={]", s)[0]:
+                name = m.group(1)
             elif (m := FUNC.match(s)) and not qualified and not s.endswith(";"):
-                if anon or re.match(r"^(?:template\s*<.*>\s*)?static", s):
+                if anon or re.match(r"^(?:template\s*<.*>\s*)?static\b", s):
                     name = m.group(1)
             if name and name not in KEYWORDS:
                 yield ns, name, no, raw.strip()
@@ -101,8 +111,28 @@ def scan(path):
             pending = opener
 
 
+def load_targets(builds):
+    """Maps each source (repo-relative) to its CMake target, from the first build dir's compile_commands.json."""
+    for build in builds:
+        path = os.path.join(ROOT, build, "compile_commands.json")
+        if not os.path.exists(path):
+            continue
+        targets = {}
+        for entry in json.load(open(path, encoding="utf-8")):
+            m = re.search(r"CMakeFiles[\\/]([^\\/]+)\.dir[\\/]", entry.get("output", ""))
+            if m and not m.group(1).startswith("cmake_pch"):
+                rel = os.path.relpath(entry["file"], ROOT).replace("\\", "/")
+                targets[rel] = m.group(1)
+        return targets
+    return {}
+
+
+TARGETS = {}
+
+
 def target_of(rel):
-    return rel.rsplit("/", 1)[0]
+    """The CMake target when known, else the directory: unity chunks never span targets."""
+    return TARGETS.get(rel) or rel.rsplit("/", 1)[0]
 
 
 def collect(roots):
@@ -120,8 +150,15 @@ def collect(roots):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    verbose = "--verbose" in sys.argv
+    argv = sys.argv[1:]
+    builds = ["build-nounity", "build", "build-night"]
+    if "--build" in argv:
+        i = argv.index("--build")
+        builds = [argv[i + 1]]
+        del argv[i:i + 2]
+    args = [a for a in argv if not a.startswith("--")]
+    verbose = "--verbose" in argv
+    TARGETS.update(load_targets(builds))
     defs = collect(args or ["src", "extensions", "tests"])
     total = 0
     for target in sorted(defs):

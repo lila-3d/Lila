@@ -102,6 +102,8 @@ target_link_libraries(lila_tests PRIVATE miniz::miniz)
 # The batch run tests start real lilabatch workers.
 add_dependencies(lila_tests lilabatch)
 add_test(NAME lila_tests COMMAND lila_tests)
+# Two sources of one target defining the same file-local name break unity builds once a chunk boundary moves.
+add_test(NAME lila_unity_clashes COMMAND ${Python_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/scripts/unity_clashes.py --build ${CMAKE_BINARY_DIR})
 # Fails when a Qt bump leaves the bundled PySide6 behind or it starts loading its own Qt.
 if(LILA_PYSIDE AND WIN32)
     add_test(NAME lila_pyside_python COMMAND lilabatch --batch ${CMAKE_SOURCE_DIR}/python/tests/test_pyside.py
