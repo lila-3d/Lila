@@ -1,5 +1,6 @@
 #include "io/SceneFormats.h"
 
+#include "core/Decimal.h"
 #include "core/PackedArray.h"
 #include "core/Profile.h"
 #include "core/UninitVector.h"
@@ -937,7 +938,7 @@ private:
             }
             else
             {
-                if (std::from_chars(tok.data(), tok.data() + tok.size(), d).ec != std::errc())
+                if (parseDouble(tok.data(), tok.data() + tok.size(), d).ec != std::errc())
                 {
                     out.ok = false;
                     return;
