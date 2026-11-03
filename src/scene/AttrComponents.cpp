@@ -142,6 +142,8 @@ json Component::toJson() const
     j["unreal"] = {{"mode", unrealModeName(unreal)}};
     if (!unrealClass.empty())
         j["unreal"]["class"] = unrealClass;
+    if (!unrealTags.empty())
+        j["unreal"]["tags"] = unrealTags;
     return j;
 }
 
@@ -163,6 +165,7 @@ Component Component::fromJson(const json& j)
     {
         c.unreal = unrealModeNamed(j["unreal"].value("mode", "assetUserData"));
         c.unrealClass = j["unreal"].value("class", "");
+        c.unrealTags = j["unreal"].value("tags", "");
     }
     return c;
 }
@@ -272,15 +275,19 @@ json exportSettings(const Node& n)
     return j.is_object() ? j : json::object();
 }
 
-void setExportSettings(Graph& g, NodeId node, const std::string& component, UnrealMode mode, const std::string& unrealClass)
+void setExportSettings(Graph& g, NodeId node, const std::string& component, UnrealMode mode, const std::string& unrealClass, const std::string& tags)
 {
     Node* n = g.node(node);
     if (!n)
         throw std::invalid_argument("no such node");
+    if (!tags.empty() && tags != "keyValue" && tags != "value")
+        throw std::invalid_argument("tags is keyValue or value, not '" + tags + "'");
     json j = exportSettings(*n);
     j[component] = {{"mode", unrealModeName(mode)}};
     if (!unrealClass.empty())
         j[component]["class"] = unrealClass;
+    if (!tags.empty() && tags != "keyValue")
+        j[component]["tags"] = tags;
     int i = n->type().attrIndex(kExportAttr);
     if (i < 0)
         i = g.addAttr(node, AttrDef{.name = kExportAttr, .type = PlugType::String, .defaultValue = std::string(), .flags = AttrHidden,
@@ -310,6 +317,7 @@ Component fromNode(const Node& n, const std::string& category)
     {
         c.unreal = unrealModeNamed(settings[category].value("mode", "assetUserData"));
         c.unrealClass = settings[category].value("class", "");
+        c.unrealTags = settings[category].value("tags", "");
     }
     return c;
 }
@@ -351,8 +359,8 @@ std::vector<std::string> apply(Graph& g, NodeId node, const Component& c)
             }
         }
     }
-    if (c.unreal != UnrealMode::AssetUserData || !c.unrealClass.empty())
-        setExportSettings(g, node, c.name, c.unreal, c.unrealClass);
+    if (c.unreal != UnrealMode::AssetUserData || !c.unrealClass.empty() || !c.unrealTags.empty())
+        setExportSettings(g, node, c.name, c.unreal, c.unrealClass, c.unrealTags);
     return added;
 }
 
@@ -390,7 +398,7 @@ json unrealPayload(Graph& g, NodeId node)
     for (const std::string& name : order)
     {
         UnrealMode mode = UnrealMode::AssetUserData;
-        std::string cls;
+        std::string cls, tags;
         if (settings.contains(name) && settings[name].is_object())
         {
             try
@@ -402,12 +410,15 @@ json unrealPayload(Graph& g, NodeId node)
                 log::warn("{}: component {}: {}", n->name(), name, e.what());
             }
             cls = settings[name].value("class", "");
+            tags = settings[name].value("tags", "");
         }
         if (mode == UnrealMode::None)
             continue;
         json c = {{"name", name}, {"mode", unrealModeName(mode)}, {"attrs", std::move(attrsOf[name])}};
         if (!cls.empty())
             c["class"] = cls;
+        if (mode == UnrealMode::ActorTags && !tags.empty())
+            c["tags"] = tags;
         out.push_back(std::move(c));
     }
     return out;

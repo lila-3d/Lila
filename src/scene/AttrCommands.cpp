@@ -518,12 +518,16 @@ void registerCommands()
         .name = "componentExport",
         .doc = "How a component on objects reaches Unreal: actorTags, assetUserData (the default), component (an actor component "
                "of unrealClass with matching properties), dataAsset (of unrealClass), custom (a registered exporter named by "
-               "unrealClass) or none. With query=True, returns the setting.",
+               "unrealClass) or none. actorTags tags the actor \"Component.attr=value\", or with tags=\"value\" the bare values "
+               "(a string attr holding whale-architecture tags whale-architecture; each element of a list; a true bool its "
+               "attr's name). With query=True, returns the setting.",
         .positionalDoc = "objects",
         .flags = {{"component", "c", T::String, nullptr, "The component (heading)."},
                   {"mode", "m", T::String, nullptr, "none, actorTags, assetUserData, component, dataAsset or custom.",
                    {"none", "actorTags", "assetUserData", "component", "dataAsset", "custom"}},
                   {"unrealClass", "uc", T::String, nullptr, "The UE class (component, dataAsset) or exporter (custom)."},
+                  {"tags", "tg", T::String, nullptr, "actorTags: keyValue (Component.attr=value, the default) or value (bare values).",
+                   {"keyValue", "value"}},
                   {"query", "q", T::Bool, false, "Return {mode, class}."}},
         .run = [](const Args& a) -> json {
             if (!a.has("component"))
@@ -539,7 +543,10 @@ void registerCommands()
             }
             const attrComponents::UnrealMode mode = guarded([&] { return attrComponents::unrealModeNamed(a.get<std::string>("mode", "assetUserData")); });
             for (const std::string& o : objs)
-                guarded([&] { attrComponents::setExportSettings(graph(), nodeArg(o).id(), comp, mode, a.get<std::string>("unrealClass", "")); return 0; });
+                guarded([&] {
+                    attrComponents::setExportSettings(graph(), nodeArg(o).id(), comp, mode, a.get<std::string>("unrealClass", ""), a.get<std::string>("tags", ""));
+                    return 0;
+                });
             return nullptr;
         },
     });

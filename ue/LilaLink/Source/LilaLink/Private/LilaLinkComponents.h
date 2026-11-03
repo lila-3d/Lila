@@ -13,6 +13,8 @@ struct FLilaComponent
 	FString Name;
 	FString Mode;
 	FString Class;
+	/** actorTags: "value" tags the bare values; anything else "Component.attr=value". */
+	FString Tags;
 	TSharedRef<FJsonObject> Attrs = MakeShared<FJsonObject>();
 };
 
@@ -31,7 +33,7 @@ void ApplyComponentsToAsset(UObject* Asset, const TArray<FLilaComponent>& Compon
 	TArray<FString>& OutAssets);
 
 /**
- * A placed actor's components: actorTags as "Component.attr=value" tags, component as an actor component of its class
+ * A placed actor's components: actorTags as "Component.attr=value" tags (or the bare values when Tags is "value"), component as an actor component of its class
  * (reused when the actor has one), assetUserData and dataAsset in the root component's ULilaComponentUserData, custom
  * through its exporter.
  */

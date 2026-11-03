@@ -494,6 +494,35 @@ void WriteUserData(UObject* Owner, TMap<FString, FLilaComponentValues>&& Compone
 	Data->ActorTags = MoveTemp(Tags);
 }
 
+/** tags "value": a string or number as it is, each element of a list, a true bool's attr name; nothing for false or empty. */
+void AddBareTags(const FString& Attr, const TSharedPtr<FJsonValue>& V, TArray<FName>& OutTags)
+{
+	if (!V.IsValid())
+	{
+		return;
+	}
+	bool B = false;
+	const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
+	if (V->TryGetBool(B))
+	{
+		if (B)
+		{
+			OutTags.AddUnique(FName(*Attr));
+		}
+	}
+	else if (V->TryGetArray(Items))
+	{
+		for (const TSharedPtr<FJsonValue>& Item : *Items)
+		{
+			AddBareTags(Attr, Item, OutTags);
+		}
+	}
+	else if (const FString Text = ValueText(V); !Text.IsEmpty())
+	{
+		OutTags.AddUnique(FName(*Text));
+	}
+}
+
 /** custom: a C++ exporter of that name, else a Python one registered through lila_link_components. */
 void RunExporter(const LilaLink::FLilaComponent& C, AActor* Actor, UObject* Asset, TArray<FString>& OutWarnings)
 {
@@ -628,6 +657,7 @@ bool LilaLink::ParseComponents(const TSharedPtr<FJsonObject>& Owner, TArray<FLil
 		C.Mode = TEXT("assetUserData");
 		(*Object)->TryGetStringField(TEXT("mode"), C.Mode);
 		(*Object)->TryGetStringField(TEXT("class"), C.Class);
+		(*Object)->TryGetStringField(TEXT("tags"), C.Tags);
 		const TSharedPtr<FJsonObject>* Attrs = nullptr;
 		if ((*Object)->TryGetObjectField(TEXT("attrs"), Attrs) && Attrs->IsValid())
 		{
@@ -683,6 +713,11 @@ void LilaLink::ApplyComponentsToActor(AActor* Actor, const TArray<FLilaComponent
 		{
 			for (const TPair<FString, TSharedPtr<FJsonValue>>& Attr : C.Attrs->Values)
 			{
+				if (C.Tags == TEXT("value"))
+				{
+					AddBareTags(Attr.Key, Attr.Value, Tags);
+					continue;
+				}
 				const FString Key = C.Name.IsEmpty() ? Attr.Key : C.Name + TEXT(".") + Attr.Key;
 				Tags.Add(FName(*(Key + TEXT("=") + ValueText(Attr.Value))));
 			}

@@ -32,7 +32,7 @@ namespace attrComponents
 enum class UnrealMode : uint8_t
 {
     None,
-    ActorTags,      // "name.attr=value" actor tags
+    ActorTags,      // "name.attr=value" actor tags, or the bare values with tags "value"
     AssetUserData,  // a ULilaComponentUserData holding the values by name
     Component,      // an actor component of unrealClass with matching properties
     DataAsset,      // a data asset of unrealClass, referenced from asset user data
@@ -56,6 +56,11 @@ struct LILA_SCENE_API Component
     UnrealMode unreal = UnrealMode::AssetUserData;
     /** The UE class for Component and DataAsset; the exporter's name for Custom. */
     std::string unrealClass;
+    /**
+     * ActorTags: "keyValue" (empty too) tags "name.attr=value"; "value" tags the bare values: a string or number as it
+     * is, each element of a list, a true bool's attr name, nothing for false or empty.
+     */
+    std::string unrealTags;
 
     json toJson() const;
     /** Throws std::invalid_argument. */
@@ -89,10 +94,12 @@ LILA_SCENE_API std::vector<std::string> apply(Graph& g, NodeId node, const Compo
 
 /** The object's per-component Unreal export choice, stored in its lilaComponentExport string attr as JSON. */
 LILA_SCENE_API json exportSettings(const Node& n);
-LILA_SCENE_API void setExportSettings(Graph& g, NodeId node, const std::string& component, UnrealMode mode, const std::string& unrealClass);
+/** tags is keyValue or value (see Component::unrealTags); empty leaves keyValue. Throws std::invalid_argument for another. */
+LILA_SCENE_API void setExportSettings(Graph& g, NodeId node, const std::string& component, UnrealMode mode, const std::string& unrealClass,
+                                      const std::string& tags = {});
 
 /**
- * The object's components as LilaLink sends them: [{name, mode, class?, attrs: {attr: value}}], in the order their
+ * The object's components as LilaLink sends them: [{name, mode, class?, tags?, attrs: {attr: value}}], in the order their
  * first attr appears, uncategorised added attrs as the component "". Components exported as none are left out; hidden
  * attrs and usdApiSchemas are not data. Values are JSON: numbers, bools, strings, [x, y, z], an enum's label, a list
  * for an array attr. Empty when the object has no added attrs.

@@ -43,7 +43,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lila")
 	TMap<FString, FLilaComponentValues> Components;
 
-	/** On an actor's root component: the "Component.attr=value" tags LilaLink gave the actor, replaced on the next send. */
+	/** On an actor's root component: the tags LilaLink gave the actor from actorTags components, replaced on the next send. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lila")
 	TArray<FName> ActorTags;
 
