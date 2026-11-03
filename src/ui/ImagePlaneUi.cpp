@@ -397,9 +397,9 @@ void importImage(QWidget* parent, const std::string& camera)
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
     const ui::fileDialog::ContextScope scope("imagePlane", "Images");
-    QString file = ui::fileDialog::getOpenFileName(parent, camera.empty() ? "Create Image Plane" : "Import Image", start, kImageFilter);
-    if (!file.isEmpty())
-        create(file.toStdString(), camera);
+    const QStringList files = ui::fileDialog::getOpenFileNames(parent, camera.empty() ? "Create Image Plane" : "Import Image", start, kImageFilter);
+    for (const QString& f : files)
+        create(f.toStdString(), camera);
 }
 
 void fillCameraMenu(QMenu* menu, const std::string& camera)
