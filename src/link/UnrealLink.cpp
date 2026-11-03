@@ -826,8 +826,20 @@ void Link::post(std::function<void()> fn)
 
 void Link::waitIdle()
 {
+    auto idle = [&] { return (mQueue.empty() && !mBusy) || mQuit; };
     std::unique_lock lock(mQueueMutex);
-    mQueueCv.wait(lock, [&] { return (mQueue.empty() && !mBusy) || mQuit; });
+    if (!mainq::isMainThread())
+    {
+        mQueueCv.wait(lock, idle);
+        return;
+    }
+    // Jobs hand scene snapshots to the main thread, and nothing else drains it while a command blocks here (always so in batch).
+    while (!mQueueCv.wait_for(lock, std::chrono::milliseconds(20), idle))
+    {
+        lock.unlock();
+        mainq::drain();
+        lock.lock();
+    }
 }
 
 void Link::shutdown()

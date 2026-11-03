@@ -159,7 +159,7 @@ public:
 
     /** Runs fn on the worker thread, in order. */
     void post(std::function<void()> fn);
-    /** Blocks until everything posted so far has run. */
+    /** Blocks until everything posted so far has run; on the main thread it keeps running main-queue work meanwhile. */
     void waitIdle();
     /** Stops the worker and disconnects. Call before the app exits. */
     void shutdown();
