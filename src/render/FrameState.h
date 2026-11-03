@@ -103,6 +103,24 @@ struct ImagePlaneDraw
     Depth depth = Depth::Behind;
 };
 
+/**
+ * A heightfield drawn from its heights alone (the viewport's heightfield draw path, an option): nx by nz samples cell
+ * apart from origin over X and Z, heights up local Y, placed by world. The renderer keeps one GPU copy per heights
+ * buffer, so pass the same pointer while they don't change.
+ */
+struct HeightfieldDraw
+{
+    std::shared_ptr<const std::vector<float>> heights;
+    int nx = 0;
+    int nz = 0;
+    float cell = 100.0f;
+    glm::vec2 origin{0.0f};
+    glm::mat4 world{1.0f};
+    glm::vec3 color{0.5f};
+    bool selected = false;
+    uint64_t node = 0;
+};
+
 /** A 3D colour lookup table (an Adobe .cube): display-encoded rgb in, rgb out, red varying fastest. */
 struct Lut3D
 {
@@ -284,6 +302,8 @@ struct FrameState
     float outlineWidth = 1.0f;  // device pixels
     glm::vec3 outlineColor{0.01f}; // linear
     std::vector<ImagePlaneDraw> imagePlanes;
+    /** Terrains on the heightfield draw path, shaded in the scene pass beside the meshes. */
+    std::vector<HeightfieldDraw> heightfields;
     /**
      * An external viewport renderer draws the scene instead of Lila: its image replaces the backdrop, grid fill, AO,
      * post and shaded meshes, and meshes keep only their wires and selection highlights, depth tested against its depth.

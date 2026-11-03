@@ -48,6 +48,7 @@ lila_add_shaders(lila_render FILES
     shaders/exposure.slang
     shaders/external.slang
     shaders/grid.slang
+    shaders/heightfield.slang
     shaders/imageplane.slang
     shaders/lines.slang
     shaders/overlay.slang

@@ -422,6 +422,29 @@ struct Buffer
     VmaAllocation alloc = VK_NULL_HANDLE;
 };
 
+struct HeightfieldPush
+{
+    glm::mat4 viewProj;
+    glm::vec4 model0, model1, model2;
+    glm::vec4 grid;
+    glm::vec4 origin;
+    glm::vec4 color;
+    glm::vec4 light;
+    uint64_t heights = 0;
+    uint32_t cols = 0;
+    uint32_t rows = 0;
+};
+static_assert(sizeof(HeightfieldPush) == 192, "matches HeightfieldPush in heightfield.slang");
+
+/** A heightfield's heights on the GPU, read by heightfieldVS through their address. */
+struct GpuHeights
+{
+    Buffer buffer;
+    VkDeviceAddress address = 0;
+    std::shared_ptr<const std::vector<float>> keep;
+    uint64_t lastUsed = 0;
+};
+
 struct GpuMesh
 {
     Buffer vertices, indices, edges, edgeIndices;
@@ -811,6 +834,10 @@ struct Renderer::Impl
     VkPipeline imageBehindPipeline = VK_NULL_HANDLE;
     /** An external image's depth alone, in the scene pass, so wires hide behind its surfaces. */
     VkPipeline externalDepthPipeline = VK_NULL_HANDLE;
+    /** The heightfield draw path: a grid drawn from heights alone, in the scene pass. */
+    VkPipelineLayout heightfieldLayout = VK_NULL_HANDLE;
+    VkPipeline heightfieldPipeline = VK_NULL_HANDLE;
+    std::unordered_map<const void*, GpuHeights> heightCache; // render thread only
     /** The composed scene over what the frame pass already holds (an external image), by the scene's coverage. */
     VkPipeline composeOverPipeline = VK_NULL_HANDLE;
     /** The grid in display space, over an external renderer's image in the frame pass. */
@@ -1694,6 +1721,9 @@ struct Renderer::Impl
         for (auto& [key, g] : pointCache)
             destroyBuffer(g.buffer);
         pointCache.clear();
+        for (auto& [key, g] : heightCache)
+            destroyBuffer(g.buffer);
+        heightCache.clear();
         for (auto& [key, g] : meshCache)
         {
             destroyBlas(g);
@@ -2512,6 +2542,98 @@ struct Renderer::Impl
                           VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
                               VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                           VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        prepareHeightfields(cmd, f, s);
+    }
+
+    // ---------------------------------------------------------------- heightfield draw path
+
+    /** Uploads the heights of heightfields drawn for the first time, keyed by their buffer. Runs before rendering begins. */
+    void prepareHeightfields(VkCommandBuffer cmd, Frame& f, const FrameState& s)
+    {
+        if (s.heightfields.empty())
+            return;
+        LILA_ZONE();
+
+        bool uploaded = false;
+        for (const HeightfieldDraw& d : s.heightfields)
+        {
+            if (!d.heights || d.heights->size() < size_t(d.nx) * size_t(d.nz) || d.nx < 2 || d.nz < 2)
+                continue;
+            auto it = heightCache.find(d.heights.get());
+            if (it != heightCache.end())
+            {
+                it->second.lastUsed = frameCounter;
+                continue;
+            }
+            GpuHeights g;
+            g.buffer = deviceBuffer(cmd, f, d.heights->data(), d.heights->size() * sizeof(float),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            g.address = bufferAddress(g.buffer.buffer);
+            g.keep = d.heights;
+            g.lastUsed = frameCounter;
+            heightCache.emplace(d.heights.get(), std::move(g));
+            uploaded = true;
+        }
+        if (uploaded)
+            memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+    }
+
+    /** The heightfields, in the scene pass, opaque and depth tested like meshes. */
+    void drawHeightfields(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj)
+    {
+        if (s.heightfields.empty() || !heightfieldPipeline)
+            return;
+        LILA_ZONE();
+
+        bool bound = false;
+        for (const HeightfieldDraw& d : s.heightfields)
+        {
+            auto it = d.heights ? heightCache.find(d.heights.get()) : heightCache.end();
+            if (it == heightCache.end())
+                continue;
+            // Every step-th sample, so a draw stays near four million vertices however large the grid.
+            const double samples = double(d.nx) * double(d.nz);
+            const int step = std::max(1, int(std::ceil(std::sqrt(samples / 4.0e6))));
+            HeightfieldPush p{};
+            p.viewProj = viewProj;
+            const glm::mat4 rows = glm::transpose(d.world);
+            p.model0 = rows[0];
+            p.model1 = rows[1];
+            p.model2 = rows[2];
+            p.grid = glm::vec4(float(d.nx), float(d.nz), float(step), d.cell);
+            p.origin = glm::vec4(d.origin, s.exposure, d.selected ? 1.0f : 0.0f);
+            p.color = glm::vec4(d.color, 1.0f);
+            const glm::vec3 key = s.zUp ? glm::vec3(0.35f, -0.45f, 0.82f) : glm::vec3(0.35f, 0.82f, 0.45f);
+            p.light = glm::vec4(glm::normalize(key), s.zUp ? 1.0f : 0.0f);
+            p.heights = it->second.address;
+            p.cols = uint32_t((d.nx - 1 + step - 1) / step);
+            p.rows = uint32_t((d.nz - 1 + step - 1) / step);
+            if (!bound)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, heightfieldPipeline);
+                bound = true;
+            }
+            vkCmdPushConstants(cmd, heightfieldLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+            vkCmdDraw(cmd, p.cols * p.rows * 6, 1, 0, 0);
+        }
+    }
+
+    /** Drops the GPU copies of heights no frame has drawn for a while, and at once those nothing else holds. */
+    void evictHeightfields()
+    {
+        std::vector<const void*> stale;
+        for (auto& [key, g] : heightCache)
+            if (g.lastUsed + 240 < frameCounter || (g.keep.use_count() == 1 && g.lastUsed != frameCounter))
+                stale.push_back(key);
+        if (stale.empty())
+            return;
+        vkDeviceWaitIdle(vk.device);
+        for (const void* key : stale)
+        {
+            destroyBuffer(heightCache[key].buffer);
+            heightCache.erase(key);
+        }
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
@@ -3949,6 +4071,13 @@ struct Renderer::Impl
             imageBehindPipeline = build(false, true);
             vkDestroyShaderModule(vk.device, plane, nullptr);
         }
+        heightfieldLayout = layoutFor(sizeof(HeightfieldPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, materialSetLayout);
+        if (VkShaderModule hf = module(loadSpirv("heightfield.spv")))
+        {
+            heightfieldPipeline = buildPipeline(heightfieldLayout, hf, "heightfieldVS", "heightfieldPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                                                none, true, false, true);
+            vkDestroyShaderModule(vk.device, hf, nullptr);
+        }
         externalLayout = layoutFor(sizeof(ExternalPush), VK_SHADER_STAGE_FRAGMENT_BIT, materialSetLayout);
         if (VkShaderModule external = module(loadSpirv("external.spv")))
         {
@@ -3971,7 +4100,7 @@ struct Renderer::Impl
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
                               &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
-                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline,
+                              &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline, &heightfieldPipeline,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
                               &taaPipeline, &composePipeline, &composeSinglePipeline,
                               &bloomDownPipeline, &bloomUpPipeline, &histogramPipeline, &averagePipeline, &shadowPipeline, &rtaoPipeline, &bevelPipeline, &rtShadowPipeline})
@@ -3981,7 +4110,7 @@ struct Renderer::Impl
                 *p = VK_NULL_HANDLE;
             }
         for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout,
-                                    &imagePlaneLayout, &postLayout, &externalLayout, &taaLayout, &composeLayout, &bloomLayout,
+                                    &imagePlaneLayout, &postLayout, &externalLayout, &heightfieldLayout, &taaLayout, &composeLayout, &bloomLayout,
                                     &exposureLayout, &rtaoLayout, &bevelLayout, &rtShadowLayout})
             if (*l)
             {
@@ -4477,6 +4606,7 @@ struct Renderer::Impl
         }
 
         drawContactShadows(cmd, s, vpScene, v.offscreen ? nullptr : &v);
+        drawHeightfields(cmd, s, vpScene);
         drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height,
                    sceneChunks ? &f : nullptr, &ri);
         if (aoFast)
@@ -5871,6 +6001,7 @@ struct Renderer::Impl
             vkCmdDraw(cmd, it->second.count, 1, 0, 0);
         }
         evictPoints();
+        evictHeightfields();
     }
 
     /** One slice of a task; resets task when it finished or threw. */
