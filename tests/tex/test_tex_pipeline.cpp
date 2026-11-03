@@ -5,6 +5,7 @@
 #include "mcp/McpServer.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
+#include "tex/Library.h"
 #include "tex/TextureSet.h"
 
 #include <chrono>
@@ -124,6 +125,9 @@ TEST_CASE("tex pipeline: PSD export round trips through readPsdLayers and import
 TEST_CASE("tex pipeline: MCP texture tools")
 {
     mcp::registerBuiltins();
+    // material_lint runs materialLint, a library command the test main doesn't register.
+    if (!ops::find("materialLint"))
+        tex::library::registerCommands();
     buildLayered();
 
     json d = callTool("describe_texture_set", {{"set", "Crate"}});
