@@ -290,7 +290,7 @@ void registerUi(ext::Context& ctx)
         const char* python;
     };
     const Def defs[] = {
-        {"trims.create", "New Trim Sheet", "trimSheetCreate", json::object(),
+        {"trims.create", "New Trim Sheet", "trimSheetCreate", json{{"preset", "industrialMetal"}},
          "Make a trim sheet from a preset and bake it: generator, bake and material in one step.", "trimSheetCreate(preset='industrialMetal')"},
         {"trims.bake", "Bake Trim Sheet", "trimSheetBake", json::object(), "Rebake the current trim sheet's textures.", "trimSheetBake()"},
         {"trims.generate", "Show Trim Sheet High/Low", "trimSheetGenerate", json::object(),

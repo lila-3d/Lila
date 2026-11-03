@@ -718,13 +718,22 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "trimSheetCreate",
-        .doc = "Make a trim sheet from a preset and bake it: the layout and every trim's profile go in a .lilatrim file, the generated "
-               "high is baked onto a flat plane into normal, AO, curvature, height and cavity maps plus an exact trim ID map, and a "
-               "Lila material M_<name> shows them. An existing file is kept (its settings may have been changed) and only baked when "
-               "its textures are missing, so calling this again is cheap. Presets: " + presetChoices() + ". The new sheet becomes "
-               "current. Returns the sheet summary (trims with world sizes, textures, warnings) and the bake result.",
-        .flags = {{"preset", "p", AT::String, "industrialMetal", "Layout and profiles to start from.", presetIds()},
-                  {"width", "w", AT::Int, int64_t(0), "Texture width, px (0: the preset's).", {}, {}, 0.0, 8192.0},
+        .doc = "Make a trim sheet and bake it: the layout and every trim's profile go in a .lilatrim file, the generated high is "
+               "baked onto a flat plane into normal, AO, curvature, height and cavity maps plus an exact trim ID map, and a Lila "
+               "material M_<name> shows them. Without a preset the sheet is blank (width x height, no trims, or full-width raised "
+               "strips of the heights in strips=); add trims with trimSheetEdit(add=...). An existing file is kept (its settings "
+               "may have been changed) and only baked when its textures are missing, so calling this again is cheap. Presets: " +
+               presetChoices() + ". The new sheet becomes current. Returns the sheet summary (trims with world sizes, textures, "
+               "warnings) and the bake result.",
+        .flags = {{"preset", "p", AT::String, "blank", "Layout and profiles to start from; blank starts empty.",
+                   [] {
+                       std::vector<std::string> ids = presetIds();
+                       ids.insert(ids.begin(), "blank");
+                       return ids;
+                   }()},
+                  {"height", "h", AT::Int, int64_t(0), "Texture height of a blank sheet, px (0: square).", {}, {}, 0.0, 16384.0},
+                  {"strips", "st", AT::List, nullptr, "Blank sheet: full-width raised strips of these heights, px, top to bottom."},
+                  {"width", "w", AT::Int, int64_t(0), "Texture width, px (0: the preset's, 2048 for a blank sheet).", {}, {}, 0.0, 16384.0},
                   {"file", "f", AT::String, nullptr, "Where to save; default <workspace>/TrimSheets/<name>.lilatrim."},
                   {"name", "n", AT::String, nullptr, "Sheet name (texture prefix); default the preset's, T_<Preset>."},
                   {"pxPerM", "", AT::Float, nullptr, "Texels per metre: sets every trim's world size.", {}, {}, 1.0},
@@ -736,14 +745,30 @@ void registerCommands(ext::Context& ctx)
             LILA_ZONE();
 
             Sheet s;
-            try
+            const std::string presetId = a.get<std::string>("preset", "blank");
+            if (presetId == "blank")
             {
-                s = preset(a.get<std::string>("preset", "industrialMetal"), int(a.get<int64_t>("width", 0)));
+                const int w = int(a.get<int64_t>("width", 0)) > 0 ? int(a.get<int64_t>("width", 0)) : 2048;
+                const int h = int(a.get<int64_t>("height", 0)) > 0 ? int(a.get<int64_t>("height", 0)) : w;
+                std::vector<int> heights;
+                if (a.has("strips"))
+                    for (const json& v : a.flags["strips"])
+                    {
+                        if (!v.is_number() || v.get<double>() < 1.0)
+                            throw CommandError("trimSheetCreate: strips are heights in px, like [256, 128, 64]");
+                        heights.push_back(int(v.get<double>()));
+                    }
+                s = stripLadder("T_TrimSheet", w, h, heights);
             }
-            catch (const std::exception& e)
-            {
-                throw CommandError(std::string("trimSheetCreate: ") + e.what());
-            }
+            else
+                try
+                {
+                    s = preset(presetId, int(a.get<int64_t>("width", 0)));
+                }
+                catch (const std::exception& e)
+                {
+                    throw CommandError(std::string("trimSheetCreate: ") + e.what());
+                }
             if (a.has("name"))
                 s.name = a.get<std::string>("name");
             if (a.has("pxPerM"))
@@ -760,7 +785,7 @@ void registerCommands(ext::Context& ctx)
 
             json out = sheetSummary(s, f);
             out["created"] = !existed || a.get<bool>("overwrite", false);
-            if (a.get<bool>("bake", true) && (!out["baked"].get<bool>() || out["created"].get<bool>()))
+            if (a.get<bool>("bake", true) && !s.trims.empty() && (!out["baked"].get<bool>() || out["created"].get<bool>()))
             {
                 SheetBakeOptions o;
                 o.backend = a.get<std::string>("backend", "auto");
@@ -770,7 +795,8 @@ void registerCommands(ext::Context& ctx)
             }
             return out;
         },
-        .examples = {"trimSheetCreate(preset='sciFiHull')", "trimSheetCreate(preset='woodTrims', width=1024, pxPerM=1024)['trims'][0]"},
+        .examples = {"trimSheetCreate(preset='sciFiHull')", "trimSheetCreate(preset='woodTrims', width=1024, pxPerM=1024)['trims'][0]",
+                     "trimSheetCreate(name='T_Hall', width=2048, height=1024, pxPerM=128, strips=[512, 256, 128, 64, 64])"},
     });
 
     ctx.registerCommand({
