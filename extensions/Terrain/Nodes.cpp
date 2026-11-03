@@ -2,11 +2,14 @@
 // from meshes. Every terrain command builds a group out of these.
 
 #include "Erosion.h"
+#include "ErosionGpu.h"
 #include "Inputs.h"
+#include "Stamps.h"
 #include "Terrain.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
+#include <lila/Paths.h>
 #include <lila/Profile.h>
 #include <lila/TextureGraph.h>
 #include <lila/Workspace.h>
@@ -452,13 +455,10 @@ gn::NodeDecl infoDecl()
     };
 }
 
-/** A file path as given, else under the workspace. */
-std::filesystem::path resolved(std::filesystem::path file)
+/** A file path as stored: absolute as given, relative under the workspace, then next to the scene. */
+std::filesystem::path resolved(const std::string& file)
 {
-    if (!file.empty() && file.is_relative())
-        if (const auto& root = Workspace::get().root(); !root.empty())
-            file = root / file;
-    return file;
+    return file.empty() ? std::filesystem::path() : paths::resolvePath(file);
 }
 
 gn::NodeDecl readDecl()
@@ -595,7 +595,9 @@ gn::NodeDecl erodeDecl()
         .doc = "Rivers cut valleys: stream-power erosion on the drainage network, with optional uplift building the land as it "
                "wears, and slopes over the talus angle shedding downhill. Every valley drains to the edge, which stays put. "
                "Writes masks flow (drainage), wear (removed), deposit (laid down) and lakes. Iterations is age: more is older and "
-               "more carved. Lengths are cm.",
+               "more carved. Lengths are cm. Device gpu runs it on the graphics card (in the app), within float tolerance of cpu, "
+               "which is exact and the same everywhere; auto takes the GPU when there is one.",
+        .props = {prop("device", {"cpu", "gpu", "auto"}, "cpu", "Where it runs.")},
         .sockets = {.inputs = {geoIn("heightfield"), in("iterations", T::Int, p.iterations, "Steps; more is an older landscape.", 0, 10000),
                                in("strength", T::Float, p.strength, "How fast rivers cut.", 0.0),
                                in("areaExponent", T::Float, p.areaExponent, "How much bigger rivers cut faster (0.3 to 0.7).", 0.1, 1.0),
@@ -620,8 +622,16 @@ gn::NodeDecl erodeDecl()
                 p.hardnessMask = c.s("hardnessMask");
                 p.talusAngle = c.f("talusAngle");
                 p.thermalIterations = int(std::clamp<int64_t>(c.i("thermalIterations"), 0, 100));
+                const std::string device = c.prop("device");
                 if (p.iterations > 0)
-                    erode(h, p);
+                {
+                    std::string err;
+                    const bool gpu = device == "gpu" || (device == "auto" && gpuErosionAvailable());
+                    if (!gpu)
+                        erode(h, p);
+                    else if (!erodeGpu(h, p, &err))
+                        throw gn::ExecError(c.node.name + ": " + err);
+                }
                 c.out("heightfield", withHeightfield(g, std::move(h)));
             },
     };
@@ -782,12 +792,116 @@ gn::NodeDecl imageDecl()
             },
     };
 }
+
+/** A JSON list prop parsed, or an empty list. */
+nlohmann::json listProp(const ExecContext& c, const char* id)
+{
+    const std::string text = c.prop(id);
+    if (text.empty())
+        return nlohmann::json::array();
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(text);
+        return j.is_array() ? j : nlohmann::json::array();
+    }
+    catch (const std::exception& e)
+    {
+        throw gn::ExecError(c.node.name + ": " + id + " is not a JSON list: " + e.what());
+    }
+}
+
+gn::NodeDecl stampsDecl()
+{
+    return {
+        .type = "TerrainStamps",
+        .label = "Terrain Stamps",
+        .category = kCategory,
+        .doc = "Footprint stamps: building pads and plazas, parks and yards flattened, carved, raised, blended, terraced or left on "
+               "plinths and stilts, each with a skirt back to the ground, and their coverage written to masks such as cityFootprint. "
+               "Each stamp's footprint is a polygon or follows a mesh or curve through an Object Info node in this group, so moving "
+               "that object moves the stamp. terrainStampPad and terrainStampRegion write the list; put this after Erode Terrain so "
+               "erosion never re-cuts a pad.",
+        .props = {prop("stamps", {}, "[]", "The stamps, a JSON list in the heightfield's own space (see terrainStampPad).")},
+        .sockets = {.inputs = {geoIn("heightfield")}, .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                std::map<std::string, StampResult> results;
+                for (const nlohmann::json& j : listProp(c, "stamps"))
+                {
+                    Stamp s;
+                    try
+                    {
+                        s = Stamp::fromJson(j);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        throw gn::ExecError(c.node.name + ": " + e.what());
+                    }
+                    Footprint f;
+                    if (!s.object.empty())
+                    {
+                        auto it = c.env.objects.find(s.object);
+                        if (it == c.env.objects.end())
+                            continue;
+                        const glm::dmat4 toLocal = glm::inverse(c.env.ownerMatrix) * it->second.matrix;
+                        if (it->second.curves)
+                            f = footprintFromCurves(*it->second.curves, toLocal);
+                        else if (it->second.mesh)
+                            f = footprintFromMesh(*it->second.mesh, toLocal);
+                    }
+                    else
+                        f = footprintFromPolygon(s.polygon);
+                    results[s.id] = applyStamp(h, s, f);
+                }
+                publishStampResults(c.env.owner, c.node.name, std::move(results));
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
+
+gn::NodeDecl sculptDecl()
+{
+    return {
+        .type = "TerrainSculpt",
+        .label = "Terrain Sculpt",
+        .category = kCategory,
+        .doc = "Sculpt strokes replayed on the heightfield in order: raise, lower, smooth, flatten and noise, at points or along "
+               "paths, with a radius and strength. terrainSculpt adds strokes; before Erode Terrain they are shaped by erosion, "
+               "after it they stay as drawn.",
+        .props = {prop("strokes", {}, "[]", "The strokes, a JSON list in the heightfield's own space (see terrainSculpt).")},
+        .sockets = {.inputs = {geoIn("heightfield")}, .outputs = {geoOut("heightfield")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE();
+
+                GeometryPtr g = c.geometry("heightfield");
+                Heightfield h = requireHeightfield(c, g);
+                for (const nlohmann::json& j : listProp(c, "strokes"))
+                {
+                    try
+                    {
+                        applyStroke(h, SculptStroke::fromJson(j));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        throw gn::ExecError(c.node.name + ": " + e.what());
+                    }
+                }
+                c.out("heightfield", withHeightfield(g, std::move(h)));
+            },
+    };
+}
 } // namespace
 
 bool registerNodes(ext::Context& ctx)
 {
     for (gn::NodeDecl d : {gridDecl(), noiseDecl(), setHeightDecl(), setMaskDecl(), sampleDecl(), toMeshDecl(), fromMeshDecl(), blendDecl(),
-                           resampleDecl(), infoDecl(), readDecl(), textureGraphDecl(), erodeDecl(), flowDecl(), thermalDecl(), elevationDecl(), imageDecl()})
+                           resampleDecl(), infoDecl(), readDecl(), textureGraphDecl(), erodeDecl(), flowDecl(), thermalDecl(), elevationDecl(), imageDecl(),
+                           stampsDecl(), sculptDecl()})
         if (!gn::registerDecl(ctx, std::move(d)))
             return false;
     return true;

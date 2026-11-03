@@ -4,12 +4,15 @@
 #include "Export.h"
 
 #include <lila/ImageIO.h>
+#include <lila/Math.h>
 #include <lila/Profile.h>
 
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <set>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -81,7 +84,17 @@ UnrealLayout chooseUnrealLayout(int vertsX, int vertsY)
     return best;
 }
 
-json exportUnreal(const Heightfield& src, const fs::path& folder, const std::string& name, const UnrealOptions& o)
+std::string unrealLayerName(const std::string& mask)
+{
+    std::string out;
+    for (char c : mask)
+        out += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+    if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0])))
+        out = "L" + out;
+    return out;
+}
+
+json exportUnreal(const Heightfield& src, const glm::dmat4& world, const fs::path& folder, const std::string& name, const UnrealOptions& o)
 {
     LILA_ZONE();
 
@@ -130,32 +143,53 @@ json exportUnreal(const Heightfield& src, const fs::path& folder, const std::str
         writeGray(png, vertsX, vertsY, preview, 16);
         files["heightPng"] = png.generic_string();
     }
-    json layers = json::object();
+    json layers = json::array();
+    std::set<std::string> layerTaken;
     for (const auto& [mask, values] : h.masks)
     {
         if (values.size() != h.size())
             continue;
+        if (!o.masks.empty() && std::find(o.masks.begin(), o.masks.end(), mask) == o.masks.end())
+            continue;
+        auto named = o.layerNames.find(mask);
+        const std::string layer = unrealLayerName(named != o.layerNames.end() ? named->second : mask);
+        if (!layerTaken.insert(layer).second)
+            throw std::runtime_error("masks " + mask + " and another both map to paint layer " + layer);
         const std::vector<float> m = unrealOrder(h, [&](size_t k) { return std::clamp(values[k], 0.0f, 1.0f); });
         std::vector<uint8_t> bytes(m.size());
         for (size_t k = 0; k < m.size(); ++k)
             bytes[k] = uint8_t(std::lround(m[k] * 255.0f));
-        const fs::path raw8 = folder / (name + "_" + mask + ".raw");
+        const fs::path raw8 = folder / (name + "_" + layer + ".raw");
         writeRaw(raw8, bytes.data(), bytes.size());
-        layers[mask] = raw8.generic_string();
+        layers.push_back({{"mask", mask}, {"layer", layer}, {"file", raw8.generic_string()}});
     }
-    files["layers"] = layers;
 
-    // The landscape's corner is its first sample: Lila (max X, min Z), which in Unreal is (min X, min Y).
+    // The landscape's corner is its first sample: local (max X, min Z). Its X runs along local +Z, Y along local -X and Z
+    // up local Y, each carried into the world and on into Unreal.
     const glm::dvec2 e = h.extent();
-    const json location = {h.origin.y, -(h.origin.x + e.x), mid};
+    const glm::dvec3 corner = glm::dvec3(world * glm::dvec4(h.origin.x + e.x, mid, h.origin.y, 1.0));
+    const glm::dvec3 colX(world[0]), colY(world[1]), colZ(world[2]);
+    auto unreal = [](const glm::dvec3& v) {
+        const math::Vector u = math::toUnreal(math::Vector(v.x, v.y, v.z));
+        return glm::dvec3(u.x, u.y, u.z);
+    };
+    const glm::dvec3 ux = glm::normalize(unreal(colZ)), uy = glm::normalize(unreal(-colX)), uz = glm::normalize(unreal(colY));
+    // FMatrix::Rotator's decomposition, so Unreal rebuilds the same axes.
+    const double yaw = std::atan2(ux.y, ux.x), pitch = std::atan2(ux.z, std::sqrt(ux.x * ux.x + ux.y * ux.y));
+    const glm::dvec3 sy(-std::sin(yaw), std::cos(yaw), 0.0);
+    const double roll = std::atan2(glm::dot(uz, sy), glm::dot(uy, sy));
+    constexpr double kDeg = 57.29577951308232;
+    const glm::dvec3 loc = unreal(corner);
     json out = {{"target", "unreal"},
                 {"files", files},
+                {"layers", layers},
                 {"resolution", json::array({vertsX, vertsY})},
                 {"quadsPerSection", layout.quadsPerSection},
                 {"sectionsPerComponent", layout.sectionsPerComponent},
                 {"components", json::array({layout.componentsX, layout.componentsY})},
-                {"location", location},
-                {"scale", json::array({h.cell, h.cell, scaleZ})},
+                {"location", json::array({loc.x, loc.y, loc.z})},
+                {"rotation", json::array({pitch * kDeg, yaw * kDeg, roll * kDeg})},
+                {"scale", json::array({h.cell * glm::length(colZ), h.cell * glm::length(colX), scaleZ * glm::length(colY)})},
                 {"heightRange", json::array({r.x, r.y})},
                 {"clipped", int64_t(clipped)},
                 {"resampled", src.nx != h.nx || src.nz != h.nz},
@@ -163,6 +197,28 @@ json exportUnreal(const Heightfield& src, const fs::path& folder, const std::str
     std::ofstream(folder / (name + ".json")) << out.dump(2);
     out["files"]["settings"] = (folder / (name + ".json")).generic_string();
     return out;
+}
+
+json landscapeParams(const json& settings, const LandscapeSend& s)
+{
+    json layers = json::array();
+    for (const json& l : settings.value("layers", json::array()))
+        layers.push_back({{"name", l["layer"]}, {"mask", l["mask"]}, {"weightmap", l["file"]}});
+    json p = {{"id", s.id},
+              {"label", s.label},
+              {"heightmap", settings["files"]["height"]},
+              {"resolution", settings["resolution"]},
+              {"quadsPerSection", settings["quadsPerSection"]},
+              {"sectionsPerComponent", settings["sectionsPerComponent"]},
+              {"location", settings["location"]},
+              {"rotation", settings["rotation"]},
+              {"scale", settings["scale"]},
+              {"layers", layers},
+              {"makeMaterial", s.material.empty() && s.makeMaterial},
+              {"gridSize", s.gridSize}};
+    if (!s.material.empty())
+        p["material"] = s.material;
+    return p;
 }
 
 json exportFiles(const Heightfield& h, const fs::path& folder, const std::string& name)

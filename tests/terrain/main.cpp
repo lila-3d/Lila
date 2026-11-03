@@ -3,9 +3,11 @@
 
 #include "ops/Command.h"
 #include "core/MainQueue.h"
+#include "curve/CurveNodes.h"
 #include "extensions/ExtensionManager.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
+#include "render/Renderer.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 
@@ -28,6 +30,8 @@ int main(int argc, char** argv)
     lila::ops::registerBuiltins();
     lila::scene::types::registerBuiltins();
     lila::gn::registerTypes();
+    lila::curve::registerTypes();
+    lila::curve::registerCommands();
     lila::scene::registerCommands();
     lila::io::registerCommands();
     lila::extensions::registerCommands();
@@ -35,6 +39,7 @@ int main(int argc, char** argv)
 
     doctest::Context ctx(argc, argv);
     int result = ctx.run();
+    lila::render::Renderer::get().stop();
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     return result;

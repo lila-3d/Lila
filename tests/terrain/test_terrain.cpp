@@ -312,7 +312,7 @@ TEST_CASE("terrain: Unreal layouts fit the grid with the least waste, and the r1
     geo::Heightfield h = bumpy(127, 253, 100.0, {-6300.0, -12600.0});
     const auto dir = std::filesystem::temp_directory_path() / "lila_terrain_export_test";
     std::filesystem::remove_all(dir);
-    json s = terrain::exportUnreal(h, dir, "T", {});
+    json s = terrain::exportUnreal(h, glm::dmat4(1.0), dir, "T", {});
     const int w = s["resolution"][0].get<int>(), rows = s["resolution"][1].get<int>();
     CHECK(w >= h.nz);
     CHECK(rows >= h.nx);
