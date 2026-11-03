@@ -27,6 +27,10 @@ enum class Bond : uint8_t
     Flemish,    // stretcher and header alternating in every course
     Header,     // headers only, offset by half a header
     GardenWall, // three courses of stretchers, then one of headers
+    Herringbone, // stones at 45 degrees, leaning the other way each course
+    Ashlar,      // coursed random ashlar: stones of many lengths in level courses
+    Rubble,      // random rubble: rough stones of many lengths and heights, wide joints
+    DryStone,    // dry stone: rough stones, through stones at intervals, a coping of through stones on top
 };
 
 const char* bondName(Bond b);
@@ -51,8 +55,9 @@ enum class Role : uint8_t
     Band,      // string course or cornice stone, projecting from the face
     Slab,      // a piece of a floor or roof
     Rubble,    // fallen stone at the foot of a ruin
+    Paving,    // a cobble, flagstone or roof tile on a floor
 };
-inline constexpr int kRoleCount = 15;
+inline constexpr int kRoleCount = 16;
 const char* roleName(Role r);
 
 /** Which face of the wall a stone belongs to. Through stones show on both. */
@@ -175,9 +180,10 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall = 0)
 /**
  * The mortar body the stones sit in, recessed behind the faces: one convex prism per footprint segment and band of
  * courses, covering only where stones are (so openings, steps and ruined tops show through). Stones are this wall's,
- * laid by layoutWall with the same footprint and params; stones without a centre-line range are ignored.
+ * laid by layoutWall with the same footprint and params; stones without a centre-line range are ignored. With grid,
+ * cells are also cut where the wall crosses the grid's lines (x and z multiples of grid cm), so they chunk cleanly.
  */
-std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p, std::span<const Stone> stones, int wall = 0);
+std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p, std::span<const Stone> stones, int wall = 0, double grid = 0.0);
 
 /** coreCells of the intact wall, appended into one mesh on the mortar slot. */
 geo::Mesh coreMesh(const Footprint& footprint, const WallParams& p);
@@ -211,6 +217,7 @@ struct StoneShape
     double tile = 100.0;  // cm of stone per UV unit
     Shape shape = Shape::Box;
     double taper = 1.0;
+    double chips = 0.0;   // 0 to 1: chips knocked out of the worn level's edges and corners
 };
 
 /** A closed stone mesh centred on the origin, in the stone's frame, with uv0 and hard edges. */
@@ -240,6 +247,8 @@ struct Built
     std::vector<std::string> regions;     // names: "wall_0", "north_wall", "north_wall/door_1", "tower_1"
     geo::Mesh core;
     std::vector<geo::Mesh> coreHulls;     // convex pieces of the core, its collision
+    std::vector<geo::Mesh> shellCells;    // convex pieces of the walls' full volume where stones stand, for low poly shells
+    geo::Mesh dressing;                   // plaster and ivy
     int courses = 0;
     double pitch = 0.0;
     int trimmed = 0;
@@ -256,8 +265,12 @@ struct BuildOptions
     int variants = 6;
     Detail detail = Detail::Worn;
     double tile = 100.0; // cm of stone per UV unit
+    double chips = 0.3;  // 0 to 1: chipped edges on the worn level, more on stones that are older, wetter or damaged
     bool lods = false;   // also make every mesh's LOD chain
 };
+
+/** Erosion level 0 to 2 a stone's variant is picked at, from its age, wet and damage. */
+int erosionLevel(const Stone& s);
 
 /** Every footprint laid with its core, the same work the Masonry Wall node does before ruin and age. */
 Built buildWalls(std::span<const Footprint> footprints, const BuildOptions& o);
@@ -268,6 +281,8 @@ void makeMeshes(Built& b, const BuildOptions& o);
 /** Material slots: every stone mesh is on the first, the core on the second. Unreal finds or makes materials by these names. */
 inline constexpr const char* kStoneSlot = "MasonryStone";
 inline constexpr const char* kMortarSlot = "MasonryMortar";
+inline constexpr const char* kPlasterSlot = "MasonryPlaster";
+inline constexpr const char* kIvySlot = "MasonryIvy";
 
 /** A closed prism between heights y0 and y1 over a convex ground quad (any winding), faces outward. */
 geo::Mesh prismMesh(const std::array<glm::dvec3, 4>& ground, double y0, double y1);

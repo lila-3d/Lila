@@ -5,6 +5,8 @@
 #include "MasonryCore.h"
 #include "MasonryArch.h"
 
+#include <lila/Boolean.h>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <tbb/parallel_for.h>
@@ -281,6 +283,28 @@ struct Pattern
     const Unit& operator[](size_t k) const { return k < lead.size() ? lead[k] : cycle[(k - lead.size()) % cycle.size()]; }
 };
 
+/** Random lengths for the rough bonds, seeded per wall and course; dry stone puts a through stone every few. */
+Pattern roughPattern(Bond bond, int course, const Units& u, double stretcherDepth, double headerDepth, uint64_t seed, bool top)
+{
+    const double lo = bond == Bond::Ashlar ? 0.55 : (bond == Bond::Rubble ? 0.4 : 0.5);
+    const double hi = bond == Bond::Ashlar ? 1.5 : (bond == Bond::Rubble ? 1.3 : 1.6);
+    Pattern p;
+    for (int k = 0; k < 48; ++k)
+    {
+        const double r = unitRandom(mixKey(seed, uint64_t(course), uint64_t(k), 61));
+        Unit unit{u.length * (lo + (hi - lo) * r), Role::Stretcher, stretcherDepth};
+        if (bond == Bond::DryStone && (top || (k % 5 == 4 && course % 2 == 1)))
+            unit = {std::min(u.length, std::max(u.depth, u.length * (0.5 + 0.4 * r))), Role::Header, headerDepth};
+        p.cycle.push_back(unit);
+    }
+    if (course & 1)
+        p.lead.push_back({p.cycle[0].width * 0.5, p.cycle[0].role == Role::Header ? Role::Header : Role::Bat, p.cycle[0].depth});
+    return p;
+}
+
+/** Herringbone: stones at 45 degrees side by side; a unit is how far one stone moves the next along the course. */
+double herringboneUnit(const Units& u) { return (u.height + u.joint) * std::sqrt(2.0) - u.joint; }
+
 Pattern pattern(Bond bond, int course, const Units& u, double stretcherDepth, double headerDepth)
 {
     const double j = u.joint;
@@ -299,6 +323,11 @@ Pattern pattern(Bond bond, int course, const Units& u, double stretcherDepth, do
         if (course % 4 == 3)
             return {{H, Q}, {H}};
         return odd ? Pattern{{B}, {S}} : Pattern{{}, {S}};
+    case Bond::Herringbone:
+    {
+        const Unit R{herringboneUnit(u), Role::Stretcher, stretcherDepth};
+        return odd ? Pattern{{{R.width * 0.5, Role::Stretcher, stretcherDepth}}, {R}} : Pattern{{}, {R}};
+    }
     case Bond::Running:
     default: return odd ? Pattern{{B}, {S}} : Pattern{{}, {S}};
     }
@@ -496,7 +525,9 @@ Courses coursesOf(const Clean& c, const WallParams& p)
     k.base = c.base;
     if (total <= 0.0)
         return k;
-    k.count = std::max(1, int(std::lround(total / (p.stone.height + j))));
+    // A herringbone course is as tall as a stone standing at 45 degrees.
+    const double stone = p.bond == Bond::Herringbone ? (p.stone.length + p.stone.height) * std::sqrt(0.5) : p.stone.height;
+    k.count = std::max(1, int(std::lround(total / (stone + j))));
     k.pitch = total / k.count;
     k.h = std::max(0.5, k.pitch - j);
     return k;
@@ -694,13 +725,18 @@ const char* bondName(Bond b)
     case Bond::Flemish: return "flemish";
     case Bond::Header: return "header";
     case Bond::GardenWall: return "gardenWall";
+    case Bond::Herringbone: return "herringbone";
+    case Bond::Ashlar: return "ashlar";
+    case Bond::Rubble: return "rubble";
+    case Bond::DryStone: return "dryStone";
     }
     return "running";
 }
 
 bool parseBond(std::string_view name, Bond* out)
 {
-    for (Bond b : {Bond::Running, Bond::Stack, Bond::English, Bond::Flemish, Bond::Header, Bond::GardenWall})
+    for (Bond b : {Bond::Running, Bond::Stack, Bond::English, Bond::Flemish, Bond::Header, Bond::GardenWall, Bond::Herringbone, Bond::Ashlar,
+                   Bond::Rubble, Bond::DryStone})
         if (name == bondName(b))
         {
             *out = b;
@@ -712,7 +748,8 @@ bool parseBond(std::string_view name, Bond* out)
 std::vector<std::string> bondNames()
 {
     std::vector<std::string> out;
-    for (Bond b : {Bond::Running, Bond::Stack, Bond::English, Bond::Flemish, Bond::Header, Bond::GardenWall})
+    for (Bond b : {Bond::Running, Bond::Stack, Bond::English, Bond::Flemish, Bond::Header, Bond::GardenWall, Bond::Herringbone, Bond::Ashlar,
+                   Bond::Rubble, Bond::DryStone})
         out.emplace_back(bondName(b));
     return out;
 }
@@ -720,7 +757,7 @@ std::vector<std::string> bondNames()
 const char* roleName(Role r)
 {
     static const char* names[] = {"stretcher", "header", "bat", "closer", "filler", "voussoir", "keystone", "lintel",
-                                  "sill", "jamb", "column", "step", "band", "slab", "rubble"};
+                                  "sill", "jamb", "column", "step", "band", "slab", "rubble", "paving"};
     return names[std::min(size_t(r), std::size(names) - 1)];
 }
 
@@ -1061,7 +1098,10 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                 }
                 spans = subtract(std::move(spans), cuts, line.cyclic ? total : 0.0);
 
-                const Pattern pat = pattern(p.bond, course, u, stretcherDepth, headerDepth);
+                const bool rough = p.bond == Bond::Ashlar || p.bond == Bond::Rubble || p.bond == Bond::DryStone;
+                const Pattern pat = rough ? roughPattern(p.bond, course, u, stretcherDepth, headerDepth, mixKey(p.seed, uint64_t(wall), ri, uint64_t(side > 0.0), 7),
+                                                         course == K.count - 1)
+                                          : pattern(p.bond, course, u, stretcherDepth, headerDepth);
                 for (size_t si = 0; si < spans.size(); ++si)
                 {
                     const Span& sp = spans[si];
@@ -1135,6 +1175,30 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                         s.t1 = centre.paramAt(kb, fb);
                         if (s.t1 < s.t0)
                             s.t1 += centre.length();
+                        if (p.bond == Bond::Herringbone)
+                        {
+                            // The stone stands at 45 degrees in its unit, leaning the other way on alternate courses.
+                            double len = (h - u.height * std::sqrt(0.5)) * std::sqrt(2.0);
+                            // The end stones of a stretch are cut so they don't stand out past it.
+                            if (ii == 0 || ii + 1 == ivs.size())
+                                len = std::min(len, width * std::sqrt(2.0) + u.height * 0.5);
+                            len = std::max(len, u.height);
+                            const double a = (course & 1) ? -0.25 * kPi : 0.25 * kPi;
+                            const glm::dvec3 fx = s.frame[0], fy = s.frame[1];
+                            s.frame[0] = fx * std::cos(a) + fy * std::sin(a);
+                            s.frame[1] = fy * std::cos(a) - fx * std::sin(a);
+                            s.size = {len, u.height, iv.unit.depth};
+                        }
+                        else if (p.bond == Bond::Rubble || p.bond == Bond::DryStone)
+                        {
+                            // Rough stones: lower than the course and a little shorter, sitting on their bed.
+                            const double r1 = unitRandom(mixKey(p.seed, uint64_t(wall), laid.course.size(), 71));
+                            const double r2 = unitRandom(mixKey(p.seed, uint64_t(wall), laid.course.size(), 72));
+                            const double hh = h * (0.7 + 0.3 * r1);
+                            s.center.y -= (h - hh) * 0.5;
+                            s.size.y = hh;
+                            s.size.x = std::max(minLen, s.size.x * (0.86 + 0.14 * r2));
+                        }
                         // String courses and the cornice stand out of the outer face.
                         const double above = y - K.base;
                         double project = 0.0;
@@ -1338,7 +1402,7 @@ geo::Mesh hexMesh(const std::array<glm::dvec3, 8>& pts)
     return geo::Mesh::fromPolygons(P, sizes, idx);
 }
 
-std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p, std::span<const Stone> stones, int wall)
+std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p, std::span<const Stone> stones, int wall, double grid)
 {
     std::vector<geo::Mesh> out;
     const Clean c = clean(footprint, std::max(0.0, p.height));
@@ -1462,6 +1526,27 @@ std::vector<geo::Mesh> coreCells(const Footprint& footprint, const WallParams& p
                                 cuts.push_back({tv, int(v % np)});
                         }
                     cuts.push_back({iv.second, endAtCorner ? int(np - 1) : -1});
+                    std::sort(cuts.begin(), cuts.end());
+                }
+                if (grid > 0.0)
+                {
+                    std::vector<std::pair<double, int>> lines;
+                    for (size_t k = 0; k + 1 < cuts.size(); ++k)
+                    {
+                        const double ta = cuts[k].first, tb = cuts[k + 1].first;
+                        const glm::dvec3 pa = centre.sample(ta), pb = centre.sample(tb);
+                        for (int axis : {0, 2})
+                        {
+                            const double lo = std::min(pa[axis], pb[axis]), hi = std::max(pa[axis], pb[axis]);
+                            for (double g = std::ceil(lo / grid) * grid; g < hi; g += grid)
+                            {
+                                const double f = (g - pa[axis]) / (pb[axis] - pa[axis]);
+                                if (f > 1e-6 && f < 1.0 - 1e-6)
+                                    lines.push_back({ta + (tb - ta) * f, -1});
+                            }
+                        }
+                    }
+                    cuts.insert(cuts.end(), lines.begin(), lines.end());
                     std::sort(cuts.begin(), cuts.end());
                 }
                 for (size_t k = 0; k + 1 < cuts.size(); ++k)
@@ -1596,6 +1681,54 @@ geo::Mesh drumMesh(const StoneShape& s)
 }
 } // namespace
 
+namespace
+{
+/** Chips knocked out of a worn stone's edges and corners: small tilted boxes subtracted, more and bigger with s.chips. */
+geo::Mesh chipped(geo::Mesh m, const glm::dvec3& e, const StoneShape& s)
+{
+    const double amount = std::clamp(s.chips, 0.0, 1.0);
+    const int count = int(std::lround(2.0 + 10.0 * amount));
+    const double minE = std::min({e.x, e.y, e.z});
+    std::vector<geo::Mesh> cutters;
+    std::vector<lila::scene::BooleanOperand> ops = {{&m, glm::dmat4(1.0)}};
+    cutters.reserve(size_t(count));
+    for (int k = 0; k < count; ++k)
+    {
+        auto rnd = [&](int n) { return unitRandom(mixKey(s.seed, uint64_t(k), uint64_t(n), 733)); };
+        // On an edge (two axes at their extremes) or a corner (three), chosen by seed.
+        glm::dvec3 at;
+        const int along = int(rnd(0) * 3.0) % 3;
+        for (int a = 0; a < 3; ++a)
+            at[a] = (a == along && rnd(1) < 0.7) ? (rnd(2) * 2.0 - 1.0) * e[a] * 0.8 : (rnd(3 + a) < 0.5 ? -e[a] : e[a]);
+        const double size = minE * (0.12 + 0.35 * amount) * (0.5 + rnd(6));
+        const double ax = rnd(7) * kPi, ay = rnd(8) * kPi;
+        glm::dmat4 xf = glm::translate(glm::dmat4(1.0), at);
+        xf = glm::rotate(xf, ax, glm::dvec3(1, 0, 0));
+        xf = glm::rotate(xf, ay, glm::dvec3(0, 1, 0));
+        const glm::dvec3 hs(size * (0.7 + 0.6 * rnd(9)), size * (0.5 + 0.5 * rnd(10)), size * (0.7 + 0.6 * rnd(11)));
+        std::array<glm::dvec3, 8> box;
+        for (int i = 0; i < 8; ++i)
+            box[size_t(i)] = glm::dvec3(xf * glm::dvec4((i & 1) ? hs.x : -hs.x, (i & 2) ? hs.y : -hs.y, (i & 4) ? hs.z : -hs.z, 1.0));
+        cutters.push_back(hexMesh(box));
+    }
+    for (const geo::Mesh& c : cutters)
+        ops.push_back({&c, glm::dmat4(1.0)});
+    lila::scene::BooleanOptions bo;
+    bo.op = lila::scene::BooleanOp::Difference;
+    bo.splitNgons = false;
+    lila::scene::BooleanResult r = lila::scene::meshBoolean(ops, glm::dmat4(1.0), bo);
+    if (!r.ok() || r.mesh.numFaces() < 6)
+        return m;
+    return std::move(r.mesh);
+}
+} // namespace
+
+int erosionLevel(const Stone& s)
+{
+    const double v = 0.55 * double(s.age) + 0.6 * double(s.damage) + 0.25 * double(s.wet) * double(s.age);
+    return std::clamp(int(v * 3.0), 0, 2);
+}
+
 geo::Mesh stoneMesh(const StoneShape& s)
 {
     if (s.shape == Shape::Drum)
@@ -1690,6 +1823,8 @@ geo::Mesh stoneMesh(const StoneShape& s)
     }
 
     geo::Mesh m = geo::Mesh::fromPolygons(pts, sizes, idx);
+    if (s.detail == Detail::Worn && s.chips > 0.0)
+        m = chipped(std::move(m), e, s);
     // Box-projected UVs at the given scale, offset per seed so stones read different parts of the texture.
     const glm::dvec2 offset(unitRandom(uint64_t(s.seed) * 2 + 101), unitRandom(uint64_t(s.seed) * 2 + 102));
     const double tile = std::max(s.tile, 1e-3);
@@ -1917,7 +2052,7 @@ geo::Mesh edgesFromFootprints(std::span<const Footprint> footprints)
 void makeMeshes(Built& b, const BuildOptions& o)
 {
     const int variants = std::max(1, o.variants);
-    using Key = std::tuple<int, int64_t, int64_t, int64_t, int64_t, int>;
+    using Key = std::tuple<int, int64_t, int64_t, int64_t, int64_t, int, int>;
     std::map<Key, int> refs;
     struct ShapeRef
     {
@@ -1925,6 +2060,7 @@ void makeMeshes(Built& b, const BuildOptions& o)
         int variant;
         Shape shape;
         double taper;
+        int erosion;
     };
     std::vector<ShapeRef> shapes;
     b.reference.assign(b.stones.size(), 0);
@@ -1943,10 +2079,11 @@ void makeMeshes(Built& b, const BuildOptions& o)
         // Sizes rounded down to a quarter centimetre (never grown into a neighbour), so the common stones share a handful of meshes.
         const glm::dvec3 q = glm::floor(s.size * 4.0);
         const int64_t taper = s.shape == Shape::Box ? 1000 : int64_t(std::lround(double(s.taper) * 1000.0));
-        const Key key{int(s.shape), int64_t(q.x), int64_t(q.y), int64_t(q.z), taper, v};
+        const int erosion = o.chips > 0.0 ? erosionLevel(s) : 0;
+        const Key key{int(s.shape), int64_t(q.x), int64_t(q.y), int64_t(q.z), taper, v, erosion};
         auto [it, added] = refs.emplace(key, int(shapes.size()));
         if (added)
-            shapes.push_back({q / 4.0, v, s.shape, double(taper) / 1000.0});
+            shapes.push_back({q / 4.0, v, s.shape, double(taper) / 1000.0, erosion});
         b.reference[k] = it->second;
     }
     const size_t shaped = shapes.size();
@@ -1970,6 +2107,7 @@ void makeMeshes(Built& b, const BuildOptions& o)
         shape.tile = o.tile;
         shape.shape = shapes[r].shape;
         shape.taper = shapes[r].taper;
+        shape.chips = o.chips > 0.0 ? std::min(1.0, o.chips * (1.0 + 0.8 * shapes[r].erosion)) : 0.0;
         b.meshes[r] = stoneMesh(shape);
         if (o.lods)
             b.lods[r] = stoneLods(shape);
