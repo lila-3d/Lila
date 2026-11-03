@@ -427,8 +427,8 @@ TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, con
 		for (int32 Index = 0; Index < Spline.Points.Num(); ++Index)
 		{
 			const FLilaSplinePoint& In = Spline.Points[Index];
-			const FVector World = Location + In.Position;
-			const FIntVector Key(FMath::RoundToInt(World.X), FMath::RoundToInt(World.Y), FMath::RoundToInt(World.Z));
+			const FVector WorldPosition = Location + In.Position;
+			const FIntVector Key(FMath::RoundToInt(WorldPosition.X), FMath::RoundToInt(WorldPosition.Y), FMath::RoundToInt(WorldPosition.Z));
 			if (bJoin)
 			{
 				if (ULandscapeSplineControlPoint** Found = Shared.Find(Key))

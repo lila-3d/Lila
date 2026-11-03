@@ -515,9 +515,9 @@ void PlaceInstanced(UWorld* World, const TSharedPtr<FJsonObject>& Params, const 
 	Removed += DestroyActors(World, Others);
 	if (!Holder)
 	{
-		FActorSpawnParameters Params;
-		Params.ObjectFlags |= RF_Transactional;
-		Holder = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, Params);
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.ObjectFlags |= RF_Transactional;
+		Holder = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SpawnParams);
 		if (!Holder)
 		{
 			return;
