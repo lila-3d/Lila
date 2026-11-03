@@ -1030,6 +1030,10 @@ void LilaLink::ImportAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLin
 	{
 		return;
 	}
+	else if (FPaths::GetExtension(Request.File).StartsWith(TEXT("usd"), ESearchCase::IgnoreCase))
+	{
+		Outcome.Errors.Add(FString::Printf(TEXT("%s is USD, which this project cannot import: enable the USD Importer plugin"), *FPaths::GetCleanFilename(Request.File)));
+	}
 	else
 	{
 		ImportWithFbxFactory(Request, Outcome);
