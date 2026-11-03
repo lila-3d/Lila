@@ -96,8 +96,9 @@ struct HashMemo
 
 HashMemo& memo()
 {
-    static HashMemo m;
-    return m;
+    // Leaked: its weak_ptrs can hold control blocks made in extension DLLs, which are unloaded before LilaScene's statics die.
+    static HashMemo* m = new HashMemo;
+    return *m;
 }
 
 uint64_t hashComponent(const std::shared_ptr<const geo::Mesh>& m)
