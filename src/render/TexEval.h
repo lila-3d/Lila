@@ -214,6 +214,17 @@ public:
      */
     void refreshExternals();
 
+    /**
+     * Render thread: the uv region {x0, y0, x1, y1} (fractions, rows down) the stores wrote since the last call, false
+     * when none.
+     */
+    bool takeStored(std::array<float, 4>& uv);
+    /**
+     * Render thread: has the next step write the store images over uv again from what the plan computed, for images
+     * another evaluator (a preview) wrote over. Reruns in full when trimmed.
+     */
+    void storeAgain(const std::array<float, 4>& uv);
+
     /** Render thread: one slice of about budgetMs. True when nothing is left to run. Throws std::runtime_error on GPU failure. */
     bool step(VulkanContext& vk, double budgetMs = 40.0);
     /** Whether every pass of the latest plan has run and its images are written. */

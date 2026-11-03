@@ -528,6 +528,7 @@ void Evaluator::State::recordStores(VulkanContext& vk, VkCommandBuffer cmd, std:
         const int rw = r[2] - r[0], rh = r[3] - r[1];
         if (rw <= 0 || rh <= 0)
             continue;
+        stored = stored.unite(Rect::texels(r, img->width(), img->height()));
         const uint64_t texels = uint64_t(rw) * uint64_t(rh);
         const uint64_t nWords = (texels * uint64_t(texelBytes(img->format())) + 3) / 4;
         StorePush push{};

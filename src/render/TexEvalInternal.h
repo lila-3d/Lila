@@ -204,6 +204,8 @@ struct Evaluator::State
     std::vector<uint8_t> storeDirty; // per store
     /** What of each dirty pass, pending load and dirty store has to be redone. */
     std::vector<Rect> passRect, loadRect, storeRect;
+    /** What the stores wrote since takeStored last asked. */
+    Rect stored;
     /** Per buffer with a pending partial load: the image version it brings the buffer up to (0: whatever is current). */
     std::vector<uint64_t> loadTarget;
     std::vector<uint64_t> loadedVersion; // per buffer: the GPU external's key and version last loaded

@@ -543,8 +543,13 @@ bool runSlice(render::VulkanContext& vk)
         }
         try
         {
+            const bool finished = e.ev->step(vk, 40.0);
+            // A preview writes the tile's full-size images too, upsampled: the full size writes its texels back over
+            // them, even when it has nothing of its own to redo there.
+            if (std::array<float, 4> uv; e.full && e.ev->takeStored(uv))
+                e.full->storeAgain(uv);
             // A finished level has written its images: show them.
-            if (e.ev->step(vk, 40.0))
+            if (finished)
                 mainq::post([node = e.node] {
                     if (auto it = gSets.find(node); it != gSets.end())
                         it->second->ready = true;

@@ -690,6 +690,30 @@ void Evaluator::refreshExternals()
     m->done = false;
 }
 
+bool Evaluator::takeStored(std::array<float, 4>& uv)
+{
+    State& st = *m;
+    if (st.stored.empty())
+        return false;
+    uv = {st.stored.x0, st.stored.y0, st.stored.x1, st.stored.y1};
+    st.stored = {};
+    return true;
+}
+
+void Evaluator::storeAgain(const std::array<float, 4>& uv)
+{
+    State& st = *m;
+    if (!st.cur)
+        return;
+    const Rect r{uv[0], uv[1], uv[2], uv[3]};
+    for (size_t t = 0; t < st.storeDirty.size(); ++t)
+    {
+        st.storeRect[t] = st.storeDirty[t] ? st.storeRect[t].unite(r) : r;
+        st.storeDirty[t] = 1;
+    }
+    st.done = false;
+}
+
 bool Evaluator::idle() const
 {
     std::scoped_lock lock(m->mutex);
