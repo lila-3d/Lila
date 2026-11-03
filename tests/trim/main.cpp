@@ -12,6 +12,7 @@
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "tex/TextureSet.h"
+#include "uv/UvCommands.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -42,6 +43,7 @@ int main(int argc, char** argv)
     lila::tex::registerCommands();
     lila::curve::registerCommands();
     lila::link::registerCommands();
+    lila::uv::registerCommands();
 
     doctest::Context ctx(argc, argv);
     int result = ctx.run();

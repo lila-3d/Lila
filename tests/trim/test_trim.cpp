@@ -762,6 +762,141 @@ TEST_CASE("trim send: meshes not yet in Unreal are sent first or listed, whateve
     CHECK_THROWS_WITH(ops::execute("trimSheetSend", {{"meshes", "mapped"}}), doctest::Contains("SendB"));
 }
 
+namespace
+{
+json checkOf(const std::string& node, json flags = json::object())
+{
+    ops::execute("select", {{"args", {node}}});
+    return ops::execute("trimCheck", flags)["meshes"][node];
+}
+
+bool hasIssue(const json& mesh, const std::string& issue) { return mesh["issues"].contains(issue); }
+} // namespace
+
+TEST_CASE("trim check: density, alignment, orientation, stretch, readability and repetition")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("check") / "T_Check.lilatrim";
+    ops::execute("trimSheetCreate", {{"file", file.generic_string()}, {"name", "T_Check"}, {"width", 1024}, {"strips", {256, 128, 128, 512}}, {"pxPerM", 512.0}, {"bake", false}});
+    scene::components::setMode(scene::ComponentMode::Object);
+
+    // Strip0 is 50 cm tall: a 50 cm band maps onto it at the sheet's density, upright, inside it.
+    const std::string band = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {400, 0, 0}, {400, 50, 0}, {0, 50, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "CheckBand"}}));
+    ops::execute("select", {{"args", {band}}});
+    ops::execute("trimApply", {{"trim", 0}});
+    json c = checkOf(band, {{"distance", 500.0}, {"all", true}});
+    REQUIRE(c["islands"] == 1);
+    const json& is = c["details"][0];
+    CHECK(c["ok"].get<bool>());
+    CHECK(is["trim"] == "Strip0");
+    CHECK(is["densityError"].get<double>() == doctest::Approx(0.0).epsilon(0.05));
+    CHECK(is["quarterTurns"] == 0);
+    CHECK(is["trimsCrossed"] == 1);
+    CHECK(is["stretch"].get<double>() < 0.01);
+    CHECK_FALSE(is["mirrored"].get<bool>());
+    CHECK(is["cleanToMip"].get<int>() >= 3);
+    // An 8 px bevel at 512 px per metre is 1.6 cm: about 3 px at 5 m on a 1080p screen, under 1 px at 30 m.
+    CHECK(is["featurePx"].get<double>() == doctest::Approx(2.9).epsilon(0.1));
+    CHECK(hasIssue(checkOf(band, {{"distance", 3000.0}}), "unreadable"));
+    CHECK(hasIssue(checkOf(band, {{"distance", 500.0}, {"targetPxPerM", 256.0}}), "density"));
+
+    // Pulled across the strip: stretched, off its rectangle and over the next strip.
+    ops::execute("uvTransform", {{"scale", {1.0, 1.6}}});
+    c = checkOf(band, {{"distance", 500.0}});
+    CHECK(hasIssue(c, "stretched"));
+    CHECK(hasIssue(c, "outside"));
+    CHECK(hasIssue(c, "crossesTrims"));
+    ops::execute("undo", json::object());
+    ops::execute("uvTransform", {{"scale", {-1.0, 1.0}}});
+    CHECK(hasIssue(checkOf(band, {{"distance", 500.0}}), "mirrored"));
+    ops::execute("undo", json::object());
+    ops::execute("uvTransform", {{"rotate", 7.0}});
+    CHECK(hasIssue(checkOf(band, {{"distance", 500.0}}), "skewed"));
+    ops::execute("undo", json::object());
+    CHECK(checkOf(band, {{"distance", 500.0}})["ok"].get<bool>());
+
+    // Two faces round a corner, both centred on one strip: the same texels meet at the corner.
+    const std::string corner = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {100, 0, 0}, {100, 50, 0}, {0, 50, 0}, {100, 0, -100}, {100, 50, -100}}},
+                                                                {"faces", {{0, 1, 2, 3}, {1, 4, 5, 2}}},
+                                                                {"name", "CheckCorner"}}));
+    ops::execute("select", {{"args", {corner}}});
+    ops::execute("trimApply", {{"trim", 0}});
+    c = checkOf(corner, {{"distance", 500.0}});
+    CHECK(c["issues"]["repeats"] == 2);
+    ops::execute("trimApply", {{"trim", 0}, {"randomOffset", true}, {"seed", 4}});
+    CHECK_FALSE(hasIssue(checkOf(corner, {{"distance", 500.0}}), "repeats"));
+
+    // uvLayout counts trim overlap apart from real overlap; texel density leaves trims alone unless told.
+    ops::execute("trimApply", {{"trim", 0}});
+    const json layout = ops::execute("uvLayout", json::object());
+    CHECK(layout["overlappingFaces"] == 0);
+    CHECK(layout["trimOverlapFaces"] == 2);
+    CHECK_THROWS_WITH(ops::execute("uvTexelDensity", {{"density", 2.0}}), doctest::Contains("trim sheet"));
+    ops::execute("uvTexelDensity", {{"density", 2.0}, {"trims", "rescale"}});
+    const geo::Mesh rescaled = meshOf(corner);
+    CHECK(rescaled.faceAttrs().get<int32_t>(kFaceTrim)[0] == 0);
+
+    ops::execute("trimSheetEdit", {{"trim", 0}, {"values", {{"allowRotate", false}}}});
+    ops::execute("select", {{"args", {band}}});
+    ops::execute("uvTransform", {{"rotate", 90.0}});
+    CHECK(hasIssue(checkOf(band, {{"distance", 500.0}}), "rotated"));
+}
+
+TEST_CASE("trim scale: a monumental and a human-scale sheet in one scene each map their own meshes at true size")
+{
+    loadTrims();
+    const std::filesystem::path stone = scratch("scale") / "T_Whale.lilatrim", metal = scratch("scale") / "T_Human.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "monumentalStone"}, {"name", "T_Whale"}, {"width", 512}, {"file", stone.generic_string()}, {"bake", false}});
+    ops::execute("trimSheetCreate", {{"preset", "industrialFrame"}, {"name", "T_Human"}, {"width", 512}, {"file", metal.generic_string()}, {"bake", false}});
+    // Same world sizes at any resolution: the stone sheet is 64 m across, the metal one 4 m.
+    CHECK(load(stone).worldExtent().x == doctest::Approx(6400.0));
+    CHECK(load(metal).worldExtent().x == doctest::Approx(400.0));
+    scene::components::setMode(scene::ComponentMode::Object);
+
+    auto mapped = [&](const char* name, double w, double h, const std::filesystem::path& sheet, bool rotate = true) {
+        const std::string n = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {w, 0, 0}, {w, h, 0}, {0, h, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", name}}));
+        ops::execute("select", {{"args", {n}}});
+        const json r = ops::execute("trimAuto", {{"sheet", sheet.generic_string()}, {"randomOffset", false}, {"allowRotate", rotate}});
+        REQUIRE(r["details"].size() == 1);
+        return std::pair{n, r["details"][0]};
+    };
+    auto worldHeight = [](const std::filesystem::path& sheet, const json& detail) {
+        const Sheet s = load(sheet);
+        for (const Trim& t : s.trims)
+            if (t.name == detail["trim"].get<std::string>())
+                return s.worldSize(t).y;
+        return 0.0;
+    };
+
+    // A 4 m course along a kilometre of wall: a 4 m band of the stone sheet, repeating, not stretched.
+    const auto [course, courseTrim] = mapped("WhaleCourse", 100000.0, 400.0, stone);
+    CHECK(worldHeight(stone, courseTrim) == doctest::Approx(400.0));
+    CHECK(courseTrim["sizeError"].get<double>() < 0.05);
+    CHECK_FALSE(courseTrim["poor"].get<bool>());
+    // A 16 m tall pylon face goes to the 16 m fluting.
+    const auto [pylon, pylonTrim] = mapped("WhalePylon", 3000.0, 1600.0, stone);
+    CHECK(courseTrim["trim"] != pylonTrim["trim"]);
+    CHECK(worldHeight(stone, pylonTrim) == doctest::Approx(1600.0));
+    // A 25 cm rail at human scale on the metal sheet, beside them.
+    const auto [rail, railTrim] = mapped("HumanRail", 300.0, 25.0, metal);
+    CHECK(worldHeight(metal, railTrim) == doctest::Approx(25.0));
+    CHECK(railTrim["sizeError"].get<double>() < 0.05);
+
+    // Each keeps its own sheet's density: 8 px per metre for the stone at this width, 128 for the metal.
+    for (const auto& [node, density] : {std::pair{course, 8.0}, std::pair{pylon, 8.0}, std::pair{rail, 128.0}})
+    {
+        CAPTURE(node);
+        const json c = checkOf(node, {{"all", true}, {"distance", 2000.0}});
+        CHECK(c["targetPxPerM"].get<double>() == doctest::Approx(density));
+        CHECK_FALSE(hasIssue(c, "density"));
+        CHECK_FALSE(hasIssue(c, "crossesTrims"));
+        CHECK_FALSE(hasIssue(c, "outside"));
+    }
+    // The wrong scale is caught: kept upright, the human rail on the monumental sheet is a poor match.
+    const auto [lost, lostTrim] = mapped("HumanOnStone", 300.0, 25.0, stone, false);
+    CHECK(lostTrim["poor"].get<bool>());
+}
+
 TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")
 {
     const Sheet stone = preset("monumentalStone"), frame = preset("industrialFrame"), hangar = preset("starfighterFacility");

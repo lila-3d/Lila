@@ -2,7 +2,8 @@
 add_executable(lila_trim_tests main.cpp test_trim.cpp ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/TrimSheet.cpp
     ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/Generator.cpp
     ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/TrimBake.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/Strips.cpp)
+    ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/Strips.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/TrimSheets/Check.cpp)
 target_include_directories(lila_trim_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/TrimSheets ${CMAKE_SOURCE_DIR}/sdk/include)
 target_link_libraries(lila_trim_tests PRIVATE LilaUI doctest::doctest)
 add_dependencies(lila_trim_tests lila_trimsheets_extension)

@@ -23,8 +23,8 @@ namespace uv = lila::uv;
 
 /** File extension of a trim sheet definition. */
 inline constexpr const char* kExtension = ".lilatrim";
-/** Face int attribute holding the trim index a face was mapped to (-1 none). */
-inline constexpr const char* kFaceTrim = "trim";
+/** Face int attribute holding the trim index + 1 a face was mapped to (0 none). */
+inline constexpr const char* kFaceTrim = uv::kTrimFaceAttr;
 /** Mesh node string attribute naming the .lilatrim a mesh is mapped with. */
 inline constexpr const char* kNodeSheet = "trimSheet";
 
@@ -96,6 +96,8 @@ struct Trim
     std::vector<std::string> tags;
     int altGroup = -1;
     bool allowRotate = true;
+    /** Mirrored islands read right on this trim (a symmetric profile with no lettering or lighting baked one way). */
+    bool allowMirror = false;
     bool reserved = false;
     /** World size override, cm; zero derives it from the sheet's density. */
     glm::dvec2 worldSize{0.0};

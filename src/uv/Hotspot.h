@@ -16,6 +16,15 @@
 /** Hotspotting: islands rectified, measured in 3D and mapped onto the best fitting rectangle of a trim sheet or hotspot atlas. */
 namespace lila::uv
 {
+/**
+ * Face int attribute: the trim (index + 1, 0 none) a face is mapped onto. Trim-mapped faces share texels on purpose and
+ * take their texel density from the sheet, so uv tools leave them be.
+ */
+inline constexpr const char* kTrimFaceAttr = "trim";
+
+/** Whether face f is mapped onto a trim (kTrimFaceAttr above zero). */
+inline bool trimMapped(std::span<const int32_t> trimAttr, Index f) { return f < trimAttr.size() && trimAttr[f] > 0; }
+
 enum class TrimKind : uint8_t
 {
     StripU, // full width strip that tiles along U

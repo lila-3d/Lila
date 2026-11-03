@@ -2,6 +2,7 @@
 // (one trim, automatic hotspotting, shifting between strips, edge chamfers).
 
 #include "TrimSheets.h"
+#include "Check.h"
 #include "Generator.h"
 #include "Strips.h"
 #include "TrimBake.h"
@@ -1462,6 +1463,117 @@ void registerCommands(ext::Context& ctx)
             });
         },
         .examples = {"trimShift(steps=1)", "trimShift(steps=-2)"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimCheck",
+        .doc = "Check trim-mapped meshes against their sheets, island by island: texel density (px per metre) against the sheet's "
+               "or targetPxPerM, the trim each maps to and how far it runs outside it, orientation (quarter turns from world up, "
+               "skew, mirroring the trim doesn't allow), stretch, trims crossed (a sheet seam through the island), the mip its "
+               "trim stays clean to, the trim's smallest feature in screen px at distance= for a screenHeight= display "
+               "(readability), and neighbours showing the same trim at the same offset (repetition). Checks the selected meshes, "
+               "or every mesh mapped onto a sheet when none is selected. showIssues paints a colour set trimCheck on the selected "
+               "meshes (red issues, green clean). Returns per mesh {sheet, islands, withIssues, ok, pxPerM {min, max}, issues "
+               "{kind: islands}, details} plus totals; details lists the islands with issues (all=True lists every one).",
+        .flags = {sheetFlag(),
+                  uvSetFlag(),
+                  {"targetPxPerM", "tpm", AT::Float, nullptr, "Texel density islands should have; the sheet's when not given.", {}, {}, 0.001},
+                  {"densityTolerance", "dt", AT::Float, 0.25, "Allowed density error in doublings (0.25 is about 19%).", {}, {}, 0.0, 4.0},
+                  {"maxStretch", "ms", AT::Float, 0.1, "Allowed stretch: larger uv scale over smaller, minus one.", {}, {}, 0.0, 10.0},
+                  {"maxSkew", "mk", AT::Float, 3.0, "Allowed skew off a quarter turn, degrees.", {}, {}, 0.0, 45.0},
+                  {"distance", "d", AT::Float, 1000.0, "Gameplay viewing distance, cm.", {}, {}, 1.0},
+                  {"screenHeight", "sh", AT::Float, 1080.0, "Screen height, px.", {}, {}, 1.0},
+                  {"fov", "", AT::Float, 60.0, "Vertical field of view, degrees.", {}, {}, 1.0, 170.0},
+                  {"minFeaturePx", "mf", AT::Float, 2.0, "Smallest feature a trim may show on screen, px.", {}, {}, 0.0},
+                  {"all", "", AT::Bool, false, "List every island, not only those with issues."},
+                  {"showIssues", "si", AT::Bool, false, "Paint the selected meshes' colour set trimCheck: red islands with issues, green clean."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            LILA_ZONE();
+
+            CheckOptions o;
+            o.uvSet = a.get<std::string>("uvSet", "uv0");
+            o.targetPxPerM = a.get<double>("targetPxPerM", 0.0);
+            o.densityTolerance = a.get<double>("densityTolerance", o.densityTolerance);
+            o.maxStretch = a.get<double>("maxStretch", o.maxStretch);
+            o.maxSkew = a.get<double>("maxSkew", o.maxSkew);
+            o.distanceCm = a.get<double>("distance", o.distanceCm);
+            o.screenHeightPx = a.get<double>("screenHeight", o.screenHeightPx);
+            o.fovDeg = a.get<double>("fov", o.fovDeg);
+            o.minFeaturePx = a.get<double>("minFeaturePx", o.minFeaturePx);
+            const bool all = a.get<bool>("all", false);
+            const std::optional<std::filesystem::path> forced = a.has("sheet") ? std::optional(loadedPath(a, "trimCheck", "sheet", false)) : std::nullopt;
+
+            Graph& g = Graph::current();
+            std::vector<scene::NodeId> targets;
+            for (scene::NodeId id : g.selection())
+                if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                    targets.push_back(id);
+            if (targets.empty())
+                for (scene::NodeId id : g.nodes())
+                    if (Node* n = g.node(id); n && n->type().isA("mesh") && !sheetOf(*n).empty())
+                        targets.push_back(id);
+            if (targets.empty())
+                throw CommandError("trimCheck: no meshes mapped onto a trim sheet; select some or map them with trimApply or trimAuto");
+
+            std::map<std::filesystem::path, Sheet> sheets;
+            auto sheetFor = [&](const Node& n) -> std::pair<std::filesystem::path, const Sheet*> {
+                std::filesystem::path f = forced ? *forced : sheetOf(n);
+                if (f.empty() && !currentSheet().empty())
+                    f = paths::resolvePath(currentSheet());
+                if (f.empty() || !std::filesystem::exists(f))
+                    return {f, nullptr};
+                auto it = sheets.find(f);
+                if (it == sheets.end())
+                    it = sheets.emplace(f, loadOr(f, "trimCheck")).first;
+                return {f, &it->second};
+            };
+            json meshes = json::object();
+            std::map<std::string, int> totals;
+            int64_t islands = 0, bad = 0;
+            std::map<scene::NodeId, std::vector<std::vector<geo::Index>>> flagged, clean;
+            for (scene::NodeId id : targets)
+            {
+                Node& n = *g.node(id);
+                const auto [f, sheet] = sheetFor(n);
+                if (!sheet)
+                {
+                    meshes[n.path()] = {{"error", "no trim sheet; map it or give sheet="}};
+                    continue;
+                }
+                CheckOptions mo = o;
+                mo.world = std::get<glm::dmat4>(g.value({id, scene::Transform::kWorldMatrix, -1}));
+                const scene::MeshPtr m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1}));
+                if (!m)
+                    continue;
+                const MeshCheck r = checkMesh(*m, *sheet, mo);
+                json j = r.toJson(*sheet, all);
+                j["sheet"] = f.generic_string();
+                meshes[n.path()] = j;
+                islands += int64_t(r.islands.size());
+                for (const IslandCheck& is : r.islands)
+                {
+                    bad += !is.issues.empty();
+                    (is.issues.empty() ? clean : flagged)[id].push_back(is.faces);
+                }
+                for (const auto& [k, v] : r.issueCounts())
+                    totals[k] += v;
+            }
+            if (a.get<bool>("showIssues", false))
+                uv::editUvMeshes("Show Trim Issues", scene::ComponentMode::Face, [&](geo::Mesh& m, const Ids&, Node& n) -> json {
+                    geo::colors::add(m, "trimCheck", glm::vec4(1.0f));
+                    std::span<glm::vec4> col = geo::colors::values(m, "trimCheck");
+                    for (auto [groups, c] : {std::pair{&flagged, glm::vec4(0.9f, 0.15f, 0.1f, 1.0f)}, std::pair{&clean, glm::vec4(0.2f, 0.8f, 0.3f, 1.0f)}})
+                        if (const auto it = groups->find(n.id()); it != groups->end())
+                            for (const std::vector<geo::Index>& faces : it->second)
+                                for (geo::Index fc : faces)
+                                    if (m.faceValid(fc))
+                                        m.forEachFaceCorner(fc, [&](geo::Index k) { col[k] = c; });
+                    return true;
+                });
+            return {{"meshes", meshes}, {"islands", islands}, {"withIssues", bad}, {"ok", bad == 0}, {"issues", totals}};
+        },
+        .examples = {"trimCheck()['issues']", "trimCheck(distance=3000, screenHeight=2160, all=True)", "trimCheck(targetPxPerM=256, showIssues=True)"},
     });
 
     ctx.registerCommand({

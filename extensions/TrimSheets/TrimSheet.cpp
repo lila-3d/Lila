@@ -229,6 +229,7 @@ json Trim::toJson() const
               {"tags", tags},
               {"altGroup", altGroup},
               {"allowRotate", allowRotate},
+              {"allowMirror", allowMirror},
               {"reserved", reserved},
               {"profile", profile.toJson()}};
     if (worldSize.x > 0.0 && worldSize.y > 0.0)
@@ -249,6 +250,7 @@ Trim Trim::fromJson(const json& j)
     t.tags = j.value("tags", std::vector<std::string>());
     t.altGroup = j.value("altGroup", -1);
     t.allowRotate = j.value("allowRotate", true);
+    t.allowMirror = j.value("allowMirror", false);
     t.reserved = j.value("reserved", false);
     if (const json ws = j.value("worldSize", json()); ws.is_array() && ws.size() == 2)
         t.worldSize = {ws[0].get<double>(), ws[1].get<double>()};

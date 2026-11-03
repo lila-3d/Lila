@@ -10,6 +10,7 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "geo/Symmetry.h"
+#include "uv/Hotspot.h"
 #include "uv/SymmetryUv.h"
 #include "uv/Uv.h"
 #include "uv/UvEdit.h"
@@ -1190,11 +1191,14 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "uvTexelDensity",
-        .doc = "Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space).",
+        .doc = "Texel density of the selection in px/cm for a texture size. With density=, scales each island to it (world space). "
+               "Faces mapped onto a trim sheet take their density from the sheet: trims='skip' (the default) leaves their islands "
+               "on their trims and reports how many were skipped, 'rescale' scales them too and clears their trim mapping.",
         .flags = {uvSetFlag(),
                   {"resolution", "", T::Int, 1024, "Texture size, px.", {}, {}, 1.0},
                   {"density", "", T::Float, nullptr, "Set to this many px/cm.", {}, {}, 0.0},
-                  {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."}},
+                  {"worldSpace", "", T::Bool, true, "Measure world size, with the mesh's scale."},
+                  {"trims", "", T::String, "skip", "Trim-mapped faces: skip keeps them on their trims, rescale scales them off.", {"skip", "rescale"}}},
         .run = [](const Args& a) -> json {
             double res = double(std::max(1, a.get<int>("resolution", 1024)));
             bool world = a.get<bool>("worldSpace", true);
@@ -1204,14 +1208,36 @@ void registerCommands()
                     return texelDensity(m, set, f, res, world ? worldLinear(n) : glm::dmat3(1.0));
                 });
             double density = a.get<double>("density");
-            return editUv("Set Texel Density", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
+            const bool rescaleTrims = a.get<std::string>("trims", "skip") == "rescale";
+            size_t skippedAll = 0, editedAll = 0;
+            json out = editUv("Set Texel Density", K::Face, [&](geo::Mesh& m, const Ids& f, Node& n) -> json {
                 glm::dmat3 lin = world ? worldLinear(n) : glm::dmat3(1.0);
-                withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
-                    setTexelDensity(m, set, f, res, density, lin);
-                    return nullptr;
-                });
-                return texelDensity(m, set, f, res, lin);
+                std::vector<Index> faces = liveFaces(m, f);
+                std::span<int32_t> trim = m.faceAttrs().get<int32_t>(kTrimFaceAttr);
+                const size_t before = faces.size();
+                if (rescaleTrims)
+                {
+                    for (Index fc : faces)
+                        if (trimMapped(trim, fc))
+                            trim[fc] = 0;
+                }
+                else
+                    std::erase_if(faces, [&](Index fc) { return trimMapped(trim, fc); });
+                const size_t skipped = before - faces.size();
+                skippedAll += skipped;
+                editedAll += faces.size();
+                if (!faces.empty())
+                    withUvSymmetry(m, n, set, UvSymmetry::Absolute, {}, [&]() -> json {
+                        setTexelDensity(m, set, faces, res, density, lin);
+                        return nullptr;
+                    });
+                json r = faces.empty() ? json(nullptr) : json(texelDensity(m, set, faces, res, lin));
+                return skipped ? json{{"density", r}, {"skippedTrimFaces", skipped}} : r;
             });
+            if (editedAll == 0 && skippedAll > 0)
+                throw CommandError("uvTexelDensity: these faces are mapped onto a trim sheet, whose texel density is the sheet's pxPerM; "
+                                   "change the sheet (trimSheetEdit(values={'pxPerM': ...})) or pass trims='rescale' to take them off it");
+            return out;
         },
     });
 
@@ -1247,7 +1273,9 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "uvLayout",
-        .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density.",
+        .doc = "UV report for the selection: islands, overlapping and folded faces, distortion and texel density. Faces mapped onto a "
+               "trim sheet share texels on purpose: their overlaps count in trimOverlapFaces, not overlappingFaces (trimCheck checks "
+               "them against their sheet).",
         .flags = {uvSetFlag(), {"resolution", "", T::Int, 1024, "Texture size for the density, px.", {}, {}, 1.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -1260,7 +1288,12 @@ void registerCommands()
                 co.source = IslandSource::Uvs;
                 co.uvSet = set;
                 std::vector<uint8_t> flags;
-                size_t overlapping = overlappingFaces(m, set, flags, f);
+                overlappingFaces(m, set, flags, f);
+                std::span<const int32_t> trim = m.faceAttrs().get<int32_t>(kTrimFaceAttr);
+                size_t overlapping = 0, trimOverlap = 0;
+                for (Index fc = 0; fc < flags.size(); ++fc)
+                    if (flags[fc])
+                        ++(trimMapped(trim, fc) ? trimOverlap : overlapping);
                 std::vector<FaceDistortion> d = faceDistortion(m, set, f);
                 DistortionSummary s = summarize(m, d, f);
                 std::vector<std::string> sets;
@@ -1271,6 +1304,7 @@ void registerCommands()
                         {"uvSets", sets},
                         {"islands", islandFaces(m, f, co).size()},
                         {"overlappingFaces", overlapping},
+                        {"trimOverlapFaces", trimOverlap},
                         {"foldedFaces", s.folded},
                         {"areaDistortion", {{"mean", s.meanArea}, {"max", s.maxArea}}},
                         {"angleDistortion", {{"mean", s.meanAngle}, {"max", s.maxAngle}}},
