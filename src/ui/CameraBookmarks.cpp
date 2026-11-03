@@ -87,25 +87,37 @@ json storedBookmarks(scene::NodeId camera, const std::string& viewName)
     return it != builtInBookmarks().end() ? it->second : json::object();
 }
 
-void storeBookmarks(scene::NodeId camera, const std::string& viewName, const json& slots)
+void setBuiltInBookmarks(const std::string& viewName, const json& slots)
 {
-    scene::Graph& g = scene::Graph::current();
-    if (g.node(camera))
-    {
-        // Like camera moves, bookmarks stay off the scene's undo stack.
-        UndoStack& u = UndoStack::get();
-        bool was = u.enabled();
-        u.setEnabled(false);
-        g.setValue({camera, scene::Camera::kBookmarks, -1}, slots.empty() ? std::string() : slots.dump());
-        u.setEnabled(was);
-        io::markModified();
-        return;
-    }
     if (slots.empty())
         builtInBookmarks().erase(viewName);
     else
         builtInBookmarks()[viewName] = slots;
     io::uiChanged(kSection);
+}
+
+struct BuiltInBookmarksEdit final : UndoAction
+{
+    std::string view;
+    json before, after;
+    void undo() override { setBuiltInBookmarks(view, before); }
+    void redo() override { setBuiltInBookmarks(view, after); }
+};
+
+void storeBookmarks(scene::NodeId camera, const std::string& viewName, const json& slots)
+{
+    scene::Graph& g = scene::Graph::current();
+    if (g.node(camera))
+    {
+        g.setValue({camera, scene::Camera::kBookmarks, -1}, slots.empty() ? std::string() : slots.dump());
+        return;
+    }
+    auto edit = std::make_unique<BuiltInBookmarksEdit>();
+    edit->view = viewName;
+    edit->before = storedBookmarks(camera, viewName);
+    edit->after = slots;
+    setBuiltInBookmarks(viewName, slots);
+    UndoStack::get().record(std::move(edit));
 }
 
 ViewportWidget* requireView()
@@ -196,8 +208,8 @@ void install(std::function<ViewportWidget*()> active)
         .name = "cameraBookmark",
         .doc = "Jump the active view to a camera bookmark, or set, clear or list them.\n\n"
                "Each camera has its own slots 1 to 9: every camera node, and each built-in view (persp, top, front ...). "
-               "Bookmarks act on the camera the active view shows. Jumping is a camera undo step, not a scene one. Returns "
-               "whether it jumped, the slot set, or with query the slots in use.",
+               "Bookmarks act on the camera the active view shows. Jumping is a camera undo step, not a scene one. "
+               "Setting and clearing are scene undo steps. Returns whether it jumped, the slot set, or with query the slots in use.",
         .positionalDoc = "slot",
         .flags = {{.name = "set", .shortName = "s", .type = ArgType::Bool, .doc = "Save the view's camera in the slot instead of jumping to it."},
                   {.name = "clear", .shortName = "c", .type = ArgType::Bool, .doc = "Remove the slot's bookmark; with no slot, every one on the camera."},
@@ -216,6 +228,7 @@ void install(std::function<ViewportWidget*()> active)
             }
             if (a.get<bool>("clear"))
             {
+                UndoChunk chunk("cameraBookmark");
                 v->clearBookmarks(slot);
                 return nullptr;
             }
@@ -223,6 +236,7 @@ void install(std::function<ViewportWidget*()> active)
                 throw CommandError("cameraBookmark: slot expected");
             if (a.get<bool>("set"))
             {
+                UndoChunk chunk("cameraBookmark");
                 v->setBookmark(slot);
                 return slot;
             }
