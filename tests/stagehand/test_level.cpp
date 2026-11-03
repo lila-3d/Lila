@@ -7,6 +7,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -135,4 +137,103 @@ TEST_CASE("stagehand: a terrain is a heightfield collider and things settle onto
     CHECK(r["atRest"].get<bool>());
     CHECK(worldPos(stone).y == doctest::Approx(1500.0).epsilon(0.001));
     CHECK(r["movers"][0]["restsOn"][0] == terrain);
+}
+
+namespace
+{
+/** A cube broken by a Fracture geometry-nodes modifier into about `pieces` instanced pieces. */
+std::string fracturedCube(const char* name, const glm::dvec3& at, int pieces)
+{
+    const std::string c = cube(name, at, {200, 200, 200});
+    const std::string group = std::string(name) + "Break";
+    run("gnBuildGroup", {{"args", {json{{"name", group},
+                                        {"nodes", json::array({{{"name", "F"}, {"type", "Fracture"}, {"values", {{"pieces", pieces}, {"roughness", 0.0}}}}})},
+                                        {"links", json::array({"GroupInput.geometry -> F.mesh", "F.pieces -> GroupOutput.geometry"})}}}}});
+    run("gnApply", {{"args", {c, group}}});
+    return c;
+}
+
+std::filesystem::path scratchFile(const char* name)
+{
+    const auto dir = std::filesystem::temp_directory_path() / "lila_stagehand_level";
+    std::filesystem::create_directories(dir);
+    return dir / name;
+}
+} // namespace
+
+TEST_CASE("stagehand: fracture pieces become objects that settle, undo, and survive save and reopen")
+{
+    load();
+    run("newScene");
+    const glm::dvec3 site(1000000, 0, -400000);
+    const std::string wall = fracturedCube("Wall", site, 12);
+    const json r = run("instancesToObjects", {{"args", {wall}}, {"material", "stone"}});
+    const size_t count = r["count"].get<size_t>();
+    CHECK(count >= 6);
+    CHECK(r["objects"].size() == count);
+    CHECK(r["meshes"].get<size_t>() == count); // every piece is its own mesh
+    CHECK(run("getAttr", {{"args", {wall + ".visibility"}}}).get<bool>() == false);
+    // Each piece sits where its instance was: together they still fill the cube.
+    glm::dvec3 lo(1e300), hi(-1e300);
+    for (const json& o : r["objects"])
+    {
+        const json info = run("dressInfo", {{"args", {o}}})[0];
+        CHECK(info["role"] == "dynamic");
+        CHECK(info["material"] == "stone");
+        for (int k = 0; k < 3; ++k)
+        {
+            lo[k] = std::min(lo[k], info["boundsMin"][k].get<double>());
+            hi[k] = std::max(hi[k], info["boundsMax"][k].get<double>());
+        }
+    }
+    CHECK(lo.x == doctest::Approx(site.x - 100.0).epsilon(1e-4));
+    CHECK(hi.y == doctest::Approx(200.0).epsilon(0.01));
+
+    // Lifted and settled, the pieces fall in a heap on the ground.
+    run("xform", {{"args", {r["group"]}}, {"translation", json::array({0, 300, 0})}});
+    const std::vector<std::string> objs = r["objects"].get<std::vector<std::string>>();
+    const json s = run("settle", {{"args", objs}});
+    CHECK(s["atRest"].get<bool>());
+    CHECK(s["deepestPenetration"].get<double>() < 1.0);
+    for (const json& m : s["movers"])
+        CHECK(m["position"][1].get<double>() < 300.0);
+
+    const auto path = scratchFile("fracture_objects.lila");
+    const glm::dvec3 before = worldPos(objs[0]);
+    run("saveScene", {{"args", {path.string()}}});
+    run("openScene", {{"args", {path.string()}}});
+    CHECK(glm::length(worldPos(objs[0]) - before) < 1e-6);
+    CHECK(run("dressInfo", {{"args", {objs[0]}}})[0]["material"] == "stone");
+    CHECK(run("getAttr", {{"args", {wall + ".visibility"}}}).get<bool>() == false);
+
+    run("newScene");
+    const std::string w2 = fracturedCube("Wall", site, 12);
+    run("instancesToObjects", {{"args", {w2}}});
+    run("undo");
+    CHECK(run("getAttr", {{"args", {w2 + ".visibility"}}}).get<bool>() == true);
+    CHECK_FALSE(run("objExists", {{"args", {"Wall_Objects"}}}).get<bool>());
+}
+
+TEST_CASE("stagehand: scattered copies of one mesh become scene instances of it")
+{
+    load();
+    run("newScene");
+    const std::string ground = cube("Lot", {0, 0, 0}, {1000, 10, 1000});
+    const std::string rock = cube("Rock", {0, 0, 3000}, {20, 15, 25});
+    run("gnBuildGroup",
+        {{"args", {json{{"name", "Strew"},
+                        {"nodes", json::array({{{"name", "Info"}, {"type", "ObjectInfo"}, {"props", {{"object", rock}, {"transformSpace", "original"}}}},
+                                               {{"name", "Pts"}, {"type", "DistributePointsOnFaces"}, {"values", {{"density", 0.2}, {"seed", 3}}}},
+                                               {{"name", "Inst"}, {"type", "InstanceOnPoints"}}})},
+                        {"links", json::array({"GroupInput.geometry -> Pts.mesh", "Pts.points -> Inst.points", "Info.geometry -> Inst.instance",
+                                               "Inst.instances -> GroupOutput.geometry"})}}}}});
+    run("gnApply", {{"args", {ground, "Strew"}}});
+    const json r = run("instancesToObjects", {{"args", {ground}}, {"name", "Strewn"}});
+    CHECK(r["meshes"].get<int64_t>() == 1);
+    CHECK(r["count"].get<int64_t>() >= 10);
+    CHECK(run("selectInstances", {{"args", {r["objects"][0]}}}).size() == r["objects"].size());
+
+    const json u = run("instancesToObjects", {{"args", {ground}}, {"mode", "unique"}, {"hide", false}});
+    CHECK(u["count"] == r["count"]);
+    CHECK(run("selectInstances", {{"args", {u["objects"][0]}}}).size() == 1);
 }

@@ -209,6 +209,8 @@ bool boundsUnder(Graph& g, NodeId root, glm::dvec3& lo, glm::dvec3& hi);
 bool registerKitNodes(lila::ext::Context& ctx);
 void registerKitCommands(lila::ext::Context& ctx);
 void registerKitUi(lila::ext::Context& ctx);
+/** instancesToObjects (Realize.cpp). */
+void registerRealizeCommands(lila::ext::Context& ctx);
 /** fillShelf, scatterProps, pileProps, stackProps (ArrangeCommands.cpp). */
 void registerArrangeCommands(lila::ext::Context& ctx);
 /** The Library panel and dragging assets from it into viewports (LibraryUi.cpp). */
