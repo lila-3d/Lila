@@ -409,6 +409,7 @@ PlugRef editPlug(Graph& g, NodeId mesh)
     // A generator (or anything else) feeds the chain: freeze its current result into a stored source.
     g.evaluate();
     MeshPtr frozen = std::get<MeshPtr>(g.value(*src));
+    log::info("{}: baked {} into the mesh to edit it; its settings no longer apply", g.node(mesh)->path(), up->path());
     // Other stacks it feeds (references) move onto the frozen source with this one, so they keep sharing it.
     std::vector<PlugRef> shared;
     for (const PlugRef& d : g.destinations(*src))

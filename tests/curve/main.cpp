@@ -7,6 +7,7 @@
 #include "ops/Command.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
+#include "uv/UvCommands.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -28,6 +29,7 @@ int main(int argc, char** argv)
     lila::io::registerCommands();
     lila::curve::registerTypes();
     lila::curve::registerCommands();
+    lila::uv::registerCommands();
 
     doctest::Context ctx(argc, argv);
     return ctx.run();

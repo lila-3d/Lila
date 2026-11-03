@@ -294,3 +294,31 @@ TEST_CASE("pipe, sweep and cable uv flags: live, saved and undone")
     UvBox cb = uvBox(*meshNamed(c[0][3].get<std::string>()), "pipePart", 0);
     CHECK(cb.lo.y == doctest::Approx(0.875));
 }
+
+TEST_CASE("uv edits on a live pipe bake it first and are kept")
+{
+    run("newScene");
+    std::string path = run("curve", {{"type", "poly"}, {"points", points({D3(0), D3(0, 0, 200)})}, {"name", "Run"}});
+    json r = run("pipe", {{"args", {path}}, {"uvLayout", "along"}});
+    std::string mesh = r[0], node = r[1];
+    const UvBox before = uvBox(*meshNamed(mesh));
+    run("selectComponents", {{"args", {mesh}}, {"faces", {0, 1, 2}}});
+    run("uvTransform", {{"translate", {2.0, 0.0}}});
+    CHECK(!run("objExists", {{"args", {node}}}).get<bool>());
+    const UvBox after = uvBox(*meshNamed(mesh));
+    CHECK(after.hi.x == doctest::Approx(before.hi.x + 2.0).epsilon(1e-4));
+
+    saveAndReopen("pipe_uv_edit.lila");
+    CHECK(uvBox(*meshNamed(mesh)).hi.x == doctest::Approx(after.hi.x).epsilon(1e-4));
+
+    // Undo puts the live pipe back with its own uvs.
+    run("newScene");
+    r = run("pipe", {{"args", {run("curve", {{"type", "poly"}, {"points", points({D3(0), D3(0, 0, 200)})}})}}});
+    mesh = r[0].get<std::string>();
+    node = r[1].get<std::string>();
+    run("selectComponents", {{"args", {mesh}}, {"faces", {0}}});
+    run("uvTransform", {{"translate", {2.0, 0.0}}});
+    run("undo");
+    CHECK(run("objExists", {{"args", {node}}}).get<bool>());
+    CHECK(uvBox(*meshNamed(mesh)).hi.x <= 1.0 + 1e-4);
+}
