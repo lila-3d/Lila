@@ -1,3 +1,4 @@
+#include "curve/PipeToolsNodes.h"
 #include "curve/CurveNodes.h"
 
 #include "core/Profile.h"
@@ -975,6 +976,7 @@ void registerCommands()
     });
 
     registerPipeCommands();
+    registerPipeToolCommands();
     registerPlanarCommands();
     registerEdgeToCurveCommand();
     registerAlongCommands();

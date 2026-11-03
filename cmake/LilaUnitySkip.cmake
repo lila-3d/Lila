@@ -69,7 +69,11 @@ set(LILA_UNITY_SKIP
     src/curve/Ops.cpp
     src/curve/Pipe.cpp
     src/curve/PipeNode.cpp
+    src/curve/PipeToolsNodes.cpp
+    src/curve/Carve.cpp
+    src/curve/Channel.cpp
     src/curve/StripUvAttrs.cpp
+    src/curve/WorldMeshes.cpp
     src/curve/Planar.cpp
     src/curve/PlanarNodes.cpp
     src/curve/Roof.cpp

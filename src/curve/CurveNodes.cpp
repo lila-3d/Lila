@@ -4,6 +4,7 @@
 #include "core/Profile.h"
 #include "curve/AlongNodes.h"
 #include "curve/CurveControls.h"
+#include "curve/PipeToolsNodes.h"
 #include "curve/StripUvAttrs.h"
 #include "curve/EdgeToCurve.h"
 #include "curve/EnvironmentNodes.h"
@@ -1012,6 +1013,7 @@ void registerTypes()
     types::registerType(std::move(t));
     registerHistoryTypes();
     registerPipeType();
+    registerPipeToolTypes();
     registerPlanarTypes();
     registerEdgeToCurveType();
     registerAlongTypes();

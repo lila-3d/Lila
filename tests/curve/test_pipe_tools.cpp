@@ -1,9 +1,12 @@
 #include <doctest/doctest.h>
 
+#include "curve/Carve.h"
+#include "curve/Channel.h"
 #include "curve/CurveNodes.h"
 #include "curve/Pipe.h"
 #include "curve/Strap.h"
 #include "curve/Sweep.h"
+#include "curve/WorldMeshes.h"
 #include "geo/Attribute.h"
 #include "geo/Mesh.h"
 #include "geo/Primitives.h"
@@ -321,4 +324,128 @@ TEST_CASE("uv edits on a live pipe bake it first and are kept")
     run("undo");
     CHECK(run("objExists", {{"args", {node}}}).get<bool>());
     CHECK(uvBox(*meshNamed(mesh)).hi.x <= 1.0 + 1e-4);
+}
+
+TEST_CASE("channel sections")
+{
+    for (curve::ChannelShape s : {curve::ChannelShape::UChannel, curve::ChannelShape::VGroove, curve::ChannelShape::HalfRound, curve::ChannelShape::Stepped})
+    {
+        curve::ChannelOptions o;
+        o.shape = s;
+        o.width = 300.0;
+        o.depth = 120.0;
+        std::vector<glm::dvec2> sec = curve::channelSection(o);
+        INFO(curve::channelShapeName(s));
+        REQUIRE(sec.size() >= 3);
+        CHECK(sec.front() == glm::dvec2(-150.0, 0.0));
+        CHECK(sec.back() == glm::dvec2(150.0, 0.0));
+        double low = 0.0;
+        for (const glm::dvec2& p : sec)
+        {
+            low = std::min(low, p.y);
+            CHECK(std::abs(p.x) <= 150.0 + 1e-9);
+        }
+        CHECK(low == doctest::Approx(-120.0));
+        geo::Mesh cutter = curve::channelCutter(line({D3(0), D3(1000, 0, 0)}), o);
+        CHECK(boundaryEdges(cutter) == 0);
+        CHECK(nonManifoldEdges(cutter) == 0);
+    }
+}
+
+TEST_CASE("carve a channel into an open surface")
+{
+    curve::ChannelOptions o;
+    o.width = 200.0;
+    o.depth = 80.0;
+    geo::Mesh surface = ground(2000.0, 20);
+    geo::Mesh cutter = curve::channelCutter(line({D3(-500, 0, 0), D3(500, 0, 300)}), o);
+    curve::CarveResult r = curve::carve(surface, glm::dmat4(1.0), cutter);
+    REQUIRE(r.ok());
+    CHECK(r.patchFaces > 0);
+    CHECK(r.unwelded == 0);
+    CHECK(nonManifoldEdges(r.mesh) == 0);
+    // The outer border is all that stays open: 4 sides of 20 edges.
+    CHECK(boundaryEdges(r.mesh) == 80);
+    CHECK(r.mesh.bounds().min.y == doctest::Approx(-80.0).epsilon(1e-6));
+    CHECK(r.mesh.bounds().max.y == doctest::Approx(0.0).epsilon(1e-6));
+    CHECK(r.mesh.validate().empty());
+    // The channel walls carry the strip: V across in 0..1.
+    auto uv = r.mesh.cornerAttrs().get<glm::vec2>(geo::attr::uvName(0));
+    for (geo::Index f = 0; f < r.mesh.faceCapacity(); ++f)
+        if (r.mesh.faceValid(f) && r.mesh.faceCentroid(f).y < -1.0)
+            r.mesh.forEachFaceCorner(f, [&](geo::Index c) {
+                CHECK(uv[c].y >= -1e-4f);
+                CHECK(uv[c].y <= 1.0f + 1e-4f);
+            });
+}
+
+TEST_CASE("carve at kilometre scale far from the origin keeps the rest of the surface exact")
+{
+    // 4 km of terrain 30 km from the origin, in 100 m faces, with a 3 m wide trench 1.2 km long.
+    const D3 far(3.0e6, 1500.0, -2.0e6);
+    geo::Mesh surface = ground(400000.0, 40, far);
+    curve::ChannelOptions o;
+    o.width = 300.0;
+    o.depth = 150.0;
+    o.shape = curve::ChannelShape::Stepped;
+    geo::Mesh cutter = curve::channelCutter(line({far + D3(-60000, 0, 2500), far + D3(60000, 0, 6500)}), o);
+    const auto t0 = std::chrono::steady_clock::now();
+    curve::CarveResult r = curve::carve(surface, glm::dmat4(1.0), cutter);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    REQUIRE(r.ok());
+    CHECK(seconds < 10.0);
+    CHECK(r.unwelded == 0);
+    CHECK(nonManifoldEdges(r.mesh) == 0);
+    CHECK(boundaryEdges(r.mesh) == 160);
+    CHECK(r.mesh.bounds().min.y == doctest::Approx(far.y - 150.0).epsilon(1e-9));
+    // Points away from the cut are the surface's own, bit for bit.
+    int exact = 0;
+    for (const D3& p : surface.positions())
+        for (const D3& q : r.mesh.positions())
+            if (p == q)
+            {
+                ++exact;
+                break;
+            }
+    CHECK(exact == int(surface.numPoints()));
+
+    // The same carve placed by a matrix gives the same cut.
+    const glm::dmat4 m = glm::translate(glm::dmat4(1.0), far);
+    curve::CarveResult moved = curve::carve(ground(400000.0, 40), m, cutter);
+    REQUIRE(moved.ok());
+    CHECK(moved.mesh.numFaces() == r.mesh.numFaces());
+}
+
+TEST_CASE("carveChannel command: live, saved and undone")
+{
+    run("newScene");
+    std::string plane = run("polyPlane", {{"width", 3000}, {"depth", 3000}, {"subdivisionsX", 10}, {"subdivisionsZ", 10}})[0];
+    const size_t faces0 = meshNamed(plane)->numFaces();
+    json r = run("carveChannel", {{"surface", plane},
+                                  {"points", points({D3(-1000, 200, 0), D3(1000, 200, 500)})},
+                                  {"shape", "vGroove"},
+                                  {"width", 150.0},
+                                  {"depth", 60.0}});
+    std::string mod = r[1], curveName = r[2];
+    scene::MeshPtr m = meshNamed(plane);
+    CHECK(m->numFaces() > faces0);
+    // followSurface drops the path (drawn 2 m up) onto the plane.
+    CHECK(m->bounds().min.y == doctest::Approx(-60.0).epsilon(1e-6));
+
+    run("setAttr", {{"args", {mod + ".depth", 100.0}}});
+    CHECK(meshNamed(plane)->bounds().min.y == doctest::Approx(-100.0).epsilon(1e-6));
+    run("move", {{"args", {curveName}}, {"by", {0, 0, 400}}});
+    const size_t movedFaces = meshNamed(plane)->numFaces();
+    CHECK(movedFaces > faces0);
+
+    saveAndReopen("channel.lila");
+    CHECK(meshNamed(plane)->numFaces() == movedFaces);
+    CHECK(attr(mod, "depth") == doctest::Approx(100.0));
+
+    run("newScene");
+    plane = run("polyPlane", {{"width", 3000}, {"depth", 3000}})[0].get<std::string>();
+    run("carveChannel", {{"surface", plane}, {"points", points({D3(-500, 0, 0), D3(500, 0, 0)})}});
+    CHECK(meshNamed(plane)->numFaces() > 1);
+    run("undo");
+    CHECK(meshNamed(plane)->numFaces() == 1);
 }
