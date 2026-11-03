@@ -47,7 +47,7 @@ constexpr int kImportTimeoutMs = 10 * 60 * 1000;
 constexpr int kImportIdleTimeoutMs = 60 * 1000;
 
 const char* const kOptionKeys[] = {
-    "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "generateLightmapUVs",
+    "skeleton", "importMaterials", "importTextures", "combineMeshes", "autoCollision", "collision", "generateLightmapUVs",
     "normals",  "lodGroup",        "existing",       "nanite",        "importAnimations", "reapplyOptions", "save",
     "materialFolder", "keepMaterials", "lodScreenSizes", "materialCurves", "facing",
 };

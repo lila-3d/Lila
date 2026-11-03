@@ -34,10 +34,14 @@
 #include "Engine/SkeletalMeshSocket.h"
 #include "Engine/StaticMesh.h"
 #include "Containers/Ticker.h"
+#include "Editor.h"
 #include "HAL/PlatformTime.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "PhysicsEngine/BodySetup.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "StaticMeshEditorSubsystem.h"
+#include "StaticMeshEditorSubsystemHelpers.h"
 #include "UObject/StrongObjectPtr.h"
 
 namespace
@@ -66,6 +70,8 @@ struct FImportRequest
 	bool bImportTextures = true;
 	bool bCombineMeshes = true;
 	bool bAutoCollision = false;
+	/** Static: none, box, convex, complexAsSimple or ucx, applied after the import; empty leaves autoCollision in charge. */
+	FString Collision;
 	bool bGenerateLightmapUVs = false;
 	bool bComputeNormals = false;
 	bool bNanite = false;
@@ -176,6 +182,13 @@ bool ParseRequest(const TSharedPtr<FJsonObject>& Params, FImportRequest& Out, FS
 	Options->TryGetBoolField(TEXT("importTextures"), Out.bImportTextures);
 	Options->TryGetBoolField(TEXT("combineMeshes"), Out.bCombineMeshes);
 	Options->TryGetBoolField(TEXT("autoCollision"), Out.bAutoCollision);
+	Options->TryGetStringField(TEXT("collision"), Out.Collision);
+	if (!Out.Collision.IsEmpty() && Out.Collision != TEXT("none") && Out.Collision != TEXT("box") && Out.Collision != TEXT("convex") &&
+		Out.Collision != TEXT("complexAsSimple") && Out.Collision != TEXT("ucx"))
+	{
+		OutError = FString::Printf(TEXT("importAsset: collision is none, box, convex, complexAsSimple or ucx, not '%s'"), *Out.Collision);
+		return false;
+	}
 	Options->TryGetBoolField(TEXT("generateLightmapUVs"), Out.bGenerateLightmapUVs);
 	Options->TryGetBoolField(TEXT("nanite"), Out.bNanite);
 	Options->TryGetBoolField(TEXT("importAnimations"), Out.bImportAnimations);
@@ -295,7 +308,7 @@ UInterchangeGenericAssetsPipeline* MakePipeline(const FImportRequest& R)
 	// UCX_ and friends still import; this only stops the fallback hull when there are none.
 	Mesh->bCollision = true;
 	Mesh->bImportCollisionAccordingToMeshName = true;
-	if (!R.bAutoCollision)
+	if (!R.bAutoCollision || !R.Collision.IsEmpty())
 	{
 		Mesh->Collision = EInterchangeMeshCollision::None;
 	}
@@ -517,7 +530,7 @@ UFbxImportUI* MakeFbxOptions(const FImportRequest& R)
 	const EFBXNormalImportMethod Normals = R.bComputeNormals ? FBXNIM_ComputeNormals : FBXNIM_ImportNormals;
 	UFbxStaticMeshImportData* Static = Options->StaticMeshImportData;
 	Static->bCombineMeshes = R.bCombineMeshes;
-	Static->bAutoGenerateCollision = R.bAutoCollision;
+	Static->bAutoGenerateCollision = R.bAutoCollision && R.Collision.IsEmpty();
 	Static->bGenerateLightmapUVs = R.bGenerateLightmapUVs;
 	Static->bBuildNanite = R.bNanite;
 	Static->NormalImportMethod = Normals;
@@ -862,6 +875,57 @@ void ApplyComponents(const FImportRequest& Request, FImportOutcome& Outcome)
 	}
 }
 
+/** The requested collision on the imported static mesh, replacing whatever the import gave it (ucx keeps the file's). */
+void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyCollision);
+
+	UStaticMesh* Mesh = Cast<UStaticMesh>(RequestedAsset(Request, Outcome));
+	UStaticMeshEditorSubsystem* Meshes = GEditor ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+	if (!Mesh || !Meshes)
+	{
+		Outcome.Warnings.Add(FString::Printf(TEXT("Collision %s not applied: no static mesh to apply it to"), *Request.Collision));
+		return;
+	}
+	Mesh->Modify();
+	if (Request.Collision == TEXT("ucx"))
+	{
+		if (Meshes->GetSimpleCollisionCount(Mesh) <= 0)
+		{
+			Outcome.Warnings.Add(TEXT("collision ucx: the file has no UCX_ meshes, so the asset has no simple collision"));
+		}
+	}
+	else
+	{
+		if (Meshes->GetSimpleCollisionCount(Mesh) > 0)
+		{
+			Meshes->RemoveCollisionsWithNotification(Mesh, false);
+		}
+		if (Request.Collision == TEXT("box"))
+		{
+			Meshes->AddSimpleCollisionsWithNotification(Mesh, EScriptCollisionShapeType::Box, false);
+		}
+		else if (Request.Collision == TEXT("convex"))
+		{
+			// The editor's Auto Convex Collision defaults: up to 4 hulls of 16 vertices from 100k voxels.
+			Meshes->SetConvexDecompositionCollisionsWithNotification(Mesh, 4, 16, 100000, false);
+		}
+	}
+	if (!Mesh->GetBodySetup())
+	{
+		Mesh->CreateBodySetup();
+	}
+	if (UBodySetup* Body = Mesh->GetBodySetup())
+	{
+		Body->Modify();
+		Body->CollisionTraceFlag = Request.Collision == TEXT("complexAsSimple") ? CTF_UseComplexAsSimple : CTF_UseDefault;
+		Body->InvalidatePhysicsData();
+		Body->CreatePhysicsMeshes();
+	}
+	Mesh->PostEditChange();
+	Mesh->MarkPackageDirty();
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
@@ -874,6 +938,12 @@ void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const 
 	if (!Request.LodScreenSizes.IsEmpty() && !Outcome.Assets.IsEmpty())
 	{
 		ApplyLodScreenSizes(Request, Outcome);
+	}
+
+	if (Request.Kind == EKind::Static && !Request.Collision.IsEmpty() && Outcome.Errors.IsEmpty())
+	{
+		Call->Progress(TEXT("collision"));
+		ApplyCollision(Request, Outcome);
 	}
 
 	if (!Request.MaterialCurves.IsEmpty())

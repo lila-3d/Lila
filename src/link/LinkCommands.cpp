@@ -62,6 +62,10 @@ std::vector<FlagDef> importFlags()
         {"importTextures", "it", T::Bool, nullptr, "Import textures the materials use (default on)."},
         {"combineMeshes", "cm", T::Bool, nullptr, "Merge every mesh into one static mesh (default on)."},
         {"autoCollision", "ac", T::Bool, nullptr, "Generate simple collision when there is no UCX_ mesh (default off)."},
+        {"collision", "col", T::String, nullptr,
+         "static: the asset's collision, replacing what the import made: none, box, convex (auto convex decomposition), "
+         "complexAsSimple (the render mesh) or ucx (only the file's UCX_ meshes). Unset, autoCollision decides.",
+         {"none", "box", "convex", "complexAsSimple", "ucx"}},
         {"generateLightmapUVs", "glu", T::Bool, nullptr, "Let Unreal build a lightmap UV channel (default off)."},
         {"normals", "nm", T::String, nullptr, "import | compute"},
         {"lodGroup", "lg", T::String, nullptr, "Static mesh LOD group, like LargeProp."},

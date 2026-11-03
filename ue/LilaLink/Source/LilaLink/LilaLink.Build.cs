@@ -52,6 +52,7 @@ public class LilaLink : ModuleRules
 			"ChaosCaching",
 			"PCG",
 			"ZoneGraph",
+			"StaticMeshEditor",
 			"LilaLinkRuntime",
 		});
 

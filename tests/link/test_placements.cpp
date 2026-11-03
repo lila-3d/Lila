@@ -223,6 +223,9 @@ TEST_CASE("unrealPlaceInstances exports each source once, imports it and places 
     REQUIRE(import.is_object());
     CHECK(import["contentPath"] == "/Game/Kit/SM_Bolt");
     CHECK(import["kind"] == "static");
+    // Static level meshes collide by default, without Nanite unless asked.
+    CHECK(import["options"]["collision"] == "complexAsSimple");
+    CHECK(import["options"]["nanite"] == false);
     REQUIRE(place.is_object());
     const std::string key = std::get<std::string>(g.find("Bolt")->value(scene::Transform::kLinkId));
     REQUIRE(key.size() == 16);
@@ -231,6 +234,7 @@ TEST_CASE("unrealPlaceInstances exports each source once, imports it and places 
     // The placements reference the asset the import reported.
     CHECK(place["mesh"] == "/Game/Kit/SM_Bolt.Imported");
     CHECK(place["mode"] == "actors");
+    CHECK(place["collision"] == "complexAsSimple");
     CHECK(place["placements"].size() == 3);
 
     CHECK(run("unrealRemovePlacements", {{"args", {"Bolt"}}})["removed"] == 3);
@@ -341,4 +345,31 @@ TEST_CASE("placement assets: names unique across same-named sources, saved and k
     run("rename", {{"args", {"|South|Wall", "Rampart"}}});
     CHECK(placementPlan(g, {g.find("Rampart")->id()}, o)["groups"][0]["contentPath"] == second);
     fs::remove(path);
+}
+
+TEST_CASE("placement collision: options checked, UCX_ proxies go with their source and are never placed")
+{
+    setup();
+    run("newScene");
+    run("polyCube", {{"name", "Arch"}});
+    run("polyCube", {{"name", "UCX_Arch_00"}});
+    run("parent", {{"args", {"UCX_Arch_00", "Arch"}}});
+    scene::Graph& g = scene::Graph::current();
+    PlacementOptions o;
+    json plan = placementPlan(g, {g.find("Arch")->id()}, o);
+    REQUIRE(plan["groups"].size() == 1);
+    CHECK(plan["groups"][0]["source"] == "|Arch");
+    CHECK(plan["groups"][0]["collision"] == "complexAsSimple");
+    CHECK(plan["groups"][0]["nanite"] == false);
+    o.collision = "ucx";
+    o.nanite = true;
+    plan = placementPlan(g, {g.find("Arch")->id()}, o);
+    CHECK(plan["groups"][0]["collision"] == "ucx");
+    CHECK(plan["groups"][0]["nanite"] == true);
+    o.collision = "sphere";
+    CHECK_THROWS_AS(placementPlan(g, {g.find("Arch")->id()}, o), CommandError);
+    CHECK(run("unrealPlaceInstances", {{"args", {"Arch"}}, {"dryRun", true}, {"collision", "box"}})["groups"][0]["collision"] == "box");
+
+    // unrealImport passes collision through as an import option.
+    CHECK(importParams("C:/x.fbx", {{"contentPath", "/Game/A"}, {"collision", "convex"}})["options"]["collision"] == "convex");
 }

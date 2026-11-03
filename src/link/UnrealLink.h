@@ -211,11 +211,14 @@ struct PlacementOptions
     bool assignIds = false;
     /** Each placement and light carries its Unreal Lighting Channels (lightingChannels::unrealBits). */
     bool lightingChannels = true;
+    /** The assets' collision: none, box, convex, complexAsSimple or ucx (the importAsset collision option). */
+    std::string collision = "complexAsSimple";
+    bool nanite = false;
 };
 
 /**
  * The instance groups of the meshes under `roots`, one asset per instance root:
- * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, placements: [...]}]}, each placement
+ * {groups: [{key, source (full path), sourceId, contentPath, objectPath, mode, collision, nanite, placements: [...]}]}, each placement
  * {id, name, location, rotation (quat xyzw), scale, customData: [stable random 0..1], components} in Unreal space, components
  * being the member's attrComponents::unrealPayload, and lightingChannels [bool x3] when o.lightingChannels; hidden members
  * are left out. Lights under the roots go in plan.lights, one light actor each: {id, name, kind, location, forward, up,

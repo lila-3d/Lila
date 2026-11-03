@@ -22,6 +22,7 @@
 #include "Engine/SpotLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "LevelInstance/LevelInstanceInterface.h"
@@ -120,6 +121,19 @@ TOptional<FLightingChannels> ChannelsOf(const TSharedPtr<FJsonObject>& P)
 	Channels.bChannel1 = (*Values)[1]->AsBool();
 	Channels.bChannel2 = (*Values)[2]->AsBool();
 	return Channels;
+}
+
+/** Collision "none" turns the placed components' collision off; anything else blocks like a placed static mesh. */
+void SetCollides(UPrimitiveComponent* Component, bool bCollide)
+{
+	if (bCollide)
+	{
+		Component->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+	}
+	else
+	{
+		Component->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+	}
 }
 
 bool SameChannels(const FLightingChannels& A, const FLightingChannels& B)
@@ -302,8 +316,8 @@ void ApplyMeshCollision(UStaticMesh* Mesh, const TArray<TSharedPtr<FJsonValue>>&
 }
 
 /** An actor per placement, matched to the existing ones by node id. */
-void PlaceActors(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing,
-	int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
+void PlaceActors(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bCollide, const TArray<TSharedPtr<FJsonValue>>& Placements,
+	TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceActors);
 
@@ -358,6 +372,7 @@ void PlaceActors(UWorld* World, const FString& Group, const FString& Label, USta
 		}
 		Actor->GetStaticMeshComponent()->Modify();
 		Actor->GetStaticMeshComponent()->SetStaticMesh(Mesh);
+		SetCollides(Actor->GetStaticMeshComponent(), bCollide);
 		const TArray<float> Custom = CustomDataOf(*P);
 		for (int32 K = 0; K < Custom.Num(); ++K)
 		{
@@ -409,8 +424,8 @@ void ApplyInstancedChannels(UInstancedStaticMeshComponent* Component, const TSha
  * One holder actor whose (H)ISM component carries every placement as an instance, rebuilt in order each time. Instances
  * can't hold components, so the holder takes the first placement's.
  */
-void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bHierarchical, const TArray<TSharedPtr<FJsonValue>>& Placements,
-	TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
+void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bHierarchical, bool bCollide,
+	const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceInstanced);
 
@@ -464,6 +479,7 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	}
 	Component->Modify();
 	Component->SetStaticMesh(Mesh);
+	SetCollides(Component, bCollide);
 	Component->ClearInstances();
 	// Every instance gets as many custom data floats as the placement with the most.
 	int32 CustomFloats = 0;
@@ -516,6 +532,9 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 		return nullptr;
 	}
 	Params->TryGetStringField(TEXT("mode"), Mode);
+	FString Collision;
+	Params->TryGetStringField(TEXT("collision"), Collision);
+	const bool bCollide = Collision != TEXT("none");
 	FString Label = Group;
 	Params->TryGetStringField(TEXT("label"), Label);
 	if (Mode != TEXT("actors") && Mode != TEXT("ism") && Mode != TEXT("hism"))
@@ -545,11 +564,11 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	ApplyMeshCollision(Mesh, *Placements);
 	if (Mode == TEXT("actors"))
 	{
-		PlaceActors(World, Group, Label, Mesh, *Placements, Existing, Spawned, Updated, Removed, Sink);
+		PlaceActors(World, Group, Label, Mesh, bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);
 	}
 	else
 	{
-		PlaceInstanced(World, Group, Label, Mesh, Mode == TEXT("hism"), *Placements, Existing, Spawned, Updated, Removed, Sink);
+		PlaceInstanced(World, Group, Label, Mesh, Mode == TEXT("hism"), bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);
 	}
 	for (const FString& W : Sink.Warnings)
 	{
