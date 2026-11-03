@@ -604,6 +604,11 @@ TArray<FString> LilaLink::ComponentExporterNames()
 	return Out;
 }
 
+FString LilaLink::ComponentValueText(const TSharedPtr<FJsonValue>& V)
+{
+	return ValueText(V);
+}
+
 bool LilaLink::ParseComponents(const TSharedPtr<FJsonObject>& Owner, TArray<FLilaComponent>& Out)
 {
 	const TArray<TSharedPtr<FJsonValue>>* List = nullptr;

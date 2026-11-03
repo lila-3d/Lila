@@ -1,5 +1,6 @@
 #include "LilaLinkPlacements.h"
 
+#include "LilaInstanceData.h"
 #include "LilaLinkComponents.h"
 #include "LilaLinkLog.h"
 
@@ -421,11 +422,80 @@ void ApplyInstancedChannels(UInstancedStaticMeshComponent* Component, const TSha
 }
 
 /**
- * One holder actor whose (H)ISM component carries every placement as an instance, rebuilt in order each time. Instances
- * can't hold components, so the holder takes the first placement's.
+ * The holder's ULilaInstanceData: every instance's key and component values by index, and the custom data slot names
+ * from the group's customData [{name, slot, width}].
  */
-void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bHierarchical, bool bCollide,
-	const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed, FComponentSink& Sink)
+void WriteInstanceData(AActor* Holder, const TSharedPtr<FJsonObject>& Params, const TArray<TSharedPtr<FJsonValue>>& Placements)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::WriteInstanceData);
+
+	ULilaInstanceData* Data = ULilaInstanceData::FindOn(Holder);
+	if (!Data)
+	{
+		Data = NewObject<ULilaInstanceData>(Holder, ULilaInstanceData::StaticClass(), TEXT("LilaInstanceData"), RF_Transactional);
+		Holder->AddInstanceComponent(Data);
+		Data->RegisterComponent();
+	}
+	Data->Modify();
+	Data->InstanceIds.Reset(Placements.Num());
+	Data->Columns.Reset();
+	Data->CustomDataNames.Reset();
+	const int32 Count = Placements.Num();
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		const TSharedPtr<FJsonObject>* P = nullptr;
+		if (!Placements[Index].IsValid() || !Placements[Index]->TryGetObject(P))
+		{
+			Data->InstanceIds.Add(FString());
+			continue;
+		}
+		Data->InstanceIds.Add(IdOf(*P));
+		TArray<LilaLink::FLilaComponent> Components;
+		LilaLink::ParseComponents(*P, Components);
+		for (const LilaLink::FLilaComponent& C : Components)
+		{
+			if (C.Mode == TEXT("none"))
+			{
+				continue;
+			}
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Attr : C.Attrs->Values)
+			{
+				FLilaInstanceColumn& Column = Data->Columns.FindOrAdd(FName(*(C.Name.IsEmpty() ? Attr.Key : C.Name + TEXT(".") + Attr.Key)));
+				Column.Values.SetNum(Count);
+				Column.Values[Index] = LilaLink::ComponentValueText(Attr.Value);
+			}
+		}
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Slots = nullptr;
+	if (Params->TryGetArrayField(TEXT("customData"), Slots))
+	{
+		for (const TSharedPtr<FJsonValue>& V : *Slots)
+		{
+			const TSharedPtr<FJsonObject>* Slot = nullptr;
+			if (!V.IsValid() || !V->TryGetObject(Slot))
+			{
+				continue;
+			}
+			FString Name;
+			(*Slot)->TryGetStringField(TEXT("name"), Name);
+			int32 Width = 1;
+			(*Slot)->TryGetNumberField(TEXT("width"), Width);
+			for (int32 K = 0; K < Width; ++K)
+			{
+				Data->CustomDataNames.Add(FName(*(Width > 1 ? FString::Printf(TEXT("%s.%d"), *Name, K) : Name)));
+			}
+		}
+	}
+}
+
+/**
+ * One holder actor whose (H)ISM component carries every placement as an instance, rebuilt in order each time. Instances
+ * can't hold components: the holder takes the components every instance shares (the group's "components"), and each
+ * instance's own values go in its ULilaInstanceData.
+ */
+void PlaceInstanced(UWorld* World, const TSharedPtr<FJsonObject>& Params, const FString& Group, const FString& Label, UStaticMesh* Mesh, bool bHierarchical,
+	bool bCollide, const TArray<TSharedPtr<FJsonValue>>& Placements, TArray<AActor*> Existing, int32& Spawned, int32& Updated, int32& Removed,
+	FComponentSink& Sink)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::PlaceInstanced);
 
@@ -513,10 +583,11 @@ void PlaceInstanced(UWorld* World, const FString& Group, const FString& Label, U
 	Updated += FMath::Min(Before, Count);
 	Spawned += FMath::Max(0, Count - Before);
 	Removed += FMath::Max(0, Before - Count);
+	ApplyPlacementComponents(Holder, Params, Sink);
+	WriteInstanceData(Holder, Params, Placements);
 	const TSharedPtr<FJsonObject>* First = nullptr;
 	if (!Placements.IsEmpty() && Placements[0].IsValid() && Placements[0]->TryGetObject(First))
 	{
-		ApplyPlacementComponents(Holder, *First, Sink);
 		ApplyInstancedChannels(Component, *First, Placements, Label, Sink);
 		ApplyPhysics(Component, *First, Sink.Folder, true, Label, Sink);
 	}
@@ -571,7 +642,7 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	}
 	else
 	{
-		PlaceInstanced(World, Group, Label, Mesh, Mode == TEXT("hism"), bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);
+		PlaceInstanced(World, Params, Group, Label, Mesh, Mode == TEXT("hism"), bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);
 	}
 	for (const FString& W : Sink.Warnings)
 	{

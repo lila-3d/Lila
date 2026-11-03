@@ -621,6 +621,9 @@ TEST_CASE("geometry nodes instances reach Unreal: their meshes written and impor
     REQUIRE(places.size() == 2);
     CHECK(places[0]["mode"] == "hism");
     CHECK(places[0]["label"].get<std::string>().starts_with("|Ground_"));
+    // The holder's ULilaInstanceData learns what each custom data slot holds; it shares no components here.
+    CHECK(places[0]["customData"] == json::parse(R"([{"name":"random","slot":0,"width":1}])"));
+    CHECK(places[0]["components"] == json::array());
     REQUIRE(removals.size() == 2);
     CHECK(removals[0]["groups"] == json::array({done["groups"][0]["key"]}));
     CHECK(removals[1]["prefixes"] == json::array({done["groups"][0]["key"].get<std::string>() + ":gn:"}));
@@ -704,4 +707,29 @@ TEST_CASE("custom primitive data: geometry nodes instances send their instance a
         CHECK(part["placements"][k]["customData"][0].get<double>() == doctest::Approx(double(k)));
     const size_t each = part["placements"].size();
     CHECK(plan["groups"][2]["placements"][3]["customData"][0].get<double>() == doctest::Approx(double(each + 3)));
+}
+
+TEST_CASE("instanced groups: the holder takes the components every member shares, each instance keeps its own")
+{
+    setup();
+    buildKit();
+    for (const char* m : {"Bolt", "BoltA", "BoltB"})
+    {
+        run("addAttr", {{"args", {m}}, {"longName", "kind"}, {"dataType", "string"}, {"category", "Prop"}});
+        run("setAttr", {{"args", {std::string(m) + ".kind", "bolt"}}});
+        run("addAttr", {{"args", {m}}, {"longName", "hp"}, {"defaultValue", 10.0}, {"category", "Health"}});
+    }
+    run("setAttr", {{"args", {"BoltB.hp", 25.0}}});
+    scene::Graph& g = scene::Graph::current();
+    PlacementOptions o;
+    o.mode = "hism";
+    json plan = placementPlan(g, {g.find("Bolt")->id()}, o);
+    const json& bolt = plan["groups"][0];
+    REQUIRE(bolt["components"].size() == 1);
+    CHECK(bolt["components"][0]["name"] == "Prop");
+    const json* b = placementOf(bolt, "BoltB");
+    REQUIRE(b);
+    CHECK((*b)["components"][1]["attrs"]["hp"] == 25.0);
+    // Actors carry their own components; the group has none to share.
+    CHECK_FALSE(placementPlan(g, {g.find("Bolt")->id()}, PlacementOptions{})["groups"][0].contains("components"));
 }

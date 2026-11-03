@@ -16,6 +16,9 @@ struct FLilaComponent
 	TSharedRef<FJsonObject> Attrs = MakeShared<FJsonObject>();
 };
 
+/** A value as user data and tags hold it: numbers without a needless fraction, true/false, lists comma-separated. */
+FString ComponentValueText(const TSharedPtr<FJsonValue>& V);
+
 /** Owner's "components" list. False when Owner has none (a Lila that predates them), so nothing is touched. */
 bool ParseComponents(const TSharedPtr<FJsonObject>& Owner, TArray<FLilaComponent>& Out);
 

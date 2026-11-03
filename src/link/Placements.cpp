@@ -519,6 +519,21 @@ bool writeMeshFbx(const scene::MeshPtr& mesh, const std::string& name, const fs:
     return fbx::writeFbx(scene, path, fbx::ExportOptions{}, err);
 }
 
+/** The components every placement carries with the same values: what an instanced group's holder actor takes. */
+json sharedComponents(const json& placements)
+{
+    json out = json::array();
+    if (placements.empty())
+        return out;
+    for (const json& c : placements[0].value("components", json::array()))
+        if (std::ranges::all_of(placements, [&c](const json& p) {
+                const json& list = p.value("components", json::array());
+                return std::ranges::find(list, c) != list.end();
+            }))
+            out.push_back(c);
+    return out;
+}
+
 /** Where a member is placed: itself, then each of its array copies keyed "<node key>:<copy>". */
 struct Spot
 {
@@ -596,15 +611,20 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
     json gnSources = json::array();
     auto group = [&](const std::string& key, const scene::Node& n, const std::string& asset, json list) {
         const std::string mode = o.mode != "auto" ? o.mode : int(list.size()) > o.threshold && !simulates(list) ? "hism" : "actors";
-        return json{{"key", key},
-                    {"source", n.fullPath()},
-                    {"sourceId", n.id()},
-                    {"contentPath", folder + "/" + asset},
-                    {"objectPath", folder + "/" + asset + "." + asset},
-                    {"mode", mode},
-                    {"collision", o.collision},
-                    {"nanite", o.nanite},
-                    {"placements", std::move(list)}};
+        json shared = mode != "actors" ? sharedComponents(list) : json();
+        json out{{"key", key},
+                 {"source", n.fullPath()},
+                 {"sourceId", n.id()},
+                 {"contentPath", folder + "/" + asset},
+                 {"objectPath", folder + "/" + asset + "." + asset},
+                 {"mode", mode},
+                 {"collision", o.collision},
+                 {"nanite", o.nanite},
+                 {"placements", std::move(list)}};
+        // Instances can't hold components: the holder actor takes the ones they all share.
+        if (!shared.is_null())
+            out["components"] = std::move(shared);
+        return out;
     };
     for (size_t k = 0; k < sources.size(); ++k)
     {
@@ -896,6 +916,8 @@ void registerPlacementCommands()
                                                                        {"mesh", mesh},
                                                                        {"mode", grp["mode"]},
                                                                        {"collision", grp["collision"]},
+                                                                       {"customData", grp.value("customData", json::array())},
+                                                                       {"components", grp.value("components", json::array())},
                                                                        {"placements", grp["placements"]}},
                                                        placementTimeoutMs(grp["placements"].size()));
                     grp["placed"] = placed.ok ? placed.result : json{{"error", placed.error}};
