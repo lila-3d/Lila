@@ -174,6 +174,8 @@ struct Closure
 struct ObjectInput
 {
     std::shared_ptr<const geo::Mesh> mesh;
+    /** The splines of a curve object, in its own space; null for a mesh. */
+    std::shared_ptr<const CurveSet> curves;
     glm::dmat4 matrix{1.0};
 };
 

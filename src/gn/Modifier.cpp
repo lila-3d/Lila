@@ -7,6 +7,7 @@
 
 #include "core/Log.h"
 #include "core/Profile.h"
+#include "curve/CurveNodes.h"
 #include "geo/Mesh.h"
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
@@ -45,6 +46,7 @@ struct TypeLayout
         std::string node;
         int meshAttr;
         int matrixAttr;
+        int curveAttr;
     };
     int defAttr = 2;
     std::vector<Param> params;
@@ -111,6 +113,19 @@ void touchViewModifiers()
 
 std::string objectMeshAttr(const std::string& node) { return "obj_" + node + "_mesh"; }
 std::string objectMatrixAttr(const std::string& node) { return "obj_" + node + "_matrix"; }
+std::string objectCurveAttr(const std::string& node) { return "obj_" + node + "_curve"; }
+
+/** A curve object's splines as a geometry curve component; null when the value holds none. */
+std::shared_ptr<const CurveSet> curvesOf(const scene::PlugValue& v)
+{
+    const curve::Splines& splines = curve::splinesOf(v);
+    if (splines.empty())
+        return nullptr;
+    auto set = std::make_shared<CurveSet>();
+    for (const curve::Spline& s : splines)
+        set->addSpline(s);
+    return set;
+}
 
 /** A modifier running a node group. compute() reads only its own plugs: the definition arrives by connection. */
 class GnModifierNode final : public scene::ModifierNode
@@ -181,7 +196,7 @@ public:
                 env.params[p.input.name] = paramValue(p.input, j);
             }
             for (const TypeLayout::Object& o : mLayout->objects)
-                env.objects[o.node] = {as<scene::MeshPtr>(o.meshAttr), as<glm::dmat4>(o.matrixAttr)};
+                env.objects[o.node] = {as<scene::MeshPtr>(o.meshAttr), curvesOf(value(o.curveAttr)), as<glm::dmat4>(o.matrixAttr)};
             if (mLayout->ownerAttr >= 0)
                 env.ownerMatrix = as<glm::dmat4>(mLayout->ownerAttr);
             prepareCache(env.input);
@@ -283,6 +298,7 @@ private:
         {
             Geometry object;
             object.mesh = as<scene::MeshPtr>(o.meshAttr);
+            object.curves = curvesOf(value(o.curveAttr));
             key = hashGeometry(object, key);
             key = scene::sim::hashBytes(&as<glm::dmat4>(o.matrixAttr), sizeof(glm::dmat4), key);
         }
@@ -561,7 +577,9 @@ const scene::NodeType& ensureType(const Group& g)
                               .flags = scene::AttrInput | scene::AttrHidden, .doc = "Object Info mesh."});
         t.ownAttrs.push_back({.name = objectMatrixAttr(obj), .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
                               .flags = scene::AttrInput | scene::AttrHidden, .doc = "Object Info world matrix."});
-        layout->objects.push_back({obj, meshAttr, meshAttr + 1});
+        t.ownAttrs.push_back({.name = objectCurveAttr(obj), .type = PlugType::Data, .defaultValue = scene::DataPtr(),
+                              .flags = scene::AttrInput | scene::AttrHidden, .doc = "Object Info curve."});
+        layout->objects.push_back({obj, meshAttr, meshAttr + 1, meshAttr + 2});
     }
     if (!iface.objects.empty())
     {
@@ -640,25 +658,31 @@ void connectObjects(Graph& g, Node& mod, const Group& grp)
             continue;
         int meshAttr = mod.type().attrIndex(objectMeshAttr(n.name));
         int matAttr = mod.type().attrIndex(objectMatrixAttr(n.name));
-        if (meshAttr < 0 || matAttr < 0)
+        int curveAttr = mod.type().attrIndex(objectCurveAttr(n.name));
+        if (meshAttr < 0 || matAttr < 0 || curveAttr < 0)
             continue;
         std::string object = findDecl("ObjectInfo")->propValue(n, "object");
-        PlugRef meshDst{mod.id(), meshAttr, -1}, matDst{mod.id(), matAttr, -1};
+        PlugRef meshDst{mod.id(), meshAttr, -1}, matDst{mod.id(), matAttr, -1}, curveDst{mod.id(), curveAttr, -1};
         Node* obj = object.empty() ? nullptr : g.find(object);
-        if (obj && !obj->type().isA("mesh"))
-            throw std::invalid_argument(object + " is not a mesh");
-        PlugRef meshSrc = obj ? PlugRef{obj->id(), scene::MeshNode::kOutMesh, -1} : PlugRef{};
+        const bool isCurve = obj && obj->type().isA("curve");
+        if (obj && !isCurve && !obj->type().isA("mesh"))
+            throw std::invalid_argument(object + " is not a mesh or a curve");
+        PlugRef shapeSrc;
+        if (obj)
+            shapeSrc = isCurve ? PlugRef{obj->id(), obj->type().attrIndex("local"), -1} : PlugRef{obj->id(), scene::MeshNode::kOutMesh, -1};
+        PlugRef shapeDst = isCurve ? curveDst : meshDst;
         PlugRef matSrc = obj ? PlugRef{obj->id(), scene::Transform::kWorldMatrix, -1} : PlugRef{};
-        auto cur = g.source(meshDst);
-        if (cur && obj && *cur == meshSrc && g.source(matDst) == matSrc)
+        auto cur = g.source(shapeDst);
+        if (cur && obj && *cur == shapeSrc && g.source(matDst) == matSrc && !g.source(isCurve ? meshDst : curveDst))
             continue;
         g.disconnect(meshDst);
+        g.disconnect(curveDst);
         g.disconnect(matDst);
         if (!obj)
             continue;
         try
         {
-            g.connect(meshSrc, meshDst);
+            g.connect(shapeSrc, shapeDst);
             g.connect(matSrc, matDst);
         }
         catch (const std::exception&)

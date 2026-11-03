@@ -214,9 +214,9 @@ void objectInfo()
         .type = "ObjectInfo",
         .label = "Object Info",
         .category = "Input",
-        .doc = "Another mesh object's evaluated mesh and transform. Its outMesh and worldMatrix are connected into the modifier, so "
-               "editing it re-evaluates this group.",
-        .props = {prop("object", {}, "", "Name of the mesh object."),
+        .doc = "Another mesh or curve object's evaluated shape and transform. Its mesh (or splines) and world matrix are connected "
+               "into the modifier, so editing it re-evaluates this group. A curve comes out as curves; instance places it like world.",
+        .props = {prop("object", {}, "", "Name of the mesh or curve object."),
                   prop("transformSpace", {"original", "world", "instance"}, "original",
                        "original keeps the mesh in its own space; world applies its world matrix; instance passes one instance "
                        "of the mesh placed by its world matrix, which simulation nodes follow as a moving object."),
@@ -236,7 +236,20 @@ void objectInfo()
                 c.out("location", constantVector(glm::dvec3(m[3])));
                 c.out("rotation", constantVector(matrixToEuler(r), T::Rotation));
                 c.out("scale", constantVector(s));
-                if (it->second.mesh)
+                if (it->second.curves)
+                {
+                    Geometry g;
+                    if (c.prop("transformSpace") == "original")
+                        g.curves = it->second.curves;
+                    else
+                    {
+                        CurveSet curves = *it->second.curves;
+                        transformCurves(curves, m);
+                        g.curves = std::make_shared<const CurveSet>(std::move(curves));
+                    }
+                    c.out("geometry", makeGeometry(std::move(g)));
+                }
+                else if (it->second.mesh)
                 {
                     if (c.prop("transformSpace") == "instance")
                     {
