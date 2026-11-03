@@ -860,7 +860,7 @@ void ChannelBox::scheduleRefresh()
 
 std::vector<std::string> ChannelBox::targets() const
 {
-    if (attrView::multiEditHeld())
+    if (attrView::channelBoxEditsAll() || attrView::multiEditHeld())
         return allTargets();
     scene::Node* n = Graph::current().node(mNode);
     return n ? std::vector<std::string>{n->path()} : std::vector<std::string>{};
@@ -1082,7 +1082,9 @@ void ChannelBox::refreshStrip()
         QFont f = item->font();
         f.setBold(scene::NodeId(item->data(Qt::UserRole).toULongLong()) == lead);
         item->setFont(f);
-        item->setToolTip(f.bold() ? "The lead object: edits go here (Alt edits all)" : "Click to make this the lead");
+        item->setToolTip(!f.bold()                       ? "Click to make this the lead"
+                         : attrView::channelBoxEditsAll() ? "The lead object: its values are shown"
+                                                          : "The lead object: edits go here (Alt edits all)");
     }
     mStrip->setVisible(sel.size() > 1);
 }
@@ -1095,7 +1097,7 @@ void ChannelBox::noteEdit(const Row& row)
         return;
     }
     Graph& g = Graph::current();
-    if (row.node || g.selection().size() < 2 || !attrView::hintEnabled())
+    if (row.node || g.selection().size() < 2 || attrView::channelBoxEditsAll() || !attrView::hintEnabled())
         return;
     int holders = 0;
     for (const std::string& path : allTargets())
@@ -1215,6 +1217,12 @@ void ChannelBox::showSettings(QWidget* anchor)
     ns->setChecked(attrView::showNamespaces());
     connect(ns, &QCheckBox::toggled, pop, [](bool on) { attrView::setShowNamespaces(on); });
     f->addRow(QString(), ns);
+    auto* editAll = new QCheckBox("Edit all selected", pop);
+    editAll->setObjectName("cbEditAll");
+    editAll->setChecked(attrView::channelBoxEditsAll());
+    editAll->setToolTip("Off: edits go to the lead object only, Alt edits all");
+    connect(editAll, &QCheckBox::toggled, pop, [](bool on) { attrView::setChannelBoxEditsAll(on); });
+    f->addRow(QString(), editAll);
     auto* hint = new QCheckBox("Hint after lead-only edits", pop);
     hint->setObjectName("cbHintPref");
     hint->setChecked(attrView::hintEnabled());

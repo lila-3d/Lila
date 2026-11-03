@@ -51,6 +51,10 @@ LILA_UI_API void setMultiEditForced(bool on);
 LILA_UI_API void installKeyWatch();
 /** Records that Alt was used for an edit, so its release doesn't focus the menu bar. */
 LILA_UI_API void noteMultiEditUsed();
+/** Channel Box edits go to every selected object that has the channel, as in Maya (default); off edits the lead only
+ * and Alt edits all. The Attribute Editor always edits the lead. */
+LILA_UI_API bool channelBoxEditsAll();
+LILA_UI_API void setChannelBoxEditsAll(bool on);
 /** The "Changed X only" hint after a lead-only edit with several objects selected. */
 LILA_UI_API bool hintEnabled();
 LILA_UI_API void setHintEnabled(bool on);

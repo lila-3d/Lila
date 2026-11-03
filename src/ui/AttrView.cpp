@@ -243,6 +243,14 @@ void installKeyWatch()
 
 void noteMultiEditUsed() { state().used = true; }
 
+bool channelBoxEditsAll() { return PrefStore::get().value(kFile, "/channelBoxEditsAll", true); }
+
+void setChannelBoxEditsAll(bool on)
+{
+    PrefStore::get().set(kFile, "/channelBoxEditsAll", on);
+    notify();
+}
+
 bool hintEnabled() { return PrefStore::get().value(kFile, "/multiEditHint", true); }
 
 void setHintEnabled(bool on)

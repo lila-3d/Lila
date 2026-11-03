@@ -53,7 +53,7 @@ void typeValue(QTableWidget* t, const QString& name, const QString& text)
 } // namespace channelBoxTests
 using namespace channelBoxTests;
 
-TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits with Alt for all")
+TEST_CASE("Channel Box: filter text and chips, state stripes, edits all selected, lead-only pref with Alt for all")
 {
     cbCmd("newScene");
     cbCmd("spaceLocator", {{"name", "A"}});
@@ -67,6 +67,7 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     av::setNameMode(av::NameMode::Nice);
     av::setLead(kNoNode);
     av::setHintEnabled(true);
+    av::setChannelBoxEditsAll(true);
     ui::ChannelBox box;
     box.resize(300, 700);
     box.show();
@@ -135,7 +136,14 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     cbSettle();
     CHECK(rowOf(table, "Translate X") >= 0);
 
-    // Lead only, with the hint; Alt edits every holder.
+    // Every selected holder by default, as in Maya.
+    typeValue(table, "Rotate Y", "20");
+    CHECK(cbCmd("getAttr", {{"args", {"A.ry"}}}).get<double>() == doctest::Approx(20.0));
+    CHECK(cbCmd("getAttr", {{"args", {"B.ry"}}}).get<double>() == doctest::Approx(20.0));
+    CHECK(box.findChild<QWidget*>("cbHint")->isHidden());
+
+    // Lead only with the pref off, with the hint; Alt edits every holder.
+    av::setChannelBoxEditsAll(false);
     typeValue(table, "Rotate X", "30");
     CHECK(cbCmd("getAttr", {{"args", {"B.rx"}}}).get<double>() == doctest::Approx(30.0));
     CHECK(cbCmd("getAttr", {{"args", {"A.rx"}}}).get<double>() == doctest::Approx(0.0));
@@ -146,6 +154,7 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, lead-only edits wi
     av::setMultiEditForced(false);
     CHECK(cbCmd("getAttr", {{"args", {"A.rx"}}}).get<double>() == doctest::Approx(45.0));
     CHECK(cbCmd("getAttr", {{"args", {"B.rx"}}}).get<double>() == doctest::Approx(45.0));
+    av::setChannelBoxEditsAll(true);
 
     // The object strip: selection order, click for the lead.
     auto* strip = box.findChild<QListWidget*>("cbObjects");
