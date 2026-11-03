@@ -106,6 +106,25 @@ struct Trim
     static Trim fromJson(const json& j);
 };
 
+/**
+ * One material family over the sheet's layout: the baked maps are shared, the paint is its own. Each palette has a Lila
+ * material M_<sheet>_<name>, a texture set TS_<sheet>_<name> and in Unreal an instance MI_<sheet>_<name> of the trim master.
+ * The sheet itself is the default palette (M_<sheet>, TS_<sheet>, MI_<sheet>).
+ */
+struct Palette
+{
+    std::string name;
+    /** Smart material its texture set starts from; the sheet's when empty. */
+    std::string material;
+    /** Unreal instance parameters by MF_LilaTrim name: scalars {name: value}, vectors {name: [r, g, b]}, switches {name: bool}. */
+    json scalars = json::object();
+    json vectors = json::object();
+    json switches = json::object();
+
+    json toJson() const;
+    static Palette fromJson(const json& j);
+};
+
 struct Sheet
 {
     std::string name = "TrimSheet";
@@ -133,6 +152,15 @@ struct Sheet
     std::vector<std::string> high;
     bool highReplaces = false;
     std::vector<Trim> trims;
+    std::vector<Palette> palettes;
+    /** Unreal parameters of the default palette, as Palette's. */
+    json scalars = json::object();
+    json vectors = json::object();
+    json switches = json::object();
+
+    /** The palette named name, null when none; the empty name is the default palette and also gives null. */
+    const Palette* palette(std::string_view name) const;
+    Palette* palette(std::string_view name);
 
     /** World size of a trim, cm. */
     glm::dvec2 worldSize(const Trim& t) const;

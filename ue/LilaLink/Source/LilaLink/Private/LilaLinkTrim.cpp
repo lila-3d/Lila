@@ -397,14 +397,13 @@ TSharedPtr<FJsonValue> TrimMaterials(const TSharedPtr<FJsonObject>& Params, FStr
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkTrim::TrimMaterials);
 
-	FString Folder, Slot;
+	FString Folder;
 	const TArray<TSharedPtr<FJsonValue>>* Instances = nullptr;
 	if (!Params->TryGetStringField(TEXT("folder"), Folder) || !Params->TryGetArrayField(TEXT("instances"), Instances))
 	{
 		OutError = TEXT("trimMaterials: give folder and instances");
 		return nullptr;
 	}
-	Params->TryGetStringField(TEXT("slot"), Slot);
 	TArray<FString> Created, Warnings;
 	bool bRegenerate = false;
 	Params->TryGetBoolField(TEXT("regenerate"), bRegenerate);
@@ -418,7 +417,8 @@ TSharedPtr<FJsonValue> TrimMaterials(const TSharedPtr<FJsonObject>& Params, FStr
 	}
 
 	TArray<TSharedPtr<FJsonValue>> Made, Assigned;
-	UMaterialInstanceConstant* First = nullptr;
+	// Each palette's instance goes on the mesh slots named after its Lila material.
+	TMap<FName, UMaterialInstanceConstant*> BySlot;
 	for (const TSharedPtr<FJsonValue>& V : *Instances)
 	{
 		const TSharedPtr<FJsonObject> In = V->AsObject();
@@ -451,44 +451,54 @@ TSharedPtr<FJsonValue> TrimMaterials(const TSharedPtr<FJsonObject>& Params, FStr
 		UMaterialEditingLibrary::UpdateMaterialInstance(Instance);
 		Instance->MarkPackageDirty();
 		Made.Add(Str(Instance->GetPathName()));
-		First = First ? First : Instance;
+		FString Slot;
+		if (In->TryGetStringField(TEXT("slot"), Slot) && !Slot.IsEmpty())
+		{
+			BySlot.Add(FName(*Slot), Instance);
+		}
 	}
 
-	if (First && !Slot.IsEmpty())
+	for (const FString& Path : Strings(Params, TEXT("meshes")))
 	{
-		const FName SlotName(*Slot);
-		for (const FString& Path : Strings(Params, TEXT("meshes")))
+		if (BySlot.IsEmpty())
 		{
-			UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
-			if (!Mesh)
+			break;
+		}
+		UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(Path).TryLoad());
+		if (!Mesh)
+		{
+			Warnings.Add(FString::Printf(TEXT("no static mesh %s"), *Path));
+			continue;
+		}
+		bool bChanged = false;
+		for (FStaticMaterial& M : Mesh->GetStaticMaterials())
+		{
+			UMaterialInstanceConstant** Instance = BySlot.Find(M.MaterialSlotName);
+			if (!Instance)
 			{
-				Warnings.Add(FString::Printf(TEXT("no static mesh %s"), *Path));
 				continue;
 			}
-			bool bChanged = false;
-			for (FStaticMaterial& M : Mesh->GetStaticMaterials())
+			TSharedRef<FJsonObject> A = MakeShared<FJsonObject>();
+			A->SetStringField(TEXT("mesh"), Mesh->GetPathName());
+			A->SetStringField(TEXT("slot"), M.MaterialSlotName.ToString());
+			A->SetStringField(TEXT("material"), (*Instance)->GetPathName());
+			A->SetBoolField(TEXT("changed"), M.MaterialInterface != *Instance);
+			Assigned.Add(Obj(A));
+			if (M.MaterialInterface == *Instance)
 			{
-				if (M.MaterialSlotName != SlotName || M.MaterialInterface == First)
-				{
-					continue;
-				}
-				if (!bChanged)
-				{
-					Mesh->Modify();
-					bChanged = true;
-				}
-				M.MaterialInterface = First;
-				TSharedRef<FJsonObject> A = MakeShared<FJsonObject>();
-				A->SetStringField(TEXT("mesh"), Mesh->GetPathName());
-				A->SetStringField(TEXT("slot"), Slot);
-				A->SetStringField(TEXT("material"), First->GetPathName());
-				Assigned.Add(Obj(A));
+				continue;
 			}
-			if (bChanged)
+			if (!bChanged)
 			{
-				Mesh->PostEditChange();
-				Mesh->MarkPackageDirty();
+				Mesh->Modify();
+				bChanged = true;
 			}
+			M.MaterialInterface = *Instance;
+		}
+		if (bChanged)
+		{
+			Mesh->PostEditChange();
+			Mesh->MarkPackageDirty();
 		}
 	}
 

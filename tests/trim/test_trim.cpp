@@ -9,6 +9,7 @@
 #include "ops/Command.h"
 #include "scene/Components.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/MeshNodes.h"
 #include "uv/Hotspot.h"
 
@@ -16,6 +17,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <random>
 #include <set>
 
@@ -645,6 +647,119 @@ TEST_CASE("trim styles: carved and patterned strips tile across U")
     for (geo::Index p = 0; p < ha.pointCapacity() && !differs; ++p)
         differs = ha.position(p) != hb.position(p);
     CHECK(differs);
+}
+
+namespace
+{
+std::string made(const json& r) { return r.is_string() ? r.get<std::string>() : r.at(0).get<std::string>(); }
+
+geo::Mesh meshOf(const std::string& name)
+{
+    scene::Graph& g = scene::Graph::current();
+    scene::Node* n = g.find(name);
+    REQUIRE(n);
+    return *std::get<scene::MeshPtr>(g.value({n->id(), scene::MeshNode::kOutMesh, -1}));
+}
+
+/** Faces of the mesh per material slot name. */
+std::map<std::string, uint32_t> slotsOf(const std::string& name)
+{
+    std::map<std::string, uint32_t> out;
+    for (const auto& [slot, count] : scene::materials::slotUsage(meshOf(name)))
+        if (count)
+            out[slot] = count;
+    return out;
+}
+} // namespace
+
+TEST_CASE("trim palettes: one layout, several material families, each its own set and Unreal instance")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("palettes") / "T_Pal.lilatrim";
+    ops::execute("trimSheetCreate", {{"file", file.generic_string()}, {"name", "T_Pal"}, {"width", 64}, {"strips", {32, 16, 16}}, {"pxPerM", 64.0}, {"bake", false}});
+    ops::execute("trimSheetEdit", {{"values", {{"supersampling", 1}}}});
+
+    json list = ops::execute("trimPaletteAdd", {{"args", {"Rust"}}, {"material", "Trim Rusty Iron"}, {"vectors", {{"Tint", {0.4, 0.2, 0.1}}}}, {"scalars", {{"EdgeWear", 2.0}}}});
+    REQUIRE(list.size() == 2);
+    CHECK(list[0]["name"] == "Default");
+    CHECK(list[1]["slot"] == "M_Pal_Rust");
+    CHECK(list[1]["instance"] == "MI_Pal_Rust");
+    CHECK(scene::materials::find(scene::Graph::current(), "M_Pal_Rust"));
+    CHECK_THROWS(ops::execute("trimPaletteAdd", {{"args", {"Rust"}}}));
+    CHECK_THROWS(ops::execute("trimPaletteAdd", {{"args", {"bad name"}}}));
+    ops::execute("trimPaletteAdd", {{"args", {"Steel"}}, {"copyFrom", "Rust"}});
+    list = ops::execute("trimPaletteEdit", {{"args", {"Steel"}}, {"scalars", {{"EdgeWear", nullptr}, {"Metallic", 1.0}}}});
+    CHECK_FALSE(list[2]["scalars"].contains("EdgeWear"));
+    CHECK(list[2]["material"] == "Trim Rusty Iron");
+    CHECK_THROWS(ops::execute("trimPaletteEdit", {{"args", {"Steel"}}, {"vectors", {{"Tint", 3}}}}));
+
+    // Faces mapped onto a palette keep it through a shift, move to another palette, and undo.
+    const std::string wallNode = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {300, 0, 0}, {300, 25, 0}, {0, 25, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "PalWall"}}));
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {wallNode}}});
+    CHECK_THROWS(ops::execute("trimAuto", {{"palette", "Copper"}}));
+    ops::execute("trimAuto", {{"palette", "Rust"}});
+    CHECK(slotsOf(wallNode) == std::map<std::string, uint32_t>{{"M_Pal_Rust", 1}});
+    ops::execute("trimShift", {{"steps", 1}});
+    CHECK(slotsOf(wallNode) == std::map<std::string, uint32_t>{{"M_Pal_Rust", 1}});
+    ops::execute("trimPaletteAssign", {{"palette", "Default"}});
+    CHECK(slotsOf(wallNode) == std::map<std::string, uint32_t>{{"M_Pal", 1}});
+    ops::execute("undo", json::object());
+    CHECK(slotsOf(wallNode) == std::map<std::string, uint32_t>{{"M_Pal_Rust", 1}});
+    CHECK(ops::execute("trimPaletteAssign", {{"palette", "Steel"}, {"fromPalette", "Default"}})["faces"] == 0);
+
+    // Each palette textures its own set over the shared bake.
+    const json tex = ops::execute("trimSheetTexture", {{"palette", "Rust"}});
+    CHECK(tex["set"] == "TS_Pal_Rust");
+    CHECK(tex["material"] == "Trim Rusty Iron");
+    list = ops::execute("trimPaletteList", json::object());
+    CHECK(list[1]["textured"].get<bool>());
+    CHECK_FALSE(list[0]["textured"].get<bool>());
+
+    // Unreal gets one instance per palette on the shared master, each on its own slot.
+    const json plan = ops::execute("trimSheetSend", {{"dryRun", true}});
+    const json& instances = plan["request"]["instances"];
+    REQUIRE(instances.size() == 3);
+    CHECK(instances[0]["name"] == "MI_Pal");
+    CHECK(instances[1]["name"] == "MI_Pal_Rust");
+    CHECK(instances[1]["slot"] == "M_Pal_Rust");
+    CHECK(instances[1]["vectors"]["Tint"][0].get<double>() == doctest::Approx(0.4));
+    CHECK(instances[1]["switches"]["UsePaintedMaps"].get<bool>());
+    CHECK_FALSE(instances[0]["switches"]["UsePaintedMaps"].get<bool>());
+    CHECK(instances[1]["textures"]["SheetNormalMap"] != instances[0]["textures"]["SheetNormalMap"]);
+    CHECK(instances[0]["textures"]["SheetAOMap"] == instances[2]["textures"]["SheetAOMap"]);
+    CHECK(instances[2]["scalars"]["Metallic"].get<double>() == doctest::Approx(1.0));
+
+    const json removed = ops::execute("trimPaletteRemove", {{"args", {"Rust"}}});
+    CHECK(removed["palettes"].size() == 2);
+    REQUIRE(removed["stillUsedBy"].size() == 1);
+    CHECK(removed["stillUsedBy"][0]["mesh"] == wallNode);
+}
+
+TEST_CASE("trim send: meshes not yet in Unreal are sent first or listed, whatever the order")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("send") / "T_Send.lilatrim";
+    ops::execute("trimSheetCreate", {{"file", file.generic_string()}, {"name", "T_Send"}, {"width", 64}, {"strips", {32, 32}}, {"bake", false}});
+    ops::execute("trimSheetEdit", {{"values", {{"supersampling", 1}, {"maps", {"normal"}}}}});
+    CHECK_THROWS_WITH(ops::execute("trimSheetSend", {{"dryRun", true}}), doctest::Contains("not baked"));
+    ops::execute("trimSheetBake", {{"backend", "cpu"}});
+
+    const std::string a = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {100, 0, 0}, {100, 6, 0}, {0, 6, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "SendA"}}));
+    const std::string b = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {100, 0, 0}, {100, 6, 0}, {0, 6, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "SendB"}}));
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {a, b}}});
+    ops::execute("trimAuto", json::object());
+    ops::execute("unrealMap", {{"args", {a}}, {"contentPath", "/Game/Props/SM_SendA"}});
+
+    const json plan = ops::execute("trimSheetSend", {{"dryRun", true}});
+    CHECK(plan["mapped"].size() == 1);
+    REQUIRE(plan["meshes"]["newlyMapped"].size() == 1);
+    CHECK(plan["meshes"]["newlyMapped"][0]["node"] == b);
+    CHECK(plan["meshes"]["newlyMapped"][0]["contentPath"] == "/Game/Lila/Trims/T_Send/Meshes/SM_SendB");
+    CHECK(plan["request"]["meshes"] == json::array({"/Game/Props/SM_SendA", "/Game/Lila/Trims/T_Send/Meshes/SM_SendB"}));
+    CHECK(plan["meshes"]["sent"].size() == 2);
+    CHECK_THROWS_WITH(ops::execute("trimSheetSend", {{"meshes", "mapped"}}), doctest::Contains("SendB"));
 }
 
 TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")

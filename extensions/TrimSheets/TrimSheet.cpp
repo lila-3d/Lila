@@ -256,6 +256,32 @@ Trim Trim::fromJson(const json& j)
     return t;
 }
 
+json Palette::toJson() const
+{
+    return {{"name", name}, {"material", material}, {"scalars", scalars}, {"vectors", vectors}, {"switches", switches}};
+}
+
+Palette Palette::fromJson(const json& j)
+{
+    Palette p;
+    p.name = j.value("name", std::string());
+    p.material = j.value("material", std::string());
+    for (auto [field, out] : {std::pair{"scalars", &p.scalars}, std::pair{"vectors", &p.vectors}, std::pair{"switches", &p.switches}})
+        if (const json v = j.value(field, json()); v.is_object())
+            *out = v;
+    return p;
+}
+
+const Palette* Sheet::palette(std::string_view n) const
+{
+    for (const Palette& p : palettes)
+        if (!n.empty() && p.name == n)
+            return &p;
+    return nullptr;
+}
+
+Palette* Sheet::palette(std::string_view n) { return const_cast<Palette*>(std::as_const(*this).palette(n)); }
+
 glm::dvec2 Sheet::worldSize(const Trim& t) const
 {
     if (t.worldSize.x > 0.0 && t.worldSize.y > 0.0)
@@ -301,7 +327,16 @@ json Sheet::toJson() const
             {"supersampling", supersampling},
             {"high", high},
             {"highReplaces", highReplaces},
-            {"trims", t}};
+            {"trims", t},
+            {"palettes", [&] {
+                 json p = json::array();
+                 for (const Palette& pal : palettes)
+                     p.push_back(pal.toJson());
+                 return p;
+             }()},
+            {"scalars", scalars},
+            {"vectors", vectors},
+            {"switches", switches}};
 }
 
 Sheet Sheet::fromJson(const json& j)
@@ -322,6 +357,12 @@ Sheet Sheet::fromJson(const json& j)
     s.highReplaces = j.value("highReplaces", false);
     for (const json& t : j.value("trims", json::array()))
         s.trims.push_back(Trim::fromJson(t));
+    for (const json& p : j.value("palettes", json::array()))
+        if (Palette pal = Palette::fromJson(p); !pal.name.empty() && !s.palette(pal.name))
+            s.palettes.push_back(std::move(pal));
+    for (auto [field, out] : {std::pair{"scalars", &s.scalars}, std::pair{"vectors", &s.vectors}, std::pair{"switches", &s.switches}})
+        if (const json v = j.value(field, json()); v.is_object())
+            *out = v;
     return s;
 }
 

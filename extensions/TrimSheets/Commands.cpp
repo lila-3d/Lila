@@ -26,10 +26,12 @@
 #include <lila/Workspace.h>
 
 #include <algorithm>
+#include <cctype>
 #include <format>
 #include <fstream>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <sstream>
 
 using namespace lila;
@@ -147,6 +149,12 @@ json sheetSummary(const Sheet& s, const std::filesystem::path& f)
             {"textures", textures},
             {"baked", !textures.empty()},
             {"warnings", validate(s)},
+            {"palettes", [&] {
+                 json p = json::array({"Default"});
+                 for (const Palette& pal : s.palettes)
+                     p.push_back(pal.name);
+                 return p;
+             }()},
             {"trims", trimsJ}};
 }
 
@@ -270,19 +278,48 @@ bool bestRotation(const uv::IslandMeasure& m, const uv::HotspotTrim& t)
     }
 }
 
-/** Writes the trim index (+1, 0 for none) on the faces and points them at the sheet's material slot. */
-void tagFaces(geo::Mesh& m, std::span<const geo::Index> faces, int trim, const std::string& slot)
+/**
+ * Writes the trim index (+1, 0 for none) on the faces and points them at a palette's material slot: the one given, else
+ * the sheet palette each face already uses, else the sheet's own.
+ */
+void tagFaces(geo::Mesh& m, std::span<const geo::Index> faces, int trim, const Sheet& s, const std::optional<std::string>& palette)
 {
     std::span<int32_t> attr = m.faceAttrs().getOrAdd<int32_t>(kFaceTrim);
-    std::vector<uint32_t> ids;
+    const std::vector<std::string> sheetSlots = paletteMaterials(s);
+    std::span<const int32_t> slots = std::as_const(m).faceAttrs().get<int32_t>(geo::attr::kMaterial);
+    std::map<std::string, std::vector<uint32_t>> bySlot;
     for (geo::Index f : faces)
         if (m.faceValid(f))
         {
             attr[f] = trim + 1;
-            ids.push_back(f);
+            std::string slot = palette ? materialName(s, *palette) : materialName(s);
+            if (!palette && f < slots.size())
+                if (std::string now = scene::materials::slotName(m, slots[f]); std::ranges::find(sheetSlots, now) != sheetSlots.end())
+                    slot = std::move(now);
+            bySlot[slot].push_back(f);
         }
-    if (!ids.empty())
+    for (const auto& [slot, ids] : bySlot)
         scene::materials::assign(m, slot, ids);
+}
+
+FlagDef paletteFlag() { return {"palette", "pal", AT::String, nullptr, "Palette the faces use (trimPaletteList); each face keeps its palette when not given."}; }
+
+/** The palette= flag checked against the sheet: nullopt when not given, "" for the default palette. */
+std::optional<std::string> paletteArg(const Sheet& s, const Args& a, const char* cmd)
+{
+    if (!a.has("palette"))
+        return std::nullopt;
+    const std::string p = a.get<std::string>("palette");
+    if (p.empty() || p == "Default")
+        return std::string();
+    if (!s.palette(p))
+    {
+        std::string names = "Default";
+        for (const Palette& pal : s.palettes)
+            names += ", " + pal.name;
+        throw CommandError(std::format("{}: {} has no palette {}; it has {}", cmd, s.name, p, names));
+    }
+    return p;
 }
 
 /** Splits the faces by angle, unwraps them and returns their islands, ready for measureChart. */
@@ -318,11 +355,11 @@ void tagNode(const std::string& node, const std::filesystem::path& sheet)
     ops::execute("setAttr", {{"args", {node + "." + kNodeSheet, paths::storedPath(sheet)}}});
 }
 
-/** The Lila material the sheet's faces use, made or updated with the baked maps. */
-void ensureMaterial(const Sheet& s, const std::filesystem::path& f)
+/** The Lila material a palette's faces use (the sheet's own for ""), made or updated with the baked maps. */
+void ensureMaterial(const Sheet& s, const std::filesystem::path& f, const std::string& palette = {})
 {
     Graph& g = Graph::current();
-    const std::string name = materialName(s);
+    const std::string name = materialName(s, palette);
     json call = {{"args", {name}}};
     const std::pair<const char*, const char*> maps[] = {{"normal", "normalMap"}, {"ao", "ambientOcclusionMap"}};
     json sets = json::object();
@@ -331,12 +368,23 @@ void ensureMaterial(const Sheet& s, const std::filesystem::path& f)
             sets[attr] = p.generic_string();
     if (!scene::materials::find(g, name))
     {
-        call["baseColor"] = {0.45, 0.45, 0.45};
-        call["roughness"] = 0.5;
+        // A palette's Tint and BaseRoughness show in Lila's viewport until its texture set paints it.
+        const json& vectors = palette.empty() ? s.vectors : s.palette(palette)->vectors;
+        const json& scalars = palette.empty() ? s.scalars : s.palette(palette)->scalars;
+        call["baseColor"] = vectors.contains("Tint") ? vectors["Tint"] : json({0.45, 0.45, 0.45});
+        call["roughness"] = scalars.value("BaseRoughness", 0.5);
         ops::execute("createMaterial", call);
     }
     for (const auto& [attr, value] : sets.items())
         ops::execute("setAttr", {{"args", {name + "." + attr, value}}});
+}
+
+/** ensureMaterial for every palette. */
+void ensureMaterials(const Sheet& s, const std::filesystem::path& f)
+{
+    ensureMaterial(s, f);
+    for (const Palette& p : s.palettes)
+        ensureMaterial(s, f, p.name);
 }
 
 /** Sheet trims ordered top to bottom then left to right, among the same class (strips or rectangles) as trim i. */
@@ -473,7 +521,7 @@ json runBake(const Sheet& s, const std::filesystem::path& f, const SheetBakeOpti
         std::ofstream out(bakeRecord(s, f));
         out << r.dump(2);
     }
-    ensureMaterial(s, f);
+    ensureMaterials(s, f);
     return r;
 }
 
@@ -482,8 +530,8 @@ constexpr const char* kBakeLayer = "Sheet Bake";
 /** Used when neither the call nor the sheet names a smart material. */
 constexpr const char* kDefaultSmartMaterial = "Trim Painted Metal";
 
-/** The texture set painting a sheet's material: TS_<name without T_>. */
-std::string textureSetName(const Sheet& s) { return "TS_" + materialName(s).substr(2); }
+/** The texture set painting a palette's material: TS_<name without T_>[_<palette>]. */
+std::string textureSetName(const Sheet& s, const std::string& palette = {}) { return "TS_" + materialName(s, palette).substr(2); }
 
 bool hasTextureSet(const std::string& set)
 {
@@ -521,33 +569,33 @@ json bakeLayerGraph()
 }
 
 /**
- * The sheet's texture set, bound to its material M_<name> and reading its bake, made with a Sheet Bake layer when missing.
- * Bakes the sheet first when it has no textures.
+ * A palette's texture set (the sheet's own for ""), bound to its material and reading the sheet's shared bake, made with a
+ * Sheet Bake layer when missing. Bakes the sheet first when it has no textures.
  */
-std::string ensureTextureSet(const Sheet& s, const std::filesystem::path& f, const char* cmd)
+std::string ensureTextureSet(const Sheet& s, const std::filesystem::path& f, const char* cmd, const std::string& palette = {})
 {
     if (!std::filesystem::exists(bakeRecord(s, f)))
         runBake(s, f, {}, cmd);
     else
-        ensureMaterial(s, f);
+        ensureMaterials(s, f);
     const std::string project = ensureBakeProject(s, f, cmd);
-    const std::string set = textureSetName(s);
+    const std::string set = textureSetName(s, palette);
     if (hasTextureSet(set))
         return set;
-    ops::execute("texCreateSet",
-                 {{"args", {set}}, {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s)}}}});
+    ops::execute("texCreateSet", {{"args", {set}},
+                                  {"settings", {{"width", s.width}, {"height", s.height}, {"bakeProject", project}, {"material", materialName(s, palette)}}}});
     ops::execute("texAddLayer", {{"args", {set, "procedural"}}, {"name", kBakeLayer}, {"index", 0}, {"graph", bakeLayerGraph()}});
     return set;
 }
 
-/** A new mesh node holding m (replacing one of that name), its faces on the sheet's material. Returns its path. */
-std::string addTrimMesh(const Sheet& s, const std::filesystem::path& f, const std::string& name, geo::Mesh m)
+/** A new mesh node holding m (replacing one of that name), its faces on a palette's material. Returns its path. */
+std::string addTrimMesh(const Sheet& s, const std::filesystem::path& f, const std::string& name, geo::Mesh m, const std::string& palette = {})
 {
     std::vector<uint32_t> faces;
     for (geo::Index fi = 0; fi < m.faceCapacity(); ++fi)
         if (m.faceValid(fi))
             faces.push_back(fi);
-    scene::materials::assign(m, materialName(s), faces);
+    scene::materials::assign(m, materialName(s, palette), faces);
     Graph& g = Graph::current();
     if (Node* old = g.find(name))
         ops::execute("delete", {{"args", {old->path()}}});
@@ -673,6 +721,157 @@ std::vector<std::pair<size_t, size_t>> trimRuns(std::span<const size_t> sorted)
             out.push_back({i, i});
     return out;
 }
+
+/** The name= flag, else the first positional. */
+std::string nameArg(const Args& a)
+{
+    if (a.has("name"))
+        return a.get<std::string>("name");
+    return !a.positional.empty() && a.positional[0].is_string() ? a.positional[0].get<std::string>() : std::string();
+}
+
+/** Merges the scalars=, vectors= and switches= flags into a palette's parameters; a null value removes one. */
+void mergeParams(json& scalars, json& vectors, json& switches, const Args& a, const char* cmd)
+{
+    for (auto [flag, into] : {std::pair{"scalars", &scalars}, std::pair{"vectors", &vectors}, std::pair{"switches", &switches}})
+    {
+        if (!a.has(flag))
+            continue;
+        const json v = a.flags[flag];
+        if (!v.is_object())
+            throw CommandError(std::format("{}: {} is a dict of parameter names", cmd, flag));
+        for (const auto& [k, x] : v.items())
+        {
+            const bool ok = x.is_null() || (std::string_view(flag) == "scalars" && x.is_number()) || (std::string_view(flag) == "switches" && x.is_boolean()) ||
+                            (std::string_view(flag) == "vectors" && x.is_array() && x.size() >= 3);
+            if (!ok)
+                throw CommandError(std::format("{}: {}['{}'] should be {}", cmd, flag, k,
+                                               std::string_view(flag) == "scalars" ? "a number" : std::string_view(flag) == "switches" ? "True or False" : "[r, g, b]"));
+        }
+        into->merge_patch(v);
+    }
+}
+
+json paletteSummary(const Sheet& s)
+{
+    json out = json::array();
+    auto entry = [&](const std::string& name, const std::string& material, const json& scalars, const json& vectors, const json& switches) {
+        const std::string key = name == "Default" ? std::string() : name;
+        const std::string set = textureSetName(s, key);
+        out.push_back({{"name", name},
+                       {"material", material},
+                       {"slot", materialName(s, key)},
+                       {"textureSet", set},
+                       {"textured", hasTextureSet(set)},
+                       {"instance", "MI_" + materialName(s, key).substr(2)},
+                       {"scalars", scalars},
+                       {"vectors", vectors},
+                       {"switches", switches}});
+    };
+    entry("Default", s.material, s.scalars, s.vectors, s.switches);
+    for (const Palette& p : s.palettes)
+        entry(p.name, p.material.empty() ? s.material : p.material, p.scalars, p.vectors, p.switches);
+    return out;
+}
+
+/** The sheet a node is mapped with (its trimSheet attribute, resolved), empty when none. */
+std::filesystem::path sheetOf(const Node& n)
+{
+    Graph& g = Graph::current();
+    try
+    {
+        const scene::PlugValue v = g.value(g.plug(n.path() + "." + kNodeSheet));
+        if (const std::string* s = std::get_if<std::string>(&v); s && !s->empty())
+            return paths::resolvePath(*s);
+    }
+    catch (const std::exception&)
+    {
+    }
+    return {};
+}
+
+/** Mesh nodes mapped onto the sheet at f (their trimSheet attribute names it), with their evaluated meshes. */
+std::vector<std::pair<std::string, scene::MeshPtr>> sheetMeshes(const std::filesystem::path& f)
+{
+    std::vector<std::pair<std::string, scene::MeshPtr>> out;
+    Graph& g = Graph::current();
+    for (const scene::NodeId id : g.nodes())
+    {
+        Node* n = g.node(id);
+        if (!n || !n->type().isA("mesh"))
+            continue;
+        if (sheetOf(*n).lexically_normal() != f.lexically_normal())
+            continue;
+        if (const scene::MeshPtr m = std::get<scene::MeshPtr>(g.value({id, scene::MeshNode::kOutMesh, -1})))
+            out.push_back({n->path(), m});
+    }
+    return out;
+}
+
+/** What trimSheetSend imports and makes: the texture files, and one master instance per palette. */
+struct SendPlan
+{
+    json textures = json::array();
+    json instances = json::array();
+};
+
+/**
+ * The sheet's baked maps shared by every palette, each palette's painted maps (exported from its texture set when it has
+ * one) and its instance: name, slot, textures, scalars, vectors and switches, as LilaLink's trimMaterials takes them.
+ */
+SendPlan sendPlan(const Sheet& s, const std::filesystem::path& f, const json& baked, const std::string& folder)
+{
+    SendPlan plan;
+    auto asset = [&](const json& o) {
+        const std::string name = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
+        return folder + "/Textures/" + name + "." + name;
+    };
+    const std::map<std::string, std::string> params = {
+        {"normal", "SheetNormalMap"}, {"ao", "SheetAOMap"}, {"curvature", "SheetCurvatureMap"}, {"cavity", "SheetCavityMap"}, {"height", "SheetHeightMap"}};
+    json shared = json::object();
+    for (const json& o : baked.value("outputs", json::array()))
+        if (const auto param = params.find(o.value("map", std::string())); param != params.end())
+        {
+            shared[param->second] = asset(o);
+            plan.textures.push_back(o);
+        }
+    const glm::dvec2 ext = s.worldExtent();
+    auto instance = [&](const std::string& palette, const json& scalars, const json& vectors, const json& switches) {
+        json textures = shared;
+        bool painted = false;
+        // A textured palette sends its painted maps too; its normal carries the layers' height over the bake.
+        if (const std::string set = textureSetName(s, palette); hasTextureSet(set))
+        {
+            const std::filesystem::path out = textureFolder(s, f) / "Painted" / (palette.empty() ? std::string("Default") : palette);
+            const json exported = ops::execute("texExport", {{"args", {set}}, {"preset", "unreal"}, {"folder", out.generic_string()}, {"incremental", true}});
+            const std::map<std::string, std::string> paintParams = {{"baseColor", "SheetBaseColorMap"}, {"orm", "SheetORMMap"}, {"normal", "SheetNormalMap"}};
+            int found = 0;
+            for (const json& o : exported.value("outputs", json::array()))
+                if (const auto param = paintParams.find(o.value("map", std::string())); param != paintParams.end())
+                {
+                    found += param->first != "normal";
+                    textures[param->second] = asset(o);
+                    plan.textures.push_back(o);
+                }
+            painted = found == 2;
+        }
+        json sc = {{"SheetWidthCm", ext.x}, {"SheetHeightCm", ext.y}};
+        sc.merge_patch(scalars);
+        json sw = {{"UsePaintedMaps", painted}};
+        sw.merge_patch(switches);
+        plan.instances.push_back({{"name", "MI_" + materialName(s, palette).substr(2)},
+                                  {"slot", materialName(s, palette)},
+                                  {"palette", palette.empty() ? std::string("Default") : palette},
+                                  {"textures", textures},
+                                  {"scalars", sc},
+                                  {"vectors", vectors},
+                                  {"switches", sw}});
+    };
+    instance("", s.scalars, s.vectors, s.switches);
+    for (const Palette& p : s.palettes)
+        instance(p.name, p.scalars, p.vectors, p.switches);
+    return plan;
+}
 } // namespace
 
 std::string materialName(const Sheet& s)
@@ -681,6 +880,19 @@ std::string materialName(const Sheet& s)
     if (base.starts_with("T_"))
         base = base.substr(2);
     return "M_" + base;
+}
+
+std::string materialName(const Sheet& s, std::string_view palette)
+{
+    return palette.empty() ? materialName(s) : materialName(s) + "_" + std::string(palette);
+}
+
+std::vector<std::string> paletteMaterials(const Sheet& s)
+{
+    std::vector<std::string> out = {materialName(s)};
+    for (const Palette& p : s.palettes)
+        out.push_back(materialName(s, p.name));
+    return out;
 }
 
 std::string currentSheet() { return PrefStore::get().value<std::string>(kPrefs, "/current", std::string()); }
@@ -1088,6 +1300,7 @@ void registerCommands(ext::Context& ctx)
                                       {"splitAngle", "sa", AT::Float, 30.0, "Split islands where faces meet sharper than this, degrees.", {}, {}, 0.0, 180.0},
                                       {"orient", "o", AT::String, "worldUp", "worldUp, longestU or asIs.", {"worldUp", "longestU", "asIs"}},
                                       {"seed", "s", AT::Int, int64_t(0), "Offset along strips."},
+                                      paletteFlag(),
                                       {"randomOffset", "ro", AT::Bool, false,
                                        "Slide islands to a random place along tiling strips; off centres them, so motifs sit symmetrically."}};
             return f;
@@ -1100,6 +1313,7 @@ void registerCommands(ext::Context& ctx)
             if (!a.has("trim"))
                 throw CommandError("trimApply: give trim= (index or name)");
             const int ti = trimIndex(s, a.flags["trim"], "trimApply");
+            const std::optional<std::string> palette = paletteArg(s, a, "trimApply");
             const std::vector<uv::HotspotTrim> trims = hotspotTrims(s);
             const std::string set = a.get<std::string>("uvSet", "uv0");
             const std::string rotate = a.get<std::string>("rotate", "auto");
@@ -1120,7 +1334,7 @@ void registerCommands(ext::Context& ctx)
                     alignToMotif(ch, motif);
                 }
                 uv::writeCharts(m, charts, set);
-                tagFaces(m, faces, ti, materialName(s));
+                tagFaces(m, faces, ti, s, palette);
                 nodes.push_back(node.path());
                 return {{"islands", int64_t(charts.size())}, {"trim", s.trims[size_t(ti)].name}};
             });
@@ -1141,6 +1355,7 @@ void registerCommands(ext::Context& ctx)
                "matched, poor, failed, and each island's trim and size error.",
         .flags = [] {
             std::vector<FlagDef> f = hotspotFlags();
+            f.push_back(paletteFlag());
             f.push_back({"showError", "se", AT::Bool, false, "Paint match quality into the colour set trimError."});
             return f;
         }(),
@@ -1152,6 +1367,7 @@ void registerCommands(ext::Context& ctx)
             const std::vector<uv::HotspotTrim> trims = hotspotTrims(s);
             const std::string set = a.get<std::string>("uvSet", "uv0");
             const uv::HotspotOptions o = hotspotOptions(a);
+            const std::optional<std::string> palette = paletteArg(s, a, "trimAuto");
             const bool showError = a.get<bool>("showError", false);
             std::vector<std::string> nodes;
             json out = uv::editUvMeshes("Auto Trim", scene::ComponentMode::Face, [&](geo::Mesh& m, const Ids& ids, Node& node) -> json {
@@ -1162,7 +1378,7 @@ void registerCommands(ext::Context& ctx)
                     geo::colors::add(m, "trimError", glm::vec4(1.0f));
                 for (const uv::HotspotIsland& is : r.islands)
                 {
-                    tagFaces(m, is.faces, is.trim, materialName(s));
+                    tagFaces(m, is.faces, is.trim, s, palette);
                     islands.push_back({{"faces", int64_t(is.faces.size())},
                                        {"trim", is.trim >= 0 ? json(s.trims[size_t(is.trim)].name) : json(nullptr)},
                                        {"sizeError", is.sizeError},
@@ -1239,7 +1455,7 @@ void registerCommands(ext::Context& ctx)
                         uv::placeChart(ch, trims[size_t(to)], turned, o, 0.0, 1.0, 1.0);
                     }
                     uv::writeCharts(m, charts, set);
-                    tagFaces(m, group, to, materialName(s));
+                    tagFaces(m, group, to, s, std::nullopt);
                     moved.push_back({{"from", s.trims[size_t(from)].name}, {"to", s.trims[size_t(to)].name}, {"islands", int64_t(charts.size())}});
                 }
                 return {{"moved", moved}};
@@ -1317,7 +1533,8 @@ void registerCommands(ext::Context& ctx)
                   {"orient", "o", AT::String, "flat", "flat (lies on the ground) or wall (stands up).", {"flat", "wall"}},
                   {"offset", "of", AT::Float, 0.0, "Lift along the strip's normal, cm."},
                   {"caps", "cp", AT::Bool, true, "Cap the ends with the sheet's cap-tagged trim when it has one."},
-                  {"seed", "s", AT::Int, int64_t(0), "Slides the pattern along tiling trims."}},
+                  {"seed", "s", AT::Int, int64_t(0), "Slides the pattern along tiling trims."},
+                  paletteFlag()},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -1377,7 +1594,7 @@ void registerCommands(ext::Context& ctx)
                     continue;
                 const std::string leaf = c.substr(c.find_last_of('|') + 1);
                 out.push_back({{"curve", c},
-                               {"mesh", addTrimMesh(s, f, leaf + "_Trim", std::move(all))},
+                               {"mesh", addTrimMesh(s, f, leaf + "_Trim", std::move(all), paletteArg(s, a, "trimAlongCurve").value_or(std::string()))},
                                {"trim", trim},
                                {"cap", a.get<bool>("caps", true) ? capTrim(s) : -1},
                                {"length", length}});
@@ -1400,7 +1617,8 @@ void registerCommands(ext::Context& ctx)
                   {"width", "w", AT::Float, 2.0, "Strip width across the edge, cm.", {}, {}, 0.01},
                   {"offset", "of", AT::Float, 0.05, "Float off the surface, cm, so the decal doesn't fight it.", {}, {}, 0.0},
                   {"cut", "c", AT::Bool, false, "Carve the strip into the mesh as a groove instead of floating it."},
-                  {"depth", "d", AT::Float, 0.5, "Groove depth for cut, cm.", {}, {}, 0.001}},
+                  {"depth", "d", AT::Float, 0.5, "Groove depth for cut, cm.", {}, {}, 0.001},
+                  paletteFlag()},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -1442,7 +1660,8 @@ void registerCommands(ext::Context& ctx)
                 if (all.numFaces() == 0)
                     continue;
                 const std::string leaf = n->name();
-                const std::string made = addTrimMesh(s, f, leaf + (cut ? "_TrimCut" : "_Decal"), std::move(all));
+                const std::string made =
+                    addTrimMesh(s, f, leaf + (cut ? "_TrimCut" : "_Decal"), std::move(all), paletteArg(s, a, "trimDecal").value_or(std::string()));
                 json r = {{"mesh", n->path()}, {"chains", chains.size()}, {"trim", trim}};
                 if (cut)
                 {
@@ -1466,10 +1685,12 @@ void registerCommands(ext::Context& ctx)
                "edge wear, cavity dirt and chips land on the bevels, and the set paints M_<name> live on every mesh using the sheet. "
                "The first call makes the set with a Sheet Bake layer (the baked normal and AO) and bakes the sheet if it has no "
                "textures; each call adds the smart material on top, kept to trims= (indices, names or tags) by Trim Mask masks when "
-               "given. Returns {set, project, layer, material, trims, maps}.",
+               "given. palette= textures that palette's own set TS_<name>_<palette> (painting M_<name>_<palette>) over the same bake. "
+               "Returns {set, project, layer, material, palette, trims, maps}.",
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
-                  {"material", "m", AT::String, nullptr, "Smart material name or .lilasmart; the sheet's own when not given."},
+                  {"palette", "pal", AT::String, nullptr, "Palette to texture (trimPaletteList); the sheet's default palette when not given."},
+                  {"material", "m", AT::String, nullptr, "Smart material name or .lilasmart; the palette's (else the sheet's) own when not given."},
                   {"trims", "t", AT::Any, nullptr, "Only on these trims: an index, name or tag, or a list of them."},
                   {"name", "n", AT::String, nullptr, "Layer name; the smart material's when not given."},
                   {"replace", "r", AT::Bool, false, "First remove every layer but Sheet Bake, so the sheet starts over."}},
@@ -1488,13 +1709,15 @@ void registerCommands(ext::Context& ctx)
                 {
                     throw CommandError(std::string("trimSheetTexture: ") + e.what());
                 }
-            const std::string set = ensureTextureSet(s, f, "trimSheetTexture");
+            const std::string palette = paletteArg(s, a, "trimSheetTexture").value_or(std::string());
+            const std::string set = ensureTextureSet(s, f, "trimSheetTexture", palette);
             if (a.get<bool>("replace", false))
                 for (const json& l : ops::execute("texLayerStack", {{"args", {set}}}).value("layers", json::array()))
                     if (l.value("name", std::string()) != kBakeLayer)
                         ops::execute("texRemoveLayer", {{"args", {set, l.value("id", std::string())}}});
 
-            const std::string material = a.get<std::string>("material", s.material.empty() ? std::string(kDefaultSmartMaterial) : s.material);
+            const std::string own = palette.empty() || s.palette(palette)->material.empty() ? s.material : s.palette(palette)->material;
+            const std::string material = a.get<std::string>("material", own.empty() ? std::string(kDefaultSmartMaterial) : own);
             json apply = {{"args", {set, material}}, {"addMaps", false}};
             if (a.has("name"))
                 apply["name"] = a.get<std::string>("name");
@@ -1526,15 +1749,16 @@ void registerCommands(ext::Context& ctx)
                                             {"name", std::format("Trims {}-{}", runs[k].first, runs[k].second)},
                                             {"values", {{"first", runs[k].first}, {"last", runs[k].second}}},
                                             {"mode", k == 0 ? "normal" : "lighten"}});
-            if (s.material != material && only.empty())
+            if (std::string& kept = palette.empty() ? s.material : s.palette(palette)->material; kept != material && only.empty())
             {
-                s.material = material;
+                kept = material;
                 save(s, f);
             }
             return {{"set", set},
                     {"project", s.name},
                     {"layer", layer},
                     {"material", material},
+                    {"palette", palette},
                     {"trims", only},
                     {"maps", applied.value("maps", json::array())}};
         },
@@ -1545,15 +1769,17 @@ void registerCommands(ext::Context& ctx)
         .name = "trimSheetPaint",
         .doc = "Get a trim sheet ready to paint by hand: its texture set (as trimSheetTexture makes it) and a flat <name>_Sheet plane "
                "with the sheet's material, selected, for the texture paint tool or the UV editor. Strokes land on the sheet's shared "
-               "texels, so every mesh using the sheet shows them. Returns {set, plane}.",
+               "texels, so every mesh using the sheet shows them. palette= paints that palette's set on a <name>_<palette>_Sheet "
+               "plane. Returns {set, plane}.",
         .positionalDoc = "sheet (default the current one)",
-        .flags = {sheetFlag()},
+        .flags = {sheetFlag(), {"palette", "pal", AT::String, nullptr, "Palette to paint; the default palette when not given."}},
         .run = [](const Args& a) -> json {
             const std::filesystem::path f = loadedPath(a, "trimSheetPaint");
             const Sheet s = loadOr(f, "trimSheetPaint");
-            const std::string set = ensureTextureSet(s, f, "trimSheetPaint");
+            const std::string palette = paletteArg(s, a, "trimSheetPaint").value_or(std::string());
+            const std::string set = ensureTextureSet(s, f, "trimSheetPaint", palette);
             Graph& g = Graph::current();
-            const std::string name = s.name + "_Sheet";
+            const std::string name = s.name + (palette.empty() ? "" : "_" + palette) + "_Sheet";
             Node* n = g.find(name);
             if (!n)
             {
@@ -1562,11 +1788,10 @@ void registerCommands(ext::Context& ctx)
                 for (geo::Index fi = 0; fi < plane.faceCapacity(); ++fi)
                     if (plane.faceValid(fi))
                         faces.push_back(fi);
-                tagFaces(plane, faces, -1, materialName(s));
+                tagFaces(plane, faces, -1, s, palette);
                 const json made = ops::execute("createMesh", {{"points", json::array()}, {"faces", json::array()}, {"name", name}});
                 n = g.find(made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>());
                 g.setValue({n->id(), scene::MeshNode::kInMesh, -1}, scene::MeshPtr(std::make_shared<geo::Mesh>(std::move(plane))));
-                tagNode(n->path(), f);
             }
             ops::execute("select", {{"args", {n->path()}}});
             return {{"set", set}, {"plane", n->path()}};
@@ -1574,16 +1799,197 @@ void registerCommands(ext::Context& ctx)
     });
 
     ctx.registerCommand({
+        .name = "trimPaletteList",
+        .doc = "The palettes of a trim sheet: one layout and bake, several material families. Each entry has its name (Default "
+               "is the sheet itself), smart material, Lila material slot, texture set (and whether it exists yet), Unreal instance "
+               "name, and the instance parameters it sets (scalars, vectors, switches).",
+        .positionalDoc = "sheet (default the current one)",
+        .flags = {sheetFlag()},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimPaletteList");
+            return paletteSummary(loadOr(f, "trimPaletteList"));
+        },
+        .examples = {"[p['name'] for p in trimPaletteList()]"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimPaletteAdd",
+        .doc = "Add a palette to a trim sheet: another material family on the same layout and baked maps, e.g. rusted iron and "
+               "painted steel on one industrial sheet, or sandstone and basalt on one stone sheet. It gets the Lila material "
+               "M_<sheet>_<name>; texture it with trimSheetTexture(palette=...), map faces to it with palette= on trimApply, "
+               "trimAuto or trimPaletteAssign, and trimSheetSend makes MI_<sheet>_<name> for it in Unreal. scalars, vectors and "
+               "switches are MF_LilaTrim parameters for that instance (Tint, EdgeTint, BaseRoughness, Metallic, EdgeWear, "
+               "UseDetail...). Returns the palette list.",
+        .positionalDoc = "palette name",
+        .flags = {sheetFlag(),
+                  {"name", "n", AT::String, nullptr, "Palette name: letters, digits and underscores."},
+                  {"material", "m", AT::String, nullptr, "Smart material its texture set starts from; the sheet's when not given."},
+                  {"copyFrom", "cf", AT::String, nullptr, "Palette whose material and parameters to start from (Default is the sheet's)."},
+                  {"scalars", "", AT::Any, nullptr, "{parameter: number} for its Unreal instance."},
+                  {"vectors", "", AT::Any, nullptr, "{parameter: [r, g, b]} for its Unreal instance."},
+                  {"switches", "", AT::Any, nullptr, "{parameter: bool} for its Unreal instance."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimPaletteAdd", "sheet", false);
+            Sheet s = loadOr(f, "trimPaletteAdd");
+            const std::string name = nameArg(a);
+            if (name.empty() || name == "Default" || !std::ranges::all_of(name, [](unsigned char c) { return std::isalnum(c) || c == '_'; }))
+                throw CommandError("trimPaletteAdd: give a palette name of letters, digits and underscores (not Default)");
+            if (s.palette(name))
+                throw CommandError("trimPaletteAdd: " + s.name + " already has a palette " + name + "; change it with trimPaletteEdit");
+            Palette p;
+            if (a.has("copyFrom"))
+            {
+                const std::string from = a.get<std::string>("copyFrom");
+                if (from.empty() || from == "Default")
+                {
+                    p.material = s.material;
+                    p.scalars = s.scalars;
+                    p.vectors = s.vectors;
+                    p.switches = s.switches;
+                }
+                else if (const Palette* src = s.palette(from))
+                    p = *src;
+                else
+                    throw CommandError("trimPaletteAdd: no palette " + from + " to copy");
+            }
+            p.name = name;
+            p.material = a.get<std::string>("material", p.material);
+            mergeParams(p.scalars, p.vectors, p.switches, a, "trimPaletteAdd");
+            s.palettes.push_back(std::move(p));
+            save(s, f);
+            ensureMaterial(s, f, name);
+            return paletteSummary(s);
+        },
+        .examples = {"trimPaletteAdd('Rust', material='Trim Rusty Iron', vectors={'Tint': [0.35, 0.2, 0.12]}, scalars={'EdgeWear': 2.0})",
+                     "trimPaletteAdd('Basalt', copyFrom='Default', vectors={'Tint': [0.12, 0.12, 0.13]})"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimPaletteEdit",
+        .doc = "Change a palette: material= sets its smart material (retexture with trimSheetTexture(palette=..., replace=True)); "
+               "scalars, vectors and switches merge into its Unreal parameters, a None value removing one. Default edits the "
+               "sheet's own palette. Returns the palette list.",
+        .positionalDoc = "palette name",
+        .flags = {sheetFlag(),
+                  {"name", "n", AT::String, nullptr, "Palette to change; Default is the sheet's own."},
+                  {"material", "m", AT::String, nullptr, "Smart material."},
+                  {"scalars", "", AT::Any, nullptr, "{parameter: number or None}."},
+                  {"vectors", "", AT::Any, nullptr, "{parameter: [r, g, b] or None}."},
+                  {"switches", "", AT::Any, nullptr, "{parameter: bool or None}."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimPaletteEdit", "sheet", false);
+            Sheet s = loadOr(f, "trimPaletteEdit");
+            const std::string name = nameArg(a);
+            if (name.empty())
+                throw CommandError("trimPaletteEdit: give the palette's name (Default for the sheet's own)");
+            if (name == "Default")
+            {
+                s.material = a.get<std::string>("material", s.material);
+                mergeParams(s.scalars, s.vectors, s.switches, a, "trimPaletteEdit");
+            }
+            else if (Palette* p = s.palette(name))
+            {
+                p->material = a.get<std::string>("material", p->material);
+                mergeParams(p->scalars, p->vectors, p->switches, a, "trimPaletteEdit");
+            }
+            else
+                throw CommandError("trimPaletteEdit: " + s.name + " has no palette " + name);
+            save(s, f);
+            return paletteSummary(s);
+        },
+        .examples = {"trimPaletteEdit('Rust', scalars={'EdgeWear': 0.5})"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimPaletteRemove",
+        .doc = "Remove a palette from a trim sheet. Its Lila material and texture set stay in the scene; meshes with faces still on "
+               "it are listed in stillUsedBy, to move with trimPaletteAssign(palette='Default', fromPalette=...). Returns {palettes, "
+               "stillUsedBy}.",
+        .positionalDoc = "palette name",
+        .flags = {sheetFlag(), {"name", "n", AT::String, nullptr, "Palette to remove."}},
+        .undoable = false,
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimPaletteRemove", "sheet", false);
+            Sheet s = loadOr(f, "trimPaletteRemove");
+            const std::string name = nameArg(a);
+            const auto it = std::ranges::find_if(s.palettes, [&](const Palette& p) { return p.name == name; });
+            if (it == s.palettes.end())
+                throw CommandError("trimPaletteRemove: " + s.name + " has no palette " + name);
+            const std::string slot = materialName(s, name);
+            s.palettes.erase(it);
+            save(s, f);
+            json used = json::array();
+            for (const auto& [node, mesh] : sheetMeshes(f))
+                for (const auto& [n, count] : scene::materials::slotUsage(*mesh))
+                    if (n == slot && count > 0)
+                        used.push_back({{"mesh", node}, {"faces", count}});
+            return {{"palettes", paletteSummary(s)}, {"stillUsedBy", used}};
+        },
+    });
+
+    ctx.registerCommand({
+        .name = "trimPaletteAssign",
+        .doc = "Put the selected faces (whole selected meshes in object mode) on a palette of their trim sheet, keeping their uvs: "
+               "only faces mapped onto the sheet change. fromPalette= limits it to faces on that palette. Returns per mesh the "
+               "faces moved.",
+        .flags = {sheetFlag(),
+                  {"palette", "pal", AT::String, nullptr, "Palette to put the faces on; Default is the sheet's own."},
+                  {"fromPalette", "fp", AT::String, nullptr, "Only faces now on this palette."}},
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimPaletteAssign", "sheet", false);
+            const Sheet s = loadOr(f, "trimPaletteAssign");
+            if (!a.has("palette"))
+                throw CommandError("trimPaletteAssign: give palette=");
+            const std::string palette = paletteArg(s, a, "trimPaletteAssign").value_or(std::string());
+            std::optional<std::string> fromSlot;
+            if (a.has("fromPalette"))
+            {
+                const std::string from = a.get<std::string>("fromPalette");
+                if (!from.empty() && from != "Default" && !s.palette(from))
+                    throw CommandError("trimPaletteAssign: " + s.name + " has no palette " + from);
+                fromSlot = materialName(s, from == "Default" ? std::string() : from);
+            }
+            const std::vector<std::string> slots = paletteMaterials(s);
+            ensureMaterial(s, f, palette);
+            return uv::editUvMeshes("Assign Trim Palette", scene::ComponentMode::Face, [&](geo::Mesh& m, const Ids& ids, Node&) -> json {
+                std::span<const int32_t> mat = std::as_const(m).faceAttrs().get<int32_t>(geo::attr::kMaterial);
+                std::span<const int32_t> trim = std::as_const(m).faceAttrs().get<int32_t>(kFaceTrim);
+                std::vector<uint32_t> faces;
+                for (geo::Index fc : facesOrAll(m, ids))
+                {
+                    const std::string now = fc < mat.size() ? scene::materials::slotName(m, mat[fc]) : std::string();
+                    const bool onSheet = std::ranges::find(slots, now) != slots.end() || (fc < trim.size() && trim[fc] > 0);
+                    if (onSheet && (!fromSlot || now == *fromSlot))
+                        faces.push_back(fc);
+                }
+                if (!faces.empty())
+                    scene::materials::assign(m, materialName(s, palette), faces);
+                return {{"faces", int64_t(faces.size())}, {"material", materialName(s, palette)}};
+            });
+        },
+        .examples = {"trimPaletteAssign(palette='Rust')", "trimPaletteAssign(palette='Default', fromPalette='Rust')"},
+    });
+
+    ctx.registerCommand({
         .name = "trimSheetSend",
-        .doc = "Send a trim sheet to Unreal: its baked textures go to <folder>/Textures, the trim master material M_LilaTrim is "
-               "generated (or rebuilt with regenerateMaster) and an instance MI_<name> is made with the sheet's maps, and every "
-               "mapped mesh in the scene that uses this sheet gets the instance on its sheet slot. Returns what Unreal made; "
-               "wait=False queues it.",
+        .doc = "Send a trim sheet to Unreal, in any order with its meshes: the meshes using the sheet are mapped (new ones under "
+               "<folder>/<name>/Meshes/SM_<mesh>) and sent first, the baked textures go to <folder>/<name>/Textures, the trim master "
+               "M_LilaTrim is generated (or rebuilt with regenerateMaster), each palette becomes an instance (MI_<name> for the "
+               "default, MI_<name>_<palette> for the others) with the shared maps plus that palette's painted maps and parameters, "
+               "and every mesh gets its palettes' instances on the matching slots. meshes='mapped' sends no meshes and fails "
+               "listing the ones Unreal doesn't have. Returns {instances, assigned, meshes: {sent, newlyMapped}, missing, "
+               "textures, materials, errors}; wait=False queues it; dryRun=True returns the plan without connecting.",
         .positionalDoc = "sheet (default the current one)",
         .flags = {sheetFlag(),
                   {"folder", "f", AT::String, "/Game/Lila/Trims", "Content folder; the sheet's assets go in <folder>/<name>."},
                   {"regenerateMaster", "", AT::Bool, false, "Rebuild M_LilaTrim's graph from this version of Lila, discarding edits to it."},
-                  {"wait", "w", AT::Bool, true, "Block until Unreal has imported everything."}},
+                  {"meshes", "me", AT::String, "send", "send: map and send the sheet's meshes first; mapped: only assign to meshes already in Unreal.",
+                   {"send", "mapped"}},
+                  {"wait", "w", AT::Bool, true, "Block until Unreal has imported everything."},
+                  {"dryRun", "", AT::Bool, false, "Return the plan (textures, instances, meshes) without connecting to Unreal."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1595,6 +2001,49 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("trimSheetSend: " + s.name + " is not baked yet; run trimSheetBake");
             json baked;
             rec >> baked;
+            const bool dryRun = a.get<bool>("dryRun", false);
+            const std::string meshMode = a.get<std::string>("meshes", "send");
+            const std::string folder = a.get<std::string>("folder", "/Game/Lila/Trims") + "/" + s.name;
+
+            // Meshes: the ones Unreal has (mapped) and the ones it still needs.
+            json mapped = json::array(), toMap = json::array();
+            std::vector<std::string> nodes;
+            for (const auto& [node, mesh] : sheetMeshes(f))
+            {
+                nodes.push_back(node);
+                if (const json m = link::mappingOf(node); m.is_object() && m.contains("contentPath"))
+                    mapped.push_back({{"node", node}, {"contentPath", m["contentPath"]}});
+                else
+                {
+                    const std::string leaf = node.substr(node.find_last_of('|') + 1);
+                    toMap.push_back({{"node", node}, {"contentPath", folder + "/Meshes/SM_" + leaf}});
+                }
+            }
+            if (meshMode == "mapped" && !toMap.empty())
+            {
+                std::string list;
+                for (const json& m : toMap)
+                    list += (list.empty() ? "" : ", ") + m["node"].get<std::string>();
+                throw CommandError("trimSheetSend: these meshes use " + s.name + " but aren't in Unreal: " + list +
+                                   "; send them first (unrealMap + unrealSync) or use meshes='send'");
+            }
+
+            const SendPlan plan = sendPlan(s, f, baked, folder);
+            json meshPaths = json::array();
+            for (const json& m : mapped)
+                meshPaths.push_back(m["contentPath"]);
+            if (meshMode == "send")
+                for (const json& m : toMap)
+                    meshPaths.push_back(m["contentPath"]);
+            json request = {{"folder", folder + "/Materials"},
+                            {"regenerate", a.get<bool>("regenerateMaster", false)},
+                            {"meshes", meshPaths},
+                            {"instances", plan.instances}};
+            const json importParams = link::textureImportParams({{"outputs", plan.textures}}, {{"folder", folder + "/Textures"}, {"materialMode", "none"}});
+            json meshReport = {{"sent", meshMode == "send" ? json(nodes) : json::array()}, {"newlyMapped", meshMode == "send" ? toMap : json::array()}};
+            if (dryRun)
+                return {{"request", request}, {"textures", plan.textures}, {"meshes", meshReport}, {"mapped", mapped}};
+
             try
             {
                 link::Link::get().ensureConnected();
@@ -1606,72 +2055,15 @@ void registerCommands(ext::Context& ctx)
             const json features = link::Link::get().status().value("features", json::array());
             if (!features.is_array() || std::ranges::find(features, json("trimMaterials")) == features.end())
                 throw CommandError("trimSheetSend: the LilaLink plugin in this editor is too old for trim sheets; rebuild it from Lila's ue/LilaLink");
-
-            const std::string folder = a.get<std::string>("folder", "/Game/Lila/Trims") + "/" + s.name;
-            const std::map<std::string, std::string> params = {
-                {"normal", "SheetNormalMap"}, {"ao", "SheetAOMap"}, {"curvature", "SheetCurvatureMap"}, {"cavity", "SheetCavityMap"}, {"height", "SheetHeightMap"}};
-            json textures = json::object();
-            json sent = json::array();
-            auto add = [&](const json& o, const std::string& param) {
-                const std::string asset = link::textureAssetName(o.value("file", std::string()), o.value("udim", 1001));
-                textures[param] = folder + "/Textures/" + asset + "." + asset;
-                sent.push_back(o);
-            };
-            for (const json& o : baked.value("outputs", json::array()))
-                if (const auto param = params.find(o.value("map", std::string())); param != params.end())
-                    add(o, param->second);
-            // A textured sheet sends its painted maps too; its normal carries the layers' height over the bake.
-            bool painted = false;
-            if (const std::string set = textureSetName(s); hasTextureSet(set))
+            if (meshMode == "send")
             {
-                const json exported = ops::execute("texExport", {{"args", {set}},
-                                                                 {"preset", "unreal"},
-                                                                 {"folder", (textureFolder(s, f) / "Painted").generic_string()},
-                                                                 {"incremental", true}});
-                const std::map<std::string, std::string> paintParams = {
-                    {"baseColor", "SheetBaseColorMap"}, {"orm", "SheetORMMap"}, {"normal", "SheetNormalMap"}};
-                int found = 0;
-                for (const json& o : exported.value("outputs", json::array()))
-                    if (const auto param = paintParams.find(o.value("map", std::string())); param != paintParams.end())
-                    {
-                        if (param->first != "normal")
-                            ++found;
-                        sent.erase(std::remove_if(sent.begin(), sent.end(), [&](const json& b) { return b.value("map", std::string()) == param->first; }),
-                                   sent.end());
-                        add(o, param->second);
-                    }
-                painted = found == 2;
+                for (const json& m : toMap)
+                    ops::execute("unrealMap", {{"args", {m["node"]}}, {"contentPath", m["contentPath"]}, {"kind", "static"}});
+                // Queued on the link's worker ahead of the material job, so the meshes exist when their slots are set.
+                link::syncMappings(true, nodes);
             }
-            json meshes = json::array();
-            Graph& g = Graph::current();
-            for (const scene::NodeId id : g.nodes())
-            {
-                Node* n = g.node(id);
-                if (!n || !n->type().isA("mesh"))
-                    continue;
-                try
-                {
-                    const json v = ops::execute("getAttr", {{"args", {n->path() + "." + kNodeSheet}}});
-                    if (v.is_string() && paths::resolvePath(v.get<std::string>()).lexically_normal() == f.lexically_normal())
-                        if (const json m = link::mappingOf(n->path()); m.is_object() && m.contains("contentPath"))
-                            meshes.push_back(m["contentPath"]);
-                }
-                catch (const std::exception&)
-                {
-                }
-            }
-            const glm::dvec2 ext = s.worldExtent();
-            json request = {{"folder", folder + "/Materials"},
-                            {"regenerate", a.get<bool>("regenerateMaster", false)},
-                            {"slot", materialName(s)},
-                            {"meshes", meshes},
-                            {"instances", json::array({{{"name", "MI_" + materialName(s).substr(2)},
-                                                        {"textures", textures},
-                                                        {"scalars", {{"SheetWidthCm", ext.x}, {"SheetHeightCm", ext.y}}},
-                                                        {"switches", {{"UsePaintedMaps", painted}}}}})}};
-            const json importParams = link::textureImportParams({{"outputs", sent}}, {{"folder", folder + "/Textures"}, {"materialMode", "none"}});
 
-            auto send = [importParams, request]() -> json {
+            auto send = [importParams, request, meshReport]() -> json {
                 std::shared_ptr<link::RpcClient> client = link::Link::get().client();
                 if (!client)
                     throw std::runtime_error("not connected to Unreal");
@@ -1682,12 +2074,24 @@ void registerCommands(ext::Context& ctx)
                 link::RpcResult m = client->call("trimMaterials", request, link::importCallOptions());
                 if (!m.ok)
                     errors.push_back("materials: " + m.error);
-                return {{"textures", t.ok ? t.result : json()}, {"materials", m.ok ? m.result : json()}, {"errors", errors}};
+                json missing = json::array();
+                if (m.ok)
+                    for (const json& w : m.result.value("warnings", json::array()))
+                        if (const std::string text = w.is_string() ? w.get<std::string>() : std::string(); text.starts_with("no static mesh "))
+                            missing.push_back(text.substr(15));
+                return {{"instances", m.ok ? m.result.value("instances", json::array()) : json::array()},
+                        {"assigned", m.ok ? m.result.value("assigned", json::array()) : json::array()},
+                        {"meshes", meshReport},
+                        {"missing", missing},
+                        {"textures", t.ok ? t.result : json()},
+                        {"materials", m.ok ? m.result : json()},
+                        {"errors", errors}};
             };
             if (a.get<bool>("wait", true))
             {
                 try
                 {
+                    link::Link::get().waitIdle();
                     return send();
                 }
                 catch (const std::exception& e)
@@ -1709,11 +2113,14 @@ void registerCommands(ext::Context& ctx)
                 mainq::post([done, name] {
                     for (const json& e : done.value("errors", json::array()))
                         log::error("trimSheetSend {}: {}", name, e.get<std::string>());
+                    for (const json& m : done.value("missing", json::array()))
+                        log::warn("trimSheetSend {}: Unreal has no mesh {}", name, m.get<std::string>());
+                    log::info("trimSheetSend {}: {} slots assigned", name, done.value("assigned", json::array()).size());
                 });
             });
-            return {{"queued", true}};
+            return {{"queued", true}, {"meshes", meshReport}};
         },
-        .examples = {"trimSheetSend()"},
+        .examples = {"trimSheetSend()", "trimSheetSend(dryRun=True)['request']['instances']", "trimSheetSend(meshes='mapped')"},
     });
 }
 } // namespace trims

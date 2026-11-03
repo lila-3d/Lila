@@ -8,6 +8,7 @@
 #include "extensions/ExtensionManager.h"
 #include "gn/Gn.h"
 #include "io/SceneFile.h"
+#include "link/UnrealLink.h"
 #include "scene/Node.h"
 #include "scene/SceneCommands.h"
 #include "tex/TextureSet.h"
@@ -40,6 +41,7 @@ int main(int argc, char** argv)
     lila::bake::registerCommands();
     lila::tex::registerCommands();
     lila::curve::registerCommands();
+    lila::link::registerCommands();
 
     doctest::Context ctx(argc, argv);
     int result = ctx.run();

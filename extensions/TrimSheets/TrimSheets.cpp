@@ -84,7 +84,10 @@ void hotspotExec(ExecContext& c)
             trimAttr[f] = is.trim + 1;
             faces.push_back(f);
         }
-    scene::materials::assign(m, materialName(sheet), faces);
+    const std::string palette = c.s("palette") == "Default" ? std::string() : c.s("palette");
+    if (!palette.empty() && !sheet.palette(palette))
+        throw gn::ExecError(sheet.name + " has no palette " + palette);
+    scene::materials::assign(m, materialName(sheet, palette), faces);
 
     Geometry out = *src;
     out.mesh = std::make_shared<const geo::Mesh>(std::move(m));
@@ -109,7 +112,8 @@ gn::NodeDecl hotspotDecl()
                                in("seed", T::Int, 0, "Variation seed."),
                                in("randomOffset", T::Bool, true, "Slide islands along tiling strips."),
                                in("randomFlip", T::Bool, false, "Turn islands 180 degrees at random."),
-                               in("uvSet", T::String, "uv0", "UV set to write.")},
+                               in("uvSet", T::String, "uv0", "UV set to write."),
+                               in("palette", T::String, "", "Palette the faces use; the sheet's default when empty.")},
                     .outputs = {geoSocket("geometry", "The mesh with its uvs on the sheet.")}},
         .exec = hotspotExec,
     };

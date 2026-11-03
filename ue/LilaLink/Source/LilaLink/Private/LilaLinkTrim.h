@@ -18,10 +18,11 @@ namespace LilaLink
  * which users' own materials can call too (outputs BaseColor, Roughness, Metallic, AmbientOcclusion, tangent-space Normal);
  * its inputs default to the parameters the instances set.
  *
- * trimMaterials {folder, regenerate?, slot, meshes: [static mesh paths], instances: [{name, textures: {param: texture asset
+ * trimMaterials {folder, regenerate?, meshes: [static mesh paths], instances: [{name, slot, textures: {param: texture asset
  *   path}, scalars: {param: value}, vectors: {param: [r, g, b]}, switches: {param: bool}}]}
- * makes or updates each instance in folder under the master and sets the first on every slot named slot of the meshes.
- * Returns {master, masterVersion, built, instances, assigned: [{mesh, slot, material}], created, warnings}.
+ * makes or updates each instance (one per sheet palette) in folder under the master and sets it on every slot of the meshes
+ * named its slot. Returns {master, masterVersion, built, instances, assigned: [{mesh, slot, material, changed}], created,
+ * warnings}; a mesh that isn't there is a warning "no static mesh <path>".
  */
 void AddTrimMethods(TMap<FString, FLilaLinkMethod>& Methods);
 
