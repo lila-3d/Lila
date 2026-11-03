@@ -1226,6 +1226,12 @@ Layout layoutWall(const Footprint& footprint, const WallParams& p, int wall)
                         s.run = int32_t(ri);
                         s.role = iv.unit.role;
                         s.face = iv.unit.depth >= T - j - 1e-6 ? Face::Through : face;
+                        // A through stone reaches both faces, even when the wall is a little thicker than a brick is long.
+                        if (s.face == Face::Through && side != 0.0 && s.size.z < T)
+                        {
+                            s.size.z = T;
+                            s.center = glm::dvec3(faceMid.x, s.center.y, faceMid.z) + into * (T * 0.5);
+                        }
                         s.grounded = line.baseAt(iv.a) >= y - K.pitch * 0.5 || line.baseAt(iv.b) >= y - K.pitch * 0.5 || course == 0;
                         if ((ii == 0 && sp.jambA) || (ii + 1 == ivs.size() && sp.jambB))
                             s.role = Role::Jamb;
@@ -1839,12 +1845,12 @@ geo::Mesh stoneMesh(const StoneShape& s)
                 knock = std::min(std::clamp(s.wear, 0.0, 1.0) * b * (0.3 + 1.7 * r * r), 0.4 * minE - b);
                 knock = std::max(knock, 0.0);
             }
+            // The knock moves each point within its own face, so faces stay flat and never sink behind the mortar.
             for (int axis = 0; axis < 3; ++axis)
             {
                 glm::dvec3 q;
                 for (int k = 0; k < 3; ++k)
-                    q[k] = sg[k] * (k == axis ? e[k] : e[k] - b);
-                q -= sg * knock;
+                    q[k] = sg[k] * (k == axis ? e[k] : e[k] - b - knock);
                 pts.push_back(q);
             }
         }
