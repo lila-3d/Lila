@@ -4,6 +4,7 @@
 #include "curve/Channel.h"
 #include "curve/CurveNodes.h"
 #include "curve/Pipe.h"
+#include "curve/PipeRoute.h"
 #include "curve/Strap.h"
 #include "curve/Sweep.h"
 #include "curve/WorldMeshes.h"
@@ -448,4 +449,91 @@ TEST_CASE("carveChannel command: live, saved and undone")
     CHECK(meshNamed(plane)->numFaces() > 1);
     run("undo");
     CHECK(meshNamed(plane)->numFaces() == 1);
+}
+
+TEST_CASE("route around an obstacle with clearance")
+{
+    // A wall 4 m wide and 3 m tall standing between the ends.
+    curve::WorldMeshes world;
+    world.add(std::make_shared<geo::Mesh>(geo::makeCube({40.0, 300.0, 400.0})), glm::translate(glm::dmat4(1.0), D3(0, 150, 0)));
+    curve::ObstacleDistance dist = [&](const D3& p, double maxD) { return world.signedDistance(p, maxD); };
+    curve::PipeRouteOptions o;
+    o.clearance = 15.0;
+    o.cellSize = 10.0;
+    const D3 a(-300, 100, 0), b(300, 100, 0);
+    curve::PipeRouteResult r = curve::routePipe(a, b, dist, o);
+    REQUIRE(r.found);
+    CHECK(r.points.front() == a);
+    CHECK(r.points.back() == b);
+    CHECK(r.bends >= 2);
+    for (size_t k = 1; k < r.points.size(); ++k)
+    {
+        const D3 d = r.points[k] - r.points[k - 1];
+        int axes = (std::abs(d.x) > 1e-6) + (std::abs(d.y) > 1e-6) + (std::abs(d.z) > 1e-6);
+        CHECK(axes == 1);
+        for (int s = 0; s <= 20; ++s)
+        {
+            const D3 p = glm::mix(r.points[k - 1], r.points[k], s / 20.0);
+            CHECK(world.signedDistance(p, 1e3) >= o.clearance - 1e-6);
+        }
+    }
+
+    // A high cost on y keeps it from going over the top: it goes round the side.
+    o.axisCost = D3(1.0, 50.0, 1.0);
+    curve::PipeRouteResult side = curve::routePipe(a, b, dist, o);
+    REQUIRE(side.found);
+    double topY = -1e9;
+    for (const D3& p : side.points)
+        topY = std::max(topY, p.y);
+    CHECK(topY == doctest::Approx(100.0));
+
+    // Start direction: leaves the start straight down.
+    o.axisCost = D3(1.0);
+    o.startDir = D3(0, -1, 0);
+    curve::PipeRouteResult down = curve::routePipe(a, b, dist, o);
+    REQUIRE(down.found);
+    REQUIRE(down.points.size() >= 2);
+    CHECK(down.points[1].y < a.y);
+
+    // Without obstacles: one bend at most on two differing axes, none on a straight line.
+    o.startDir = D3(0.0);
+    CHECK(curve::routePipe(D3(0), D3(500, 0, 0), {}, o).bends == 0);
+    CHECK(curve::routePipe(D3(0), D3(500, 0, 300), {}, o).bends == 1);
+}
+
+TEST_CASE("pipeRoute command: live pipe reroutes, saved and undone")
+{
+    run("newScene");
+    std::string wall = run("polyCube", {{"width", 40}, {"height", 300}, {"depth", 400}})[0];
+    run("move", {{"args", {wall}}, {"to", {0, 150, 0}}});
+    json r = run("pipeRoute", {{"start", {-300, 100, 0}}, {"end", {300, 100, 0}}, {"obstacles", {wall}}, {"cellSize", 10.0},
+                               {"pipe", true}, {"pipeOptions", {{"radius", 5.0}}}});
+    std::string curveName = r[0], node = r[1], pipe = r[2];
+    CHECK(attr(node, "clearance") == doctest::Approx(7.5));
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::Node* rn = g.find(node);
+    REQUIRE(rn);
+    CHECK(rn->as<bool>(rn->type().attrIndex("found")));
+    const double len0 = attr(node, "length");
+    CHECK(len0 > 600.0);
+    REQUIRE(meshNamed(pipe));
+    CHECK(meshNamed(pipe)->numFaces() > 0);
+
+    // Moving the wall out of the way straightens the run, and the pipe follows.
+    run("move", {{"args", {wall}}, {"to", {0, 150, 2000}}});
+    CHECK(attr(node, "length") == doctest::Approx(600.0));
+    CHECK(meshNamed(pipe)->bounds().max.y == doctest::Approx(105.0).epsilon(1e-3));
+    run("undo");
+    CHECK(attr(node, "length") == doctest::Approx(len0));
+
+    saveAndReopen("route.lila");
+    CHECK(attr(node, "length") == doctest::Approx(len0));
+    CHECK(meshNamed(pipe)->numFaces() > 0);
+
+    run("newScene");
+    r = run("pipeRoute", {{"start", {0, 0, 0}}, {"end", {100, 0, 0}}});
+    CHECK(run("objExists", {{"args", {r[0]}}}).get<bool>());
+    run("undo");
+    CHECK(!run("objExists", {{"args", {r[0]}}}).get<bool>());
 }

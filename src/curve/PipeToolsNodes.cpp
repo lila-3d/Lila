@@ -5,6 +5,7 @@
 #include "curve/Carve.h"
 #include "curve/Channel.h"
 #include "curve/EnvAttrs.h"
+#include "curve/PipeRoute.h"
 #include "curve/StripUvAttrs.h"
 #include "curve/WorldMeshes.h"
 #include "math/MathCore.h"
@@ -268,6 +269,78 @@ void registerChannelModifier()
     types::registerType(std::move(t));
 }
 
+// Routing.
+
+class PipeRouteNode final : public Node
+{
+public:
+    void compute(const EvalContext&) override
+    {
+        LILA_ZONE();
+
+        const int outCurve = idx(*this, "outCurve");
+        try
+        {
+            PipeRouteOptions o;
+            o.clearance = std::max(0.0, f(*this, "clearance"));
+            o.cellSize = std::max(0.0, f(*this, "cellSize"));
+            o.axisCost = glm::max(v(*this, "axisCost"), D3(1e-3));
+            o.bendCost = std::max(0.0, f(*this, "bendCost"));
+            o.startDir = v(*this, "startDir");
+            o.endDir = v(*this, "endDir");
+            o.margin = std::max(0.0, f(*this, "margin"));
+            WorldMeshes obstacles = worldMeshesOf(*this, "obstacles", "obstacleMatrices");
+            ObstacleDistance dist;
+            if (!obstacles.empty())
+                dist = [&obstacles](const D3& p, double maxDistance) { return obstacles.signedDistance(p, maxDistance); };
+            PipeRouteResult r = routePipe(v(*this, "start"), v(*this, "end"), dist, o);
+            if (!r.warning.empty() && r.warning != as<std::string>(idx(*this, "warning")))
+                log::warn("{}: {}", name(), r.warning);
+            setOutput(idx(*this, "warning"), r.warning);
+            setOutput(idx(*this, "found"), r.found);
+            setOutput(idx(*this, "bends"), int64_t(r.bends));
+            setOutput(idx(*this, "length"), r.length);
+            setOutput(outCurve, makeCurveData({routeSpline(r)}));
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("{}: {}", name(), e.what());
+            setOutput(outCurve, DataPtr());
+        }
+    }
+};
+
+void registerRouteType()
+{
+    if (types::find("curvePipeRoute"))
+        return;
+    NodeType t;
+    t.name = "curvePipeRoute";
+    t.icon = "route";
+    t.doc = "An orthogonal pipe run from start to end around the obstacle meshes, with clearance, preferred axes and few bends. "
+            "Its curve feeds a pipe, which rounds the corners into bends.";
+    t.ownAttrs = {
+        vAttr("start", D3(0.0), "Where the run starts, world cm."),
+        vAttr("end", D3(100.0, 0.0, 0.0), "Where the run ends, world cm."),
+        vAttr("startDir", D3(0.0), "The run leaves the start along this axis (zero: any)."),
+        vAttr("endDir", D3(0.0), "The run arrives at the end moving along this axis (zero: any)."),
+        fAttr("clearance", 10.0, "Least distance from the centreline to any obstacle, cm: the pipe radius plus a gap.", 0.0),
+        fAttr("cellSize", 0.0, "Grid step, cm; 0 picks one from the clearance and the distance.", 0.0),
+        vAttr("axisCost", D3(1.0), "Cost per cm along x, y and z: raise one to keep runs off that axis."),
+        fAttr("bendCost", 100.0, "Cost of each bend, in cm of run.", 0.0),
+        fAttr("margin", 0.0, "How far the search reaches past the box around the ends, cm; 0 is a quarter of the distance.", 0.0),
+        meshArray("obstacles", "Meshes the run keeps clear of."),
+        matrixArray("obstacleMatrices", "The obstacles' world matrices."),
+        dataOut("outCurve", "The run: a poly curve through its corners."),
+        out("found", PlugType::Bool, false, "A route was found; otherwise the curve is a straight line."),
+        out("bends", PlugType::Int, int64_t(0), "Corners along the run."),
+        out("length", PlugType::Float, 0.0, "Run length, cm."),
+        stringOut("warning", "Why no route was found."),
+    };
+    t.create = [] { return std::make_unique<PipeRouteNode>(); };
+    types::registerType(std::move(t));
+}
+
 json withArgs(const json& options, const std::string& arg)
 {
     json call = options.is_object() ? options : json::object();
@@ -279,6 +352,7 @@ json withArgs(const json& options, const std::string& arg)
 void registerPipeToolTypes()
 {
     registerChannelModifier();
+    registerRouteType();
 }
 
 void registerPipeToolCommands()
@@ -344,6 +418,52 @@ void registerPipeToolCommands()
                 }
                 g.select({surface->id()});
                 return out.size() == 1 ? out[0] : out;
+            },
+        });
+    }
+
+    {
+        std::vector<FlagDef> flags = attrFlags("curvePipeRoute");
+        for (FlagDef fd : std::vector<FlagDef>{
+                 {"obstacles", "", T::List, nullptr, "Meshes to keep clear of (default: the selected meshes)."},
+                 {"pipe", "", T::Bool, false, "Also build a live pipe along the run."},
+                 {"pipeOptions", "", T::Any, nullptr, "{flag: value} for the pipe command (radius, preset, uvLayout ...)."},
+                 {"name", "n", T::String, nullptr, "Route curve name; made unique."}})
+            flags.push_back(std::move(fd));
+        ops::registerCommand({
+            .name = "pipeRoute",
+            .doc = "Route a pipe from start to end around obstacle meshes: orthogonal runs on a grid with clearance, preferred axes "
+                   "(axisCost) and few bends (bendCost). Live: moving the obstacles or the ends reroutes, and a pipe on the route "
+                   "follows. Returns [route curve, curvePipeRoute, pipe mesh or None].",
+            .flags = flags,
+            .run = [](const Args& a) -> json {
+                Graph& g = Graph::current();
+                if (!a.has("start") || !a.has("end"))
+                    throw CommandError("pipeRoute: give start= and end=");
+                std::vector<Node*> obstacles = meshList(g, a, "obstacles", "pipeRoute");
+                if (!a.has("obstacles"))
+                    for (NodeId id : g.selection())
+                        if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                            obstacles.push_back(n);
+                Node* op = g.createNode(*types::find("curvePipeRoute"), {}, kNoNode, true);
+                if (!a.has("clearance") && a.has("pipeOptions") && a.flags["pipeOptions"].contains("radius"))
+                    g.setValue({op->id(), idx(*op, "clearance"), -1}, a.flags["pipeOptions"]["radius"].get<double>() * 1.5);
+                applyFlags(g, *op, a, "pipeRoute");
+                connectMeshes(g, *op, obstacles, "obstacles", "obstacleMatrices");
+                Node* curve = g.createNode(*types::find("curve"), a.get<std::string>("name", "PipeRoute"), kNoNode, true);
+                g.connect({op->id(), idx(*op, "outCurve"), -1}, {curve->id(), CurveShape::kCreate, -1});
+                g.evaluate();
+                if (!op->as<bool>(idx(*op, "found")))
+                    log::warn("pipeRoute: {}", op->as<std::string>(idx(*op, "warning")));
+                json pipeMesh = nullptr;
+                if (a.get<bool>("pipe", false))
+                {
+                    json r = ops::execute("pipe", withArgs(a.has("pipeOptions") ? a.flags["pipeOptions"] : json(), curve->path()));
+                    if (r.is_array() && !r.empty())
+                        pipeMesh = r[0];
+                }
+                g.select({curve->id()});
+                return json::array({curve->path(), op->path(), pipeMesh});
             },
         });
     }

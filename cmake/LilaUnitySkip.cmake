@@ -70,6 +70,7 @@ set(LILA_UNITY_SKIP
     src/curve/Pipe.cpp
     src/curve/PipeNode.cpp
     src/curve/PipeToolsNodes.cpp
+    src/curve/PipeRoute.cpp
     src/curve/Carve.cpp
     src/curve/Channel.cpp
     src/curve/StripUvAttrs.cpp
