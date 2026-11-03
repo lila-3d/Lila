@@ -33,6 +33,7 @@
 
 #include <glm/gtc/constants.hpp>
 
+#include <algorithm>
 #include <array>
 #include <map>
 
@@ -253,6 +254,41 @@ std::string selectedClayPath()
     return o ? o->path() : std::string();
 }
 
+/**
+ * The signed world distance from p to the selected clay's mirror plane (its YZ plane), with the plane's normal, or
+ * nothing when the clay isn't mirrored.
+ */
+std::optional<std::pair<double, glm::dvec3>> mirrorOffset(const glm::dvec3& p)
+{
+    scene::Node* o = selectedClay();
+    const scene::Node* surface = o ? clay::surfaceOf(*o) : nullptr;
+    if (!surface || surface->as<int64_t>(surface->type().attrIndex("symmetry")) != 1)
+        return std::nullopt;
+    const glm::dmat4 world = o->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+    const glm::dvec3 n = glm::cross(glm::dvec3(world[1]), glm::dvec3(world[2]));
+    if (glm::length(n) < 1e-12)
+        return std::nullopt;
+    const glm::dvec3 unit = glm::normalize(n);
+    return std::pair{glm::dot(p - glm::dvec3(world[3]), unit), unit};
+}
+
+/** How near the mirror plane a shape of radius r snaps onto it: where it would overlap its mirror, wider with X held. */
+double mirrorReach(double r)
+{
+    return tools::snaps() & SnapGrid ? 4.0 * r : r;
+}
+
+/** p moved onto the mirror plane when it is within reach of it for a shape of radius r. */
+bool snapToMirror(glm::dvec3& p, double r)
+{
+    if (auto off = mirrorOffset(p); off && std::abs(off->first) < mirrorReach(r))
+    {
+        p -= off->first * off->second;
+        return true;
+    }
+    return false;
+}
+
 /** A stroke span's far end, where a new stroke continues it. */
 struct StrokeEnd
 {
@@ -308,6 +344,8 @@ std::vector<KeyHint> clayKeys()
                                  {"Ctrl+drag", s.cut ? "Add" : "Cut"},
                                  {"Shift+click", "Select a shape"},
                                  {"S", "Strokes"}};
+    if (const scene::Node* o = selectedClay(); o && mirrorOffset(glm::dvec3(o->as<glm::dmat4>(scene::Transform::kWorldMatrix)[3])))
+        keys.push_back({"X+click", "Snap to mirror"});
     if (s.stroke)
         keys.push_back({"T", s.taper ? "Taper off" : "Taper on"});
     keys.insert(keys.end(), {{"B+drag", "Radius"}, {"[  ]", "Smaller, larger"}, {",  .", "Blend"}, {"Esc", "Exit"}});
@@ -588,6 +626,7 @@ public:
             mStrokePoints = {mPress};
             return true;
         }
+        snapToMirror(mPress, s.radius);
         // The shape goes in now and follows the drag; the whole press is one undo step.
         UndoStack::get().openChunk("Clay Shape");
         mChunk = true;
@@ -624,6 +663,7 @@ public:
                 mHover = onViewPlane(mHoverPx, view);
             mHoverView = view.camera;
             mHoverEnd = hit && settings().stroke ? strokeEndNear(mHover) : std::nullopt;
+            mHoverSnapped = !settings().stroke && snapToMirror(mHover, settings().radius);
             viewportTools::requestRedraw();
             return false;
         }
@@ -657,6 +697,14 @@ public:
         {
             if (mStrokePoints.size() >= 2)
             {
+                // A stroke that runs along the mirror plane is one stroke on it, not a pair hugging it.
+                const bool onPlane = std::ranges::all_of(mStrokePoints, [this](const glm::dvec3& p) {
+                    auto off = mirrorOffset(p);
+                    return off && std::abs(off->first) < mirrorReach(mStrokeRadius);
+                });
+                if (onPlane)
+                    for (glm::dvec3& p : mStrokePoints)
+                        snapToMirror(p, mStrokeRadius);
                 json pts = json::array();
                 for (const glm::dvec3& p : mStrokePoints)
                     pts.push_back(jsonVec(p));
@@ -736,7 +784,10 @@ public:
         // The brush: the current radius at the surface under the cursor (at the press while B-dragging it).
         if (!mDragging && view.camera == mHoverView)
         {
-            const QPointF at = mRadiusDrag ? mPressPx : mHoverPx;
+            QPointF at = mRadiusDrag ? mPressPx : mHoverPx;
+            if (!mRadiusDrag && mHoverSnapped)
+                if (auto snapped = view.project(mHover))
+                    at = *snapped;
             const double r = s.radius / std::max(mRadiusDrag ? mRadiusUnit : view.unitsPerPixel(mHover), 1e-9);
             std::vector<QPointF> ring;
             for (int i = 0; i < 48; ++i)
@@ -881,6 +932,7 @@ private:
     glm::dvec3 mHover{0.0};
     std::string mHoverView;
     std::optional<StrokeEnd> mHoverEnd;
+    bool mHoverSnapped = false;
     bool mRadiusDrag = false;
     bool mCtrl = false;
     std::unique_ptr<QTimer> mModifierWatch;
