@@ -103,23 +103,13 @@ FString ValueText(const TSharedPtr<FJsonValue>& V)
 
 bool NumberOf(const TSharedPtr<FJsonValue>& V, double& Out)
 {
-	bool B = false;
-	FString S;
-	if (V->TryGetNumber(Out))
+	// TryGetNumber reads numeric strings; TryGetBool would accept any string, so bools are matched by type.
+	if (V->Type == EJson::Boolean)
 	{
+		Out = V->AsBool() ? 1.0 : 0.0;
 		return true;
 	}
-	if (V->TryGetBool(B))
-	{
-		Out = B ? 1.0 : 0.0;
-		return true;
-	}
-	if (V->TryGetString(S) && S.IsNumeric())
-	{
-		Out = FCString::Atod(*S);
-		return true;
-	}
-	return false;
+	return V->TryGetNumber(Out);
 }
 
 bool NumbersOf(const TSharedPtr<FJsonValue>& V, TArray<double>& Out)
@@ -501,11 +491,11 @@ void AddBareTags(const FString& Attr, const TSharedPtr<FJsonValue>& V, TArray<FN
 	{
 		return;
 	}
-	bool B = false;
 	const TArray<TSharedPtr<FJsonValue>>* Items = nullptr;
-	if (V->TryGetBool(B))
+	// TryGetBool succeeds on strings and numbers too, so only a real JSON bool is read as one.
+	if (V->Type == EJson::Boolean)
 	{
-		if (B)
+		if (V->AsBool())
 		{
 			OutTags.AddUnique(FName(*Attr));
 		}
