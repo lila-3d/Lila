@@ -1,4 +1,5 @@
 #include "media/Decode.h"
+#include "media/DecodeBackend.h"
 
 #include "core/Paths.h"
 #include "core/Profile.h"
@@ -70,25 +71,36 @@ struct Input
         avformat_close_input(&fmt);
     }
 
-    bool open(const fs::path& path, AVMediaType type, std::string* err)
+    /** Opens the container and finds its best stream of type, without a decoder. */
+    bool probe(const fs::path& path, AVMediaType type, std::string* err)
     {
         const std::string utf8 = paths::toUtf8(path);
         if (int r = avformat_open_input(&fmt, utf8.c_str(), nullptr, nullptr); r < 0)
             return fail(err, utf8 + ": " + avError(r));
         if (int r = avformat_find_stream_info(fmt, nullptr); r < 0)
             return fail(err, utf8 + ": " + avError(r));
-        const AVCodec* codec = nullptr;
-        stream = av_find_best_stream(fmt, type, -1, -1, &codec, 0);
-        if (stream < 0 || !codec)
+        stream = av_find_best_stream(fmt, type, -1, -1, nullptr, 0);
+        if (stream < 0)
             return fail(err, utf8 + (type == AVMEDIA_TYPE_VIDEO ? ": no video stream" : ": no audio stream"));
-        dec = avcodec_alloc_context3(codec);
-        if (!dec || avcodec_parameters_to_context(dec, fmt->streams[stream]->codecpar) < 0)
-            return fail(err, utf8 + ": unsupported codec");
-        dec->thread_count = 0;
-        if (int r = avcodec_open2(dec, codec, nullptr); r < 0)
-            return fail(err, utf8 + ": " + avError(r));
         return true;
     }
+
+    bool openDecoder(const fs::path& path, std::string* err)
+    {
+        const AVCodecID id = fmt->streams[stream]->codecpar->codec_id;
+        const AVCodec* codec = avcodec_find_decoder(id);
+        if (!codec)
+            return fail(err, paths::toUtf8(path) + ": no " + avcodec_get_name(id) + " decoder");
+        dec = avcodec_alloc_context3(codec);
+        if (!dec || avcodec_parameters_to_context(dec, fmt->streams[stream]->codecpar) < 0)
+            return fail(err, paths::toUtf8(path) + ": unsupported codec");
+        dec->thread_count = 0;
+        if (int r = avcodec_open2(dec, codec, nullptr); r < 0)
+            return fail(err, paths::toUtf8(path) + ": " + avError(r));
+        return true;
+    }
+
+    bool open(const fs::path& path, AVMediaType type, std::string* err) { return probe(path, type, err) && openDecoder(path, err); }
 
     AVStream* st() const { return fmt->streams[stream]; }
 
@@ -135,7 +147,9 @@ bool isAudioFile(const std::string& path)
 
 // ---------------------------------------------------------------- VideoDecoder
 
-struct VideoDecoder::Impl
+namespace
+{
+struct FfmpegVideo final : VideoDecoder::Impl
 {
     Input in;
     Packet pkt;
@@ -145,16 +159,12 @@ struct VideoDecoder::Impl
     Frame pending;
     bool hasPending = false;
     SwsContext* sws = nullptr;
-    VideoInfo info;
     AVRational tb{1, 1};
     int64_t startPts = 0;
-    int outW = 0, outH = 0;
-    VideoFramePtr last;
-    int64_t seeks = 0;
     /** The last decoded frame's index; a frame without a timestamp (a stream's delayed last picture) follows it. */
     int64_t lastAt = -1;
 
-    ~Impl() { sws_freeContext(sws); }
+    ~FfmpegVideo() override { sws_freeContext(sws); }
 
     int64_t indexOf(const AVFrame* f)
     {
@@ -163,7 +173,7 @@ struct VideoDecoder::Impl
         return lastAt;
     }
 
-    void seek(int64_t index, double backSeconds)
+    void seek(int64_t index, double backSeconds) override
     {
         const double seconds = std::max(0.0, double(index) / info.fps - backSeconds);
         const int64_t ts = startPts + int64_t(seconds / av_q2d(tb));
@@ -177,8 +187,22 @@ struct VideoDecoder::Impl
         ++seeks;
     }
 
-    VideoFramePtr convert(const AVFrame* f, int64_t index)
+    int64_t heldAt() const override { return held.f->buf[0] ? held.f->pts : -1; }
+
+    bool holdPending(int64_t index) override
     {
+        if (!hasPending)
+            return false;
+        av_frame_unref(held.f);
+        av_frame_move_ref(held.f, pending.f);
+        hasPending = false;
+        held.f->pts = index;
+        return true;
+    }
+
+    VideoFramePtr convertHeld(int64_t index) override
+    {
+        const AVFrame* f = held.f;
         sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), outW, outH, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr,
                                    nullptr, nullptr);
         if (!sws)
@@ -196,8 +220,7 @@ struct VideoDecoder::Impl
         return out;
     }
 
-    /** Decodes forward to the frame showing at index; false when nothing at or before it came out. */
-    bool decodeTo(int64_t index, std::string* err)
+    bool decodeTo(int64_t index, std::string* err) override
     {
         bool have = held.f->buf[0] != nullptr;
         for (;;)
@@ -230,6 +253,27 @@ struct VideoDecoder::Impl
     }
 };
 
+/** Rate, length and size of the container's video stream, as FFmpeg reads them. */
+VideoInfo probedInfo(const Input& in)
+{
+    const AVStream* st = in.st();
+    VideoInfo info;
+    info.width = st->codecpar->width;
+    info.height = st->codecpar->height;
+    info.codec = avcodec_get_name(st->codecpar->codec_id);
+    double fps = av_q2d(st->avg_frame_rate);
+    if (!(fps > 0.0) || !std::isfinite(fps))
+        fps = av_q2d(st->r_frame_rate);
+    info.fps = fps > 0.0 && std::isfinite(fps) ? fps : 25.0;
+    if (st->duration != AV_NOPTS_VALUE && st->duration > 0)
+        info.duration = double(st->duration) * av_q2d(st->time_base);
+    else if (in.fmt->duration != AV_NOPTS_VALUE)
+        info.duration = double(in.fmt->duration) / AV_TIME_BASE;
+    info.frameCount = st->nb_frames > 0 ? st->nb_frames : std::max<int64_t>(1, std::llround(info.duration * info.fps));
+    return info;
+}
+} // namespace
+
 VideoDecoder::VideoDecoder(std::unique_ptr<Impl> impl) : mImpl(std::move(impl)) {}
 VideoDecoder::~VideoDecoder() = default;
 
@@ -237,41 +281,29 @@ std::unique_ptr<VideoDecoder> VideoDecoder::open(const fs::path& path, int maxSi
 {
     LILA_ZONE();
 
-    auto impl = std::make_unique<Impl>();
-    if (!impl->in.open(path, AVMEDIA_TYPE_VIDEO, err))
+    auto impl = std::make_unique<FfmpegVideo>();
+    if (!impl->in.probe(path, AVMEDIA_TYPE_VIDEO, err))
         return nullptr;
-    AVStream* st = impl->in.st();
-    AVCodecContext* dec = impl->in.dec;
-    VideoInfo& info = impl->info;
-    info.width = dec->width;
-    info.height = dec->height;
-    info.codec = avcodec_get_name(dec->codec_id);
-    double fps = av_q2d(st->avg_frame_rate);
-    if (!(fps > 0.0) || !std::isfinite(fps))
-        fps = av_q2d(st->r_frame_rate);
-    info.fps = fps > 0.0 && std::isfinite(fps) ? fps : 25.0;
-    impl->tb = st->time_base;
-    impl->startPts = st->start_time != AV_NOPTS_VALUE ? st->start_time : 0;
-    if (st->duration != AV_NOPTS_VALUE && st->duration > 0)
-        info.duration = double(st->duration) * av_q2d(st->time_base);
-    else if (impl->in.fmt->duration != AV_NOPTS_VALUE)
-        info.duration = double(impl->in.fmt->duration) / AV_TIME_BASE;
-    info.frameCount = st->nb_frames > 0 ? st->nb_frames : std::max<int64_t>(1, std::llround(info.duration * info.fps));
-    if (info.width <= 0 || info.height <= 0)
+    VideoInfo probed = probedInfo(impl->in);
+    if (probed.width <= 0 || probed.height <= 0)
     {
         fail(err, paths::toUtf8(path) + ": no picture size");
         return nullptr;
     }
-    impl->outW = info.width;
-    impl->outH = info.height;
-    if (maxSize > 0 && std::max(info.width, info.height) > maxSize)
+#ifdef _WIN32
+    if (const AVCodecID id = impl->in.st()->codecpar->codec_id; id == AV_CODEC_ID_H264 || id == AV_CODEC_ID_HEVC)
     {
-        const double s = double(maxSize) / std::max(info.width, info.height);
-        impl->outW = std::max(2, int(std::lround(info.width * s)) & ~1);
-        impl->outH = std::max(2, int(std::lround(info.height * s)) & ~1);
+        std::unique_ptr<Impl> mf = openMediaFoundation(path, probed, maxSize, err);
+        return mf ? std::unique_ptr<VideoDecoder>(new VideoDecoder(std::move(mf))) : nullptr;
     }
-    info.width = impl->outW;
-    info.height = impl->outH;
+#endif
+    if (!impl->in.openDecoder(path, err))
+        return nullptr;
+    impl->info = probed;
+    impl->info.decoder = "ffmpeg";
+    impl->tb = impl->in.st()->time_base;
+    impl->startPts = impl->in.st()->start_time != AV_NOPTS_VALUE ? impl->in.st()->start_time : 0;
+    fitOutput(*impl, maxSize);
     // Frame 0 is the first picture: containers without presentation times (AVI with B-frames) stamp it a frame late.
     if (impl->in.receive(impl->pending.f, impl->pkt.p) == 0)
     {
@@ -303,7 +335,7 @@ VideoFramePtr VideoDecoder::frame(int64_t index, std::string* err)
         return d.last;
     // Decoding on is cheaper than a seek for a short step forward; a GOP is rarely longer than this.
     constexpr int64_t kForward = 48;
-    const int64_t heldAt = d.held.f->buf[0] ? d.held.f->pts : -1;
+    const int64_t heldAt = d.heldAt();
     const bool ahead = heldAt >= 0 && index >= heldAt && index - heldAt <= kForward;
     bool found = false;
     if (ahead)
@@ -316,21 +348,15 @@ VideoFramePtr VideoDecoder::frame(int64_t index, std::string* err)
         found = d.decodeTo(index, err);
     }
     // A stream whose first picture is stamped after the asked time shows that picture.
-    if (!found && d.hasPending)
-    {
-        av_frame_unref(d.held.f);
-        av_frame_move_ref(d.held.f, d.pending.f);
-        d.hasPending = false;
-        d.held.f->pts = index;
-        found = true;
-    }
+    if (!found)
+        found = d.holdPending(index);
     if (!found)
     {
         if (err && err->empty())
             *err = "no frame at " + std::to_string(index);
         return nullptr;
     }
-    VideoFramePtr out = d.convert(d.held.f, index);
+    VideoFramePtr out = d.convertHeld(index);
     if (!out)
     {
         fail(err, "can't convert the picture");

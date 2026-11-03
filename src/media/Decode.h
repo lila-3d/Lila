@@ -16,8 +16,9 @@
 #include <vector>
 
 /**
- * Video and audio decoding through FFmpeg (LGPL, linked dynamically): frame-accurate video frames for image planes and
- * reference images, and whole sound files resampled for the timeline.
+ * Video and audio decoding through FFmpeg (LGPL, linked dynamically, built without H.264 and HEVC decoders; on Windows
+ * those go through Media Foundation): frame-accurate video frames for image planes and reference images, and whole
+ * sound files resampled for the timeline.
  */
 namespace lila::media
 {
@@ -37,6 +38,8 @@ struct VideoInfo
     int64_t frameCount = 0;
     double duration = 0.0; // seconds
     std::string codec;
+    /** "ffmpeg", or "mediaFoundation" for H.264 and HEVC on Windows. */
+    std::string decoder;
 };
 
 /** One decoded picture: RGBA8, row 0 at the top. */

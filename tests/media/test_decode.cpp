@@ -3,6 +3,7 @@
 #include "TestClips.h"
 
 #include "media/Decode.h"
+#include "core/VideoWriter.h"
 #include "media/Media.h"
 
 extern "C"
@@ -190,6 +191,71 @@ TEST_CASE("video: random seeks and steps land on the exact frame in mp4, mkv and
         checkFrame(dec->frame(-5), 0);
     }
 }
+
+TEST_CASE("video: FFmpeg carries no H.264 or HEVC decoder")
+{
+    CHECK_FALSE(avcodec_find_decoder(AV_CODEC_ID_H264));
+    CHECK_FALSE(avcodec_find_decoder(AV_CODEC_ID_HEVC));
+}
+
+#ifdef _WIN32
+TEST_CASE("video: H.264 decodes through Media Foundation, frame-accurate")
+{
+    REQUIRE(video::available());
+    const auto path = scratch() / "gray_h264.mp4";
+    {
+        video::Options o;
+        o.width = 160;
+        o.height = 96;
+        o.fps = 24.0;
+        o.quality = 1.0;
+        std::string err;
+        auto w = video::Writer::open(path, o, &err);
+        REQUIRE_MESSAGE(w, err);
+        std::vector<uint8_t> bgra(size_t(o.width) * o.height * 4);
+        for (int i = 0; i < 30; ++i)
+        {
+            for (size_t p = 0; p < bgra.size(); p += 4)
+            {
+                bgra[p] = bgra[p + 1] = bgra[p + 2] = uint8_t(20 + 7 * i);
+                bgra[p + 3] = 255;
+            }
+            REQUIRE(w->add(bgra.data(), &err));
+        }
+        REQUIRE(w->finish(&err));
+    }
+    std::string err;
+    auto dec = media::VideoDecoder::open(path, 0, &err);
+    REQUIRE_MESSAGE(dec, err);
+    CHECK(dec->info().decoder == "mediaFoundation");
+    CHECK(dec->info().codec == "h264");
+    CHECK(dec->info().width == 160);
+    CHECK(dec->info().height == 96);
+    CHECK(dec->info().frameCount == 30);
+    auto check = [&](int i) {
+        CAPTURE(i);
+        media::VideoFramePtr f = dec->frame(i, &err);
+        REQUIRE_MESSAGE(f, err);
+        CHECK(f->index == i);
+        CHECK(std::abs(meanRed(*f) - (20.0 + 7.0 * i)) < 4.0);
+    };
+    for (int i : {17, 3, 4, 5, 29, 0, 12, 11, 8, 7, 22})
+        check(i);
+    check(14);
+    const int64_t seeks = dec->seeks();
+    for (int i = 15; i < 22; ++i)
+        check(i);
+    CHECK(dec->seeks() == seeks);
+
+    // The same file through a stream, and scaled down for the viewport.
+    auto small = media::VideoDecoder::open(path, 80, &err);
+    REQUIRE(small);
+    CHECK(small->info().width == 80);
+    media::VideoFramePtr f = small->frame(9, &err);
+    REQUIRE(f);
+    CHECK(std::abs(meanRed(*f) - 83.0) < 4.0);
+}
+#endif
 
 TEST_CASE("video: a stream returns the nearest cached frame at once and the exact one once decoded")
 {
