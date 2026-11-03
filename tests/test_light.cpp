@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "core/ExtensionContext.h"
+#include "core/Paths.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/Light.h"
@@ -65,7 +66,11 @@ TEST_CASE("light settings round trip through both scene formats")
         run("openScene", {{"args", {path}}});
         Node* back = Graph::current().find(name);
         REQUIRE(back);
-        CHECK(lights::settings(*back) == s);
+        // The texture is a file attr, so the scene stores it relative to its folder.
+        lights::Settings read = lights::settings(*back);
+        CHECK(paths::resolvePath(read.texture, dir).lexically_normal() == std::filesystem::path(s.texture).lexically_normal());
+        read.texture = s.texture;
+        CHECK(read == s);
     }
 }
 
