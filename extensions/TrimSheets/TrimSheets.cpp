@@ -5,8 +5,10 @@
 #include "TrimSheets.h"
 #include "Generator.h"
 
+#include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
+#include <lila/Paths.h>
 #include <lila/Profile.h>
 #include <lila/TextureGraph.h>
 #include <lila/Workspace.h>
@@ -145,9 +147,101 @@ gn::NodeDecl generatorDecl()
         .exec = generatorExec,
     };
 }
+/** trimHotspotModifier's evaluation: the input hotspotted onto its sheet, read fresh each time the input or a parameter changes. */
+geo::Mesh liveHotspot(const geo::Mesh& in, const scene::Node& n)
+{
+    LILA_ZONE();
+
+    const scene::NodeType& t = n.type();
+    auto str = [&](const char* name) { return n.as<std::string>(t.attrIndex(name)); };
+    std::string p = str("sheet");
+    if (p.empty())
+        p = currentSheet();
+    if (p.empty())
+        throw std::runtime_error("no trim sheet: set its sheet");
+    const Sheet sheet = load(paths::resolvePath(p));
+    uv::HotspotOptions o;
+    o.splitAngle = n.as<double>(t.attrIndex("splitAngle"));
+    o.orient = std::array{uv::HotspotOrient::WorldUp, uv::HotspotOrient::LongestU, uv::HotspotOrient::AsIs}[size_t(
+        std::clamp<int64_t>(n.as<int64_t>(t.attrIndex("orient")), 0, 2))];
+    o.tag = str("tag");
+    o.seed = uint32_t(n.as<int64_t>(t.attrIndex("seed")));
+    o.randomOffset = n.as<bool>(t.attrIndex("randomOffset"));
+    o.randomFlip = n.as<bool>(t.attrIndex("randomFlip"));
+    o.sliceOversized = n.as<bool>(t.attrIndex("sliceOversized"));
+    const std::string palette = str("palette") == "Default" ? std::string() : str("palette");
+    if (!palette.empty() && !sheet.palette(palette))
+        throw std::runtime_error(sheet.name + " has no palette " + palette);
+    const std::string set = str("uvSet").empty() ? std::string("uv0") : str("uvSet");
+
+    geo::Mesh m = in;
+    const uv::HotspotResult r = uv::hotspot(m, {}, hotspotTrims(sheet), set, o);
+    std::span<int32_t> trimAttr = m.faceAttrs().getOrAdd<int32_t>(kFaceTrim);
+    std::vector<uint32_t> faces;
+    for (const uv::HotspotIsland& is : r.islands)
+        for (geo::Index f : is.faces)
+        {
+            trimAttr[f] = is.trim + 1;
+            faces.push_back(f);
+        }
+    scene::materials::assign(m, materialName(sheet, palette), faces);
+    return m;
+}
+
+scene::AttrDef liveParam(std::string name, scene::PlugType type, scene::PlugValue def, std::string doc, std::optional<double> lo = {},
+                         std::optional<double> hi = {})
+{
+    using namespace scene;
+    return {.name = std::move(name), .type = type, .defaultValue = std::move(def), .flags = AttrInput | AttrStorable | AttrKeyable,
+            .doc = std::move(doc), .minValue = lo, .maxValue = hi};
+}
+
+bool registerLiveHotspot(ext::Context& ctx)
+{
+    using namespace scene;
+    NodeType t;
+    t.name = kLiveModifier;
+    t.icon = "stack-2";
+    t.doc = "Keeps a mesh hotspotted onto a trim sheet: whenever the mesh under it changes (a blockout edited, a generator's "
+            "parameters, a modifier lower in the stack) its islands are split, measured and mapped onto the trims again, faces "
+            "on the sheet's material and their trim recorded.";
+    AttrDef orient = liveParam("orient", PlugType::Enum, int64_t(0), "worldUp keeps world up running up the trim; longestU lays the long side along it.");
+    orient.enumNames = {"worldUp", "longestU", "asIs"};
+    t.ownAttrs = {
+        {.name = "inMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden},
+        liveParam("enabled", PlugType::Bool, true, "Turn the modifier off without removing it."),
+        {.name = "exportEnabled", .type = PlugType::Bool, .defaultValue = true, .flags = AttrInput | AttrStorable, .doc = "Apply the modifier when exporting."},
+        {.name = "sheet", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable,
+         .doc = "The .lilatrim, relative to the workspace or the scene; the current sheet when empty."},
+        liveParam("splitAngle", PlugType::Float, 30.0, "Faces meeting sharper than this, degrees, become separate islands.", 0.0, 180.0),
+        orient,
+        {.name = "tag", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable, .doc = "Only trims with this tag."},
+        liveParam("seed", PlugType::Int, int64_t(0), "Variation seed."),
+        liveParam("randomOffset", PlugType::Bool, true, "Slide islands along tiling strips."),
+        liveParam("randomFlip", PlugType::Bool, false, "Turn islands 180 degrees at random where the trim allows."),
+        liveParam("sliceOversized", PlugType::Bool, true, "Cut islands taller than every strip into courses."),
+        {.name = "palette", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrInput | AttrStorable,
+         .doc = "Palette the faces use; the sheet's default when empty."},
+        {.name = "uvSet", .type = PlugType::String, .defaultValue = std::string("uv0"), .flags = AttrInput | AttrStorable, .doc = "UV set to write."},
+        {.name = "sheetRevision", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = AttrInput | AttrHidden,
+         .doc = "Raised when the sheet file changes, so the mapping follows it."},
+        {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden},
+    };
+    const int out = int(t.ownAttrs.size()) - 1;
+    t.create = [out] {
+        auto n = std::make_unique<ModifierNode>();
+        n->apply = liveHotspot;
+        n->outAttr = out;
+        return n;
+    };
+    return types::registerType(ctx, std::move(t)) != nullptr;
+}
 } // namespace
 
-bool registerNodes(ext::Context& ctx) { return gn::registerDecl(ctx, hotspotDecl()) != nullptr && gn::registerDecl(ctx, generatorDecl()) != nullptr; }
+bool registerNodes(ext::Context& ctx)
+{
+    return gn::registerDecl(ctx, hotspotDecl()) != nullptr && gn::registerDecl(ctx, generatorDecl()) != nullptr && registerLiveHotspot(ctx);
+}
 } // namespace trims
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)

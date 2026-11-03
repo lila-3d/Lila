@@ -791,6 +791,25 @@ std::filesystem::path sheetOf(const Node& n)
     return {};
 }
 
+/** Re-runs the live hotspot modifiers mapping onto the sheet at f, after the file changed under them. */
+void touchLive(const std::filesystem::path& f)
+{
+    Graph& g = Graph::current();
+    for (const scene::NodeId id : g.nodes())
+    {
+        Node* n = g.node(id);
+        if (!n || n->type().name != kLiveModifier)
+            continue;
+        std::string p = n->as<std::string>(n->type().attrIndex("sheet"));
+        if (p.empty())
+            p = currentSheet();
+        if (p.empty() || paths::resolvePath(p).lexically_normal() != f.lexically_normal())
+            continue;
+        const int rev = n->type().attrIndex("sheetRevision");
+        g.setValue({id, rev, -1}, n->as<int64_t>(rev) + 1);
+    }
+}
+
 /** Mesh nodes mapped onto the sheet at f (their trimSheet attribute names it), with their evaluated meshes. */
 std::vector<std::pair<std::string, scene::MeshPtr>> sheetMeshes(const std::filesystem::path& f)
 {
@@ -1109,6 +1128,7 @@ void registerCommands(ext::Context& ctx)
                 changed = {i, i + 1};
             }
             save(s, f);
+            touchLive(f);
             json out = sheetSummary(s, f);
             if (!changed.empty())
                 out["changed"] = changed;
@@ -1409,6 +1429,59 @@ void registerCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"trimAuto()", "trimAuto(seed=3, randomFlip=True, showError=True)", "trimAuto(tag='edge', orient='longestU')"},
+    });
+
+    ctx.registerCommand({
+        .name = "trimLive",
+        .doc = "Keep the selected meshes trimmed while they change: adds a trimHotspot modifier to each one's stack, which "
+               "hotspots the mesh under it onto the sheet whenever that mesh changes (a blockout edited, a generator's "
+               "parameters, a modifier lower down) and when the sheet's layout is edited. Same matching and variation as "
+               "trimAuto. Remove it, or apply the stack, to freeze the mapping. Returns {mesh: modifier}.",
+        .flags = [] {
+            std::vector<FlagDef> f = {sheetFlag(),
+                                      uvSetFlag(),
+                                      {"splitAngle", "sa", AT::Float, 30.0, "Faces meeting sharper than this, degrees, become separate islands.", {}, {}, 0.0, 180.0},
+                                      {"orient", "o", AT::String, "worldUp", "worldUp, longestU or asIs.", {"worldUp", "longestU", "asIs"}},
+                                      {"tag", "tg", AT::String, "", "Only trims with this tag."},
+                                      {"seed", "s", AT::Int, int64_t(0), "Variation seed."},
+                                      {"randomOffset", "ro", AT::Bool, true, "Slide islands along tiling strips."},
+                                      {"randomFlip", "rf", AT::Bool, false, "Turn islands 180 degrees at random where the trim allows."},
+                                      {"sliceOversized", "so", AT::Bool, true, "Cut islands taller than every strip into courses."},
+                                      paletteFlag()};
+            return f;
+        }(),
+        .run = [](const Args& a) -> json {
+            const std::filesystem::path f = loadedPath(a, "trimLive", "sheet", false);
+            const Sheet s = loadOr(f, "trimLive");
+            const std::string palette = paletteArg(s, a, "trimLive").value_or(std::string());
+            const std::string orient = a.get<std::string>("orient", "worldUp");
+            const json params = {{"sheet", paths::storedPath(f)},
+                                 {"uvSet", a.get<std::string>("uvSet", "uv0")},
+                                 {"splitAngle", a.get<double>("splitAngle", 30.0)},
+                                 {"orient", orient == "longestU" ? 1 : orient == "asIs" ? 2 : 0},
+                                 {"tag", a.get<std::string>("tag", "")},
+                                 {"seed", a.get<int64_t>("seed", 0)},
+                                 {"randomOffset", a.get<bool>("randomOffset", true)},
+                                 {"randomFlip", a.get<bool>("randomFlip", false)},
+                                 {"sliceOversized", a.get<bool>("sliceOversized", true)},
+                                 {"palette", palette}};
+            Graph& g = Graph::current();
+            std::vector<std::string> meshes;
+            for (scene::NodeId id : g.selection())
+                if (Node* n = g.node(id); n && n->type().isA("mesh"))
+                    meshes.push_back(n->path());
+            if (meshes.empty())
+                throw CommandError("trimLive: select the meshes to keep trimmed");
+            json out = json::object();
+            for (const std::string& m : meshes)
+            {
+                out[m] = ops::execute("addModifier", {{"args", {m}}, {"kind", "trimHotspot"}, {"params", params}});
+                tagNode(m, f);
+            }
+            ensureMaterial(s, f, palette);
+            return out;
+        },
+        .examples = {"trimLive()", "trimLive(seed=2, palette='Rust')"},
     });
 
     ctx.registerCommand({

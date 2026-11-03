@@ -11,6 +11,7 @@
 #include "scene/Graph.h"
 #include "scene/Materials.h"
 #include "scene/MeshNodes.h"
+#include "scene/Modifiers.h"
 #include "uv/Hotspot.h"
 
 #include <doctest/doctest.h>
@@ -895,6 +896,32 @@ TEST_CASE("trim scale: a monumental and a human-scale sheet in one scene each ma
     // The wrong scale is caught: kept upright, the human rail on the monumental sheet is a poor match.
     const auto [lost, lostTrim] = mapped("HumanOnStone", 300.0, 25.0, stone, false);
     CHECK(lostTrim["poor"].get<bool>());
+}
+
+TEST_CASE("trim live: the hotspot modifier re-maps when the mesh under it or its sheet changes")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("live") / "T_Live.lilatrim";
+    // Strip0 is 50 cm, Strip1 and Strip2 25 cm, Strip3 100 cm at 512 px per metre.
+    ops::execute("trimSheetCreate", {{"file", file.generic_string()}, {"name", "T_Live"}, {"width", 1024}, {"strips", {256, 128, 128, 512}}, {"pxPerM", 512.0}, {"bake", false}});
+    const std::string node = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {400, 0, 0}, {400, 25, 0}, {0, 25, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "LiveWall"}}));
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {node}}});
+    const json mods = ops::execute("trimLive", {{"randomOffset", false}});
+    REQUIRE(mods.contains(node));
+    auto trimOf = [&] { return meshOf(node).faceAttrs().get<int32_t>(kFaceTrim)[0]; };
+    const int first = trimOf();
+    CHECK((first == 2 || first == 3));
+    CHECK(slotsOf(node) == std::map<std::string, uint32_t>{{"M_Live", 1}});
+
+    // The blockout under the stack grows to a metre: the modifier moves it to the metre strip by itself.
+    scene::Graph& g = scene::Graph::current();
+    const scene::PlugRef base = scene::modifiers::editPlug(g, g.find(node)->id());
+    g.setValue(base, scene::MeshPtr(std::make_shared<geo::Mesh>(wall(400.0, 100.0))));
+    CHECK(trimOf() == 4);
+    // Halving the sheet's density doubles every trim's world size: Strip0 is now the metre one.
+    ops::execute("trimSheetEdit", {{"values", {{"pxPerM", 256.0}}}});
+    CHECK(trimOf() == 1);
 }
 
 TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")

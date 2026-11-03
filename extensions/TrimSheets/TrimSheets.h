@@ -19,6 +19,9 @@ std::string materialName(const Sheet& sheet, std::string_view palette);
 /** Every material slot the sheet's palettes use, the sheet's own first. */
 std::vector<std::string> paletteMaterials(const Sheet& sheet);
 
+/** Node type of the live hotspot modifier (addModifier kind trimHotspot). */
+inline constexpr const char* kLiveModifier = "trimHotspotModifier";
+
 /** The sheet trim tools use when none is given; kept in prefs. */
 std::string currentSheet();
 void setCurrentSheet(const std::string& path);
