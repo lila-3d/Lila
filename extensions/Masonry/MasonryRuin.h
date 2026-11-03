@@ -11,6 +11,17 @@
 
 namespace masonry
 {
+/** A ruin brush stroke: stones near the line fall (strength above 0) or are held up (below 0). */
+struct RuinStroke
+{
+    std::vector<glm::dvec3> points;
+    double radius = 50.0;  // cm
+    double strength = 1.0; // -1 to 1
+};
+
+/** Strokes from JSON [{points: [[x, y, z], ...], radius, strength}]. Throws std::runtime_error. */
+std::vector<RuinStroke> strokesFromJson(const nlohmann::json& list);
+
 /** How a structure is ruined. Defaults leave it standing. */
 struct RuinParams
 {
@@ -27,7 +38,9 @@ struct RuinParams
     bool settle = false;     // drop the rubble with the rigid-body solver instead of only heaping it
     uint32_t seed = 1;
     std::vector<std::string> regions; // only stones of these regions (or regions under them) ruin; empty is all
-    bool active() const { return left < 1.0 - 1e-9 || gaps > 0; }
+    std::vector<RuinStroke> strokes;  // painted damage, on top of the break
+    bool structural = false;          // also drop what the rigid-body solver can't hold up (arches without keystones, overhangs)
+    bool active() const { return left < 1.0 - 1e-9 || gaps > 0 || !strokes.empty() || structural; }
 };
 
 struct RuinStats
@@ -39,6 +52,8 @@ struct RuinStats
     int rubble = 0;
     int slabPieces = 0;
     int fallenPieces = 0;
+    int painted = 0;    // stones the brush strokes took
+    int unstable = 0;   // stones the structural pass found could not stand
     double left = 1.0;   // share of stone volume standing after the ruin
     bool settled = false;
     nlohmann::json toJson() const;
@@ -62,7 +77,18 @@ struct AgeParams
     double moss = 0.5;      // 0 to 1, scaled by age
     double wetHeight = 0.0; // cm above the ground that stays damp; 0 is a fifth of the structure's height
     uint32_t seed = 1;
+    double plaster = 0.0;          // 0 to 1: how much of a render coat is left on the outer faces
+    double plasterThickness = 0.0; // cm; 0 is a third of a stone height
+    double ivy = 0.0;              // 0 to 1: how much ivy climbs from the ground
+    double ivyHeight = 0.7;        // 0 to 1: how far up the structure it reaches
+    double leaf = 0.0;             // cm, leaf size; 0 is two thirds of a typical stone
 };
+
+/** The render coat left on the outer faces, a tile per stone, peeled most where high, damaged and exposed; slot MasonryPlaster. */
+geo::Mesh plasterMesh(std::span<const Stone> stones, std::span<const float> height, const AgeParams& p, double joint);
+
+/** Ivy strands climbing the outer faces from the ground, stopping where the stones do; leaf cards and stems, slot MasonryIvy. */
+geo::Mesh ivyMesh(std::span<const Stone> stones, const AgeParams& p);
 
 /** Fills every stone's age, wet and moss (damage comes from the ruin): wet near the ground and on tops, moss where wet and exposed. */
 void ageStones(std::vector<Stone>& stones, const AgeParams& p);

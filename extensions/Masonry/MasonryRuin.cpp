@@ -13,6 +13,7 @@
 #include <cmath>
 #include <map>
 #include <numeric>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace masonry
@@ -331,10 +332,105 @@ bool inside(const std::vector<glm::dvec3>& poly, double x, double z)
 }
 } // namespace
 
+/**
+ * Every standing stone as a rigid body (grounded ones fixed) left to settle under gravity: those that move or turn more
+ * than a little cannot stand. Returns how many fell; they are taken out of keep.
+ */
+int structuralPass(std::vector<Stone>& stones, std::vector<char>& keep, double ground, double pad)
+{
+    LILA_ZONE_N("Masonry structural pass");
+    namespace ph = lila::physics;
+    std::vector<size_t> bodies;
+    size_t dynamic = 0;
+    for (size_t k = 0; k < stones.size(); ++k)
+        if (keep[k])
+        {
+            bodies.push_back(k);
+            dynamic += stones[k].grounded ? 0 : 1;
+        }
+    if (dynamic == 0 || dynamic > 8000)
+        return 0;
+    ph::initJolt();
+    ph::Settings set;
+    set.ground = true;
+    set.groundHeight = ground;
+    set.recordContacts = false;
+    ph::RigidScene scene(set);
+    std::vector<int> id(bodies.size());
+    for (size_t i = 0; i < bodies.size(); ++i)
+    {
+        const Stone& s = stones[bodies[i]];
+        auto pts = std::make_shared<std::vector<glm::dvec3>>();
+        const glm::dvec3 h = s.size * 0.5;
+        for (int c = 0; c < 8; ++c)
+        {
+            glm::dvec3 q((c & 1) ? h.x : -h.x, (c & 2) ? h.y : -h.y, (c & 4) ? h.z : -h.z);
+            if (s.shape == Shape::Wedge && !(c & 2))
+                q.x *= double(s.taper);
+            pts->push_back(q);
+        }
+        ph::BodyDesc b;
+        b.shape.kind = ph::Shape::Kind::Hull;
+        b.shape.points = pts;
+        b.shape.rounding = std::min(0.2, std::min({h.x, h.y, h.z}) * 0.1);
+        b.position = s.center;
+        b.rotation = glm::quat_cast(s.frame);
+        b.role = s.grounded ? ph::Role::Static : ph::Role::Dynamic;
+        b.density = 2200.0;
+        b.friction = 0.8;
+        b.bounce = 0.0;
+        b.damping = 0.1;
+        id[i] = scene.add(b);
+    }
+    scene.settle(3.0);
+    int fell = 0;
+    for (size_t i = 0; i < bodies.size(); ++i)
+    {
+        Stone& s = stones[bodies[i]];
+        if (s.grounded)
+            continue;
+        const ph::Pose pose = scene.pose(id[i]);
+        const double moved = glm::length(pose.position - s.center);
+        const glm::dquat was = glm::quat_cast(s.frame);
+        const double turned = 2.0 * std::acos(std::clamp(std::abs(glm::dot(was, pose.rotation)), 0.0, 1.0));
+        const double minSize = std::min({s.size.x, s.size.y, s.size.z});
+        if (moved > std::max(2.0 + pad, 0.25 * minSize) || turned > glm::radians(8.0))
+        {
+            keep[bodies[i]] = 0;
+            ++fell;
+        }
+    }
+    return fell;
+}
+
+std::vector<RuinStroke> strokesFromJson(const nlohmann::json& list)
+{
+    std::vector<RuinStroke> out;
+    if (list.is_null() || (list.is_string() && list.get<std::string>().empty()))
+        return out;
+    const nlohmann::json parsed = list.is_string() ? nlohmann::json::parse(list.get<std::string>(), nullptr, false) : list;
+    if (!parsed.is_array())
+        throw std::runtime_error("ruin strokes are a JSON list of {points, radius, strength}");
+    for (const nlohmann::json& s : parsed)
+    {
+        if (!s.is_object() || !s.contains("points") || !s["points"].is_array())
+            throw std::runtime_error("a ruin stroke is {points: [[x, y, z], ...], radius, strength}");
+        RuinStroke r;
+        for (const nlohmann::json& q : s["points"])
+            if (q.is_array() && q.size() == 3)
+                r.points.emplace_back(q[0].get<double>(), q[1].get<double>(), q[2].get<double>());
+        r.radius = s.value("radius", 50.0);
+        r.strength = std::clamp(s.value("strength", 1.0), -1.0, 1.0);
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
 nlohmann::json RuinStats::toJson() const
 {
-    return {{"removed", removed}, {"survivors", survivors}, {"loose", loose},          {"unsupported", unsupported}, {"rubble", rubble},
-            {"slabPieces", slabPieces}, {"fallenPieces", fallenPieces}, {"left", left}, {"settled", settled}};
+    return {{"removed", removed},       {"survivors", survivors},       {"loose", loose},     {"unsupported", unsupported},
+            {"rubble", rubble},         {"slabPieces", slabPieces},     {"fallenPieces", fallenPieces}, {"painted", painted},
+            {"unstable", unstable},     {"left", left},                 {"settled", settled}};
 }
 
 RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pitch, std::span<const char> eligible, std::vector<int>* keptOut)
@@ -430,6 +526,33 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
         {
             keep[k] = 2;
             ++st.survivors;
+        }
+    }
+
+    // Brush strokes: stones near a stroke fall (or, for a negative stroke, stay), by strength and distance.
+    for (const RuinStroke& stroke : p.strokes)
+    {
+        if (stroke.points.empty() || stroke.radius <= 0.0)
+            continue;
+        for (size_t k = 0; k < n; ++k)
+        {
+            double d = 1e300;
+            const glm::dvec3& c = stones[k].center;
+            for (size_t i = 0; i < stroke.points.size(); ++i)
+            {
+                const glm::dvec3 a = stroke.points[i], b = stroke.points[std::min(i + 1, stroke.points.size() - 1)];
+                const glm::dvec3 ab = b - a;
+                const double t = glm::dot(ab, ab) > 1e-12 ? std::clamp(glm::dot(c - a, ab) / glm::dot(ab, ab), 0.0, 1.0) : 0.0;
+                d = std::min(d, glm::length(c - (a + ab * t)));
+            }
+            const double w = stroke.strength * std::clamp(1.0 - d / stroke.radius, 0.0, 1.0);
+            if (w > 0.25 + 0.4 * unitRandom(mixKey(p.seed, 420, k)))
+            {
+                st.painted += keep[k] ? 1 : 0;
+                keep[k] = 0;
+            }
+            else if (w < -0.25)
+                keep[k] = std::max<char>(keep[k], 1);
         }
     }
 
@@ -531,6 +654,11 @@ RuinStats ruinStones(std::vector<Stone>& stones, const RuinParams& p, double pit
     // A tipped or slid stone may no longer hold what it held.
     grid.build(stones, 0.0);
     supportPass();
+    if (p.structural)
+    {
+        st.unstable = structuralPass(stones, keep, cols.ground, pad);
+        supportPass();
+    }
 
     // Damage: kept stones near what fell, by distance.
     {
@@ -869,6 +997,15 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
     }
     if (b.core.numFaces() > 0)
         lila::scene::materials::assign(b.core, kMortarSlot, {});
+    // Full thickness cells for the low poly shells, following what stands.
+    for (size_t w = 0; w < plan.walls.size(); ++w)
+    {
+        WallParams full = plan.walls[w].params;
+        full.recess = 0.0;
+        const double grid = std::max(200.0, full.stone.length * 4.0);
+        for (geo::Mesh& cell : coreCells(plan.walls[w].footprint, full, b.stones, int(w), grid))
+            b.shellCells.push_back(std::move(cell));
+    }
 
     BuildOptions look = plan.look;
     look.lods = lods;
@@ -883,6 +1020,10 @@ Built realizePlan(const Plan& plan, const RuinParams& ruin, const AgeParams& age
     for (size_t k = 0; k < b.stones.size(); ++k)
         if (b.stones[k].wall < 0 || b.stones[k].role == Role::Rubble)
             b.heightFraction[k] = hi > lo ? float((b.stones[k].center.y - lo) / (hi - lo)) : 0.0f;
+    if (age.plaster > 0.0)
+        b.dressing.append(plasterMesh(b.stones, b.heightFraction, age, plan.look.wall.stone.joint));
+    if (age.ivy > 0.0)
+        b.dressing.append(ivyMesh(b.stones, age));
     if (statsOut)
         *statsOut = stats;
     return b;
