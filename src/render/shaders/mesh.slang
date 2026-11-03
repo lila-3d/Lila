@@ -101,7 +101,7 @@ float wrapAxis(float x, uint mode, float halfTexel, inout bool outside)
     return x;
 }
 
-/** Screen derivatives of the uv at the pixel centre (VSOut::uvCenter), set once per pixel before any map is sampled. */
+/** Screen derivatives of the uv at the pixel centre (Centers::uv), set once per pixel before any map is sampled. */
 static float2 gUvDx = float2(0, 0), gUvDy = float2(0, 0);
 
 /**
@@ -370,7 +370,7 @@ float sampleAo(int2 px, float depth, float3 n)
 /** Roughness the normal map's filtering hides in this pixel (Toksvig), added by specularAntialias. */
 static float gNormalVariance = 0.0;
 
-/** The smooth surface normal at the pixel centre (VSOut::normalCenter), which specularAntialias differentiates. */
+/** The smooth surface normal at the pixel centre (Centers::normal), which specularAntialias differentiates. */
 static float3 gCenterNormal = float3(0, 0, 1);
 
 /** How far the reflection of the smooth surface (no normal map) turns across a pixel, radians; see reflectionLod. */
@@ -417,16 +417,14 @@ struct VSOut
     float4 pos : SV_Position;
     // Centroid: with MSAA a pixel the triangle only partly covers would otherwise extrapolate past its edge.
     centroid float3 worldPos : POSITION;
-    centroid float3 normal : NORMAL;
+    // At the pixel centre, for smooth screen derivatives; the shading reads them at the centroid (see atCentroid).
+    float3 normal : NORMAL;
     centroid float4 tangent : TANGENT;
-    centroid float2 uv : TEXCOORD;
+    float2 uv : TEXCOORD;
     centroid float4 color : COLOR;
     centroid float3 objPos : TEXCOORD1;
     centroid float3 objNormal : TEXCOORD2;
     nointerpolation uint instance : TEXCOORD3; // index into pc.instances
-    // The normal at the pixel centre, for screen derivatives only: centroid values jump along every triangle edge.
-    float3 normalCenter : TEXCOORD4;
-    float2 uvCenter : TEXCOORD5;
 };
 
 float4x4 instanceWorld(uint instance)
@@ -447,13 +445,11 @@ VSOut meshVS(VSIn v, uint instanceId: SV_InstanceID)
     float3x3 m = (float3x3)world;
     float3x3 cof = float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
     o.normal = mul(cof, v.normal);
-    o.normalCenter = o.normal;
     // A mirroring world matrix flips the bitangent.
     o.tangent = float4(mul(m, v.tangent.xyz), determinant(m) < 0.0 ? -v.tangent.w : v.tangent.w);
     // Lila UVs are V-up (Maya, FBX) and image rows run top down; Unreal's FBX import flips V the same way.
     float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
     o.uv = float2(uv.x, 1.0 - uv.y);
-    o.uvCenter = o.uv;
     o.color = v.color;
     o.objPos = v.pos;
     o.objNormal = v.normal;
@@ -900,11 +896,21 @@ float3 tintBack(float3 c, bool front)
     return lerp(c, t.rgb, t.a);
 }
 
-float4 shadeMesh(VSOut i, bool front)
+/**
+ * The normal and uv at the pixel centre, for screen derivatives: centroid values jump along every triangle edge. The
+ * shading reads them at the centroid, evaluated per pixel rather than interpolated twice per vertex.
+ */
+struct Centers
+{
+    float3 normal;
+    float2 uv;
+};
+
+float4 shadeMesh(VSOut i, bool front, Centers center)
 {
     gVtPixel = uint2(i.pos.xy);
-    gUvDx = ddx(i.uvCenter);
-    gUvDy = ddy(i.uvCenter);
+    gUvDx = ddx(center.uv);
+    gUvDy = ddy(center.uv);
     uint flags = pc.flags;
     if ((flags & kVertexColorUnlit) != 0)
         return float4(fromDisplay(tintBack(vertexColor(i.color, flags), front), pc.gamma), 1.0);
@@ -948,7 +954,7 @@ float4 shadeMesh(VSOut i, bool front)
     float3 ng = normalize(i.normal);
     {
         // From the interpolated normal: it changes smoothly, so neighbouring quads pick neighbouring levels.
-        gCenterNormal = normalize(i.normalCenter);
+        gCenterNormal = normalize(center.normal);
         float3 r = reflect(normalize(i.worldPos - pc.eye.xyz), gCenterNormal);
         float3 dx = ddx(r), dy = ddy(r);
         gReflectionSweep = sqrt(max(dot(dx, dx), dot(dy, dy)));
@@ -1048,7 +1054,10 @@ float4 shadeMesh(VSOut i, bool front)
 [shader("fragment")]
 float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
-    return shadeMesh(i, front);
+    const Centers center = {i.normal, i.uv};
+    i.normal = EvaluateAttributeAtCentroid(i.normal);
+    i.uv = EvaluateAttributeAtCentroid(i.uv);
+    return shadeMesh(i, front, center);
 }
 
 #ifdef LILA_WIRE
@@ -1059,7 +1068,10 @@ float4 meshPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 [shader("fragment")]
 float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycentrics, uint prim : SV_PrimitiveID) : SV_Target
 {
-    float4 c = shadeMesh(i, front);
+    const Centers center = {i.normal, i.uv};
+    i.normal = EvaluateAttributeAtCentroid(i.normal);
+    i.uv = EvaluateAttributeAtCentroid(i.uv);
+    float4 c = shadeMesh(i, front, center);
     const float4 wire = pc.instances[i.instance].color;
     if (wire.a <= 0.0)
         return c;
@@ -1085,8 +1097,10 @@ float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycen
 float4 prepassPS(VSOut i, bool front : SV_IsFrontFace) : SV_Target
 {
     gVtPixel = uint2(i.pos.xy);
-    gUvDx = ddx(i.uvCenter);
-    gUvDy = ddy(i.uvCenter);
+    gUvDx = ddx(i.uv);
+    gUvDy = ddy(i.uv);
+    i.normal = EvaluateAttributeAtCentroid(i.normal);
+    i.uv = EvaluateAttributeAtCentroid(i.uv);
     if ((pc.flags & kMasked) != 0)
     {
         float opacity = pc.surface.z;
