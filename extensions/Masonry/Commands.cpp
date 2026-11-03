@@ -389,6 +389,14 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
     if (!client)
         throw std::runtime_error("not connected to Unreal");
     json errors = json::array();
+    // Unreal rebuilds a Nanite Assembly each time one of its parts is reimported, seconds a stone; the old one goes first.
+    json assemblies = json::array();
+    for (const json& as : plan["assets"])
+        if (as["kind"] == "assembly")
+            assemblies.push_back(as["objectPath"]);
+    if (!assemblies.empty())
+        if (link::RpcResult r = client->call("deleteAssets", {{"paths", assemblies}}); !r.ok)
+            errors.push_back("deleteAssets: " + r.error);
     std::vector<std::string> meshes;
     for (size_t k = 0; k < files.size(); ++k)
     {
@@ -403,8 +411,13 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
         std::string mesh = as["objectPath"].get<std::string>();
         if (!r.ok)
             errors.push_back(as["name"].get<std::string>() + ": " + r.error);
-        else if (json made = r.result.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
-            mesh = made[0].get<std::string>();
+        else
+        {
+            for (const json& e : r.result.value("errors", json::array()))
+                errors.push_back(as["name"].get<std::string>() + ": " + (e.is_string() ? e.get<std::string>() : e.dump()));
+            if (json made = r.result.value("assets", json::array()); made.is_array() && !made.empty() && made[0].is_string())
+                mesh = made[0].get<std::string>();
+        }
         meshes.push_back(mesh);
     }
     int64_t placed = 0;
