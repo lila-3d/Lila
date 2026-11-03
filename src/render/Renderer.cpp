@@ -465,6 +465,13 @@ struct Frame
     // GPU timestamps: frame start, before and after ambient occlusion, frame end.
     VkQueryPool timestamps = VK_NULL_HANDLE;
     bool timed = false, aoTimed = false;
+    /** Secondary command buffers the section draws record into on worker threads; a pool each, so no two threads share one. */
+    struct Chunk
+    {
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+    };
+    std::vector<Chunk> chunks;
 };
 
 struct Viewport
@@ -772,7 +779,7 @@ struct Renderer::Impl
     std::vector<SectionRecord> offscreenRecords;
     std::vector<SectionRecord>* frameRecords = &offscreenRecords;
     uint64_t meshEvictions = 0, meshUploads = 0;
-    /** The cull mode emitSection last set and on which command buffer; reset whenever a command buffer begins. */
+    /** The cull mode emitSection last set and on which command buffer; reset whenever a pipeline is bound, which may fix it. */
     VkCommandBuffer cullCmd = VK_NULL_HANDLE;
     VkCullModeFlags cullMode = 0;
     VkDeviceAddress frameInstanceAddress = 0;
@@ -1086,6 +1093,9 @@ struct Renderer::Impl
                 vkDestroyQueryPool(vk.device, f.timestamps, nullptr);
             vkDestroyFence(vk.device, f.fence, nullptr);
             vkDestroyCommandPool(vk.device, f.pool, nullptr);
+            for (const Frame::Chunk& c : f.chunks)
+                vkDestroyCommandPool(vk.device, c.pool, nullptr);
+            f.chunks.clear();
         }
         destroySwapchain(v);
         for (VkDescriptorSet set : {v.gtaoSet, v.denoiseSet, v.aoSampleSet, v.postSet, v.taaSets[0][0], v.taaSets[0][1], v.taaSets[1][0],
@@ -2408,6 +2418,7 @@ struct Renderer::Impl
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
         constexpr uint32_t tilesPerRow = kShadowAtlas / kShadowTile;
+        cullCmd = VK_NULL_HANDLE;
         for (const auto& [tile, viewProj] : frameShadows)
         {
             const VkViewport viewport{float(tile % tilesPerRow * kShadowTile), float(tile / tilesPerRow * kShadowTile), float(kShadowTile),
@@ -3036,19 +3047,37 @@ struct Renderer::Impl
         ri.colorAttachmentCount = 1;
         ri.pColorAttachments = &normal;
         ri.pDepthAttachment = &depth;
-        vkCmdBeginRendering(cmd, &ri);
-        VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
-        VkRect2D scissor{{0, 0}, v.extent};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepassPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
         // The main pass's section records, so the prepass costs a draw call per section and nothing more.
-        VkDescriptorSet boundSet = VK_NULL_HANDLE;
-        for (SectionRecord& r : *frameRecords)
-            if (!r.translucent)
-                emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
+        if (chunked())
+        {
+            ChunkPass pass;
+            pass.color = kAoNormalFormat;
+            pass.extent = v.extent;
+            pass.pipeline = prepassPipeline;
+            pass.aoSet = whiteAoSet;
+            pass.viewProj = viewProj;
+            const std::vector<VkCommandBuffer> chunks = recordChunks(f, s, pass);
+            ri.flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+            vkCmdBeginRendering(cmd, &ri);
+            vkCmdExecuteCommands(cmd, uint32_t(chunks.size()), chunks.data());
+            cullCmd = VK_NULL_HANDLE;
+        }
+        else
+        {
+            vkCmdBeginRendering(cmd, &ri);
+            VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
+            VkRect2D scissor{{0, 0}, v.extent};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, prepassPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &whiteAoSet, 0, nullptr);
+            cullCmd = VK_NULL_HANDLE;
+            VkDescriptorSet boundSet = VK_NULL_HANDLE;
+            for (SectionRecord& r : *frameRecords)
+                if (!r.translucent)
+                    emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, frameBatches.shaded[r.batch].count, viewProj, boundSet);
+        }
         vkCmdEndRendering(cmd);
 
         barrier(cmd, v.aoDepth.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, depthStage,
@@ -4367,6 +4396,10 @@ struct Renderer::Impl
         ri.colorAttachmentCount = 1;
         ri.pColorAttachments = &color;
         ri.pDepthAttachment = &depth;
+        // Many sections record on worker threads: the pass suspends around them, see drawMeshes.
+        const bool sceneChunks = !s.xray && meshPipeline && !s.meshes.empty() && chunked();
+        if (sceneChunks)
+            ri.flags = VK_RENDERING_SUSPENDING_BIT;
         vkCmdBeginRendering(cmd, &ri);
 
         VkViewport viewport{0, 0, float(v.extent.width), float(v.extent.height), 0, 1};
@@ -4413,7 +4446,8 @@ struct Renderer::Impl
         }
 
         drawContactShadows(cmd, s, vpScene, v.offscreen ? nullptr : &v);
-        drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height);
+        drawMeshes(cmd, s, vpScene, (ao && !aoFast) || frameBevel || frameRtShadow ? v.aoSampleSet : whiteAoSet, v.extent.height,
+                   sceneChunks ? &f : nullptr, &ri);
         if (aoFast)
         {
             vkCmdEndRendering(cmd);
@@ -5457,10 +5491,152 @@ struct Renderer::Impl
         frameMeshInstances += count;
     }
 
-    void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, uint32_t heightPx)
+    /** Where the opaque sections of a pass record into secondary command buffers, and with what. */
+    struct ChunkPass
+    {
+        VkFormat color = VK_FORMAT_UNDEFINED;
+        VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+        VkRenderingFlags flags = 0; // of the rendering pass that executes them, less the secondary contents bit
+        VkExtent2D extent{};
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline wirePipeline = VK_NULL_HANDLE; // for batches that draw their wire in the shader; null draws them plain
+        VkDescriptorSet aoSet = VK_NULL_HANDLE;
+        glm::mat4 viewProj{1.0f};
+        size_t firstChunk = 0; // into Frame::chunks, so passes of one frame never share a buffer
+    };
+    static constexpr size_t kChunkSections = 1024; // sections per worker below which recording stays on this thread
+    static constexpr size_t kMaxChunks = 16;
+
+    /** Enough opaque sections that recording them on worker threads beats doing it here. LILA_VK_NO_CHUNKS turns it off. */
+    bool chunked() const
+    {
+        return frameInstanceAddress && frameRecords->size() >= 2 * kChunkSections && std::getenv("LILA_VK_NO_CHUNKS") == nullptr;
+    }
+
+    /**
+     * Records the frame's opaque section records on worker threads, in order, one secondary command buffer per slice:
+     * executed in sequence they draw exactly what emitSection would. Translucent sections are left to the caller.
+     */
+    std::vector<VkCommandBuffer> recordChunks(Frame& f, const FrameState& s, const ChunkPass& pass)
+    {
+        LILA_ZONE();
+        const std::vector<SectionRecord>& records = *frameRecords;
+        const size_t count = std::clamp<size_t>(records.size() / kChunkSections, 1, kMaxChunks);
+        while (f.chunks.size() < pass.firstChunk + count)
+        {
+            Frame::Chunk& c = f.chunks.emplace_back();
+            VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            pci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            pci.queueFamilyIndex = vk.queueFamily;
+            vkCreateCommandPool(vk.device, &pci, nullptr, &c.pool);
+            VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            ai.commandPool = c.pool;
+            ai.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+            ai.commandBufferCount = 1;
+            vkAllocateCommandBuffers(vk.device, &ai, &c.cmd);
+        }
+        VkCommandBufferInheritanceRenderingInfo rendering{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO};
+        rendering.flags = pass.flags;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachmentFormats = &pass.color;
+        rendering.depthAttachmentFormat = kDepthFormat;
+        rendering.rasterizationSamples = pass.samples;
+        VkCommandBufferInheritanceInfo inherit{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+        inherit.pNext = &rendering;
+        const VkCullModeFlags cull = s.backfaceCulling ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+        const VkViewport viewport{0, 0, float(pass.extent.width), float(pass.extent.height), 0, 1};
+        const VkRect2D scissor{{0, 0}, pass.extent};
+        std::vector<VkCommandBuffer> out(count);
+        std::vector<std::pair<uint64_t, uint64_t>> counts(count); // draws, placements
+        tbb::parallel_for(size_t(0), count, [&](size_t c) {
+            LILA_ZONE_N("Record section chunk");
+            const Frame::Chunk& chunk = f.chunks[pass.firstChunk + c];
+            vkResetCommandPool(vk.device, chunk.pool, 0);
+            VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+            bi.pInheritanceInfo = &inherit;
+            VkCommandBuffer cmd = chunk.cmd;
+            vkBeginCommandBuffer(cmd, &bi);
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdSetCullMode(cmd, cull);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pass.pipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 0, 1, &envSet, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 2, 1, &pass.aoSet, 0, nullptr);
+            VkPipeline bound = pass.pipeline;
+            VkDescriptorSet boundSet = VK_NULL_HANDLE;
+            auto& [draws, placements] = counts[c];
+            const size_t begin = records.size() * c / count, end = records.size() * (c + 1) / count;
+            for (size_t i = begin; i < end; ++i)
+            {
+                const SectionRecord& r = records[i];
+                if (r.translucent)
+                    continue;
+                const DrawBatch& b = frameBatches.shaded[r.batch];
+                const VkPipeline want = pass.wirePipeline && b.wire && r.mesh->edgeMask.address ? pass.wirePipeline : pass.pipeline;
+                if (want != bound)
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = want);
+                if (r.set != boundSet)
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshLayout, 1, 1, &(boundSet = r.set), 0, nullptr);
+                MeshPush p = r.push;
+                p.viewProj = pass.viewProj;
+                vkCmdPushConstants(cmd, meshLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+                const GpuMesh& g = *r.mesh;
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &g.vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(cmd, g.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                const uint32_t first = std::min(r.section.firstIndex, g.indexCount);
+                vkCmdDrawIndexed(cmd, std::min(r.section.indexCount, g.indexCount - first), b.count, first, 0, 0);
+                ++draws;
+                placements += b.count;
+            }
+            vkEndCommandBuffer(cmd);
+            out[c] = cmd;
+        });
+        for (const auto& [draws, placements] : counts)
+        {
+            frameMeshDraws += draws;
+            frameMeshInstances += placements;
+        }
+        return out;
+    }
+
+    /**
+     * With chunks (the frame to record them in), the caller began the pass suspending: the opaque sections record on
+     * worker threads and run in a resumed instance of it, and the rest continue in a third, which leaves ri's flags clear.
+     */
+    void drawMeshes(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, VkDescriptorSet aoSet, uint32_t heightPx,
+                    Frame* chunks = nullptr, VkRenderingInfo* ri = nullptr)
     {
         LILA_ZONE();
 
+        if (chunks)
+        {
+            ChunkPass pass;
+            pass.color = sceneFormat;
+            pass.samples = vk.msaa;
+            pass.flags = VK_RENDERING_RESUMING_BIT | VK_RENDERING_SUSPENDING_BIT;
+            pass.extent = ri->renderArea.extent;
+            pass.pipeline = meshPipeline;
+            pass.wirePipeline = meshWirePipeline;
+            pass.aoSet = aoSet;
+            pass.viewProj = viewProj;
+            pass.firstChunk = kMaxChunks;
+            const std::vector<VkCommandBuffer> recorded = recordChunks(*chunks, s, pass);
+            vkCmdEndRendering(cmd);
+            ri->flags = pass.flags | VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT;
+            vkCmdBeginRendering(cmd, ri);
+            vkCmdExecuteCommands(cmd, uint32_t(recorded.size()), recorded.data());
+            vkCmdEndRendering(cmd);
+            ri->flags = VK_RENDERING_RESUMING_BIT;
+            vkCmdBeginRendering(cmd, ri);
+            ri->flags = 0;
+            const VkViewport viewport{0, 0, float(pass.extent.width), float(pass.extent.height), 0, 1};
+            const VkRect2D scissor{{0, 0}, pass.extent};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            cullCmd = VK_NULL_HANDLE;
+        }
         if (s.meshes.empty() || !meshPipeline)
             return;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
@@ -5478,13 +5654,19 @@ struct Renderer::Impl
         VkPipeline bound = meshPipeline;
         auto use = [&](VkPipeline p) {
             if (p && p != bound)
+            {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = p);
+                cullCmd = VK_NULL_HANDLE;
+            }
         };
+        cullCmd = VK_NULL_HANDLE;
 
         for (SectionRecord& r : *frameRecords)
         {
             const DrawBatch& b = frameBatches.shaded[r.batch];
             const bool wire = b.wire && r.mesh->edgeMask.address && meshWirePipeline;
+            if (chunks && !r.translucent)
+                continue;
             if (s.xray || r.translucent)
             {
                 const glm::vec4 centre((b.draw->mesh->boundsMin + b.draw->mesh->boundsMax) * 0.5f, 1.0f);
