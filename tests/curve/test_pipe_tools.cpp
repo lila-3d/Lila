@@ -5,6 +5,7 @@
 #include "curve/CurveNodes.h"
 #include "curve/Pipe.h"
 #include "curve/PipeRoute.h"
+#include "curve/PipeSupport.h"
 #include "curve/Strap.h"
 #include "curve/Sweep.h"
 #include "curve/WorldMeshes.h"
@@ -533,6 +534,97 @@ TEST_CASE("pipeRoute command: live pipe reroutes, saved and undone")
 
     run("newScene");
     r = run("pipeRoute", {{"start", {0, 0, 0}}, {"end", {100, 0, 0}}});
+    CHECK(run("objExists", {{"args", {r[0]}}}).get<bool>());
+    run("undo");
+    CHECK(!run("objExists", {{"args", {r[0]}}}).get<bool>());
+}
+
+TEST_CASE("supports reach to the nearest surface")
+{
+    // A floor at y = 0 and a ceiling at y = 400 over a 10 m run 300 cm up.
+    curve::WorldMeshes world;
+    world.add(std::make_shared<geo::Mesh>(ground(3000.0, 1)), glm::dmat4(1.0));
+    geo::Mesh ceiling = ground(3000.0, 1, D3(0, 400, 0));
+    for (geo::Index f = 0; f < ceiling.faceCapacity(); ++f)
+        if (ceiling.faceValid(f))
+            ceiling.flipFace(f);
+    world.add(std::make_shared<geo::Mesh>(std::move(ceiling)), glm::dmat4(1.0));
+    curve::SupportOptions o;
+    o.pipeRadius = 5.0;
+    o.spacing = 200.0;
+    o.cast = [&](const D3& p, const D3& d, double maxD) { return world.raycast(p, d, maxD); };
+    const curve::Spline run10 = line({D3(-500, 300, 0), D3(500, 300, 0)});
+    curve::SupportResult r = curve::makeSupports(run10, o);
+    REQUIRE(r.placements.size() == 5);
+    for (const curve::SupportPlacement& p : r.placements)
+    {
+        CHECK(p.style == curve::SupportStyle::Hanger);
+        CHECK(p.reach == doctest::Approx(100.0).epsilon(1e-6));
+        CHECK(p.hit.y == doctest::Approx(400.0));
+    }
+    CHECK(r.mesh.numFaces() > 0);
+    CHECK(r.mesh.bounds().max.y == doctest::Approx(400.0).epsilon(1e-6));
+
+    o.target = curve::SupportTarget::Floor;
+    r = curve::makeSupports(run10, o);
+    REQUIRE(r.placements.size() == 5);
+    CHECK(r.placements[0].style == curve::SupportStyle::Stand);
+    CHECK(r.mesh.bounds().min.y == doctest::Approx(0.0).epsilon(1e-6));
+
+    // Out of reach: none, with a warning.
+    o.maxReach = 50.0;
+    r = curve::makeSupports(run10, o);
+    CHECK(r.placements.empty());
+    CHECK(!r.warnings.empty());
+
+    // A custom mesh, stretched to the ceiling.
+    o.maxReach = 500.0;
+    o.target = curve::SupportTarget::Ceiling;
+    o.style = curve::SupportStyle::Mesh;
+    geo::Mesh post = geo::makeCube({2.0, 10.0, 2.0});
+    for (D3& p : post.positions())
+        p.y += 5.0;
+    o.mesh = &post;
+    r = curve::makeSupports(run10, o);
+    REQUIRE(r.placements.size() == 5);
+    CHECK(r.mesh.bounds().max.y == doctest::Approx(400.0).epsilon(1e-6));
+    CHECK(r.mesh.bounds().min.y == doctest::Approx(300.0).epsilon(1e-6));
+}
+
+TEST_CASE("pipeSupports command follows the pipe live, saved and undone")
+{
+    run("newScene");
+    std::string ceiling = run("polyPlane", {{"width", 3000}, {"depth", 3000}})[0];
+    run("move", {{"args", {ceiling}}, {"to", {0, 400, 0}}});
+    run("rotate", {{"args", {ceiling}}, {"to", {180, 0, 0}}});
+    std::string path = run("curve", {{"type", "poly"}, {"points", points({D3(-500, 300, 0), D3(500, 300, 0)})}, {"name", "Run"}});
+    json p = run("pipe", {{"args", {path}}, {"radius", 5.0}});
+    std::string pipeMesh = p[0], pipeNode = p[1];
+    json r = run("pipeSupports", {{"args", {pipeMesh}}, {"surfaces", {ceiling}}, {"spacing", 250.0}});
+    std::string mesh = r[0], node = r[1];
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    scene::Node* sn = g.find(node);
+    REQUIRE(sn);
+    CHECK(sn->as<int64_t>(sn->type().attrIndex("count")) == 4);
+    CHECK(meshNamed(mesh)->bounds().max.y == doctest::Approx(400.0).epsilon(1e-6));
+
+    // The pipe's radius drives the rings; moving the run moves the supports.
+    run("setAttr", {{"args", {pipeNode + ".radius", 10.0}}});
+    CHECK(attr(node, "pipeRadius") == doctest::Approx(10.0));
+    run("move", {{"args", {path}}, {"by", {0, -100, 0}}});
+    g.evaluate();
+    CHECK(meshNamed(mesh)->bounds().min.y < 200.0);
+    const size_t faces = meshNamed(mesh)->numFaces();
+
+    saveAndReopen("supports.lila");
+    CHECK(meshNamed(mesh)->numFaces() == faces);
+    CHECK(attr(node, "spacing") == doctest::Approx(250.0));
+
+    run("newScene");
+    std::string c2 = run("curve", {{"type", "poly"}, {"points", points({D3(-500, 300, 0), D3(500, 300, 0)})}});
+    std::string floor = run("polyPlane", {{"width", 3000}, {"depth", 3000}})[0];
+    r = run("pipeSupports", {{"args", {c2}}, {"surfaces", {floor}}});
     CHECK(run("objExists", {{"args", {r[0]}}}).get<bool>());
     run("undo");
     CHECK(!run("objExists", {{"args", {r[0]}}}).get<bool>());

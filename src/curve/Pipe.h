@@ -38,6 +38,7 @@ enum class PipePart : int32_t
     Body = 0,
     Coupling = 1,
     Fastener = 2,
+    Support = 3,
 };
 
 struct PipeOptions

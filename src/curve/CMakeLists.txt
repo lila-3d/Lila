@@ -41,6 +41,8 @@ lila_module(lila_curve Scene
     Pipe.h
     PipeRoute.cpp
     PipeRoute.h
+    PipeSupport.cpp
+    PipeSupport.h
     Channel.cpp
     Channel.h
     WorldMeshes.cpp

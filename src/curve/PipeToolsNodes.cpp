@@ -6,6 +6,7 @@
 #include "curve/Channel.h"
 #include "curve/EnvAttrs.h"
 #include "curve/PipeRoute.h"
+#include "curve/PipeSupport.h"
 #include "curve/StripUvAttrs.h"
 #include "curve/WorldMeshes.h"
 #include "math/MathCore.h"
@@ -29,6 +30,8 @@ using T = ArgType;
 namespace
 {
 const std::vector<std::string> kShapes = {"uChannel", "vGroove", "halfRound", "stepped"};
+const std::vector<std::string> kSupportStyles = {"auto", "hanger", "bracket", "stand", "clamp", "mesh"};
+const std::vector<std::string> kSupportTargets = {"nearest", "floor", "ceiling", "wall"};
 
 D3 worldUp() { return math::upAxis() == math::UpAxis::Z ? D3(0, 0, 1) : D3(0, 1, 0); }
 
@@ -341,6 +344,119 @@ void registerRouteType()
     types::registerType(std::move(t));
 }
 
+// Supports.
+
+class PipeSupportsNode final : public Node
+{
+public:
+    void compute(const EvalContext&) override
+    {
+        LILA_ZONE();
+
+        const int outMesh = idx(*this, "outMesh");
+        try
+        {
+            SupportOptions o;
+            o.style = SupportStyle(std::clamp<int64_t>(i(*this, "style"), 0, 5));
+            o.target = SupportTarget(std::clamp<int64_t>(i(*this, "target"), 0, 3));
+            o.spacing = std::max(1.0, f(*this, "spacing"));
+            o.startOffset = f(*this, "startOffset");
+            o.endClearance = std::max(0.0, f(*this, "endClearance"));
+            o.pipeRadius = std::max(1e-3, f(*this, "pipeRadius"));
+            o.bendRadius = std::max(0.0, f(*this, "bendRadius"));
+            o.maxReach = std::max(0.0, f(*this, "maxReach"));
+            o.ringThickness = std::max(0.0, f(*this, "ringThickness"));
+            o.ringWidth = std::max(0.0, f(*this, "ringWidth"));
+            o.rodSize = std::max(0.0, f(*this, "rodSize"));
+            o.sides = int(std::clamp<int64_t>(i(*this, "sides"), 3, 64));
+            o.up = v(*this, "up");
+            o.meshScale = f(*this, "meshScale");
+            o.stretch = b(*this, "stretch");
+            const MeshPtr& custom = as<MeshPtr>(idx(*this, "supportMesh"));
+            o.mesh = custom.get();
+            WorldMeshes surfaces = worldMeshesOf(*this, "surfaces", "surfaceMatrices");
+            o.cast = [&surfaces](const D3& origin, const D3& dir, double maxDistance) { return surfaces.raycast(origin, dir, maxDistance); };
+            geo::Mesh mesh;
+            int64_t count = 0;
+            std::string warning;
+            for (const Spline& s : splinesOf(value(idx(*this, "path"))))
+            {
+                SupportResult r = makeSupports(s, o);
+                mesh.append(r.mesh);
+                count += int64_t(r.placements.size());
+                for (const std::string& w : r.warnings)
+                    warning += (warning.empty() ? "" : "; ") + w;
+            }
+            if (surfaces.empty())
+                warning = "no surfaces connected to reach to";
+            if (!warning.empty() && warning != as<std::string>(idx(*this, "warning")))
+                log::warn("{}: {}", name(), warning);
+            setOutput(idx(*this, "warning"), warning);
+            setOutput(idx(*this, "count"), count);
+            setOutput(outMesh, MeshPtr(std::make_shared<geo::Mesh>(std::move(mesh))));
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("{}: {}", name(), e.what());
+            setOutput(outMesh, MeshPtr());
+        }
+    }
+};
+
+void registerSupportsType()
+{
+    if (types::find("curvePipeSupports"))
+        return;
+    NodeType t;
+    t.name = "curvePipeSupports";
+    t.icon = "route";
+    t.doc = "Supports along a pipe run: hangers to a ceiling, brackets to a wall, stands to a floor, clamps or your own mesh, "
+            "spaced along the run and each reaching to the nearest surface found by casting rays.";
+    t.ownAttrs = {
+        dataIn("path", "The run's path curves, world space (the pipe's own path)."),
+        meshArray("surfaces", "Meshes supports reach to: walls, floors, ceilings."),
+        matrixArray("surfaceMatrices", "The surfaces' world matrices."),
+        meshIn("supportMesh", "A mesh to place as each support (style mesh): +y toward the surface, +z along the pipe."),
+        eAttr("style", kSupportStyles, 0, "auto picks a hanger, bracket or stand by the direction it reaches; or one style for all."),
+        eAttr("target", kSupportTargets, 0, "Which surface to reach for: the nearest, or only floors, ceilings or walls."),
+        fAttr("spacing", 200.0, "Distance between supports along the run, cm.", 1.0),
+        fAttr("startOffset", -1.0, "First support's distance from the start, cm; negative is half the spacing."),
+        fAttr("endClearance", 0.0, "Keep supports this far from the ends and off bends, cm; 0 is twice the pipe radius.", 0.0),
+        fAttr("pipeRadius", 5.0, "Radius of the pipe held, cm.", 0.0),
+        fAttr("bendRadius", 0.0, "Bend radius the pipe rounds corners with, cm; 0 is twice the radius.", 0.0),
+        fAttr("maxReach", 500.0, "Farthest a support reaches, cm; stations farther from any surface get none.", 0.0),
+        fAttr("ringThickness", 0.0, "Clamp ring thickness, cm; 0 sizes it from the pipe.", 0.0),
+        fAttr("ringWidth", 0.0, "Clamp ring width along the pipe, cm; 0 sizes it from the pipe.", 0.0),
+        fAttr("rodSize", 0.0, "Rod, arm or post thickness, cm; 0 sizes it from the pipe.", 0.0),
+        iAttr("sides", 12, "Sides around the rings.", 3, 64.0),
+        vAttr("up", D3(0, 1, 0), "World up: floors are below, ceilings above."),
+        fAttr("meshScale", 1.0, "Scale of the support mesh.", 0.0),
+        bAttr("stretch", true, "Stretch the support mesh along its +y to reach the surface."),
+        {.name = "outMesh", .shortName = "o", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden, .doc = "The supports."},
+        out("count", PlugType::Int, int64_t(0), "Supports placed."),
+        stringOut("warning", "Stations that found no surface."),
+    };
+    t.create = [] { return std::make_unique<PipeSupportsNode>(); };
+    types::registerType(std::move(t));
+}
+
+/** The pipe node building a mesh (through any modifiers), or null. */
+Node* pipeFeeding(Graph& g, Node* n)
+{
+    for (int depth = 0; n && depth < 16; ++depth)
+    {
+        if (n->type().name == "curvePipe")
+            return n;
+        const ModifierNode* mod = modifiers::asModifier(n);
+        const int in = n->type().isA("mesh") ? MeshNode::kInMesh : mod ? mod->inAttr : -1;
+        if (in < 0)
+            return nullptr;
+        std::optional<PlugRef> src = g.source({n->id(), in, -1});
+        n = src ? g.node(src->node) : nullptr;
+    }
+    return nullptr;
+}
+
 json withArgs(const json& options, const std::string& arg)
 {
     json call = options.is_object() ? options : json::object();
@@ -353,6 +469,7 @@ void registerPipeToolTypes()
 {
     registerChannelModifier();
     registerRouteType();
+    registerSupportsType();
 }
 
 void registerPipeToolCommands()
@@ -464,6 +581,85 @@ void registerPipeToolCommands()
                 }
                 g.select({curve->id()});
                 return json::array({curve->path(), op->path(), pipeMesh});
+            },
+        });
+    }
+
+    {
+        std::vector<FlagDef> flags = attrFlags("curvePipeSupports");
+        for (FlagDef fd : std::vector<FlagDef>{
+                 {"surfaces", "", T::List, nullptr, "Meshes supports reach to (default: the selected meshes that aren't the pipe)."},
+                 {"supportMeshNode", "", T::String, nullptr, "Mesh to place as each support (sets style = mesh)."},
+                 {"name", "n", T::String, nullptr, "Supports mesh name; made unique."}})
+            flags.push_back(std::move(fd));
+        ops::registerCommand({
+            .name = "pipeSupports",
+            .doc = "Place supports along pipes: hangers, wall brackets, floor stands, clamps or your own mesh, every spacing cm, "
+                   "each reaching to the nearest wall, floor or ceiling by ray cast. Given a pipe mesh, the supports follow its "
+                   "path, radius and bends live. Returns [supports mesh, curvePipeSupports] per pipe or path curve.",
+            .positionalDoc = "pipe meshes or path curves (default: the selection)",
+            .flags = flags,
+            .run = [](const Args& a) -> json {
+                Graph& g = Graph::current();
+                std::vector<Node*> given;
+                for (const json& p : a.positional)
+                {
+                    Node* n = g.find(p.get<std::string>());
+                    if (!n)
+                        throw CommandError("pipeSupports: no node named '" + p.get<std::string>() + "'");
+                    given.push_back(n);
+                }
+                const bool fromSelection = given.empty();
+                if (fromSelection)
+                    for (NodeId id : g.selection())
+                        if (Node* n = g.node(id); n && (n->type().isA("curve") || pipeFeeding(g, n)))
+                            given.push_back(n);
+                std::vector<Node*> surfaces = meshList(g, a, "surfaces", "pipeSupports");
+                if (!a.has("surfaces"))
+                    for (NodeId id : g.selection())
+                        if (Node* n = g.node(id); n && n->type().isA("mesh") && !pipeFeeding(g, n))
+                            surfaces.push_back(n);
+                if (given.empty())
+                    throw CommandError("pipeSupports: select pipe meshes or path curves");
+                if (surfaces.empty())
+                    throw CommandError("pipeSupports: give surfaces= (the walls, floors and ceilings to reach to)");
+                json out = json::array();
+                std::vector<NodeId> made;
+                for (Node* n : given)
+                {
+                    Node* op = g.createNode(*types::find("curvePipeSupports"), {}, kNoNode, true);
+                    if (!a.has("up"))
+                        g.setValue({op->id(), idx(*op, "up"), -1}, worldUp());
+                    if (a.has("supportMeshNode"))
+                    {
+                        g.connect({meshNamed(g, a.get<std::string>("supportMeshNode"), "pipeSupports").id(), MeshNode::kOutMesh, -1},
+                                  {op->id(), idx(*op, "supportMesh"), -1});
+                        g.setValue({op->id(), idx(*op, "style"), -1}, int64_t(5));
+                    }
+                    applyFlags(g, *op, a, "pipeSupports");
+                    if (Node* pipe = pipeFeeding(g, n))
+                    {
+                        std::optional<PlugRef> path = g.source({pipe->id(), idx(*pipe, "path"), -1});
+                        if (!path)
+                            throw CommandError("pipeSupports: " + n->path() + " has no path curve");
+                        g.connect(*path, {op->id(), idx(*op, "path"), -1});
+                        if (!a.has("pipeRadius"))
+                            g.connect({pipe->id(), idx(*pipe, "radius"), -1}, {op->id(), idx(*op, "pipeRadius"), -1});
+                        if (!a.has("bendRadius"))
+                            g.connect({pipe->id(), idx(*pipe, "bendRadius"), -1}, {op->id(), idx(*op, "bendRadius"), -1});
+                    }
+                    else if (n->type().isA("curve"))
+                        g.connect({n->id(), CurveShape::kWorldSpace, -1}, {op->id(), idx(*op, "path"), -1});
+                    else
+                        throw CommandError("pipeSupports: " + n->path() + " is neither a pipe nor a curve");
+                    connectMeshes(g, *op, surfaces, "surfaces", "surfaceMatrices");
+                    Node* mesh = g.createNode(*types::find("mesh"), a.get<std::string>("name", "PipeSupports"), kNoNode, true);
+                    g.connect({op->id(), idx(*op, "outMesh"), -1}, {mesh->id(), MeshNode::kInMesh, -1});
+                    out.push_back(json::array({mesh->path(), op->path()}));
+                    made.push_back(mesh->id());
+                }
+                g.select(made);
+                return out.size() == 1 ? out[0] : out;
             },
         });
     }
