@@ -39,7 +39,7 @@
 namespace
 {
 /** Raised when the graph changes; a master older than this is kept (artists own it) and reported, until regenerate. */
-constexpr int32 MasterVersion = 1;
+constexpr int32 MasterVersion = 2;
 const TCHAR* MasterName = TEXT("M_LilaMasonry");
 const TCHAR* FunctionName = TEXT("MF_LilaMasonry");
 const TCHAR* NeutralName = TEXT("T_LilaMasonryNeutral");
@@ -54,19 +54,31 @@ template <class T> T* AssetAt(const FString& Folder, const FString& Name)
 	return Data.IsValid() ? Cast<T>(Data.GetAsset()) : nullptr;
 }
 
-/** Shared by every masonry slot: the per-stone random and height, wherever this mesh carries them. */
+/** Shared by every masonry slot: the per-stone random, height, age, damage, wet and moss, wherever this mesh carries them. */
 const TCHAR* StoneDataCode = TEXT(R"(
 float rnd = 0.5;
 float h = saturate(LocalPos.z / max(WallHeight, 1.0));
+float age = 0.0;
+float dmg = 0.0;
+float wet = 0.0;
+float moss = 0.0;
 if (StoneData > 1.5)
 {
     rnd = VColor.r;
     h = VColor.g;
+    moss = VColor.b;
+    wet = VColor.a;
+    age = UV2.x;
+    dmg = UV2.y;
 }
 else if (StoneData > 0.5)
 {
     rnd = InstRandom;
     h = InstHeight;
+    age = InstAge;
+    dmg = InstDamage;
+    wet = InstWet;
+    moss = InstMoss;
 }
 )");
 
@@ -94,13 +106,19 @@ float curv = HasBakedMaps > 0.5 ? Texture2DSample(BakedCurvatureMap, BakedCurvat
 col *= 1.0 + max(curv - 0.5, 0.0) * 2.0 * EdgeLighten;
 col = lerp(col, col * CavityColor.rgb, saturate((0.5 - curv) * 2.0) * CavityStrength);
 float dirt = saturate((DirtHeight - h) / max(DirtFade, 1e-3)) * DirtStrength;
-return lerp(col, col * DirtColor.rgb, dirt);
+col = lerp(col, col * DirtColor.rgb, dirt);
+col *= 1.0 - age * AgeDarken;
+col = lerp(col, DamageColor.rgb, saturate(dmg * DamageStrength));
+col *= 1.0 - wet * WetDarken;
+float up = saturate(normalize(NormalWS).z);
+float m = saturate(moss * MossStrength * lerp(1.0, up, MossUp));
+return lerp(col, MossColor.rgb, m);
 )");
 
 const TCHAR* RoughnessCode = TEXT(R"(
 float curv = HasBakedMaps > 0.5 ? Texture2DSample(BakedCurvatureMap, BakedCurvatureMapSampler, UV0).r : 0.5;
 float dirt = saturate((DirtHeight - h) / max(DirtFade, 1e-3)) * DirtStrength;
-return saturate(BaseRoughness + (0.5 - curv) * CurvatureRoughness + (rnd - 0.5) * RoughnessSpread - dirt * 0.1);
+return saturate(BaseRoughness + (0.5 - curv) * CurvatureRoughness + (rnd - 0.5) * RoughnessSpread - dirt * 0.1 - wet * WetRoughness + moss * 0.1);
 )");
 
 const TCHAR* OcclusionCode = TEXT(R"(
@@ -176,7 +194,7 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMasonry::BuildFunction);
 
-	LilaLink::FFunctionGraph G(Function, TEXT("Lila Masonry: per-stone colour spread, cavity and edge wear from baked maps, and dirt by height."));
+	LilaLink::FFunctionGraph G(Function, TEXT("Lila Masonry: per-stone colour spread, cavity and edge wear from baked maps, dirt by height, and age, damage, wet and moss per stone."));
 	TMap<FString, UMaterialExpression*> Inputs;
 	auto Scalar = [&](const TCHAR* Param, float Value, const TCHAR* Description) { Inputs.Add(Param, G.ScalarInput(Param, Value, TEXT(""), Description)); };
 	auto Vector = [&](const TCHAR* Param, const FLinearColor& Value, const TCHAR* Description) {
@@ -207,6 +225,7 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	Texture(TEXT("BakedCurvatureMap"), Neutral, SAMPLERTYPE_Masks, TEXT("Baked curvature on UV0, 0.5 flat."));
 	Coord(TEXT("UV0"), 0, TEXT("UVs of the baked maps; UV channel 0 when unconnected."));
 	Coord(TEXT("UV1"), 1, TEXT("UVs of the tiling textures; UV channel 1 when unconnected."));
+	Coord(TEXT("UV2"), 2, TEXT("Merged stones' age (x) and damage (y); UV channel 2 when unconnected."));
 	// World position is large-world (double) and a Custom node takes floats: divide and wrap it with nodes that handle that first.
 	{
 		UMaterialExpression* World = G.Make(UMaterialExpressionWorldPosition::StaticClass(), -1600);
@@ -225,9 +244,13 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	Inputs.Add(TEXT("VColor"), G.Make(UMaterialExpressionVertexColor::StaticClass(), -1200));
 	InstanceData(TEXT("InstRandom"), 0, 0.5f);
 	InstanceData(TEXT("InstHeight"), 1, 0.5f);
+	InstanceData(TEXT("InstAge"), 2, 0.0f);
+	InstanceData(TEXT("InstDamage"), 3, 0.0f);
+	InstanceData(TEXT("InstWet"), 4, 0.0f);
+	InstanceData(TEXT("InstMoss"), 5, 0.0f);
 
 	// Switches, as scalars so one master serves every slot without a shader permutation each.
-	Scalar(TEXT("StoneData"), 1.0f, TEXT("Per-stone random and height: 0 none (height from the mesh), 1 per instance custom data 0 and 1, 2 vertex colour R and G."));
+	Scalar(TEXT("StoneData"), 1.0f, TEXT("Per-stone data: 0 none (height from the mesh), 1 per instance custom data 0-5 (random, height, age, damage, wet, moss), 2 vertex colour (random, height, moss, wet) and UV2 (age, damage)."));
 	Scalar(TEXT("WorldAligned"), 0.0f, TEXT("1 projects BaseColorMap in world space (cores, shells) instead of on UV1."));
 	Scalar(TEXT("UseBakedNormal"), 0.0f, TEXT("1 for far stones and shells, whose geometry lacks the detail."));
 	Scalar(TEXT("HasBakedMaps"), 0.0f, TEXT("1 when the baked maps are set."));
@@ -250,12 +273,21 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 	Scalar(TEXT("RoughnessSpread"), 0.1f, TEXT("Per-stone roughness spread."));
 	Scalar(TEXT("AOStrength"), 1.0f, TEXT("How much of the baked AO shows."));
 	Scalar(TEXT("DetailNormalStrength"), 1.0f, TEXT("Scales the detail normal."));
+	Scalar(TEXT("AgeDarken"), 0.25f, TEXT("How much darker the oldest stones are."));
+	Scalar(TEXT("DamageStrength"), 0.35f, TEXT("How far freshly broken stone shifts towards DamageColor."));
+	Scalar(TEXT("WetDarken"), 0.3f, TEXT("How much darker wet stone is."));
+	Scalar(TEXT("WetRoughness"), 0.35f, TEXT("How much smoother wet stone is."));
+	Scalar(TEXT("MossStrength"), 1.0f, TEXT("Scales the moss mask."));
+	Scalar(TEXT("MossUp"), 0.6f, TEXT("How much moss keeps to upward faces, 0 to 1."));
 	Vector(TEXT("Tint"), FLinearColor(0.6f, 0.55f, 0.5f), TEXT("Stone colour, multiplied with BaseColorMap."));
 	Vector(TEXT("SpreadColor"), FLinearColor(0.9f, 0.82f, 0.75f), TEXT("Colour some stones drift towards."));
 	Vector(TEXT("CavityColor"), FLinearColor(0.55f, 0.52f, 0.48f), TEXT("Multiplied into cavities."));
 	Vector(TEXT("DirtColor"), FLinearColor(0.45f, 0.42f, 0.35f), TEXT("Multiplied in where dirt gathers."));
+	Vector(TEXT("DamageColor"), FLinearColor(0.72f, 0.68f, 0.62f), TEXT("Freshly broken stone, near what fell."));
+	Vector(TEXT("MossColor"), FLinearColor(0.16f, 0.22f, 0.07f), TEXT("Moss."));
 
-	const TArray<const TCHAR*> StoneInputs = {TEXT("StoneData"), TEXT("WallHeight"), TEXT("LocalPos"), TEXT("VColor"), TEXT("InstRandom"), TEXT("InstHeight")};
+	const TArray<const TCHAR*> StoneInputs = {TEXT("StoneData"), TEXT("WallHeight"), TEXT("LocalPos"), TEXT("VColor"), TEXT("InstRandom"), TEXT("InstHeight"),
+		TEXT("InstAge"), TEXT("InstDamage"), TEXT("InstWet"), TEXT("InstMoss"), TEXT("UV2")};
 	auto With = [&](std::initializer_list<const TCHAR*> Extra) {
 		TArray<const TCHAR*> All = StoneInputs;
 		All.Append(Extra.begin(), int32(Extra.size()));
@@ -287,10 +319,11 @@ void BuildFunction(UMaterialFunction* Function, TArray<FString>& OutCreated)
 		With({TEXT("Tint"), TEXT("HasBaseColorMap"), TEXT("WorldAligned"), TEXT("NormalWS"), TEXT("WorldTile"), TEXT("BaseColorMap"),
 			TEXT("UV1"), TEXT("TextureScale"), TEXT("RandomOffset"), TEXT("ValueSpread"), TEXT("SpreadColor"), TEXT("ColorSpread"), TEXT("HasBakedMaps"),
 			TEXT("BakedCurvatureMap"), TEXT("UV0"), TEXT("EdgeLighten"), TEXT("CavityColor"), TEXT("CavityStrength"), TEXT("DirtHeight"), TEXT("DirtFade"),
-			TEXT("DirtStrength"), TEXT("DirtColor")}));
+			TEXT("DirtStrength"), TEXT("DirtColor"), TEXT("AgeDarken"), TEXT("DamageColor"), TEXT("DamageStrength"), TEXT("WetDarken"), TEXT("MossColor"),
+			TEXT("MossStrength"), TEXT("MossUp")}));
 	auto* Roughness = CustomOf(Version + TEXT(" roughness"), FString(StoneDataCode) + RoughnessCode, CMOT_Float1,
 		With({TEXT("HasBakedMaps"), TEXT("BakedCurvatureMap"), TEXT("UV0"), TEXT("DirtHeight"), TEXT("DirtFade"), TEXT("DirtStrength"),
-			TEXT("BaseRoughness"), TEXT("CurvatureRoughness"), TEXT("RoughnessSpread")}));
+			TEXT("BaseRoughness"), TEXT("CurvatureRoughness"), TEXT("RoughnessSpread"), TEXT("WetRoughness")}));
 	auto* Occlusion = CustomOf(Version + TEXT(" occlusion"), OcclusionCode, CMOT_Float1,
 		{TEXT("HasBakedMaps"), TEXT("BakedAOMap"), TEXT("UV0"), TEXT("AOStrength")});
 	auto* Normal = CustomOf(Version + TEXT(" normal"), NormalCode, CMOT_Float3,
