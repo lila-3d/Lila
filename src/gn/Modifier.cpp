@@ -151,8 +151,11 @@ public:
         if (!mPlan || def != mCachedDef)
         {
             mCachedDef = def;
+            PlanPtr oldPlan = std::move(mPlan);
+            StepCache oldCache = std::move(mCache);
             mPlan.reset();
             mCache = StepCache{};
+            mCarry = StepCache{};
             try
             {
                 if (!def.empty())
@@ -162,6 +165,8 @@ public:
             {
                 log::warn("{}: {}", name(), e.what());
             }
+            if (oldPlan && mPlan && oldCache.plan == oldPlan.get())
+                mCarry = carryOver(oldCache, *oldPlan, *mPlan);
         }
         noteSimulationModifier(id(), mPlan && mPlan->statefulStep >= 0, mPlan && mPlan->statefulInputsUseTime);
         noteViewModifier(id(), mPlan && mPlan->usesView);
@@ -287,7 +292,7 @@ private:
      */
     void prepareCache(const GeometryPtr& in)
     {
-        uint64_t key = scene::sim::hashBytes(&mPlan, sizeof mPlan);
+        uint64_t key = 0x6a09e667f3bcc908ull;
         key = in ? hashGeometry(*in, key) : key;
         for (const TypeLayout::Param& p : mLayout->params)
         {
@@ -304,10 +309,78 @@ private:
         }
         if (mCache.plan != mPlan.get() || mCache.key != key)
         {
-            mCache = StepCache{};
-            mCache.plan = mPlan.get();
-            mCache.key = key;
+            // A new plan keeps the results of steps an edit left alone, while nothing from outside changed.
+            if (mCarry.plan == mPlan.get() && mCarry.key == key)
+                mCache = std::move(mCarry);
+            else
+            {
+                mCache = StepCache{};
+                mCache.plan = mPlan.get();
+                mCache.key = key;
+            }
+            mCarry = StepCache{};
         }
+    }
+
+    /**
+     * Each step's identity: its node's type, values and mute, and the identities of what feeds it. Equal identities in two
+     * plans compute the same thing from the same outside inputs.
+     */
+    static std::vector<uint64_t> stepSignatures(const Plan& p)
+    {
+        std::vector<uint64_t> sig(p.steps.size(), 0);
+        for (size_t s = 0; s < p.steps.size(); ++s)
+        {
+            const Plan::Step& step = p.steps[s];
+            const GNode& n = p.group.nodes[step.node];
+            std::string text = n.type + "|" + n.values.dump() + (n.muted ? "|m" : "|");
+            // A nested group's step runs the definition embedded for it, which can change while the node doesn't.
+            if (auto g = n.values.find("group"); g != n.values.end() && g->is_string())
+                if (auto def = p.group.subgroups.find(g->get<std::string>()); def != p.group.subgroups.end())
+                    text += def->second.dump();
+            uint64_t h = scene::sim::hashBytes(text.data(), text.size(), 0x9e3779b97f4a7c15ull);
+            for (const auto& links : step.inputs)
+            {
+                for (const Plan::Source& src : links)
+                {
+                    const uint64_t part[3] = {src.step >= 0 ? sig[size_t(src.step)] : 0, uint64_t(src.output), uint64_t(src.type)};
+                    h = scene::sim::hashBytes(part, sizeof part, h);
+                }
+                h = (h ^ 0xff51afd7ed558ccdull) * 0x100000001b3ull;
+            }
+            sig[s] = h;
+        }
+        return sig;
+    }
+
+    /** The old cache's results for the new plan's steps that compute the same thing; a cache for the new plan. */
+    static StepCache carryOver(const StepCache& old, const Plan& oldPlan, const Plan& next)
+    {
+        StepCache c;
+        c.plan = &next;
+        c.key = old.key;
+        c.valid.assign(next.steps.size(), 0);
+        c.results.assign(next.steps.size(), {});
+        if (old.valid.size() != oldPlan.steps.size())
+            return c;
+        std::map<uint64_t, size_t> was;
+        const std::vector<uint64_t> oldSig = stepSignatures(oldPlan), newSig = stepSignatures(next);
+        for (size_t s = 0; s < oldPlan.steps.size(); ++s)
+            if (old.valid[s])
+                was[oldSig[s]] = s;
+        for (size_t s = 0; s < next.steps.size(); ++s)
+        {
+            const Plan::Step& step = next.steps[s];
+            // Nested groups and simulation nodes read more than their node shows; they always run again.
+            if (step.dynamic || step.decl->stateful || step.decl->dynamicSockets)
+                continue;
+            if (auto it = was.find(newSig[s]); it != was.end())
+            {
+                c.results[s] = old.results[it->second];
+                c.valid[s] = 1;
+            }
+        }
+        return c;
     }
 
     void publishViewer(const ViewerSink& sink)
@@ -370,6 +443,8 @@ private:
     std::string mCachedDef;
     PlanPtr mPlan;
     StepCache mCache;
+    /** Results a definition edit carried over, taken up by prepareCache when the outside inputs are unchanged. */
+    StepCache mCarry;
 };
 
 /** Node holding a group definition. Nothing to compute: modifiers read the definition through connections. */
