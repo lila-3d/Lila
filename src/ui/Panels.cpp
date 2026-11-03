@@ -10,6 +10,7 @@
 #include <QDockWidget>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QTimer>
 
 #include <algorithm>
 
@@ -112,11 +113,16 @@ void panels::floatUnplaced(QDockWidget* dock)
             // Only the user docks a dock while the window is up: a saved layout is restored before anything shows.
             if (floating || !dock->isVisible() || !dock->window()->isVisible() || dockedByUser(id))
                 return;
-            nlohmann::json list = PrefStore::get().value("general", kDockedByUserPref, nlohmann::json::array());
-            if (!list.is_array())
-                list = nlohmann::json::array();
-            list.push_back(id);
-            PrefStore::get().set("general", kDockedByUserPref, list);
+            // Deferred: general pref listeners rebuild menus, which must not run inside Qt's dock plug.
+            QTimer::singleShot(0, dock, [id] {
+                if (dockedByUser(id))
+                    return;
+                nlohmann::json list = PrefStore::get().value("general", kDockedByUserPref, nlohmann::json::array());
+                if (!list.is_array())
+                    list = nlohmann::json::array();
+                list.push_back(id);
+                PrefStore::get().set("general", kDockedByUserPref, list);
+            });
         });
     }
     if (dock->isFloating() || dockedByUser(id))
