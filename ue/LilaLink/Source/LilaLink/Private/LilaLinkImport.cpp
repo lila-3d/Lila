@@ -40,6 +40,7 @@
 #include "Misc/Paths.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "RenderUtils.h"
 #include "StaticMeshEditorSubsystem.h"
 #include "StaticMeshEditorSubsystemHelpers.h"
 #include "UObject/StrongObjectPtr.h"
@@ -931,6 +932,32 @@ void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 	Mesh->MarkPackageDirty();
 }
 
+/** Runs the import again once Mesh has finished building, polling on the core ticker; gives up after five minutes. */
+void WaitForMeshBuild(const UStaticMesh* Mesh, const TSharedPtr<FJsonObject>& Params, const FLilaLinkCallRef& Call)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::WaitForMeshBuild);
+
+	UE_LOG(LogLilaLink, Log, TEXT("%s: waiting for %s to finish building"), *Call->Describe(), *Mesh->GetName());
+	Call->Progress(TEXT("waiting for build"));
+	const double Deadline = FPlatformTime::Seconds() + 300.0;
+	TWeakObjectPtr<const UStaticMesh> Weak(Mesh);
+	FTSTicker::GetCoreTicker().AddTicker(TEXT("LilaLinkWaitForBuild"), 1.0f, [Weak, Params, Call, Deadline](float)
+	{
+		if (Weak.IsValid() && Weak->IsCompiling())
+		{
+			if (FPlatformTime::Seconds() < Deadline)
+			{
+				Call->Progress(TEXT("waiting for build"));
+				return true;
+			}
+			Call->Reply(nullptr, FString::Printf(TEXT("%s was still building after five minutes"), *Weak->GetName()));
+			return false;
+		}
+		LilaLink::ImportAsset(Params, Call);
+		return false;
+	});
+}
+
 void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const FLilaLinkCallRef& Call)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::FinishImport);
@@ -954,6 +981,18 @@ void FinishImport(const FImportRequest& Request, FImportOutcome& Outcome, const 
 	if (!Request.MaterialCurves.IsEmpty())
 	{
 		ApplyMaterialCurves(Request, Outcome);
+	}
+
+	if (!NaniteAssembliesSupported())
+	{
+		for (const FString& Path : Outcome.Assets)
+		{
+			const UStaticMesh* Mesh = LoadObject<UStaticMesh>(nullptr, *Path);
+			if (Mesh && Mesh->IsNaniteAssembly())
+			{
+				Outcome.Errors.Add(FString::Printf(TEXT("%s is a Nanite Assembly, which this project does not build: set r.Nanite.AllowAssemblies=1 under [/Script/Engine.RendererSettings] in DefaultEngine.ini (or enable Nanite Foliage) and restart the editor"), *Mesh->GetName()));
+			}
+		}
 	}
 
 	if (Request.Materials.bManaged && !Outcome.Assets.IsEmpty())
@@ -1003,6 +1042,13 @@ void LilaLink::ImportAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLin
 		return;
 	}
 
+	// Reimporting a mesh that is still building asserts in the engine; a Nanite Assembly rebuilds whenever its parts change.
+	if (const UStaticMesh* Building = Cast<UStaticMesh>(Request.bReplace ? nullptr : FindExisting(Request)); Building && Building->IsCompiling())
+	{
+		WaitForMeshBuild(Building, Params, Call);
+		return;
+	}
+
 	if (Request.Kind == EKind::GeometryCache)
 	{
 		Call->Progress(TEXT("importing"));
@@ -1034,7 +1080,7 @@ void LilaLink::ImportAsset(const TSharedPtr<FJsonObject>& Params, const FLilaLin
 	}
 	else if (FPaths::GetExtension(Request.File).StartsWith(TEXT("usd"), ESearchCase::IgnoreCase))
 	{
-		Outcome.Errors.Add(FString::Printf(TEXT("%s is USD, which this project cannot import: enable the USD Importer plugin"), *FPaths::GetCleanFilename(Request.File)));
+		Outcome.Errors.Add(FString::Printf(TEXT("%s is USD, which this project cannot import: enable the Interchange OpenUSD plugin"), *FPaths::GetCleanFilename(Request.File)));
 	}
 	else
 	{

@@ -52,6 +52,7 @@ public class LilaLink : ModuleRules
 			"ChaosCaching",
 			"StaticMeshEditor",
 			"EditorSubsystem",
+			"RenderCore",
 			"LilaLinkRuntime",
 		});
 
