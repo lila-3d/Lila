@@ -19,6 +19,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <random>
 #include <set>
@@ -983,6 +985,81 @@ TEST_CASE("trim decals: a unique inscription baked with an opacity mask, placed,
     CHECK(crest.rgba[(size_t(32) * 64 + 32) * 4] > 0.5f);
     CHECK(crest.rgba[(size_t(5) * 64 + 5) * 4] < 0.05f);
     CHECK_THROWS(ops::execute("trimDecalCreate", {{"args", {"Bare"}}, {"kind", "relief"}, {"bake", false}}));
+}
+
+TEST_CASE("trim reopen: a scene of trimmed meshes, palettes, a live modifier and a decal saves, reopens and re-exports")
+{
+    loadTrims();
+    ops::execute("newScene", json::object());
+    const std::filesystem::path dir = scratch("reopen");
+    const std::filesystem::path file = dir / "T_Reo.lilatrim", decal = dir / "Mark.lilatrim", scenePath = dir / "level.lila";
+    ops::execute("trimSheetCreate", {{"file", file.generic_string()}, {"name", "T_Reo"}, {"width", 64}, {"strips", {32, 16, 16}}, {"pxPerM", 64.0}, {"bake", false}});
+    ops::execute("trimSheetEdit", {{"values", {{"supersampling", 1}}}});
+    ops::execute("trimPaletteAdd", {{"args", {"Rust"}}, {"material", "Trim Rusty Iron"}, {"vectors", {{"Tint", {0.4, 0.2, 0.1}}}}});
+    ops::execute("trimSheetTexture", json::object());
+    ops::execute("trimSheetTexture", {{"palette", "Rust"}});
+    const json before = load(file).toJson();
+
+    scene::components::setMode(scene::ComponentMode::Object);
+    auto quad = [&](const char* name, double w, double h) {
+        return made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {w, 0, 0}, {w, h, 0}, {0, h, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", name}}));
+    };
+    const std::string plain = quad("ReoPlain", 300.0, 25.0), rusty = quad("ReoRust", 300.0, 50.0), live = quad("ReoLive", 200.0, 25.0);
+    ops::execute("select", {{"args", {plain}}});
+    ops::execute("trimAuto", {{"seed", 2}});
+    ops::execute("select", {{"args", {rusty}}});
+    ops::execute("trimAuto", {{"palette", "Rust"}});
+    ops::execute("select", {{"args", {live}}});
+    ops::execute("trimLive", {{"palette", "Rust"}});
+    ops::execute("trimDecalCreate", {{"args", {"Mark"}}, {"width", 100.0}, {"height", 25.0}, {"resolution", 64}, {"file", decal.generic_string()}, {"backend", "cpu"}});
+    const std::string placed = ops::execute("trimDecalPlace", {{"decal", decal.generic_string()}, {"position", {0, 100, 0}}, {"normal", {0, 0, 1}}}).get<std::string>();
+
+    const geo::Mesh plainBefore = meshOf(plain), liveBefore = meshOf(live);
+    const json planBefore = ops::execute("trimSheetSend", {{"dryRun", true}, {"sheet", file.generic_string()}});
+    ops::execute("saveScene", {{"args", {scenePath.generic_string()}}});
+    ops::execute("trimSheetCurrent", {{"args", {(dir / "T_Reo.lilatrim").generic_string()}}});
+    ops::execute("openScene", {{"args", {scenePath.generic_string()}}});
+
+    // Meshes keep their uvs, trims and palette slots; the live modifier comes back and maps the same.
+    const geo::Mesh plainAfter = meshOf(plain);
+    CHECK(plainAfter.faceAttrs().get<int32_t>(kFaceTrim)[0] == plainBefore.faceAttrs().get<int32_t>(kFaceTrim)[0]);
+    CHECK(uvAt(plainAfter, {300, 25, 0}) == uvAt(plainBefore, {300, 25, 0}));
+    CHECK(slotsOf(plain) == std::map<std::string, uint32_t>{{"M_Reo", 1}});
+    CHECK(slotsOf(rusty) == std::map<std::string, uint32_t>{{"M_Reo_Rust", 1}});
+    CHECK(slotsOf(live) == std::map<std::string, uint32_t>{{"M_Reo_Rust", 1}});
+    CHECK(uvAt(meshOf(live), {200, 25, 0}) == uvAt(liveBefore, {200, 25, 0}));
+    scene::Graph& g = scene::Graph::current();
+    const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, g.find(live)->id());
+    REQUIRE(stack.size() == 1);
+    CHECK(g.node(stack[0])->type().name == "trimHotspotModifier");
+    CHECK(ops::execute("trimSheetCurrent", json::object()).get<std::string>() == file.generic_string());
+
+    // The sheet file reopens unchanged, its palettes' texture sets are back, and it plans and exports the same.
+    CHECK(load(file).toJson() == before);
+    const json palettes = ops::execute("trimPaletteList", {{"sheet", file.generic_string()}});
+    CHECK(palettes[0]["textured"].get<bool>());
+    CHECK(palettes[1]["textured"].get<bool>());
+    const json planAfter = ops::execute("trimSheetSend", {{"dryRun", true}, {"sheet", file.generic_string()}});
+    CHECK(planAfter["request"]["instances"] == planBefore["request"]["instances"]);
+    CHECK(planAfter["meshes"]["sent"].size() == 3);
+    for (const char* format : {"rect", "svg", "json", "idmap"})
+    {
+        CAPTURE(format);
+        const std::string out = ops::execute("trimSheetExport", {{"sheet", file.generic_string()}, {"format", format}}).get<std::string>();
+        CHECK(std::filesystem::exists(out));
+    }
+    std::ifstream rect(ops::execute("trimSheetExport", {{"sheet", file.generic_string()}, {"format", "rect"}}).get<std::string>());
+    CHECK(fromRect(std::string(std::istreambuf_iterator<char>(rect), {}), 64, 64).trims.size() == 3);
+    const json rebaked = ops::execute("trimSheetBake", {{"sheet", file.generic_string()}, {"backend", "cpu"}});
+    CHECK(rebaked["seamError"].get<double>() < 0.05);
+    // With nothing selected trimCheck takes every mapped mesh: the plain, rusty and live ones.
+    ops::execute("select", {{"clear", true}});
+    CHECK(ops::execute("trimCheck", {{"distance", 300.0}})["meshes"].size() == 3);
+
+    // The decal placement comes back too and plans the same decal actor.
+    const json decals = ops::execute("trimDecalSend", {{"dryRun", true}});
+    REQUIRE(decals["request"]["decals"].size() == 1);
+    CHECK(decals["request"]["decals"][0]["name"] == g.find(placed)->name());
 }
 
 TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")
