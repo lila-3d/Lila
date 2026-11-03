@@ -228,8 +228,8 @@ void MainWindow::registerPanels()
                  .area = Qt::RightDockWidgetArea, .icon = "cube-unfolded"});
     panels::add({.id = kChannelBoxDock, .title = "Channel Box", .create = make([](QWidget* p) { return new ChannelBox(p); }),
                  .area = Qt::RightDockWidgetArea, .icon = "list", .place = [this, dock](QDockWidget* channels) {
-                     // Back to its own width when its tab is picked after a wider one, such as the modeling toolkit.
-                     channels->setProperty(kDefaultTabExtent, kDefaultSidePanelWidth);
+                     // Back to its narrowest when its tab is picked after a wider one, such as the modeling toolkit.
+                     channels->setProperty(kHugTabExtent, true);
                      splitDockWidget(dock(kUvEditorDock), channels, Qt::Horizontal);
                      // Split before the tabs join, so the layer editor sits under the whole channel box tab group as in Maya.
                      splitDockWidget(channels, dock(kDisplayLayersDock), Qt::Vertical);

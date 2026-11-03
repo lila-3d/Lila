@@ -97,10 +97,15 @@ int slotExtent(QMainWindow* window, QDockWidget* dock, Qt::Orientation orientati
     const int own = measure();
     if (!dock->isVisible() || own <= 0)
         return own;
+    // Applied now: the dock's geometry only changes when the layout runs, and measuring before then sees no loss.
     window->resizeDocks({dock}, {own}, orientation);
+    window->layout()->activate();
     const int lost = own - measure();
     if (lost != 0)
+    {
         window->resizeDocks({dock}, {own + lost}, orientation);
+        window->layout()->activate();
+    }
     return own + lost;
 }
 
@@ -298,7 +303,9 @@ void DockSidebars::restoreSize(QDockWidget* dock)
     if (area == Qt::NoDockWidgetArea)
         return;
     int want = 0;
-    if (auto it = mTabSizes.find(dock->objectName()); it != mTabSizes.end())
+    if (dock->property(kHugTabExtent).toBool())
+        want = 1;
+    else if (auto it = mTabSizes.find(dock->objectName()); it != mTabSizes.end())
         want = it->second;
     else if (QVariant extent = dock->property(kDefaultTabExtent); extent.isValid())
         want = extent.toInt();
@@ -470,7 +477,7 @@ void DockSidebars::reveal(QDockWidget* dock)
         else
         {
             // Checked again here: a dock that was hidden only rejoins its tab group once shown.
-            if (tabbed || !mWindow->tabifiedDockWidgets(d).isEmpty())
+            if (tabbed || !mWindow->tabifiedDockWidgets(d).isEmpty() || d->property(kHugTabExtent).toBool())
                 restoreSize(d);
             ensureUsableSize(d);
         }
@@ -483,7 +490,7 @@ void DockSidebars::ensureUsableSize(QDockWidget* dock)
 {
     Qt::DockWidgetArea area = mWindow->dockWidgetArea(dock);
     // The top area holds slim strips like the shelf, which are meant to stay small.
-    if (area == Qt::NoDockWidgetArea || area == Qt::TopDockWidgetArea)
+    if (area == Qt::NoDockWidgetArea || area == Qt::TopDockWidgetArea || dock->property(kHugTabExtent).toBool())
         return;
     bool sideways = area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea;
     QSizePolicy policy = dock->widget() ? dock->widget()->sizePolicy() : QSizePolicy();
@@ -660,15 +667,27 @@ void DockSidebars::expand(QDockWidget* dock)
     auto* tab = static_cast<QToolButton*>(it->second);
     tab->setChecked(true);
     tab->setToolTip("Collapse " + dock->windowTitle());
+    const bool tabbed = !dock->isFloating() && !mWindow->tabifiedDockWidgets(dock).isEmpty();
+    if (tabbed)
+        for (QDockWidget* other : mWindow->tabifiedDockWidgets(dock))
+            if (dockShowing(other))
+                rememberSize(other);
     dock->show();
     dock->raise();
     if (auto size = mSizes.find(dock); size != mSizes.end() && size->second.width() > 40 && size->second.height() > 40)
     {
         Qt::DockWidgetArea area = mWindow->dockWidgetArea(dock);
         bool sideways = area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea;
-        mWindow->resizeDocks({dock}, {sideways ? size->second.width() : size->second.height()}, sideways ? Qt::Horizontal : Qt::Vertical);
+        if (!tabbed)
+            mWindow->resizeDocks({dock}, {sideways ? size->second.width() : size->second.height()}, sideways ? Qt::Horizontal : Qt::Vertical);
         mSizes.erase(size);
     }
+    // In a tab group the slot is the group's, still at the width of the tab that was showing: back to this tab's own.
+    if (tabbed || dock->property(kHugTabExtent).toBool())
+        QTimer::singleShot(0, this, [this, d = QPointer<QDockWidget>(dock)] {
+            if (d && d->isVisible())
+                restoreSize(d);
+        });
     refreshStrips();
     Q_EMIT changed();
 }

@@ -150,21 +150,20 @@ QDockWidget* sculptDock(bool create)
     dock->setWidget(scroll);
     setDockDocs(dock, "sculpting");
     mw->addDockWidget(Qt::RightDockWidgetArea, dock);
-    // Wide enough for the brush grid with its labels and the session rows without squeezing.
-    mw->resizeDocks({dock}, {std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 74)}, Qt::Horizontal);
     if (auto* toolkit = mw->findChild<QDockWidget*>(kModelingToolkitDock); toolkit && !toolkit->isFloating() && toolkit->isVisible())
         mw->tabifyDockWidget(toolkit, dock);
+    // Wide enough for five brush columns with their labels and the session rows. Set as the tab extent too, or picking
+    // the tab in a narrower group keeps the group's width.
+    const int width = std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 84);
+    dock->setProperty(kDefaultTabExtent, width);
+    mw->resizeDocks({dock}, {width}, Qt::Horizontal);
     return dock;
 }
 
 void showDock()
 {
     if (QDockWidget* d = sculptDock(true))
-    {
-        d->show();
-        d->raise();
-        flashLocate(d);
-    }
+        revealDock(d);
 }
 
 std::vector<std::string> selectedMeshes()

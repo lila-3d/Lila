@@ -32,6 +32,8 @@ LILA_UI_API void revealDock(QDockWidget* dock);
 
 /** Dynamic property on a dock: its width (or height) as a tab when it has no size of its own remembered yet. */
 inline constexpr const char* kDefaultTabExtent = "lilaDefaultTabExtent";
+/** Dynamic property on a dock: shown, it takes the narrowest width its column allows, whatever it was before. */
+inline constexpr const char* kHugTabExtent = "lilaHugTabExtent";
 
 /** Gives the dock's title bar a help button opening a docs page ("topology", "curves?id=pipe"); empty removes it. */
 LILA_UI_API void setDockDocs(QDockWidget* dock, const std::string& page);
