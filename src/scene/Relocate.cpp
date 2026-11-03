@@ -1841,6 +1841,8 @@ void registerBuiltins()
     registerWorldAttrs("curveRevolve", {.points = {"axisOrigin"}, .directions = {"axis"}, .worldData = {"profile"}, .worldOutput = true});
     registerWorldAttrs("curveSweep", {.directions = {"upVector"}, .worldData = {"path", "profile"}, .worldOutput = true});
     registerWorldAttrs("hairCards", {.directions = {"upVector"}, .worldData = {"inCurve", "guideCurve"}, .worldOutput = true});
+    registerWorldAttrs("curveStrapPath", {.matrices = {"meshMatrices"}, .points = {"start", "end"}, .directions = {"startDir", "endDir"}, .worldOutput = true});
+    registerWorldAttrs("curveStrap", {.directions = {"up"}, .worldData = {"path"}});
     // Curve-driven modifiers read world-space curves through the mesh's world matrix when they were connected.
     for (const char* t : {"curveArrayModifier", "curveDeformModifier"})
         registerWorldAttrs(t, {.matrices = {"targetMatrix"}, .directions = {"upVector"}, .worldData = {"curve", "aimCurve"}});
