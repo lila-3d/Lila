@@ -635,7 +635,11 @@ TSharedPtr<FJsonValue> PlaceInstances(const TSharedPtr<FJsonObject>& Params, FSt
 	FComponentSink Sink;
 	Sink.Folder = FPackageName::GetLongPackagePath(Mesh->GetPackage()->GetName());
 	TArray<AActor*> Existing = TaggedActors(World, GroupTag(Group));
-	ApplyMeshCollision(Mesh, *Placements);
+	// A Lila send names the collision, which its import already gave the mesh; other senders leave it to the body.
+	if (Collision.IsEmpty())
+	{
+		ApplyMeshCollision(Mesh, *Placements);
+	}
 	if (Mode == TEXT("actors"))
 	{
 		PlaceActors(World, Group, Label, Mesh, bCollide, *Placements, Existing, Spawned, Updated, Removed, Sink);

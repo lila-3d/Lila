@@ -199,6 +199,32 @@ json extrasOf(scene::Graph& g, scene::NodeId id)
     return out;
 }
 
+bool hasUcxChildren(scene::Graph& g, scene::NodeId src)
+{
+    for (scene::NodeId c : g.children(src))
+        if (const scene::Node* n = g.node(c); n && n->type().isA("mesh") && collisionProxy(n->name()))
+            return true;
+    return false;
+}
+
+/**
+ * auto: ucx when the source carries hulls (UCX_ children, or a collision source's such as a Stagehand body, written
+ * into its FBX), complexAsSimple when its body asks for that or it has none. Any other choice stands.
+ */
+std::string resolvedCollision(scene::Graph& g, scene::NodeId src, const std::string& choice, bool ucxChildren, const json& extras)
+{
+    if (choice != "auto")
+        return choice;
+    if (extras.is_object() && extras.contains("physics") && extras["physics"].value("collision", "") == "complexAsSimple")
+        return "complexAsSimple";
+    if (ucxChildren)
+        return "ucx";
+    for (const std::string& id : fbx::collisionSources().idsInOrder())
+        if (const fbx::CollisionSource* s = fbx::collisionSources().find(id); s && *s && !(*s)(g, src).empty())
+            return "ucx";
+    return "complexAsSimple";
+}
+
 /** Simulated members need actors: instances of an (H)ISM can't each simulate. */
 bool simulates(const json& placements)
 {
@@ -558,8 +584,8 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
 
     if (o.mode != "auto" && o.mode != "actors" && o.mode != "ism" && o.mode != "hism")
         throw CommandError("unrealPlaceInstances: mode is auto, actors, ism or hism, not '" + o.mode + "'");
-    if (o.collision != "none" && o.collision != "box" && o.collision != "convex" && o.collision != "complexAsSimple" && o.collision != "ucx")
-        throw CommandError("unrealPlaceInstances: collision is none, box, convex, complexAsSimple or ucx, not '" + o.collision + "'");
+    if (o.collision != "auto" && o.collision != "none" && o.collision != "box" && o.collision != "convex" && o.collision != "complexAsSimple" && o.collision != "ucx")
+        throw CommandError("unrealPlaceInstances: collision is auto, none, box, convex, complexAsSimple or ucx, not '" + o.collision + "'");
     g.evaluate();
     // Every mesh under the roots counts with its whole instance group: Unreal drops a group's placements Lila no longer sends.
     std::vector<scene::NodeId> sources, lightNodes;
@@ -619,6 +645,7 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                  {"objectPath", folder + "/" + asset + "." + asset},
                  {"mode", mode},
                  {"collision", o.collision},
+                 {"ucxChildren", false},
                  {"nanite", o.nanite},
                  {"placements", std::move(list)}};
         // Instances can't hold components: the holder actor takes the ones they all share.
@@ -670,6 +697,8 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                     list.push_back(std::move(p));
                 }
         json own = group(groupKey, *n, asset, std::move(list));
+        own["ucxChildren"] = hasUcxChildren(g, src);
+        own["collision"] = resolvedCollision(g, src, o.collision, own["ucxChildren"].get<bool>(), extras.empty() ? json() : extras.front());
         own["customData"] = slotsJson(slots);
         if (gnr && gnr->base)
         {
@@ -702,6 +731,7 @@ json buildPlan(scene::Graph& g, const std::vector<scene::NodeId>& roots, const P
                     }
             json pg = group(partKey, *n, asset + "_" + part.hash.substr(0, 8), std::move(gl));
             pg["label"] = n->fullPath() + "_" + part.hash.substr(0, 8);
+            pg["collision"] = o.collision == "auto" ? "complexAsSimple" : o.collision;
             pg["customData"] = slotsJson(gnSlots);
             pg["gnMesh"] = meshes.size();
             meshes.push_back(part.mesh);
@@ -812,11 +842,12 @@ void registerPlacementCommands()
                   {"lightingChannels", "lc", T::Bool, true,
                    "Set the actors' and lights' Lighting Channels from Lila's channels. The plan's lightingChannels lists the "
                    "channels, lights and objects, the Unreal slot of each channel and any dropped."},
-                  {"collision", "col", T::String, "complexAsSimple",
-                   "Collision the assets get: none (the placed actors and instances don't collide either), box, convex (Unreal's "
-                   "auto convex decomposition), complexAsSimple (the render mesh) or ucx (the source's UCX_ child meshes, sent "
-                   "with it; its other children go into the asset too).",
-                   {"none", "box", "convex", "complexAsSimple", "ucx"}},
+                  {"collision", "col", T::String, "auto",
+                   "Collision the assets get: auto (ucx for a source with UCX_ children or a Stagehand body's hulls, else "
+                   "complexAsSimple), none (the placed actors and instances don't collide either), box, convex (Unreal's auto "
+                   "convex decomposition), complexAsSimple (the render mesh) or ucx (the hulls only; a source's UCX_ child "
+                   "meshes go with it, and its other children into the asset too).",
+                   {"auto", "none", "box", "convex", "complexAsSimple", "ucx"}},
                   {"nanite", "na", T::Bool, false, "Build Nanite data for the assets."},
                   {"validate", "va", T::Bool, true,
                    "Run the validators first: an issue blocking unrealPlaceInstances, \"unreal\" or \"*\" on what is sent stops "
@@ -861,12 +892,12 @@ void registerPlacementCommands()
             if (a.get<bool>("dryRun"))
                 return plan;
 
-            // ucx sends the source with its children, so its UCX_ meshes reach the import.
+            // A source with UCX_ children goes with its children, so they reach the import.
             ExportFn withChildren = findExporter("fbx");
-            ExportFn exporter = o.collision == "ucx" ? withChildren : findExporter("fbx:instanceSource");
-            if (!exporter)
-                exporter = withChildren;
-            if (!exporter)
+            ExportFn alone = findExporter("fbx:instanceSource");
+            if (!alone)
+                alone = withChildren;
+            if (!alone)
                 throw CommandError("unrealPlaceInstances: no FBX exporter is registered");
             for (json& grp : plan["groups"])
                 grp["materials"] = grp.contains("gnMesh") ? meshMaterials(g, *meshes[grp["gnMesh"].get<size_t>()])
@@ -885,7 +916,7 @@ void registerPlacementCommands()
                 plan["lights"] = json::array();
             }
 
-            auto job = [plan, meshes, exporter, dir = cacheDir()]() mutable {
+            auto job = [plan, meshes, alone, withChildren, dir = cacheDir()]() mutable {
                 LILA_ZONE_N("Unreal placements");
                 std::shared_ptr<RpcClient> client = Link::get().client();
                 if (!client)
@@ -907,7 +938,8 @@ void registerPlacementCommands()
                     std::string err;
                     const bool written = grp.contains("gnMesh")
                                              ? writeMeshFbx(meshes[grp["gnMesh"].get<size_t>()], asset.substr(asset.rfind('/') + 1), file, &err)
-                                             : exporter({scene::NodeId(grp["sourceId"].get<uint64_t>())}, file, &err);
+                                             : (grp.value("ucxChildren", false) && withChildren ? withChildren : alone)(
+                                                   {scene::NodeId(grp["sourceId"].get<uint64_t>())}, file, &err);
                     if (!written)
                     {
                         grp["error"] = "export failed: " + err;

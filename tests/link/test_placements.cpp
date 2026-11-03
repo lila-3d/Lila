@@ -363,7 +363,9 @@ TEST_CASE("placement collision: options checked, UCX_ proxies go with their sour
     json plan = placementPlan(g, {g.find("Arch")->id()}, o);
     REQUIRE(plan["groups"].size() == 1);
     CHECK(plan["groups"][0]["source"] == "|Arch");
-    CHECK(plan["groups"][0]["collision"] == "complexAsSimple");
+    // auto: a source with UCX_ children collides with them, and goes with its children.
+    CHECK(plan["groups"][0]["collision"] == "ucx");
+    CHECK(plan["groups"][0]["ucxChildren"] == true);
     CHECK(plan["groups"][0]["nanite"] == false);
     o.collision = "ucx";
     o.nanite = true;

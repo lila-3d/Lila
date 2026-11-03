@@ -42,6 +42,16 @@ using scene::Graph;
 using scene::Node;
 using T = ArgType;
 
+/** The stones' custom data slots as placeInstances names them (MasonryShip's customData order), for the holder's LilaInstanceData. */
+json masonryDataSlots()
+{
+    json out = json::array();
+    int slot = 0;
+    for (const char* name : {"random", "height", "age", "damage", "wet", "moss"})
+        out.push_back({{"name", name}, {"slot", slot++}, {"width", 1}});
+    return out;
+}
+
 /** Flags of a set of inputs; with noDefaults every flag is unset unless given (for commands that change only what is given). */
 std::vector<FlagDef> flagsOf(InputSet set, bool noDefaults = false)
 {
@@ -399,7 +409,9 @@ json sendPlan(const json& plan, const std::vector<std::filesystem::path>& files,
                                                             {"label", grp["label"]},
                                                             {"mesh", meshes[grp["asset"].get<size_t>()]},
                                                             {"mode", grp["mode"]},
-                                                            {"placements", grp["placements"]}});
+                                                            {"customData", masonryDataSlots()},
+                                                            {"placements", grp["placements"]}},
+                                            link::placementTimeoutMs(grp["placements"].size()));
         if (r.ok)
             placed += int64_t(grp["placements"].size());
         else
