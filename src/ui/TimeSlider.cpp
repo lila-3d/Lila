@@ -604,10 +604,10 @@ TimeSlider::TimeSlider(QWidget* parent) : QWidget(parent)
     mGraphListener = Graph::current().addListener([this](scene::Change c, scene::NodeId id) {
         if (c == scene::Change::Renamed || c == scene::Change::Reparented)
             return;
-        // Ticks come from the selection and its curves (non-DAG nodes): an orbiting camera's values change neither.
+        // Ticks come from the selection's curves (non-DAG nodes): a DAG node's values never move them.
         const Graph& g = Graph::current();
         if (c == scene::Change::Value)
-            if (const scene::Node* n = g.node(id); n && n->type().dag && !g.isSelected(id))
+            if (const scene::Node* n = g.node(id); n && n->type().dag)
             {
                 if (mRuler->mDrewCache)
                     mRuler->update();

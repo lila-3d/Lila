@@ -35,6 +35,9 @@ public:
     /** Puts the object in or out of a column's group, through its command. */
     bool setMember(const std::string& object, const Column& column, bool in);
 
+protected:
+    void showEvent(QShowEvent* e) override;
+
 private:
     void scheduleRefresh();
     void refresh();
@@ -45,6 +48,7 @@ private:
     std::vector<std::string> mRows;
     int mListener = 0;
     bool mQueued = false;
+    bool mStale = false; // something changed while hidden
     bool mUpdating = false;
 };
 

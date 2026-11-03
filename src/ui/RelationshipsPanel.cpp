@@ -111,14 +111,37 @@ RelationshipsPanel::RelationshipsPanel(QWidget* parent) : QWidget(parent)
             return;
         setMember(mRows[size_t(item->row())], mColumns[size_t(item->column())], item->checkState() == Qt::Checked);
     });
-    mListener = Graph::current().addListener([this](scene::Change, scene::NodeId) { scheduleRefresh(); });
+    mListener = Graph::current().addListener([this](scene::Change c, scene::NodeId id) {
+        // Rows are the selection and columns its groups: an object or camera moving changes neither.
+        if (c == scene::Change::Value)
+        {
+            const Graph& g = Graph::current();
+            const scene::Node* n = g.node(id);
+            const scene::PlugRef* plug = g.changedPlug();
+            if (n && n->type().dag && plug && plug->attr != n->type().attrIndex(scene::lightingChannels::kAttr))
+                return;
+        }
+        scheduleRefresh();
+    });
     refresh();
 }
 
 RelationshipsPanel::~RelationshipsPanel() { Graph::current().removeListener(mListener); }
 
+void RelationshipsPanel::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    if (std::exchange(mStale, false))
+        refresh();
+}
+
 void RelationshipsPanel::scheduleRefresh()
 {
+    if (!isVisible())
+    {
+        mStale = true;
+        return;
+    }
     if (mQueued)
         return;
     mQueued = true;

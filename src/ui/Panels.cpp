@@ -3,10 +3,12 @@
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
 #include "core/PrefStore.h"
+#include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/DisplayLayersPanel.h"
 #include "ui/UndoHistory.h"
 
+#include <QApplication>
 #include <QDockWidget>
 #include <QGuiApplication>
 #include <QScreen>
@@ -25,6 +27,14 @@ std::function<void(const char*)>& showDockHook()
 }
 
 constexpr const char* kDockedByUserPref = "/ui/dockedByUser";
+
+QDockWidget* findDock(const std::string& id)
+{
+    for (QWidget* top : QApplication::topLevelWidgets())
+        if (auto* dock = top->findChild<QDockWidget*>(QString::fromStdString(id)))
+            return dock;
+    return nullptr;
+}
 
 bool dockedByUser(const std::string& id)
 {
@@ -172,6 +182,30 @@ void setToggleDockHook(std::function<void(const char* dockName)> toggleDock)
 
 void registerPanelActions()
 {
+    using namespace ops;
+    if (!find("showPanel"))
+        registerCommand({
+            .name = "showPanel",
+            .doc = "Show a panel by its id, or hide it with hide. With no id, returns every panel id.",
+            .positionalDoc = "panel",
+            .flags = {{.name = "hide", .shortName = "h", .type = ArgType::Bool, .doc = "Hide the panel instead."}},
+            .undoable = false,
+            .run = [](const Args& a) -> json {
+                if (a.positional.empty())
+                    return panels::registry().idsInOrder();
+                const std::string id = a.positional[0].is_string() ? a.positional[0].get<std::string>() : std::string();
+                if (!panels::registry().contains(id))
+                    throw CommandError("showPanel: no panel '" + id + "'");
+                if (a.get<bool>("hide"))
+                {
+                    if (const QDockWidget* dock = findDock(id); dock && dock->isVisible())
+                        panels::toggle(id);
+                }
+                else
+                    panels::show(id);
+                return nullptr;
+            },
+        });
     actions::add({.id = "window.apiReference", .label = "API Reference", .category = "Windows", .run = [] { toggle(kApiReferenceDock); },
                   .doc = "Searchable reference for every command and the lila Python package.",
                   .python = "lila.ui.run_action(\"window.apiReference\")"});
