@@ -227,6 +227,7 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
     const viewportDisplay::SelectionOrderColors order = viewportDisplay::selectionOrderColors(g);
     const glm::vec4 snapColor = themeLinear("wireSnapSurface", kSnapSurfaceWireColor);
     const std::vector<scene::NodeId> snaps = rv ? std::vector<scene::NodeId>() : surfaceSnap::surfaces();
+    const ViewportTool* tool = rv ? nullptr : viewportTools::active();
     std::vector<EmittedDraw> from;
     from.reserve(meshes.size());
     bool rebuilt = false;
@@ -255,7 +256,7 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
         if (aids)
             aids->push_back({e.shown, e.world, {}});
         uint32_t flags = 0;
-        if (selected.contains(id))
+        if (selected.contains(id) && (!tool || tool->showsSelection(id)))
             flags = order.other(id) ? render::DrawSelected | render::DrawSelectedOther : render::DrawSelected;
         else if (preselecting && (mPreselect.node == id || (e.arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
             flags = render::DrawPreselect;

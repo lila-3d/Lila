@@ -585,6 +585,8 @@ public:
     }
 
     bool ownsBrushRadius() const override { return true; }
+    // The shape outlines stand in for the selection, so the clay's dense mesh wire stays off.
+    bool showsSelection(scene::NodeId mesh) const override { return !clay::objectOf(mesh); }
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {

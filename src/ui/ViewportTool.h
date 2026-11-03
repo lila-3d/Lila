@@ -54,6 +54,8 @@ public:
     virtual std::optional<QCursor> cursor() const { return std::nullopt; }
     /** B + LMB/MMB drag sets this tool's brush radius rather than soft select's. */
     virtual bool ownsBrushRadius() const { return false; }
+    /** False draws the selected mesh without its selection wire while this tool is active. */
+    virtual bool showsSelection(scene::NodeId mesh) const { (void)mesh; return true; }
 };
 
 /** An X: the cursor while a modifier click deletes what is under it. */
