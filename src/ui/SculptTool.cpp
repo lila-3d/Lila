@@ -10,6 +10,7 @@
 #include "core/PrefStore.h"
 #include "core/Profile.h"
 #include "scene/Graph.h"
+#include "scene/Isolation.h"
 #include "scene/MeshNodes.h"
 #include "sculpt/SculptSession.h"
 #include "ui/Actions.h"
@@ -67,7 +68,11 @@ SculptSettings loadSettings()
     s.levels = std::clamp(p.value<int>("general", "/sculpt/levels", s.levels), 1, 6);
     s.resolution = std::clamp(p.value<int>("general", "/sculpt/resolution", s.resolution), 16, 2048);
     s.exitMethod = p.value<std::string>("general", "/sculpt/exitMethod", s.exitMethod);
-    s.keepProxy = p.value<bool>("general", "/sculpt/keepProxy", s.keepProxy);
+    s.highPoly = p.value<std::string>("general", "/sculpt/highPoly", s.highPoly);
+    s.highLevel = std::clamp(p.value<int>("general", "/sculpt/highLevel", s.highLevel), 0, 6);
+    s.lowLevel = std::clamp(p.value<int>("general", "/sculpt/lowLevel", s.lowLevel), 0, 6);
+    s.previewWireframe = p.value<bool>("general", "/sculpt/previewWireframe", s.previewWireframe);
+    s.symmetryLine = p.value<bool>("general", "/sculpt/symmetryLine", s.symmetryLine);
     s.shareRadius = p.value<bool>("general", "/sculpt/shareRadius", s.shareRadius);
     s.shareStrength = p.value<bool>("general", "/sculpt/shareStrength", s.shareStrength);
     s.shareStroke = p.value<bool>("general", "/sculpt/shareStroke", s.shareStroke);
@@ -186,9 +191,11 @@ public:
     {
         mControls.setStrengthTap([] {
             SculptSettings& s = sculptSettings();
-            s.wireframe = !s.wireframe;
+            // The preview and the sculpt each keep their own wireframe setting.
+            bool& wire = sculptPreviewing() ? s.previewWireframe : s.wireframe;
+            wire = !wire;
             sculptSettingsChanged();
-            viewportToast::showActive(s.wireframe ? "Wireframe on" : "Wireframe off", 1000);
+            viewportToast::showActive(wire ? "Wireframe on" : "Wireframe off", 1000);
         });
         mControls.activate();
         mListener = sculpt::addListener([] { viewportTools::requestRedraw(); });
@@ -215,6 +222,8 @@ public:
         auto s = sculpt::active();
         if (!s || !scene::Graph::current().node(s->node))
             return true;
+        if (sculptPreviewing())
+            return false;
         Hit hit;
         const bool line = sculptSettings().stroke.mode == brush::StrokeMode::Line && sculptSettings().brush != sculpt::Brush::Grab;
         if (!surfaceHit(*s, e->position(), view, hit) && !line)
@@ -257,8 +266,37 @@ public:
         case Qt::Key_Escape:
             QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
             return true;
+        case Qt::Key_V:
+            if ((e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) != Qt::ShiftModifier)
+                return false;
+            if (!e->isAutoRepeat())
+                QTimer::singleShot(0, [] { actions::run(json("sculpt.previewLowPoly")); });
+            return true;
         default: return false;
         }
+    }
+
+    /** ZBrush's level keys while a subdivision sculpt is open: D finer, Shift+D coarser, Ctrl+D adds a level. Shift+V previews the low poly. */
+    bool hotkey(const QKeyEvent& e, std::string_view) override
+    {
+        if (e.key() == Qt::Key_V && e.type() == QEvent::KeyPress && sculpt::active() &&
+            (e.modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) == Qt::ShiftModifier)
+        {
+            if (!e.isAutoRepeat())
+                QTimer::singleShot(0, [] { actions::run(json("sculpt.previewLowPoly")); });
+            return true;
+        }
+        auto s = sculpt::active();
+        if (!s || !s->stack || e.key() != Qt::Key_D || e.type() != QEvent::KeyPress)
+            return false;
+        const Qt::KeyboardModifiers mods = e.modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
+        const char* id = mods == Qt::NoModifier ? "sculpt.levelUp" : mods == Qt::ShiftModifier ? "sculpt.levelDown"
+                       : mods == Qt::ControlModifier ? "sculpt.addLevel" : nullptr;
+        if (!id)
+            return false;
+        if (!e.isAutoRepeat())
+            QTimer::singleShot(0, [id] { actions::run(json(id)); });
+        return true;
     }
 
     void draw(render::FrameState&, OverlayPainter& p, const ViewInfo& view) override
@@ -271,6 +309,11 @@ public:
         if (!n)
         {
             drawToolMessage(p, view, "Sculpt: select a mesh and Enter Sculpt");
+            return;
+        }
+        if (sculptPreviewing())
+        {
+            drawToolMessage(p, view, QString("Previewing %1's low poly: Preview Low Poly again to sculpt").arg(QString::fromStdString(n->name())));
             return;
         }
         // Shift smooths and Ctrl inverts the next stroke, so the message names the brush that stroke would use.
@@ -287,8 +330,10 @@ public:
             name += " (not loaded)";
         if (invert)
             name += " (inverted)";
+        const QString where = s->stack ? QString("%1 level %2/%3").arg(QString::fromStdString(n->name())).arg(s->level).arg(s->stack->top())
+                                       : QString::fromStdString(n->name());
         drawToolMessage(p, view, QString("Sculpt %1: %2   radius %3 px   strength %4%5")
-                              .arg(QString::fromStdString(n->path()), name)
+                              .arg(where, name)
                               .arg(int(std::lround(st.stroke.radius)))
                               .arg(st.stroke.strength, 0, 'f', 2)
                               .arg(s->sculpt.symmetric() ? "   symmetry" : ""));
@@ -533,7 +578,24 @@ public:
         // The mesh itself is hidden while its proxy stands in for it. Its draw is found by its cached render copy.
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         auto shown = renderMeshFor(smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth));
-        std::erase_if(s.meshes.edit(), [&](const render::MeshDraw& d) { return shown && d.mesh && (d.mesh == shown || d.mesh->shareVertices == shown); });
+        auto isShown = [&](const render::MeshDraw& d) { return shown && d.mesh && (d.mesh == shown || d.mesh->shareVertices == shown); };
+        if (sculptPreviewing())
+        {
+            // The mesh's own draw, its materials kept, with the low poly Exit would leave.
+            auto low = renderMeshFor(previewMesh(*session, *n));
+            for (render::MeshDraw& d : s.meshes.edit())
+                if (isShown(d))
+                {
+                    d.mesh = low;
+                    if (sculptSettings().previewWireframe)
+                    {
+                        d.flags |= render::DrawWire;
+                        d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, 0.8f);
+                    }
+                }
+            return;
+        }
+        std::erase_if(s.meshes.edit(), isShown);
 
         render::MeshDraw d;
         d.mesh = session->sculpt.renderMesh();
@@ -562,6 +624,32 @@ public:
     }
 
 private:
+    /** The mesh with the positions Exit Sculpt would give it, rebuilt when the sculpt or the Low poly choice changes. */
+    scene::MeshPtr previewMesh(sculpt::Session& session, const scene::Node& node)
+    {
+        const std::string& method = sculptSettings().exitMethod;
+        const int level = sculptSettings().lowLevel;
+        const int64_t symmetry = node.as<int64_t>(scene::MeshNode::kSymmetry);
+        if (mPreview && &session == mPreviewFor && session.sculpt.version() == mPreviewVersion && method == mPreviewMethod &&
+            symmetry == mPreviewSymmetry && level == mPreviewLevel)
+            return mPreview;
+        mPreviewFor = &session;
+        mPreviewVersion = session.sculpt.version();
+        mPreviewMethod = method;
+        mPreviewSymmetry = symmetry;
+        mPreviewLevel = level;
+        try
+        {
+            mPreview = std::make_shared<geo::Mesh>(sculpt::lowPoly(session, method, level));
+        }
+        catch (const std::exception& e)
+        {
+            log::warn("Sculpt low poly preview: {}", e.what());
+            mPreview = std::make_shared<geo::Mesh>(session.cage);
+        }
+        return mPreview;
+    }
+
     /** The cage as Exit Sculpt will leave it, refitted as the sculpt changes. */
     void addCage(render::FrameState& s, sculpt::Session& session, const scene::Node& node, const glm::dmat4& world)
     {
@@ -660,6 +748,12 @@ private:
         s.tris3d.insert(s.tris3d.end(), mMaskVerts.begin(), mMaskVerts.end());
     }
 
+    const sculpt::Session* mPreviewFor = nullptr;
+    uint64_t mPreviewVersion = 0;
+    std::string mPreviewMethod;
+    int64_t mPreviewSymmetry = -1;
+    int mPreviewLevel = 0;
+    scene::MeshPtr mPreview;
     const sculpt::Session* mCageFor = nullptr;
     uint64_t mCageVersion = 0;
     std::string mCageMethod;
@@ -700,7 +794,11 @@ void sculptSettingsChanged()
     p.set("general", "/sculpt/levels", s.levels);
     p.set("general", "/sculpt/resolution", s.resolution);
     p.set("general", "/sculpt/exitMethod", s.exitMethod);
-    p.set("general", "/sculpt/keepProxy", s.keepProxy);
+    p.set("general", "/sculpt/highPoly", s.highPoly);
+    p.set("general", "/sculpt/highLevel", s.highLevel);
+    p.set("general", "/sculpt/lowLevel", s.lowLevel);
+    p.set("general", "/sculpt/previewWireframe", s.previewWireframe);
+    p.set("general", "/sculpt/symmetryLine", s.symmetryLine);
     p.set("general", "/sculpt/shareRadius", s.shareRadius);
     p.set("general", "/sculpt/shareStrength", s.shareStrength);
     p.set("general", "/sculpt/shareStroke", s.shareStroke);
@@ -802,8 +900,43 @@ bool sculptToolActive()
     return t && std::string_view(t->name()) == "sculpt";
 }
 
+namespace
+{
+bool gPreview = false;
+/** The preview turned the active view's isolation on, so it turns it off again. */
+bool gPreviewIsolated = false;
+} // namespace
+
+bool sculptPreviewing() { return gPreview && sculpt::active(); }
+
+void setSculptPreview(bool on)
+{
+    auto session = sculpt::active();
+    on = on && session;
+    if (on == gPreview)
+        return;
+    gPreview = on;
+    const scene::isolation::Set* iso = scene::isolation::active();
+    scene::Graph& g = scene::Graph::current();
+    if (on && !(iso && iso->active()))
+    {
+        if (scene::Node* n = g.node(session->node); n && !g.isSelected(n->id()))
+            ops::execute("select", {{"args", {n->path()}}}, CallSource::UI);
+        actions::run(json("viewport.isolate"));
+        gPreviewIsolated = true;
+    }
+    else if (!on && std::exchange(gPreviewIsolated, false) && iso && iso->active())
+        actions::run(json("viewport.isolate"));
+    sculpt::notify();
+    viewportTools::requestRedraw();
+}
+
 void installSculptDrawer()
 {
+    sculpt::addListener([] {
+        if (gPreview && !sculpt::active())
+            setSculptPreview(false);
+    });
     sculpt::setPivotHandler([](const std::optional<glm::dvec3>& p) {
         if (sculptToolActive() && PrefStore::get().value<bool>("general", viewportTools::kOrbitUndoPref, true))
             viewportTools::setOrbitPoint(p);

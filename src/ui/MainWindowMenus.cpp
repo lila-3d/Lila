@@ -204,7 +204,8 @@ void MainWindow::buildMenus()
                                   "viewport.vertexColors.unlit", "viewport.toggleBackfaceCulling"});
 
     menu("Sculpt", "Sculpt", Area::MenuBar, {}, "", modeling);
-    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Shape",
+    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.previewLowPoly", "sculpt.duplicateLowPoly", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Levels",
+                                 "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.deleteHigher", "#Shape",
                                  "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
 
     // The modifier kinds fill in above these rows each time it opens.

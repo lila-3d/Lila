@@ -40,10 +40,12 @@ TEST_CASE("outliner row icons")
 {
     run("newScene");
     run("createNode", {{"args", {"mesh"}}, {"name", "body"}});
-    run("createNode", {{"args", {"mesh"}}, {"name", "body_sculptProxy"}});
+    run("createNode", {{"args", {"mesh"}}, {"name", "rock_high"}});
     scene::Graph& g = scene::Graph::current();
+    g.createNode(*scene::types::find("mesh"), "body_high", g.find("body")->id(), false);
     CHECK(outliner::iconName(*g.find("body")) == "cube");
-    CHECK(outliner::iconName(*g.find("body_sculptProxy")) == "brush");
+    CHECK(outliner::iconName(*g.find("body_high")) == "brush");
+    CHECK(outliner::iconName(*g.find("rock_high")) == "cube");
 }
 
 TEST_CASE("outliner context menu targets")

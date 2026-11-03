@@ -3,6 +3,8 @@
 #include "ui/UvLive.h"
 #include "uv/Chart.h"
 #include "uv/Uv.h"
+#include "ui/SculptTool.h"
+#include "sculpt/SculptSession.h"
 
 #include <limits>
 
@@ -346,6 +348,8 @@ void ViewportWidget::drawObjectSymmetryEdges(render::FrameState& s)
     {
         scene::Node* n = g.node(id);
         if (!n || !n->type().isA("mesh") || !scene::effectivelyVisible(g, id) || !isolate::shows(&mIsolation, id))
+            continue;
+        if (auto sculpting = sculpt::active(); sculpting && sculpting->node == id && !sculptSettings().symmetryLine)
             continue;
         scene::MeshPtr mesh = scene::modifiers::cage(g, id);
         if (!mesh)

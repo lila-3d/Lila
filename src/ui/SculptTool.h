@@ -43,7 +43,9 @@ struct SculptSettings
     bool shareStrength = false;
     bool shareStroke = false;
     bool frontFacesOnly = false;
-    bool showCage = true;
+    bool showCage = false;
+    /** The red line along the mesh's mirror plane while sculpting. */
+    bool symmetryLine = true;
     /** The sculpt mesh's wireframe (not the cage's). */
     bool wireframe = false;
     /** How strongly the wireframe draws over the surface, 0.05 to 1. */
@@ -53,11 +55,26 @@ struct SculptSettings
     std::string proxyMode = "subdivide";
     int levels = 2;
     int resolution = 192;
-    std::string exitMethod = "fit";
-    bool keepProxy = false;
+    std::string exitMethod = "closest";
+    /** sculptExit's high: highest, belowHighest, level or none. */
+    std::string highPoly = "highest";
+    /** sculptExit's highLevel. */
+    int highLevel = 1;
+    /** sculptExit's lowLevel, and the level Duplicate Low Poly and the preview use. */
+    int lowLevel = 0;
+    /** The low poly preview's wireframe. */
+    bool previewWireframe = false;
 };
 
 LILA_UI_API SculptSettings& sculptSettings();
+
+/**
+ * Previewing the low poly: sculpt mode draws the mesh as Exit Sculpt would leave it, with its wireframe, in place of the
+ * sculpt, and isolates it in the active view (unless that view already isolates something). Strokes wait until it ends.
+ * It ends with the session.
+ */
+LILA_UI_API bool sculptPreviewing();
+LILA_UI_API void setSculptPreview(bool on);
 /** Saves the settings and tells listeners (the panel, the viewports). */
 LILA_UI_API void sculptSettingsChanged();
 LILA_UI_API int addSculptSettingsListener(std::function<void()> fn);
@@ -79,6 +96,7 @@ LILA_UI_API std::vector<std::pair<std::string, std::string>> sculptMaterials();
  *   F or B held + drag   brush radius (F tapped still frames the selection)
  *   M or Shift+F + drag  brush strength (or B held + RMB drag)
  *   Shift+F tapped       the sculpt mesh's wireframe on or off
+ *   Shift+V              preview the low poly Exit would leave (Preview Low Poly)
  *   [ ]                  radius smaller / larger
  *   Esc                  leaves the tool; the session stays open until Exit Sculpt
  *

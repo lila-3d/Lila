@@ -244,16 +244,16 @@ TEST_CASE("polypaint survives exit onto the cage and the kept proxy, and resumes
 
     CHECK_THROWS(ops::execute("sculptStroke", {{"brush", "noSuchBrush"}, {"dabs", json::array({dab})}}));
 
-    ops::execute("sculptExit", {{"keepProxy", true}});
+    ops::execute("sculptExit", json::object());
     const geo::Mesh& cage = storedPaintMesh("paintCube");
     REQUIRE(geo::colors::has(cage, sculpt::kColorSet));
     bool red = false;
     for (const glm::vec4& c : geo::colors::pointColors(cage, sculpt::kColorSet))
         red |= c.r > 0.5f && c.g < 0.5f;
     CHECK(red);
-    scene::Node* kept = scene::Graph::current().find("paintCube_sculptProxy");
+    scene::Node* kept = scene::Graph::current().find("paintCube_high");
     REQUIRE(kept);
-    CHECK(geo::colors::has(storedPaintMesh("paintCube_sculptProxy"), sculpt::kColorSet));
+    CHECK(geo::colors::has(storedPaintMesh("paintCube_high"), sculpt::kColorSet));
 
     ops::execute("sculptEnter", {{"args", {"paintCube"}}});
     REQUIRE(sculpt::active());

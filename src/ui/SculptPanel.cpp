@@ -16,6 +16,7 @@
 #include "ui/LocateFlash.h"
 #include "ui/DockSidebar.h"
 #include "ui/FileDialog.h"
+#include "ui/FixedRowLayout.h"
 #include "ui/FlowLayout.h"
 #include "ui/Icons.h"
 #include "ui/ModelingToolkit.h"
@@ -147,7 +148,10 @@ QDockWidget* sculptDock(bool create)
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(new SculptPanel(scroll));
     dock->setWidget(scroll);
+    setDockDocs(dock, "sculpting");
     mw->addDockWidget(Qt::RightDockWidgetArea, dock);
+    // Wide enough for the brush grid with its labels and the session rows without squeezing.
+    mw->resizeDocks({dock}, {std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 74)}, Qt::Horizontal);
     if (auto* toolkit = mw->findChild<QDockWidget*>(kModelingToolkitDock); toolkit && !toolkit->isFloating() && toolkit->isVisible())
         mw->tabifyDockWidget(toolkit, dock);
     return dock;
@@ -194,7 +198,8 @@ void exitSculpt()
     if (!sculpt::active())
         return;
     const SculptSettings& st = sculptSettings();
-    if (runActionWithOptions("sculptExit", {{"method", st.exitMethod}, {"keepProxy", st.keepProxy}}) && sculptToolActive())
+    if (runActionWithOptions("sculptExit", {{"method", st.exitMethod}, {"lowLevel", st.lowLevel}, {"high", st.highPoly}, {"highLevel", st.highLevel}}) &&
+        sculptToolActive())
         viewportTools::set(nullptr);
 }
 
@@ -223,45 +228,113 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     auto* sform = new QFormLayout(session);
     mStatus = new QLabel(session);
     mStatus->setWordWrap(true);
+    mStatus->setObjectName("sculptStatus");
     sform->addRow(mStatus);
     mMode = new QComboBox(session);
-    mMode->addItem("Subdivide", "subdivide");
+    mMode->addItem("Subdivision levels", "subdivide");
     mMode->addItem("Voxel remesh", "remesh");
-    mMode->addItem("Direct (no proxy)", "direct");
-    mMode->setToolTip("Subdivide: a Catmull-Clark proxy the cage is fitted back to exactly. Voxel remesh: a uniform proxy, fitted "
-                      "back by projection. Direct: sculpt the mesh itself.");
+    mMode->addItem("Mesh itself", "direct");
+    mMode->setItemData(0, "A subdivided copy with levels to step between. Exit fits the mesh back to it exactly.", Qt::ToolTipRole);
+    mMode->setItemData(1, "An even voxel remesh, free of the mesh's topology. Exit projects the mesh onto it.", Qt::ToolTipRole);
+    mMode->setItemData(2, "The mesh's own points, no copy.", Qt::ToolTipRole);
+    mMode->setToolTip("What you sculpt on. The mesh keeps its topology and UVs whichever you pick.");
     setComboDefault(mMode, mMode->findData(QString::fromStdString(defaults.proxyMode)));
-    sform->addRow("Proxy", mMode);
+    sform->addRow("Sculpt on", mMode);
     mLevels = new QSpinBox(session);
     mLevels->setRange(1, 6);
-    mLevels->setToolTip("Subdivision levels: each one has four times the faces.");
+    mLevels->setToolTip("Subdivision levels to start with; each has four times the faces. Add or step between them while sculpting.");
     setSpinDefault(mLevels, defaults.levels);
     sform->addRow("Levels", mLevels);
+    mLevelRow = new QWidget(session);
+    mLevelRow->setObjectName("sculptLevelRow");
+    {
+        auto* row = new QHBoxLayout(mLevelRow);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(2);
+        mLevelDown = actionButton("sculpt.levelDown", "chevron-down", QString(), mLevelRow);
+        mLevelUp = actionButton("sculpt.levelUp", "chevron-up", QString(), mLevelRow);
+        mLevelLabel = new QLabel(mLevelRow);
+        mLevelLabel->setMinimumWidth(QFontMetrics(mLevelLabel->font()).horizontalAdvance("0 / 0  "));
+        mLevelLabel->setAlignment(Qt::AlignCenter);
+        mLevelLabel->setObjectName("sculptLevel");
+        mAddLevel = actionButton("sculpt.addLevel", "square-plus", "Add", mLevelRow);
+        mDeleteHigher = actionButton("sculpt.deleteHigher", "trash-x", "Delete Higher", mLevelRow);
+        row->addWidget(mLevelDown);
+        row->addWidget(mLevelLabel);
+        row->addWidget(mLevelUp);
+        row->addWidget(mAddLevel);
+        row->addWidget(mDeleteHigher);
+        row->addStretch(1);
+    }
+    sform->addRow("Level", mLevelRow);
     mResolution = new QSpinBox(session);
     mResolution->setRange(16, 2048);
-    mResolution->setToolTip("Voxels along the longest side, for the voxel remesh proxy.");
+    mResolution->setToolTip("Voxels along the longest side of the remesh.");
     setSpinDefault(mResolution, defaults.resolution);
     sform->addRow("Resolution", mResolution);
     mExitMethod = new QComboBox(session);
-    mExitMethod->addItem("Fit subdivision", "fit");
-    mExitMethod->addItem("Closest point", "closest");
-    mExitMethod->addItem("Along normal", "normal");
-    mExitMethod->setToolTip("How Exit Sculpt moves the cage: fit solves for the cage whose subdivision matches the sculpt; the "
-                            "others project each cage point onto it.");
+    mExitMethod->addItem("Game mesh", "closest");
+    mExitMethod->addItem("Game mesh, along normals", "normal");
+    mExitMethod->addItem("Subdivision cage", "fit");
+    mExitMethod->setItemData(0, "Each point moves to the nearest spot on the sculpt, so the low poly lies on it. Bake normals from the "
+                                "high poly onto it.", Qt::ToolTipRole);
+    mExitMethod->setItemData(1, "Each point moves straight in or out along its normal onto the sculpt. Try it when Game mesh slides "
+                                "points sideways into a crease.", Qt::ToolTipRole);
+    mExitMethod->setItemData(2, "Points float off the sculpt so that subdividing the low poly gives the sculpt back. For a mesh you "
+                                "subdivide afterwards, not one you bake.", Qt::ToolTipRole);
+    mExitMethod->setToolTip("What Exit makes of the mesh you entered with. It keeps its topology and UVs either way. Show cage previews it.");
     setComboDefault(mExitMethod, mExitMethod->findData(QString::fromStdString(defaults.exitMethod)));
-    sform->addRow("Exit by", mExitMethod);
-    mKeepProxy = new QCheckBox("Keep sculpt proxy", session);
-    mKeepProxy->setToolTip("Store the sculpt as a hidden child mesh so Enter Sculpt can continue from it.");
-    setCheckDefault(mKeepProxy, defaults.keepProxy);
-    sform->addRow(mKeepProxy);
+    {
+        auto* lowRow = new QWidget(session);
+        auto* row = new QHBoxLayout(lowRow);
+        row->setContentsMargins(0, 0, 0, 0);
+        mExitMethod->setParent(lowRow);
+        mLowLevel = new QSpinBox(lowRow);
+        mLowLevel->setRange(0, 6);
+        mLowLevel->setPrefix("Level ");
+        mLowLevel->setToolTip("The level the low poly comes out at. Level 0 keeps the mesh's topology; each level above subdivides "
+                              "it once more, UVs included.");
+        setSpinDefault(mLowLevel, defaults.lowLevel);
+        auto* duplicate = actionButton("sculpt.duplicateLowPoly", "copy", QString(), lowRow);
+        row->addWidget(mExitMethod, 1);
+        row->addWidget(mLowLevel);
+        row->addWidget(duplicate);
+        sform->addRow("Low poly", lowRow);
+    }
+    {
+        auto* highRow = new QWidget(session);
+        auto* row = new QHBoxLayout(highRow);
+        row->setContentsMargins(0, 0, 0, 0);
+        mHighPoly = new QComboBox(highRow);
+        mHighPoly->addItem("Highest level", "highest");
+        mHighPoly->addItem("Below highest", "belowHighest");
+        mHighPoly->addItem("Level", "level");
+        mHighPoly->addItem("Don't keep", "none");
+        mHighPoly->setItemData(1, "Keeps a level some steps below the highest: a lighter high poly to bake from.", Qt::ToolTipRole);
+        mHighPoly->setItemData(3, "Keeps nothing: the sculpt and its levels are gone after Exit.", Qt::ToolTipRole);
+        mHighPoly->setToolTip("Exit keeps the sculpt as the hidden child <mesh>_high, at this level, to bake from. Every level "
+                              "comes back the next time you sculpt the mesh.");
+        setComboDefault(mHighPoly, mHighPoly->findData(QString::fromStdString(defaults.highPoly)));
+        mHighLevel = new QSpinBox(highRow);
+        mHighLevel->setRange(0, 6);
+        setSpinDefault(mHighLevel, defaults.highLevel);
+        row->addWidget(mHighPoly, 1);
+        row->addWidget(mHighLevel);
+        sform->addRow("High poly", highRow);
+    }
     auto* buttons = new QHBoxLayout;
     mEnter = new QPushButton(icon("door-enter"), "Enter", session);
     mExit = new QPushButton(icon("door-exit"), "Exit", session);
+    mPreview = new QPushButton(icon("eye"), "Preview", session);
+    mPreview->setObjectName("sculptPreview");
+    mPreview->setCheckable(true);
+    mPreview->setToolTip("Show the low poly Exit would leave, isolated, before you commit. Again to sculpt on. Shift+V");
     mCancel = new QPushButton("Cancel", session);
-    mEnter->setToolTip("Enter Sculpt on the selected mesh.");
-    mExit->setToolTip("Exit Sculpt, moving the cage onto the sculpt.");
-    mCancel->setToolTip("Leave sculpt mode without changing the mesh.");
+    mEnter->setToolTip("Sculpt the selected mesh.");
+    mExit->setToolTip("Move the mesh onto the sculpt and leave sculpt mode.");
+    mCancel->setToolTip("Leave sculpt mode; the mesh stays as it was.");
     buttons->addWidget(mEnter);
+    buttons->addWidget(mPreview);
     buttons->addWidget(mExit);
     buttons->addWidget(mCancel);
     sform->addRow(buttons);
@@ -269,7 +342,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
 
     // Brushes
     mBrushBox = new QGroupBox("Brushes", this);
-    mBrushFlow = new FlowLayout(3);
+    mBrushFlow = new FixedRowLayout(5, 3);
     mBrushBox->setLayout(mBrushFlow);
     mBrushes = new QButtonGroup(this);
     mBrushes->setExclusive(true);
@@ -365,9 +438,13 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     shareRow->addStretch(1);
     bform->addRow("Shared", shareRow);
     mShowCage = new QCheckBox("Show cage", settingsBox);
-    mShowCage->setToolTip("Draw the low-poly cage over the sculpt as Exit will leave it, refitted as you sculpt.");
+    mShowCage->setToolTip("Draw the low poly over the sculpt as Exit will leave it, refitted as you sculpt.");
     setCheckDefault(mShowCage, defaults.showCage);
     bform->addRow(mShowCage);
+    mSymmetryLine = new QCheckBox("Symmetry line", settingsBox);
+    mSymmetryLine->setToolTip("The red line along the mesh's mirror plane.");
+    setCheckDefault(mSymmetryLine, defaults.symmetryLine);
+    bform->addRow(mSymmetryLine);
     col->addWidget(settingsBox);
     mStrokeOptions = new brush::ui::StrokeOptions(this, []() -> brush::BrushSettings& { return sculptSettings().stroke; },
                                                   [] { sculptSettingsChanged(); });
@@ -494,7 +571,13 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
         sculptSettings().exitMethod = mExitMethod->currentData().toString().toStdString();
         changed();
     });
-    connect(mKeepProxy, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().keepProxy = on; changed(); });
+    connect(mHighPoly, &QComboBox::currentIndexChanged, this, [this, changed](int) {
+        sculptSettings().highPoly = mHighPoly->currentData().toString().toStdString();
+        changed();
+    });
+    connect(mHighLevel, &QSpinBox::valueChanged, this, [changed](int v) { sculptSettings().highLevel = v; changed(); });
+    connect(mLowLevel, &QSpinBox::valueChanged, this, [changed](int v) { sculptSettings().lowLevel = v; changed(); });
+    connect(mSymmetryLine, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().symmetryLine = on; changed(); });
     connect(mSymmetry, &QComboBox::activated, this, [this](int) {
         std::vector<std::string> targets;
         if (auto s = sculpt::active(); s && scene::Graph::current().node(s->node))
@@ -506,6 +589,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     });
     connect(mEnter, &QPushButton::clicked, this, [] { actions::run(json("sculpt.enter")); });
     connect(mExit, &QPushButton::clicked, this, [] { actions::run(json("sculpt.exit")); });
+    connect(mPreview, &QPushButton::clicked, this, [] { actions::run(json("sculpt.previewLowPoly")); });
     connect(mCancel, &QPushButton::clicked, this, [] { actions::run(json("sculpt.cancel")); });
 
     mSettingsListener = addSculptSettingsListener([this] { syncFromSettings(); });
@@ -552,7 +636,7 @@ SculptPanel::~SculptPanel()
     scene::Graph::current().removeListener(mGraphListener);
 }
 
-QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, const QString& doc, FlowLayout* flow)
+QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, const QString& doc, QLayout* flow)
 {
     flow = flow ? flow : mBrushFlow;
     auto* btn = new QToolButton(flow == mBrushFlow ? mBrushBox : mPresetBox);
@@ -560,7 +644,8 @@ QToolButton* SculptPanel::brushButton(const QIcon& ic, const QString& label, con
     btn->setText(label);
     btn->setCheckable(true);
     btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    btn->setMinimumWidth(66);
+    if (flow != mBrushFlow)
+        btn->setMinimumWidth(66);
     btn->setToolTip(doc.isEmpty() ? label : QString("%1\n%2").arg(label, doc));
     flow->addWidget(btn);
     return btn;
@@ -720,7 +805,7 @@ void SculptPanel::syncFromSettings()
 {
     const SculptSettings& s = sculptSettings();
     QSignalBlocker b1(mRadius), b2(mStrength), b3(mSpacing), b4(mFalloff), b5(mFrontFaces), b6(mShowCage), b7(mMode), b8(mLevels),
-        b9(mResolution), b10(mExitMethod), b11(mKeepProxy), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
+        b9(mResolution), b10(mExitMethod), b11(mHighPoly), b19(mHighLevel), b20(mSymmetryLine), b21(mLowLevel), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
         b16(mWireframe), b17(mMaterial), b18(mWireOpacity);
     mShareRadius->setChecked(s.shareRadius);
     mShareStrength->setChecked(s.shareStrength);
@@ -759,7 +844,11 @@ void SculptPanel::syncFromSettings()
     mLevels->setValue(s.levels);
     mResolution->setValue(s.resolution);
     mExitMethod->setCurrentIndex(std::max(0, mExitMethod->findData(QString::fromStdString(s.exitMethod))));
-    mKeepProxy->setChecked(s.keepProxy);
+    mHighPoly->setCurrentIndex(std::max(0, mHighPoly->findData(QString::fromStdString(s.highPoly))));
+    mHighLevel->setValue(s.highLevel);
+    mLowLevel->setValue(s.lowLevel);
+    mSymmetryLine->setChecked(s.symmetryLine);
+    refreshSession();
 }
 
 void SculptPanel::refreshSession()
@@ -767,18 +856,77 @@ void SculptPanel::refreshSession()
     scene::Graph& g = scene::Graph::current();
     auto s = sculpt::active();
     scene::Node* n = s ? g.node(s->node) : nullptr;
+    const bool levels = n && s->stack;
+    bool resuming = false;
+    int resumingLevels = 0;
     if (n)
     {
-        const char* modes[] = {"subdivided", "voxel remeshed", "direct"};
-        mStatus->setText(QString("Sculpting %1: %2, %L3 faces").arg(QString::fromStdString(n->path()), modes[int(s->mode)]).arg(s->sculpt.mesh().numFaces()));
+        const QString name = QString::fromStdString(n->name());
+        const int faces = int(s->sculpt.mesh().numFaces());
+        if (levels)
+            mStatus->setText(QString("Sculpting %1: level %2 of %3, %L4 faces").arg(name).arg(s->level).arg(s->stack->top()).arg(faces));
+        else
+            mStatus->setText(QString("Sculpting %1: %2, %L3 faces").arg(name, s->mode == sculpt::ProxyMode::Remesh ? "voxel remesh" : "the mesh itself").arg(faces));
     }
     else
     {
         auto meshes = selectedMeshes();
-        mStatus->setText(meshes.empty() ? "Select a mesh, then Enter." : QString("Ready to sculpt %1.").arg(QString::fromStdString(meshes.back())));
+        scene::Node* m = meshes.empty() ? nullptr : g.find(meshes.back());
+        const std::optional<sculpt::KeptSculpt> kept = m ? sculpt::keptSculpt(*m) : std::nullopt;
+        resuming = kept.has_value();
+        resumingLevels = kept ? kept->levels : 0;
+        if (!m)
+            mStatus->setText("Select a mesh, then Enter.");
+        else if (kept && kept->levels > 0)
+            mStatus->setText(QString("Ready: %1, resumes level %2 of %3").arg(QString::fromStdString(m->name()))
+                                 .arg(kept->level >= 0 ? kept->level : kept->levels).arg(kept->levels));
+        else if (kept)
+            mStatus->setText(QString("Ready: %1, resumes its sculpt").arg(QString::fromStdString(m->name())));
+        else
+            mStatus->setText(QString("Ready: %1").arg(QString::fromStdString(m->name())));
+    }
+    // How a sculpt starts is fixed once it has; the level row replaces the starting levels while it runs.
+    const std::string& mode = sculptSettings().proxyMode;
+    mMode->setEnabled(!n);
+    mLevels->setEnabled(!n && !resuming && mode == "subdivide");
+    const std::string& high = sculptSettings().highPoly;
+    mHighLevel->setVisible(high == "belowHighest" || high == "level");
+    mHighLevel->setPrefix(high == "level" ? "Level " : "");
+    mHighLevel->setSuffix(high == "belowHighest" ? " below" : "");
+    // Levels that exist: the open sculpt's, else the kept one's, else the ones Enter will make.
+    const int top = levels ? s->stack->top() : resumingLevels > 0 ? resumingLevels : mode == "subdivide" ? sculptSettings().levels : 0;
+    {
+        QSignalBlocker b1(mHighLevel), b2(mLowLevel);
+        if (high == "level")
+            mHighLevel->setRange(std::min(1, top), top);
+        else
+            mHighLevel->setRange(0, std::max(top - 1, 0));
+        mLowLevel->setRange(0, top);
+    }
+    mLowLevel->setEnabled(top > 0);
+    // Sculpting the mesh itself leaves nothing to keep.
+    mHighPoly->setEnabled(n ? s->mode != sculpt::ProxyMode::Direct : mode != "direct");
+    mResolution->setEnabled(!n && mode == "remesh");
+    if (auto* form = qobject_cast<QFormLayout*>(mLevelRow->parentWidget()->layout()))
+    {
+        form->setRowVisible(mLevels, !levels);
+        form->setRowVisible(mLevelRow, levels);
+    }
+    if (levels)
+    {
+        mLevelLabel->setText(QString("%1 / %2").arg(s->level).arg(s->stack->top()));
+        mLevelDown->setEnabled(s->level > 0);
+        mLevelUp->setEnabled(s->level < s->stack->top());
+        mAddLevel->setEnabled(s->stack->top() < 6);
+        mDeleteHigher->setEnabled(s->level > 0 && s->level < s->stack->top());
     }
     mEnter->setEnabled(!n && !selectedMeshes().empty());
     mExit->setEnabled(n != nullptr);
+    mPreview->setEnabled(n != nullptr);
+    {
+        QSignalBlocker block(mPreview);
+        mPreview->setChecked(sculptPreviewing());
+    }
     mCancel->setEnabled(n != nullptr);
 
     scene::Node* sym = n;
@@ -855,14 +1003,47 @@ void registerSculptUi()
                   .label = "Enter Sculpt",
                   .category = "Sculpt",
                   .run = enterSculpt,
-                  .doc = "Build a high-resolution sculpt proxy of the selected mesh's cage (settings in the Sculpt panel).",
+                  .doc = "Sculpt the selected mesh on a high-resolution copy; the mesh keeps its topology (settings in the Sculpt panel).",
                   .python = ops::toPython("sculptEnter", {{"mode", "subdivide"}, {"levels", 2}})});
+    auto levelAction = [](std::string id, std::string label, std::string command, json args, std::string doc) {
+        actions::add({.id = id,
+                      .label = label,
+                      .category = "Sculpt",
+                      .run = [command, args] { runActionWithOptions(command.c_str(), args); },
+                      .enabled = [] { auto s = sculpt::active(); return s && s->stack; },
+                      .doc = doc,
+                      .python = ops::toPython(command, args)});
+    };
+    levelAction("sculpt.levelUp", "Sculpt Level Up", "sculptLevel", {{"step", 1}}, "Sculpt the next finer subdivision level (D while sculpting).");
+    levelAction("sculpt.levelDown", "Sculpt Level Down", "sculptLevel", {{"step", -1}},
+                "Sculpt the next coarser level; finer detail follows what you change there (Shift+D while sculpting).");
+    levelAction("sculpt.addLevel", "Add Sculpt Level", "sculptAddLevel", json::object(), "Subdivide the finest level once more (Ctrl+D while sculpting).");
+    levelAction("sculpt.deleteHigher", "Delete Higher Levels", "sculptDeleteHigher", json::object(),
+                "Delete the levels above this one and their detail.");
+    actions::add({.id = "sculpt.previewLowPoly",
+                  .label = "Preview Low Poly",
+                  .category = "Sculpt",
+                  .run = [] { setSculptPreview(!sculptPreviewing()); },
+                  .enabled = [] { return sculpt::active() != nullptr; },
+                  .doc = "Show the mesh as Exit Sculpt would leave it, with the Low poly choice, isolated in the view; again to sculpt on (Shift+V while sculpting).",
+                  .python = "lila.ui.run_action(\"sculpt.previewLowPoly\")",
+                  .checked = [] { return sculptPreviewing(); }});
+    actions::add({.id = "sculpt.duplicateLowPoly",
+                  .label = "Duplicate Low Poly",
+                  .category = "Sculpt",
+                  .run = [] {
+                      const SculptSettings& st = sculptSettings();
+                      runActionWithOptions("sculptDuplicateLowPoly", {{"method", st.exitMethod}, {"level", st.lowLevel}});
+                  },
+                  .enabled = [] { return sculpt::active() != nullptr; },
+                  .doc = "Copy the low poly Exit would leave, at the Low poly level, beside the mesh, and keep sculpting.",
+                  .python = ops::toPython("sculptDuplicateLowPoly", {{"method", "closest"}, {"level", 0}})});
     actions::add({.id = "sculpt.exit",
                   .label = "Exit Sculpt",
                   .category = "Sculpt",
                   .run = exitSculpt,
                   .enabled = [] { return sculpt::active() != nullptr; },
-                  .doc = "Move the low-poly cage onto the sculpt and leave sculpt mode.",
+                  .doc = "Move the mesh onto the sculpt and leave sculpt mode.",
                   .python = ops::toPython("sculptExit", {{"method", "fit"}})});
     actions::add({.id = "sculpt.cancel",
                   .label = "Cancel Sculpt",

@@ -31,6 +31,7 @@ class StrokeOptions;
 namespace lila::ui
 {
 class FlowLayout;
+class FixedRowLayout;
 
 /** Dock object name for the sculpt panel. */
 inline constexpr const char* kSculptDock = "sculptPanel";
@@ -49,7 +50,7 @@ public:
 private:
     void syncFromSettings();
     void refreshSession();
-    QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc, FlowLayout* flow = nullptr);
+    QToolButton* brushButton(const QIcon& icon, const QString& label, const QString& doc, QLayout* flow = nullptr);
     void rebuildCustomBrushes();
     void rebuildPresets();
     void savePreset();
@@ -59,7 +60,7 @@ private:
     void dropEvent(QDropEvent* e) override;
 
     QGroupBox* mBrushBox = nullptr;
-    FlowLayout* mBrushFlow = nullptr;
+    FixedRowLayout* mBrushFlow = nullptr;
     QButtonGroup* mBrushes = nullptr;
     /** Registered brush names, in button order. */
     std::vector<std::string> mCustomBrushes;
@@ -87,14 +88,24 @@ private:
     QCheckBox* mShowCage = nullptr;
     QComboBox* mMode = nullptr;
     QSpinBox* mLevels = nullptr;
+    QWidget* mLevelRow = nullptr;
+    QLabel* mLevelLabel = nullptr;
+    QToolButton* mLevelDown = nullptr;
+    QToolButton* mLevelUp = nullptr;
+    QToolButton* mAddLevel = nullptr;
+    QToolButton* mDeleteHigher = nullptr;
     QSpinBox* mResolution = nullptr;
     QComboBox* mExitMethod = nullptr;
-    QCheckBox* mKeepProxy = nullptr;
+    QComboBox* mHighPoly = nullptr;
+    QSpinBox* mHighLevel = nullptr;
+    QSpinBox* mLowLevel = nullptr;
+    QCheckBox* mSymmetryLine = nullptr;
     QComboBox* mSymmetry = nullptr;
     brush::ui::StrokeOptions* mStrokeOptions = nullptr;
     QLabel* mStatus = nullptr;
     QPushButton* mEnter = nullptr;
     QPushButton* mExit = nullptr;
+    QPushButton* mPreview = nullptr;
     QPushButton* mCancel = nullptr;
     int mSettingsListener = 0;
     int mSessionListener = 0;

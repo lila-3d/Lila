@@ -137,7 +137,7 @@ TEST_CASE("reprojection round trip leaves an untouched cage unchanged")
     ops::execute("sculptEnter", {{"args", {"rtCube"}}, {"levels", 2}});
     REQUIRE(sculpt::active());
     CHECK(sculpt::active()->sculpt.mesh().numFaces() == 6 * 16);
-    ops::execute("sculptExit", json::object());
+    ops::execute("sculptExit", {{"method", "fit"}});
     CHECK_FALSE(sculpt::active());
     CHECK(maxDiff(before, inMesh("rtCube")) < 1e-9);
 }
@@ -323,10 +323,10 @@ std::pair<FitResult, FitResult> sculptAndFit(geo::Mesh cage, const std::vector<j
             r.sculptMove = std::max(r.sculptMove, glm::length(now[i] - start[i]));
         sculpt::FitOptions fo;
         fo.maxMoveRatio = ratio;
-        std::vector<glm::dvec3> x = sculpt::fitCage(s->cage, s->stencils, now, fo);
+        std::vector<glm::dvec3> x = sculpt::fitCage(s->cage, s->stack->stencils, now, fo);
         for (Index p = 0; p < s->cage.pointCapacity(); ++p)
             r.cageMove = std::max(r.cageMove, glm::length(x[p] - s->cage.position(p)));
-        for (const auto& st : s->stencils)
+        for (const auto& st : s->stack->stencils)
             x = st.apply(x);
         for (size_t i = 0; i < now.size(); ++i)
             r.rms += glm::dot(x[i] - now[i], x[i] - now[i]);
@@ -452,17 +452,17 @@ TEST_CASE("sculpt commands undo as single steps")
     CHECK(r["points"].get<int>() > 0);
     std::vector<glm::dvec3> sculpted(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end());
     CHECK(sculpted != start);
-    ops::execute("sculptExit", {{"keepProxy", true}});
+    ops::execute("sculptExit", json::object());
     CHECK_FALSE(sculpt::active());
     CHECK(maxDiff(before, inMesh("undoCube")) > 0.1);
-    CHECK(scene::Graph::current().find("undoCube_sculptProxy"));
+    CHECK(scene::Graph::current().find("undoCube_high"));
 
     // Undo exit: back in sculpt mode with the sculpt intact, cage restored.
     REQUIRE(u.undo());
     REQUIRE(sculpt::active() == s);
     CHECK(maxDiff(before, inMesh("undoCube")) == 0.0);
     CHECK(std::vector<glm::dvec3>(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end()) == sculpted);
-    CHECK_FALSE(scene::Graph::current().find("undoCube_sculptProxy"));
+    CHECK_FALSE(scene::Graph::current().find("undoCube_high"));
     // Undo the stroke, then the enter.
     REQUIRE(u.undo());
     CHECK(std::vector<glm::dvec3>(s->sculpt.mesh().positions().begin(), s->sculpt.mesh().positions().end()) == start);
