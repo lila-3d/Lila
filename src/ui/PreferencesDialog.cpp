@@ -24,6 +24,7 @@
 #include "ui/RigViewport.h"
 #include "ui/SoftSelectPanel.h"
 #include "ui/SpinScrub.h"
+#include "ui/TearOff.h"
 #include "ui/TexturePicker.h"
 #include "ui/ThemeEditor.h"
 #include "ui/Telemetry.h"
@@ -691,6 +692,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         number(ui, "Flash strength", kLocateFlashStrengthPref, 0.7, 0.05, 1.0, 0.05, 2);
         number(ui, "Flash reach from the edges", kLocateFlashReachPref, 0.05, 0.0, 1.0, 0.05, 2);
         color(ui, "Flash color", kLocateFlashColorPref, kLocateFlashDefaultColor);
+        toggle(ui, "Tear-offs drop at the cursor", tearoff::kDropAtCursorPref, false);
         toggle(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
         choice(ui, "Toggle Channel Box (Ctrl+A) switches to", "/ui/channelBoxToggle",
                {{"The tab shown before it", "lastTab"}, {"The attribute editor (Maya)", "attributeEditor"}}, "lastTab");

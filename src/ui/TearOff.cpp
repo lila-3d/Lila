@@ -1,6 +1,7 @@
 #include "ui/TearOff.h"
 
 #include "core/Log.h"
+#include "core/PrefStore.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
@@ -588,8 +589,12 @@ QDockWidget* tearOffToPlace(QMenu* menu, const QString& section)
         return nullptr;
     QMainWindow* window = windowOf(menu);
     QDockWidget* existing = window ? window->findChild<QDockWidget*>(dockNameFor(menu, section)) : nullptr;
-    QDockWidget* dock = tearOff(menu, QCursor::pos(), section);
-    if (dock && dock->isFloating() && !dock->property(kPlacingProperty).toBool())
+    const QPoint cursor = QCursor::pos();
+    QDockWidget* dock = tearOff(menu, cursor, section);
+    if (!dock || !dock->isFloating() || dock->property(kPlacingProperty).toBool())
+        return dock;
+    const bool dropNow = PrefStore::get().value<bool>("general", kDropAtCursorPref, false) && QApplication::topLevelAt(cursor);
+    if (!dropNow)
         new Placer(dock, !existing);
     return dock;
 }
