@@ -1064,7 +1064,11 @@ TSharedPtr<FJsonValue> ListPlacements(const TSharedPtr<FJsonObject>& Params, FSt
 			Entry->SetStringField(TEXT("collision"), C->GetCollisionProfileName().ToString());
 		}
 		const FVector Location = It->GetActorLocation();
-		Entry->SetArrayField(TEXT("location"), {MakeShared<FJsonValueNumber>(Location.X), MakeShared<FJsonValueNumber>(Location.Y), MakeShared<FJsonValueNumber>(Location.Z)});
+		TArray<TSharedPtr<FJsonValue>> At;
+		At.Add(MakeShared<FJsonValueNumber>(Location.X));
+		At.Add(MakeShared<FJsonValueNumber>(Location.Y));
+		At.Add(MakeShared<FJsonValueNumber>(Location.Z));
+		Entry->SetArrayField(TEXT("location"), At);
 		if (It->Tags.Contains(InstancedTag))
 		{
 			Entry->SetNumberField(TEXT("instances"), Weight(*It));

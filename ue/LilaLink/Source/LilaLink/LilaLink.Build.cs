@@ -53,6 +53,7 @@ public class LilaLink : ModuleRules
 			"PCG",
 			"ZoneGraph",
 			"StaticMeshEditor",
+			"EditorSubsystem",
 			"LilaLinkRuntime",
 		});
 

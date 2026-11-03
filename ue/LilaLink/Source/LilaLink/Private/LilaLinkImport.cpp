@@ -881,7 +881,10 @@ void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkImport::ApplyCollision);
 
 	UStaticMesh* Mesh = Cast<UStaticMesh>(RequestedAsset(Request, Outcome));
-	UStaticMeshEditorSubsystem* Meshes = GEditor ? GEditor->GetEditorSubsystem<UStaticMeshEditorSubsystem>() : nullptr;
+	// The subsystem's class isn't exported, so its StaticClass can't be linked: look it up by path instead.
+	UClass* SubsystemClass = FindObject<UClass>(nullptr, TEXT("/Script/StaticMeshEditor.StaticMeshEditorSubsystem"));
+	UStaticMeshEditorSubsystem* Meshes =
+		GEditor && SubsystemClass ? static_cast<UStaticMeshEditorSubsystem*>(GEditor->GetEditorSubsystemBase(SubsystemClass)) : nullptr;
 	if (!Mesh || !Meshes)
 	{
 		Outcome.Warnings.Add(FString::Printf(TEXT("Collision %s not applied: no static mesh to apply it to"), *Request.Collision));
