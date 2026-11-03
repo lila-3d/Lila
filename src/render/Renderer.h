@@ -41,6 +41,7 @@ public:
         double aoCpuMs = 0.0; // the ambient occlusion share of cpuMs
         uint64_t meshDrawCalls = 0; // shaded mesh draw calls, prepass included; each draws one batch's placements
         uint64_t meshInstances = 0; // placements those calls drew
+        uint64_t meshUploads = 0;   // GPU mesh copies made so far, every view counted
     };
 
     bool start();

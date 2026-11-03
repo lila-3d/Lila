@@ -35,6 +35,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace lila::render
 {
@@ -532,6 +533,8 @@ struct Viewport
     bool keptShaderWire = false;
     std::vector<uint32_t> keptDynamic; // indices of the kept draws whose meshes deform
     std::vector<SectionRecord> keptRecords;
+    /** The GPU meshes the kept records draw from, with the meshes they share vertices with; pointers into meshCache. */
+    std::vector<GpuMesh*> keptGpuMeshes;
     /** The kept draws' material maps, each once, in the order the draws first use them, with their placeholders. */
     std::vector<std::pair<TexturePtr, uint64_t>> keptMaps;
     std::vector<TexturePtr> keptTextures;
@@ -768,7 +771,7 @@ struct Renderer::Impl
     /** The frame's shaded sections, ready to record; the viewport's kept list. */
     std::vector<SectionRecord> offscreenRecords;
     std::vector<SectionRecord>* frameRecords = &offscreenRecords;
-    uint64_t meshEvictions = 0;
+    uint64_t meshEvictions = 0, meshUploads = 0;
     /** The cull mode emitSection last set and on which command buffer; reset whenever a command buffer begins. */
     VkCommandBuffer cullCmd = VK_NULL_HANDLE;
     VkCullModeFlags cullMode = 0;
@@ -1571,6 +1574,7 @@ struct Renderer::Impl
             g.keep = mesh;
             it = meshCache.emplace(mesh->key, std::move(g)).first;
             ++uploadEpoch;
+            ++meshUploads;
         }
         else if (mesh->shareVertices)
             it->second.vertices = shared;
@@ -1599,6 +1603,15 @@ struct Renderer::Impl
             return {};
         }
     }
+
+    /** Logs the first failed submit or present; after a lost device nothing draws again until Lila restarts. */
+    void checkQueue(VkResult r, const char* what)
+    {
+        if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_OUT_OF_DATE_KHR || std::exchange(queueFailed, true))
+            return;
+        log::error("render: {} failed ({}); the viewport stops drawing until Lila restarts", what, vkResultName(r));
+    }
+    bool queueFailed = false;
 
     /**
      * Drops GPU copies no frame has drawn for a while, and at once those nothing else holds any more: views draw on
@@ -4628,6 +4641,7 @@ struct Renderer::Impl
         v.timing.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
         v.timing.meshDrawCalls = frameMeshDraws;
         v.timing.meshInstances = frameMeshInstances;
+        v.timing.meshUploads = meshUploads;
         if (v.offscreen)
             return finishOffscreen(v, f, cmd);
         barrier(cmd, v.images[imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, colorStage, colorWrite,
@@ -4649,7 +4663,7 @@ struct Renderer::Impl
         si.pCommandBufferInfos = &cbi;
         si.signalSemaphoreInfoCount = 1;
         si.pSignalSemaphoreInfos = &signal;
-        vkQueueSubmit2(vk.queue, 1, &si, f.fence);
+        checkQueue(vkQueueSubmit2(vk.queue, 1, &si, f.fence), "submit");
 
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pi.waitSemaphoreCount = 1;
@@ -4661,6 +4675,7 @@ struct Renderer::Impl
             LILA_ZONE_N("Present");
             r = vkQueuePresentKHR(vk.queue, &pi);
         }
+        checkQueue(r, "present");
         v.frameIndex = (v.frameIndex + 1) % kFramesInFlight;
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
         {
@@ -4902,7 +4917,7 @@ struct Renderer::Impl
             VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
             si.commandBufferInfoCount = 1;
             si.pCommandBufferInfos = &cbi;
-            vkQueueSubmit2(vk.queue, 1, &si, f.fence);
+            checkQueue(vkQueueSubmit2(vk.queue, 1, &si, f.fence), "submit");
             v.frameIndex = (v.frameIndex + 1) % kFramesInFlight;
             return false;
         }
@@ -4936,7 +4951,7 @@ struct Renderer::Impl
         VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
         si.commandBufferInfoCount = 1;
         si.pCommandBufferInfos = &cbi;
-        vkQueueSubmit2(vk.queue, 1, &si, f.fence);
+        checkQueue(vkQueueSubmit2(vk.queue, 1, &si, f.fence), "submit");
         vkWaitForFences(vk.device, 1, &f.fence, VK_TRUE, UINT64_MAX);
         f.feedback.collect();
         readTimings(v, f);
@@ -5282,9 +5297,13 @@ struct Renderer::Impl
                 if (r.material)
                     r.push.textureTable = frameTableAddress;
             }
+            // Nothing else looks these meshes up this frame, and evictMeshes frees what goes unused.
+            for (GpuMesh* g : v.keptGpuMeshes)
+                g->lastUsed = frameCounter;
             return;
         }
         records.clear();
+        v.keptGpuMeshes.clear();
         if (frameInstanceAddress)
             for (uint32_t bi = 0; bi < frameBatches.shaded.size(); ++bi)
             {
@@ -5295,6 +5314,10 @@ struct Renderer::Impl
                 GpuMesh* g = gpuMesh(d.mesh);
                 if (!g)
                     continue;
+                v.keptGpuMeshes.push_back(g);
+                if (d.mesh->shareVertices)
+                    if (auto base = meshCache.find(d.mesh->shareVertices->key); base != meshCache.end())
+                        v.keptGpuMeshes.push_back(&base->second);
                 for (MeshSection whole; const MeshSection& sec : sectionsOf(d, *g, whole))
                 {
                     SectionRecord r;

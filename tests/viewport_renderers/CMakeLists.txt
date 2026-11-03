@@ -6,6 +6,7 @@ lila_add_extension(lila_test_viewport_renderer_extension ID viewportRenderer UI
     OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/viewport_renderers/$<CONFIG>/native)
 add_executable(lila_viewport_renderer_tests
     main.cpp
+    test_mesh_residency.cpp
     test_viewport_renderers.cpp)
 target_link_libraries(lila_viewport_renderer_tests PRIVATE LilaUI doctest::doctest)
 add_dependencies(lila_viewport_renderer_tests lila_test_viewport_renderer_extension)

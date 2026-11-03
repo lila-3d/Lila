@@ -625,8 +625,8 @@ void registerCommands()
 
     ops::registerCommand({
         .name = "viewportStats",
-        .doc = "The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls, renderer}. "
-               "frames counts frames drawn so far, so two calls apart give the frame rate. Unlike measureView it times what the "
+        .doc = "The active viewport's last finished frame as the GPU measured it: {frames, gpuMs, aoMs, cpuMs, meshDrawCalls, meshUploads, renderer}. "
+               "frames counts frames drawn so far, so two calls apart give the frame rate; meshUploads counts GPU mesh copies the same way. Unlike measureView it times what the "
                "view really draws, components and highlights included. When an external renderer such as a Hydra delegate draws "
                "the view, rendererStats holds what it reports.",
         .undoable = false,
@@ -636,7 +636,7 @@ void registerCommands()
                 throw CommandError("viewportStats: no viewport");
             const render::Renderer::FrameStats st = vp->frameStats();
             json out{{"frames", st.frames}, {"gpuMs", st.gpuMs}, {"aoMs", st.aoMs}, {"cpuMs", st.cpuMs}, {"meshDrawCalls", st.meshDrawCalls},
-                     {"renderer", viewportRenderers::selected(vp->hudPanel())}};
+                     {"meshUploads", st.meshUploads}, {"renderer", viewportRenderers::selected(vp->hudPanel())}};
             if (json rs = viewportRenderers::stats(vp->hudPanel()); !rs.is_null())
                 out["rendererStats"] = std::move(rs);
             return out;
