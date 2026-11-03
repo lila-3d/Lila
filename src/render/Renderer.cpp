@@ -337,6 +337,15 @@ struct PointsPush
 };
 static_assert(sizeof(PointsPush) == 144, "matches PointsPush in points.slang");
 
+struct PointsCullPush
+{
+    glm::mat4 viewProj;
+    glm::uvec4 grid{0}; // cells across and down, cell size in pixels, points
+    glm::vec4 viewport{0.0f};
+    VkDeviceAddress points = 0, cells = 0, out = 0, args = 0;
+};
+static_assert(sizeof(PointsCullPush) == 128, "matches CullPush in points_cull.slang");
+
 /** Pixels' worth of world distance that lines over meshes are pulled toward the camera, plus half their width. */
 constexpr double kLinePullPixels = 2.0;
 
@@ -432,6 +441,7 @@ struct GpuMesh
 struct GpuPoints
 {
     Buffer buffer;
+    VkDeviceAddress address = 0; // for thinning a dense cloud (points_cull.slang)
     uint32_t count = 0;
     std::shared_ptr<const PointCloud> keep;
     uint64_t lastUsed = 0;
@@ -465,6 +475,8 @@ struct Frame
     // GPU timestamps: frame start, before and after ambient occlusion, frame end.
     VkQueryPool timestamps = VK_NULL_HANDLE;
     bool timed = false, aoTimed = false;
+    /** Dense component dots thinned to one per screen cell (points_cull.slang): cell grids, kept points, draw counts. */
+    compute::Buffer pointCells, pointOut, pointArgs;
     /** Secondary command buffers the section draws record into on worker threads; a pool each, so no two threads share one. */
     struct Chunk
     {
@@ -659,7 +671,10 @@ struct Renderer::Impl
     VkPipeline meshPipeline = VK_NULL_HANDLE, wirePipeline = VK_NULL_HANDLE, wireXrayPipeline = VK_NULL_HANDLE;
     std::unordered_map<uint64_t, GpuMesh> meshCache; // render thread only
     std::unordered_map<uint64_t, GpuPoints> pointCache; // render thread only
-    VkPipelineLayout pointsLayout = VK_NULL_HANDLE;
+    VkPipelineLayout pointsLayout = VK_NULL_HANDLE, pointsCullLayout = VK_NULL_HANDLE;
+    VkPipeline pointsNearestPipeline = VK_NULL_HANDLE, pointsKeepPipeline = VK_NULL_HANDLE;
+    /** By s.points index: where that cloud's thinned points went this frame (PointsCull), or none when it draws whole. */
+    std::vector<int> frameCulledPoints;
     VkPipeline pointsPipeline = VK_NULL_HANDLE;
     uint64_t frameCounter = 0;
     VkDescriptorSetLayout atlasSetLayout = VK_NULL_HANDLE;
@@ -1081,6 +1096,9 @@ struct Renderer::Impl
             compute::destroy(vk, f.table);
             compute::destroy(vk, f.instances);
             compute::destroy(vk, f.lights);
+            compute::destroy(vk, f.pointCells);
+            compute::destroy(vk, f.pointOut);
+            compute::destroy(vk, f.pointArgs);
             compute::destroy(vk, f.tlasInstances);
             compute::destroy(vk, f.traceTable);
             if (f.lines)
@@ -2480,14 +2498,19 @@ struct Renderer::Impl
             if (p.cloud && !p.cloud->points.empty() && !pointCache.contains(p.cloud->key))
             {
                 GpuPoints g;
-                g.buffer = deviceBuffer(cmd, f, p.cloud->points.data(), p.cloud->points.size() * sizeof(PointVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+                g.buffer = deviceBuffer(cmd, f, p.cloud->points.data(), p.cloud->points.size() * sizeof(PointVertex),
+                                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+                VkBufferDeviceAddressInfo bai{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+                bai.buffer = g.buffer.buffer;
+                g.address = vkGetBufferDeviceAddress(vk.device, &bai);
                 g.count = uint32_t(p.cloud->points.size());
                 g.keep = p.cloud;
                 pointCache.emplace(p.cloud->key, std::move(g));
             }
         if (f.staging.size() != staged)
             memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                          VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                           VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     }
 
@@ -3684,6 +3707,7 @@ struct Renderer::Impl
         gridLayout = layoutFor(sizeof(GridPush), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         linesLayout = layoutFor(sizeof(LinesPush), VK_SHADER_STAGE_VERTEX_BIT);
         pointsLayout = layoutFor(sizeof(PointsPush), VK_SHADER_STAGE_VERTEX_BIT);
+        pointsCullLayout = layoutFor(sizeof(PointsCullPush), VK_SHADER_STAGE_COMPUTE_BIT);
         overlayTrisLayout = layoutFor(sizeof(glm::vec2), VK_SHADER_STAGE_VERTEX_BIT, atlasSetLayout);
 
         VkShaderModule grid = module(loadSpirv("grid.spv"));
@@ -3796,6 +3820,12 @@ struct Renderer::Impl
                 rtShadowPipeline = buildCompute(rtShadowLayout, rt, "shadowCS");
                 vkDestroyShaderModule(vk.device, rt, nullptr);
             }
+        }
+        if (VkShaderModule cull = module(loadSpirv("points_cull.spv")))
+        {
+            pointsNearestPipeline = buildCompute(pointsCullLayout, cull, "pointsNearestCS");
+            pointsKeepPipeline = buildCompute(pointsCullLayout, cull, "pointsKeepCS");
+            vkDestroyShaderModule(vk.device, cull, nullptr);
         }
         if (VkShaderModule ao = module(loadSpirv("ao.spv")))
         {
@@ -3940,7 +3970,7 @@ struct Renderer::Impl
     {
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
                               &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
-                              &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline,
+                              &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
                               &taaPipeline, &composePipeline, &composeSinglePipeline,
@@ -3950,7 +3980,7 @@ struct Renderer::Impl
                 vkDestroyPipeline(vk.device, *p, nullptr);
                 *p = VK_NULL_HANDLE;
             }
-        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout,
+        for (VkPipelineLayout* l : {&gridLayout, &linesLayout, &overlayTrisLayout, &meshLayout, &wireLayout, &contactLayout, &aoLayout, &aoApplyLayout, &pointsLayout, &pointsCullLayout,
                                     &imagePlaneLayout, &postLayout, &externalLayout, &taaLayout, &composeLayout, &bloomLayout,
                                     &exposureLayout, &rtaoLayout, &bevelLayout, &rtShadowLayout})
             if (*l)
@@ -4219,6 +4249,7 @@ struct Renderer::Impl
 
         glm::dmat4 viewProj = s.proj * s.view;
         glm::mat4 vpF(viewProj);
+        cullPoints(cmd, f, s, vpF, v.extent);
         const bool msaa = v.color.image != VK_NULL_HANDLE;
         // Temporal antialiasing: the scene draws with a sub-pixel jitter and blends into its history, while lines and
         // overlays draw over the result with the plain projection. An external renderer's image has no jitter to resolve.
@@ -4597,7 +4628,7 @@ struct Renderer::Impl
                                  {linesOnTopPipeline, 1, 1.0f}, {linesOnTopPipeline, 8, s.highlightEdgeWidth}, {linesOnTopPipeline, 6, s.seamLineWidth},
                                  {linesOnTopPipeline, 7, s.symmetryLineWidth}, {linesOnTopPipeline, 5, s.selectedEdgeWidth},
                                  {tris3dPipeline, 2, 0.0f}};
-        drawPoints(cmd, s, vpF, v.extent.height);
+        drawPoints(cmd, f, s, vpF, v.extent.height);
         for (const Biased& b : biased)
         {
             const std::vector<LineVertex>& verts = *lineSets[b.set];
@@ -5726,13 +5757,96 @@ struct Renderer::Impl
         evictMeshes();
     }
 
-    void drawPoints(VkCommandBuffer cmd, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
+    /**
+     * Thins the frame's dense dot clouds to their nearest point per screen cell, ahead of the passes that draw them: a
+     * dot covers its cell, so millions of points become about one per cell and draw in a fraction of the time.
+     */
+    void cullPoints(VkCommandBuffer cmd, Frame& f, const FrameState& s, const glm::mat4& viewProj, VkExtent2D extent)
+    {
+        frameCulledPoints.assign(s.points.size(), -1);
+        if (!pointsNearestPipeline || !pointsKeepPipeline || extent.width == 0 || extent.height == 0)
+            return;
+        LILA_ZONE();
+        constexpr uint32_t kMinPoints = 200'000, kMaxClouds = 4, kGroups = 65535 * 256;
+        std::vector<std::pair<size_t, const GpuPoints*>> clouds;
+        uint32_t cellPx = 0;
+        for (size_t i = 0; i < s.points.size() && clouds.size() < kMaxClouds; ++i)
+        {
+            const PointDraw& d = s.points[i];
+            auto it = d.cloud ? pointCache.find(d.cloud->key) : pointCache.end();
+            if (it == pointCache.end() || !it->second.address || it->second.count < kMinPoints || it->second.count > kGroups)
+                continue;
+            clouds.emplace_back(i, &it->second);
+            // Half the smaller dot: neighbouring kept dots still overlap, so a dense surface stays solid.
+            cellPx = std::max(cellPx, uint32_t(std::max(1.0f, std::floor(std::min(d.size, d.selectedSize) * 0.5f))));
+        }
+        if (clouds.empty())
+            return;
+        const uint32_t across = (extent.width + cellPx - 1) / cellPx, down = (extent.height + cellPx - 1) / cellPx;
+        const VkDeviceSize cells = VkDeviceSize(across) * down;
+        auto ensure = [&](compute::Buffer& b, VkDeviceSize bytes, VkBufferUsageFlags usage) {
+            if (b.size >= bytes)
+                return true;
+            compute::destroy(vk, b);
+            try
+            {
+                b = compute::makeBuffer(vk, bytes, usage, compute::Host::None);
+                return true;
+            }
+            catch (const std::exception& e)
+            {
+                log::error("render: {}", e.what());
+                return false;
+            }
+        };
+        const VkDeviceSize n = clouds.size();
+        if (!ensure(f.pointCells, n * cells * 2 * sizeof(uint32_t), 0) ||
+            !ensure(f.pointOut, n * cells * sizeof(PointVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) ||
+            !ensure(f.pointArgs, n * sizeof(VkDrawIndirectCommand), VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT))
+            return;
+
+        vkCmdFillBuffer(cmd, f.pointCells.buffer, 0, n * cells * 2 * sizeof(uint32_t), 0);
+        std::vector<VkDrawIndirectCommand> args(clouds.size(), VkDrawIndirectCommand{0, 1, 0, 0});
+        vkCmdUpdateBuffer(cmd, f.pointArgs.buffer, 0, args.size() * sizeof(VkDrawIndirectCommand), args.data());
+        memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        auto run = [&](VkPipeline pipeline) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+            for (size_t k = 0; k < clouds.size(); ++k)
+            {
+                PointsCullPush p;
+                p.viewProj = viewProj;
+                p.grid = glm::uvec4(across, down, cellPx, clouds[k].second->count);
+                p.viewport = glm::vec4(float(extent.width), float(extent.height), 0.0f, 0.0f);
+                p.points = clouds[k].second->address;
+                p.cells = f.pointCells.address + k * cells * 2 * sizeof(uint32_t);
+                p.out = f.pointOut.address + k * cells * sizeof(PointVertex);
+                p.args = f.pointArgs.address + k * sizeof(VkDrawIndirectCommand);
+                vkCmdPushConstants(cmd, pointsCullLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(p), &p);
+                vkCmdDispatch(cmd, (clouds[k].second->count + 255) / 256, 1, 1);
+            }
+        };
+        run(pointsNearestPipeline);
+        memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        run(pointsKeepPipeline);
+        memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                      VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+        for (size_t k = 0; k < clouds.size(); ++k)
+            frameCulledPoints[clouds[k].first] = int(k);
+        frameCullCells = cells;
+    }
+    VkDeviceSize frameCullCells = 0;
+
+    void drawPoints(VkCommandBuffer cmd, Frame& f, const FrameState& s, const glm::mat4& viewProj, uint32_t heightPx)
     {
         if (!pointsPipeline || s.points.empty())
             return;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pointsPipeline);
-        for (const PointDraw& d : s.points)
+        for (size_t i = 0; i < s.points.size(); ++i)
         {
+            const PointDraw& d = s.points[i];
             auto it = d.cloud ? pointCache.find(d.cloud->key) : pointCache.end();
             if (it == pointCache.end())
                 continue;
@@ -5745,6 +5859,13 @@ struct Renderer::Impl
             const float* range = vk.properties.limits.pointSizeRange;
             p.sizes = glm::vec4(std::clamp(d.size, range[0], range[1]), std::clamp(d.selectedSize, range[0], range[1]), 0.0f, 0.0f);
             vkCmdPushConstants(cmd, pointsLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);
+            if (const int k = i < frameCulledPoints.size() ? frameCulledPoints[i] : -1; k >= 0)
+            {
+                const VkDeviceSize offset = VkDeviceSize(k) * frameCullCells * sizeof(PointVertex);
+                vkCmdBindVertexBuffers(cmd, 0, 1, &f.pointOut.buffer, &offset);
+                vkCmdDrawIndirect(cmd, f.pointArgs.buffer, VkDeviceSize(k) * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
+                continue;
+            }
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &it->second.buffer.buffer, &offset);
             vkCmdDraw(cmd, it->second.count, 1, 0, 0);
