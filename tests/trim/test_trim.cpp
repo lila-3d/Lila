@@ -592,3 +592,76 @@ TEST_CASE("trim commands: faces line up with the strip's motifs")
     const double mid = (elo + ehi) * 0.5;
     CHECK(std::abs((mid - 0.125) * 4.0 - std::round((mid - 0.125) * 4.0)) < 0.05);
 }
+
+TEST_CASE("trim commands: a blank sheet, empty or laid out as strips")
+{
+    loadTrims();
+    const std::filesystem::path empty = scratch("blank") / "T_Empty.lilatrim";
+    const json made = ops::execute("trimSheetCreate", {{"file", empty.generic_string()}, {"width", 512}, {"height", 256}, {"pxPerM", 64.0}});
+    CHECK(made["trims"].empty());
+    CHECK(made["size"] == json::array({512, 256}));
+    CHECK_FALSE(made["baked"].get<bool>());
+    CHECK(made["preset"] == "");
+    ops::execute("trimSheetEdit", {{"add", {{"name", "Band"}, {"min", {0, 0}}, {"max", {512, 128}}, {"profile", {{"style", "glyphs"}}}}}});
+    CHECK(ops::execute("trimSheetInfo", json::object())["trims"][0]["worldSizeCm"][1].get<double>() == doctest::Approx(200.0));
+
+    const std::filesystem::path strips = scratch("blank") / "T_Strips.lilatrim";
+    const json laid = ops::execute("trimSheetCreate", {{"file", strips.generic_string()}, {"width", 256}, {"strips", {128, 64, 64}}, {"bake", false}});
+    REQUIRE(laid["trims"].size() == 3);
+    CHECK(laid["trims"][2]["min"] == json::array({0, 192}));
+    CHECK_THROWS(ops::execute("trimSheetCreate", {{"file", (scratch("blank") / "T_Bad.lilatrim").generic_string()}, {"strips", {"wide"}}}));
+}
+
+TEST_CASE("trim styles: carved and patterned strips tile across U")
+{
+    for (const char* style : {"glyphs", "meander", "fluting", "chipped", "hazard", "conduit"})
+    {
+        CAPTURE(style);
+        Sheet s = stripLadder(std::string("T_") + style, 128, 128, std::vector<int>{64, 64});
+        s.pxPerM = 128.0;
+        s.supersampling = 1;
+        s.maps = {"normal"};
+        s.trims[0].profile.style = *styleFromName(style);
+        s.trims[0].profile.bevelPx = 4.0;
+        s.trims[0].profile.detailPx = 6.0;
+        s.trims[0].profile.spacingPx = 32.0;
+        const Generated g = generate(s);
+        CHECK(g.high.numFaces() > 200);
+        const std::filesystem::path file = scratch(std::string("style_") + style) / (s.name + ".lilatrim");
+        save(s, file);
+        SheetBakeOptions o;
+        o.backend = "cpu";
+        const json r = bakeSheet(s, file, o);
+        CHECK(r["seamError"].get<double>() < 0.03);
+    }
+    // Glyph bands are seeded: another seed carves other glyphs.
+    Sheet a = stripLadder("T_Glyph", 256, 64, std::vector<int>{64});
+    a.trims[0].profile.style = Style::Glyphs;
+    Sheet b = a;
+    b.trims[0].profile.seed = 7;
+    const geo::Mesh ha = generate(a).high, hb = generate(b).high;
+    REQUIRE(ha.numPoints() == hb.numPoints());
+    bool differs = false;
+    for (geo::Index p = 0; p < ha.pointCapacity() && !differs; ++p)
+        differs = ha.position(p) != hb.position(p);
+    CHECK(differs);
+}
+
+TEST_CASE("trim presets: stone, industrial and starfighter families build at their scale")
+{
+    const Sheet stone = preset("monumentalStone"), frame = preset("industrialFrame"), hangar = preset("starfighterFacility");
+    CHECK(stone.worldExtent().x == doctest::Approx(6400.0));
+    CHECK(hangar.worldExtent().x == doctest::Approx(800.0));
+    CHECK(frame.worldExtent().x == doctest::Approx(400.0));
+    auto hasStyle = [](const Sheet& s, Style st) { return std::ranges::any_of(s.trims, [&](const Trim& t) { return t.profile.style == st; }); };
+    for (Style st : {Style::Glyphs, Style::Meander, Style::Channel, Style::Torus, Style::Ogee, Style::Cavetto, Style::Fluting, Style::Dentils,
+                     Style::Steps, Style::Chipped})
+        CHECK(hasStyle(stone, st));
+    for (Style st : {Style::Rail, Style::Conduit, Style::Grating, Style::Hazard})
+    {
+        CHECK(hasStyle(frame, st));
+        CHECK(hasStyle(hangar, st));
+    }
+    // Generated on first use, not shipped: a small copy builds its relief.
+    CHECK(generate(preset("monumentalStone", 256)).high.numFaces() > 0);
+}

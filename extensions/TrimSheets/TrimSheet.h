@@ -44,6 +44,20 @@ enum class Style : uint8_t
     Vents,       // raised plate with louvre slats
     Tread,       // raised plate with diamond tread bars
     Planks,      // planks of varied length with bevelled seams
+    Channel,     // raised plate with a rounded channel carved along its centre
+    Torus,       // big convex round between two fillets
+    Cavetto,     // concave quarter round rising to the top
+    Ogee,        // S-curve moulding: concave below, convex above
+    Fluting,     // concave flutes across the strip, repeated along it
+    Dentils,     // row of square blocks along the strip
+    Meander,     // raised Greek key border
+    Glyphs,      // carved band of inscription-like glyphs (seeded strokes, not text)
+    Steps,       // stepped transition rising toward the top
+    Chipped,     // weathered block: worn, chipped borders and pitting
+    Grating,     // bar grating: bars across over open holes
+    Rail,        // round rail tube along the strip
+    Conduit,     // three conduits with clips across them
+    Hazard,      // diagonal hazard stripes, slightly raised
 };
 
 std::string_view styleName(Style s);

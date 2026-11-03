@@ -17,7 +17,7 @@ namespace trims
 {
 namespace
 {
-constexpr std::array<std::pair<Style, const char*>, 13> kStyles = {{
+constexpr std::array<std::pair<Style, const char*>, 27> kStyles = {{
     {Style::Flat, "flat"},
     {Style::Raised, "raised"},
     {Style::Recessed, "recessed"},
@@ -31,6 +31,20 @@ constexpr std::array<std::pair<Style, const char*>, 13> kStyles = {{
     {Style::Vents, "vents"},
     {Style::Tread, "tread"},
     {Style::Planks, "planks"},
+    {Style::Channel, "channel"},
+    {Style::Torus, "torus"},
+    {Style::Cavetto, "cavetto"},
+    {Style::Ogee, "ogee"},
+    {Style::Fluting, "fluting"},
+    {Style::Dentils, "dentils"},
+    {Style::Meander, "meander"},
+    {Style::Glyphs, "glyphs"},
+    {Style::Steps, "steps"},
+    {Style::Chipped, "chipped"},
+    {Style::Grating, "grating"},
+    {Style::Rail, "rail"},
+    {Style::Conduit, "conduit"},
+    {Style::Hazard, "hazard"},
 }};
 
 constexpr std::array<std::pair<uv::TrimKind, const char*>, 6> kKinds = {{
@@ -153,6 +167,15 @@ const std::vector<PresetInfo> kPresets = {
     {"stoneMouldings", "Stone Mouldings", "Rounded and stepped mouldings, string courses and plinths."},
     {"hotspotGrid", "Hotspot Grid", "Valve-style hotspot atlas: framed panels at 1:1, 2:1, 4:1 and 8:1 in several sizes, for fast blockout texturing."},
     {"ladder", "Power-of-Two Ladder", "Plain strips of 512, 256, 128, 64, 32 and 16 px on a 1024 sheet: a clean start for your own."},
+    {"monumentalStone", "Monumental Stone",
+     "Carved stone at more than human scale, 32 px per metre: glyph bands, key borders, channels, torus, ogee and cavetto "
+     "mouldings, fluting, dentils, stepped transitions and chipped ashlar courses metres tall."},
+    {"industrialFrame", "Industrial Frame",
+     "Human-scale industry: frame edges, rails, conduits with clips, bar grating, hazard bands, bolted plates, vents and a row of "
+     "mechanical housings."},
+    {"starfighterFacility", "Starfighter Facility",
+     "Hangar and service decks: floor grating and tread, bulkhead bands, gantry rails, conduits, hazard edging, service vents and "
+     "equipment surrounds."},
 };
 } // namespace
 
@@ -543,6 +566,91 @@ Sheet preset(std::string_view id, int width)
         l.addRow("Sq128_", 128, {{128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised},
                                  {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised},
                                  {128, S::Raised}, {128, S::Raised}, {128, S::Raised}, {128, S::Raised}}, K::Rect, 9);
+    }
+    else if (id == "monumentalStone")
+    {
+        sheet.name = "T_MonumentalStone";
+        sheet.material = "Trim Sandstone";
+        // 64 m across the sheet: a 256 px band is 8 m tall.
+        sheet.pxPerM = 32.0;
+        l.addStrip("Glyphs256", 256, S::Glyphs);
+        l.addStrip("Key128", 128, S::Meander);
+        l.addStrip("Channel128", 128, S::Channel);
+        l.addStrip("Torus128", 128, S::Torus);
+        l.addStrip("Ogee256", 256, S::Ogee);
+        l.addStrip("Cavetto128", 128, S::Cavetto);
+        l.addStrip("Fluting512", 512, S::Fluting, 96);
+        l.addStrip("Dentils128", 128, S::Dentils, 96);
+        l.addStrip("Steps256", 256, S::Steps);
+        l.addStrip("Ashlar128", 128, S::Chipped, 192);
+        for (Trim& t : sheet.trims)
+        {
+            t.tags.erase(std::remove(t.tags.begin(), t.tags.end(), std::string("edge")), t.tags.end());
+            t.profile.detailPx = 12.0 * l.s.k;
+            const std::string_view n = t.name;
+            t.tags.push_back(n.starts_with("Glyphs") ? "inscription" : n.starts_with("Key") ? "border" : n.starts_with("Steps") ? "transition"
+                             : n.starts_with("Ashlar")                                       ? "wall"
+                                                                                             : "moulding");
+        }
+    }
+    else if (id == "industrialFrame")
+    {
+        sheet.name = "T_IndustrialFrame";
+        sheet.material = "Trim Painted Metal";
+        l.addStrip("Edge16", 16, S::Raised);
+        l.addStrip("Edge16b", 16, S::Step);
+        l.addStrip("Frame32", 32, S::DoubleBevel);
+        l.addStrip("Hazard64", 64, S::Hazard);
+        l.addStrip("Rail64", 64, S::Rail);
+        l.addStrip("Groove64", 64, S::Groove);
+        l.addStrip("Conduit128", 128, S::Conduit, 192);
+        l.addStrip("Bolts128", 128, S::Bolts, 160);
+        l.addStrip("Grating256", 256, S::Grating, 48);
+        l.addStrip("Panel256", 256, S::Raised);
+        l.addStrip("Vents256", 256, S::Vents, 32);
+        l.addRow("Housing", 512, {{512, S::Raised}, {512, S::Bolts}, {512, S::Vents}, {512, S::Recessed}}, K::Rect, 0);
+        l.addStrip("Tread128", 128, S::Tread, 32);
+        l.addStrip("Ribs128", 128, S::Ribs, 16);
+        for (Trim& t : sheet.trims)
+        {
+            if (t.profile.style == S::Hazard)
+                t.tags.push_back("hazard");
+            if (t.profile.style == S::Rail || t.profile.style == S::Conduit)
+                t.tags.push_back("pipe");
+            if (t.profile.style == S::Grating || t.profile.style == S::Tread)
+                t.tags.push_back("floor");
+        }
+    }
+    else if (id == "starfighterFacility")
+    {
+        sheet.name = "T_StarfighterFacility";
+        sheet.material = "Trim Hull Paint";
+        // 8 m across the sheet: decks, bulkheads and gantries at hangar scale.
+        sheet.pxPerM = 256.0;
+        l.addStrip("Edge32", 32, S::Step);
+        l.addStrip("Edge32b", 32, S::Raised);
+        l.addStrip("Hazard64", 64, S::Hazard);
+        l.addStrip("Rail64", 64, S::Rail);
+        l.addStrip("Groove64", 64, S::Groove);
+        l.addStrip("Gantry128", 128, S::Grating, 32);
+        l.addStrip("Conduit128", 128, S::Conduit, 128);
+        l.addStrip("Deck256", 256, S::Tread, 48);
+        l.addStrip("Bulkhead256", 256, S::DoubleBevel);
+        l.addStrip("Service256", 256, S::Vents, 40);
+        l.addRow("Surround", 512, {{512, S::Recessed}, {512, S::DoubleBevel}, {1024, S::Raised}}, K::Rect, 0);
+        l.addStrip("Floor256", 256, S::Grating, 64);
+        for (Trim& t : sheet.trims)
+        {
+            const std::string_view n = t.name;
+            if (n.starts_with("Hazard"))
+                t.tags.push_back("hazard");
+            if (n.starts_with("Gantry") || n.starts_with("Deck") || n.starts_with("Floor"))
+                t.tags.push_back("floor");
+            if (n.starts_with("Bulkhead") || n.starts_with("Service") || n.starts_with("Surround"))
+                t.tags.push_back("wall");
+            if (n.starts_with("Rail") || n.starts_with("Conduit"))
+                t.tags.push_back("pipe");
+        }
     }
     else if (ladder)
     {
