@@ -12,6 +12,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 
 using namespace lila;
 using namespace lila::scene;
@@ -325,4 +326,75 @@ TEST_CASE("kilometre scale: walls metres across, kilometres out, stand, fall and
     const Frozen f = frozen(r["group"].get<std::string>());
     CHECK(glm::length(f.bounds.min - after.min) < 0.01);
     CHECK(glm::length(f.bounds.max - after.max) < 0.01);
+}
+
+TEST_CASE("exportChaos writes the pieces and their motion for a Geometry Collection and Chaos cache, in Unreal's space")
+{
+    load();
+    run("newScene");
+    run("playbackOptions", {{"minTime", 1.0 / 24.0}, {"maxTime", 1.0}, {"fps", 24.0}});
+    const std::string w = wall("Wall");
+    run("breakApart", {{"args", {w}}, {"pieces", 10}, {"impact", json::array({0, 60, 10})}});
+    const auto folder = std::filesystem::temp_directory_path() / "lila_chaos_export";
+    std::filesystem::remove_all(folder);
+    json r = run("exportChaos", {{"args", {w}}, {"folder", folder.string()}, {"start", 1}, {"end", 24}});
+    CHECK(r["frames"].get<int>() == 24);
+    const size_t pieces = r["pieces"].get<size_t>();
+    CHECK(pieces >= 6);
+
+    std::ifstream js(r["json"].get<std::string>());
+    const json m = json::parse(js);
+    CHECK(m["format"] == "lila-geometry-collection");
+    REQUIRE(m["pieces"].size() == pieces);
+    std::ifstream bf(r["bin"].get<std::string>(), std::ios::binary);
+    const std::vector<char> bin((std::istreambuf_iterator<char>(bf)), std::istreambuf_iterator<char>());
+    auto buffer = [&](const char* name, size_t stride) {
+        const json& b = m["buffers"][name];
+        CHECK(b["offset"].get<size_t>() + b["count"].get<size_t>() * stride <= bin.size());
+        return std::make_pair(bin.data() + b["offset"].get<size_t>(), b["count"].get<size_t>());
+    };
+    auto [pos, vertices] = buffer("positions", 12);
+    auto [nrm, normals] = buffer("normals", 12);
+    auto [idx, corners] = buffer("indices", 4);
+    auto [xf, transforms] = buffer("transforms", 28);
+    CHECK(normals == vertices);
+    CHECK(transforms == pieces * 24);
+    CHECK(corners % 3 == 0);
+
+    // Outward winding: each triangle's face normal agrees with its corners' normals.
+    const auto* p = reinterpret_cast<const glm::vec3*>(pos);
+    const auto* n = reinterpret_cast<const glm::vec3*>(nrm);
+    const auto* ix = reinterpret_cast<const int32_t*>(idx);
+    size_t agree = 0, total = 0;
+    for (const json& piece : m["pieces"])
+    {
+        const size_t v0 = piece["vertexStart"], t0 = piece["triangleStart"], tn = piece["triangleCount"];
+        for (size_t t = t0; t < t0 + tn; ++t)
+        {
+            const glm::vec3 a = p[v0 + ix[t * 3]], b = p[v0 + ix[t * 3 + 1]], c = p[v0 + ix[t * 3 + 2]];
+            const glm::vec3 face = glm::cross(b - a, c - a);
+            if (glm::length(face) < 1e-6f)
+                continue;
+            ++total;
+            agree += glm::dot(face, n[v0 + ix[t * 3]]) > 0.0f ? 1 : 0;
+        }
+    }
+    CHECK(total > 0);
+    CHECK(double(agree) / double(total) > 0.95);
+
+    // Unreal's Z is up: the wall's pieces sit within its 100 cm at rest, and the ones the blast threw are marked released.
+    double top = -1e9;
+    int released = 0;
+    for (const json& piece : m["pieces"])
+    {
+        top = std::max(top, piece["position"][2].get<double>());
+        released += piece["releaseFrame"].get<int>() >= 1 ? 1 : 0;
+    }
+    CHECK(top > 50.0);
+    CHECK(top < 100.0);
+    CHECK(released > 0);
+    js.close();
+    bf.close();
+    std::error_code ec;
+    std::filesystem::remove_all(folder, ec);
 }

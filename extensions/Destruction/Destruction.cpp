@@ -430,6 +430,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     destruction::registerCommands(ctx);
     destruction::registerFreeze(ctx);
+    destruction::registerChaosExport(ctx);
     destruction::registerUi(ctx);
     destruction::registerSounds(ctx);
     return 0;
