@@ -11,6 +11,8 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -379,4 +381,122 @@ TEST_CASE("unreal: an assembly goes as one Level Instance and keeps its settings
     run("assemblyCreate", {{"args", {c}}, {"name", "Pile"}});
     run("undo");
     CHECK_FALSE(run("objExists", {{"args", {"Pile"}}}).get<bool>());
+}
+
+TEST_CASE("library: an assembly saves its props by id, nests, and places as a whole that survives save and reopen")
+{
+    load();
+    run("newScene");
+    const auto lib = std::filesystem::temp_directory_path() / ("lila_stagehand_asm_" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(lib);
+    run("libraryPaths", {{"add", lib.generic_string()}});
+    const std::string post = cube("Post", {0, 0, 0}, {30, 200, 30});
+    run("physicsBody", {{"args", {post}}, {"material", "stone"}, {"role", "static"}});
+    run("libraryAdd", {{"args", {post}}, {"tier", lib.generic_string()}, {"collection", "Kit"}, {"thumbnail", false}});
+    const std::string beam = cube("Lintel", {0, 0, 0}, {260, 30, 30});
+    run("libraryAdd", {{"args", {beam}}, {"tier", lib.generic_string()}, {"collection", "Kit"}, {"thumbnail", false}});
+    run("newScene");
+
+    // A gate: two posts and a lintel from the library, and a step that is only in this scene.
+    const json left = run("place", {{"args", {"Kit/Post"}}, {"at", json::array({-115, 0, 0})}, {"snap", false}});
+    const json right = run("place", {{"args", {"Kit/Post"}}, {"at", json::array({115, 0, 0})}, {"snap", false}});
+    const json lintel = run("place", {{"args", {"Kit/Lintel"}}, {"at", json::array({0, 200, 0})}, {"snap", false}});
+    const std::string step = cube("Step", {0, 0, 40}, {200, 10, 40});
+    const std::string gate = run("assemblyCreate", {{"args", {left[0]["node"], right[0]["node"], lintel[0]["node"], step}}, {"name", "Gate"},
+                                                    {"kind", "packedLevelActor"}})
+                                 .get<std::string>();
+    const json saved = run("libraryAdd", {{"args", {gate}}, {"tier", lib.generic_string()}, {"collection", "Kits"}, {"thumbnail", false}});
+    REQUIRE(saved["assembly"].is_object());
+    CHECK(saved["assembly"]["members"].size() == 3);
+    CHECK(saved["assembly"]["kind"] == "packedLevelActor");
+    CHECK(saved["model"].get<std::string>().find("Gate.glb") != std::string::npos);
+
+    // Two gates side by side make a court: an assembly of assemblies.
+    run("newScene");
+    const json g1 = run("place", {{"args", {"Kits/Gate"}}, {"at", json::array({-500, 0, 0})}, {"snap", false}});
+    const json g2 = run("place", {{"args", {"Kits/Gate"}}, {"at", json::array({500, 0, 0})}, {"snap", false}});
+    CHECK(g1[0]["meshes"].size() == 4);
+    const std::string court = run("assemblyCreate", {{"args", {g1[0]["node"], g2[0]["node"]}}, {"name", "Court"}}).get<std::string>();
+    const json courtAsset = run("libraryAdd", {{"args", {court}}, {"tier", lib.generic_string()}, {"collection", "Kits"}, {"thumbnail", false}});
+    CHECK(courtAsset["assembly"]["members"].size() == 2);
+    CHECK(courtAsset["assembly"]["members"][0]["asset"] == "Kits/Gate");
+    const bool courtHasModel = courtAsset.contains("model") && !courtAsset["model"].get<std::string>().empty();
+    CHECK_FALSE(courtHasModel);
+
+    run("newScene");
+    const json placed = run("place", {{"args", {"Kits/Court"}}, {"at", json::array({300000, 0, 0})}, {"snap", false}});
+    REQUIRE(placed.size() == 1);
+    CHECK(placed[0]["meshes"].size() == 8);
+    const std::string root = placed[0]["node"].get<std::string>();
+    // The two gates keep their 10 m spacing and stand on the point.
+    glm::dvec3 lo(1e300), hi(-1e300);
+    for (const json& m : placed[0]["meshes"])
+    {
+        const json info = run("dressInfo", {{"args", {m}}})[0];
+        for (int k = 0; k < 3; ++k)
+        {
+            lo[k] = std::min(lo[k], info["boundsMin"][k].get<double>());
+            hi[k] = std::max(hi[k], info["boundsMax"][k].get<double>());
+        }
+    }
+    CHECK(hi.x - lo.x == doctest::Approx(1000.0 + 260.0).epsilon(0.001));
+    CHECK(lo.y == doctest::Approx(0.0));
+    CHECK((lo.x + hi.x) * 0.5 == doctest::Approx(300000.0));
+    int stonePosts = 0;
+    for (const json& m : placed[0]["meshes"])
+        if (m.get<std::string>().find("Post") != std::string::npos)
+            stonePosts += run("dressInfo", {{"args", {m}}})[0]["material"] == "stone" ? 1 : 0;
+    CHECK(stonePosts == 4);
+    CHECK(run("unrealPlaceAssembly", {{"args", {root}}, {"dryRun", true}})["levelInstance"]["kind"] == "levelInstance");
+
+    const auto path = scratchFile("court.lila");
+    run("saveScene", {{"args", {path.string()}}});
+    run("openScene", {{"args", {path.string()}}});
+    CHECK(run("unrealPlaceAssembly", {{"args", {root}}, {"dryRun", true}})["plan"]["groups"].size() >= 2);
+
+    std::error_code ec;
+    std::filesystem::remove_all(lib, ec);
+}
+
+TEST_CASE("library: starter thumbnails are drawn without leaving anything in the scene or on the undo stack")
+{
+    load();
+    run("newScene");
+    run("libraryStarter", {{"thumbnails", false}});
+    // Without a renderer it says so and draws nothing.
+    if (!ops::registry().find("captureView"))
+        CHECK(run("libraryStarter").contains("thumbnailNote"));
+
+    // A stand-in renderer that writes a file and checks it sees the one prop it is asked to draw.
+    int calls = 0;
+    ops::registerCommand({.name = "captureView",
+                          .flags = {{"path", "", ArgType::String, nullptr, ""},
+                                    {"view", "", ArgType::String, nullptr, ""},
+                                    {"width", "", ArgType::Int, nullptr, ""},
+                                    {"height", "", ArgType::Int, nullptr, ""},
+                                    {"display", "", ArgType::String, nullptr, ""},
+                                    {"isolate", "", ArgType::Bool, nullptr, ""},
+                                    {"frameSelection", "", ArgType::Bool, nullptr, ""},
+                                    {"grid", "", ArgType::Bool, nullptr, ""},
+                                    {"showSelection", "", ArgType::Bool, nullptr, ""}},
+                          .undoable = false,
+                          .run = [&calls](const Args& a) -> json {
+                              CHECK(scene::Graph::current().selection().size() == 1);
+                              std::ofstream(a.get<std::string>("path"), std::ios::binary) << "png";
+                              ++calls;
+                              return a.get<std::string>("path");
+                          }});
+    const std::string keep = cube("Keep", {0, 0, 0}, {10, 10, 10});
+    const size_t nodes = scene::Graph::current().nodes().size();
+    const json r = run("libraryStarter", {{"rebuild", true}});
+    ops::unregisterCommand("captureView");
+    CHECK(r["thumbnails"].get<int64_t>() == int64_t(r["assets"].size()));
+    CHECK(r["missing"].get<int64_t>() == 0);
+    CHECK(calls == int(r["assets"].size()));
+    CHECK(scene::Graph::current().nodes().size() == nodes);
+    CHECK(std::filesystem::exists(std::filesystem::path(r["dir"].get<std::string>()) / "Facility" / "Locker" / "thumb.png"));
+    CHECK_FALSE(run("librarySearch", {{"args", {"Locker"}}, {"tier", "starter"}})[0]["thumbnail"].get<std::string>().empty());
+    // The last undo step is still the cube.
+    run("undo");
+    CHECK_FALSE(run("objExists", {{"args", {keep}}}).get<bool>());
 }

@@ -29,8 +29,10 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <optional>
 
 using namespace lila;
@@ -127,9 +129,29 @@ public:
         QObject::connect(mList, &QWidget::customContextMenuRequested, this, [this](QPoint pos) { contextMenu(pos); });
         fillCollections();
         fill();
+        // The starter props come without thumbnails; the first time the panel shows, they are drawn.
+        QTimer::singleShot(0, this, [this] { drawStarterThumbnails(); });
     }
 
 private:
+    void drawStarterThumbnails()
+    {
+        if (!library::starterEnabled())
+            return;
+        const bool missing = std::ranges::any_of(library::all(), [](const library::Asset& a) { return a.tier == "starter" && a.thumbnail.empty(); });
+        if (!missing)
+            return;
+        try
+        {
+            ops::execute("libraryStarter", json::object());
+        }
+        catch (const std::exception& e)
+        {
+            log::write(LogLevel::Warning, std::string("Library: starter thumbnails: ") + e.what());
+        }
+        fill();
+    }
+
     void fillCollections()
     {
         const QString keep = mCollection->currentText();

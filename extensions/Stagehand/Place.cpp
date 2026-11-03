@@ -14,6 +14,7 @@
 #include <lila/Profile.h>
 #include <lila/Relocate.h>
 #include <lila/Transform.h>
+#include <lila/Undo.h>
 #include <lila/Workspace.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -315,33 +316,89 @@ struct Placement
     std::string name;
 };
 
-/** Puts one copy of an asset at a placement, its bounds' bottom centre on the point. Returns its root. */
-NodeId placeOne(Graph& g, const Asset& a, const Placement& p)
+json matrixJson(const glm::dmat4& w)
 {
-    LILA_ZONE();
+    json m = json::array();
+    for (int k = 0; k < 16; ++k)
+        m.push_back(w[k / 4][k % 4]);
+    return m;
+}
 
+/** Column-major 16 numbers as a matrix; identity for anything else. */
+glm::dmat4 matrixFrom(const json& j)
+{
+    glm::dmat4 m(1.0);
+    if (j.is_array() && j.size() == 16)
+        for (int k = 0; k < 16; ++k)
+            m[k / 4][k % 4] = j[size_t(k)].get<double>();
+    return m;
+}
+
+/** A copy of a plain asset's master, top level and shown, where the master stands. */
+NodeId copyOfMaster(Graph& g, const Asset& a, const std::string& mode)
+{
     const NodeId master = ensureMaster(g, a);
-    glm::dvec3 lo, hi;
-    if (!localBounds(g, master, lo, hi))
-        throw CommandError("place: " + a.id + " has no meshes");
-    const glm::dvec3 base((lo.x + hi.x) * 0.5, lo.y, (lo.z + hi.z) * 0.5);
-
     json made;
     const std::string masterPath = g.node(master)->path();
-    if (p.mode == "copy")
+    if (mode == "copy")
         made = ops::execute("duplicate", {{"args", {masterPath}}});
-    else if (p.mode == "instance")
+    else if (mode == "instance")
         made = ops::execute("instance", {{"args", {masterPath}}});
     else
-        throw CommandError("place: mode is instance or copy, not '" + p.mode + "'");
+        throw CommandError("place: mode is instance or copy, not '" + mode + "'");
     Node* root = g.find(made.is_array() ? made[0].get<std::string>() : made.get<std::string>());
     if (!root)
         throw CommandError("place: lost the placed copy of " + a.id);
     // Unparenting may rename it to stay unique at the top, so it is kept by id.
     const NodeId id = root->id();
-    ops::execute("parent", {{"args", {root->path()}}, {"world", true}});
-    root = g.node(id);
-    ops::execute("setAttr", {{"args", {root->path() + ".visibility", true}}});
+    ops::execute("parent", {{"args", {root->fullPath()}}, {"world", true}});
+    ops::execute("setAttr", {{"args", {g.node(id)->fullPath() + ".visibility", true}}});
+    return id;
+}
+
+/**
+ * A copy of an asset, top level: a plain asset's master copied, or an assembly's group with each member (assemblies
+ * too) copied in where it stood, and the assembly's own model beside them.
+ */
+NodeId instantiate(Graph& g, const Asset& a, const std::string& mode, int depth = 0)
+{
+    if (a.assembly.is_null())
+        return copyOfMaster(g, a, mode);
+    if (depth > 16)
+        throw CommandError("place: " + a.id + " nests assemblies too deep (does it hold itself?)");
+    const json made = ops::execute("group", {{"empty", true}, {"name", identifier(a.name)}});
+    const NodeId root = g.find(made.is_array() ? made[0].get<std::string>() : made.get<std::string>())->id();
+    tagAssembly(g, root, a.assembly.value("kind", std::string("levelInstance")));
+    const json tag = ops::execute("createNode", {{"args", {kAssetType}}, {"name", "asset"}, {"parent", g.node(root)->fullPath()}, {"skipSelect", true}});
+    ops::execute("setAttr", {{"args", {tag.get<std::string>() + ".asset", a.id}}});
+    auto adopt = [&](NodeId child, const glm::dmat4& local) {
+        setWorld(g, child, local);
+        ops::execute("parent", {{"args", {g.node(child)->fullPath(), g.node(root)->fullPath()}}});
+    };
+    if (!a.model.empty())
+        adopt(copyOfMaster(g, a, mode), matrixFrom(a.assembly.value("modelMatrix", json())) * g.node(ensureMaster(g, a))->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+    for (const json& m : a.assembly.value("members", json::array()))
+    {
+        const std::string id = m.value("asset", std::string());
+        std::optional<Asset> member = library::find(id);
+        if (!member)
+            throw CommandError("place: " + a.id + " holds " + id + ", which isn't in the library");
+        adopt(instantiate(g, *member, mode, depth + 1), matrixFrom(m.value("matrix", json())));
+    }
+    return root;
+}
+
+/** Puts one copy of an asset at a placement, its bounds' bottom centre on the point. Returns its root. */
+NodeId placeOne(Graph& g, const Asset& a, const Placement& p)
+{
+    LILA_ZONE();
+
+    const NodeId id = instantiate(g, a, p.mode);
+    glm::dvec3 lo, hi;
+    if (!localBounds(g, id, lo, hi))
+        throw CommandError("place: " + a.id + " has no meshes");
+    const glm::dvec3 base((lo.x + hi.x) * 0.5, lo.y, (lo.z + hi.z) * 0.5);
+    Node* root = g.node(id);
     if (!p.name.empty())
         ops::execute("rename", {{"args", {root->path(), p.name}}});
 
@@ -367,6 +424,80 @@ json placedJson(Graph& g, NodeId root, const Asset& a, const std::string& mode)
     g.evaluate();
     const glm::dmat4 w = g.node(root)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
     return {{"node", g.node(root)->path()}, {"asset", a.id}, {"mode", mode}, {"position", v3(glm::dvec3(w[3]))}, {"meshes", meshes}};
+}
+
+/**
+ * Renders thumb.png for starter props that have none (or all, with force): each model is brought into the scene,
+ * captured alone and taken out again inside an undo chunk that is then cancelled, so neither the scene nor undo keeps
+ * a trace. Needs captureView, which the app and batch mode have.
+ */
+json renderStarterThumbnails(Graph& g, bool force)
+{
+    LILA_ZONE();
+
+    std::vector<Asset> todo;
+    for (const Asset& a : library::all())
+        if (a.tier == "starter" && !a.model.empty() && (force || a.thumbnail.empty()))
+            todo.push_back(a);
+    json out = {{"thumbnails", 0}, {"missing", int64_t(todo.size())}};
+    if (todo.empty())
+        return out;
+    if (!ops::registry().find("captureView"))
+    {
+        out["thumbnailNote"] = "no renderer here: thumbnails are drawn by the app or batch mode";
+        return out;
+    }
+    UndoStack& undo = UndoStack::get();
+    if (undo.chunkOpen())
+    {
+        out["thumbnailNote"] = "skipped inside another command";
+        return out;
+    }
+    const std::vector<NodeId> previous = g.selection();
+    int64_t rendered = 0;
+    undo.openChunk("Starter thumbnails");
+    try
+    {
+        for (const Asset& a : todo)
+        {
+            std::set<NodeId> before;
+            for (NodeId id : g.nodes())
+                before.insert(id);
+            ops::execute("importFile", {{"args", {a.model.generic_string()}}});
+            const std::vector<NodeId> roots = newRoots(g, before);
+            json names = json::array();
+            for (NodeId r : roots)
+                names.push_back(g.node(r)->path());
+            if (names.empty())
+                continue;
+            ops::execute("select", {{"args", names}});
+            ops::execute("captureView", {{"path", (a.dir / "thumb.png").generic_string()},
+                                         {"view", "three-quarter"},
+                                         {"width", 256},
+                                         {"height", 256},
+                                         {"display", "shaded"},
+                                         {"isolate", true},
+                                         {"frameSelection", true},
+                                         {"grid", false},
+                                         {"showSelection", false}});
+            ops::execute("delete", {{"args", names}});
+            ++rendered;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        out["thumbnailNote"] = std::string("stopped: ") + e.what();
+    }
+    undo.cancelChunk();
+    std::vector<NodeId> keep;
+    for (NodeId id : previous)
+        if (g.node(id))
+            keep.push_back(id);
+    g.select(keep);
+    library::reload();
+    out["thumbnails"] = rendered;
+    out["missing"] = int64_t(todo.size()) - rendered;
+    return out;
 }
 
 library::Query queryOf(const Args& a)
@@ -492,17 +623,21 @@ void registerLibraryCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "libraryStarter",
-        .doc = "The starter props: industrial (crates, barrels, pallets, beams, I-beams, pipes, panels, cable spools, scaffolding), "
+        .doc = "The starter props, built and given thumbnails: industrial (crates, barrels, pallets, beams, I-beams, pipes, panels, cable spools, scaffolding), "
                "debris (stone chunks S to XL, a rubble pile, a broken slab, rebar) and facility (lockers, consoles, supply crates, "
                "cable trays), each with physics and tags. Built from code into the user's config folder the first time the "
-               "library is used; rebuild=True writes them again. Returns dir, built and assets (ids for place).",
-        .flags = {{"rebuild", "rb", T::Bool, false, "Write the props again even if they are there."}},
+               "library is used; rebuild=True writes them again. Thumbnails are rendered where the app or batch mode can draw. "
+               "Returns dir, built, assets (ids for place), thumbnails (rendered now) and missing.",
+        .flags = {{"rebuild", "rb", T::Bool, false, "Write the props again even if they are there."},
+                  {"thumbnails", "th", T::Bool, true, "Render the thumbnails still missing (all of them after a rebuild)."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             if (!library::starterEnabled())
                 throw CommandError("libraryStarter: the starter library is off (pref stagehand /library/starter)");
-            const json out = library::buildStarter(a.get<bool>("rebuild", false));
+            json out = library::buildStarter(a.get<bool>("rebuild", false));
             library::reload();
+            if (a.get<bool>("thumbnails", true))
+                out.update(renderStarterThumbnails(Graph::current(), out.value("built", false)));
             return out;
         },
         .examples = {"libraryStarter()['assets']", "place('Industrial/Barrel', on='Floor', count=6, spacing=[70, 0, 0])"},
@@ -551,6 +686,28 @@ void registerLibraryCommands(ext::Context& ctx)
                 throw CommandError("libraryAdd: " + (dir / "asset.json").generic_string() + " exists (overwrite=True replaces it)");
             fs::create_directories(dir);
 
+            // An assembly saves its library members by id and where they stand; only the rest of it becomes the model.
+            g.evaluate();
+            json assembly;
+            std::vector<NodeId> modelNodes = ids;
+            if (ids.size() == 1 && assemblyTag(g, ids[0]))
+            {
+                const glm::dmat4 toRoot = glm::inverse(g.node(ids[0])->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+                json members = json::array();
+                modelNodes.clear();
+                for (NodeId c : g.children(ids[0]))
+                {
+                    Node* n = g.node(c);
+                    if (!n || !n->type().isA("transform") || n->type().name == kAssetType || n->type().name == "stagehandAssembly")
+                        continue;
+                    if (const std::string member = assetOf(g, c); !member.empty())
+                        members.push_back({{"asset", member}, {"matrix", matrixJson(toRoot * n->as<glm::dmat4>(scene::Transform::kWorldMatrix))}});
+                    else
+                        modelNodes.push_back(c);
+                }
+                assembly = {{"kind", assemblyKind(g, ids[0])}, {"members", members}, {"modelMatrix", matrixJson(toRoot)}};
+            }
+
             const std::vector<NodeId> previous = g.selection();
             json names = json::array();
             for (NodeId id : ids)
@@ -575,8 +732,17 @@ void registerLibraryCommands(ext::Context& ctx)
                     log::write(LogLevel::Info, std::string("libraryAdd: no thumbnail: ") + e.what());
                 }
             }
-            const fs::path model = dir / (name + ".glb");
-            ops::execute("exportGltf", {{"args", {model.generic_string()}}});
+            fs::path model = dir / (name + ".glb");
+            if (modelNodes.empty())
+                model.clear();
+            else
+            {
+                json parts = json::array();
+                for (NodeId id : modelNodes)
+                    parts.push_back(g.node(id)->path());
+                ops::execute("select", {{"args", parts}});
+                ops::execute("exportGltf", {{"args", {model.generic_string()}}});
+            }
             json restore = json::array();
             for (NodeId id : previous)
                 if (Node* n = g.node(id))
@@ -638,13 +804,16 @@ void registerLibraryCommands(ext::Context& ctx)
                                  {"matrix", m}});
             }
             json meta = {{"name", a.get<std::string>("name", name)},
-                         {"model", model.filename().generic_string()},
                          {"tags", a.flags.value("tags", json::array())},
                          {"description", a.get<std::string>("description", "")},
                          {"size", v3(size)},
                          {"physics", physics},
                          {"unreal", a.get<std::string>("unreal", "")},
                          {"snapPoints", snaps}};
+            if (!model.empty())
+                meta["model"] = model.filename().generic_string();
+            if (!assembly.is_null())
+                meta["assembly"] = assembly;
             std::ofstream(dir / "asset.json") << meta.dump(4) << "\n";
             library::reload();
             const fs::path rel = fs::relative(dir, base);

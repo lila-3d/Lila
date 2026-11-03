@@ -214,6 +214,11 @@ void registerKitUi(lila::ext::Context& ctx);
  * assemblyCreate and unrealPlaceAssembly (UnrealExport.cpp).
  */
 bool registerUnrealNodes(lila::ext::Context& ctx);
+/** The stagehandAssembly tag under a group, or null; its kind (levelInstance or packedLevelActor), empty when none. */
+Node* assemblyTag(Graph& g, NodeId root);
+std::string assemblyKind(Graph& g, NodeId root);
+/** Marks a group as an assembly with a fresh key. Undoable. */
+void tagAssembly(Graph& g, NodeId root, const std::string& kind, const std::string& level = {});
 void registerUnrealExport(lila::ext::Context& ctx);
 /** instancesToObjects (Realize.cpp). */
 void registerRealizeCommands(lila::ext::Context& ctx);

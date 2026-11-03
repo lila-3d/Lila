@@ -23,7 +23,10 @@
  * .fbx, .obj and .lila load too) and thumb.png. Its id is "<Collection>/<Asset>".
  *
  *   asset.json: { "name", "model": "Crate.glb", "tags": [], "description", "size": [x, y, z] (cm, bounds),
- *                 "physics": { "role", "material", "shape" }, "unreal": "/Game/Props/SM_Crate", "snapPoints": [] }
+ *                 "physics": { "role", "material", "shape" }, "unreal": "/Game/Props/SM_Crate", "snapPoints": [],
+ *                 "assembly": { "kind", "members": [{ "asset", "matrix": [16, column-major, relative to the assembly] }] } }
+ *
+ * An assembly holds other assets (assemblies too) where they stood; its model, when it has one, is the rest of the group.
  */
 namespace stagehand::library
 {
@@ -44,6 +47,8 @@ struct Asset
     json physics = json::object();
     std::string unreal;
     json snapPoints = json::array();
+    /** Null unless the asset is an assembly: {kind, members: [{asset, matrix}]}. */
+    json assembly;
 
     json toJson() const;
 };

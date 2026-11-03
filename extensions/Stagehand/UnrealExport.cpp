@@ -90,13 +90,6 @@ json physicsOf(Graph& g, NodeId mesh)
     return {{"physics", p}};
 }
 
-Node* assemblyTag(Graph& g, NodeId root)
-{
-    for (NodeId c : g.children(root))
-        if (Node* n = g.node(c); n && n->type().name == kAssemblyType)
-            return n;
-    return nullptr;
-}
 
 std::string str(Node& n, const char* attr) { return n.as<std::string>(n.type().attrIndex(attr)); }
 
@@ -122,6 +115,31 @@ NodeId assemblyRoot(Graph& g, const std::string& name, const char* cmd)
     throw CommandError(std::string(cmd) + ": " + n->path() + " is not in an assembly (assemblyCreate makes one)");
 }
 } // namespace
+
+Node* assemblyTag(Graph& g, NodeId root)
+{
+    for (NodeId c : g.children(root))
+        if (Node* n = g.node(c); n && n->type().name == kAssemblyType)
+            return n;
+    return nullptr;
+}
+
+std::string assemblyKind(Graph& g, NodeId root)
+{
+    Node* tag = assemblyTag(g, root);
+    return tag ? kAssemblyKinds[std::clamp<int64_t>(tag->as<int64_t>(tag->type().attrIndex("kind")), 0, 1)] : std::string();
+}
+
+void tagAssembly(Graph& g, NodeId root, const std::string& kind, const std::string& level)
+{
+    const std::string tag =
+        ops::execute("createNode", {{"args", {kAssemblyType}}, {"name", "assembly"}, {"parent", g.node(root)->path()}, {"skipSelect", true}}).get<std::string>();
+    ops::execute("setAttr", {{"args", {tag + ".kind", kind == "packedLevelActor" ? int64_t(1) : int64_t(0)}}});
+    if (!level.empty())
+        ops::execute("setAttr", {{"args", {tag + ".level", level}}});
+    static std::mt19937_64 rng{std::random_device{}()};
+    ops::execute("setAttr", {{"args", {tag + ".key", std::format("{:016x}", rng())}}});
+}
 
 bool registerUnrealNodes(ext::Context& ctx)
 {
@@ -167,14 +185,7 @@ void registerUnrealExport(ext::Context& ctx)
             if (objects.empty())
                 throw CommandError("assemblyCreate: give objects");
             const std::string group = madeName(ops::execute("group", {{"args", objects}, {"name", a.get<std::string>("name", "Assembly")}}));
-            const std::string tag = ops::execute("createNode", {{"args", {kAssemblyType}}, {"name", "assembly"}, {"parent", group}, {"skipSelect", true}})
-                                        .get<std::string>();
-            const std::string kind = a.get<std::string>("kind", "levelInstance");
-            ops::execute("setAttr", {{"args", {tag + ".kind", kind == "packedLevelActor" ? int64_t(1) : int64_t(0)}}});
-            if (a.has("level"))
-                ops::execute("setAttr", {{"args", {tag + ".level", a.get<std::string>("level")}}});
-            static std::mt19937_64 rng{std::random_device{}()};
-            ops::execute("setAttr", {{"args", {tag + ".key", std::format("{:016x}", rng())}}});
+            tagAssembly(g, g.find(group)->id(), a.get<std::string>("kind", "levelInstance"), a.get<std::string>("level", ""));
             g.select({g.find(group)->id()});
             return group;
         },

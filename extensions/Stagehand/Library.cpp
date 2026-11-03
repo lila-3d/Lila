@@ -85,7 +85,7 @@ fs::path modelIn(const fs::path& dir, const json& meta)
     if (meta.contains("model") && meta["model"].is_string())
     {
         const fs::path p = dir / utf8Path(meta["model"].get<std::string>());
-        if (fs::exists(p))
+        if (fs::is_regular_file(p))
             return p;
     }
     for (const char* ext : kModelExtensions)
@@ -117,7 +117,9 @@ void scanRoot(const Root& r, std::map<std::string, Asset>& byId, std::vector<std
             a.tier = r.tier;
             a.dir = dir;
             a.model = modelIn(dir, meta);
-            if (a.model.empty())
+            if (meta.contains("assembly") && meta["assembly"].is_object())
+                a.assembly = meta["assembly"];
+            if (a.model.empty() && a.assembly.is_null())
                 throw std::runtime_error("no model file");
             if (fs::exists(dir / "thumb.png"))
                 a.thumbnail = dir / "thumb.png";
@@ -222,7 +224,8 @@ json Asset::toJson() const
             {"size", json::array({size.x, size.y, size.z})},
             {"physics", physics},
             {"unreal", unreal},
-            {"snapPoints", snapPoints}};
+            {"snapPoints", snapPoints},
+            {"assembly", assembly}};
 }
 
 std::vector<Root> roots(bool existingOnly)
