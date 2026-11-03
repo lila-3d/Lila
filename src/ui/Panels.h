@@ -77,6 +77,8 @@ LILA_UI_API void toggle(const std::string& id);
 LILA_UI_API void floatUnplaced(QDockWidget* dock);
 /** Floats the dock at a comfortable size, centred on the main window. */
 LILA_UI_API void placeFloating(QDockWidget* dock);
+/** A floating tool palette's first showing: sized to its content beside the cursor. Later showings leave it where the user put it. */
+LILA_UI_API void placeToolPalette(QDockWidget* dock);
 /** A dock property: the dock sizes itself to its content, so a small floating size is not misplaced. */
 inline constexpr const char* kOwnSizeProperty = "lilaOwnSize";
 /** A floating dock too small to use (unless it has kOwnSizeProperty), or with its title bar off every screen. */

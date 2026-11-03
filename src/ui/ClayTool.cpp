@@ -530,16 +530,8 @@ QDockWidget* paletteDock()
 
 void showPalette()
 {
-    QDockWidget* before = paletteDock();
-    const bool wasFloating = before && before->isFloating() && before->isVisible();
     panels::show(kPaletteId);
-    QDockWidget* d = paletteDock();
-    if (!d || wasFloating || !d->isFloating())
-        return;
-    // Floated by floatFirst: sized to its content at the viewport's top-left, out of the way of the model.
-    d->resize(d->sizeHint());
-    if (QWidget* window = d->parentWidget() ? d->parentWidget()->window() : nullptr)
-        d->move(window->geometry().topLeft() + QPoint(80, 160));
+    panels::placeToolPalette(paletteDock());
 }
 
 void hidePalette()

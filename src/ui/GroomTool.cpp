@@ -998,18 +998,10 @@ QWidget* stackPanel(NodeId id)
 
 void showGroomPalette(bool drawHair)
 {
-    QDockWidget* before = groomPaletteDock();
-    const bool wasFloating = before && before->isFloating() && before->isVisible();
     panels::show(kGroomPaletteId);
     if (gGroomPalette)
         gGroomPalette->setPage(drawHair);
-    QDockWidget* d = groomPaletteDock();
-    if (!d || wasFloating || !d->isFloating())
-        return;
-    // Floated at the viewport's top-left, out of the way of the head.
-    d->resize(d->sizeHint());
-    if (QWidget* window = d->parentWidget() ? d->parentWidget()->window() : nullptr)
-        d->move(window->geometry().topLeft() + QPoint(80, 160));
+    panels::placeToolPalette(groomPaletteDock());
 }
 
 void hideGroomPalette()

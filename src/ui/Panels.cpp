@@ -10,6 +10,7 @@
 #include "ui/UndoHistory.h"
 
 #include <QApplication>
+#include <QCursor>
 #include <QDockWidget>
 #include <QGuiApplication>
 #include <QScreen>
@@ -161,6 +162,27 @@ void panels::placeFloating(QDockWidget* dock)
     r.moveTop(std::clamp(r.top(), avail.top(), avail.bottom() - r.height()));
     dock->setFloating(true);
     dock->setGeometry(r);
+}
+
+void panels::placeToolPalette(QDockWidget* dock)
+{
+    if (!dock || !dock->isFloating() || (dock->property("lilaPalettePlaced").toBool() && !floatingMisplaced(dock)))
+        return;
+    dock->setProperty("lilaPalettePlaced", true);
+    dock->resize(dock->sizeHint());
+    const QPoint cursor = QCursor::pos();
+    QScreen* screen = QGuiApplication::screenAt(cursor);
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+    const QRect avail = screen->availableGeometry();
+    const QSize size = dock->frameGeometry().size();
+    // Beside the cursor rather than under it, so the click that opened the tool does not land on the palette.
+    QPoint at = cursor + QPoint(32, -size.height() / 3);
+    at.setX(std::clamp(at.x(), avail.left(), std::max(avail.left(), avail.right() - size.width())));
+    at.setY(std::clamp(at.y(), avail.top(), std::max(avail.top(), avail.bottom() - size.height())));
+    dock->move(at);
 }
 
 void setShowDockHook(std::function<void(const char* dockName)> showDock)
