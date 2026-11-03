@@ -3,7 +3,7 @@
 	"Version": 6,
 	"VersionName": "0.6.0",
 	"FriendlyName": "Lila Link",
-	"Description": "Lets the Lila DCC import and reimport assets into this project over a localhost JSON-RPC socket.",
+	"Description": "Lets Lila import and reimport assets into this project over a localhost JSON-RPC socket.",
 	"Category": "Editor",
 	"CreatedBy": "Lila",
 	"CanContainContent": true,
