@@ -13,7 +13,7 @@ Lila includes or links the following third-party components. Each is licensed un
 
 Qt and PySide6 are dynamically linked and unmodified. You may replace the Qt and PySide6 libraries shipped with Lila with your own builds of the same versions. Their source code is available from https://download.qt.io. Eigen is used unmodified; its source is available from https://gitlab.com/libeigen/eigen.
 
-FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swresample DLLs beside the executable) and unmodified, built without its GPL and nonfree parts. You may replace those DLLs with your own builds of a compatible version. The corresponding source code is available from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, and on request from Lila's maintainers for three years from the date you received this release.
+FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swresample DLLs beside the executable) and unmodified, built without its GPL and nonfree parts and without its H.264 and HEVC decoders (Windows decodes those through Media Foundation). You may replace those DLLs with your own builds of a compatible version. The corresponding source code is available from https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, and on request from Lila's maintainers for three years from the date you received this release.
 
 ## Permissive
 
