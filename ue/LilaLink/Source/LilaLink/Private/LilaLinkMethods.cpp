@@ -9,6 +9,7 @@
 #include "LilaLinkSequence.h"
 #include "LilaLinkImposter.h"
 #include "LilaLinkLandscape.h"
+#include "LilaLinkSettlement.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTextures.h"
 #include "LilaLinkTrim.h"
@@ -112,7 +113,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")),
 		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters")), Str(TEXT("components")),
-		Str(TEXT("lights")), Str(TEXT("lightingChannels")), Str(TEXT("geometryCollection"))});
+		Str(TEXT("lights")), Str(TEXT("lightingChannels")), Str(TEXT("geometryCollection")), Str(TEXT("settlement"))});
 	TArray<TSharedPtr<FJsonValue>> Exporters;
 	for (const FString& Name : LilaLink::ComponentExporterNames())
 	{
@@ -387,6 +388,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddMLDeformerMethods(Methods);
 	LilaLink::AddSplineMethods(Methods);
 	LilaLink::AddLandscapeMethods(Methods);
+	LilaLink::AddSettlementMethods(Methods);
 	LilaLink::AddPlacementMethods(Methods);
 	LilaLink::AddMasonryMethods(Methods);
 	LilaLink::AddTrimMethods(Methods);

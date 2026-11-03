@@ -353,7 +353,8 @@ void ClearLandscapeSplines(ULandscapeSplinesComponent* Splines, const FString& P
 }
 
 TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, const FString& Label, const FString& LandscapeLabel, const FVector& Location,
-	const TArray<FLilaSpline>& Splines, UStaticMesh* Mesh, ESplineMeshAxis::Type Axis, double Width, bool bDeform, TArray<FString>& Warnings, FString& OutError)
+	const TArray<FLilaSpline>& Splines, UStaticMesh* Mesh, ESplineMeshAxis::Type Axis, double Width, bool bDeform, bool bJoin, TArray<FString>& Warnings,
+	FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkSplines::SetLandscapeSplines);
 
@@ -417,6 +418,8 @@ TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, con
 
 	const FTransform ToComponent = Component->GetComponentTransform();
 	int32 SegmentCount = 0;
+	// With join, splines ending at the same place share one control point: a road network's junctions.
+	TMap<FIntVector, ULandscapeSplineControlPoint*> Shared;
 	for (int32 SplineIndex = 0; SplineIndex < Splines.Num(); ++SplineIndex)
 	{
 		const FLilaSpline& Spline = Splines[SplineIndex];
@@ -424,6 +427,17 @@ TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, con
 		for (int32 Index = 0; Index < Spline.Points.Num(); ++Index)
 		{
 			const FLilaSplinePoint& In = Spline.Points[Index];
+			const FVector World = Location + In.Position;
+			const FIntVector Key(FMath::RoundToInt(World.X), FMath::RoundToInt(World.Y), FMath::RoundToInt(World.Z));
+			if (bJoin)
+			{
+				if (ULandscapeSplineControlPoint** Found = Shared.Find(Key))
+				{
+					(*Found)->Width = FMath::Max((*Found)->Width, static_cast<float>(Width * In.Scale.Y));
+					Points.Add(*Found);
+					continue;
+				}
+			}
 			const FName Name(*FString::Printf(TEXT("%sP%d_%d"), *Prefix, SplineIndex, Index));
 			ULandscapeSplineControlPoint* Point = NewObject<ULandscapeSplineControlPoint>(Component, Name, RF_Transactional);
 			Component->GetControlPoints().Add(Point);
@@ -435,19 +449,31 @@ TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, con
 			Point->bRaiseTerrain = bDeform;
 			Point->bLowerTerrain = bDeform;
 			Points.Add(Point);
+			if (bJoin)
+			{
+				Shared.Add(Key, Point);
+			}
 		}
 		const int32 Segments = Spline.bClosed ? Points.Num() : Points.Num() - 1;
 		for (int32 Index = 0; Index < Segments; ++Index)
 		{
 			const int32 Next = (Index + 1) % Points.Num();
+			if (Points[Index] == Points[Next])
+			{
+				continue;
+			}
 			const FName Name(*FString::Printf(TEXT("%sS%d_%d"), *Prefix, SplineIndex, Index));
 			ULandscapeSplineSegment* Segment = NewObject<ULandscapeSplineSegment>(Component, Name, RF_Transactional);
 			Component->GetSegments().Add(Segment);
 			Segment->Connections[0].ControlPoint = Points[Index];
 			Segment->Connections[1].ControlPoint = Points[Next];
 			// The end tangent is the far point's forward times -TangentLen, so a spline running on through it takes a negative length.
-			Segment->Connections[0].TangentLen = static_cast<float>(ToComponent.InverseTransformVector(Spline.Points[Index].LeaveTangent).Size());
-			Segment->Connections[1].TangentLen = -static_cast<float>(ToComponent.InverseTransformVector(Spline.Points[Next].ArriveTangent).Size());
+			// A shared (joined) point faces the way of the spline that made it; one leaving it the other way takes the opposite sign.
+			const FVector Along = Points[Next]->Location - Points[Index]->Location;
+			const float StartSign = FVector::DotProduct(Points[Index]->Rotation.Vector(), Along) >= 0.0 ? 1.0f : -1.0f;
+			const float EndSign = FVector::DotProduct(Points[Next]->Rotation.Vector(), Along) >= 0.0 ? 1.0f : -1.0f;
+			Segment->Connections[0].TangentLen = StartSign * static_cast<float>(ToComponent.InverseTransformVector(Spline.Points[Index].LeaveTangent).Size());
+			Segment->Connections[1].TangentLen = -EndSign * static_cast<float>(ToComponent.InverseTransformVector(Spline.Points[Next].ArriveTangent).Size());
 			Segment->bRaiseTerrain = bDeform;
 			Segment->bLowerTerrain = bDeform;
 			if (Mesh)
@@ -461,7 +487,7 @@ TSharedPtr<FJsonValue> SetLandscapeSplines(UWorld* World, const FString& Id, con
 			Points[Next]->ConnectedSegments.Add(FLandscapeSplineConnection(Segment, 1));
 			++SegmentCount;
 		}
-		for (ULandscapeSplineControlPoint* Point : Points)
+		for (ULandscapeSplineControlPoint* Point : TSet<ULandscapeSplineControlPoint*>(Points))
 		{
 			Point->UpdateSplinePoints();
 		}
@@ -510,8 +536,9 @@ TSharedPtr<FJsonValue> SetSpline(const TSharedPtr<FJsonObject>& Params, FString&
 	ReadVector(Params, TEXT("location"), Location);
 	double Width = 200.0;
 	Params->TryGetNumberField(TEXT("width"), Width);
-	bool bDeform = true;
+	bool bDeform = true, bJoin = false;
 	Params->TryGetBoolField(TEXT("deformTerrain"), bDeform);
+	Params->TryGetBoolField(TEXT("join"), bJoin);
 
 	TArray<FString> Warnings;
 	UStaticMesh* Mesh = nullptr;
@@ -533,7 +560,7 @@ TSharedPtr<FJsonValue> SetSpline(const TSharedPtr<FJsonObject>& Params, FString&
 
 	FScopedTransaction Transaction(NSLOCTEXT("LilaLink", "SetSpline", "Lila: Update Spline"));
 	TSharedPtr<FJsonValue> Result = Mode == TEXT("landscape")
-		? SetLandscapeSplines(World, Id, Label, LandscapeLabel, Location, Splines, Mesh, Axis, Width, bDeform, Warnings, OutError)
+		? SetLandscapeSplines(World, Id, Label, LandscapeLabel, Location, Splines, Mesh, Axis, Width, bDeform, bJoin, Warnings, OutError)
 		: SetActorSplines(World, Id, Label, Folder, Location, Splines, Mesh, Axis, OutError);
 	if (!Result.IsValid())
 	{
