@@ -5854,8 +5854,8 @@ struct Renderer::Impl
             PointsPush p;
             p.viewProj = viewProj;
             p.depthPull = depthPull(s.proj, heightPx, kLinePullPixels + 0.5 * std::max(d.size, d.selectedSize));
-            for (int i = 0; i < 3; ++i)
-                p.colors[i] = d.colors[i];
+            for (int c = 0; c < 3; ++c)
+                p.colors[c] = d.colors[c];
             const float* range = vk.properties.limits.pointSizeRange;
             p.sizes = glm::vec4(std::clamp(d.size, range[0], range[1]), std::clamp(d.selectedSize, range[0], range[1]), 0.0f, 0.0f);
             vkCmdPushConstants(cmd, pointsLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);

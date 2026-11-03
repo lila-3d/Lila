@@ -273,9 +273,9 @@ TEST_CASE("strap command: live history, presets, baked")
     CHECK(g.find(op)->as<int64_t>(g.find(op)->type().attrIndex("style")) == 1);
     CHECK(meshBounds(mesh).max.x == doctest::Approx(52.5).epsilon(0.01));
     // Tape lifts off a hair so its underside doesn't flicker into the surface; switching away drops the gap.
-    run("strapPreset", {{"args", {mesh}}, {"preset", "tape"}});
+    strap_test::run("strapPreset", {{"args", {mesh}}, {"preset", "tape"}});
     CHECK(g.find(cut)->as<double>(g.find(cut)->type().attrIndex("gap")) == doctest::Approx(0.02));
-    run("strapPreset", {{"args", {mesh}}, {"preset", "strap"}});
+    strap_test::run("strapPreset", {{"args", {mesh}}, {"preset", "strap"}});
     CHECK(g.find(cut)->as<double>(g.find(cut)->type().attrIndex("gap")) == doctest::Approx(0.0));
 
     json baked = strap_test::run("strap", with(slash, {{"preset", "tape"}, {"constructionHistory", false}}));

@@ -38,7 +38,7 @@ TEST_CASE("a geometry-nodes volume draws in the viewport inside its box")
     scene::Graph::current().evaluate();
 
     render::FrameState s;
-    OverlayPainter painter(s.overlayTris, 1.0);
+    ui::OverlayPainter painter(s.overlayTris, 1.0);
     for (const auto& d : ui::viewportHooks::drawers())
         d(s, painter, ui::ViewInfo());
     CHECK(s.tris3d.size() > 300);

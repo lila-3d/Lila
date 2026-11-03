@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QPointer>
 #include <QTimer>
+#include <QWidget>
 
 #include <algorithm>
 

@@ -131,7 +131,8 @@ inline bool rayPlane(const glm::dvec3& o, const glm::dvec3& d, const glm::dvec3&
     double denom = glm::dot(d, n);
     if (std::abs(denom) < 1e-9)
         return false;
-    hit = o + d * (glm::dot(p - o, n) / (std::abs(denom) < 1e-9 ? 1.0 : denom)); // see lineParam
+    // Clamped as well as guarded, like lineParam: MSVC folds a constant parallel call down to /0 and warns C4723.
+    hit = o + d * (glm::dot(p - o, n) / std::copysign(std::max(std::abs(denom), 1e-9), denom));
     return true;
 }
 

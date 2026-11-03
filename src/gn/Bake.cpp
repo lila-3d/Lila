@@ -12,6 +12,7 @@
 #include "scene/Anim.h"
 #include "scene/Graph.h"
 #include "scene/Modifiers.h"
+#include "scene/Simulation.h"
 
 #include <format>
 #include <list>

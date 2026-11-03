@@ -201,16 +201,16 @@ ImposterResult bakeImposter(const geo::Mesh& source, const ImposterOptions& o)
 void registerImposterNode()
 {
     imposterNode();
-    using T = ArgType;
+    using A = ArgType;
     ops::registerCommand({
         .name = "gnBakeImposter",
         .doc = "Bake an Imposter node: evaluate a mesh running its group at the current frame, view what reaches the node from every "
                "atlas direction and write the base colour and normal-depth atlases, a card mesh FBX and a JSON of the material inputs. "
                "Returns {files, materialParams}.",
         .positionalDoc = "group node",
-        .flags = {{"folder", "", T::String, nullptr, "Where to write; defaults to imposters/ next to the scene."},
-                  {"name", "", T::String, nullptr, "File base name; defaults to the mesh's."},
-                  {"modifier", "", T::String, nullptr, "The modifier to evaluate when several meshes run the group; defaults to the first."}},
+        .flags = {{"folder", "", A::String, nullptr, "Where to write; defaults to imposters/ next to the scene."},
+                  {"name", "", A::String, nullptr, "File base name; defaults to the mesh's."},
+                  {"modifier", "", A::String, nullptr, "The modifier to evaluate when several meshes run the group; defaults to the first."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             scene::Graph& g = scene::Graph::current();

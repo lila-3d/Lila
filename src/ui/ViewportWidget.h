@@ -169,6 +169,10 @@ private:
     void submit();
     render::FrameState buildFrame(const RenderView* rv);
     struct MeshDrawCache;
+    struct MeshDrawCacheDelete
+    {
+        void operator()(MeshDrawCache* c) const;
+    };
     /**
      * Appends the mesh nodes' draws to s. Each node's draw is kept between frames and rebuilt only once the node
      * recomputed or a setting it depends on changed, so a frame that only moved the camera re-emits what it had.
@@ -347,7 +351,7 @@ private:
     std::vector<float> mBackdropBright; // OverlayPainter::classifyBackdrop state, so overlay colors switch with hysteresis
     std::deque<std::pair<double, uint64_t>> mFrameSamples; // (ms, frames the renderer drew) over the last second, for the HUD
     bool mHudRefreshQueued = false;
-    std::unique_ptr<MeshDrawCache> mMeshDraws;
+    std::unique_ptr<MeshDrawCache, MeshDrawCacheDelete> mMeshDraws;
     /** Bumped by every redraw request that isn't the camera's: tools, prefs, playback, texture arrivals, extension state. */
     uint64_t mDisplayEpoch = 1;
     /** This frame's level-of-detail hiding, shared by the mesh pass and the HUD counts. */

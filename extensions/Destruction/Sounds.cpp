@@ -4,6 +4,7 @@
 #include "PieceTransform.h"
 #include "RigidState.h"
 
+#include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>

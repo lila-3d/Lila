@@ -173,6 +173,8 @@ struct ViewportWidget::MeshDrawCache
     glm::vec4 emittedSnapColor{0.0f};
 };
 
+void ViewportWidget::MeshDrawCacheDelete::operator()(MeshDrawCache* c) const { delete c; }
+
 void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, const std::unordered_set<scene::NodeId>& lodHidden,
                                    const std::unordered_set<scene::NodeId>& underSelection, bool highlight,
                                    std::vector<displayAids::MeshEntry>* aids)
@@ -180,7 +182,7 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
     LILA_ZONE();
     scene::Graph& g = scene::Graph::current();
     if (!mMeshDraws)
-        mMeshDraws = std::make_unique<MeshDrawCache>();
+        mMeshDraws.reset(new MeshDrawCache());
     MeshDrawCache& c = *mMeshDraws;
     const std::vector<scene::Node*>& meshes = scene::sceneIndex::ofType(g, "mesh");
     const MeshSettings set = meshSettings(g, rv, mIsolation, mDisplayEpoch, devicePixelRatioF());

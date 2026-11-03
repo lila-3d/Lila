@@ -80,7 +80,7 @@ std::vector<glm::dvec3> bridgePath(const std::string& name)
     const auto sel = components::selected(components::mode());
     if (sel.size() == 1)
         if (Node* n = g.node(sel.begin()->first))
-            toLocal = glm::inverse(worldOf(*n));
+            toLocal = glm::inverse(rigutil::worldOf(*n));
     std::vector<glm::dvec3> out;
     for (const glm::dvec3& p : pl.points)
         out.push_back(glm::dvec3(toLocal * glm::dvec4(p, 1.0)));

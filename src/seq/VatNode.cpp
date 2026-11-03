@@ -52,17 +52,17 @@ std::string arg(const Args& a, size_t i, const char* what)
 void registerVatNode()
 {
     vatNode();
-    using T = ArgType;
+    using A = ArgType;
     ops::registerCommand({
         .name = "gnEncodeVat",
         .doc = "Encode a Vertex Animation Texture node: sample what reaches it on a mesh running its group, frame by frame, and write the "
                "vertex animation textures (see exportVertexAnimation for the files). Returns {files, materialParams}.",
         .positionalDoc = "group node",
-        .flags = {{"start", "", T::Float, nullptr, "First frame; defaults to the playback range's."},
-                  {"end", "", T::Float, nullptr, "Last frame; defaults to the playback range's."},
-                  {"folder", "", T::String, nullptr, "Where to write; defaults to vat/ next to the scene."},
-                  {"name", "", T::String, "{name}", "File base name; {name} is the mesh."},
-                  {"modifier", "", T::String, nullptr, "The modifier to sample when several meshes run the group; defaults to the first."}},
+        .flags = {{"start", "", A::Float, nullptr, "First frame; defaults to the playback range's."},
+                  {"end", "", A::Float, nullptr, "Last frame; defaults to the playback range's."},
+                  {"folder", "", A::String, nullptr, "Where to write; defaults to vat/ next to the scene."},
+                  {"name", "", A::String, "{name}", "File base name; {name} is the mesh."},
+                  {"modifier", "", A::String, nullptr, "The modifier to sample when several meshes run the group; defaults to the first."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             scene::Graph& g = scene::Graph::current();

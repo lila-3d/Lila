@@ -484,7 +484,7 @@ private:
             return;
         scene::Graph& g = scene::Graph::current();
         const scene::PlugValue v = g.value({mesh->id(), scene::MeshNode::kOutMesh});
-        const MeshPtr* m = std::get_if<MeshPtr>(&v);
+        const scene::MeshPtr* m = std::get_if<scene::MeshPtr>(&v);
         if (!m || !*m)
             return;
         const std::span<const int32_t> owner = (*m)->faceAttrs().get<int32_t>("panel");
@@ -520,7 +520,7 @@ private:
             return;
         scene::Graph& g = scene::Graph::current();
         const scene::PlugValue v = g.value({mesh->id(), scene::MeshNode::kOutMesh});
-        const MeshPtr* m = std::get_if<MeshPtr>(&v);
+        const scene::MeshPtr* m = std::get_if<scene::MeshPtr>(&v);
         if (!m || !*m)
             return;
         const std::span<const int32_t> owner = (*m)->faceAttrs().get<int32_t>("panel");

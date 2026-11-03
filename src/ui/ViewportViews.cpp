@@ -4,6 +4,7 @@
 #include "scene/HudStats.h"
 #include "scene/SoftSelect.h"
 #include "scene/Turntable.h"
+#include "uv/Uv.h"
 
 #include <QVariantAnimation>
 
