@@ -16,24 +16,32 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Editor.h"
+#include "EditorLevelUtils.h"
+#include "Engine/Brush.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/LevelStreamingDynamic.h"
 #include "Engine/PointLight.h"
 #include "Engine/RectLight.h"
 #include "Engine/Scene.h"
 #include "Engine/SpotLight.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
-#include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "FileHelpers.h"
+#include "GameFramework/WorldSettings.h"
+#include "LevelInstance/LevelInstanceActor.h"
 #include "LevelInstance/LevelInstanceInterface.h"
-#include "LevelInstance/LevelInstanceSubsystem.h"
 #include "LevelInstance/LevelInstanceTypes.h"
 #include "Misc/PackageName.h"
+#include "PackedLevelActor/PackedLevelActor.h"
+#include "PackedLevelActor/PackedLevelActorBuilder.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ScopedTransaction.h"
+#include "WorldPartition/WorldPartition.h"
 
 #define LOCTEXT_NAMESPACE "LilaLinkPlacements"
 
@@ -966,6 +974,79 @@ FString FreePackageName(const FString& Path)
 	return Candidate;
 }
 
+/** Where a Level Instance of these actors stands: the centre of their bounds, at their lowest point. */
+FVector AssemblyPivot(const TArray<AActor*>& Actors)
+{
+	FBox Bounds(ForceInit);
+	for (const AActor* Actor : Actors)
+	{
+		Bounds += Actor->GetComponentsBoundingBox(true);
+	}
+	if (!Bounds.IsValid)
+	{
+		return Actors[0]->GetActorLocation();
+	}
+	const FVector Center = Bounds.GetCenter();
+	return FVector(Center.X, Center.Y, Bounds.Min.Z);
+}
+
+/**
+ * Moves the actors into a new level saved as PackageName, placed relative to Pivot, and takes that level out of the world again.
+ * ULevelInstanceSubsystem::CreateLevelInstanceFrom always asks for the file name in a modal dialog, so the level is made here.
+ */
+bool SaveActorsAsLevel(UWorld* World, const TArray<AActor*>& Actors, const FString& PackageName, const FVector& Pivot, FString& OutError)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::SaveActorsAsLevel);
+
+	EditorLevelUtils::FCreateNewStreamingLevelForWorldParams Create(ULevelStreamingDynamic::StaticClass(),
+		FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetMapPackageExtension()));
+	Create.bUseSaveAs = false;
+	Create.ActorsToMove = &Actors;
+	Create.bCreateWorldPartition = World->IsPartitionedWorld();
+	Create.bUseExternalActors = World->IsPartitionedWorld();
+	Create.bEnableWorldPartitionStreaming = false;
+	// Saved before the brush is placed in the world, so it keeps no world transform; a Level Instance needs no HLOD layers.
+	Create.PreSaveLevelCallback = [](ULevel* New)
+	{
+		if (ABrush* Brush = New->IsUsingExternalActors() ? New->GetDefaultBrush() : nullptr)
+		{
+			Brush->GetRootComponent()->SetRelativeTransform(FTransform::Identity);
+		}
+		if (UWorldPartition* Partition = New->GetWorldPartition())
+		{
+			Partition->SetDefaultHLODLayer(nullptr);
+		}
+	};
+	ULevelStreaming* Streaming = UEditorLevelUtils::CreateNewStreamingLevelForWorld(*World, Create);
+	ULevel* Level = Streaming ? Streaming->GetLoadedLevel() : nullptr;
+	if (!Level)
+	{
+		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not make %s"), *PackageName);
+		return false;
+	}
+	TArray<UPackage*> Packages{Level->GetPackage()};
+	for (AActor* Actor : Level->Actors)
+	{
+		if (Actor && !Actor->IsA<AWorldSettings>() && Actor != Level->GetDefaultBrush() && !Actor->GetAttachParentActor())
+		{
+			Actor->SetFolderPath_Recursively(NAME_None);
+			Actor->SetActorLocation(Actor->GetActorLocation() - Pivot);
+		}
+		if (UPackage* External = Actor ? Actor->GetExternalPackage() : nullptr)
+		{
+			Packages.Add(External);
+		}
+	}
+	const bool bSaved = UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty=*/false);
+	World->SetCurrentLevel(World->PersistentLevel);
+	UEditorLevelUtils::RemoveLevelFromWorld(Level, /*bClearSelection=*/true, /*bResetTransBuffer=*/false);
+	if (!bSaved)
+	{
+		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not save %s"), *PackageName);
+	}
+	return bSaved;
+}
+
 TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkPlacements::MakeLevelInstance);
@@ -980,8 +1061,7 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 	Params->TryGetStringField(TEXT("name"), Name);
 	Params->TryGetStringField(TEXT("kind"), Kind);
 	UWorld* World = EditorWorld();
-	ULevelInstanceSubsystem* Subsystem = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
-	if (!Subsystem)
+	if (!World)
 	{
 		OutError = TEXT("makeLevelInstance: no level is open");
 		return nullptr;
@@ -997,36 +1077,63 @@ TSharedPtr<FJsonValue> MakeLevelInstance(const TSharedPtr<FJsonObject>& Params, 
 		return nullptr;
 	}
 
-	FScopedTransaction Transaction(LOCTEXT("MakeLevelInstance", "Lila: Make Level Instance"));
 	const FName Tag(*(FString(AssemblyPrefix) + Key));
 	TArray<AActor*> Previous = TaggedActors(World, Tag);
-	for (AActor* Old : Previous)
 	{
-		World->EditorDestroyActor(Old, true);
+		FScopedTransaction Transaction(LOCTEXT("ReplaceLevelInstance", "Lila: Replace Level Instance"));
+		for (AActor* Old : Previous)
+		{
+			World->EditorDestroyActor(Old, true);
+		}
 	}
-	FNewLevelInstanceParams Create;
-	Create.Type = Kind == TEXT("packedLevelActor") ? ELevelInstanceCreationType::PackedLevelActor : ELevelInstanceCreationType::LevelInstance;
-	Create.PivotType = ELevelInstancePivotType::CenterMinZ;
-	Create.bAlwaysShowDialog = false;
-	Create.LevelPackageName = FreePackageName(Level);
-	ILevelInstanceInterface* Made = Subsystem->CreateLevelInstanceFrom(Actors, Create);
-	AActor* Actor = Made ? Cast<AActor>(Made) : nullptr;
-	if (!Actor)
+	const FString PackageName = FreePackageName(Level);
+	const FVector Pivot = AssemblyPivot(Actors);
+	if (!SaveActorsAsLevel(World, Actors, PackageName, Pivot, OutError))
 	{
-		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not make %s"), *Create.LevelPackageName);
 		return nullptr;
 	}
-	Actor->Tags.Add(Tag);
-	if (!Name.IsEmpty())
+	const FString AssetName = FPackageName::GetShortName(PackageName);
+	const TSoftObjectPtr<UWorld> WorldAsset(FSoftObjectPath(PackageName + TEXT(".") + AssetName));
+
+	FScopedTransaction Transaction(LOCTEXT("MakeLevelInstance", "Lila: Make Level Instance"));
+	FActorSpawnParameters Spawn;
+	Spawn.OverrideLevel = World->PersistentLevel;
+	AActor* Actor = nullptr;
+	if (Kind == TEXT("packedLevelActor"))
 	{
-		Actor->SetActorLabel(Name);
+		const FString Blueprint = FString::Format(TEXT("{0}/{1}{2}.{1}{2}"), {FPackageName::GetLongPackagePath(PackageName), FPackedLevelActorBuilder::GetPackedBPPrefix(), AssetName});
+		const TSoftObjectPtr<UBlueprint> BlueprintAsset{FSoftObjectPath(Blueprint)};
+		UBlueprint* Packed = FPackedLevelActorBuilder::CreatePackedLevelActorBlueprint(BlueprintAsset, WorldAsset, true);
+		// The new Blueprint is empty: packing the level's meshes into it is a second step.
+		if (Packed && !FPackedLevelActorBuilder::CreateDefaultBuilder()->CreateOrUpdateBlueprint(WorldAsset, BlueprintAsset, false, false))
+		{
+			Packed = nullptr;
+		}
+		if (Packed && Packed->GeneratedClass)
+		{
+			Actor = World->SpawnActor<APackedLevelActor>(Packed->GeneratedClass, FTransform(Pivot), Spawn);
+		}
 	}
+	else
+	{
+		Actor = World->SpawnActor<ALevelInstance>(ALevelInstance::StaticClass(), FTransform(Pivot), Spawn);
+	}
+	ILevelInstanceInterface* Instance = Cast<ILevelInstanceInterface>(Actor);
+	if (!Instance)
+	{
+		OutError = FString::Printf(TEXT("makeLevelInstance: Unreal could not place %s"), *PackageName);
+		return nullptr;
+	}
+	Instance->SetWorldAsset(WorldAsset);
+	Instance->LoadLevelInstance();
+	Actor->Tags.Add(Tag);
+	Actor->SetActorLabel(Name.IsEmpty() ? AssetName : Name);
 	Actor->SetFolderPath(FName(TEXT("Lila/Assemblies")));
-	UE_LOG(LogLilaLink, Log, TEXT("makeLevelInstance %s: %d actors into %s (%s)"), *Name, Actors.Num(), *Create.LevelPackageName, *Kind);
+	UE_LOG(LogLilaLink, Log, TEXT("makeLevelInstance %s: %d actors into %s (%s)"), *Name, Actors.Num(), *PackageName, *Kind);
 
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetStringField(TEXT("actor"), Actor->GetActorLabel());
-	Out->SetStringField(TEXT("level"), Create.LevelPackageName);
+	Out->SetStringField(TEXT("level"), PackageName);
 	Out->SetStringField(TEXT("kind"), Kind);
 	Out->SetNumberField(TEXT("actors"), Actors.Num());
 	Out->SetNumberField(TEXT("replaced"), Previous.Num());
