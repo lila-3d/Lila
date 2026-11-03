@@ -849,9 +849,10 @@ TSharedPtr<FJsonValue> PlaceLights(const TSharedPtr<FJsonObject>& Params, FStrin
 		else
 		{
 			Actor->Modify();
-			Actor->SetActorTransform(Transform);
 			++Updated;
 		}
+		// Spawning composes the rotation with the class default's (spot and directional lights point down), so it is set again.
+		Actor->SetActorLocationAndRotation(Transform.GetLocation(), Transform.GetRotation());
 		Actor->SetFolderPath(FName(TEXT("Lila/Lights")));
 		Actor->SetActorLabel(Name);
 		if (ULightComponent* Light = Actor->GetLightComponent())

@@ -775,9 +775,10 @@ TSharedPtr<FJsonValue> TrimDecals(const TSharedPtr<FJsonObject>& Params, FString
 		else
 		{
 			Actor->Modify();
-			Actor->SetActorTransform(Transform);
 			++Updated;
 		}
+		// Spawning composes the transform with the decal component's default pitch of -90, so it is set again here.
+		Actor->SetActorTransform(Transform);
 		Actor->SetFolderPath(FName(TEXT("Lila/Decals")));
 		if (!Name.IsEmpty())
 		{
