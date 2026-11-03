@@ -152,7 +152,7 @@ TEST_CASE("freezeDestruction: the pieces at rest become static meshes with colli
     CHECK(run("getAttr", args({w + ".visibility"})) == true);
 
     // A chosen frame, every piece its own object, no collision: the wall still standing at frame 1.
-    json standing = run("freezeDestruction", {{"args", {w}}, {"frame", 1}, {"as", "objects"}, {"collision", false}, {"name", "Standing"}});
+    json standing = run("freezeDestruction", {{"args", {w}}, {"frame", 1}, {"meshes", "objects"}, {"collision", false}, {"name", "Standing"}});
     const Frozen s = frozen(standing["group"].get<std::string>());
     CHECK(s.withCollision == 0);
     CHECK(s.bounds.max.y == doctest::Approx(100.0).epsilon(0.01));

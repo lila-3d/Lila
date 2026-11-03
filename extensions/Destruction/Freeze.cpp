@@ -173,7 +173,7 @@ void registerFreeze(ext::Context& ctx)
         .positionalDoc = "destruction mesh or its modifier (default the selection)",
         .flags = {{"frame", "f", AT::Int, nullptr, "Frame to freeze. Default: where the simulation comes to rest."},
                   {"end", "e", AT::Int, nullptr, "Last frame to look for rest in before going past it. Default: the end of the playback range."},
-                  {"as", "", AT::String, "instances", "instances: pieces of the same shape share a mesh; objects: every piece its own.",
+                  {"meshes", "", AT::String, "instances", "instances: pieces of the same shape share a mesh; objects: every piece its own.",
                    {"instances", "objects"}},
                   {"collision", "c", AT::Bool, true, "A UCX_ convex hull under each piece."},
                   {"hullPoints", "", AT::Int, 32, "Most points in a collision hull.", {}, {}, 4.0, 255.0},
@@ -230,7 +230,7 @@ void registerFreeze(ext::Context& ctx)
             if (items.empty())
                 throw CommandError("freezeDestruction: " + mesh->path() + " has no pieces to freeze");
 
-            const bool share = a.get<std::string>("as", "instances") == "instances";
+            const bool share = a.get<std::string>("meshes", "instances") == "instances";
             const bool collision = a.get<bool>("collision", true);
             const int hullPoints = int(std::clamp<int64_t>(a.get<int64_t>("hullPoints", 32), 4, 255));
             const double smallest = std::max(0.0, a.get<double>("smallest", 0.0));
@@ -281,7 +281,7 @@ void registerFreeze(ext::Context& ctx)
             g.select({group->id()});
             return {{"group", group->path()}, {"pieces", made}, {"meshes", int64_t(firstOf.size())}, {"frame", frame}, {"settled", settled}};
         },
-        .examples = {"freezeDestruction('Wall')", "freezeDestruction('Wall', frame=60, as='objects', smallest=5)"},
+        .examples = {"freezeDestruction('Wall')", "freezeDestruction('Wall', frame=60, meshes='objects', smallest=5)"},
     });
 }
 } // namespace destruction
