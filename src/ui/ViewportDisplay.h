@@ -56,6 +56,11 @@ inline constexpr const char* kSoftSelectEmphasis = "/softSelect/emphasis";
 inline constexpr double kSoftSelectEmphasisDefault = 0.5;
 /** Objects draw highlighted when selected; off, they draw as if unselected (manipulators and component modes still show). */
 inline constexpr const char* kHighlightSelection = "/viewport/highlightSelection";
+/**
+ * With several objects selected, which take the selected wire colour and which the secondary one (white): "last"
+ * (Maya), "allButFirst", "first", or "all".
+ */
+inline constexpr const char* kSelectionOrderColors = "/viewport/selectionOrderColors";
 inline constexpr int kDefaultSamples = 8;
 /** Preview-only post over the shaded scene: an anisotropic Kuwahara (painted look) and depth/normal outlines. */
 inline constexpr const char* kKuwahara = "/viewport/post/kuwahara";
@@ -134,6 +139,16 @@ LILA_UI_API void apply(render::FrameState& s);
 /** Shaded meshes ignore their materials and draw the plain default one. */
 LILA_UI_API bool defaultMaterial();
 LILA_UI_API bool highlightSelection();
+/** Which selected objects draw in the selected wire colour, per kSelectionOrderColors. */
+struct SelectionOrderColors
+{
+    scene::NodeId odd = scene::kNoNode; // the first or last selected, set apart from the rest
+    bool oddIsAccent = true;            // the odd one takes the selected colour and the rest white, or the reverse
+
+    /** True when a selected node draws in the secondary colour rather than the selected one. */
+    bool other(scene::NodeId id) const { return odd != scene::kNoNode && (id == odd) != oddIsAccent; }
+};
+LILA_UI_API SelectionOrderColors selectionOrderColors(const scene::Graph& g);
 
 LILA_UI_API render::VertexColorMode vertexColorMode();
 LILA_UI_API render::ColorChannel colorChannel();

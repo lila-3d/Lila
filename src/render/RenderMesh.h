@@ -262,6 +262,7 @@ enum MeshDrawFlags : uint32_t
     DrawUnderSelected = 1 << 3,
     DrawPreselect = 1 << 4, // under the cursor: a click would select it
     DrawWireDepth = 1 << 5, // wire without shading still hides behind other surfaces (templated objects)
+    DrawSelectedOther = 1 << 6, // with DrawSelected: selected, but not the last selected
 };
 
 /** How a draw shows its vertex colors: multiplied into the lit base color, or flat and unlit. */

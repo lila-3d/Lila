@@ -34,7 +34,7 @@ bool sameMaterial(const Material& a, const Material& b)
 /** Highlighted placements sort last within a wire batch. */
 int wireRank(const MeshDraw& d)
 {
-    return (d.flags & DrawSelected) ? 3 : (d.flags & DrawPreselect) ? 2 : (d.flags & DrawUnderSelected) ? 1 : 0;
+    return (d.flags & DrawSelected) ? ((d.flags & DrawSelectedOther) ? 3 : 4) : (d.flags & DrawPreselect) ? 2 : (d.flags & DrawUnderSelected) ? 1 : 0;
 }
 
 /** Shaded draws can share a batch when these match and so do their materials. */
@@ -96,7 +96,7 @@ bool wireInShader(const MeshDraw& d) { return (d.flags & DrawShaded) && drawsWir
 
 glm::vec4 wireColor(const FrameState& s, const MeshDraw& d)
 {
-    return (d.flags & DrawSelected)        ? s.wireSelected
+    return (d.flags & DrawSelected)        ? ((d.flags & DrawSelectedOther) ? s.wireSelectedOther : s.wireSelected)
            : (d.flags & DrawPreselect)     ? s.wirePreselect
            : (d.flags & DrawUnderSelected) ? s.wireUnderSelected
            : d.wireColor.a > 0.0f          ? d.wireColor

@@ -55,6 +55,7 @@ const std::vector<TokenInfo> kTokens = {
     {"gridAxisZ", "Grid Z axis (Y when Z-up)", "Viewport"},
     {"wireframe", "Wireframe", "Viewport"},
     {"wireSelected", "Selected wireframe", "Viewport"},
+    {"wireSelectedOther", "Selected wireframe, secondary", "Viewport"},
     {"wirePreselect", "Preselected wireframe", "Viewport"},
     {"wireUnderSelected", "Child of selected", "Viewport"},
     {"curve", "Curves", "Viewport"},
@@ -114,7 +115,7 @@ const Pairs kMonotone = {
     {"issueInfo", "#5ea4e8"},     {"issueWarning", "#f2c14e"},  {"issueError", "#e5604b"},
     {"iconNormal", "#c8c8c8"},    {"iconActive", "#f2f2f2"},    {"iconDisabled", "#6e6e6e"},   {"viewportBackground", "#4d4d4d"},
     {"grid", "#adadad"},          {"gridAxisX", "#000000"},     {"gridAxisZ", "#000000"},      {"wireframe", "#272727"},
-    {"wireSelected", "#f6f6f6"},  {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"}, {"curve", "#a8a8a8"},
+    {"wireSelected", "#f6f6f6"},  {"wireSelectedOther", "#d4d4d4"}, {"wirePreselect", "#e1e1e1"}, {"wireUnderSelected", "#c4c4c4"}, {"curve", "#a8a8a8"},
     {"componentWire", "#73c7ff"}, {"componentPoint", "#f26bc7"}, {"componentSelected", "#fff226"}, {"componentHover", "#ff2e2e"},
     {"axisX", "#d96666"},         {"axisY", "#80cc6b"},         {"axisZ", "#6b8fe6"},          {"manipNeutral", "#b3b3b3"},
     {"manipActive", "#ffffff"},   {"hudText", "#ffffff"},       {"keyTick", "#db5c5c"},        {"nodeBody", "#3a3a3a"},
@@ -130,6 +131,7 @@ const Pairs kMonotone = {
 
 // Monotone's neutrals with hue where it helps scanning: selection, active state, axes and node categories.
 const Pairs kColour = {
+    {"wireSelectedOther", "#f6f6f6"},
     {"highlight", "#2f62a8"},     {"accent", "#5b9cf5"},          {"checked", "#2f5687"},          {"hover", "#4f79b3"},
     {"iconActive", "#ffffff"},    {"viewportBackground", "#4a4e54"}, {"gridAxisX", "#8a3434"},     {"gridAxisZ", "#34508a"},
     {"wireSelected", "#5ce6a5"},  {"wirePreselect", "#f2d16b"},   {"wireUnderSelected", "#3fa07a"}, {"axisX", "#e5534b"},
@@ -146,6 +148,7 @@ const Pairs kColour = {
 
 // Sampled from the Lila icon: navy ink, its sky and pale blues, and the icon's blue for selection.
 const Pairs kLight = {
+    {"wireSelectedOther", "#f6f6f6"},
     {"darkest", "#9fb2c8"},        {"shadow", "#b4c3d4"},         {"tooltip", "#fafdfe"},          {"base", "#ffffff"},
     {"altBase", "#f3f8fc"},        {"window", "#e7eff7"},         {"button", "#d6e3f0"},           {"border", "#a7b9cc"},
     {"disabled", "#8496ab"},       {"dimText", "#4a5f7a"},        {"text", "#05215b"},             {"brightText", "#020f2e"},
@@ -215,6 +218,7 @@ const Pairs kPaper = {
 };
 
 const Pairs kHighContrast = {
+    {"wireSelectedOther", "#ffffff"},
     {"darkest", "#000000"},      {"shadow", "#000000"},        {"tooltip", "#000000"},       {"base", "#000000"},
     {"altBase", "#141414"},      {"window", "#0a0a0a"},        {"button", "#262626"},        {"border", "#c0c0c0"},
     {"disabled", "#8a8a8a"},     {"dimText", "#d0d0d0"},       {"text", "#ffffff"},          {"brightText", "#ffffff"},

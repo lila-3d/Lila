@@ -676,6 +676,12 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         toggle(ui, "Monotone (overrides the colors below)", vd::kMonotone, false);
         toggle(ui, "View axis indicator in X/Y/Z colors", vd::kViewAxisColors, true);
         toggle(ui, "Manipulator axes in X/Y/Z colors", vd::kManipulatorAxisColors, true);
+        choice(ui, "Selected color with several selected", vd::kSelectionOrderColors,
+               {{"Last selected, the rest white (Maya)", "last"},
+                {"All but the first, which is white", "allButFirst"},
+                {"First selected, the rest white", "first"},
+                {"All selected", "all"}},
+               "last");
         toggle(ui, "Time slider keys in red", vd::kTimeKeyColors, true);
         toggle(ui, "Graph editor X/Y/Z curves in axis colors", vd::kGraphAxisColors, true);
         toggle(ui, "Animation ghosts tinted before and after", vd::kGhostColors, true);

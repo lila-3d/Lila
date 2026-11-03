@@ -47,6 +47,7 @@ void apply(render::FrameState& s)
     s.gridAxisZ = glm::vec3(themeLinear("gridAxisZ", glm::vec4(s.gridAxisZ, 1.0f)));
     s.gridOrigin = scene::relocate::displayOrigin();
     s.wireSelected = themeLinear("wireSelected", s.wireSelected);
+    s.wireSelectedOther = themeLinear("wireSelectedOther", s.wireSelectedOther);
     s.wirePreselect = themeLinear("wirePreselect", s.wirePreselect);
     s.wireUnderSelected = themeLinear("wireUnderSelected", s.wireUnderSelected);
     s.wireDefault = themeLinear("wireframe", s.wireDefault);
@@ -278,6 +279,21 @@ bool defaultMaterial()
 bool highlightSelection()
 {
     return PrefStore::get().value<bool>("general", kHighlightSelection, true);
+}
+
+SelectionOrderColors selectionOrderColors(const scene::Graph& g)
+{
+    const std::vector<scene::NodeId>& sel = g.selection();
+    if (sel.size() < 2)
+        return {};
+    const std::string mode = PrefStore::get().value<std::string>("general", kSelectionOrderColors, "last");
+    if (mode == "last")
+        return {sel.back(), true};
+    if (mode == "allButFirst")
+        return {sel.front(), false};
+    if (mode == "first")
+        return {sel.front(), true};
+    return {};
 }
 
 ComponentThickness componentThickness()

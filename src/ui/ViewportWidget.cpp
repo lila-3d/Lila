@@ -435,6 +435,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
     const bool smoothSubdivisions = PrefStore::get().value<bool>("general", viewportDisplay::kSmoothSubdivisions, false);
     std::vector<displayAids::MeshEntry> aidMeshes;
     const std::unordered_set<scene::NodeId> lodHidden = scene::lod::hidden(g, lodDisplay::view(mHudPanel, viewInfo()));
+    const viewportDisplay::SelectionOrderColors order = viewportDisplay::selectionOrderColors(g);
     for (scene::NodeId id : g.nodes())
     {
         scene::Node* n = g.node(id);
@@ -508,7 +509,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         bool componentMode = scene::components::mode() != scene::ComponentMode::Object;
         const scene::NodeId arrayed = scene::arrays::arrayAbove(g, id);
         if (highlight && g.isSelected(id) && !componentMode)
-            d.flags |= render::DrawSelected;
+            d.flags |= order.other(id) ? render::DrawSelected | render::DrawSelectedOther : render::DrawSelected;
         else if (!rv && mPreselect.mode == scene::ComponentMode::Object && !componentMode &&
                  (mPreselect.node == id || (arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
             d.flags |= render::DrawPreselect;
@@ -566,7 +567,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
             drawOverrides::DrawContext dc{.frame = s, .painter = painter, .view = view, .node = *n};
             dc.world = n->as<glm::dmat4>(scene::Transform::kWorldMatrix);
             dc.highlight = rank == 2 ? HL::Selected : hot ? HL::Preselected : rank == 1 ? HL::UnderSelected : HL::None;
-            dc.color = rank == 2 ? themeLinear("wireSelected", kSelectedColor)
+            dc.color = rank == 2 ? themeLinear(order.other(id) ? "wireSelectedOther" : "wireSelected", kSelectedColor)
                        : hot ? themeLinear("wirePreselect", kPreselectColor)
                        : rank == 1 ? themeLinear("wireUnderSelected", kChildOfSelectedColor)
                                    : layerLineColor(g, id, themeLinear("wireframe", kLocatorColor));
