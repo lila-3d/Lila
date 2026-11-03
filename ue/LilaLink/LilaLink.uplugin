@@ -47,6 +47,14 @@
 			"Enabled": true
 		},
 		{
+			"Name": "ChaosCaching",
+			"Enabled": true
+		},
+		{
+			"Name": "GeometryCollectionPlugin",
+			"Enabled": true
+		},
+		{
 			"Name": "PythonScriptPlugin",
 			"Enabled": true,
 			"Optional": true

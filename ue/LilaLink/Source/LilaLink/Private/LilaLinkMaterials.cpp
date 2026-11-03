@@ -958,6 +958,25 @@ void LilaLink::ApplyMaterials(const FMaterialRequest& Request, const TArray<FStr
 	}
 }
 
+TArray<UMaterialInterface*> LilaLink::ResolveSlotMaterials(const FMaterialRequest& Request, const FString& Asset, const TArray<FName>& Slots,
+	TArray<FString>& OutCreated, TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLink::ResolveSlotMaterials);
+
+	FProjectMaterials Project;
+	TArray<UMaterialInterface*> Out;
+	Out.Reserve(Slots.Num());
+	for (const FName Slot : Slots)
+	{
+		FString How;
+		UMaterialInterface* Material = Resolve(Slot, Request, Project, How, OutCreated, OutWarnings);
+		Out.Add(Material);
+		OutSlots.Add({Asset, Slot, Material ? Material->GetPathName() : FString(), How});
+		UE_LOG(LogLilaLink, Log, TEXT("%s slot %s -> %s (%s)"), *Asset, *Slot.ToString(), Material ? *Material->GetPathName() : TEXT("none"), *How);
+	}
+	return Out;
+}
+
 UMaterialInterface* LilaLink::StylisedParent(const FString& Model, bool bRebuild, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::StylisedParent);

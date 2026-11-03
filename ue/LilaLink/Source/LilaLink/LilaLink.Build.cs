@@ -46,6 +46,9 @@ public class LilaLink : ModuleRules
 			"ChaosClothAssetEngine",
 			"Chaos",
 			"GeometryCore",
+			"GeometryCollectionEngine",
+			"ChaosSolverEngine",
+			"ChaosCaching",
 			"LilaLinkRuntime",
 		});
 

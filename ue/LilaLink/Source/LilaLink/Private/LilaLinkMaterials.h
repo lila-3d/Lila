@@ -56,6 +56,13 @@ void ApplyMaterials(const FMaterialRequest& Request, const TArray<FString>& Impo
 	TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots);
 
 /**
+ * The material for each slot name, chosen as ApplyMaterials chooses them for a mesh's slots, for assets whose slots are
+ * not static or skeletal mesh slots. Asset names the asset in OutSlots.
+ */
+TArray<UMaterialInterface*> ResolveSlotMaterials(const FMaterialRequest& Request, const FString& Asset, const TArray<FName>& Slots,
+	TArray<FString>& OutCreated, TArray<FString>& OutWarnings, TArray<FSlotResult>& OutSlots);
+
+/**
  * The Painterly ("painterly") or Toon ("toon") master material, built on first use or when bRebuild; null with a warning for
  * anything else. Each calls its material function in the masters folder, MF_LilaPainterly (outputs BaseColor and a
  * world-space Normal) or MF_LilaToon (output Color, for Emissive Color on an Unlit material), for users' own materials.
