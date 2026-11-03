@@ -4,6 +4,7 @@
 
 #include "Masonry.h"
 #include "MasonryCore.h"
+#include "MasonryTools.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
@@ -28,7 +29,7 @@ using T = gn::SocketType;
 
 // clang-format off
 const Input kWall[] = {
-    {"bond", Input::String, 0, "running", 0, 0, 0, "Wall", "running, stack, english, flemish, header or gardenWall."},
+    {"bond", Input::String, 0, "running", 0, 0, 0, "Wall", "running, stack, english, flemish, header, gardenWall, herringbone, ashlar, rubble or dryStone."},
     {"height", Input::Float, 200.0, nullptr, 0, 1e7, 1000, "Wall", "Wall height above the ground, cm, where the footprint has no per-point wallHeight."},
     {"thickness", Input::Float, 21.5, nullptr, 1, 1e6, 200, "Wall", "Wall thickness at the base, cm. Under 1.5 stone depths the wall is one stone thick."},
     {"cornerAngle", Input::Float, 30.0, nullptr, 1, 179, 90, "Wall", "Turns sharper than this, degrees, are corners; gentler ones curve the wall."},
@@ -55,6 +56,7 @@ const Input kLook[] = {
     {"variants", Input::Int, 6, nullptr, 1, 64, 16, "Look", "How many differently worn versions of each stone size."},
     {"detail", Input::Int, 0, nullptr, 0, 2, 2, "Look", "0 worn, 1 clean chamfer, 2 plain boxes (fast preview)."},
     {"tile", Input::Float, 100.0, nullptr, 1, 1e7, 1000, "Look", "Cm of stone per UV unit of the tiling texture."},
+    {"chips", Input::Float, 0.3, nullptr, 0, 1, 1, "Look", "Chips knocked out of stone edges and corners, 0 to 1; more on old, wet and damaged stones."},
     {"seed", Input::Int, 1, nullptr, 0, 2147483647, 0, "Look", "Another seed gives other wander, wear and cut positions."},
 };
 const Input kRuin[] = {
@@ -70,11 +72,18 @@ const Input kRuin[] = {
     {"settle", Input::Bool, 0, nullptr, 0, 0, 0, "Ruin", "Drop the rubble with the rigid-body solver (slower) instead of only heaping it."},
     {"ruinRegions", Input::String, 0, "", 0, 0, 0, "Ruin", "Only these regions ruin, comma separated (north_wall, tower_1/door_1); empty is all."},
     {"ruinSeed", Input::Int, 1, nullptr, 0, 2147483647, 0, "Ruin", "Another seed breaks it differently."},
+    {"structural", Input::Bool, 0, nullptr, 0, 0, 0, "Ruin", "Also drop what can't stand under the rigid-body solver: arches without keystones, overhangs (slower)."},
+    {"ruinStrokes", Input::String, 0, "", 0, 0, 0, "Ruin", "Painted damage as JSON [{points, radius, strength}]; ruinPaint and the Ruin Brush add to it."},
 };
 const Input kAge[] = {
     {"age", Input::Float, 0.0, nullptr, 0, 1, 1, "Age", "How old it looks, 0 to 1: moss, wear and staining in the material."},
     {"moss", Input::Float, 0.5, nullptr, 0, 1, 1, "Age", "How much moss grows where it is wet and exposed, 0 to 1."},
     {"wetHeight", Input::Float, 0.0, nullptr, 0, 1e6, 500, "Age", "Damp band above the ground, cm; 0 is a fifth of the height."},
+    {"plaster", Input::Float, 0.0, nullptr, 0, 1, 1, "Age", "How much render coat is left on the outer faces, 0 to 1; it peels high up and where damaged."},
+    {"plasterThickness", Input::Float, 0.0, nullptr, 0, 1e4, 10, "Age", "Render coat thickness, cm; 0 is a third of a stone height."},
+    {"ivy", Input::Float, 0.0, nullptr, 0, 1, 1, "Age", "How much ivy climbs from the ground, 0 to 1."},
+    {"ivyHeight", Input::Float, 0.7, nullptr, 0, 1, 1, "Age", "How far up the ivy reaches, 0 to 1."},
+    {"leaf", Input::Float, 0.0, nullptr, 0, 1e4, 50, "Age", "Ivy leaf size, cm; 0 is two thirds of a typical stone."},
 };
 // clang-format on
 
@@ -149,9 +158,11 @@ void outputBuilt(ExecContext& c, const Built& b)
 {
     GeometryPtr stonesPtr = stonesGeometry(b);
     GeometryPtr corePtr = gn::meshGeometry(b.core);
+    GeometryPtr dressPtr = gn::meshGeometry(b.dressing);
     c.out("stones", stonesPtr);
     c.out("core", corePtr);
-    const GeometryPtr parts[] = {stonesPtr, corePtr};
+    c.out("dressing", dressPtr);
+    const GeometryPtr parts[] = {stonesPtr, corePtr, dressPtr};
     c.out("geometry", gn::makeGeometry(gn::join(parts)));
 }
 
@@ -163,8 +174,8 @@ std::vector<gn::SocketDecl> socketsOf(InputSet set)
     return out;
 }
 
-const std::vector<gn::SocketDecl> kBuiltOutputs = {geoSocket("geometry", "Stones and core together."), geoSocket("stones", "The stones, as instances."),
-                                                   geoSocket("core", "The mortar core, a mesh.")};
+const std::vector<gn::SocketDecl> kBuiltOutputs = {geoSocket("geometry", "Stones, core, plaster and ivy together."), geoSocket("stones", "The stones, as instances."),
+                                                   geoSocket("core", "The mortar core, a mesh."), geoSocket("dressing", "Plaster and ivy, a mesh.")};
 
 const char* kAttrDoc = "Stones are instances sharing a few meshes, with attributes stone, wall, course, role (0 stretcher, 1 header, 2 bat, "
                        "3 closer, 4 filler, 5 voussoir, 6 keystone, 7 lintel, 8 sill, 9 jamb, 10 column, 11 step, 12 band, 13 slab, 14 rubble), "
@@ -324,6 +335,69 @@ gn::NodeDecl ageDecl()
                 Geometry g = *in;
                 g.instances = rebuiltInstances(*in->instances, stones, from, offset);
                 c.out("geometry", gn::makeGeometry(std::move(g)));
+            },
+    };
+}
+
+gn::NodeDecl linksDecl()
+{
+    return {
+        .type = "MasonryLinks",
+        .label = "Masonry Links",
+        .category = "Masonry",
+        .doc = "Links for the Rigid Body Solver between masonry stones that touch, as two-point curves (pieceA, pieceB, type, strength, "
+               "area): mortar strength times contact area, weakened by each stone's age. Grounded stones are tied to the world.",
+        .sockets = {.inputs = {geoSocket("stones", "Stones as instances (a masonry node's stones output, or any)."),
+                               socketOf({"strength", Input::Float, 30.0, nullptr, 0, 1e6, 200, "", "Mortar strength, N per cm2 of contact."}),
+                               socketOf({"ageWeakens", Input::Float, 0.6, nullptr, 0, 1, 1, "", "How much of its strength the oldest mortar has lost, 0 to 1."}),
+                               socketOf({"anchor", Input::Bool, 1, nullptr, 0, 0, 0, "", "Tie stones on the ground to the world."})},
+                    .outputs = {geoSocket("links", "Links as two-point curves.")}},
+        .exec =
+            [](ExecContext& c) {
+                LILA_ZONE_N("Masonry Links");
+                GeometryPtr in = c.geometry("stones");
+                gn::CurveSet curves;
+                if (in->instances && in->instances->size() > 0)
+                {
+                    std::vector<glm::dvec3> offset;
+                    std::vector<Stone> stones = stonesFromInstances(*in->instances, &offset);
+                    double lowest = 1e300, typical = 0.0;
+                    for (const Stone& s : stones)
+                    {
+                        lowest = std::min(lowest, s.center.y - halfExtentAabb(s).y);
+                        typical += std::min({s.size.x, s.size.y, s.size.z});
+                    }
+                    typical /= double(stones.size());
+                    const double pad = std::max(0.3, typical * 0.08);
+                    for (Stone& s : stones)
+                        s.grounded = c.b("anchor") && s.center.y - halfExtentAabb(s).y <= lowest + pad * 2.0;
+                    std::span<const float> age = in->instances->attrs.get<float>("age");
+                    const double strength = std::max(0.0, c.f("strength")), weaken = std::clamp(c.f("ageWeakens"), 0.0, 1.0);
+                    std::vector<StoneLink> links = stoneLinks(stones, pad);
+                    for (const StoneLink& l : links)
+                    {
+                        const glm::dvec3 pts[2] = {l.at, l.at};
+                        curves.addCurve(pts, false);
+                    }
+                    curves.syncSizes();
+                    std::span<int32_t> a = curves.curveAttrs.getOrAdd<int32_t>("pieceA");
+                    std::span<int32_t> b = curves.curveAttrs.getOrAdd<int32_t>("pieceB");
+                    std::span<int32_t> type = curves.curveAttrs.getOrAdd<int32_t>("type");
+                    std::span<float> force = curves.curveAttrs.getOrAdd<float>("strength");
+                    std::span<float> area = curves.curveAttrs.getOrAdd<float>("area");
+                    for (size_t k = 0; k < links.size(); ++k)
+                    {
+                        const StoneLink& l = links[k];
+                        auto ageOf = [&](int i) { return i >= 0 && size_t(i) < age.size() ? double(age[size_t(i)]) : 0.0; };
+                        const double old = std::max(ageOf(l.a), ageOf(l.b));
+                        a[k] = l.a;
+                        b[k] = l.b;
+                        type[k] = 0;
+                        force[k] = float(strength * l.area * (1.0 - weaken * old));
+                        area[k] = float(l.area);
+                    }
+                }
+                c.out("links", gn::curveGeometry(std::move(curves)));
             },
     };
 }
@@ -511,6 +585,7 @@ BuildOptions optionsFromValues(const json& v)
     o.variants = int(i("variants"));
     o.detail = Detail(i("detail"));
     o.tile = f("tile");
+    o.chips = f("chips");
     return o;
 }
 
@@ -530,6 +605,8 @@ RuinParams ruinFromValues(const json& v)
     r.rubble = f("rubble");
     r.settle = typedValue(*findInput("settle"), v.contains("settle") ? v["settle"] : json()).get<bool>();
     r.seed = uint32_t(i("ruinSeed"));
+    r.structural = typedValue(*findInput("structural"), v.contains("structural") ? v["structural"] : json()).get<bool>();
+    r.strokes = strokesFromJson(v.value("ruinStrokes", json()));
     std::string regions = v.value("ruinRegions", std::string());
     size_t start = 0;
     while (start <= regions.size())
@@ -554,6 +631,11 @@ AgeParams ageFromValues(const json& v)
     a.age = f("age");
     a.moss = f("moss");
     a.wetHeight = f("wetHeight");
+    a.plaster = f("plaster");
+    a.plasterThickness = f("plasterThickness");
+    a.ivy = f("ivy");
+    a.ivyHeight = f("ivyHeight");
+    a.leaf = f("leaf");
     a.seed = uint32_t(typedValue(*findInput("ruinSeed"), v.contains("ruinSeed") ? v["ruinSeed"] : json()).get<int64_t>());
     return a;
 }
@@ -672,7 +754,7 @@ void writeStoneAttrs(geo::AttributeSet& attrs, const Built& b)
 
 bool registerNodes(ext::Context& ctx)
 {
-    for (gn::NodeDecl d : {wallDecl(), buildingDecl(), ruinDecl(), ageDecl()})
+    for (gn::NodeDecl d : {wallDecl(), buildingDecl(), ruinDecl(), ageDecl(), linksDecl()})
         if (!gn::registerDecl(ctx, std::move(d)))
             return false;
     return true;

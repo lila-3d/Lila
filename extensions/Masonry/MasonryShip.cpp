@@ -139,6 +139,15 @@ json shipPlan(const Built& b, const glm::dmat4& world, const std::string& wallKe
             assets.push_back(asset(folder, "SM_" + name + "_Assembly", "assembly", 0));
         }
     }
+    if (b.dressing.numFaces() > 0)
+    {
+        list.push_back({{"key", wallKey + ":dressing"},
+                        {"label", name + "_Dressing"},
+                        {"asset", int(assets.size())},
+                        {"mode", "actors"},
+                        {"placements", json::array({placementAt(world, "dressing", json::array({0.0, 0.0}))})}});
+        assets.push_back(asset(folder, "SM_" + name + "_Dressing", "dressing", 0));
+    }
     const int coreAsset = int(assets.size());
     assets.push_back(asset(folder, "SM_" + name + "_Core", "core", 0));
     list.push_back({{"key", wallKey + ":core"},

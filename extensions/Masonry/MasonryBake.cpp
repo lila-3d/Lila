@@ -356,6 +356,39 @@ std::vector<Shell> lowPolyShells(std::span<const Footprint> footprints, const Wa
     return out;
 }
 
+std::vector<Shell> shellsFromCells(std::span<const geo::Mesh> cells, double size, int texture, int padding)
+{
+    LILA_ZONE();
+
+    const double cellSize = std::max(size, 1.0);
+    auto less = [](const glm::ivec2& a, const glm::ivec2& b) { return a.x != b.x ? a.x < b.x : a.y < b.y; };
+    std::map<glm::ivec2, Shell, decltype(less)> chunks(less);
+    for (const geo::Mesh& c : cells)
+    {
+        const geo::Bounds b = c.bounds();
+        const glm::dvec3 mid = (b.min + b.max) * 0.5;
+        const glm::ivec2 at(int(std::floor(mid.x / cellSize)), int(std::floor(mid.z / cellSize)));
+        Shell& sh = chunks[at];
+        if (sh.hulls.empty())
+            sh.origin = {(at.x + 0.5) * cellSize, b.min.y, (at.y + 0.5) * cellSize};
+        sh.cell = at;
+        sh.origin.y = std::min(sh.origin.y, b.min.y);
+        sh.mesh.append(c);
+        sh.hulls.push_back(c);
+    }
+    std::vector<Shell> out;
+    const double pad = double(std::max(1, padding)) / double(std::max(64, texture));
+    for (auto& [at, sh] : chunks)
+    {
+        unwrapFaces(sh.mesh, pad);
+        std::span<bool> hard = sh.mesh.edgeAttrs().getOrAdd<bool>(geo::attr::kHard);
+        std::fill(hard.begin(), hard.end(), true);
+        lila::scene::materials::assign(sh.mesh, kShellSlot, {});
+        out.push_back(std::move(sh));
+    }
+    return out;
+}
+
 json bakeAtlas(const Built& b, double bevel, const std::string& project, const BakeSettings& s)
 {
     LILA_ZONE();

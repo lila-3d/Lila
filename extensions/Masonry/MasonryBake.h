@@ -44,6 +44,9 @@ struct Shell
 /** The walls' shells, split where the footprints cross the size cm ground grid, in cell order. */
 std::vector<Shell> lowPolyShells(std::span<const Footprint> footprints, const WallParams& p, double size, int texture, int padding);
 
+/** Shells from convex cells (Built::shellCells: the walls as they stand, ruined or not), grouped by the size cm ground grid. */
+std::vector<Shell> shellsFromCells(std::span<const geo::Mesh> cells, double size, int texture, int padding);
+
 /** A bake of the stones' atlas or the shells, through the Baker. */
 struct BakeSettings
 {
