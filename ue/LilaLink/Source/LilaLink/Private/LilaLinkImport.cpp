@@ -891,16 +891,18 @@ void ApplyCollision(const FImportRequest& Request, FImportOutcome& Outcome)
 		return;
 	}
 	Mesh->Modify();
+	// GetSimpleCollisionCount leaves out convex hulls, which is what UCX_ meshes become.
+	const int32 Shapes = FMath::Max(0, Meshes->GetSimpleCollisionCount(Mesh)) + FMath::Max(0, Meshes->GetConvexCollisionCount(Mesh));
 	if (Request.Collision == TEXT("ucx"))
 	{
-		if (Meshes->GetSimpleCollisionCount(Mesh) <= 0)
+		if (Shapes == 0)
 		{
 			Outcome.Warnings.Add(TEXT("collision ucx: the file has no UCX_ meshes, so the asset has no simple collision"));
 		}
 	}
 	else
 	{
-		if (Meshes->GetSimpleCollisionCount(Mesh) > 0)
+		if (Shapes > 0)
 		{
 			Meshes->RemoveCollisionsWithNotification(Mesh, false);
 		}
