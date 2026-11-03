@@ -39,6 +39,8 @@ using T = ArgType;
 using library::Asset;
 
 constexpr const char* kMasters = "StagehandLibrary";
+/** Stagehand's own node types under a mesh or group: data, not geometry. */
+const std::set<std::string> kTagTypes = {kBodyType, "stagehandSnap", "stagehandAsset", "stagehandAssembly"};
 constexpr const char* kAssetType = "stagehandAsset";
 
 json v3(const glm::dvec3& v) { return json::array({v.x, v.y, v.z}); }
@@ -737,11 +739,35 @@ void registerLibraryCommands(ext::Context& ctx)
                 model.clear();
             else
             {
-                json parts = json::array();
-                for (NodeId id : modelNodes)
-                    parts.push_back(g.node(id)->path());
-                ops::execute("select", {{"args", parts}});
-                ops::execute("exportGltf", {{"args", {model.generic_string()}}});
+                // Bodies, snap points and tags travel in asset.json and come back on placing; in the model they would
+                // land as empty transforms beside a second body. They go for the export only, in a cancelled chunk.
+                UndoStack& undo = UndoStack::get();
+                const bool scratch = undo.enabled() && !undo.chunkOpen();
+                if (scratch)
+                    undo.openChunk("libraryAdd export");
+                try
+                {
+                    json tags = json::array();
+                    for (NodeId id : modelNodes)
+                        for (NodeId d : g.descendants(id))
+                            if (Node* n = g.node(d); n && kTagTypes.count(n->type().name))
+                                tags.push_back(n->fullPath());
+                    if (scratch && !tags.empty())
+                        ops::execute("delete", {{"args", tags}});
+                    json parts = json::array();
+                    for (NodeId id : modelNodes)
+                        parts.push_back(g.node(id)->path());
+                    ops::execute("select", {{"args", parts}});
+                    ops::execute("exportGltf", {{"args", {model.generic_string()}}});
+                }
+                catch (...)
+                {
+                    if (scratch)
+                        undo.cancelChunk();
+                    throw;
+                }
+                if (scratch)
+                    undo.cancelChunk();
             }
             json restore = json::array();
             for (NodeId id : previous)

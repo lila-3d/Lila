@@ -500,3 +500,38 @@ TEST_CASE("library: starter thumbnails are drawn without leaving anything in the
     run("undo");
     CHECK_FALSE(run("objExists", {{"args", {keep}}}).get<bool>());
 }
+
+TEST_CASE("library: a saved prop comes back with one body and its snap points, and no empty transforms for them")
+{
+    load();
+    run("newScene");
+    const auto lib = std::filesystem::temp_directory_path() / ("lila_stagehand_tags_" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(lib);
+    run("libraryPaths", {{"add", lib.generic_string()}});
+    const std::string crate = cube("Crate", {0, 0, 0}, {60, 60, 60});
+    run("physicsBody", {{"args", {crate}}, {"material", "wood"}, {"role", "dynamic"}});
+    run("addSnapPoint", {{"args", {crate}}, {"type", "stack"}, {"position", json::array({30, 30, 0})}, {"normal", json::array({1, 0, 0})}, {"name", "side"}});
+    run("libraryAdd", {{"args", {crate}}, {"tier", lib.generic_string()}, {"collection", "Tags"}, {"thumbnail", false}});
+    // The source keeps its body and snap point.
+    CHECK(run("dressInfo", {{"args", {crate}}})[0]["material"] == "wood");
+    CHECK(run("snapPoints", {{"args", {crate}}}).size() == 1);
+
+    run("newScene");
+    const json placed = run("place", {{"args", {"Tags/Crate"}}, {"at", json::array({0, 0, 0})}, {"snap", false}});
+    scene::Graph& g = scene::Graph::current();
+    const scene::Node* root = g.find(placed[0]["node"].get<std::string>());
+    REQUIRE(root);
+    int bodies = 0, snaps = 0, empties = 0;
+    for (scene::NodeId d : g.descendants(root->id()))
+    {
+        const std::string type = g.node(d)->type().name;
+        bodies += type == "stagehandBody";
+        snaps += type == "stagehandSnap";
+        empties += type == "transform";
+    }
+    CHECK(bodies == 1);
+    CHECK(snaps == 1);
+    CHECK(empties == 0);
+    std::error_code ec;
+    std::filesystem::remove_all(lib, ec);
+}
