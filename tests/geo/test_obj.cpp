@@ -4,7 +4,13 @@
 #include "geo/ObjIO.h"
 #include "geo/Primitives.h"
 
+#include <charconv>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <random>
+#include <string>
 
 using namespace lila::geo;
 using namespace lila::geo::test;
@@ -105,6 +111,45 @@ TEST_CASE("obj: hard edges from normals without smoothing groups")
     ObjReadResult r = readObj(writeObj(cube, wo));
     REQUIRE(r.objects.size() == 1);
     CHECK(hardCount(r.objects[0].mesh) == 12);
+}
+
+TEST_CASE("obj: coordinates read exactly as from_chars reads them, whatever their formatting")
+{
+    std::mt19937_64 rng(7);
+    std::uniform_real_distribution<double> mag(-30.0, 30.0);
+    const char* formats[] = {"%.6f", "%.9g", "%.17g", "%.3e", "%.15g", "%g", "%.0f", "%.12f"};
+    std::vector<std::string> numbers = {"0", "-0", "1.", ".5", "-.25", "1e5", "1E-7", "123456789012345", "1234567890123456",
+                                        "0.000000000000000000001", "1e22", "1e23", "1e-22", "1e-23", "007.50", "-0.0"};
+    for (int i = 0; i < 3000; ++i)
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), formats[i % 8], (i % 3 == 0 ? -1.0 : 1.0) * std::pow(10.0, mag(rng) / 5.0) * mag(rng));
+        numbers.push_back(buf);
+    }
+    while (numbers.size() % 3)
+        numbers.push_back("1");
+    const size_t points = numbers.size() / 3;
+    // Points no face uses are dropped, so every three points get a face.
+    ObjReadOptions opts;
+    std::string all;
+    for (size_t i = 0; i < numbers.size(); i += 3)
+        all += "v " + numbers[i] + " " + numbers[i + 1] + " " + numbers[i + 2] + "\n";
+    for (size_t i = 0; i + 2 < points; i += 3)
+        all += "f " + std::to_string(i + 1) + " " + std::to_string(i + 2) + " " + std::to_string(i + 3) + "\n";
+    const ObjReadResult every = readObj(all, opts);
+    REQUIRE(every.objects.size() == 1);
+    const Mesh& m = every.objects[0].mesh;
+    REQUIRE(size_t(m.pointCapacity()) == points - points % 3);
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        for (int c = 0; c < 3; ++c)
+        {
+            const std::string& s = numbers[size_t(p) * 3 + size_t(c)];
+            const char* b = s.data() + (s[0] == '+' ? 1 : 0);
+            double want = 0.0;
+            std::from_chars(b, s.data() + s.size(), want);
+            INFO(s);
+            CHECK(std::memcmp(&want, &m.position(p)[c], sizeof(double)) == 0);
+        }
 }
 
 TEST_CASE("obj: lines without faces report an error")

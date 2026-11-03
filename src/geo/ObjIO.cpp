@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <charconv>
 #include <cstring>
 #include <fstream>
@@ -54,6 +55,76 @@ struct Chunk
     std::vector<std::string> mtllibs;
     size_t lines = 0;
 };
+
+/**
+ * A plain decimal (optional sign, digits, optional fraction and exponent) of at most 15 significant digits with a
+ * power of ten within 22 of the digits, converted exactly: both are exact doubles, so one multiply or divide rounds
+ * correctly, as from_chars would. Anything else returns null for from_chars to take, which almost no OBJ number needs.
+ */
+const char* fastDecimal(const char* p, const char* end, double& out)
+{
+    static constexpr double kPow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
+                                        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+    const bool negative = p < end && *p == '-';
+    if (negative)
+        ++p;
+    uint64_t digits = 0;
+    int count = 0, scale = 0;
+    const char* start = p;
+    for (; p < end && unsigned(*p - '0') < 10; ++p)
+    {
+        if (digits != 0 || *p != '0')
+            ++count;
+        digits = digits * 10 + uint64_t(*p - '0');
+        if (count > 15)
+            return nullptr;
+    }
+    const bool whole = p != start;
+    bool fraction = false;
+    if (p < end && *p == '.')
+    {
+        ++p;
+        for (; p < end && unsigned(*p - '0') < 10; ++p, --scale)
+        {
+            fraction = true;
+            if (digits != 0 || *p != '0')
+                ++count;
+            digits = digits * 10 + uint64_t(*p - '0');
+            if (count > 15)
+                return nullptr;
+        }
+    }
+    if (!whole && !fraction)
+        return nullptr;
+    if (p < end && (*p == 'e' || *p == 'E'))
+    {
+        const char* e = p + 1;
+        bool expNegative = false;
+        if (e < end && (*e == '-' || *e == '+'))
+            expNegative = *e++ == '-';
+        int exponent = 0;
+        const char* expStart = e;
+        for (; e < end && unsigned(*e - '0') < 10; ++e)
+        {
+            if (exponent > 1000)
+                return nullptr;
+            exponent = exponent * 10 + (*e - '0');
+        }
+        if (e == expStart)
+            return nullptr;
+        scale += expNegative ? -exponent : exponent;
+        p = e;
+    }
+    // Inf, nan, hex floats and the like keep going in from_chars.
+    if (p < end && (std::isalpha(static_cast<unsigned char>(*p)) || *p == '.'))
+        return nullptr;
+    if (scale < -22 || scale > 22)
+        return nullptr;
+    double value = double(digits);
+    value = scale < 0 ? value / kPow10[-scale] : value * kPow10[scale];
+    out = negative ? -value : value;
+    return p;
+}
 
 struct Cursor
 {
@@ -97,6 +168,11 @@ struct Cursor
         skipSpace();
         if (p < end && *p == '+')
             ++p;
+        if (const char* q = fastDecimal(p, end, out))
+        {
+            p = q;
+            return true;
+        }
         auto [ptr, ec] = std::from_chars(p, end, out);
         if (ec != std::errc())
             return false;
@@ -368,17 +444,47 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
         material = group = -1;
     };
 
-    for (size_t ci = 0; ci < chunks.size(); ++ci)
-    {
-        const Chunk& ch = chunks[ci];
+    // References made global in parallel: a chunk's relative indices depend only on the counts before it. A face with a
+    // missing point is dropped below; missing UVs or normals stay absent.
+    std::vector<std::vector<uint8_t>> faceBad(chunks.size());
+    tbb::parallel_for(size_t(0), chunks.size(), [&](size_t ci) {
+        Chunk& ch = chunks[ci];
         auto resolve = [&](int64_t r, const std::vector<size_t>& base, size_t count) -> int64_t {
             if (r == kNoRef)
                 return -1;
             const int64_t g = r >= 0 ? r : int64_t(base[ci]) + (-r - 1);
             return g >= 0 && size_t(g) < count ? g : -2;
         };
-        size_t ev = 0;
+        faceBad[ci].assign(ch.faceSize.size(), 0);
         size_t at = 0;
+        for (size_t f = 0; f < ch.faceSize.size(); ++f)
+        {
+            const uint32_t n = ch.faceSize[f];
+            int64_t* refs = ch.refs.data() + at * 3;
+            at += n;
+            bool bad = n < 3;
+            for (uint32_t k = 0; k < n; ++k)
+            {
+                refs[k * 3] = resolve(refs[k * 3], vBase, v.size());
+                refs[k * 3 + 1] = resolve(refs[k * 3 + 1], tBase, vt.size());
+                refs[k * 3 + 2] = resolve(refs[k * 3 + 2], nBase, vn.size());
+                bad = bad || refs[k * 3] < 0;
+            }
+            faceBad[ci][f] = bad;
+        }
+    });
+
+    // Sorting faces into objects follows the state statements in file order; each face only notes where its corners go.
+    constexpr uint32_t kSkipped = ~0u;
+    std::vector<std::vector<uint32_t>> faceBuilder(chunks.size());
+    std::vector<std::vector<uint64_t>> faceCorner(chunks.size());
+    std::vector<size_t> builderCorners;
+    for (size_t ci = 0; ci < chunks.size(); ++ci)
+    {
+        const Chunk& ch = chunks[ci];
+        faceBuilder[ci].assign(ch.faceSize.size(), kSkipped);
+        faceCorner[ci].resize(ch.faceSize.size());
+        size_t ev = 0;
         for (size_t f = 0; f <= ch.faceSize.size(); ++f)
         {
             for (; ev < ch.events.size() && ch.events[ev].faceIndex == f; ++ev)
@@ -392,7 +498,10 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
                     if (!builders.empty() && builders.back().faceSize.empty())
                         builders.back().obj.name = e.name;
                     else
+                    {
                         beginObject(e.name);
+                        builderCorners.push_back(0);
+                    }
                     break;
                 case Event::Group: groupName = e.name; group = -1; break;
                 case Event::Material: materialName = e.name; material = -1; break;
@@ -401,38 +510,40 @@ ObjReadResult readObj(std::string_view text, const ObjReadOptions& opts)
             }
             if (f == ch.faceSize.size())
                 break;
-            const uint32_t n = ch.faceSize[f];
-            const int64_t* refs = ch.refs.data() + at * 3;
-            at += n;
             if (builders.empty())
+            {
                 beginObject("default");
-            ObjectBuilder& b = builders.back();
-
-            bool bad = n < 3;
-            const size_t start = b.refs.size();
-            for (uint32_t k = 0; k < n && !bad; ++k)
-            {
-                const int64_t vi = resolve(refs[k * 3], vBase, v.size());
-                bad = vi < 0;
-                b.refs.push_back(vi);
-                b.refs.push_back(resolve(refs[k * 3 + 1], tBase, vt.size()));
-                b.refs.push_back(resolve(refs[k * 3 + 2], nBase, vn.size()));
+                builderCorners.push_back(0);
             }
-            if (bad)
-            {
-                b.refs.resize(start);
+            if (faceBad[ci][f])
                 continue;
-            }
+            ObjectBuilder& b = builders.back();
             if (material < 0 && !materialName.empty())
                 material = nameId(b.obj.mesh.materialNames(), materialName);
             if (group < 0 && !groupName.empty())
                 group = nameId(b.obj.groupNames, groupName);
-            b.faceSize.push_back(n);
+            faceBuilder[ci][f] = uint32_t(builders.size() - 1);
+            faceCorner[ci][f] = builderCorners.back();
+            builderCorners.back() += ch.faceSize[f];
+            b.faceSize.push_back(ch.faceSize[f]);
             b.material.push_back(std::max(0, material));
             b.group.push_back(std::max(0, group));
             b.smooth.push_back(smooth);
         }
     }
+    for (size_t i = 0; i < builders.size(); ++i)
+        builders[i].refs.resize(builderCorners[i] * 3);
+    tbb::parallel_for(size_t(0), chunks.size(), [&](size_t ci) {
+        const Chunk& ch = chunks[ci];
+        size_t at = 0;
+        for (size_t f = 0; f < ch.faceSize.size(); ++f)
+        {
+            const uint32_t n = ch.faceSize[f];
+            if (faceBuilder[ci][f] != kSkipped)
+                std::copy_n(ch.refs.data() + at * 3, size_t(n) * 3, builders[faceBuilder[ci][f]].refs.data() + faceCorner[ci][f] * 3);
+            at += n;
+        }
+    });
 
     std::vector<Index> pointOf(v.size(), kInvalid);
     std::vector<int64_t> used;
