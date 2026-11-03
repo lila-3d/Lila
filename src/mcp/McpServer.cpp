@@ -72,7 +72,9 @@ struct Server::Impl
     std::map<std::string, Tool> tools;
     std::map<std::string, std::string> toolOwners; // extension tools only
     std::map<std::string, Resource> resources;
+    std::map<std::string, std::string> resourceOwners; // extension resources only
     std::map<std::string, Prompt> prompts;
+    std::map<std::string, std::string> promptOwners; // extension prompts only
     std::string instructions = "Lila DCC. Use execute_python to drive the app with the lila package "
                                "(lila.ops.* mirrors every command). list_commands shows what exists.";
     std::unique_ptr<httplib::Server> http;
@@ -355,14 +357,58 @@ void Server::addResource(Resource resource)
 {
     std::scoped_lock lock(m->toolsMutex);
     std::string uri = resource.uri;
+    m->resourceOwners.erase(uri);
     m->resources[uri] = std::move(resource);
+}
+
+namespace
+{
+/** Adds an extension's entry to `entries`, owned by ctx: unloading removes it unless something else took the key since. */
+template <class T>
+bool addOwnedMcpEntry(ext::Context& ctx, std::mutex& mutex, std::map<std::string, T>& entries, std::map<std::string, std::string>& owners,
+              const std::string& key, T entry, const char* what)
+{
+    {
+        std::scoped_lock lock(mutex);
+        if (entries.contains(key))
+        {
+            log::error("extension {}: MCP {} '{}' is already registered", ctx.owner(), what, key);
+            return false;
+        }
+        entries[key] = std::move(entry);
+        owners[key] = ctx.owner();
+    }
+    std::string owner = ctx.owner();
+    ctx.track(std::string("mcp ") + what + ":" + key, [&mutex, &entries, &owners, key, owner] {
+        std::scoped_lock lock(mutex);
+        auto it = owners.find(key);
+        if (it == owners.end() || it->second != owner)
+            return;
+        owners.erase(it);
+        entries.erase(key);
+    });
+    return true;
+}
+} // namespace
+
+bool Server::addResource(ext::Context& ctx, Resource resource)
+{
+    std::string uri = resource.uri;
+    return addOwnedMcpEntry(ctx, m->toolsMutex, m->resources, m->resourceOwners, uri, std::move(resource), "resource");
 }
 
 void Server::addPrompt(Prompt prompt)
 {
     std::scoped_lock lock(m->toolsMutex);
     std::string name = prompt.name;
+    m->promptOwners.erase(name);
     m->prompts[name] = std::move(prompt);
+}
+
+bool Server::addPrompt(ext::Context& ctx, Prompt prompt)
+{
+    std::string name = prompt.name;
+    return addOwnedMcpEntry(ctx, m->toolsMutex, m->prompts, m->promptOwners, name, std::move(prompt), "prompt");
 }
 
 void Server::setInstructions(std::string text)

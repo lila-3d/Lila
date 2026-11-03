@@ -87,5 +87,6 @@ std::vector<Stone> stonesFromInstances(const lila::gn::Instances& inst, std::vec
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
-void registerAgentDocs();
+/** The guide, spec schema and make_ruin prompt over MCP, owned by ctx. */
+void registerAgentDocs(lila::ext::Context& ctx);
 } // namespace masonry

@@ -767,6 +767,6 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     masonry::registerCommands(ctx);
     masonry::registerUi(ctx);
-    masonry::registerAgentDocs();
+    masonry::registerAgentDocs(ctx);
     return 0;
 }

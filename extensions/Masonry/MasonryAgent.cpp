@@ -64,21 +64,21 @@ Style: {style}. Condition: {condition}. Budget: {budget}.
 )";
 } // namespace
 
-void registerAgentDocs()
+void registerAgentDocs(lila::ext::Context& ctx)
 {
     using lila::mcp::Server;
     Server& s = Server::get();
-    s.addResource({.uri = "lila://guide/masonry",
+    s.addResource(ctx, {.uri = "lila://guide/masonry",
                    .name = "Masonry guide",
                    .description = "Walls and buildings stone by stone: wall from a line, building from a spec, regions, ruin, age, "
                                   "check and ship to Unreal. Read before building masonry.",
                    .read = [] { return std::string(kGuide); }});
-    s.addResource({.uri = "lila://masonry/spec-schema",
+    s.addResource(ctx, {.uri = "lila://masonry/spec-schema",
                    .name = "Masonry building spec",
                    .description = "Every key of the masonryBuilding spec with its type, default and meaning.",
                    .mimeType = "application/json",
                    .read = [] { return specSchema().dump(2); }});
-    s.addPrompt({.name = "make_ruin",
+    s.addPrompt(ctx, {.name = "make_ruin",
                  .description = "Build a masonry building or ruin from one description: spec, ruin, age, check, ship to Unreal.",
                  .arguments = nlohmann::json::array({
                      {{"name", "subject"}, {"description", "What to build, e.g. \"a ruined Gothic chapel with a bell tower\""}, {"required", true}},

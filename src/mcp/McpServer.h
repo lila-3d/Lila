@@ -65,7 +65,11 @@ public:
     bool removeTool(const std::string& name);
     bool hasTool(const std::string& name) const;
     void addResource(Resource resource);
+    /** For extensions: owned by ctx and removed when it unloads. False, with a log message, if the uri is taken. */
+    bool addResource(ext::Context& ctx, Resource resource);
     void addPrompt(Prompt prompt);
+    /** For extensions: owned by ctx and removed when it unloads. False, with a log message, if the name is taken. */
+    bool addPrompt(ext::Context& ctx, Prompt prompt);
     /** Sent to clients on initialize; agents read it as standing instructions for the server. */
     void setInstructions(std::string text);
 

@@ -1,12 +1,14 @@
 #include <doctest/doctest.h>
 
 #include "ops/Command.h"
+#include "core/ExtensionContext.h"
 #include "core/MainQueue.h"
 #include "mcp/McpServer.h"
 #include "render/Renderer.h"
 
 #include <httplib.h>
 
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <set>
@@ -136,6 +138,28 @@ TEST_CASE("mcp: guides as resources, model_asset as a prompt")
     std::string msg = p["result"]["messages"][0]["content"]["text"];
     CHECK(msg.find("a small cute dog") != std::string::npos);
     CHECK(msg.find("{{") == std::string::npos);
+}
+
+TEST_CASE("mcp: an extension's resources and prompts leave with it")
+{
+    mcp::Server& s = mcp::Server::get();
+    auto listed = [&s](const char* method, const char* key, const char* field, const std::string& value) {
+        json r = s.handle({{"jsonrpc", "2.0"}, {"id", 1}, {"method", method}})["result"][key];
+        return std::any_of(r.begin(), r.end(), [&](const json& e) { return e[field] == value; });
+    };
+    {
+        ext::Context ctx("mcpTestExtension");
+        CHECK(s.addResource(ctx, {.uri = "lila://test/owned", .name = "Owned", .read = [] { return std::string("x"); }}));
+        CHECK(s.addPrompt(ctx, {.name = "owned_prompt", .get = [](const json&) { return std::string("y"); }}));
+        ext::Context other("otherExtension");
+        CHECK_FALSE(s.addResource(other, {.uri = "lila://test/owned", .name = "Taken"}));
+        CHECK_FALSE(s.addPrompt(other, {.name = "owned_prompt"}));
+        CHECK(listed("resources/list", "resources", "uri", "lila://test/owned"));
+        CHECK(listed("prompts/list", "prompts", "name", "owned_prompt"));
+        ctx.unloadAll();
+    }
+    CHECK_FALSE(listed("resources/list", "resources", "uri", "lila://test/owned"));
+    CHECK_FALSE(listed("prompts/list", "prompts", "name", "owned_prompt"));
 }
 
 TEST_CASE("mcp: scene_summary and mesh_info describe meshes")
