@@ -900,7 +900,8 @@ QWidget* BakerPanel::buildOutput()
     mFolderResolved = new QLabel(w);
     mFolderResolved->setObjectName("bakerFolderResolved");
     mFolderResolved->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    mFolderResolved->setWordWrap(true);
+    // Word wrap in a form row hits Qt's height-for-width bug and stretches the row over the whole tab.
+    mFolderResolved->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     mFolderResolved->setToolTip("The folder the textures are written to");
     form->addRow(QString(), mFolderResolved);
 
