@@ -409,12 +409,13 @@ struct ImagePlanePush
 {
     glm::mat4 viewProj;
     glm::vec4 corners[4];
-    glm::vec4 uv;
+    glm::vec4 uv[2]; // per corner: xy, zw
     glm::vec4 params; // opacity, brightness, contrast, grayscale
     glm::vec4 texel;
     glm::vec4 outline; // rgb: line color, display-encoded; w: 1 for outline mode
+    glm::vec4 key;     // rgb: background to clear, display-encoded; w: tolerance, 0 for none
 };
-static_assert(sizeof(ImagePlanePush) == 192, "matches ImagePlanePush in imageplane.slang");
+static_assert(sizeof(ImagePlanePush) == 224, "matches ImagePlanePush in imageplane.slang");
 
 struct AllocatedBuffer
 {
@@ -5384,10 +5385,14 @@ struct Renderer::Impl
             push.viewProj = viewProj;
             for (int i = 0; i < 4; ++i)
                 push.corners[i] = glm::vec4(p.corners[i], p.screen ? 0.0f : 1.0f);
-            push.uv = p.uv;
+            const glm::vec2 rect[4] = {{p.uv.x, p.uv.y}, {p.uv.z, p.uv.y}, {p.uv.z, p.uv.w}, {p.uv.x, p.uv.w}};
+            const glm::vec2* uv = p.cornerUvs ? p.cornerUv : rect;
+            push.uv[0] = glm::vec4(uv[0], uv[1]);
+            push.uv[1] = glm::vec4(uv[2], uv[3]);
             push.params = glm::vec4(std::clamp(p.opacity, 0.0f, 1.0f), p.brightness, p.contrast, p.grayscale ? 1.0f : 0.0f);
             push.texel = glm::vec4(0.5f / float(std::max(p.image->width, 1)), 0.5f / float(std::max(p.image->height, 1)), 0.0f, behind ? 1.0f : 0.0f);
             push.outline = glm::vec4(p.outlineColor, p.outline ? 1.0f : 0.0f);
+            push.key = p.key;
             vkCmdPushConstants(cmd, imagePlaneLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
             vkCmdDraw(cmd, 6, 1, 0, 0);
         }

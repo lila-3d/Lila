@@ -6,6 +6,7 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 namespace lila::scene
 {
@@ -46,6 +47,11 @@ public:
         kStartFrame,
         kFps,
         kMedia,
+        kRegion,
+        kKeyBackground,
+        kKeyTolerance,
+        kDrawOrder,
+        kGuides,
         kCount
     };
 };
@@ -121,6 +127,20 @@ struct LILA_SCENE_API Quad
 };
 
 LILA_SCENE_API Settings settings(const Node& n);
+
+/** A cut plane's region: loops in its local XY, cm, filled even-odd. Empty for an uncut plane, which shows it all. */
+using Region = std::vector<std::vector<glm::dvec2>>;
+LILA_SCENE_API Region region(const Node& n);
+LILA_SCENE_API std::string regionString(const Region& r);
+/**
+ * What a cut works on: the region, or for an uncut plane its picture's rectangle at aspect (width / height). Without an
+ * aspect, a rectangle far past any picture its settings could lay out.
+ */
+LILA_SCENE_API Region shownRegion(const Node& n, double aspect);
+/** The plane's guide lines, set by imagePlaneGuide: (x0, y0, x1, y1) in its local XY, cm, each from its start through its end. */
+LILA_SCENE_API std::vector<glm::dvec4> guides(const Node& n);
+/** drawOrder summed up the chain of image planes n is cut from: where it draws among planes with the same placement. */
+LILA_SCENE_API int64_t drawOrder(const Graph& g, const Node& n);
 LILA_SCENE_API Quad layoutFree(const Settings& s, const glm::dmat4& world, double imageAspect);
 LILA_SCENE_API Quad layoutAttached(const Settings& s, const CameraFrame& cam, double imageAspect);
 
@@ -138,6 +158,8 @@ LILA_SCENE_API bool validCamera(const std::string& value);
 
 /** The imagePlane type. Idempotent; needs the transform type first. */
 LILA_SCENE_API void registerImagePlaneTypes();
-/** The imagePlane command. Idempotent. */
+/** The imagePlane and imagePlaneCut commands. Idempotent. */
 LILA_SCENE_API void registerImagePlaneCommands();
+/** imagePlaneCut alone; registerImagePlaneCommands calls it. */
+void registerImagePlaneCutCommand();
 } // namespace lila::scene

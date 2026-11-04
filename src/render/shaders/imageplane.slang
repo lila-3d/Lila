@@ -5,10 +5,11 @@ struct ImagePlanePush
 {
     float4x4 viewProj;
     float4 corners[4]; // xyz: top left, top right, bottom right, bottom left; w 0: xy are NDC, glued to the screen
-    float4 uv;         // u0, v0, u1, v1
+    float4 uv[2];      // each corner's image coordinates: [0].xy top left, [0].zw top right, [1].xy bottom right, [1].zw bottom left
     float4 params;     // opacity, brightness, contrast, grayscale
     float4 texel;      // xy: half a texel, to keep bilinear taps off the far edge of the repeating sampler; w: 1 behind the scene
     float4 outline;    // rgb: line color, display-encoded; w: 1 draws only the image's edges
+    float4 key;        // rgb: background color to clear, display-encoded; w: how far from it still clears, 0 for none
 };
 
 [[vk::push_constant]] ImagePlanePush pc;
@@ -25,14 +26,14 @@ VSOut imagePlaneVS(uint id : SV_VertexID)
 {
     const uint order[6] = {0, 1, 2, 0, 2, 3};
     uint c = order[id];
-    float2 t = float2(c == 1 || c == 2 ? 1.0 : 0.0, c >= 2 ? 1.0 : 0.0);
     VSOut o;
     // Screen quads skip the camera, so its TAA jitter and motion never shake them; reversed-Z puts 1 at the near plane.
     o.pos = pc.corners[c].w < 0.5 ? float4(pc.corners[c].xy, 1.0, 1.0) : mul(pc.viewProj, float4(pc.corners[c].xyz, 1.0));
     // Behind the scene: at the far plane, so only what nothing covers takes it (reversed-Z clears to 0).
     if (pc.texel.w > 0.5)
         o.pos.z = 0.0;
-    o.uv = lerp(pc.uv.xy, pc.uv.zw, t);
+    float4 pair = pc.uv[c / 2];
+    o.uv = (c & 1) == 0 ? pair.xy : pair.zw;
     return o;
 }
 
@@ -78,10 +79,13 @@ float4 imagePlanePS(VSOut i) : SV_Target
     }
     float4 c = image.Sample(clamp(i.uv, pc.texel.xy, 1.0 - pc.texel.xy));
     float a = c.a * pc.params.x;
+    float3 d = toDisplay(c.rgb);
+    // Keyed background fades out over the outer half of the tolerance, so edges stay soft.
+    if (pc.key.w > 0.0)
+        a *= smoothstep(pc.key.w * 0.5, pc.key.w, length(d - pc.key.rgb));
     // Clear texels write no depth, so geometry behind a cut-out reference stays visible.
     if (a < 0.002)
         discard;
-    float3 d = toDisplay(c.rgb);
     if (pc.params.w > 0.5)
         d = dot(d, float3(0.2126, 0.7152, 0.0722));
     d = saturate((d - 0.5) * pc.params.z + 0.5 + pc.params.y);

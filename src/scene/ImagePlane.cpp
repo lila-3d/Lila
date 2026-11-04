@@ -66,6 +66,16 @@ std::vector<AttrDef> imagePlaneAttrs()
     at(ImagePlane::kFps).flags = kPlaneStored;
     at(ImagePlane::kMedia) = {.name = "media", .type = PlugType::Bool, .defaultValue = false, .flags = AttrOutput | AttrHidden,
                               .doc = "Connected to the media of the takes it belongs to."};
+    at(ImagePlane::kRegion) = {.name = "region", .type = PlugType::String, .defaultValue = std::string(), .flags = kPlaneStored | AttrHidden,
+                               .doc = "The part of the picture shown, set by imagePlaneCut: JSON loops of [x, y] in the plane's local cm. Empty shows it all."};
+    at(ImagePlane::kGuides) = {.name = "guides", .type = PlugType::String, .defaultValue = std::string(), .flags = kPlaneStored | AttrHidden,
+                               .doc = "Guide lines drawn over the picture, set by imagePlaneGuide: JSON [x0, y0, x1, y1] in the plane's local cm."};
+    at(ImagePlane::kDrawOrder) = {.name = "drawOrder", .type = PlugType::Int, .defaultValue = int64_t(0), .flags = kPlaneStored | AttrChannelBox,
+                                  .doc = "Higher draws in front of lower among planes with the same placement. A cut piece's adds to the plane it was cut from, so "
+                                         "moving that plane moves the whole figure."};
+    at(ImagePlane::kKeyBackground) = boolAttr("keyBackground", false, "Clears the picture's background: the color of its top left corner.");
+    at(ImagePlane::kKeyTolerance) =
+        floatAttr("keyTolerance", 0.15, "How far from the background color a pixel still clears, 0 to 1; the outer half fades.", 0.0, 1.0);
     return a;
 }
 
@@ -200,6 +210,78 @@ Settings settings(const Node& n)
     return s;
 }
 
+Region region(const Node& n)
+{
+    Region r;
+    const std::string& text = n.as<std::string>(ImagePlane::kRegion);
+    if (text.empty())
+        return r;
+    json j = json::parse(text, nullptr, false);
+    if (!j.is_array())
+        return r;
+    for (const json& loop : j)
+    {
+        if (!loop.is_array())
+            continue;
+        std::vector<glm::dvec2>& out = r.emplace_back();
+        for (const json& p : loop)
+            if (p.is_array() && p.size() >= 2 && p[0].is_number() && p[1].is_number())
+                out.emplace_back(p[0].get<double>(), p[1].get<double>());
+        if (out.size() < 3)
+            r.pop_back();
+    }
+    return r;
+}
+
+std::string regionString(const Region& r)
+{
+    json j = json::array();
+    for (const auto& loop : r)
+    {
+        json l = json::array();
+        for (const glm::dvec2& p : loop)
+            l.push_back({p.x, p.y});
+        j.push_back(std::move(l));
+    }
+    return j.dump();
+}
+
+std::vector<glm::dvec4> guides(const Node& n)
+{
+    std::vector<glm::dvec4> out;
+    json j = json::parse(n.as<std::string>(ImagePlane::kGuides), nullptr, false);
+    if (j.is_array())
+        for (const json& l : j)
+            if (l.is_array() && l.size() == 4 && std::ranges::all_of(l, [](const json& v) { return v.is_number(); }))
+                out.emplace_back(l[0].get<double>(), l[1].get<double>(), l[2].get<double>(), l[3].get<double>());
+    return out;
+}
+
+int64_t drawOrder(const Graph& g, const Node& n)
+{
+    int64_t order = 0;
+    for (const Node* p = &n; p && p->type().isA("imagePlane"); p = g.node(g.parent(p->id())))
+        order += p->as<int64_t>(ImagePlane::kDrawOrder);
+    return order;
+}
+
+Region shownRegion(const Node& n, double aspect)
+{
+    Region r = region(n);
+    if (!r.empty())
+        return r;
+    if (aspect > 0.0 && std::isfinite(aspect))
+    {
+        std::vector<glm::dvec2>& loop = r.emplace_back();
+        for (const glm::dvec3& c : layoutFree(settings(n), glm::dmat4(1.0), aspect).corners())
+            loop.emplace_back(c.x, c.y);
+        return r;
+    }
+    double h = 100.0 * (std::max({n.as<double>(ImagePlane::kWidth), n.as<double>(ImagePlane::kHeight), 1.0}) +
+                        std::abs(n.as<double>(ImagePlane::kOffsetX)) + std::abs(n.as<double>(ImagePlane::kOffsetY)));
+    return {{{-h, -h}, {h, -h}, {h, h}, {-h, h}}};
+}
+
 Quad layoutFree(const Settings& s, const glm::dmat4& world, double imageAspect)
 {
     FitResult f = fit(s.fit, sizeBox(s, imageAspect > 0.0 ? imageAspect : 1.0), imageAspect);
@@ -290,6 +372,7 @@ void registerImagePlaneCommands()
     using T = ArgType;
     if (ops::find("imagePlane"))
         return;
+    registerImagePlaneCutCommand();
     std::vector<FlagDef> flags = {
         {"fileName", "f", T::String, nullptr, "Image file; stored relative to the workspace root (or the scene folder without one)."},
         {"camera", "c", T::String, nullptr, "View to follow: persp, front, side (right), top, ..., or a camera node; empty for a free plane."},
@@ -315,6 +398,9 @@ void registerImagePlaneCommands()
         {"displayMode", "dm", T::String, nullptr, "lookingThrough or allViews.", kDisplayModeNames},
         {"placement", "pl", T::String, nullptr, "behind, inScene or inFront of the geometry.", kPlacementNames},
         {"locked", "lk", T::Bool, nullptr, "Not pickable in the viewport (reference mode)."},
+        {"drawOrder", "do", T::Int, nullptr, "Higher draws in front of lower among planes with the same placement."},
+        {"keyBackground", "kb", T::Bool, nullptr, "Clear the picture's background (its top left corner's color)."},
+        {"keyTolerance", "kt", T::Float, nullptr, "How far from the background color still clears, 0 to 1.", {}, {}, 0.0, 1.0},
     };
     ops::registerCommand({
         .name = "imagePlane",

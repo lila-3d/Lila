@@ -95,6 +95,11 @@ struct ImagePlaneDraw
     /** corners are view NDC (x, y; z unused) rather than world points: glued to the screen, untouched by the camera. */
     bool screen = false;
     glm::vec4 uv{0.0f, 0.0f, 1.0f, 1.0f}; // u0, v0, u1, v1; v0 is the image's top row
+    /** Each corner's own image coordinates instead of uv's rectangle: a piece of a cut plane, drawn a triangle at a time. */
+    bool cornerUvs = false;
+    glm::vec2 cornerUv[4]{};
+    /** rgb: a background color to clear (display-encoded); w: how far from it a texel still clears. 0 keys nothing. */
+    glm::vec4 key{0.0f};
     TexturePtr image;                     // sRGB
     float opacity = 1.0f;
     float brightness = 0.0f; // added in display space

@@ -8,9 +8,15 @@
 class QMenu;
 class QWidget;
 
+namespace lila::render
+{
+struct FrameState;
+}
+
 namespace lila::ui
 {
 class ViewportWidget;
+struct ViewInfo;
 }
 
 namespace lila::ui::imagePlanes
@@ -33,6 +39,9 @@ LILA_UI_API void fillCameraMenu(QMenu* menu, const std::string& camera);
 
 /** Image files dropped onto the view each make a plane attached to its camera. */
 LILA_UI_API void acceptDrops(ViewportWidget* view);
+
+/** Adds the image planes view shows, as the viewports draw them, for offscreen captures. */
+LILA_UI_API void drawInto(render::FrameState& s, const ViewInfo& view);
 
 /** paths::resolvePath of a stored image path, as UTF-8. */
 LILA_UI_API std::string resolve(const std::string& stored);

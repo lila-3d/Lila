@@ -46,6 +46,8 @@ lila_module(lila_curve Scene
     WorldMeshes.h
     Planar.cpp
     Planar.h
+    RegionSplit.cpp
+    RegionSplit.h
     Roof.cpp
     Roof.h
     Skeleton.cpp

@@ -16,6 +16,8 @@
 #include "ui/Camera.h"
 #include "ui/DebugDrawUi.h"
 #include "ui/Environments.h"
+#include "ui/ImagePlaneUi.h"
+#include "ui/ViewInfo.h"
 #include "ui/MaterialDraw.h"
 #include "ui/MeshCache.h"
 #include "ui/Overlay.h"
@@ -373,6 +375,22 @@ QImage render(const Options& o, Timing* timing, int repeat)
             addSelection(s, id);
     }
     addDebugDraw(s);
+    {
+        ViewInfo view;
+        view.view = s.view;
+        view.proj = s.proj;
+        view.eye = s.eye;
+        view.width = w;
+        view.height = h;
+        view.camera = o.lookThrough.empty() && !o.yaw && !o.pitch ? (o.view == "side" ? "right" : o.view == "active" ? "persp" : o.view) : "persp";
+        view.ortho = cam.ortho;
+        view.film = cam.filmExtents();
+        // The first pass asks for the planes' pictures; the second draws them once they have loaded.
+        imagePlanes::drawInto(s, view);
+        textures::waitForLoads(30.0);
+        s.imagePlanes.clear();
+        imagePlanes::drawInto(s, view);
+    }
     if (o.label && qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
     {
         OverlayPainter painter(s.overlayTris, 1.0);

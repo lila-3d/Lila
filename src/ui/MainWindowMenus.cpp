@@ -116,7 +116,7 @@ void MainWindow::buildMenus()
                                              "create.disc", "create.pipe", "create.quadSphere", "create.icoSphere"});
     menus::addActions("Create", {"create.locator", "create.camera", "create.cameraFromView", "create.emptyGroup", "create.turntableBase", "create.audio"});
     addSubmenu("Create", "Reference Images");
-    menus::addActions("Create/Reference Images", {"create.imagePlane", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
+    menus::addActions("Create/Reference Images", {"create.imagePlane", "imagePlane.cut", "imagePlane.guides", "reference.addImages", "referenceOverlay.addImage", "", "referenceOverlay.adjust",
                                                    "referenceOverlay.toggle", "referenceOverlay.next", ""});
     menus::addItem({.menu = "Create/Reference Images", .action = docs::pageAction("reference-images")});
     addSubmenu("Create", "Sets");
