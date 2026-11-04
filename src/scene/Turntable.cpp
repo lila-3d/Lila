@@ -118,10 +118,11 @@ double delta(double from, double to)
     return d;
 }
 
-double smootherstep(double x)
+/** Ease-out: leaves at speed and settles, so a step or Front reads as immediate. */
+double easeOut(double x)
 {
-    x = std::clamp(x, 0.0, 1.0);
-    return x * x * x * (x * (x * 6.0 - 15.0) + 10.0);
+    x = 1.0 - std::clamp(x, 0.0, 1.0);
+    return 1.0 - x * x * x;
 }
 
 /** The turntable's world frame from its own attrs, so a pivot moved this frame counts before the node evaluates. */
@@ -615,8 +616,8 @@ bool advance(Graph& g, double dt, double now)
         {
             const Turntable::Seek& s = *t->seek;
             const double x = (now - s.start) / std::max(s.duration, 1e-3);
-            t->angle = wrap(s.from + (s.to - s.from) * smootherstep(x));
-            t->pitch = s.pitchFrom + (s.pitchTo - s.pitchFrom) * smootherstep(x);
+            t->angle = wrap(s.from + (s.to - s.from) * easeOut(x));
+            t->pitch = s.pitchFrom + (s.pitchTo - s.pitchFrom) * easeOut(x);
             if (x >= 1.0)
             {
                 const bool pause = s.pauseAfter;
@@ -634,11 +635,13 @@ bool advance(Graph& g, double dt, double now)
             if (t->held)
                 tau = 0.15 / 4.0;
             else if (t->coasting)
-                tau = cruise == 0.0 ? 0.6 : std::max(tau * 2.0, 0.4);
+                tau = 0.024;
             t->velocity = cruise + (t->velocity - cruise) * std::exp(-dt / tau);
+            // A flick's tail below a couple of degrees a second is invisible, so it stops there.
+            const double restBelow = t->coasting ? 2.0 : 0.01;
             if (t->coasting && std::abs(t->velocity - cruise) < 0.5)
                 t->coasting = false;
-            if (cruise == 0.0 && std::abs(t->velocity) < 0.01)
+            if (cruise == 0.0 && std::abs(t->velocity) < restBelow)
                 t->velocity = 0.0;
             t->angle = wrap(t->angle + t->velocity * dt);
         }
@@ -802,7 +805,7 @@ void registerTypes()
         f("secondsPerTurn", 20.0, "How long one full turn takes while it spins.", 1.0, 120.0),
         AttrDef{.name = "direction", .type = PlugType::Enum, .defaultValue = int64_t(0), .flags = AttrInput | AttrStorable,
                 .enumNames = {"counterClockwise", "clockwise"}, .doc = "Which way it spins, seen from above."},
-        f("ease", 0.8, "Seconds to reach full speed or come to rest; steps and Front take about this long too.", 0.0, 5.0),
+        f("ease", 0.25, "Seconds to reach full speed or come to rest; steps and Front take about this long too.", 0.0, 5.0),
         restAngle,
         f("stepAngle", 90.0, "The angle between stops for stepping (front, side, back, side at 90).", 1.0, 180.0),
         b("lightsFollow", false, "Turn the scene's lights and the environment with it: the light stays put on the model. Off, highlights travel across it."),
