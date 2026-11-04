@@ -48,7 +48,7 @@ constexpr double kGlyphSize = 10.0;
 constexpr double kGlyphReach = 50.0;
 
 constexpr float kDot = 4.5f;
-constexpr double kPickPx = 8.0;
+constexpr double kPickPx = 12.0;
 /** Screen pixels of intensity drag per stop (a doubling); Shift drags five times finer. */
 constexpr double kPxPerStop = 60.0;
 

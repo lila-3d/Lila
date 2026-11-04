@@ -486,7 +486,7 @@ H Manipulator::pick(QPointF px) const
     auto c = mView.project(mPivot);
     if (!c)
         return H::None;
-    const double grab = 8.0;
+    const double grab = kHandleGrabPx;
     double L = handleLength();
     Tool t = effectiveTool();
     glm::dvec3 viewDir = mView.viewDir(mPivot);
@@ -524,7 +524,8 @@ H Manipulator::pick(QPointF px) const
             auto tip = mView.project(mPivot + axis(i) * L);
             if (!tip || dist(*tip, *c) < 12)
                 continue;
-            double d = segmentDistPx(px, *c, *tip);
+            // The arrowhead or cube is drawn past the tip.
+            double d = segmentDistPx(px, *c, *tip + (*tip - *c) / dist(*tip, *c) * 10.0);
             if (d < bestD)
             {
                 bestD = d;

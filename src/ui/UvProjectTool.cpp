@@ -37,7 +37,7 @@ using uv::Projection;
 constexpr const char* kProjectCommand = "uvProject";
 constexpr const char* kToolName = "uvProject";
 const glm::vec4 kDim(0.55f, 0.55f, 0.55f, 0.8f);
-constexpr double kPick = 8.0;
+constexpr double kPick = kHandleGrabPx;
 
 std::optional<glm::dvec3> gViewDir;
 std::optional<glm::dvec3> gViewEye;

@@ -276,7 +276,7 @@ ExtrudeHandle ExtrudeHandles::pick(QPointF px, const ViewInfo& view) const
         return ExtrudeHandle::None;
     if (std::abs(px.x() - offset.x()) <= 8 && std::abs(px.y() - offset.y()) <= 8)
         return ExtrudeHandle::Offset;
-    if (segmentDistPx(px, base, tip) <= 8 || std::hypot(px.x() - tip.x(), px.y() - tip.y()) <= 11)
+    if (segmentDistPx(px, base, tip) <= kHandleGrabPx || std::hypot(px.x() - tip.x(), px.y() - tip.y()) <= kHandleGrabPx + 3)
         return ExtrudeHandle::Thickness;
     return ExtrudeHandle::None;
 }

@@ -1029,7 +1029,7 @@ void registerLockHandles()
             [](QPointF px, const nodeHandles::Context& c) {
                 const auto hs = lockHandles(c.node);
                 int best = -1;
-                double bestD = 8.0;
+                double bestD = kHandleGrabPx;
                 for (size_t k = 0; k < hs.size(); ++k)
                 {
                     if (!hs[k])

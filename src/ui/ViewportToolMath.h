@@ -13,6 +13,8 @@ namespace lila::ui
 {
 /** How close, in pixels, the cursor has to be to pick a vertex or edge in the topology tools. */
 inline constexpr double kPickRadiusPx = 12.0;
+/** How close, in pixels, the cursor has to be to grab a manipulator or tool handle. */
+inline constexpr double kHandleGrabPx = 12.0;
 
 inline double distPx(QPointF a, QPointF b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); }
 

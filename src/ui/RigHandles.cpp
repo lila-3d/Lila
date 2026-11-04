@@ -17,6 +17,7 @@
 #include "ui/NodeHandles.h"
 #include "ui/ViewportHooks.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToolMath.h"
 #include "scene/SceneIndex.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,7 +38,7 @@ using D3 = glm::dvec3;
 
 constexpr double kPi = std::numbers::pi;
 constexpr float kDot = 4.5f;
-constexpr double kPickPx = 8.0;
+constexpr double kPickPx = kHandleGrabPx;
 
 const glm::vec4 kHinge{1.0f, 0.62f, 0.2f, 1.0f};
 const glm::vec4 kCone{0.3f, 0.75f, 1.0f, 1.0f};

@@ -36,7 +36,7 @@ using D2 = glm::dvec2;
 using curve::Spline;
 using curve::Splines;
 
-constexpr double kPickPx = 8.0;
+constexpr double kPickPx = kHandleGrabPx;
 constexpr double kInferPx = 10.0;
 constexpr float kButton = 26.0f;
 

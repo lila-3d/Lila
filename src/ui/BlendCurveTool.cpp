@@ -25,7 +25,7 @@ using curve::Geometry;
 const glm::vec4 kHandle(1.0f, 0.78f, 0.3f, 1.0f);
 const glm::vec4 kCombColor(0.55f, 0.75f, 1.0f, 1.0f);
 constexpr double kEndPx = 20.0;
-constexpr double kHandlePx = 10.0;
+constexpr double kHandlePx = kHandleGrabPx;
 
 /** One end of the blend: a curve's end, a point along a curve, or a point on a mesh border edge. */
 struct Pick
