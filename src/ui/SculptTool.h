@@ -53,7 +53,7 @@ struct SculptSettings
     /** The sculpt surface draws at opacity, so what is behind it (an image plane) shows through. */
     bool seeThrough = false;
     /** The surface's opacity while seeThrough is on, 0 to 1 (0 leaves the wireframe alone). */
-    double opacity = 0.35;
+    double seeThroughOpacity = 0.35;
     /** A sculptMaterials() id. */
     std::string material = "clay";
     std::string proxyMode = "subdivide";

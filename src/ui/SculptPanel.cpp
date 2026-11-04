@@ -553,7 +553,7 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mWireframe, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().wireframe = on; changed(); });
     connect(mWireOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().wireOpacity = v / 100.0; changed(); });
     connect(mSeeThrough, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().seeThrough = on; changed(); });
-    connect(mOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().opacity = v / 100.0; changed(); });
+    connect(mOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().seeThroughOpacity = v / 100.0; changed(); });
     connect(mMaterial, &QComboBox::currentIndexChanged, this, [this, changed](int) {
         sculptSettings().material = mMaterial->currentData().toString().toStdString();
         changed();
@@ -824,7 +824,7 @@ void SculptPanel::syncFromSettings()
     mWireOpacity->setValue(int(std::lround(s.wireOpacity * 100.0)));
     mWireOpacity->setEnabled(s.wireframe);
     mSeeThrough->setChecked(s.seeThrough);
-    mOpacity->setValue(int(std::lround(s.opacity * 100.0)));
+    mOpacity->setValue(int(std::lround(s.seeThroughOpacity * 100.0)));
     mOpacity->setEnabled(s.seeThrough);
     mMaterial->setCurrentIndex(std::max(0, mMaterial->findData(QString::fromStdString(s.material))));
     int checked = int(s.brush);

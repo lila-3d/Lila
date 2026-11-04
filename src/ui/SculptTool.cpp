@@ -79,7 +79,7 @@ SculptSettings loadSettings()
     s.wireframe = p.value<bool>("general", "/sculpt/wireframe", s.wireframe);
     s.wireOpacity = std::clamp(p.value<double>("general", "/sculpt/wireOpacity", s.wireOpacity), 0.05, 1.0);
     s.seeThrough = p.value<bool>("general", "/sculpt/seeThrough", s.seeThrough);
-    s.opacity = std::clamp(p.value<double>("general", "/sculpt/opacity", s.opacity), 0.0, 1.0);
+    s.seeThroughOpacity = std::clamp(p.value<double>("general", "/sculpt/seeThroughOpacity", s.seeThroughOpacity), 0.0, 1.0);
     s.material = p.value<std::string>("general", "/sculpt/material", s.material);
     if (json per = p.value("general", "/sculpt/perBrush"); per.is_object())
         for (auto& [name, j] : per.items())
@@ -635,7 +635,7 @@ public:
         }
         // The sculpt mesh has no line list (strokes would leave it stale), so a wireframe view draws it as a clear surface
         // with the wire in its shader.
-        const float opacity = wireframeView ? 0.0f : st.seeThrough ? float(std::clamp(st.opacity, 0.0, 1.0)) : 1.0f;
+        const float opacity = wireframeView ? 0.0f : st.seeThrough ? float(std::clamp(st.seeThroughOpacity, 0.0, 1.0)) : 1.0f;
         if (opacity < 1.0f)
         {
             d.materials[0].flags |= render::MatTranslucent;
@@ -840,7 +840,7 @@ void sculptSettingsChanged()
     p.set("general", "/sculpt/wireframe", s.wireframe);
     p.set("general", "/sculpt/wireOpacity", s.wireOpacity);
     p.set("general", "/sculpt/seeThrough", s.seeThrough);
-    p.set("general", "/sculpt/opacity", s.opacity);
+    p.set("general", "/sculpt/seeThroughOpacity", s.seeThroughOpacity);
     p.set("general", "/sculpt/material", s.material);
     json per = json::object();
     for (const auto& [name, b] : s.perBrush)
