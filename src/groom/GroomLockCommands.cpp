@@ -371,6 +371,7 @@ void registerLockCommands()
                   {"size", "", T::Float, 1.0, "Braid and rope half width, ringlet radius, cm.", {}, {}, 0.0},
                   {"period", "", T::Float, 4.0, "Length of one turn of a braid, rope or ringlet, cm.", {}, {}, 0.01},
                   {"width", "w", T::Float, 1.0, "Width of the new locks relative to the groom's.", {}, {}, 0.0},
+                  {"thickness", "th", T::Float, 1.0, "Thickness of the new locks relative to the groom's.", {}, {}, 0.0},
                   {"profile", "", T::String, nullptr, "Cross-section of the new locks; default the groom's.", profiles},
                   {"snapRoot", "", T::Bool, true, "Move the root onto the scalp."}},
         .run = [](const Args& a) -> json {
@@ -413,6 +414,8 @@ void registerLockCommands()
             {
                 attr::set(sp, attr::kId, double(next));
                 attr::set(sp, attr::kWidth, attr::get(sp, attr::kWidth, 1.0) * a.get<double>("width", 1.0));
+                if (const double th = a.get<double>("thickness", 1.0); th != 1.0)
+                    attr::set(sp, attr::kThickness, attr::get(sp, attr::kThickness, 1.0) * th);
                 if (made.size() > 1)
                     attr::set(sp, attr::kClump, clump);
                 if (hasProfile)

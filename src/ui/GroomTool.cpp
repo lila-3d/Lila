@@ -20,6 +20,7 @@
 #include "ui/Icons.h"
 #include "ui/NodeHandles.h"
 #include "ui/Panels.h"
+#include "ui/SpinScrub.h"
 #include "ui/Tools.h"
 #include "ui/UiCommands.h"
 #include "ui/ViewInfo.h"
@@ -43,6 +44,8 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <glm/gtc/constants.hpp>
 
 #include <array>
 #include <cmath>
@@ -74,12 +77,14 @@ constexpr std::array<const char*, size_t(HairMode::Count)> kModeNames = {"lock",
 constexpr std::array<const char*, size_t(HairMode::Count)> kModeLabels = {"Lock", "Braid", "Rope", "Ringlet", "Part", "Ponytail", "Bun", "Bangs"};
 constexpr const char* kPrefix = "/drawHair";
 
-/** What the Draw Hair tool remembers between sessions. */
+/** What the Draw Hair tool remembers between sessions, for one mode: each kind of hair keeps its own. */
 struct DrawHairSettings
 {
+    /** The mode these settings belong to. */
     HairMode mode = HairMode::Lock;
-    /** New lock width relative to the groom's. */
+    /** New lock width and thickness relative to the groom's. */
     double width = 1.0;
+    double thickness = 1.0;
     /** Height above the scalp the stroke draws at, cm. */
     double lift = 0.4;
     double size = 1.0;
@@ -90,45 +95,84 @@ struct DrawHairSettings
     double presetRadius = 6.0;
 };
 
-std::string key(const char* k) { return std::string(kPrefix) + "/" + k; }
-
-DrawHairSettings& drawHairSettings()
+DrawHairSettings defaultsFor(HairMode m)
 {
-    static DrawHairSettings s = [] {
-        DrawHairSettings c;
-        const PrefStore& p = PrefStore::get();
-        const std::string mode = p.value<std::string>("general", key("mode"), "lock");
-        for (size_t k = 0; k < kModeNames.size(); ++k)
-            if (mode == kModeNames[k])
-                c.mode = HairMode(k);
-        c.width = std::clamp(p.value<double>("general", key("width"), c.width), 0.05, 20.0);
-        c.lift = std::max(0.0, p.value<double>("general", key("lift"), c.lift));
-        c.size = std::max(0.01, p.value<double>("general", key("size"), c.size));
-        c.period = std::max(0.05, p.value<double>("general", key("period"), c.period));
-        c.partRadius = std::max(0.01, p.value<double>("general", key("partRadius"), c.partRadius));
-        c.presetCount = std::clamp(p.value<int>("general", key("presetCount"), c.presetCount), 1, 4096);
-        c.presetLength = std::max(0.01, p.value<double>("general", key("presetLength"), c.presetLength));
-        c.presetRadius = std::max(0.01, p.value<double>("general", key("presetRadius"), c.presetRadius));
-        return c;
-    }();
-    return s;
+    DrawHairSettings d;
+    d.mode = m;
+    switch (m)
+    {
+    case HairMode::Braid: d.size = 1.0, d.period = 4.0; break;
+    case HairMode::Rope: d.size = 0.8, d.period = 3.0; break;
+    case HairMode::Ringlet: d.width = 0.7, d.size = 1.2, d.period = 3.0; break;
+    case HairMode::Bun: d.presetCount = 12, d.presetRadius = 4.0; break;
+    case HairMode::Bangs: d.presetCount = 7, d.presetLength = 10.0; break;
+    default: break;
+    }
+    return d;
 }
+
+std::string key(HairMode m, const char* k) { return std::string(kPrefix) + "/" + kModeNames[size_t(m)] + "/" + k; }
+
+struct DrawHairState
+{
+    HairMode current = HairMode::Lock;
+    std::array<DrawHairSettings, size_t(HairMode::Count)> modes;
+};
+
+DrawHairState& drawHairState()
+{
+    static DrawHairState st = [] {
+        DrawHairState out;
+        const PrefStore& p = PrefStore::get();
+        const std::string mode = p.value<std::string>("general", std::string(kPrefix) + "/mode", "lock");
+        for (size_t k = 0; k < kModeNames.size(); ++k)
+        {
+            if (mode == kModeNames[k])
+                out.current = HairMode(k);
+            const HairMode m = HairMode(k);
+            DrawHairSettings c = defaultsFor(m);
+            c.width = std::clamp(p.value<double>("general", key(m, "width"), c.width), 0.05, 20.0);
+            c.thickness = std::clamp(p.value<double>("general", key(m, "thickness"), c.thickness), 0.05, 10.0);
+            c.lift = std::max(0.0, p.value<double>("general", key(m, "lift"), c.lift));
+            c.size = std::max(0.01, p.value<double>("general", key(m, "size"), c.size));
+            c.period = std::max(0.05, p.value<double>("general", key(m, "period"), c.period));
+            c.partRadius = std::max(0.01, p.value<double>("general", key(m, "partRadius"), c.partRadius));
+            c.presetCount = std::clamp(p.value<int>("general", key(m, "presetCount"), c.presetCount), 1, 4096);
+            c.presetLength = std::max(0.01, p.value<double>("general", key(m, "presetLength"), c.presetLength));
+            c.presetRadius = std::max(0.01, p.value<double>("general", key(m, "presetRadius"), c.presetRadius));
+            out.modes[k] = c;
+        }
+        return out;
+    }();
+    return st;
+}
+
+/** The current mode's settings; its mode field says which mode that is. */
+DrawHairSettings& drawHairSettings() { return drawHairState().modes[size_t(drawHairState().current)]; }
 
 void saveDrawHair()
 {
     syncGroomPalette();
-    const DrawHairSettings& c = drawHairSettings();
     PrefStore& p = PrefStore::get();
-    p.set("general", key("mode"), std::string(kModeNames[size_t(c.mode)]));
-    p.set("general", key("width"), c.width);
-    p.set("general", key("lift"), c.lift);
-    p.set("general", key("size"), c.size);
-    p.set("general", key("period"), c.period);
-    p.set("general", key("partRadius"), c.partRadius);
-    p.set("general", key("presetCount"), c.presetCount);
-    p.set("general", key("presetLength"), c.presetLength);
-    p.set("general", key("presetRadius"), c.presetRadius);
+    const DrawHairSettings& c = drawHairSettings();
+    const HairMode m = c.mode;
+    p.set("general", std::string(kPrefix) + "/mode", std::string(kModeNames[size_t(m)]));
+    p.set("general", key(m, "width"), c.width);
+    p.set("general", key(m, "thickness"), c.thickness);
+    p.set("general", key(m, "lift"), c.lift);
+    p.set("general", key(m, "size"), c.size);
+    p.set("general", key(m, "period"), c.period);
+    p.set("general", key(m, "partRadius"), c.partRadius);
+    p.set("general", key(m, "presetCount"), c.presetCount);
+    p.set("general", key(m, "presetLength"), c.presetLength);
+    p.set("general", key(m, "presetRadius"), c.presetRadius);
     viewportTools::requestRedraw();
+}
+
+void setDrawHairMode(HairMode m)
+{
+    drawHairState().current = m;
+    saveDrawHair();
 }
 
 json vec(const Point3& v) { return json::array({v.x, v.y, v.z}); }
@@ -219,6 +263,7 @@ public:
             b->setFixedSize(36, 36);
             b->setCheckable(true);
             b->setAutoRaise(true);
+            b->setFocusPolicy(Qt::NoFocus);
             b->setToolTip(def.label);
             connect(b, &QToolButton::clicked, this, std::move(fn));
             return b;
@@ -231,10 +276,7 @@ public:
         modes->setSpacing(2);
         for (size_t i = 0; i < kModeButtons.size(); ++i)
         {
-            mModes[i] = iconButton(kModeButtons[i], [i] {
-                drawHairSettings().mode = HairMode(i);
-                saveDrawHair();
-            });
+            mModes[i] = iconButton(kModeButtons[i], [i] { setDrawHairMode(HairMode(i)); });
             modes->addWidget(mModes[i], int(i / 4), int(i % 4));
         }
         dv->addLayout(modes);
@@ -250,6 +292,7 @@ public:
             s->setSuffix(suffix);
             s->setToolTip(tip);
             s->setKeyboardTracking(false);
+            mFields.push_back({s, field});
             connect(s, &QDoubleSpinBox::valueChanged, this, [field](double value) {
                 drawHairSettings().*field = value;
                 saveDrawHair();
@@ -257,7 +300,8 @@ public:
             form->addRow(label, s);
             return s;
         };
-        mWidth = spin("Width", 0.05, 20.0, "x", "New locks' width, times the groom's  ([ ], Ctrl+scroll)", &DrawHairSettings::width);
+        mWidth = spin("Width", 0.05, 20.0, "x", "New locks' width, times the groom's  (B+drag, [ ], Ctrl+scroll)", &DrawHairSettings::width);
+        mThickness = spin("Thickness", 0.05, 10.0, "x", "New locks' thickness, times the groom's  (B+drag up and down)", &DrawHairSettings::thickness);
         mLift = spin("Lift", 0.0, 100.0, " cm", "How far above the scalp the stroke draws.", &DrawHairSettings::lift);
         mSize = spin("Size", 0.01, 100.0, " cm", "Braid and rope half width, ringlet radius.", &DrawHairSettings::size);
         mPeriod = spin("Turn", 0.05, 500.0, " cm", "Length of one turn of a braid, rope or ringlet.", &DrawHairSettings::period);
@@ -295,19 +339,38 @@ public:
         mBrushName->setAlignment(Qt::AlignHCenter);
         sv->addWidget(mBrushName);
         mSettleGrab = new QCheckBox("Settle While Grabbing");
+        mSettleGrab->setFocusPolicy(Qt::NoFocus);
         mSettleGrab->setToolTip("Grab settles the locks around it, so they make room.");
+        setCheckDefault(mSettleGrab, true);
         connect(mSettleGrab, &QCheckBox::clicked, this, [](bool on) { setCurveSculptSettleGrab(on); });
         sv->addWidget(mSettleGrab);
         v->addWidget(mSculpt);
 
         mMirror = new QCheckBox("Mirror X");
+        mMirror->setFocusPolicy(Qt::NoFocus);
         connect(mMirror, &QCheckBox::clicked, this, [](bool on) {
             if (Node* guides = groomPaletteGuides())
                 runUi("setAttr", {{"args", {guides->path() + ".symmetry", on ? "x" : "off"}}});
         });
         v->addWidget(mMirror);
+        auto* reset = new QPushButton("Reset");
+        reset->setFocusPolicy(Qt::NoFocus);
+        reset->setToolTip("Put the current mode's or brush's settings back to their defaults.");
+        connect(reset, &QPushButton::clicked, this, [this] {
+            if (!mDrawPage)
+            {
+                resetCurveSculptSettings();
+                return;
+            }
+            DrawHairSettings& s = drawHairSettings();
+            s = defaultsFor(s.mode);
+            saveDrawHair();
+        });
+        v->addWidget(reset);
         mKeys = new QCheckBox("Show keys");
+        mKeys->setFocusPolicy(Qt::NoFocus);
         mKeys->setToolTip("List the tool's keys in the corner of the view.");
+        setCheckDefault(mKeys, true);
         connect(mKeys, &QCheckBox::clicked, this, [](bool on) {
             PrefStore::get().set("general", kGroomKeysPref, on);
             viewportTools::requestRedraw();
@@ -339,7 +402,7 @@ public:
         for (size_t i = 0; i < mModes.size(); ++i)
             mModes[i]->setChecked(HairMode(i) == s.mode);
         mModeName->setText(kModeLabels[size_t(s.mode)]);
-        for (auto [box, value] : {std::pair{mWidth, s.width}, std::pair{mLift, s.lift}, std::pair{mSize, s.size}, std::pair{mPeriod, s.period},
+        for (auto [box, value] : {std::pair{mWidth, s.width}, std::pair{mThickness, s.thickness}, std::pair{mLift, s.lift}, std::pair{mSize, s.size}, std::pair{mPeriod, s.period},
                                   std::pair{mPartRadius, s.partRadius}, std::pair{mLength, s.presetLength}})
         {
             const QSignalBlocker block(box);
@@ -349,8 +412,14 @@ public:
             const QSignalBlocker block(mCount);
             mCount->setValue(s.presetCount);
         }
+        // Middle click resets to this mode's own defaults.
+        const DrawHairSettings d = defaultsFor(s.mode);
+        for (auto [box, field] : mFields)
+            setSpinDefault(box, d.*field);
+        setSpinDefault(mCount, d.presetCount);
         const bool plait = s.mode == HairMode::Braid || s.mode == HairMode::Rope || s.mode == HairMode::Ringlet;
         const bool preset = s.mode == HairMode::Ponytail || s.mode == HairMode::Bun || s.mode == HairMode::Bangs;
+        mThickness->setEnabled(!preset && s.mode != HairMode::Part);
         mSize->setEnabled(plait);
         mPeriod->setEnabled(plait);
         mPartRadius->setEnabled(s.mode == HairMode::Part);
@@ -375,8 +444,9 @@ private:
     std::array<QToolButton*, kModeButtons.size()> mModes{};
     std::array<QToolButton*, kBrushButtons.size()> mBrushes{};
     QLabel *mModeName = nullptr, *mBrushName = nullptr;
-    QDoubleSpinBox *mWidth = nullptr, *mLift = nullptr, *mSize = nullptr, *mPeriod = nullptr, *mPartRadius = nullptr, *mLength = nullptr;
+    QDoubleSpinBox *mWidth = nullptr, *mThickness = nullptr, *mLift = nullptr, *mSize = nullptr, *mPeriod = nullptr, *mPartRadius = nullptr, *mLength = nullptr;
     QSpinBox* mCount = nullptr;
+    std::vector<std::pair<QDoubleSpinBox*, double DrawHairSettings::*>> mFields;
     QCheckBox *mSettleGrab = nullptr, *mMirror = nullptr, *mKeys = nullptr;
     QTimer* mRefresh = nullptr;
     int mGraphListener = 0;
@@ -401,6 +471,7 @@ class DrawHairTool final : public ViewportTool
 {
 public:
     const char* name() const override { return "Draw Hair"; }
+    bool ownsBrushRadius() const override { return true; }
 
     void activate() override
     {
@@ -436,6 +507,16 @@ public:
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
+        // B is the brush controls' while the viewport has focus, the app's otherwise; either arms the drag.
+        if (tools::brushRadiusDrag(e, mControls.armed() == brush::ui::BrushControls::Adjust::Radius))
+        {
+            mSizing = true;
+            mSizePress = e->position();
+            mSizeStart = {e->button() == Qt::MiddleButton ? 0.05 : drawHairSettings().width, sizingSecond()};
+            Point3 at;
+            mSizeUnit = point(e->position(), view, true, at) ? view.unitsPerPixel(at) : 0.0;
+            return true;
+        }
         if (e->button() != Qt::LeftButton)
             return false;
         if (!groomNode())
@@ -458,6 +539,16 @@ public:
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
+        if (mSizing)
+        {
+            // Right is wider; up is thicker, longer or reaching further, as the mode has it.
+            DrawHairSettings& s = drawHairSettings();
+            const double dx = e->position().x() - mSizePress.x(), dy = mSizePress.y() - e->position().y();
+            s.width = std::clamp(mSizeStart.first * std::pow(2.0, dx / 120.0), 0.05, 20.0);
+            setSizingSecond(mSizeStart.second * std::pow(2.0, dy / 120.0));
+            saveDrawHair();
+            return true;
+        }
         if (!mStroking)
             return false;
         if (QLineF(mLastPx, e->position()).length() < 4.0)
@@ -475,6 +566,12 @@ public:
 
     bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
+        if (mSizing)
+        {
+            mSizing = false;
+            viewportTools::requestRedraw();
+            return true;
+        }
         if (e->button() != Qt::LeftButton || !mStroking)
             return false;
         mStroking = false;
@@ -523,6 +620,8 @@ public:
                         .fields = {{"width", QString::number(s.width, 'f', 2)}},
                         .prompt = gr ? QString() : QString("select a groom or a scalp mesh"),
                         .symmetry = mirrored ? std::optional<ToolSymmetry>(ToolSymmetry{true, QString("XYZ").mid(curve::symmetryAxis(*guides), 1)}) : std::nullopt});
+        if (mSizing)
+            drawSizing(p, gr);
         if (groomKeysShown())
             drawKeyList(p, QPointF(16.0, view.height - 84.0), keys(mirrored));
     }
@@ -534,6 +633,51 @@ private:
         return n && n->type().isA("groom") ? n : nullptr;
     }
 
+    static bool isPreset(HairMode m) { return m == HairMode::Ponytail || m == HairMode::Bun || m == HairMode::Bangs; }
+
+    static const char* secondName(HairMode m) { return m == HairMode::Part ? "reach" : isPreset(m) ? "length" : "thickness"; }
+
+    /** What B+drag's up and down changes: thickness for drawn locks, length for presets, reach for a parting. */
+    static double sizingSecond()
+    {
+        const DrawHairSettings& s = drawHairSettings();
+        return s.mode == HairMode::Part ? s.partRadius : isPreset(s.mode) ? s.presetLength : s.thickness;
+    }
+
+    static void setSizingSecond(double v)
+    {
+        DrawHairSettings& s = drawHairSettings();
+        if (s.mode == HairMode::Part)
+            s.partRadius = std::clamp(v, 0.01, 100.0);
+        else if (isPreset(s.mode))
+            s.presetLength = std::clamp(v, 0.01, 1000.0);
+        else
+            s.thickness = std::clamp(v, 0.05, 10.0);
+    }
+
+    /** The new lock's cross-section at the press while B+dragging, at its size on screen, with the values. */
+    void drawSizing(OverlayPainter& p, Node* gr) const
+    {
+        const DrawHairSettings& s = drawHairSettings();
+        const bool cm = s.mode == HairMode::Part || isPreset(s.mode);
+        QString name = secondName(s.mode);
+        name[0] = name[0].toUpper();
+        const QString text = QString("Width %1x   %2 %3").arg(s.width, 0, 'f', 2).arg(name, cm ? QString("%1 cm").arg(sizingSecond(), 0, 'f', 1) : QString("%1x").arg(sizingSecond(), 0, 'f', 2));
+        if (gr && mSizeUnit > 0.0 && !cm)
+        {
+            const groom::LockOptions lo = groom::lockOptionsOf(*gr);
+            const double w = lo.width * s.width / mSizeUnit, h = std::max(2.0, w * std::clamp(lo.thickness * s.thickness, 0.02, 4.0));
+            std::vector<QPointF> ring;
+            for (int i = 0; i < 40; ++i)
+            {
+                const double a = glm::two_pi<double>() * i / 40.0;
+                ring.emplace_back(mSizePress.x() + 0.5 * w * std::cos(a), mSizePress.y() + 0.5 * h * std::sin(a));
+            }
+            p.polyline(ring, 1.5f, glm::vec4(0.95f, 0.75f, 0.35f, 1.0f), true);
+        }
+        p.label(mSizePress + QPointF(12.0, -18.0), text);
+    }
+
     static std::vector<KeyHint> keys(bool mirrored)
     {
         const HairMode m = drawHairSettings().mode;
@@ -541,7 +685,7 @@ private:
         std::vector<KeyHint> out = {{"Drag", QString("%1 %2").arg(what, QString(kModeLabels[size_t(m)]).toLower())}};
         if (mirrored)
             out.push_back({"X+drag", "Snap to mirror"});
-        out.insert(out.end(), {{"[  ]", "Narrower, wider"}, {"Ctrl+scroll", "Width"}, {"Esc", "Exit"}});
+        out.insert(out.end(), {{"B+drag", QString("Width; up and down, %1").arg(secondName(m))}, {"[  ]", "Narrower, wider"}, {"Esc", "Exit"}});
         return out;
     }
 
@@ -675,7 +819,8 @@ private:
                                 {"shape", kModeNames[size_t(s.mode)]},
                                 {"size", s.size},
                                 {"period", s.period},
-                                {"width", s.width}});
+                                {"width", s.width},
+                                {"thickness", s.thickness}});
             break;
         case HairMode::Part:
             if (pts.size() >= 2)
@@ -693,7 +838,7 @@ private:
         case HairMode::Bangs:
             if (pts.size() >= 2)
                 runUi("groomPreset",
-                      {{"args", args}, {"preset", "bangs"}, {"at", vec(pts.front())}, {"to", vec(pts.back())}, {"count", s.presetCount}, {"length", s.presetLength * 0.5}});
+                      {{"args", args}, {"preset", "bangs"}, {"at", vec(pts.front())}, {"to", vec(pts.back())}, {"count", s.presetCount}, {"length", s.presetLength}});
             break;
         default: break;
         }
@@ -706,6 +851,10 @@ private:
     std::vector<double> mPressure;
     QPointF mLastPx;
     bool mStroking = false;
+    bool mSizing = false;
+    QPointF mSizePress;
+    std::pair<double, double> mSizeStart{1.0, 1.0};
+    double mSizeUnit = 0.0;
     const geo::Mesh* mScalpMesh = nullptr;
     glm::dmat4 mScalpMatrix{0.0};
     std::unique_ptr<groom::Surface> mScalp;

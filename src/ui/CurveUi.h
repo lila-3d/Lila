@@ -46,6 +46,8 @@ int curveSculptBrush();
 void setCurveSculptBrush(int brush);
 bool curveSculptSettleGrab();
 void setCurveSculptSettleGrab(bool on);
+/** Sculpt Curves' stroke and brush settings back to their defaults, keeping the brush. */
+void resetCurveSculptSettings();
 /** The Sculpt Curves keys that matter now, for the key list. */
 std::vector<KeyHint> curveSculptKeys();
 /** The Groom palette: shown while Draw Hair or Sculpt Curves is active, on that tool's page; synced when settings change. */

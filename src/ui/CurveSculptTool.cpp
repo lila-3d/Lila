@@ -661,6 +661,16 @@ void setCurveSculptBrush(int brush)
     saveSettings();
 }
 
+void resetCurveSculptSettings()
+{
+    CurveSculptSettings& c = curveSculptSettings();
+    const groom::Brush brush = c.brush;
+    c = CurveSculptSettings{};
+    c.brush = brush;
+    c.stroke.strength = 0.5;
+    saveSettings();
+}
+
 bool curveSculptSettleGrab() { return curveSculptSettings().settleWhileGrabbing; }
 
 void setCurveSculptSettleGrab(bool on)
