@@ -18,6 +18,7 @@
 #include <QFrame>
 #include <QLabel>
 #include <QListWidget>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QPointer>
 #include <QToolButton>
@@ -65,6 +66,40 @@ namespace lila::ui
 namespace
 {
 using scene::Graph;
+
+/** The selection's names, wrapped onto as many rows as the width needs and exactly that tall: never a scroll bar. */
+class SelectionStrip : public QListWidget
+{
+public:
+    explicit SelectionStrip(QWidget* parent)
+        : QListWidget(parent)
+    {
+        setFlow(QListView::LeftToRight);
+        setWrapping(true);
+        setResizeMode(QListView::Adjust);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setSpacing(2);
+    }
+
+    void fitHeight()
+    {
+        doItemsLayout();
+        int bottom = 0;
+        for (int i = 0; i < count(); ++i)
+            bottom = std::max(bottom, visualItemRect(item(i)).bottom() + 1);
+        const int rows = std::max(bottom + spacing(), fontMetrics().height() + 10);
+        setFixedHeight(rows + 2 * frameWidth());
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* e) override
+    {
+        QListWidget::resizeEvent(e);
+        if (e->size().width() != e->oldSize().width())
+            QTimer::singleShot(0, this, [this] { fitHeight(); });
+    }
+};
 
 /** The plug "Set as Driver" picked, for Drive From. */
 std::string gDriverPlug;
@@ -346,15 +381,9 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
 
     setProperty("lilaMultiEditPanel", true);
     attrView::installKeyWatch();
-    mStrip = new QListWidget(this);
+    mStrip = new SelectionStrip(this);
     mStrip->setObjectName("cbObjects");
-    mStrip->setFlow(QListView::LeftToRight);
-    mStrip->setWrapping(false);
     mStrip->setDragDropMode(QAbstractItemView::InternalMove);
-    mStrip->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    mStrip->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    mStrip->setFixedHeight(mStrip->fontMetrics().height() + 12);
-    mStrip->setSpacing(2);
     mStrip->setToolTip("The selection in order: click to make one the lead, drag to reorder");
     layout->addWidget(mStrip);
     connect(mStrip, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
@@ -523,6 +552,8 @@ ChannelBox::ChannelBox(QWidget* parent) : QWidget(parent)
     mTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     mTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
     mTable->setColumnWidth(1, 90);
+    // Room for the longer channel names (Key Tolerance, morph targets) beside a full value column.
+    mTable->setMinimumWidth(12 * mTable->fontMetrics().height() + 90 + 2 * mTable->frameWidth());
     mTable->verticalHeader()->setDefaultSectionSize(20);
     mTable->setShowGrid(false);
     mTable->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -1071,6 +1102,8 @@ void ChannelBox::refreshStrip()
                                                           : "The lead object: edits go here (Alt edits all)");
     }
     mStrip->setVisible(sel.size() > 1);
+    if (!mStrip->isHidden())
+        static_cast<SelectionStrip*>(mStrip)->fitHeight();
 }
 
 void ChannelBox::noteEdit(const Row& row)
