@@ -161,44 +161,93 @@
         {
           "task": "Shaded",
           "values": [
-            4.73,
-            1.8,
-            3.54
+            11.87,
+            null,
+            3.72
           ],
-          "notes": "Blender has no MSAA: it draws one sample a frame while the view moves, then adds samples once it stops. Lila without antialiasing: 1.89 ms"
+          "notes": "8x antialiasing; Blender's viewport has no multisampling"
         },
         {
           "task": "Shaded with ambient occlusion",
           "values": [
-            5.58,
-            1.83,
-            3.65
+            13.18,
+            null,
+            3.1
           ],
-          "notes": "Lila fast mode, accurate mode 6.8 ms; Blender: world-space cavity"
+          "notes": "Lila fast mode; accurate mode 6.8 ms"
         },
         {
           "task": "Wireframe on shaded (20 million edges)",
           "values": [
-            4.99,
-            4.37,
-            4.85
+            12.16,
+            null,
+            4.73
           ]
         },
         {
           "task": "Object selected",
           "values": [
-            19.35,
-            2.83,
-            4.76
+            7.79,
+            null,
+            4.63
           ]
         },
         {
           "task": "Vertex mode, all 6.75 million vertices selected",
           "values": [
-            6.42,
-            11.59,
-            5.25
+            17.3,
+            null,
+            5.04
           ]
+        }
+      ]
+    },
+    {
+      "title": "Viewport, no antialiasing",
+      "unit": "ms",
+      "rows": [
+        {
+          "task": "Shaded",
+          "values": [
+            5.63,
+            1.8,
+            1.74
+          ],
+          "notes": "Lila's Temporal mode, one sample a frame refined once the view stops: 1.85 ms"
+        },
+        {
+          "task": "Shaded with ambient occlusion",
+          "values": [
+            7.08,
+            1.83,
+            2.04
+          ],
+          "notes": "Lila fast mode; Blender: world-space cavity"
+        },
+        {
+          "task": "Wireframe on shaded (20 million edges)",
+          "values": [
+            5.8,
+            4.37,
+            3.72
+          ]
+        },
+        {
+          "task": "Object selected",
+          "values": [
+            3.6,
+            2.83,
+            3.73
+          ]
+        },
+        {
+          "task": "Vertex mode, all 6.75 million vertices selected",
+          "values": [
+            8.47,
+            11.59,
+            5.53
+          ],
+          "notes": "Lila's Temporal mode: 3.84 ms"
         }
       ]
     },
