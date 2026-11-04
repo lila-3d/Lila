@@ -786,6 +786,9 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         numberField(viewport, "Gamma", vd::kGamma, 1.0, 0.1, 4.0, 0.05);
         sectionHeader(viewport, "Antialiasing");
         toggleField(viewport, "Enabled", vd::kAaEnabled, true);
+        choiceField(viewport, "Mode", vd::kAaMode,
+                    {{"Multisample", "multisample"}, {"Temporal", vd::kAaTemporal}},
+                    "multisample");
         {
             auto* box = new QComboBox;
             int current = PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples);
@@ -797,7 +800,7 @@ void addBuiltIns(Registry<prefPages::Page>& r)
             }
             QObject::connect(box, &QComboBox::currentIndexChanged, box, [box](int) { PrefStore::get().set("general", vd::kAaSamples, box->currentData().toInt()); });
             setComboDefault(box, box->findData(vd::kDefaultSamples));
-            addRow(viewport, "Samples", box, vd::kAaSamples);
+            addRow(viewport, "Multisample samples", box, vd::kAaSamples);
         }
         toggleField(viewport, "Temporal (smooths shading shimmer)", vd::kTaa, true);
         numberField(viewport, "Still frames averaged", vd::kAccumulate, 16.0, 1.0, 256.0, 1.0, 0);

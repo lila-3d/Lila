@@ -16,6 +16,12 @@ namespace lila::ui::viewportDisplay
  */
 inline constexpr const char* kAaEnabled = "/viewport/aa/enabled";
 inline constexpr const char* kAaSamples = "/viewport/aa/samples"; // 1, 2, 4 or 8
+/**
+ * "multisample" (kAaSamples every frame) or "temporal": one sample a frame with temporal antialiasing, refined over the
+ * still frames (kAccumulate) once the view stops. Temporal draws dense scenes about twice as fast while they move.
+ */
+inline constexpr const char* kAaMode = "/viewport/aa/mode";
+inline constexpr const char* kAaTemporal = "temporal";
 /** Temporal antialiasing, and how many jittered frames a still view averages after each change. */
 inline constexpr const char* kTaa = "/viewport/aa/temporal";
 inline constexpr const char* kAccumulate = "/viewport/aa/accumulate";
@@ -180,9 +186,11 @@ LILA_UI_API glm::vec4 falloffColor(float w, bool grayscale);
 enum class Quality
 {
     Best,     // accurate AO, 8x and temporal antialiasing, shadows
-    Balanced, // fast AO, 4x and temporal antialiasing, shadows
+    Balanced, // fast AO, temporal-only antialiasing (kAaMode), shadows
     Fastest,  // no AO, antialiasing or shadows
 };
+/** kAaMode is temporal. */
+LILA_UI_API bool temporalAa();
 LILA_UI_API void applyQuality(Quality q);
 /** The scene's active post process into s (nothing when it has none); effects turns its grading, bloom and lens effects on. */
 LILA_UI_API void applyPostProcess(render::FrameState& s, bool effects);

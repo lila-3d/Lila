@@ -825,11 +825,18 @@ void registerBuiltins()
         std::string label = "Antialiasing " + std::to_string(n) + "x";
         actions::add({.id = "viewport.aaSamples" + std::to_string(n), .label = label, .category = "Display", .run = [n] {
                           PrefStore::get().set("general", vd::kAaSamples, n);
+                          PrefStore::get().set("general", vd::kAaMode, "multisample");
                           PrefStore::get().set("general", vd::kAaEnabled, true);
                       },
                       .doc = std::to_string(n) + " samples per pixel. More is smoother and costs more GPU time.",
                       .python = "lila.prefs.set(\"general\", \"/viewport/aa/samples\", " + std::to_string(n) + ")"});
     }
+    actions::add({.id = "viewport.aaTemporal", .label = "Temporal Antialiasing Only", .category = "Display", .run = [] {
+                      PrefStore::get().set("general", vd::kAaMode, vd::kAaTemporal);
+                      PrefStore::get().set("general", vd::kAaEnabled, true);
+                  },
+                  .doc = "One sample a frame, refined once the view stops. Dense scenes draw about twice as fast while they move.",
+                  .python = "lila.prefs.set(\"general\", \"/viewport/aa/mode\", \"temporal\")"});
     for (auto [mode, label, doc] : {std::tuple{"environment", "Environment Lighting", "Lights the scene with the HDRI environment."},
                                     {"studio", "Studio Lighting", "Lights the scene with a fixed studio rig, whatever the HDRI."},
                                     {"flat", "Flat Lighting", "Unlit base colors, for checking textures and silhouettes."}})

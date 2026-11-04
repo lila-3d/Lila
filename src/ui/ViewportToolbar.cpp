@@ -257,7 +257,10 @@ std::optional<bool> viewportActionState(const std::string& id, const ViewportWid
             if (id.substr(14) == scene::selectionMask::name(k))
                 return scene::selectionMask::shown(k);
     if (id.starts_with("viewport.aaSamples"))
-        return generalPref(vd::kAaEnabled, true) && PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(id.substr(18));
+        return generalPref(vd::kAaEnabled, true) && !vd::temporalAa() &&
+               PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(id.substr(18));
+    if (id == "viewport.aaTemporal")
+        return generalPref(vd::kAaEnabled, true) && vd::temporalAa();
     if (id == "viewport.toggleVertexColors")
         return PrefStore::get().value<std::string>("general", vd::kVertexColors, "off") != "off";
     if (id.starts_with("viewport.vertexColors."))
@@ -685,10 +688,16 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
             std::string id = std::string("viewport.aaSamples") + n;
             QAction* a = m->addAction(QString(n) + "x");
             a->setCheckable(true);
-            a->setChecked(PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(n));
+            a->setChecked(!vd::temporalAa() && PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples) == std::stoi(n));
             group->addAction(a);
             connect(a, &QAction::triggered, this, [id] { actions::run(id); });
         }
+        QAction* temporal = m->addAction("Temporal");
+        temporal->setCheckable(true);
+        temporal->setChecked(vd::temporalAa());
+        temporal->setToolTip("One sample a frame, refined once the view stops");
+        group->addAction(temporal);
+        connect(temporal, &QAction::triggered, this, [] { actions::run("viewport.aaTemporal"); });
     });
     mSamplesButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     mLilaRendererOnly.push_back(mSamplesButton);
@@ -826,7 +835,7 @@ void ViewportToolbar::refresh()
         }
     mCameraButton->setToolTip("Camera: " + QString::fromStdString(mView->viewName()) + "\nRight-click to select it");
     int samples = PrefStore::get().value<int>("general", vd::kAaSamples, vd::kDefaultSamples);
-    mSamplesButton->setText(QString::number(samples) + "x");
+    mSamplesButton->setText(vd::temporalAa() ? QString("TAA") : QString::number(samples) + "x");
     const bool lilaDraws = viewportRenderers::selected(mView->hudPanel()) == viewportRenderers::kLila;
     for (QToolButton* b : mLilaRendererOnly)
     {

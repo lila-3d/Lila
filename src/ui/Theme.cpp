@@ -736,7 +736,7 @@ QWidget* makeThemeChooser(QWidget* parent)
     };
     const Option options[] = {
         {vd::Quality::Best, "Best quality", "Accurate ambient occlusion, 8x antialiasing and shadows."},
-        {vd::Quality::Balanced, "Balanced", "Faster ambient occlusion that also darkens reflections, 4x antialiasing and shadows."},
+        {vd::Quality::Balanced, "Balanced", "Faster ambient occlusion that also darkens reflections, temporal antialiasing (refines when the view stops) and shadows."},
         {vd::Quality::Fastest, "Fastest", "No ambient occlusion, antialiasing or shadows. For laptops and integrated graphics."},
     };
     auto* group = new QButtonGroup(box);

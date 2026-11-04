@@ -31,8 +31,10 @@ namespace lila::ui::viewportDisplay
 void apply(render::FrameState& s)
 {
     const PrefStore& p = PrefStore::get();
-    s.msaaSamples = render::msaaSamples(p.value<bool>("general", kAaEnabled, true), p.value<int>("general", kAaSamples, kDefaultSamples), 0xFFu);
-    s.taa = p.value<bool>("general", kTaa, true);
+    const bool aa = p.value<bool>("general", kAaEnabled, true);
+    const bool temporal = aa && temporalAa();
+    s.msaaSamples = temporal ? 1 : render::msaaSamples(aa, p.value<int>("general", kAaSamples, kDefaultSamples), 0xFFu);
+    s.taa = temporal || p.value<bool>("general", kTaa, true);
     s.accumulate = std::clamp(p.value<int>("general", kAccumulate, 16), 1, 256);
     s.frameCap = frameCap();
     s.vsync = p.value<bool>("general", kVsync, false);
@@ -430,9 +432,15 @@ void applyQuality(Quality q)
     p.set("general", "/viewport/ao/enabled", q != Quality::Fastest);
     p.set("general", "/viewport/ao/mode", q == Quality::Best ? "accurate" : "fast");
     p.set("general", kAaEnabled, q != Quality::Fastest);
-    p.set("general", kAaSamples, q == Quality::Best ? 8 : 4);
+    p.set("general", kAaSamples, 8);
+    p.set("general", kAaMode, q == Quality::Balanced ? kAaTemporal : "multisample");
     p.set("general", kTaa, q != Quality::Fastest);
     p.set("general", kShadows, q != Quality::Fastest);
+}
+
+bool temporalAa()
+{
+    return PrefStore::get().value<std::string>("general", kAaMode, "multisample") == kAaTemporal;
 }
 
 Quality recommendedQuality()
