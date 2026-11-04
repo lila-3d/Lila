@@ -288,7 +288,7 @@ struct ClaySettings
     bool stroke = false; // capsule strokes instead of shapes
     bool taper = true;
     bool chain = false;     // each new shape links to the selected one
-    double thickness = 0.6; // of a link's ends, as a fraction of their shapes' sizes
+    double thickness = 1.0; // of a link's ends, as a fraction of their shapes' sizes
     bool cut = false; // Ctrl gives the other
     double radius = 5.0, blend = 2.0;
     double lastRadius = 0.0; // of the last shape placed; 0 before the first
@@ -769,8 +769,13 @@ public:
                 {
                     mLive = n->id();
                     if (!from.empty())
-                        callClay("addClayLink", {{"args", {from, made}}, {"thickness", s.thickness}, {"operation", call["operation"]},
-                                                 {"blend", s.blend}, {"skipSelect", true}});
+                    {
+                        json link = {{"args", {from, made}}, {"thickness", s.thickness}, {"operation", call["operation"]}, {"skipSelect", true}};
+                        // At full thickness the command picks a hard join, which keeps the joints from swelling.
+                        if (s.thickness < 0.999)
+                            link["blend"] = s.blend;
+                        callClay("addClayLink", link);
+                    }
                 }
         }
         return true;

@@ -41,9 +41,9 @@ def addClayLink(*objects: Any, thickness: float | None = None, operation: str | 
 
     Args:
         objects: start shape, end shape.
-        thickness: Each end's radius as a fraction of its shape's size. Short form th. Default 0.6.
+        thickness: Each end's radius as a fraction of its shape's size. Short form th. Default 1.0.
         operation: How the link joins the clay before it. Short form op. One of 'add', 'subtract', 'intersect'. Default 'add'.
-        blend: Smooth join radius, cm. Short form b.
+        blend: Smooth join radius, cm; 0 by default at full thickness. Short form b.
         color: Linear colour. Short form c.
         name: Name; made unique. Short form n. Default 'ClayLink'.
         skipSelect: Leave the selection as it is. Short form ss. Default False.

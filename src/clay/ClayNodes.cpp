@@ -591,7 +591,7 @@ void registerTypes()
     link.doc = "A round cone between two clay shapes' centres that follows them as they move and resize: each end's radius is "
                "thickness times that shape's size.";
     link.ownAttrs = joinAttrs();
-    link.ownAttrs.push_back(param("thickness", PlugType::Float, 0.6, "Each end's radius as a fraction of the shape it starts from.", {}, 0.0, 1.0));
+    link.ownAttrs.push_back(param("thickness", PlugType::Float, 1.0, "Each end's radius as a fraction of the shape it starts from.", {}, 0.0, 1.0));
     link.ownAttrs.push_back(vec3("color", "RGB", glm::dvec3(1.0), "Linear colour, blended across joins into the clay color set.", AttrColor));
     for (const char* end : {"start", "end"})
         link.ownAttrs.push_back({.name = end, .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
@@ -753,9 +753,9 @@ void registerCommands()
         .doc = "Link two shapes of a clay object with a round cone between their centres, ZSphere style. The link follows the "
                "shapes as they move and resize. Returns the link.",
         .positionalDoc = "start shape, end shape",
-        .flags = {{"thickness", "th", T::Float, 0.6, "Each end's radius as a fraction of its shape's size.", {}, {}, 0.0},
+        .flags = {{"thickness", "th", T::Float, 1.0, "Each end's radius as a fraction of its shape's size.", {}, {}, 0.0},
                   {"operation", "op", T::String, "add", "How the link joins the clay before it.", kOps},
-                  {"blend", "b", T::Float, nullptr, "Smooth join radius, cm.", {}, {}, 0.0},
+                  {"blend", "b", T::Float, nullptr, "Smooth join radius, cm; 0 by default at full thickness.", {}, {}, 0.0},
                   {"color", "c", T::Vec3, nullptr, "Linear colour."},
                   {"name", "n", T::String, "ClayLink", "Name; made unique."},
                   {"skipSelect", "ss", T::Bool, false, "Leave the selection as it is."}},
@@ -772,6 +772,9 @@ void registerCommands()
             Node& parent = containerOf(g, *ends[0], "addClayLink");
             Node* link = g.createNode(*types::find("clayLink"), a.get<std::string>("name", "ClayLink"), parent.id(), true);
             setAttrs(g, *link, a, "addClayLink");
+            // A full-thickness link's ends coincide with its shapes, and a smooth join of coincident surfaces swells them.
+            if (!a.has("blend") && a.get<double>("thickness", 1.0) >= 0.999)
+                g.setValue({link->id(), idx(*link, "blend"), -1}, 0.0);
             if (a.has("color"))
                 g.setValue({link->id(), idx(*link, "color"), -1}, vecFlag(a, "color"));
             g.connect({ends[0]->id(), idx(*ends[0], "outClay"), -1}, {link->id(), idx(*link, "start"), -1});
