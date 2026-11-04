@@ -223,7 +223,10 @@ TEST_CASE("symmetric strokes stay symmetric")
     for (sculpt::Brush brush : {sculpt::Brush::Draw, sculpt::Brush::ClayStrips, sculpt::Brush::Inflate, sculpt::Brush::Smooth,
                                 sculpt::Brush::Flatten, sculpt::Brush::Pinch, sculpt::Brush::Crease, sculpt::Brush::Scrape,
                                 sculpt::Brush::Relax, sculpt::Brush::Grab, sculpt::Brush::DamStandard, sculpt::Brush::TrimDynamic,
-                                sculpt::Brush::Polish, sculpt::Brush::Fold})
+                                sculpt::Brush::Polish, sculpt::Brush::Fold, sculpt::Brush::Fill, sculpt::Brush::Clay,
+                                sculpt::Brush::Layer, sculpt::Brush::Blob, sculpt::Brush::Magnify, sculpt::Brush::Planar,
+                                sculpt::Brush::SnakeHook, sculpt::Brush::ElasticGrab, sculpt::Brush::Nudge, sculpt::Brush::Thumb,
+                                sculpt::Brush::Rotate, sculpt::Brush::Pose})
     {
         sculpt::BrushSettings b;
         b.brush = brush;
@@ -272,6 +275,259 @@ TEST_CASE("a dab on the symmetry plane moves points once, not once per side")
         CHECK_MESSAGE(moved > 0.0, sculpt::brushName(brush));
         CHECK_MESSAGE(off < 1e-6 * std::max(moved, 1.0), sculpt::brushName(brush));
     }
+}
+
+namespace
+{
+/** A flat 100 cm square in XZ, facing +Y, 40 quads a side. */
+geo::Mesh flatGrid()
+{
+    geo::PlaneOptions o;
+    o.subdivX = o.subdivZ = 40;
+    return geo::makePlane(o);
+}
+
+sculpt::Dab flatDab(glm::dvec3 at, double radius)
+{
+    sculpt::Dab d;
+    d.center = at;
+    d.normal = glm::dvec3(0.0, 1.0, 0.0);
+    d.radius = radius;
+    d.viewDir = glm::dvec3(0.0, -1.0, 0.0);
+    return d;
+}
+
+double highest(const sculpt::SculptMesh& s)
+{
+    double y = -1e30;
+    for (Index p = 0; p < s.mesh().pointCapacity(); ++p)
+        y = std::max(y, s.mesh().position(p).y);
+    return y;
+}
+
+sculpt::SculptMesh strokeOn(geo::Mesh mesh, sculpt::Brush brush, const std::vector<sculpt::Dab>& dabs, bool invert = false)
+{
+    sculpt::SculptMesh s(std::move(mesh));
+    sculpt::BrushSettings b;
+    b.brush = brush;
+    b.strength = 1.0;
+    b.invert = invert;
+    s.beginStroke(b);
+    for (const sculpt::Dab& d : dabs)
+        s.dab(d);
+    s.endStroke();
+    return s;
+}
+} // namespace
+
+TEST_CASE("Layer raises a plateau that repeated passes don't build past")
+{
+    std::vector<sculpt::Dab> once, many;
+    for (int i = 0; i < 10; ++i)
+        once.push_back(flatDab({-20.0 + i * 4.0, 0.0, 0.0}, 15.0));
+    for (int pass = 0; pass < 5; ++pass)
+        many.insert(many.end(), once.begin(), once.end());
+    const double h1 = highest(strokeOn(flatGrid(), sculpt::Brush::Layer, once));
+    const double h5 = highest(strokeOn(flatGrid(), sculpt::Brush::Layer, many));
+    CHECK(h1 > 0.1);
+    CHECK(h5 <= 15.0 * 0.08 * 1.02);
+    CHECK(highest(strokeOn(flatGrid(), sculpt::Brush::Draw, many)) > h5);
+}
+
+TEST_CASE("Fill raises dips to the plane and leaves what stands above it")
+{
+    geo::Mesh dented = flatGrid();
+    for (Index p = 0; p < dented.pointCapacity(); ++p)
+    {
+        glm::dvec3 q = dented.position(p);
+        const double r = glm::length(glm::dvec2(q.x, q.z));
+        q.y = r < 6.0 ? -2.0 : (r > 10.0 && r < 12.0 ? 1.0 : 0.0);
+        dented.setPosition(p, q);
+    }
+    sculpt::SculptMesh s = strokeOn(dented, sculpt::Brush::Fill, std::vector<sculpt::Dab>(8, flatDab({0.0, 0.0, 0.0}, 16.0)));
+    double deepest = 0.0, ridge = 0.0;
+    for (Index p = 0; p < s.mesh().pointCapacity(); ++p)
+    {
+        const glm::dvec3 q = s.mesh().position(p);
+        const double r = glm::length(glm::dvec2(q.x, q.z));
+        if (r < 6.0)
+            deepest = std::min(deepest, q.y);
+        if (r > 10.5 && r < 11.5)
+            ridge = std::max(ridge, q.y);
+    }
+    CHECK(deepest > -1.0);
+    CHECK(ridge == doctest::Approx(1.0));
+}
+
+TEST_CASE("Planar holds the first dab's plane for the whole stroke")
+{
+    // A step up at x = 0; the stroke starts on the low side and runs onto the high one.
+    geo::Mesh stepped = flatGrid();
+    for (Index p = 0; p < stepped.pointCapacity(); ++p)
+    {
+        glm::dvec3 q = stepped.position(p);
+        q.y = q.x > 0.0 ? 3.0 : 0.0;
+        stepped.setPosition(p, q);
+    }
+    std::vector<sculpt::Dab> dabs;
+    for (int i = 0; i < 30; ++i)
+        dabs.push_back(flatDab({-20.0 + i * 1.5, 0.0, 0.0}, 8.0));
+    auto heightAtEnd = [&](sculpt::Brush brush) {
+        sculpt::SculptMesh s = strokeOn(stepped, brush, dabs);
+        double y = -1e30;
+        for (Index p = 0; p < stepped.pointCapacity(); ++p)
+            if (glm::length(stepped.position(p) - glm::dvec3(22.5, 3.0, 0.0)) < 1e-6)
+                y = std::max(y, s.mesh().position(p).y);
+        return y;
+    };
+    // Flatten follows the high side's own plane; Planar presses it down toward where the stroke began.
+    CHECK(heightAtEnd(sculpt::Brush::Flatten) == doctest::Approx(3.0).epsilon(0.01));
+    CHECK(heightAtEnd(sculpt::Brush::Planar) < 1.5);
+}
+
+TEST_CASE("Rotate turns the patch rigidly about where the stroke began")
+{
+    std::vector<sculpt::Dab> dabs;
+    sculpt::Dab first = flatDab({0.0, 0.0, 0.0}, 20.0);
+    dabs.push_back(first);
+    // Out along +X, then a quarter turn around to +Z.
+    for (int i = 1; i <= 10; ++i)
+    {
+        sculpt::Dab d = first;
+        d.delta = glm::dvec3(1.0, 0.0, 0.0);
+        dabs.push_back(d);
+    }
+    for (int i = 1; i <= 20; ++i)
+    {
+        const double a0 = (i - 1) * 0.5 * glm::pi<double>() / 20.0, a1 = i * 0.5 * glm::pi<double>() / 20.0;
+        sculpt::Dab d = first;
+        d.delta = 10.0 * glm::dvec3(std::cos(a1) - std::cos(a0), 0.0, std::sin(a1) - std::sin(a0));
+        dabs.push_back(d);
+    }
+    const geo::Mesh grid = flatGrid();
+    sculpt::SculptMesh s = strokeOn(grid, sculpt::Brush::Rotate, dabs);
+    double moved = 0.0, radial = 0.0;
+    for (Index p = 0; p < grid.pointCapacity(); ++p)
+    {
+        const glm::dvec3 a = grid.position(p), b = s.mesh().position(p);
+        moved = std::max(moved, glm::length(b - a));
+        radial = std::max(radial, std::abs(glm::length(b) - glm::length(a)));
+        if (std::abs(b.y) > 1e-9)
+            FAIL_CHECK("rotated off the plane");
+    }
+    CHECK(moved > 1.0);
+    CHECK(radial < 1e-6);
+}
+
+TEST_CASE("Pose bends the part under the brush about the ring where it meets the rest")
+{
+    geo::CylinderOptions co;
+    co.radius = 25.0;
+    co.subdivHeight = 20;
+    co.subdivCaps = 4;
+    const geo::Mesh rod = geo::makeCylinder(co);
+    geo::Bounds b = rod.bounds();
+    // Grab the top end and pull sideways.
+    sculpt::Dab first = flatDab({0.0, b.max.y, 0.0}, b.size().y * 0.4);
+    std::vector<sculpt::Dab> dabs = {first};
+    for (int i = 0; i < 10; ++i)
+    {
+        sculpt::Dab d = first;
+        d.delta = glm::dvec3(b.size().y * 0.03, 0.0, 0.0);
+        dabs.push_back(d);
+    }
+    sculpt::SculptMesh s = strokeOn(rod, sculpt::Brush::Pose, dabs);
+    double tip = 0.0, base = 0.0;
+    for (Index p = 0; p < rod.pointCapacity(); ++p)
+    {
+        const double move = glm::length(s.mesh().position(p) - rod.position(p));
+        if (rod.position(p).y > b.max.y - 1e-6)
+            tip = std::max(tip, move);
+        if (rod.position(p).y < b.max.y - first.radius - 1e-6)
+            base = std::max(base, move);
+    }
+    CHECK(tip > b.size().y * 0.05);
+    CHECK(base == 0.0);
+}
+
+TEST_CASE("Boundary moves open borders and leaves a closed surface alone")
+{
+    sculpt::Dab first = flatDab({50.0, 0.0, 0.0}, 15.0);
+    std::vector<sculpt::Dab> dabs = {first};
+    sculpt::Dab pull = first;
+    pull.delta = glm::dvec3(0.0, 2.0, 0.0);
+    dabs.push_back(pull);
+    const geo::Mesh grid = flatGrid();
+    sculpt::SculptMesh s = strokeOn(grid, sculpt::Brush::Boundary, dabs);
+    double border = 0.0, inner = 0.0;
+    for (Index p = 0; p < grid.pointCapacity(); ++p)
+    {
+        const double move = glm::length(s.mesh().position(p) - grid.position(p));
+        if (grid.position(p).x > 50.0 - 1e-6)
+            border = std::max(border, move);
+        if (grid.position(p).x < 50.0 - 2.5 * 4)
+            inner = std::max(inner, move);
+    }
+    CHECK(border > 1.0);
+    CHECK(inner == 0.0);
+
+    geo::Mesh cube = geo::makeCube({});
+    sculpt::SculptMesh closed(cube);
+    std::vector<sculpt::Dab> onCube = {dabAt(closed, glm::dvec3(0.0, 0.0, 200.0), 30.0)};
+    sculpt::Dab cubePull = onCube[0];
+    cubePull.delta = glm::dvec3(5.0, 0.0, 0.0);
+    onCube.push_back(cubePull);
+    CHECK(maxDiff(strokeOn(cube, sculpt::Brush::Boundary, onCube).mesh(), cube) == 0.0);
+}
+
+TEST_CASE("Snake Hook, Elastic Grab, Nudge, Thumb, Clay, Blob and Magnify move the surface the way they say")
+{
+    const geo::Mesh grid = flatGrid();
+    auto moveOf = [&](sculpt::Brush brush, const std::vector<sculpt::Dab>& dabs, bool invert = false) {
+        sculpt::SculptMesh s = strokeOn(grid, brush, dabs, invert);
+        glm::dvec3 sum(0.0);
+        double far = 0.0;
+        for (Index p = 0; p < grid.pointCapacity(); ++p)
+        {
+            const glm::dvec3 d = s.mesh().position(p) - grid.position(p);
+            sum += d;
+            if (glm::length(glm::dvec2(grid.position(p).x, grid.position(p).z)) > 12.0)
+                far = std::max(far, glm::length(d));
+        }
+        return std::pair(sum, far);
+    };
+    sculpt::Dab at = flatDab({0.0, 0.0, 0.0}, 10.0);
+    sculpt::Dab up = at;
+    up.delta = glm::dvec3(0.0, 1.0, 0.0);
+    // Snake Hook pulls up along the drag.
+    CHECK(moveOf(sculpt::Brush::SnakeHook, {at, up, up, up}).first.y > 1.0);
+    // Elastic Grab reaches past the brush radius; Grab does not.
+    CHECK(moveOf(sculpt::Brush::ElasticGrab, {at, up, up}).second > 0.01);
+    CHECK(moveOf(sculpt::Brush::Grab, {at, up, up}).second == 0.0);
+    // Nudge and Thumb push along the stroke and stay on the surface.
+    sculpt::Dab along = at;
+    along.direction = glm::dvec3(1.0, 0.0, 0.0);
+    for (sculpt::Brush brush : {sculpt::Brush::Nudge, sculpt::Brush::Thumb})
+    {
+        const glm::dvec3 sum = moveOf(brush, {along, along, along}).first;
+        CHECK_MESSAGE(sum.x > 1.0, sculpt::brushName(brush));
+        CHECK_MESSAGE(std::abs(sum.y) < 1e-9, sculpt::brushName(brush));
+    }
+    // Clay and Blob build up; Ctrl digs.
+    for (sculpt::Brush brush : {sculpt::Brush::Clay, sculpt::Brush::Blob})
+    {
+        CHECK_MESSAGE(moveOf(brush, {at, at, at}).first.y > 0.1, sculpt::brushName(brush));
+        CHECK_MESSAGE(moveOf(brush, {at, at, at}, true).first.y < -0.1, sculpt::brushName(brush));
+    }
+    // Magnify spreads points out from the centre: the ring just inside the radius moves outward.
+    sculpt::SculptMesh m = strokeOn(grid, sculpt::Brush::Magnify, {at, at});
+    double outward = 0.0;
+    for (Index p = 0; p < grid.pointCapacity(); ++p)
+    {
+        const glm::dvec2 a(grid.position(p).x, grid.position(p).z), b(m.mesh().position(p).x, m.mesh().position(p).z);
+        outward += glm::length(b) - glm::length(a);
+    }
+    CHECK(outward > 0.1);
 }
 
 TEST_CASE("mask and freeze are respected")

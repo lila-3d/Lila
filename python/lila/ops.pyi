@@ -7648,7 +7648,7 @@ def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Seq
     """One brush stroke on the sculpt: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
 
     Args:
-        brush: draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, trimDynamic, polish, fold, mask, relax, freeze, paint, or a brush an extension registered. Default 'draw'.
+        brush: draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, trimDynamic, polish, fold, mask, relax, freeze, paint, fill, clay, layer, blob, magnify, planar, snakeHook, elasticGrab, nudge, thumb, rotate, pose, boundary, or a brush an extension registered. Default 'draw'.
         paint: Shape brushes also paint color where they move points. Default False.
         color: Paint color, linear [r, g, b]. Default [1.0, 1.0, 1.0].
         falloff: Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name. Default 'smooth'.

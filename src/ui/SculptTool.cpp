@@ -114,7 +114,19 @@ brush::BrushSettings defaultStroke(sculpt::Brush b)
         s.falloff = "root";
         break;
     case sculpt::Brush::Mask:
-    case sculpt::Brush::Paint: s.strength = 1.0; break;
+    case sculpt::Brush::Paint:
+    case sculpt::Brush::Rotate:
+    case sculpt::Brush::Pose:
+    case sculpt::Brush::ElasticGrab:
+    case sculpt::Brush::Boundary: s.strength = 1.0; break;
+    case sculpt::Brush::SnakeHook:
+        s.radius = 40.0;
+        s.strength = 0.9;
+        s.falloff = "root";
+        break;
+    case sculpt::Brush::Layer:
+    case sculpt::Brush::Planar: s.strength = 0.8; break;
+    case sculpt::Brush::Magnify: s.falloff = "sharp"; break;
     default: break;
     }
     return s;
@@ -227,7 +239,7 @@ public:
         if (sculptPreviewing())
             return false;
         Hit hit;
-        const bool line = sculptSettings().stroke.mode == brush::StrokeMode::Line && sculptSettings().brush != sculpt::Brush::Grab;
+        const bool line = sculptSettings().stroke.mode == brush::StrokeMode::Line && !sculpt::dragsCursor(sculptSettings().brush);
         if (!surfaceHit(*s, e->position(), view, hit) && !line)
             return false;
         beginStroke(*s, e, view);
@@ -415,8 +427,8 @@ private:
         mDabs = json::array();
         mStroking = true;
         brush::BrushSettings stroke = st.stroke;
-        // Grab drags one dab across the view plane rather than laying a trail of them.
-        if (mSettings.brush == sculpt::Brush::Grab)
+        // Grab-style brushes drag one dab across the view plane rather than laying a trail of them.
+        if (sculpt::dragsCursor(mSettings.brush))
             stroke.mode = brush::StrokeMode::Freehand;
         stroke.seed = uint32_t(e->timestamp());
         const ViewInfo v = view;
@@ -483,7 +495,7 @@ private:
         auto s = sculpt::active();
         if (!s || s != mSession || !scene::Graph::current().node(s->node))
             return;
-        if (mSettings.brush == sculpt::Brush::Grab)
+        if (sculpt::dragsCursor(mSettings.brush))
         {
             if (mDabs.empty())
                 return;

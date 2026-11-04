@@ -52,6 +52,32 @@ enum class Brush : uint8_t
     Freeze,
     /** Colour only: paints the polypaint layer without moving anything. */
     Paint,
+    /** Raises what dips below the average plane up to it; Ctrl scrapes. */
+    Fill,
+    /** Builds up rounded layers of clay toward a plane just above the surface. */
+    Clay,
+    /** Raises a plateau to one height over where the stroke started, however often it passes. */
+    Layer,
+    /** Swells a rounded ball: draws out and pushes points away from the centre. */
+    Blob,
+    /** Pushes points away from the brush centre; Ctrl pinches. */
+    Magnify,
+    /** Flattens onto the plane under the stroke's first dab, held for the whole stroke. */
+    Planar,
+    /** Pulls the surface under the cursor along with it, thinning as it goes: horns and tendrils. */
+    SnakeHook,
+    /** Grab with a soft, wide reach that falls off smoothly, keeping the form's volume. */
+    ElasticGrab,
+    /** Pushes the surface along the stroke, sliding over it. */
+    Nudge,
+    /** Pushes along the stroke and presses flat, like a thumb dragged through clay. */
+    Thumb,
+    /** Twists the patch under the brush around its normal as the cursor circles. */
+    Rotate,
+    /** Bends the part under the brush around the ring where it meets the rest, like a limb at its joint. */
+    Pose,
+    /** Drags the open borders under the brush and the few rings of points next to them. */
+    Boundary,
     Count,
     /** A registered brush, named by BrushSettings::custom. */
     Custom = 0xff,
@@ -68,6 +94,8 @@ enum class Falloff : uint8_t
     Count
 };
 
+/** Brushes the cursor drags across the view plane from where the stroke began, instead of laying a trail of dabs. */
+LILA_SCENE_API bool dragsCursor(Brush b);
 LILA_SCENE_API std::string_view brushName(Brush b);
 LILA_SCENE_API std::optional<Brush> brushFromName(std::string_view name);
 LILA_SCENE_API std::string_view falloffName(Falloff f);
@@ -258,9 +286,16 @@ private:
         std::vector<double> weights; // falloff only
         glm::dvec3 areaNormal{0.0};
         glm::dvec3 areaCenter{0.0};
+        /** Held brushes: the cursor's travel since the stroke began, where Rotate's angle starts, and Pose's joint. */
+        glm::dvec3 travel{0.0};
+        glm::dvec3 rotateFrom{0.0};
+        glm::dvec3 pivot{0.0};
     };
 
     void gather(Side& s, bool forGrab);
+    /** The held brushes' region and weights, gathered once at the stroke's first dab. */
+    void gatherHeld(Side& s);
+    void addHeldDisplacement(Side& s, const glm::dvec3& delta, double amount);
     void computeArea(Side& s) const;
     void touch(Index p);
     void addDisplacement(const Side& s);
@@ -297,6 +332,8 @@ private:
     brush::FalloffTable mFalloffTable;
     bool mStroking = false;
     std::vector<Side> mGrab;
+    /** Planar: each side's plane (centre, normal), set by the stroke's first dab. */
+    std::vector<std::pair<glm::dvec3, glm::dvec3>> mPlanes;
     // Per stroke: the state before a point was first touched.
     std::vector<uint32_t> mStrokeStamp;
     std::vector<uint32_t> mRecordIndex;

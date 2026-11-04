@@ -886,7 +886,8 @@ void registerCommands()
                "delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, "
                "frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.",
         .flags = {{"brush", "", T::String, "draw", "draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, "
-                                                     "trimDynamic, polish, fold, mask, relax, freeze, paint, or a brush an extension registered."},
+                                                     "trimDynamic, polish, fold, mask, relax, freeze, paint, fill, clay, layer, blob, magnify, planar, snakeHook, "
+                                                     "elasticGrab, nudge, thumb, rotate, pose, boundary, or a brush an extension registered."},
                   {"paint", "", T::Bool, false, "Shape brushes also paint color where they move points."},
                   {"color", "", T::List, json::array({1.0, 1.0, 1.0}), "Paint color, linear [r, g, b]."},
                   {"falloff", "", T::String, "smooth", "Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name."},

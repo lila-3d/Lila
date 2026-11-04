@@ -3,12 +3,14 @@
 #include "brush/Symmetry.h"
 #include "core/Profile.h"
 
+#include <glm/gtc/quaternion.hpp>
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <tuple>
 
 namespace lila::sculpt
 {
@@ -16,7 +18,8 @@ namespace
 {
 constexpr std::array<std::string_view, size_t(Brush::Count)> kBrushNames = {
     "draw",      "clayStrips", "inflate", "grab", "smooth", "flatten", "pinch",  "crease", "scrape",
-    "damStandard", "trimDynamic", "polish", "fold", "mask", "relax", "freeze", "paint"};
+    "damStandard", "trimDynamic", "polish", "fold", "mask", "relax", "freeze", "paint", "fill", "clay", "layer", "blob", "magnify",
+    "planar", "snakeHook", "elasticGrab", "nudge", "thumb", "rotate", "pose", "boundary"};
 constexpr std::array<std::string_view, size_t(Falloff::Count)> kFalloffNames = {"smooth", "sphere", "root", "sharp", "linear", "constant"};
 
 // Per-dab step sizes as fractions of the radius at full strength; with dabs every tenth of a radius a stroke builds up
@@ -27,6 +30,14 @@ constexpr double kClayDepth = 0.12;
 constexpr double kDamPinch = 0.25;
 constexpr double kTrimDepth = 0.04;
 constexpr double kFoldPinch = 0.3;
+constexpr double kLayerHeight = 0.08;
+constexpr double kBlobSpread = 0.08;
+constexpr double kSnakePinch = 0.2;
+constexpr double kNudgeStep = 0.25;
+/** Elastic Grab reaches this many radii, its weight falling as (1 + (d/r)^2)^-1.5. */
+constexpr double kElasticReach = 3.0;
+/** Boundary moves the open border and this many rings of points in from it. */
+constexpr int kBoundaryRings = 3;
 
 glm::dvec3 reflectVector(const geo::SymmetryPlane& plane, const glm::dvec3& v) { return v - 2.0 * glm::dot(v, plane.normal) * plane.normal; }
 
@@ -61,6 +72,14 @@ glm::dvec3 closestOnTriangle(const glm::dvec3& p, const glm::dvec3& a, const glm
 }
 
 bool movesPoints(Brush b) { return b != Brush::Mask && b != Brush::Freeze && b != Brush::Paint; }
+
+/** Brushes that gather their region once, at the stroke's first dab, and move it as the cursor drags. */
+bool heldRegion(Brush b)
+{
+    return b == Brush::Grab || b == Brush::ElasticGrab || b == Brush::Rotate || b == Brush::Pose || b == Brush::Boundary;
+}
+
+glm::dvec3 rotateAbout(const glm::dvec3& v, const glm::dvec3& axis, double angle) { return glm::angleAxis(angle, axis) * v; }
 
 constexpr glm::vec4 kWhite(1.0f);
 } // namespace
@@ -110,6 +129,8 @@ bool setBrush(BrushSettings& s, std::string_view name)
     s.custom = std::string(name);
     return true;
 }
+
+bool dragsCursor(Brush b) { return heldRegion(b) || b == Brush::SnakeHook; }
 
 std::string_view brushName(Brush b) { return b < Brush::Count ? kBrushNames[size_t(b)] : std::string_view(); }
 
@@ -298,6 +319,7 @@ void SculptMesh::beginStroke(const BrushSettings& settings)
         ensureColor();
     mStroking = true;
     mGrab.clear();
+    mPlanes.clear();
     mRecord = {};
     if (++mStroke == 0)
     {
@@ -386,7 +408,7 @@ void SculptMesh::touch(Index p)
 
 bool SculptMesh::painting() const
 {
-    return mSettings.brush == Brush::Paint || (mSettings.paint && movesPoints(mSettings.brush) && mSettings.brush != Brush::Grab);
+    return mSettings.brush == Brush::Paint || (mSettings.paint && movesPoints(mSettings.brush) && !dragsCursor(mSettings.brush));
 }
 
 void SculptMesh::ensureColor()
@@ -534,7 +556,60 @@ void SculptMesh::addDisplacement(const Side& s)
             }
             case Brush::Crease: d = tangential(C - P, N) * (w * kPinchStep) - N * (w * r * kDrawStep * sign); break;
             case Brush::Custom: d = mCustom(area, BrushSample{.point = p, .position = P, .normal = glm::dvec3(mNormals[p]), .weight = w}); break;
+            case Brush::Fill:
+            case Brush::Planar:
+            {
+                // Fill raises what sits under the plane (Ctrl: shaves what stands over it); Planar presses both onto it.
+                const double dist = glm::dot(P - C, N);
+                if (brush == Brush::Planar || dist * sign < 0.0)
+                    d = -N * (dist * std::min(w, 1.0));
+                break;
+            }
+            case Brush::Clay:
+            {
+                const double dist = glm::dot(P - clayPlane, N);
+                if (dist * sign < 0.0)
+                    d = -N * (dist * std::min(w, 1.0) * 0.5);
+                break;
+            }
+            case Brush::Layer:
+            {
+                // Toward one height over the stroke's start, never past it, however often the stroke passes.
+                const double height = r * kLayerHeight * sign;
+                const double offset = glm::dot(P - originalPosition(p), N);
+                if ((height - offset) * sign > 0.0)
+                    d = N * ((height - offset) * std::min(w, 1.0));
+                break;
+            }
+            case Brush::Blob: d = N * (w * r * kDrawStep * sign) + tangential(P - C, N) * (w * kBlobSpread * sign); break;
+            case Brush::Magnify: d = tangential(P - C, N) * (w * kPinchStep * sign); break;
+            case Brush::SnakeHook:
+            {
+                // The cursor's pull, pinched in across it so the tendril stays thin.
+                const double len = glm::length(s.dab.delta);
+                if (len <= 0.0)
+                    break;
+                const glm::dvec3 along = s.dab.delta / len;
+                d = s.dab.delta * std::min(w, 1.0) + tangential(C - P, along) * (std::min(w, 1.0) * kSnakePinch);
+                break;
+            }
+            case Brush::Nudge:
+            case Brush::Thumb:
+            {
+                const glm::dvec3 dir = tangential(s.dab.direction, N);
+                const double len = glm::length(dir);
+                if (len <= 1e-12)
+                    break;
+                d = dir / len * (w * r * kNudgeStep);
+                if (brush == Brush::Thumb)
+                    d -= N * (glm::dot(P - C, N) * std::min(w, 1.0) * 0.25);
+                break;
+            }
             case Brush::Grab:
+            case Brush::ElasticGrab:
+            case Brush::Rotate:
+            case Brush::Pose:
+            case Brush::Boundary:
             case Brush::Mask:
             case Brush::Freeze:
             case Brush::Paint:
@@ -738,36 +813,31 @@ void SculptMesh::dab(const Dab& d)
         for (Dab& copy : brush::symmetricDabs(first, mSymmetry.empty() ? nullptr : &mSymmetry.plane(), mSettings.radial))
             sides.push_back(Side{.dab = std::move(copy)});
 
-    if (mSettings.brush == Brush::Grab)
+    if (heldRegion(mSettings.brush))
     {
         if (mGrab.empty())
         {
             mGrab = sides;
             for (Side& s : mGrab)
-                gather(s, true);
+                gatherHeld(s);
         }
         for (size_t k = 0; k < mGrab.size() && k < sides.size(); ++k)
-        {
-            const Side& g = mGrab[k];
-            const glm::dvec3 delta = sides[k].dab.delta;
-            for (size_t i = 0; i < g.points.size(); ++i)
-            {
-                const Index p = g.points[i];
-                double w = mFrozen[p] ? 0.0 : g.weights[i] * (1.0 - double(mMask[p])) * d.opacity * d.flow;
-                if (w <= 0.0)
-                    continue;
-                touch(p);
-                mDisp[p] += delta * w;
-            }
-        }
+            addHeldDisplacement(mGrab[k], sides[k].dab.delta, d.opacity * d.flow);
     }
     else
-        for (Side& s : sides)
+        for (size_t k = 0; k < sides.size(); ++k)
         {
+            Side& s = sides[k];
             gather(s, false);
             if (movesPoints(mSettings.brush))
             {
                 computeArea(s);
+                if (mSettings.brush == Brush::Planar)
+                {
+                    if (mPlanes.size() <= k)
+                        mPlanes.emplace_back(s.areaCenter, s.areaNormal);
+                    std::tie(s.areaCenter, s.areaNormal) = mPlanes[k];
+                }
                 addDisplacement(s);
             }
             else if (mSettings.brush == Brush::Paint)
@@ -777,6 +847,135 @@ void SculptMesh::dab(const Dab& d)
         }
     symmetrizeChanges();
     commitChanges();
+}
+
+void SculptMesh::gatherHeld(Side& s)
+{
+    const Brush brush = mSettings.brush;
+    const double r = s.dab.radius;
+    if (brush == Brush::ElasticGrab)
+    {
+        s.dab.radius = r * kElasticReach;
+        gather(s, true);
+        s.dab.radius = r;
+        for (size_t i = 0; i < s.points.size(); ++i)
+        {
+            const double t = glm::length(mMesh.position(s.points[i]) - s.dab.center) / r;
+            s.weights[i] = std::pow(1.0 + t * t, -1.5) * (1.0 - t / kElasticReach);
+        }
+        return;
+    }
+    gather(s, true);
+    computeArea(s);
+    if (brush != Brush::Pose && brush != Brush::Boundary)
+        return;
+    std::vector<uint8_t> inside(mMesh.pointCapacity(), 0);
+    for (Index p : s.points)
+        inside[p] = 1;
+    if (brush == Brush::Pose)
+    {
+        // The joint is the ring where the region meets the rest of the mesh; the region bends about it rigidly,
+        // easing in over the half of the way from the ring to where the stroke began.
+        glm::dvec3 ring(0.0);
+        size_t count = 0;
+        for (Index p : s.points)
+            for (Index q : neighbours(p))
+                if (!inside[q])
+                {
+                    ring += mMesh.position(p);
+                    ++count;
+                    break;
+                }
+        s.pivot = count ? ring / double(count) : s.dab.center;
+        const double reach = std::max(glm::length(s.dab.center - s.pivot), r * 1e-3);
+        for (size_t i = 0; i < s.points.size(); ++i)
+        {
+            const double t = std::clamp(glm::length(mMesh.position(s.points[i]) - s.pivot) / (reach * 0.5), 0.0, 1.0);
+            s.weights[i] = t * t * (3.0 - 2.0 * t);
+        }
+        return;
+    }
+    // Boundary: rings in from the open border, each a step weaker; points further in stay put.
+    std::vector<int> ring(mMesh.pointCapacity(), -1);
+    std::vector<Index> front;
+    for (Index p : s.points)
+        if (mMesh.isBoundaryPoint(p))
+        {
+            ring[p] = 0;
+            front.push_back(p);
+        }
+    for (int k = 1; k <= kBoundaryRings && !front.empty(); ++k)
+    {
+        std::vector<Index> next;
+        for (Index p : front)
+            for (Index q : neighbours(p))
+                if (inside[q] && ring[q] < 0)
+                {
+                    ring[q] = k;
+                    next.push_back(q);
+                }
+        front = std::move(next);
+    }
+    size_t kept = 0;
+    for (size_t i = 0; i < s.points.size(); ++i)
+        if (const int k = ring[s.points[i]]; k >= 0)
+        {
+            s.points[kept] = s.points[i];
+            s.weights[kept++] = s.weights[i] * (1.0 - double(k) / double(kBoundaryRings + 1));
+        }
+    s.points.resize(kept);
+    s.weights.resize(kept);
+}
+
+void SculptMesh::addHeldDisplacement(Side& s, const glm::dvec3& delta, double amount)
+{
+    const Brush brush = mSettings.brush;
+    s.travel += delta;
+    const glm::dvec3 N = s.areaNormal, C = s.dab.center;
+    // Rotate turns by the angle the cursor has swept around where the stroke began, once it has left the centre.
+    double angle = 0.0;
+    glm::dvec3 axis = N, pivot = C;
+    if (brush == Brush::Rotate)
+    {
+        const glm::dvec3 now = tangential(s.travel, N);
+        if (glm::length(s.rotateFrom) == 0.0)
+        {
+            if (glm::length(now) < s.dab.radius * 0.05)
+                return;
+            s.rotateFrom = glm::normalize(now);
+            return;
+        }
+        if (glm::length(now) < 1e-12)
+            return;
+        angle = std::atan2(glm::dot(glm::cross(s.rotateFrom, now), N), glm::dot(s.rotateFrom, now));
+    }
+    else if (brush == Brush::Pose)
+    {
+        // The part swings about its joint so the point under the cursor follows it.
+        pivot = s.pivot;
+        const glm::dvec3 from = C - pivot, to = C + s.travel - pivot;
+        const glm::dvec3 c = glm::cross(from, to);
+        if (glm::length(c) < 1e-12 * glm::length(from) * glm::length(to))
+            return;
+        axis = glm::normalize(c);
+        angle = std::atan2(glm::length(c), glm::dot(from, to));
+    }
+    for (size_t i = 0; i < s.points.size(); ++i)
+    {
+        const Index p = s.points[i];
+        const double w = mFrozen[p] ? 0.0 : s.weights[i] * (1.0 - double(mMask[p])) * amount;
+        if (w <= 0.0)
+            continue;
+        touch(p);
+        if (brush == Brush::Rotate || brush == Brush::Pose)
+        {
+            // Absolute from where the stroke began, so the turn follows the cursor back as well as forward.
+            const glm::dvec3 start = originalPosition(p);
+            mDisp[p] = pivot + rotateAbout(start - pivot, axis, angle * std::min(w, 1.0)) - mMesh.position(p);
+        }
+        else
+            mDisp[p] += delta * w;
+    }
 }
 
 StrokeRecord SculptMesh::endStroke()

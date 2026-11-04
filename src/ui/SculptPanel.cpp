@@ -70,22 +70,36 @@ struct BrushInfo
     const char* doc;
 };
 
+/** In the panel's order: shape brushes, then the mask, freeze and paint layers. */
 constexpr std::array<BrushInfo, size_t(sculpt::Brush::Count)> kBrushes = {{
     {sculpt::Brush::Draw, "brush", "Draw", "Push the surface out along its normal; Ctrl digs in."},
     {sculpt::Brush::ClayStrips, "layers-subtract", "Clay Strips", "Build up flat square strips of clay; Ctrl carves them."},
+    {sculpt::Brush::Clay, "circle-dot", "Clay", "Build up rounded layers of clay; Ctrl carves them."},
     {sculpt::Brush::Inflate, "balloon", "Inflate", "Swell each point along its own normal; Ctrl deflates."},
+    {sculpt::Brush::Blob, "circles", "Blob", "Swell a rounded ball; Ctrl sucks one in."},
+    {sculpt::Brush::Layer, "stack", "Layer", "Raise a plateau to one height however often you pass; Ctrl sinks one."},
     {sculpt::Brush::Grab, "hand-grab", "Grab", "Drag a patch of surface with the cursor."},
+    {sculpt::Brush::ElasticGrab, "hand-move", "Elastic Grab", "Grab with a soft, wide reach that keeps the form's volume."},
+    {sculpt::Brush::SnakeHook, "route", "Snake Hook", "Pull the surface out after the cursor, thinning as it goes: horns, spikes, tendrils."},
     {sculpt::Brush::Smooth, "droplet", "Smooth", "Average out bumps and noise. Shift gives this brush for one stroke."},
+    {sculpt::Brush::Relax, "wave-sine", "Relax", "Even out the point spacing, sliding along the surface so the form stays."},
     {sculpt::Brush::Flatten, "ironing", "Flatten", "Press toward the average plane under the brush; Ctrl raises contrast."},
-    {sculpt::Brush::Pinch, "arrows-minimize", "Pinch", "Pull points toward the brush centre to sharpen edges; Ctrl spreads them."},
-    {sculpt::Brush::Crease, "chisel", "Crease", "Cut a sharp groove; Ctrl raises a sharp ridge."},
+    {sculpt::Brush::Planar, "box-align-bottom", "Planar", "Flatten onto the plane where the stroke began, for hard planes."},
+    {sculpt::Brush::Fill, "bucket", "Fill", "Raise dips up to the average plane; Ctrl scrapes."},
     {sculpt::Brush::Scrape, "shovel", "Scrape", "Shave off what sticks out of the average plane; Ctrl fills dips."},
+    {sculpt::Brush::Pinch, "arrows-minimize", "Pinch", "Pull points toward the brush centre to sharpen edges; Ctrl spreads them."},
+    {sculpt::Brush::Magnify, "arrows-maximize", "Magnify", "Push points away from the brush centre; Ctrl pinches."},
+    {sculpt::Brush::Crease, "chisel", "Crease", "Cut a sharp groove; Ctrl raises a sharp ridge."},
     {sculpt::Brush::DamStandard, "slash", "Dam Standard", "Cut a narrow V groove that pinches its edges in, for wrinkles and seams; Ctrl raises a sharp ridge."},
     {sculpt::Brush::TrimDynamic, "cut", "Trim Dynamic", "Cut flat to a plane just under the brush, for hard planes; Ctrl fills up to it."},
     {sculpt::Brush::Polish, "sparkles", "Polish", "Smooth along the surface's normal only and ease onto its plane: crisp, flat forms."},
     {sculpt::Brush::Fold, "ripple", "Fold", "Raise a cloth fold along the stroke, pinched from the sides; Ctrl presses a crease in."},
+    {sculpt::Brush::Nudge, "hand-finger", "Nudge", "Push the surface along the stroke."},
+    {sculpt::Brush::Thumb, "hand-click", "Thumb", "Push along the stroke and press flat, like a thumb through clay."},
+    {sculpt::Brush::Rotate, "rotate-clockwise", "Rotate", "Twist the patch under the brush: drag out, then circle around where you clicked."},
+    {sculpt::Brush::Pose, "walk", "Pose", "Click on a part with the brush covering it and drag: it bends at the ring where the brush meets the rest."},
+    {sculpt::Brush::Boundary, "border-outer", "Boundary", "Drag the open borders under the brush and the points just inside them."},
     {sculpt::Brush::Mask, "mask", "Mask", "Paint the mask, which shields points from every brush; Ctrl erases it."},
-    {sculpt::Brush::Relax, "wave-sine", "Relax", "Even out the point spacing, sliding along the surface so the form stays."},
     {sculpt::Brush::Freeze, "snowflake", "Freeze", "Pin points so no brush moves them; Ctrl unfreezes."},
     {sculpt::Brush::Paint, "paint", "Paint", "Paint polypaint in the Polypaint color without moving anything. The mask shields points."},
 }};
@@ -717,7 +731,7 @@ void SculptPanel::savePreset()
     const std::string brushName = s.brush == sculpt::Brush::Custom ? s.custom : std::string(sculpt::brushName(s.brush));
     QString suggested = current ? QString::fromStdString(current->label)
                         : s.brush == sculpt::Brush::Custom ? QString::fromStdString(s.custom)
-                                                           : QString(kBrushes[size_t(s.brush)].label);
+                                                           : QString(std::ranges::find(kBrushes, s.brush, &BrushInfo::brush)->label);
     bool ok = false;
     const QString label = QInputDialog::getText(this, "Save Brush Preset", "Name", QLineEdit::Normal, suggested, &ok).trimmed();
     if (!ok || label.isEmpty())
