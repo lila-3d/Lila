@@ -21,6 +21,8 @@ export const MAX_REPORTS_PER_IP_DAY = 10;
 export const MAX_BYTES_PER_IP_DAY = 300 * 1024 * 1024;
 export const MAX_BYTES_PER_DAY = 2 * 1024 * 1024 * 1024;
 const MAINTAINERS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+/** Triage replies are posted by the app itself (scripts/issues.py). */
+export const BOT_LOGIN = "lila-reports[bot]";
 const GITHUB_API = "https://api.github.com";
 const api = (env) => env.REPORTS_GITHUB_API || GITHUB_API;
 const USER_AGENT = "lila-reports";
@@ -147,7 +149,7 @@ export function reportStatus(issue, comments) {
     labels: (issue.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
     updated: issue.updated_at,
     replies: comments
-      .filter((c) => MAINTAINERS.has(c.author_association))
+      .filter((c) => MAINTAINERS.has(c.author_association) || c.user?.login === BOT_LOGIN)
       .map((c) => ({ at: c.created_at, body: c.body })),
   };
 }

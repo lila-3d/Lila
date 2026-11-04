@@ -10,8 +10,9 @@
     python scripts/issues.py --files N
     python scripts/issues.py --setup
 
-GitHub calls go through the gh CLI (gh auth login once). --files reads the support bundle and screenshot from the
-telemetry Worker with LILA_CREDITS_ADMIN_TOKEN (its ADMIN_TOKEN secret) and unzips the bundle.
+GitHub calls go through the gh CLI as the Lila Reports app, so replies, labels and closes show as lila-reports[bot]:
+LILA_REPORTS_APP_KEY is the path to the app's private key (signed with node). --files reads the support bundle and
+screenshot from the telemetry Worker with LILA_CREDITS_ADMIN_TOKEN (its ADMIN_TOKEN secret) and unzips the bundle.
 Each dump labels open issues that carry no triage label "Pending" (--no-pending to skip).
 Reports sent from Lila carry a lila-report marker; their reporter is the Reporter row when they gave a GitHub
 user, and otherwise they read replies in Help > My Reports.
@@ -46,12 +47,72 @@ LABELS = {
 }
 
 
+APP_ID = "5602963"
+INSTALLATION_ID = "178359544"
+
+# Signs an RS256 GitHub App JWT: key path in argv, claims JSON on stdin, token on stdout.
+SIGN_JWT = r"""
+const { createPrivateKey, sign } = require("node:crypto");
+const fs = require("node:fs");
+const b64 = (b) => Buffer.from(b).toString("base64url");
+const head = b64(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+const body = b64(fs.readFileSync(0, "utf8"));
+const sig = sign("sha256", Buffer.from(`${head}.${body}`), createPrivateKey(fs.readFileSync(process.argv[1])));
+process.stdout.write(`${head}.${body}.${b64(sig)}`);
+"""
+
+_token = None
+
+
+def app_token():
+    """An installation token for the Lila Reports app, made once per run."""
+    global _token
+    if _token:
+        return _token
+    key = user_env("LILA_REPORTS_APP_KEY")
+    if not key or not Path(key).exists():
+        sys.exit("set LILA_REPORTS_APP_KEY to the Lila Reports app's private key (.pem)")
+    import time
+    now = int(time.time()) - 60
+    claims = json.dumps({"iat": now, "exp": now + 540, "iss": APP_ID})
+    try:
+        jwt = subprocess.run(["node", "-e", SIGN_JWT, key], input=claims, capture_output=True, text=True, check=True).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        sys.exit(f"couldn't sign the app token with node: {getattr(e, 'stderr', '') or e}")
+    req = urllib.request.Request(
+        f"https://api.github.com/app/installations/{INSTALLATION_ID}/access_tokens",
+        method="POST",
+        headers={"Authorization": f"Bearer {jwt}", "Accept": "application/vnd.github+json", "User-Agent": "lila-issues"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            _token = json.loads(r.read())["token"]
+    except urllib.error.HTTPError as e:
+        sys.exit(f"GitHub app token: {e.code} {e.read().decode(errors='replace')}")
+    return _token
+
+
+def user_env(name):
+    """The variable from the process, falling back to the registry so a fresh setx works without a new terminal."""
+    if os.environ.get(name):
+        return os.environ[name]
+    if sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                return winreg.QueryValueEx(k, name)[0]
+        except OSError:
+            pass
+    return None
+
+
 def gh(*args, body=None):
     cmd = ["gh", "api", *args]
     if body is not None:
         cmd += ["--input", "-"]
+    env = {**os.environ, "GH_TOKEN": app_token()}
     try:
-        out = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True, encoding="utf-8")
+        out = subprocess.run(cmd, input=json.dumps(body) if body is not None else None, capture_output=True, text=True, encoding="utf-8", env=env)
     except FileNotFoundError:
         sys.exit("gh is not installed")
     if out.returncode != 0:
@@ -132,7 +193,7 @@ def setup():
 
 
 def worker_get(query):
-    token = os.environ.get("LILA_CREDITS_ADMIN_TOKEN")
+    token = user_env("LILA_CREDITS_ADMIN_TOKEN")
     if not token:
         sys.exit("set LILA_CREDITS_ADMIN_TOKEN to the Worker's ADMIN_TOKEN")
     req = urllib.request.Request(f"{WORKER}/issues/file?{query}", headers={"Authorization": f"Bearer {token}", "User-Agent": "lila-issues"})

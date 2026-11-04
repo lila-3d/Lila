@@ -107,9 +107,13 @@ test("status keeps maintainer replies only", () => {
   const s = reportStatus({ number: 3, html_url: "u", title: "t", state: "closed", state_reason: "completed", labels: [{ name: "Solved" }], updated_at: "x" }, [
     { author_association: "OWNER", created_at: "a", body: "Fixed in the next update." },
     { author_association: "NONE", created_at: "b", body: "me too" },
+    { author_association: "NONE", user: { login: "lila-reports[bot]" }, created_at: "c", body: "Which menu was open?" },
   ]);
   assert.deepEqual(s.labels, ["Solved"]);
-  assert.deepEqual(s.replies, [{ at: "a", body: "Fixed in the next update." }]);
+  assert.deepEqual(s.replies, [
+    { at: "a", body: "Fixed in the next update." },
+    { at: "c", body: "Which menu was open?" },
+  ]);
 });
 
 test("a report files an issue, stores attachments privately and answers status with its token", async () => {
