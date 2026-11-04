@@ -38,7 +38,7 @@
       "Ctrl+Shift+E": "file.exportSelection",
       "Alt+Shift+E": "file.gameExporter",
       "Alt+R": "file.createReference",
-      "Ctrl+Alt+R": "window.referenceEditor",
+      "Alt+Shift+R": "window.referenceEditor",
       "Ctrl+Q": "file.exit",
       "Ctrl+Space": "window.toggleMaximizePanel",
       "Ctrl+,": "window.preferences",
