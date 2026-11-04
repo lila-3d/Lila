@@ -1,5 +1,8 @@
 # Lila
 
+> [!CAUTION]
+> **Under construction: pre-alpha.** Expect crashes, missing features, lost work, and an excessive and rapid quantity of commits. Testers welcome: report issues on the [Lila Dev Discord](https://discord.gg/kx3jxkksmf) (open until release).
+
 3D app for game assets: Maya-style workflow, modern multithreaded core, Unreal-first pipeline.
 
 ## Get it running (Windows)
