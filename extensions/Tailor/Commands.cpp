@@ -207,8 +207,8 @@ Node* colliderArg(Graph& g, const Args& a)
     return nullptr;
 }
 
-/** The collider's body measurements and where its feet stand, in metres. */
-Body measureCollider(Graph& g, Node& collider, Vec3& offset)
+/** The collider's body measurements and where its feet stand, in metres. neck (above the feet), when set, overrides the measured one. */
+Body measureCollider(Graph& g, Node& collider, Vec3& offset, float neck = 0.f)
 {
     g.evaluate();
     const PlugValue v = g.value({collider.id(), MeshNode::kOutMesh});
@@ -218,7 +218,7 @@ Body measureCollider(Graph& g, Node& collider, Vec3& offset)
     std::vector<Vec3> pts;
     std::vector<std::array<int, 3>> tris;
     colliderTriangles(**mesh, std::get<glm::dmat4>(g.value({collider.id(), Transform::kWorldMatrix})), pts, tris);
-    return measureBody(pts, tris, &offset);
+    return measureBody(pts, tris, &offset, neck);
 }
 
 /** Where panels meet on a garment mesh (edges between faces of different panels), as world polylines in cm. */
@@ -762,12 +762,38 @@ const std::vector<std::string>& trimShapes()
     return s;
 }
 
+/** The pattern point s metres along a chain of outline runs, inset metres in from the edge, with its panel. */
+std::pair<int, Vec2> pointAlongSides(const Garment& gm, const std::vector<SeamSide>& sides, float s, float inset)
+{
+    for (const SeamSide& side : sides)
+    {
+        const auto& o = gm.panels[size_t(side.panel)].outline;
+        const int n = int(o.size());
+        for (int v = side.from; v != side.to; v = (v + 1) % n)
+        {
+            const Vec2 &p = o[size_t(v)], &q = o[size_t((v + 1) % n)];
+            const float l = std::hypot(q[0] - p[0], q[1] - p[1]);
+            if (l <= 0.f)
+                continue;
+            if (s <= l)
+            {
+                const float t = s / l;
+                // Inward is left of travel round a counter-clockwise outline.
+                return {side.panel, {p[0] + (q[0] - p[0]) * t - (q[1] - p[1]) / l * inset, p[1] + (q[1] - p[1]) * t + (q[0] - p[0]) / l * inset}};
+            }
+            s -= l;
+        }
+    }
+    const SeamSide& last = sides.back();
+    return {last.panel, gm.panels[size_t(last.panel)].outline[size_t(last.to)]};
+}
+
 /**
  * Copies of a trim, each standing on the cloth at a frame with its +Z out of the cloth and +Y upright, latched rigidly to
  * the cloth. along (when set) turns each copy's +Y to that direction instead. Returns [mesh, binding].
  */
 json placeTrims(Graph& g, Node& op, const geo::Mesh& trim, const std::vector<TrimFrame>& frames, const MeshPtr& drape, std::string name,
-                double spinDegrees, const std::vector<glm::dvec3>& along = {})
+                double spinDegrees, const std::vector<glm::dvec3>& along = {}, double scale = 1.0)
 {
     std::vector<glm::dvec3> all;
     std::vector<geo::Index> sizes, idx;
@@ -785,7 +811,7 @@ json placeTrims(Graph& g, Node& op, const geo::Mesh& trim, const std::vector<Tri
         std::vector<geo::Index> remap(trim.pointCapacity(), geo::kInvalid);
         for (geo::Index pi = 0; pi < trim.pointCapacity(); ++pi)
         {
-            const glm::dvec3 l = trim.position(pi);
+            const glm::dvec3 l = trim.position(pi) * scale;
             remap[pi] = geo::Index(all.size());
             all.push_back(frames[k].at + ax * l.x + ay * l.y + nrm * l.z);
         }
@@ -945,8 +971,9 @@ json checkGarment(Graph& g, Node& op)
 /** A tailorGarment node holding gm, fed by the collider flag (or selection) and feeding a new mesh. Returns [mesh, garment]. */
 json createGarment(const Garment& gm, const std::string& block, const Args& a, const char* cmd, const std::string& meshName = {})
 {
-    const std::string fabric = a.get<std::string>("fabric");
-    fabricArg(fabric, cmd);
+    const std::string fabric = a.has("fabric") ? a.get<std::string>("fabric") : std::string();
+    if (!fabric.empty())
+        fabricArg(fabric, cmd);
 
     Graph& g = Graph::current();
     Node* collider = colliderArg(g, a);
@@ -1005,12 +1032,13 @@ void registerCommands(ext::Context& ctx)
         .flags = {{"block", "b", T::String, "tee", "The block to start from.", blockNames()},
                   {"collider", "c", T::String, json(), "The body mesh to drape onto; empty for none."},
                   {"name", "n", T::String, "Garment", "Name of the new mesh."},
-                  {"fabric", "fab", T::String, "Cotton", "Fabric preset.", presetChoices()},
+                  {"fabric", "fab", T::String, json(), "Fabric preset; the block's own when left out.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Target cloth edge length, cm.", {}, {}, 0.1, 50.0},
                   {"simulate", "sim", T::Bool, true, "Drape it; off leaves the panels where the block placed them."},
                   {"frames", "fr", T::Int, int64_t(90), "Solver frames run to settle the drape.", {}, {}, 0.0, 10000.0},
                   {"wait", "w", T::Bool, false, "Drape before returning instead of in the background."},
                   {"fit", "ft", T::Bool, true, "Size the block to the collider's measurements and stand it where the collider stands."},
+                  {"neck", "nk", T::Float, json(), "Height of the base of the neck above the collider's feet, cm, when the measured one is wrong."},
                   {"params", "pr", T::Any, json::object(),
                    "Block parameters by name, metres and 0/1 for switches, e.g. {'sleeveStyle': 9, 'sleeveLength': 0.6}. "
                    "Sleeve styles: 0 set-in, 1 cuffed, 2 bishop, 3 bell, 4 puff, 5 cap, 6 flutter, 7 leg-of-mutton, 8 poet, "
@@ -1022,7 +1050,9 @@ void registerCommands(ext::Context& ctx)
             Vec3 offset{0.f, 0.f, 0.f};
             Graph& g = Graph::current();
             if (Node* collider = colliderArg(g, a); collider && a.get<bool>("fit"))
-                body = measureCollider(g, *collider, offset);
+                body = measureCollider(g, *collider, offset, a.has("neck") ? float(a.get<double>("neck") / kCmPerM) : 0.f);
+            else if (a.has("neck"))
+                body.neckHeight = float(a.get<double>("neck") / kCmPerM);
             BlockParamValues values;
             if (const json pj = a.flags.value("params", json::object()); pj.is_object())
                 for (const auto& [k, v] : pj.items())
@@ -1985,13 +2015,19 @@ void registerCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "tailorAddTrim",
-        .doc = "Put copies of a trim on a garment's drape at points, each standing on the cloth with its +Z out of it and "
-               "riding the cloth rigidly from then on: your mesh, or a built-in shape (button, grommet, rivet, toggle, "
-               "buckle, zipTooth, slider). The copies make one new mesh. Returns [mesh, binding].",
+        .doc = "Put copies of a trim on a garment's drape at points, or spaced along edges, each standing on the cloth with "
+               "its +Z out of it and riding the cloth rigidly from then on: your mesh (eyes, teeth, spines, plates), or a "
+               "built-in shape (button, grommet, rivet, toggle, buckle, zipTooth, slider). Along edges, each copy's +Y "
+               "follows the edge. The copies make one new mesh. Returns [mesh, binding].",
         .positionalDoc = "garment",
         .flags = {{"mesh", "m", T::String, json(), "Your trim, modelled at the origin with +Z facing out of the cloth, cm."},
                   {"shape", "sh", T::String, "button", "A built-in trim, when mesh is left out.", trimShapes()},
                   {"points", "pts", T::List, json(), "Where, [[x, y, z], ...] world cm, on or near the cloth."},
+                  {"along", "al", T::String, json(), "Edges to space copies along instead of points, as tailorSew sides, e.g. \"Hood L:0:1\"."},
+                  {"count", "c", T::Int, int64_t(0), "Copies along the edges; 0 spaces them by spacing.", {}, {}, 0.0, 500.0},
+                  {"spacing", "sg", T::Float, 3.0, "Between copies along the edges, cm.", {}, {}, 0.2, 100.0},
+                  {"inset", "in", T::Float, 0.5, "Copies in from the edge, cm.", {}, {}, 0.05, 20.0},
+                  {"scale", "sc", T::Float, 1.0, "Size of each copy.", {}, {}, 0.01, 100.0},
                   {"name", "n", T::String, "Trims", "Name of the new mesh."},
                   {"spin", "sp", T::Float, 0.0, "Turn each copy about its +Z, degrees.", {}, {}, -360.0, 360.0}},
         .run = [](const Args& a) -> json {
@@ -2017,15 +2053,40 @@ void registerCommands(ext::Context& ctx)
                 shape = trimShape(a.get<std::string>("shape"));
                 trim = &shape;
             }
-            const std::vector<glm::dvec3> pts = brushPoints(g, op, a, "tailorAddTrim");
             const MeshPtr drape = drapedMesh(g, op, "tailorAddTrim");
             std::vector<TrimFrame> frames;
-            for (const glm::dvec3& p : pts)
-                frames.push_back(frameNear(*drape, p * kCmPerM));
-            return placeTrims(g, op, *trim, frames, drape, a.get<std::string>("name"), a.get<double>("spin"));
+            std::vector<glm::dvec3> along;
+            if (a.has("along"))
+            {
+                const Garment gm = readGarment(op);
+                const std::vector<SeamSide> sides = parseSides(gm, a.get<std::string>("along"), "tailorAddTrim");
+                const float length = seamSideLength(gm, sides);
+                const int count = a.get<int64_t>("count") > 0 ? int(a.get<int64_t>("count"))
+                                                              : std::max(1, int(length / float(a.get<double>("spacing") / kCmPerM)));
+                const float inset = float(a.get<double>("inset") / kCmPerM);
+                for (int k = 0; k < count; ++k)
+                {
+                    const float s = (float(k) + 0.5f) / float(count) * length;
+                    const auto [panel, at] = pointAlongSides(gm, sides, s, inset);
+                    const auto [panel2, ahead] = pointAlongSides(gm, sides, std::min(s + 0.01f, length), inset);
+                    const auto f = frameAtPattern(*drape, panel, at);
+                    if (!f)
+                        continue;
+                    frames.push_back(*f);
+                    const auto t = frameAtPattern(*drape, panel2, ahead);
+                    along.push_back(t ? t->at - f->at : glm::dvec3(0.0, 1.0, 0.0));
+                }
+                if (frames.empty())
+                    throw CommandError("tailorAddTrim: those edges aren't on the drape");
+            }
+            else
+                for (const glm::dvec3& p : brushPoints(g, op, a, "tailorAddTrim"))
+                    frames.push_back(frameNear(*drape, p * kCmPerM));
+            return placeTrims(g, op, *trim, frames, drape, a.get<std::string>("name"), a.get<double>("spin"), along, a.get<double>("scale"));
         },
         .examples = {"tailorAddTrim('Coat', shape='button', points=[[0, 130, 16], [0, 118, 17], [0, 106, 17]])",
-                     "tailorAddTrim('Coat', mesh='SM_Buckle', points=[[0, 100, 16]])"},
+                     "tailorAddTrim('Coat', mesh='SM_Buckle', points=[[0, 100, 16]])",
+                     "tailorAddTrim('Onesie', mesh='Tooth', along='Hood L:0:1', count=2, spin=180)"},
     });
 
     ctx.registerCommand({
@@ -2801,7 +2862,7 @@ void registerCommands(ext::Context& ctx)
             const Body to = measureCollider(g, *target, toFeet);
             const bool grade = a.get<bool>("grade");
             const float sx = grade ? to.chest / std::max(from.chest, 0.01f) : 1.f;
-            const float sy = grade ? to.height / std::max(from.height, 0.01f) : 1.f;
+            const float sy = grade ? to.torso() / std::max(from.torso(), 0.01f) : 1.f;
             Garment gm = readGarment(op);
             gradePattern(gm, sx, sy);
             for (Panel& p : gm.panels)

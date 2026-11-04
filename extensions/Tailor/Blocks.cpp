@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <tuple>
 
 namespace tailor
 {
@@ -11,6 +12,7 @@ namespace
 
 constexpr float kStep = 0.01f; // curve sampling
 constexpr float kGap = 0.025f; // body to panel at placement
+constexpr float kStuffedBend = 3000.f; // at tailStiffness 1: holds out from the back, the tip drooping
 
 Vec3 add3(const Vec3& a, const Vec3& b) { return {a[0] + b[0], a[1] + b[1], a[2] + b[2]}; }
 Vec3 mul3(const Vec3& a, float s) { return {a[0] * s, a[1] * s, a[2] * s}; }
@@ -205,9 +207,10 @@ struct HoodPanels
 /** Hood side panels at +X and -X with the crown seam; the neck edges are left for the caller. */
 HoodPanels addHood(Garment& g, const Body& body, float neckLength, float depth, float height)
 {
+    // Room for the head over its widest section and up to its crown, however big it is.
     const float d0 = std::max(neckLength, 0.1f);
-    const float d = std::max(depth, d0);
-    const float h = std::max(height, 0.15f);
+    const float d = std::max({depth, d0, body.head / std::numbers::pi_v<float> * 1.25f});
+    const float h = std::max({height, 0.15f, (body.height - body.neckY()) * 1.15f});
     const float f = std::min(0.12f, d0 * 0.45f);
     const float yc = std::min(0.12f, h * 0.3f);
     Builder b;
@@ -337,9 +340,17 @@ std::vector<Vec2> bezier(const Vec2& a, const Vec2& c, const Vec2& b)
     }
     return out;
 }
-} // namespace
 
-Garment top(const Body& body, const TopParams& p)
+/** The edges of a drafted top that other pieces join. Neck and centre front are filled for open fronts only. */
+struct TopRuns
+{
+    std::vector<SeamSide> hemFront; // -X to +X
+    SeamSide hemBack;               // +X to -X
+    std::vector<SeamSide> neck;     // centre front on -X, round the back, to centre front on +X
+    SeamSide centreL, centreR;      // the front panels' centre edges, top to bottom on L
+};
+
+Garment draftTop(const Body& body, const TopParams& p, TopRuns* runs)
 {
     Garment g = withFabric(p.openFront ? "Wool" : "Linen");
     const SleeveStyle style = SleeveStyle(std::clamp(p.sleeveStyle, 0, int(SleeveStyle::Count) - 1));
@@ -489,6 +500,23 @@ Garment top(const Body& body, const TopParams& p)
         bMinus = {bs.minusRun(bk, rSide, rU), bs.minusRun(bk, rU, rS), bs.minusRun(bk, rS, rN), {}};
     }
 
+    SeamSide sleeveNeck[2]; // raglan sleeves' neck edges, L then R
+    if (runs)
+    {
+        runs->hemBack = {bk, 0, 1};
+        if (p.openFront)
+        {
+            const int n = int(g.panels[0].outline.size());
+            const SeamSide flHem{0, 0, 1}, flNeck{0, 1 + rN, n - 1}, flCentre{0, n - 1, 0};
+            runs->hemFront = {mirrorRun(flHem, n, 1), flHem};
+            runs->neck = {mirrorRun(flNeck, n, 1), {bk, bs.plus[size_t(rN)], bs.minus[size_t(rN)]}, flNeck};
+            runs->centreL = flCentre;
+            runs->centreR = mirrorRun(flCentre, n, 1);
+        }
+        else
+            runs->hemFront = {{0, 0, 1}};
+    }
+
     // The back faces -Z, so its +x half lies on the wearer's right (-X).
     g.seams.push_back(seam({fPlus.side}, {bMinus.side}));
     g.seams.push_back(seam({fMinus.side}, {bPlus.side}));
@@ -618,6 +646,8 @@ Garment top(const Body& body, const TopParams& p)
             const SeamSide toFront = s > 0.f ? fPlus.arm : bPlus.arm, toBack = s > 0.f ? bMinus.arm : fMinus.arm;
             g.seams.push_back(seam({toFront}, {{sp, frontTop, capEnd}}));
             g.seams.push_back(seam({toBack}, {{sp, 0, backTop}}));
+            // Front to back on the right arm, back to front on the left, as the neck chain walks.
+            sleeveNeck[s > 0.f ? 0 : 1] = {sp, backTop, frontTop};
         }
         else
             g.seams.push_back(seam(armChain, {{sp, 0, capEnd}}));
@@ -689,8 +719,13 @@ Garment top(const Body& body, const TopParams& p)
             g.seams.push_back(seam({{fp, n, innerStart}}, {{fp, innerEnd, 0}}));
         }
     }
+    if (runs && raglan && runs->neck.size() == 3 && sleeveNeck[0].panel >= 0 && sleeveNeck[1].panel >= 0)
+        runs->neck = {runs->neck[0], sleeveNeck[1], runs->neck[1], sleeveNeck[0], runs->neck[2]};
     return g;
 }
+} // namespace
+
+Garment top(const Body& body, const TopParams& p) { return draftTop(body, p, nullptr); }
 
 Garment tee(const Body& body, const TeeParams& p) { return top(body, p); }
 Garment tunic(const Body& body, const TunicParams& p) { return top(body, p); }
@@ -712,7 +747,7 @@ Garment trousers(const Body& body, const TrousersParams& p)
     const float hx = std::clamp(p.hemCircumference, 0.2f, 1.2f) * 0.25f;
     const float cf = -tx;
     const float hipQ = body.hip * (1.f + ease) * 0.25f;
-    const float waistQ = body.waist * (1.f + ease) * 0.25f;
+    const float waistQ = (p.waist > 0.f ? p.waist : body.waist * (1.f + ease)) * 0.25f;
 
     struct Shape { std::vector<Vec2> o; int crotch; };
     // The inner hem corner keeps the same offset from the crotch point front and back, so inseams match.
@@ -1054,6 +1089,223 @@ Garment cloakTunicBelt(const Body& body, const OutfitParams& p, std::vector<Bloc
     return out;
 }
 
+namespace
+{
+/** A bootie's opening, split where it meets the leg's side seams: A front and back halves, M's mirrored. */
+struct Bootie
+{
+    SeamSide af, ab, mf, mb;
+};
+
+/**
+ * One foot cover centred on x = cx: a side profile (A, facing -X) and its mirror (M, facing +X), sewn round all but the
+ * top. The opening is frontHalf + backHalf long on each profile, split between the two at its mid point.
+ */
+Bootie addBootie(Garment& g, const Body& body, float cx, float top, float frontHalf, float backHalf, float length, const char* side)
+{
+    const float s = body.torso() / 1.8f;
+    const float rH = 0.035f * s, toeH = 0.085f * s;
+    const float w = frontHalf + backHalf;
+    const float xh = -0.085f * s, xb = xh + 0.005f, xf = xb + w, xm = xf - frontHalf;
+    const float rT = std::min(0.05f * s, 0.5f * toeH);
+    const float xt = std::max(xh + length, xf + rT + 0.01f);
+    top = std::max(top, toeH + 0.06f * s);
+
+    // Counter-clockwise from the heel: sole forward, round the toe, up the instep, back along the opening, down the heel.
+    Builder b;
+    b.add(xh + rH, 0.f);
+    b.add(xt - rT, 0.f);
+    b.arc({xt - rT, 0.5f * toeH}, rT, 0.5f * toeH, -0.5f * std::numbers::pi_v<float>, 0.5f * std::numbers::pi_v<float>, true);
+    const Vec2 instep{xf, std::min(top - 0.03f, toeH + 0.04f * s)};
+    for (const Vec2& q : bezier({xt - rT, toeH}, {xf, toeH}, instep))
+        b.add(q[0], q[1]);
+    b.add(instep[0], instep[1]);
+    const int topF = b.add(xf, top);
+    const int topM = b.add(xm, top);
+    const int topB = b.add(xb, top);
+    b.add(xh, rH);
+    b.arc({xh + rH, rH}, rH, rH, std::numbers::pi_v<float>, 1.5f * std::numbers::pi_v<float>, false);
+    const int n = int(b.pts.size());
+
+    const float gap = 0.055f * s;
+    const int a = int(g.panels.size()), m = a + 1;
+    const bool left = cx > 0.f;
+    Panel pa = makePanel(std::string(left ? "Foot Inner" : "Foot Outer") + side, b.pts);
+    Panel pm = makePanel(std::string(left ? "Foot Outer" : "Foot Inner") + side, mirrorX(b.pts));
+    pa.particleDistance = pm.particleDistance = 0.012f;
+    place(pa, {cx - gap, 0.005f, 0.f}, {0.f, 1.f, 0.f}, {-1.f, 0.f, 0.f}, 0.f);
+    place(pm, {cx + gap, 0.005f, 0.f}, {0.f, 1.f, 0.f}, {1.f, 0.f, 0.f}, 0.f);
+    g.panels.push_back(std::move(pa));
+    g.panels.push_back(std::move(pm));
+
+    const SeamSide round{a, topB, topF};
+    g.seams.push_back(seam({round}, {mirrorRun(round, n, m)}));
+    Bootie out;
+    out.af = {a, topF, topM};
+    out.ab = {a, topM, topB};
+    out.mf = mirrorRun(out.af, n, m);
+    out.mb = mirrorRun(out.ab, n, m);
+    return out;
+}
+
+/**
+ * A tail out of the back panel `host`: two mirrored tapering profiles sewn along their outer edges, their mouths tacked
+ * round an oval on host centred at its pattern point `at`. It points straight back and droops under its own weight.
+ */
+void addTail(Garment& g, int host, const Vec2& at, float length, float girth, float scale)
+{
+    const float pi = std::numbers::pi_v<float>;
+    const float a = girth / (pi * 1.85f), b = 0.85f * a;
+    // Each profile's mouth is half the oval's perimeter (Ramanujan), so the two mouths go round it once.
+    const float mouth = 0.5f * pi * (3.f * (a + b) - std::sqrt((3.f * a + b) * (a + 3.f * b)));
+    const float tipY = -0.1f * mouth, tipH = 0.03f * scale;
+
+    // Counter-clockwise, pattern +x out of the back: mouth bottom, along the underside to the tip, back along the top to
+    // the mouth top. The closing edge is the mouth.
+    Builder bd;
+    bd.add(0.f, -0.5f * mouth);
+    for (const Vec2& q : bezier({0.f, -0.5f * mouth}, {0.45f * length, -0.3f * mouth}, {length, tipY}))
+        bd.add(q[0], q[1]);
+    bd.add(length, tipY);
+    bd.add(length, tipY + tipH);
+    for (const Vec2& q : bezier({length, tipY + tipH}, {0.4f * length, 0.45f * mouth}, {0.f, 0.5f * mouth}))
+        bd.add(q[0], q[1]);
+    bd.add(0.f, 0.5f * mouth);
+    const int n = int(bd.pts.size());
+
+    const Panel& hp = g.panels[size_t(host)];
+    const Vec3 outward = norm3(cross3(hp.right, hp.up));
+    const Vec3 side = norm3(cross3({0.f, 1.f, 0.f}, outward));
+    const Vec3 base = add3(placePatternPoint(hp, at), mul3(outward, 0.01f));
+    const float gap = 0.25f * a;
+    // Which way the host's pattern x runs against the tail's +side decides which half of the oval each profile takes.
+    const float hostX = hp.right[0] * side[0] + hp.right[1] * side[1] + hp.right[2] * side[2] >= 0.f ? 1.f : -1.f;
+
+    // A on the -side facing out, M its mirror on the +side; both have pattern +x running out of the back.
+    const int pa = int(g.panels.size()), pm = pa + 1;
+    Panel A = makePanel("Tail A", bd.pts), M = makePanel("Tail B", mirrorX(bd.pts));
+    A.particleDistance = M.particleDistance = 0.015f;
+    place(A, add3(base, mul3(side, -gap)), {0.f, 1.f, 0.f}, mul3(side, -1.f), 0.f);
+    place(M, add3(base, mul3(side, gap)), {0.f, 1.f, 0.f}, side, 0.f);
+    g.panels.push_back(std::move(A));
+    g.panels.push_back(std::move(M));
+
+    const SeamSide outer{pa, 0, n - 1};
+    g.seams.push_back(seam({outer}, {mirrorRun(outer, n, pm)}));
+
+    const int count = std::max(8, int(mouth / 0.012f));
+    for (int k = 0; k <= count; ++k)
+    {
+        const float t = float(k) / float(count);
+        const Vec2 mouthPt{0.f, 0.5f * mouth - t * mouth};
+        const float ox = a * std::sin(pi * t), oy = b * std::cos(pi * t);
+        g.tacks.push_back({pa, mouthPt, host, {at[0] - hostX * ox, at[1] + oy}});
+        g.tacks.push_back({pm, mouthPt, host, {at[0] + hostX * ox, at[1] + oy}});
+    }
+}
+
+/** The bootie's opening as one chain that, walked backwards, starts at M's mid point and goes round the back first. */
+std::vector<SeamSide> bootieOpening(const Bootie& b) { return {b.mf, b.af, b.ab, b.mb}; }
+
+float chainLength(const Garment& g, const std::vector<SeamSide>& chain)
+{
+    float len = 0.f;
+    for (const SeamSide& s : chain)
+        len += runLength(g.panels[size_t(s.panel)].outline, s.from, s.to);
+    return len;
+}
+
+Garment cutFrom(Garment g, const char* fabricName)
+{
+    if (const Fabric* f = findFabric(fabricName))
+        g.fabrics = {*f};
+    for (Panel& pn : g.panels)
+        pn.fabric = 0;
+    return g;
+}
+} // namespace
+
+Garment booties(const Body& body, const BootieParams& p)
+{
+    Garment g = withFabric("Wool");
+    const float quarter = std::clamp(p.opening, 0.2f, 1.f) * 0.25f;
+    const float length = std::clamp(p.length, 0.15f, 0.6f), height = std::clamp(p.height, 0.1f, 0.6f);
+    addBootie(g, body, body.hip * 0.1f, height, quarter, quarter, length, " L");
+    addBootie(g, body, -body.hip * 0.1f, height, quarter, quarter, length, " R");
+    return cutFrom(std::move(g), "Plush");
+}
+
+Garment onesie(const Body& body, const OnesieParams& p)
+{
+    TopParams tp;
+    tp.length = body.shoulderY() - body.waistY();
+    tp.ease = std::max(p.ease, 0.f);
+    tp.sleeveLength = p.sleeveLength;
+    tp.sleeveEase = p.sleeveEase;
+    tp.sleeveStyle = p.sleeveStyle;
+    tp.neckDepth = 0.06f;
+    tp.openFront = true;
+    tp.overlap = 0.f;
+    TopRuns tr;
+    Garment g = draftTop(body, tp, &tr);
+    // Centre front first, so the zip goes in seam 0.
+    g.seams.insert(g.seams.begin(), seam({tr.centreL}, {tr.centreR}));
+
+    const float floorToFoot = p.feet ? 0.16f * body.torso() / 1.8f : 0.f;
+    TrousersParams tq;
+    tq.ease = std::max(p.legEase, 0.f);
+    tq.hemCircumference = p.legOpening;
+    tq.backRise = 0.f;
+    tq.waist = chainLength(g, tr.hemFront) + chainLength(g, {tr.hemBack});
+    tq.length = body.waistY() - (p.feet ? floorToFoot : 0.03f);
+    const int t0 = appendGarment(g, trousers(body, tq), 0);
+    const int fl = t0, bl = t0 + 1, fr = t0 + 2, br = t0 + 3;
+    const int nf = int(g.panels[size_t(fl)].outline.size()), nb = int(g.panels[size_t(br)].outline.size());
+
+    // Top hem to trouser waist: fronts -X to +X, back +X to -X.
+    g.seams.push_back(seam(tr.hemFront, {{fl, 4, 5}, {fr, nf - 5, nf - 4}}));
+    g.seams.push_back(seam({tr.hemBack}, {{br, 4, 5}, {bl, nb - 5, nb - 4}}));
+
+    if (p.hood && !tr.neck.empty())
+    {
+        const HoodPanels hp = addHood(g, body, chainLength(g, tr.neck) * 0.5f, p.hoodDepth, p.hoodHeight);
+        g.seams.push_back(seam(tr.neck, {hp.neckP, hp.neckM}));
+    }
+
+    if (p.feet)
+    {
+        // Each leg's hem starts at the side seam on the back, walks the back, then the front.
+        const std::vector<SeamSide> hemL{{bl, nb - 1, 0}, {fl, 0, 1}}, hemR{{br, 0, 1}, {fr, nf - 1, 0}};
+        for (const auto& [hem, sign, side] : {std::tuple{hemL, 1.f, " L"}, std::tuple{hemR, -1.f, " R"}})
+        {
+            const float back = runLength(g.panels[size_t(hem[0].panel)].outline, hem[0].from, hem[0].to);
+            const float front = runLength(g.panels[size_t(hem[1].panel)].outline, hem[1].from, hem[1].to);
+            const float cx = g.panels[size_t(sign > 0.f ? fl : fr)].origin[0];
+            const Bootie bt = addBootie(g, body, cx, floorToFoot, 0.5f * front, 0.5f * back, std::max(p.footLength, 0.15f), side);
+            g.seams.push_back(seam(hem, bootieOpening(bt)));
+        }
+    }
+    g = cutFrom(std::move(g), "Plush");
+    if (p.tail)
+    {
+        // At the small of the back, the oval's bottom just above the waist seam.
+        const float girth = std::clamp(p.tailGirth, 0.15f, 1.2f);
+        const float b = 0.85f * girth / (std::numbers::pi_v<float> * 1.85f);
+        const int first = int(g.panels.size());
+        addTail(g, tr.hemBack.panel, {0.f, b + 0.02f}, std::clamp(p.tailLength, 0.1f, 2.f), girth, body.torso() / 1.8f);
+        // Stuffing has no sim of its own: the tail's plush bends like foam instead, so it holds out from the back.
+        Fabric stuffed = g.fabrics[0];
+        stuffed.name = "Plush Stuffed";
+        const float bend = kStuffedBend * std::clamp(p.tailStiffness, 0.f, 3.f);
+        stuffed.bendWarp *= bend, stuffed.bendWeft *= bend, stuffed.bendBias *= bend;
+        stuffed.density *= 0.6f;
+        g.fabrics.push_back(stuffed);
+        for (size_t k = size_t(first); k < g.panels.size(); ++k)
+            g.panels[k].fabric = 1;
+    }
+    return g;
+}
+
 // Registry
 
 namespace
@@ -1226,6 +1478,28 @@ std::vector<Block> makeBlocks()
                                            {"beltEase", &OutfitParams::beltEase, 0.f, 0.3f},
                                            {"hood", &OutfitParams::hood}},
                                           Generator<OutfitParams>(&cloakTunicBelt)));
+    out.push_back(makeBlock<OnesieParams>("onesie", "Onesie",
+                                          {{"ease", &OnesieParams::ease, 0.f, 1.f},
+                                           {"sleeveLength", &OnesieParams::sleeveLength, 0.f, 0.75f},
+                                           {"sleeveEase", &OnesieParams::sleeveEase, 0.f, 1.5f},
+                                           {"sleeveStyle", &OnesieParams::sleeveStyle, 0, int(SleeveStyle::Count) - 1},
+                                           {"legEase", &OnesieParams::legEase, 0.f, 0.8f},
+                                           {"legOpening", &OnesieParams::legOpening, 0.3f, 1.f},
+                                           {"hood", &OnesieParams::hood},
+                                           {"hoodDepth", &OnesieParams::hoodDepth, 0.2f, 0.5f},
+                                           {"hoodHeight", &OnesieParams::hoodHeight, 0.25f, 0.6f},
+                                           {"feet", &OnesieParams::feet},
+                                           {"footLength", &OnesieParams::footLength, 0.15f, 0.6f},
+                                           {"tail", &OnesieParams::tail},
+                                           {"tailLength", &OnesieParams::tailLength, 0.1f, 2.f},
+                                           {"tailGirth", &OnesieParams::tailGirth, 0.15f, 1.2f},
+                                           {"tailStiffness", &OnesieParams::tailStiffness, 0.f, 3.f}},
+                                          plain(&onesie)));
+    out.push_back(makeBlock<BootieParams>("booties", "Booties",
+                                          {{"length", &BootieParams::length, 0.15f, 0.6f},
+                                           {"height", &BootieParams::height, 0.1f, 0.6f},
+                                           {"opening", &BootieParams::opening, 0.2f, 1.f}},
+                                          plain(&booties)));
     return out;
 }
 

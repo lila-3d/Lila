@@ -298,7 +298,36 @@ float girth(const std::vector<Vec3>& pts, const std::vector<std::array<int, 3>>&
 }
 } // namespace
 
-Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset)
+/**
+ * The base of the neck, from the floor: walking down from the crown, the narrowest section after the head has widened and
+ * before the shoulders widen again. 0 when the profile has no such waist.
+ */
+static float findNeck(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, float floor, float height, const XZ& axis)
+{
+    const float step = 0.005f * height;
+    float headMax = 0.f, best = 1e30f, bestY = 0.f;
+    bool narrowed = false;
+    for (float y = height - step; y > 0.3f * height; y -= step)
+    {
+        const float g = girth(points, tris, floor + y, axis);
+        if (g <= 0.f)
+            continue;
+        if (!narrowed)
+        {
+            headMax = std::max(headMax, g);
+            if (g < 0.8f * headMax)
+                narrowed = true, best = g, bestY = y;
+            continue;
+        }
+        if (g < best)
+            best = g, bestY = y;
+        else if (g > 1.2f * best)
+            return bestY;
+    }
+    return 0.f;
+}
+
+Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset, float neckGiven)
 {
     Body body;
     if (points.empty() || tris.empty())
@@ -318,18 +347,34 @@ Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<i
     body.inseam = ref.inseam * s;
 
     const XZ axis(0.5f * (lo.x + hi.x), 0.5f * (lo.z + hi.z));
+    // A head far out of human proportion moves the neck: everything below it is then sized from the neck, not the height.
+    const float neck = neckGiven > 0.f ? neckGiven : findNeck(points, tris, lo.y, body.height, axis);
+    if (neck > 0.f && (neckGiven > 0.f || std::abs(neck - ref.neckY() * s) > 0.05f * body.height))
+    {
+        body.neckHeight = neck;
+        const float t = body.torso() / ref.height;
+        body.shoulderWidth = ref.shoulderWidth * t;
+        body.armLength = ref.armLength * t;
+        body.inseam = ref.inseam * t;
+    }
+    const float st = body.torso() / ref.height;
     // Measured relative to the floor of the mesh, so slice heights are offset by lo.y.
     auto read = [&](float y, float fallback) {
         const float g = girth(points, tris, lo.y + y, axis);
-        return g > 0.f ? g : fallback * s;
+        return g > 0.f ? g : fallback * st;
     };
     // Under the arms the section can take them in; the smallest of three is the chest.
-    body.chest = std::min({read(body.chestY(), ref.chest), read(body.chestY() - 0.03f * s, ref.chest),
-                           read(body.chestY() + 0.03f * s, ref.chest)});
+    body.chest = std::min({read(body.chestY(), ref.chest), read(body.chestY() - 0.03f * st, ref.chest),
+                           read(body.chestY() + 0.03f * st, ref.chest)});
     body.waist = read(body.waistY(), ref.waist);
     body.hip = read(body.hipY(), ref.hip);
-    body.neck = read(body.neckY() + 0.03f * s, ref.neck);
-    body.head = read(body.height - 0.11f * s, ref.head);
+    body.neck = read(body.neckY() + 0.03f * st, ref.neck);
+    // The widest section above the neck, so a big head gets a hood that fits over it.
+    body.head = 0.f;
+    for (float y = body.neckY() + 0.05f * st; y < body.height - 0.02f * s; y += 0.01f * s)
+        body.head = std::max(body.head, read(y, 0.f));
+    if (body.head <= 0.f)
+        body.head = read(body.height - 0.11f * s, ref.head);
     if (offset)
         *offset = {axis.x, lo.y, axis.y};
     return body;

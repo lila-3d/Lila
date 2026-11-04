@@ -54,6 +54,8 @@ const std::vector<Fabric>& fabricPresets()
         makeFabricPreset("Rubber", 500.f, 500.f, 500.f, 1e-4f, 1e-4f, 1e-4f, 0.f, 1.00f, 0.0020f, 0.80f, 0.020f),
         makeFabricPreset("Burlap", 9000.f, 8000.f, 500.f, 1.5e-4f, 1.5e-4f, 1e-4f, 0.04f, 0.35f, 0.0015f, 0.60f, 0.020f),
         makeFabricPreset("Heavy", 30000.f, 30000.f, 8000.f, 2e-3f, 2e-3f, 2e-3f, 0.02f, 3.00f, 0.0040f, 0.40f, 0.050f),
+        makeFabricPreset("Fleece", 2000.f, 1500.f, 180.f, 6e-5f, 5e-5f, 4e-5f, 0.20f, 0.28f, 0.0030f, 0.60f, 0.030f),
+        makeFabricPreset("Plush", 1500.f, 900.f, 120.f, 1.2e-4f, 1e-4f, 9e-5f, 0.25f, 0.35f, 0.0040f, 0.70f, 0.040f),
         makeFabricPreset("Banner", 7000.f, 6000.f, 400.f, 3e-5f, 3e-5f, 2e-5f, 0.05f, 0.20f, 0.0006f, 0.30f, 0.005f),
     };
     return presets;

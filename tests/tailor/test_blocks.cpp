@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <string>
 
 using namespace tailor;
@@ -464,6 +465,294 @@ TEST_CASE("sleeve templates build and pass the pattern check")
         {
             CAPTURE(i.message);
             CHECK(i.level != PatternIssue::Error);
+        }
+    }
+}
+
+namespace
+{
+Vec2 chainPoint(const Garment& g, const std::vector<SeamSide>& chain, float f)
+{
+    float total = 0.f;
+    for (const SeamSide& s : chain)
+        total += runLength(g, s);
+    float want = std::clamp(f, 0.f, 1.f) * total;
+    for (const SeamSide& s : chain)
+    {
+        const auto& o = g.panels[s.panel].outline;
+        const int n = int(o.size());
+        for (int i = s.from; i != s.to; i = (i + 1) % n)
+        {
+            const Vec2 &p = o[i], &q = o[(i + 1) % n];
+            const float l = std::hypot(q[0] - p[0], q[1] - p[1]);
+            if (want <= l && l > 0.f)
+                return {p[0] + (q[0] - p[0]) * want / l, p[1] + (q[1] - p[1]) * want / l};
+            want -= l;
+        }
+    }
+    return g.panels[chain.back().panel].outline[chain.back().to];
+}
+
+int chainPanel(const Garment& g, const std::vector<SeamSide>& chain, float f)
+{
+    float total = 0.f;
+    for (const SeamSide& s : chain)
+        total += runLength(g, s);
+    float want = std::clamp(f, 0.f, 1.f) * total;
+    for (const SeamSide& s : chain)
+    {
+        if (want <= runLength(g, s))
+            return s.panel;
+        want -= runLength(g, s);
+    }
+    return chain.back().panel;
+}
+
+/** Mean placed distance between a seam's sides, walked as the seam says (or the other way round). */
+float seamGap(const Garment& g, const Seam& s, bool flip)
+{
+    const bool rev = s.reversed != flip;
+    float sum = 0.f;
+    const int n = 24;
+    for (int k = 0; k <= n; ++k)
+    {
+        const float f = float(k) / float(n);
+        const Vec3 a = placePatternPoint(g.panels[chainPanel(g, s.a, f)], chainPoint(g, s.a, f));
+        const float fb = rev ? 1.f - f : f;
+        const Vec3 b = placePatternPoint(g.panels[chainPanel(g, s.b, fb)], chainPoint(g, s.b, fb));
+        sum += std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+    }
+    return sum / float(n + 1);
+}
+} // namespace
+
+TEST_CASE("onesie: one piece, every seam walks its sides the same way")
+{
+    const std::vector<BlockParamValues> variants = {
+        {},
+        {{"hood", 0.f}},
+        {{"feet", 0.f}},
+        {{"sleeveStyle", float(SleeveStyle::Raglan)}},
+        {{"sleeveStyle", float(SleeveStyle::SetIn)}, {"ease", 0.1f}},
+        {{"tail", 1.f}},
+    };
+    Body child;
+    child.height = 1.2f, child.chest = 0.64f, child.waist = 0.58f, child.hip = 0.66f, child.shoulderWidth = 0.3f;
+    child.armLength = 0.42f, child.inseam = 0.52f, child.neck = 0.29f, child.head = 0.52f;
+    for (const Body& body : {Body{}, child})
+        for (const BlockParamValues& v : variants)
+        {
+            Garment g;
+            REQUIRE(buildBlock("onesie", g, nullptr, body, v));
+            checkGarment(g, "onesie");
+            REQUIRE(g.fabrics.size() == (v.count("tail") ? 2u : 1u));
+            CHECK(g.fabrics[0].name == "Plush");
+            const bool hood = !v.count("hood"), feet = !v.count("feet");
+            int hoods = 0, feetPanels = 0;
+            for (const Panel& p : g.panels)
+            {
+                hoods += p.name.rfind("Hood", 0) == 0;
+                feetPanels += p.name.rfind("Foot", 0) == 0;
+            }
+            CHECK(hoods == (hood ? 2 : 0));
+            CHECK(feetPanels == (feet ? 4 : 0));
+            // Seam 0 is the centre front, one run each side, for the zip.
+            CHECK(g.seams[0].a.size() == 1);
+            CHECK(g.seams[0].b.size() == 1);
+            for (size_t si = 0; si < g.seams.size(); ++si)
+            {
+                CAPTURE(si);
+                CHECK(seamGap(g, g.seams[si], false) < seamGap(g, g.seams[si], true));
+            }
+            CHECK(buildClothMesh(g).tris.size() > 500);
+            // A tail's mouth starts right on the back it is tacked to.
+            CHECK(g.tacks.empty() == !v.count("tail"));
+            for (const Tack& t : g.tacks)
+            {
+                const Vec3 a = placePatternPoint(g.panels[t.panelA], t.atA), b = placePatternPoint(g.panels[t.panelB], t.atB);
+                CHECK(std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 0.12f);
+            }
+        }
+}
+
+TEST_CASE("onesie tail drapes out of the back")
+{
+    const Body body;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(body, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.05f);
+    Garment g;
+    REQUIRE(buildBlock("onesie", g, nullptr, body, {{"tail", 1.f}, {"feet", 0.f}}));
+    for (Panel& p : g.panels)
+        p.particleDistance = std::max(p.particleDistance, 0.025f);
+    const ClothMesh cm = buildClothMesh(g);
+    ClothSolver solver;
+    SolverSettings s;
+    s.floorY = 0.f;
+    solver.reset(cm, g, s);
+    solver.setColliders({&sdf});
+    for (int frame = 0; frame < 200; ++frame)
+        solver.step();
+    float tailBack = 0.f, tailGap = 0.f, tailLow = 10.f;
+    for (size_t v = 0; v < solver.positions().size(); ++v)
+        if (g.panels[cm.vertPanel[v]].name.rfind("Tail", 0) == 0)
+            tailBack = std::min(tailBack, solver.positions()[v][2]), tailLow = std::min(tailLow, solver.positions()[v][1]);
+    for (size_t i = 0; i < cm.seamPairs.size(); ++i)
+    {
+        const Vec3 &a = solver.positions()[cm.seamPairs[i][0]], &b = solver.positions()[cm.seamPairs[i][1]];
+        if (g.panels[cm.vertPanel[cm.seamPairs[i][0]]].name.rfind("Tail", 0) == 0)
+            tailGap = std::max(tailGap, std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+    }
+    MESSAGE("tail reaches z " << tailBack << ", low " << tailLow << ", seam gap " << tailGap);
+    for (const Vec3& q : solver.positions())
+        REQUIRE(std::isfinite(q[0] + q[1] + q[2]));
+    // Out from the back, drooping rather than hanging.
+    CHECK(tailBack < -0.45f);
+    CHECK(tailLow > 0.5f);
+    CHECK(tailGap < 0.02f);
+}
+
+TEST_CASE("booties: two closed feet, open at the top")
+{
+    Garment g;
+    REQUIRE(buildBlock("booties", g));
+    checkGarment(g, "booties");
+    REQUIRE(g.panels.size() == 4);
+    REQUIRE(g.seams.size() == 2);
+    for (const Seam& s : g.seams)
+        CHECK(seamGap(g, s, false) < seamGap(g, s, true));
+    // The left foot's profiles sit either side of x > 0, toes forward.
+    CHECK(g.panels[0].origin[0] > 0.f);
+    CHECK(g.panels[1].origin[0] > g.panels[0].origin[0]);
+    CHECK(g.panels[0].right[2] > 0.9f);
+}
+
+TEST_CASE("onesie drapes onto the mannequin, seams closed, feet on the feet")
+{
+    const Body body;
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    mannequin(body, pts, tris);
+    const Sdf sdf = sdfFromMesh(pts, tris, 0.01f, 0.05f);
+
+    Garment g;
+    REQUIRE(buildBlock("onesie", g));
+    for (Panel& p : g.panels)
+        p.particleDistance = std::max(p.particleDistance, 0.025f);
+    const ClothMesh cm = buildClothMesh(g);
+    ClothSolver solver;
+    SolverSettings s;
+    s.floorY = 0.f;
+    solver.reset(cm, g, s);
+    solver.setColliders({&sdf});
+    for (int frame = 0; frame < 400; ++frame)
+        solver.step();
+
+    int inside = 0, finite = 0;
+    for (const Vec3& p : solver.positions())
+    {
+        finite += std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]);
+        inside += sdf.sample(p) < -0.005f;
+    }
+    CHECK(finite == int(solver.positions().size()));
+    CHECK(inside < int(solver.positions().size()) / 50);
+    float maxGap = 0.f;
+    for (const auto& pr : cm.seamPairs)
+    {
+        const Vec3 &a = solver.positions()[pr[0]], &b = solver.positions()[pr[1]];
+        maxGap = std::max(maxGap, std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+    }
+    // The four-way junction at each inseam hem closes last.
+    CHECK(maxGap < 0.02f);
+    // The hood stays up on the head and the feet stay down on the floor.
+    float hoodTop = 0.f, footTop = 0.f;
+    for (size_t v = 0; v < solver.positions().size(); ++v)
+    {
+        const std::string& name = g.panels[cm.vertPanel[v]].name;
+        if (name.rfind("Hood", 0) == 0)
+            hoodTop = std::max(hoodTop, solver.positions()[v][1]);
+        if (name.rfind("Foot", 0) == 0)
+            footTop = std::max(footTop, solver.positions()[v][1]);
+    }
+    CHECK(hoodTop > body.neckY() + 0.15f);
+    CHECK(footTop < 0.3f);
+}
+
+TEST_CASE("a big cartoon head moves the neck, and the blocks follow it")
+{
+    // A lathed body: a short torso, a thin neck and a head nearly as wide as the body is tall.
+    auto radius = [](float y) {
+        if (y < 0.6f)
+            return 0.15f;
+        if (y < 0.68f)
+            return 0.08f;
+        const float c = 0.9f, r = 0.25f, d = y - c;
+        return std::max(std::sqrt(std::max(r * r - d * d, 0.f)), y < c ? 0.08f : 0.f);
+    };
+    std::vector<Vec3> pts;
+    std::vector<std::array<int, 3>> tris;
+    const int rings = 230, segs = 48;
+    const float top = 1.15f;
+    pts.push_back({0.f, 0.f, 0.f});
+    for (int i = 1; i < rings; ++i)
+    {
+        const float y = top * float(i) / float(rings);
+        for (int k = 0; k < segs; ++k)
+        {
+            const float a = 2.f * std::numbers::pi_v<float> * float(k) / float(segs);
+            pts.push_back({radius(y) * std::cos(a), y, radius(y) * std::sin(a)});
+        }
+    }
+    pts.push_back({0.f, top, 0.f});
+    const int last = int(pts.size()) - 1;
+    auto at = [&](int ring, int k) { return 1 + (ring - 1) * segs + (k % segs); };
+    for (int k = 0; k < segs; ++k)
+    {
+        tris.push_back({0, at(1, k + 1), at(1, k)});
+        for (int i = 1; i + 1 < rings; ++i)
+        {
+            tris.push_back({at(i, k), at(i, k + 1), at(i + 1, k + 1)});
+            tris.push_back({at(i, k), at(i + 1, k + 1), at(i + 1, k)});
+        }
+        tris.push_back({at(rings - 1, k), at(rings - 1, k + 1), last});
+    }
+
+    const Body body = measureBody(pts, tris);
+    CHECK(body.height == doctest::Approx(top).epsilon(0.02));
+    CHECK(body.neckHeight > 0.58f);
+    CHECK(body.neckHeight < 0.72f);
+    CHECK(body.shoulderY() < body.neckHeight);
+    CHECK(body.head > 1.4f);
+    CHECK(body.chest == doctest::Approx(2.f * std::numbers::pi_v<float> * 0.15f).epsilon(0.05));
+
+    // A neck given by hand wins over the one found.
+    const Body told = measureBody(pts, tris, nullptr, 0.5f);
+    CHECK(told.neckHeight == doctest::Approx(0.5f));
+    CHECK(told.shoulderY() < 0.5f);
+
+    // A human-proportioned mannequin keeps the usual landmarks.
+    std::vector<Vec3> mp;
+    std::vector<std::array<int, 3>> mt;
+    mannequin(Body{}, mp, mt);
+    CHECK(measureBody(mp, mt).neckHeight == 0.f);
+
+    for (const char* id : {"onesie", "tee", "cloak"})
+    {
+        CAPTURE(std::string(id));
+        Garment g;
+        REQUIRE(buildBlock(id, g, nullptr, body));
+        checkGarment(g, id);
+        for (const Panel& p : g.panels)
+        {
+            CAPTURE(p.name);
+            float hi = -1e30f;
+            for (const Vec2& q : p.outline)
+                hi = std::max(hi, placePatternPoint(p, q)[1]);
+            if (p.name.rfind("Hood", 0) == 0)
+                CHECK(hi > top - 0.02f);
+            else if (p.name.rfind("Sleeve", 0) != 0)
+                CHECK(hi < body.neckHeight + 0.08f);
         }
     }
 }

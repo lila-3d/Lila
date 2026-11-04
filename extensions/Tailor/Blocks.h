@@ -29,12 +29,17 @@ struct Body
     float neck = 0.38f;
     float head = 0.57f;
     float armAngle = 0.785f;       // radians below horizontal: 0 is a T-pose, the default is an A-pose
+    /** Floor to the base of the neck when the head is out of human proportion (a big cartoon head); 0 = 0.84 of height.
+     *  Everything below the neck is proportioned to it, the head takes the rest. */
+    float neckHeight = 0.f;
 
-    float neckY() const { return height * 0.84f; }
-    float shoulderY() const { return height * 0.815f; }
-    float chestY() const { return height * 0.72f; }
-    float waistY() const { return height * 0.6f; }
-    float hipY() const { return height * 0.52f; }
+    /** The height of a human body with this one's neck: what the landmarks below the neck scale with. */
+    float torso() const { return neckHeight > 0.f ? neckHeight / 0.84f : height; }
+    float neckY() const { return torso() * 0.84f; }
+    float shoulderY() const { return torso() * 0.815f; }
+    float chestY() const { return torso() * 0.72f; }
+    float waistY() const { return torso() * 0.6f; }
+    float hipY() const { return torso() * 0.52f; }
     float crotchY() const { return inseam; }
     float chestRadius() const;     // radius of a cylinder with the chest circumference
 };
@@ -359,6 +364,7 @@ struct TrousersParams
     float ease = 0.1f;
     float hemCircumference = 0.42f;
     float backRise = 0.03f;
+    float waist = 0.f;             // waist circumference to cut, 0 = the body's with ease
 };
 
 struct SkirtParams
@@ -465,11 +471,41 @@ struct OutfitParams
     bool hood = true;
 };
 
+/** Foot covers sewn from two side profiles each, open at the top. `length` is heel to toe, `height` floor to opening. */
+struct BootieParams
+{
+    float length = 0.3f;
+    float height = 0.2f;
+    float opening = 0.42f;         // circumference of the top edge
+};
+
+/**
+ * One-piece suit: an open-front top joined at the waist to trousers, the fronts sewn down the centre (seam 0, ready for
+ * tailorAddZip), with an optional hood and booties sewn to the leg hems. Cut from Plush.
+ */
+struct OnesieParams
+{
+    float ease = 0.3f;
+    float sleeveLength = 0.6f;
+    float sleeveEase = 0.45f;
+    int sleeveStyle = int(SleeveStyle::DropShoulder);
+    float legEase = 0.25f;
+    float legOpening = 0.46f;      // leg hem circumference
+    bool hood = true;
+    float hoodDepth = 0.34f;
+    float hoodHeight = 0.42f;
+    bool feet = true;
+    float footLength = 0.3f;
+    bool tail = false;             // a stuffed tail tacked to the small of the back
+    float tailLength = 0.7f;
+    float tailGirth = 0.42f;       // round the base
+    float tailStiffness = 1.f;     // 1 holds it out with the tip drooping, 0 lets it hang limp
+};
+
 Garment tee(const Body& body, const TeeParams& p = {});
 Garment tunic(const Body& body, const TunicParams& p = {});
 Garment robe(const Body& body, const RobeParams& p = {});
 /** Any top: tee, tunic, robe and the sleeve-style templates all draft through it. */
-Garment top(const Body& body, const TopParams& p);
 Garment top(const Body& body, const TopParams& p);
 Garment trousers(const Body& body, const TrousersParams& p = {});
 Garment skirt(const Body& body, const SkirtParams& p = {});
@@ -484,6 +520,8 @@ Garment belt(const Body& body, const BeltParams& p = {}, std::vector<BlockAnchor
 Garment sack(const Body& body, const SackParams& p = {});
 Garment banner(const Body& body, const BannerParams& p = {});
 Garment tent(const Body& body, const TentParams& p = {});
+Garment booties(const Body& body, const BootieParams& p = {});
+Garment onesie(const Body& body, const OnesieParams& p = {});
 Garment cloakTunicBelt(const Body& body, const OutfitParams& p = {}, std::vector<BlockAnchor>* anchors = nullptr);
 
 /** Appends `src` to `dst`, offsetting panel, seam and fabric indices; returns the first new panel index. */
@@ -520,9 +558,10 @@ std::vector<std::string> blockNames();
 void mannequin(const Body& body, std::vector<Vec3>& points, std::vector<std::array<int, 3>>& tris, float cell = 0.012f);
 
 /** Measures a standing body mesh (metres, +Y up, facing +Z): height from its bounds; chest, waist, hip, neck and head
- *  girths as a tape would read them around horizontal sections; other lengths scaled by height. `offset` gets the
+ *  girths as a tape would read them around horizontal sections; other lengths scaled by height, or by the neck when the
+ *  head is out of human proportion. `neck` (above the feet), when set, is used instead of the one found. `offset` gets the
  *  centre of its feet, where garments built for the result go. */
-Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset = nullptr);
+Body measureBody(const std::vector<Vec3>& points, const std::vector<std::array<int, 3>>& tris, Vec3* offset = nullptr, float neck = 0.f);
 
 /** Something a pattern maker would flag, with what to do about it. */
 struct PatternIssue
