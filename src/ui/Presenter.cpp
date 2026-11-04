@@ -3,12 +3,15 @@
 #include "core/PrefStore.h"
 #include "ops/Command.h"
 #include "ops/Undo.h"
-#include "scene/Components.h"
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
+#include "ui/CameraBookmarks.h"
 #include "ui/Hotkeys.h"
+#include "ui/Icons.h"
 #include "ui/Tools.h"
+#include "ui/ViewportHud.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportWidget.h"
 
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -80,7 +83,7 @@ struct BlockDef
 constexpr BlockDef kPresenterBlocks[] = {
     {"keys", "Keys", 0.5, 0.95, 0.5, 1.0, "keys"},
     {"actions", "Actions", 0.5, 0.87, 0.5, 1.0, "actions"},
-    {"context", "Tool and mode", 0.98, 0.08, 1.0, 0.0, "context"},
+    {"context", "Tool", 0.98, 0.08, 1.0, 0.0, "context"},
     {"caption", "Caption", 0.5, 0.12, 0.5, 0.0, "caption"},
 };
 
@@ -119,7 +122,9 @@ struct State
     QString nav;
     QString caption;
     qint64 captionAt = 0;
-    QString context;
+    QString context, contextIcon;
+    /** Top-right corner, in global coordinates, of the active viewport's spot for the tool icon; null without one. */
+    QPoint contextAnchor;
     int actionDepth = 0;
     int runListener = 0;
     int executeListener = 0;
@@ -404,9 +409,7 @@ public:
         const double s = scale();
         QSize size = contentSize(s, !content).grownBy(QMargins(0, editBand(), 0, 0));
         size = size.expandedTo(QSize(40, 20));
-        const QRect m = mainRect();
-        const double ax = pref("x", mDef.x), ay = pref("y", mDef.y), fx = pref("fx", mDef.fx), fy = pref("fy", mDef.fy);
-        QPoint pos(int(std::lround(m.x() + ax * m.width() - fx * size.width())), int(std::lround(m.y() + ay * m.height() - fy * size.height())));
+        const QPoint pos = place(size);
         if (geometry() != QRect(pos, size))
             setGeometry(QRect(pos, size));
         if (!isVisible())
@@ -416,6 +419,16 @@ public:
 
 protected:
     virtual bool hasContent() const = 0;
+
+    /** Where the block goes: its stored or default anchor on the main window. */
+    virtual QPoint place(QSize size) const
+    {
+        const QRect m = mainRect();
+        const double ax = pref("x", mDef.x), ay = pref("y", mDef.y), fx = pref("fx", mDef.fx), fy = pref("fy", mDef.fy);
+        return {int(std::lround(m.x() + ax * m.width() - fx * size.width())), int(std::lround(m.y() + ay * m.height() - fy * size.height()))};
+    }
+
+    bool placed() const { return !std::isnan(pref("x", std::nan(""))); }
     virtual QSize contentSize(double s, bool placeholder) const = 0;
     virtual void paintContent(QPainter& p, double s, bool placeholder) = 0;
 
@@ -671,18 +684,38 @@ public:
 protected:
     bool hasContent() const override { return !state().context.isEmpty(); }
 
+    bool iconOnly() const { return !state().contextIcon.isEmpty(); }
+
     QSize contentSize(double s, bool) const override
     {
+        if (iconOnly())
+            return QSize(int(std::ceil(36.0 * s)), int(std::ceil(36.0 * s)));
         const double w = QFontMetricsF(presenterFont(10.5 * s, true)).horizontalAdvance(state().context);
         return QSize(int(std::ceil(w + 24.0 * s)), int(std::ceil(30.0 * s)));
     }
 
+    /** Beside the active viewport's view cube, or in its place when the cube is hidden, until the user moves it. */
+    QPoint place(QSize size) const override
+    {
+        const QPoint anchor = state().contextAnchor;
+        if (placed() || anchor.isNull())
+            return Block::place(size);
+        return {anchor.x() - size.width(), anchor.y() - editBand()};
+    }
+
     void paintContent(QPainter& p, double s, bool) override
     {
-        const QRectF r(0, 0, width(), 30.0 * s);
+        const QRectF r(0, 0, width(), height() - editBand());
         p.setPen(Qt::NoPen);
         p.setBrush(kPresenterBack);
         p.drawRoundedRect(r, 7.0 * s, 7.0 * s);
+        if (iconOnly())
+        {
+            const int side = int(std::lround(24.0 * s));
+            const QRect box(int(r.center().x() - side / 2.0), int(r.center().y() - side / 2.0), side, side);
+            icon(state().contextIcon).paint(&p, box, Qt::AlignCenter, QIcon::Active);
+            return;
+        }
         p.setPen(kPresenterText);
         p.setFont(presenterFont(10.5 * s, true));
         p.drawText(r, Qt::AlignCenter, state().context);
@@ -810,7 +843,7 @@ public:
             {"actions", "Actions, with their menu path and hotkey"},
             {"commands", "Edits from drags and panels"},
             {"agent", "Commands an agent runs"},
-            {"context", "Tool and mode"},
+            {"context", "Current tool"},
             {"caption", "Captions"},
             {"cursor", "Cursor highlight"},
             {"navigation", "Camera navigation"},
@@ -890,39 +923,27 @@ void refreshBlocks()
     relayoutAll();
 }
 
-QString contextText()
+/** The current tool's label and Tabler icon name; the icon is empty when the tool has none. */
+std::pair<QString, QString> currentTool()
 {
-    QString tool;
     if (const std::string& id = viewportTools::activeId(); !id.empty())
     {
         if (const viewportTools::ToolDef* d = viewportTools::registry().find(id))
-            tool = d->label;
-        else
-            tool = humanised(id);
+            return {d->label, QString::fromStdString(d->icon)};
+        return {humanised(id), {}};
     }
-    else
-        tool = capitalised(QString::fromUtf8(tools::name(tools::current()))) + " Tool";
-    QStringList parts{tool};
-    const scene::ComponentMode mode = scene::components::mode();
-    if (mode != scene::ComponentMode::Object)
-        parts << capitalised(QString::fromUtf8(scene::components::modeName(mode)));
-    if (PrefStore::get().value<bool>("general", "/softSelect/enabled", false))
-        parts << "Soft Select";
-    QStringList snaps;
-    const unsigned held = tools::snaps();
-    if (held & SnapGrid)
-        snaps << "grid";
-    if (held & SnapEdge)
-        snaps << "edge";
-    if (held & SnapVertex)
-        snaps << "vertex";
-    if (held & SnapSurface)
-        snaps << "surface";
-    if (tools::current() != Tool::Select && tools::incrementSnap(tools::current()).enabled)
-        snaps << "increment";
-    if (!snaps.isEmpty())
-        parts << "Snap " + snaps.join(", ");
-    return parts.join("   ");
+    const QString name = QString::fromUtf8(tools::name(tools::current()));
+    return {capitalised(name) + " Tool", QString::fromStdString(actions::iconFor("tool." + name.toStdString()))};
+}
+
+QPoint contextAnchor()
+{
+    ViewportWidget* v = cameraBookmarks::activeView();
+    if (!v || !v->isVisible())
+        return {};
+    const QRectF cube = hud::viewCubeRect(v->width());
+    const double right = hud::shown(v->hudPanel(), "viewCube") ? cube.left() - 8.0 : cube.right();
+    return v->mapToGlobal(QPoint(int(right), int(cube.top())));
 }
 
 void pushCard(Card c)
@@ -1106,9 +1127,12 @@ void onTick()
         st.nav.clear();
         changed = true;
     }
-    const QString context = presenterShows("context") ? contextText() : QString();
-    changed |= context != st.context;
-    st.context = context;
+    auto [context, contextIcon] = presenterShows("context") ? currentTool() : std::pair<QString, QString>();
+    const QPoint anchor = context.isEmpty() ? QPoint() : contextAnchor();
+    changed |= context != st.context || contextIcon != st.contextIcon || anchor != st.contextAnchor;
+    st.context = std::move(context);
+    st.contextIcon = std::move(contextIcon);
+    st.contextAnchor = anchor;
     const double seconds = presenterDuration();
     while (!st.cards.empty() && fadeFor(st.cards.front().at, seconds) <= 0.0)
     {

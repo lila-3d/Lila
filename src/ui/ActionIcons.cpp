@@ -13,6 +13,10 @@ namespace
 const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
 {
     static const std::unordered_map<std::string_view, std::string_view> table = {
+    {"tool.select", "pointer"},
+    {"tool.move", "arrows-move"},
+    {"tool.rotate", "rotate-360"},
+    {"tool.scale", "arrows-maximize"},
     {"file.new", "file"},
     {"file.open", "folder-open"},
     {"file.reload", "reload"},
