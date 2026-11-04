@@ -5,13 +5,10 @@
 #include "ops/Undo.h"
 #include "ui/AchievementRules.h"
 #include "ui/Actions.h"
-#include "ui/CameraBookmarks.h"
 #include "ui/Hotkeys.h"
 #include "ui/Icons.h"
 #include "ui/Tools.h"
-#include "ui/ViewportHud.h"
 #include "ui/ViewportTool.h"
-#include "ui/ViewportWidget.h"
 
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -82,13 +79,14 @@ struct BlockDef
 
 /**
  * Default places keep clear of video subtitles: the bottom 20% of the frame (burned-in caption bars, YouTube captions
- * and its player controls) and the top caption slot, so keys and actions stack up from 80% and the caption starts at 14%.
+ * and its player controls) and the top caption slot above 11.5%, so keys and actions stack up from 80% and the tool
+ * sits over the caption below that slot.
  */
 constexpr BlockDef kPresenterBlocks[] = {
     {"keys", "Keys", 0.5, 0.80, 0.5, 1.0, "keys"},
     {"actions", "Actions", 0.5, 0.755, 0.5, 1.0, "actions"},
-    {"context", "Tool", 0.98, 0.08, 1.0, 0.0, "context"},
-    {"caption", "Caption", 0.5, 0.14, 0.5, 0.0, "caption"},
+    {"context", "Tool", 0.5, 0.115, 0.5, 0.0, "context"},
+    {"caption", "Caption", 0.5, 0.16, 0.5, 0.0, "caption"},
 };
 
 struct Card
@@ -428,14 +426,13 @@ protected:
     virtual bool hasContent() const = 0;
 
     /** Where the block goes: its stored or default anchor on the main window. */
-    virtual QPoint place(QSize size) const
+    QPoint place(QSize size) const
     {
         const QRect m = mainRect();
         const double ax = pref("x", mDef.x), ay = pref("y", mDef.y), fx = pref("fx", mDef.fx), fy = pref("fy", mDef.fy);
         return {int(std::lround(m.x() + ax * m.width() - fx * size.width())), int(std::lround(m.y() + ay * m.height() - fy * size.height()))};
     }
 
-    bool placed() const { return !std::isnan(pref("x", std::nan(""))); }
     virtual QSize contentSize(double s, bool placeholder) const = 0;
     virtual void paintContent(QPainter& p, double s, bool placeholder) = 0;
 
@@ -714,15 +711,6 @@ protected:
         return QSize(int(std::ceil(w + 24.0 * s)), int(std::ceil(30.0 * s)));
     }
 
-    /** Beside the active viewport's view cube, or in its place when the cube is hidden, until the user moves it. */
-    QPoint place(QSize size) const override
-    {
-        const QPoint anchor = state().contextAnchor;
-        if (placed() || anchor.isNull())
-            return Block::place(size);
-        return {anchor.x() - size.width(), anchor.y() - editBand()};
-    }
-
     void paintContent(QPainter& p, double s, bool) override
     {
         const QRectF r(0, 0, width(), height() - editBand());
@@ -956,16 +944,6 @@ std::pair<QString, QString> currentTool()
     return {capitalised(name) + " Tool", QString::fromStdString(actions::iconFor("tool." + name.toStdString()))};
 }
 
-QPoint contextAnchor()
-{
-    ViewportWidget* v = cameraBookmarks::activeView();
-    if (!v || !v->isVisible())
-        return {};
-    const QRectF cube = hud::viewCubeRect(v->width());
-    const double right = hud::shown(v->hudPanel(), "viewCube") ? cube.left() - 8.0 : cube.right();
-    return v->mapToGlobal(QPoint(int(right), int(cube.top())));
-}
-
 void pushCard(Card c)
 {
     State& st = state();
@@ -1148,11 +1126,9 @@ void onTick()
         changed = true;
     }
     auto [context, contextIcon] = presenterShows("context") ? currentTool() : std::pair<QString, QString>();
-    const QPoint anchor = context.isEmpty() ? QPoint() : contextAnchor();
-    changed |= context != st.context || contextIcon != st.contextIcon || anchor != st.contextAnchor;
+    changed |= context != st.context || contextIcon != st.contextIcon;
     st.context = std::move(context);
     st.contextIcon = std::move(contextIcon);
-    st.contextAnchor = anchor;
     const double seconds = presenterDuration();
     while (!st.cards.empty() && fadeFor(st.cards.front().at, seconds) <= 0.0)
     {
@@ -1225,7 +1201,7 @@ void askCaption()
     });
     popup->adjustSize();
     const QRect m = mainRect();
-    popup->move(m.x() + (m.width() - popup->width()) / 2, m.y() + int(m.height() * 0.14));
+    popup->move(m.x() + (m.width() - popup->width()) / 2, m.y() + int(m.height() * 0.16));
     popup->show();
     edit->setFocus();
 }
