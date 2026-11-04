@@ -410,8 +410,11 @@ public:
             hide();
             return;
         }
+        // A block being dragged stays where the mouse has it until the drop stores its place.
+        if (!mDragOffset.isNull())
+            return;
         const double s = scale();
-        QSize size = contentSize(s, !content).grownBy(QMargins(0, editBand(), 0, 0));
+        QSize size = contentSize(s, showsPlaceholder()).grownBy(QMargins(0, editBand(), 0, 0));
         size = size.expandedTo(QSize(40, 20));
         const QPoint pos = place(size);
         if (geometry() != QRect(pos, size))
@@ -447,11 +450,14 @@ protected:
 
     int editBand() const { return state().editing ? 18 : 0; }
 
+    /** Sample content while the layout is edited, so a block keeps its size as it is dragged. */
+    bool showsPlaceholder() const { return state().editing || !hasContent(); }
+
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const bool placeholder = !hasContent();
+        const bool placeholder = showsPlaceholder();
         if (state().editing)
         {
             p.setPen(QPen(kPresenterCapLit, 1.0, Qt::DashLine));
