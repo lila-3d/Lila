@@ -50,6 +50,10 @@ struct SculptSettings
     bool wireframe = false;
     /** How strongly the wireframe draws over the surface, 0.05 to 1. */
     double wireOpacity = 1.0;
+    /** The sculpt surface draws at opacity, so what is behind it (an image plane) shows through. */
+    bool seeThrough = false;
+    /** The surface's opacity while seeThrough is on, 0 to 1 (0 leaves the wireframe alone). */
+    double opacity = 0.35;
     /** A sculptMaterials() id. */
     std::string material = "clay";
     std::string proxyMode = "subdivide";
@@ -96,6 +100,7 @@ LILA_UI_API std::vector<std::pair<std::string, std::string>> sculptMaterials();
  *   F or B held + drag   brush radius (F tapped still frames the selection)
  *   M or Shift+F + drag  brush strength (or B held + RMB drag)
  *   Shift+F tapped       the sculpt mesh's wireframe on or off
+ *   Alt+X                see-through on or off
  *   Shift+V              preview the low poly Exit would leave (Preview Low Poly)
  *   [ ]                  radius smaller / larger
  *   Esc                  leaves the tool; the session stays open until Exit Sculpt

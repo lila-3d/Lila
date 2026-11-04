@@ -208,7 +208,7 @@ void MainWindow::buildMenus()
                                   "viewport.vertexColors.unlit", "viewport.toggleBackfaceCulling"});
 
     menu("Sculpt", "Sculpt", Area::MenuBar, {}, "", modeling);
-    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.previewLowPoly", "sculpt.duplicateLowPoly", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Levels",
+    menus::addActions("Sculpt", {"#Sculpt", "sculpt.tool", "sculpt.enter", "sculpt.previewLowPoly", "sculpt.toggleSeeThrough","sculpt.duplicateLowPoly", "sculpt.exit", "sculpt.cancel", "window.sculpt", "#Levels",
                                  "sculpt.levelUp", "sculpt.levelDown", "sculpt.addLevel", "sculpt.deleteHigher", "#Shape",
                                  "mesh.relaxKeepForm", "mesh.reproject", "mesh.transferShape"});
 

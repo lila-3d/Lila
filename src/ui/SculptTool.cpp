@@ -78,6 +78,8 @@ SculptSettings loadSettings()
     s.shareStroke = p.value<bool>("general", "/sculpt/shareStroke", s.shareStroke);
     s.wireframe = p.value<bool>("general", "/sculpt/wireframe", s.wireframe);
     s.wireOpacity = std::clamp(p.value<double>("general", "/sculpt/wireOpacity", s.wireOpacity), 0.05, 1.0);
+    s.seeThrough = p.value<bool>("general", "/sculpt/seeThrough", s.seeThrough);
+    s.opacity = std::clamp(p.value<double>("general", "/sculpt/opacity", s.opacity), 0.0, 1.0);
     s.material = p.value<std::string>("general", "/sculpt/material", s.material);
     if (json per = p.value("general", "/sculpt/perBrush"); per.is_object())
         for (auto& [name, j] : per.items())
@@ -284,6 +286,13 @@ public:
         {
             if (!e.isAutoRepeat())
                 QTimer::singleShot(0, [] { actions::run(json("sculpt.previewLowPoly")); });
+            return true;
+        }
+        if (e.key() == Qt::Key_X && e.type() == QEvent::KeyPress && sculpt::active() &&
+            (e.modifiers() & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier)) == Qt::AltModifier)
+        {
+            if (!e.isAutoRepeat())
+                QTimer::singleShot(0, [] { actions::run(json("sculpt.toggleSeeThrough")); });
             return true;
         }
         auto s = sculpt::active();
@@ -596,12 +605,24 @@ public:
                 }
             return;
         }
+        const render::MeshDraw* replaced = nullptr;
+        for (const render::MeshDraw& m : s.meshes)
+            if (isShown(m))
+            {
+                replaced = &m;
+                break;
+            }
+        const bool wireframeView = replaced && !(replaced->flags & render::DrawShaded);
+        const uint32_t wireFlags = render::DrawWire | render::DrawSelected | render::DrawSelectedOther | render::DrawPreselect | render::DrawUnderSelected;
+        const uint32_t viewWire = replaced ? replaced->flags & wireFlags : 0u;
+        const glm::vec4 viewWireColor = replaced ? replaced->wireColor : glm::vec4(0.0f);
         std::erase_if(s.meshes.edit(), isShown);
 
+        const SculptSettings& st = sculptSettings();
         render::MeshDraw d;
         d.mesh = session->sculpt.renderMesh();
         d.world = glm::mat4(world);
-        const render::Material& mat = sculptMaterial(sculptSettings().material);
+        const render::Material& mat = sculptMaterial(st.material);
         d.materials = {mat};
         d.baseColor = mat.baseColor;
         d.roughness = mat.roughness;
@@ -609,13 +630,26 @@ public:
         if (!session->sculpt.colors().empty())
         {
             d.vertexColors = render::VertexColorMode::Shaded;
-            if (sculptSettings().material == "clay")
+            if (st.material == "clay")
                 d.materials[0].baseColor = d.baseColor = glm::vec3(0.8f);
         }
-        if (sculptSettings().wireframe)
+        // The sculpt mesh has no line list (strokes would leave it stale), so a wireframe view draws it as a clear surface
+        // with the wire in its shader.
+        const float opacity = wireframeView ? 0.0f : st.seeThrough ? float(std::clamp(st.opacity, 0.0, 1.0)) : 1.0f;
+        if (opacity < 1.0f)
+        {
+            d.materials[0].flags |= render::MatTranslucent;
+            d.materials[0].opacity = opacity;
+        }
+        if (wireframeView)
+        {
+            d.flags |= viewWire | render::DrawWire;
+            d.wireColor = viewWireColor;
+        }
+        else if (st.wireframe)
         {
             d.flags |= render::DrawWire;
-            d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, float(std::clamp(sculptSettings().wireOpacity, 0.05, 1.0)));
+            d.wireColor = glm::vec4(0.06f, 0.06f, 0.06f, float(std::clamp(st.wireOpacity, 0.05, 1.0)));
         }
         s.meshes.push_back(std::move(d));
 
@@ -805,6 +839,8 @@ void sculptSettingsChanged()
     p.set("general", "/sculpt/shareStroke", s.shareStroke);
     p.set("general", "/sculpt/wireframe", s.wireframe);
     p.set("general", "/sculpt/wireOpacity", s.wireOpacity);
+    p.set("general", "/sculpt/seeThrough", s.seeThrough);
+    p.set("general", "/sculpt/opacity", s.opacity);
     p.set("general", "/sculpt/material", s.material);
     json per = json::object();
     for (const auto& [name, b] : s.perBrush)

@@ -79,6 +79,8 @@ private:
     QCheckBox* mShareStroke = nullptr;
     QCheckBox* mWireframe = nullptr;
     QSlider* mWireOpacity = nullptr;
+    QCheckBox* mSeeThrough = nullptr;
+    QSlider* mOpacity = nullptr;
     QComboBox* mMaterial = nullptr;
     QComboBox* mFalloff = nullptr;
     QDoubleSpinBox* mRadius = nullptr;

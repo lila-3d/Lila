@@ -348,6 +348,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"sculpt.exit", "door-exit"},
     {"sculpt.duplicateLowPoly", "copy"},
     {"sculpt.previewLowPoly", "eye"},
+    {"sculpt.toggleSeeThrough", "ghost"},
     {"sculpt.levelUp", "chevron-up"},
     {"sculpt.levelDown", "chevron-down"},
     {"sculpt.addLevel", "square-plus"},

@@ -24,6 +24,7 @@
 #include "ui/SpinScrub.h"
 #include "ui/UiCommon.h"
 #include "ui/ViewportTool.h"
+#include "ui/ViewportToast.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -154,7 +155,7 @@ QDockWidget* sculptDock(bool create)
         mw->tabifyDockWidget(toolkit, dock);
     // Wide enough for five brush columns with their labels and the session rows. Set as the tab extent too, or picking
     // the tab in a narrower group keeps the group's width.
-    const int width = std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 84);
+    const int width = std::max(dock->sizeHint().width(), dock->fontMetrics().averageCharWidth() * 88);
     dock->setProperty(kDefaultTabExtent, width);
     mw->resizeDocks({dock}, {width}, Qt::Horizontal);
     return dock;
@@ -466,6 +467,14 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     mWireOpacity->setRange(5, 100);
     mWireOpacity->setToolTip("How strongly the wireframe draws over the sculpt");
     dform->addRow("Wire Opacity", mWireOpacity);
+    mSeeThrough = new QCheckBox("See-through", displayBox);
+    mSeeThrough->setToolTip("Image planes behind the sculpt show through (Alt+X in the viewport)");
+    setCheckDefault(mSeeThrough, SculptSettings{}.seeThrough);
+    dform->addRow(mSeeThrough);
+    mOpacity = new QSlider(Qt::Horizontal, displayBox);
+    mOpacity->setRange(0, 100);
+    mOpacity->setToolTip("The sculpt surface's opacity while see-through");
+    dform->addRow("Opacity", mOpacity);
     col->addWidget(displayBox);
 
     // Polypaint
@@ -543,6 +552,8 @@ SculptPanel::SculptPanel(QWidget* parent) : QWidget(parent)
     connect(mShareStroke, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().shareStroke = on; changed(); });
     connect(mWireframe, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().wireframe = on; changed(); });
     connect(mWireOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().wireOpacity = v / 100.0; changed(); });
+    connect(mSeeThrough, &QCheckBox::toggled, this, [changed](bool on) { sculptSettings().seeThrough = on; changed(); });
+    connect(mOpacity, &QSlider::valueChanged, this, [changed](int v) { sculptSettings().opacity = v / 100.0; changed(); });
     connect(mMaterial, &QComboBox::currentIndexChanged, this, [this, changed](int) {
         sculptSettings().material = mMaterial->currentData().toString().toStdString();
         changed();
@@ -805,13 +816,16 @@ void SculptPanel::syncFromSettings()
     const SculptSettings& s = sculptSettings();
     QSignalBlocker b1(mRadius), b2(mStrength), b3(mSpacing), b4(mFalloff), b5(mFrontFaces), b6(mShowCage), b7(mMode), b8(mLevels),
         b9(mResolution), b10(mExitMethod), b11(mHighPoly), b19(mHighLevel), b20(mSymmetryLine), b21(mLowLevel), b12(mPaint), b13(mShareRadius), b14(mShareStrength), b15(mShareStroke),
-        b16(mWireframe), b17(mMaterial), b18(mWireOpacity);
+        b16(mWireframe), b17(mMaterial), b18(mWireOpacity), b22(mSeeThrough), b23(mOpacity);
     mShareRadius->setChecked(s.shareRadius);
     mShareStrength->setChecked(s.shareStrength);
     mShareStroke->setChecked(s.shareStroke);
     mWireframe->setChecked(s.wireframe);
     mWireOpacity->setValue(int(std::lround(s.wireOpacity * 100.0)));
     mWireOpacity->setEnabled(s.wireframe);
+    mSeeThrough->setChecked(s.seeThrough);
+    mOpacity->setValue(int(std::lround(s.opacity * 100.0)));
+    mOpacity->setEnabled(s.seeThrough);
     mMaterial->setCurrentIndex(std::max(0, mMaterial->findData(QString::fromStdString(s.material))));
     int checked = int(s.brush);
     if (auto preset = std::ranges::find(mPresets, s.preset); !s.preset.empty() && preset != mPresets.end())
@@ -1027,6 +1041,19 @@ void registerSculptUi()
                   .doc = "Show the mesh as Exit Sculpt would leave it, with the Low poly choice, isolated in the view; again to sculpt on (Shift+V while sculpting).",
                   .python = "lila.ui.run_action(\"sculpt.previewLowPoly\")",
                   .checked = [] { return sculptPreviewing(); }});
+    actions::add({.id = "sculpt.toggleSeeThrough",
+                  .label = "See-Through Sculpt",
+                  .category = "Sculpt",
+                  .run =
+                      [] {
+                          bool& on = sculptSettings().seeThrough;
+                          on = !on;
+                          sculptSettingsChanged();
+                          viewportToast::showActive(on ? "See-through on" : "See-through off", 1000);
+                      },
+                  .doc = "Draw the sculpt at the Display opacity so image planes behind it show through (Alt+X while sculpting).",
+                  .python = "lila.ui.run_action(\"sculpt.toggleSeeThrough\")",
+                  .checked = [] { return sculptSettings().seeThrough; }});
     actions::add({.id = "sculpt.duplicateLowPoly",
                   .label = "Duplicate Low Poly",
                   .category = "Sculpt",

@@ -1118,6 +1118,8 @@ float4 meshWirePS(VSOut i, bool front : SV_IsFrontFace, float3 bary : SV_Barycen
         d = min(d, px.y);
     const float cover = saturate(0.5 * pc.wireWidth + 0.5 - d);
     c.rgb = lerp(c.rgb, fromDisplay(wire.rgb, pc.gamma), cover * wire.a);
+    // The wire stays solid over a translucent surface, down to a fully clear one.
+    c.a = lerp(c.a, 1.0, cover * wire.a);
     return c;
 }
 #endif

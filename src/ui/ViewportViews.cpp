@@ -531,6 +531,8 @@ nlohmann::json ViewportWidget::inspect(const std::optional<QRectF>& pick)
                 ++flags[name];
         if (!d.materials.empty())
             ++flags["textured"];
+        if (std::ranges::any_of(d.materials, [](const render::Material& m) { return (m.flags & render::MatTranslucent) && m.opacity < 1.0f; }))
+            ++flags["translucent"];
     }
     out["size"] = {width(), height()};
     out["draws"] = {{"count", s.meshes.size()}, {"placements", placements}, {"nodes", nodes.size()}, {"flags", flags}};
