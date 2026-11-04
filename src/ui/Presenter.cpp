@@ -80,11 +80,15 @@ struct BlockDef
     const char* element;
 };
 
+/**
+ * Default places keep clear of video subtitles: the bottom 20% of the frame (burned-in caption bars, YouTube captions
+ * and its player controls) and the top caption slot, so keys and actions stack up from 80% and the caption starts at 14%.
+ */
 constexpr BlockDef kPresenterBlocks[] = {
-    {"keys", "Keys", 0.5, 0.95, 0.5, 1.0, "keys"},
-    {"actions", "Actions", 0.5, 0.87, 0.5, 1.0, "actions"},
+    {"keys", "Keys", 0.5, 0.80, 0.5, 1.0, "keys"},
+    {"actions", "Actions", 0.5, 0.755, 0.5, 1.0, "actions"},
     {"context", "Tool", 0.98, 0.08, 1.0, 0.0, "context"},
-    {"caption", "Caption", 0.5, 0.12, 0.5, 0.0, "caption"},
+    {"caption", "Caption", 0.5, 0.14, 0.5, 0.0, "caption"},
 };
 
 struct Card
@@ -1215,7 +1219,7 @@ void askCaption()
     });
     popup->adjustSize();
     const QRect m = mainRect();
-    popup->move(m.x() + (m.width() - popup->width()) / 2, m.y() + int(m.height() * 0.12));
+    popup->move(m.x() + (m.width() - popup->width()) / 2, m.y() + int(m.height() * 0.14));
     popup->show();
     edit->setFocus();
 }
