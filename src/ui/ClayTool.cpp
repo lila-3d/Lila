@@ -10,6 +10,7 @@
 #include "scene/Transform.h"
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
+#include "ui/DrawOverrides.h"
 #include "ui/Icons.h"
 #include "ui/Panels.h"
 #include "ui/Tools.h"
@@ -1294,6 +1295,9 @@ void registerClayTool()
     viewportHooks::setClickHook("lila.clayRings", pressRings);
     viewportHooks::addDrawer("lila.clayShapes", drawShapes);
     viewportHooks::addPicker("lila.clayShapes", pickShapes);
+    // Shapes are locators underneath, but their outlines and the clay surface stand in for the locator cross.
+    if (!drawOverrides::registry().find("lila.clayPrimitive"))
+        drawOverrides::add({.id = "lila.clayPrimitive", .nodeType = "clayPrimitive", .draw = [](drawOverrides::DrawContext&) {}});
     panels::add({.id = kPaletteId,
                  .title = "Clay",
                  .create = [](QWidget* parent) -> QWidget* { return gPalette = new ClayPalette(parent); },
