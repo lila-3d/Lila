@@ -1,5 +1,5 @@
 // Throwaway harness: builds the hotkey editor, cheat sheet, capture dialog and marking menu editor, drives them a
-// little and grabs PNGs. Usage (with LILA_CONFIG_DIR pointing at a temp dir): lila_hk_demo <outdir>
+// little and grabs PNGs. Usage: lila_hk_demo <outdir>
 
 #include "ops/Command.h"
 #include "core/MainQueue.h"
@@ -28,6 +28,8 @@
 #include <QTimer>
 #include <QTreeWidget>
 
+#include <cstdlib>
+#include <filesystem>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -66,6 +68,14 @@ std::string readFile(const std::filesystem::path& p)
 int main(int argc, char** argv)
 {
     gOut = argc > 1 ? argv[1] : ".";
+    // Keep the demo out of the real user prefs.
+    auto cfg = std::filesystem::temp_directory_path() / "lila_hk_demo";
+    std::filesystem::create_directories(cfg);
+#ifdef _WIN32
+    _putenv_s("LILA_CONFIG_DIR", cfg.string().c_str());
+#else
+    setenv("LILA_CONFIG_DIR", cfg.string().c_str(), 1);
+#endif
     mainq::init();
     PrefStore::get().start();
     ops::registerBuiltins();

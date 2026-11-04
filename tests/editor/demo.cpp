@@ -27,6 +27,8 @@
 #include <QTimer>
 #include <QToolTip>
 
+#include <cstdlib>
+#include <filesystem>
 #include <cstdio>
 #include <functional>
 
@@ -90,6 +92,14 @@ void save(QWidget* w, const QString& path)
 int main(int argc, char** argv)
 {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    // Keep the demo out of the real user prefs.
+    auto cfg = std::filesystem::temp_directory_path() / "lila_editor_demo";
+    std::filesystem::create_directories(cfg);
+#ifdef _WIN32
+    _putenv_s("LILA_CONFIG_DIR", cfg.string().c_str());
+#else
+    setenv("LILA_CONFIG_DIR", cfg.string().c_str(), 1);
+#endif
     mainq::init();
     PrefStore::get().start();
     ops::registerBuiltins();

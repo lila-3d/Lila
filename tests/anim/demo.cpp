@@ -1,5 +1,5 @@
 // Throwaway harness: builds the time slider, graph editor and channel box over a keyed scene and grabs PNGs.
-// Usage (with LILA_CONFIG_DIR pointing at a temp dir): lila_anim_demo <outdir>
+// Usage: lila_anim_demo <outdir>
 
 #include "TestUtil.h"
 #include "ops/Command.h"
@@ -21,6 +21,8 @@
 #include <QKeySequence>
 #include <QMouseEvent>
 
+#include <cstdlib>
+#include <filesystem>
 #include <cstdio>
 
 using namespace lila;
@@ -56,6 +58,14 @@ void mouse(QWidget* w, QEvent::Type type, QPointF at, Qt::MouseButton button, Qt
 int main(int argc, char** argv)
 {
     gOut = argc > 1 ? argv[1] : ".";
+    // Keep the demo out of the real user prefs.
+    auto cfg = std::filesystem::temp_directory_path() / "lila_anim_demo";
+    std::filesystem::create_directories(cfg);
+#ifdef _WIN32
+    _putenv_s("LILA_CONFIG_DIR", cfg.string().c_str());
+#else
+    setenv("LILA_CONFIG_DIR", cfg.string().c_str(), 1);
+#endif
     mainq::init();
     PrefStore::get().start();
     ops::registerBuiltins();
