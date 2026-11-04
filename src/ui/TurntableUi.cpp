@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace lila::ui
 {
@@ -64,14 +65,20 @@ struct TurntableUiState
     glm::dvec3 pitchAxis{1.0, 0.0, 0.0}, pitchCentre{0.0};
     QPointF dragLast;
     bool dragSnap = false;
-    // On-view control buttons as last drawn, for clicks.
     struct Button
     {
         QRectF rect;
         int id = 0;
     };
-    std::vector<Button> buttons;
-    QSizeF buttonsView;
+    /** On-view controls as one viewport last drew them, for its clicks. */
+    struct Controls
+    {
+        QRectF bar;
+        std::vector<Button> buttons;
+        QSizeF view;
+    };
+    /** Keyed by the viewport's isolation set, the one per-viewport pointer a ViewInfo carries. */
+    std::map<const void*, Controls> controls;
 };
 
 TurntableUiState& turntableState()
@@ -279,7 +286,8 @@ void drawTurntableKeys(OverlayPainter& p, QPointF bottomLeft, float alpha)
 void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInfo& view)
 {
     TurntableUiState& s = turntableState();
-    s.buttons.clear();
+    TurntableUiState::Controls& c = s.controls[view.isolation];
+    c = {};
     if (!PrefStore::get().value<bool>("general", kControlsPref, true))
         return;
     tt::Turntable* t = activeTurntable();
@@ -299,6 +307,7 @@ void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInf
     const double w = 7 * (size + gap) + textW + 14.0;
     const QRectF bar(view.width * 0.5 - w * 0.5, view.height - size - 34.0, w, size + 8.0);
     p.rect(bar, {0.08f, 0.08f, 0.09f, float(0.72 * alpha)});
+    c.bar = bar;
     const glm::vec4 white(0.92f, 0.92f, 0.92f, float(alpha));
     const glm::vec4 accent(0.35f, 0.65f, 1.0f, float(alpha));
     double x = bar.left() + 4.0;
@@ -308,7 +317,7 @@ void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInf
     {
         const QRectF r(x, bar.top() + 4.0, size, size);
         p.icon(r.adjusted(4, 4, -4, -4), icon, id == kPlay && spinning ? accent : white);
-        s.buttons.push_back({r, id});
+        c.buttons.push_back({r, id});
         x += size + gap;
     }
     p.text(QPointF(x + 8.0, bar.center().y() + 5.0), info, white);
@@ -322,20 +331,21 @@ void drawTurntableControls(render::FrameState&, OverlayPainter& p, const ViewInf
     {
         const QRectF r(x, bar.top() + 4.0, size, size);
         p.icon(r.adjusted(4, 4, -4, -4), icon, on ? accent : off);
-        s.buttons.push_back({r, id});
+        c.buttons.push_back({r, id});
         x += size + gap;
     }
     if (generalPref(kKeysPref, false))
         drawTurntableKeys(p, QPointF(bar.left(), bar.top() - 10.0), float(alpha));
-    s.buttonsView = QSizeF(view.width, view.height);
+    c.view = QSizeF(view.width, view.height);
 }
 
 bool clickTurntableControls(QPointF px, const ViewInfo& view)
 {
     TurntableUiState& s = turntableState();
-    if (s.buttons.empty() || s.buttonsView != QSizeF(view.width, view.height))
+    auto it = s.controls.find(view.isolation);
+    if (it == s.controls.end() || it->second.view != QSizeF(view.width, view.height) || !it->second.bar.contains(px))
         return false;
-    for (const TurntableUiState::Button& b : s.buttons)
+    for (const TurntableUiState::Button& b : it->second.buttons)
         if (b.rect.contains(px))
         {
             Graph& g = Graph::current();
@@ -356,7 +366,9 @@ bool clickTurntableControls(QPointF px, const ViewInfo& view)
             turntableTouched();
             return true;
         }
-    return false;
+    // The bar between its buttons is still the bar, not the scene behind it.
+    turntableTouched();
+    return true;
 }
 
 // Alt+Shift+drag turns the active turntable by hand; Ctrl as well snaps to its stops.
