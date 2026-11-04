@@ -98,6 +98,28 @@ TEST_CASE("physics: pushing the first book topples the row like dominoes")
         CHECK(s.penetration(k) < 1.0);
 }
 
+TEST_CASE("physics: a dynamic mesh body shaken as kinematic goes back to dynamic; a static one can't go dynamic")
+{
+    physics::Settings st;
+    st.ground = true;
+    physics::RigidScene s(st);
+    auto cube = std::make_shared<std::vector<glm::dvec3>>();
+    const glm::dvec3 c[8] = {{-5, 0, -5}, {5, 0, -5}, {5, 10, -5}, {-5, 10, -5}, {-5, 0, 5}, {5, 0, 5}, {5, 10, 5}, {-5, 10, 5}};
+    for (const int f : {0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 3, 2, 6, 3, 6, 7, 0, 3, 7, 0, 7, 4, 1, 5, 6, 1, 6, 2})
+        cube->push_back(c[f]);
+    physics::BodyDesc m;
+    m.shape.kind = physics::Shape::Kind::Mesh;
+    m.shape.points = cube;
+    m.position = {0, 20, 0};
+    const int moving = s.add(m);
+    s.setRole(moving, physics::Role::Kinematic);
+    CHECK_NOTHROW(s.setRole(moving, physics::Role::Dynamic));
+    m.role = physics::Role::Static;
+    m.position = {40, 0, 0};
+    const int fixed = s.add(m);
+    CHECK_THROWS_AS(s.setRole(fixed, physics::Role::Dynamic), std::invalid_argument);
+}
+
 TEST_CASE("physics: a held body follows the hand and still collides")
 {
     physics::Settings st;

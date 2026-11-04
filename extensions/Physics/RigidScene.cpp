@@ -795,9 +795,11 @@ void RigidScene::setRole(int body, Role role)
     BodyDesc& d = w.descs[size_t(body)];
     if (d.role == role)
         return;
-    if (role == Role::Dynamic && (d.shape.kind == Shape::Kind::Mesh || d.shape.kind == Shape::Kind::Heightfield))
-        throw std::invalid_argument("a triangle mesh or heightfield body can't be dynamic");
     JPH::BodyInterface& bi = w.bi();
+    // A mesh body added as dynamic was built as its hull and may go dynamic again; one built as triangles can't.
+    const JPH::EShapeSubType built = bi.GetShape(id)->GetSubType();
+    if (role == Role::Dynamic && (built == JPH::EShapeSubType::Mesh || built == JPH::EShapeSubType::HeightField))
+        throw std::invalid_argument("a triangle mesh or heightfield body can't be dynamic");
     bi.SetObjectLayer(id, !d.collides ? layers::kNone : role == Role::Static ? layers::kStatic : layers::kMoving);
     bi.SetMotionType(id,
                      role == Role::Static      ? JPH::EMotionType::Static
