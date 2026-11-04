@@ -164,3 +164,103 @@ TEST_CASE("clay commands: clayJoints chains a stroke and weights the converted m
     CHECK(w[0]["weights"].value("Tail_3", 0.0) + w[0]["weights"].value("Tail_2", 0.0) > 0.9);
     CHECK(w[1]["weights"].value("Worm_root", 0.0) > 0.9);
 }
+
+TEST_CASE("clay commands: addClayLink joins two shapes and follows them as they move and resize")
+{
+    reset();
+    const json made = run("createClay", {{"name", "Chain"}, {"symmetry", "off"}});
+    const std::string object = made[0], mesh = made[1], body = made[3];
+    const std::string head = run("addClayPrimitive", {{"args", {object}}, {"radius", 5.0}, {"position", {60, 0, 0}}});
+    scene::Graph& g = scene::Graph::current();
+
+    // The widest the surface gets around a point on the axis, among vertices within 1 cm of it along that axis.
+    auto girth = [&](int axis, double at) {
+        double r = 0.0;
+        const scene::MeshPtr m = outMesh(mesh);
+        for (geo::Index p = 0; p < m->pointCapacity(); ++p)
+            if (m->pointValid(p) && std::abs(m->position(p)[axis] - at) < 1.0)
+                r = std::max(r, std::abs(m->position(p)[(axis + 2) % 3]));
+        return r;
+    };
+    CHECK(girth(0, 30.0) == 0.0);
+
+    const std::string link = run("addClayLink", {{"args", {body, head}}, {"thickness", 0.5}, {"blend", 0.0}});
+    REQUIRE(g.find(link));
+    CHECK(g.find(link)->type().name == "clayLink");
+    // Halfway, the cone's radius is halfway between 0.5 * 10 and 0.5 * 5.
+    CHECK(girth(0, 30.0) == doctest::Approx(3.75).epsilon(0.1));
+
+    run("setAttr", {{"args", {head + ".translate", 0, 60, 0}}});
+    CHECK(girth(0, 30.0) == 0.0);
+    CHECK(girth(1, 30.0) == doctest::Approx(3.75).epsilon(0.1));
+
+    run("setAttr", {{"args", {head + ".radius", 15.0}}});
+    CHECK(girth(1, 30.0) == doctest::Approx(6.25).epsilon(0.1));
+
+    run("setAttr", {{"args", {link + ".thickness", 1.0}}});
+    CHECK(girth(1, 30.0) == doctest::Approx(12.5).epsilon(0.1));
+
+    UndoStack::get().undo();
+    UndoStack::get().undo();
+    UndoStack::get().undo();
+    UndoStack::get().undo();
+    CHECK(g.find(link) == nullptr);
+    CHECK(girth(0, 30.0) == 0.0);
+
+    CHECK_THROWS(run("addClayLink", {{"args", {body, body}}}));
+    CHECK_THROWS(run("addClayLink", {{"args", {body, object}}}));
+}
+
+TEST_CASE("clay commands: duplicate copies shapes and links into the clay, links joining the copied ends")
+{
+    reset();
+    const json made = run("createClay", {{"name", "Hand"}, {"symmetry", "off"}});
+    const std::string object = made[0], palm = made[3];
+    const std::string knuckle = run("addClayPrimitive", {{"args", {object}}, {"radius", 3.0}, {"position", {0, 20, 0}}});
+    const std::string tip = run("addClayPrimitive", {{"args", {object}}, {"radius", 2.0}, {"position", {0, 30, 0}}});
+    const std::string toKnuckle = run("addClayLink", {{"args", {palm, knuckle}}, {"skipSelect", true}});
+    const std::string toTip = run("addClayLink", {{"args", {knuckle, tip}}, {"skipSelect", true}});
+    scene::Graph& g = scene::Graph::current();
+    g.evaluate();
+    const size_t items = g.elements({g.find(made[2])->id(), g.find(made[2])->type().attrIndex("items")}).size();
+
+    const json copies = run("duplicate", {{"args", {knuckle, tip, toKnuckle, toTip}}});
+    REQUIRE(copies.size() == 4);
+    CHECK(g.elements({g.find(made[2])->id(), g.find(made[2])->type().attrIndex("items")}).size() == items + 4);
+
+    auto endOf = [&](const std::string& link, const char* end) {
+        const scene::Node* n = g.find(link);
+        return g.node(g.source({n->id(), n->type().attrIndex(end), -1})->node)->path();
+    };
+    // The knuckle-to-tip copy joins the copied knuckle and tip; the palm link's copy still starts at the palm.
+    CHECK(endOf(copies[3], "start") == copies[0].get<std::string>());
+    CHECK(endOf(copies[3], "end") == copies[1].get<std::string>());
+    CHECK(endOf(copies[2], "start") == palm);
+    CHECK(endOf(copies[2], "end") == copies[0].get<std::string>());
+
+    // Moving the copied finger moves its links, leaving the first finger as it was.
+    run("move", {{"args", {copies[0], copies[1]}}, {"by", {15, 0, 0}}});
+    const scene::MeshPtr m = outMesh(made[1]);
+    CHECK(m->bounds().max.x > 15.0);
+    CHECK(m->bounds().min.x == doctest::Approx(-10.0).epsilon(0.05));
+}
+
+TEST_CASE("clay commands: a duplicated clay object meshes its own shapes")
+{
+    reset();
+    const json made = run("createClay", {{"name", "Blob"}, {"symmetry", "off"}});
+    const json copy = run("duplicate", {{"args", {made[0]}}});
+    REQUIRE(copy.size() == 1);
+    const std::string object = copy[0];
+    run("move", {{"args", {object}}, {"by", {100, 0, 0}}});
+    scene::Graph& g = scene::Graph::current();
+    std::string mesh;
+    for (scene::NodeId c : g.children(g.find(object)->id()))
+        if (g.node(c)->type().isA("mesh"))
+            mesh = g.node(c)->path();
+    REQUIRE(!mesh.empty());
+    const std::string shape = run("clayShapeAt", {{"args", {object}}, {"point", {100, 0, 0}}});
+    run("setAttr", {{"args", {shape + ".radius", 4.0}}});
+    CHECK(width(*outMesh(mesh)) == doctest::Approx(8.0).epsilon(0.05));
+    CHECK(width(*outMesh("|Blob|BlobSurface")) == doctest::Approx(20.0).epsilon(0.05));
+}

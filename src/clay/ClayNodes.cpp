@@ -3,6 +3,7 @@
 #include "core/Profile.h"
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "scene/Duplicate.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Skin.h"
@@ -90,6 +91,63 @@ public:
     }
 };
 
+/** The radius a link takes from a shape at one of its ends: what the shape shows, through its scale. */
+double linkEndSize(const Item& item)
+{
+    const Primitive& p = *item.shape;
+    const glm::dmat4& m = item.matrix;
+    const double scale = std::min({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
+    switch (p.shape)
+    {
+    case Shape::Ellipsoid:
+    case Shape::Box: return std::min({p.extents.x, p.extents.y, p.extents.z}) * scale;
+    case Shape::Torus: return p.endRadius * scale;
+    default: return p.radius * scale;
+    }
+}
+
+/** A round cone between two clay shapes' centres, recomputed whenever either end moves or resizes. */
+class LinkNode final : public Transform
+{
+public:
+    void compute(const EvalContext& ctx) override
+    {
+        Transform::compute(ctx);
+        const Item* a = itemIn("start");
+        const Item* b = itemIn("end");
+        DataPtr out;
+        if (a && b)
+        {
+            const glm::dvec3 from(a->matrix[3]), to(b->matrix[3]);
+            if (const double len = glm::length(to - from); len > 1e-9)
+            {
+                const double k = num(*this, "thickness");
+                Primitive capsule{.shape = Shape::Capsule,
+                                  .radius = k * linkEndSize(*a),
+                                  .endRadius = k * linkEndSize(*b),
+                                  .length = len,
+                                  .color = glm::vec3(vec(*this, "color"))};
+                Item item{.op = Op(std::clamp<int64_t>(choice(*this, "operation"), 0, 2)),
+                          .blend = num(*this, "blend"),
+                          .matrix = glm::translate(glm::dmat4(1.0), 0.5 * (from + to)) * glm::toMat4(glm::rotation(glm::dvec3(0, 1, 0), (to - from) / len)),
+                          .shape = capsule};
+                out = DataPtr(std::make_shared<ItemData>(std::move(item)));
+            }
+        }
+        setOutput(idx(*this, "outClay"), out);
+    }
+
+private:
+    const Item* itemIn(const char* attr) const
+    {
+        const DataPtr& d = as<DataPtr>(idx(*this, attr));
+        if (!d || std::string_view(d->kind()) != "clayItem")
+            return nullptr;
+        const Item& item = static_cast<const ItemData&>(*d).item;
+        return item.shape ? &item : nullptr;
+    }
+};
+
 /**
  * The clay tree a surface node has been fed. Every shape and group feeds the surface directly (a group fed by its own
  * children would be a cycle through their parent matrices), with world matrices and each one's depth below the object.
@@ -145,7 +203,7 @@ private:
 
 // ------------------------------------------------------------------------------------------------ commands
 
-bool isItem(const Node& n) { return n.type().isA("clayPrimitive") || n.type().isA("clayGroup"); }
+bool isItem(const Node& n) { return n.type().isA("clayPrimitive") || n.type().isA("clayGroup") || n.type().isA("clayLink"); }
 
 /** The mesh under a clay object that shows its surface. */
 Node* meshOf(Graph& g, const Node& object)
@@ -219,7 +277,11 @@ std::vector<Node*> targets(Graph& g, const Args& a, const char* cmd)
 {
     std::vector<Node*> out;
     for (const json& p : a.positional)
-        out.push_back(&named(g, p.get<std::string>(), cmd));
+        if (p.is_array())
+            for (const json& q : p)
+                out.push_back(&named(g, q.get<std::string>(), cmd));
+        else
+            out.push_back(&named(g, p.get<std::string>(), cmd));
     if (out.empty())
         for (NodeId id : g.selection())
             if (Node* n = g.node(id))
@@ -308,7 +370,7 @@ Node* addStroke(Graph& g, Node& parent, const std::vector<glm::dvec3>& points, d
     return group;
 }
 
-/** The shape of a clay object nearest p (world), deepest inside first; cuts count, so their carved surfaces pick them. */
+/** The shape or link of a clay object nearest p (world), deepest inside first; cuts count, so their carved surfaces pick them. */
 Node* shapeAt(Graph& g, NodeId object, const glm::dvec3& p)
 {
     g.evaluate();
@@ -320,7 +382,7 @@ Node* shapeAt(Graph& g, NodeId object, const glm::dvec3& p)
     {
         Node* n = g.node(id);
         const DataPtr d = n->as<DataPtr>(idx(*n, "outClay"));
-        if (!d || !n->type().isA("clayPrimitive"))
+        if (!d || !(n->type().isA("clayPrimitive") || n->type().isA("clayLink")))
             continue;
         const Item& item = static_cast<const ItemData&>(*d).item;
         const glm::dmat4& m = item.matrix;
@@ -441,6 +503,37 @@ Node& containerOf(Graph& g, Node& n, const char* cmd)
 }
 } // namespace
 
+/**
+ * After a duplicate: a copied link joins the copies of its ends where they were copied too, else the originals; a
+ * copied clay object's surface follows the copy; every clay object that gained shapes is rewired to them.
+ */
+static void fixCopies(Graph& g, const std::unordered_map<NodeId, NodeId>& copied)
+{
+    std::vector<NodeId> objects;
+    for (const auto& [from, to] : copied)
+    {
+        Node* n = g.node(to);
+        if (!n)
+            continue;
+        if (n->type().isA("clayLink"))
+            for (const char* end : {"start", "end"})
+                if (std::optional<PlugRef> src = g.source({from, idx(*n, end), -1}))
+                {
+                    const auto it = copied.find(src->node);
+                    const NodeId shape = it != copied.end() ? it->second : src->node;
+                    g.connect({shape, src->attr, -1}, {to, idx(*n, end), -1});
+                }
+        if (n->type().isA("clay"))
+            if (Node* surface = surfaceOfObject(g, *n); surface && surface != surfaceOfObject(g, *g.node(from)))
+                g.connect({to, Transform::kWorldMatrix, -1}, {surface->id(), idx(*surface, "objectMatrix"), -1});
+        if (isItem(*n) || n->type().isA("clay"))
+            if (Node* o = objectOfNode(g, to); o && std::ranges::find(objects, o->id()) == objects.end())
+                objects.push_back(o->id());
+    }
+    for (NodeId o : objects)
+        sync(g, o);
+}
+
 Node* surfaceOf(const Node& object) { return clay::surfaceOfObject(Graph::current(), object); }
 Node* objectOf(NodeId id) { return clay::objectOfNode(Graph::current(), id); }
 
@@ -490,6 +583,23 @@ void registerTypes()
     group.create = [] { return std::make_unique<GroupNode>(); };
     types::registerType(std::move(group));
 
+    NodeType link;
+    link.name = "clayLink";
+    link.icon = "link";
+    link.base = types::find("transform");
+    link.dag = true;
+    link.doc = "A round cone between two clay shapes' centres that follows them as they move and resize: each end's radius is "
+               "thickness times that shape's size.";
+    link.ownAttrs = joinAttrs();
+    link.ownAttrs.push_back(param("thickness", PlugType::Float, 0.6, "Each end's radius as a fraction of the shape it starts from.", {}, 0.0, 1.0));
+    link.ownAttrs.push_back(vec3("color", "RGB", glm::dvec3(1.0), "Linear colour, blended across joins into the clay color set.", AttrColor));
+    for (const char* end : {"start", "end"})
+        link.ownAttrs.push_back({.name = end, .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrHidden,
+                                 .doc = std::string("The shape at the link's ") + end + ", fed from its outClay."});
+    link.ownAttrs.push_back(outClay());
+    link.create = [] { return std::make_unique<LinkNode>(); };
+    types::registerType(std::move(link));
+
     NodeType surface;
     surface.name = "claySurface";
     surface.icon = "grid-dots";
@@ -514,6 +624,7 @@ void registerTypes()
     surface.create = [] { return std::make_unique<SurfaceNode>(); };
     types::registerType(std::move(surface));
     registerGnNodes();
+    duplicate::addFixup(fixCopies);
 }
 
 void registerCommands()
@@ -638,8 +749,44 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "addClayLink",
+        .doc = "Link two shapes of a clay object with a round cone between their centres, ZSphere style. The link follows the "
+               "shapes as they move and resize. Returns the link.",
+        .positionalDoc = "start shape, end shape",
+        .flags = {{"thickness", "th", T::Float, 0.6, "Each end's radius as a fraction of its shape's size.", {}, {}, 0.0},
+                  {"operation", "op", T::String, "add", "How the link joins the clay before it.", kOps},
+                  {"blend", "b", T::Float, nullptr, "Smooth join radius, cm.", {}, {}, 0.0},
+                  {"color", "c", T::Vec3, nullptr, "Linear colour."},
+                  {"name", "n", T::String, "ClayLink", "Name; made unique."},
+                  {"skipSelect", "ss", T::Bool, false, "Leave the selection as it is."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            std::vector<Node*> ends = targets(g, a, "addClayLink");
+            if (ends.size() != 2 || !ends[0]->type().isA("clayPrimitive") || !ends[1]->type().isA("clayPrimitive"))
+                throw CommandError("addClayLink: give two clay shapes");
+            if (ends[0] == ends[1])
+                throw CommandError("addClayLink: the shapes must differ");
+            Node* object = objectOfNode(g, ends[0]->id());
+            if (!object || objectOfNode(g, ends[1]->id()) != object)
+                throw CommandError("addClayLink: the shapes must be in the same clay object");
+            Node& parent = containerOf(g, *ends[0], "addClayLink");
+            Node* link = g.createNode(*types::find("clayLink"), a.get<std::string>("name", "ClayLink"), parent.id(), true);
+            setAttrs(g, *link, a, "addClayLink");
+            if (a.has("color"))
+                g.setValue({link->id(), idx(*link, "color"), -1}, vecFlag(a, "color"));
+            g.connect({ends[0]->id(), idx(*ends[0], "outClay"), -1}, {link->id(), idx(*link, "start"), -1});
+            g.connect({ends[1]->id(), idx(*ends[1], "outClay"), -1}, {link->id(), idx(*link, "end"), -1});
+            sync(g, object->id());
+            if (!a.get<bool>("skipSelect", false))
+                g.select({link->id()});
+            return link->path();
+        },
+        .examples = {"addClayLink([\"Body\", \"Head\"], thickness=0.5)"},
+    });
+
+    ops::registerCommand({
         .name = "clayShapeAt",
-        .doc = "The clay shape of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts "
+        .doc = "The clay shape or link of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts "
                "count. Returns its path, or None for an object without shapes.",
         .positionalDoc = "clay object or anything in it",
         .flags = {{"point", "p", T::Vec3, nullptr, "World point."}},
