@@ -898,6 +898,7 @@ private:
 QWidget* makePatternEditor(QWidget* parent)
 {
     auto* w = new QWidget(parent);
+    w->setMinimumWidth(460);
     auto* col = new QVBoxLayout(w);
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(0);
@@ -923,6 +924,8 @@ QWidget* makePatternEditor(QWidget* parent)
     QToolButton* autoSew = button("Auto-Sew", "Sew the unsewn edges that meet where the panels are placed, with lengths that match.", false);
     QToolButton* fit = button("Fit", "Frame every panel (F).", false);
     auto* title = new QLabel(w);
+    // The garment name never widens the panel; the toolbar sets its floor.
+    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     bar->addSpacing(12);
     bar->addWidget(title, 1);
     col->addLayout(bar);
