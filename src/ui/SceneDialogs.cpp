@@ -16,6 +16,7 @@
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
 #include "ui/Icons.h"
+#include "ui/IssueReport.h"
 #include "ui/Telemetry.h"
 #include "ui/Theme.h"
 #include "ui/WelcomeNews.h"
@@ -33,6 +34,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QListWidget>
+#include <QMainWindow>
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
@@ -418,13 +420,27 @@ RecoveryDialog::RecoveryDialog(const std::vector<io::recovery::Candidate>& candi
         auto* folder = new QPushButton("Open Crash Folder", this);
         auto* copy = new QPushButton("Copy Crash Report", this);
         copy->setToolTip("Everything a developer needs to see what crashed, ready to paste into a bug report or a chat");
+        auto* report = new QPushButton("Report Crash...", this);
+        report->setToolTip("Sends this crash to the Lila issue tracker, with its report attached privately");
         auto* copied = new QLabel(this);
+        row->addWidget(report);
         row->addWidget(open);
         row->addWidget(folder);
         row->addWidget(copy);
         row->addWidget(copied);
         row->addStretch(1);
         layout->addLayout(row);
+        auto* queued = new QLabel("The report opens when you close this.", this);
+        queued->hide();
+        layout->addWidget(queued);
+        connect(report, &QPushButton::clicked, this, [this, crashReport, report, queued] {
+            auto* window = qobject_cast<QMainWindow*>(parentWidget());
+            if (!window)
+                return;
+            issueReport::showCrash(window, crashReport);
+            report->setEnabled(false);
+            queued->show();
+        });
         connect(open, &QPushButton::clicked, this, [crashReport] { openCrashReport(crashReport); });
         connect(folder, &QPushButton::clicked, this, [crashReport] { openCrashFolder(crashReport); });
         connect(copy, &QPushButton::clicked, this, [crashReport, copied] {

@@ -138,7 +138,7 @@ bool sceneAllowed()
 }
 } // namespace
 
-bool writeBundle(const fs::path& zipFile, bool includeScene, std::string* error)
+bool writeBundle(const fs::path& zipFile, bool includeScene, std::string* error, const fs::path& crashDir)
 {
     auto fail = [&](const std::string& what) {
         if (error)
@@ -157,7 +157,11 @@ bool writeBundle(const fs::path& zipFile, bool includeScene, std::string* error)
     zip.add("session.txt", crash::liveReport());
 
     std::vector<fs::path> reports = crash::reports();
-    for (size_t i = 0; i < reports.size() && i < kCrashReports; ++i)
+    if (reports.size() > kCrashReports)
+        reports.resize(kCrashReports);
+    if (!crashDir.empty() && std::find(reports.begin(), reports.end(), crashDir) == reports.end())
+        reports.push_back(crashDir);
+    for (size_t i = 0; i < reports.size(); ++i)
     {
         const std::string dir = "crashes/" + zipName(reports[i].filename()) + "/";
         for (const char* file : {"report.txt", "minidump.dmp"})

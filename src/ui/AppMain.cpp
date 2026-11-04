@@ -44,6 +44,7 @@
 #include "ui/TargetWeldTool.h"
 #include "ui/TearOff.h"
 #include "ui/Telemetry.h"
+#include "ui/IssueReport.h"
 #include "ui/Updater.h"
 #include "ui/CurveUi.h"
 #include "ui/ClayUi.h"
@@ -306,6 +307,7 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
                 io::fileTypes::applyPrefs();
         });
         updater::startAutoCheck(&window);
+        issueReport::startup(&window);
         rc = app.exec();
         // Tearing the window down resizes and hides viewports, and a swapchain rebuilt for one of those crashes some drivers.
         render::Renderer::get().removeAllViewports();

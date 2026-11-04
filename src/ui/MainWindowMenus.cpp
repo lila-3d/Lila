@@ -364,9 +364,12 @@ void MainWindow::buildMenus()
                            "window.markingMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
-    menus::addActions("Help", {"help.docs"});
+    menus::addActions("Help", {"#Learn", "help.docs"});
     addSubmenu("Help", "Docs Topics", [](QMenu* m) { docs::attachTopicsMenu(m); });
-    menus::addActions("Help", {"help.updateDocs", "", "window.searchMenus", "window.searchScene", "window.searchTearOffs", "", "help.agentSetup", "help.prefsFolder", "help.crashReports", "help.copyLastCrash", "help.supportBundle", "help.perfTrace", "help.telemetry", "help.checkUpdates", "help.hotkeyCheatSheet", "", "help.licenses", "help.credits", "help.about"});
+    menus::addActions("Help", {"help.hotkeyCheatSheet", "help.updateDocs", "#Search", "window.searchMenus", "window.searchScene", "window.searchTearOffs",
+                               "#Problems", "help.reportIssue", "help.myReports", "help.perfTrace", "help.supportBundle", "help.copyLastCrash",
+                               "help.crashReports", "#Setup", "help.agentSetup", "help.telemetry", "help.checkUpdates", "help.prefsFolder", "",
+                               "help.licenses", "help.credits", "help.about"});
 
     buildPanelMenus();
 

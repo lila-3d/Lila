@@ -17,6 +17,8 @@ namespace lila::ui::support
 /** Studios set this false (and lock it) to keep scenes out of bundles. */
 inline constexpr const char* kAllowScenePref = "/support/allowScene";
 
-LILA_UI_API bool writeBundle(const std::filesystem::path& zip, bool includeScene, std::string* error = nullptr);
+/** `crashDir` is a crash folder to include even when it is older than the newest few. */
+LILA_UI_API bool writeBundle(const std::filesystem::path& zip, bool includeScene, std::string* error = nullptr,
+                             const std::filesystem::path& crashDir = {});
 LILA_UI_API void showDialog(QWidget* parent);
 } // namespace lila::ui::support

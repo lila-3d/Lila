@@ -8,6 +8,7 @@
 #include "ui/ReferenceOverlay.h"
 #include "ui/ReferenceSet.h"
 #include "ui/ReferenceWindow.h"
+#include "ui/IssueReport.h"
 #include "ui/SupportBundle.h"
 #include "ui/Updater.h"
 #include "ui/ViewportToast.h"
@@ -377,6 +378,10 @@ void MainWindow::registerActions()
                   }, nullptr, "Puts the newest crash report on the clipboard, ready to paste into a bug report."});
     actions::add({"help.checkUpdates", "Check for Updates...", "Help", [this] { updater::checkNow(this); }, nullptr,
                   "Looks for a newer Lila and offers to install it when Lila closes."});
+    actions::add({"help.reportIssue", "Report Issue...", "Help", [this] { issueReport::showDialog(this); }, nullptr,
+                  "Sends a bug report or request to the Lila issue tracker, with your support bundle attached privately."});
+    actions::add({"help.myReports", "My Reports...", "Help", [this] { issueReport::showMyReports(this); }, nullptr,
+                  "Reports sent from this machine, their status and replies."});
     actions::add({"help.supportBundle", "Save Support Bundle...", "Help", [this] { support::showDialog(this); }, nullptr,
                   "Saves a zip with your system, this session's log, recent crash reports and prefs, to attach to a bug report."});
     perfTrace::registerAll(this);
