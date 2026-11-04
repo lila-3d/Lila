@@ -10429,11 +10429,12 @@ def viewPlace(*objects: Any, eye: Sequence[float] | None = None, lookAt: Sequenc
         orthographicWidth: Width of an orthographic view, cm. Short form ow.
     """
 
-def viewportInspect(pick: Sequence[Any] | None = None) -> Any:
+def viewportInspect(pick: Sequence[Any] | None = None, path: str | None = None, *, p: str | None = None) -> Any:
     """What the active viewport draws and counts now: {hud: {scene, objects, components, uniqueTris, uniqueObjectTris}, size: [width, height], draws: {count, placements, nodes, flags}, picked}. picked, with pick, is what a click (two equal corners) or marquee there would select. For checking the view in tests and scripts.
 
     Args:
         pick: Widget pixels: [x, y] for a click, or [x0, y0, x1, y1] for a marquee.
+        path: Also render the view's live frame (tools and their drawing included) offscreen to this PNG. Short form p.
     """
 
 def viewportStats() -> Any:

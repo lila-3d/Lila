@@ -73,6 +73,8 @@ public:
      * with pick (widget pixels, a click when both corners match), what a click or marquee there would select.
      */
     nlohmann::json inspect(const std::optional<QRectF>& pick);
+    /** The frame the view draws now, tools and their drawers included (overlay text and HUD aside). */
+    render::FrameState liveFrame() { return buildFrame(nullptr); }
     void requestFrame();
     void frameSelection(bool all);
     /**

@@ -666,12 +666,24 @@ void registerCommands()
         .doc = "What the active viewport draws and counts now: {hud: {scene, objects, components, uniqueTris, uniqueObjectTris}, size: [width, height], draws: "
                "{count, placements, nodes, flags}, picked}. picked, with pick, is what a click (two equal corners) or marquee there "
                "would select. For checking the view in tests and scripts.",
-        .flags = {{"pick", "", T::List, nullptr, "Widget pixels: [x, y] for a click, or [x0, y0, x1, y1] for a marquee."}},
+        .flags = {{"pick", "", T::List, nullptr, "Widget pixels: [x, y] for a click, or [x0, y0, x1, y1] for a marquee."},
+                  {"path", "p", T::String, nullptr, "Also render the view's live frame (tools and their drawing included) offscreen to this PNG."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             ViewportWidget* vp = activeViewport();
             if (!vp)
                 throw CommandError("viewportInspect: no viewport");
+            if (a.has("path"))
+            {
+                const int w = std::max(vp->width(), 64), h = std::max(vp->height(), 64);
+                std::vector<uint8_t> bgra;
+                std::string err;
+                if (!render::Renderer::get().renderOffscreen(vp->liveFrame(), w, h, bgra, &err))
+                    throw CommandError("viewportInspect: render failed: " + err);
+                QImage img(bgra.data(), w, h, w * 4, QImage::Format_ARGB32);
+                if (!img.convertToFormat(QImage::Format_RGB32).save(QString::fromStdString(a.get<std::string>("path"))))
+                    throw CommandError("viewportInspect: cannot write " + a.get<std::string>("path"));
+            }
             std::optional<QRectF> pick;
             if (a.has("pick"))
             {

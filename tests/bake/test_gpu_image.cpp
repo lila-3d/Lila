@@ -219,6 +219,50 @@ TEST_CASE("Viewport: float textures and GPU images sample as material maps")
     CHECK(bluish(pixel(bgra, 16, 8, 8)));
 }
 
+TEST_CASE("Viewport: the shader wire draws on polygon sides, over a clear surface too")
+{
+    if (!gpu())
+        return;
+    Material mat;
+    mat.baseColor = glm::vec3(0.0f, 0.0f, 1.0f);
+    for (bool dynamic : {false, true})
+        for (float opacity : {1.0f, 0.0f})
+        {
+            CAPTURE(dynamic);
+            CAPTURE(opacity);
+            Material m = mat;
+            if (opacity < 1.0f)
+            {
+                m.flags |= MatTranslucent;
+                m.opacity = opacity;
+            }
+            FrameState s = quad(m, 1.0f);
+            auto mesh = std::make_shared<RenderMesh>(*s.meshes[0].mesh);
+            // Triangle 0 (0,1,2): sides 0-1 and 1-2 are the quad's; triangle 1 (0,2,3): sides 2-3 and 3-0.
+            mesh->edgeMask = {0b011u | (0b110u << 4)};
+            if (dynamic)
+            {
+                mesh->dynamic = std::make_shared<DynamicVertices>();
+                mesh->dynamic->vertices.assign(mesh->vertices.begin(), mesh->vertices.end());
+                mesh->vertices.clear();
+            }
+            MeshDraw d = s.meshes[0];
+            d.mesh = mesh;
+            d.flags = DrawShaded | DrawWire;
+            d.wireColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+            d.wireWidth = 6.0f;
+            s.meshes = {d};
+            std::vector<uint8_t> bgra;
+            std::string err;
+            REQUIRE(Renderer::get().renderOffscreen(s, 32, 32, bgra, &err));
+            CHECK(reddish(pixel(bgra, 32, 16, 0)));
+            CHECK(reddish(pixel(bgra, 32, 0, 16)));
+            CHECK_FALSE(reddish(pixel(bgra, 32, 16, 16)));
+            if (opacity == 1.0f)
+                CHECK(bluish(pixel(bgra, 32, 16, 16)));
+        }
+}
+
 TEST_CASE("Compute: the shared pipeline cache makes each kernel once")
 {
     if (!gpu())
