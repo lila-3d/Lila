@@ -36,6 +36,22 @@ def addAttr(*objects: Any, longName: str | None = None, shortName: str | None = 
         doc: What it is for: editors show it as a tooltip.
     """
 
+def addClayLink(*objects: Any, thickness: float | None = None, operation: str | None = None, blend: float | None = None, color: Sequence[float] | None = None, name: str | None = None, skipSelect: bool | None = None, th: float | None = None, op: str | None = None, b: float | None = None, c: Sequence[float] | None = None, n: str | None = None, ss: bool | None = None) -> Any:
+    """Link two shapes of a clay object with a round cone between their centres, ZSphere style. The link follows the shapes as they move and resize. Returns the link.
+
+    Args:
+        objects: start shape, end shape.
+        thickness: Each end's radius as a fraction of its shape's size. Short form th. Default 0.6.
+        operation: How the link joins the clay before it. Short form op. One of 'add', 'subtract', 'intersect'. Default 'add'.
+        blend: Smooth join radius, cm. Short form b.
+        color: Linear colour. Short form c.
+        name: Name; made unique. Short form n. Default 'ClayLink'.
+        skipSelect: Leave the selection as it is. Short form ss. Default False.
+
+    Examples:
+        addClayLink(["Body", "Head"], thickness=0.5)
+    """
+
 def addClayPrimitive(*objects: Any, shape: str | None = None, operation: str | None = None, blend: float | None = None, radius: float | None = None, endRadius: float | None = None, length: float | None = None, extents: Sequence[float] | None = None, rounding: float | None = None, color: Sequence[float] | None = None, position: Sequence[float] | None = None, rotation: Sequence[float] | None = None, name: str | None = None, sh: str | None = None, op: str | None = None, b: float | None = None, r: float | None = None, er: float | None = None, l: float | None = None, ex: Sequence[float] | None = None, rn: float | None = None, c: Sequence[float] | None = None, p: Sequence[float] | None = None, ro: Sequence[float] | None = None, n: str | None = None) -> Any:
     """Add a clay shape to a clay object or group, after its other shapes. Given a shape, adds next to it. Returns the new shape.
 
@@ -1585,7 +1601,7 @@ def clayJoints(*objects: Any, mesh: str | None = None, maxInfluences: int | None
     """
 
 def clayShapeAt(*objects: Any, point: Sequence[float] | None = None, p: Sequence[float] | None = None) -> Any:
-    """The clay shape of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts count. Returns its path, or None for an object without shapes.
+    """The clay shape or link of a clay object at a world point: the one the point is deepest inside, else the nearest. Cuts count. Returns its path, or None for an object without shapes.
 
     Args:
         objects: clay object or anything in it.
@@ -1900,6 +1916,24 @@ def createDisplayLayer(*objects: Any, name: str | None = None, empty: bool | Non
         empty: Make it with no members, whatever is selected. Short form e. Default False.
     """
 
+def createGroom(*objects: Any, guides: str | None = None, count: int | None = None, length: float | None = None, symmetry: str | None = None, name: str | None = None, width: float | None = None, thickness: float | None = None, profile: str | None = None, widthRamp: str | None = None, twist: float | None = None, sides: int | None = None, c: int | None = None, l: float | None = None, sym: str | None = None, n: str | None = None) -> Any:
+    """A new groom growing from a scalp mesh: a guide curve (empty, or the curve given, or count guides grown from the scalp), the groom node and its locks mesh. Draw locks with groomDraw or the Draw Lock tool, style them with groomAddStyle. Returns {groom, guides, locks}.
+
+    Args:
+        objects: scalp.
+        guides: An existing curve to use as the guides.
+        count: Guides to grow straight out of the scalp; 0 starts empty. Short form c. Default 0.
+        length: Length of grown guides, cm. Short form l. Default 10.0.
+        symmetry: Mirror the guides across the world plane: off, x, y or z. Short form sym. One of 'off', 'x', 'y', 'z'. Default 'x'.
+        name: Base name of the new nodes. Short form n. Default 'Hair'.
+        width: Lock width, cm, times each lock's width and its points' radius.
+        thickness: Thickness as a fraction of width; 1 is round.
+        profile: Cross-section of every lock without one of its own. One of 'tube', 'ribbon', 'crescent', 'teardrop', 'custom'.
+        widthRamp: Width from root to tip: keys "t:scale".
+        twist: Twist from root to tip, degrees.
+        sides: Points around each lock.
+    """
+
 def createMaterial(*objects: Any, baseColor: Sequence[float] | None = None, metallic: float | None = None, roughness: float | None = None, specular: float | None = None, emissive: Sequence[float] | None = None, emissiveIntensity: float | None = None, opacity: float | None = None, opacityMaskClipValue: float | None = None, blendMode: Any | None = None, twoSided: bool | None = None, uvSet: int | None = None, normalFormat: Any | None = None, flipGreen: bool | None = None, baseColorMap: str | None = None, metallicMap: str | None = None, roughnessMap: str | None = None, normalMap: str | None = None, ambientOcclusionMap: str | None = None, ormMap: str | None = None, packedLayout: Any | None = None, emissiveMap: str | None = None, shadingModel: Any | None = None, painterlyStrength: float | None = None, strokeNormal: float | None = None, strokeScale: float | None = None, strokeLayerRatio: float | None = None, strokeMapping: Any | None = None, strokeMap: str | None = None, paletteCount: int | None = None, paletteShadow: Sequence[float] | None = None, paletteLight: Sequence[float] | None = None, paletteAccent: Sequence[float] | None = None, paletteContrast: float | None = None, paletteSpread: float | None = None, specularTint: float | None = None, boil: bool | None = None, boilFps: float | None = None, toonShadowColor: Sequence[float] | None = None, toonLightTint: Sequence[float] | None = None, toonThreshold: float | None = None, toonSoftness: float | None = None, toonOuterOffset: float | None = None, toonOuterColor: Sequence[float] | None = None, rimColor: Sequence[float] | None = None, rimWidth: float | None = None, rimStrength: float | None = None, foliageBottomColor: Sequence[float] | None = None, foliageTopColor: Sequence[float] | None = None, foliageGradient: float | None = None, foliageBottomShadow: float | None = None, foliageTopHighlight: float | None = None, foliageTranslucency: float | None = None, foliageWrap: float | None = None, subsurfaceColor: Sequence[float] | None = None, subsurfaceAmount: float | None = None, sheenColor: Sequence[float] | None = None, sheenRoughness: float | None = None, clearcoat: float | None = None, clearcoatRoughness: float | None = None, anisotropy: float | None = None, anisotropyRotation: float | None = None, hairShift: float | None = None, irisRadius: float | None = None, irisDepth: float | None = None, limbalRing: float | None = None, bevelRadius: float | None = None, baseColorMapWrapU: Any | None = None, baseColorMapWrapV: Any | None = None, baseColorMapFilter: Any | None = None, metallicMapWrapU: Any | None = None, metallicMapWrapV: Any | None = None, metallicMapFilter: Any | None = None, roughnessMapWrapU: Any | None = None, roughnessMapWrapV: Any | None = None, roughnessMapFilter: Any | None = None, normalMapWrapU: Any | None = None, normalMapWrapV: Any | None = None, normalMapFilter: Any | None = None, ambientOcclusionMapWrapU: Any | None = None, ambientOcclusionMapWrapV: Any | None = None, ambientOcclusionMapFilter: Any | None = None, ormMapWrapU: Any | None = None, ormMapWrapV: Any | None = None, ormMapFilter: Any | None = None, emissiveMapWrapU: Any | None = None, emissiveMapWrapV: Any | None = None, emissiveMapFilter: Any | None = None, bc: Sequence[float] | None = None) -> Any:
     """Create a material (Unreal default lit inputs). Faces use it through a slot of the same name. Returns its name.
 
@@ -2211,12 +2245,12 @@ def curveNetwork(*objects: Any, tolerance: float | None = None, spansU: int | No
         name: Mesh name. Short form n.
     """
 
-def curveSculptStroke(*objects: Any, brush: str | None = None, dabs: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, keepLength: bool | None = None, frontOnly: bool | None = None, addCount: int | None = None, addLength: float | None = None, addPoints: int | None = None, interpolate: bool | None = None, minDistance: float | None = None, density: float | None = None, densitySet: str | None = None, seed: int | None = None, surface: str | None = None, selectedOnly: bool | None = None, b: str | None = None, d: Sequence[Any] | None = None, s: float | None = None, i: bool | None = None) -> Any:
-    """One curve sculpting stroke on a curve holding many curves (hair): comb, smooth, length, puff, add, delete, density, cut, pinch or slide. dabs is a list of {center, normal, radius, strength, delta, view} in world space, as the Sculpt Curves tool records them. Roots stay put (on the groom surface) except under slide and add. Returns {changed, added, removed, curves}.
+def curveSculptStroke(*objects: Any, brush: str | None = None, dabs: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, keepLength: bool | None = None, frontOnly: bool | None = None, addCount: int | None = None, addLength: float | None = None, addPoints: int | None = None, interpolate: bool | None = None, minDistance: float | None = None, density: float | None = None, densitySet: str | None = None, seed: int | None = None, surface: str | None = None, selectedOnly: bool | None = None, settleWhileGrabbing: bool | None = None, b: str | None = None, d: Sequence[Any] | None = None, s: float | None = None, i: bool | None = None) -> Any:
+    """One curve sculpting stroke on a curve holding many curves (hair): comb, smooth, length, puff, add, delete, density, cut, pinch or slide, and on a groom's guides the lock brushes grab, twist, widen, flatten, curl, frizz, clump, split, merge and settle. dabs is a list of {center, normal, radius, strength, delta, view} in world space, as the Sculpt Curves tool records them. Roots stay put (on the groom surface) except under slide and add. Returns {changed, added, removed, curves}.
 
     Args:
         objects: curve.
-        brush: The brush. Short form b. One of 'comb', 'smooth', 'length', 'puff', 'add', 'delete', 'density', 'cut', 'pinch', 'slide'. Default 'comb'.
+        brush: The brush. Short form b. One of 'comb', 'smooth', 'length', 'puff', 'add', 'delete', 'density', 'cut', 'pinch', 'slide', 'grab', 'twist', 'widen', 'flatten', 'curl', 'frizz', 'clump', 'split', 'merge', 'settle'. Default 'comb'.
         dabs: [{center, normal, radius, strength, delta, view}, ...] world space; radius in cm. Short form d.
         falloff: Falloff: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset name. Default 'smooth'.
         strength: Brush strength, 0 to 1. Short form s. Default 0.5.
@@ -2233,6 +2267,7 @@ def curveSculptStroke(*objects: Any, brush: str | None = None, dabs: Sequence[An
         seed: Random seed for add, delete and density. Default 0.
         surface: Mesh the roots grow from; default the curve's groomSurface.
         selectedOnly: With points of the curve selected, only the curves holding them change. Default True.
+        settleWhileGrabbing: Grab: the locks near the grabbed ones settle as it moves, making room. Default False.
     """
 
 def curveSymmetry(*objects: Any, axis: str | None = None, space: str | None = None, a: str | None = None, s: str | None = None) -> Any:
@@ -3873,6 +3908,51 @@ def goToBindPose(*objects: Any) -> Any:
         objects: mesh.
     """
 
+def groomAddStyle(*objects: Any, style: str | None = None, position: int | None = None, amount: float | None = None, frequency: float | None = None, radius: float | None = None, count: int | None = None, spread: float | None = None, length: float | None = None, widthScale: float | None = None, randomness: float | None = None, seed: int | None = None, ramp: str | None = None, s: str | None = None, p: int | None = None) -> Any:
+    """Adds a style modifier to a groom's stack: split, clump, curl, wave, frizz, noise, length, cut or flyaways. Every one works on locks and strands alike. Returns the new node.
+
+    Args:
+        objects: groom.
+        style: The modifier. Short form s. One of 'split', 'clump', 'curl', 'wave', 'frizz', 'noise', 'length', 'cut', 'flyaways'.
+        position: Where in the stack, 0 first; -1 appends. Short form p. Default -1.
+        amount: Sets the modifier's amount when it has one.
+        frequency: Sets the modifier's frequency when it has one.
+        radius: Sets the modifier's radius when it has one.
+        count: Sets the modifier's count when it has one.
+        spread: Sets the modifier's spread when it has one.
+        length: Sets the modifier's length when it has one.
+        widthScale: Sets the modifier's widthScale when it has one.
+        randomness: Sets the modifier's randomness when it has one.
+        seed: Sets the modifier's seed when it has one.
+        ramp: Sets the modifier's ramp when it has one.
+    """
+
+def groomDraw(*objects: Any, points: Sequence[Any] | None = None, pressure: Sequence[Any] | None = None, shape: str | None = None, size: float | None = None, period: float | None = None, width: float | None = None, thickness: float | None = None, profile: str | None = None, snapRoot: bool | None = None, pt: Sequence[Any] | None = None, pr: Sequence[Any] | None = None, s: str | None = None, w: float | None = None, th: float | None = None) -> Any:
+    """Adds locks along a stroke to a groom's guides: points from the root, world space; the root snaps to the scalp. shape draws a lock, a braid (three strands), a rope (two) or a ringlet. pressure (0 to 1 per point) sets the width along it. Returns the new guides' ids.
+
+    Args:
+        objects: groom.
+        points: [[x, y, z], ...] from root to tip, world space. Short form pt.
+        pressure: Pen pressure per point, 0 to 1. Short form pr.
+        shape: What the stroke draws. Short form s. One of 'lock', 'braid', 'rope', 'ringlet'. Default 'lock'.
+        size: Braid and rope half width, ringlet radius, cm. Default 1.0.
+        period: Length of one turn of a braid, rope or ringlet, cm. Default 4.0.
+        width: Width of the new locks relative to the groom's. Short form w. Default 1.0.
+        thickness: Thickness of the new locks relative to the groom's. Short form th. Default 1.0.
+        profile: Cross-section of the new locks; default the groom's. One of 'tube', 'ribbon', 'crescent', 'teardrop', 'custom'.
+        snapRoot: Move the root onto the scalp. Default True.
+    """
+
+def groomEditLock(*objects: Any, index: int | None = None, width: float | None = None, twist: float | None = None, i: int | None = None, w: float | None = None, t: float | None = None) -> Any:
+    """Sets one guide's lock width (relative to the groom's) and twist from root to tip, as the viewport lock handles do. index is the guide's place among the curve's own splines.
+
+    Args:
+        objects: guides.
+        index: Which guide. Short form i. Default 0.
+        width: Width relative to the groom's. Short form w.
+        twist: Twist from root to tip, degrees: replaces the guide's tilt with an even ramp. Short form t.
+    """
+
 def groomGuides(*objects: Any, count: int | None = None, length: float | None = None, lengthJitter: float | None = None, points: int | None = None, minDistance: float | None = None, densitySet: str | None = None, seed: int | None = None, name: str | None = None, c: int | None = None, l: float | None = None, p: int | None = None, n: str | None = None) -> Any:
     """Grow guide curves out of a mesh along its normals, spread evenly by area (and a density map), as a new curve with the mesh as its groom surface. Returns the curve.
 
@@ -3886,6 +3966,95 @@ def groomGuides(*objects: Any, count: int | None = None, length: float | None = 
         densitySet: Vertex color set used as the density map (bright: dense, black: none).
         seed: Random seed. Default 1.
         name: Name of the new curve. Short form n.
+    """
+
+def groomLoadPreset(*objects: Any, preset: str | None = None, guides: bool | None = None, replace: bool | None = None, p: str | None = None, g: bool | None = None) -> Any:
+    """Applies a hairstyle preset to a groom: its lock settings, its style stack in place of the groom's, and its guides fitted to the scalp when it has them. Returns how many guides it added.
+
+    Args:
+        objects: groom.
+        preset: Preset id (groomPresets) or a .lilagroom file. Short form p.
+        guides: Add the preset's guides when it has them. Short form g. Default True.
+        replace: The preset's guides replace the groom's. Default False.
+    """
+
+def groomPart(*objects: Any, points: Sequence[Any] | None = None, radius: float | None = None, strength: float | None = None, pt: Sequence[Any] | None = None, r: float | None = None, s: float | None = None) -> Any:
+    """A parting: turns the locks whose roots lie near the line so they leave the scalp away from it. points is the line, world space. Returns how many locks turned.
+
+    Args:
+        objects: groom.
+        points: [[x, y, z], ...] along the parting, world space. Short form pt.
+        radius: How far from the line roots turn, cm. Short form r. Default 3.0.
+        strength: 0 to 1: how far they turn. Short form s. Default 1.0.
+    """
+
+def groomPreset(*objects: Any, preset: str | None = None, at: Sequence[float] | None = None, to: Sequence[float] | None = None, count: int | None = None, length: float | None = None, radius: float | None = None, down: Sequence[float] | None = None, seed: int | None = None, p: str | None = None, c: int | None = None, l: float | None = None, r: float | None = None) -> Any:
+    """Adds a hairstyle preset's guides to a groom: a ponytail or bun gathered at a point on the scalp, or bangs along a line between two. Returns the new guides' ids.
+
+    Args:
+        objects: groom.
+        preset: The preset. Short form p. One of 'ponytail', 'bun', 'bangs'. Default 'ponytail'.
+        at: Ponytail and bun: where it gathers; bangs: one end of the fringe. World space.
+        to: Bangs: the other end of the fringe.
+        count: Locks. Short form c. Default 16.
+        length: Length, cm. Short form l. Default 20.0.
+        radius: Ponytail: how far roots spread from the gather point; bun: its size, cm. Short form r. Default 6.0.
+        down: Which way hair falls, world space. Default [0.0, -1.0, 0.0].
+        seed: Random seed. Default 1.
+    """
+
+def groomPresets() -> Any:
+    """Hairstyle presets in the groom folders (Lila's, the studio's, yours and the project's). Returns [{id, name, doc, source, guides, file}, ...]."""
+
+def groomSavePreset(*objects: Any, name: str | None = None, doc: str | None = None, guides: bool | None = None, scope: str | None = None, n: str | None = None, g: bool | None = None) -> Any:
+    """Saves a groom's lock settings and style stack as a hairstyle preset, with its guides when guides is on. Returns the preset id.
+
+    Args:
+        objects: groom.
+        name: Preset name. Short form n.
+        doc: One line on what it looks like.
+        guides: Keep the guides too, so loading it draws the hairstyle. Short form g. Default False.
+        scope: Where it goes. One of 'user', 'project'. Default 'user'.
+    """
+
+def groomSettle(*objects: Any, steps: int | None = None, bend: float | None = None, holdShape: float | None = None, rootStiffness: float | None = None, damping: float | None = None, slip: float | None = None, gravity: Sequence[float] | None = None, lockCollisions: bool | None = None, b: float | None = None, hs: float | None = None) -> Any:
+    """Settles a groom's guides under gravity: roots stay on the scalp, locks fall, rest on it and on each other sized by their thickness, keeping some of their styled shape. Returns {curves, contacts, motion, penetration}.
+
+    Args:
+        objects: groom.
+        steps: Solver steps (at 60 a second). Default 90.
+        bend: Bend stiffness, 0 (rope) to 1 (wire). Short form b. Default 0.5.
+        holdShape: Pull back toward the styled shape, 0 to 1. Short form hs. Default 0.15.
+        rootStiffness: How firmly roots keep their direction out of the scalp, 0 to 1. Default 0.9.
+        damping: Damping per step, 0 to 1. Default 0.08.
+        slip: How freely locks slide on what they rest on, 0 to 1. Default 0.25.
+        gravity: Gravity, world space, cm/s^2. Default [0.0, -981.0, 0.0].
+        lockCollisions: Locks collide with each other. Default True.
+    """
+
+def groomShell(*objects: Any, voxelSize: float | None = None, blend: float | None = None, inflate: float | None = None, segments: int | None = None, skipStrays: bool | None = None, projectSteps: int | None = None, gpu: bool | None = None, name: str | None = None, n: str | None = None) -> Any:
+    """One watertight mesh over a groom's locks, smooth-unioned so they join into a single surface ready for retopology (quadRemesh). Live: it follows the groom. Returns [mesh, groomShell].
+
+    Args:
+        objects: groom.
+        voxelSize: Mesh resolution, cm.
+        blend: Smooth union between locks, cm: larger fills the gaps between them.
+        inflate: Grows every lock, cm.
+        segments: Round cones per lock; 0 uses every ring.
+        skipStrays: Leave stray strands out.
+        projectSteps: Steps moving vertices onto the surface.
+        gpu: Sample the field on the GPU when one is available.
+        name: Mesh name; default <groom>Shell. Short form n.
+    """
+
+def groomStack(*objects: Any, edit: str | None = None, node: str | None = None, to: int | None = None, e: str | None = None) -> Any:
+    """Lists a groom's style modifiers in order, or changes the stack: move one to a position, toggle it on or off, or remove it. Returns the stack as [{node, style, enabled}, ...].
+
+    Args:
+        objects: groom.
+        edit: What to do. Short form e. One of 'list', 'move', 'toggle', 'remove'. Default 'list'.
+        node: The modifier to move, toggle or remove.
+        to: move: its new position, 0 first. Default 0.
     """
 
 def groomSurface(*objects: Any, mesh: str | None = None, attach: bool | None = None, m: str | None = None) -> Any:
@@ -7374,8 +7543,11 @@ def screenshot(path: str | None = None, target: str | None = None, *, p: str | N
         target: window (with its floating windows), viewport, or a panel's name such as outliner or channelBox. Short form t. Default 'window'.
     """
 
+def sculptAddLevel() -> Any:
+    """Subdivide the sculpt once more and sculpt the new level (from a lower level, the finest is subdivided). Returns {level, levels, points, faces}."""
+
 def sculptCancel() -> Any:
-    """Leave sculpt mode without changing the mesh, discarding the proxy (a kept proxy stays as it was)."""
+    """Leave sculpt mode without changing the mesh, discarding the sculpt (a kept <mesh>_high stays as it was)."""
 
 def sculptColor(op: str | None = None, color: Sequence[Any] | None = None) -> Any:
     """Fill the sculpt's polypaint with a color (masked points keep theirs) or clear it back to white.
@@ -7392,24 +7564,46 @@ def sculptCorrective(*objects: Any) -> Any:
         objects: mesh.
     """
 
+def sculptDeleteHigher() -> Any:
+    """Delete the levels above the one being sculpted, and their detail. Returns {level, levels, points, faces}."""
+
+def sculptDuplicateLowPoly(method: str | None = None, level: int | None = None, name: str | None = None) -> Any:
+    """Without leaving sculpt mode, duplicate the mesh as the low poly sculptExit would leave with this method at this level, next to it. The copy keeps the mesh's materials, transform and modifiers. Returns its name.
+
+    Args:
+        method: closest, normal or fit. One of 'closest', 'normal', 'fit'. Default 'closest'.
+        level: 0 keeps the mesh's topology; higher subdivides it that many times. Default 0.
+        name: Name for the copy; default <mesh>_low<level>.
+    """
+
 def sculptEnter(*objects: Any, mode: str | None = None, levels: int | None = None, resolution: int | None = None, resume: bool | None = None) -> Any:
-    """Enter sculpt mode on a mesh: builds a temporary high-resolution proxy of its cage to sculpt on. mode='subdivide' (Catmull-Clark, levels deep) reprojects exactly on exit; 'remesh' sculpts a uniform voxel remesh; 'direct' sculpts the mesh itself. Resumes from a kept proxy when there is one. Returns {mesh, mode, levels, points, faces}.
+    """Enter sculpt mode on a mesh: builds a high-resolution copy of its cage to sculpt on, outside the scene. mode='subdivide' gives Catmull-Clark levels to step between (sculptLevel) and fits back exactly on exit; 'remesh' sculpts a uniform voxel remesh; 'direct' sculpts the mesh itself. Resumes from the high poly a previous exit kept (<mesh>_high). Returns {mesh, mode, level, levels, points, faces}.
 
     Args:
         objects: mesh.
         mode: subdivide, remesh or direct. One of 'subdivide', 'remesh', 'direct'. Default 'subdivide'.
-        levels: Subdivision levels of the proxy, 1 to 6. Default 2.
+        levels: Subdivision levels to start with, 1 to 6. Default 2.
         resolution: Voxels along the longest side, for mode='remesh'. Default 192.
-        resume: Continue from the mesh's kept proxy when it has one. Default True.
+        resume: Continue from the mesh's kept high poly when it has one. Default True.
     """
 
-def sculptExit(method: str | None = None, keepProxy: bool | None = None, iterations: int | None = None) -> Any:
-    """Leave sculpt mode, moving the low-poly cage onto the sculpt. method='fit' solves for the cage whose subdivision best matches the sculpt (least squares through the subdivision stencils); 'closest' and 'normal' project each cage point onto the sculpted surface instead. Only positions change: UVs and other attributes stay, except that polypaint lands on the cage's polypaint color set, sampled from the sculpt. keepProxy stores the proxy, polypaint included, as a hidden child mesh to resume from and to bake from. Returns {mesh, maxMove}.
+def sculptExit(method: str | None = None, high: str | None = None, highLevel: int | None = None, lowLevel: int | None = None, iterations: int | None = None) -> Any:
+    """Leave sculpt mode, moving the mesh (the low poly) onto the sculpt. method='closest' moves each point to the nearest spot on the sculpt and 'normal' along its normal onto it: a game mesh to bake onto. 'fit' solves for the cage whose subdivision best matches the sculpt, its points off the surface: a mesh to subdivide again. The fit is to the finest level from any level. Only positions change: UVs and other attributes stay, except that polypaint lands on the mesh's polypaint color set. high keeps the sculpt as the hidden child <mesh>_high to bake from, at the finest level, highLevel levels below it, or level highLevel; the next sculptEnter gets every level back from it, less the levels lowLevel moved into the low poly. Returns {mesh, maxMove, high: {mesh, level, levels} or null}.
 
     Args:
-        method: fit, closest or normal. One of 'fit', 'closest', 'normal'. Default 'fit'.
-        keepProxy: Keep the sculpt as a hidden child mesh. Default False.
+        method: closest, normal or fit. One of 'closest', 'normal', 'fit'. Default 'closest'.
+        high: Which level <mesh>_high keeps: highest, belowHighest, level, or none to keep nothing. One of 'highest', 'belowHighest', 'level', 'none'. Default 'highest'.
+        highLevel: Levels below the highest (belowHighest), or the level (level). Default 1.
+        lowLevel: The level the low poly comes out at: 0 keeps the mesh's topology, higher subdivides it that many times (its UVs with it). Default 0.
         iterations: Project-and-fit rounds for remeshed proxies. Default 3.
+    """
+
+def sculptLevel(level: int | None = None, step: int | None = None) -> Any:
+    """Sculpt another subdivision level: 0 is the cage, the highest the finest. Going down keeps the finer detail, and going back up lays it over whatever changed below. Returns {level, levels, points, faces}.
+
+    Args:
+        level: The level to sculpt. Default 0.
+        step: Move this many levels from the current one instead (1 up, -1 down). Default 0.
     """
 
 def sculptMask(op: str | None = None, layer: str | None = None, iterations: int | None = None) -> Any:
@@ -7422,10 +7616,10 @@ def sculptMask(op: str | None = None, layer: str | None = None, iterations: int 
     """
 
 def sculptState() -> Any:
-    """The open sculpt session: {active, mesh, mode, levels, points, faces, symmetry, masked, frozen, painted}."""
+    """The open sculpt session: {active, mesh, mode, level, levels, points, faces, symmetry, masked, frozen, painted}."""
 
 def sculptStroke(brush: str | None = None, paint: bool | None = None, color: Sequence[Any] | None = None, falloff: str | None = None, strength: float | None = None, invert: bool | None = None, frontFacesOnly: bool | None = None, radialCount: int | None = None, radialAxis: str | None = None, dabs: Sequence[Any] | None = None, live: int | None = None) -> Any:
-    """One brush stroke on the sculpt proxy: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
+    """One brush stroke on the sculpt: dabs is a list of {center, normal, radius, pressure, opacity, flow, view, delta, direction} in world space (only center is required; opacity defaults to pressure). Honours the mask, frozen points and the mesh's symmetry, mirrored exactly. Returns {points} changed.
 
     Args:
         brush: draw, clayStrips, inflate, grab, smooth, flatten, pinch, crease, scrape, damStandard, trimDynamic, polish, fold, mask, relax, freeze, paint, or a brush an extension registered. Default 'draw'.
