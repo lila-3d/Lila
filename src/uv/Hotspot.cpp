@@ -9,7 +9,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numbers>
+#include <unordered_map>
 
 namespace lila::uv
 {
@@ -418,6 +420,131 @@ size_t sliceOversizedCharts(geo::Mesh& mesh, const std::vector<Chart>& charts, s
 }
 } // namespace
 
+double startOnWholeSheets(Chart& chart, const HotspotTrim& t)
+{
+    if (chart.uv.empty())
+        return 1.0;
+    const double sheet = t.max.x - t.min.x;
+    const double lo = chart.uvMin().x, span = chart.uvMax().x - lo;
+    if (sheet <= 0.0 || span <= 0.0)
+        return 1.0;
+    const double k = std::max(1.0, std::round(span / sheet)) * sheet / span;
+    // Too short a run would be stretched out of shape; it keeps its scale and only starts on the sheet's edge.
+    const double used = std::abs(k - 1.0) <= kMaxWholeSheetStretch ? k : 1.0;
+    for (glm::dvec2& p : chart.uv)
+        p.x = t.min.x + (p.x - lo) * used;
+    return used;
+}
+
+size_t chainStripCharts(std::span<Chart> charts, std::span<const int> trimOf, std::span<const HotspotTrim> trims,
+                        bool wholeSheets, const std::function<void(Chart&, int trim)>& align)
+{
+    LILA_ZONE();
+
+    constexpr double kEps = 1e-5;
+    constexpr size_t kNone = ~size_t(0);
+    auto onStrip = [&](size_t i) {
+        const int t = trimOf[i];
+        return t >= 0 && size_t(t) < trims.size() && trims[size_t(t)].kind == TrimKind::StripU && !charts[i].uv.empty();
+    };
+    struct End
+    {
+        size_t chart;
+        double v;
+    };
+    // The mesh points on each strip chart's low-U end, with their v.
+    std::unordered_map<Index, std::vector<End>> lowEnds;
+    for (size_t i = 0; i < charts.size(); ++i)
+        if (onStrip(i))
+        {
+            const Chart& ch = charts[i];
+            const double lo = ch.uvMin().x;
+            for (size_t v = 0; v < ch.uv.size(); ++v)
+                if (ch.uv[v].x < lo + kEps)
+                    lowEnds[ch.vertexPoint[v]].push_back({i, ch.uv[v].y});
+        }
+    // next[i] is the chart on the same trim whose low end shares at least two points, at the same v, with i's high end.
+    std::vector<size_t> next(charts.size(), kNone), prev(charts.size(), kNone);
+    for (size_t i = 0; i < charts.size(); ++i)
+    {
+        if (!onStrip(i))
+            continue;
+        const Chart& ch = charts[i];
+        const double hi = ch.uvMax().x;
+        std::map<size_t, int> shared;
+        for (size_t v = 0; v < ch.uv.size(); ++v)
+            if (ch.uv[v].x > hi - kEps)
+                if (auto it = lowEnds.find(ch.vertexPoint[v]); it != lowEnds.end())
+                    for (const End& e : it->second)
+                        if (e.chart != i && trimOf[e.chart] == trimOf[i] && std::abs(e.v - ch.uv[v].y) < kEps)
+                            ++shared[e.chart];
+        for (const auto& [j, n] : shared)
+            if (n >= 2 && prev[j] == kNone)
+            {
+                next[i] = j;
+                prev[j] = i;
+                break;
+            }
+    }
+
+    auto shift = [&](size_t i, double du) {
+        for (glm::dvec2& p : charts[i].uv)
+            p.x += du;
+    };
+    auto scaleU = [&](size_t i, double k) {
+        const double lo = charts[i].uvMin().x;
+        for (glm::dvec2& p : charts[i].uv)
+            p.x = lo + (p.x - lo) * k;
+    };
+    auto length = [&](size_t i) { return charts[i].uv.empty() ? 0.0 : charts[i].uvMax().x - charts[i].uvMin().x; };
+    std::vector<size_t> order(charts.size());
+    for (size_t i = 0; i < order.size(); ++i)
+        order[i] = i;
+    std::ranges::stable_sort(order, [&](size_t a, size_t b) { return length(a) > length(b); });
+    std::vector<uint8_t> done(charts.size(), 0);
+    size_t moved = 0;
+    for (size_t root : order)
+    {
+        if (done[root])
+            continue;
+        done[root] = 1;
+        double k = 1.0;
+        if (wholeSheets && onStrip(root))
+            k = startOnWholeSheets(charts[root], trims[size_t(trimOf[root])]);
+        else if (align && trimOf[root] >= 0)
+            align(charts[root], trimOf[root]);
+        // Alternating steps, so a closed loop's seam lands opposite the root.
+        for (size_t fwd = root, back = root; fwd != kNone || back != kNone;)
+        {
+            if (fwd != kNone)
+            {
+                const size_t j = next[fwd];
+                fwd = j != kNone && !done[j] ? j : kNone;
+                if (fwd != kNone)
+                {
+                    scaleU(j, k);
+                    shift(j, charts[prev[j]].uvMax().x - charts[j].uvMin().x);
+                    done[j] = 1;
+                    ++moved;
+                }
+            }
+            if (back != kNone)
+            {
+                const size_t j = prev[back];
+                back = j != kNone && !done[j] ? j : kNone;
+                if (back != kNone)
+                {
+                    scaleU(j, k);
+                    shift(j, charts[next[j]].uvMin().x - charts[j].uvMax().x);
+                    done[j] = 1;
+                    ++moved;
+                }
+            }
+        }
+    }
+    return moved;
+}
+
 HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faceIds, std::span<const HotspotTrim> trims, std::string_view uvSet,
                       const HotspotOptions& opts)
 {
@@ -500,6 +627,10 @@ HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faceIds, std::span
         out.poor = c.sizeError > opts.maxSizeError;
     });
 
+    std::vector<int> trimOf(charts.size());
+    for (size_t i = 0; i < charts.size(); ++i)
+        trimOf[i] = res.islands[i].trim;
+    chainStripCharts(charts, trimOf, trims, !opts.randomOffset);
     writeCharts(mesh, charts, uvSet);
     for (const HotspotIsland& is : res.islands)
     {

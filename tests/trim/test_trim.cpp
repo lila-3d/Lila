@@ -549,54 +549,81 @@ TEST_CASE("trim commands: a face as tall as the strip stays upright on it")
     const glm::dvec2 bottom = uvAt(m, {0, 0, 0}), top = uvAt(m, {0, 50, 0}), right = uvAt(m, {42, 0, 0});
     CHECK(std::abs(top.x - bottom.x) < 1e-6);
     CHECK(top.y > bottom.y);
-    CHECK(std::abs(right.x - bottom.x) == doctest::Approx(42.0 / 200.0).epsilon(0.05));
-    // Centred on the strip, so a motif in the middle of the sheet lands in the middle of the face.
-    CHECK((right.x + bottom.x) * 0.5 == doctest::Approx(0.5).epsilon(1e-3));
+    // Too short to stretch to a whole sheet: it keeps its scale and starts on the sheet's edge.
+    CHECK(bottom.x == doctest::Approx(0.0));
+    CHECK(right.x == doctest::Approx(42.0 / 200.0).epsilon(0.05));
 }
 
-TEST_CASE("trim commands: faces line up with the strip's motifs")
+TEST_CASE("trim commands: a band's sides run on round its corners, with one seam at the back")
 {
     loadTrims();
-    // A strip with a stud every 25 cm (four across the 100 cm sheet), baked from detail meshes.
-    Sheet s = stripLadder("T_Studs", 128, 128, std::vector<int>{64, 64});
-    s.pxPerM = 128.0;
-    s.supersampling = 1;
-    s.maps = {"normal"};
-    const std::filesystem::path file = scratch("studs") / "T_Studs.lilatrim";
-    save(s, file);
-    SheetBakeOptions o;
-    o.backend = "cpu";
-    for (int k = 0; k < 4; ++k)
-    {
-        const double x = 12.5 + 25.0 * k;
-        const glm::dvec3 lo{x - 5.0, 0.0, 20.0}, hi{x + 5.0, 12.0, 30.0};
-        const glm::dvec3 pts[] = {{lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z}, {hi.x, hi.y, hi.z}, {lo.x, hi.y, hi.z},
-                                  {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z}, {hi.x, hi.y, lo.z}, {lo.x, hi.y, lo.z}};
-        const geo::Index sizes[] = {4, 4, 4, 4, 4, 4};
-        const geo::Index idx[] = {0, 1, 2, 3, 5, 4, 7, 6, 3, 2, 6, 7, 1, 0, 4, 5, 1, 5, 6, 2, 4, 0, 3, 7};
-        o.high.push_back(geo::Mesh::fromPolygons(pts, sizes, idx));
-    }
-    bakeSheet(s, file, o);
-    ops::execute("trimSheetCurrent", {{"args", {file.generic_string()}}});
-
-    auto place = [&](const char* name, double width) {
-        const json made = ops::execute("createMesh", {{"points", {{0, 0, 0}, {width, 0, 0}, {width, 50, 0}, {0, 50, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", name}});
-        const std::string n = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
-        scene::components::setMode(scene::ComponentMode::Object);
-        ops::execute("select", {{"args", {n}}});
-        ops::execute("trimApply", {{"trim", 0}});
+    const std::filesystem::path file = scratch("band") / "T_Band.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "ladder"}, {"width", 1024}, {"file", file.generic_string()}, {"bake", false}});
+    // The four sides of a 400 x 50 x 40 band, no caps: front, right, back, left.
+    const json made = ops::execute("createMesh", {{"points", {{-200, 0, 20}, {200, 0, 20}, {200, 0, -20}, {-200, 0, -20},
+                                                              {-200, 50, 20}, {200, 50, 20}, {200, 50, -20}, {-200, 50, -20}}},
+                                                   {"faces", {{0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}}},
+                                                   {"name", "Band"}});
+    const std::string band = made.is_string() ? made.get<std::string>() : made.at(0).get<std::string>();
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {band}}});
+    auto uvOf = [&](geo::Index face, geo::Index point) {
         scene::Graph& g = scene::Graph::current();
-        const geo::Mesh m = *std::get<scene::MeshPtr>(g.value({g.find(n)->id(), scene::MeshNode::kOutMesh, -1}));
-        const double a = uvAt(m, {0, 0, 0}).x, b = uvAt(m, {width, 0, 0}).x;
-        return std::pair{std::min(a, b), std::max(a, b)};
+        const geo::Mesh m = *std::get<scene::MeshPtr>(g.value({g.find(band)->id(), scene::MeshNode::kOutMesh, -1}));
+        std::span<const glm::vec2> uv = m.cornerAttrs().get<glm::vec2>("uv0");
+        glm::vec2 out(0.0f);
+        m.forEachFaceCorner(face, [&](geo::Index c) {
+            if (m.cornerPoint(c) == point)
+                out = uv[c];
+        });
+        return out;
     };
-    // Studs are centred on u = 0.125 + k / 4. A 100 cm face holds four repeats, so its middle sits on a gap, u = k / 4.
-    const auto [lo, hi] = place("Long", 100.0);
-    CHECK(std::abs((lo + hi) * 0.5 * 4.0 - std::round((lo + hi) * 0.5 * 4.0)) < 0.05);
-    // A 25 cm face (one repeat) is centred on a stud.
-    const auto [elo, ehi] = place("End", 25.0);
-    const double mid = (elo + ehi) * 0.5;
-    CHECK(std::abs((mid - 0.125) * 4.0 - std::round((mid - 0.125) * 4.0)) < 0.05);
+    // Vertical edge k (points k and k + 4) is shared by face k - 1 and face k; true where both faces show the same texels.
+    auto joined = [&](geo::Index k) {
+        auto same = [](glm::vec2 a, glm::vec2 b) {
+            const float du = a.x - b.x;
+            return std::abs(du - std::round(du)) < 1e-4f && std::abs(a.y - b.y) < 1e-5f;
+        };
+        const geo::Index before = (k + 3) % 4;
+        return same(uvOf(before, k), uvOf(k, k)) && same(uvOf(before, k + 4), uvOf(k, k + 4));
+    };
+    auto continuous = [&] {
+        int n = 0;
+        for (geo::Index k = 0; k < 4; ++k)
+            n += joined(k) ? 1 : 0;
+        return n;
+    };
+
+    ops::execute("trimApply", {{"trim", "Strip256"}});
+    // The front spans whole sheets from the sheet's edge, so copies tile; the loop round the back keeps one seam there.
+    CHECK(continuous() == 3);
+    CHECK(joined(0));
+    CHECK(joined(1));
+    CHECK(uvOf(0, 0).x == doctest::Approx(0.0));
+    CHECK(uvOf(0, 1).x == doctest::Approx(2.0));
+
+    // trimAuto picks the strip per island, then chains the ones on the same strip the same way.
+    ops::execute("trimAuto", {{"seed", 3}});
+    CHECK(continuous() == 3);
+}
+
+TEST_CASE("trim commands: copies of a piece laid end to end meet on the same texels")
+{
+    loadTrims();
+    const std::filesystem::path file = scratch("pieces") / "T_Pieces.lilatrim";
+    ops::execute("trimSheetCreate", {{"preset", "ladder"}, {"width", 1024}, {"file", file.generic_string()}, {"bake", false}});
+    // A 380 cm wall on the 200 cm sheet: about 1.9 sheets, stretched to 2 so a copy's start continues its end.
+    const json r = ops::execute("createMesh", {{"points", {{0, 0, 0}, {380, 0, 0}, {380, 50, 0}, {0, 50, 0}}}, {"faces", {{0, 1, 2, 3}}}, {"name", "Piece"}});
+    const std::string n = r.is_string() ? r.get<std::string>() : r.at(0).get<std::string>();
+    scene::components::setMode(scene::ComponentMode::Object);
+    ops::execute("select", {{"args", {n}}});
+    ops::execute("trimApply", {{"trim", "Strip256"}});
+    scene::Graph& g = scene::Graph::current();
+    const geo::Mesh m = *std::get<scene::MeshPtr>(g.value({g.find(n)->id(), scene::MeshNode::kOutMesh, -1}));
+    const glm::dvec2 start = uvAt(m, {0, 0, 0}), end = uvAt(m, {380, 0, 0});
+    CHECK(start.x == doctest::Approx(0.0));
+    CHECK(end.x == doctest::Approx(2.0));
+    CHECK(start.y == doctest::Approx(end.y));
 }
 
 TEST_CASE("trim commands: a blank sheet, empty or laid out as strips")
@@ -796,7 +823,8 @@ TEST_CASE("trim check: density, alignment, orientation, stretch, readability and
     CHECK(is["densityError"].get<double>() == doctest::Approx(0.0).epsilon(0.05));
     CHECK(is["quarterTurns"] == 0);
     CHECK(is["trimsCrossed"] == 1);
-    CHECK(is["stretch"].get<double>() < 0.01);
+    // Stretched along U by at most a few percent to span whole sheets.
+    CHECK(is["stretch"].get<double>() < 0.03);
     CHECK_FALSE(is["mirrored"].get<bool>());
     CHECK(is["cleanToMip"].get<int>() >= 3);
     // An 8 px bevel at 512 px per metre is 1.6 cm: about 3 px at 5 m on a 1080p screen, under 1 px at 30 m.
@@ -819,19 +847,34 @@ TEST_CASE("trim check: density, alignment, orientation, stretch, readability and
     ops::execute("undo", json::object());
     CHECK(checkOf(band, {{"distance", 500.0}})["ok"].get<bool>());
 
-    // Two faces round a corner, both centred on one strip: the same texels meet at the corner.
+    // Two faces round a corner run on along the strip, so neither repeats the other.
     const std::string corner = made(ops::execute("createMesh", {{"points", {{0, 0, 0}, {100, 0, 0}, {100, 50, 0}, {0, 50, 0}, {100, 0, -100}, {100, 50, -100}}},
                                                                 {"faces", {{0, 1, 2, 3}, {1, 4, 5, 2}}},
                                                                 {"name", "CheckCorner"}}));
     ops::execute("select", {{"args", {corner}}});
     ops::execute("trimApply", {{"trim", 0}});
+    CHECK_FALSE(hasIssue(checkOf(corner, {{"distance", 500.0}}), "repeats"));
+
+    // The same corner mapped a face at a time: both centred on the strip, so the same texels meet at the corner.
+    auto eachFace = [&](json args) {
+        scene::Graph& g = scene::Graph::current();
+        for (geo::Index f : {0u, 1u})
+        {
+            scene::components::setMode(scene::ComponentMode::Face);
+            scene::components::select(g.find(corner)->id(), scene::ComponentMode::Face, {f});
+            ops::execute("trimApply", args);
+        }
+        scene::components::setMode(scene::ComponentMode::Object);
+        ops::execute("select", {{"args", {corner}}});
+    };
+    eachFace({{"trim", 0}});
     c = checkOf(corner, {{"distance", 500.0}});
     CHECK(c["issues"]["repeats"] == 2);
-    ops::execute("trimApply", {{"trim", 0}, {"randomOffset", true}, {"seed", 4}});
+    eachFace({{"trim", 0}, {"randomOffset", true}, {"seed", 4}});
     CHECK_FALSE(hasIssue(checkOf(corner, {{"distance", 500.0}}), "repeats"));
 
     // uvLayout counts trim overlap apart from real overlap; texel density leaves trims alone unless told.
-    ops::execute("trimApply", {{"trim", 0}});
+    eachFace({{"trim", 0}});
     const json layout = ops::execute("uvLayout", json::object());
     CHECK(layout["overlappingFaces"] == 0);
     CHECK(layout["trimOverlapFaces"] == 2);

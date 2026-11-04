@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -169,6 +170,26 @@ LILA_SCENE_API Index markSeamsByAngle(geo::Mesh& mesh, std::span<const Index> fa
  */
 LILA_SCENE_API HotspotResult hotspot(geo::Mesh& mesh, std::span<const Index> faces, std::span<const HotspotTrim> trims, std::string_view uvSet,
                                      const HotspotOptions& opts = {});
+
+/** How far a run may be stretched along U to span a whole number of sheet widths (startOnWholeSheets). */
+inline constexpr double kMaxWholeSheetStretch = 0.25;
+
+/**
+ * Stretches a chart on a tiling strip along U to span a whole number of sheet widths (at least one) and starts it on the
+ * sheet's edge, so copies laid end to end continue on the same texels. A chart that would stretch by more than
+ * kMaxWholeSheetStretch keeps its scale and only starts on the edge. Returns the stretch used.
+ */
+LILA_SCENE_API double startOnWholeSheets(Chart& chart, const HotspotTrim& trim);
+
+/**
+ * Slides charts placed on tiling strips so U runs on across the edges they share end to end, as round a band's corners.
+ * trimOf gives each chart's trim (-1 for none); only charts on the same StripU trim whose shared end matches in V chain.
+ * Each chain starts from its longest chart and grows both ways from it; a closed loop keeps one seam, opposite the start.
+ * With wholeSheets, each start goes through startOnWholeSheets and the rest of its chain takes the same stretch;
+ * otherwise align (when given) places each start. Returns how many charts were moved to follow another.
+ */
+LILA_SCENE_API size_t chainStripCharts(std::span<Chart> charts, std::span<const int> trimOf, std::span<const HotspotTrim> trims,
+                                       bool wholeSheets = false, const std::function<void(Chart&, int trim)>& align = {});
 
 /** Stable hash to [0, 1) from a seed and two keys. */
 LILA_SCENE_API double hotspotRandom(uint32_t seed, uint64_t a, uint64_t b);

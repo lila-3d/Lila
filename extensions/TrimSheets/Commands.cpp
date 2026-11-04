@@ -160,106 +160,6 @@ json sheetSummary(const Sheet& s, const std::filesystem::path& f)
             {"trims", trimsJ}};
 }
 
-/** How a tiling strip's detail repeats along it, in uv: the repeat and where one motif is centred. Zero period: plain. */
-struct Motif
-{
-    double period = 0.0;
-    double centre = 0.0;
-};
-
-/**
- * The repeat of a strip's carved or modelled detail, read from its baked normal map: detail on a tiling strip repeats a
- * whole number of times across the sheet, so the repeat is the shortest sheet width / k the strip matches itself at.
- */
-Motif measureMotif(const Sheet& s, const std::filesystem::path& f, size_t trim)
-{
-    Motif out;
-    const Trim& t = s.trims[trim];
-    const lila::image::Image img = lila::image::read(mapFile(s, f, "normal"));
-    if (img.width < 8 || t.kind != uv::TrimKind::StripU)
-        return out;
-    const int w = img.width;
-    const double sy = double(img.height) / s.height;
-    const int y0 = std::clamp(int(t.min.y * sy), 0, img.height), y1 = std::clamp(int(t.max.y * sy), y0, img.height);
-    if (y1 - y0 < 2)
-        return out;
-    // How far each column leans from flat; the profile is the same in every column, so only detail varies along it.
-    std::vector<double> sig(size_t(w), 0.0);
-    for (int y = y0; y < y1; ++y)
-        for (int x = 0; x < w; ++x)
-        {
-            const float* px = &img.rgba[(size_t(y) * size_t(w) + size_t(x)) * 4];
-            sig[size_t(x)] += std::abs(px[0] - 0.5) + std::abs(px[1] - 0.5);
-        }
-    double mean = 0.0;
-    for (double v : sig)
-        mean += v;
-    mean /= w;
-    double spread = 0.0;
-    for (double& v : sig)
-    {
-        v -= mean;
-        spread += std::abs(v);
-    }
-    spread /= w;
-    if (spread < 1e-3 * (y1 - y0))
-        return out;
-    auto at = [&](double x) {
-        x = std::fmod(x, double(w));
-        if (x < 0.0)
-            x += w;
-        const int i = int(x);
-        const double f2 = x - i;
-        return sig[size_t(i)] * (1.0 - f2) + sig[size_t((i + 1) % w)] * f2;
-    };
-    int repeats = 1;
-    for (int k = w / 4; k >= 2; --k)
-    {
-        const double shift = double(w) / k;
-        double err = 0.0;
-        for (int x = 0; x < w; ++x)
-            err += std::abs(sig[size_t(x)] - at(x + shift));
-        if (err / w < 0.2 * spread)
-        {
-            repeats = k;
-            break;
-        }
-    }
-    const double period = double(w) / repeats;
-    // The motif's centre: the circular centroid of the detail over one repeat.
-    double cx = 0.0, sx = 0.0;
-    for (int x = 0; x < w; ++x)
-    {
-        const double a = 2.0 * std::numbers::pi * x / period;
-        const double weight = std::max(0.0, sig[size_t(x)]);
-        cx += weight * std::cos(a);
-        sx += weight * std::sin(a);
-    }
-    double centre = std::atan2(sx, cx) / (2.0 * std::numbers::pi) * period;
-    if (centre < 0.0)
-        centre += period;
-    out.period = period / w;
-    out.centre = (centre + 0.5) / w;
-    return out;
-}
-
-/**
- * Slides a placed chart along its tiling strip so the motifs sit symmetrically: an odd number of repeats across it puts a
- * motif in its middle, an even number a gap, so a short end shows one centred motif and a long face ends between motifs.
- */
-void alignToMotif(uv::Chart& ch, const Motif& m)
-{
-    if (m.period <= 0.0 || ch.uv.empty())
-        return;
-    const double lo = ch.uvMin().x, hi = ch.uvMax().x;
-    const double middle = (lo + hi) * 0.5;
-    const long repeats = std::max(1L, std::lround((hi - lo) / m.period));
-    const double anchor = m.centre + (repeats % 2 == 0 ? m.period * 0.5 : 0.0);
-    const double target = anchor + std::round((middle - anchor) / m.period) * m.period;
-    for (glm::dvec2& p : ch.uv)
-        p.x += target - middle;
-}
-
 /** The rotation that fits an island onto one trim best. */
 bool bestRotation(const uv::IslandMeasure& m, const uv::HotspotTrim& t)
 {
@@ -1395,8 +1295,9 @@ void registerCommands(ext::Context& ctx)
     ctx.registerCommand({
         .name = "trimApply",
         .doc = "Map the selected faces (whole selected meshes in object mode) onto one trim: each island is split by angle, "
-               "rectified, turned to suit the trim and fitted to it (stretched to a strip's height and slid along it, or fitted "
-               "inside a rectangle). Faces get the sheet's material and remember their trim (face int 'trim', index + 1). "
+               "rectified, turned to suit the trim and fitted to it (stretched to a strip's height, or fitted inside a "
+               "rectangle). Along a strip, a run spans a whole number of sheet widths, so copies laid end to "
+               "end tile, and runs on round corners. Faces get the sheet's material and remember their trim (face int 'trim', index + 1). "
                "Returns per mesh the islands placed.",
         .flags = [] {
             std::vector<FlagDef> f = {sheetFlag(),
@@ -1408,7 +1309,7 @@ void registerCommands(ext::Context& ctx)
                                       {"seed", "s", AT::Int, int64_t(0), "Offset along strips."},
                                       paletteFlag(),
                                       {"randomOffset", "ro", AT::Bool, false,
-                                       "Slide islands to a random place along tiling strips; off centres them, so motifs sit symmetrically."}};
+                                       "Slide islands to a random place along tiling strips; off starts each run on the sheet's edge and spans whole sheets, so copies tile."}};
             return f;
         }(),
         .run = [](const Args& a) -> json {
@@ -1425,7 +1326,6 @@ void registerCommands(ext::Context& ctx)
             const std::string rotate = a.get<std::string>("rotate", "auto");
             uv::HotspotOptions o = hotspotOptions(a);
             o.randomOffset = a.get<bool>("randomOffset", false);
-            const Motif motif = o.randomOffset ? Motif{} : measureMotif(s, f, size_t(ti));
             std::vector<std::string> nodes;
             json out = uv::editUvMeshes("Apply Trim", scene::ComponentMode::Face, [&](geo::Mesh& m, const Ids& ids, Node& node) -> json {
                 const std::vector<geo::Index> faces = facesOrAll(m, ids);
@@ -1437,8 +1337,9 @@ void registerCommands(ext::Context& ctx)
                     const uint64_t key = ch.faces.empty() ? 0 : ch.faces.front();
                     uv::placeChart(ch, trims[size_t(ti)], rot, o, uv::hotspotRandom(o.seed, key, 1), uv::hotspotRandom(o.seed, key, 2),
                                    uv::hotspotRandom(o.seed, key, 3));
-                    alignToMotif(ch, motif);
                 }
+                const std::vector<int> trimOf(charts.size(), ti);
+                uv::chainStripCharts(charts, trimOf, trims, !o.randomOffset);
                 uv::writeCharts(m, charts, set);
                 tagFaces(m, faces, ti, s, palette);
                 nodes.push_back(node.path());

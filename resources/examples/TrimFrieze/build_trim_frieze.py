@@ -83,12 +83,25 @@ ops.hide("SheetHigh")
 ops.trimSheetBake(high=motifs)
 ops.trimSheetTexture(material=MATERIAL, replace=True)
 
+CAP_STRIP = "Panel"  # the tops and bottoms of the bands: flat stone with a chamfered lip
+
+
+def map_band(band, strip):
+    # A cube's faces: front, top, back, bottom, right, left. The sides share one strip, so it runs on round the corners.
+    ops.selectMode("face")
+    ops.selectComponents(band, faces=[0, 2, 4, 5])
+    ops.trimApply(trim=strip)
+    ops.selectComponents(band, faces=[1, 3])
+    ops.trimApply(trim=CAP_STRIP)
+    ops.selectMode("object")
+    ops.select(clear=True)
+
+
 bands = []
 for name, y, height, depth, strip in BANDS:
     band = first(ops.polyCube(width=400, height=height, depth=depth, baseAtOrigin=True, name=name))
     ops.move(band, to=[0, y, 0])
-    ops.select(band)
-    ops.trimApply(trim=strip)
+    map_band(band, strip)
     bands.append(band)
 ops.group(*bands, name="Wall")
 
