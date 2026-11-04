@@ -145,6 +145,7 @@ json callAsData(const std::string& method, const json& params, int timeoutMs)
 } // namespace
 
 void registerMlDeformerCommands();
+void registerExpressionRigCommands();
 
 void registerCommands()
 {
@@ -153,6 +154,7 @@ void registerCommands()
     registerTextureSetCommands();
     registerSplineCommands();
     registerPlacementCommands();
+    registerExpressionRigCommands();
     static const events::SubscriptionId adopt =
         events::subscribe(events::Event::SceneOpened, [](const events::EventData&) { adoptWorkspaceMappings(); });
     (void)adopt;

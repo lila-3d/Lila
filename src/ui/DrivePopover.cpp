@@ -210,8 +210,9 @@ DrivePopover::DrivePopover(std::string target, QWidget* parent)
         mExpressionNote->setObjectName("driveExpressionNote");
         mExpressionNote->setWordWrap(true);
         mExpressionNote->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
-        mExpressionNote->setText("Arithmetic, comparisons, if/else, math functions and other plugs by name compile to rig math nodes, "
-                                 "which evaluate as fast as nodes and go to Unreal Control Rig. Anything else runs as Python.");
+        mExpressionNote->setText("Arithmetic, comparisons, if/else, math functions, noise, random, time, frame and other plugs by name "
+                                 "compile to rig math nodes, which evaluate as fast as nodes and go to Unreal Control Rig. Anything else "
+                                 "runs as Python.");
         pv->addWidget(mExpressionNote);
         pv->addStretch(1);
         auto* apply = new QPushButton("Apply", page);

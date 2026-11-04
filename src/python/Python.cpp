@@ -56,7 +56,8 @@ namespace
 /** Runs pythonExpression nodes: their code evaluated with v0, v1 ... bound and math's names in scope. */
 void installExpressionEvaluator()
 {
-    scene::expressions::setPythonEvaluator([](const std::string& code, const std::vector<double>& values, std::string* error) -> std::optional<double> {
+    scene::expressions::setPythonEvaluator([](const std::string& code, const std::vector<double>& values, double time, double frame,
+                                              std::string* error) -> std::optional<double> {
         if (!gInitialized)
             return std::nullopt;
         Gil gil;
@@ -66,6 +67,12 @@ void installExpressionEvaluator()
         {
             PyDict_Update(globals, PyModule_GetDict(math));
             Py_DECREF(math);
+        }
+        for (auto [name, value] : {std::pair{"time", time}, std::pair{"frame", frame}})
+        {
+            PyObject* v = PyFloat_FromDouble(value);
+            PyDict_SetItemString(globals, name, v);
+            Py_DECREF(v);
         }
         for (size_t i = 0; i < values.size(); ++i)
         {

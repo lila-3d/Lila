@@ -104,6 +104,26 @@ TEST_CASE("Drive popover: an expression compiles to nodes and the Channel Box ma
     CHECK_FALSE(bad.applyExpression());
 }
 
+TEST_CASE("Drive popover: time, frame, noise and random compile to nodes and follow the scene time")
+{
+    dCmd("newScene");
+    dCmd("spaceLocator", {{"name", "Ctrl"}});
+    dCmd("spaceLocator", {{"name", "Box"}});
+    {
+        ui::DrivePopover pop("Box.ry");
+        CHECK(pop.findChild<QLabel*>("driveExpressionNote")->text().contains("time"));
+        pop.findChild<QLineEdit*>("driveExpression")->setText("sin(time) * 10 + noise(frame * 0.1, 2) + random(Ctrl.ty)");
+        CHECK(pop.applyExpression());
+    }
+    CHECK(dCmd("expression", {{"args", {"Box.ry"}}, {"query", true}})["native"] == true);
+    CHECK((ui::ChannelBox::stateOf(Graph::current().plug("Box.ry")) & ui::ChannelBox::kExpression));
+    const double at0 = dCmd("getAttr", {{"args", {"Box.ry"}}}).get<double>();
+    Graph::current().setTime(1.0);
+    const double at1 = dCmd("getAttr", {{"args", {"Box.ry"}}}).get<double>();
+    CHECK(at1 != at0);
+    Graph::current().setTime(0.0);
+}
+
 TEST_CASE("Attribute Editor shows what drives a row and what the object drives")
 {
     dCmd("newScene");

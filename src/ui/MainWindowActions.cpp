@@ -101,6 +101,17 @@ void MainWindow::registerActions()
                   "unrealMap(node, contentPath=\"/Game/Meshes/SM_Name\"); unrealSync()"});
     actions::add({"unreal.sync", "Sync to Unreal", "Unreal", [this] { run("unrealSync"); }, nullptr,
                   "Exports and reimports every object already mapped to an Unreal asset, as saving does.", "unrealSync()"});
+    actions::add({"unreal.expressionRig", "Send Expression Rig to Unreal", "Unreal",
+                  [this] {
+                      json args = json::object();
+                      if (const auto sel = scene::Graph::current().selection(); !sel.empty())
+                          args["args"] = {scene::Graph::current().node(sel.front())->path()};
+                      run("unrealExpressionRig", args);
+                  },
+                  nullptr,
+                  "Builds a Control Rig that runs the selected character's expressions in Unreal, exactly as in Lila, and plays it from "
+                  "the mesh's post-process Anim Blueprint.",
+                  "unrealExpressionRig(\"Char\")"});
     actions::add({"unreal.connect", "Connect to Unreal", "Unreal", [this] { run("unrealConnect"); }, nullptr,
                   "Connects to an Unreal Editor running the LilaLink plugin.", "unrealConnect()"});
     for (const char* view : {"persp", "top", "front", "right", "left", "back", "bottom"})

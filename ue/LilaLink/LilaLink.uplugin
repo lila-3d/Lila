@@ -15,6 +15,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "LilaLinkRig",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "LilaLink",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit",
@@ -52,6 +57,10 @@
 		},
 		{
 			"Name": "GeometryCollectionPlugin",
+			"Enabled": true
+		},
+		{
+			"Name": "ControlRig",
 			"Enabled": true
 		},
 		{

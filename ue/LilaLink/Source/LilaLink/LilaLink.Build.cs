@@ -54,6 +54,10 @@ public class LilaLink : ModuleRules
 			"EditorSubsystem",
 			"RenderCore",
 			"LilaLinkRuntime",
+			"AnimGraph",
+			"BlueprintGraph",
+			"ControlRig",
+			"ControlRigDeveloper",
 		});
 
 		// Editor modules that register component exporters include LilaComponentExporter.h, which uses FJsonObject.

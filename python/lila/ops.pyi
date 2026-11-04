@@ -3144,13 +3144,13 @@ def exportWebViewer(*objects: Any, selection: bool | None = None, title: str | N
     """
 
 def expression(*objects: Any, string: str | None = None, python: bool | None = None, query: bool | None = None, delete: bool | None = None, s: str | None = None, py: bool | None = None, q: bool | None = None, d: bool | None = None) -> Any:
-    """Drive a plug with an expression in Python syntax: expression('box.ty', string='ctrl.ry * 0.5 + clamp(foot.roll, 0, 90)'). Numbers, other plugs by name, + - * / % **, comparisons, and/or/not, `a if c else b` and abs, min, max, clamp, lerp, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, pow, log, sign, fmod, hypot, degrees, radians, wrap and mapRange compile to rig math nodes: as fast as nodes, shown in the node editor. Anything else runs as Python (slower, Lila only). Returns {native, nodes, reason}.
+    """Drive a plug with an expression in Python syntax: expression('box.ty', string='ctrl.ry * 0.5 + clamp(foot.roll, 0, 90)'). Numbers, other plugs by name, time (seconds) and frame, + - * / % **, comparisons, and/or/not, `a if c else b` and abs, min, max, clamp, lerp, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, pow, log, sign, fmod, hypot, degrees, radians, wrap, mapRange, floor, ceil, round, trunc, noise(x, seed), random(seed) or random(seed, min, max), linstep(min, max, x) and smoothstep(min, max, x) compile to rig math nodes: as fast as nodes, shown in the node editor, and sent to Unreal Control Rig by unrealExpressionRig. Anything else runs as Python with time and frame in scope (slower, Lila only). Returns {native, nodes, reason}; query adds the Unreal program.
 
     Args:
         objects: plug.
         string: The expression; a leading = is optional. Short form s.
         python: Run it as Python even when it compiles to nodes. Short form py. Default False.
-        query: Return {text, native, nodes} for the plug's expression, or None. Short form q. Default False.
+        query: Return {text, native, nodes, program, programInputs} for the plug's expression, or None. Short form q. Default False.
         delete: Remove the plug's expression and its nodes. Short form d. Default False.
     """
 
@@ -9694,6 +9694,17 @@ def unrealCustomData(*objects: Any, data: Any | None = None, query: bool | None 
 
     Examples:
         unrealCustomData("Boulder", data=["random", "wear", "tint"])
+    """
+
+def unrealExpressionRig(*objects: Any, skeletalMesh: str | None = None, rig: str | None = None, postProcess: bool | None = None, dryRun: bool | None = None, sm: str | None = None, r: str | None = None, pp: bool | None = None, dry: bool | None = None) -> Any:
+    """Build a Control Rig in Unreal that runs the character's expressions live: one Lila Expression node each, evaluating exactly as Lila does. Targets are bone channels, morph target weights (as curves) or attributes under the root (as curves named node_attr); inputs that aren't bones, morph weights or time become float controls. Expressions that run as Python stay in Lila. Returns {rig, animBlueprint, expressions, skipped, controls, curves, warnings, unreal}.
+
+    Args:
+        objects: root.
+        skeletalMesh: The skeletal mesh asset. Default: the root's skeletal mapping. Short form sm.
+        rig: The Control Rig asset to create or update. Default: CR_<mesh>_Expressions beside the mesh. Short form r.
+        postProcess: Run the rig from the mesh's post-process Anim Blueprint (made as ABP_<name>_Expressions) so the expressions play wherever the mesh does, and make it the mesh's default animating rig. A post-process Anim Blueprint you made is left alone, with a warning to add a Control Rig node to it. Short form pp. Default True.
+        dryRun: Return what would be sent without connecting to Unreal. Short form dry. Default False.
     """
 
 def unrealImport(*objects: Any, contentPath: str | None = None, kind: str | None = None, skeleton: str | None = None, facing: str | None = None, importMaterials: bool | None = None, materialFolder: str | None = None, keepMaterials: bool | None = None, importTextures: bool | None = None, combineMeshes: bool | None = None, autoCollision: bool | None = None, collision: str | None = None, generateLightmapUVs: bool | None = None, normals: str | None = None, lodGroup: str | None = None, nanite: bool | None = None, existing: str | None = None, reapplyOptions: bool | None = None, save: bool | None = None, file: str | None = None, wait: bool | None = None, cp: str | None = None, k: str | None = None, sk: str | None = None, fc: str | None = None, im: bool | None = None, mf: str | None = None, km: bool | None = None, it: bool | None = None, cm: bool | None = None, ac: bool | None = None, col: str | None = None, glu: bool | None = None, nm: str | None = None, lg: str | None = None, na: bool | None = None, ex: str | None = None, ro: bool | None = None, sv: bool | None = None, f: str | None = None, w: bool | None = None) -> Any:

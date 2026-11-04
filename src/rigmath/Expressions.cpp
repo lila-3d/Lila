@@ -6,11 +6,15 @@
 #include "scene/Graph.h"
 #include "scene/Node.h"
 #include "scene/Relocate.h"
+#include "scene/Anim.h"
+#include "rigmath/ExpressionVm.h"
 
 #include <cctype>
 #include <cmath>
+#include <format>
 #include <map>
 #include <mutex>
+#include <set>
 
 namespace lila::scene::expressions
 {
@@ -244,6 +248,8 @@ private:
         ++mAt;
         static const std::map<std::string, double> kConstants = {{"pi", 3.14159265358979323846}, {"tau", 6.28318530717958647692},
                                                                  {"e", 2.71828182845904523536}, {"True", 1.0}, {"False", 0.0}};
+        if ((t.text == "time" || t.text == "frame") && !(peek().kind == Token::Op && peek().text == "("))
+            return node(Ast::Time, t.text);
         if (auto c = kConstants.find(t.text); c != kConstants.end())
         {
             auto a = node(Ast::Number, "");
@@ -275,19 +281,84 @@ struct FnInfo
 {
     std::string rigmath;
     int args;
-    int output = 0; // which output pin
+    int output = 0;  // which output pin
+    int maxArgs = 0; // the most arguments it takes when some are optional; 0 = args
+    rigmath::Kind kind = rigmath::Kind::Float;
+    std::vector<int> pins = {};                     // the pin each argument goes to; empty = in order
+    std::vector<std::pair<int, double>> fixed = {}; // pins set to constants
 };
 const std::map<std::string, FnInfo>& fnTable()
 {
+    using K = rigmath::Kind;
     static const std::map<std::string, FnInfo> t = {
-        {"abs", {"abs", 1}},       {"min", {"min", 2}},        {"max", {"max", 2}},       {"clamp", {"clamp", 3}},
-        {"lerp", {"lerp", 3}},     {"sin", {"sin", 1}},        {"cos", {"cos", 1}},       {"tan", {"tan", 1}},
-        {"asin", {"asin", 1}},     {"acos", {"acos", 1}},      {"atan", {"atan", 1}},     {"atan2", {"atan2", 2}},
-        {"sqrt", {"sqrt", 1}},     {"exp", {"exp", 1}},        {"pow", {"pow", 2}},       {"log", {"loge", 1}},
-        {"sign", {"sign", 1}},     {"fmod", {"fmod", 2, 1}},   {"hypot", {"hypotenuse", 2}}, {"degrees", {"radiansToDegrees", 1}},
-        {"radians", {"degreesToRadians", 1}}, {"wrap", {"wrap", 3}}, {"mapRange", {"mapRangeClamped", 5}},
+        {"abs", {"abs", 1}},
+        {"min", {"min", 2}},
+        {"max", {"max", 2}},
+        {"clamp", {"clamp", 3}},
+        {"lerp", {"lerp", 3}},
+        {"sin", {"sin", 1}},
+        {"cos", {"cos", 1}},
+        {"tan", {"tan", 1}},
+        {"asin", {"asin", 1}},
+        {"acos", {"acos", 1}},
+        {"atan", {"atan", 1}},
+        {"atan2", {"atan2", 2}},
+        {"sqrt", {"sqrt", 1}},
+        {"exp", {"exp", 1}},
+        {"pow", {"pow", 2}},
+        {"log", {"loge", 1, 0, 2}},
+        {"sign", {"sign", 1}},
+        {"fmod", {"fmod", 2, 1}},
+        {"hypot", {"hypotenuse", 2}},
+        {"degrees", {"radiansToDegrees", 1}},
+        {"radians", {"degreesToRadians", 1}},
+        {"wrap", {"wrap", 3}},
+        {"mapRange", {"mapRangeClamped", 5}},
+        {"floor", {"floor", 1}},
+        {"ceil", {"ceil", 1}},
+        {"round", {"round", 1}},
+        {"trunc", {"truncate", 1}},
+        {"noise", {"perlinNoise1D", 1, 0, 2}},
+        {"random", {"randomFloatFromStream", 1, 0, 3, K::Int}},
+        // Maya's argument order: linstep(min, max, value), smoothstep(min, max, value).
+        {"linstep", {"mapRangeClamped", 3, 0, 0, K::Float, {1, 2, 0}, {{3, 0.0}, {4, 1.0}}}},
+        {"smoothstep", {"mapRangeClamped", 3, 0, 0, K::Float, {1, 2, 0}, {{3, 0.0}, {4, 1.0}}}},
     };
     return t;
+}
+
+/** Whether fn takes n arguments; random takes a seed, or a seed, min and max. */
+bool arityOk(const std::string& fn, const FnInfo& f, int n)
+{
+    if (fn == "random")
+        return n == 1 || n == 3;
+    return n >= f.args && n <= std::max(f.args, f.maxArgs);
+}
+
+/** Whether text uses name as a bare identifier: outside strings, not after a dot. */
+bool usesName(const std::string& s, std::string_view name)
+{
+    auto word = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == ':'; };
+    char quote = 0;
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        const char c = s[i];
+        if (quote)
+        {
+            if (c == quote)
+                quote = 0;
+            continue;
+        }
+        if (c == '"' || c == '\'')
+        {
+            quote = c;
+            continue;
+        }
+        if (s.compare(i, name.size(), name) == 0 && (i == 0 || (!word(s[i - 1]) && s[i - 1] != '.')) &&
+            (i + name.size() >= s.size() || !word(s[i + name.size()])))
+            return true;
+    }
+    return false;
 }
 
 /** The overload of a rig math function whose inputs take kind (Float, or Bool for logic). */
@@ -320,8 +391,12 @@ std::string uncompilable(const Ast& a, Graph& g)
         auto it = fnTable().find(a.op);
         if (it == fnTable().end())
             return a.op + "() isn't a rig math function";
-        if (int(a.args.size()) != it->second.args && !(a.op == "log" && a.args.size() == 2))
-            return a.op + "() takes " + std::to_string(it->second.args) + " arguments";
+        if (const FnInfo& f = it->second; !arityOk(a.op, f, int(a.args.size())))
+        {
+            const int most = std::max(f.args, f.maxArgs);
+            const std::string counts = a.op == "random" ? "1 or 3" : most == f.args ? std::to_string(f.args) : std::format("{} or {}", f.args, most);
+            return a.op + "() takes " + counts + " arguments";
+        }
     }
     for (const auto& c : a.args)
         if (std::string why = uncompilable(*c, g); !why.empty())
@@ -371,6 +446,7 @@ public:
         case Ast::Ternary:
             // select's pins are a, b, pickA.
             return op("select", rigmath::Kind::Float, {build(*a.args[0]), build(*a.args[2]), build(*a.args[1])});
+        case Ast::Time: return time(a.op == "frame");
         case Ast::Call:
         {
             const FnInfo& f = fnTable().at(a.op);
@@ -379,7 +455,16 @@ public:
                 args.push_back(build(*c));
             if (a.op == "log" && args.size() == 2)
                 return op("log", rigmath::Kind::Float, std::move(args));
-            return op(f.rigmath, rigmath::Kind::Float, std::move(args), f.output);
+            if (a.op == "random" && args.size() == 3)
+                return op("randomFloatInRangeFromStream", rigmath::Kind::Float, {args[1], args[2], args[0]});
+            Value v = op(f.rigmath, f.kind, std::move(args), f.output, f.pins, f.fixed);
+            if (a.op == "smoothstep")
+            {
+                // t * t * (3 - 2 * t), t the clamped place in min..max.
+                const Value rest = op("subtract", rigmath::Kind::Float, {{std::nullopt, 3.0}, op("multiply", rigmath::Kind::Float, {v, {std::nullopt, 2.0}})});
+                return op("multiply", rigmath::Kind::Float, {op("multiply", rigmath::Kind::Float, {v, v}), rest});
+            }
+            return v;
         }
         }
         throw std::invalid_argument("unknown expression part");
@@ -388,7 +473,19 @@ public:
     std::vector<NodeId> nodes;
 
 private:
-    Value op(const std::string& fn, rigmath::Kind kind, std::vector<Value> args, int output = 0)
+    /** The scene time in seconds, or in frames: one sceneTime node per expression. */
+    Value time(bool frames)
+    {
+        if (mTime == kNoNode)
+        {
+            mTime = g.createNode(*types::find("sceneTime"), mLabel + "_time")->id();
+            nodes.push_back(mTime);
+        }
+        return {PlugRef{mTime, frames ? 1 : 0}, 0.0};
+    }
+
+    Value op(const std::string& fn, rigmath::Kind kind, std::vector<Value> args, int output = 0, const std::vector<int>& pins = {},
+             const std::vector<std::pair<int, double>>& fixed = {})
     {
         const rigmath::Overload* o = overload(fn, kind);
         if (!o)
@@ -398,25 +495,31 @@ private:
             throw std::invalid_argument("rig math node " + o->nodeType + " isn't registered");
         Node* n = g.createNode(*type, mLabel + "_" + fn);
         nodes.push_back(n->id());
-        for (size_t i = 0; i < args.size() && i < o->inputs.size(); ++i)
-        {
-            const int pin = n->type().attrIndex(o->inputs[i].name);
-            if (args[i].plug)
-                g.connect(*args[i].plug, {n->id(), pin});
+        auto set = [&](size_t input, const Value& v) {
+            const int pin = n->type().attrIndex(o->inputs[input].name);
+            if (v.plug)
+                g.connect(*v.plug, {n->id(), pin});
             else
             {
                 const AttrDef& d = n->type().attrs[size_t(pin)];
-                g.setValue({n->id(), pin}, d.type == PlugType::Bool ? PlugValue(args[i].constant != 0.0)
-                                           : d.type == PlugType::Int ? PlugValue(int64_t(std::llround(args[i].constant)))
-                                                                     : PlugValue(args[i].constant));
+                g.setValue({n->id(), pin}, d.type == PlugType::Bool ? PlugValue(v.constant != 0.0)
+                                           : d.type == PlugType::Int ? PlugValue(int64_t(std::llround(v.constant)))
+                                                                     : PlugValue(v.constant));
             }
-        }
+        };
+        for (size_t i = 0; i < args.size(); ++i)
+            if (const size_t input = i < pins.size() ? size_t(pins[i]) : i; input < o->inputs.size())
+                set(input, args[i]);
+        for (const auto& [input, value] : fixed)
+            if (size_t(input) < o->inputs.size())
+                set(size_t(input), {std::nullopt, value});
         return {PlugRef{n->id(), n->type().attrIndex(o->outputs[size_t(output)].name)}, 0.0};
     }
 
     Graph& g;
     std::string mTarget;
     std::string mLabel;
+    NodeId mTime = kNoNode;
 };
 
 /** Plug paths in text as (offset, length), for Python: dotted names that resolve, outside strings. */
@@ -469,6 +572,16 @@ std::mutex& evaluatorLock()
     return m;
 }
 
+class SceneTimeNode final : public Node
+{
+public:
+    void compute(const EvalContext& ctx) override
+    {
+        setOutput(0, ctx.time);
+        setOutput(1, anim::frameOf(ctx.time));
+    }
+};
+
 class PythonNode final : public Node
 {
 public:
@@ -478,6 +591,8 @@ public:
         kInputs,
         kOutput,
         kError,
+        kTime,
+        kFrame,
     };
     void compute(const EvalContext&) override
     {
@@ -495,7 +610,7 @@ public:
             fn = evaluator();
         }
         std::string error;
-        std::optional<double> r = fn ? fn(as<std::string>(kCode), values, &error) : std::nullopt;
+        std::optional<double> r = fn ? fn(as<std::string>(kCode), values, as<double>(kTime), as<double>(kFrame), &error) : std::nullopt;
         if (!fn)
             error = "Python isn't running";
         setOutput(kOutput, r.value_or(0.0));
@@ -566,6 +681,135 @@ bool compiles(const std::string& text, std::string* why)
     }
 }
 
+std::vector<PlugRef> targets(Graph& g)
+{
+    std::vector<PlugRef> out;
+    for (NodeId id : g.nodes())
+        if (json t = tagOf(*g.node(id)); t.is_object() && t.contains("text"))
+            try
+            {
+                out.push_back(g.plug(t.value("target", "")));
+            }
+            catch (const std::exception&)
+            {
+            }
+    return out;
+}
+
+ProgramText program(Graph& g, const PlugRef& target)
+{
+    ProgramText out;
+    const std::string key = g.fullPlugName(target);
+    std::vector<NodeId> nodes = expressionNodes(g, key);
+    if (nodes.empty())
+    {
+        out.why = "no expression";
+        return out;
+    }
+    if (!tagOf(*g.node(nodes[0])).value("native", true))
+    {
+        out.why = "runs as Python";
+        return out;
+    }
+    const std::optional<PlugRef> root = g.source(target);
+    if (!root)
+    {
+        out.why = "the expression isn't connected to " + g.plugName(target);
+        return out;
+    }
+    const std::set<NodeId> mine(nodes.begin(), nodes.end());
+    std::map<NodeId, int> step;
+    std::map<PlugRef, int> inputIndex;
+    std::vector<std::string> lines;
+    auto outputIndex = [](const rigmath::Overload& o, const Node& n, int attr) {
+        for (size_t k = 0; k < o.outputs.size(); ++k)
+            if (n.type().attrIndex(o.outputs[k].name) == attr)
+                return int(k);
+        return -1;
+    };
+    // An argument naming where a plug's value comes from; emits upstream nodes first.
+    std::function<std::string(const PlugRef&)> arg;
+    std::function<bool(NodeId)> emit = [&](NodeId id) -> bool {
+        if (step.count(id))
+            return true;
+        const Node& n = *g.node(id);
+        const rigmath::Overload* o = rigmath::overloadFor(n.type().name);
+        const rigmath::Function* f = rigmath::functionFor(n.type().name);
+        const lila_expr::Op op = f ? lila_expr::opNamed(f->name) : lila_expr::Op::Count;
+        if (!o || op == lila_expr::Op::Count)
+        {
+            out.why = n.name() + " (" + n.type().name + ") has no Unreal equivalent";
+            return false;
+        }
+        const rigmath::Kind expect = f->name == "not" || f->name == "and" || f->name == "or" ? rigmath::Kind::Bool
+                                     : f->name == "randomFloatFromStream"                  ? rigmath::Kind::Int
+                                                                                           : rigmath::Kind::Float;
+        if (overload(f->name, expect) != o)
+        {
+            out.why = n.name() + " uses the " + rigmath::kindName(o->inputs.empty() ? expect : o->inputs[0].kind) + " form of " + f->name;
+            return false;
+        }
+        std::string line = f->name;
+        for (const rigmath::Pin& pin : o->inputs)
+        {
+            const PlugRef in{id, n.type().attrIndex(pin.name)};
+            std::string a = arg(in);
+            if (a.empty())
+                return false;
+            line += " " + a;
+        }
+        step[id] = int(lines.size());
+        lines.push_back(std::move(line));
+        return true;
+    };
+    arg = [&](const PlugRef& in) -> std::string {
+        if (const std::optional<PlugRef> src = g.source(in))
+        {
+            const Node& s = *g.node(src->node);
+            if (mine.count(src->node) && s.type().name == "sceneTime")
+            {
+                out.usesTime = true;
+                return src->attr == 0 ? "t" : "f";
+            }
+            if (mine.count(src->node))
+            {
+                if (!emit(src->node))
+                    return {};
+                const int k = outputIndex(*rigmath::overloadFor(s.type().name), s, src->attr);
+                return std::format("n{}.{}", step[src->node], std::max(k, 0));
+            }
+            auto [it, added] = inputIndex.emplace(*src, int(inputIndex.size()));
+            if (added)
+                out.inputs.push_back(*src);
+            return "i" + std::to_string(it->second);
+        }
+        const PlugValue v = g.value(in);
+        double d = 0.0;
+        if (const double* x = std::get_if<double>(&v))
+            d = *x;
+        else if (const int64_t* i = std::get_if<int64_t>(&v))
+            d = double(*i);
+        else if (const bool* b = std::get_if<bool>(&v))
+            d = *b ? 1.0 : 0.0;
+        return std::format("{}", d);
+    };
+    std::string result;
+    if (mine.count(root->node))
+        result = arg(target);
+    if (result.empty())
+    {
+        if (out.why.empty())
+            out.why = "the expression isn't connected to " + g.plugName(target);
+        out.inputs.clear();
+        return out;
+    }
+    out.text = std::format("fps {}\ninputs {}\n", anim::playback().fps, out.inputs.size());
+    for (const std::string& l : lines)
+        out.text += l + "\n";
+    out.text += "= " + result + "\n";
+    return out;
+}
+
 void setPythonEvaluator(PythonEvaluator fn)
 {
     std::lock_guard lock(evaluatorLock());
@@ -586,10 +830,25 @@ void registerTypes()
         {.name = "inputs", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput | AttrStorable | AttrArray, .doc = "The plugs the code reads."},
         {.name = "output", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "The result."},
         {.name = "error", .type = PlugType::String, .defaultValue = std::string(), .flags = AttrOutput, .doc = "Why the last run failed."},
+        {.name = "time", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput, .doc = "Seconds, as time in the code."},
+        {.name = "frame", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrInput, .doc = "The frame, as frame in the code."},
     };
     t.create = [] { return std::make_unique<PythonNode>(); };
     types::registerType(std::move(t));
     relocate::registerNeutral("pythonExpression");
+
+    NodeType st;
+    st.name = "sceneTime";
+    st.icon = "clock";
+    st.timeDependent = true;
+    st.doc = "The scene's current time, in seconds and in frames: what time and frame read in an expression.";
+    st.ownAttrs = {
+        {.name = "time", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "Seconds."},
+        {.name = "frame", .type = PlugType::Float, .defaultValue = 0.0, .flags = AttrOutput, .doc = "Seconds times the scene's frame rate."},
+    };
+    st.create = [] { return std::make_unique<SceneTimeNode>(); };
+    types::registerType(std::move(st));
+    relocate::registerNeutral("sceneTime");
 }
 
 void registerCommands()
@@ -598,14 +857,16 @@ void registerCommands()
     ops::registerCommand({
         .name = "expression",
         .doc = "Drive a plug with an expression in Python syntax: expression('box.ty', string='ctrl.ry * 0.5 + clamp(foot.roll, 0, 90)'). "
-               "Numbers, other plugs by name, + - * / % **, comparisons, and/or/not, `a if c else b` and abs, min, max, clamp, lerp, "
-               "sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, pow, log, sign, fmod, hypot, degrees, radians, wrap and mapRange "
-               "compile to rig math nodes: as fast as nodes, shown in the node editor. Anything else runs as Python (slower, Lila only). "
-               "Returns {native, nodes, reason}.",
+               "Numbers, other plugs by name, time (seconds) and frame, + - * / % **, comparisons, and/or/not, `a if c else b` and abs, "
+               "min, max, clamp, lerp, sin, cos, tan, asin, acos, atan, atan2, sqrt, exp, pow, log, sign, fmod, hypot, degrees, radians, "
+               "wrap, mapRange, floor, ceil, round, trunc, noise(x, seed), random(seed) or random(seed, min, max), linstep(min, max, x) "
+               "and smoothstep(min, max, x) compile to rig math nodes: as fast as nodes, shown in the node editor, and sent to Unreal "
+               "Control Rig by unrealExpressionRig. Anything else runs as Python with time and frame in scope (slower, Lila only). "
+               "Returns {native, nodes, reason}; query adds the Unreal program.",
         .positionalDoc = "plug",
         .flags = {{"string", "s", T::String, nullptr, "The expression; a leading = is optional."},
                   {"python", "py", T::Bool, false, "Run it as Python even when it compiles to nodes."},
-                  {"query", "q", T::Bool, false, "Return {text, native, nodes} for the plug's expression, or None."},
+                  {"query", "q", T::Bool, false, "Return {text, native, nodes, program, programInputs} for the plug's expression, or None."},
                   {"delete", "d", T::Bool, false, "Remove the plug's expression and its nodes."}},
         .run = [](const Args& a) -> json {
             if (a.positional.size() != 1)
@@ -630,7 +891,19 @@ void registerCommands()
                 json nodes = json::array();
                 for (NodeId id : existing)
                     nodes.push_back(g.node(id)->path());
-                return {{"text", root.value("text", "")}, {"native", root.value("native", true)}, {"nodes", nodes}};
+                json out = {{"text", root.value("text", "")}, {"native", root.value("native", true)}, {"nodes", nodes}};
+                if (out["native"].get<bool>())
+                {
+                    ProgramText p = program(g, target);
+                    json inputs = json::array();
+                    for (const PlugRef& in : p.inputs)
+                        inputs.push_back(g.plugName(in));
+                    out["program"] = p.text.empty() ? json(nullptr) : json(p.text);
+                    out["programInputs"] = inputs;
+                    if (!p.why.empty())
+                        out["unrealReason"] = p.why;
+                }
+                return out;
             }
             for (NodeId id : existing)
                 if (g.node(id))
@@ -704,6 +977,14 @@ void registerCommands()
                     g.connect({n->id(), PythonNode::kOutput}, target, true);
                     tag(g, n->id(), {{"target", key}, {"text", text}, {"native", false}});
                     nodes.push_back(n->path());
+                    if (usesName(code, "time") || usesName(code, "frame"))
+                    {
+                        Node* clock = g.createNode(*types::find("sceneTime"), label + "_time");
+                        g.connect({clock->id(), 0}, {n->id(), PythonNode::kTime});
+                        g.connect({clock->id(), 1}, {n->id(), PythonNode::kFrame});
+                        tag(g, clock->id(), {{"target", key}});
+                        nodes.push_back(clock->path());
+                    }
                 }
             }
             catch (const std::invalid_argument& e)

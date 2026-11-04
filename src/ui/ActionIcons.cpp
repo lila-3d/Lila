@@ -33,6 +33,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"unreal.sync", "refresh"},
     {"unreal.sendBake", "send"},
     {"deform.exportMLDeformer", "brain"},
+    {"unreal.expressionRig", "math-function"},
     {"unreal.connect", "plug-connected"},
     {"file.openFolder", "folder"},
     {"file.closeFolder", "folder-x"},
