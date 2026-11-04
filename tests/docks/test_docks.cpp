@@ -669,3 +669,22 @@ TEST_CASE("collapsing and revealing a tabbed dock keeps its width")
         CHECK(std::abs(attrs->width() - width) < 4);
     }
 }
+
+TEST_CASE("a tab hidden behind another doesn't hold its group wider; shown, it gets its own minimum back")
+{
+    Window w;
+    QDockWidget* channels = w.docks["channelBox"];
+    QDockWidget* attrs = w.docks["attributeEditor"];
+    attrs->raise();
+    settle();
+    attrs->widget()->setMinimumWidth(420);
+    channels->raise();
+    settle();
+    w.win.resizeDocks({channels}, {60}, Qt::Horizontal);
+    settle();
+    CHECK(channels->width() < 200);
+    attrs->raise();
+    settle();
+    CHECK(attrs->width() >= 420);
+    CHECK(attrs->widget()->minimumWidth() == 420);
+}

@@ -120,6 +120,33 @@ const std::map<Qt::DockWidgetArea, std::pair<Qt::ToolBarArea, const char*>>& str
     };
     return areas;
 }
+
+constexpr const char* kTabMinimum = "lilaTabMinimum";
+constexpr QSize kRelaxedMinimum(1, 1);
+
+/**
+ * Qt sizes a tab group to the largest minimum of all its tabs' contents, shown or not. A hidden dock's content
+ * drops its minimum so only the shown tab limits the group; showing it restores the old one, unless the panel set
+ * a new minimum of its own while hidden.
+ */
+void relaxHiddenMinimum(QDockWidget* dock, bool visible)
+{
+    QWidget* content = dock->widget();
+    if (!content)
+        return;
+    const QVariant saved = content->property(kTabMinimum);
+    if (visible && saved.isValid())
+    {
+        if (content->minimumSize() == kRelaxedMinimum)
+            content->setMinimumSize(saved.toSize());
+        content->setProperty(kTabMinimum, QVariant());
+    }
+    else if (!visible && !saved.isValid())
+    {
+        content->setProperty(kTabMinimum, content->minimumSize());
+        content->setMinimumSize(kRelaxedMinimum);
+    }
+}
 } // namespace
 
 void arrangeBottomDocks(QMainWindow* window, const QList<QDockWidget*>& tabs, QDockWidget* current, QDockWidget* row)
@@ -433,7 +460,9 @@ void DockSidebars::manage(QDockWidget* dock)
     dock->setTitleBarWidget(bar);
     connect(bar, &DockTitleBar::collapseRequested, this, [this, dock] { collapse(dock); });
     // Showing a collapsed panel from a menu or hotkey expands it.
+    relaxHiddenMinimum(dock, dock->isVisible());
     connect(dock, &QDockWidget::visibilityChanged, this, [this, dock](bool visible) {
+        relaxHiddenMinimum(dock, visible);
         if (visible && isCollapsed(dock))
             expand(dock);
         // Closed from its own title bar: an open panel's tab goes with it. Hidden behind another tab is not closed.
