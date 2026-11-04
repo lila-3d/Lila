@@ -109,6 +109,24 @@ TEST_CASE("Multi-object edits: the lead only with a hint, every holder with Alt,
     av::setHintEnabled(true);
 }
 
+TEST_CASE("Header: selection chips wrap instead of widening the panel")
+{
+    hCmd("newScene");
+    const char* names[] = {"ReferenceSheetSide", "ReferenceSheetFront", "OutfitSheetSide", "OutfitSheetFront"};
+    for (const char* n : names)
+        hCmd("spaceLocator", {{"name", n}});
+    ui::AttributeEditor ae;
+    ae.resize(420, 900);
+    ae.show();
+    hCmd("select", {{"args", {names[0]}}});
+    hSettle();
+    const int single = ae.minimumSizeHint().width();
+    hCmd("select", {{"args", {names[0], names[1], names[2], names[3]}}});
+    hSettle();
+    CHECK(ae.findChildren<QToolButton*>("selectionChip").size() == 4);
+    CHECK(ae.minimumSizeHint().width() <= single + 40);
+}
+
 TEST_CASE("Header: lead chips, pin, related nodes with back and forward, name mode and section views")
 {
     hCmd("newScene");

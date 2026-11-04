@@ -19,6 +19,7 @@
 #include "scene/Light.h"
 #include "ui/ColorPopup.h"
 #include "ui/Deletion.h"
+#include "ui/FlowLayout.h"
 #include "ui/FontPicker.h"
 #include "ui/Icons.h"
 #include "ui/ImagePicker.h"
@@ -1779,13 +1780,20 @@ void AttributeEditor::rebuildHeader()
     connect(back, &QToolButton::clicked, this, [step] { step(-1); });
     connect(forward, &QToolButton::clicked, this, [step] { step(1); });
 
+    // Chips wrap rather than widen: a tabbed dock can't shrink below its widest tab, so this row would pin its neighbours.
+    auto* chipArea = new QWidget(mChips);
+    auto* flow = new FlowLayout(3);
+    flow->setContentsMargins(0, 0, 0, 0);
+    chipArea->setLayout(flow);
+    row->addWidget(chipArea, 1);
+
     // The selected objects, lead first; a click makes one the lead without touching the selection.
     const std::vector<scene::NodeId> sel = attrView::selectionLeadFirst();
     const QColor accent = themeColor("accent");
     for (size_t i = 0; i < sel.size() && i < 4; ++i)
     {
         const scene::Node* n = g.node(sel[i]);
-        auto* chip = new QToolButton(mChips);
+        auto* chip = new QToolButton(chipArea);
         chip->setObjectName("selectionChip");
         chip->setText(QString::fromStdString(n->name()));
         chip->setToolTip(i == 0 ? "The lead object: edits go here" : "Click to make this the lead object");
@@ -1802,20 +1810,20 @@ void AttributeEditor::rebuildHeader()
             mRebuild = true;
             scheduleRefresh();
         });
-        row->addWidget(chip);
+        flow->addWidget(chip);
     }
     if (sel.size() > 4)
     {
-        auto* more = new QLabel(QString("+%1").arg(sel.size() - 4), mChips);
+        auto* more = new QLabel(QString("+%1").arg(sel.size() - 4), chipArea);
         more->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
-        row->addWidget(more);
+        flow->addWidget(more);
     }
-    mMultiPill = new QLabel(mChips);
+    mMultiPill = new QLabel(chipArea);
     mMultiPill->setObjectName("multiEditPill");
     mMultiPill->setProperty("lilaRawColors", true);
     mMultiPill->setStyleSheet(QString("QLabel { color: %1; border: 1px solid %1; border-radius: 3px; padding: 1px 6px; }").arg(accent.name()));
     mMultiPill->hide();
-    row->addWidget(mMultiPill);
+    flow->addWidget(mMultiPill);
 
     // Related nodes: what feeds the shown one, and the deformers and modifiers it feeds.
     if (const scene::Node* shown = g.node(mNode))
@@ -1838,14 +1846,14 @@ void AttributeEditor::rebuildHeader()
         (void)shown;
         if (!related.empty())
         {
-            auto* sep = new QLabel(QString::fromUtf8("·"), mChips);
+            auto* sep = new QLabel(QString::fromUtf8("·"), chipArea);
             sep->setStyleSheet(QString("color: %1;").arg(themeColor("dimText").name()));
-            row->addWidget(sep);
+            flow->addWidget(sep);
         }
         for (size_t i = 0; i < related.size() && i < 4; ++i)
         {
             const scene::Node* o = g.node(related[i]);
-            auto* chip = new QToolButton(mChips);
+            auto* chip = new QToolButton(chipArea);
             chip->setObjectName("relatedChip");
             chip->setText(QString::fromStdString(o->name()));
             chip->setIcon(icon(QString::fromStdString(scene::types::iconFor(o->type(), "box"))));
@@ -1853,10 +1861,9 @@ void AttributeEditor::rebuildHeader()
             chip->setToolTip(QString::fromStdString(o->type().registered().name) + ": show it here");
             chip->setAutoRaise(true);
             connect(chip, &QToolButton::clicked, this, [this, id = related[i]] { focusNode(id); });
-            row->addWidget(chip);
+            flow->addWidget(chip);
         }
     }
-    row->addStretch(1);
     QToolButton* pin = tool("aePin", mPinned ? "pinned" : "pin", mPinned ? "Unpin: follow the selection again" : "Pin: keep showing this object");
     pin->setCheckable(true);
     pin->setChecked(mPinned);
