@@ -1125,7 +1125,8 @@ void registerClayTool()
                  .icon = "brush",
                  .open = false,
                  .place = [](QDockWidget* d) { d->setProperty(panels::kOwnSizeProperty, true); },
-                 .floatFirst = true});
+                 .floatFirst = true,
+                 .toolPalette = true});
     if (!viewportTools::registry().find("clay.tool"))
         viewportTools::add({.id = "clay.tool", .label = "Clay Tool", .icon = "brush", .create = [] { return std::make_unique<ClayTool>(); }});
     actions::add({.id = "clay.tool",

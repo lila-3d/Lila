@@ -28,6 +28,7 @@ void MainWindow::restoreLayout()
                 tearOffs.push_back(name.get<std::string>());
         tearoff::recreate(this, tearOffs);
         restoreState(QByteArray::fromBase64(QByteArray::fromStdString(state)));
+        panels::hideToolPalettes(this);
         toolBox::place(this);
         QStringList collapsed;
         for (auto& name : p.value(kLayoutFile, "/collapsed", json::array()))

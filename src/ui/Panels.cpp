@@ -164,6 +164,24 @@ void panels::placeFloating(QDockWidget* dock)
     dock->setGeometry(r);
 }
 
+std::vector<std::string> panels::shownToolPalettes(QWidget* window)
+{
+    std::vector<std::string> out;
+    for (const Panel* p : registry().allInOrder())
+        if (p->toolPalette)
+            if (auto* d = window->findChild<QDockWidget*>(QString::fromStdString(p->id)); d && d->isVisible())
+                out.push_back(p->id);
+    return out;
+}
+
+void panels::hideToolPalettes(QWidget* window, const std::vector<std::string>& keep)
+{
+    for (const Panel* p : registry().allInOrder())
+        if (p->toolPalette)
+            if (auto* d = window->findChild<QDockWidget*>(QString::fromStdString(p->id)))
+                d->setVisible(std::ranges::find(keep, p->id) != keep.end());
+}
+
 void panels::placeToolPalette(QDockWidget* dock)
 {
     if (!dock || !dock->isFloating() || (dock->property("lilaPalettePlaced").toBool() && !floatingMisplaced(dock)))

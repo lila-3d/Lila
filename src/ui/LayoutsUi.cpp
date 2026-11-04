@@ -8,6 +8,7 @@
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
 #include "ui/DockSidebar.h"
+#include "ui/Panels.h"
 #include "ui/Icons.h"
 #include "ui/Layouts.h"
 #include "ui/Shelf.h"
@@ -439,6 +440,8 @@ void LayoutController::apply(const json& layout)
     if (layout.contains("state") && layout["state"].is_string())
     {
         mSidebars->expandAll();
+        // An active tool keeps its palette across a layout switch; no layout opens one for a tool that isn't.
+        const std::vector<std::string> palettes = panels::shownToolPalettes(mWindow);
         mWindow->restoreState(QByteArray::fromBase64(QByteArray::fromStdString(layout["state"].get<std::string>())));
         toolBox::place(mWindow);
         for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
@@ -456,6 +459,7 @@ void LayoutController::apply(const json& layout)
             if (d->isFloating() && g.is_array() && g.size() == 4)
                 d->setGeometry(g[0].get<int>(), g[1].get<int>(), g[2].get<int>(), g[3].get<int>());
         }
+        panels::hideToolPalettes(mWindow, palettes);
         QStringList collapsed;
         for (const json& n : layout.value("collapsed", json::array()))
             if (n.is_string())

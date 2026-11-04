@@ -1028,7 +1028,8 @@ void registerGroomUi()
                  .icon = "feather",
                  .open = false,
                  .place = [](QDockWidget* d) { d->setProperty(panels::kOwnSizeProperty, true); },
-                 .floatFirst = true});
+                 .floatFirst = true,
+                 .toolPalette = true});
     if (!viewportTools::registry().find("groom.drawHair"))
         viewportTools::add({.id = "groom.drawHair", .label = "Draw Hair", .icon = "brush", .create = [] { return std::make_unique<DrawHairTool>(); }});
     actions::add({.id = "groom.drawHair",
