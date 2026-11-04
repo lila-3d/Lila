@@ -39,12 +39,15 @@ struct ExtrudeOptions
     const SymmetryMap* symmetry = nullptr;
     /** Inward distance of the extruded cap's border in its plane (Maya's offset); negative grows it. */
     double inset = 0.0;
+    /** A region bordered only by open edges, like a whole open shell, keeps a reversed copy of its faces at the base. */
+    bool keepBack = true;
 };
 
 struct ExtrudeResult
 {
     std::vector<Index> faces; // the extruded faces, same ids as the input
     std::vector<Index> sides; // new side faces
+    std::vector<Index> back;  // new faces closing the base of open regions
 };
 
 LILA_SCENE_API ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts = {});

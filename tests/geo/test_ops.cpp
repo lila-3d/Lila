@@ -1001,18 +1001,37 @@ TEST_CASE("ops: more coverage")
     REQUIRE(ring != kInvalid);
     CHECK(edgeLoop(cyl, ring).size() == 16);
 
-    // Extruding a whole open plane walls in its border.
+    // Extruding a whole open plane walls in its border and keeps the plane facing back at the base.
     Mesh plane = makePlane({100, 100, 2, 2});
     std::vector<Index> all;
     for (Index f = 0; f < plane.faceCapacity(); ++f)
         all.push_back(f);
+    Mesh open = plane;
     ExtrudeOptions eo;
     eo.offset = 10.0;
     ExtrudeResult r = extrudeFaces(plane, all, eo);
     CHECK(isValid(plane));
     CHECK(r.sides.size() == 8);
-    CHECK(boundaryEdgeCount(plane) == 8);
+    CHECK(r.back.size() == 4);
+    CHECK(boundaryEdgeCount(plane) == 0);
+    CHECK(plane.numPoints() == 18);
     CHECK(plane.bounds().max.y == doctest::Approx(10.0));
+    CHECK(plane.bounds().min.y == doctest::Approx(0.0));
+    for (Index f : r.back)
+        CHECK(plane.faceNormal(f).y == doctest::Approx(-1.0));
+
+    eo.keepBack = false;
+    r = extrudeFaces(open, all, eo);
+    CHECK(isValid(open));
+    CHECK(r.back.empty());
+    CHECK(boundaryEdgeCount(open) == 8);
+
+    // Part of an open plane meets the faces around it, so it has no back.
+    Mesh part = makePlane({100, 100, 2, 2});
+    eo.keepBack = true;
+    r = extrudeFaces(part, std::vector<Index>{0}, eo);
+    CHECK(isValid(part));
+    CHECK(r.back.empty());
 
     // Individual inset keeps faces apart.
     Mesh grid = makePlane({100, 100, 2, 1});

@@ -19,7 +19,55 @@ struct RegionMove
     double offset = 0.0;    // along normals, every region point
     double thickness = 0.0; // inward, boundary points only
     bool clamp = false;     // shrink the thickness so no face's border crosses itself
+    bool keepBack = false;  // close regions bordered only by open edges with their faces reversed at the base
 };
+
+/** Per face (by position in faces): whether its connected region's border is all open mesh edges. */
+std::vector<char> openRegions(const Mesh& mesh, const std::vector<Index>& faces)
+{
+    auto slot = [&](Index f) {
+        auto it = std::lower_bound(faces.begin(), faces.end(), f);
+        return it != faces.end() && *it == f ? size_t(it - faces.begin()) : size_t(-1);
+    };
+    std::vector<size_t> region(faces.size(), size_t(-1));
+    std::vector<char> open;
+    std::vector<size_t> stack;
+    for (size_t seed = 0; seed < faces.size(); ++seed)
+    {
+        if (region[seed] != size_t(-1))
+            continue;
+        const size_t id = open.size();
+        open.push_back(1);
+        region[seed] = id;
+        stack.assign(1, seed);
+        while (!stack.empty())
+        {
+            const size_t i = stack.back();
+            stack.pop_back();
+            mesh.forEachFaceCorner(faces[i], [&](Index c) {
+                int corners = 0, selected = 0;
+                mesh.forEachEdgeCorner(mesh.cornerEdge(c), [&](Index r) {
+                    ++corners;
+                    if (const size_t j = slot(mesh.cornerFace(r)); j != size_t(-1))
+                    {
+                        ++selected;
+                        if (region[j] == size_t(-1))
+                        {
+                            region[j] = id;
+                            stack.push_back(j);
+                        }
+                    }
+                });
+                if (selected == 1 && corners > 1)
+                    open[id] = 0;
+            });
+        }
+    }
+    std::vector<char> out(faces.size());
+    for (size_t i = 0; i < faces.size(); ++i)
+        out[i] = open[region[i]];
+    return out;
+}
 
 struct Clamp
 {
@@ -229,6 +277,12 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
         return it == dup.end() ? p : it->second;
     };
 
+    const std::vector<char> backed = move.keepBack ? openRegions(mesh, faces) : std::vector<char>(faces.size(), 0);
+    std::vector<std::vector<Index>> backPoints(faces.size());
+    for (size_t i = 0; i < faces.size(); ++i)
+        if (backed[i])
+            mesh.forEachFaceCorner(faces[i], [&](Index c) { backPoints[i].push_back(mesh.cornerPoint(c)); });
+
     const Index edgeCap = mesh.edgeCapacity();
     std::vector<Index> pts;
     for (Index f : faces)
@@ -236,6 +290,31 @@ ExtrudeResult extrudeRegion(Mesh& mesh, const std::vector<Index>& faces, const R
         pts.clear();
         mesh.forEachFaceCorner(f, [&](Index c) { pts.push_back(mapped(mesh.cornerPoint(c))); });
         mesh.setFacePoints(f, pts);
+    }
+
+    // The border points stay at the base with the sides; interior points get a copy there, since the cap takes them.
+    std::unordered_map<Index, Index> basePoint;
+    for (size_t i = 0; i < faces.size(); ++i)
+    {
+        if (!backed[i])
+            continue;
+        std::vector<Index> src;
+        mesh.forEachFaceCorner(faces[i], [&](Index c) { src.push_back(c); });
+        for (Index& p : backPoints[i])
+            if (!dup.count(p))
+            {
+                auto [it, made] = basePoint.try_emplace(p, kInvalid);
+                if (made)
+                {
+                    it->second = mesh.addPoint(mesh.position(p));
+                    mesh.pointAttrs().copy(it->second, p);
+                }
+                p = it->second;
+            }
+        std::reverse(backPoints[i].begin(), backPoints[i].end());
+        std::reverse(src.begin(), src.end());
+        if (const Index bf = mesh.addFace(backPoints[i], faces[i], src); bf != kInvalid)
+            result.back.push_back(bf);
     }
     for (size_t i = 0; i < selCorners.size(); ++i)
     {
@@ -356,6 +435,7 @@ ExtrudeResult runRegions(Mesh& mesh, std::span<const Index> faces, bool individu
             ExtrudeResult r = extrudeRegion(mesh, {f}, move);
             out.faces.insert(out.faces.end(), r.faces.begin(), r.faces.end());
             out.sides.insert(out.sides.end(), r.sides.begin(), r.sides.end());
+            out.back.insert(out.back.end(), r.back.begin(), r.back.end());
         }
     }
     else if (!sel.empty())
@@ -369,7 +449,7 @@ ExtrudeResult extrudeFaces(Mesh& mesh, std::span<const Index> faces, const Extru
 {
     LILA_ZONE();
 
-    return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.offset, opts.inset});
+    return runRegions(mesh, faces, opts.individual, opts.symmetry, {opts.offset, opts.inset, false, opts.keepBack});
 }
 
 ExtrudeCopy extrudeCopy(const Mesh& mesh, std::span<const Index> faces, const ExtrudeOptions& opts, bool keepSides)
@@ -380,7 +460,10 @@ ExtrudeCopy extrudeCopy(const Mesh& mesh, std::span<const Index> faces, const Ex
     ExtrudeResult r = extrudeFaces(work, faces, opts);
     std::vector<Index> keep = r.faces;
     if (keepSides)
+    {
         keep.insert(keep.end(), r.sides.begin(), r.sides.end());
+        keep.insert(keep.end(), r.back.begin(), r.back.end());
+    }
     keep = uniqueSorted(keep);
     std::erase_if(keep, [&](Index f) { return !work.faceValid(f); });
     ExtrudeCopy out{extractFaces(work, keep), {}};

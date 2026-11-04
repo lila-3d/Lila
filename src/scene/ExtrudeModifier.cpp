@@ -32,6 +32,7 @@ public:
         kThickness,
         kOffset,
         kIndividual,
+        kKeepBack,
         kComponents,
         kOutMesh,
         kLost,
@@ -170,7 +171,7 @@ void ExtrudeModifierNode::compute(const EvalContext&)
         if (r.kind == ComponentMode::Edge)
             geo::extrudeEdges(m, r.ids, geo::EdgeExtrudeOptions{as<double>(kThickness), as<double>(kOffset), nullptr});
         else
-            geo::extrudeFaces(m, r.ids, geo::ExtrudeOptions{as<double>(kThickness), as<bool>(kIndividual), nullptr, as<double>(kOffset)});
+            geo::extrudeFaces(m, r.ids, geo::ExtrudeOptions{as<double>(kThickness), as<bool>(kIndividual), nullptr, as<double>(kOffset), as<bool>(kKeepBack)});
         m.compact();
         setOutput(kOutMesh, MeshPtr(std::make_shared<geo::Mesh>(std::move(m))));
     }
@@ -348,6 +349,7 @@ void registerTypes()
         param("offset", PlugType::Float, 0.0,
               "Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm."),
         param("individual", PlugType::Bool, false, "Extrude each face separately instead of connected faces as regions."),
+        param("keepBack", PlugType::Bool, true, "Where the faces only border open edges, as a whole open shell, keep a copy facing back at the base."),
         {.name = "components", .type = PlugType::Data, .defaultValue = DataPtr(), .flags = AttrInput | AttrStorable | AttrHidden,
          .doc = "The faces or edges to extrude."},
         {.name = "outMesh", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrOutput | AttrHidden},

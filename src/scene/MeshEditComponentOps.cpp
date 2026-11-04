@@ -168,13 +168,16 @@ void registerMeshEditComponentCommands()
                   {"offset", "", T::Float, 0.0,
                    "Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm."},
                   {"individual", "", T::Bool, false, "Each face separately."},
+                  {"keepBack", "", T::Bool, true,
+                   "Faces: where the extruded faces only border open edges, as a whole open shell, keep a copy facing back at the base."},
                   {"duplicate", "", T::Bool, false, "Faces: leave the mesh as it is and put the extruded faces in a new mesh."},
                   {"keepSides", "", T::Bool, false, "With duplicate, the new mesh also keeps the side faces."}},
         .run = [](const Args& a) -> json {
             selectWholeInObjectMode(K::Face);
             if (a.get<bool>("duplicate") && components::mode() != K::Edge)
             {
-                geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), nullptr, a.get<double>("offset")};
+                geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), nullptr, a.get<double>("offset"),
+                                      a.get<bool>("keepBack")};
                 return extrudeDuplicate(o, a.get<bool>("keepSides"));
             }
             if (components::mode() == K::Edge)
@@ -183,7 +186,7 @@ void registerMeshEditComponentCommands()
                     return edges(geo::extrudeEdges(m, sel, o).edges);
                 });
             return editSelected("Extrude", K::Face, [&](geo::Mesh& m, const Ids& sel, const geo::SymmetryMap* s) {
-                geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), s, a.get<double>("offset")};
+                geo::ExtrudeOptions o{a.get<double>("thickness"), a.get<bool>("individual"), s, a.get<double>("offset"), a.get<bool>("keepBack")};
                 return faces(geo::extrudeFaces(m, sel, o).faces);
             });
         },

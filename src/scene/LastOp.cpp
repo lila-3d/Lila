@@ -538,7 +538,8 @@ void makeNonDestructive()
     {
         if (value("duplicate") == true)
             throw CommandError("makeNonDestructive: a duplicating extrude has no modifier equivalent");
-        params = {{"thickness", value("thickness")}, {"offset", value("offset")}, {"individual", value("individual")}};
+        params = {{"thickness", value("thickness")}, {"offset", value("offset")}, {"individual", value("individual")},
+                  {"keepBack", value("keepBack")}};
     }
 
     // Back past every adjustment and the op's own run.

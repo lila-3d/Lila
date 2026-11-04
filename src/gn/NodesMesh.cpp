@@ -299,6 +299,7 @@ void meshOps()
                                                                       std::vector<double> scale = evaluateAll<double>(c.field("offsetScale"), ctx);
                                                                       geo::ExtrudeOptions o;
                                                                       o.individual = c.prop("individual") != "false";
+                                                                      o.keepBack = false;
                                                                       geo::ExtrudeResult r = geo::extrudeFaces(m, sel, o);
                                                                       std::unordered_map<Index, std::pair<D3, int>> moves;
                                                                       for (Index f : r.faces)

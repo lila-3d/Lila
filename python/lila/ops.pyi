@@ -6063,13 +6063,14 @@ def polyEditEdgeFlow(adjustEdgeFlow: float | None = None, edgeFlow: bool | None 
 def polyExtract() -> Any:
     """Move the selected faces out into new mesh objects (one per source mesh). Returns their names."""
 
-def polyExtrude(thickness: float | None = None, offset: float | None = None, individual: bool | None = None, duplicate: bool | None = None, keepSides: bool | None = None) -> Any:
+def polyExtrude(thickness: float | None = None, offset: float | None = None, individual: bool | None = None, keepBack: bool | None = None, duplicate: bool | None = None, keepSides: bool | None = None) -> Any:
     """Extrude the selected faces along their normals, or in edge mode grow a strip of faces off the selected edges. Connected faces extrude as regions unless individual=True.
 
     Args:
         thickness: Distance along the normals, cm. Default 0.0.
         offset: Faces: inward distance of the extruded border, cm; negative grows them. Edges: outward distance from their faces, cm. Default 0.0.
         individual: Each face separately. Default False.
+        keepBack: Faces: where the extruded faces only border open edges, as a whole open shell, keep a copy facing back at the base. Default True.
         duplicate: Faces: leave the mesh as it is and put the extruded faces in a new mesh. Default False.
         keepSides: With duplicate, the new mesh also keeps the side faces. Default False.
     """
