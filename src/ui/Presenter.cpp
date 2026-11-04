@@ -464,7 +464,10 @@ protected:
     void mousePressEvent(QMouseEvent* e) override
     {
         if (e->button() == Qt::LeftButton)
+        {
             mDragOffset = e->globalPosition().toPoint() - pos();
+            mDragStart = pos();
+        }
         else if (e->button() == Qt::RightButton)
             showMenu(e->globalPosition().toPoint());
     }
@@ -473,7 +476,14 @@ protected:
     {
         if (!(e->buttons() & Qt::LeftButton) || mDragOffset.isNull())
             return;
-        move(e->globalPosition().toPoint() - mDragOffset);
+        QPoint to = e->globalPosition().toPoint() - mDragOffset;
+        // Shift keeps the block on the axis it has moved furthest along since the press.
+        if (e->modifiers() & Qt::ShiftModifier)
+        {
+            const QPoint d = to - mDragStart;
+            to = std::abs(d.x()) >= std::abs(d.y()) ? QPoint(to.x(), mDragStart.y()) : QPoint(mDragStart.x(), to.y());
+        }
+        move(to);
     }
 
     void mouseReleaseEvent(QMouseEvent* e) override
@@ -524,7 +534,7 @@ private:
     }
 
     BlockDef mDef;
-    QPoint mDragOffset;
+    QPoint mDragOffset, mDragStart;
 };
 
 class KeysBlock : public Block
@@ -835,7 +845,7 @@ public:
         v->setContentsMargins(12, 10, 12, 10);
         auto* title = new QLabel("<b>Presenter Layout</b>", this);
         v->addWidget(title);
-        auto* hint = new QLabel("Drag a block to move it and scroll over it to scale it. Right-click a block for more.", this);
+        auto* hint = new QLabel("Drag a block to move it, with Shift to keep it on one axis, and scroll over it to scale it. Right-click a block for more.", this);
         hint->setWordWrap(true);
         v->addWidget(hint);
         const std::pair<const char*, const char*> toggles[] = {
