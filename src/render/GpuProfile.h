@@ -21,7 +21,14 @@ void collect();
 tracy::VkCtx* context();
 #endif
 
-/** Consecutive GPU zones over one command buffer: each begin ends the one before. end() before the buffer ends. */
+/** Opens and closes a VK_EXT_debug_utils label, when the instance has it. */
+void beginLabel(VkCommandBuffer cmd, const char* name);
+void endLabel(VkCommandBuffer cmd);
+
+/**
+ * Consecutive GPU zones over one command buffer: each begin ends the one before. end() before the buffer ends.
+ * Each zone is also a debug label, so GPU profilers show the same passes.
+ */
 class Sections
 {
 public:
@@ -29,20 +36,35 @@ public:
 #ifdef LILA_TRACY
     void begin(const tracy::SourceLocationData* where)
     {
-        mZone.reset();
+        end();
+        beginLabel(mCmd, where->name);
+        mLabel = true;
         if (tracy::VkCtx* ctx = context())
             mZone.emplace(ctx, where, mCmd, true);
     }
-    void end() { mZone.reset(); }
-
-private:
-    std::optional<tracy::VkCtxScope> mZone;
-#else
-    void end() {}
-
-private:
 #endif
-    [[maybe_unused]] VkCommandBuffer mCmd;
+    void begin(const char* name)
+    {
+        end();
+        beginLabel(mCmd, name);
+        mLabel = true;
+    }
+    void end()
+    {
+#ifdef LILA_TRACY
+        mZone.reset();
+#endif
+        if (mLabel)
+            endLabel(mCmd);
+        mLabel = false;
+    }
+
+private:
+#ifdef LILA_TRACY
+    std::optional<tracy::VkCtxScope> mZone;
+#endif
+    VkCommandBuffer mCmd;
+    bool mLabel = false;
 };
 } // namespace lila::render::gpuProfile
 
@@ -55,5 +77,5 @@ private:
         (sections).begin(&lilaGpuWhere);                                                                                       \
     } while (0)
 #else
-#define LILA_GPU_SECTION(sections, name) ((void)(sections))
+#define LILA_GPU_SECTION(sections, name) (sections).begin(name)
 #endif

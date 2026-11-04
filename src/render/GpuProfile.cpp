@@ -7,6 +7,26 @@
 
 namespace lila::render::gpuProfile
 {
+namespace
+{
+bool gLabels = false;
+}
+
+void beginLabel(VkCommandBuffer cmd, const char* name)
+{
+    if (!gLabels)
+        return;
+    VkDebugUtilsLabelEXT label{VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};
+    label.pLabelName = name;
+    vkCmdBeginDebugUtilsLabelEXT(cmd, &label);
+}
+
+void endLabel(VkCommandBuffer cmd)
+{
+    if (gLabels)
+        vkCmdEndDebugUtilsLabelEXT(cmd);
+}
+
 #ifdef LILA_TRACY
 namespace
 {
@@ -33,6 +53,7 @@ tracy::VkCtx* context() { return gContext; }
 
 void start(VulkanContext& vk)
 {
+    gLabels = vk.debugLabels && vkCmdBeginDebugUtilsLabelEXT && vkCmdEndDebugUtilsLabelEXT;
     if (gContext)
         return;
     if (!vk.calibratedTimestamps)
@@ -68,7 +89,7 @@ void collect()
         TracyVkCollectHost(gContext);
 }
 #else
-void start(VulkanContext&) {}
+void start(VulkanContext& vk) { gLabels = vk.debugLabels && vkCmdBeginDebugUtilsLabelEXT && vkCmdEndDebugUtilsLabelEXT; }
 void stop() {}
 void collect() {}
 #endif

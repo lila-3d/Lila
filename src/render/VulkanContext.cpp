@@ -61,6 +61,18 @@ bool hasDeviceExtension(VkPhysicalDevice physical, const char* name)
     return false;
 }
 
+bool hasInstanceExtension(const char* name)
+{
+    uint32_t n = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr);
+    std::vector<VkExtensionProperties> exts(n);
+    vkEnumerateInstanceExtensionProperties(nullptr, &n, exts.data());
+    for (auto& e : exts)
+        if (std::strcmp(e.extensionName, name) == 0)
+            return true;
+    return false;
+}
+
 bool hasLayer(const char* name)
 {
     uint32_t n = 0;
@@ -91,10 +103,10 @@ bool VulkanContext::init(bool validation)
     std::vector<const char*> layers;
     validation = validation && hasLayer("VK_LAYER_KHRONOS_validation");
     if (validation)
-    {
         layers.push_back("VK_LAYER_KHRONOS_validation");
+    debugLabels = validation || hasInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (debugLabels)
         exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-    }
 
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "Lila";
