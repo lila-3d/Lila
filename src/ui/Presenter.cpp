@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <optional>
 #include <functional>
 
 namespace lila::ui::presenter
@@ -106,6 +107,7 @@ struct Chord
 class Block;
 class CursorRing;
 class LayoutCard;
+class LayoutGrid;
 
 struct State
 {
@@ -125,8 +127,9 @@ struct State
     QString caption;
     qint64 captionAt = 0;
     QString context, contextIcon;
-    /** Top-right corner, in global coordinates, of the active viewport's spot for the tool icon; null without one. */
-    QPoint contextAnchor;
+    QPointer<LayoutGrid> grid;
+    /** The grid lines, in global coordinates, a dragged block is snapped to. */
+    std::optional<int> snapX, snapY;
     int actionDepth = 0;
     int runListener = 0;
     int executeListener = 0;
@@ -361,6 +364,40 @@ double drawCaps(QPainter& p, QPointF at, const QStringList& caps, double s, bool
 void relayoutAll();
 void refreshBlocks();
 
+/** Layout grid spacing as a fraction of the main window; 0.5 falls on a line, so the centre lines are part of it. */
+constexpr double kGridStep = 0.05;
+constexpr double kSnapPixels = 8.0;
+
+/**
+ * Snaps a block spanning [start, start + length) on one axis to the nearest grid line within kSnapPixels of its near edge,
+ * middle or far edge. Returns the new start and sets line to the line it snapped to.
+ */
+int snapToGrid(int start, int length, int origin, int extent, std::optional<int>& line)
+{
+    line.reset();
+    if (extent <= 0)
+        return start;
+    const double step = extent * kGridStep;
+    double best = kSnapPixels + 1.0;
+    int result = start;
+    for (const double offset : {0.0, length * 0.5, double(length)})
+    {
+        const double at = start + offset;
+        const double grid = origin + std::round((at - origin) / step) * step;
+        if (std::abs(grid - at) < best)
+        {
+            best = std::abs(grid - at);
+            result = int(std::lround(grid - offset));
+            line = int(std::lround(grid));
+        }
+    }
+    if (best > kSnapPixels)
+        line.reset();
+    return line ? result : start;
+}
+
+void updateGrid();
+
 /**
  * One movable piece of the overlay, its own small window over the main one so the rest of Lila keeps the mouse. While
  * the layout is edited it takes the mouse: drag to move, scroll to scale, right-click for its menu.
@@ -490,7 +527,20 @@ protected:
             const QPoint d = to - mDragStart;
             to = std::abs(d.x()) >= std::abs(d.y()) ? QPoint(to.x(), mDragStart.y()) : QPoint(mDragStart.x(), to.y());
         }
+        State& st = state();
+        st.snapX.reset();
+        st.snapY.reset();
+        // Ctrl drags freely; an axis Shift has locked stays where it is.
+        if (!(e->modifiers() & Qt::ControlModifier))
+        {
+            const QRect m = mainRect();
+            if (to.x() != mDragStart.x() || !(e->modifiers() & Qt::ShiftModifier))
+                to.setX(snapToGrid(to.x(), width(), m.x(), m.width(), st.snapX));
+            if (to.y() != mDragStart.y() || !(e->modifiers() & Qt::ShiftModifier))
+                to.setY(snapToGrid(to.y(), height(), m.y(), m.height(), st.snapY));
+        }
         move(to);
+        updateGrid();
     }
 
     void mouseReleaseEvent(QMouseEvent* e) override
@@ -498,6 +548,9 @@ protected:
         if (e->button() != Qt::LeftButton || mDragOffset.isNull())
             return;
         mDragOffset = {};
+        state().snapX.reset();
+        state().snapY.reset();
+        updateGrid();
         storePlace();
     }
 
@@ -843,7 +896,7 @@ public:
         v->setContentsMargins(12, 10, 12, 10);
         auto* title = new QLabel("<b>Presenter Layout</b>", this);
         v->addWidget(title);
-        auto* hint = new QLabel("Drag a block to move it, with Shift to keep it on one axis, and scroll over it to scale it. Right-click a block for more.", this);
+        auto* hint = new QLabel("Drag a block to move it: it snaps to the grid, Ctrl moves it freely and Shift keeps it on one axis. Scroll over a block to scale it, right-click it for more.", this);
         hint->setWordWrap(true);
         v->addWidget(hint);
         const std::pair<const char*, const char*> toggles[] = {
@@ -920,10 +973,76 @@ private:
     QPoint mDrag;
 };
 
+/** The snapping grid drawn over the main window while the layout is edited, its centre lines and snapped lines brighter. */
+class LayoutGrid : public QWidget
+{
+public:
+    explicit LayoutGrid(QWidget* owner)
+        : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint | Qt::WindowDoesNotAcceptFocus |
+                             Qt::WindowTransparentForInput)
+    {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        const State& st = state();
+        const QPoint origin = mapToGlobal(QPoint(0, 0));
+        auto lines = [&](int extent, bool vertical, const std::optional<int>& snapped, int originOnAxis) {
+            const int count = int(std::lround(1.0 / kGridStep));
+            for (int i = 1; i < count; ++i)
+            {
+                const int at = int(std::lround(extent * kGridStep * i));
+                const bool centre = i * 2 == count;
+                const bool lit = snapped && *snapped - originOnAxis == at;
+                QColor c = kPresenterCapLit;
+                c.setAlpha(lit ? 230 : centre ? 120 : 36);
+                p.setPen(QPen(c, lit || centre ? 1.5 : 1.0, centre && !lit ? Qt::DashLine : Qt::SolidLine));
+                if (vertical)
+                    p.drawLine(at, 0, at, height());
+                else
+                    p.drawLine(0, at, width(), at);
+            }
+        };
+        lines(width(), true, st.snapX, origin.x());
+        lines(height(), false, st.snapY, origin.y());
+    }
+};
+
+void updateGrid()
+{
+    State& st = state();
+    if (!st.editing || !mainShowing())
+    {
+        if (st.grid)
+            st.grid->hide();
+        return;
+    }
+    if (!st.grid)
+        st.grid = new LayoutGrid(st.main);
+    const QRect m = mainRect();
+    if (st.grid->geometry() != m)
+        st.grid->setGeometry(m);
+    if (!st.grid->isVisible())
+    {
+        st.grid->show();
+        for (Block* b : st.blocks)
+            b->raise();
+        if (st.card)
+            st.card->raise();
+    }
+    st.grid->update();
+}
+
 void relayoutAll()
 {
     for (Block* b : state().blocks)
         b->relayout();
+    updateGrid();
 }
 
 void refreshBlocks()
