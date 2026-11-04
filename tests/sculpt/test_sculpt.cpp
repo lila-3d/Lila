@@ -243,6 +243,37 @@ TEST_CASE("symmetric strokes stay symmetric")
     }
 }
 
+TEST_CASE("a dab on the symmetry plane moves points once, not once per side")
+{
+    geo::SubdivideOptions o;
+    o.levels = 3;
+    const geo::Mesh proxy = geo::subdivide(geo::makeCube({}), o);
+    for (sculpt::Brush brush : {sculpt::Brush::Smooth, sculpt::Brush::Draw, sculpt::Brush::Flatten})
+    {
+        sculpt::SculptMesh plain(proxy), mirrored(proxy);
+        mirrored.setSymmetry(geo::axisPlane(0), 1e-4);
+        REQUIRE(mirrored.symmetric());
+        sculpt::BrushSettings b;
+        b.brush = brush;
+        b.strength = 1.0;
+        for (sculpt::SculptMesh* s : {&plain, &mirrored})
+        {
+            s->beginStroke(b);
+            for (int i = 0; i < 4; ++i)
+                s->dab(dabAt(*s, glm::dvec3(0.0, 20.0, 200.0), 40.0));
+            s->endStroke();
+        }
+        double off = 0.0, moved = 0.0;
+        for (Index p = 0; p < proxy.pointCapacity(); ++p)
+        {
+            off = std::max(off, glm::length(plain.mesh().position(p) - mirrored.mesh().position(p)));
+            moved = std::max(moved, glm::length(plain.mesh().position(p) - proxy.position(p)));
+        }
+        CHECK_MESSAGE(moved > 0.0, sculpt::brushName(brush));
+        CHECK_MESSAGE(off < 1e-6 * std::max(moved, 1.0), sculpt::brushName(brush));
+    }
+}
+
 TEST_CASE("mask and freeze are respected")
 {
     geo::SubdivideOptions o;

@@ -547,8 +547,12 @@ void SculptMesh::addDisplacement(const Side& s)
     {
         if (out[i] != glm::dvec3(0.0))
         {
-            touch(s.points[i]);
-            mDisp[s.points[i]] += out[i];
+            // Where a dab and its mirror overlap (near the symmetry plane) a point takes the stronger move, not both:
+            // summed, smoothing brushes overshoot their target and spike the centre line.
+            const Index p = s.points[i];
+            touch(p);
+            if (glm::dot(out[i], out[i]) > glm::dot(mDisp[p], mDisp[p]))
+                mDisp[p] = out[i];
         }
         if (paint && paintOut[i] > 0.0f)
         {
