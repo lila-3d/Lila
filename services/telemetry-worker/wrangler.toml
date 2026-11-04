@@ -13,3 +13,14 @@ crons = ["0 15 * * *"]
 # binding = "CREDITS_DB"
 # database_name = "lila-credits"
 # database_id = ""
+
+# Issue reports. Secrets: REPORTS_APP_ID, REPORTS_APP_KEY, REPORTS_INSTALLATION_ID, ADMIN_TOKEN.
+# The bucket's lifecycle rules expire files/ after 90 days and limits/ after 2.
+[[r2_buckets]]
+binding = "REPORTS"
+bucket_name = "lila-reports"
+
+[[ratelimits]]
+name = "REPORT_LIMIT"
+namespace_id = "1001"
+simple = { limit = 3, period = 60 }
