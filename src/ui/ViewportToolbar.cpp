@@ -21,6 +21,7 @@
 #include "ui/PaintSelect.h"
 #include "ui/RetopoDrawTool.h"
 #include "ui/SpinScrub.h"
+#include "ui/TearOff.h"
 #include "ui/Tools.h"
 #include "ui/UiCommon.h"
 #include "ui/ViewportContext.h"
@@ -35,6 +36,8 @@
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QEvent>
+#include <QMainWindow>
+#include <QMouseEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -73,6 +76,31 @@ constexpr int kHeight = 24;
 constexpr int kIcon = 16;
 constexpr int kSpacing = 1;
 constexpr const char* kViews[] = {"persp", "top", "front", "right", "left", "back", "bottom"};
+
+/** Shift+click on a toolbar button tears off a main menu at the cursor instead of clicking the button. */
+class ShiftClickTearOff final : public QObject
+{
+public:
+    ShiftClickTearOff(QObject* parent, std::vector<std::string> menu) : QObject(parent), mMenu(std::move(menu)) {}
+
+    bool eventFilter(QObject* obj, QEvent* e) override
+    {
+        if (e->type() != QEvent::MouseButtonPress && e->type() != QEvent::MouseButtonRelease && e->type() != QEvent::MouseButtonDblClick)
+            return false;
+        auto* m = static_cast<QMouseEvent*>(e);
+        if (m->button() != Qt::LeftButton || !(m->modifiers() & Qt::ShiftModifier))
+            return false;
+        // The press is swallowed too, so the button neither toggles nor starts its long-press menu.
+        if (e->type() == QEvent::MouseButtonRelease)
+            if (auto* window = qobject_cast<QMainWindow*>(static_cast<QWidget*>(obj)->window()))
+                if (QMenu* menu = tearoff::findMenu(window, mMenu))
+                    tearoff::tearOff(menu, m->globalPosition().toPoint());
+        return true;
+    }
+
+private:
+    std::vector<std::string> mMenu;
+};
 
 QString labelOf(const std::string& id)
 {
@@ -576,8 +604,10 @@ ViewportToolbar::ViewportToolbar(ViewportWidget* view, QWidget* parent) : QWidge
     actionButton("viewport.toggleGrid", "grid-4x4");
     actionButton("viewport.toggleFilmGate", "frame");
     actionButton("viewport.toggleResolutionGate", "aspect-ratio");
-    // Click toggles this view's image planes; a long press opens the camera's image plane menu.
+    // Click toggles this view's image planes; a long press opens the camera's image plane menu; Shift+click tears off
+    // Create > Reference Images.
     QToolButton* planes = actionButton("viewport.toggleImagePlanes", "photo");
+    planes->installEventFilter(new ShiftClickTearOff(planes, {"Create", "Reference Images"}));
     auto* planeMenu = new QMenu(planes);
     connect(planeMenu, &QMenu::aboutToShow, this, [this, planeMenu] {
         activateView();
