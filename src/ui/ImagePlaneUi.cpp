@@ -343,6 +343,13 @@ std::optional<glm::dmat4> cutMatrix(const scene::Node& n, const ViewInfo& view);
 
 const glm::vec4 kGuideColor(0.95f, 0.78f, 0.3f, 0.9f);
 
+/** Guides are a reposing aid: they show only while the cut or guide tool is active. */
+bool guidesShown()
+{
+    const ViewportTool* t = viewportTools::active();
+    return t && (std::string_view(t->name()) == "Cut Image Plane" || std::string_view(t->name()) == "Image Plane Guides");
+}
+
 /** Not a piece cut from another plane: guides live on these. */
 bool isRootPlane(const scene::Graph& g, const scene::Node& n)
 {
@@ -404,6 +411,7 @@ void drawInto(render::FrameState& s, const ViewInfo& view)
 
     scene::Graph& g = scene::Graph::current();
     std::vector<Placed> placed = placedIn(view);
+    const bool showGuides = guidesShown();
     // Drawn in order, so later ones cover earlier ones in the same placement.
     std::vector<int64_t> order;
     for (const Placed& p : placed)
@@ -452,7 +460,7 @@ void drawInto(render::FrameState& s, const ViewInfo& view)
                     s.linesOnTop.push_back({glm::vec3(loop[i]), kSelectedColor});
                     s.linesOnTop.push_back({glm::vec3(loop[(i + 1) % loop.size()]), kSelectedColor});
                 }
-        if (isRootPlane(g, n))
+        if (showGuides && isRootPlane(g, n))
             for (const GuideLine& l : guidesOf(p, view))
             {
                 s.linesOnTop.push_back({glm::vec3(l.start), kGuideColor});
