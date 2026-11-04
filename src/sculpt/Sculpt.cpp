@@ -655,7 +655,7 @@ void SculptMesh::commitChanges()
 {
     LILA_ZONE();
 
-    std::vector<Index> moved, recolored;
+    std::vector<Index> moved, recolored, retinted;
     bool maskChanged = false;
     const glm::vec4 brushColor(mSettings.color, 1.0f);
     for (Index p : mChanged)
@@ -682,7 +682,8 @@ void SculptMesh::commitChanges()
             mMesh.setPosition(p, mMesh.position(p) + mDisp[p]);
             moved.push_back(p);
         }
-        maskChanged |= newMask != mMask[p] || newFrozen != mFrozen[p];
+        const bool retint = newMask != mMask[p] || newFrozen != mFrozen[p];
+        maskChanged |= retint;
         mMask[p] = newMask;
         mFrozen[p] = newFrozen;
         if (recolor)
@@ -690,6 +691,8 @@ void SculptMesh::commitChanges()
             mColor[p] = glm::mix(mColor[p], brushColor, std::min(mPaint[p], 1.0f));
             recolored.push_back(p);
         }
+        else if (retint)
+            retinted.push_back(p);
     }
     mChanged.clear();
     if (!moved.empty())
@@ -702,6 +705,7 @@ void SculptMesh::commitChanges()
         writeVertices(recolored);
         ++mColorVersion;
     }
+    writeVertices(retinted);
     if (maskChanged)
         ++mMaskVersion;
 }
@@ -809,7 +813,7 @@ void SculptMesh::apply(const StrokeRecord& r, bool undo)
     const auto& colors = undo ? r.colorBefore : r.colorAfter;
     if (!colors.empty())
         ensureColor();
-    std::vector<Index> moved, recolored;
+    std::vector<Index> moved, recolored, retinted;
     bool maskChanged = false;
     for (size_t i = 0; i < r.points.size(); ++i)
     {
@@ -821,22 +825,27 @@ void SculptMesh::apply(const StrokeRecord& r, bool undo)
             mMesh.setPosition(p, pos[i]);
             moved.push_back(p);
         }
+        bool retint = false;
         if (i < mask.size() && mask[i] != mMask[p])
         {
             mMask[p] = mask[i];
-            maskChanged = true;
+            retint = true;
         }
         if (i < frozen.size() && frozen[i] != mFrozen[p])
         {
             mFrozen[p] = frozen[i];
-            maskChanged = true;
+            retint = true;
         }
+        maskChanged |= retint;
         if (i < colors.size() && colors[i] != mColor[p])
         {
             mColor[p] = colors[i];
             recolored.push_back(p);
         }
+        else if (retint)
+            retinted.push_back(p);
     }
+    writeVertices(retinted);
     if (!moved.empty())
     {
         refresh(moved);
@@ -902,6 +911,7 @@ StrokeRecord SculptMesh::maskOp(MaskOp op, Layer layer, int iterations)
             mMask[p] = next[p];
             mFrozen[p] = nextFrozen[p];
         }
+    writeVertices(r.points);
     if (!r.empty())
         ++mMaskVersion;
     return r;
@@ -925,8 +935,13 @@ void SculptMesh::setPositions(std::span<const glm::dvec3> positions)
 
 void SculptMesh::setMask(std::span<const float> mask)
 {
+    std::vector<Index> all;
     for (Index p = 0; p < mMask.size() && p < mask.size(); ++p)
+    {
         mMask[p] = std::clamp(mask[p], 0.0f, 1.0f);
+        all.push_back(p);
+    }
+    writeVertices(all);
     ++mMaskVersion;
 }
 
@@ -1039,9 +1054,17 @@ void SculptMesh::writeVertices(std::span<const Index> points)
         v.pos = glm::vec3(mMesh.position(p));
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-        v.color = mColor.empty() ? kWhite : mColor[p];
+        v.color = shownColor(p);
         dv.write(p, v);
     }
+}
+
+glm::vec4 SculptMesh::shownColor(Index p) const
+{
+    glm::vec4 c = mColor.empty() ? kWhite : mColor[p];
+    if (mFrozen[p])
+        return glm::vec4(glm::mix(glm::vec3(c), glm::vec3(0.92f), 0.45f), c.a);
+    return glm::vec4(glm::mix(glm::vec3(c), glm::vec3(0.02f), 0.7f * mMask[p]), c.a);
 }
 
 std::shared_ptr<const render::RenderMesh> SculptMesh::renderMesh()
@@ -1061,7 +1084,7 @@ std::shared_ptr<const render::RenderMesh> SculptMesh::renderMesh()
         v.normal = mNormals[p];
         v.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
         v.uv = v.uv1 = glm::vec2(0.0f);
-        v.color = mColor.empty() ? kWhite : mColor[p];
+        v.color = shownColor(p);
     });
     const auto& corners = mBvh.triangles().corners;
     rm->indices.resize(corners.size());

@@ -274,6 +274,8 @@ private:
     void refresh(std::span<const Index> moved);
     void updateNormals(std::span<const Index> points);
     void writeVertices(std::span<const Index> points);
+    /** The vertex colour drawn: the polypaint, darkened where masked and lightened where frozen. */
+    glm::vec4 shownColor(Index p) const;
     glm::dvec3 originalPosition(Index p) const;
     glm::dvec3 projectToOriginal(Index p, const glm::dvec3& at) const;
     double pointWeight(Index p, double falloff) const;

@@ -626,13 +626,12 @@ public:
         d.materials = {mat};
         d.baseColor = mat.baseColor;
         d.roughness = mat.roughness;
-        // Polypaint tints the material: white paint shows the material as it is.
-        if (!session->sculpt.colors().empty())
-        {
+        // Polypaint tints the material: white paint shows the material as it is. The mask and freeze ride in the same colours.
+        const bool painted = !session->sculpt.colors().empty();
+        if (painted || marked(*session))
             d.vertexColors = render::VertexColorMode::Shaded;
-            if (st.material == "clay")
-                d.materials[0].baseColor = d.baseColor = glm::vec3(0.8f);
-        }
+        if (painted && st.material == "clay")
+            d.materials[0].baseColor = d.baseColor = glm::vec3(0.8f);
         // The sculpt mesh has no line list (strokes would leave it stale), so a wireframe view draws it as a clear surface
         // with the wire in its shader.
         const float opacity = wireframeView ? 0.0f : st.seeThrough ? float(std::clamp(st.seeThroughOpacity, 0.0, 1.0)) : 1.0f;
@@ -655,7 +654,6 @@ public:
 
         if (sculptSettings().showCage)
             addCage(s, *session, *n, world);
-        addMask(s, *session, world);
     }
 
 private:
@@ -736,51 +734,18 @@ private:
         s.lines.insert(s.lines.end(), mCage.begin(), mCage.end());
     }
 
-    void addMask(render::FrameState& s, const sculpt::Session& session, const glm::dmat4& world)
+    /** Whether any point is masked or frozen, so the sculpt draws its vertex colours, which carry both. */
+    bool marked(const sculpt::Session& session)
     {
-        LILA_ZONE();
-
         const sculpt::SculptMesh& sm = session.sculpt;
         if (&session != mMaskFor || sm.maskVersion() != mMaskVersion)
         {
             mMaskFor = &session;
             mMaskVersion = sm.maskVersion();
-            mMaskVertsVersion = 0;
-            mMaskTris.clear();
-            const auto& corners = sm.bvh().triangles().corners;
-            const geo::Mesh& m = sm.mesh();
-            for (size_t t = 0; t * 3 < corners.size(); ++t)
-                for (int k = 0; k < 3; ++k)
-                {
-                    geo::Index p = m.cornerPoint(corners[t * 3 + k]);
-                    if (sm.mask()[p] > 0.0f || sm.frozen()[p])
-                    {
-                        mMaskTris.push_back(geo::Index(t));
-                        break;
-                    }
-                }
+            mMarked = std::ranges::any_of(sm.mask(), [](float m) { return m > 0.0f; }) ||
+                      std::ranges::any_of(sm.frozen(), [](uint8_t f) { return f != 0; });
         }
-        // Past this many the overlay costs more than it helps; the panel still reports the mask.
-        if (mMaskTris.empty() || mMaskTris.size() > 250000)
-            return;
-        if (sm.version() != mMaskVertsVersion || world != mMaskWorld)
-        {
-            mMaskVertsVersion = sm.version();
-            mMaskWorld = world;
-            mMaskVerts.resize(mMaskTris.size() * 3);
-            const auto& corners = sm.bvh().triangles().corners;
-            const geo::Mesh& m = sm.mesh();
-            tbb::parallel_for(size_t(0), mMaskTris.size(), [&](size_t i) {
-                for (int k = 0; k < 3; ++k)
-                {
-                    geo::Index p = m.cornerPoint(corners[size_t(mMaskTris[i]) * 3 + k]);
-                    // Masked reads dark, frozen reads light; both stay grey.
-                    glm::vec4 c = sm.frozen()[p] ? glm::vec4(0.92f, 0.92f, 0.92f, 0.45f) : glm::vec4(0.02f, 0.02f, 0.02f, 0.7f * sm.mask()[p]);
-                    mMaskVerts[i * 3 + k] = {glm::vec3(xformPoint(world, m.position(p))), c};
-                }
-            });
-        }
-        s.tris3d.insert(s.tris3d.end(), mMaskVerts.begin(), mMaskVerts.end());
+        return mMarked;
     }
 
     const sculpt::Session* mPreviewFor = nullptr;
@@ -801,10 +766,7 @@ private:
 
     const sculpt::Session* mMaskFor = nullptr;
     uint64_t mMaskVersion = 0;
-    uint64_t mMaskVertsVersion = 0;
-    glm::dmat4 mMaskWorld{0.0};
-    std::vector<geo::Index> mMaskTris;
-    std::vector<render::LineVertex> mMaskVerts;
+    bool mMarked = false;
 };
 } // namespace
 
