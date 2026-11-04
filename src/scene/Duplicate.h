@@ -4,6 +4,7 @@
 
 #include "scene/Plug.h"
 
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -38,6 +39,13 @@ LILA_SCENE_API void copyValues(Graph& g, const Node& from, Node& to);
  */
 LILA_SCENE_API NodeId copyTree(Graph& g, NodeId src, NodeId parent, Mode mode, std::string_view name,
                                std::unordered_map<NodeId, NodeId>& copies);
+
+/**
+ * Runs after a duplicate with every node it copied, source to copy, so a node type can rewire what copying values
+ * alone misses (connections between copied nodes, a container to resync). Once per copy for a run of copies.
+ */
+using Fixup = std::function<void(Graph& g, const std::unordered_map<NodeId, NodeId>& copied)>;
+LILA_SCENE_API void addFixup(Fixup fixup);
 
 /** A source and its newest copy, as Duplicate with Transform repeats them. */
 struct Pair

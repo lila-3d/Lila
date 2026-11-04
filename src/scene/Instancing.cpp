@@ -303,7 +303,11 @@ void copyHistory(Graph& g, NodeId srcMesh, NodeId dstMesh, std::unordered_map<No
             Node* copy = g.createNode(up->type(), {}, kNoNode, true);
             const auto& defs = up->type().attrs;
             for (int i = 0; i < int(defs.size()); ++i)
-                if ((defs[i].flags & AttrInput) && !g.source({up->id(), i, -1}))
+                if (!(defs[i].flags & AttrInput))
+                    continue;
+                else if (defs[i].flags & AttrArray)
+                    g.copyElements(up->id(), copy->id(), i, false);
+                else if (!g.source({up->id(), i, -1}))
                     g.setValue({copy->id(), i, -1}, up->value(i));
             copyId = copy->id();
             copies[up->id()] = copyId;

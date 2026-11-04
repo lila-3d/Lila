@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <optional>
 
 namespace lila::scene::duplicate
 {
@@ -25,6 +26,32 @@ std::vector<Pair>& pairs()
 {
     static std::vector<Pair> p;
     return p;
+}
+
+std::vector<Fixup>& fixups()
+{
+    static std::vector<Fixup> f;
+    return f;
+}
+
+/** Where copyTree records the nodes it copies while an operation spanning several calls collects them; null otherwise. */
+std::unordered_map<NodeId, NodeId>*& recording()
+{
+    static std::unordered_map<NodeId, NodeId>* r = nullptr;
+    return r;
+}
+
+/** Stops recording when the operation ends, however it ends. */
+struct RecordingScope
+{
+    ~RecordingScope() { recording() = nullptr; }
+};
+
+void runFixups(Graph& g, const std::unordered_map<NodeId, NodeId>& copied)
+{
+    if (!copied.empty())
+        for (const Fixup& f : fixups())
+            f(g, copied);
 }
 
 /** Driven inputs of a shape without a mesh stack (curves) take their current value, so the copy keeps its shape without the history. */
@@ -92,7 +119,8 @@ std::vector<NodeId> duplicateRoots(Graph& g, const std::vector<NodeId>& roots, c
 
     g.evaluate();
     // One map per repetition: history shared by several roots is copied once per copy, not shared by every copy.
-    std::vector<std::unordered_map<NodeId, NodeId>> copies(size_t(r.count));
+    std::vector<std::unordered_map<NodeId, NodeId>> copies(size_t(r.count)), copied(size_t(r.count));
+    const RecordingScope scope;
     std::vector<NodeId> made;
     std::vector<Pair> recorded;
     for (NodeId root : roots)
@@ -104,7 +132,9 @@ std::vector<NodeId> duplicateRoots(Graph& g, const std::vector<NodeId>& roots, c
         NodeId prev = root, last = root;
         for (int i = 0; i < r.count; ++i)
         {
+            recording() = &copied[size_t(i)];
             NodeId c = copyTree(g, root, g.parent(root), r.mode, r.name, copies[size_t(i)]);
+            recording() = nullptr;
             if (!r.step.identity())
                 repeat::setWorldMatrix(g, c, placed[size_t(i)], rotateOf(g, root) + r.step.rotate * double(i + 1));
             made.push_back(c);
@@ -113,6 +143,8 @@ std::vector<NodeId> duplicateRoots(Graph& g, const std::vector<NodeId>& roots, c
         }
         recorded.push_back({prev, last, r.mode});
     }
+    for (const auto& c : copied)
+        runFixups(g, c);
     if (r.group)
     {
         NodeId parent = g.parent(roots.front());
@@ -174,12 +206,23 @@ void copyValues(Graph& g, const Node& from, Node& to)
     }
 }
 
+void addFixup(Fixup fixup) { fixups().push_back(std::move(fixup)); }
+
 NodeId copyTree(Graph& g, NodeId src, NodeId parent, Mode mode, std::string_view name, std::unordered_map<NodeId, NodeId>& copies)
 {
+    std::unordered_map<NodeId, NodeId> own;
+    const bool alone = !recording();
+    std::optional<RecordingScope> scope;
+    if (alone)
+    {
+        recording() = &own;
+        scope.emplace();
+    }
     std::function<NodeId(NodeId, NodeId, bool)> copy = [&](NodeId s, NodeId p, bool top) {
         Node* n = g.node(s);
         const bool named = top && !name.empty();
         Node* c = g.createNode(n->type(), named ? std::string(name) : n->name(), p, named);
+        recording()->emplace(s, c->id());
         copyValues(g, *n, *c);
         if (Node* layer = displayLayers::layerOf(g, s))
             displayLayers::addMembers(g, layer->id(), {c->id()});
@@ -206,7 +249,13 @@ NodeId copyTree(Graph& g, NodeId src, NodeId parent, Mode mode, std::string_view
             copy(child, c->id(), false);
         return c->id();
     };
-    return copy(src, parent, true);
+    const NodeId made = copy(src, parent, true);
+    if (alone)
+    {
+        scope.reset();
+        runFixups(g, own);
+    }
+    return made;
 }
 
 const std::vector<Pair>& lastPairs() { return pairs(); }
@@ -305,6 +354,8 @@ void registerCommands()
             const int count = std::clamp(a.get<int>("count", 1), 1, 10000);
             g.evaluate();
             std::unordered_map<NodeId, NodeId> copies;
+            std::vector<std::unordered_map<NodeId, NodeId>> copied(static_cast<size_t>(count));
+            const RecordingScope scope;
             std::vector<NodeId> made;
             std::vector<Pair> recorded;
             for (const Pair& p : from)
@@ -314,7 +365,9 @@ void registerCommands()
                 NodeId prev = p.source, last = p.copy;
                 for (int i = 0; i < count; ++i)
                 {
+                    recording() = &copied[size_t(i)];
                     NodeId c = copyTree(g, last, g.parent(last), p.mode, "", copies);
+                    recording() = nullptr;
                     repeat::setWorldMatrix(g, c, step * worldOf(g, last), rotateOf(g, last) + turn);
                     made.push_back(c);
                     prev = last;
@@ -322,6 +375,8 @@ void registerCommands()
                 }
                 recorded.push_back({prev, last, p.mode});
             }
+            for (const std::unordered_map<NodeId, NodeId>& each : copied)
+                runFixups(g, each);
             setLastPairs(std::move(recorded));
             g.select(made);
             return pathsOf(g, made);
