@@ -93,6 +93,9 @@ public:
         case QEvent::ShortcutOverride: break;
         default: return false;
         }
+        // Qt filters each key event for the native window before its widget; only the widget's copy says where focus is.
+        if (!obj->isWidgetType())
+            return false;
         auto* k = static_cast<QKeyEvent*>(e);
         // Shift and Ctrl change what a stroke would do, which the tools' messages and cursors show.
         if (e->type() != QEvent::ShortcutOverride && (k->key() == Qt::Key_Shift || k->key() == Qt::Key_Control))
