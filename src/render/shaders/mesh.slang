@@ -402,6 +402,9 @@ static const uint kOneSidedLighting = 1 << 16;
 static const uint kNormalXY = 1 << 17; // the normal map stores X and Y only (BC5)
 static const uint kGreyBase = 1 << 18;  // the base colour map supplies opacity only
 
+/** The lean pipelines: the section reads no tangent, vertex colour or second uv (Renderer.cpp's leanPush). */
+[vk::constant_id(0)] const bool kLean = false;
+
 struct VSIn
 {
     float3 pos : POSITION;
@@ -422,14 +425,38 @@ struct VSOut
     centroid float4 tangent : TANGENT;
     float2 uv : TEXCOORD;
     centroid float4 color : COLOR;
-    centroid float3 objPos : TEXCOORD1;
-    centroid float3 objNormal : TEXCOORD2;
     nointerpolation uint instance : TEXCOORD3; // index into pc.instances
 };
 
 float4x4 instanceWorld(uint instance)
 {
     return pc.instances[instance].world;
+}
+
+// Object space comes back from the world position and normal in the pixel shader: fewer interpolants per vertex,
+// which dense meshes are bound by.
+float3x3 cofactor(float3x3 m)
+{
+    return float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+}
+
+float safeDeterminant(float3x3 m)
+{
+    float d = determinant(m);
+    return abs(d) < 1e-20 ? (d < 0.0 ? -1e-20 : 1e-20) : d;
+}
+
+float3 objectPos(VSOut i)
+{
+    float4x4 w = instanceWorld(i.instance);
+    float3x3 m = (float3x3)w;
+    return mul(transpose(cofactor(m)), i.worldPos - float3(w[0][3], w[1][3], w[2][3])) / safeDeterminant(m);
+}
+
+float3 objectNormal(VSOut i)
+{
+    float3x3 m = (float3x3)instanceWorld(i.instance);
+    return mul(transpose(m), i.normal) * sign(safeDeterminant(m));
 }
 
 [shader("vertex")]
@@ -443,16 +470,14 @@ VSOut meshVS(VSIn v, uint instanceId: SV_InstanceID)
     o.pos = mul(pc.viewProj, wp);
     // Inverse transpose would be exact under non-uniform scale; cofactor matrix gives it without an inverse.
     float3x3 m = (float3x3)world;
-    float3x3 cof = float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+    float3x3 cof = cofactor(m);
     o.normal = mul(cof, v.normal);
     // A mirroring world matrix flips the bitangent.
-    o.tangent = float4(mul(m, v.tangent.xyz), determinant(m) < 0.0 ? -v.tangent.w : v.tangent.w);
+    o.tangent = kLean ? float4(1.0, 0.0, 0.0, 1.0) : float4(mul(m, v.tangent.xyz), determinant(m) < 0.0 ? -v.tangent.w : v.tangent.w);
     // Lila UVs are V-up (Maya, FBX) and image rows run top down; Unreal's FBX import flips V the same way.
-    float2 uv = (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
+    float2 uv = !kLean && (pc.flags & kUv1) != 0 ? v.uv1 : v.uv;
     o.uv = float2(uv.x, 1.0 - uv.y);
-    o.color = v.color;
-    o.objPos = v.pos;
-    o.objNormal = v.normal;
+    o.color = kLean ? float4(1.0) : v.color;
     return o;
 }
 
@@ -912,6 +937,11 @@ float4 shadeMesh(VSOut i, bool front, Centers center)
     gUvDx = ddx(center.uv);
     gUvDy = ddy(center.uv);
     uint flags = pc.flags;
+    if (kLean)
+    {
+        i.tangent = float4(1.0, 0.0, 0.0, 1.0);
+        i.color = float4(1.0);
+    }
     if ((flags & kVertexColorUnlit) != 0)
         return float4(fromDisplay(tintBack(vertexColor(i.color, flags), front), pc.gamma), 1.0);
     const uint model = styleModel();

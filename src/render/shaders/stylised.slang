@@ -144,8 +144,7 @@ Stroke triplanarStroke(float3 p, float3 nb, float scale, float tilt)
 
 float3x3 normalMatrix(uint instance)
 {
-    float3x3 m = (float3x3)instanceWorld(instance);
-    return float3x3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+    return cofactor((float3x3)instanceWorld(instance));
 }
 
 /** The painterly stroke at a fragment: s.n is the stroke-bent world normal for geometric normal ng (front side). */
@@ -171,8 +170,8 @@ Stroke painterlyStroke(VSOut i, float3 ng, bool front)
     }
     if (mapping == kMapObject)
     {
-        float3 on = normalize(i.objNormal) * (front ? 1.0 : -1.0);
-        s = triplanarStroke(i.objPos, on, scale, tilt);
+        float3 on = normalize(objectNormal(i)) * (front ? 1.0 : -1.0);
+        s = triplanarStroke(objectPos(i), on, scale, tilt);
         s.n = normalize(mul(normalMatrix(i.instance), s.n));
         return s;
     }
@@ -258,7 +257,8 @@ void foliageSurface(VSOut i, float3 n, float3 baseColor, float metallic, inout S
     float4 p0 = styleVec(0), p1 = styleVec(1), lo = styleVec(6), hi = styleVec(7);
     uint axis = uint(lo.w + 0.5);
     float h0 = axis == 2 ? lo.z : lo.y, h1 = axis == 2 ? hi.z : hi.y;
-    float h = saturate(((axis == 2 ? i.objPos.z : i.objPos.y) - h0) / max(h1 - h0, 1e-4));
+    float3 op = objectPos(i);
+    float h = saturate(((axis == 2 ? op.z : op.y) - h0) / max(h1 - h0, 1e-4));
     float3 albedo = lerp(baseColor, lerp(styleVec(2).rgb, styleVec(3).rgb, h), saturate(p0.z));
     float3 up = pc.params.y > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
     float f = dot(n, up);

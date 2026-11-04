@@ -13,7 +13,7 @@ struct BevelPush
 /** A traced placement's mesh: its vertex and index buffers and world matrix rows. Matches render::TraceInstance. */
 struct TraceInstance
 {
-    uint64_t vertices; // MeshVertex, 72 bytes each: the normal sits 12 bytes in
+    uint64_t vertices; // MeshVertex, 64 bytes each: the normal sits 12 bytes in
     uint64_t indices;
     float4 rows[3];
 };
@@ -55,7 +55,7 @@ float3 hitNormal(uint instance, uint primitive, float2 bary)
     float w[3] = { 1.0 - bary.x - bary.y, bary.x, bary.y };
     for (uint k = 0; k < 3; ++k)
     {
-        float* v = (float*)(ti.vertices + uint64_t(idx[primitive * 3 + k]) * 72);
+        float* v = (float*)(ti.vertices + uint64_t(idx[primitive * 3 + k]) * 64);
         nn += float3(v[3], v[4], v[5]) * w[k];
     }
     float3x3 m = float3x3(ti.rows[0].xyz, ti.rows[1].xyz, ti.rows[2].xyz);

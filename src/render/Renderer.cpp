@@ -106,6 +106,7 @@ struct SectionRecord
     VkDescriptorSet set = VK_NULL_HANDLE;
     bool material = false;    // reads the frame's texture table
     bool translucent = false; // its material blends
+    bool lean = false;        // draws with the lean pipelines (see leanPush)
 };
 
 /** What section records depend on besides the draws: frame settings, the texture table and the GPU mesh cache. */
@@ -141,6 +142,15 @@ constexpr uint32_t kNoHandle = 0xffffu;
 constexpr uint32_t kMaxBindless = 16384;
 constexpr uint32_t kNoStyle = 0xffffffffu;
 constexpr uint32_t kMaterialBindings = 5; // base color, normal, ORM, emissive, stroke sheet
+
+/**
+ * A section whose shading reads no tangent, vertex colour or second uv: the lean pipelines specialise those reads away,
+ * so the driver neither fetches them nor passes them on, which dense meshes are bound by.
+ */
+bool leanPush(uint32_t flags, uint32_t style)
+{
+    return style == kNoStyle && (flags & (MatNormalMap | MatUv1 | kVertexColorShaded | kVertexColorUnlit)) == 0;
+}
 
 struct ContactPush
 {
@@ -832,6 +842,8 @@ struct Renderer::Impl
     VkPipeline meshBlendPipeline = VK_NULL_HANDLE;
     /** meshPS with the wire drawn over it (meshWirePS); null without fragment shader barycentrics, and wires draw as lines. */
     VkPipeline meshWirePipeline = VK_NULL_HANDLE, meshWireBlendPipeline = VK_NULL_HANDLE;
+    /** meshPipeline and meshWirePipeline for lean sections (SectionRecord::lean). */
+    VkPipeline meshLeanPipeline = VK_NULL_HANDLE, meshWireLeanPipeline = VK_NULL_HANDLE;
     // Image planes sample through set 0 of their layout, a material set holding the image as its base color.
     VkPipelineLayout imagePlaneLayout = VK_NULL_HANDLE;
     VkPipeline imageOverPipeline = VK_NULL_HANDLE, imageDepthPipeline = VK_NULL_HANDLE, imageBlendPipeline = VK_NULL_HANDLE;
@@ -3737,11 +3749,11 @@ struct Renderer::Impl
                              VkPrimitiveTopology topology, const VkPipelineVertexInputStateCreateInfo& vertexInput, bool depthWrite,
                              bool blend, bool depthTest = true, float depthBias = 0.0f, bool dynamicCull = false, bool singleSample = false,
                              bool dynamicLineWidth = false, const VkPipelineColorBlendAttachmentState* blendState = nullptr, bool withDepth = true,
-                             bool withColor = true)
+                             bool withColor = true, const VkSpecializationInfo* spec = nullptr)
     {
         VkPipelineShaderStageCreateInfo stages[2]{};
-        stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, mod, vs};
-        stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, mod, ps};
+        stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, mod, vs, spec};
+        stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, mod, ps, spec};
 
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
         ia.topology = topology;
@@ -3897,7 +3909,7 @@ struct Renderer::Impl
                 {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex, tangent)},
                 {3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv)},
                 {4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(MeshVertex, uv1)},
-                {5, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex, color)},
+                {5, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(MeshVertex, color)},
             };
             VkPipelineVertexInputStateCreateInfo mvin{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
             mvin.vertexBindingDescriptionCount = 1;
@@ -3906,6 +3918,11 @@ struct Renderer::Impl
             mvin.pVertexAttributeDescriptions = ma;
             meshPipeline =
                 buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true, false, true, 0.0f, true);
+            const VkBool32 lean = VK_TRUE;
+            const VkSpecializationMapEntry leanEntry{0, 0, sizeof(lean)};
+            const VkSpecializationInfo leanSpec{1, &leanEntry, sizeof(lean), &lean};
+            meshLeanPipeline = buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true, false,
+                                             true, 0.0f, true, false, false, nullptr, true, true, &leanSpec);
             meshBlendPipeline =
                 buildPipeline(meshLayout, mesh, "meshVS", "meshPS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, false, true, true, 0.0f, true);
             prepassPipeline = buildPipeline(meshLayout, mesh, "meshVS", "prepassPS", kAoNormalFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
@@ -3917,6 +3934,8 @@ struct Renderer::Impl
                 {
                     meshWirePipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin, true,
                                                      false, true, 0.0f, true);
+                    meshWireLeanPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin,
+                                                         true, false, true, 0.0f, true, false, false, nullptr, true, true, &leanSpec);
                     meshWireBlendPipeline = buildPipeline(meshLayout, wired, "meshVS", "meshWirePS", sceneFormat, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mvin,
                                                           false, true, true, 0.0f, true);
                     vkDestroyShaderModule(vk.device, wired, nullptr);
@@ -4102,7 +4121,7 @@ struct Renderer::Impl
     void destroyPipelines()
     {
         for (VkPipeline* p : {&gridPipeline, &linesPipeline, &overlayPipeline, &overlayTrisPipeline, &meshPipeline, &meshBlendPipeline, &meshWirePipeline,
-                              &meshWireBlendPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
+                              &meshWireBlendPipeline, &meshLeanPipeline, &meshWireLeanPipeline, &aoApplyPipeline, &pointsPipeline, &wirePipeline,
                               &wireXrayPipeline, &backgroundPipeline, &linesOnTopPipeline, &tris3dPipeline, &linesOverPipeline, &contactPipeline, &prepassPipeline, &gtaoPipeline, &pointsNearestPipeline, &pointsKeepPipeline,
                               &denoisePipeline, &imageOverPipeline, &imageDepthPipeline, &imageBlendPipeline, &imageBehindPipeline, &gridFramePipeline, &externalDepthPipeline, &heightfieldPipeline,
                               &composeOverPipeline, &postPipeline, &externalPipeline,
@@ -5567,6 +5586,7 @@ struct Renderer::Impl
                     const Material* mat = sec.material < d.materials.size() ? &d.materials[sec.material] : nullptr;
                     r.material = mat != nullptr;
                     r.translucent = mat && (mat->flags & MatTranslucent);
+                    r.lean = leanPush(r.push.flags, r.push.style);
                     if (r.set)
                         records.push_back(r);
                 }
@@ -5697,6 +5717,7 @@ struct Renderer::Impl
         VkExtent2D extent{};
         VkPipeline pipeline = VK_NULL_HANDLE;
         VkPipeline wirePipeline = VK_NULL_HANDLE; // for batches that draw their wire in the shader; null draws them plain
+        VkPipeline leanPipeline = VK_NULL_HANDLE, leanWirePipeline = VK_NULL_HANDLE; // for lean sections; null uses the two above
         VkDescriptorSet aoSet = VK_NULL_HANDLE;
         glm::mat4 viewProj{1.0f};
         size_t firstChunk = 0; // into Frame::chunks, so passes of one frame never share a buffer
@@ -5770,7 +5791,9 @@ struct Renderer::Impl
                 if (r.translucent)
                     continue;
                 const DrawBatch& b = frameBatches.shaded[r.batch];
-                const VkPipeline want = pass.wirePipeline && b.wire && r.mesh->edgeMask.address ? pass.wirePipeline : pass.pipeline;
+                const bool wire = pass.wirePipeline && b.wire && r.mesh->edgeMask.address;
+                const VkPipeline lean = r.lean ? (wire ? pass.leanWirePipeline : pass.leanPipeline) : VK_NULL_HANDLE;
+                const VkPipeline want = lean ? lean : wire ? pass.wirePipeline : pass.pipeline;
                 if (want != bound)
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound = want);
                 if (r.set != boundSet)
@@ -5816,6 +5839,8 @@ struct Renderer::Impl
             pass.extent = ri->renderArea.extent;
             pass.pipeline = meshPipeline;
             pass.wirePipeline = meshWirePipeline;
+            pass.leanPipeline = meshLeanPipeline;
+            pass.leanWirePipeline = meshWireLeanPipeline;
             pass.aoSet = aoSet;
             pass.viewProj = viewProj;
             pass.firstChunk = kMaxChunks;
@@ -5874,7 +5899,8 @@ struct Renderer::Impl
                 }
                 continue;
             }
-            use(wire ? meshWirePipeline : meshPipeline);
+            const VkPipeline lean = r.lean ? (wire ? meshWireLeanPipeline : meshLeanPipeline) : VK_NULL_HANDLE;
+            use(lean ? lean : wire ? meshWirePipeline : meshPipeline);
             emitSection(cmd, s, r.push, r.set, *r.mesh, r.section, b.count, viewProj, boundSet);
         }
         // Translucency after everything opaque, far to near, testing depth without writing it.

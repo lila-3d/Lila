@@ -6,6 +6,7 @@
 #include "render/TextureFormat.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include <array>
 #include <atomic>
@@ -18,15 +19,30 @@
 
 namespace lila::render
 {
+/** Linear RGBA in half floats, as colour sets store it (geo/ColorSets.cpp). */
+struct HalfColor
+{
+    uint64_t bits = 0x3c003c003c003c00ull; // white
+
+    HalfColor() = default;
+    HalfColor(const glm::vec4& c) : bits(glm::packHalf4x16(c)) {}
+    operator glm::vec4() const { return glm::unpackHalf4x16(bits); }
+};
+
+/**
+ * 64 bytes, so each vertex starts on a 32-byte sector and what the lean pipelines read (position, normal, first uv)
+ * is one sector.
+ */
 struct MeshVertex
 {
     glm::vec3 pos;
     glm::vec3 normal;
-    glm::vec4 tangent; // w: bitangent sign
     glm::vec2 uv;
     glm::vec2 uv1;
-    glm::vec4 color{1.0f}; // linear RGBA from the mesh's current color set; white without one
+    glm::vec4 tangent; // w: bitangent sign
+    HalfColor color;   // from the mesh's current color set; white without one
 };
+static_assert(sizeof(MeshVertex) == 64, "rtbevel.slang reads MeshVertex by this stride");
 
 /** A run of triangles sharing one material slot. */
 struct MeshSection
