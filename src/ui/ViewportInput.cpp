@@ -144,8 +144,12 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             MarkingMenu::popup(base, MarkingMenu::Trigger::MouseButton, Qt::RightButton, at);
         return;
     }
-    // Channels highlighted in the channel box turn a middle drag into Maya's virtual slider.
-    if (e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::AltModifier) && channelSlider::begin(e->globalPosition().toPoint()))
+    // Channels highlighted in the channel box turn a middle drag into Maya's virtual slider. Shift+MMB stays the
+    // gizmo's pick-the-axis drag while one is drawn.
+    Gizmo* shiftGizmo = (e->modifiers() & Qt::ShiftModifier) ? drawnGizmo() : nullptr;
+    const bool gizmoAxisDrag = shiftGizmo && shiftGizmo->visible();
+    if (e->button() == Qt::MiddleButton && !(e->modifiers() & Qt::AltModifier) && !gizmoAxisDrag &&
+        channelSlider::begin(e->globalPosition().toPoint()))
     {
         mChannelDrag = true;
         return;
