@@ -464,8 +464,11 @@ Snap snapAt(QPointF px, const ViewInfo& view)
     {
         glm::dvec3 up = prefs().value<std::string>("general", "/scene/upAxis", "y") == "z" ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
         double denom = glm::dot(d, up);
-        double t = std::abs(denom) > 1e-9 ? -glm::dot(o, up) / denom : -1.0;
-        out.p = t > 0.0 ? o + d * t : o + d * 100.0;
+        double t = std::abs(denom) > 0.1 ? -glm::dot(o, up) / denom : -1.0;
+        // A ground plane seen edge-on (front and side views) gives no usable hit: use the plane through the origin facing the view.
+        if (t <= 0.0)
+            t = -glm::dot(o, d);
+        out.p = o + d * (t > 0.0 ? t : 100.0);
     }
     if ((snaps & SnapGrid) && !best)
     {
