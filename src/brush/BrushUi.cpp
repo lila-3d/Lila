@@ -172,8 +172,9 @@ bool BrushControls::key(int k, Qt::KeyboardModifiers mods, bool down)
         mArmedUsed = false;
         return true;
     }
+    // A release we never saw pressed (pressed with focus elsewhere) belongs to whoever took the press.
     if (k != mArmedKey)
-        return true;
+        return false;
     // A tapped F still frames the selection, as everywhere else; a tapped Shift+F is the tool's.
     if (k == Qt::Key_F && !mArmedUsed && mAdjusting == Adjust::None)
     {

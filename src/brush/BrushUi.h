@@ -69,6 +69,8 @@ public:
     bool keyPress(const QKeyEvent* e);
 
     Adjust adjusting() const { return mAdjusting; }
+    /** The adjustment a held key has armed for the next press, None when no key is held. */
+    Adjust armed() const { return mArmed; }
     /** Where the cursor ring belongs: where an adjustment began, so its size reads against the surface there. */
     QPointF anchor(QPointF hover) const { return mAdjusting != Adjust::None ? mStart : hover; }
 
