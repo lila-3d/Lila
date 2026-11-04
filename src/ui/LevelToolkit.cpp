@@ -158,6 +158,7 @@ LevelToolkit::~LevelToolkit()
 void LevelToolkit::rebuild()
 {
     mButtons.clear();
+    mGrids.clear();
     QLayout* root = mBody->layout();
     while (QLayoutItem* item = root->takeAt(0))
     {
@@ -185,7 +186,10 @@ void LevelToolkit::rebuild()
             else if (QToolButton* b = actionButton(item.action, QString::fromStdString(item.icon), QString::fromStdString(item.text), rows))
                 flow->addWidget(optionBox::withOptionBox(b, item.action, rows));
         if (flow->count())
+        {
             boxLayout->addWidget(rows);
+            mGrids.push_back(rows);
+        }
         else
             delete rows;
         if (s->create)
@@ -216,8 +220,16 @@ void LevelToolkit::rebuild()
         v->addWidget(levelSection("Tool Options", optionsBox, mBody));
     }
     v->addStretch(1);
-    // The panel stops at its narrowest fixed row instead of clipping it.
-    mScroll->setMinimumWidth(mBody->minimumSizeHint().width() + mScroll->verticalScrollBar()->sizeHint().width());
+    updateMinimumWidth();
+}
+
+void LevelToolkit::updateMinimumWidth()
+{
+    const QMargins m = mBody->layout()->contentsMargins();
+    int width = mBody->minimumSizeHint().width();
+    for (QWidget* grid : mGrids)
+        width = std::max(width, grid->layout()->sizeHint().width() + m.left() + m.right());
+    mScroll->setMinimumWidth(width + mScroll->verticalScrollBar()->sizeHint().width());
 }
 
 QToolButton* LevelToolkit::actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent)
@@ -245,6 +257,8 @@ QToolButton* LevelToolkit::actionButton(const std::string& id, const QString& ic
 void LevelToolkit::showEvent(QShowEvent* e)
 {
     QWidget::showEvent(e);
+    // Styles land on first show and change the buttons' hints.
+    updateMinimumWidth();
     // Hotkeys are live-editable, so tooltips pick up the current keys whenever the panel shows.
     for (QToolButton* b : mButtons)
         if (std::string id = b->property("lilaAction").toString().toStdString(); actions::find(id))

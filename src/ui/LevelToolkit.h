@@ -82,12 +82,15 @@ protected:
 
 private:
     void rebuild();
+    /** The panel stops where every button grid still fits its labels and option boxes, open or folded. */
+    void updateMinimumWidth();
     QToolButton* actionButton(const std::string& id, const QString& iconName, const QString& text, QWidget* parent);
 
     QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;
     QTimer* mRebuild = nullptr;
     std::vector<QToolButton*> mButtons;
+    std::vector<QWidget*> mGrids;
     int mSectionListener = 0;
     int mActionListener = 0;
 };
