@@ -550,7 +550,7 @@ render::FrameState ViewportWidget::buildFrame(const RenderView* rv)
         cursorBadges::publish(this, {});
     renderPasses::run(renderPasses::Stage::Final, passes);
     // The ground grid is edge-on in side views, so they get a grid in the view plane through the origin instead.
-    if (mCamera.ortho && std::abs(glm::dot(mCamera.forward(), mCamera.up())) < 0.5)
+    if (s.grid && mCamera.ortho && std::abs(glm::dot(mCamera.forward(), mCamera.up())) < 0.5)
     {
         glm::dvec3 r = mCamera.right(), u = glm::cross(r, mCamera.forward());
         glm::dvec2 ext = mCamera.viewExtents(aspect());
