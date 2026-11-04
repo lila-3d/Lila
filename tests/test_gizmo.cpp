@@ -185,6 +185,30 @@ TEST_CASE("orienting the pivot turns the manipulator's axes, not the object")
     CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
 }
 
+TEST_CASE("a pivot moved on a scaled object stays still when it scales again")
+{
+    using namespace lila;
+    ops::execute("newScene", nlohmann::json::object());
+    std::string cube = ops::execute("polyCube", nlohmann::json::object())[0];
+    scene::Graph& g = scene::Graph::current();
+    scene::NodeId id = g.find(cube)->id();
+    g.setValue({id, scene::Transform::kTranslate, -1}, glm::dvec3(0.0, 125.0, 0.0));
+    g.setValue({id, scene::Transform::kScale, -1}, glm::dvec3(1.5, 2.0, 1.5));
+    g.evaluate();
+    const glm::dmat4 before = g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix);
+
+    scene::xformops::setWorldPivot(g, id, glm::dvec3(0.0));
+    g.evaluate();
+    CHECK(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) == before);
+    CHECK(nearTight(scene::xformops::worldPivot(g, id), glm::dvec3(0.0)));
+
+    // The world origin, under the pivot, is where scaling leaves things.
+    const glm::dvec4 at = glm::inverse(before) * glm::dvec4(0.0, 0.0, 0.0, 1.0);
+    scene::xformops::scaleBy(g, {id}, glm::dvec3(2.0));
+    g.evaluate();
+    CHECK(nearTight(glm::dvec3(g.node(id)->as<glm::dmat4>(scene::Transform::kWorldMatrix) * at), glm::dvec3(0.0)));
+}
+
 TEST_CASE("cursor wrap: moves queued before a warp carry on from the far side instead of jumping back")
 {
     using gizmo::CursorWrap;

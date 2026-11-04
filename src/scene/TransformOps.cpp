@@ -154,8 +154,11 @@ void setWorldPivot(Graph& g, NodeId id, const glm::dvec3& world)
     glm::dvec3 newRp = glm::transpose(r) * (target - t - rpt - rp + r * rp);
     glm::dvec3 newRpt = rpt + (rp - newRp) - r * (rp - newRp);
 
-    // The scale pivot moves to the same object-space point, compensated the same way.
-    glm::dvec3 newSp = newRp;
+    // The scale pivot is the pre-scale point that scales onto the new rotate pivot, so scaling holds the pivot still.
+    glm::dvec3 newSp = sp;
+    for (int i = 0; i < 3; ++i)
+        if (std::abs(s[i]) > 1e-12)
+            newSp[i] = sp[i] + (newRp[i] - sp[i] - spt[i]) / s[i];
     glm::dvec3 newSpt = spt + (sp - newSp) - s * (sp - newSp);
 
     g.setValue({id, Transform::kRotatePivot}, newRp);
