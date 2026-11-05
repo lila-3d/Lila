@@ -277,6 +277,15 @@ LILA_SCENE_API std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, 
                                                               Extracted* grid = nullptr, int foldRetries = 0,
                                                               Index* folds = nullptr);
 
+/**
+ * A quad layout made patch by patch, so it can't fold: field lines traced from every pole and feature corner (a
+ * motorcycle graph) split the surface into four-sided patches, each side's lattice steps are made whole with opposite
+ * sides equal, and each patch is filled with a regular grid through an embedding that is one to one. Empty mesh, with
+ * error set, when it can't be built. targetCells, when positive, is the lattice cell count to scale the steps to.
+ */
+LILA_SCENE_API Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
+                                       double targetCells = 0.0, std::string* error = nullptr);
+
 /** Lattice points of i and j (returned and outJ) that coincide best near the two vertices. */
 LILA_SCENE_API glm::dvec3 compatLatticePair(const glm::dvec3& vi, const glm::dvec3& ni, const glm::dvec3& qi, const glm::dvec3& oi, double si,
                              const glm::dvec3& vj, const glm::dvec3& nj, const glm::dvec3& qj, const glm::dvec3& oj, double sj,

@@ -1,0 +1,2530 @@
+#include "retopo/Internal.h"
+#include "retopo/Patch.h"
+
+#include "core/Profile.h"
+
+#include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
+
+#include <glm/gtc/constants.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <limits>
+#include <map>
+#include <numeric>
+#include <queue>
+#include <set>
+#include <unordered_map>
+
+namespace lila::retopo::detail
+{
+namespace
+{
+using Chart = std::array<glm::dvec2, 3>;
+constexpr double kQuarter = glm::half_pi<double>();
+
+double cross2(const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; }
+int mod4(int k) { return ((k % 4) + 4) % 4; }
+glm::dvec2 turn2(glm::dvec2 c, int k)
+{
+    for (int i = 0; i < mod4(k); ++i)
+        c = {-c.y, c.x};
+    return c;
+}
+glm::dvec2 axis(int k) { return turn2({1.0, 0.0}, k); }
+double angleAbout(const glm::dvec3& a, const glm::dvec3& b, const glm::dvec3& n) { return std::atan2(glm::dot(n, glm::cross(a, b)), glm::dot(a, b)); }
+glm::dvec3 turn3(glm::dvec3 b, const glm::dvec3& n, int k)
+{
+    for (int i = 0; i < mod4(k); ++i)
+        b = glm::cross(n, b);
+    return b;
+}
+
+/**
+ * The surface's triangles in the frames the tracing reads: per triangle one field direction, and its corners in a chart
+ * whose x axis is that direction, in lattice steps, so a field line is an axis-aligned segment in each triangle.
+ */
+struct Layout
+{
+    const Surface& s;
+    std::vector<glm::dvec3> dir;               // per triangle, unit, in its plane
+    std::vector<Chart> chart;                  // per triangle
+    std::vector<std::array<Index, 3>> triEdge; // surface edge of corner k to k+1
+    std::vector<uint8_t> wall;                 // per edge: a feature line or border, where traces end
+    std::vector<uint8_t> source;               // per vertex: a pole or feature corner, where traces start
+    std::vector<uint8_t> singular;             // per vertex
+    std::vector<int> quarters;                 // per vertex: how many quarter turns the field makes round it
+
+    Index other(Index e, Index t) const { return s.edgeTris[e][0] == t ? s.edgeTris[e][1] : s.edgeTris[e][0]; }
+    int cornerOf(Index t, Index v) const
+    {
+        for (int k = 0; k < 3; ++k)
+            if (s.tris[t][k] == v)
+                return k;
+        return -1;
+    }
+    /** Quarter turns k with dir[t] ~ turn(dir[o], k), unfolded about edge e; axis d in t is axis d + k in o. */
+    int matching(Index e, Index t, Index o) const
+    {
+        const glm::dvec3 d = glm::normalize(s.pos[s.edges[e][1]] - s.pos[s.edges[e][0]]);
+        const double a = angleAbout(d, dir[t], s.triNormal[t]), b = angleAbout(d, dir[o], s.triNormal[o]);
+        return mod4(int(std::lround((a - b) / kQuarter)));
+    }
+    /** Angle of the edge from its vertex v in t's chart minus in o's, less whole quarter turns: the field's smooth turn. */
+    double frameTurn(Index e, Index t, Index o) const
+    {
+        const Index v = s.edges[e][0], w = s.edges[e][1];
+        auto angleIn = [&](Index tri) {
+            const glm::dvec2 d = chart[tri][cornerOf(tri, w)] - chart[tri][cornerOf(tri, v)];
+            return std::atan2(d.y, d.x);
+        };
+        const double delta = std::remainder(angleIn(o) - angleIn(t), glm::two_pi<double>());
+        return delta - kQuarter * std::round(delta / kQuarter);
+    }
+};
+
+Layout makeLayout(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale)
+{
+    Layout lay{s};
+    const Index nt = Index(s.tris.size()), ne = Index(s.edges.size()), nv = s.vertexCount();
+    lay.dir.resize(nt);
+    std::unordered_map<Index, glm::dvec3> atJunction;
+    for (const CreaseJunction& j : creaseJunctions(s))
+        for (const CreaseJunction::Wedge& w : j.fan)
+        {
+            const glm::dvec3 n = glm::normalize(s.triNormal[w.tri]), e0 = glm::normalize(s.pos[w.next] - s.pos[j.vertex]);
+            const double turnBy = -w.before - (w.alpha - 1.0) * (w.before + 0.5 * w.angle);
+            atJunction[w.tri] = e0 * std::cos(turnBy) + glm::cross(n, e0) * std::sin(turnBy);
+        }
+    for (Index t = 0; t < nt; ++t)
+    {
+        const glm::dvec3 n = s.triNormal[t];
+        if (auto it = atJunction.find(t); it != atJunction.end())
+        {
+            lay.dir[t] = it->second;
+            continue;
+        }
+        glm::dvec3 ref(0.0), sum(0.0);
+        for (Index v : s.tris[t])
+        {
+            glm::dvec3 d = q[v] - n * glm::dot(n, q[v]);
+            if (glm::length(d) < 1e-12)
+                continue;
+            d = glm::normalize(d);
+            if (glm::length(ref) == 0.0)
+                ref = d;
+            sum += turn3(d, n, int(std::lround(angleAbout(d, ref, n) / kQuarter)));
+        }
+        lay.dir[t] = glm::length(sum) > 1e-12 ? glm::normalize(sum) : anyTangent(n);
+    }
+    lay.chart.resize(nt);
+    for (Index t = 0; t < nt; ++t)
+    {
+        const auto& tri = s.tris[t];
+        const glm::dvec3 x = lay.dir[t], y = glm::cross(s.triNormal[t], x);
+        const double h = (scale[tri[0]] + scale[tri[1]] + scale[tri[2]]) / 3.0;
+        for (int k = 0; k < 3; ++k)
+        {
+            const glm::dvec3 d = s.pos[tri[k]] - s.pos[tri[0]];
+            lay.chart[t][k] = glm::dvec2(glm::dot(d, x), glm::dot(d, y)) / h;
+        }
+    }
+    lay.triEdge.resize(nt);
+    for (Index t = 0; t < nt; ++t)
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index a = s.tris[t][k], b = s.tris[t][(k + 1) % 3];
+            lay.triEdge[t][k] = kInvalid;
+            for (Index i = s.adjStart[a]; i < s.adjStart[a + 1]; ++i)
+                if (s.adj[i] == b)
+                    lay.triEdge[t][k] = s.adjEdge[i];
+        }
+    lay.wall.assign(ne, 0);
+    for (Index e = 0; e < ne; ++e)
+        lay.wall[e] = s.edgeTriCount[e] != 2 || s.edgeFeature[e] || s.edgeBoundary[e];
+
+    // Singular vertices: the field's quarter-wrapped jumps round the fan plus the angle defect make a whole turn.
+    std::vector<double> turn(nv, glm::two_pi<double>());
+    std::vector<uint8_t> border(nv, 0);
+    for (Index e = 0; e < ne; ++e)
+        if (s.edgeTriCount[e] != 2)
+            border[s.edges[e][0]] = border[s.edges[e][1]] = 1;
+    for (Index t = 0; t < nt; ++t)
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index v = s.tris[t][k], next = s.tris[t][(k + 1) % 3], prev = s.tris[t][(k + 2) % 3];
+            const glm::dvec3 toNext = glm::normalize(s.pos[next] - s.pos[v]), toPrev = glm::normalize(s.pos[prev] - s.pos[v]);
+            const double gamma = angleAbout(toNext, toPrev, s.triNormal[t]);
+            turn[v] -= gamma;
+            const Index e = lay.triEdge[t][(k + 2) % 3];
+            if (e == kInvalid || s.edgeTriCount[e] != 2)
+                continue;
+            const Index o = lay.other(e, t);
+            const double leaving = angleAbout(toNext, lay.dir[t], s.triNormal[t]) - gamma;
+            const double entering = angleAbout(toPrev, lay.dir[o], s.triNormal[o]);
+            turn[v] += std::remainder(entering - leaving, kQuarter);
+        }
+    lay.singular.assign(nv, 0);
+    lay.source.assign(nv, 0);
+    for (Index v = 0; v < nv; ++v)
+    {
+        lay.singular[v] = !border[v] && std::lround(turn[v] / kQuarter) != 0;
+        lay.quarters.push_back(int(std::lround(turn[v] / kQuarter)));
+        lay.source[v] = lay.singular[v] || s.feature[v] == FeatureKind::Corner;
+    }
+    return lay;
+}
+
+/** One stretch of a trace inside one triangle, in that triangle's chart. */
+struct Segment
+{
+    Index tracer = kInvalid;
+    Index tri = kInvalid;
+    glm::dvec2 a, b;
+    double t0 = 0.0; // trace time at a
+    int dirK = 0;
+    Index endsOn = kInvalid; // the segment its far end stops on, inside this triangle
+};
+
+struct Traces
+{
+    std::vector<Segment> segments;
+    std::vector<double> end;            // per tracer, the time it stops
+    std::vector<Index> sourceOf;        // per tracer
+    std::vector<std::vector<Index>> in; // per triangle, its segments
+    int why[5] = {};                    // ends: on a trace, killed by a trace, wall, source, lost
+    std::vector<int> endWhy;            // per tracer
+};
+
+/**
+ * The motorcycle graph: from every source a field line leaves along each axis direction of its fan, and all advance
+ * together in lattice steps, each stopping where it meets a line that got there first, a wall or another source.
+ */
+/**
+ * The lines out of an inner pole: the field turns round it by `quarters`, so 4 - quarters lines leave it, evenly round
+ * its fan; each goes along the field axis, in the fan triangle whose corner holds it, nearest its even place.
+ */
+struct PoleLine
+{
+    Index tri;
+    int dir;
+    glm::dvec2 free{0.0}; // when set, the first step's direction in tri's chart, off the field axes
+};
+
+std::vector<PoleLine> poleLines(const Layout& lay, Index v, Index first)
+{
+    const Surface& s = lay.s;
+    const int n = 4 - lay.quarters[v];
+    std::vector<PoleLine> out;
+    if (n <= 0)
+        return out;
+    // The fan, counter-clockwise: from each triangle across its edge from v to the corner before v.
+    struct Wedge
+    {
+        Index tri;
+        double start, span, cum;
+    };
+    std::vector<Wedge> fan;
+    double total = 0.0;
+    for (Index t = first; fan.size() < 64;)
+    {
+        const int c = lay.cornerOf(t, v);
+        const glm::dvec2 p = lay.chart[t][c], a = lay.chart[t][(c + 1) % 3] - p, b = lay.chart[t][(c + 2) % 3] - p;
+        const double start = std::atan2(a.y, a.x);
+        const double span = std::fmod(std::atan2(b.y, b.x) - start + 2.0 * glm::two_pi<double>(), glm::two_pi<double>());
+        fan.push_back({t, start, span, total});
+        total += span;
+        const Index e = lay.triEdge[t][(c + 2) % 3];
+        if (e == kInvalid || s.edgeTriCount[e] != 2)
+        {
+            if (std::getenv("LILA_PATCH_LIST"))
+                std::fprintf(stderr, "pole %d: fan open at edge %d (%d tris)\n", int(v), int(e), e == kInvalid ? -1 : int(s.edgeTriCount[e]));
+            return out;
+        }
+        t = lay.other(e, t);
+        if (t == first)
+            break;
+    }
+    // Candidates: every axis inside a fan corner, at its place round the fan.
+    struct Candidate
+    {
+        double at;
+        Index tri;
+        int dir;
+    };
+    std::vector<Candidate> cand;
+    for (const Wedge& w : fan)
+        for (int dir = 0; dir < 4; ++dir)
+        {
+            const double phi = std::fmod(dir * kQuarter - w.start + 2.0 * glm::two_pi<double>(), glm::two_pi<double>());
+            if (phi < w.span)
+                cand.push_back({w.cum + phi, w.tri, dir});
+        }
+    if (std::getenv("LILA_PATCH_LIST") && fan.size() >= 64)
+        std::fprintf(stderr, "pole %d: fan didn't close\n", int(v));
+    if (cand.empty())
+        return out;
+    // Even places, starting from the candidate that lets most of the others line up; a place with no axis near it gets
+    // a line in its own direction, which follows the field from the next triangle on.
+    auto wedgeAt = [&](double at) -> const Wedge& {
+        for (const Wedge& w : fan)
+            if (at < w.cum + w.span)
+                return w;
+        return fan.back();
+    };
+    const double reach = glm::radians(20.0);
+    double bestCost = std::numeric_limits<double>::max();
+    std::vector<PoleLine> best;
+    for (const Candidate& base : cand)
+    {
+        std::vector<PoleLine> pick;
+        double cost = 0.0;
+        std::vector<uint8_t> used(cand.size(), 0);
+        for (int j = 0; j < n; ++j)
+        {
+            const double want = std::fmod(base.at + j * total / n, total);
+            size_t bi = cand.size();
+            double bd = reach;
+            for (size_t i = 0; i < cand.size(); ++i)
+            {
+                double d = std::abs(cand[i].at - want);
+                d = std::min(d, total - d);
+                if (!used[i] && d < bd)
+                {
+                    bd = d;
+                    bi = i;
+                }
+            }
+            if (bi < cand.size())
+            {
+                used[bi] = 1;
+                pick.push_back({cand[bi].tri, cand[bi].dir});
+                cost += bd * bd;
+                continue;
+            }
+            const Wedge& w = wedgeAt(want);
+            const double local = w.start + std::clamp(want - w.cum, 1e-3 * w.span, w.span * (1.0 - 1e-3));
+            pick.push_back({w.tri, mod4(int(std::lround(local / kQuarter))), glm::dvec2(std::cos(local), std::sin(local))});
+            cost += reach * reach;
+        }
+        if (cost < bestCost)
+        {
+            bestCost = cost;
+            best = pick;
+        }
+    }
+    out = best;
+    return out;
+}
+
+/** A line started from a point on another, at the time that one passes it, to cut a patch that has too few corners. */
+struct ExtraStart
+{
+    Index tri;
+    glm::dvec2 at;
+    int dirK;
+    double time;
+};
+
+Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {})
+{
+    LILA_ZONE();
+    const Surface& s = lay.s;
+    const Index nt = Index(s.tris.size());
+    struct Tracer
+    {
+        Index tri;
+        glm::dvec2 at;
+        int dirK;
+        double time = 0.0;
+        int entered = -1;
+        int steps = 0;
+        bool alive = true;
+        glm::dvec2 free{0.0};
+    };
+    std::vector<Tracer> tracers;
+    Traces out;
+    out.in.resize(nt);
+    // Starts: each fan triangle sends the axis directions inside its corner; the same line leaving through two fan
+    // triangles (along their shared edge, or where the field jumps) goes once.
+    std::vector<std::vector<glm::dvec3>> leaving(s.pos.size());
+    std::vector<uint8_t> poleDone(s.pos.size(), 0);
+    for (Index t = 0; t < nt; ++t)
+        for (int c = 0; c < 3; ++c)
+        {
+            const Index v = s.tris[t][c];
+            if (!lay.source[v])
+                continue;
+            if (lay.singular[v])
+            {
+                if (!poleDone[v])
+                {
+                    poleDone[v] = 1;
+                    for (const PoleLine& line : poleLines(lay, v, t))
+                    {
+                        Tracer tracer{line.tri, lay.chart[line.tri][lay.cornerOf(line.tri, v)], line.dir};
+                        tracer.free = line.free;
+                        tracers.push_back(tracer);
+                        out.sourceOf.push_back(v);
+                    }
+                }
+                continue;
+            }
+            const glm::dvec2 p = lay.chart[t][c], a = lay.chart[t][(c + 1) % 3] - p, b = lay.chart[t][(c + 2) % 3] - p;
+            const double start = std::atan2(a.y, a.x);
+            const double span = std::fmod(std::atan2(b.y, b.x) - start + 2.0 * glm::two_pi<double>(), glm::two_pi<double>());
+            for (int dir = 0; dir < 4; ++dir)
+            {
+                const double phi = std::fmod(dir * kQuarter - start + 2.0 * glm::two_pi<double>(), glm::two_pi<double>());
+                if (phi >= span)
+                    continue;
+                // Along a wall the line is already there.
+                if ((phi < 1e-3 && lay.wall[lay.triEdge[t][c]]) || (span - phi < 1e-3 && lay.wall[lay.triEdge[t][(c + 2) % 3]]))
+                    continue;
+                const glm::dvec3 d3 = lay.dir[t] * axis(dir).x + glm::cross(s.triNormal[t], lay.dir[t]) * axis(dir).y;
+                bool dup = false;
+                for (const glm::dvec3& o : leaving[v])
+                    dup = dup || glm::dot(o, d3) > std::cos(glm::radians(25.0));
+                if (dup)
+                    continue;
+                leaving[v].push_back(d3);
+                tracers.push_back({t, p, dir});
+                out.sourceOf.push_back(v);
+            }
+        }
+    for (const ExtraStart& x : extras)
+    {
+        Tracer tracer{x.tri, x.at, x.dirK};
+        tracer.time = x.time;
+        tracers.push_back(tracer);
+        out.sourceOf.push_back(kInvalid);
+    }
+    out.end.assign(tracers.size(), std::numeric_limits<double>::max());
+
+    using Event = std::pair<double, Index>;
+    std::priority_queue<Event, std::vector<Event>, std::greater<>> queue;
+    std::vector<uint8_t> queued(tracers.size(), 1);
+    for (Index i = 0; i < Index(tracers.size()); ++i)
+        queue.push({tracers[i].time, i});
+    // Who each line stopped, so a line cut short later lets go of those it stopped past its new end.
+    struct Kill
+    {
+        Index victim, seg, endsOn;
+        double atKiller, victimEnd, before;
+        bool wasAlive;
+    };
+    std::vector<std::vector<Kill>> killsBy(tracers.size());
+    // Who stopped on each line, with where they were before the step, to send them on if the line ends short of them.
+    struct Stopped
+    {
+        Index victim, seg;
+        double atStopper, victimEnd;
+        Tracer before;
+    };
+    std::vector<std::vector<Stopped>> stoppedOn(tracers.size());
+    std::function<void(Index, double)> shorten = [&](Index x, double end) {
+        out.end[x] = end;
+        for (const Stopped& k : stoppedOn[x])
+            if (k.atStopper > end + 1e-12 && out.end[k.victim] == k.victimEnd)
+            {
+                out.segments[k.seg].b = out.segments[k.seg].a;
+                out.segments[k.seg].endsOn = kInvalid;
+                out.end[k.victim] = std::numeric_limits<double>::max();
+                tracers[k.victim] = k.before;
+                if (!queued[k.victim])
+                {
+                    queued[k.victim] = 1;
+                    queue.push({k.before.time, k.victim});
+                }
+            }
+        for (const Kill& k : killsBy[x])
+            if (k.atKiller > end + 1e-12 && out.end[k.victim] == k.victimEnd)
+            {
+                out.end[k.victim] = k.before;
+                out.segments[k.seg].endsOn = k.endsOn;
+                tracers[k.victim].alive = k.wasAlive;
+                if (k.wasAlive && !queued[k.victim])
+                {
+                    queued[k.victim] = 1;
+                    queue.push({tracers[k.victim].time, k.victim});
+                }
+            }
+    };
+    constexpr int kMaxSteps = 500000;
+    out.endWhy.assign(tracers.size(), -1);
+    auto stop = [&](Index ai, double at, int why) {
+        out.endWhy[ai] = why;
+        out.end[ai] = at;
+        tracers[ai].alive = false;
+        ++out.why[why];
+    };
+    size_t events = 0;
+    while (!queue.empty())
+    {
+        if (++events % 4096 == 0)
+            Budget::checkpoint();
+        const Index ai = queue.top().second;
+        queue.pop();
+        queued[ai] = 0;
+        Tracer& A = tracers[ai];
+        if (!A.alive)
+            continue;
+        if (++A.steps > kMaxSteps)
+        {
+            stop(ai, A.time, 4);
+            continue;
+        }
+        const Index t = A.tri;
+        const glm::dvec2 d = A.free != glm::dvec2(0.0) ? A.free : axis(A.dirK);
+        A.free = glm::dvec2(0.0);
+        int exitEdge = -1;
+        double exitS = std::numeric_limits<double>::max(), exitR = 0.0;
+        // Near a pole the field can run along the edge it came in by; then the line leaves by the nearest other edge.
+        for (double slack : {1e-9, 0.5, 1e9})
+        {
+            for (int k = 0; k < 3; ++k)
+            {
+                if (k == A.entered)
+                    continue;
+                const glm::dvec2 p0 = lay.chart[t][k], e = lay.chart[t][(k + 1) % 3] - p0;
+                const double denom = cross2(d, e);
+                if (std::abs(denom) < 1e-14)
+                    continue;
+                const double along = cross2(p0 - A.at, e) / denom, r = cross2(p0 - A.at, d) / denom;
+                if (along > 1e-12 && r >= -slack && r <= 1.0 + slack && along < exitS)
+                {
+                    exitS = along;
+                    exitEdge = k;
+                    exitR = std::clamp(r, 0.0, 1.0);
+                }
+            }
+            if (exitEdge >= 0)
+                break;
+        }
+        if (exitEdge < 0)
+        {
+            if (std::getenv("LILA_PATCH_DEBUG"))
+                std::fprintf(stderr, "lost: tri %d entered %d steps %d at %.4f %.4f dir %d corners %.4f %.4f / %.4f %.4f / %.4f %.4f\n", int(t), A.entered, A.steps,
+                             A.at.x, A.at.y, A.dirK, lay.chart[t][0].x, lay.chart[t][0].y, lay.chart[t][1].x, lay.chart[t][1].y, lay.chart[t][2].x, lay.chart[t][2].y);
+            stop(ai, A.time, 4);
+            continue;
+        }
+        // Through a plain vertex: cross just beside it, where the next triangle is known, at the same place on both sides.
+        if (const int c = exitR < 1e-6 ? exitEdge : exitR > 1.0 - 1e-6 ? (exitEdge + 1) % 3 : -1; c >= 0 && !lay.source[s.tris[t][c]])
+            exitR = std::clamp(exitR, 1e-6, 1.0 - 1e-6);
+        glm::dvec2 b = (1.0 - exitR) * lay.chart[t][exitEdge] + exitR * lay.chart[t][(exitEdge + 1) % 3];
+        exitS = glm::length(b - A.at);
+        Index endsOn = kInvalid;
+        bool stopped = false;
+
+        // Crossings with lines already through this triangle, nearest first.
+        struct Hit
+        {
+            double sA;
+            Index seg;
+            double tB;
+        };
+        std::vector<Hit> hits;
+        for (Index si : out.in[t])
+        {
+            const Segment& B = out.segments[si];
+            if (B.tracer == ai || mod4(B.dirK - A.dirK) % 2 == 0)
+                continue;
+            const glm::dvec2 eb = B.b - B.a, ea = b - A.at;
+            const double denom = cross2(ea, eb);
+            if (std::abs(denom) < 1e-18)
+                continue;
+            const double sA = cross2(B.a - A.at, eb) / denom, sB = cross2(B.a - A.at, ea) / denom;
+            if (sA > 1e-12 && sA <= 1.0 + 1e-12 && sB >= -1e-12 && sB <= 1.0 + 1e-12)
+            {
+                const double tB = B.t0 + sB * glm::length(eb);
+                if (tB <= out.end[B.tracer] + 1e-12)
+                    hits.push_back({sA, si, tB});
+            }
+        }
+        std::sort(hits.begin(), hits.end(), [](const Hit& p, const Hit& q) { return p.sA < q.sA; });
+        const Index mine = Index(out.segments.size());
+        for (const Hit& h : hits)
+        {
+            const double tA = A.time + h.sA * exitS;
+            if (h.tB <= tA)
+            {
+                // The other line was here first.
+                Tracer before = A;
+                before.steps = A.steps;
+                stoppedOn[out.segments[h.seg].tracer].push_back({ai, mine, h.tB, tA, before});
+                b = A.at + h.sA * (b - A.at);
+                endsOn = h.seg;
+                stopped = true;
+                stop(ai, tA, 0);
+                break;
+            }
+            // This one was here first: the other ends on it.
+            const Index bt = out.segments[h.seg].tracer;
+            if (h.tB < out.end[bt])
+            {
+                out.why[1] += tracers[bt].alive;
+                out.endWhy[bt] = 1;
+                killsBy[ai].push_back({bt, h.seg, out.segments[h.seg].endsOn, tA, h.tB, out.end[bt], tracers[bt].alive});
+                tracers[bt].alive = false;
+                out.segments[h.seg].endsOn = mine;
+                shorten(bt, h.tB);
+            }
+        }
+        out.segments.push_back({ai, t, A.at, b, A.time, A.dirK, endsOn});
+        out.in[t].push_back(mine);
+        if (stopped)
+            continue;
+
+        const Index e = lay.triEdge[t][exitEdge];
+        const double tEnd = A.time + exitS;
+        const int atCorner = exitR < 1e-7 ? exitEdge : exitR > 1.0 - 1e-7 ? (exitEdge + 1) % 3 : -1;
+        if (atCorner >= 0 && lay.source[s.tris[t][atCorner]])
+        {
+            stop(ai, tEnd, 3);
+            continue;
+        }
+        if (e == kInvalid || lay.wall[e])
+        {
+            stop(ai, tEnd, 2);
+            continue;
+        }
+        const Index o = lay.other(e, t);
+        const Index va = s.tris[t][exitEdge], vb = s.tris[t][(exitEdge + 1) % 3];
+        const int ca = lay.cornerOf(o, va), cb = lay.cornerOf(o, vb);
+        if (ca < 0 || cb < 0)
+        {
+            stop(ai, tEnd, 4);
+            continue;
+        }
+        // The edge runs b to a in o; the point keeps its place along it.
+        int ko = -1;
+        for (int k = 0; k < 3; ++k)
+            if (s.tris[o][k] == vb && s.tris[o][(k + 1) % 3] == va)
+                ko = k;
+        if (ko < 0)
+        {
+            stop(ai, tEnd, 4);
+            continue;
+        }
+        A.at = (1.0 - exitR) * lay.chart[o][ca] + exitR * lay.chart[o][cb];
+        A.dirK = mod4(A.dirK + lay.matching(e, t, o));
+        A.tri = o;
+        A.entered = ko;
+        A.time = tEnd;
+        queued[ai] = 1;
+        queue.push({A.time, ai});
+    }
+    // Clip each segment to its trace's end.
+    for (Segment& g : out.segments)
+    {
+        const double len = glm::length(g.b - g.a), end = out.end[g.tracer];
+        if (g.t0 + len > end + 1e-12 && len > 0.0)
+            g.b = g.a + (std::max(0.0, end - g.t0) / len) * (g.b - g.a);
+    }
+    return out;
+}
+
+/** A convex part of one triangle between traces; each side is a triangle edge (0-2) or a segment (3 + index). */
+struct Piece
+{
+    Index tri = kInvalid;
+    std::vector<glm::dvec2> poly;
+    std::vector<Index> side;
+};
+
+constexpr Index kSegSide = 3;
+
+/** Each triangle cut along its trace segments into convex pieces. */
+std::vector<Piece> cutPieces(const Layout& lay, const Traces& tr, int& mismatched, std::vector<uint8_t>& onEdge)
+{
+    LILA_ZONE();
+    std::vector<Piece> pieces;
+    const Index nt = Index(lay.s.tris.size());
+    for (Index t = 0; t < nt; ++t)
+    {
+        std::vector<Piece> mine(1);
+        mine[0].tri = t;
+        mine[0].poly = {lay.chart[t][0], lay.chart[t][1], lay.chart[t][2]};
+        mine[0].side = {0, 1, 2};
+        // Segments that end on another go after it.
+        std::vector<Index> order;
+        std::vector<uint8_t> placed(tr.segments.size(), 0);
+        std::function<void(Index, int)> place = [&](Index si, int depth) {
+            if (placed[si] || depth > 64)
+                return;
+            placed[si] = 1;
+            const Index on = tr.segments[si].endsOn;
+            if (on < tr.segments.size() && tr.segments[on].tri == t)
+                place(on, depth + 1);
+            order.push_back(si);
+        };
+        for (Index si : tr.in[t])
+            if (glm::length(tr.segments[si].b - tr.segments[si].a) > 1e-9)
+                place(si, 0);
+        for (Index si : order)
+        {
+            const Segment& g = tr.segments[si];
+            const glm::dvec2 mid = 0.5 * (g.a + g.b), dir = glm::normalize(g.b - g.a);
+            // The piece holding the segment's middle.
+            size_t pi = mine.size();
+            for (size_t i = 0; i < mine.size() && pi == mine.size(); ++i)
+            {
+                bool inside = true;
+                const auto& P = mine[i].poly;
+                for (size_t k = 0; k < P.size() && inside; ++k)
+                    inside = cross2(P[(k + 1) % P.size()] - P[k], mid - P[k]) >= -1e-12;
+                if (inside)
+                    pi = i;
+            }
+            if (pi == mine.size())
+            {
+                ++mismatched;
+                continue;
+            }
+            // Split it along the segment's line.
+            const Piece P = mine[pi];
+            const size_t n = P.poly.size();
+            std::vector<double> sd(n);
+            for (size_t k = 0; k < n; ++k)
+                sd[k] = cross2(dir, P.poly[k] - g.a);
+            Piece left{t}, right{t};
+            std::vector<glm::dvec2> chord;
+            for (size_t k = 0; k < n; ++k)
+            {
+                const size_t k1 = (k + 1) % n;
+                const glm::dvec2 p = P.poly[k];
+                const double eps = 1e-12;
+                if (sd[k] >= -eps)
+                {
+                    left.poly.push_back(p);
+                    left.side.push_back(std::abs(sd[k]) <= eps ? kSegSide + si : P.side[k]);
+                }
+                if (sd[k] <= eps)
+                {
+                    right.poly.push_back(p);
+                    right.side.push_back(std::abs(sd[k]) <= eps ? kSegSide + si : P.side[k]);
+                }
+                if (std::abs(sd[k]) <= eps)
+                    chord.push_back(p);
+                if ((sd[k] > eps && sd[k1] < -eps) || (sd[k] < -eps && sd[k1] > eps))
+                {
+                    const glm::dvec2 x = p + (sd[k] / (sd[k] - sd[k1])) * (P.poly[k1] - p);
+                    chord.push_back(x);
+                    left.poly.push_back(x);
+                    right.poly.push_back(x);
+                    left.side.push_back(sd[k] > 0 ? kSegSide + si : P.side[k]);
+                    right.side.push_back(sd[k] > 0 ? P.side[k] : kSegSide + si);
+                }
+            }
+            // A vertex on the line starts the segment side; fix sides so each polygon edge keeps the label of the edge it
+            // came from, and the chord edge gets the segment.
+            auto relabel = [&](Piece& q) {
+                const size_t m = q.poly.size();
+                for (size_t k = 0; k < m; ++k)
+                {
+                    const glm::dvec2 p0 = q.poly[k], p1 = q.poly[(k + 1) % m];
+                    const bool onLine = std::abs(cross2(dir, p0 - g.a)) <= 1e-9 && std::abs(cross2(dir, p1 - g.a)) <= 1e-9;
+                    if (onLine)
+                        q.side[k] = kSegSide + si;
+                    else
+                    {
+                        // The original side this edge lies on.
+                        for (size_t j = 0; j < n; ++j)
+                        {
+                            const glm::dvec2 o0 = P.poly[j], o1 = P.poly[(j + 1) % n], oe = o1 - o0;
+                            const double l2 = glm::dot(oe, oe);
+                            if (l2 <= 0.0)
+                                continue;
+                            const glm::dvec2 m0 = 0.5 * (p0 + p1);
+                            if (std::abs(cross2(oe, m0 - o0)) <= 1e-9 * std::sqrt(l2) && glm::dot(m0 - o0, oe) >= 0.0 && glm::dot(m0 - o0, oe) <= l2)
+                            {
+                                q.side[k] = P.side[j];
+                                break;
+                            }
+                        }
+                    }
+                }
+            };
+            if (left.poly.size() < 3 || right.poly.size() < 3)
+            {
+                // The segment runs along the piece's side (a line along a triangle edge): that side is the line.
+                Piece& Q = mine[pi];
+                bool along = false;
+                for (size_t k = 0; k < Q.poly.size(); ++k)
+                {
+                    const glm::dvec2 p0 = Q.poly[k], p1 = Q.poly[(k + 1) % Q.poly.size()];
+                    const double tol = 1e-7 * std::max(1.0, glm::length(p1 - p0));
+                    if (std::abs(cross2(dir, p0 - g.a)) <= tol && std::abs(cross2(dir, p1 - g.a)) <= tol)
+                    {
+                        // Both triangles must see the line there, so the edge itself stops patches joining across it.
+                        if (Q.side[k] < kSegSide)
+                        {
+                            if (const Index e = lay.triEdge[t][Q.side[k]]; e != kInvalid)
+                                onEdge[e] = 1;
+                        }
+                        along = true;
+                    }
+                }
+                if (!along)
+                    ++mismatched;
+                continue;
+            }
+            relabel(left);
+            relabel(right);
+            // The chord should be the segment: a segment that ends inside the piece leaves a dangling line.
+            if (chord.size() == 2)
+            {
+                const double c0 = glm::dot(chord[0] - g.a, dir), c1 = glm::dot(chord[1] - g.a, dir), len = glm::length(g.b - g.a);
+                const double lo = std::min(c0, c1), hi = std::max(c0, c1);
+                if (lo < -1e-6 || hi > len + 1e-6)
+                    ++mismatched;
+            }
+            mine[pi] = std::move(left);
+            mine.push_back(std::move(right));
+        }
+        pieces.insert(pieces.end(), std::make_move_iterator(mine.begin()), std::make_move_iterator(mine.end()));
+    }
+    return pieces;
+}
+
+
+/** Points welded by position within a tolerance, so pieces that meet at a point share one id. */
+class Welder
+{
+public:
+    explicit Welder(double tol) : mTol(tol), mCell(4.0 * tol) {}
+    Index id(const glm::dvec3& p)
+    {
+        const std::array<int64_t, 3> c = cell(p);
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz)
+                    if (auto it = mCells.find(key({c[0] + dx, c[1] + dy, c[2] + dz})); it != mCells.end())
+                        for (Index i : it->second)
+                            if (glm::length(mPos[i] - p) <= mTol)
+                                return i;
+        const Index n = Index(mPos.size());
+        mPos.push_back(p);
+        mCells[key(c)].push_back(n);
+        return n;
+    }
+    const glm::dvec3& pos(Index i) const { return mPos[i]; }
+    Index size() const { return Index(mPos.size()); }
+
+private:
+    std::array<int64_t, 3> cell(const glm::dvec3& p) const
+    {
+        return {int64_t(std::floor(p.x / mCell)), int64_t(std::floor(p.y / mCell)), int64_t(std::floor(p.z / mCell))};
+    }
+    static uint64_t key(const std::array<int64_t, 3>& c)
+    {
+        return uint64_t(c[0]) * 73856093ull ^ uint64_t(c[1]) * 19349663ull ^ uint64_t(c[2]) * 83492791ull;
+    }
+    double mTol, mCell;
+    std::vector<glm::dvec3> mPos;
+    std::unordered_map<uint64_t, std::vector<Index>> mCells;
+};
+
+/** A stretch of patch border between two nodes, shared by the patches either side. */
+struct Arc
+{
+    Index a = kInvalid, b = kInvalid; // end nodes, in the first traversal's direction
+    std::vector<Index> path;          // points from a to b
+    std::vector<double> along;        // lattice length from a to each path point
+    double length = 0.0;
+    int users = 0;
+    bool wall = false, border = false;
+    int count = 0; // whole lattice steps, once quantized
+};
+
+struct Side
+{
+    std::vector<std::pair<Index, bool>> arcs; // arc, and whether it runs forward along the side
+};
+
+struct PatchShape
+{
+    std::vector<Side> sides; // counter-clockwise from a corner
+};
+
+/**
+ * Turns the traced patches into the quad mesh: borders become loops of arcs between nodes (corners and T-junctions),
+ * each arc gets a whole number of steps with opposite sides of every four-sided patch equal (others split into quads
+ * round a centre), and each patch is filled with a grid through a Tutte embedding of its triangles, which is one to one.
+ */
+Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked, const std::vector<std::vector<uint8_t>>& joined,
+                         const std::vector<Piece>& pieces, const std::vector<Index>& patchOf, Index np, double targetCells, std::string& why,
+                         std::vector<std::pair<Index, Index>>* merge)
+{
+    LILA_ZONE();
+    const Surface& s = lay.s;
+    const bool debug = std::getenv("LILA_PATCH_DEBUG") != nullptr;
+    Extracted ex;
+    auto at3d = [&](const Piece& P, const glm::dvec2& p) {
+        const Chart& c = lay.chart[P.tri];
+        const double area = cross2(c[1] - c[0], c[2] - c[0]);
+        const glm::dvec3 w(cross2(c[1] - p, c[2] - p) / area, cross2(c[2] - p, c[0] - p) / area, cross2(c[0] - p, c[1] - p) / area);
+        return w.x * s.pos[s.tris[P.tri][0]] + w.y * s.pos[s.tris[P.tri][1]] + w.z * s.pos[s.tris[P.tri][2]];
+    };
+    auto internalSide = [&](const Piece& P, Index side) {
+        if (side >= kSegSide)
+            return kInvalid;
+        const Index e = lay.triEdge[P.tri][side];
+        return e == kInvalid || blocked[e] ? kInvalid : e;
+    };
+    Welder weld(s.meanEdgeLength() * 4e-6);
+    const Index npieces = Index(pieces.size());
+    std::vector<std::vector<Index>> pid(npieces);
+    for (Index pi = 0; pi < npieces; ++pi)
+        for (const glm::dvec2& p : pieces[pi].poly)
+            pid[pi].push_back(weld.id(at3d(pieces[pi], p)));
+
+    // Field angle each patch fills at each of its points (see the corner count in layoutPatches).
+    std::map<std::pair<Index, Index>, double> angleAt;
+    for (Index pi = 0; pi < npieces; ++pi)
+    {
+        const Piece& P = pieces[pi];
+        const size_t n = P.poly.size();
+        for (size_t k = 0; k < n; ++k)
+        {
+            const glm::dvec2 u = P.poly[(k + n - 1) % n] - P.poly[k], v = P.poly[(k + 1) % n] - P.poly[k];
+            double& a = angleAt[{patchOf[pi], pid[pi][k]}];
+            a += std::atan2(cross2(v, u), glm::dot(u, v));
+            if (const Index e = internalSide(P, P.side[(k + n - 1) % n]); e != kInvalid && joined[pi][(k + n - 1) % n])
+                a += lay.frameTurn(e, P.tri, lay.other(e, P.tri));
+        }
+    }
+
+    // Border edges, interior on the left; each piece side keeps the points later inserted on it.
+    struct Edge
+    {
+        Index patch, from, to, piece;
+        int side;
+        double length;
+        Index wallEdge;
+    };
+    std::vector<std::vector<Index>> polyPid = pid; // with inserted nodes
+    std::vector<Edge> edges;
+    for (Index pi = 0; pi < npieces; ++pi)
+    {
+        const Piece& P = pieces[pi];
+        for (size_t k = 0; k < P.poly.size(); ++k)
+        {
+            if (internalSide(P, P.side[k]) != kInvalid && joined[pi][k])
+                continue;
+            const Index a = pid[pi][k], b = pid[pi][(k + 1) % P.poly.size()];
+            if (a == b)
+                continue;
+            edges.push_back({patchOf[pi], a, b, pi, int(k), glm::length(P.poly[(k + 1) % P.poly.size()] - P.poly[k]),
+                             P.side[k] < kSegSide && lay.triEdge[P.tri][P.side[k]] != kInvalid && lay.wall[lay.triEdge[P.tri][P.side[k]]]
+                                 ? lay.triEdge[P.tri][P.side[k]]
+                                 : kInvalid});
+        }
+    }
+
+    std::vector<uint8_t> isNode;
+    std::set<std::pair<Index, Index>> virtualCorner; // (patch, point) corners added to patches with too few
+    std::set<std::pair<Index, Index>> dropped;       // (patch, point) corners passed over in patches with too many
+    // Split every border edge at the nodes lying inside it, so both patches along a line see the same nodes.
+    auto insertNodes = [&]() {
+        isNode.resize(weld.size(), 0);
+        const double h = s.meanEdgeLength();
+        std::unordered_map<uint64_t, std::vector<Index>> grid;
+        auto cellOf = [&](const glm::dvec3& p) {
+            return std::array<int64_t, 3>{int64_t(std::floor(p.x / h)), int64_t(std::floor(p.y / h)), int64_t(std::floor(p.z / h))};
+        };
+        auto hash = [](const std::array<int64_t, 3>& c) { return uint64_t(c[0]) * 73856093ull ^ uint64_t(c[1]) * 19349663ull ^ uint64_t(c[2]) * 83492791ull; };
+        for (Index i = 0; i < weld.size(); ++i)
+            if (isNode[i])
+                grid[hash(cellOf(weld.pos(i)))].push_back(i);
+        std::vector<Edge> out;
+        out.reserve(edges.size());
+        for (const Edge& e : edges)
+        {
+            const glm::dvec3 a = weld.pos(e.from), b = weld.pos(e.to), d = b - a;
+            const double l2 = glm::dot(d, d);
+            std::vector<std::pair<double, Index>> on;
+            const auto ca = cellOf(glm::min(a, b)), cb = cellOf(glm::max(a, b));
+            for (int64_t x = ca[0] - 1; x <= cb[0] + 1; ++x)
+                for (int64_t y = ca[1] - 1; y <= cb[1] + 1; ++y)
+                    for (int64_t z = ca[2] - 1; z <= cb[2] + 1; ++z)
+                        if (auto it = grid.find(hash({x, y, z})); it != grid.end())
+                            for (Index n : it->second)
+                            {
+                                if (n == e.from || n == e.to || l2 <= 0.0)
+                                    continue;
+                                const double t = glm::dot(weld.pos(n) - a, d) / l2;
+                                if (t <= 1e-9 || t >= 1.0 - 1e-9)
+                                    continue;
+                                if (glm::length(a + t * d - weld.pos(n)) <= 1e-6 * std::sqrt(l2) + 1e-7 * h)
+                                    on.push_back({t, n});
+                            }
+            if (on.empty())
+            {
+                out.push_back(e);
+                continue;
+            }
+            std::sort(on.begin(), on.end());
+            on.erase(std::unique(on.begin(), on.end(), [](const auto& x, const auto& y) { return x.second == y.second; }), on.end());
+            // The piece's polygon gains the points too, so the patch's triangles reach them.
+            std::vector<Index>& poly = polyPid[e.piece];
+            auto at = std::find(poly.begin(), poly.end(), e.from);
+            size_t pos = size_t(at - poly.begin()) + 1;
+            Index prev = e.from;
+            double prevT = 0.0;
+            for (const auto& [t, n] : on)
+            {
+                poly.insert(poly.begin() + pos++, n);
+                out.push_back({e.patch, prev, n, e.piece, e.side, e.length * (t - prevT), e.wallEdge});
+                prev = n;
+                prevT = t;
+            }
+            out.push_back({e.patch, prev, e.to, e.piece, e.side, e.length * (1.0 - prevT), e.wallEdge});
+        }
+        edges = std::move(out);
+    };
+
+    // Loops: each patch's border edges chained head to tail.
+    std::vector<std::vector<Index>> loopOf; // per patch, edge indices in order
+    // Each patch's border edges joined into one circuit (Hierholzer), so a slit or a pinch is walked out and back; edges
+    // left over after that are a second border, a patch that isn't a disk.
+    // Pieces by (triangle, side label): who is across a traced side.
+    std::map<std::pair<Index, Index>, std::vector<Index>> sideOf;
+    for (Index pi = 0; pi < npieces; ++pi)
+        for (Index label : pieces[pi].side)
+            if (label >= kSegSide)
+                sideOf[{pieces[pi].tri, label}].push_back(pi);
+    std::vector<std::vector<Index>> piecesAt(weld.size());
+    for (Index pi = 0; pi < npieces; ++pi)
+        for (Index w : pid[pi])
+            piecesAt[w].push_back(pi);
+    auto buildLoops = [&]() {
+        bool failed = false;
+        loopOf.assign(np, {});
+        std::vector<std::vector<Index>> ofPatch(np);
+        for (Index i = 0; i < Index(edges.size()); ++i)
+            ofPatch[edges[i].patch].push_back(i);
+        for (Index p = 0; p < np; ++p)
+        {
+            if (ofPatch[p].empty())
+            {
+                // A sliver thinner than the weld: it joins a patch it touches.
+                Index touching = kInvalid;
+                for (Index pi = 0; pi < npieces && touching == kInvalid; ++pi)
+                    if (patchOf[pi] == p)
+                        for (Index w : pid[pi])
+                            for (Index pj : piecesAt[w])
+                                if (patchOf[pj] != p)
+                                    touching = patchOf[pj];
+                if (merge && touching != kInvalid)
+                    merge->push_back({p, touching});
+                failed = true;
+                continue;
+            }
+            std::unordered_map<Index, std::vector<Index>> outOf;
+            std::unordered_map<Index, int> balance;
+            for (Index e : ofPatch[p])
+            {
+                outOf[edges[e].from].push_back(e);
+                ++balance[edges[e].from];
+                --balance[edges[e].to];
+            }
+            bool even = true;
+            for (const auto& [v, b] : balance)
+                even = even && b == 0;
+            std::vector<Index> circuit, stack = {ofPatch[p][0]};
+            std::unordered_map<Index, size_t> next;
+            if (even)
+            {
+                auto& first = outOf[edges[ofPatch[p][0]].from];
+                first.erase(std::find(first.begin(), first.end(), ofPatch[p][0]));
+                while (!stack.empty())
+                {
+                    auto& out = outOf[edges[stack.back()].to];
+                    if (!out.empty())
+                    {
+                        stack.push_back(out.back());
+                        out.pop_back();
+                    }
+                    else
+                    {
+                        circuit.push_back(stack.back());
+                        stack.pop_back();
+                    }
+                }
+                std::reverse(circuit.begin(), circuit.end());
+            }
+            if (!even && debug && std::getenv("LILA_PATCH_LIST"))
+                for (const auto& [v, b] : balance)
+                    if (b != 0)
+                    {
+                        std::fprintf(stderr, "  patch %d: point %d off by %d at %.12f %.12f %.12f;", int(p), int(v), b, weld.pos(v).x, weld.pos(v).y, weld.pos(v).z);
+                        for (Index e : ofPatch[p])
+                            if (edges[e].from == v || edges[e].to == v)
+                                std::fprintf(stderr, " [%s tri %d side %d label %d wall %d]", edges[e].from == v ? "out" : "in", int(pieces[edges[e].piece].tri),
+                                             edges[e].side, int(pieces[edges[e].piece].side[edges[e].side]), int(edges[e].wallEdge != kInvalid));
+                        std::fprintf(stderr, "\n");
+                    }
+            if (even && circuit.size() != ofPatch[p].size())
+            {
+                // Leftover loops with this patch on both sides (a closed line inside it) are dropped.
+                std::vector<Index> sorted = circuit;
+                std::sort(sorted.begin(), sorted.end());
+                bool island = false;
+                for (Index e : ofPatch[p])
+                    if (!std::binary_search(sorted.begin(), sorted.end(), e))
+                        for (Index other : sideOf[std::pair(pieces[edges[e].piece].tri, pieces[edges[e].piece].side[edges[e].side])])
+                            island = island || patchOf[other] != p;
+                if (!island)
+                {
+                    loopOf[p] = std::move(circuit);
+                    continue;
+                }
+            }
+            if (!even || circuit.size() != ofPatch[p].size())
+            {
+                if (debug && std::getenv("LILA_PATCH_LIST"))
+                    std::fprintf(stderr, "patch %d border: %s, %zu of %zu edges in one circuit\n", int(p), even ? "more than one border" : "edges don't pair up",
+                                 circuit.size(), ofPatch[p].size());
+                // An island inside (the edges the circuit missed) joins this patch; a patch whose edges don't pair up joins the
+                // neighbour it shares most border with.
+                std::vector<Index> rest;
+                if (even)
+                {
+                    std::vector<Index> sorted = circuit;
+                    std::sort(sorted.begin(), sorted.end());
+                    for (Index e : ofPatch[p])
+                        if (!std::binary_search(sorted.begin(), sorted.end(), e))
+                            rest.push_back(e);
+                }
+                else
+                    rest = ofPatch[p];
+                std::map<Index, int> shared;
+                for (Index e : rest)
+                {
+                    const Edge& ed = edges[e];
+                    const Index label = pieces[ed.piece].side[ed.side];
+                    for (Index other : sideOf[{pieces[ed.piece].tri, label}])
+                        if (patchOf[other] != p)
+                            ++shared[patchOf[other]];
+                }
+                if (merge)
+                {
+                    if (even)
+                        for (const auto& [q, n] : shared)
+                            merge->push_back({p, q});
+                    else if (!shared.empty())
+                        merge->push_back({p, std::max_element(shared.begin(), shared.end(), [](const auto& a, const auto& b) { return a.second < b.second; })->first});
+                }
+                failed = true;
+                continue;
+            }
+            loopOf[p] = std::move(circuit);
+        }
+        return failed ? "a patch isn't a disk" : "";
+    };
+    auto cornersOf = [&](Index p) {
+        std::vector<size_t> out; // positions in the loop whose start point is a corner
+        for (size_t i = 0; i < loopOf[p].size(); ++i)
+        {
+            const Index v = edges[loopOf[p][i]].from;
+            if (dropped.count({p, v}))
+                continue;
+            if (virtualCorner.count({p, v}))
+                out.push_back(i);
+            else if (auto it = angleAt.find({p, v}); it != angleAt.end())
+            {
+                const double deg = glm::degrees(it->second);
+                if (deg > 45.0 && deg < 135.0)
+                    out.push_back(i);
+            }
+        }
+        return out;
+    };
+
+    isNode.assign(weld.size(), 0);
+    for (const auto& [key, a] : angleAt)
+    {
+        const double deg = glm::degrees(a);
+        if (deg > 45.0 && deg < 135.0)
+            isNode[key.second] = 1;
+    }
+    insertNodes();
+    if (const char* e = buildLoops(); *e)
+    {
+        why = e;
+        return {};
+    }
+    // Every patch is made four-sided: more than four keeps the four nearest a right angle, the others run straight
+    // through as points on a side; fewer get corners added, evenly round the border, or for three in the middle of the
+    // longest side.
+    for (int settle = 0; settle < 4; ++settle)
+    {
+    bool added = false;
+    for (Index p = 0; p < np; ++p)
+    {
+        const std::vector<size_t> c = cornersOf(p);
+        if (c.size() == 4)
+            continue;
+        if (debug && std::getenv("LILA_PATCH_LIST") && loopOf[p].size() > 20)
+        {
+            std::fprintf(stderr, "settle %d patch %d: %zu corners at", settle, int(p), c.size());
+            for (size_t i : c)
+                std::fprintf(stderr, " %zu(pid %d%s)", i, int(edges[loopOf[p][i]].from), virtualCorner.count({p, edges[loopOf[p][i]].from}) ? " v" : "");
+            std::fprintf(stderr, " of %zu\n", loopOf[p].size());
+        }
+        if (c.size() > 4)
+        {
+            std::vector<std::pair<double, Index>> byAngle;
+            for (size_t i : c)
+            {
+                const Index v = edges[loopOf[p][i]].from;
+                const auto it = angleAt.find({p, v});
+                byAngle.push_back({it == angleAt.end() ? 0.0 : std::abs(glm::degrees(it->second) - 90.0), v});
+            }
+            std::sort(byAngle.begin(), byAngle.end());
+            for (size_t i = 4; i < byAngle.size(); ++i)
+                dropped.insert({p, byAngle[i].second});
+            continue;
+        }
+        const std::vector<Index>& loop = loopOf[p];
+        std::vector<double> cum(loop.size() + 1, 0.0);
+        for (size_t i = 0; i < loop.size(); ++i)
+            cum[i + 1] = cum[i] + edges[loop[i]].length;
+        const double total = cum.back();
+        std::vector<double> want;
+        if (c.empty())
+            want = {0.0, 0.25 * total, 0.5 * total, 0.75 * total};
+        else if (c.size() == 1)
+            want = {cum[c[0]] + 0.25 * total, cum[c[0]] + 0.5 * total, cum[c[0]] + 0.75 * total};
+        else if (c.size() == 3)
+        {
+            double longest = -1.0, at = 0.0;
+            for (size_t k = 0; k < 3; ++k)
+            {
+                const double a = cum[c[k]], b = k + 1 < 3 ? cum[c[k + 1]] : cum[c[0]] + total;
+                if (b - a > longest)
+                {
+                    longest = b - a;
+                    at = 0.5 * (a + b);
+                }
+            }
+            want = {at};
+        }
+        else
+        {
+            const double a = cum[c[0]], b = cum[c[1]];
+            want = {0.5 * (a + b), 0.5 * (b + a + total)};
+        }
+        for (double w : want)
+        {
+            w = std::fmod(w, total);
+            size_t best = loop.size();
+            for (size_t i = 0; i < loop.size(); ++i)
+                if (std::find(c.begin(), c.end(), i) == c.end() && (best == loop.size() || std::abs(cum[i] - w) < std::abs(cum[best] - w)))
+                    best = i;
+            if (best == loop.size())
+            {
+                // No point between the corners: a new one in the middle of the longest edge, split into both sides.
+                size_t longestEdge = 0;
+                for (size_t i = 0; i < loop.size(); ++i)
+                    if (edges[loop[i]].length > edges[loop[longestEdge]].length)
+                        longestEdge = i;
+                const Edge& e = edges[loop[longestEdge]];
+                const Index mid = weld.id(0.5 * (weld.pos(e.from) + weld.pos(e.to)));
+                isNode.resize(weld.size(), 0);
+                piecesAt.resize(weld.size());
+                isNode[mid] = 1;
+                virtualCorner.insert({p, mid});
+                added = true;
+                continue;
+            }
+            isNode[edges[loop[best]].from] = 1;
+            virtualCorner.insert({p, edges[loop[best]].from});
+            added = true;
+        }
+    }
+    if (!added)
+        break;
+    insertNodes();
+    if (const char* e = buildLoops(); *e)
+    {
+        why = e;
+        return {};
+    }
+    }
+
+    // A patch too small to take three corners joins the neighbour across its longest edge.
+    bool tooFew = false;
+    for (Index p = 0; p < np; ++p)
+    {
+        if (cornersOf(p).size() >= 3)
+            continue;
+        tooFew = true;
+        Index across = kInvalid;
+        double longest = -1.0;
+        for (Index e : loopOf[p])
+            if (edges[e].length > longest)
+                for (Index other : sideOf[std::pair(pieces[edges[e].piece].tri, pieces[edges[e].piece].side[edges[e].side])])
+                    if (patchOf[other] != p)
+                    {
+                        longest = edges[e].length;
+                        across = patchOf[other];
+                    }
+        if (across == kInvalid)
+            for (Index e : loopOf[p])
+                for (Index pj : piecesAt[edges[e].from])
+                    if (patchOf[pj] != p)
+                        across = patchOf[pj];
+        if (merge && across != kInvalid)
+            merge->push_back({p, across});
+    }
+    if (tooFew)
+    {
+        why = "a patch has too few corners";
+        return {};
+    }
+
+    // Arcs: each loop cut at the nodes, matched with the same stretch seen from the patch on the other side.
+    std::vector<Arc> arcs;
+    std::map<std::pair<Index, Index>, std::vector<Index>> arcsBetween;
+    std::vector<PatchShape> shapes(np);
+    int nGons = 0;
+    for (Index p = 0; p < np; ++p)
+    {
+        const std::vector<Index>& loop = loopOf[p];
+        const std::vector<size_t> corner = cornersOf(p);
+        if (corner.size() < 3)
+        {
+            why = "a patch has too few corners";
+            return {};
+        }
+        std::vector<uint8_t> isCorner(loop.size(), 0);
+        for (size_t c : corner)
+            isCorner[c] = 1;
+        PatchShape& shape = shapes[p];
+        const size_t start = corner[0];
+        std::vector<Index> path = {edges[loop[start]].from};
+        std::vector<double> along = {0.0};
+        bool wall = true, border = true;
+        for (size_t step = 0; step < loop.size(); ++step)
+        {
+            const size_t i = (start + step) % loop.size();
+            if (isCorner[i] && step > 0)
+                shape.sides.emplace_back();
+            if (step == 0)
+                shape.sides.emplace_back();
+            const Edge& e = edges[loop[i]];
+            path.push_back(e.to);
+            along.push_back(along.back() + e.length);
+            wall = wall && e.wallEdge != kInvalid;
+            border = border && e.wallEdge != kInvalid && (s.edgeTriCount[e.wallEdge] != 2 || s.edgeBoundary[e.wallEdge]);
+            const size_t next = (i + 1) % loop.size();
+            if (!isNode[e.to] && !isCorner[next])
+                continue;
+            // An arc from path.front() to e.to.
+            const Index a = path.front(), b = path.back();
+            const std::pair<Index, Index> key{std::min(a, b), std::max(a, b)};
+            Index found = kInvalid;
+            for (Index ai : arcsBetween[key])
+            {
+                Arc& arc = arcs[ai];
+                if (arc.users >= 2 || arc.a != b || arc.b != a)
+                    continue;
+                bool shares = path.size() == 2 && arc.path.size() == 2;
+                for (size_t k = 1; k + 1 < path.size() && !shares; ++k)
+                    shares = std::find(arc.path.begin() + 1, arc.path.end() - 1, path[k]) != arc.path.end() - 1;
+                if (shares)
+                    found = ai;
+            }
+            if (found == kInvalid)
+            {
+                found = Index(arcs.size());
+                arcs.push_back({a, b, path, along, along.back(), 0, wall, border});
+                arcsBetween[key].push_back(found);
+            }
+            else
+                arcs[found].length = 0.5 * (arcs[found].length + along.back());
+            ++arcs[found].users;
+            shape.sides.back().arcs.push_back({found, arcs[found].a == a});
+            path = {e.to};
+            along = {0.0};
+            wall = border = true;
+        }
+        if (shape.sides.size() != 4)
+        {
+            ++nGons;
+            if (debug && std::getenv("LILA_PATCH_LIST"))
+                std::fprintf(stderr, "patch %d has %zu sides from %zu corners, %zu border edges\n", int(p), shape.sides.size(), corner.size(), loop.size());
+        }
+    }
+
+    // Quantize: whole steps per arc, close to its lattice length times a scale that meets the target count, with
+    // opposite sides of every four-sided patch equal. An arc may get none: a sliver between near-parallel lines collapses. Patches with other corner counts stay holes for the hole filler,
+    // so they constrain nothing.
+    const Index na = Index(arcs.size());
+    struct Row
+    {
+        std::vector<std::pair<Index, double>> terms;
+        Index patch;
+    };
+    std::vector<Row> rows;
+    // A four-sided patch whose opposite sides differ a lot isn't a rectangle (a corner in the wrong place); holding its
+    // sides equal would drag every patch in line with it, so it is left free, for the hole filler.
+    auto latticeLength = [&](const Side& side) {
+        double l = 0.0;
+        for (const auto& [arc, fwd] : side.arcs)
+            l += arcs[arc].length;
+        return l;
+    };
+    std::vector<uint8_t> unequal(np, 0);
+    for (Index p = 0; p < np; ++p)
+    {
+        const PatchShape& shape = shapes[p];
+        if (shape.sides.size() != 4)
+            continue;
+        for (int k = 0; k < 2; ++k)
+        {
+            const double a = latticeLength(shape.sides[k]), b = latticeLength(shape.sides[k + 2]);
+            if (std::abs(a - b) > std::max(1.5, 0.5 * std::max(a, b)))
+                unequal[p] = 1;
+        }
+    }
+    for (Index p = 0; p < np; ++p)
+    {
+        const PatchShape& shape = shapes[p];
+        if (shape.sides.size() != 4 || unequal[p])
+            continue;
+        for (int k = 0; k < 2; ++k)
+        {
+            std::map<Index, double> sum;
+            for (const auto& [arc, fwd] : shape.sides[k].arcs)
+                sum[arc] += 1.0;
+            for (const auto& [arc, fwd] : shape.sides[k + 2].arcs)
+                sum[arc] -= 1.0;
+            Row row{{}, p};
+            for (auto [arc, c] : sum)
+                if (c != 0.0)
+                    row.terms.push_back({arc, c});
+            rows.push_back(std::move(row));
+        }
+    }
+    auto sideLength = [&](const Side& side) {
+        double l = 0.0;
+        for (const auto& [arc, fwd] : side.arcs)
+            l += arcs[arc].length;
+        return l;
+    };
+    const double stiff = 1e6;
+    Eigen::SparseMatrix<double> base(na, na);
+    {
+        std::vector<Eigen::Triplet<double>> trip;
+        for (Index i = 0; i < na; ++i)
+            trip.emplace_back(i, i, 1.0);
+        for (const Row& row : rows)
+            for (auto [vi, ci] : row.terms)
+                for (auto [vj, cj] : row.terms)
+                    trip.emplace_back(vi, vj, stiff * ci * cj);
+        base.setFromTriplets(trip.begin(), trip.end());
+    }
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt;
+    ldlt.analyzePattern(base);
+    std::vector<double> target(na, 0.0);
+    std::vector<std::pair<Index, double>> fixed;
+    Eigen::VectorXd x;
+    auto solve = [&]() {
+        Eigen::SparseMatrix<double> a = base;
+        Eigen::VectorXd b(na);
+        for (Index i = 0; i < na; ++i)
+            b[i] = target[i];
+        for (auto [var, value] : fixed)
+        {
+            a.coeffRef(var, var) += stiff;
+            b[var] += stiff * value;
+        }
+        ldlt.factorize(a);
+        if (ldlt.info() != Eigen::Success)
+            return false;
+        x = ldlt.solve(b);
+        return ldlt.info() == Eigen::Success && x.allFinite();
+    };
+    // Cells: four-sided patches by their sides, the rest by their perimeter as if square.
+    auto cells = [&](auto&& value) {
+        double sum = 0.0;
+        for (const PatchShape& shape : shapes)
+        {
+            if (shape.sides.size() == 4)
+            {
+                double w = 0.0, h = 0.0;
+                for (const auto& [arc, fwd] : shape.sides[0].arcs)
+                    w += value(arc);
+                for (const auto& [arc, fwd] : shape.sides[1].arcs)
+                    h += value(arc);
+                sum += w * h;
+            }
+            else
+            {
+                double perimeter = 0.0;
+                for (const Side& side : shape.sides)
+                    for (const auto& [arc, fwd] : side.arcs)
+                        perimeter += value(arc);
+                sum += perimeter * perimeter / 16.0;
+            }
+        }
+        return sum;
+    };
+    double alpha = 1.0;
+    auto setTargets = [&]() {
+        for (Index a = 0; a < na; ++a)
+            target[a] = alpha * arcs[a].length;
+    };
+    setTargets();
+    if (targetCells > 0.0)
+        if (const double now = cells([&](Index a) { return target[a]; }); now > 0.0)
+            alpha = std::sqrt(targetCells / now);
+    std::vector<int> value(na, 0);
+    // An arc may only vanish where the patch really is thin: if the 3D distance across a patch is well over what its
+    // short sides' lattice length says (its corners sit wrong), those sides keep at least a step, or the collapse would
+    // weld points from opposite sides of a tube together.
+    std::vector<int> lower(na, 0);
+    {
+        auto midpoint = [&](const Side& side) {
+            double total = 0.0;
+            for (const auto& [ai, fwd] : side.arcs)
+                total += arcs[ai].along.back();
+            double want = 0.5 * total;
+            for (const auto& [ai, fwd] : side.arcs)
+            {
+                const Arc& arc = arcs[ai];
+                const double l = arc.along.back();
+                if (want <= l)
+                {
+                    const double at = fwd ? want : l - want;
+                    size_t j = 1;
+                    while (j + 1 < arc.along.size() && arc.along[j] < at)
+                        ++j;
+                    const double span = arc.along[j] - arc.along[j - 1];
+                    const double t = span > 0.0 ? std::clamp((at - arc.along[j - 1]) / span, 0.0, 1.0) : 0.0;
+                    return glm::mix(weld.pos(arc.path[j - 1]), weld.pos(arc.path[j]), t);
+                }
+                want -= l;
+            }
+            return weld.pos(arcs[side.arcs.back().first].b);
+        };
+        auto unit3d = [&](const Side& side) {
+            double lattice = 0.0, space = 0.0;
+            for (const auto& [ai, fwd] : side.arcs)
+            {
+                const Arc& arc = arcs[ai];
+                lattice += arc.length;
+                for (size_t k = 1; k < arc.path.size(); ++k)
+                    space += glm::length(weld.pos(arc.path[k]) - weld.pos(arc.path[k - 1]));
+            }
+            return lattice > 1e-9 ? space / lattice : 0.0;
+        };
+        for (const PatchShape& shape : shapes)
+        {
+            if (shape.sides.size() != 4)
+                continue;
+            for (int k = 0; k < 2; ++k)
+            {
+                const Side &a = shape.sides[k], &b = shape.sides[k + 2], &across0 = shape.sides[k + 1], &across1 = shape.sides[(k + 3) % 4];
+                const double unit = 0.5 * (unit3d(a) + unit3d(b));
+                const double across = 0.5 * (sideLength(across0) + sideLength(across1));
+                if (unit > 0.0 && glm::length(midpoint(a) - midpoint(b)) > unit * std::max(0.75, 3.0 * across))
+                    for (const Side* side : {&across0, &across1})
+                    {
+                        // One step on the side's longest arc keeps it open.
+                        Index longest = side->arcs.front().first;
+                        for (const auto& [ai, fwd] : side->arcs)
+                            if (arcs[ai].length > arcs[longest].length)
+                                longest = ai;
+                        lower[longest] = 1;
+                    }
+            }
+        }
+    }
+    std::vector<uint8_t> holeRow(rows.size(), 0);
+    // Rounding moves the count, so the scale is corrected and it all goes again; the pass closest to the target is kept.
+    std::vector<int> bestValue;
+    std::vector<uint8_t> bestHoles;
+    double bestOff = std::numeric_limits<double>::max();
+    for (int pass = 0; pass < 8; ++pass)
+    {
+        setTargets();
+        fixed.clear();
+        if (!solve())
+        {
+            why = "patch quantization didn't solve";
+            return {};
+        }
+        // Greedy rounding, closest to whole first, re-solving between batches.
+        std::vector<uint8_t> isFixed(na, 0);
+        for (int round = 0; round < 200; ++round)
+        {
+            std::vector<std::pair<double, Index>> open;
+            for (Index i = 0; i < na; ++i)
+                if (!isFixed[i])
+                    open.push_back({std::abs(x[i] - std::round(x[i])), i});
+            if (open.empty())
+                break;
+            std::sort(open.begin(), open.end());
+            const size_t batch = std::max<size_t>(1, open.size() / 4);
+            for (size_t i = 0; i < open.size() && (i < batch || open[i].first < 0.05); ++i)
+            {
+                isFixed[open[i].second] = 1;
+                fixed.push_back({open[i].second, std::max(double(lower[open[i].second]), std::round(x[open[i].second]))});
+            }
+            if (!solve())
+            {
+                why = "patch quantization didn't solve";
+                return {};
+            }
+        }
+        for (auto [var, v] : fixed)
+            value[var] = int(v);
+        // Repair: a row left unequal is evened by a chain of +-1 steps through the rows sharing arcs (each arc sits in at
+        // most two rows), ending at a row that wants the opposite change or an arc in one row only.
+        std::vector<std::vector<std::pair<Index, int>>> rowsOf(na);
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            for (auto [a, c] : rows[r].terms)
+                rowsOf[a].push_back({r, int(c)});
+        std::vector<int> res(rows.size(), 0);
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            for (auto [a, c] : rows[r].terms)
+                res[r] += int(c) * value[a];
+        auto cost = [&](Index a, int d) {
+            const double t = alpha * arcs[a].length;
+            return 1.0 + std::max(0.0, std::abs(value[a] + d - t) - std::abs(value[a] - t));
+        };
+        std::fill(holeRow.begin(), holeRow.end(), 0);
+        for (Index r0 = 0; r0 < Index(rows.size()); ++r0)
+            for (int tries = 0; res[r0] != 0; ++tries)
+            {
+                Budget::checkpoint();
+                if (tries >= 16)
+                {
+                    holeRow[r0] = 1;
+                    break;
+                }
+                // Dijkstra over rows: state (row, the change that row needs).
+                struct Back
+                {
+                    Index row, arc;
+                    int delta;
+                };
+                std::unordered_map<Index, double> dist;
+                std::unordered_map<Index, Back> back;
+                std::unordered_map<Index, int> need;
+                using Q = std::pair<double, Index>;
+                std::priority_queue<Q, std::vector<Q>, std::greater<>> queue;
+                dist[r0] = 0.0;
+                need[r0] = res[r0] > 0 ? -1 : 1;
+                queue.push({0.0, r0});
+                Index endRow = kInvalid, endArc = kInvalid;
+                int endDelta = 0;
+                Index endFrom = kInvalid;
+                double best = std::numeric_limits<double>::max();
+                while (!queue.empty())
+                {
+                    const auto [d, r] = queue.top();
+                    queue.pop();
+                    if (d > dist[r] || d >= best)
+                        continue;
+                    const int want = need[r];
+                    for (auto [a, c] : rows[r].terms)
+                    {
+                        const int delta = want * int(c);
+                        if (value[a] + delta < lower[a])
+                            continue;
+                        const double nd = d + cost(a, delta);
+                        Index other = kInvalid;
+                        int oc = 0;
+                        for (auto [r2, c2] : rowsOf[a])
+                            if (r2 != r)
+                            {
+                                other = r2;
+                                oc = c2;
+                            }
+                        const int effect = oc * delta;
+                        if (other == kInvalid || (res[other] != 0 && (res[other] > 0) != (effect > 0)))
+                        {
+                            if (nd < best)
+                            {
+                                best = nd;
+                                endRow = other;
+                                endArc = a;
+                                endDelta = delta;
+                                endFrom = r;
+                            }
+                            continue;
+                        }
+                        if (auto it = dist.find(other); it == dist.end() || nd < it->second)
+                        {
+                            dist[other] = nd;
+                            need[other] = -effect;
+                            back[other] = {r, a, delta};
+                            queue.push({nd, other});
+                        }
+                    }
+                }
+                if (endArc == kInvalid)
+                {
+                    holeRow[r0] = 1;
+                    break;
+                }
+                auto apply = [&](Index a, int delta) {
+                    value[a] += delta;
+                    for (auto [r2, c2] : rowsOf[a])
+                        res[r2] += c2 * delta;
+                };
+                apply(endArc, endDelta);
+                for (Index r = endFrom; r != r0;)
+                {
+                    const Back& b = back[r];
+                    apply(b.arc, b.delta);
+                    r = b.row;
+                }
+                (void)endRow;
+            }
+        int unmet = 0;
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            unmet += res[r] != 0;
+        const double got = cells([&](Index a) { return double(value[a]); });
+        if (debug)
+            std::fprintf(stderr, "patch quantization pass %d: %d arcs, %d four-sided of %d, %zu rows, %d unmet, alpha %.3f, cells %.0f (target %.0f)\n", pass,
+                         int(na), int(np) - nGons, int(np), rows.size(), unmet, alpha, got, targetCells);
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            holeRow[r] = res[r] != 0;
+        const double off = targetCells > 0.0 ? std::abs(got / targetCells - 1.0) + 0.01 * unmet : 0.0;
+        if (off < bestOff)
+        {
+            bestOff = off;
+            bestValue = value;
+            bestHoles = holeRow;
+        }
+        if (targetCells <= 0.0 || off < 0.01)
+            break;
+        // Damped, since rounding answers a change of scale in steps.
+        alpha *= std::pow(targetCells / got, pass < 2 ? 0.5 : 0.3);
+    }
+    value = bestValue;
+    holeRow = bestHoles;
+    for (Index a = 0; a < na; ++a)
+        arcs[a].count = value[a];
+    // Four-sided patches whose sides came out unequal are left for the hole filler too.
+    std::vector<uint8_t> hole(np, 0);
+    for (Index p = 0; p < np; ++p)
+        hole[p] = shapes[p].sides.size() != 4 || unequal[p];
+    for (Index r = 0; r < Index(rows.size()); ++r)
+        if (holeRow[r])
+            hole[rows[r].patch] = 1;
+    // A free patch is filled by pattern (Takayama et al. 2014), which needs an even number of steps round it. An odd one
+    // takes a step on an arc that no held patch counts (a border, or one shared only with free patches).
+    {
+        std::vector<int> heldUses(na, 0);
+        for (const Row& row : rows)
+            if (!hole[row.patch])
+                for (auto [a, c] : row.terms)
+                    ++heldUses[a];
+        for (Index p = 0; p < np; ++p)
+        {
+            if (!hole[p])
+                continue;
+            int total = 0;
+            for (const Side& side : shapes[p].sides)
+                for (const auto& [a, fwd] : side.arcs)
+                    total += arcs[a].count;
+            if (total % 2 == 0)
+                continue;
+            for (const Side& side : shapes[p].sides)
+            {
+                bool done = false;
+                for (const auto& [a, fwd] : side.arcs)
+                    if (heldUses[a] == 0)
+                    {
+                        ++arcs[a].count;
+                        done = true;
+                        break;
+                    }
+                if (done)
+                    break;
+            }
+        }
+    }
+    if (debug)
+    {
+        int notFour = 0, uneven = 0, unmet = 0;
+        for (Index p = 0; p < np; ++p)
+        {
+            notFour += shapes[p].sides.size() != 4;
+            uneven += shapes[p].sides.size() == 4 && unequal[p];
+        }
+        for (Index r = 0; r < Index(rows.size()); ++r)
+            unmet += holeRow[r];
+        std::fprintf(stderr, "patch holes: %d not four-sided, %d with unequal sides, %d rows unmet, of %d patches\n", notFour, uneven, unmet, int(np));
+    }
+
+    // Fill.
+    std::unordered_map<Index, Index> nodePoint;
+    std::map<std::pair<Index, int>, Index> arcPoint;
+    auto addPoint = [&](const glm::dvec3& p, FeatureKind kind, bool border) {
+        const Index i = ex.mesh.addPoint(p);
+        ex.feature.resize(size_t(i) + 1, FeatureKind::None);
+        ex.boundary.resize(size_t(i) + 1, 0);
+        ex.feature[i] = kind;
+        ex.boundary[i] = border;
+        return i;
+    };
+    std::unordered_map<Index, Index> cornerVertex; // welded point of a feature corner vertex
+    for (Index v = 0; v < s.vertexCount(); ++v)
+        if (s.feature[v] == FeatureKind::Corner)
+            cornerVertex[weld.id(s.pos[v])] = v;
+    // Arc point k of n, counted from its a end.
+    auto arcPointId = [&](Index ai, int k) {
+        const Arc& arc = arcs[ai];
+        if (k == 0 || k == arc.count)
+        {
+            const Index node = k == 0 ? arc.a : arc.b;
+            auto [it, fresh] = nodePoint.try_emplace(node, kInvalid);
+            if (fresh)
+                it->second = addPoint(weld.pos(node), cornerVertex.count(node) ? FeatureKind::Corner : arc.wall ? FeatureKind::Line : FeatureKind::None, arc.border);
+            else if (arc.wall && ex.feature[it->second] == FeatureKind::None)
+                ex.feature[it->second] = FeatureKind::Line;
+            if (arc.border)
+                ex.boundary[it->second] = 1;
+            return it->second;
+        }
+        auto [it, fresh] = arcPoint.try_emplace({ai, k}, kInvalid);
+        if (fresh)
+        {
+            const double want = arc.length * double(k) / double(arc.count);
+            const double total = arc.along.back();
+            const double at = total > 0.0 ? want * total / arc.length : 0.0;
+            size_t j = 1;
+            while (j + 1 < arc.along.size() && arc.along[j] < at)
+                ++j;
+            const double span = arc.along[j] - arc.along[j - 1];
+            const double t = span > 0.0 ? std::clamp((at - arc.along[j - 1]) / span, 0.0, 1.0) : 0.0;
+            it->second = addPoint(glm::mix(weld.pos(arc.path[j - 1]), weld.pos(arc.path[j]), t), arc.wall ? FeatureKind::Line : FeatureKind::None, arc.border);
+        }
+        return it->second;
+    };
+    // The point at whole step c along a side (from its first corner).
+    auto sidePoint = [&](const Side& side, int c) {
+        for (const auto& [ai, fwd] : side.arcs)
+        {
+            const int n = arcs[ai].count;
+            if (c <= n)
+                return arcPointId(ai, fwd ? c : n - c);
+            c -= n;
+        }
+        const auto& [ai, fwd] = side.arcs.back();
+        return arcPointId(ai, fwd ? arcs[ai].count : 0);
+    };
+    auto sideCount = [&](const Side& side) {
+        int n = 0;
+        for (const auto& [ai, fwd] : side.arcs)
+            n += arcs[ai].count;
+        return n;
+    };
+
+    std::vector<std::array<Index, 4>> quads;
+    std::vector<Index> same; // union-find over output points
+    auto rootOf = [&](Index x) {
+        while (same[x] != x)
+            x = same[x] = same[same[x]];
+        return x;
+    };
+    auto unite = [&](Index a, Index b) {
+        same.resize(ex.mesh.pointCapacity(), kInvalid);
+        for (Index i = 0; i < Index(same.size()); ++i)
+            if (same[i] == kInvalid)
+                same[i] = i;
+        if (debug && std::getenv("LILA_PATCH_LIST") && glm::length(ex.mesh.position(a) - ex.mesh.position(b)) > 0.5)
+            std::fprintf(stderr, "weld across %.2f at %.2f %.2f %.2f\n", glm::length(ex.mesh.position(a) - ex.mesh.position(b)), ex.mesh.position(a).x,
+                         ex.mesh.position(a).y, ex.mesh.position(a).z);
+        same[rootOf(a)] = rootOf(b);
+    };
+    std::vector<std::vector<Index>> piecesOf(np);
+    for (Index pi = 0; pi < npieces; ++pi)
+        piecesOf[patchOf[pi]].push_back(pi);
+    int tutteFailed = 0, foldedPatches = 0;
+    int patterned = 0, unfilled[5] = {}; // a side without steps, odd, no pattern fits, fill failed, too many sides
+    for (Index p = 0; p < np; ++p)
+    {
+        if (hole[p])
+        {
+            // Free: its border points in order, corners where the sides start, filled by pattern.
+            const PatchShape& shape = shapes[p];
+            if (shape.sides.size() < 2 || shape.sides.size() > 6)
+            {
+                ++unfilled[4];
+                continue;
+            }
+            PatchBoundary b;
+            std::vector<Index> ids;
+            bool ok = true;
+            // A side that collapsed to no steps joins its two corners: the patch has a side fewer.
+            for (const Side& side : shape.sides)
+            {
+                const int count = sideCount(side);
+                if (count == 0)
+                    continue;
+                b.corners.push_back(int(ids.size()));
+                for (int c = 0; c < count; ++c)
+                    ids.push_back(sidePoint(side, c));
+            }
+            ok = b.corners.size() >= 3;
+            for (Index id : ids)
+                b.points.push_back(ex.mesh.position(id));
+            if (!ok)
+            {
+                ++unfilled[0];
+                continue;
+            }
+            if (ids.size() % 2 != 0)
+            {
+                ++unfilled[1];
+                continue;
+            }
+            if (!patchSidesFillable(patchSideCounts(b)))
+            {
+                ++unfilled[2];
+                continue;
+            }
+            const PatchResult r = fillPatch(b);
+            if (!r.ok())
+            {
+                ++unfilled[3];
+                continue;
+            }
+            std::vector<Index> id(r.positions.size());
+            for (size_t i = 0; i < r.positions.size(); ++i)
+                id[i] = i < ids.size() ? ids[i] : addPoint(r.positions[i], FeatureKind::None, false);
+            for (const auto& f : r.faces)
+                if (f.size() == 4)
+                    quads.push_back({id[f[0]], id[f[1]], id[f[2]], id[f[3]]});
+            ++patterned;
+            continue;
+        }
+        const PatchShape& shape = shapes[p];
+        const size_t n = shape.sides.size();
+        // The patch's triangles: each piece fanned from its centre.
+        std::unordered_map<Index, Index> local;
+        std::vector<glm::dvec3> pos;
+        auto localOf = [&](Index w) {
+            auto [it, fresh] = local.try_emplace(w, Index(pos.size()));
+            if (fresh)
+                pos.push_back(weld.pos(w));
+            return it->second;
+        };
+        std::vector<std::array<Index, 3>> tris;
+        for (Index pi : piecesOf[p])
+        {
+            const std::vector<Index>& poly = polyPid[pi];
+            glm::dvec3 c(0.0);
+            for (Index w : poly)
+                c += weld.pos(w) / double(poly.size());
+            const Index centre = Index(pos.size());
+            pos.push_back(c);
+            for (size_t k = 0; k < poly.size(); ++k)
+                if (poly[k] != poly[(k + 1) % poly.size()])
+                    tris.push_back({centre, localOf(poly[k]), localOf(poly[(k + 1) % poly.size()])});
+        }
+        // Border points on the domain polygon: corners on a regular polygon (a rectangle W x H when four-sided), the
+        // rest placed along their side by whole steps.
+        std::vector<int> counts(n);
+        for (size_t i = 0; i < n; ++i)
+            counts[i] = sideCount(shape.sides[i]);
+        std::vector<glm::dvec2> corner(n);
+        if (n == 4)
+            corner = {{0.0, 0.0}, {double(counts[0]), 0.0}, {double(counts[0]), double(counts[1])}, {0.0, double(counts[1])}};
+        else
+        {
+            double perimeter = 0.0;
+            for (int c : counts)
+                perimeter += c;
+            const double r = perimeter / (2.0 * n * std::sin(glm::pi<double>() / n));
+            for (size_t i = 0; i < n; ++i)
+                corner[i] = r * glm::dvec2(std::cos(glm::two_pi<double>() * i / n), std::sin(glm::two_pi<double>() * i / n));
+        }
+        std::vector<glm::dvec2> uv(pos.size(), glm::dvec2(0.0));
+        std::vector<uint8_t> onBorder(pos.size(), 0);
+        {
+            // Along each side, each point sits at its arc's whole steps so far plus its share of the arc it is on, by its
+            // own lattice length between the arc's nodes.
+            const std::vector<Index>& loop = loopOf[p];
+            const std::vector<size_t> cs = cornersOf(p);
+            std::vector<uint8_t> isCorner(loop.size(), 0);
+            for (size_t c : cs)
+                isCorner[c] = 1;
+            size_t side = 0, arcInSide = 0;
+            int before = 0;
+            std::vector<std::pair<Index, double>> run; // points of the current arc and their length from its start
+            auto flush = [&]() {
+                const Side& sd = shape.sides[side];
+                const int count = arcInSide < sd.arcs.size() ? arcs[sd.arcs[arcInSide].first].count : 0;
+                const double total = run.back().second;
+                for (const auto& [li, len] : run)
+                {
+                    const double u = before + count * (total > 0.0 ? len / total : 0.0);
+                    uv[li] = glm::mix(corner[side], corner[(side + 1) % n], counts[side] > 0 ? u / counts[side] : 0.0);
+                    onBorder[li] = 1;
+                }
+                before += count;
+                ++arcInSide;
+            };
+            run.push_back({localOf(edges[loop[cs[0]]].from), 0.0});
+            for (size_t step = 0; step < loop.size(); ++step)
+            {
+                const size_t i = (cs[0] + step) % loop.size(), next = (i + 1) % loop.size();
+                const Edge& e = edges[loop[i]];
+                run.push_back({localOf(e.to), run.back().second + e.length});
+                if (!isNode[e.to] && !isCorner[next])
+                    continue;
+                flush();
+                run = {{localOf(e.to), 0.0}};
+                if (isCorner[next])
+                {
+                    ++side;
+                    arcInSide = 0;
+                    before = 0;
+                    if (side == n)
+                        break;
+                }
+            }
+        }
+        // Tutte: each inner point at the weighted mean of its neighbours, cotangent weights clamped positive.
+        std::vector<Index> inner(pos.size(), kInvalid);
+        Index ni = 0;
+        for (size_t i = 0; i < pos.size(); ++i)
+            if (!onBorder[i])
+                inner[i] = ni++;
+        if (ni > 0)
+        {
+            std::map<std::pair<Index, Index>, double> w;
+            for (const auto& t : tris)
+                for (int k = 0; k < 3; ++k)
+                {
+                    const Index a = t[k], b = t[(k + 1) % 3], o = t[(k + 2) % 3];
+                    const glm::dvec3 ea = pos[a] - pos[o], eb = pos[b] - pos[o];
+                    const double cot = glm::dot(ea, eb) / std::max(glm::length(glm::cross(ea, eb)), 1e-300);
+                    w[{std::min(a, b), std::max(a, b)}] += 0.5 * cot;
+                }
+            std::vector<Eigen::Triplet<double>> trip;
+            Eigen::MatrixXd rhs = Eigen::MatrixXd::Zero(ni, 2);
+            for (auto [key, sum] : w)
+            {
+                const double wij = std::max(sum, 1e-3);
+                const auto [a, b] = key;
+                for (auto [i, j] : {std::pair{a, b}, std::pair{b, a}})
+                {
+                    if (inner[i] == kInvalid)
+                        continue;
+                    trip.emplace_back(inner[i], inner[i], wij);
+                    if (inner[j] != kInvalid)
+                        trip.emplace_back(inner[i], inner[j], -wij);
+                    else
+                    {
+                        rhs(inner[i], 0) += wij * uv[j].x;
+                        rhs(inner[i], 1) += wij * uv[j].y;
+                    }
+                }
+            }
+            // A point cut off from the border (a sliver's corner) would make it singular; a faint pull to the centre keeps it solvable.
+            for (Index i = 0; i < ni; ++i)
+                trip.emplace_back(i, i, 1e-9);
+            Eigen::SparseMatrix<double> L(ni, ni);
+            L.setFromTriplets(trip.begin(), trip.end());
+            Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> tutte(L);
+            if (tutte.info() != Eigen::Success)
+            {
+                why = "a patch's embedding didn't solve";
+                return {};
+            }
+            const Eigen::MatrixXd sol = tutte.solve(rhs);
+            for (size_t i = 0; i < pos.size(); ++i)
+                if (inner[i] != kInvalid)
+                    uv[i] = glm::dvec2(sol(inner[i], 0), sol(inner[i], 1));
+        }
+        // A domain point back on the surface: the embedded triangle holding it.
+        auto lift = [&](const glm::dvec2& d) {
+            double bestOut = std::numeric_limits<double>::max();
+            glm::dvec3 best(0.0);
+            for (const auto& t : tris)
+            {
+                const glm::dvec2 a = uv[t[0]], b = uv[t[1]], c = uv[t[2]];
+                const double area = cross2(b - a, c - a);
+                if (std::abs(area) < 1e-18)
+                    continue;
+                const glm::dvec3 l(cross2(b - d, c - d) / area, cross2(c - d, a - d) / area, cross2(a - d, b - d) / area);
+                const double out = std::max(0.0, -std::min({l.x, l.y, l.z}));
+                if (out < bestOut)
+                {
+                    bestOut = out;
+                    const glm::dvec3 lc = glm::max(l, glm::dvec3(0.0)) / std::max(1e-300, glm::max(l, glm::dvec3(0.0)).x + glm::max(l, glm::dvec3(0.0)).y + glm::max(l, glm::dvec3(0.0)).z);
+                    best = lc.x * pos[t[0]] + lc.y * pos[t[1]] + lc.z * pos[t[2]];
+                    if (out == 0.0)
+                        break;
+                }
+            }
+            tutteFailed += bestOut > 1e-6;
+            return best;
+        };
+        // The surface's normal under a domain point.
+        auto normalAt = [&](const glm::dvec2& d) {
+            double bestOut = std::numeric_limits<double>::max();
+            glm::dvec3 best(0.0);
+            for (const auto& t : tris)
+            {
+                const glm::dvec2 a = uv[t[0]], b = uv[t[1]], c = uv[t[2]];
+                const double area = cross2(b - a, c - a);
+                if (std::abs(area) < 1e-18)
+                    continue;
+                const double out = std::max(0.0, -std::min({cross2(b - d, c - d) / area, cross2(c - d, a - d) / area, cross2(a - d, b - d) / area}));
+                if (out < bestOut)
+                {
+                    bestOut = out;
+                    best = glm::cross(pos[t[1]] - pos[t[0]], pos[t[2]] - pos[t[0]]);
+                    if (out == 0.0)
+                        break;
+                }
+            }
+            return best;
+        };
+        std::map<std::pair<int64_t, int64_t>, Index> innerPoint;
+        auto domainPoint = [&](const glm::dvec2& d) {
+            const std::pair<int64_t, int64_t> key{std::llround(d.x * 1e6), std::llround(d.y * 1e6)};
+            auto [it, fresh] = innerPoint.try_emplace(key, kInvalid);
+            if (fresh)
+                it->second = addPoint(lift(d), FeatureKind::None, false);
+            return it->second;
+        };
+        auto quad = [&](Index a, Index b, Index c, Index d) { quads.push_back({a, b, c, d}); };
+        if (n == 4)
+        {
+            const int W = counts[0], H = counts[1];
+            // Collapsed one way, the patch is a line: its long sides are the same points.
+            if (W == 0 || H == 0)
+            {
+                if (H == 0)
+                    for (int i = 0; i <= W; ++i)
+                        unite(sidePoint(shape.sides[0], i), sidePoint(shape.sides[2], W - i));
+                if (W == 0)
+                    for (int j = 0; j <= H; ++j)
+                        unite(sidePoint(shape.sides[1], j), sidePoint(shape.sides[3], H - j));
+                continue;
+            }
+            auto at = [&](int i, int j) -> Index {
+                if (j == 0)
+                    return sidePoint(shape.sides[0], i);
+                if (i == W)
+                    return sidePoint(shape.sides[1], j);
+                if (j == H)
+                    return sidePoint(shape.sides[2], W - i);
+                if (i == 0)
+                    return sidePoint(shape.sides[3], H - j);
+                return domainPoint(glm::dvec2(i, j));
+            };
+            // A patch whose grid folds over the surface (too few steps for its real size, corners in the wrong place) is
+            // left for the hole filler.
+            std::vector<std::array<Index, 4>> grid;
+            bool folded = false;
+            for (int j = 0; j < H; ++j)
+                for (int i = 0; i < W; ++i)
+                {
+                    const std::array<Index, 4> q = {at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)};
+                    const glm::dvec3 p0 = ex.mesh.position(q[0]), p1 = ex.mesh.position(q[1]), p2 = ex.mesh.position(q[2]), p3 = ex.mesh.position(q[3]);
+                    const glm::dvec3 facing = glm::cross(p2 - p0, p3 - p1);
+                    folded = folded || glm::dot(facing, normalAt(glm::dvec2(i + 0.5, j + 0.5))) <= 0.0;
+                    grid.push_back(q);
+                }
+            if (folded)
+                ++foldedPatches;
+            else
+                quads.insert(quads.end(), grid.begin(), grid.end());
+        }
+    }
+    // Collapsed arcs and patches weld their points; the mesh is built from the welded quads.
+    for (Index ai = 0; ai < Index(arcs.size()); ++ai)
+        if (arcs[ai].count == 0)
+            if (auto ia = nodePoint.find(arcs[ai].a), ib = nodePoint.find(arcs[ai].b); ia != nodePoint.end() && ib != nodePoint.end())
+                unite(ia->second, ib->second);
+    {
+        same.resize(ex.mesh.pointCapacity(), kInvalid);
+        for (Index i = 0; i < Index(same.size()); ++i)
+            if (same[i] == kInvalid)
+                same[i] = i;
+        Extracted out;
+        std::vector<Index> newOf(same.size(), kInvalid);
+        std::vector<uint8_t> used(same.size(), 0);
+        for (const auto& qd : quads)
+            for (Index v : qd)
+                used[rootOf(v)] = 1;
+        // A welded group sits at its mean.
+        std::vector<glm::dvec3> sum(same.size(), glm::dvec3(0.0));
+        std::vector<int> members(same.size(), 0);
+        for (Index i = 0; i < Index(same.size()); ++i)
+        {
+            sum[rootOf(i)] += ex.mesh.position(i);
+            ++members[rootOf(i)];
+        }
+        for (Index i = 0; i < Index(same.size()); ++i)
+            if (members[i] > 1)
+                ex.mesh.setPosition(i, sum[i] / double(members[i]));
+        for (Index i = 0; i < Index(same.size()); ++i)
+        {
+            const Index r = rootOf(i);
+            if (!used[r])
+                continue;
+            if (newOf[r] == kInvalid)
+            {
+                newOf[r] = out.mesh.addPoint(ex.mesh.position(r));
+                out.feature.push_back(FeatureKind::None);
+                out.boundary.push_back(0);
+            }
+            const Index j = newOf[r];
+            if (ex.feature[i] == FeatureKind::Corner || (ex.feature[i] == FeatureKind::Line && out.feature[j] == FeatureKind::None))
+                out.feature[j] = ex.feature[i];
+            out.boundary[j] = out.boundary[j] || ex.boundary[i];
+        }
+        for (const auto& qd : quads)
+        {
+            std::vector<Index> poly;
+            for (Index v : qd)
+            {
+                const Index w = newOf[rootOf(v)];
+                if (poly.empty() || poly.back() != w)
+                    poly.push_back(w);
+            }
+            while (poly.size() > 1 && poly.front() == poly.back())
+                poly.pop_back();
+            if (poly.size() >= 3)
+                out.mesh.addFace(poly);
+        }
+        ex = std::move(out);
+    }
+    if (debug)
+        std::fprintf(stderr, "patch mesh: %d points, %d faces, %d points lifted from outside their patch, %d patches folded, %d filled by pattern (unfilled: %d empty side, %d odd, %d no pattern, %d failed, %d many sides)\n",
+                     int(ex.mesh.numPoints()), int(ex.mesh.numFaces()), tutteFailed, foldedPatches, patterned, unfilled[0], unfilled[1], unfilled[2], unfilled[3],
+                     unfilled[4]);
+    return ex;
+}
+
+struct PatchStats
+{
+    int tracers = 0, segments = 0, mismatched = 0, pieces = 0, patches = 0, rectangles = 0, reflex = 0, corners[9] = {};
+};
+} // namespace
+
+Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale, double targetCells, std::string* error)
+{
+    LILA_ZONE();
+    auto fail = [&](const std::string& why) {
+        if (error)
+            *error = why;
+        return Extracted{};
+    };
+    const bool debug = std::getenv("LILA_PATCH_DEBUG") != nullptr;
+    const Layout lay = makeLayout(s, q, scale);
+    auto at3d = [&](const Piece& P, const glm::dvec2& p) {
+        const Chart& c = lay.chart[P.tri];
+        const double area = cross2(c[1] - c[0], c[2] - c[0]);
+        const glm::dvec3 w(cross2(c[1] - p, c[2] - p) / area, cross2(c[2] - p, c[0] - p) / area, cross2(c[0] - p, c[1] - p) / area);
+        return w.x * s.pos[s.tris[P.tri][0]] + w.y * s.pos[s.tris[P.tri][1]] + w.z * s.pos[s.tris[P.tri][2]];
+    };
+    const double unit = s.meanEdgeLength() * 1e-6;
+    std::vector<ExtraStart> extras;
+    Traces tr;
+    PatchStats st;
+    std::vector<Piece> pieces;
+    std::vector<Index> patchOf;
+    std::vector<int> corners, reflex;
+    std::vector<uint8_t> blocked;            // walls, and triangle edges a line runs along
+    std::vector<std::vector<uint8_t>> joined; // per piece side: joined to a piece across it
+    Index np = 0;
+    // A line across each wanted patch from the middle of its longest traced side, started as that side's line passes.
+    auto cutsFor = [&](const std::vector<uint8_t>& want) {
+        std::vector<double> longest(np, 0.0);
+        std::vector<ExtraStart> cut(np, ExtraStart{kInvalid});
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+        {
+            const Piece& P = pieces[pi];
+            const Index patch = patchOf[pi];
+            if (!want[patch])
+                continue;
+            glm::dvec2 centroid(0.0);
+            for (const glm::dvec2& p : P.poly)
+                centroid += p / double(P.poly.size());
+            for (size_t k = 0; k < P.poly.size(); ++k)
+            {
+                if (P.side[k] < kSegSide)
+                    continue;
+                const glm::dvec2 a = P.poly[k], b = P.poly[(k + 1) % P.poly.size()];
+                const double len = glm::length(b - a);
+                if (len <= longest[patch])
+                    continue;
+                const Segment& g = tr.segments[P.side[k] - kSegSide];
+                const glm::dvec2 mid = 0.5 * (a + b);
+                const int inward = cross2(axis(g.dirK), centroid - mid) > 0.0 ? 1 : 3;
+                longest[patch] = len;
+                cut[patch] = {P.tri, mid, mod4(g.dirK + inward), g.t0 + glm::length(mid - g.a)};
+            }
+        }
+        std::vector<ExtraStart> out;
+        for (const ExtraStart& x : cut)
+            if (x.tri != kInvalid)
+                out.push_back(x);
+        return out;
+    };
+    Extracted ex;
+    std::string why;
+    for (int round = 0;; ++round)
+    {
+        st = {};
+        tr = trace(lay, extras);
+        st.tracers = int(tr.end.size());
+        st.segments = int(tr.segments.size());
+        blocked = lay.wall;
+        pieces = cutPieces(lay, tr, st.mismatched, blocked);
+        st.pieces = int(pieces.size());
+
+        // Patches: pieces joined across inner, non-wall triangle edges where their sides overlap.
+        std::vector<Index> parent(pieces.size());
+        std::iota(parent.begin(), parent.end(), Index(0));
+        auto find = [&](Index x) {
+            while (parent[x] != x)
+                x = parent[x] = parent[parent[x]];
+            return x;
+        };
+        struct Span
+        {
+            double lo, hi;
+            Index piece;
+            size_t side;
+        };
+        std::vector<std::vector<Span>> spans(s.edges.size());
+        // Along the edge from its lower vertex; the same in both triangles' charts, which are each the 3D triangle scaled.
+        auto edgeParam = [&](Index t, int k, const glm::dvec2& p, Index e) {
+            const glm::dvec2 a = lay.chart[t][k], b = lay.chart[t][(k + 1) % 3];
+            const double l2 = glm::dot(b - a, b - a);
+            const double r = l2 > 0.0 ? glm::dot(p - a, b - a) / l2 : 0.0;
+            return s.tris[t][k] == s.edges[e][0] ? r : 1.0 - r;
+        };
+        auto internalSide = [&](const Piece& P, Index side) {
+            if (side >= kSegSide)
+                return kInvalid;
+            const Index e = lay.triEdge[P.tri][side];
+            return e == kInvalid || blocked[e] ? kInvalid : e;
+        };
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+        {
+            const Piece& P = pieces[pi];
+            for (size_t k = 0; k < P.poly.size(); ++k)
+                if (const Index e = internalSide(P, P.side[k]); e != kInvalid)
+                {
+                    const int tk = int(P.side[k]);
+                    const double r0 = edgeParam(P.tri, tk, P.poly[k], e), r1 = edgeParam(P.tri, tk, P.poly[(k + 1) % P.poly.size()], e);
+                    spans[e].push_back({std::min(r0, r1), std::max(r0, r1), pi, k});
+                }
+        }
+        joined.assign(pieces.size(), {});
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+            joined[pi].assign(pieces[pi].poly.size(), 0);
+        for (Index e = 0; e < Index(s.edges.size()); ++e)
+            for (size_t i = 0; i < spans[e].size(); ++i)
+                for (size_t j = i + 1; j < spans[e].size(); ++j)
+                {
+                    const Span &a = spans[e][i], &b = spans[e][j];
+                    if (pieces[a.piece].tri != pieces[b.piece].tri && std::min(a.hi, b.hi) - std::max(a.lo, b.lo) > 1e-9)
+                    {
+                        parent[find(a.piece)] = find(b.piece);
+                        joined[a.piece][a.side] = joined[b.piece][b.side] = 1;
+                    }
+                }
+        std::unordered_map<Index, Index> patchIndex;
+        patchOf.assign(pieces.size(), 0);
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+            patchOf[pi] = patchIndex.try_emplace(find(pi), Index(patchIndex.size())).first->second;
+        np = Index(patchIndex.size());
+        st.patches = int(np);
+
+        // Corners: at each point on a patch's border, the angle its pieces fill there, measured against the field, so the
+        // field's own smooth turning across triangle edges doesn't count and a corner reads as a quarter turn.
+        struct At
+        {
+            double angle = 0.0;
+            bool border = false;
+        };
+        std::map<std::tuple<Index, int64_t, int64_t, int64_t>, At> angleAt;
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+        {
+            const Piece& P = pieces[pi];
+            const size_t n = P.poly.size();
+            for (size_t k = 0; k < n; ++k)
+            {
+                const Index before = P.side[(k + n - 1) % n], after = P.side[k];
+                const glm::dvec2 u = P.poly[(k + n - 1) % n] - P.poly[k], v = P.poly[(k + 1) % n] - P.poly[k];
+                const glm::dvec3 p = at3d(P, P.poly[k]);
+                At& at = angleAt[{patchOf[pi], std::llround(p.x / unit), std::llround(p.y / unit), std::llround(p.z / unit)}];
+                at.angle += std::atan2(cross2(v, u), glm::dot(u, v));
+                at.border = at.border || internalSide(P, before) == kInvalid || internalSide(P, after) == kInvalid;
+                if (const Index e = internalSide(P, before); e != kInvalid)
+                    at.angle += lay.frameTurn(e, P.tri, lay.other(e, P.tri));
+            }
+        }
+        corners.assign(np, 0);
+        reflex.assign(np, 0);
+        for (const auto& [key, at] : angleAt)
+        {
+            if (!at.border)
+                continue;
+            const double deg = glm::degrees(at.angle);
+            if (deg > 45.0 && deg < 135.0)
+                ++corners[std::get<0>(key)];
+            else if (deg > 225.0)
+            {
+                if (std::getenv("LILA_PATCH_LIST") && reflex[std::get<0>(key)] < 3)
+                    std::fprintf(stderr, "reflex in %d: %.1f deg at %.4f %.4f %.4f\n", int(std::get<0>(key)), deg, std::get<1>(key) * unit,
+                                 std::get<2>(key) * unit, std::get<3>(key) * unit);
+                ++reflex[std::get<0>(key)];
+            }
+        }
+        // A patch with too few corners (a ring round a bare tube, a strip) gets a line across it from the middle of its
+        // longest side, and the layout is traced again.
+        if (round >= 3)
+            break;
+        std::vector<uint8_t> want(np, 0);
+        for (Index p = 0; p < np; ++p)
+            want[p] = corners[p] < 4 && !reflex[p];
+        const std::vector<ExtraStart> more = cutsFor(want);
+        if (more.empty())
+            break;
+        extras.insert(extras.end(), more.begin(), more.end());
+    }
+    if (std::getenv("LILA_PATCH_LIST"))
+    {
+        // Slits: a line with the same patch on both sides.
+        std::vector<std::vector<Index>> sideOf(tr.segments.size());
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+            for (Index side : pieces[pi].side)
+                if (side >= kSegSide)
+                    sideOf[side - kSegSide].push_back(patchOf[pi]);
+        std::map<Index, int> slitTracers;
+        for (size_t g = 0; g < sideOf.size(); ++g)
+            if (sideOf[g].size() >= 2 && std::all_of(sideOf[g].begin(), sideOf[g].end(), [&](Index p) { return p == sideOf[g][0]; }))
+                ++slitTracers[tr.segments[g].tracer];
+        for (const auto& [tracer, n] : slitTracers)
+        {
+            const Segment* last = nullptr;
+            for (const Segment& g : tr.segments)
+                if (g.tracer == tracer && glm::length(g.b - g.a) > 1e-9)
+                    last = &g;
+            std::fprintf(stderr, "slit tracer %d: %d slit segments, source %d, end %.3f why %d, last tri %d ends on %d\n", int(tracer), n,
+                         int(tr.sourceOf[tracer]), tr.end[tracer], tr.endWhy[tracer], last ? int(last->tri) : -1, last ? int(last->endsOn) : -2);
+        }
+        {
+            std::map<Index, int> lines;
+            for (Index i = 0; i < Index(tr.sourceOf.size()); ++i)
+                if (tr.sourceOf[i] != kInvalid)
+                    ++lines[tr.sourceOf[i]];
+            std::map<std::pair<int, int>, int> table;
+            for (const auto& [v, n] : lines)
+                if (lay.singular[v])
+                    ++table[{lay.quarters[v], n}];
+            for (const auto& [k, n] : table)
+                std::fprintf(stderr, "poles turning %d with %d lines: %d\n", k.first, k.second, n);
+            std::map<int, int> none;
+            for (Index v = 0; v < Index(lay.singular.size()); ++v)
+                if (lay.singular[v] && !lines.count(v))
+                    ++none[lay.quarters[v]];
+            for (const auto& [k, n] : none)
+                std::fprintf(stderr, "poles turning %d with no lines: %d\n", k, n);
+        }
+        std::vector<glm::dvec3> centre(np, glm::dvec3(0.0));
+        std::vector<int> count(np, 0);
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+        {
+            centre[patchOf[pi]] += at3d(pieces[pi], pieces[pi].poly[0]);
+            ++count[patchOf[pi]];
+        }
+        for (Index p = 0; p < np; ++p)
+            if (corners[p] != 4 || reflex[p])
+            {
+                const glm::dvec3 c = centre[p] / double(count[p]);
+                std::fprintf(stderr, "patch %d: %d corners, %d reflex, %d pieces, at %.2f %.2f %.2f\n", int(p), corners[p], reflex[p], count[p], c.x, c.y, c.z);
+            }
+    }
+    for (Index p = 0; p < np; ++p)
+    {
+        ++st.corners[std::min(8, corners[p])];
+        st.rectangles += corners[p] == 4 && reflex[p] == 0;
+        st.reflex += reflex[p] > 0;
+    }
+    if (std::getenv("LILA_PATCH_DEBUG"))
+    {
+        int sing = 0;
+        for (uint8_t v : lay.singular)
+            sing += v;
+        std::fprintf(stderr, "patches: %d singular, %d tracers, %d segments, %d mismatched, %d pieces, %d patches, %d rectangles, %d with reflex corners; corners",
+                     sing, st.tracers, st.segments, st.mismatched, st.pieces, st.patches, st.rectangles, st.reflex);
+        for (int c = 0; c < 9; ++c)
+            std::fprintf(stderr, " %d:%d", c, st.corners[c]);
+        std::fprintf(stderr, "; ends: on a line %d, killed %d, wall %d, source %d, lost %d\n", tr.why[0], tr.why[1], tr.why[2], tr.why[3], tr.why[4]);
+        if (const char* dump = std::getenv("LILA_PATCH_DUMP"))
+            if (FILE* f = std::fopen(dump, "w"))
+            {
+                for (const Piece& P : pieces)
+                    for (const glm::dvec2& p : P.poly)
+                    {
+                        const glm::dvec3 x = at3d(P, p);
+                        std::fprintf(f, "v %.9g %.9g %.9g\n", x.x, x.y, x.z);
+                    }
+                Index base = 1;
+                for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+                {
+                    const Index patch = patchOf[pi];
+                    std::fprintf(f, "# fc %d %d\nf", int(patch), int(corners[patch] == 4 && reflex[patch] == 0));
+                    for (size_t k = 0; k < pieces[pi].poly.size(); ++k)
+                        std::fprintf(f, " %d", int(base + k));
+                    std::fprintf(f, "\n");
+                    base += Index(pieces[pi].poly.size());
+                }
+                std::fclose(f);
+            }
+    }
+    // Patches that aren't disks merge with the neighbours that close them up, and the mesh is built again.
+    for (int pass = 0; pass < 8; ++pass)
+    {
+        std::vector<std::pair<Index, Index>> merge;
+        why.clear();
+        ex = buildPatchMesh(lay, blocked, joined, pieces, patchOf, np, targetCells, why, &merge);
+        if (debug && !merge.empty())
+            std::fprintf(stderr, "patch merge pass %d: %zu merges\n", pass, merge.size());
+        if (merge.empty())
+            break;
+        std::vector<Index> up(np);
+        std::iota(up.begin(), up.end(), Index(0));
+        auto root = [&](Index x) {
+            while (up[x] != x)
+                x = up[x] = up[up[x]];
+            return x;
+        };
+        for (auto [a, b] : merge)
+            up[root(a)] = root(b);
+        std::unordered_map<Index, Index> renumber;
+        for (Index& p : patchOf)
+            p = renumber.try_emplace(root(p), Index(renumber.size())).first->second;
+        np = Index(renumber.size());
+    }
+    if (!why.empty())
+        return fail(why);
+    return ex;
+}
+} // namespace lila::retopo::detail

@@ -1134,7 +1134,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
         clock.lap("cleanup");
 
-        if (opts.pureQuads)
+        // The patch layout is built at the final density.
+        if (opts.pureQuads && std::string_view(layout) != "patches")
         {
             m = splitToQuads(m, feature, boundary, lines, coarseH);
             snapBorder(m, feature, border, coarseH);
@@ -1239,6 +1240,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,
     // when the budget leaves room for the retry and the extraction after it. One folded through and through (busy
     // creases, mostly) doesn't come right by steering, so it isn't retried.
+    const auto seamlessStarted = std::chrono::steady_clock::now();
     if (trySeamlessLayout)
     {
         const auto started = std::chrono::steady_clock::now();
@@ -1248,10 +1250,40 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             trySeamless(48);
     }
     clock.lap("seamless");
+    // Where the seamless layout didn't come out clean, the patch layout: lines from the poles cut the surface into
+    // rectangles filled one by one, which can't fold and meets the count. A clean one stands in for the seamless layout.
+    const bool forcePatches = std::getenv("LILA_PATCHES") != nullptr;
+    // It takes about as long as the seamless solve, so it only starts with that much time left.
+    const double seamlessTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - seamlessStarted).count();
+    if (trySeamlessLayout && !opts.poles && (forcePatches || !(seamless && seamless->ok() && seamlessFlaws == 0)) &&
+        Budget::remaining() > 1.5 * seamlessTook)
+    {
+        std::string why;
+        Extracted ex = layoutPatches(s, qSeam, scale, double(opts.targetFaces) * (symmetric ? 0.5 : 1.0), &why);
+        if (ex.mesh.numFaces() > 0)
+        {
+            QuadRemeshResult r = record(buildFrom(std::move(ex), "patches"));
+            const int flaws = flawsOf(r);
+            if (r.ok() && (forcePatches || flaws == 0))
+            {
+                seamless = std::move(r);
+                seamlessFlaws = flaws;
+            }
+        }
+        else
+        {
+            Budget::note("patch layout: " + why);
+            if (std::getenv("LILA_PATCH_DEBUG"))
+                std::fprintf(stderr, "patch layout: %s\n", why.c_str());
+        }
+        clock.lap("patches");
+    }
     // Pins only hold exactly in the seamless layout, so with pins the local field is only a fallback.
     const bool preferSeamless = !opts.pinnedPoints.empty();
     QuadRemeshResult best;
-    if (seamless && seamless->ok() && preferSeamless)
+    if (forcePatches && seamless && seamless->ok() && seamless->layout == "patches")
+        best = std::move(*seamless);
+    else if (seamless && seamless->ok() && preferSeamless)
         best = std::move(*seamless);
     else
     {
@@ -1265,7 +1297,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
     // half a cell often fits where the first didn't, at the same density.
     int bestDefects = best.ok() ? int(defects(best.mesh, src, bvh, closed)) : 0;
-    if (!preferSeamless && !(best.ok() && bestDefects == 0))
+    if (!preferSeamless && best.layout != "patches" && !(best.ok() && bestDefects == 0))
         for (glm::dvec2 shift : {glm::dvec2(0.5, 0.0), glm::dvec2(0.0, 0.5), glm::dvec2(0.5, 0.5)})
         {
             QuadRemeshResult again = build("shifted", solvePositionField(s, q, scale, shift));
@@ -1429,7 +1461,7 @@ QuadRemeshResult cleanest(const geo::Mesh& source, const QuadRemeshOptions& opts
     for (int attempt = 0; attempt < 4; ++attempt)
     {
         // A finer lattice takes longer; one that wouldn't finish in time gives way to the best result so far.
-        if (result.ok() && Budget::remaining() < 2.0 * lastTook)
+        if (result.ok() && (Budget::remaining() < 2.0 * lastTook || std::getenv("LILA_NO_FINER")))
             break;
         if (opts.targetEdgeLength > 0.0)
             finer.targetEdgeLength *= 0.85;
@@ -1474,7 +1506,8 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         QuadRemeshResult r = quadRemeshOnce(source, again);
         lastTook = secondsSince(started);
         // A clean seamless layout outranks any other at a closer count: the count is a request, the flow is the result.
-        const bool keepsLayout = result.layout != "seamless" || r.layout == "seamless";
+        auto global = [](const QuadRemeshResult& x) { return x.layout == "seamless" || x.layout == "patches"; };
+        const bool keepsLayout = !global(result) || global(r);
         const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result) && keepsLayout;
         if (take)
             asked = again.targetFaces;
@@ -1482,7 +1515,7 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         keepOrMerge(result, std::move(r), take);
         if (!lostTo.empty())
             result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: at the count asked only a " + lostTo +
-                                   " layout came out clean, with worse flow, so the seamless layout is kept");
+                                   " layout came out clean, with worse flow, so the " + result.layout + " layout is kept");
         if (!take)
             break;
     }

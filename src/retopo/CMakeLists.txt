@@ -20,6 +20,7 @@ lila_module(lila_retopo Scene
     Metrics.cpp
     Patch.cpp
     Patch.h
+    Patches.cpp
     Poles.cpp
     QuadRemesh.cpp
     Relax.cpp
