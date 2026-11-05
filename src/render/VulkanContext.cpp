@@ -73,6 +73,31 @@ bool hasInstanceExtension(const char* name)
     return false;
 }
 
+/** The first feature the renderer can't run without that the device lacks, or null when it has them all. */
+const char* missingRequiredFeature(VkPhysicalDevice physical)
+{
+    VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
+    VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, &f12};
+    VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f11};
+    vkGetPhysicalDeviceFeatures2(physical, &f2);
+    const std::pair<VkBool32, const char*> required[] = {
+        {f13.dynamicRendering, "dynamicRendering"},
+        {f13.synchronization2, "synchronization2"},
+        {f13.shaderDemoteToHelperInvocation, "shaderDemoteToHelperInvocation"},
+        {f12.timelineSemaphore, "timelineSemaphore"},
+        {f12.bufferDeviceAddress, "bufferDeviceAddress"},
+        {f11.shaderDrawParameters, "shaderDrawParameters"},
+        {f2.features.fillModeNonSolid, "fillModeNonSolid"},
+    };
+    for (const auto& [have, name] : required)
+        if (!have)
+            return name;
+    if (!hasDeviceExtension(physical, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+        return VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    return nullptr;
+}
+
 bool hasLayer(const char* name)
 {
     uint32_t n = 0;
@@ -149,6 +174,11 @@ bool VulkanContext::init(bool validation)
         vkGetPhysicalDeviceProperties(d, &p);
         if (p.apiVersion < VK_API_VERSION_1_3)
             continue;
+        if (const char* missing = missingRequiredFeature(d))
+        {
+            log::warn("vulkan: skipping {}, which lacks {}", p.deviceName, missing);
+            continue;
+        }
         int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 2 : 1;
         if (score > best)
         {
@@ -159,7 +189,7 @@ bool VulkanContext::init(bool validation)
     }
     if (!physical)
     {
-        log::error("vulkan: no GPU with Vulkan 1.3");
+        log::error("vulkan: no GPU with Vulkan 1.3 and the features Lila needs; update the GPU driver");
         return false;
     }
     deviceName = properties.deviceName;
@@ -201,11 +231,13 @@ bool VulkanContext::init(bool validation)
     f12.bufferDeviceAddress = VK_TRUE;
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.pNext = &f12;
-    f2.features.wideLines = VK_TRUE;
-    f2.features.largePoints = VK_TRUE;
     f2.features.fillModeNonSolid = VK_TRUE;
     VkPhysicalDeviceFeatures supported;
     vkGetPhysicalDeviceFeatures(physical, &supported);
+    wideLines = supported.wideLines == VK_TRUE;
+    f2.features.wideLines = supported.wideLines;
+    largePoints = supported.largePoints == VK_TRUE;
+    f2.features.largePoints = supported.largePoints;
     anisotropy = supported.samplerAnisotropy == VK_TRUE;
     f2.features.samplerAnisotropy = supported.samplerAnisotropy;
     bcTextures = supported.textureCompressionBC == VK_TRUE;

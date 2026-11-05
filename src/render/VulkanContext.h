@@ -30,6 +30,8 @@ public:
     VkSampleCountFlags msaaSupported = VK_SAMPLE_COUNT_1_BIT;
     bool anisotropy = false; // samplerAnisotropy enabled
     bool bcTextures = false; // textureCompressionBC enabled
+    bool wideLines = false;   // without it lines draw 1 pixel wide
+    bool largePoints = false; // without it points draw 1 pixel wide
     std::string deviceName;
 
     // Optional features, each enabled only when the device supports it.

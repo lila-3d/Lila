@@ -1000,16 +1000,23 @@ struct Renderer::Impl
         if (v.offscreen)
             return createOffscreenTargets(v);
         vkDeviceWaitIdle(vk.device);
-        VkSurfaceCapabilitiesKHR caps;
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physical, v.surface, &caps);
+        VkSurfaceCapabilitiesKHR caps{};
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physical, v.surface, &caps) != VK_SUCCESS)
+            return false;
         VkExtent2D extent = caps.currentExtent;
         if (extent.width == UINT32_MAX)
-            extent = {uint32_t(v.width), uint32_t(v.height)};
+            extent = {std::clamp(uint32_t(v.width), caps.minImageExtent.width, caps.maxImageExtent.width),
+                      std::clamp(uint32_t(v.height), caps.minImageExtent.height, caps.maxImageExtent.height)};
         if (extent.width == 0 || extent.height == 0)
             return false;
 
         uint32_t fn = 0;
         vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, v.surface, &fn, nullptr);
+        if (fn == 0)
+        {
+            log::error("render: the window surface offers no formats");
+            return false;
+        }
         std::vector<VkSurfaceFormatKHR> formats(fn);
         vkGetPhysicalDeviceSurfaceFormatsKHR(vk.physical, v.surface, &fn, formats.data());
         VkSurfaceFormatKHR chosen = formats[0];
@@ -1031,7 +1038,7 @@ struct Renderer::Impl
         sci.imageArrayLayers = 1;
         sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         sci.preTransform = caps.currentTransform;
-        sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        sci.compositeAlpha = opaqueCompositeAlpha(caps.supportedCompositeAlpha);
         sci.presentMode = presentMode(v.surface, v.vsync);
         sci.clipped = VK_TRUE;
         sci.oldSwapchain = old;
@@ -3738,9 +3745,28 @@ struct Renderer::Impl
 
     VkShaderModule module(const std::vector<uint32_t>& code) { return compute::shaderModule(vk, code); }
 
+    bool canPresent(VkSurfaceKHR surface) const
+    {
+        VkBool32 supported = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(vk.physical, vk.queueFamily, surface, &supported);
+        return supported == VK_TRUE;
+    }
+
+    /** Opaque when the surface allows it; otherwise the first mode it offers (some compositors only take inherit or premultiplied). */
+    static VkCompositeAlphaFlagBitsKHR opaqueCompositeAlpha(VkCompositeAlphaFlagsKHR supported)
+    {
+        for (VkCompositeAlphaFlagBitsKHR mode : {VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+                                                 VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR, VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR})
+            if (supported & mode)
+                return mode;
+        return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    }
+
     /** A requested line width within what the device rasterizes. */
     float lineWidth(float w) const
     {
+        if (!vk.wideLines)
+            return 1.0f;
         const float* range = vk.properties.limits.lineWidthRange;
         return std::clamp(w, std::max(1.0f, range[0]), std::max(1.0f, range[1]));
     }
@@ -6048,7 +6074,8 @@ struct Renderer::Impl
             for (int c = 0; c < 3; ++c)
                 p.colors[c] = d.colors[c];
             const float* range = vk.properties.limits.pointSizeRange;
-            p.sizes = glm::vec4(std::clamp(d.size, range[0], range[1]), std::clamp(d.selectedSize, range[0], range[1]), 0.0f, 0.0f);
+            const float maxSize = vk.largePoints ? range[1] : 1.0f;
+            p.sizes = glm::vec4(std::clamp(d.size, range[0], maxSize), std::clamp(d.selectedSize, range[0], maxSize), 0.0f, 0.0f);
             vkCmdPushConstants(cmd, pointsLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(p), &p);
             if (const int k = i < frameCulledPoints.size() ? frameCulledPoints[i] : -1; k >= 0)
             {
@@ -6195,7 +6222,14 @@ struct Renderer::Impl
                 if (!v.surface)
                 {
                     v.surface = createSurface(vk.instance, v.window);
-                    initFrames(v);
+                    if (v.surface && !canPresent(v.surface))
+                    {
+                        log::error("render: the GPU's graphics queue can't present to this window");
+                        vkDestroySurfaceKHR(vk.instance, v.surface, nullptr);
+                        v.surface = VK_NULL_HANDLE;
+                    }
+                    if (v.surface)
+                        initFrames(v);
                 }
                 if (!v.surface)
                     continue;
