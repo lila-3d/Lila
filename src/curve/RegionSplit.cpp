@@ -2,6 +2,10 @@
 
 #include "core/Profile.h"
 
+#ifdef _MSC_VER
+// The optimizer reports Clipper2's unreachable code after any warning scope around the include ends.
+#pragma warning(disable : 4702)
+#endif
 #include <clipper2/clipper.h>
 
 #include <algorithm>

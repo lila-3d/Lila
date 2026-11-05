@@ -1478,10 +1478,10 @@ std::vector<AutoGroup> matchAutoGroups(const std::vector<std::string>& names, st
             continue;
         }
         for (AutoGroup& other : groups)
-            if (auto it = std::ranges::find(other.lows, a.base); &other != &a && it != other.lows.end())
+            if (auto found = std::ranges::find(other.lows, a.base); &other != &a && found != other.lows.end())
             {
-                a.lows.push_back(*it);
-                other.lows.erase(it);
+                a.lows.push_back(*found);
+                other.lows.erase(found);
                 break;
             }
     }
