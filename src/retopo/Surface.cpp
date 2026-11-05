@@ -238,6 +238,36 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
             }
     }
 
+    // A crease that runs along both sides of a thin triangle forks at a sliver no lattice corner fits: keep the sharper
+    // side. Only angle creases; hard edges and borders are the user's.
+    {
+        const auto bendOf = [&](size_t e) {
+            return std::acos(std::clamp(glm::dot(filtered[edgeTris[e][0]], filtered[edgeTris[e][1]]), -1.0, 1.0));
+        };
+        const auto byAngleOnly = [&](size_t e) {
+            return edgeFeature[e] && edgeTriCount[e] == 2 && !hard.contains(edgeKey(edges[e][0], edges[e][1]));
+        };
+        std::unordered_map<uint64_t, size_t> edgeIndex;
+        for (size_t e = 0; e < edges.size(); ++e)
+            edgeIndex[edgeKey(edges[e][0], edges[e][1])] = e;
+        const double cosFork = std::cos(glm::radians(45.0));
+        for (const auto& t : tris)
+            for (int k = 0; k < 3; ++k)
+            {
+                const Index v = t[k], a = t[(k + 1) % 3], b = t[(k + 2) % 3];
+                const size_t ea = edgeIndex[edgeKey(v, a)], eb = edgeIndex[edgeKey(v, b)];
+                if (!edgeFeature[ea] || !edgeFeature[eb])
+                    continue;
+                if (glm::dot(glm::normalize(pos[a] - pos[v]), glm::normalize(pos[b] - pos[v])) < cosFork)
+                    continue;
+                const bool canA = byAngleOnly(ea), canB = byAngleOnly(eb);
+                if (!canA && !canB)
+                    continue;
+                const size_t drop = !canA ? eb : !canB ? ea : (bendOf(ea) < bendOf(eb) ? ea : eb);
+                edgeFeature[drop] = 0;
+            }
+    }
+
     const Index n = vertexCount();
     feature.assign(n, FeatureKind::None);
     featureDir.assign(n, glm::dvec3(0.0));
@@ -324,6 +354,89 @@ void Surface::detectFeatures(double sharpAngleDeg, double cornerDeficitDeg, doub
                 feature[v] = FeatureKind::Corner;
             }
     }
+}
+
+std::vector<CreaseJunction> creaseJunctions(const Surface& s)
+{
+    std::vector<CreaseJunction> out;
+    const Index nv = s.vertexCount();
+    std::vector<int> creases(nv, 0), border(nv, 0);
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        if (s.edgeFeature[e])
+            for (Index v : s.edges[e])
+            {
+                ++creases[v];
+                border[v] += s.edgeBoundary[e];
+            }
+    std::vector<std::vector<Index>> vertexTris(nv);
+    for (size_t t = 0; t < s.tris.size(); ++t)
+        for (Index v : s.tris[t])
+            vertexTris[v].push_back(Index(t));
+    const auto isCrease = [&](Index a, Index b) {
+        for (Index k = s.adjStart[a]; k < s.adjStart[a + 1]; ++k)
+            if (s.adj[k] == b)
+                return s.edgeFeature[s.adjEdge[k]] != 0;
+        return false;
+    };
+    const double quarter = glm::half_pi<double>();
+    for (Index v = 0; v < nv; ++v)
+    {
+        if (border[v] || creases[v] < 2 || s.feature[v] != FeatureKind::Corner)
+            continue;
+        using Wedge = CreaseJunction::Wedge;
+        const auto wedgeOf = [&](Index t) {
+            const auto& tri = s.tris[t];
+            int k = 0;
+            while (tri[k] != v)
+                ++k;
+            Wedge w;
+            w.tri = t;
+            w.next = tri[(k + 1) % 3];
+            w.prev = tri[(k + 2) % 3];
+            const glm::dvec3 a = s.pos[w.next] - s.pos[v], b = s.pos[w.prev] - s.pos[v];
+            w.angle = std::atan2(glm::length(glm::cross(a, b)), glm::dot(a, b));
+            return w;
+        };
+        // Triangle (v, n, p) is followed counter-clockwise by the one whose n is this one's p.
+        std::vector<Wedge> fan = {wedgeOf(vertexTris[v].front())};
+        while (fan.size() < vertexTris[v].size())
+        {
+            Index found = kInvalid;
+            for (Index t : vertexTris[v])
+                if (wedgeOf(t).next == fan.back().prev)
+                    found = t;
+            if (found == kInvalid || found == fan.front().tri)
+                break;
+            fan.push_back(wedgeOf(found));
+        }
+        if (fan.size() != vertexTris[v].size() || fan.back().prev != fan.front().next)
+            continue;
+        size_t start = 0;
+        while (start < fan.size() && !isCrease(v, fan[start].next))
+            ++start;
+        if (start == fan.size())
+            continue;
+        std::rotate(fan.begin(), fan.begin() + long(start), fan.end());
+        for (size_t i = 0; i < fan.size();)
+        {
+            size_t j = i;
+            double theta = 0.0;
+            do
+                theta += fan[j].angle;
+            while (!isCrease(v, fan[j++].prev) && j < fan.size());
+            const double alpha = std::max(1, int(std::lround(theta / quarter))) * quarter / std::max(theta, 1e-9);
+            double before = 0.0;
+            for (size_t w = i; w < j; ++w)
+            {
+                fan[w].before = before;
+                fan[w].alpha = alpha;
+                before += fan[w].angle;
+            }
+            i = j;
+        }
+        out.push_back({v, std::move(fan)});
+    }
+    return out;
 }
 
 void Surface::thinCorners(const std::vector<double>& spacing)

@@ -1,4 +1,5 @@
 #include "geo/Primitives.h"
+#include "retopo/Internal.h"
 #include "retopo/Retopo.h"
 
 #include <doctest/doctest.h>
@@ -200,4 +201,40 @@ TEST_CASE("quad remesh keeps an inside-out source's winding")
         if (r.mesh.faceValid(f))
             inward += glm::dot(r.mesh.faceAreaVector(f), r.mesh.faceCentroid(f)) < 0.0;
     CHECK(inward == int(r.mesh.numFaces()));
+}
+
+TEST_CASE("crease junctions split their fan into sectors of whole quarter turns")
+{
+    // A triangular prism: each top corner has a 60 degree face corner and two 90 degree side corners.
+    geo::Mesh m;
+    std::vector<Index> top, bottom;
+    for (int k = 0; k < 3; ++k)
+    {
+        const double a = 6.283185307179586 * k / 3.0;
+        top.push_back(m.addPoint({50.0 * std::cos(a), 50.0, 50.0 * std::sin(a)}));
+        bottom.push_back(m.addPoint({50.0 * std::cos(a), 0.0, 50.0 * std::sin(a)}));
+    }
+    m.addFace({top[0], top[2], top[1]});
+    m.addFace({bottom[0], bottom[1], bottom[2]});
+    for (int k = 0; k < 3; ++k)
+        m.addFace({top[k], top[(k + 1) % 3], bottom[(k + 1) % 3], bottom[k]});
+    retopo::detail::Surface s = retopo::detail::surfaceFromMesh(m, true);
+    retopo::detail::refineSurface(s, 8.0);
+    s.buildTopology();
+    s.buildGeometry();
+    s.detectFeatures(40.0);
+    const std::vector<retopo::detail::CreaseJunction> junctions = retopo::detail::creaseJunctions(s);
+    REQUIRE(junctions.size() == 6);
+    for (const retopo::detail::CreaseJunction& j : junctions)
+    {
+        double total = 0.0, stretched = 0.0;
+        for (const auto& w : j.fan)
+        {
+            total += w.angle;
+            stretched += w.angle * w.alpha;
+        }
+        CHECK(std::abs(total - glm::radians(240.0)) < 1e-6);
+        // 60 degrees becomes one quarter turn, each 90 stays one: three quarter turns round the corner.
+        CHECK(std::abs(stretched - glm::radians(270.0)) < 1e-6);
+    }
 }

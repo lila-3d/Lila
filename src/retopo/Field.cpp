@@ -258,6 +258,15 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
     for (Index v = 0; v < n; ++v)
         if (s.feature[v] == FeatureKind::Line)
             constrain(v, s.featureDir[v]);
+    // Round a crease junction the field follows each sector's map, so it turns at the junction and not beside it.
+    for (const CreaseJunction& j : creaseJunctions(s))
+        for (const CreaseJunction::Wedge& w : j.fan)
+            if (s.feature[w.next] == FeatureKind::None)
+            {
+                const glm::dvec3 nv = s.normal[j.vertex], e = glm::normalize(s.pos[w.next] - s.pos[j.vertex]);
+                const double turnBy = -w.alpha * w.before;
+                constrain(w.next, e * std::cos(turnBy) + glm::cross(nv, e) * std::sin(turnBy));
+            }
     if (!opts.guides.empty())
         for (Index v = 0; v < n; ++v)
         {

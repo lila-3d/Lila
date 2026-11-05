@@ -135,6 +135,26 @@ struct LILA_SCENE_API Surface
     double meanEdgeLength() const;
 };
 
+/**
+ * An inner vertex where creases meet at a corner, with its triangle fan in counter-clockwise order split into sectors
+ * between consecutive creases. A sector of angle theta can only hold a whole number k = round(theta / 90 deg) of quad
+ * corners, so the lattice maps it like z^alpha, alpha = k * 90 deg / theta.
+ */
+struct CreaseJunction
+{
+    struct Wedge
+    {
+        Index tri = kInvalid;
+        Index next = kInvalid, prev = kInvalid; // the fan corners after the junction, counter-clockwise
+        double angle = 0.0;                     // the triangle's angle at the junction
+        double before = 0.0;                    // the sector's angle up to this wedge's first edge
+        double alpha = 1.0;                     // the sector's map exponent
+    };
+    Index vertex = kInvalid;
+    std::vector<Wedge> fan;
+};
+LILA_SCENE_API std::vector<CreaseJunction> creaseJunctions(const Surface& s);
+
 /** Triangulates a polygon mesh into a surface; hard edges become feature pairs when asked. */
 LILA_SCENE_API Surface surfaceFromMesh(const geo::Mesh& mesh, bool useHardEdges);
 /** Splits edges longer than maxLength until none are. */

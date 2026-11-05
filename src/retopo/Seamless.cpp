@@ -66,6 +66,23 @@ struct ParamMesh
     std::vector<uint8_t> boundary; // per vertex
 };
 
+/** Field directions for the triangles round each crease junction, from the junction's sector maps. */
+std::unordered_map<Index, glm::dvec3> junctionDirections(const Surface& s)
+{
+    std::unordered_map<Index, glm::dvec3> out;
+    for (const CreaseJunction& j : creaseJunctions(s))
+        for (const CreaseJunction::Wedge& w : j.fan)
+        {
+            const glm::dvec3 n = glm::normalize(s.triNormal[w.tri]);
+            const glm::dvec3 e0 = glm::normalize(s.pos[w.next] - s.pos[j.vertex]);
+            const double phi = w.before + 0.5 * w.angle;
+            // Relative to the wedge's first edge, which sits at angle `before` in its sector.
+            const double turnBy = -w.before - (w.alpha - 1.0) * phi;
+            out[w.tri] = e0 * std::cos(turnBy) + glm::cross(n, e0) * std::sin(turnBy);
+        }
+    return out;
+}
+
 ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale)
 {
     ParamMesh m;
@@ -91,10 +108,18 @@ ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, con
         }
         return glm::length(sum) > 1e-12 ? glm::normalize(sum) : anyTangent(n);
     };
+    const std::unordered_map<Index, glm::dvec3> atJunction = junctionDirections(s);
     for (size_t t = 0; t < s.tris.size(); ++t)
     {
         const auto& tri = s.tris[t];
         glm::dvec3 n = s.triNormal[t];
+        if (auto it = atJunction.find(Index(t)); it != atJunction.end())
+        {
+            m.tris.push_back(tri);
+            m.normal.push_back(n);
+            m.dir.push_back(it->second);
+            continue;
+        }
         if (!singular[t])
         {
             m.tris.push_back(tri);
