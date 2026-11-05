@@ -25,6 +25,7 @@
 #include <QToolButton>
 
 #include <algorithm>
+#include <climits>
 
 namespace lila::ui
 {
@@ -361,6 +362,15 @@ bool DockSidebars::eventFilter(QObject* obj, QEvent* e)
     {
         if (e->type() == QEvent::ChildPolished)
             hookTabBars();
+        else if (e->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent*>(e)->button() == Qt::LeftButton)
+            beginEdgeDrag(static_cast<QMouseEvent*>(e)->position().toPoint());
+        else if (e->type() == QEvent::MouseMove && !mEdgeDrags.empty())
+            QTimer::singleShot(0, this, &DockSidebars::keepOuterColumns);
+        else if (e->type() == QEvent::MouseButtonRelease && !mEdgeDrags.empty())
+            QTimer::singleShot(0, this, [this] {
+                keepOuterColumns();
+                mEdgeDrags.clear();
+            });
         // A state restored before the first show is applied lazily by the layout, dropping the strips it doesn't name.
         else if (e->type() == QEvent::Show || e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)
             for (auto& [area, bar] : mStrips)
@@ -651,6 +661,63 @@ QToolBar* DockSidebars::strip(Qt::DockWidgetArea area)
     bar->hide();
     mStrips[area] = bar;
     return bar;
+}
+
+void DockSidebars::beginEdgeDrag(const QPoint& at)
+{
+    mEdgeDrags.clear();
+    // Separators are the only parts of the window with no child under them; a press on a child propagates here too.
+    if (mWindow->childAt(at))
+        return;
+    for (Qt::DockWidgetArea area : {Qt::LeftDockWidgetArea, Qt::RightDockWidgetArea})
+    {
+        EdgeDrag drag;
+        int left = INT_MAX, right = INT_MIN;
+        for (QDockWidget* d : mWindow->findChildren<QDockWidget*>())
+            // A tab behind another is parked outside the window.
+            if (!d->isFloating() && dockShowing(d) && mWindow->dockWidgetArea(d) == area && mWindow->rect().intersects(d->geometry()))
+            {
+                drag.docks.push_back({d, d->width()});
+                left = std::min(left, d->x());
+                right = std::max(right, d->x() + d->width());
+            }
+        bool columns = false;
+        for (EdgeDragDock& d : drag.docks)
+        {
+            d.inner = area == Qt::RightDockWidgetArea ? d.dock->x() == left : d.dock->x() + d.width == right;
+            columns |= !d.inner;
+        }
+        if (!columns)
+            continue;
+        drag.extent = right - left;
+        mEdgeDrags.push_back(std::move(drag));
+    }
+}
+
+void DockSidebars::keepOuterColumns()
+{
+    for (const EdgeDrag& drag : mEdgeDrags)
+    {
+        int left = INT_MAX, right = INT_MIN;
+        for (const EdgeDragDock& d : drag.docks)
+            if (d.dock && d.dock->isVisible())
+            {
+                left = std::min(left, d.dock->x());
+                right = std::max(right, d.dock->x() + d.dock->width());
+            }
+        const int delta = (right - left) - drag.extent;
+        if (left > right || delta == 0)
+            continue;
+        QList<QDockWidget*> docks;
+        QList<int> widths;
+        for (const EdgeDragDock& d : drag.docks)
+            if (d.dock && d.dock->isVisible())
+            {
+                docks << d.dock;
+                widths << d.width + (d.inner ? delta : 0);
+            }
+        mWindow->resizeDocks(docks, widths, Qt::Horizontal);
+    }
 }
 
 void DockSidebars::collapse(QDockWidget* dock)

@@ -3,12 +3,14 @@
 #include "core/Export.h"
 
 #include <QApplication>
+#include <QPointer>
 #include <QStringList>
 #include <QWidget>
 
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
 class QDockWidget;
 class QHBoxLayout;
@@ -153,8 +155,29 @@ private:
     void restoreSize(QDockWidget* dock);
     /** Gives a docked panel squeezed to almost nothing its remembered size, or a default share of the window. */
     void ensureUsableSize(QDockWidget* dock);
+    /** Snapshots the side areas' panel widths when a drag starts on a dock separator. */
+    void beginEdgeDrag(const QPoint& at);
+    /**
+     * Qt shares a side area's change in width across all its columns; this hands it all to the column next to the
+     * viewport, so dragging the area's edge resizes only the panel beside it.
+     */
+    void keepOuterColumns();
+
+    /** A side-area panel's width when an edge drag began, and whether it is in the column next to the viewport. */
+    struct EdgeDragDock
+    {
+        QPointer<QDockWidget> dock;
+        int width = 0;
+        bool inner = false;
+    };
+    struct EdgeDrag
+    {
+        std::vector<EdgeDragDock> docks;
+        int extent = 0;
+    };
 
     QMainWindow* mWindow;
+    std::vector<EdgeDrag> mEdgeDrags;
     std::map<Qt::DockWidgetArea, QToolBar*> mStrips;
     std::map<QDockWidget*, QWidget*> mTabs;
     /** Docks whose strip tab stays while they are open. */
