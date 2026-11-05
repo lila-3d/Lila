@@ -314,6 +314,62 @@ void removeValence2(geo::Mesh& m, std::vector<FeatureKind>& feature)
 }
 
 /**
+ * On the half of a symmetric remesh, folds each quad with three corners in a row on the seam (the middle one with no
+ * other edge) into its fourth corner's row: the outer two seam corners merge at their midpoint. Left in, the middle
+ * corner mirrors into a valence 2 point and the fourth into a valence 6 pair, a diamond on the seam.
+ */
+void collapseSeamWedges(geo::Mesh& m, int axis, double tolerance)
+{
+    LILA_ZONE();
+
+    auto onSeam = [&](Index p) { return m.isBoundaryPoint(p) && std::abs(m.position(p)[axis]) <= tolerance; };
+    for (bool changed = true; changed;)
+    {
+        changed = false;
+        for (Index b = 0; b < m.pointCapacity(); ++b)
+        {
+            if (!m.pointValid(b) || m.pointValence(b) != 2 || !onSeam(b))
+                continue;
+            const std::vector<Index> faces = m.pointFaces(b);
+            if (faces.size() != 1 || m.faceSize(faces[0]) != 4)
+                continue;
+            const Index wedge = faces[0];
+            std::vector<Index> pts = m.facePoints(wedge);
+            const size_t at = size_t(std::find(pts.begin(), pts.end(), b) - pts.begin());
+            const Index a = pts[(at + 3) % 4], c = pts[(at + 1) % 4];
+            if (!onSeam(a) || !onSeam(c))
+                continue;
+            // c's faces are rebuilt on a; one already holding a would come out with a repeated corner.
+            std::vector<std::vector<Index>> rebuilt;
+            std::vector<Index> cFaces = m.pointFaces(c);
+            bool ok = true;
+            for (Index f : cFaces)
+            {
+                if (f == wedge)
+                    continue;
+                std::vector<Index> fp = m.facePoints(f);
+                ok &= std::find(fp.begin(), fp.end(), a) == fp.end();
+                std::replace(fp.begin(), fp.end(), c, a);
+                rebuilt.push_back(std::move(fp));
+            }
+            if (!ok)
+                continue;
+            const glm::dvec3 mid = 0.5 * (m.position(a) + m.position(c));
+            m.removeFace(wedge);
+            for (Index f : cFaces)
+                if (f != wedge)
+                    m.removeFace(f);
+            m.removePoint(b);
+            m.removePoint(c);
+            for (const auto& fp : rebuilt)
+                m.addFace(fp);
+            m.setPosition(a, mid);
+            changed = true;
+        }
+    }
+}
+
+/**
  * Closes the holes extraction leaves where the field was too tangled to trace a face. Boundary edges are walked
  * against their faces, and a walk that comes back through a point it already passed is cut there, so a hole that
  * touches itself or another hole still comes out as simple loops. Loops on the source's own border stay open.
@@ -1175,6 +1231,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
                     at[axis] = 0.0;
                     m.setPosition(p, at);
                 }
+            collapseSeamWedges(m, axis, 1e-9 * h);
             geo::MirrorOptions mo;
             mo.plane = plane;
             mo.weld = true;
