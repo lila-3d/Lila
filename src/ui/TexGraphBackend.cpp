@@ -242,13 +242,23 @@ NodeEditor* texEditor()
 }
 
 /** "<slot>Tex" for the selected mesh's first material slot, so the new set drives it. Empty when no mesh is selected. */
-std::string selectedSlot()
+/** The first selected mesh's first material slot, or a new material assigned to the selection when that slot is Default. */
+std::string slotForNewSet()
 {
     scene::Graph& g = scene::Graph::current();
     for (scene::NodeId id : g.selection())
         if (scene::Node* n = g.node(id); n && n->type().isA("mesh"))
             if (scene::MeshPtr mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
-                return scene::materials::slotName(*mesh, 0);
+            {
+                std::string slot = scene::materials::slotName(*mesh, 0);
+                if (slot != scene::materials::kDefaultSlot)
+                    return slot;
+                json made = runUi("createMaterial", argsCall({"M_" + n->name()}));
+                if (!made.is_string())
+                    return {};
+                runUi("assignMaterial", argsCall({made}));
+                return made.get<std::string>();
+            }
     return {};
 }
 
@@ -275,7 +285,8 @@ void openSet(const std::string& set)
 
 void newSet()
 {
-    std::string slot = selectedSlot();
+    UndoChunk chunk("New Texture Set");
+    std::string slot = slotForNewSet();
     json call = argsCall({uniqueName(slot.empty() ? "TextureSet" : slot + "Tex")});
     if (!slot.empty())
         call["settings"] = {{"material", slot}};
@@ -370,7 +381,8 @@ void registerTextureGraphUi()
                   .category = "Texture",
                   .run = [] { newSet(); },
                   .doc = "Make a texture set (a texture graph with a Material Output and the standard channels) and open it in the "
-                         "Texture Graph. With a mesh selected, it drives the mesh's first material slot.",
+                         "Texture Graph. With a mesh selected, it drives the mesh's first material, assigning a new one if the mesh only has "
+                         "Default.",
                   .python = "lila.ops.texCreateSet(\"RockTex\", settings={\"material\": \"Rock\"})"});
     actions::add({.id = "texture.import",
                   .label = "Import Texture Graph...",
