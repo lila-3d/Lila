@@ -392,9 +392,11 @@ void LayoutController::applyColumns(const json& columns)
             else
                 mWindow->splitDockWidget(top, head, Qt::Vertical);
             top = top ? top : head;
-            for (QDockWidget* t : g.mid(1))
-                mWindow->tabifyDockWidget(head, t);
         }
+        // Tabs join after the column is split: splitting a dock that is already in a tab group tabs the new one too.
+        for (const QList<QDockWidget*>& g : stack)
+            for (QDockWidget* t : g.mid(1))
+                mWindow->tabifyDockWidget(g.front(), t);
         previous = top;
     }
     for (auto& [d, on] : shown)

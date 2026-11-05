@@ -82,7 +82,7 @@ const std::vector<std::pair<std::string, json>>& presets()
                               {"uvEditor", "channelBox"}, {{"uvEditor", {{"width", 0.42}}}})},
         {"Baking", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "baker", "channelBox", "attributeEditor", "displayLayers"},
                           {"baker", "channelBox"}, {{"baker", {{"width", 0.21}}}}, {}, {},
-                          json::array({{"baker"}, {"channelBox"}}))},
+                          json::array({{"baker"}, {"channelBox", "displayLayers"}}))},
         {"Rigging", preset({"shelf", "outliner", "quickSelectSets", "undoHistory", "channelBox", "attributeEditor", "displayLayers", "scriptOutput",
                             "timeSlider"},
                            {"channelBox"})},
