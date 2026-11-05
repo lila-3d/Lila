@@ -300,8 +300,26 @@ void removeValence2(geo::Mesh& m, std::vector<FeatureKind>& feature)
  * touches itself or another hole still comes out as simple loops. Loops on the source's own border stay open.
  */
 /** A quad patch across a hole loop wider than a face, or false when no pattern fits its sides. */
-bool patchHole(geo::Mesh& m, const std::vector<Index>& loop, const geo::MeshBvh* surface)
+bool patchHole(geo::Mesh& m, std::vector<Index>& loop, const geo::MeshBvh* surface)
 {
+    // Quads need an even loop: an odd one gets a point in its longest edge, turning the face beyond it into a pentagon
+    // that the pure-quad pass splits later.
+    if (loop.size() >= 5 && loop.size() % 2 != 0)
+    {
+        size_t longest = 0;
+        double length = -1.0;
+        for (size_t k = 0; k < loop.size(); ++k)
+            if (const double d = glm::distance(m.position(loop[k]), m.position(loop[(k + 1) % loop.size()])); d > length)
+            {
+                length = d;
+                longest = k;
+            }
+        const Index e = m.findEdge(loop[longest], loop[(longest + 1) % loop.size()]);
+        if (e == kInvalid)
+            return false;
+        const Index p = m.splitEdge(e, 0.5);
+        loop.insert(loop.begin() + std::ptrdiff_t(longest + 1), p);
+    }
     if (loop.size() < 6 || loop.size() % 2 != 0)
         return false;
     PatchBoundary b;
@@ -385,8 +403,9 @@ void fillHoles(geo::Mesh& m, const std::vector<uint8_t>& sourceBoundary, const g
                 border.push_back(k);
         if (border.size() < 2)
         {
-            if (!(surface && patchHole(m, loop, surface)))
-                m.addFace(loop);
+            std::vector<Index> hole = loop;
+            if (!(surface && patchHole(m, hole, surface)))
+                m.addFace(hole);
             continue;
         }
         // A hole that reaches the source's border is a bay in it: fill each run of inner points between two border
