@@ -2,6 +2,7 @@
 # license text in licenses/<id>.txt, which Help > Licenses shows. -DSOURCE_DIR, -DSHARE_DIR (vcpkg's share), -DOUT_DIR.
 file(MAKE_DIRECTORY "${OUT_DIR}/licenses")
 file(COPY_FILE "${SOURCE_DIR}/THIRD-PARTY-NOTICES.md" "${OUT_DIR}/THIRD-PARTY-NOTICES.md" ONLY_IF_DIFFERENT)
+file(COPY_FILE "${SOURCE_DIR}/LICENSE" "${OUT_DIR}/LICENSE" ONLY_IF_DIFFERENT)
 if(SHARE_DIR AND IS_DIRECTORY "${SHARE_DIR}")
     file(GLOB _ports LIST_DIRECTORIES true "${SHARE_DIR}/*")
     foreach(_port ${_ports})

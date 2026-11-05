@@ -34,4 +34,7 @@ LILA_UI_API QString licenseText(const Component& c);
 
 /** Help > Licenses: every third-party component with its license, searchable. One window, raised if already open. */
 LILA_UI_API void showLicenses(QWidget* parent);
+
+/** Lila's own LICENSE, read from beside the executable or the source tree, else opened on GitHub at the build's commit. */
+LILA_UI_API void showLilaLicense(QWidget* parent);
 } // namespace lila::ui

@@ -1,6 +1,9 @@
 #include "ui/LicensesDialog.h"
 
+#include "core/Version.h"
+
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
 #include <QFile>
@@ -11,6 +14,7 @@
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QTextBrowser>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -209,6 +213,63 @@ void showLicenses(QWidget* parent)
         list->setCurrentRow(0);
     else
         text->setPlainText("THIRD-PARTY-NOTICES.md is missing beside the executable.");
+    dlg->show();
+}
+
+namespace
+{
+/** Prose in the UI font: blank-line paragraphs, the title and short numbered lines ("1. Grant") as headings. */
+QString licenseHtml(const QString& text)
+{
+    static const QRegularExpression kHeading("^\\d+\\.\\s+\\S.{0,60}$");
+    QString html;
+    bool first = true;
+    for (const QString& para : text.split(QRegularExpression("\\r?\\n\\s*\\r?\\n"), Qt::SkipEmptyParts))
+    {
+        const QString p = para.trimmed();
+        if (first || (!p.contains('\n') && kHeading.match(p).hasMatch()))
+            html += QString("<h%1>%2</h%1>").arg(first ? 3 : 4).arg(p.toHtmlEscaped());
+        else
+            html += "<p>" + p.toHtmlEscaped().replace(QRegularExpression("\\r?\\n"), "<br>") + "</p>";
+        first = false;
+    }
+    return html;
+}
+} // namespace
+
+void showLilaLicense(QWidget* parent)
+{
+    QString license = licenses::readFile(QDir(QCoreApplication::applicationDirPath()).filePath("LICENSE"));
+    if (license.isEmpty())
+        license = licenses::readFile(QDir(QString::fromUtf8(LILA_SOURCE_DIR)).filePath("LICENSE"));
+    if (license.isEmpty())
+    {
+        const QString sha = QString::fromUtf8(version::gitSha());
+        const QString ref = sha == "unknown" ? QString("main") : sha;
+        QDesktopServices::openUrl(QUrl("https://github.com/lila-3d/Lila/blob/" + ref + "/LICENSE"));
+        return;
+    }
+
+    static QPointer<QDialog> open;
+    if (open)
+    {
+        open->raise();
+        open->activateWindow();
+        return;
+    }
+    auto* dlg = new QDialog(parent);
+    open = dlg;
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setObjectName("lilaLicenseDialog");
+    dlg->setWindowTitle("License");
+    dlg->resize(720, 620);
+    auto* layout = new QVBoxLayout(dlg);
+    auto* text = new QTextBrowser(dlg);
+    text->setObjectName("lilaLicenseText");
+    text->setOpenExternalLinks(true);
+    text->document()->setDocumentMargin(12);
+    text->setHtml(licenseHtml(license));
+    layout->addWidget(text, 1);
     dlg->show();
 }
 } // namespace lila::ui

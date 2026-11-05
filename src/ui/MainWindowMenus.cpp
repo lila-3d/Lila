@@ -3,6 +3,7 @@
 #include "ui/CreditsDialog.h"
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
+#include "ui/LicensesDialog.h"
 #include "ui/MenuSets.h"
 #include "ui/Shelf.h"
 
@@ -692,6 +693,11 @@ void MainWindow::showAbout()
     connect(creditsButton, &QPushButton::clicked, &dlg, [this, &dlg] {
         dlg.accept();
         QTimer::singleShot(0, this, [this] { showCredits(this); });
+    });
+    QPushButton* licenseButton = buttons->addButton("License", QDialogButtonBox::ActionRole);
+    connect(licenseButton, &QPushButton::clicked, &dlg, [this, &dlg] {
+        dlg.accept();
+        QTimer::singleShot(0, this, [this] { showLilaLicense(this); });
     });
     auto* layout = new QVBoxLayout(&dlg);
     layout->addLayout(row);
