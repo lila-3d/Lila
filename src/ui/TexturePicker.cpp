@@ -97,7 +97,7 @@ struct Thumbs
     {
         std::error_code ec;
         auto t = fs::last_write_time(file, ec);
-        return paths::toUtf8(file) + "|" + std::to_string(ec ? 0 : t.time_since_epoch().count());
+        return paths::toUtf8(file) + "|" + std::to_string(ec ? 0 : paths::timeKey(t));
     }
 
     /** The cached pixmap, or null after queueing a read; then arrived() reports the key. */

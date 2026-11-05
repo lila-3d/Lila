@@ -464,7 +464,7 @@ std::string listStamp()
 {
     std::error_code ec;
     const auto t = fs::last_write_time(brushDir() / "GoZ_ObjectList.txt", ec);
-    return ec ? std::string() : std::to_string(t.time_since_epoch().count());
+    return ec ? std::string() : std::to_string(paths::timeKey(t));
 }
 
 std::string exeName(const fs::path& exe) { return paths::toUtf8(exe.filename()); }

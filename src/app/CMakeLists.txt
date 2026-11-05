@@ -11,6 +11,7 @@ add_executable(lilabatch batch.cpp $<$<PLATFORM_ID:Windows>:lila.rc>)
 target_link_libraries(lilabatch PRIVATE LilaScene)
 # Loaded at run time for the capture commands when it is there; lilabatch runs without it.
 add_dependencies(lilabatch LilaUI)
+target_compile_definitions(lilabatch PRIVATE LILA_UI_LIBRARY="$<TARGET_FILE_NAME:LilaUI>")
 add_dependencies(lila lilabatch)
 # Opt-in for source builds: cmake --build build --target register_file_types (unregister_file_types to undo).
 add_custom_target(register_file_types COMMAND lilabatch -c "registerFileTypes()" DEPENDS lila VERBATIM)

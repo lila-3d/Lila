@@ -2,6 +2,7 @@
 
 #include "core/Export.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -9,6 +10,12 @@
 namespace lila::paths
 {
 namespace fs = std::filesystem;
+
+/** A file time as one integer for cache keys: it changes whenever the file is rewritten. The epoch differs per platform. */
+inline int64_t timeKey(fs::file_time_type t) { return int64_t(t.time_since_epoch().count()); }
+
+/** A file time as seconds since the Unix epoch. */
+LILA_FOUNDATION_API int64_t unixSeconds(fs::file_time_type t);
 
 /** %APPDATA%/Lila, ~/.config/Lila, ~/Library/Application Support/Lila. Created on first call. */
 LILA_FOUNDATION_API fs::path userConfigDir();

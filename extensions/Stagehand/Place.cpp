@@ -10,6 +10,7 @@
 #include <lila/Extension.h>
 #include <lila/Log.h>
 #include <lila/Mesh.h>
+#include <lila/Paths.h>
 #include <lila/Prefs.h>
 #include <lila/Profile.h>
 #include <lila/Relocate.h>
@@ -58,7 +59,7 @@ std::string stamp(const fs::path& p)
 {
     std::error_code ec;
     const auto t = fs::last_write_time(p, ec);
-    return ec ? std::string() : std::to_string(t.time_since_epoch().count());
+    return ec ? std::string() : std::to_string(paths::timeKey(t));
 }
 
 Asset need(const std::string& id, const char* cmd)

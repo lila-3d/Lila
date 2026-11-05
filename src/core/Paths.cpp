@@ -2,6 +2,7 @@
 
 #include "core/Workspace.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <cwctype>
 #include <vector>
@@ -196,5 +197,16 @@ fs::path resolvePath(std::string_view stored, const fs::path& sceneDir)
         if (fs::is_directory((b / p).parent_path(), ec))
             return (b / p).lexically_normal();
     return bases.empty() ? p : (bases.front() / p).lexically_normal();
+}
+
+int64_t unixSeconds(fs::file_time_type t)
+{
+    // MSVC's file_clock only converts through clock_cast; libc++ and libstdc++ have to_sys.
+#ifdef _WIN32
+    const auto sys = std::chrono::clock_cast<std::chrono::system_clock>(t);
+#else
+    const auto sys = fs::file_time_type::clock::to_sys(t);
+#endif
+    return std::chrono::duration_cast<std::chrono::seconds>(sys.time_since_epoch()).count();
 }
 } // namespace lila::paths

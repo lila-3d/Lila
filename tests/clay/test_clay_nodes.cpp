@@ -222,11 +222,11 @@ TEST_CASE("clay commands: duplicate copies shapes and links into the clay, links
     const std::string toTip = run("addClayLink", {{"args", {knuckle, tip}}, {"skipSelect", true}});
     scene::Graph& g = scene::Graph::current();
     g.evaluate();
-    const size_t items = g.elements({g.find(made[2])->id(), g.find(made[2])->type().attrIndex("items")}).size();
+    const size_t items = g.elements({g.find(made[2].get<std::string>())->id(), g.find(made[2].get<std::string>())->type().attrIndex("items")}).size();
 
     const json copies = run("duplicate", {{"args", {knuckle, tip, toKnuckle, toTip}}});
     REQUIRE(copies.size() == 4);
-    CHECK(g.elements({g.find(made[2])->id(), g.find(made[2])->type().attrIndex("items")}).size() == items + 4);
+    CHECK(g.elements({g.find(made[2].get<std::string>())->id(), g.find(made[2].get<std::string>())->type().attrIndex("items")}).size() == items + 4);
 
     auto endOf = [&](const std::string& link, const char* end) {
         const scene::Node* n = g.find(link);

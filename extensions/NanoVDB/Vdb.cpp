@@ -90,7 +90,7 @@ std::shared_ptr<const gn::Volume> readVdb(const std::filesystem::path& file, con
     auto stamp = std::filesystem::last_write_time(file, ec);
     if (ec)
         throw std::runtime_error("can't find " + paths::toUtf8(file));
-    std::string key = paths::toUtf8(file) + "|" + gridName + "|" + std::to_string(stamp.time_since_epoch().count());
+    std::string key = paths::toUtf8(file) + "|" + gridName + "|" + std::to_string(paths::timeKey(stamp));
     {
         std::lock_guard lock(mutex);
         for (auto& [k, v] : recent)

@@ -3,11 +3,9 @@
 #include "core/Paths.h"
 #include "core/Version.h"
 
-#include <cstdio>
+#include "extensions/Library.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include <cstdio>
 
 using namespace lila;
 
@@ -19,19 +17,20 @@ namespace
  */
 void loadUiCommands()
 {
-#ifdef _WIN32
-    const std::filesystem::path dll = paths::executableDir() / "LilaUI.dll";
-    HMODULE ui = LoadLibraryW(dll.c_str());
+    const std::filesystem::path dll = paths::executableDir() / LILA_UI_LIBRARY;
+    std::string error;
+    std::unique_ptr<extensions::Library> ui = extensions::Library::open(dll, &error);
     if (!ui)
     {
-        std::fprintf(stderr, "lilabatch: %s did not load (error %lu): captureView, captureTurntable and the other UI commands are "
-                             "unavailable\n", dll.string().c_str(), GetLastError());
+        std::fprintf(stderr, "lilabatch: %s did not load (%s): captureView, captureTurntable and the other UI commands are unavailable\n",
+                     paths::toUtf8(dll).c_str(), error.c_str());
         return;
     }
+    // The commands it registers run until exit.
+    ui->leak();
     using RegisterFn = void (*)();
-    if (auto fn = reinterpret_cast<RegisterFn>(GetProcAddress(ui, "lilaUiRegisterBatchCommands")))
+    if (auto fn = reinterpret_cast<RegisterFn>(ui->symbol("lilaUiRegisterBatchCommands")))
         fn();
-#endif
 }
 } // namespace
 
