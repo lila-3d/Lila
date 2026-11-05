@@ -10,6 +10,7 @@
 // Plan.h has a member named like Qt's slots macro.
 #pragma push_macro("slots")
 #undef slots
+#include "tex/Evaluate.h"
 #include "tex/NodeDef.h"
 #include "tex/TextureSet.h"
 #pragma pop_macro("slots")
@@ -26,6 +27,11 @@
 #include "ui/UiCommon.h"
 
 #include <QApplication>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QLabel>
+#include <QImageReader>
 #include <QBoxLayout>
 #include <QFileDialog>
 #include <QPointer>
@@ -45,6 +51,69 @@ std::vector<NodeEditor*>& texEditors()
 {
     static std::vector<NodeEditor*> list;
     return list;
+}
+
+/** A param's value on a node panel's json, else its default. */
+json paramValue(const json& node, const std::string& id)
+{
+    for (const json& p : node.value("params", json::array()))
+        if (p.value("id", "") == id)
+            return p.contains("value") ? p["value"] : p.value("default", json());
+    return {};
+}
+
+/** The smallest set size (a power of two, 512 to 16384) holding n texels. */
+int setSizeFor(int n)
+{
+    int s = 512;
+    while (s < n && s < 16384)
+        s *= 2;
+    return s;
+}
+
+/**
+ * An Image node's file size against its texture set's, with Match Set when the set would sample it smaller. Null when
+ * the node is outside a set or its file has no readable size.
+ */
+QWidget* imageSizeRow(QWidget* parent, const std::string& set, const json& node)
+{
+    scene::Node* n = tex::findSet(scene::Graph::current(), set);
+    const json file = paramValue(node, "file");
+    if (!n || !file.is_string() || file.get<std::string>().empty())
+        return nullptr;
+    const std::filesystem::path path = tex::resolveImagePath(file.get<std::string>(), texPreview::imageRoot());
+    const QSize size = QImageReader(QString::fromStdU16String(path.u16string())).size();
+    if (!size.isValid())
+        return nullptr;
+    const tex::SetSettings s = tex::readSettings(*n);
+    const json tilesValue = paramValue(node, "tiles");
+    const int tiles = std::max(tilesValue.is_number() ? int(tilesValue.get<double>()) : 1, 1);
+    const int wantW = setSizeFor(size.width() * tiles), wantH = setSizeFor(size.height() * tiles);
+    const bool smaller = s.width < wantW || s.height < wantH;
+
+    auto* row = new QWidget(parent);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    QString text = QString("%1 \u00d7 %2").arg(size.width()).arg(size.height());
+    if (smaller)
+        text += s.width == s.height ? QString("\nset %1").arg(s.width) : QString("\nset %1 \u00d7 %2").arg(s.width).arg(s.height);
+    auto* label = new QLabel(text, row);
+    label->setToolTip(smaller ? "The set samples this image below its own resolution" : "Image size");
+    h->addWidget(label, 1);
+    if (smaller)
+    {
+        auto* match = new QPushButton("Match Set", row);
+        match->setToolTip(QString("Set the texture set's resolution to %1 \u00d7 %2").arg(wantW).arg(wantH));
+        QObject::connect(match, &QPushButton::clicked, row, [set, wantW, wantH, row, label, size] {
+            runUi("texSetSettings", argsCall({set, json{{"width", wantW}, {"height", wantH}}}));
+            label->setText(QString("%1 \u00d7 %2").arg(size.width()).arg(size.height()));
+            label->setToolTip("Image size");
+            for (QPushButton* b : row->findChildren<QPushButton*>())
+                b->hide();
+        });
+        h->addWidget(match);
+    }
+    return row;
 }
 
 /** Texture graphs: one per texture set, edited through the tex* commands. */
@@ -206,10 +275,19 @@ public:
         std::string group = editor.group().toStdString();
         std::string name = node.value("name", "");
         QPointer<NodeEditor> ed(&editor);
-        return texParams::nodePanel(parent, node, [ed, group, name](const std::string& id, const json& v) {
+        QWidget* panel = texParams::nodePanel(parent, node, [ed, group, name](const std::string& id, const json& v) {
             if (ed)
                 ed->setValueFromField(argsCall({group, name + "." + id, v}));
         });
+        if (node.value("type", "") == "image")
+            if (QWidget* row = imageSizeRow(panel, group, node))
+            {
+                if (auto* form = panel->findChild<QFormLayout*>())
+                    form->addRow("Size", row);
+                else
+                    panel->layout()->addWidget(row);
+            }
+        return panel;
     }
 
     void addToolbarButtons(QBoxLayout* bar, NodeEditor& editor) const override

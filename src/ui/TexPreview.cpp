@@ -213,15 +213,6 @@ Prepared prepare(const Request& r)
     return p;
 }
 
-std::filesystem::path imageRoot()
-{
-    if (Workspace::get().isOpen())
-        return Workspace::get().root();
-    if (!io::currentPath().empty())
-        return io::currentPath().parent_path();
-    return {};
-}
-
 image::Image evaluate(const Renderer& renderer, const Job& job)
 {
     if (renderer)
@@ -332,6 +323,15 @@ Result resultOf(Entry& e, bool stale)
     return {e.image, e.type, stale, e.error};
 }
 } // namespace
+
+std::filesystem::path imageRoot()
+{
+    if (Workspace::get().isOpen())
+        return Workspace::get().root();
+    if (!io::currentPath().empty())
+        return io::currentPath().parent_path();
+    return {};
+}
 
 Result get(const Request& request, std::function<void()> ready)
 {

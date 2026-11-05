@@ -5,6 +5,7 @@
 
 #include <QImage>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -60,6 +61,9 @@ LILA_UI_API void setRenderer(Renderer renderer);
 
 /** Drops every cached image (a node library reload, a changed image file). */
 LILA_UI_API void clear();
+
+/** The folder relative image paths resolve against first: the workspace, else the scene's folder. */
+LILA_UI_API std::filesystem::path imageRoot();
 
 /** For display: colour outputs encoded to sRGB, data as it is; channel -1 for all, 0 to 3 to solo one as gray. */
 LILA_UI_API QImage toQImage(const image::Image& img, const std::string& type, bool srgb, int channel = -1);
