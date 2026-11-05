@@ -6,6 +6,7 @@
 #include "ui/HotkeyCheatSheet.h"
 #include "ui/HotkeyEditor.h"
 #include "ui/MarkingMenuEditor.h"
+#include "ui/UserMenuEditor.h"
 #include "ui/UiCommon.h"
 
 #include <QApplication>
@@ -57,6 +58,11 @@ void registerEditorActions()
                           openMarkingMenuEditor();
                   },
                   nullptr, "Edit marking menu slots, labels and targets"});
+    actions::add({"window.userMenuEditor", "Menu Editor...", "Windows", [] {
+                      if (!closeShownWindow<UserMenuEditor>())
+                          openUserMenuEditor();
+                  },
+                  nullptr, "Build your own menus for the menu bar or inside any menu; they tear off and show in Shift+T"});
     actions::add({"help.hotkeyCheatSheet", "Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::open(); }, nullptr,
                   "Show the hotkeys live in the focused panel: hold to peek, tap to keep it open and filter"});
     actions::add({"help.hotkeyCheatSheetClose", "Close Hotkey Cheat Sheet", "Help", [] { HotkeyCheatSheet::released(); },

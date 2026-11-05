@@ -70,6 +70,7 @@ add_executable(lila_tests
     test_hud.cpp
     test_backdrop.cpp
     test_tearoff.cpp
+    test_user_menus.cpp
     test_visibility.cpp
     test_display_layers.cpp
     test_object_sets.cpp

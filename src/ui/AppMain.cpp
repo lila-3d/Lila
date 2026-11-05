@@ -95,6 +95,7 @@
 #include "ui/PaintSelect.h"
 #include "ui/ViewportTool.h"
 #include "ui/ViewportToast.h"
+#include "ui/UserMenus.h"
 
 #include <QAbstractEventDispatcher>
 #include <QApplication>
@@ -139,6 +140,7 @@ void registerUi()
     registerShelfActions();
     levelToolkit::registerShelf();
     registerEditorActions();
+    userMenus::install();
     registerPanelActions();
     docs::registerDocsUi();
     registerMaterialUi();

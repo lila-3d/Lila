@@ -362,7 +362,7 @@ void MainWindow::buildMenus()
     addItem({.id = "Windows/layouts", .menu = "Windows", .kind = Kind::Custom, .setup = [this](QMenu* m) { m->addMenu(mLayouts->menu()); }});
     menus::addActions("Windows", {"window.resetLayout", "window.expandPanels", "window.toggleMaximizePanel", "#Show", "window.toggleToolBox",
                            "window.toggleChannelBox", "window.toggleUvEditor", "window.commandPalette", "view.presenter", "reference.addImages", "reference.clickable", "#Customize",
-                           "window.markingMenuEditor", "window.extensionManager"});
+                           "window.markingMenuEditor", "window.userMenuEditor", "window.extensionManager"});
 
     menu("Help", "Help");
     menus::addActions("Help", {"#Learn", "help.docs"});
