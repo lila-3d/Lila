@@ -405,7 +405,7 @@ void registerCommands()
                "creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size "
                "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
-               "an error saying how far it got, changing nothing. Returns {name, metrics, layout}, and with poles= where each "
+               "an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each "
                "pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.",
         .positionalDoc = "source",
         .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
@@ -441,6 +441,8 @@ void registerCommands()
             log::info("quadRemesh {}: {} ({:.2f} s)", src.path(), r.metrics.summary(), total);
             if (r.defects > 0)
                 log::warn("quadRemesh {}: {} folds or other flaws left; a higher targetFaces or adaptivity may clear them", src.path(), r.defects);
+            for (const std::string& note : r.notes)
+                log::warn("quadRemesh {}: {}", src.path(), note);
 
             // Where each requested pole landed, in world space, read before the mesh moves into the node.
             json poles = json::array();
@@ -475,6 +477,11 @@ void registerCommands()
                 g.setValue({src.id(), Transform::kVisibility, -1}, false);
             g.select({out->id()});
             json result = {{"name", outName}, {"metrics", metricsJson(r.metrics)}, {"layout", r.layout}};
+            json attempts = json::array();
+            for (const RemeshAttempt& at : r.attempts)
+                attempts.push_back({{"layout", at.layout}, {"faces", at.faces}, {"defects", at.defects}, {"irregular", at.irregular}});
+            result["attempts"] = std::move(attempts);
+            result["notes"] = r.notes;
             if (o.poles)
                 result["poles"] = std::move(poles);
             return result;

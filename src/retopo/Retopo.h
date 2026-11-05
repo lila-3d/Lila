@@ -254,6 +254,8 @@ struct QuadRemeshResult
     std::vector<std::pair<std::string, double>> timings;
     /** Folds, holes, pinched edges and fans left in the mesh when no lattice tried came out clean; 0 normally. */
     int defects = 0;
+    /** Where the result departs from what was asked and why, such as a face count kept outside countTolerance. */
+    std::vector<std::string> notes;
     std::string error;
     bool ok() const { return error.empty(); }
 };

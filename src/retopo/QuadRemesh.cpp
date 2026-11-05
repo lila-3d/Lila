@@ -1473,13 +1473,21 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         const auto started = std::chrono::steady_clock::now();
         QuadRemeshResult r = quadRemeshOnce(source, again);
         lastTook = secondsSince(started);
-        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result);
+        // A clean seamless layout outranks any other at a closer count: the count is a request, the flow is the result.
+        const bool keepsLayout = result.layout != "seamless" || r.layout == "seamless";
+        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result) && keepsLayout;
         if (take)
             asked = again.targetFaces;
+        const std::string lostTo = r.ok() && !keepsLayout && r.defects <= result.defects ? r.layout : std::string();
         keepOrMerge(result, std::move(r), take);
+        if (!lostTo.empty())
+            result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: at the count asked only a " + lostTo +
+                                   " layout came out clean, with worse flow, so the seamless layout is kept");
         if (!take)
             break;
     }
+    if (off(result) > opts.countTolerance && result.notes.empty())
+        result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: no closer count came out as clean");
 }
 
 /** For each requested pole, the nearest irregular inner point within a few faces of it. */
