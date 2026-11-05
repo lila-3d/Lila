@@ -304,11 +304,10 @@ void MainWindow::importFile()
 {
     QString start = Workspace::get().isOpen() ? QString::fromStdWString(Workspace::get().root().wstring()) : QString();
     const ui::fileDialog::ContextScope scope("import", "Imports");
-    QString file = ui::fileDialog::getOpenFileName(this, "Import", start,
-                                                QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Import, "Scenes and meshes")));
-    if (file.isEmpty())
-        return;
-    runTranslator(io::translators::Op::Import, file, {});
+    const QStringList files = ui::fileDialog::getOpenFileNames(
+        this, "Import", start, QString::fromStdString(io::translators::dialogFilter(io::translators::Op::Import, "Scenes and meshes")));
+    for (const QString& file : files)
+        runTranslator(io::translators::Op::Import, file, {});
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* e)
