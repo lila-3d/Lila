@@ -35,6 +35,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QStatusBar>
 #include <QSysInfo>
 #include <QTextBrowser>
@@ -44,6 +45,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -117,9 +119,20 @@ std::vector<std::string> labelsOf(const json& r)
     return out;
 }
 
+/** Maintainer replies only; the reporter's own replies from My Reports don't count as new. */
 int replyCount(const json& r)
 {
-    return r.contains("replies") && r["replies"].is_array() ? int(r["replies"].size()) : 0;
+    if (!r.contains("replies") || !r["replies"].is_array())
+        return 0;
+    return int(std::count_if(r["replies"].begin(), r["replies"].end(), [](const json& x) { return x.value("from", "") != "you"; }));
+}
+
+/** One per issue, in the order statusText prefers them. The Worker (TRIAGE in issues.js) and scripts/issues.py use the same names. */
+constexpr std::array<const char*, 5> kTriage = {"Solved", "Dismissed", "Needs Info", "On Hold", "Pending"};
+
+bool isTriage(const std::string& label)
+{
+    return std::any_of(kTriage.begin(), kTriage.end(), [&](const char* t) { return label == t; });
 }
 
 std::string errorText(QNetworkReply* reply)
@@ -280,7 +293,7 @@ void remember(const json& sent, const std::string& title, const std::string& kin
 
 std::string statusText(const std::string& state, const std::vector<std::string>& labels)
 {
-    for (const char* triage : {"Solved", "Dismissed", "On Hold", "Pending"})
+    for (const char* triage : kTriage)
         if (std::find(labels.begin(), labels.end(), triage) != labels.end())
             return triage;
     return state == "closed" ? "Closed" : "Open";
@@ -414,7 +427,7 @@ void sentMessage(QWidget* parent, const json& sent)
     if (sent.value("dropped", false))
         text += "\n\nThe attachments weren't kept: today's upload limit was reached.";
     box.setText(text);
-    QPushButton* open = box.addButton("Open Issue", QMessageBox::ActionRole);
+    QPushButton* open = box.addButton("Open on GitHub", QMessageBox::ActionRole);
     box.addButton(QMessageBox::Close);
     box.exec();
     if (box.clickedButton() == open)
@@ -1029,14 +1042,36 @@ void showMyReports(QWidget* parent)
     list->setUniformRowHeights(true);
     list->header()->setStretchLastSection(false);
     list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    auto* replies = new QTextBrowser(&dlg);
-    replies->setOpenExternalLinks(true);
-    replies->setPlaceholderText("No replies");
+    auto* thread = new QTextBrowser(&dlg);
+    thread->setOpenExternalLinks(true);
+    thread->setPlaceholderText("No replies");
     auto* empty = new QLabel("No reports sent from this machine. Help > Report Issue sends one.", &dlg);
     empty->setStyleSheet("color: #9a9a9a;");
     layout->addWidget(empty);
     layout->addWidget(list, 2);
-    layout->addWidget(replies, 3);
+    layout->addWidget(thread, 3);
+
+    auto* composer = new QWidget(&dlg);
+    auto* composerLayout = new QVBoxLayout(composer);
+    composerLayout->setContentsMargins(0, 0, 0, 0);
+    auto* edit = new AnswerEdit(composer);
+    auto* row = new QHBoxLayout;
+    auto* pick = new QPushButton("Attach File...", composer);
+    pick->setToolTip("Up to 25 MB, kept private");
+    auto* fileName = new QLabel(composer);
+    fileName->setStyleSheet("color: #9a9a9a;");
+    auto* unpick = new QPushButton("Remove", composer);
+    unpick->hide();
+    auto* send = new QPushButton("Send Reply", composer);
+    send->setToolTip("Public on the issue, like the report");
+    row->addWidget(pick);
+    row->addWidget(fileName, 1);
+    row->addWidget(unpick);
+    row->addWidget(send);
+    composerLayout->addWidget(edit);
+    composerLayout->addLayout(row);
+    layout->addWidget(composer);
+
     auto* error = new QLabel(&dlg);
     error->setWordWrap(true);
     error->setStyleSheet("color: #e0a050;");
@@ -1044,14 +1079,42 @@ void showMyReports(QWidget* parent)
     layout->addWidget(error);
 
     auto* buttons = new QDialogButtonBox(&dlg);
-    QPushButton* open = buttons->addButton("Open Issue", QDialogButtonBox::ActionRole);
+    QPushButton* open = buttons->addButton("Open on GitHub", QDialogButtonBox::ActionRole);
     QPushButton* refresh = buttons->addButton("Refresh", QDialogButtonBox::ActionRole);
     buttons->addButton(QDialogButtonBox::Close);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(buttons);
 
+    QPointer<QDialog> guard(&dlg);
+    auto file = std::make_shared<QString>();
+    auto sending = std::make_shared<bool>(false);
+    auto showError = [=](const QString& text) {
+        error->setText(text);
+        error->setVisible(!text.isEmpty());
+    };
+    auto setFile = [=](const QString& f) {
+        *file = f;
+        fileName->setText(f.isEmpty() ? QString() : QFileInfo(f).fileName());
+        unpick->setVisible(!f.isEmpty());
+    };
+    auto currentNumber = [=] { return list->currentItem() ? list->currentItem()->data(0, Qt::UserRole).toInt() : 0; };
+    auto updateComposer = [=] {
+        json store = loadStore();
+        const json* r = nullptr;
+        for (const json& x : store["reports"])
+            if (x.value("number", 0) == currentNumber())
+                r = &x;
+        const bool closed = r && r->value("state", "open") == "closed";
+        composer->setVisible(r != nullptr);
+        edit->setEnabled(!closed && !*sending);
+        pick->setEnabled(!closed && !*sending);
+        unpick->setEnabled(!*sending);
+        send->setEnabled(!closed && !*sending && !edit->toPlainText().trimmed().isEmpty());
+        edit->setPlaceholderText(closed ? "Closed. Help > Report Issue sends a new report." : "Reply");
+    };
+
     auto fill = [=] {
-        const int keep = list->currentItem() ? list->currentItem()->data(0, Qt::UserRole).toInt() : 0;
+        const int keep = currentNumber();
         list->clear();
         json store = loadStore();
         for (auto it = store["reports"].rbegin(); it != store["reports"].rend(); ++it)
@@ -1060,11 +1123,17 @@ void showMyReports(QWidget* parent)
             const int n = r.value("number", 0);
             const int count = replyCount(r);
             const int unseen = count - r.value("seenReplies", 0);
-            auto* item = new QTreeWidgetItem(list, {QString::number(n), QString::fromStdString(r.value("title", "")),
-                                                    QString::fromStdString(statusText(r.value("state", "open"), labelsOf(r))),
+            const std::string status = statusText(r.value("state", "open"), labelsOf(r));
+            auto* item = new QTreeWidgetItem(list, {QString::number(n), QString::fromStdString(r.value("title", "")), QString::fromStdString(status),
                                                     unseen > 0 ? QString("%1 new").arg(unseen) : QString::number(count)});
             item->setData(0, Qt::UserRole, n);
             item->setTextAlignment(0, Qt::AlignRight | Qt::AlignVCenter);
+            if (status == "Needs Info")
+            {
+                QFont bold = item->font(2);
+                bold.setBold(true);
+                item->setFont(2, bold);
+            }
             if (n == keep)
                 list->setCurrentItem(item);
         }
@@ -1073,13 +1142,15 @@ void showMyReports(QWidget* parent)
         const bool any = list->topLevelItemCount() > 0;
         empty->setVisible(!any);
         list->setVisible(any);
-        replies->setVisible(any);
+        thread->setVisible(any);
         open->setEnabled(list->currentItem() != nullptr);
+        updateComposer();
     };
 
-    QObject::connect(list, &QTreeWidget::currentItemChanged, &dlg, [=](QTreeWidgetItem* item) {
+    auto showThread = [=](QTreeWidgetItem* item) {
         open->setEnabled(item != nullptr);
-        replies->clear();
+        thread->clear();
+        updateComposer();
         if (!item)
             return;
         const int n = item->data(0, Qt::UserRole).toInt();
@@ -1093,9 +1164,11 @@ void showMyReports(QWidget* parent)
                 for (const json& reply : r["replies"])
                 {
                     const QDateTime at = QDateTime::fromString(QString::fromStdString(reply.value("at", "")), Qt::ISODate);
-                    parts << "**" + at.toLocalTime().toString("d MMM yyyy, h:mm ap") + "**\n\n" + QString::fromStdString(reply.value("body", ""));
+                    const QString who = reply.value("from", "") == "you" ? "You" : "Lila";
+                    parts << "**" + who + "** · " + at.toLocalTime().toString("d MMM yyyy, h:mm ap") + "\n\n" + QString::fromStdString(reply.value("body", ""));
                 }
-            replies->setMarkdown(parts.join("\n\n---\n\n"));
+            thread->setMarkdown(parts.join("\n\n---\n\n"));
+            thread->verticalScrollBar()->setValue(thread->verticalScrollBar()->maximum());
             if (r.value("seenReplies", 0) != replyCount(r))
             {
                 r["seenReplies"] = replyCount(r);
@@ -1103,16 +1176,91 @@ void showMyReports(QWidget* parent)
                 item->setText(3, QString::number(replyCount(r)));
             }
         }
-    });
+    };
+    QObject::connect(list, &QTreeWidget::currentItemChanged, &dlg, showThread);
     QObject::connect(open, &QPushButton::clicked, &dlg, [=] {
-        if (!list->currentItem())
-            return;
-        const int n = list->currentItem()->data(0, Qt::UserRole).toInt();
-        for (const json& r : loadStore()["reports"])
-            if (r.value("number", 0) == n)
+        const json store = loadStore();
+        for (const json& r : store["reports"])
+            if (r.value("number", 0) == currentNumber())
                 QDesktopServices::openUrl(QUrl(QString::fromStdString(r.value("url", ""))));
     });
-    QPointer<QDialog> guard(&dlg);
+    QObject::connect(edit, &QPlainTextEdit::textChanged, &dlg, updateComposer);
+    QObject::connect(pick, &QPushButton::clicked, &dlg, [=] {
+        const QString f = fileDialog::getOpenFileName(guard.data(), "Attach File");
+        if (f.isEmpty())
+            return;
+        if (QFileInfo(f).size() > kMaxFileBytes)
+        {
+            showError("That file is over 25 MB. Attach a smaller one, or email it to " + QString(kSupportEmail) + ".");
+            return;
+        }
+        showError({});
+        setFile(f);
+    });
+    QObject::connect(unpick, &QPushButton::clicked, &dlg, [=] { setFile({}); });
+    QObject::connect(send, &QPushButton::clicked, &dlg, [=] {
+        const int n = currentNumber();
+        std::string token;
+        const json store = loadStore();
+        for (const json& r : store["reports"])
+            if (r.value("number", 0) == n)
+                token = r.value("token", "");
+        const QString text = edit->toPlainText().trimmed();
+        if (!n || token.empty() || text.isEmpty())
+            return;
+        auto* multi = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+        addPart(multi, "reply", {}, "application/json", QByteArray::fromStdString(json{{"number", n}, {"token", token}, {"text", text.toStdString()}}.dump()));
+        if (!file->isEmpty())
+            addPart(multi, "file", QFileInfo(*file).fileName(), "application/octet-stream", readBytes(fs::path(file->toStdWString())));
+        *sending = true;
+        send->setText("Sending...");
+        showError({});
+        updateComposer();
+        QNetworkRequest req{QUrl(worker() + "/issues/reply")};
+        req.setTransferTimeout(180000);
+        QNetworkReply* reply = network()->post(req, multi);
+        multi->setParent(reply);
+        QObject::connect(reply, &QNetworkReply::finished, qApp, [=] {
+            reply->deleteLater();
+            const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const json j = reply->error() == QNetworkReply::NoError && code == 200 ? json::parse(reply->readAll().toStdString(), nullptr, false) : json();
+            const bool ok = j.is_object() && j.contains("body");
+            if (ok)
+            {
+                json store = loadStore();
+                for (json& r : store["reports"])
+                    if (r.value("number", 0) == n)
+                    {
+                        if (!r.contains("replies") || !r["replies"].is_array())
+                            r["replies"] = json::array();
+                        r["replies"].push_back({{"at", j.value("at", "")}, {"body", j.value("body", "")}, {"from", "you"}});
+                        json labels = json::array({"Pending"});
+                        for (const std::string& l : labelsOf(r))
+                            if (!isTriage(l))
+                                labels.push_back(l);
+                        r["labels"] = labels;
+                    }
+                saveStore(store);
+            }
+            if (!guard)
+                return;
+            *sending = false;
+            send->setText("Send Reply");
+            if (ok)
+            {
+                edit->clear();
+                setFile({});
+                showError(j.value("dropped", false) ? "Sent. The file wasn't kept: today's upload limit was reached." : QString());
+                fill();
+                showThread(list->currentItem());
+            }
+            else
+            {
+                showError(QString::fromStdString(errorText(reply)));
+                updateComposer();
+            }
+        });
+    });
     auto doRefresh = [=] {
         refresh->setEnabled(false);
         refresh->setText("Refreshing...");
@@ -1121,8 +1269,7 @@ void showMyReports(QWidget* parent)
                 return;
             refresh->setEnabled(true);
             refresh->setText("Refresh");
-            error->setText(QString::fromStdString(why));
-            error->setVisible(!why.empty());
+            showError(QString::fromStdString(why));
             fill();
         });
     };
@@ -1138,7 +1285,7 @@ void showMyReports(QWidget* parent)
     {
         refresh->setEnabled(false);
     }
-    dlg.resize(620, 460);
+    dlg.resize(620, 560);
     dlg.exec();
 }
 
@@ -1157,8 +1304,13 @@ void startup(QMainWindow* window)
         refreshAll([win](std::vector<int> fresh, std::string) {
             if (!win || fresh.empty())
                 return;
+            bool asked = false;
+            const json store = loadStore();
+            for (const json& r : store["reports"])
+                if (std::find(fresh.begin(), fresh.end(), r.value("number", 0)) != fresh.end())
+                    asked |= statusText(r.value("state", "open"), labelsOf(r)) == "Needs Info";
             const QString which = fresh.size() == 1 ? QString("report #%1").arg(fresh.front()) : QString("%1 reports").arg(fresh.size());
-            const QString text = "New reply on " + which + ": Help > My Reports";
+            const QString text = (asked ? "Question on " : "New reply on ") + which + ": Help > My Reports";
             win->statusBar()->showMessage(text, 20000);
             viewportToast::showActive(text, 6000);
         });

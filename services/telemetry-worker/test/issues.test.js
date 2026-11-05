@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 
 import { allowedHost, sanitizeText, stripPaths, LINK_HOSTS } from "../src/issues.js";
-import { appJwt, attachmentName, handleIssues, MAX_BYTES_PER_DAY, MAX_REPORTS_PER_IP_DAY, issueBody, parseReport, reportStatus, sha256 } from "../src/issues.js";
+import { appJwt, attachmentName, handleIssues, MAX_BYTES_PER_DAY, MAX_REPLIES_PER_IP_DAY, MAX_REPORTS_PER_IP_DAY, issueBody, parseReport, replyAttachmentName, reportStatus, sha256 } from "../src/issues.js";
 
 /** An R2 stand-in holding bytes in a Map. */
 function fakeR2() {
@@ -42,9 +42,19 @@ function fakeGitHub() {
       issues.set(number, { ...body, number, html_url: `https://github.com/lila-3d/issues/issues/${number}`, state: "open", comments: 0, labels: body.labels.map((name) => ({ name })) });
       return Response.json(issues.get(number), { status: 201 });
     }
-    const m = path.match(/^\/repos\/lila-3d\/issues\/issues\/(\d+)(\/comments)?$/);
+    const m = path.match(/^\/repos\/lila-3d\/issues\/issues\/(\d+)(\/comments|\/labels)?$/);
     if (m && issues.has(Number(m[1]))) {
       const issue = issues.get(Number(m[1]));
+      if (init.method === "POST" && m[2] === "/comments") {
+        const c = { user: { login: "lila-reports[bot]" }, author_association: "NONE", created_at: "now", body: JSON.parse(init.body).body };
+        issue.commentList = [...(issue.commentList || []), c];
+        issue.comments = issue.commentList.length;
+        return Response.json(c, { status: 201 });
+      }
+      if (init.method === "PUT" && m[2] === "/labels") {
+        issue.labels = JSON.parse(init.body).labels.map((name) => ({ name }));
+        return Response.json(issue.labels);
+      }
       return Response.json(m[2] ? issue.commentList || [] : issue);
     }
     return new Response("nope", { status: 404 });
@@ -170,6 +180,59 @@ test("attachments download only with the admin token", async () => {
   const file = await get("Bearer admin", "&name=bundle.zip");
   assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [1, 2, 3]);
   assert.equal((await get("Bearer admin", "&name=../x")).status, 404);
+});
+
+function replyRequest(reply, file) {
+  const form = new FormData();
+  form.set("reply", JSON.stringify(reply));
+  if (file) form.set("file", file);
+  return new Request("https://w.example/issues/reply", { method: "POST", body: form });
+}
+
+test("a reporter's reply is posted by the bot, goes back to Pending and shows as theirs in status", async () => {
+  const e = env();
+  const gh = fakeGitHub();
+  const { number, token } = await (await handleIssues(reportRequest(META, { bundle: new File([new Uint8Array(3)], "b.zip") }), e, gh.fetcher)).json();
+  const issue = gh.issues.get(number);
+  issue.labels = [{ name: "Bug" }, { name: "Needs Info" }];
+
+  assert.equal((await handleIssues(replyRequest({ number, token: "wrong", text: "hi" }), e, gh.fetcher)).status, 404);
+  assert.equal((await handleIssues(replyRequest({ number, token, text: "  " }), e, gh.fetcher)).status, 400);
+
+  const res = await handleIssues(replyRequest({ number, token, text: "It was the UV menu. @someone <b>x</b>" }, new File([new Uint8Array(4)], "bundle.zip")), e, gh.fetcher);
+  assert.equal(res.status, 200);
+  const sent = await res.json();
+  assert.equal(sent.from, "you");
+  assert.match(sent.body, /^It was the UV menu\. `@someone` &lt;b>x&lt;\/b>/);
+  assert.deepEqual(issue.labels.map((l) => l.name), ["Bug", "Pending"]);
+  assert.match(issue.commentList[0].body, /<!-- lila-reporter -->$/);
+
+  const rec = await (await e.REPORTS.get(`issues/${number}.json`)).json();
+  assert.deepEqual(rec.files, ["bundle.zip", "file-bundle.zip"]);
+
+  const st = await handleIssues(new Request("https://w.example/issues/status", { method: "POST", body: JSON.stringify({ reports: [{ number, token }] }) }), e, gh.fetcher);
+  const [r] = (await st.json()).reports;
+  assert.equal(r.replies.length, 1);
+  assert.equal(r.replies[0].from, "you");
+  assert.ok(!r.replies[0].body.includes("lila-reporter"));
+  assert.ok(!r.replies[0].body.startsWith("**Reporter"));
+
+  issue.state = "closed";
+  assert.equal((await handleIssues(replyRequest({ number, token, text: "still broken" }), e, gh.fetcher)).status, 409);
+});
+
+test("reply attachments never replace one already on the report", () => {
+  assert.equal(replyAttachmentName("x.zip", ["bundle.zip"]), "file-x.zip");
+  assert.equal(replyAttachmentName("x.zip", ["file-x.zip"]), "file-2-x.zip");
+  assert.equal(replyAttachmentName("x.zip", ["file-x.zip", "file-2-x.zip"]), "file-3-x.zip");
+});
+
+test("a sender gets a set number of replies a day", async () => {
+  const e = env();
+  const gh = fakeGitHub();
+  const { number, token } = await (await handleIssues(reportRequest(META), e, gh.fetcher)).json();
+  for (let i = 0; i < MAX_REPLIES_PER_IP_DAY; ++i) assert.equal((await handleIssues(replyRequest({ number, token, text: `r${i}` }), e, gh.fetcher)).status, 200);
+  assert.equal((await handleIssues(replyRequest({ number, token, text: "one more" }), e, gh.fetcher)).status, 429);
 });
 
 test("oversize attachments and missing storage are refused", async () => {

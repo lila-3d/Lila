@@ -12,11 +12,11 @@ class QWidget;
 /**
  * Help > Report Issue files an issue on github.com/lila-3d/issues through the telemetry Worker, with the support bundle
  * and a screenshot as private attachments. Help > My Reports lists the reports sent from this machine with their status
- * and maintainer replies, so reporters need no GitHub account.
+ * and maintainer replies, and sends the reporter's answers, so reporters need no GitHub account.
  */
 namespace lila::ui::issueReport
 {
-/** Status shown for a report: its triage label (Pending, Solved, On Hold, Dismissed), else Open or Closed. */
+/** Status shown for a report: its triage label (Pending, Needs Info, On Hold, Solved, Dismissed), else Open or Closed. */
 LILA_UI_API std::string statusText(const std::string& state, const std::vector<std::string>& labels);
 
 LILA_UI_API void showDialog(QMainWindow* window);

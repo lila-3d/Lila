@@ -3,6 +3,7 @@
     python scripts/issues.py [--out DIR] [--since YYYY-MM-DD] [--unsolved] [--all]
     python scripts/issues.py --solve N --note "Fixed: ..."
     python scripts/issues.py --dismiss N --note "Works as intended: ..."
+    python scripts/issues.py --ask N --note "Which menu was open?"
     python scripts/issues.py --hold N [--note "..."]
     python scripts/issues.py --unsolve N
     python scripts/issues.py --retag N Bug
@@ -15,7 +16,8 @@ LILA_REPORTS_APP_KEY is the path to the app's private key (signed with node). --
 screenshot from the telemetry Worker with LILA_CREDITS_ADMIN_TOKEN (its ADMIN_TOKEN secret) and unzips the bundle.
 Each dump labels open issues that carry no triage label "Pending" (--no-pending to skip).
 Reports sent from Lila carry a lila-report marker; their reporter is the Reporter row when they gave a GitHub
-user, and otherwise they read replies in Help > My Reports.
+user, and otherwise they read replies and answer in Help > My Reports (posted by the bot, ending in a lila-reporter
+marker, which sets the issue back to Pending).
 """
 
 import argparse
@@ -33,7 +35,7 @@ REPO = Path(__file__).resolve().parent.parent
 GH_REPO = "lila-3d/issues"
 WORKER = os.environ.get("LILA_ISSUES_WORKER", "https://lila-telemetry.lila3d.workers.dev")
 KINDS = ["Bug", "Crash", "Performance", "Request", "Question"]
-TRIAGE = ["Pending", "Solved", "On Hold", "Dismissed"]
+TRIAGE = ["Pending", "Needs Info", "On Hold", "Solved", "Dismissed"]
 LABELS = {
     "Bug": ("d73a4a", "Something is broken"),
     "Crash": ("b60205", "Lila crashed"),
@@ -42,7 +44,8 @@ LABELS = {
     "Question": ("d876e3", "How do I..."),
     "Pending": ("ededed", "Not looked at yet, or being worked on"),
     "Solved": ("0e8a16", "Fixed; out with the next update"),
-    "On Hold": ("c5def5", "Waiting on a repro or the reporter"),
+    "Needs Info": ("f9d0c4", "Waiting on the reporter; their reply sets Pending"),
+    "On Hold": ("c5def5", "Parked: waiting on a repro or other work"),
     "Dismissed": ("bfbfbf", "Closed without a fix"),
 }
 
@@ -144,6 +147,13 @@ def set_labels(n, labels):
     gh("-X", "PUT", f"repos/{GH_REPO}/issues/{n}/labels", body={"labels": labels})
 
 
+def comment_author(c):
+    """Who wrote a comment: replies sent from My Reports are posted by the bot but are the reporter's."""
+    if c["user"]["login"].endswith("[bot]") and "<!-- lila-reporter -->" in (c.get("body") or ""):
+        return "reporter (from Lila)"
+    return c["user"]["login"]
+
+
 def from_lila(it):
     return "<!-- lila-report " in (it.get("body") or "")
 
@@ -222,7 +232,7 @@ def files(n, out):
 
 
 def status(it):
-    for t in ["Solved", "Dismissed", "On Hold", "Pending"]:
+    for t in ["Solved", "Dismissed", "Needs Info", "On Hold", "Pending"]:
         if t in labels_of(it):
             return t
     return it["state"]
@@ -255,7 +265,7 @@ def dump(args):
             "from_lila": from_lila(it),
             "created": it["created_at"],
             "body": it.get("body") or "",
-            "comments": [{"author": c["user"]["login"], "role": c["author_association"], "at": c["created_at"], "body": c["body"]} for c in comments],
+            "comments": [{"author": comment_author(c), "role": c["author_association"], "at": c["created_at"], "body": c["body"]} for c in comments],
         })
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "issues.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
@@ -282,11 +292,12 @@ def main():
     p.add_argument("--no-pending", action="store_true", help="don't label untriaged open issues Pending")
     p.add_argument("--solve", type=int, metavar="N", help="label Solved, reply with --note and close")
     p.add_argument("--dismiss", type=int, metavar="N", help="label Dismissed, reply with --note and close as not planned")
-    p.add_argument("--hold", type=int, metavar="N", help="label On Hold: waiting on a repro or the reporter")
+    p.add_argument("--ask", type=int, metavar="N", help="label Needs Info and ask the reporter --note; their reply sets Pending")
+    p.add_argument("--hold", type=int, metavar="N", help="label On Hold: parked, waiting on a repro or other work")
     p.add_argument("--unsolve", type=int, metavar="N", help="back to Pending, reopened")
     p.add_argument("--retag", nargs=2, metavar=("N", "KIND"), help="replace the kind label (Bug, Crash, Performance, Request, Question)")
     p.add_argument("--reply", nargs=2, metavar=("N", "TEXT"), help="comment, mentioning the reporter, without changing labels")
-    p.add_argument("--note", help="the reply that goes with --solve, --dismiss, --hold or --unsolve")
+    p.add_argument("--note", help="the reply that goes with --solve, --dismiss, --ask, --hold or --unsolve")
     p.add_argument("--files", type=int, metavar="N", help="download the private attachments to OUT/files/N")
     p.add_argument("--setup", action="store_true", help="create or update the labels")
     args = p.parse_args()
@@ -301,6 +312,10 @@ def main():
         if not args.note:
             sys.exit("--dismiss needs --note saying why")
         triage(args.dismiss, "Dismissed", args.note, close="not_planned")
+    elif args.ask:
+        if not args.note:
+            sys.exit("--ask needs --note with the question")
+        triage(args.ask, "Needs Info", args.note)
     elif args.hold:
         triage(args.hold, "On Hold", args.note)
     elif args.unsolve:

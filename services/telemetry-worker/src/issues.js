@@ -2,7 +2,7 @@
 // The text is public on the issue; the support bundle and screenshot stay private in the REPORTS R2 bucket.
 // Secrets: REPORTS_APP_ID, REPORTS_APP_KEY (PKCS#8 PEM), REPORTS_INSTALLATION_ID, ADMIN_TOKEN (attachment downloads).
 // Bindings: REPORTS (R2: files/ attachments, expired by a lifecycle rule; issues/ records; limits/ daily counters),
-// REPORT_LIMIT (per-minute rate limit, optional). REPORTS_GITHUB_API points GitHub calls elsewhere for local tests.
+// REPORT_LIMIT (per-minute rate limit for reports and replies, optional). REPORTS_GITHUB_API points GitHub calls elsewhere for local tests.
 
 export const REPO = "lila-3d/issues";
 export const KINDS = ["Bug", "Crash", "Performance", "Request", "Question"];
@@ -20,6 +20,12 @@ export const MAX_STATUS = 10;
 export const MAX_REPORTS_PER_IP_DAY = 10;
 export const MAX_BYTES_PER_IP_DAY = 300 * 1024 * 1024;
 export const MAX_BYTES_PER_DAY = 2 * 1024 * 1024 * 1024;
+export const MAX_REPLIES_PER_IP_DAY = 30;
+/** Triage labels; exactly one is on an issue. scripts/issues.py and IssueReport.cpp (statusText) use the same names. */
+export const TRIAGE = ["Pending", "Needs Info", "On Hold", "Solved", "Dismissed"];
+/** Ends a reporter's reply posted by the bot, so status can tell it from a maintainer's. */
+export const REPORTER_MARK = "<!-- lila-reporter -->";
+const REPLY_HEADING = "**Reporter replied from Lila:**";
 const MAINTAINERS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 /** Triage replies are posted by the app itself (scripts/issues.py). */
 export const BOT_LOGIN = "lila-reports[bot]";
@@ -138,7 +144,23 @@ export function issueBody(report, id, files, dropped = false) {
   return lines.join("\n");
 }
 
-/** What the reporter sees in Lila: state, labels and maintainer replies. */
+/** A reporter's reply as the bot posts it. */
+export function replyBody(text, file, dropped = false) {
+  const lines = [REPLY_HEADING, "", sanitizeText(text)];
+  if (file) lines.push("", `Private attachment: ${file.label} (${sizeText(file.size)}).`);
+  if (dropped) lines.push("", "Attachment not kept: over the daily upload limit.");
+  lines.push(REPORTER_MARK);
+  return lines.join("\n");
+}
+
+const isReporterReply = (c) => c.user?.login === BOT_LOGIN && (c.body || "").includes(REPORTER_MARK);
+
+/** The reply as the reporter wrote it, without the heading and marker the bot adds. */
+function reporterText(body) {
+  return body.replace(REPORTER_MARK, "").replace(`${REPLY_HEADING}\n\n`, "").trim();
+}
+
+/** What the reporter sees in Lila: state, labels, maintainer replies and their own replies (from: "you"). */
 export function reportStatus(issue, comments) {
   return {
     number: issue.number,
@@ -150,7 +172,7 @@ export function reportStatus(issue, comments) {
     updated: issue.updated_at,
     replies: comments
       .filter((c) => MAINTAINERS.has(c.author_association) || c.user?.login === BOT_LOGIN)
-      .map((c) => ({ at: c.created_at, body: c.body })),
+      .map((c) => (isReporterReply(c) ? { at: c.created_at, body: reporterText(c.body), from: "you" } : { at: c.created_at, body: c.body })),
   };
 }
 
@@ -209,11 +231,21 @@ async function github(env, fetcher, method, path, body) {
   return res.json();
 }
 
+async function rateLimited(request, env) {
+  if (!env.REPORT_LIMIT) return false;
+  const { success } = await env.REPORT_LIMIT.limit({ key: request.headers.get("CF-Connecting-IP") || "unknown" });
+  return !success;
+}
+
+/** Today's counters: this sender's (by hashed IP) and everyone's. */
+async function dailyKeys(request) {
+  const day = new Date().toISOString().slice(0, 10);
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  return { senderKey: `limits/${day}/${await sha256(`${day}:${ip}`)}.json`, totalKey: `limits/${day}/total.json` };
+}
+
 async function fileReport(request, env, fetcher) {
-  if (env.REPORT_LIMIT) {
-    const { success } = await env.REPORT_LIMIT.limit({ key: request.headers.get("CF-Connecting-IP") || "unknown" });
-    if (!success) return json({ error: "Too many reports from this address. Try again in a minute." }, 429);
-  }
+  if (await rateLimited(request, env)) return json({ error: "Too many reports from this address. Try again in a minute." }, 429);
   let form;
   try {
     form = await request.formData();
@@ -243,10 +275,7 @@ async function fileReport(request, env, fetcher) {
     files.push({ ...u, name: u.name || attachmentName(f.name), file: f, size: f.size });
   }
 
-  const day = new Date().toISOString().slice(0, 10);
-  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  const senderKey = `limits/${day}/${await sha256(`${day}:${ip}`)}.json`;
-  const totalKey = `limits/${day}/total.json`;
+  const { senderKey, totalKey } = await dailyKeys(request);
   const sender = (await readJson(env, senderKey)) || { reports: 0, bytes: 0 };
   const total = (await readJson(env, totalKey)) || { bytes: 0 };
   if (sender.reports >= MAX_REPORTS_PER_IP_DAY)
@@ -267,7 +296,7 @@ async function fileReport(request, env, fetcher) {
     return json({ error: "GitHub didn't take the report. Try again later." }, 502);
   }
   const kept = dropped ? 0 : size;
-  await putJson(env, senderKey, { reports: sender.reports + 1, bytes: sender.bytes + kept });
+  await putJson(env, senderKey, { ...sender, reports: sender.reports + 1, bytes: sender.bytes + kept });
   if (kept) await putJson(env, totalKey, { bytes: total.bytes + kept });
   const token = randomToken();
   await putJson(env, `issues/${issue.number}.json`, { id, tokenHash: await sha256(token), files: files.map((f) => f.name), at: new Date().toISOString() });
@@ -299,8 +328,7 @@ async function status(request, env, fetcher) {
   if (!Array.isArray(reports) || reports.length > MAX_STATUS) return json({ error: `send 1 to ${MAX_STATUS} reports` }, 400);
   const out = [];
   for (const r of reports) {
-    const rec = await record(env, r?.number);
-    if (!rec || typeof r.token !== "string" || (await sha256(r.token)) !== rec.tokenHash) {
+    if (!(await authorized(env, r?.number, r?.token))) {
       out.push({ number: r?.number ?? null, error: "unknown report" });
       continue;
     }
@@ -313,6 +341,75 @@ async function status(request, env, fetcher) {
     }
   }
   return json({ reports: out });
+}
+
+/** The report's record if the token matches it, else null. */
+async function authorized(env, number, token) {
+  const rec = await record(env, number);
+  return rec && typeof token === "string" && (await sha256(token)) === rec.tokenHash ? rec : null;
+}
+
+/** A stored name for a reply's attachment that doesn't replace one already on the report. */
+export function replyAttachmentName(name, taken) {
+  const base = attachmentName(name);
+  if (!taken.includes(base)) return base;
+  for (let i = 2; ; ++i) if (!taken.includes(`file-${i}-${base.slice(5)}`)) return `file-${i}-${base.slice(5)}`;
+}
+
+/** A reporter answers on their report: posted by the bot, which puts the issue back to Pending. */
+async function postReply(request, env, fetcher) {
+  if (await rateLimited(request, env)) return json({ error: "Too many replies from this address. Try again in a minute." }, 429);
+  let form, meta;
+  try {
+    form = await request.formData();
+    meta = JSON.parse(form.get("reply"));
+  } catch {
+    return json({ error: "bad reply" }, 400);
+  }
+  const text = clean(meta?.text, MAX_BODY);
+  if (!text) return json({ error: "reply missing" }, 400);
+  const rec = await authorized(env, meta.number, meta.token);
+  if (!rec) return json({ error: "unknown report" }, 404);
+
+  const f = form.get("file");
+  const file = f && typeof f !== "string" ? { file: f, size: f.size, label: attachmentName(f.name).slice(5), name: replyAttachmentName(f.name, rec.files) } : null;
+  if (file && file.size > MAX_FILE) return json({ error: `The file is over ${sizeText(MAX_FILE)}. Email it to ${SUPPORT_EMAIL} instead.` }, 413);
+
+  const { senderKey, totalKey } = await dailyKeys(request);
+  const sender = (await readJson(env, senderKey)) || { reports: 0, bytes: 0 };
+  const total = (await readJson(env, totalKey)) || { bytes: 0 };
+  if ((sender.replies || 0) >= MAX_REPLIES_PER_IP_DAY) return json({ error: `You've sent ${MAX_REPLIES_PER_IP_DAY} replies today. Try again tomorrow.` }, 429);
+  const dropped = !!file && (sender.bytes + file.size > MAX_BYTES_PER_IP_DAY || total.bytes + file.size > MAX_BYTES_PER_DAY);
+  const kept = file && !dropped ? file : null;
+
+  let issue;
+  try {
+    issue = await github(env, fetcher, "GET", `/repos/${REPO}/issues/${meta.number}`);
+  } catch {
+    return json({ error: "GitHub unavailable. Try again later." }, 502);
+  }
+  if (issue.state === "closed") return json({ error: "This report is closed. Send a new one from Help > Report Issue." }, 409);
+
+  if (kept) await env.REPORTS.put(`files/${rec.id}/${kept.name}`, kept.file.stream(), { httpMetadata: { contentType: "application/octet-stream" } });
+  let posted;
+  try {
+    posted = await github(env, fetcher, "POST", `/repos/${REPO}/issues/${meta.number}/comments`, { body: replyBody(text, kept, dropped) });
+  } catch {
+    if (kept) await env.REPORTS.delete(`files/${rec.id}/${kept.name}`);
+    return json({ error: "GitHub didn't take the reply. Try again later." }, 502);
+  }
+  const labels = (issue.labels || []).map((l) => (typeof l === "string" ? l : l.name)).filter((l) => !TRIAGE.includes(l));
+  try {
+    await github(env, fetcher, "PUT", `/repos/${REPO}/issues/${meta.number}/labels`, { labels: [...labels, "Pending"] });
+  } catch {
+    // The reply is posted; triage still sees it as the newest comment.
+  }
+  await putJson(env, senderKey, { ...sender, replies: (sender.replies || 0) + 1, bytes: sender.bytes + (kept ? kept.size : 0) });
+  if (kept) {
+    await putJson(env, totalKey, { bytes: total.bytes + kept.size });
+    await putJson(env, `issues/${meta.number}.json`, { ...rec, files: [...rec.files, kept.name] });
+  }
+  return json({ at: posted.created_at, body: reporterText(posted.body), from: "you", ...(dropped ? { dropped: true } : {}) });
 }
 
 async function attachment(request, env, url) {
@@ -334,6 +431,7 @@ export async function handleIssues(request, env, fetcher = fetch) {
   if (!env.REPORTS) return json({ error: "reports not configured" }, 503);
   if (url.pathname === "/issues/new" && request.method === "POST") return fileReport(request, env, fetcher);
   if (url.pathname === "/issues/status" && request.method === "POST") return status(request, env, fetcher);
+  if (url.pathname === "/issues/reply" && request.method === "POST") return postReply(request, env, fetcher);
   if (url.pathname === "/issues/file" && request.method === "GET") return attachment(request, env, url);
   return json({ error: "not found" }, 404);
 }
