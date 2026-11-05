@@ -6,6 +6,9 @@
 
 3D app for game assets: Maya-style workflow, modern multithreaded core, Unreal-first pipeline.
 
+> [!NOTE]
+> Source-available, not open source: build and modify it for yourself or your studio, but don't publish builds or forks. No pull requests; request changes through issues. See [LICENSE](LICENSE) and the [FAQ](https://lila-3d.github.io/docs/#/faq?id=license).
+
 ## Get it running (Windows)
 
 Needs Visual Studio 2022 (C++ workload with its default MSVC 14.44, CMake 3.28+, vcpkg). Qt comes from vcpkg with the other dependencies; no Qt installer or Qt account. An installed Python 3.14 is found in `C:\Python314` or python.org's default folders, otherwise the first build downloads it into `.deps`. Defaults live in `scripts/env.cmd`; set `LILA_VS`, `LILA_PYTHON_DIR` or `VCPKG_ROOT` before calling it to override. Lila and its vcpkg dependencies all build with the MSVC toolset pinned in `cmake/triplets/x64-windows.cmake`; `scripts\toolchain.cmd` shows what the build gets. sccache and lld-link are used when found, and are optional.
