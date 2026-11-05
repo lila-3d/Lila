@@ -5819,7 +5819,7 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
         splitNgons: Cut the n-gons along the seam into quads (and triangles) that carry on the edge loops. Default True.
         quadBand: Remesh a band of faces around the seam into quads that follow it, welded back into the faces around it. Falls back to splitting n-gons where the band's border can't be kept. Default False.
         bandRings: Rings of faces past the seam the quad band takes in. Default 1.
-        timeout: Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever. Default 5.0.
+        timeout: Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever. Default 60.0.
         filletWidth: Width of a rounded strip along the seam, cm; 0 keeps it sharp. Default 0.0.
         filletSegments: Rows of faces across the fillet. Default 2.
         hardAngle: New edges sharper than this many degrees are marked hard. Default 30.0.
@@ -6465,7 +6465,7 @@ def quadRemesh(*objects: Any, method: str | None = None, targetFaces: int | None
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 500.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
-        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 5.0.
+        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 60.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
         useHardEdges: Follow edges marked hard. Default True.
@@ -7108,7 +7108,7 @@ def retopoPoles(*objects: Any, method: str | None = None, targetFaces: int | Non
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 500.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
-        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 5.0.
+        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 60.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
         useHardEdges: Follow edges marked hard. Default True.

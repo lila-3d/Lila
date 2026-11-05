@@ -236,7 +236,7 @@ std::vector<FlagDef> remeshFlags()
     return {{"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
             {"targetFaces", "", T::Int, 500, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
-            {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
+            {"timeout", "", T::Float, 60.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
             {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive.", {}, {}, 0.0},
             {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies.", {}, {}, 0.0, 1.0},
             {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
@@ -266,7 +266,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Field;
     o.targetFaces = std::max(8, a.get<int>("targetFaces", 500));
     o.countTolerance = std::clamp(a.get<double>("countTolerance", 0.1), 0.0, 1.0);
-    o.timeout = std::max(0.0, a.get<double>("timeout", 5.0));
+    o.timeout = std::max(0.0, a.get<double>("timeout", 60.0));
     o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
     o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.25), 0.0, 1.0);
     o.useHardEdges = a.get<bool>("useHardEdges", true);
