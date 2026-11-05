@@ -155,6 +155,8 @@ struct QuadRemeshOptions
     double adaptivity = 0.25;
     /** Make the lattice finer where the surface comes close to itself across a gap, so it doesn't bridge it. */
     bool resolveGaps = true;
+    /** Thin parts of a closed shape, like fingers, get at least this many edges round them; 0 off. */
+    int edgesAround = 8;
     /** Edges bending at least this many degrees (gentler than sharpAngle, like a bevel's segments) steer the edge flow; 0 off. */
     double softCreaseAngle = 0.0;
     /** Align to edges flagged "hard". */

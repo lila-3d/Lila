@@ -249,6 +249,7 @@ std::vector<FlagDef> remeshFlags()
             {"densityHandles", "", T::List, nullptr,
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
+            {"edgesAround", "", T::Int, 8, "Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off.", {}, {}, 0.0, 64.0},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
             {"seamless", "", T::Bool, false, "Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points."},
             {"poles", "", T::List, nullptr,
@@ -281,6 +282,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     o.pureQuads = a.get<bool>("pureQuads", true);
     o.seamless = a.get<bool>("seamless", false);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
+    o.edgesAround = std::clamp(a.get<int>("edgesAround", 8), 0, 64);
     if (a.has("poles") && !a.flags["poles"].is_null())
         o.poles = polesFor(a.flags["poles"], src, cmd);
     return o;

@@ -155,6 +155,13 @@ struct CreaseJunction
 };
 LILA_SCENE_API std::vector<CreaseJunction> creaseJunctions(const Surface& s);
 
+/**
+ * The thickness straight through a round part (a finger, a limb) from vertex v, or 0 where v isn't on one: on or next to
+ * a crease, in a hollow, or where the ray finds no wall facing straight back within maxThickness.
+ */
+LILA_SCENE_API double roundThickness(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, const std::vector<double>& curvature,
+                                     Index v, double maxThickness);
+
 /** Triangulates a polygon mesh into a surface; hard edges become feature pairs when asked. */
 LILA_SCENE_API Surface surfaceFromMesh(const geo::Mesh& mesh, bool useHardEdges);
 /** Splits edges longer than maxLength until none are. */

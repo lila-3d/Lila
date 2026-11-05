@@ -439,6 +439,33 @@ std::vector<CreaseJunction> creaseJunctions(const Surface& s)
     return out;
 }
 
+double roundThickness(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, const std::vector<double>& curvature, Index v,
+                      double maxThickness)
+{
+    const glm::dvec3 nrm = s.normal[v];
+    if (glm::dot(nrm, nrm) < 0.5)
+        return 0.0;
+    // A crease bends sharply without being thin, so points on or next to one don't count; and a round part bulges out,
+    // so its neighbours sit below the tangent plane, unlike a pipe's bore.
+    double below = 0.0;
+    bool nearCrease = s.feature[v] != FeatureKind::None;
+    for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+    {
+        below += glm::dot(s.pos[s.adj[k]] - s.pos[v], nrm);
+        nearCrease |= s.feature[s.adj[k]] != FeatureKind::None;
+    }
+    if (nearCrease || below >= 0.0)
+        return 0.0;
+    const double eps = 1e-6 * maxThickness;
+    geo::BvhHit hit;
+    // Across a round part the far wall faces straight back and the surface curves at about 2 / thickness; a cone's tip,
+    // a spike, an ellipsoid off its axes, a slab or a pipe's wall doesn't.
+    if (bvh.raycast(s.pos[v] - eps * nrm, -nrm, hit, maxThickness) && !hit.frontFacing && hit.face != geo::kInvalid &&
+        glm::dot(src.faceNormal(hit.face), nrm) < -0.9 && curvature[v] * hit.t > 1.5)
+        return hit.t + eps;
+    return 0.0;
+}
+
 void Surface::thinCorners(const std::vector<double>& spacing)
 {
     std::vector<std::pair<int, Index>> corners;

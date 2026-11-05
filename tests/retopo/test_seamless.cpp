@@ -106,6 +106,8 @@ TEST_CASE("zz remesh obj" * doctest::skip())
     o.useHardEdges = !std::getenv("LILA_NO_HARD");
     if (const char* a = std::getenv("LILA_AB_ADAPT"))
         o.adaptivity = std::atof(a);
+    if (const char* a = std::getenv("LILA_AB_AROUND"))
+        o.edgesAround = std::atoi(a);
     if (const char* a = std::getenv("LILA_AB_SHARP"))
         o.sharpAngle = std::atof(a);
     if (std::getenv("LILA_AB_GRID"))

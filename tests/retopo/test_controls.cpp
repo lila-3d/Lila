@@ -238,3 +238,51 @@ TEST_CASE("crease junctions split their fan into sectors of whole quarter turns"
         CHECK(std::abs(stretched - glm::radians(270.0)) < 1e-6);
     }
 }
+
+TEST_CASE("quad remesh puts enough edges round thin parts")
+{
+    // A fat body and a thin arm beside it, which on its own gets few edges round it.
+    geo::CapsuleOptions bodyOptions;
+    bodyOptions.radius = 30.0;
+    bodyOptions.height = 120.0;
+    bodyOptions.subdivAxis = 48;
+    bodyOptions.subdivHeight = 24;
+    geo::Mesh m = geo::makeCapsule(bodyOptions);
+    geo::CapsuleOptions armOptions;
+    armOptions.radius = 3.0;
+    armOptions.height = 80.0;
+    armOptions.subdivAxis = 24;
+    armOptions.subdivHeight = 40;
+    const geo::Mesh arm = geo::makeCapsule(armOptions);
+    std::vector<Index> id(arm.pointCapacity(), geo::kInvalid);
+    for (Index p = 0; p < arm.pointCapacity(); ++p)
+        if (arm.pointValid(p))
+            id[p] = m.addPoint(glm::dvec3(arm.position(p).y + 80.0, -arm.position(p).x, arm.position(p).z));
+    for (Index f = 0; f < arm.faceCapacity(); ++f)
+        if (arm.faceValid(f))
+        {
+            std::vector<Index> pts;
+            for (Index p : arm.facePoints(f))
+                pts.push_back(id[p]);
+            m.addFace(pts);
+        }
+    // Edges crossing the plane x = 80, halfway along the arm.
+    const auto around = [](const geo::Mesh& r) {
+        int count = 0;
+        for (Index e = 0; e < r.edgeCapacity(); ++e)
+            if (r.edgeValid(e))
+                count += (r.position(r.edgePoint(e, 0)).x < 80.0) != (r.position(r.edgePoint(e, 1)).x < 80.0);
+        return count;
+    };
+    retopo::QuadRemeshOptions o;
+    o.targetFaces = 600;
+    o.edgesAround = 0;
+    retopo::QuadRemeshResult plain = retopo::quadRemesh(m, o);
+    o.edgesAround = 8;
+    retopo::QuadRemeshResult capped = retopo::quadRemesh(m, o);
+    REQUIRE(plain.ok());
+    REQUIRE(capped.ok());
+    INFO("plain " << around(plain.mesh) << " capped " << around(capped.mesh));
+    CHECK(around(plain.mesh) < 8);
+    CHECK(around(capped.mesh) >= 8);
+}

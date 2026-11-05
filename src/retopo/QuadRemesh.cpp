@@ -807,6 +807,43 @@ void embedFeatureGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& 
     }
 }
 
+/**
+ * Caps the lattice spacing on thin parts, like fingers, so at least `around` edges go round them: the thickness straight
+ * through the shape (to the inside of the far wall) stands in for a tube's diameter. The cap grows out gradually, like
+ * fitGaps'. cf is the lattice's coarsening, the spacing per result edge.
+ */
+void fitThickness(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, const std::vector<double>& curvature, int around, double cf,
+                  std::vector<double>& scale)
+{
+    LILA_ZONE();
+
+    const Index n = s.vertexCount();
+    const double perDiameter = cf * 3.141592653589793 / double(around);
+    std::vector<double> cap(n, std::numeric_limits<double>::max());
+    tbb::parallel_for(Index(0), n, [&](Index v) {
+        if (const double t = roundThickness(s, src, bvh, curvature, v, scale[v] / perDiameter); t > 0.0)
+            cap[v] = std::max(perDiameter * t, 0.25 * scale[v]);
+    });
+    for (int it = 0; it < 30; ++it)
+    {
+        bool changed = false;
+        for (Index v = 0; v < n; ++v)
+            for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+            {
+                const double limit = cap[s.adj[k]] + 0.25 * glm::length(s.pos[v] - s.pos[s.adj[k]]);
+                if (cap[v] > limit)
+                {
+                    cap[v] = limit;
+                    changed = true;
+                }
+            }
+        if (!changed)
+            break;
+    }
+    for (Index v = 0; v < n; ++v)
+        scale[v] = std::min(scale[v], cap[v]);
+}
+
 /** The working surface and lattice spacing everything after it shares. Not movable: the bvh points into src. */
 struct Work
 {
@@ -929,6 +966,8 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             scale[v] = cf * h / std::sqrt(rho[v]);
         if (opts.resolveGaps && closedSource)
             fitGaps(s, w.src, bvh, scale);
+        if (opts.edgesAround > 0 && closedSource)
+            fitThickness(s, w.src, bvh, curv.magnitude, opts.edgesAround, cf, scale);
         double minScale = std::numeric_limits<double>::max();
         for (Index v = 0; v < n; ++v)
             minScale = std::min(minScale, scale[v]);
@@ -1378,7 +1417,10 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
     {
         if (lastTook > 0.0 && Budget::remaining() < 2.0 * lastTook)
             break;
-        again.targetFaces = std::max(8, int(std::lround(asked * target / double(result.mesh.numFaces()))));
+        // Within reason: thin parts and gaps can need more than the target, and asking for far less to pay for them
+        // starves the rest.
+        again.targetFaces = std::clamp(int(std::lround(asked * target / double(result.mesh.numFaces()))), std::max(8, int(target / 2)),
+                                       int(target * 4));
         if (again.targetFaces == asked)
             break;
         const auto started = std::chrono::steady_clock::now();
