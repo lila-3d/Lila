@@ -119,7 +119,7 @@ TEST_CASE("zz remesh obj" * doctest::skip())
     const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     std::printf("%s, %d defects, %s, %.2f s\n", r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects, r.layout.c_str(), took);
     for (const retopo::RemeshAttempt& at : r.attempts)
-        std::printf("  %s %u faces %d defects\n", at.layout.c_str(), unsigned(at.faces), at.defects);
+        std::printf("  %s %u faces %d defects %u irregular\n", at.layout.c_str(), unsigned(at.faces), at.defects, unsigned(at.irregular));
     if (const char* out = std::getenv("LILA_AB_OUT"))
         std::ofstream(out) << geo::writeObj(r.mesh);
 }

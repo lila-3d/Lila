@@ -1,6 +1,7 @@
 #include "TestUtil.h"
 #include "ops/Command.h"
 #include "geo/Primitives.h"
+#include "retopo/Internal.h"
 #include "retopo/Retopo.h"
 
 #include <doctest/doctest.h>
@@ -145,4 +146,44 @@ TEST_CASE("quadRemesh hides the kept source and errors without changing the scen
     size_t before = run("ls", {{"type", "mesh"}}).size();
     CHECK_THROWS_WITH(run("quadRemesh", {{"args", {ball}}, {"timeout", 1e-6}}), doctest::Contains("gave up"));
     CHECK(run("ls", {{"type", "mesh"}}).size() == before);
+}
+
+TEST_CASE("close opposite poles cancel and crowded poles move apart")
+{
+    namespace rd = retopo::detail;
+    rd::Surface s = rd::surfaceFromMesh(sphere(48), false);
+    s.buildTopology();
+    s.buildGeometry();
+    const std::vector<double> scale(s.vertexCount(), 10.0);
+    auto centre = [&](geo::Index t) { return (s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) / 3.0; };
+    // A triangle, one beside it, and one on the far side.
+    const geo::Index a = 0;
+    geo::Index beside = geo::kInvalid, far = geo::kInvalid;
+    double farthest = 0.0;
+    for (geo::Index t = 1; t < geo::Index(s.tris.size()); ++t)
+    {
+        int shared = 0;
+        for (geo::Index v : s.tris[t])
+            shared += v == s.tris[a][0] || v == s.tris[a][1] || v == s.tris[a][2];
+        if (shared == 2 && beside == geo::kInvalid)
+            beside = t;
+        if (const double d = glm::length(centre(t) - centre(a)); d > farthest)
+        {
+            farthest = d;
+            far = t;
+        }
+    }
+    REQUIRE(beside != geo::kInvalid);
+
+    const std::vector<rd::FieldSingularity> left = rd::cancelClosePoles(s, {{a, 1}, {beside, -1}, {far, 1}}, scale, 1.5);
+    REQUIRE(left.size() == 1);
+    CHECK(left[0].tri == far);
+    CHECK(left[0].index == 1);
+
+    const std::vector<rd::FieldSingularity> apart = rd::spreadPoles(s, {{a, 1}, {beside, 1}, {far, -1}}, scale, 1.0);
+    REQUIRE(apart.size() == 3);
+    CHECK(apart[0].tri == a);
+    CHECK(apart[2].tri == far);
+    CHECK(apart[1].index == 1);
+    CHECK(glm::length(centre(apart[1].tri) - centre(a)) > 0.8 * scale[0]);
 }

@@ -237,6 +237,7 @@ struct RemeshAttempt
     std::string layout;
     Index faces = 0;
     int defects = 0;
+    Index irregular = 0;
 };
 
 struct QuadRemeshResult

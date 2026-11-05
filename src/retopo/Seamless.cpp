@@ -48,7 +48,7 @@ glm::dvec2 turn2(glm::dvec2 c, int k)
 
 int mod4(int k) { return ((k % 4) + 4) % 4; }
 
-/** The surface with each singular triangle split at its centre, so singularities sit on vertices; one field direction per triangle. */
+/** The surface with one field direction per triangle, so singularities sit on vertices. */
 struct ParamMesh
 {
     std::vector<glm::dvec3> pos;
@@ -89,10 +89,6 @@ ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, con
     m.pos = s.pos;
     m.scale = scale;
     m.surfaceVertices = s.vertexCount();
-    std::vector<uint8_t> singular(s.tris.size(), 0);
-    for (const FieldSingularity& f : fieldSingularities(s, q))
-        singular[f.tri] = 1;
-
     // The given vertices' directions, matched by quarter turns to the first and averaged in the plane.
     auto meanDir = [&](std::initializer_list<Index> verts, const glm::dvec3& n) {
         glm::dvec3 ref(0.0), sum(0.0);
@@ -120,23 +116,11 @@ ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, con
             m.dir.push_back(it->second);
             continue;
         }
-        if (!singular[t])
-        {
-            m.tris.push_back(tri);
-            m.normal.push_back(n);
-            m.dir.push_back(meanDir({tri[0], tri[1], tri[2]}, n));
-            continue;
-        }
-        // Each third takes its own two corners' directions, so the field turns round the new centre vertex.
-        Index c = Index(m.pos.size());
-        m.pos.push_back((s.pos[tri[0]] + s.pos[tri[1]] + s.pos[tri[2]]) / 3.0);
-        m.scale.push_back((scale[tri[0]] + scale[tri[1]] + scale[tri[2]]) / 3.0);
-        for (int k = 0; k < 3; ++k)
-        {
-            m.tris.push_back({tri[k], tri[(k + 1) % 3], c});
-            m.normal.push_back(n);
-            m.dir.push_back(meanDir({tri[k], tri[(k + 1) % 3]}, n));
-        }
+        // A singular triangle's mean direction is arbitrary, so its turn lands on one of its corners, which is where the
+        // parametrization wants it.
+        m.tris.push_back(tri);
+        m.normal.push_back(n);
+        m.dir.push_back(meanDir({tri[0], tri[1], tri[2]}, n));
     }
 
     std::unordered_map<uint64_t, Index> edgeOf;

@@ -1174,7 +1174,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     const bool closed = isClosed(src);
     auto record = [&](QuadRemeshResult r) {
         if (r.ok())
-            result.attempts.push_back({r.layout, r.mesh.numFaces(), int(defects(r.mesh, src, bvh, closed))});
+            result.attempts.push_back({r.layout, r.mesh.numFaces(), int(defects(r.mesh, src, bvh, closed)), r.metrics.irregular});
         return r;
     };
     auto build = [&](const char* layout, const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
@@ -1187,11 +1187,36 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     };
     std::optional<QuadRemeshResult> seamless;
     int seamlessFlaws = 0;
+    // The seamless layout puts every pole on a lattice point, so poles closer than a step or so fold it; a close pair of
+    // opposite poles is only a kink in the flow, and the field without it is the one to lay out.
+    std::vector<glm::dvec3> qSeam = q;
+    if (opts.seamless && !opts.poles)
+    {
+        // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
+        FieldOptions budgeted = fo;
+        budgeted.curvatureWeight *= 0.3;
+        for (int round = 0; round < 3; ++round)
+        {
+            const std::vector<FieldSingularity> poles = fieldSingularities(s, qSeam);
+            const std::vector<FieldSingularity> kept = spreadPoles(s, cancelClosePoles(s, poles, scale, 1.5), scale, 1.0);
+            bool same = kept.size() == poles.size();
+            for (size_t i = 0; i < kept.size() && same; ++i)
+                same = kept[i].tri == poles[i].tri && kept[i].index == poles[i].index;
+            if (same)
+                break;
+            PrescribedTwist pt = prescribeSingularities(s, kept);
+            if (!pt.error.empty())
+                break;
+            budgeted.twist = std::move(pt.twist);
+            qSeam = solveCrossField(s, budgeted);
+        }
+        Budget::note(std::to_string(fieldSingularities(s, qSeam).size()) + " poles for the seamless layout");
+    }
     auto trySeamless = [&](int foldRetries) {
         std::vector<std::array<int, 2>> steps;
         Extracted grid;
         Index folds = 0;
-        std::vector<glm::dvec3> o = solveSeamlessPositions(s, q, scale, nullptr, &steps, &grid, foldRetries, &folds);
+        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, scale, nullptr, &steps, &grid, foldRetries, &folds);
         if (o.empty())
             return folds;
         auto consider = [&](QuadRemeshResult r) {
@@ -1206,7 +1231,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         };
         // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
         if (grid.mesh.numFaces() == 0 || consider(record(buildFrom(std::move(grid), "seamless"))) > 0)
-            consider(build("seamless", o, &steps));
+            consider(record(buildFrom(extractMesh(s, qSeam, o, scale, &steps), "seamless")));
         return folds;
     };
     // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,

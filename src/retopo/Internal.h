@@ -219,6 +219,19 @@ struct PrescribedTwist
 };
 LILA_SCENE_API PrescribedTwist prescribeSingularities(const Surface& s, std::span<const FieldSingularity> singularities);
 
+/**
+ * The poles left when each three-edge and five-edge pole closer than `reach` lattice steps (scale per vertex) cancel,
+ * closest pairs first. Such a pair is a dislocation: the flow kinks there but turns no further.
+ */
+LILA_SCENE_API std::vector<FieldSingularity> cancelClosePoles(const Surface& s, const std::vector<FieldSingularity>& poles,
+                                                              const std::vector<double>& scale, double reach);
+/**
+ * Poles moved apart until no two are closer than minSep lattice steps over the surface. Each pole too close to one
+ * already placed moves to the nearest clear spot within two steps, or failing that joins the nearest placed pole.
+ */
+LILA_SCENE_API std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles,
+                                                         const std::vector<double>& scale, double minSep);
+
 /** Per triangle, its shell (connected through edges); and per shell, the index total its singularities must reach, or INT_MIN when it has a border. */
 struct Shells
 {

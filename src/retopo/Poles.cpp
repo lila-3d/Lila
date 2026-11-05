@@ -13,6 +13,7 @@
 #include <map>
 #include <numeric>
 #include <queue>
+#include <tuple>
 
 namespace lila::retopo::detail
 {
@@ -200,6 +201,133 @@ PrescribedTwist prescribeSingularities(const Surface& s, std::span<const FieldSi
             if (sides[t].edge[k] != kInvalid)
                 out.twist[sides[t].edge[k]] += sides[t].sign[k] * y[t];
     return out;
+}
+
+std::vector<FieldSingularity> cancelClosePoles(const Surface& s, const std::vector<FieldSingularity>& poles, const std::vector<double>& scale,
+                                               double reach)
+{
+    auto centre = [&](Index t) { return (s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) / 3.0; };
+    auto spacing = [&](Index t) { return (scale[s.tris[t][0]] + scale[s.tris[t][1]] + scale[s.tris[t][2]]) / 3.0; };
+    std::vector<std::tuple<double, size_t, size_t>> pairs;
+    for (size_t i = 0; i < poles.size(); ++i)
+        for (size_t j = i + 1; j < poles.size(); ++j)
+            if (poles[i].index * poles[j].index < 0)
+            {
+                const double d = glm::length(centre(poles[i].tri) - centre(poles[j].tri)) / (0.5 * (spacing(poles[i].tri) + spacing(poles[j].tri)));
+                if (d < reach)
+                    pairs.push_back({d, i, j});
+            }
+    std::sort(pairs.begin(), pairs.end());
+    std::vector<int> left(poles.size());
+    for (size_t i = 0; i < poles.size(); ++i)
+        left[i] = poles[i].index;
+    for (const auto& [d, i, j] : pairs)
+        if (left[i] != 0 && left[j] != 0)
+        {
+            const int sign = left[i] > 0 ? 1 : -1;
+            left[i] -= sign;
+            left[j] += sign;
+        }
+    std::vector<FieldSingularity> out;
+    for (size_t i = 0; i < poles.size(); ++i)
+        if (left[i] != 0)
+            out.push_back({poles[i].tri, left[i]});
+    return out;
+}
+
+std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles, const std::vector<double>& scale,
+                                          double minSep)
+{
+    const Index nt = Index(s.tris.size());
+    auto centre = [&](Index t) { return (s.pos[s.tris[t][0]] + s.pos[s.tris[t][1]] + s.pos[s.tris[t][2]]) / 3.0; };
+    auto spacing = [&](Index t) { return (scale[s.tris[t][0]] + scale[s.tris[t][1]] + scale[s.tris[t][2]]) / 3.0; };
+    auto neighbours = [&](Index t) {
+        std::array<Index, 3> out{kInvalid, kInvalid, kInvalid};
+        for (int k = 0; k < 3; ++k)
+        {
+            const Index a = s.tris[t][k], b = s.tris[t][(k + 1) % 3];
+            for (Index i = s.adjStart[a]; i < s.adjStart[a + 1]; ++i)
+                if (s.adj[i] == b)
+                {
+                    const Index e = s.adjEdge[i];
+                    if (s.edgeTriCount[e] == 2)
+                        out[k] = s.edgeTris[e][0] == t ? s.edgeTris[e][1] : s.edgeTris[e][0];
+                }
+        }
+        return out;
+    };
+    // Geodesic distance in lattice steps from the triangles in `from`, out to `radius`; calls visit(t, d) for each.
+    std::vector<double> seen(nt, std::numeric_limits<double>::max());
+    std::vector<Index> touched;
+    auto spread = [&](Index from, double radius, auto&& visit) {
+        for (Index t : touched)
+            seen[t] = std::numeric_limits<double>::max();
+        touched.clear();
+        using Item = std::pair<double, Index>;
+        std::priority_queue<Item, std::vector<Item>, std::greater<>> todo;
+        todo.push({0.0, from});
+        seen[from] = 0.0;
+        touched.push_back(from);
+        while (!todo.empty())
+        {
+            const auto [d, t] = todo.top();
+            todo.pop();
+            if (d > seen[t])
+                continue;
+            visit(t, d);
+            for (Index o : neighbours(t))
+            {
+                if (o == kInvalid)
+                    continue;
+                const double nd = d + glm::length(centre(o) - centre(t)) / (0.5 * (spacing(o) + spacing(t)));
+                if (nd < radius && nd < seen[o])
+                {
+                    if (seen[o] == std::numeric_limits<double>::max())
+                        touched.push_back(o);
+                    seen[o] = nd;
+                    todo.push({nd, o});
+                }
+            }
+        }
+    };
+    std::vector<double> clearance(nt, std::numeric_limits<double>::max()); // to the nearest placed pole
+    std::vector<FieldSingularity> placed;
+    auto place = [&](FieldSingularity p) {
+        placed.push_back(p);
+        spread(p.tri, 3.0 * minSep, [&](Index t, double d) { clearance[t] = std::min(clearance[t], d); });
+    };
+    for (const FieldSingularity& p : poles)
+    {
+        if (clearance[p.tri] >= minSep)
+        {
+            place(p);
+            continue;
+        }
+        Index best = kInvalid;
+        spread(p.tri, 2.0, [&](Index t, double) {
+            if (best == kInvalid && clearance[t] >= minSep)
+                best = t;
+        });
+        if (best != kInvalid)
+        {
+            place({best, p.index});
+            continue;
+        }
+        size_t nearest = 0;
+        double bestD = std::numeric_limits<double>::max();
+        for (size_t i = 0; i < placed.size(); ++i)
+            if (const double d = glm::length(centre(placed[i].tri) - centre(p.tri)); d < bestD)
+            {
+                bestD = d;
+                nearest = i;
+            }
+        if (placed.empty())
+            place(p);
+        else
+            placed[nearest].index += p.index;
+    }
+    std::erase_if(placed, [](const FieldSingularity& p) { return p.index == 0; });
+    return placed;
 }
 
 std::vector<glm::dvec3> propagateField(const Surface& s, const std::vector<double>& twist)
