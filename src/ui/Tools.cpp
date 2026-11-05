@@ -15,7 +15,7 @@ namespace lila::ui::tools
 {
 namespace
 {
-Tool gTool = Tool::Move;
+Tool gTool = Tool::Select;
 bool gPivotEdit = false;
 bool gCloneDrag = false;
 unsigned gHandleResets = 0;
