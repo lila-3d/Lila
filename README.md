@@ -19,6 +19,8 @@ Don't create the `build` folder by hand; the first `build.bat` makes it. `build.
 
 To skip the heaviest dependencies, configure once before `build.bat` with `cmake --preset windows -DLILA_USD=OFF -DLILA_VOLUMES=OFF` (either or both). `LILA_USD=OFF` drops OpenUSD: USD files, live stages, MaterialX and Hydra viewport renderers; Lila's own viewport doesn't need it. `LILA_VOLUMES=OFF` drops OpenVDB and the VDB volume nodes.
 
+After the dependencies, Lila itself takes about 7 minutes cold on 32 cores, and about 1 minute in a new build folder once sccache is warm. Disk: about 115 GB for Debug, RelWithDebInfo and Release builds with their dependencies, plus about 90 GB of vcpkg build trees in `vcpkg_installed\vcpkg\blds` that you can delete once dependencies are built (`-DVCPKG_INSTALL_OPTIONS=--clean-after-build` doesn't keep them). `-DLILA_BUILD_TESTS=OFF` skips the tests, almost 40% of the build folder.
+
 To build an installer instead, also install Inno Setup 6 (`winget install JRSoftware.InnoSetup`), then:
 
 ```
