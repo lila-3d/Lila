@@ -13,6 +13,7 @@ class QLineEdit;
 class QListWidget;
 class QLabel;
 class QPushButton;
+class QScrollArea;
 class QVBoxLayout;
 
 namespace lila::scene
@@ -51,12 +52,15 @@ private:
     void applyFilter();
     void rebuild();
     void updateValues();
+    /** Keeps the body wide enough for its rows, so it never scrolls sideways. */
+    void fitWidth();
     void setAttr(int attr, const scene::json& value);
     scene::Node* current() const;
 
     QLineEdit* mFilter = nullptr;
     QListWidget* mList = nullptr;
     QLabel* mPreview = nullptr;
+    QScrollArea* mScroll = nullptr;
     QWidget* mBody = nullptr;
     QVBoxLayout* mBodyLayout = nullptr;
     QPushButton* mAssign = nullptr;

@@ -47,6 +47,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
@@ -305,9 +306,10 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     top->addWidget(mPreview);
     root->addLayout(top);
 
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = mScroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     mBody = new QWidget;
     mBodyLayout = new QVBoxLayout(mBody);
     mBodyLayout->setContentsMargins(0, 0, 0, 0);
@@ -367,6 +369,7 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     });
     mTextureListener = textures::addListener([this] { scheduleRefresh(); });
     refreshList();
+    fitWidth();
 }
 
 MaterialEditor::~MaterialEditor()
@@ -891,6 +894,15 @@ void MaterialEditor::updateValues()
     for (auto& fn : mUpdaters)
         fn();
     mPreview->setPixmap(previewBall(*n));
+    // Rows just added are shown on the next pass of the event loop; until then they take no room.
+    QTimer::singleShot(0, this, [this] { fitWidth(); });
+}
+
+void MaterialEditor::fitWidth()
+{
+    // Set on the scroll area, not the panel: the dock code relaxes the panel's own minimum while its tab is hidden.
+    const int rows = mBody->minimumSizeHint().width() + mScroll->verticalScrollBar()->sizeHint().width();
+    mScroll->setMinimumWidth(std::max(rows, kPreviewSize + fontMetrics().averageCharWidth() * 30));
 }
 
 void registerMaterialUi()
