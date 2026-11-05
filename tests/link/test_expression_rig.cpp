@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "FakeServer.h"
+#include "TestUtil.h"
 
 #include "core/MainQueue.h"
 #include "link/UnrealLink.h"
