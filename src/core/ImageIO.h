@@ -74,7 +74,7 @@ LILA_FOUNDATION_API void write(const fs::path& path, const Image& image, int bit
 LILA_FOUNDATION_API Image readPng(const fs::path& path, std::string* err = nullptr);
 LILA_FOUNDATION_API Image readExr(const fs::path& path, std::string* err = nullptr);
 LILA_FOUNDATION_API Image readTga(const fs::path& path, std::string* err = nullptr);
-/** Strip-based RGB/RGBA, 8/16 bit unsigned or 32 bit float, uncompressed or deflate, predictor none or horizontal. */
+/** Strip-based RGB/RGBA, 8/16 bit unsigned or 32 bit float, uncompressed, LZW, PackBits or deflate, predictor none or horizontal. */
 LILA_FOUNDATION_API Image readTiff(const fs::path& path, std::string* err = nullptr);
 /** The flattened image of an uncompressed 8/16 bit RGB PSD. */
 LILA_FOUNDATION_API Image readPsd(const fs::path& path, std::string* err = nullptr);

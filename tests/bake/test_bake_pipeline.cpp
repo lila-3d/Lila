@@ -24,6 +24,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <tuple>
 #include <thread>
 
 using namespace lila;
@@ -541,4 +543,148 @@ TEST_CASE("Unreal texture import params: per map settings, UDIM sets and materia
     CHECK(link::textureAssetName("C:/b/rock_N_1003.png", 1003) == "rock_N");
     CHECK(link::textureSettings("baseColor", "srgb", "png", 8)["srgb"] == true);
     CHECK(link::textureSettings("id", "srgb", "png", 8)["compression"] == "uncompressed");
+}
+
+namespace
+{
+/** Full-dictionary TIFF LZW, so codes widen past 9 bits and the table clears at 4094. */
+std::vector<unsigned char> lzwEncode(const std::vector<unsigned char>& in)
+{
+    std::vector<unsigned char> out;
+    uint32_t acc = 0, width = 9, next = 258;
+    int bits = 0;
+    auto put = [&](uint32_t c) {
+        acc = (acc << width) | c;
+        bits += int(width);
+        while (bits >= 8)
+        {
+            out.push_back(static_cast<unsigned char>(acc >> (bits - 8)));
+            bits -= 8;
+        }
+    };
+    std::map<std::pair<int, unsigned char>, uint32_t> table;
+    put(256);
+    int w = -1;
+    for (unsigned char c : in)
+    {
+        if (w >= 0)
+            if (auto it = table.find({w, c}); it != table.end())
+            {
+                w = int(it->second);
+                continue;
+            }
+        if (w < 0)
+        {
+            w = c;
+            continue;
+        }
+        put(uint32_t(w));
+        table[{w, c}] = next++;
+        if (next >= (1u << width) && width < 12)
+            ++width;
+        if (next >= 4094)
+        {
+            put(256);
+            table.clear();
+            next = 258;
+            width = 9;
+        }
+        w = c;
+    }
+    put(uint32_t(w));
+    ++next;
+    if (next >= (1u << width) && width < 12)
+        ++width;
+    put(257);
+    if (bits)
+        out.push_back(static_cast<unsigned char>(acc << (8 - bits)));
+    return out;
+}
+
+/** Runs of up to 128 repeats, literals otherwise. */
+std::vector<unsigned char> packBits(const std::vector<unsigned char>& in)
+{
+    std::vector<unsigned char> out;
+    for (size_t i = 0; i < in.size();)
+    {
+        size_t run = 1;
+        while (i + run < in.size() && run < 128 && in[i + run] == in[i])
+            ++run;
+        if (run > 1)
+        {
+            out.insert(out.end(), {static_cast<unsigned char>(1 - int(run)), in[i]});
+            i += run;
+            continue;
+        }
+        size_t lit = 1;
+        while (i + lit < in.size() && lit < 128 && in[i + lit] != in[i + lit - 1])
+            ++lit;
+        out.push_back(static_cast<unsigned char>(lit - 1));
+        out.insert(out.end(), in.begin() + std::ptrdiff_t(i), in.begin() + std::ptrdiff_t(i + lit));
+        i += lit;
+    }
+    return out;
+}
+
+/** An 8-bit chunky RGB TIFF, one strip, with the given compression. */
+void writeRgbTiff(const fs::path& path, int w, int h, const std::vector<unsigned char>& rgb, uint16_t compression)
+{
+    const std::vector<unsigned char> data = compression == 5 ? lzwEncode(rgb) : packBits(rgb);
+    std::vector<unsigned char> b = {'I', 'I', 42, 0};
+    auto p16 = [&](uint32_t v) { b.insert(b.end(), {static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8)}); };
+    auto p32 = [&](uint32_t v) { p16(v & 0xffff); p16(v >> 16); };
+    const uint32_t bitsAt = 8, dataAt = 14;
+    p32(uint32_t(dataAt + data.size()));
+    p16(8);
+    p16(8);
+    p16(8);
+    b.insert(b.end(), data.begin(), data.end());
+    const std::tuple<uint16_t, uint16_t, uint32_t, uint32_t> entries[] = {
+        {256, 3, 1, uint32_t(w)}, {257, 3, 1, uint32_t(h)}, {258, 3, 3, bitsAt}, {259, 3, 1, compression}, {262, 3, 1, 2},
+        {273, 4, 1, dataAt},      {277, 3, 1, 3},           {278, 3, 1, uint32_t(h)}, {279, 4, 1, uint32_t(data.size())}};
+    p16(uint32_t(std::size(entries)));
+    for (auto [tag, type, count, value] : entries)
+    {
+        p16(tag);
+        p16(type);
+        p32(count);
+        p32(value);
+    }
+    p32(0);
+    std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(b.data()), std::streamsize(b.size()));
+}
+} // namespace
+
+TEST_CASE("TIFF reads LZW and PackBits strips")
+{
+    const fs::path dir = tempDir("tiff_lzw");
+    const int w = 97, h = 61;
+    std::vector<unsigned char> rgb(size_t(w) * h * 3);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            unsigned char* p = &rgb[(size_t(y) * w + x) * 3];
+            p[0] = static_cast<unsigned char>(x / 8 * 20);
+            p[1] = static_cast<unsigned char>((x * 7 + y * 13) & 255);
+            p[2] = static_cast<unsigned char>(y < h / 2 ? 200 : x ^ y);
+        }
+    for (uint16_t compression : {uint16_t(5), uint16_t(32773)})
+    {
+        INFO("compression " << compression);
+        const fs::path f = dir / ("c" + std::to_string(compression) + ".tif");
+        writeRgbTiff(f, w, h, rgb, compression);
+        std::string err;
+        const image::Image img = image::read(f, &err);
+        INFO(err);
+        REQUIRE(img.width == w);
+        REQUIRE(img.height == h);
+        int bad = 0;
+        for (size_t i = 0; i < size_t(w) * h; ++i)
+        {
+            for (int c = 0; c < 3; ++c)
+                bad += std::lround(img.rgba[i * 4 + size_t(c)] * 255.0f) != rgb[i * 3 + size_t(c)];
+            bad += img.rgba[i * 4 + 3] != 1.0f;
+        }
+        CHECK(bad == 0);
+    }
 }

@@ -648,6 +648,94 @@ void writeTiffImpl(const fs::path& path, int w, int h, std::span<const float> rg
     writeFile(path, out);
 }
 
+/** TIFF LZW (compression 5): MSB-first codes, 256 clear, 257 end, width grows one code early. False on corrupt data. */
+bool decodeTiffLzw(const unsigned char* src, size_t n, std::vector<unsigned char>& out)
+{
+    std::vector<uint32_t> prefix(4096);
+    std::vector<unsigned char> suffix(4096), first(4096), stack;
+    stack.reserve(4096);
+    for (uint32_t i = 0; i < 256; ++i)
+        suffix[i] = first[i] = static_cast<unsigned char>(i);
+    size_t o = 0, bit = 0;
+    uint32_t next = 258, width = 9;
+    int prev = -1;
+    auto emit = [&](uint32_t code) {
+        stack.clear();
+        for (; code >= 258; code = prefix[code])
+            stack.push_back(suffix[code]);
+        stack.push_back(static_cast<unsigned char>(code));
+        for (auto it = stack.rbegin(); it != stack.rend() && o < out.size(); ++it)
+            out[o++] = *it;
+    };
+    while (o < out.size() && bit + width <= n * 8)
+    {
+        uint32_t code = 0;
+        for (uint32_t i = 0; i < width; ++i, ++bit)
+            code = code << 1 | ((src[bit >> 3] >> (7 - (bit & 7))) & 1u);
+        if (code == 257)
+            break;
+        if (code == 256)
+        {
+            next = 258;
+            width = 9;
+            prev = -1;
+            continue;
+        }
+        if (prev < 0)
+        {
+            if (code > 255)
+                return false;
+            emit(code);
+        }
+        else
+        {
+            if (code > next)
+                return false;
+            const unsigned char head = code == next ? first[uint32_t(prev)] : first[code];
+            if (next < 4096)
+            {
+                prefix[next] = uint32_t(prev);
+                suffix[next] = head;
+                first[next] = first[uint32_t(prev)];
+                ++next;
+            }
+            emit(code);
+        }
+        prev = int(code);
+        if (next + 1 >= (1u << width) && width < 12)
+            ++width;
+    }
+    return o == out.size();
+}
+
+/** PackBits (compression 32773). False on corrupt data. */
+bool decodePackBits(const unsigned char* src, size_t n, std::vector<unsigned char>& out)
+{
+    size_t i = 0, o = 0;
+    while (o < out.size() && i < n)
+    {
+        const int c = static_cast<signed char>(src[i++]);
+        if (c >= 0)
+        {
+            const size_t len = size_t(c) + 1;
+            if (i + len > n || o + len > out.size())
+                return false;
+            std::memcpy(&out[o], &src[i], len);
+            i += len;
+            o += len;
+        }
+        else if (c != -128)
+        {
+            const size_t len = size_t(1 - c);
+            if (i >= n || o + len > out.size())
+                return false;
+            std::memset(&out[o], src[i++], len);
+            o += len;
+        }
+    }
+    return o == out.size();
+}
+
 Image readTiffImpl(const fs::path& path, std::string* err)
 {
     auto fail = [&](const std::string& why) {
@@ -693,8 +781,8 @@ Image readTiffImpl(const fs::path& path, std::string* err)
         return fail("only chunky RGB or RGBA");
     if (!((bits == 8 || bits == 16) && format == 1) && !(bits == 32 && format == 3))
         return fail("only 8/16 bit unsigned or 32 bit float samples");
-    if (compression != 1 && compression != 8 && compression != 32946)
-        return fail("only uncompressed or deflate");
+    if (compression != 1 && compression != 5 && compression != 8 && compression != 32773 && compression != 32946)
+        return fail("only uncompressed, LZW, PackBits or deflate");
     const std::vector<uint32_t>& offsets = tags[273];
     const std::vector<uint32_t>& counts = tags[279];
     const int rowsPerStrip = int(std::min<uint32_t>(one(278, uint32_t(h)), uint32_t(h)));
@@ -716,6 +804,12 @@ Image readTiffImpl(const fs::path& path, std::string* err)
             if (counts[s] < raw.size())
                 return fail("short strip");
             std::memcpy(raw.data(), &d[offsets[s]], raw.size());
+        }
+        else if (compression == 5 || compression == 32773)
+        {
+            const bool ok = compression == 5 ? decodeTiffLzw(&d[offsets[s]], counts[s], raw) : decodePackBits(&d[offsets[s]], counts[s], raw);
+            if (!ok)
+                return fail("bad strip data");
         }
         else
         {
