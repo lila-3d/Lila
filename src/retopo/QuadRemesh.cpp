@@ -1171,7 +1171,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     {
         best = build("field", solvePositionField(s, q, scale));
         clock.lap("local");
-        if (seamless && seamless->ok() && (!best.ok() || seamless->metrics.irregular <= best.metrics.irregular))
+        // Fewer poles only count when it is no less clean: a folded seamless layout is worse than any clean one.
+        if (seamless && seamless->ok() &&
+            (!best.ok() || seamlessFlaws < flawsOf(best) || (seamlessFlaws == flawsOf(best) && seamless->metrics.irregular <= best.metrics.irregular)))
             best = std::move(*seamless);
     }
     // Where lattice points land against a tight spot is down to where the lattice happens to sit; a lattice shifted by
