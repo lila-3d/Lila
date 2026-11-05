@@ -173,8 +173,8 @@ struct QuadRemeshOptions
     /** All quads (extract at half density and split each polygon); otherwise quad dominant. */
     bool pureQuads = true;
     int relaxIterations = 6;
-    /** Also try one global parametrization, which only turns at the poles, and keep it when it has fewer irregular points. */
-    bool seamless = false;
+    /** Also try one global parametrization, which only turns at the poles, and keep it when it is as clean with fewer irregular points. */
+    bool seamless = true;
     /** Source points (object space, exact) the result keeps as vertices, like a patch's border points to stitch it back by. */
     std::vector<glm::dvec3> pinnedPoints;
     /** Seconds before giving up with an error saying how far it got; 0 is unlimited. The progress overlay can cancel too. */

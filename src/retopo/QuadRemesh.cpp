@@ -1187,10 +1187,12 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     };
     std::optional<QuadRemeshResult> seamless;
     int seamlessFlaws = 0;
+    // Its lattice spacing evens out over the whole surface, so local density handles barely show in it.
+    const bool trySeamlessLayout = opts.seamless && opts.densityHandles.empty();
     // The seamless layout puts every pole on a lattice point, so poles closer than a step or so fold it; a close pair of
     // opposite poles is only a kink in the flow, and the field without it is the one to lay out.
     std::vector<glm::dvec3> qSeam = q;
-    if (opts.seamless && !opts.poles)
+    if (trySeamlessLayout && !opts.poles)
     {
         // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
         FieldOptions budgeted = fo;
@@ -1235,13 +1237,14 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         return folds;
     };
     // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,
-    // when the budget leaves room for the retry and the extraction after it.
-    if (opts.seamless)
+    // when the budget leaves room for the retry and the extraction after it. One folded through and through (busy
+    // creases, mostly) doesn't come right by steering, so it isn't retried.
+    if (trySeamlessLayout)
     {
         const auto started = std::chrono::steady_clock::now();
         const Index folds = trySeamless(0);
         const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        if (folds > 0 && Budget::remaining() > 3.0 * took)
+        if (folds > 0 && folds <= Index(s.tris.size() / 100) && Budget::remaining() > 3.0 * took)
             trySeamless(48);
     }
     clock.lap("seamless");

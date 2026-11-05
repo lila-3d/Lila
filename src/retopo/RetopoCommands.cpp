@@ -251,7 +251,7 @@ std::vector<FlagDef> remeshFlags()
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
             {"edgesAround", "", T::Int, 8, "Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off.", {}, {}, 0.0, 64.0},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
-            {"seamless", "", T::Bool, false, "Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points."},
+            {"seamless", "", T::Bool, true, "Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower."},
             {"poles", "", T::List, nullptr,
              "The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from "
              "retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports."}};
@@ -280,7 +280,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     if (a.has("densityHandles") && !a.flags["densityHandles"].is_null())
         o.densityHandles = densityHandlesFor(a.flags["densityHandles"], src, cmd);
     o.pureQuads = a.get<bool>("pureQuads", true);
-    o.seamless = a.get<bool>("seamless", false);
+    o.seamless = a.get<bool>("seamless", true);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
     o.edgesAround = std::clamp(a.get<int>("edgesAround", 8), 0, 64);
     if (a.has("poles") && !a.flags["poles"].is_null())

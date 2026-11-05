@@ -5819,7 +5819,7 @@ def polyBoolean(*objects: Any, operation: str | None = None, keepCutters: bool |
         splitNgons: Cut the n-gons along the seam into quads (and triangles) that carry on the edge loops. Default True.
         quadBand: Remesh a band of faces around the seam into quads that follow it, welded back into the faces around it. Falls back to splitting n-gons where the band's border can't be kept. Default False.
         bandRings: Rings of faces past the seam the quad band takes in. Default 1.
-        timeout: Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever. Default 60.0.
+        timeout: Seconds the quad band remesh may take before the n-gon split runs instead; 0 waits forever. Default 5.0.
         filletWidth: Width of a rounded strip along the seam, cm; 0 keeps it sharp. Default 0.0.
         filletSegments: Rows of faces across the fillet. Default 2.
         hardAngle: New edges sharper than this many degrees are marked hard. Default 30.0.
@@ -6479,7 +6479,7 @@ def quadRemesh(*objects: Any, method: str | None = None, targetFaces: int | None
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 8.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
-        seamless: Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points. Default False.
+        seamless: Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower. Default True.
         poles: The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports.
         relaxIterations: Tangential relax passes on the surface. Default 6.
         transferUvs: Copy UV sets from the source. Default True.
@@ -7122,7 +7122,7 @@ def retopoPoles(*objects: Any, method: str | None = None, targetFaces: int | Non
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 8.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
-        seamless: Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points. Default False.
+        seamless: Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower. Default True.
         poles: The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports.
     """
 
