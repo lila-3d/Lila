@@ -91,9 +91,13 @@ void projectPoints(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::M
     });
 }
 
-/** Tangential Laplacian relax that slides points along the surface and crease points along their creases. */
+/**
+ * Tangential Laplacian relax that slides points along the surface and crease points along their creases. With a seam
+ * axis, the half of a symmetric remesh: border points on the plane relax as if their mirrored neighbours were there,
+ * so the rows crossing the seam meet it straight, and stay on the plane.
+ */
 void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, const FeatureLines& lines, double h,
-                    int iterations)
+                    int iterations, int seamAxis = -1)
 {
     LILA_ZONE();
 
@@ -110,6 +114,21 @@ void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, c
             next[p] = at;
             if (feature[p] == FeatureKind::Corner || nb[p].empty())
                 return;
+            if (seamAxis >= 0 && std::abs(at[seamAxis]) < 0.35 * h && m.isBoundaryPoint(p))
+            {
+                // The mirror of a neighbour off the plane averages with it onto the plane, so only its other coordinates count.
+                glm::dvec3 sum(0.0);
+                for (Index o : nb[p])
+                    sum += m.position(o);
+                glm::dvec3 target = glm::mix(at, sum / double(nb[p].size()), 0.5);
+                target[seamAxis] = 0.0;
+                geo::BvhClosest c;
+                if (bvh.closestPoint(target, c))
+                    target = c.point;
+                target[seamAxis] = 0.0;
+                next[p] = target;
+                return;
+            }
             glm::dvec3 avg(0.0);
             int count = 0;
             for (Index o : nb[p])
@@ -1131,7 +1150,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         boundary.resize(m.pointCapacity(), 0);
         snapBorder(m, feature, border, 1.5 * coarseH);
         projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
-        relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2));
+        relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2), symmetric ? opts.symmetryAxis : -1);
         clock.lap("cleanup");
 
         // The patch layout is built at the final density.
@@ -1141,7 +1160,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             snapBorder(m, feature, border, coarseH);
             projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
         }
-        relaxAlongFeatures(m, feature, bvh, lines, h, opts.relaxIterations);
+        relaxAlongFeatures(m, feature, bvh, lines, h, opts.relaxIterations, symmetric ? opts.symmetryAxis : -1);
         untangle(m, feature, src, bvh, lines, h);
         clock.lap("refine");
 
