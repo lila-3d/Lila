@@ -17,6 +17,7 @@
 #include "ops/Command.h"
 #include "ops/Undo.h"
 #include "scene/Graph.h"
+#include "scene/Materials.h"
 #include "scene/Node.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
@@ -78,6 +79,37 @@ constexpr int kRoleId = Qt::UserRole + 1;
 constexpr int kRoleLayer = Qt::UserRole + 2;
 constexpr int kRoleFolder = Qt::UserRole + 3;
 constexpr const char* kAllChannels = "";
+
+/** Lists the scene's materials, refreshed each time it opens, keeping `current` selected and listed. */
+class MaterialSlotCombo : public QComboBox
+{
+public:
+    MaterialSlotCombo(std::string current, QWidget* parent) : QComboBox(parent), mCurrent(std::move(current)) { fill(); }
+
+    void showPopup() override
+    {
+        mCurrent = currentData().toString().toStdString();
+        fill();
+        QComboBox::showPopup();
+    }
+
+private:
+    void fill()
+    {
+        std::vector<std::string> names;
+        for (const scene::Node* m : scene::materials::all(scene::Graph::current()))
+            names.push_back(m->path());
+        if (std::ranges::find(names, mCurrent) == names.end())
+            names.push_back(mCurrent);
+        std::ranges::sort(names);
+        clear();
+        for (const std::string& n : names)
+            addItem(QString::fromStdString(n), QString::fromStdString(n));
+        setCurrentIndex(std::max(0, findData(QString::fromStdString(mCurrent))));
+    }
+
+    std::string mCurrent;
+};
 
 // Active paint layers ------------------------------------------------------------------------------------------------
 
@@ -463,11 +495,11 @@ struct TextureSetPanel::Impl
 
     // Commands ----------------------------------------------------------------------------------------------------------
 
-    json args(json list) const
+    json args(std::initializer_list<json> list) const
     {
         json a = json::array({set});
-        for (json& x : list)
-            a.push_back(std::move(x));
+        for (const json& x : list)
+            a.push_back(x);
         return {{"args", a}};
     }
 
@@ -975,16 +1007,12 @@ struct TextureSetPanel::Impl
 
     void rebuildSettings()
     {
-        QLayout* old = settingsBox->layout();
-        if (old)
+        delete settingsBox->layout();
+        // Children of nested layouts too, which taking the top layout's items would miss.
+        for (QWidget* w : settingsBox->findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
         {
-            while (QLayoutItem* it = old->takeAt(0))
-            {
-                if (QWidget* w = it->widget())
-                    w->deleteLater();
-                delete it;
-            }
-            delete old;
+            w->hide();
+            w->deleteLater();
         }
         auto* v = new QVBoxLayout(settingsBox);
         v->setContentsMargins(4, 2, 4, 4);
@@ -1149,10 +1177,21 @@ struct TextureSetPanel::Impl
         QObject::connect(conv, &QComboBox::activated, settingsBox,
                          [this, conv](int) { runUi("texSetSettings", args({json{{"normalConvention", conv->currentData().toString().toStdString()}}})); });
         form->addRow("Normals", conv);
+        form->addRow("Material", materialPicker(settingsBox));
         auto* bake = new QLabel(settings.bakeProject.empty() ? QString("none") : qs(settings.bakeProject), settingsBox);
         bake->setToolTip("The bake project whose maps feed the set's mesh inputs (texSetSettings bakeProject=)");
         form->addRow("Bake project", bake);
         v->addLayout(form);
+    }
+
+    /** The material slot the set drives. An empty setting means the material named after the set. */
+    QComboBox* materialPicker(QWidget* parent)
+    {
+        auto* box = new MaterialSlotCombo(settings.material.empty() ? set : settings.material, parent);
+        box->setToolTip("Meshes using this material show the set's maps");
+        QObject::connect(box, &QComboBox::activated, parent,
+                         [this, box](int) { runUi("texSetSettings", args({json{{"material", box->currentData().toString().toStdString()}}})); });
+        return box;
     }
 
     void rebuildChannelPicker()
@@ -1708,7 +1747,7 @@ TextureSetPanel::TextureSetPanel(QWidget* parent) : QWidget(parent), d(std::make
     bh->addWidget(d->bannerText, 1);
     d->rebuild = new QPushButton(icon("refresh"), "Rebuild Layers", d->bannerBox);
     d->rebuild->setObjectName("rebuildLayers");
-    connect(d->rebuild, &QPushButton::clicked, this, [this] { runUi("texRebuildLayers", d->args(json::array())); });
+    connect(d->rebuild, &QPushButton::clicked, this, [this] { runUi("texRebuildLayers", d->args({})); });
     bh->addWidget(d->rebuild);
     d->bannerBox->hide();
     v->addWidget(d->bannerBox);
