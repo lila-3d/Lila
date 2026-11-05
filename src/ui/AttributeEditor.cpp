@@ -510,6 +510,8 @@ AttributeEditor::AttributeEditor(QWidget* parent) : QWidget(parent)
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 4);
     outer->setSpacing(4);
+    // A label column plus a row of three float fields.
+    setMinimumWidth(fontMetrics().averageCharWidth() * 42);
 
     setProperty("lilaMultiEditPanel", true);
     attrView::installKeyWatch();

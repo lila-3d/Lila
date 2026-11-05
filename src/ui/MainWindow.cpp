@@ -235,7 +235,11 @@ void MainWindow::registerPanels()
                      splitDockWidget(channels, dock(kDisplayLayersDock), Qt::Vertical);
                  }});
     panels::add({.id = "attributeEditor", .title = "Attribute Editor", .create = make([](QWidget* p) { return new AttributeEditor(p); }),
-                 .area = Qt::RightDockWidgetArea, .icon = "file-description", .place = [this, dock](QDockWidget* d) { tabifyDockWidget(dock(kChannelBoxDock), d); }});
+                 .area = Qt::RightDockWidgetArea, .icon = "file-description", .place = [this, dock](QDockWidget* d) {
+                     tabifyDockWidget(dock(kChannelBoxDock), d);
+                     // Always comes in at its minimum width, not the width of the tab shown before it.
+                     d->setProperty(kHugTabExtent, true);
+                 }});
     auto tabWithAttributes = [this, dock](QDockWidget* d) { tabifyDockWidget(dock("attributeEditor"), d); };
     panels::add({.id = kModelingToolkitDock, .title = "Modeling Toolkit", .create = make([](QWidget* p) { return new ModelingToolkit(p); }),
                  .area = Qt::RightDockWidgetArea, .icon = "tool", .open = false, .place = [tabWithAttributes](QDockWidget* toolkit) {
