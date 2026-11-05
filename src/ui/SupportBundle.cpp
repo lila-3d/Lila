@@ -13,6 +13,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
@@ -208,12 +209,20 @@ void showDialog(QWidget* parent)
     text->setWordWrap(true);
     layout->addWidget(text);
     auto* scene = new QCheckBox("Include the open scene", &dlg);
+    scene->setToolTip(kSceneOnlyTip);
     if (!sceneAllowed())
     {
         scene->setEnabled(false);
         scene->setToolTip("Turned off by your studio");
     }
-    layout->addWidget(scene);
+    auto* sceneNote = new QLabel("No textures", &dlg);
+    sceneNote->setStyleSheet("color: #9a9a9a;");
+    sceneNote->setToolTip(kSceneOnlyTip);
+    auto* sceneRow = new QHBoxLayout;
+    sceneRow->addWidget(scene);
+    sceneRow->addWidget(sceneNote);
+    sceneRow->addStretch(1);
+    layout->addLayout(sceneRow);
     auto* buttons = new QDialogButtonBox(&dlg);
     buttons->addButton("Save...", QDialogButtonBox::AcceptRole)->setDefault(true);
     buttons->addButton(QDialogButtonBox::Cancel);

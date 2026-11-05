@@ -16,6 +16,7 @@ namespace lila::ui::support
 {
 /** Studios set this false (and lock it) to keep scenes out of bundles. */
 inline constexpr const char* kAllowScenePref = "/support/allowScene";
+inline constexpr const char* kSceneOnlyTip = "The scene file only. Textures and other referenced files aren't included.";
 
 /** `crashDir` is a crash folder to include even when it is older than the newest few. */
 LILA_UI_API bool writeBundle(const std::filesystem::path& zip, bool includeScene, std::string* error = nullptr,

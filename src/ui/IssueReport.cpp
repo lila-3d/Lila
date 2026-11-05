@@ -494,13 +494,17 @@ public:
         mBundle->setToolTip("Lila's version, your system and GPU, this session's log, recent crash reports and your prefs (tokens and passwords removed).");
         mScene = new QCheckBox("Include the open scene", this);
         mSceneAllowed = PrefStore::get().value<bool>("general", support::kAllowScenePref, true);
-        if (!mSceneAllowed)
-            mScene->setToolTip("Turned off by your studio");
+        mScene->setToolTip(mSceneAllowed ? support::kSceneOnlyTip : "Turned off by your studio");
+        auto* sceneNote = new QLabel("No textures", this);
+        sceneNote->setStyleSheet("color: #9a9a9a;");
+        sceneNote->setToolTip(support::kSceneOnlyTip);
         mShot = new QCheckBox("Attach screenshot of the Lila window", this);
         layout->addWidget(mBundle);
         auto* sceneRow = new QHBoxLayout;
         sceneRow->addSpacing(20);
         sceneRow->addWidget(mScene);
+        sceneRow->addWidget(sceneNote);
+        sceneRow->addStretch(1);
         layout->addLayout(sceneRow);
         layout->addWidget(mShot);
         auto* fileRow = new QHBoxLayout;
