@@ -98,6 +98,7 @@
 
 #include <QAbstractEventDispatcher>
 #include <QApplication>
+#include <QImageReader>
 #include <QImage>
 #include <QTimer>
 
@@ -232,6 +233,8 @@ int runApp(int argc, char** argv, const host::Options& opts, const fs::path& sta
     QApplication::setApplicationName("Lila");
     QApplication::setApplicationVersion(version::number());
     QApplication::setOrganizationName("Lila");
+    // Qt refuses images over 256 MB by default; texture maps reach 16K and beyond.
+    QImageReader::setAllocationLimit(4096);
     applyTheme(app);
 
     mainq::setWakeup([&app] { QMetaObject::invokeMethod(&app, [] { mainq::drain(); }, Qt::QueuedConnection); });

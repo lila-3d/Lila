@@ -5,6 +5,7 @@
 #include "core/MainQueue.h"
 #include "core/Profile.h"
 #include "render/HdrImage.h"
+#include "render/VirtualTexture.h"
 #include "ui/ViewportTool.h"
 
 #include <QCoreApplication>
@@ -271,7 +272,8 @@ void shrinkToFit(image::Image& img)
     }
 }
 
-Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks = false)
+/** full keeps the decoded image at its own size, else it is shrunk to kMaxSize. */
+Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks = false, bool full = false)
 {
     LILA_ZONE();
 
@@ -360,10 +362,13 @@ Pixels readPixels(const std::string& file, std::string& error, bool allowBlocks 
             px.rgba8 = img;
     }
     if (!px.floats.rgba.empty())
-        shrinkToFit(px.floats);
+    {
+        if (!full)
+            shrinkToFit(px.floats);
+    }
     else if (!px.rgba8.isNull())
     {
-        if (px.rgba8.width() > kMaxSize || px.rgba8.height() > kMaxSize)
+        if (!full && (px.rgba8.width() > kMaxSize || px.rgba8.height() > kMaxSize))
             px.rgba8 = px.rgba8.scaled(kMaxSize, kMaxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         px.rgba8 = px.rgba8.convertToFormat(QImage::Format_RGBA8888);
     }
@@ -416,14 +421,184 @@ render::TexturePtr toTexture(const Pixels& px, bool srgb)
     return t;
 }
 
-/** One file as a texture. */
+/**
+ * A decoded image's mip chain on the CPU, handing the virtual texture system the pages it asks for. Edge texels wrap,
+ * so the map repeats like a plain texture.
+ */
+class ImagePages final : public render::vt::Producer
+{
+public:
+    ImagePages(int width, int height, render::TextureFormat format) : mFormat(format), mBytes(size_t(render::texelBytes(format)))
+    {
+        mLevels.push_back({width, height, {}});
+    }
+
+    /** Level 0 from 8-bit RGBA rows, then every coarser level down to one texel. */
+    void setRgba8(const QImage& img)
+    {
+        Level& top = mLevels[0];
+        top.texels.resize(size_t(top.width) * size_t(top.height) * 4);
+        for (int y = 0; y < top.height; ++y)
+            std::memcpy(&top.texels[size_t(y) * size_t(top.width) * 4], img.constScanLine(y), size_t(top.width) * 4);
+        while (mLevels.back().width > 1 || mLevels.back().height > 1)
+        {
+            const Level& a = mLevels.back();
+            Level b{std::max(a.width / 2, 1), std::max(a.height / 2, 1), {}};
+            b.texels.resize(size_t(b.width) * size_t(b.height) * 4);
+            for (int y = 0; y < b.height; ++y)
+                for (int x = 0; x < b.width; ++x)
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        int sum = 0;
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            const int sx = std::min(x * 2 + (k & 1), a.width - 1), sy = std::min(y * 2 + (k >> 1), a.height - 1);
+                            sum += a.texels[(size_t(sy) * size_t(a.width) + size_t(sx)) * 4 + size_t(c)];
+                        }
+                        b.texels[(size_t(y) * size_t(b.width) + size_t(x)) * 4 + size_t(c)] = uint8_t((sum + 2) / 4);
+                    }
+            mLevels.push_back(std::move(b));
+        }
+    }
+
+    /** Level 0 from linear RGBA floats (consumed), then every coarser level, each encoded in the producer's format. */
+    void setFloats(image::Image img)
+    {
+        mLevels.clear();
+        for (;;)
+        {
+            Level l{img.width, img.height, {}};
+            render::encodeTexels(mFormat, false, img.rgba, l.texels);
+            mLevels.push_back(std::move(l));
+            if (img.width == 1 && img.height == 1)
+                break;
+            const int w = std::max(img.width / 2, 1), h = std::max(img.height / 2, 1);
+            std::vector<float> out(size_t(w) * size_t(h) * 4);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x)
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        float sum = 0.0f;
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            const int sx = std::min(x * 2 + (k & 1), img.width - 1), sy = std::min(y * 2 + (k >> 1), img.height - 1);
+                            sum += img.rgba[(size_t(sy) * size_t(img.width) + size_t(sx)) * 4 + size_t(c)];
+                        }
+                        out[(size_t(y) * size_t(w) + size_t(x)) * 4 + size_t(c)] = sum * 0.25f;
+                    }
+            img = {w, h, std::move(out)};
+        }
+    }
+
+    std::vector<uint8_t> record(render::VulkanContext& vk, VkCommandBuffer cmd, std::span<const render::vt::Job> jobs,
+                                std::vector<render::compute::Buffer>& temps) override
+    {
+        const size_t slotBytes = mBytes * size_t(render::vt::kSlotSize) * size_t(render::vt::kSlotSize);
+        std::vector<uint8_t> made(jobs.size(), 0);
+        render::compute::Buffer host = render::compute::makeBuffer(vk, slotBytes * jobs.size(), 0, render::compute::Host::Write);
+        temps.push_back(host);
+        std::vector<VkBufferCopy> copies;
+        VkBuffer dst = VK_NULL_HANDLE;
+        for (size_t i = 0; i < jobs.size(); ++i)
+        {
+            const render::vt::Job& j = jobs[i];
+            if (j.layers.empty() || size_t(j.page.mip) >= mLevels.size())
+                continue;
+            fillSlot(mLevels[size_t(j.page.mip)], j.x0, j.y0, static_cast<uint8_t*>(host.mapped) + i * slotBytes);
+            copies.push_back({VkDeviceSize(i * slotBytes), VkDeviceSize(j.layers[0] - j.stagingAddress), VkDeviceSize(slotBytes)});
+            dst = j.staging;
+            made[i] = 1;
+        }
+        vmaFlushAllocation(vk.allocator, host.alloc, 0, VK_WHOLE_SIZE);
+        if (!copies.empty())
+            vkCmdCopyBuffer(cmd, host.buffer, dst, uint32_t(copies.size()), copies.data());
+        return made;
+    }
+
+private:
+    struct Level
+    {
+        int width = 0;
+        int height = 0;
+        std::vector<uint8_t> texels;
+    };
+
+    /** The slot's texels, rows top first: level texels from (x0, y0), wrapping at the edges. */
+    void fillSlot(const Level& l, int x0, int y0, uint8_t* out) const
+    {
+        const int n = render::vt::kSlotSize;
+        for (int y = 0; y < n; ++y)
+        {
+            const int sy = ((y0 + y) % l.height + l.height) % l.height;
+            const uint8_t* row = &l.texels[size_t(sy) * size_t(l.width) * mBytes];
+            for (int x = 0; x < n; ++x)
+            {
+                const int sx = ((x0 + x) % l.width + l.width) % l.width;
+                std::memcpy(out + (size_t(y) * size_t(n) + size_t(x)) * mBytes, row + size_t(sx) * mBytes, mBytes);
+            }
+        }
+    }
+
+    render::TextureFormat mFormat;
+    size_t mBytes;
+    std::vector<Level> mLevels;
+};
+
+/** An image past kMaxSize as a repeating virtual texture map, or null when the renderer has no virtual texturing. */
+render::TexturePtr toVirtual(const std::string& path, Pixels& px, bool srgb)
+{
+    if (!render::vt::available())
+        return nullptr;
+    const bool floats = !px.floats.rgba.empty();
+    const int w = floats ? px.floats.width : px.rgba8.width(), h = floats ? px.floats.height : px.rgba8.height();
+    const render::TextureFormat format = floats ? render::TextureFormat::RGBA16F : render::TextureFormat::RGBA8;
+    auto pages = std::make_shared<ImagePages>(w, h, format);
+    if (floats)
+    {
+        if (srgb && !px.linear)
+            for (size_t i = 0; i < px.floats.rgba.size(); ++i)
+                if (i % 4 != 3)
+                    px.floats.rgba[i] = decodeSrgb(px.floats.rgba[i]);
+        pages->setFloats(std::move(px.floats));
+    }
+    else
+        pages->setRgba8(px.rgba8.convertToFormat(QImage::Format_RGBA8888));
+    auto vt = render::vt::Texture::create(path, {{format, srgb && !floats}}, {{1001, w, h}}, pages);
+    vt->setRepeat(true);
+    return vt->map(0);
+}
+
+/** One file as a texture: past kMaxSize, a virtual texture at full size when the renderer has it, else shrunk to fit. */
 Result loadSingle(const std::string& path, bool srgb)
 {
     Result r;
     r.times = stamps({path});
-    Pixels px = readPixels(path, r.error, true);
-    if (!px.empty())
-        r.image = toTexture(px, srgb);
+    Pixels px = readPixels(path, r.error, true, true);
+    if (px.empty())
+        return r;
+    const int w = px.blocks ? 0 : !px.floats.rgba.empty() ? px.floats.width : px.rgba8.width();
+    const int h = px.blocks ? 0 : !px.floats.rgba.empty() ? px.floats.height : px.rgba8.height();
+    if (w > kMaxSize || h > kMaxSize)
+    {
+        try
+        {
+            if (render::TexturePtr t = toVirtual(path, px, srgb))
+            {
+                r.image = std::move(t);
+                return r;
+            }
+        }
+        catch (const std::exception& e)
+        {
+            r.error = e.what();
+            return r;
+        }
+        if (!px.floats.rgba.empty())
+            shrinkToFit(px.floats);
+        else
+            px.rgba8 = px.rgba8.scaled(kMaxSize, kMaxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation).convertToFormat(QImage::Format_RGBA8888);
+    }
+    r.image = toTexture(px, srgb);
     return r;
 }
 

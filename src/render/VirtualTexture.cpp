@@ -518,8 +518,12 @@ bool streamSlice(VulkanContext& vk)
         staging = compute::makeBuffer(vk, std::max<VkDeviceSize>(bytes, 256), 0, compute::Host::None);
         for (Work& w : work)
             for (Job& j : w.jobs)
+            {
                 for (VkDeviceAddress& a : j.layers)
                     a += staging.address;
+                j.staging = staging.buffer;
+                j.stagingAddress = staging.address;
+            }
         s.sub.run(vk, [&](VkCommandBuffer cmd) {
             for (size_t i = 0; i < work.size(); ++i)
             {
@@ -1022,7 +1026,7 @@ void tableEntry(const TextureImage& t, std::vector<uint32_t>& table, const std::
     Texture::Impl& m = t.vt->impl();
     std::vector<TexturePtr> chunks = chunkTextures(t);
     const VkDeviceAddress address = m.table.address;
-    table.push_back(kVtEntry | uint32_t(chunks.size()));
+    table.push_back(kVtEntry | (t.vt->repeat() ? kVtRepeat : 0u) | uint32_t(chunks.size()));
     table.push_back(uint32_t(address & 0xffffffffu));
     table.push_back(uint32_t(address >> 32));
     table.push_back(t.vt->id());

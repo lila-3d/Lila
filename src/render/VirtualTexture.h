@@ -50,6 +50,8 @@ inline constexpr int kFeedbackCell = 4;
 inline constexpr uint32_t kTableHeaderWords = 4;
 /** A texture table entry that heads a virtual texture map (mesh.slang). */
 inline constexpr uint32_t kVtEntry = 0x40000000u;
+/** With kVtEntry: the map repeats its one tile over every UV cell, as a plain texture does. */
+inline constexpr uint32_t kVtRepeat = 0x20000000u;
 
 struct LayerFormat
 {
@@ -89,6 +91,9 @@ struct Job
     int y0 = 0;
     /** Per layer, where its kSlotSize x kSlotSize texels go, rows top first, tightly packed in the layer's format. */
     std::vector<VkDeviceAddress> layers;
+    /** The buffer the layer addresses point into, for producers that copy texels in (offset = address - stagingAddress). */
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceAddress stagingAddress = 0;
 };
 
 class Producer
@@ -162,6 +167,9 @@ public:
     /** Every page is stale (the graph changed). */
     void invalidateAll();
     void unpin();
+    /** Samples outside UDIM 1001 wrap into it (a plain image), instead of reading as black. */
+    void setRepeat(bool on) { mRepeat = on; }
+    bool repeat() const { return mRepeat; }
     /** Asks for pages as a feedback would (tests, prefetching a view). */
     void request(std::span<const PageId> pages);
 
@@ -178,6 +186,7 @@ private:
     std::vector<LayerFormat> mLayers;
     std::vector<TileDesc> mTiles;
     uint32_t mId = 0;
+    bool mRepeat = false;
     std::unique_ptr<Impl> m;
 };
 

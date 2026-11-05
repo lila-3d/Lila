@@ -154,6 +154,7 @@ uint mapIndex(uint slot, float2 uv)
 // table starts with a 10x10 grid of UDIM cells (entry base + 1, width, height, mip count), then per tile and level the
 // page entries: 0 for missing, else kVtResident | fade << 16 | slot.
 static const uint kVtEntry = 0x40000000;
+static const uint kVtRepeat = 0x20000000;
 static const uint kVtResident = 0x80000000;
 static const uint kVtPage = 128;
 static const uint kVtBorder = 4;
@@ -262,6 +263,8 @@ float4 vtSample(uint h, float2 uv)
     uint* pt = vtPageTable(h);
     // Derivatives first, while every pixel of the quad is still here.
     float2 duvx = gUvDx, duvy = gUvDy;
+    if ((pc.textureTable[h] & kVtRepeat) != 0)
+        uv = float2(frac(uv.x), 1.0 - frac(1.0 - uv.y));
     int col = int(floor(uv.x));
     int row = int(floor(1.0 - uv.y));
     if (col < 0 || col >= 10 || row < 0 || row >= 10)
