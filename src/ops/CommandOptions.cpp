@@ -41,7 +41,11 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     m["transferAttributes"] = std::move(transfer);
 
     O remesh;
-    for (const char* f : {"targetFaces", "targetEdgeLength", "adaptivity"})
+    remesh.order = {"method"};
+    remesh.choices["method"] = {{"field", "Field (Flowing Loops)"}, {"grid", "Grid (Open Sheets)"}};
+    remesh.choiceDocs["method"] = {{"field", "Quads follow curvature, creases and guides, with poles where the flow turns."},
+                                   {"grid", "A straight grid seen down the sheet's normal, for terrain tiles and panels. Closed shapes fall back to Field."}};
+    for (const char* f : {"targetFaces", "countTolerance", "targetEdgeLength", "adaptivity"})
         remesh.sections[f] = "Density";
     for (const char* f : {"useHardEdges", "sharpAngle", "symmetry", "pureQuads", "relaxIterations"})
         remesh.sections[f] = "Edge Flow";
@@ -50,6 +54,8 @@ void registerBuiltinOverrides(std::map<std::string, Override, std::less<>>& m)
     remesh.labels = {{"transferUvs", "Transfer UVs"}};
     remesh.ranges["sharpAngle"] = {0.0, 180.0, 1.0, " deg"};
     remesh.ranges["adaptivity"] = {0.0, 1.0, 0.05, ""};
+    remesh.ranges["countTolerance"] = {0.0, 1.0, 0.01, ""};
+    remesh.labels["countTolerance"] = "Count Tolerance";
     m["quadRemesh"] = std::move(remesh);
 
     O bevel;

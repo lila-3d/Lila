@@ -6457,12 +6457,14 @@ def putOnTurntable(*objects: Any) -> Any:
         objects: objects.
     """
 
-def quadRemesh(*objects: Any, targetFaces: int | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, pureQuads: bool | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
-    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics}.
+def quadRemesh(*objects: Any, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
+    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
 
     Args:
         objects: source.
+        method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 500.
+        countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 5.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
@@ -6471,6 +6473,9 @@ def quadRemesh(*objects: Any, targetFaces: int | None = None, timeout: float | N
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. Default 'off'.
         guides: Mesh nodes whose edges are guide curves.
         guidePoints: Guide polylines as lists of world [x, y, z].
+        featureGuides: Mesh nodes whose edges get an edge loop laid on them, like a hard edge.
+        featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
+        densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
         seamless: Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points. Default False.
@@ -7094,12 +7099,14 @@ def retopoDrawSetReference(mesh: str | None = None, reference: str | None = None
         reference: The new reference mesh.
     """
 
-def retopoPoles(*objects: Any, targetFaces: int | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, pureQuads: bool | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None) -> Any:
+def retopoPoles(*objects: Any, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None) -> Any:
     """The poles quadRemesh's edge flow would turn at with these options, without remeshing: where each one is and its valence (3 or 5). Move, add or remove them and pass them back as quadRemesh(poles=...). Also returns, per closed shell, what (4 - valence) over its poles has to sum to.
 
     Args:
         objects: source.
+        method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 500.
+        countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
         timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 5.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
@@ -7108,6 +7115,9 @@ def retopoPoles(*objects: Any, targetFaces: int | None = None, timeout: float | 
         symmetry: off, x, y or z: remesh half and mirror, exactly symmetric. Default 'off'.
         guides: Mesh nodes whose edges are guide curves.
         guidePoints: Guide polylines as lists of world [x, y, z].
+        featureGuides: Mesh nodes whose edges get an edge loop laid on them, like a hard edge.
+        featureGuidePoints: Feature guide polylines as lists of world [x, y, z].
+        densityHandles: Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius.
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
         seamless: Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points. Default False.

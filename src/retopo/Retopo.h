@@ -125,9 +125,30 @@ struct Pole
     int valence = 3;
 };
 
+/** A soft brush on face size: faces inside radius get scale times the edge length, easing back to 1 at the rim. */
+struct DensityHandle
+{
+    glm::dvec3 position{0.0};
+    double radius = 1.0;
+    /** Edge length multiplier at the centre: 0.5 halves the edges (four times the faces), 2 doubles them. 0.35 to 2.8. */
+    double scale = 1.0;
+};
+
+/** How quadRemesh lays the quads out. */
+enum class RemeshMethod
+{
+    /** Follows curvature, features and guides with poles where the flow turns. */
+    Field,
+    /** A straight grid seen down the sheet's normal, for open sheets like terrain tiles and panels; Field otherwise. */
+    Grid,
+};
+
 struct QuadRemeshOptions
 {
+    RemeshMethod method = RemeshMethod::Field;
     int targetFaces = 500;
+    /** Retries at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first. */
+    double countTolerance = 0.1;
     /** Positive overrides targetFaces. */
     double targetEdgeLength = 0.0;
     /** 0 uniform, 1 strongly denser where curved. The point float "density" attribute multiplies on top. */
@@ -144,6 +165,9 @@ struct QuadRemeshOptions
     int symmetryAxis = -1;
     /** Polylines on (or near) the surface the edge flow should follow. */
     std::vector<std::vector<glm::dvec3>> guides;
+    /** Polylines on the surface an edge loop lands on, like a hard edge: the flow follows them and points snap onto them. */
+    std::vector<std::vector<glm::dvec3>> featureGuides;
+    std::vector<DensityHandle> densityHandles;
     /** All quads (extract at half density and split each polygon); otherwise quad dominant. */
     bool pureQuads = true;
     int relaxIterations = 6;
@@ -196,10 +220,33 @@ LILA_SCENE_API PoleResult findPoles(const geo::Mesh& source, const QuadRemeshOpt
 /** Measures a mesh; distances need the source's Bvh. */
 LILA_SCENE_API QualityMetrics measureQuality(const geo::Mesh& mesh, const geo::MeshBvh* source = nullptr);
 
+/** Where a requested pole ended up: the nearest irregular result point, or none within a few faces of it. */
+struct PoleMatch
+{
+    Index point = geo::kInvalid;
+    int valence = 0;
+    double distance = 0.0;
+    bool valenceMatched = false;
+};
+
+/** One layout quadRemesh built on the way to its result. */
+struct RemeshAttempt
+{
+    std::string layout;
+    Index faces = 0;
+    int defects = 0;
+};
+
 struct QuadRemeshResult
 {
     geo::Mesh mesh;
     QualityMetrics metrics;
+    /** The layout kept: field, seamless, shifted or grid. */
+    std::string layout;
+    /** Every layout built, in order, the kept one among them. */
+    std::vector<RemeshAttempt> attempts;
+    /** Per QuadRemeshOptions::poles entry, in order. */
+    std::vector<PoleMatch> poleMatches;
     /** Wall time per stage, seconds. */
     std::vector<std::pair<std::string, double>> timings;
     /** Folds, holes, pinched edges and fans left in the mesh when no lattice tried came out clean; 0 normally. */

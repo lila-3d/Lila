@@ -23,6 +23,12 @@ namespace lila::progress
 class Scope;
 }
 
+namespace lila::retopo
+{
+struct QuadRemeshOptions;
+struct QuadRemeshResult;
+} // namespace lila::retopo
+
 namespace lila::retopo::detail
 {
 /** Why a remesh stopped early: it ran past its time budget, or was cancelled from the progress overlay. */
@@ -291,6 +297,9 @@ inline glm::dvec3 closestOnSegments(const glm::dvec3& x, std::span<const std::ar
     }
     return best;
 }
+
+/** A straight grid over an open sheet seen down its normal (RemeshMethod::Grid); an error when the sheet doesn't suit one. */
+QuadRemeshResult gridRemesh(const geo::Mesh& source, const QuadRemeshOptions& opts);
 
 /** Unit vector perpendicular to n, chosen deterministically. */
 inline glm::dvec3 anyTangent(const glm::dvec3& n)

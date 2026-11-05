@@ -656,6 +656,157 @@ void fitGaps(const Surface& s, const geo::Mesh& src, const geo::MeshBvh& bvh, st
         scale[v] = std::min(scale[v], cap[v]);
 }
 
+/** The density multiplier the handles give a point: a handle of scale s wants edges s times as long, so 1 / s^2 the faces. */
+double handleDensity(const glm::dvec3& p, const std::vector<DensityHandle>& handles)
+{
+    double rho = 1.0;
+    for (const DensityHandle& d : handles)
+    {
+        if (!(d.radius > 0.0))
+            continue;
+        const double t = 1.0 - glm::distance(p, d.position) / d.radius;
+        if (t <= 0.0)
+            continue;
+        const double ease = t * t * (3.0 - 2.0 * t);
+        const double scale = 1.0 + (std::clamp(d.scale, 0.35, 2.8) - 1.0) * ease;
+        rho /= scale * scale;
+    }
+    return rho;
+}
+
+/**
+ * Lays each feature guide onto the working surface as hard edges: the surface vertex path nearest the polyline, with its
+ * vertices moved onto the polyline where that leaves their triangles facing the same way, so the crease runs straight.
+ */
+void embedFeatureGuides(Surface& s, const std::vector<std::vector<glm::dvec3>>& guides, const geo::MeshBvh& bvh)
+{
+    LILA_ZONE();
+
+    if (guides.empty())
+        return;
+    s.buildTopology();
+    s.buildGeometry();
+    const Index n = s.vertexCount();
+    std::vector<std::vector<Index>> vertexTris(n);
+    for (size_t t = 0; t < s.tris.size(); ++t)
+        for (Index v : s.tris[t])
+            vertexTris[v].push_back(Index(t));
+    std::vector<uint8_t> border(n, 0);
+    for (size_t e = 0; e < s.edges.size(); ++e)
+        if (s.edgeTriCount[e] == 1)
+            border[s.edges[e][0]] = border[s.edges[e][1]] = 1;
+    const auto nearestVertex = [&](const glm::dvec3& p) {
+        Index best = kInvalid;
+        double bestD = std::numeric_limits<double>::max();
+        for (Index v = 0; v < n; ++v)
+            if (const double d = glm::dot(s.pos[v] - p, s.pos[v] - p); d < bestD)
+            {
+                bestD = d;
+                best = v;
+            }
+        return best;
+    };
+    const double step = std::max(s.meanEdgeLength() * 0.5, 1e-12);
+    std::vector<double> dist(n, std::numeric_limits<double>::max());
+    std::vector<Index> from(n, kInvalid), touched;
+    for (const auto& guide : guides)
+    {
+        std::vector<glm::dvec3> samples;
+        for (size_t i = 0; i + 1 < guide.size(); ++i)
+        {
+            const int count = std::max(1, int(std::ceil(glm::distance(guide[i], guide[i + 1]) / step)));
+            for (int k = 0; k < count; ++k)
+                samples.push_back(glm::mix(guide[i], guide[i + 1], double(k) / count));
+        }
+        if (!guide.empty())
+            samples.push_back(guide.back());
+        std::vector<Index> path;
+        for (const glm::dvec3& p : samples)
+        {
+            const Index v = nearestVertex(p);
+            if (v == kInvalid || (!path.empty() && path.back() == v))
+                continue;
+            if (path.empty())
+            {
+                path.push_back(v);
+                continue;
+            }
+            // Shortest edge path from the last vertex, which is a few edges away at most.
+            const Index a = path.back();
+            for (Index t : touched)
+            {
+                dist[t] = std::numeric_limits<double>::max();
+                from[t] = kInvalid;
+            }
+            touched.assign({a});
+            dist[a] = 0.0;
+            std::vector<std::pair<double, Index>> heap{{0.0, a}};
+            while (!heap.empty())
+            {
+                std::pop_heap(heap.begin(), heap.end(), std::greater<>());
+                auto [d, u] = heap.back();
+                heap.pop_back();
+                if (u == v || d > dist[u])
+                    break;
+                for (Index k = s.adjStart[u]; k < s.adjStart[u + 1]; ++k)
+                {
+                    const Index w = s.adj[k];
+                    const double nd = d + glm::distance(s.pos[u], s.pos[w]);
+                    if (nd < dist[w] && nd < 8.0 * step)
+                    {
+                        if (dist[w] == std::numeric_limits<double>::max())
+                            touched.push_back(w);
+                        dist[w] = nd;
+                        from[w] = u;
+                        heap.push_back({nd, w});
+                        std::push_heap(heap.begin(), heap.end(), std::greater<>());
+                    }
+                }
+            }
+            if (from[v] == kInvalid)
+            {
+                path.push_back(v);
+                continue;
+            }
+            std::vector<Index> leg;
+            for (Index u = v; u != a; u = from[u])
+                leg.push_back(u);
+            path.insert(path.end(), leg.rbegin(), leg.rend());
+        }
+        for (Index v : path)
+        {
+            glm::dvec3 best = s.pos[v];
+            double bestD = std::numeric_limits<double>::max();
+            for (size_t i = 0; i + 1 < guide.size(); ++i)
+            {
+                const glm::dvec3 a = guide[i], ab = guide[i + 1] - a;
+                const double len2 = glm::dot(ab, ab);
+                const glm::dvec3 q = a + ab * (len2 > 0.0 ? std::clamp(glm::dot(s.pos[v] - a, ab) / len2, 0.0, 1.0) : 0.0);
+                if (const double d = glm::dot(q - s.pos[v], q - s.pos[v]); d < bestD)
+                {
+                    bestD = d;
+                    best = q;
+                }
+            }
+            geo::BvhClosest c;
+            if (bvh.closestPoint(best, c))
+                best = c.point;
+            bool keeps = !border[v];
+            for (Index t : vertexTris[v])
+            {
+                std::array<glm::dvec3, 3> p;
+                for (int k = 0; k < 3; ++k)
+                    p[k] = s.tris[t][k] == v ? best : s.pos[s.tris[t][k]];
+                keeps &= glm::dot(glm::cross(p[1] - p[0], p[2] - p[0]), s.triNormal[t]) > 0.0;
+            }
+            if (keeps)
+                s.pos[v] = best;
+        }
+        for (size_t i = 0; i + 1 < path.size(); ++i)
+            s.hard.insert(edgeKey(path[i], path[i + 1]));
+    }
+}
+
 /** The working surface and lattice spacing everything after it shares. Not movable: the bvh points into src. */
 struct Work
 {
@@ -715,6 +866,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     if (decimated)
         decimateSurface(s, Index(workTris));
     refineSurface(s, 1.5 * workLength);
+    embedFeatureGuides(s, opts.featureGuides, bvh);
     auto prepare = [&]() {
         s.buildTopology();
         s.buildGeometry();
@@ -761,6 +913,10 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             }
             rho = std::move(next);
         }
+        // Handles ease out over their own radius already; spreading them as well would flatten their peak.
+        if (!opts.densityHandles.empty())
+            for (Index v = 0; v < n; ++v)
+                rho[v] = std::clamp(rho[v] * handleDensity(s.pos[v], opts.densityHandles), 1.0 / 8.0, 8.0);
         if (opts.targetEdgeLength <= 0.0)
         {
             double weighted = 0.0;
@@ -873,8 +1029,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     clock.lap("cross field");
 
     // Extraction and cleanup for one lattice layout.
-    auto buildFrom = [&](Extracted ex) {
+    auto buildFrom = [&](Extracted ex, const char* layout) {
         QuadRemeshResult out;
+        out.layout = layout;
         if (ex.mesh.numFaces() == 0)
         {
             out.error = "extraction produced no faces";
@@ -904,6 +1061,11 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         boundary.resize(m.pointCapacity(), 0);
         compactTagged(m, feature, boundary);
         geo::conformNormals(m);
+        // Conforming only makes the winding consistent; the source's own decides which way round it goes.
+        if (2 * foldedFaces(m, src, bvh).size() > size_t(m.numFaces()))
+            for (Index f = 0; f < m.faceCapacity(); ++f)
+                if (m.faceValid(f))
+                    m.flipFace(f);
         const double coarseH = cf * h;
         FeatureLines border;
         border.build(s, fo.scale * 0.5, true);
@@ -951,10 +1113,15 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
 
     // The seamless layout only turns at the poles, but rounding can tangle it near tight features; keep whichever of it
     // and the local position field comes out with fewer irregular points.
-    auto build = [&](const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
-        return buildFrom(extractMesh(s, q, o, scale, steps));
-    };
     const bool closed = isClosed(src);
+    auto record = [&](QuadRemeshResult r) {
+        if (r.ok())
+            result.attempts.push_back({r.layout, r.mesh.numFaces(), int(defects(r.mesh, src, bvh, closed))});
+        return r;
+    };
+    auto build = [&](const char* layout, const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
+        return record(buildFrom(extractMesh(s, q, o, scale, steps), layout));
+    };
     auto flawsOf = [&](const QuadRemeshResult& r) { return r.ok() ? int(defects(r.mesh, src, bvh, closed) + largeFaces(r.mesh)) : 0; };
     // Fewer flaws first, then fewer irregular points.
     auto seamlessBetter = [&](const QuadRemeshResult& a, int flawsA, const std::optional<QuadRemeshResult>& b, int flawsB) {
@@ -980,8 +1147,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             return ok ? flaws : 1;
         };
         // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
-        if (grid.mesh.numFaces() == 0 || consider(buildFrom(std::move(grid))) > 0)
-            consider(build(o, &steps));
+        if (grid.mesh.numFaces() == 0 || consider(record(buildFrom(std::move(grid), "seamless"))) > 0)
+            consider(build("seamless", o, &steps));
         return folds;
     };
     // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,
@@ -1002,7 +1169,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         best = std::move(*seamless);
     else
     {
-        best = build(solvePositionField(s, q, scale));
+        best = build("field", solvePositionField(s, q, scale));
         clock.lap("local");
         if (seamless && seamless->ok() && (!best.ok() || seamless->metrics.irregular <= best.metrics.irregular))
             best = std::move(*seamless);
@@ -1013,7 +1180,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     if (!preferSeamless && !(best.ok() && bestDefects == 0))
         for (glm::dvec2 shift : {glm::dvec2(0.5, 0.0), glm::dvec2(0.0, 0.5), glm::dvec2(0.5, 0.5)})
         {
-            QuadRemeshResult again = build(solvePositionField(s, q, scale, shift));
+            QuadRemeshResult again = build("shifted", solvePositionField(s, q, scale, shift));
             clock.lap("shifted");
             const int againDefects = again.ok() ? int(defects(again.mesh, src, bvh, closed)) : 0;
             if (better(again, againDefects, best, bestDefects))
@@ -1032,6 +1199,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     }
     result.mesh = std::move(best.mesh);
     result.metrics = best.metrics;
+    result.layout = best.layout;
     clock.lap("finish");
     return result;
 }
@@ -1140,41 +1308,152 @@ QuadRemeshResult quadRemesh(const geo::Mesh& source, const QuadRemeshOptions& op
     }
 }
 
-static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
+namespace
+{
+double secondsSince(std::chrono::steady_clock::time_point t)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+}
+
+/** Keeps `again` in place of `kept` when take is set, and the attempts of both either way. */
+void keepOrMerge(QuadRemeshResult& kept, QuadRemeshResult&& again, bool take)
+{
+    std::vector<RemeshAttempt> attempts = std::move(kept.attempts);
+    attempts.insert(attempts.end(), again.attempts.begin(), again.attempts.end());
+    if (take)
+        kept = std::move(again);
+    kept.attempts = std::move(attempts);
+}
+
+/** The first clean layout, retrying finer for thin strips and tight spots, up to about four times the faces asked for. */
+QuadRemeshResult cleanest(const geo::Mesh& source, const QuadRemeshOptions& opts, int& asked)
 {
     auto started = std::chrono::steady_clock::now();
     QuadRemeshResult result = quadRemeshOnce(source, opts);
-    double lastTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    double lastTook = secondsSince(started);
+    asked = opts.targetFaces;
+    if (source.numFaces() == 0)
+        return result;
     // Pinned points tie the lattice to the source's own spacing; a finer retry would no longer meet them.
-    if (source.numFaces() == 0 || !opts.pinnedPoints.empty())
+    if (!opts.pinnedPoints.empty() || (result.ok() && result.defects == 0))
         return result;
-    if (result.ok() && result.defects == 0)
-        return result;
-    geo::Mesh src = source;
-    src.compact();
-    // Too coarse for a thin strip or a tight spot: a finer lattice fits, up to about four times the faces asked for. The
-    // result with the fewest defects is the fallback.
-    double area = 0.0;
-    for (Index f = 0; f < src.faceCapacity(); ++f)
-        if (src.faceValid(f))
-            area += src.faceArea(f);
     QuadRemeshOptions finer = opts;
-    double length = opts.targetEdgeLength > 0.0 ? opts.targetEdgeLength : std::sqrt(area / std::max(8, opts.targetFaces));
     for (int attempt = 0; attempt < 4; ++attempt)
     {
         // A finer lattice takes longer; one that wouldn't finish in time gives way to the best result so far.
         if (result.ok() && Budget::remaining() < 2.0 * lastTook)
             break;
-        length *= 0.85;
-        finer.targetEdgeLength = length;
+        if (opts.targetEdgeLength > 0.0)
+            finer.targetEdgeLength *= 0.85;
+        else
+            finer.targetFaces = int(std::lround(finer.targetFaces / (0.85 * 0.85)));
         started = std::chrono::steady_clock::now();
         QuadRemeshResult again = quadRemeshOnce(source, finer);
-        lastTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        if (again.ok() && again.defects == 0)
-            return again;
-        if (better(again, again.defects, result, result.defects))
-            result = std::move(again);
+        lastTook = secondsSince(started);
+        const bool take = better(again, again.defects, result, result.defects) || (again.ok() && again.defects == 0);
+        if (take)
+            asked = finer.targetFaces;
+        keepOrMerge(result, std::move(again), take);
+        if (result.ok() && result.defects == 0)
+            break;
     }
+    return result;
+}
+
+/**
+ * Steers the face count onto the target: the count follows the faces asked for closely but not exactly (creases, gaps
+ * and borders add their own), so ask again in proportion. A retry is kept only when it is closer and no less clean.
+ */
+void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemeshResult& result, int asked)
+{
+    if (opts.countTolerance <= 0.0 || opts.targetEdgeLength > 0.0 || !opts.pinnedPoints.empty() || !result.ok())
+        return;
+    const double target = opts.targetFaces;
+    const auto off = [&](const QuadRemeshResult& r) { return std::abs(double(r.mesh.numFaces()) / target - 1.0); };
+    QuadRemeshOptions again = opts;
+    double lastTook = 0.0;
+    for (int attempt = 0; attempt < 3 && off(result) > opts.countTolerance; ++attempt)
+    {
+        if (lastTook > 0.0 && Budget::remaining() < 2.0 * lastTook)
+            break;
+        again.targetFaces = std::max(8, int(std::lround(asked * target / double(result.mesh.numFaces()))));
+        if (again.targetFaces == asked)
+            break;
+        const auto started = std::chrono::steady_clock::now();
+        QuadRemeshResult r = quadRemeshOnce(source, again);
+        lastTook = secondsSince(started);
+        const bool take = r.ok() && r.defects <= result.defects && off(r) < off(result);
+        if (take)
+            asked = again.targetFaces;
+        keepOrMerge(result, std::move(r), take);
+        if (!take)
+            break;
+    }
+}
+
+/** For each requested pole, the nearest irregular inner point within a few faces of it. */
+void matchPoles(const QuadRemeshOptions& opts, QuadRemeshResult& result)
+{
+    if (!opts.poles || !result.ok())
+        return;
+    const geo::Mesh& m = result.mesh;
+    double edge = 0.0;
+    Index edges = 0;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e))
+        {
+            edge += m.edgeLength(e);
+            ++edges;
+        }
+    const double reach = 2.5 * (edges ? edge / double(edges) : 0.0);
+    std::vector<uint8_t> taken(m.pointCapacity(), 0);
+    for (const Pole& pole : *opts.poles)
+    {
+        PoleMatch match;
+        double best = reach;
+        // A point of the asked valence wins over a nearer one of another.
+        for (bool wantValence : {true, false})
+        {
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+            {
+                if (!m.pointValid(p) || taken[p] || m.isBoundaryPoint(p) || m.pointValence(p) == 4)
+                    continue;
+                if (wantValence && int(m.pointValence(p)) != pole.valence)
+                    continue;
+                if (const double d = glm::distance(m.position(p), pole.position); d <= best)
+                {
+                    best = d;
+                    match.point = p;
+                }
+            }
+            if (match.point != geo::kInvalid)
+                break;
+        }
+        if (match.point != geo::kInvalid)
+        {
+            taken[match.point] = 1;
+            match.valence = int(m.pointValence(match.point));
+            match.distance = best;
+            match.valenceMatched = match.valence == pole.valence;
+        }
+        result.poleMatches.push_back(match);
+    }
+}
+} // namespace
+
+static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadRemeshOptions& opts)
+{
+    QuadRemeshResult result;
+    if (opts.method == RemeshMethod::Grid)
+    {
+        result = gridRemesh(source, opts);
+        if (result.ok())
+            return result;
+    }
+    int asked = opts.targetFaces;
+    keepOrMerge(result, cleanest(source, opts, asked), true);
+    fitCount(source, opts, result, asked);
+    matchPoles(opts, result);
     return result;
 }
 } // namespace lila::retopo

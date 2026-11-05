@@ -11,6 +11,7 @@ lila_module(lila_retopo Scene
     Construct.h
     Field.cpp
     Generators.cpp
+    Grid.cpp
     Handles.cpp
     Handles.h
     Internal.h

@@ -106,8 +106,16 @@ TEST_CASE("zz remesh obj" * doctest::skip())
     o.useHardEdges = !std::getenv("LILA_NO_HARD");
     if (const char* a = std::getenv("LILA_AB_ADAPT"))
         o.adaptivity = std::atof(a);
+    if (std::getenv("LILA_AB_GRID"))
+        o.method = retopo::RemeshMethod::Grid;
+    if (const char* t = std::getenv("LILA_AB_TOL"))
+        o.countTolerance = std::atof(t);
+    const auto started = std::chrono::steady_clock::now();
     retopo::QuadRemeshResult r = retopo::quadRemesh(m, o);
-    std::printf("%s, %d defects, %.2f s\n", r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects, seconds(r));
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    std::printf("%s, %d defects, %s, %.2f s\n", r.ok() ? r.metrics.summary().c_str() : r.error.c_str(), r.defects, r.layout.c_str(), took);
+    for (const retopo::RemeshAttempt& at : r.attempts)
+        std::printf("  %s %u faces %d defects\n", at.layout.c_str(), unsigned(at.faces), at.defects);
     if (const char* out = std::getenv("LILA_AB_OUT"))
         std::ofstream(out) << geo::writeObj(r.mesh);
 }

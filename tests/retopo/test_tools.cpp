@@ -180,6 +180,27 @@ TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly"
     CHECK(scene::Graph::current().find(name) == nullptr);
 }
 
+TEST_CASE("commands: quadRemesh takes density handles, feature guides, a method, and reports poles")
+{
+    scene::Graph::current().clear();
+    UndoStack::get().clear();
+    makeMeshNode("src", sphere(64));
+    json found = ops::execute("retopoPoles", {{"args", {"src"}}, {"targetFaces", 600}});
+    json r = ops::execute("quadRemesh", {{"args", {"src"}},
+                                         {"targetFaces", 600},
+                                         {"densityHandles", {{{"position", {50.0, 0.0, 0.0}}, {"radius", 30.0}, {"scale", 0.6}}}},
+                                         {"featureGuidePoints", {{{-50.0, 0.0, 0.0}, {0.0, 0.0, 50.0}}}},
+                                         {"poles", found["poles"]}});
+    CHECK(r["layout"].is_string());
+    REQUIRE(r["poles"].is_array());
+    CHECK(r["poles"].size() == found["poles"].size());
+    CHECK(std::abs(r["metrics"]["faces"].get<double>() / 600.0 - 1.0) < 0.25);
+
+    json grid = ops::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 300}, {"method", "grid"}});
+    CHECK(grid["layout"] != "grid");
+    CHECK_THROWS(ops::execute("quadRemesh", {{"args", {"src"}}, {"method", "lattice"}}));
+}
+
 TEST_CASE("commands: retopo draw edits")
 {
     scene::Graph::current().clear();

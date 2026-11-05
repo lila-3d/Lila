@@ -142,13 +142,16 @@ std::vector<glm::dvec3> vecList(const json& j, const char* cmd)
     return out;
 }
 
-/** Guide polylines in the source's object space: edge chains of mesh nodes, or point lists given directly in world space. */
-std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src)
+/**
+ * Guide polylines in the source's object space: edge chains of the mesh nodes in nodesFlag, or point lists given directly
+ * in world space in pointsFlag.
+ */
+std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src, const char* nodesFlag = "guides", const char* pointsFlag = "guidePoints")
 {
     std::vector<std::vector<glm::dvec3>> out;
     glm::dmat4 toLocal = glm::inverse(worldOf(src));
-    if (a.has("guides"))
-        for (const json& g : a.flags["guides"])
+    if (a.has(nodesFlag))
+        for (const json& g : a.flags[nodesFlag])
         {
             if (!g.is_string())
                 continue;
@@ -169,8 +172,8 @@ std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src)
                     out.push_back(std::move(line));
             }
         }
-    if (a.has("guidePoints"))
-        for (const json& g : a.flags["guidePoints"])
+    if (a.has(pointsFlag))
+        for (const json& g : a.flags[pointsFlag])
         {
             std::vector<glm::dvec3> line;
             for (const glm::dvec3& p : vecList(g, "quadRemesh"))
@@ -178,6 +181,22 @@ std::vector<std::vector<glm::dvec3>> guidesFor(const Args& a, const Node& src)
             if (line.size() >= 2)
                 out.push_back(std::move(line));
         }
+    return out;
+}
+
+/** Density handles from a list of {position: world [x, y, z], radius, scale}, in the source's object space. */
+std::vector<DensityHandle> densityHandlesFor(const json& list, const Node& src, const char* cmd)
+{
+    const glm::dmat4 toLocal = glm::inverse(worldOf(src));
+    const double radiusScale = std::cbrt(std::abs(glm::determinant(glm::dmat3(toLocal))));
+    std::vector<DensityHandle> out;
+    for (const json& j : list)
+    {
+        if (!j.is_object() || !j.contains("position") || !j.contains("radius"))
+            throw CommandError(std::string(cmd) + ": each density handle is {position: [x, y, z], radius, scale}");
+        const glm::dvec3 at = vecList(json::array({j["position"]}), cmd).front();
+        out.push_back({glm::dvec3(toLocal * glm::dvec4(at, 1.0)), j["radius"].get<double>() * radiusScale, j.value("scale", 1.0)});
+    }
     return out;
 }
 
@@ -214,7 +233,9 @@ json polesJson(const std::vector<Pole>& poles, const Node& src)
 std::vector<FlagDef> remeshFlags()
 {
     using T = ArgType;
-    return {{"targetFaces", "", T::Int, 500, "Approximate face count.", {}, {}, 8.0},
+    return {{"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
+            {"targetFaces", "", T::Int, 500, "Approximate face count.", {}, {}, 8.0},
+            {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
             {"timeout", "", T::Float, 5.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
             {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive.", {}, {}, 0.0},
             {"adaptivity", "", T::Float, 0.25, "0 uniform, 1 much denser where curved; painted point 'density' multiplies.", {}, {}, 0.0, 1.0},
@@ -223,6 +244,10 @@ std::vector<FlagDef> remeshFlags()
             {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
             {"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."},
             {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
+            {"featureGuides", "", T::List, nullptr, "Mesh nodes whose edges get an edge loop laid on them, like a hard edge."},
+            {"featureGuidePoints", "", T::List, nullptr, "Feature guide polylines as lists of world [x, y, z]."},
+            {"densityHandles", "", T::List, nullptr,
+             "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
             {"seamless", "", T::Bool, false, "Experimental: also try a global layout that only turns at the poles, kept when it has fewer irregular points."},
@@ -234,7 +259,12 @@ std::vector<FlagDef> remeshFlags()
 QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
 {
     QuadRemeshOptions o;
+    const std::string method = a.get<std::string>("method", "field");
+    if (method != "field" && method != "grid")
+        throw CommandError(std::string(cmd) + ": method must be field or grid");
+    o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Field;
     o.targetFaces = std::max(8, a.get<int>("targetFaces", 500));
+    o.countTolerance = std::clamp(a.get<double>("countTolerance", 0.1), 0.0, 1.0);
     o.timeout = std::max(0.0, a.get<double>("timeout", 5.0));
     o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
     o.adaptivity = std::clamp(a.get<double>("adaptivity", 0.25), 0.0, 1.0);
@@ -245,6 +275,9 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
         throw CommandError(std::string(cmd) + ": symmetry must be off, x, y or z");
     o.symmetryAxis = sym == "off" ? -1 : sym[0] - 'x';
     o.guides = guidesFor(a, src);
+    o.featureGuides = guidesFor(a, src, "featureGuides", "featureGuidePoints");
+    if (a.has("densityHandles") && !a.flags["densityHandles"].is_null())
+        o.densityHandles = densityHandlesFor(a.flags["densityHandles"], src, cmd);
     o.pureQuads = a.get<bool>("pureQuads", true);
     o.seamless = a.get<bool>("seamless", false);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
@@ -370,7 +403,8 @@ void registerCommands()
                "creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size "
                "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
-               "an error saying how far it got, changing nothing. Returns {name, metrics}.",
+               "an error saying how far it got, changing nothing. Returns {name, metrics, layout}, and with poles= where each "
+               "pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.",
         .positionalDoc = "source",
         .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
                   {"transferUvs", "", T::Bool, true, "Copy UV sets from the source."},
@@ -406,6 +440,20 @@ void registerCommands()
             if (r.defects > 0)
                 log::warn("quadRemesh {}: {} folds or other flaws left; a higher targetFaces or adaptivity may clear them", src.path(), r.defects);
 
+            // Where each requested pole landed, in world space, read before the mesh moves into the node.
+            json poles = json::array();
+            const glm::dmat4 world = worldOf(src);
+            for (const PoleMatch& m : r.poleMatches)
+            {
+                if (m.point == geo::kInvalid)
+                {
+                    poles.push_back(nullptr);
+                    continue;
+                }
+                const glm::dvec3 w = glm::dvec3(world * glm::dvec4(r.mesh.position(m.point), 1.0));
+                poles.push_back({{"point", m.point}, {"position", {w.x, w.y, w.z}}, {"valence", m.valence}, {"valenceMatched", m.valenceMatched}});
+            }
+
             std::string name = a.get<std::string>("name", src.name() + "_remesh");
             Node* out = g.createNode(*scene::types::find("mesh"), name, g.parent(src.id()), true);
             copyTransform(g, src, *out);
@@ -424,7 +472,10 @@ void registerCommands()
             else if (a.get<bool>("hideSource", true))
                 g.setValue({src.id(), Transform::kVisibility, -1}, false);
             g.select({out->id()});
-            return {{"name", outName}, {"metrics", metricsJson(r.metrics)}};
+            json result = {{"name", outName}, {"metrics", metricsJson(r.metrics)}, {"layout", r.layout}};
+            if (o.poles)
+                result["poles"] = std::move(poles);
+            return result;
         },
     });
 
