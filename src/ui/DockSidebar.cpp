@@ -8,6 +8,7 @@
 #include "ui/Theme.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QDockWidget>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
@@ -146,6 +147,17 @@ void relaxHiddenMinimum(QDockWidget* dock, bool visible)
         content->setProperty(kTabMinimum, content->minimumSize());
         content->setMinimumSize(kRelaxedMinimum);
     }
+}
+
+/**
+ * Qt passes focus out of a dock being hidden to the next widget in the chain, often the time slider's spin box, which
+ * then takes every letter hotkey as typing. The viewport gets it instead.
+ */
+void releaseFocus(QMainWindow* window, QDockWidget* dock)
+{
+    if (QWidget* focus = QApplication::focusWidget(); focus && dock->isAncestorOf(focus))
+        if (QWidget* central = window ? window->centralWidget() : nullptr)
+            central->setFocus(Qt::OtherFocusReason);
 }
 } // namespace
 
@@ -594,6 +606,7 @@ void toggleDock(QDockWidget* dock)
         return;
     }
     auto* window = qobject_cast<QMainWindow*>(dock->parentWidget());
+    releaseFocus(window, dock);
     if (auto* sidebars = window && !dock->isFloating() ? window->findChild<DockSidebars*>(Qt::FindDirectChildrenOnly) : nullptr)
         sidebars->collapse(dock);
     else
@@ -648,6 +661,7 @@ void DockSidebars::collapse(QDockWidget* dock)
     if (area == Qt::NoDockWidgetArea)
         return;
     rememberSize(dock);
+    releaseFocus(mWindow, dock);
     QToolBar* bar = strip(area);
     Qt::Orientation orientation = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea) ? Qt::Vertical : Qt::Horizontal;
     if (auto open = mTabs.find(dock); open != mTabs.end())
