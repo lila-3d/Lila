@@ -137,6 +137,8 @@ TEST_CASE("undo and redo repeat while their key is held")
 {
     CHECK(hotkeys::repeatsWhileHeld(json("edit.undo")));
     CHECK(hotkeys::repeatsWhileHeld(json("edit.redo")));
+    CHECK(hotkeys::repeatsWhileHeld(json("viewport.cameraUndo")));
+    CHECK(hotkeys::repeatsWhileHeld(json("viewport.cameraRedo")));
     CHECK_FALSE(hotkeys::repeatsWhileHeld(json("edit.delete")));
     CHECK_FALSE(hotkeys::repeatsWhileHeld(json()));
 }

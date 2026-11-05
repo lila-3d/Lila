@@ -187,11 +187,14 @@ private:
 };
 
 /**
- * Plain bindings whose action repeats while the key is held (undo and redo), on the cadence of the /undo/repeatDelayMs
- * and /undo/repeatIntervalMs prefs rather than the OS key repeat.
+ * Plain bindings whose action repeats while the key is held (scene and camera undo and redo), on the cadence of the
+ * /undo/repeatDelayMs and /undo/repeatIntervalMs prefs rather than the OS key repeat.
  */
 inline bool repeatsWhileHeld(const nlohmann::json& press)
 {
-    return press.is_string() && (press.get_ref<const std::string&>() == "edit.undo" || press.get_ref<const std::string&>() == "edit.redo");
+    if (!press.is_string())
+        return false;
+    const std::string& id = press.get_ref<const std::string&>();
+    return id == "edit.undo" || id == "edit.redo" || id == "viewport.cameraUndo" || id == "viewport.cameraRedo";
 }
 } // namespace lila::ui::hotkeys

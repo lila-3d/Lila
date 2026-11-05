@@ -54,7 +54,7 @@ LILA_UI_API bool remove(const std::string& id);
  * passThrough) also gets that context's keys, Maya style, and swallows typed letters instead of keyboard-searching. A focused widget with the property "numericEntry" gets digits,
  * "." and "-" typed without modifiers, so a value can be typed straight in. Tap vs hold: with a hold target, releasing before holdDelayMs runs press. LMB/MMB/RMB run
  * when that button goes down while the key is held, and then the key's own targets don't run (see HeldKey).
- * Undo and redo repeat while held, on the /undo/repeatDelayMs and /undo/repeatIntervalMs "general" prefs.
+ * Undo and redo (scene and camera) repeat while held, on the /undo/repeatDelayMs and /undo/repeatIntervalMs "general" prefs.
  */
 class LILA_UI_API Hotkeys : public QObject
 {
