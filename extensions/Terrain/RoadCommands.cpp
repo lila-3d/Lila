@@ -1,6 +1,7 @@
 // The Terrain Roads node and the road commands: lay roads into a terrain's stack, list and remove them, build their
 // meshes (Sweep, arrayAlongCurve), export them as curves with attributes, and send them to Unreal as landscape splines.
 
+#include "LandformCommands.h"
 #include "Roads.h"
 #include "Stamps.h"
 #include "Terrain.h"
@@ -563,7 +564,8 @@ json runAddRoad(const Args& a, const std::string& cmd)
 
     Layers t = groupOf(g, f, cmd);
     const bool base = a.get<std::string>("stage", "final") == "base";
-    const std::set<std::string> skip = base ? std::set<std::string>{"ErodeTerrain", "TerrainStamps", "TerrainSculpt", "TerrainRoads"} : std::set<std::string>{"TerrainStamps"};
+    const std::set<std::string> skip = base ? withLandformTypes({"ErodeTerrain", "TerrainStamps", "TerrainSculpt", "TerrainRoads", "TerrainWaterFeatures", "TerrainVolume", "TerrainBiomes", "TerrainLayers"})
+                                                : std::set<std::string>{"TerrainStamps", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
     json list = listOf(roadLayer(t.group, layer, skip, cmd));
     std::string id = a.get<std::string>("id", "");
     if (id.empty())

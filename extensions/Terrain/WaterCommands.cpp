@@ -190,7 +190,9 @@ gn::GNode* waterNode(gn::Group& grp, bool create, const std::string& cmd)
     for (gn::GLink* l = into(grp, to, socket); l; l = into(grp, to, socket))
     {
         const gn::GNode* from = named(grp, l->fromNode);
-        if (!from || from->type != "TerrainStamps")
+        // Water sits right after the ground forms: stamps, roads (which bridge it), the volume and surface layers come after.
+        static const std::set<std::string> after = {"TerrainStamps", "TerrainRoads", "TerrainVolume", "TerrainBiomes", "TerrainLayers"};
+        if (!from || !after.count(from->type))
             break;
         to = from->name;
         socket = "heightfield";
