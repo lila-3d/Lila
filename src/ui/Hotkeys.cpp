@@ -5,6 +5,7 @@
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/Hotbox.h"
+#include "ui/HotkeyBindings.h"
 #include "ui/MarkingMenu.h"
 #include "ui/ViewportTool.h"
 
@@ -61,7 +62,7 @@ uint32_t eventScancode(QKeyEvent* e)
 #ifdef _WIN32
     uint32_t s = e->nativeScanCode();
     // Only the remappable block; anything else (arrows, F-keys) matches by Qt key.
-    return (s >= 0x02 && s <= 0x35) ? s : 0;
+    return hotkeys::matchesByPosition(s, hotkeys::keysByPosition()) ? s : 0;
 #else
     (void)e;
     return 0;

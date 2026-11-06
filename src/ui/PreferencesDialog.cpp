@@ -15,6 +15,7 @@
 #include "stream/ChangeStream.h"
 #include "ui/ColorPopup.h"
 #include "ui/CommandPreview.h"
+#include "ui/HotkeyChord.h"
 #include "ui/Icons.h"
 #include "ui/Issues.h"
 #include "ui/LocateFlash.h"
@@ -712,6 +713,8 @@ void addBuiltIns(Registry<prefPages::Page>& r)
         colorField(ui, "Flash color", kLocateFlashColorPref, kLocateFlashDefaultColor);
         toggleField(ui, "Tear-offs drop at the cursor", tearoff::kDropAtCursorPref, false);
         toggleField(ui, "Badges at the viewport cursor for held keys", "/viewport/cursorBadges", true);
+        choiceField(ui, "Hotkeys follow", hotkeys::kKeysFollowPref,
+               {{"Key labels", "labels"}, {"Key positions (US layout)", "positions"}}, "labels");
         choiceField(ui, "Toggle Channel Box (Ctrl+A) switches to", "/ui/channelBoxToggle",
                {{"The tab shown before it", "lastTab"}, {"The attribute editor (Maya)", "attributeEditor"}}, "lastTab");
         sectionHeader(ui, "Issues");

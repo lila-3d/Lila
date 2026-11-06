@@ -74,7 +74,10 @@ LILA_UI_API std::string toText(QKeyCombination chord);
 LILA_UI_API QString displayText(QKeyCombination chord);
 LILA_UI_API QString keyName(int qtKey);
 
-/** Chord for a key event, named by US physical position the way Hotkeys matches. Empty for a lone modifier. */
+/** The keysFollow pref is "positions": keys match by their US position rather than their label. */
+LILA_UI_API bool keysByPosition();
+
+/** Chord for a key event, named the way Hotkeys matches it (see keysByPosition). Empty for a lone modifier. */
 LILA_UI_API std::optional<QKeyCombination> chordFromEvent(QKeyEvent* e);
 
 /** Focus widget's hotkeyContext chain, innermost first, ending in "global". */

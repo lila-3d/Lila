@@ -131,6 +131,11 @@ QString keyName(int qtKey)
     return QKeySequence(qtKey).toString(QKeySequence::NativeText);
 }
 
+bool keysByPosition()
+{
+    return PrefStore::get().value<std::string>("general", kKeysFollowPref, "labels") == "positions";
+}
+
 std::optional<QKeyCombination> chordFromEvent(QKeyEvent* e)
 {
     int key = e->key();
@@ -143,8 +148,9 @@ std::optional<QKeyCombination> chordFromEvent(QKeyEvent* e)
         mods |= Qt::ShiftModifier;
     }
 #ifdef _WIN32
-    if (int us = usKeyForScancode(e->nativeScanCode()))
-        key = us;
+    if (const uint32_t scan = e->nativeScanCode(); matchesByPosition(scan, keysByPosition()))
+        if (int us = usKeyForScancode(scan))
+            key = us;
 #endif
     std::tie(mods, key) = normalizeShifted(mods, key);
     return QKeyCombination(Qt::KeyboardModifiers(mods), Qt::Key(key));

@@ -3,12 +3,27 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <cstdint>
 #include <utility>
 
 namespace lila::ui::hotkeys
 {
 /** JSON keys of the mouse buttons a hotkey pairs with, indexed left, middle, right. */
 inline constexpr const char* kButtonKeys[3] = {"LMB", "MMB", "RMB"};
+
+/** general.json: "labels" matches keys by the character printed on them, "positions" by where they sit on a US keyboard. */
+inline constexpr const char* kKeysFollowPref = "/hotkeys/keysFollow";
+
+/**
+ * Whether the key with this Windows set-1 scancode matches by its US position. The number row always does, so AZERTY's
+ * unshifted digits still reach the number hotkeys.
+ */
+inline bool matchesByPosition(uint32_t scan, bool positions)
+{
+    if (scan >= 0x02 && scan <= 0x0B)
+        return true;
+    return positions && scan >= 0x02 && scan <= 0x35;
+}
 
 /** Qt::ShiftModifier, spelled out so this header stays free of Qt. */
 inline constexpr int kShiftModifier = 0x02000000;
