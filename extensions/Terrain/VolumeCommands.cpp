@@ -155,14 +155,26 @@ gn::GNode& ensureVolumeNode(gn::Group& grp, const std::string& cmd)
             throw CommandError(cmd + ": the terrain's group has a " + n->type + " node named " + kNodeName + " already");
         return *n;
     }
-    gn::GLink* in = nullptr;
-    for (gn::GLink& l : grp.links)
-        if (l.toNode == "GroupOutput" && l.toSocket == "geometry")
-            in = &l;
+    auto linkInto = [&](const std::string& node, const std::string& socket) -> gn::GLink* {
+        for (gn::GLink& l : grp.links)
+            if (l.toNode == node && l.toSocket == socket)
+                return &l;
+        return nullptr;
+    };
+    // Biomes and material layers read the split heights, so the volume goes before them.
+    std::string toName = "GroupOutput", toSocket = "geometry";
+    gn::GLink* in = linkInto(toName, toSocket);
+    for (const gn::GNode* f = in ? volumeNodeNamed(grp, in->fromNode) : nullptr; f && (f->type == "TerrainBiomes" || f->type == "TerrainLayers");
+         f = in ? volumeNodeNamed(grp, in->fromNode) : nullptr)
+    {
+        toName = f->name;
+        toSocket = "heightfield";
+        in = linkInto(toName, toSocket);
+    }
     if (!in)
         throw CommandError(cmd + ": the terrain's group has no heightfield running into its output");
     const gn::GNode* from = volumeNodeNamed(grp, in->fromNode);
-    const gn::GNode* to = volumeNodeNamed(grp, "GroupOutput");
+    const gn::GNode* to = volumeNodeNamed(grp, toName);
     const glm::dvec2 at = from && to ? (from->position + to->position) * 0.5 + glm::dvec2(0.0, 160.0) : glm::dvec2(0.0);
     const std::string fromNode = in->fromNode, fromSocket = in->fromSocket;
     in->fromNode = kNodeName;
