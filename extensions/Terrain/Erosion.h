@@ -45,6 +45,9 @@ struct ErosionParams
     double talusAngle = 38.0;
     /** Thermal steps after each stream-power step. */
     int thermalIterations = 2;
+    /** Masks pinning heights as erosion runs: weight 0 to 1, and the height held there (drawn ridges, valleys, rivers). */
+    std::string constraintMask = "constraint";
+    std::string constraintHeightMask = "constraintHeight";
 };
 
 /**

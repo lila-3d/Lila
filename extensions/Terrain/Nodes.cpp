@@ -6,11 +6,15 @@
 #include "ErosionGpu.h"
 #include "Inputs.h"
 #include "LandformCommands.h"
+#include "Painted.h"
+#include "Projection.h"
 #include "Stamps.h"
 #include "Terrain.h"
 
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
+#include <lila/ImageIO.h>
+#include <lila/Log.h>
 #include <lila/Paths.h>
 #include <lila/Profile.h>
 #include <lila/TextureGraph.h>
@@ -628,7 +632,12 @@ gn::NodeDecl erodeDecl()
                 if (p.iterations > 0)
                 {
                     std::string err;
-                    const bool gpu = device == "gpu" || (device == "auto" && gpuErosionAvailable());
+                    bool gpu = device == "gpu" || (device == "auto" && gpuErosionAvailable());
+                    if (gpu && h.findMask(p.constraintMask) && h.findMask(p.constraintHeightMask))
+                    {
+                        log::warn("{}: drawn constraints erode on the CPU (the GPU path doesn't hold them)", c.node.name);
+                        gpu = false;
+                    }
                     const std::vector<float> uneroded = h.findMask("erosionProtect") ? h.heights : std::vector<float>{};
                     if (!gpu)
                         erode(h, p);
@@ -706,15 +715,18 @@ gn::NodeDecl elevationDecl()
         .doc = "Loads real-world elevation: GeoTIFF (DEM tiles such as Copernicus GLO-30, national lidar), SRTM .hgt, ESRI ASCII "
                "grid (.asc), XYZ points, or Terrarium and Terrain-RGB PNG map tiles. Heights become cm, centred on center with "
                "north toward -Z; data in degrees is flattened around its middle. Voids are filled from the data around them and "
-               "marked in the mask voids. Data without spacing (PNG tiles, bare XYZ) uses spacing.",
-        .props = {prop("format", demFormatNames(), "auto", "File type; auto goes by extension, and .png is Terrarium.")},
+               "marked in the mask voids. Data without spacing (PNG tiles, bare XYZ) uses spacing. Projection utm or enu "
+               "reprojects data in degrees to UTM metres or a tangent plane at its centre (with the earth's curvature).",
+        .props = {prop("format", demFormatNames(), "auto", "File type; auto goes by extension, and .png is Terrarium."),
+                  prop("projection", projectionNames(), "local", "local flattens degrees around the middle; utm and enu reproject.")},
         .sockets = {.inputs = {in("file", Socket::String, "", "Path; relative paths are under the workspace."),
                                in("center", Socket::Vector, vec(0, 0, 0), "Centre of the area."),
                                in("cellSize", Socket::Float, o.cell, "Grid spacing, cm; 0 keeps the data's own.", 0.0),
                                in("spacing", Socket::Float, o.spacing, "Sample spacing, metres, for files that don't carry one.", 0.0),
                                in("exaggeration", Socket::Float, o.exaggeration, "Multiplies heights.", 0.0),
                                in("fromLowest", Socket::Bool, o.fromLowest, "Lowest point at 0 instead of sea level."),
-                               in("fillVoids", Socket::Bool, true, "Fill voids; off leaves them at 0.")},
+                               in("fillVoids", Socket::Bool, true, "Fill voids; off leaves them at 0."),
+                               in("zone", Socket::Int, int64_t(0), "UTM zone; 0 picks the data's.", 0.0, 60.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -735,10 +747,13 @@ gn::NodeDecl elevationDecl()
                 o.fromLowest = c.b("fromLowest");
                 try
                 {
-                    Dem d = readDem(file, format);
-                    if (c.b("fillVoids"))
-                        fillVoids(d);
-                    c.out("heightfield", gn::heightfieldGeometry(demToHeightfield(d, o)));
+                    ProjectionKind projection = ProjectionKind::Local;
+                    if (!parseProjection(c.prop("projection"), &projection))
+                        throw std::runtime_error("unknown projection '" + c.prop("projection") + "'");
+                    Georef geo;
+                    Heightfield h = demToTerrain(readDem(file, format), o, projection, int(c.i("zone")), c.b("fillVoids"), &geo);
+                    publishGeoref(c.env.owner, geo);
+                    c.out("heightfield", gn::heightfieldGeometry(std::move(h)));
                 }
                 catch (const std::exception& e)
                 {
@@ -758,8 +773,9 @@ gn::NodeDecl imageDecl()
         .doc = "Turns a painted height image (png, psd, tif, exr, tga from Photoshop, Krita or GIMP) into terrain. Mode guide keeps "
                "the painting's big shapes and lets erosion add natural detail; height takes it literally; uplift reads brightness "
                "as how fast the land rises, so ranges grow where it is bright and rivers carve them; mask leaves flat ground and "
-               "puts the image in a mask. The image is width wide along X, its top row on the -Z edge. Erosion is slow on big "
-               "grids: seconds at 1K.",
+               "puts the image in a mask; sketch reads red strokes as ridges, green as valleys, blue as rivers and yellow as flat "
+               "ground over a grey base, and erosion keeps them. The image is width wide along X, its top row on the -Z edge. "
+               "Erosion is slow on big grids: seconds at 1K.",
         .props = {prop("mode", imageModeNames(), "guide", "How brightness is read.")},
         .sockets = {.inputs = {in("file", Socket::String, "", "Path; relative paths are under the workspace."),
                                in("width", Socket::Float, 100000.0, "Width along X, cm.", 0.0), in("low", Socket::Float, o.low, "Height of black, cm."),
@@ -792,8 +808,20 @@ gn::NodeDecl imageDecl()
                 const D3 center = c.v("center");
                 try
                 {
-                    Heightfield h = loadHeightfield(file, {center.x, center.z}, c.f("width"), 0.0, 1.0, false);
-                    interpretImage(h, o);
+                    Heightfield h;
+                    if (o.mode == ImageMode::Sketch)
+                    {
+                        std::string err;
+                        const image::Image img = image::read(file, &err);
+                        if (img.width < 2 || img.height < 2)
+                            throw std::runtime_error(file.string() + ": " + (err.empty() ? std::string("no image") : err));
+                        h = sketchTerrain(img, {center.x, center.z}, c.f("width"), o);
+                    }
+                    else
+                    {
+                        h = loadHeightfield(file, {center.x, center.z}, c.f("width"), 0.0, 1.0, false);
+                        interpretImage(h, o);
+                    }
                     c.out("heightfield", gn::heightfieldGeometry(std::move(h)));
                 }
                 catch (const std::exception& e)

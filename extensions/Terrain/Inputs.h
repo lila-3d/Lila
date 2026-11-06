@@ -27,6 +27,8 @@ struct Dem
     double dy = 0.0;
     /** 1 where fillVoids filled a void. */
     std::vector<uint8_t> filled;
+    /** EPSG code from the GeoTIFF's geokeys (4326, 326zz UTM north ...); 0 when unknown. */
+    int epsg = 0;
 };
 
 enum class DemFormat : uint8_t
@@ -86,6 +88,8 @@ enum class ImageMode : uint8_t
     Uplift,
     /** Flat ground, brightness into a mask. */
     Mask,
+    /** Colour-coded strokes (ridge, valley, river, flat) over a grey base, kept through erosion as constraints. */
+    Sketch,
 };
 
 const std::vector<std::string>& imageModeNames();
@@ -109,6 +113,12 @@ struct ImageOptions
     /** Mask written in Mask mode. */
     std::string mask = "painted";
 };
+
+/**
+ * Removes the steps of 8- or 16-bit brightness (heights 0 to 1 that are all multiples of 1/255 or 1/65535): smooth ramps
+ * that stay within half a level of every pixel, so big shapes are kept exactly. Returns the level size found (0: none).
+ */
+double dequantize(Heightfield& h);
 
 /** Turns h, whose heights are the image's brightness from 0 to 1, into terrain. */
 void interpretImage(Heightfield& h, const ImageOptions& o);

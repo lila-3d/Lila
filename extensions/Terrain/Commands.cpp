@@ -2548,7 +2548,7 @@ void registerCommands(ext::Context& ctx)
                "The file and erosion settings become inputs on the modifier, like terrainCreate's, so terrainErode and setAttr "
                "work on it. Returns the mesh, modifier, group and terrainInfo's stats.",
         .positionalDoc = "file; relative paths are under the workspace",
-        .flags = {{"mode", "m", T::String, "", "elevation, guide, height, uplift or mask; empty picks elevation for DEM files, else guide."},
+        .flags = {{"mode", "m", T::String, "", "elevation, guide, height, uplift, mask or sketch (colour strokes); empty picks elevation for DEM files, else guide."},
                   {"size", "sz", T::Float, 100000.0, "Images: width along X, cm.", {}, {}, 0.0},
                   {"low", "lo", T::Float, 0.0, "Images: height of black, cm."},
                   {"high", "hi", T::Float, 50000.0, "Images: height of white, cm."},
@@ -2577,7 +2577,7 @@ void registerCommands(ext::Context& ctx)
             const bool elevation = mode == "elevation";
             ImageMode imageMode = ImageMode::Guide;
             if (!elevation && !parseImageMode(mode, &imageMode))
-                throw CommandError("terrainImport: unknown mode '" + mode + "' (elevation, guide, height, uplift, mask)");
+                throw CommandError("terrainImport: unknown mode '" + mode + "' (elevation, guide, height, uplift, mask, sketch)");
 
             Graph& g = Graph::current();
             const std::string host = createHost(a.get<std::string>("name", "Terrain"));

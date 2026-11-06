@@ -89,6 +89,8 @@ TerrainRef findTerrainRef(const std::string& node, const std::string& cmd);
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);
 void registerUi(lila::ext::Context& ctx);
+/** Real-world and drawn inputs: Terrain Constraints, OSM Land Cover, Bare Earth and Amplify nodes, their commands, live link. */
+bool registerInputs(lila::ext::Context& ctx);
 /** The Sculpt Terrain viewport tool (terrain.sculptTool). */
 void registerSculptTool(lila::ext::Context& ctx);
 /** Rivers, lakes and sea level: the Terrain Water Features node and the water commands (Water.h). */
