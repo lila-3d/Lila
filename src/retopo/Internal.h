@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <span>
 #include <stdexcept>
@@ -229,9 +230,11 @@ LILA_SCENE_API std::vector<FieldSingularity> cancelClosePoles(const Surface& s, 
 /**
  * Poles moved apart until no two are closer than minSep lattice steps over the surface. Each pole too close to one
  * already placed moves to the nearest clear spot within two steps, or failing that joins the nearest placed pole.
+ * With allowed, a pole on a triangle it rejects moves to the nearest allowed clear spot within four steps.
  */
 LILA_SCENE_API std::vector<FieldSingularity> spreadPoles(const Surface& s, const std::vector<FieldSingularity>& poles,
-                                                         const std::vector<double>& scale, double minSep);
+                                                         const std::vector<double>& scale, double minSep,
+                                                         const std::function<bool(Index)>& allowed = {});
 
 /** Per triangle, its shell (connected through edges); and per shell, the index total its singularities must reach, or INT_MIN when it has a border. */
 struct Shells

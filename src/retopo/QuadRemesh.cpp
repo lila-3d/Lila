@@ -1537,10 +1537,20 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         // Weaker pull to the curvature lets the field keep to the poles it is given instead of growing new ones beside them.
         FieldOptions budgeted = fo;
         budgeted.curvatureWeight *= 0.3;
+        // A seam point mirrors to an even count of edges, so a pole by the seam comes out as a pair beside it with a
+        // six-edge point between. LILA_POLES_OFF_SEAM moves poles two steps off: clears the head top and crotch on
+        // Mochi but tangles the chest, so it stays a switch.
+        std::function<bool(Index)> offSeam;
+        if (symmetric && std::getenv("LILA_POLES_OFF_SEAM"))
+            offSeam = [&](Index t) {
+                const auto& tri = s.tris[t];
+                const glm::dvec3 c = (s.pos[tri[0]] + s.pos[tri[1]] + s.pos[tri[2]]) / 3.0;
+                return std::abs(plane.distance(c)) >= 2.0 * (scale[tri[0]] + scale[tri[1]] + scale[tri[2]]) / 3.0;
+            };
         for (int round = 0; round < 3; ++round)
         {
             const std::vector<FieldSingularity> poles = fieldSingularities(s, qSeam);
-            const std::vector<FieldSingularity> kept = spreadPoles(s, cancelClosePoles(s, poles, scale, 1.5), scale, 1.0);
+            const std::vector<FieldSingularity> kept = spreadPoles(s, cancelClosePoles(s, poles, scale, 1.5), scale, 1.0, offSeam);
             bool same = kept.size() == poles.size();
             for (size_t i = 0; i < kept.size() && same; ++i)
                 same = kept[i].tri == poles[i].tri && kept[i].index == poles[i].index;
