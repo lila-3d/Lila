@@ -157,6 +157,7 @@ const render::Material& checkerMaterial(int checks)
         mat.roughness = 0.8f;
         mat.baseColorMap = std::move(img);
         mat.flags = render::MatBaseColorMap | render::MatTwoSided;
+        mat.keepBaseColor = true;
         m = std::move(mat);
     }
     return m;

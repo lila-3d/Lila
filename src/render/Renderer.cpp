@@ -5681,7 +5681,7 @@ struct Renderer::Impl
                 p.flags &= ~(MatMetallicMap | MatRoughnessMap | MatOcclusionMap);
             if (emissive == kNoHandle)
                 p.flags &= ~MatEmissiveMap;
-            if (s.greyBaseColor)
+            if (s.greyBaseColor && !mat->keepBaseColor)
             {
                 p.base = glm::vec4(glm::vec3(0.5f), mat->roughness);
                 p.flags |= kGreyBase;

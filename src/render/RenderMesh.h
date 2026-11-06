@@ -279,6 +279,8 @@ struct Material
     MaterialStyle style;
     /** Live bevel radius, cm: edges round as they shade (ray traced); 0 is off. */
     float bevelRadius = 0.0f;
+    /** Shows its own base colour even under the Grey Base Color display (the UV checker). */
+    bool keepBaseColor = false;
 };
 
 /**
