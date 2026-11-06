@@ -131,7 +131,7 @@ TEST_CASE("stitch command: live on a sphere, presets, baked")
     scene::Node* curveNode = g.createNode(*scene::types::find("curve"), "Seam", scene::kNoNode, true);
     g.setValue({curveNode->id(), curve::CurveShape::kCreate, -1}, curve::makeCurveData({ring}));
 
-    const json made = ops::execute("stitch", {{"args", {"Seam"}}, {"surface", "Ball"}, {"preset", "heavyLeather"}, {"rows", 2}});
+    const json made = ops::execute("stitch", {{"args", {"Seam"}}, {"surfaces", json::array({"Ball"})}, {"preset", "heavyLeather"}, {"rows", 2}});
     REQUIRE(made.size() == 1);
     REQUIRE(made[0][1].is_string());
     g.evaluate();
@@ -165,7 +165,7 @@ TEST_CASE("stitch command: live on a sphere, presets, baked")
     CHECK(op->as<int64_t>(op->type().attrIndex("stitchCount")) < before);
 
     // No history: the mesh keeps its stitches with no node behind it.
-    const json baked = ops::execute("stitch", {{"args", {"Seam"}}, {"surface", "Ball"}, {"constructionHistory", false}});
+    const json baked = ops::execute("stitch", {{"args", {"Seam"}}, {"surfaces", json::array({"Ball"})}, {"constructionHistory", false}});
     CHECK(baked[0][1].is_null());
     g.evaluate();
     scene::Node* bakedMesh = g.find(baked[0][0].get<std::string>());

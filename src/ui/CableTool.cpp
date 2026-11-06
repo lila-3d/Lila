@@ -378,7 +378,7 @@ void registerCableTool()
     actions::add({.id = "curve.stitch",
                   .label = "Stitch",
                   .category = "Curves",
-                  .doc = "Sews live thread along the selected curves: running, saddle, zigzag, cross or blanket stitches; a selected mesh is what they sit on.",
+                  .doc = "Sews live thread along the selected curves: running, saddle, zigzag, cross or blanket stitches, sitting on the selected meshes.",
                   .python = ops::toPython("stitch", json::object()),
                   .command = "stitch",
                   .call = json::object()});

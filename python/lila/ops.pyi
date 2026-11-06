@@ -8768,8 +8768,8 @@ def splitRingsEditSelection(*objects: Any) -> Any:
         objects: modifier or mesh.
     """
 
-def stitch(*objects: Any, pattern: str | None = None, stitchLength: float | None = None, stitchGap: float | None = None, rotation: float | None = None, stitchWidth: float | None = None, rows: int | None = None, rowSpacing: float | None = None, rowAlign: str | None = None, offset: float | None = None, diameter: float | None = None, flatten: float | None = None, plies: int | None = None, twist: float | None = None, restHeight: float | None = None, insetDepth: float | None = None, jitter: float | None = None, seed: int | None = None, continuousUv: bool | None = None, uvScale: float | None = None, uvRandom: float | None = None, sides: int | None = None, segments: int | None = None, up: Sequence[float] | None = None, preset: str | None = None, surface: str | None = None, constructionHistory: bool | None = None, name: str | None = None, srf: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
-    """Sew thread along curves: running (saddle with rotation), zigzag, cross or blanket stitches, in rows, as real geometry arching in and out of the surface with twisted plies and UVs along the thread. Sits on a mesh when one is given. Live: editing the curve, the mesh or the settings updates the stitches. Returns [mesh, curveStitch] per curve.
+def stitch(*objects: Any, pattern: str | None = None, stitchLength: float | None = None, stitchGap: float | None = None, rotation: float | None = None, stitchWidth: float | None = None, rows: int | None = None, rowSpacing: float | None = None, rowAlign: str | None = None, offset: float | None = None, diameter: float | None = None, flatten: float | None = None, plies: int | None = None, twist: float | None = None, restHeight: float | None = None, insetDepth: float | None = None, jitter: float | None = None, seed: int | None = None, continuousUv: bool | None = None, uvScale: float | None = None, uvRandom: float | None = None, sides: int | None = None, segments: int | None = None, up: Sequence[float] | None = None, preset: str | None = None, surfaces: Sequence[Any] | None = None, constructionHistory: bool | None = None, name: str | None = None, srf: Sequence[Any] | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+    """Sew thread along curves: running (saddle with rotation), zigzag, cross or blanket stitches, in rows, as real geometry arching in and out of the surface with twisted plies and UVs along the thread. Sits on the closest of the meshes given. Live: editing the curve, the mesh or the settings updates the stitches. Returns [mesh, curveStitch] per curve.
 
     Args:
         objects: curves (default: the selected curves).
@@ -8797,12 +8797,12 @@ def stitch(*objects: Any, pattern: str | None = None, stitchLength: float | None
         segments: Rings along each stitch.
         up: With no surface mesh: which way is out of the surface along the curve.
         preset: Starting settings (flags given as well win). One of 'running', 'topstitch', 'saddle', 'denim', 'heavyLeather', 'zigzag', 'cross', 'blanket'.
-        surface: The mesh the stitches sit on (default: the selected mesh). Leave out for none. Short form srf.
+        surfaces: The meshes the stitches sit on, each point on the closest (default: the selected meshes). [] for none. Short form srf.
         constructionHistory: Keep the stitch node so editing the curve or settings updates the stitches. Short form ch. Default True.
         name: Mesh name; made unique. Short form n.
 
     Examples:
-        stitch('SeamCurve', surface='Shoe', preset='heavyLeather')
+        stitch('SeamCurve', surfaces=['Shoe', 'Tongue'], preset='heavyLeather')
 
         stitch('Hem', pattern='zigzag', stitchWidth=0.6, rows=2)
     """

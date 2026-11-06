@@ -73,7 +73,51 @@ json presetValues(const StitchOptions& o)
             {"jitter", o.jitter}};
 }
 
-/** Stitches along the input curves, on the surface mesh when one is connected. */
+struct Surface
+{
+    MeshPtr mesh;
+    std::shared_ptr<geo::MeshBvh> bvh;
+    glm::dmat4 world, toLocal;
+    glm::dmat3 normalToWorld;
+};
+
+/** The closest point over every connected surface mesh, world space; empty when none is connected. */
+ClosestSurface closestOverSurfaces(const Node& n)
+{
+    auto surfaces = std::make_shared<std::vector<Surface>>();
+    const auto& matrices = n.elements(idx(n, "surfaceMatrices"));
+    for (const auto& [k, v] : n.elements(idx(n, "surfaces")))
+    {
+        const MeshPtr& mesh = std::get<MeshPtr>(v);
+        if (!mesh || mesh->numFaces() == 0)
+            continue;
+        auto mx = std::ranges::find(matrices, k, [](const auto& e) { return e.first; });
+        const glm::dmat4 world = mx != matrices.end() ? std::get<glm::dmat4>(mx->second) : glm::dmat4(1.0);
+        surfaces->push_back({mesh, std::make_shared<geo::MeshBvh>(*mesh), world, glm::inverse(world), glm::transpose(glm::inverse(glm::dmat3(world)))});
+    }
+    if (surfaces->empty())
+        return {};
+    return [surfaces](const D3& p) -> std::optional<SurfacePoint> {
+        std::optional<SurfacePoint> best;
+        double bestDist = 1e300;
+        for (const Surface& s : *surfaces)
+        {
+            geo::BvhClosest hit;
+            if (!s.bvh->closestPoint(D3(s.toLocal * glm::dvec4(p, 1.0)), hit) || !s.mesh->faceValid(hit.face))
+                continue;
+            const D3 w(s.world * glm::dvec4(hit.point, 1.0));
+            const double dist = glm::distance(w, p);
+            if (dist >= bestDist)
+                continue;
+            const D3 nrm = s.normalToWorld * s.mesh->faceNormal(hit.face);
+            bestDist = dist;
+            best = SurfacePoint{w, glm::length(nrm) > 1e-12 ? glm::normalize(nrm) : D3(0, 1, 0)};
+        }
+        return best;
+    };
+}
+
+/** Stitches along the input curves, on the surface meshes when any are connected. */
 class StitchNode final : public Node
 {
 public:
@@ -85,20 +129,7 @@ public:
         try
         {
             const StitchOptions o = optionsOf(*this);
-            ClosestSurface snap;
-            if (const MeshPtr& mesh = as<MeshPtr>(idx(*this, "surface")); mesh && mesh->numFaces() > 0)
-            {
-                const glm::dmat4 world = as<glm::dmat4>(idx(*this, "surfaceMatrix")), toLocal = glm::inverse(world);
-                const glm::dmat3 normalToWorld = glm::transpose(glm::inverse(glm::dmat3(world)));
-                auto bvh = std::make_shared<geo::MeshBvh>(*mesh);
-                snap = [mesh, bvh, world, toLocal, normalToWorld](const D3& p) -> std::optional<SurfacePoint> {
-                    geo::BvhClosest hit;
-                    if (!bvh->closestPoint(D3(toLocal * glm::dvec4(p, 1.0)), hit) || !mesh->faceValid(hit.face))
-                        return std::nullopt;
-                    const D3 n = normalToWorld * mesh->faceNormal(hit.face);
-                    return SurfacePoint{D3(world * glm::dvec4(hit.point, 1.0)), glm::length(n) > 1e-12 ? glm::normalize(n) : D3(0, 1, 0)};
-                };
-            }
+            const ClosestSurface snap = closestOverSurfaces(*this);
 
             geo::Mesh all;
             int count = 0;
@@ -141,7 +172,7 @@ void registerStitchOptionLayout()
 {
     namespace opt = ops::options;
     opt::Override o;
-    o.order = {"preset",   "surface",    "pattern",  "stitchLength", "stitchGap", "rotation",   "stitchWidth", "rows",
+    o.order = {"preset",   "surfaces",   "pattern",  "stitchLength", "stitchGap", "rotation",   "stitchWidth", "rows",
                "rowSpacing", "rowAlign", "offset",   "diameter",     "flatten",   "plies",      "twist",       "restHeight",
                "insetDepth", "jitter",   "seed",     "continuousUv", "uvScale",   "uvRandom",   "sides",       "segments"};
     o.hidden = {"name"};
@@ -169,10 +200,13 @@ void registerStitchType()
     t.name = "curveStitch";
     t.icon = "line-dashed";
     t.doc = "Sewn thread along curves: running, zigzag, cross or blanket stitches arching in and out of the surface, in twisted "
-            "plies, sitting on a mesh when one is connected.";
+            "plies, sitting on the closest of the connected meshes.";
     t.ownAttrs.push_back(dataIn("inCurve", "The stitch lines, world space.", false));
-    t.ownAttrs.push_back(meshIn("surface", "The mesh the stitches sit on."));
-    t.ownAttrs.push_back(matrixIn("surfaceMatrix", "That mesh's world matrix."));
+    // Paired by element: surfaceMatrices[k] places surfaces[k].
+    t.ownAttrs.push_back({.name = "surfaces", .type = PlugType::Mesh, .defaultValue = MeshPtr(), .flags = AttrInput | AttrHidden | AttrArray,
+                          .doc = "The meshes the stitches sit on; each point takes the closest."});
+    t.ownAttrs.push_back({.name = "surfaceMatrices", .type = PlugType::Matrix, .defaultValue = glm::dmat4(1.0),
+                          .flags = AttrInput | AttrHidden | AttrArray, .doc = "Each mesh's world matrix, by the same element."});
     const StitchOptions d;
     for (AttrDef a : {eAttr("pattern", kPatterns, 0, "How the thread runs: dashes, side-to-side diagonals, an X per stitch, or legs across joined along the line."),
                       fAttr("stitchLength", d.length, "Each stitch's length along the line, cm.", 0.01),
@@ -209,7 +243,7 @@ void registerStitchCommands()
     std::vector<FlagDef> flags = attrFlags("curveStitch");
     for (FlagDef fd : std::vector<FlagDef>{
              {"preset", "", T::String, nullptr, "Starting settings (flags given as well win).", stitchPresetNames()},
-             {"surface", "srf", T::String, nullptr, "The mesh the stitches sit on (default: the selected mesh). Leave out for none."},
+             nodeFlag({"surfaces", "srf", T::List, nullptr, "The meshes the stitches sit on, each point on the closest (default: the selected meshes). [] for none."}, "mesh"),
              {"constructionHistory", "ch", T::Bool, true, "Keep the stitch node so editing the curve or settings updates the stitches."},
              {"name", "n", T::String, nullptr, "Mesh name; made unique."}})
         flags.push_back(std::move(fd));
@@ -217,8 +251,8 @@ void registerStitchCommands()
     ops::registerCommand({
         .name = "stitch",
         .doc = "Sew thread along curves: running (saddle with rotation), zigzag, cross or blanket stitches, in rows, as real "
-               "geometry arching in and out of the surface with twisted plies and UVs along the thread. Sits on a mesh when one "
-               "is given. Live: editing the curve, the mesh or the settings updates the stitches. Returns [mesh, curveStitch] "
+               "geometry arching in and out of the surface with twisted plies and UVs along the thread. Sits on the closest "
+               "of the meshes given. Live: editing the curve, the mesh or the settings updates the stitches. Returns [mesh, curveStitch] "
                "per curve.",
         .positionalDoc = "curves (default: the selected curves)",
         .flags = flags,
@@ -232,14 +266,17 @@ void registerStitchCommands()
                     throw CommandError("stitch: " + p.get<std::string>() + " is not a curve");
                 curves.push_back(n);
             }
-            Node* surface = a.has("surface") ? &meshNamed(g, a.get<std::string>("surface"), "stitch") : nullptr;
+            std::vector<Node*> surfaces;
+            if (a.has("surfaces"))
+                for (const json& s : a.flags["surfaces"].is_array() ? a.flags["surfaces"] : json::array({a.flags["surfaces"]}))
+                    surfaces.push_back(&meshNamed(g, s.get<std::string>(), "stitch"));
             for (NodeId id : g.selection())
                 if (Node* n = g.node(id))
                 {
                     if (a.positional.empty() && n->type().isA("curve"))
                         curves.push_back(n);
-                    else if (!surface && !a.has("surface") && n->type().isA("mesh"))
-                        surface = n;
+                    else if (!a.has("surfaces") && n->type().isA("mesh"))
+                        surfaces.push_back(n);
                 }
             if (curves.empty())
                 throw CommandError("stitch: select the curves to stitch along");
@@ -265,12 +302,12 @@ void registerStitchCommands()
                 Node* op = g.createNode(*types::find("curveStitch"), {}, kNoNode, true);
                 applyFlags(g, *op, merged, "stitch");
                 g.connect({curve->id(), CurveShape::kWorldSpace, -1}, {op->id(), idx(*op, "inCurve"), -1});
-                if (surface)
+                for (size_t k = 0; k < surfaces.size(); ++k)
                 {
-                    g.connect({surface->id(), MeshNode::kOutMesh, -1}, {op->id(), idx(*op, "surface"), -1});
-                    g.connect({surface->id(), Transform::kWorldMatrix, -1}, {op->id(), idx(*op, "surfaceMatrix"), -1});
+                    g.connect({surfaces[k]->id(), MeshNode::kOutMesh, -1}, {op->id(), idx(*op, "surfaces"), -1, int(k)});
+                    g.connect({surfaces[k]->id(), Transform::kWorldMatrix, -1}, {op->id(), idx(*op, "surfaceMatrices"), -1, int(k)});
                 }
-                else if (math::upAxis() == math::UpAxis::Z)
+                if (surfaces.empty() && math::upAxis() == math::UpAxis::Z)
                     g.setValue({op->id(), idx(*op, "up"), -1}, D3(0, 0, 1));
                 Node* mesh = g.createNode(*types::find("mesh"), a.get<std::string>("name", "Stitches"), kNoNode, true);
                 g.connect({op->id(), idx(*op, "outMesh"), -1}, {mesh->id(), MeshNode::kInMesh, -1});
@@ -289,7 +326,7 @@ void registerStitchCommands()
             g.select(made);
             return out;
         },
-        .examples = {"stitch('SeamCurve', surface='Shoe', preset='heavyLeather')", "stitch('Hem', pattern='zigzag', stitchWidth=0.6, rows=2)"},
+        .examples = {"stitch('SeamCurve', surfaces=['Shoe', 'Tongue'], preset='heavyLeather')", "stitch('Hem', pattern='zigzag', stitchWidth=0.6, rows=2)"},
     });
     registerStitchOptionLayout();
 }
