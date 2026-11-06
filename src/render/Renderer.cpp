@@ -468,6 +468,7 @@ struct GpuMesh
     VkAccelerationStructureKHR blas = VK_NULL_HANDLE;
     compute::Buffer blasBuffer;
     VkDeviceAddress blasAddress = 0;
+    bool blasStale = false; // a live mesh's vertices changed since its structure was built; refit before tracing
     std::shared_ptr<const RenderMesh> keep;
     uint64_t lastUsed = 0;
 };
@@ -2733,6 +2734,7 @@ struct Renderer::Impl
                 AllocatedBuffer staging = createBuffer(data.data(), data.size() * sizeof(MeshVertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 f.staging.push_back(staging);
                 vkCmdCopyBuffer(cmd, staging.buffer, g.vertices.buffer, uint32_t(regions.size()), regions.data());
+                g.blasStale = g.blas != VK_NULL_HANDLE;
             }
             if (edgesStale)
             {
@@ -3356,8 +3358,11 @@ struct Renderer::Impl
         g.blasAddress = 0;
     }
 
-    /** The mesh's bottom-level structure, recorded into cmd; its scratch goes with the frame. */
-    bool buildBlas(VkCommandBuffer cmd, Frame& f, GpuMesh& g, uint32_t vertexCount)
+    /**
+     * The mesh's bottom-level structure, recorded into cmd; its scratch goes with the frame. A live mesh's is built
+     * updatable, and with refit an existing one is updated in place from the mesh's current vertices.
+     */
+    bool buildBlas(VkCommandBuffer cmd, Frame& f, GpuMesh& g, uint32_t vertexCount, bool live, bool refit = false)
     {
         VkAccelerationStructureGeometryKHR geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
         geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
@@ -3371,8 +3376,8 @@ struct Renderer::Impl
         geom.geometry.triangles.indexData.deviceAddress = bufferAddress(g.indices.buffer);
         VkAccelerationStructureBuildGeometryInfoKHR info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
         info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-        info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | (live ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR : 0);
+        info.mode = refit ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
         info.geometryCount = 1;
         info.pGeometries = &geom;
         const uint32_t triangles = g.indexCount / 3;
@@ -3380,21 +3385,27 @@ struct Renderer::Impl
         vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &triangles, &sizes);
         try
         {
-            g.blasBuffer = compute::makeBuffer(vk, sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
-                                               compute::Host::None);
-            f.scratch.push_back(compute::makeBuffer(vk, sizes.buildScratchSize + vk.asScratchAlignment, 0, compute::Host::None));
+            if (!refit)
+                g.blasBuffer = compute::makeBuffer(vk, sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                                   compute::Host::None);
+            const VkDeviceSize scratch = refit ? sizes.updateScratchSize : sizes.buildScratchSize;
+            f.scratch.push_back(compute::makeBuffer(vk, scratch + vk.asScratchAlignment, 0, compute::Host::None));
         }
         catch (const std::exception& e)
         {
             log::error("render: {}", e.what());
             return false;
         }
-        VkAccelerationStructureCreateInfoKHR aci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
-        aci.buffer = g.blasBuffer.buffer;
-        aci.size = sizes.accelerationStructureSize;
-        aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        vkCreateAccelerationStructureKHR(vk.device, &aci, nullptr, &g.blas);
+        if (!refit)
+        {
+            VkAccelerationStructureCreateInfoKHR aci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+            aci.buffer = g.blasBuffer.buffer;
+            aci.size = sizes.accelerationStructureSize;
+            aci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            vkCreateAccelerationStructureKHR(vk.device, &aci, nullptr, &g.blas);
+        }
         const VkDeviceSize align = vk.asScratchAlignment;
+        info.srcAccelerationStructure = refit ? g.blas : VK_NULL_HANDLE;
         info.dstAccelerationStructure = g.blas;
         info.scratchData.deviceAddress = (f.scratch.back().address + align - 1) / align * align;
         const VkAccelerationStructureBuildRangeInfoKHR range{triangles, 0, 0, 0};
@@ -3402,12 +3413,14 @@ struct Renderer::Impl
         vkCmdBuildAccelerationStructuresKHR(cmd, 1, &info, &ranges);
         VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR, nullptr, g.blas};
         g.blasAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &ai);
+        g.blasStale = false;
         return true;
     }
 
     /**
      * Rebuilds the scene's top-level structure in place from the frame's shaded placements, building bottom-level ones
-     * for meshes that have none. Deforming meshes are left out. False when there is nothing to trace or no ray tracing.
+     * for meshes that have none and refitting those of live meshes whose vertices changed. False when there is nothing
+     * to trace or no ray tracing.
      */
     bool buildSceneTlas(VkCommandBuffer cmd, Frame& f)
     {
@@ -3434,15 +3447,20 @@ struct Renderer::Impl
         for (const DrawBatch& b : frameBatches.shaded)
         {
             const MeshDraw& d = *b.draw;
-            if (!d.mesh || d.mesh->dynamic || d.mesh->indices.empty())
+            if (!d.mesh || d.mesh->indices.empty())
                 continue;
             GpuMesh* g = gpuMesh(d.mesh);
             if (!g || g->indexCount < 3)
                 continue;
-            if (!g->blas)
+            if (!g->blas || g->blasStale)
             {
                 const RenderMesh& source = d.mesh->shareVertices ? *d.mesh->shareVertices : *d.mesh;
-                if (!buildBlas(cmd, f, *g, uint32_t(source.vertices.size())))
+                if (g->blas && !built)
+                    // The refit reads vertices this frame's upload wrote, over a structure earlier frames' traces read.
+                    memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                                           VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
+                if (!buildBlas(cmd, f, *g, uint32_t(source.vertices.size()), d.mesh->dynamic != nullptr, g->blas != VK_NULL_HANDLE))
                     continue;
                 built = true;
             }
