@@ -344,10 +344,20 @@ void LayoutController::ensureDocks(const json& docks)
 
 void LayoutController::applyColumns(const json& columns)
 {
-    // Each dock brings its whole tab group, hidden tabs included, so the group's other panels open where they belong.
-    auto group = [this](QDockWidget* d) {
+    std::set<QDockWidget*> named;
+    for (const json& column : columns)
+        for (const json& n : column)
+            if (QDockWidget* d = n.is_string() ? dock(QString::fromStdString(n.get<std::string>())) : nullptr)
+                named.insert(d);
+    // Each dock brings its whole tab group, hidden tabs included, so the group's other panels open where they belong. A dock the
+    // columns name on its own leaves its group for its own place, and the rest go with the first named dock of their group.
+    std::set<QDockWidget*> claimed;
+    auto group = [this, &named, &claimed](QDockWidget* d) {
         QList<QDockWidget*> g{d};
-        g += mWindow->tabifiedDockWidgets(d);
+        claimed.insert(d);
+        for (QDockWidget* t : mWindow->tabifiedDockWidgets(d))
+            if (!named.count(t) && claimed.insert(t).second)
+                g.push_back(t);
         return g;
     };
     std::vector<std::vector<QList<QDockWidget*>>> placed;
@@ -381,6 +391,7 @@ void LayoutController::applyColumns(const json& columns)
     for (const auto& stack : placed)
     {
         QDockWidget* top = nullptr;
+        QDockWidget* above = nullptr;
         for (const QList<QDockWidget*>& g : stack)
         {
             QDockWidget* head = g.front();
@@ -390,8 +401,9 @@ void LayoutController::applyColumns(const json& columns)
             else if (!top)
                 mWindow->splitDockWidget(previous, head, Qt::Horizontal);
             else
-                mWindow->splitDockWidget(top, head, Qt::Vertical);
+                mWindow->splitDockWidget(above, head, Qt::Vertical);
             top = top ? top : head;
+            above = head;
         }
         // Tabs join after the column is split: splitting a dock that is already in a tab group tabs the new one too.
         for (const QList<QDockWidget*>& g : stack)
@@ -405,6 +417,7 @@ void LayoutController::applyColumns(const json& columns)
 
 void LayoutController::applyPreset(const json& preset)
 {
+    holdOwnColumns(mWindow);
     mReset();
     std::set<std::string> open;
     for (const json& n : preset.value("open", json::array()))

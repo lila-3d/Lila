@@ -911,6 +911,14 @@ void toggleDock(QDockWidget* dock)
         dock->hide();
 }
 
+void holdOwnColumns(QMainWindow* window)
+{
+    gArrangingColumns = true;
+    gClosedColumns.clear();
+    // Two hops: the arranging a placement queues is itself a zero timer posted while it runs.
+    QTimer::singleShot(0, window, [window] { QTimer::singleShot(0, window, [] { gArrangingColumns = false; }); });
+}
+
 void keepOwnColumn(QDockWidget* dock)
 {
     dock->setProperty(kOwnColumn, true);

@@ -47,6 +47,9 @@ inline constexpr const char* kOwnColumn = "lilaOwnColumn";
  */
 LILA_UI_API void keepOwnColumn(QDockWidget* dock);
 
+/** Holds keepOwnColumn's arranging while a layout places every dock itself, until the events it queues have run. */
+LILA_UI_API void holdOwnColumns(QMainWindow* window);
+
 /** Gives the dock's title bar a help button opening a docs page ("topology", "curves?id=pipe"); empty removes it. */
 LILA_UI_API void setDockDocs(QDockWidget* dock, const std::string& page);
 
