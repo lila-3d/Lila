@@ -315,6 +315,7 @@ Dem readGeoTiff(const fs::path& path)
             if (dir[k + 1] == 0)
                 keys[int(dir[k])] = int(dir[k + 3]);
     dem.geographic = keys.contains(1024) ? keys[1024] == 2 : false;
+    dem.epsg = keys.contains(3072) ? keys[3072] : keys.contains(2048) ? keys[2048] : 0;
     const bool pointSamples = keys.contains(1025) && keys[1025] == 2;
     double unit = 1.0;
     if (keys.contains(3076))
@@ -797,7 +798,7 @@ Heightfield demToHeightfield(const Dem& d, const DemOptions& o)
 
 const std::vector<std::string>& imageModeNames()
 {
-    static const std::vector<std::string> n = {"height", "guide", "uplift", "mask"};
+    static const std::vector<std::string> n = {"height", "guide", "uplift", "mask", "sketch"};
     return n;
 }
 
@@ -817,6 +818,7 @@ void interpretImage(Heightfield& h, const ImageOptions& o)
 
     if (h.empty())
         return;
+    dequantize(h);
     blur(h, o.smooth);
     const double shape = std::max(0.05, o.shape);
     for (float& v : h.heights)

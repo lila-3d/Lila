@@ -6,7 +6,7 @@
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
-    if (!terrain::registerNodes(ctx))
+    if (!terrain::registerNodes(ctx) || !terrain::registerInputs(ctx))
         return 1;
     terrain::registerCommands(ctx);
     terrain::registerUi(ctx);

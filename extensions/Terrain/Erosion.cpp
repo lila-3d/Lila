@@ -195,6 +195,15 @@ void erode(Heightfield& h, const ErosionParams& p)
     const std::vector<float> start = h.heights;
     const std::vector<float> uplift = maskOr(h, p.upliftMask, 1.0f);
     const std::vector<float> hardness = maskOr(h, p.hardnessMask, 0.0f);
+    const std::vector<float> pinWeight = maskOr(h, h.findMask(p.constraintHeightMask) ? p.constraintMask : std::string(), 0.0f);
+    const std::vector<float> pinHeight = maskOr(h, p.constraintHeightMask, 0.0f);
+    auto pin = [&](size_t i, float v) { return v + (pinHeight[i] - v) * std::clamp(pinWeight[i], 0.0f, 1.0f); };
+    const bool pinned = std::any_of(pinWeight.begin(), pinWeight.end(), [](float w) { return w > 0.0f; });
+    auto pinAll = [&] {
+        if (pinned)
+            tbb::parallel_for(size_t(0), h.size(), [&](size_t i) { h.heights[i] = pin(i, h.heights[i]); });
+    };
+    pinAll();
     // Erosion works in metres so a grid erodes the same at any resolution: area in m2, distance in m.
     const double cellM = h.cell * 0.01, cellArea = cellM * cellM;
     Drainage d;
@@ -214,7 +223,7 @@ void erode(Heightfield& h, const ErosionParams& p)
             const double k = p.strength * (1.0 - 0.9 * std::clamp(double(hardness[i]), 0.0, 1.0));
             const double f = k * std::pow(double(d.area[i]) * cellArea, p.areaExponent) / dist;
             const double raised = double(z[i]) + p.uplift * double(uplift[i]);
-            z[i] = float((raised + f * double(z[r])) / (1.0 + f));
+            z[i] = pin(i, float((raised + f * double(z[r])) / (1.0 + f)));
         }
         if (p.thermalIterations > 0)
         {
@@ -229,6 +238,7 @@ void erode(Heightfield& h, const ErosionParams& p)
                 z[h.index(0, r)] = d.filled[h.index(0, r)];
                 z[h.index(h.nx - 1, r)] = d.filled[h.index(h.nx - 1, r)];
             }
+            pinAll();
         }
     }
     d = drain(h);

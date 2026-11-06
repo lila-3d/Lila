@@ -13,6 +13,8 @@
 
 #include <QApplication>
 
+#include <tuple>
+
 using namespace lila;
 using namespace lila::ui;
 
@@ -35,6 +37,7 @@ void registerUi(ext::Context& ctx)
         {"terrain.export", "Export Terrain", "terrainExport", "Write the selected terrain to files for an engine or another tool.", "terrainExport('Terrain', target='files')"},
         {"terrain.sendToUnreal", "Send Terrain to Unreal", "terrainSendToUnreal", "Send the selected terrain to the connected Unreal editor as a Landscape.",
          "terrainSendToUnreal('Terrain')"},
+        {"terrain.liveLink", "Live Link Terrain", "terrainLiveLink", "Re-run the selected terrain whenever its source file is saved.", "terrainLiveLink('Terrain')"},
     };
     for (const auto& c : commands)
         actions::add(ctx, {.id = c.id, .label = c.label, .category = "Terrain", .doc = c.doc, .python = c.python, .command = c.command, .call = nlohmann::json::object()});
@@ -52,6 +55,16 @@ void registerUi(ext::Context& ctx)
                        .doc = "Make a terrain from a DEM tile or a painted height image.",
                        .python = "terrainImport('dem/N46E007.hgt')"});
 
+    for (const auto& [id, label, command, doc, python] :
+         {std::tuple{"terrain.importDem", "Real Place", "terrainImportDem", "Make a terrain from real elevation, by area or place name.",
+                     "terrainImportDem(place='Matterhorn', size=[1200000, 1200000])"},
+          std::tuple{"terrain.importOsm", "OSM Features", "terrainImportOsm", "Drape OpenStreetMap roads, rivers and lakes on a terrain and add land cover masks.",
+                     "terrainImportOsm('area.osm', terrain='Terrain')"}})
+    {
+        const std::string cmd = command;
+        actions::add(ctx, {.id = id, .label = label, .category = "Terrain", .run = [cmd] { actions::runWithOptions(cmd, nlohmann::json::object()); }, .doc = doc, .python = python});
+    }
+
     registerSculptTool(ctx);
     actions::add(ctx, {.id = "terrain.sculpt",
                        .label = "Sculpt Terrain",
@@ -63,7 +76,7 @@ void registerUi(ext::Context& ctx)
     menus::addItem(ctx, {.id = "terrain.menu",.menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
                          .after = levelToolkit::kBuildSection});
     int separators = 0;
-    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "", "terrain.toMesh", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
+    for (const char* a : {"terrain.create", "terrain.import", "terrain.importDem", "terrain.importOsm", "terrain.liveLink", "terrain.erode", "terrain.sculpt", "", "terrain.toMesh", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("terrain.menu.") + a, .menu = "Level/Terrain", .action = a});
