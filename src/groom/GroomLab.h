@@ -19,7 +19,7 @@ namespace lila::groom
 {
 struct GrownStrands
 {
-    Splines strands;
+    curve::Splines strands;
     /** What the graph reported while evaluating (unknown nodes, bad params); empty when it ran clean. */
     std::vector<std::string> warnings;
 };
@@ -29,7 +29,7 @@ struct GrownStrands
  * rooted on the scalp at their first point and read by the graph's Guides nodes. seconds is the time expressions and
  * motion nodes see. Throws std::runtime_error when the graph can't load or its output isn't strands or guides.
  */
-LILA_SCENE_API GrownStrands growStrands(const geo::Mesh& scalp, const Splines& guides, const std::string& graphJson,
+LILA_SCENE_API GrownStrands growStrands(const geo::Mesh& scalp, const curve::Splines& guides, const std::string& graphJson,
                                         double seconds = 0.0);
 
 void registerGroomLabType();

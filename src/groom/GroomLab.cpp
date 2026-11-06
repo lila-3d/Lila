@@ -5,6 +5,7 @@
 #include "curve/NodeHelpers.h"
 #include "geo/Mesh.h"
 #include "groom/Attrs.h"
+#include "groom/Groom.h"
 #include "groom/GroomEvaluator.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
