@@ -595,7 +595,10 @@ AttrDef paramAttr(const GInput& in)
     return a;
 }
 
-/** Refreshes the presentation of an already registered type's params in place, so a tooltip edit needs no new type. */
+/**
+ * Refreshes an already registered type's params in place, so a tooltip edit needs no new type. Defaults are refreshed too:
+ * a group rebuilt under the same name (a new scene) must not hand new modifiers the old group's defaults.
+ */
 void representParams(const scene::NodeType& t, const Group& g)
 {
     auto& type = const_cast<scene::NodeType&>(t);
@@ -603,7 +606,10 @@ void representParams(const scene::NodeType& t, const Group& g)
         for (std::vector<AttrDef>* list : {&type.ownAttrs, &type.attrs})
             for (AttrDef& a : *list)
                 if (a.name == in.name)
+                {
                     presentParam(a, in);
+                    a.defaultValue = paramAttr(in).defaultValue;
+                }
 }
 
 const scene::NodeType& ensureType(const Group& g)

@@ -485,3 +485,20 @@ TEST_CASE("the user's Blender VFX graph, rebuilt")
     std::vector<glm::dvec3> again(outMesh(mesh)->positions().begin(), outMesh(mesh)->positions().end());
     CHECK(again == p0);
 }
+
+TEST_CASE("a group rebuilt under the same name in a new scene gives new modifiers its new defaults")
+{
+    auto build = [](double size) {
+        run("gnBuildGroup", args({json{{"name", "Sized"},
+                                       {"inputs", json::array({{{"name", "size"}, {"type", "float"}, {"default", size}}})},
+                                       {"links", json::array({"GroupInput.geometry -> GroupOutput.geometry"})}}}));
+    };
+    run("newScene");
+    build(100.0);
+    std::string mod = run("gnApply", args({plane("Sized", 2), "Sized"})).get<std::string>();
+    CHECK(run("getAttr", args({mod + ".size"})).get<double>() == doctest::Approx(100.0));
+    run("newScene");
+    build(25.0);
+    mod = run("gnApply", args({plane("Sized", 2), "Sized"})).get<std::string>();
+    CHECK(run("getAttr", args({mod + ".size"})).get<double>() == doctest::Approx(25.0));
+}
