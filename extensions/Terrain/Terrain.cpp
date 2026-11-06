@@ -11,6 +11,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
         return 1;
     terrain::registerCommands(ctx);
     terrain::registerExportEngines(ctx);
+    terrain::registerWater(ctx);
     terrain::registerUi(ctx);
     return 0;
 }
