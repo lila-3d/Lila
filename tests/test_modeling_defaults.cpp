@@ -104,7 +104,8 @@ TEST_CASE("component edits in object mode take the whole mesh")
     run("select", {{"args", {plane}}});
     run("selectMode", {{"args", {"object"}}});
     run("polyExtrude", {{"thickness", 1.0}});
-    CHECK(faces(plane) == before + 4);
+    // An open plane keeps a back-facing base: the top, four sides and the base.
+    CHECK(faces(plane) == before + 5);
     CHECK(run("selectMode") == "face");
     run("undo");
     CHECK(faces(plane) == before);
