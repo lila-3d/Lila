@@ -42,7 +42,7 @@ using json = nlohmann::json;
 namespace
 {
 namespace fs = std::filesystem;
-using T = ArgType;
+using EA = ArgType;
 
 fs::path gScripts;
 
@@ -54,7 +54,7 @@ void writeBytes(const fs::path& path, const void* data, size_t bytes)
         throw std::runtime_error("can't write " + path.string());
 }
 
-std::vector<char> readBytes(const fs::path& path)
+std::vector<char> readFileBytes(const fs::path& path)
 {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f)
@@ -642,7 +642,7 @@ json exportGodot(const Heightfield& h, const glm::dmat4& world, const fs::path& 
     {
         if (!fs::exists(o.script))
             throw std::runtime_error("the Terrain3D importer script is missing from the extension: " + o.script.generic_string());
-        const std::vector<char> src = readBytes(o.script);
+        const std::vector<char> src = readFileBytes(o.script);
         std::string text(src.begin(), src.end());
         const std::string token = "%TERRAIN_JSON%";
         if (const size_t at = text.find(token); at != std::string::npos)
@@ -903,12 +903,12 @@ json splitUnrealRegions(json settings, int regionQuads)
     const fs::path heightFile = settings["files"]["height"].get<std::string>();
     const fs::path folder = heightFile.parent_path();
     const std::string stem = heightFile.stem().string();
-    const std::vector<char> heights = readBytes(heightFile);
+    const std::vector<char> heights = readFileBytes(heightFile);
     if (heights.size() != size_t(vx) * size_t(vy) * 2)
         throw std::runtime_error(heightFile.generic_string() + " isn't " + std::to_string(vx) + " x " + std::to_string(vy) + " 16-bit");
     std::vector<std::pair<std::string, std::vector<char>>> layers;
     for (const json& l : settings.value("layers", json::array()))
-        layers.emplace_back(l["layer"].get<std::string>(), readBytes(l["file"].get<std::string>()));
+        layers.emplace_back(l["layer"].get<std::string>(), readFileBytes(l["file"].get<std::string>()));
 
     const int rx = std::max(1, (vx - 1 + regionQuads - 1) / regionQuads), ry = std::max(1, (vy - 1 + regionQuads - 1) / regionQuads);
     std::vector<json> regions(size_t(rx) * size_t(ry));
@@ -1223,21 +1223,21 @@ std::vector<FlagDef> engineExportFlags(std::vector<FlagDef> flags)
         else if (f.name == "layers")
             f.doc = "unreal, unity, godot, files splats: masks to send as paint layers, a list, or {mask: layer name}; default every mask.";
     const std::vector<FlagDef> more = {
-        {"tileSize", "ts", T::Int, int64_t(0), "files: samples per tile side, 0 writes one set; mesh: samples per tile (257).", {}, {}, 0.0, 65536.0},
-        {"sharedEdges", "se", T::Bool, false, "files: neighbouring tiles repeat their common edge; off, they abut as Unreal's tiled import reads them."},
-        {"splats", "sp", T::Bool, false, "files: also write the masks packed four to an RGBA PNG (<name>_splat<k>.png)."},
-        {"resolution", "res", T::Int, int64_t(0), "unity: heightmap resolution per tile, 2^n + 1 from 33 to 4097; 0 keeps the terrain's detail.", {}, {}, 0.0, 4097.0},
-        {"maxResolution", "mres", T::Int, int64_t(4097), "unity: largest tile resolution picked when resolution is 0; bigger terrains become more tiles.", {}, {}, 33.0, 4097.0},
-        {"baseLayer", "bl", T::Bool, true, "unity, godot: a Base layer first takes the weight the masks leave below 1."},
-        {"regionSize", "rgs", T::Int, int64_t(0), "godot: Terrain3D region size, 64 to 2048; 0 picks from 256 up to fit its region map.", {}, {}, 0.0, 2048.0},
-        {"mode", "md", T::String, "terrain3d", "godot: terrain3d (regions for the Terrain3D addon) or mesh (glTF tiles).", {"terrain3d", "mesh"}},
-        {"format", "fmt", T::String, nullptr, "mesh: fbx, gltf, glb, usd, usda, usdc or usdz, comma separated for several; default fbx (glb for godot)."},
-        {"lods", "lod", T::Int, int64_t(3), "mesh: levels per tile, LOD0 at full resolution.", {}, {}, 1.0, 8.0},
-        {"lodRatio", "lr", T::Float, 0.25, "mesh: triangles each level keeps of the one before.", {}, {}, 0.001, 1.0},
-        {"skirt", "sk", T::Float, 0.0, "mesh: depth of a skirt hung from every tile edge, cm; 0 for none.", {}, {}, 0.0},
-        {"collision", "col", T::Bool, true, "mesh: write a reduced collision mesh per tile."},
-        {"collisionRatio", "cr", T::Float, 0.1, "mesh: triangles the collision mesh keeps of LOD0.", {}, {}, 0.001, 1.0},
-        {"perTile", "pt", T::Bool, true, "mesh: one file per tile; off writes every tile into one file."},
+        {"tileSize", "ts", EA::Int, int64_t(0), "files: samples per tile side, 0 writes one set; mesh: samples per tile (257).", {}, {}, 0.0, 65536.0},
+        {"sharedEdges", "se", EA::Bool, false, "files: neighbouring tiles repeat their common edge; off, they abut as Unreal's tiled import reads them."},
+        {"splats", "sp", EA::Bool, false, "files: also write the masks packed four to an RGBA PNG (<name>_splat<k>.png)."},
+        {"resolution", "res", EA::Int, int64_t(0), "unity: heightmap resolution per tile, 2^n + 1 from 33 to 4097; 0 keeps the terrain's detail.", {}, {}, 0.0, 4097.0},
+        {"maxResolution", "mres", EA::Int, int64_t(4097), "unity: largest tile resolution picked when resolution is 0; bigger terrains become more tiles.", {}, {}, 33.0, 4097.0},
+        {"baseLayer", "bl", EA::Bool, true, "unity, godot: a Base layer first takes the weight the masks leave below 1."},
+        {"regionSize", "rgs", EA::Int, int64_t(0), "godot: Terrain3D region size, 64 to 2048; 0 picks from 256 up to fit its region map.", {}, {}, 0.0, 2048.0},
+        {"mode", "md", EA::String, "terrain3d", "godot: terrain3d (regions for the Terrain3D addon) or mesh (glTF tiles).", {"terrain3d", "mesh"}},
+        {"format", "fmt", EA::String, nullptr, "mesh: fbx, gltf, glb, usd, usda, usdc or usdz, comma separated for several; default fbx (glb for godot)."},
+        {"lods", "lod", EA::Int, int64_t(3), "mesh: levels per tile, LOD0 at full resolution.", {}, {}, 1.0, 8.0},
+        {"lodRatio", "lr", EA::Float, 0.25, "mesh: triangles each level keeps of the one before.", {}, {}, 0.001, 1.0},
+        {"skirt", "sk", EA::Float, 0.0, "mesh: depth of a skirt hung from every tile edge, cm; 0 for none.", {}, {}, 0.0},
+        {"collision", "col", EA::Bool, true, "mesh: write a reduced collision mesh per tile."},
+        {"collisionRatio", "cr", EA::Float, 0.1, "mesh: triangles the collision mesh keeps of LOD0.", {}, {}, 0.001, 1.0},
+        {"perTile", "pt", EA::Bool, true, "mesh: one file per tile; off writes every tile into one file."},
     };
     flags.insert(flags.end(), more.begin(), more.end());
     return flags;
@@ -1246,14 +1246,14 @@ std::vector<FlagDef> engineExportFlags(std::vector<FlagDef> flags)
 std::vector<FlagDef> engineSendFlags(std::vector<FlagDef> flags)
 {
     const std::vector<FlagDef> more = {
-        {"kind", "k", T::String, "landscape", "landscape, or meshTerrain for UE 5.8's experimental Mesh Terrain (needs the LilaLinkMeshTerrain plugin).",
+        {"kind", "k", EA::String, "landscape", "landscape, or meshTerrain for UE 5.8's experimental Mesh Terrain (needs the LilaLinkMeshTerrain plugin).",
          {"landscape", "meshTerrain"}},
-        {"regions", "rg", T::String, "auto",
+        {"regions", "rg", EA::String, "auto",
          "landscape: write the heights region by region (bounded memory for huge maps); auto does above 8193 x 8193 vertices.",
          {"auto", "on", "off"}},
-        {"regionComponents", "rc", T::Int, int64_t(0), "landscape regions: components per region side; 0 uses gridSize, else 16.", {}, {}, 0.0, 256.0},
-        {"sectionQuads", "sq", T::Int, int64_t(256), "meshTerrain: quads per Mesh Partition section side (at most 4096 sections).", {}, {}, 8.0, 8192.0},
-        {"saveAndUnload", "su", T::Bool, false,
+        {"regionComponents", "rc", EA::Int, int64_t(0), "landscape regions: components per region side; 0 uses gridSize, else 16.", {}, {}, 0.0, 256.0},
+        {"sectionQuads", "sq", EA::Int, int64_t(256), "meshTerrain: quads per Mesh Partition section side (at most 4096 sections).", {}, {}, 8.0, 8192.0},
+        {"saveAndUnload", "su", EA::Bool, false,
          "meshTerrain in a World Partition level: save and unload sections as they are made (huge maps); placement is then left at the origin."},
     };
     flags.insert(flags.end(), more.begin(), more.end());

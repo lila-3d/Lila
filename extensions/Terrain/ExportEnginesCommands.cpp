@@ -11,7 +11,7 @@ using namespace lila;
 namespace terrain
 {
 using json = nlohmann::json;
-using T = ArgType;
+using EA = ArgType;
 
 void registerExportEngines(ext::Context& ctx)
 {
@@ -26,13 +26,13 @@ void registerExportEngines(ext::Context& ctx)
                "spans the whole terrain and masks are point attributes. terrainExport(target='mesh') writes the same tiles to "
                "FBX, glTF or USD without keeping them. Returns the group, each tile's nodes and triangle counts.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"tileSize", "ts", T::Int, int64_t(257), "Samples per tile side; neighbours share their edge row.", {}, {}, 2.0, 65536.0},
-                  {"lods", "lod", T::Int, int64_t(3), "Levels per tile, LOD0 at full resolution.", {}, {}, 1.0, 8.0},
-                  {"lodRatio", "lr", T::Float, 0.25, "Triangles each level keeps of the one before.", {}, {}, 0.001, 1.0},
-                  {"skirt", "sk", T::Float, 0.0, "Depth of a skirt hung from every tile edge, cm; 0 for none.", {}, {}, 0.0},
-                  {"collision", "col", T::Bool, true, "Make a reduced collision mesh per tile."},
-                  {"collisionRatio", "cr", T::Float, 0.1, "Triangles the collision mesh keeps of LOD0.", {}, {}, 0.001, 1.0},
-                  {"name", "n", T::String, "", "Group name and the tiles' stem; defaults to <terrain>_tiles."}},
+        .flags = {{"tileSize", "ts", EA::Int, int64_t(257), "Samples per tile side; neighbours share their edge row.", {}, {}, 2.0, 65536.0},
+                  {"lods", "lod", EA::Int, int64_t(3), "Levels per tile, LOD0 at full resolution.", {}, {}, 1.0, 8.0},
+                  {"lodRatio", "lr", EA::Float, 0.25, "Triangles each level keeps of the one before.", {}, {}, 0.001, 1.0},
+                  {"skirt", "sk", EA::Float, 0.0, "Depth of a skirt hung from every tile edge, cm; 0 for none.", {}, {}, 0.0},
+                  {"collision", "col", EA::Bool, true, "Make a reduced collision mesh per tile."},
+                  {"collisionRatio", "cr", EA::Float, 0.1, "Triangles the collision mesh keeps of LOD0.", {}, {}, 0.001, 1.0},
+                  {"name", "n", EA::String, "", "Group name and the tiles' stem; defaults to <terrain>_tiles."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
