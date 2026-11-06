@@ -1176,6 +1176,16 @@ std::optional<ExportCamera> cameraOf(const Node& n)
     return c;
 }
 
+bool channelsDriven(const Graph& g, NodeId id)
+{
+    using scene::Transform;
+    for (int attr : {int(Transform::kTranslate), int(Transform::kRotate), int(Transform::kScale)})
+        for (int c = -1; c < 3; ++c)
+            if (g.source({id, attr, c}))
+                return true;
+    return false;
+}
+
 /** The scene side of an export while it is being gathered. */
 struct Gather
 {
@@ -1829,6 +1839,9 @@ std::optional<ExportTake> Gather::sampleRange(const std::string& name, double st
 
     const size_t count = out.nodes.size();
     take.locals.assign(count, {});
+    take.keyed.assign(count, 0);
+    for (size_t i = 0; i < count; ++i)
+        take.keyed[i] = channelsDriven(graph, out.nodes[i].source);
     take.curves.assign(count, std::nullopt);
     std::vector<char> sampled(count, 1);
     // A camera's or light's file frame is turned from its channels, and so is its children's parent frame.

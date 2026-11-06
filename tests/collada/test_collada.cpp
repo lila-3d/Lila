@@ -202,13 +202,23 @@ TEST_CASE("skinned, animated cylinder round-trips through COLLADA")
 TEST_CASE("COLLADA animation export is the skeleton and its curves, as Maya's animation exports are")
 {
     buildSkinned();
+    run("select", {{"args", {"bone_c"}}});
+    run("joint", {{"position", v3(3, 60, 5)}, {"name", "brow"}});
+    run("select", {{"args", {"bone_c"}}});
+    run("joint", {{"position", v3(3, 60, -5)}, {"name", "jaw"}});
+    for (double t : {0.0, 1.0})
+        anim::setKey(graph(), {node("jaw").id(), Transform::kRotate, 2}, t, 0.0);
     const fs::path file = tempDir("anim") / "anim.dae";
     run("exportCollada", {{"args", {file.string(), "bone_a"}}, {"kind", "animation"}});
     const std::string text = readAll(file);
     CHECK(text.find("<library_geometries") == std::string::npos);
     CHECK(text.find("<library_controllers") == std::string::npos);
     CHECK(text.find("<unit name=\"centimeter\" meter=\"0.01\"/>") != std::string::npos);
-    // Every channel of every joint is a curve, constant ones too, as a keyed Maya rig exports.
+    // A joint the animation never moves gets no curves, so the game's own face animation still drives it.
+    CHECK(text.find("name=\"brow\"") != std::string::npos);
+    CHECK(text.find("brow/") == std::string::npos);
+    CHECK(text.find("jaw/rotateZ.ANGLE") != std::string::npos);
+    // Every channel of every moving joint is a curve, constant ones too, as a keyed Maya rig exports.
     for (const std::string& j : kJoints)
         for (const char* channel : {"/translate\"", "/rotateX.ANGLE", "/rotateY.ANGLE", "/rotateZ.ANGLE", "/scale\""})
         {
@@ -233,7 +243,7 @@ TEST_CASE("COLLADA animation export is the skeleton and its curves, as Maya's an
     }();
     run("newScene");
     json r = run("importCollada", {{"args", {file.string()}}, {"report", true}});
-    CHECK(r["joints"].size() == 3);
+    CHECK(r["joints"].size() == 5);
     double worst = 0.0;
     for (int f = 0; f <= kFrames; ++f)
     {

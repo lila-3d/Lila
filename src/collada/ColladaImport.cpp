@@ -1417,6 +1417,7 @@ void Importer::importAnimation()
                 rc.keys.push_back(key);
             }
             const std::string base = graph.node(fn->id)->name();
+            const auto curvesBefore = r.curves;
             auto still = [](const anim::Curve& c, double v) {
                 return std::all_of(c.keys.begin(), c.keys.end(), [&](const anim::Key& k) { return std::abs(k.value - v) < 1e-6; });
             };
@@ -1433,7 +1434,8 @@ void Importer::importAnimation()
                     ++r.curves;
                 }
             }
-            bool turns = ranges.size() > 1;
+            // A node the file keys stays keyed even when it holds still, so an animation export writes it again.
+            bool turns = ranges.size() > 1 || r.curves == curvesBefore;
             for (int a = 0; a < 3 && !turns; ++a)
                 turns = !still(euler[size_t(a)], fn->rest.r[a]);
             if (!turns)

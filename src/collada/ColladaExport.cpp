@@ -777,6 +777,12 @@ void Exporter::animations()
     double offset = 0.0;
     std::vector<std::vector<double>> times(scene.nodes.size());
     std::vector<std::vector<glm::dmat4>> values(scene.nodes.size());
+    // Only keyed or moving nodes get channels, as in Maya: a game applies the clip over its own face and secondary
+    // animation, so a curve on an unkeyed joint would pin it.
+    std::vector<char> moves(scene.nodes.size(), 0);
+    for (const ExportTake* t : takes)
+        for (size_t i = 0; i < moves.size(); ++i)
+            moves[i] = moves[i] || (i < t->locals.size() && !t->locals[i].empty()) || (i < t->keyed.size() && t->keyed[i]);
     for (const ExportTake* t : takes)
     {
         const double shift = clips.empty() ? 0.0 : offset - t->start;
@@ -784,8 +790,8 @@ void Exporter::animations()
         for (size_t i = 0; i < scene.nodes.size(); ++i)
         {
             const bool sampled = i < t->locals.size() && !t->locals[i].empty();
-            // A joint the take leaves still holds its pose for the clip, so the target rig gets a value for it.
-            if (!sampled && !scene.nodes[i].joint)
+            // A node still in this take but moving in another holds its pose for this clip.
+            if (!moves[i])
                 continue;
             for (size_t k = 0; k < t->times.size(); ++k)
             {

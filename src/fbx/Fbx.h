@@ -263,6 +263,8 @@ struct ExportTake
     std::vector<double> times;
     /** [node][frame] local matrix, Lila space; empty for a node written from its curves or not animated. */
     std::vector<std::vector<glm::dmat4>> locals;
+    /** [node] translate, rotate or scale has an input (keys, a constraint, a driver), even if it holds still. */
+    std::vector<char> keyed;
     /** [node] translate xyz, rotate xyz, scale xyz curves in Lila channel space, for nodes written from their keys. */
     std::vector<std::optional<std::array<scene::anim::Curve, 9>>> curves;
     /** [node][frame] camera settings; empty for a node that is not a camera or whose settings don't change. */
