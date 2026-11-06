@@ -53,6 +53,8 @@ void registerEditorActions()
                           openHotkeyEditor();
                   }, nullptr,
                   "Browse, search and rebind hotkeys"});
+    actions::add({"window.importMayaHotkeys", "Import Maya Hotkeys...", "Windows", [] { importMayaHotkeysDialog(nullptr); },
+                  nullptr, "Bind keys from a Maya hotkey set over the current hotkeys"});
     actions::add({"window.markingMenuEditor", "Marking Menu Editor...", "Windows", [] {
                       if (!closeShownWindow<MarkingMenuEditor>())
                           openMarkingMenuEditor();

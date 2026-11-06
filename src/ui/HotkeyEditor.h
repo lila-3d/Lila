@@ -155,6 +155,9 @@ private:
 /** Capture dialog that binds a chord to actionId; usable from menus, shelves and marking menus. */
 LILA_UI_API void assignHotkeyDialog(const std::string& actionId, QWidget* parent);
 
+/** Picks a Maya hotkey set and imports it over the current hotkeys, then lists what didn't map. */
+LILA_UI_API void importMayaHotkeysDialog(QWidget* parent);
+
 /** Adds "Assign Hotkey..." to the right-click of any QMenu entry whose QAction data or objectName is an action id. */
 LILA_UI_API void installMenuHotkeyHook();
 } // namespace lila::ui

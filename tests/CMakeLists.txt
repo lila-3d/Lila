@@ -42,6 +42,7 @@ add_executable(lila_tests
     test_geometry_snap.cpp
     test_imageplane.cpp
     test_hotkeys.cpp
+    test_maya_hotkeys.cpp
     test_display.cpp
     test_display_aids.cpp
     test_icon_bars.cpp

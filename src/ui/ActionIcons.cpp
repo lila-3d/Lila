@@ -716,6 +716,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"window.commandPalette", "command"},
     {"view.presenter", "presentation"},
     {"window.hotkeyEditor", "keyboard"},
+    {"window.importMayaHotkeys", "keyboard"},
     {"window.markingMenuEditor", "chart-donut"},
     {"window.userMenuEditor", "menu-2"},
     {"mode.puppeteerRig", "bone"},

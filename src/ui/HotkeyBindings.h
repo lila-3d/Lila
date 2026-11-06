@@ -94,6 +94,16 @@ LILA_UI_API bool targets(const Binding& b, const std::string& actionId);
 
 /** Puts target into one slot of the binding at chord, keeping the binding's other slots. */
 LILA_UI_API void assign(const std::string& context, QKeyCombination chord, Slot slot, const nlohmann::json& target);
+
+struct Assignment
+{
+    std::string context;
+    QKeyCombination chord;
+    Slot slot = Slot::Press;
+    nlohmann::json target;
+};
+/** assign() for each, in order, written as one prefs change so the hotkeys reload once. */
+LILA_UI_API void assignAll(const std::vector<Assignment>& list);
 /** Removes the binding; a default gets a null override. */
 LILA_UI_API void unbind(const std::string& context, const std::string& keyText);
 /** Drops the user override so the default (or nothing) applies again. */

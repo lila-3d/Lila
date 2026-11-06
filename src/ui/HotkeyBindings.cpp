@@ -316,21 +316,46 @@ bool targets(const Binding& b, const std::string& actionId)
 
 void assign(const std::string& context, QKeyCombination chord, Slot slot, const json& target)
 {
+    assignAll({{context, chord, slot, target}});
+}
+
+void assignAll(const std::vector<Assignment>& list)
+{
+    if (list.empty())
+        return;
     Snapshot s = snapshot();
-    std::string keyText = toText(chord);
-    Binding next;
-    if (const Binding* b = find(s, context, chord))
+    json doc = PrefStore::get().userDoc("hotkeys");
+    for (const Assignment& a : list)
     {
-        keyText = b->keyText;
-        next = *b;
+        std::string keyText = toText(a.chord);
+        Binding* existing = nullptr;
+        for (Binding& b : s.bindings)
+            if (b.context == a.context && b.chord == a.chord)
+                existing = &b;
+        if (existing)
+            keyText = existing->keyText;
+        else
+            // Reuse a nulled default's spelling so the new value replaces the null rather than sitting beside it.
+            for (const Unbound& u : s.unbound)
+                if (u.context == a.context && parse(u.keyText) == a.chord)
+                    keyText = u.keyText;
+        Binding next;
+        if (existing)
+            next = *existing;
+        else
+        {
+            next.context = a.context;
+            next.keyText = keyText;
+            next.chord = a.chord;
+        }
+        const_cast<json&>(slotTarget(next, a.slot)) = a.target;
+        doc[json::json_pointer(pointerFor(a.context, keyText))] = joinSlots(slotsOf(next));
+        if (existing)
+            *existing = next;
+        else
+            s.bindings.push_back(next);
     }
-    else
-        // Reuse a nulled default's spelling so the new value replaces the null rather than sitting beside it.
-        for (const Unbound& u : s.unbound)
-            if (u.context == context && parse(u.keyText) == chord)
-                keyText = u.keyText;
-    const_cast<json&>(slotTarget(next, slot)) = target;
-    PrefStore::get().set("hotkeys", pointerFor(context, keyText), joinSlots(slotsOf(next)));
+    PrefStore::get().setUserDoc("hotkeys", std::move(doc));
 }
 
 void unbind(const std::string& context, const std::string& keyText)

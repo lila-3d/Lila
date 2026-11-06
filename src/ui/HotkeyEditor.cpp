@@ -3,7 +3,9 @@
 #include "core/PrefStore.h"
 #include "ui/Actions.h"
 #include "ui/Deletion.h"
+#include "ui/FileDialog.h"
 #include "ui/Hotkeys.h"
+#include "ui/MayaHotkeys.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -18,6 +20,7 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
@@ -269,6 +272,34 @@ void ChordCaptureDialog::apply() const
     if (!mChord)
         return;
     hotkeys::assign(mContext->currentText().toStdString(), *mChord, hotkeys::Slot(mMode->currentData().toInt()), json(mActionId));
+}
+
+void importMayaHotkeysDialog(QWidget* parent)
+{
+    parent = parent ? parent : hostWindow();
+    QString path;
+    {
+        const fileDialog::ContextScope scope("mayaHotkeys", "Hotkey Sets");
+        path = fileDialog::getOpenFileName(parent, "Import Maya Hotkeys",
+                                           QString::fromStdWString(mayaHotkeys::defaultFolder().wstring()),
+                                           "Maya hotkeys (*.mhk *.mel);;All files (*)");
+    }
+    if (path.isEmpty())
+        return;
+    mayaHotkeys::Result r = mayaHotkeys::importFile(path.toStdWString());
+
+    QMessageBox box(parent);
+    box.setWindowTitle("Import Maya Hotkeys");
+    box.setText(QString("%1 hotkeys imported").arg(r.imported));
+    if (!r.skipped.empty())
+    {
+        box.setInformativeText(QString("%1 skipped").arg(r.skipped.size()));
+        QStringList lines;
+        for (const mayaHotkeys::Skipped& s : r.skipped)
+            lines << QString::fromStdString(s.key + "    " + s.command + "    " + s.reason);
+        box.setDetailedText(lines.join(QChar('\n')));
+    }
+    box.exec();
 }
 
 void assignHotkeyDialog(const std::string& actionId, QWidget* parent)
@@ -537,6 +568,10 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
     buttons->addWidget(mUnbind);
     buttons->addWidget(mReset);
     buttons->addStretch(1);
+    auto* importMaya = new QPushButton("Import from Maya...");
+    importMaya->setToolTip("Bind keys from a Maya hotkey set (.mhk) or userHotkeys.mel over the current ones");
+    connect(importMaya, &QPushButton::clicked, this, [this] { importMayaHotkeysDialog(window()); });
+    buttons->addWidget(importMaya);
     layout->addLayout(buttons);
 
     mGrabber = new ChordGrabber(this);
