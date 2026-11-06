@@ -26,7 +26,7 @@ double planeTolerance(const Node& n)
 }
 
 
-glm::dvec3 toLocal(const Node& n, const glm::dvec3& world)
+glm::dvec3 planeLocal(const Node& n, const glm::dvec3& world)
 {
     return glm::dvec3(glm::inverse(n.as<glm::dmat4>(Transform::kWorldMatrix)) * glm::dvec4(world, 1.0));
 }
@@ -53,7 +53,7 @@ Node* pieceAt(Graph& g, const std::vector<Node*>& candidates, const glm::dvec3& 
     {
         if (attached(*n) || !effectivelyVisible(g, n->id()))
             continue;
-        glm::dvec3 p = toLocal(*n, joint);
+        glm::dvec3 p = planeLocal(*n, joint);
         if (std::abs(p.z) > planeTolerance(*n) || !curve::regionContains(ip::shownRegion(*n, aspect), {p.x, p.y}))
             continue;
         int d = depthOf(g, n->id());
@@ -72,7 +72,7 @@ NodeId cutPiece(Graph& g, Node& n, const std::vector<glm::dvec3>& points, const 
     RegionLoop cut;
     for (const glm::dvec3& w : points)
     {
-        glm::dvec3 p = toLocal(n, w);
+        glm::dvec3 p = planeLocal(n, w);
         cut.emplace_back(p.x, p.y);
     }
     const glm::dvec3 pivot = n.as<glm::dvec3>(Transform::kRotatePivot);
@@ -81,7 +81,7 @@ NodeId cutPiece(Graph& g, Node& n, const std::vector<glm::dvec3>& points, const 
         return kNoNode;
 
     const NodeId id = n.id();
-    const glm::dvec3 j = toLocal(n, joint);
+    const glm::dvec3 j = planeLocal(n, joint);
     const glm::dvec3 jointLocal(j.x, j.y, 0.0);
     // Pieces are named after the plane the chain started from: imagePlane1Piece1, imagePlane1Piece2, ...
     NodeId root = id;
@@ -158,7 +158,7 @@ bool within(const Graph& g, NodeId id, NodeId root)
     return false;
 }
 
-std::vector<glm::dvec3> pointsArg(const Args& a)
+std::vector<glm::dvec3> cutPointsArg(const Args& a)
 {
     if (!a.has("points"))
         throw CommandError("imagePlaneCut: points is required");
@@ -266,7 +266,7 @@ void registerImagePlaneCutCommand()
 
             Graph& g = Graph::current();
             g.evaluate();
-            std::vector<glm::dvec3> points = pointsArg(a);
+            std::vector<glm::dvec3> points = cutPointsArg(a);
             const std::string sym = a.get<std::string>("symmetry", "off");
             const int axis = sym == "x" ? 0 : sym == "y" ? 1 : sym == "z" ? 2 : sym == "off" ? -1 : -2;
             if (axis == -2)
