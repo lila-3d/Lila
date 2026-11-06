@@ -83,6 +83,11 @@ std::unordered_map<Index, glm::dvec3> junctionDirections(const Surface& s)
     return out;
 }
 
+/** Each triangle's corners in its own chart of the parametrization. */
+using Chart = std::array<glm::dvec2, 3>;
+
+void buildEdges(ParamMesh& m);
+
 ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale)
 {
     ParamMesh m;
@@ -123,8 +128,18 @@ ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, con
         m.dir.push_back(meanDir({tri[0], tri[1], tri[2]}, n));
     }
 
+    buildEdges(m);
+    return m;
+}
+
+/** Edges, the triangles on each side, each triangle's edges and the border vertices, from m.tris. */
+void buildEdges(ParamMesh& m)
+{
+    m.edges.clear();
+    m.edgeTris.clear();
+    m.edgeTriCount.clear();
     std::unordered_map<uint64_t, Index> edgeOf;
-    m.triEdges.resize(m.tris.size());
+    m.triEdges.assign(m.tris.size(), {kInvalid, kInvalid, kInvalid});
     for (size_t t = 0; t < m.tris.size(); ++t)
         for (int k = 0; k < 3; ++k)
         {
@@ -149,7 +164,54 @@ ParamMesh buildParamMesh(const Surface& s, const std::vector<glm::dvec3>& q, con
     for (size_t e = 0; e < m.edges.size(); ++e)
         if (m.edgeTriCount[e] != 2)
             m.boundary[m.edges[e][0]] = m.boundary[m.edges[e][1]] = 1;
-    return m;
+}
+
+/**
+ * The half of a symmetric remesh joined at the seam to its reflection, charts reflected with it, so extraction traces
+ * the seam row as an inner lattice line instead of stopping at an open border. Seam vertices are shared; the copy's
+ * triangles run the other way round, so its reflected charts keep their orientation. The seam is a whole lattice line,
+ * so each chart meets its reflection by a half turn or a whole shift, transitions extraction reads from the shared edges.
+ */
+void mirrorForExtraction(const ParamMesh& m, const std::vector<Chart>& chart, const geo::SymmetryPlane& plane, ParamMesh& out,
+                         std::vector<Chart>& outChart)
+{
+    const Index nv = Index(m.pos.size()), nt = Index(m.tris.size());
+    double meanScale = 0.0;
+    for (double sc : m.scale)
+        meanScale += sc;
+    const double tol = 1e-9 * std::max(1e-12, meanScale / std::max<double>(1.0, double(m.scale.size())));
+    auto reflect = [&](const glm::dvec3& p) { return p - 2.0 * plane.distance(p) * plane.normal; };
+    auto reflectDir = [&](const glm::dvec3& d) { return d - 2.0 * glm::dot(d, plane.normal) * plane.normal; };
+    out = ParamMesh();
+    out.pos = m.pos;
+    out.scale = m.scale;
+    out.surfaceVertices = m.surfaceVertices;
+    std::vector<Index> mirrorOf(nv);
+    for (Index v = 0; v < nv; ++v)
+    {
+        if (m.boundary[v] && std::abs(plane.distance(m.pos[v])) <= tol)
+        {
+            mirrorOf[v] = v;
+            continue;
+        }
+        mirrorOf[v] = Index(out.pos.size());
+        out.pos.push_back(reflect(m.pos[v]));
+        out.scale.push_back(m.scale[v]);
+    }
+    out.tris = m.tris;
+    out.normal = m.normal;
+    out.dir = m.dir;
+    outChart = chart;
+    for (Index t = 0; t < nt; ++t)
+    {
+        const auto& tri = m.tris[t];
+        out.tris.push_back({mirrorOf[tri[0]], mirrorOf[tri[2]], mirrorOf[tri[1]]});
+        out.normal.push_back(reflectDir(m.normal[t]));
+        out.dir.push_back(reflectDir(m.dir[t]));
+        auto r = [](const glm::dvec2& p) { return glm::dvec2(-p.x, p.y); };
+        outChart.push_back({r(chart[t][0]), r(chart[t][2]), r(chart[t][1])});
+    }
+    buildEdges(out);
 }
 
 /** Quarter turns k with dir[t] ~ turn(dir[other], k) across edge e, unfolded about the edge. */
@@ -190,8 +252,6 @@ std::vector<uint8_t> singularVertices(const ParamMesh& m)
     return out;
 }
 
-/** Each triangle's corners in its own chart of the parametrization. */
-using Chart = std::array<glm::dvec2, 3>;
 
 double cross2(const glm::dvec2& a, const glm::dvec2& b) { return a.x * b.y - a.y * b.x; }
 
@@ -698,7 +758,7 @@ Extracted extractIntegerGrid(const Surface& s, const ParamMesh& m, const std::ve
 
 std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<double>& scale,
                                                std::string* error, std::vector<std::array<int, 2>>* edgeSteps, Extracted* grid,
-                                               int foldRetries, Index* folds)
+                                               int foldRetries, Index* folds, const geo::SymmetryPlane* mirror)
 {
     LILA_ZONE();
 
@@ -1145,7 +1205,16 @@ std::vector<glm::dvec3> solveSeamlessPositions(const Surface& s, const std::vect
             *folds = Index(foldedAfter);
         if (debug)
             std::fprintf(stderr, "  untangle: folded %d -> %d\n", foldedBefore, foldedAfter);
-        *grid = extractIntegerGrid(s, m, chart);
+        if (mirror)
+        {
+            ParamMesh both;
+            std::vector<Chart> bothChart;
+            mirrorForExtraction(m, chart, *mirror, both, bothChart);
+            *grid = extractIntegerGrid(s, both, bothChart);
+            grid->mirrored = true;
+        }
+        else
+            *grid = extractIntegerGrid(s, m, chart);
     }
 
     // Each surface vertex's nearest lattice point, from any one of its corners.

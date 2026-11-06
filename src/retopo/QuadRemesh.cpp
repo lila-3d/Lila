@@ -406,6 +406,30 @@ void splitHighValence(geo::Mesh& m, std::vector<FeatureKind>& feature)
     }
 }
 
+void compactTagged(geo::Mesh& m, std::vector<FeatureKind>& feature, std::vector<uint8_t>& boundary);
+
+/** A whole symmetric remesh cut back to the faces on the plane's positive side, for the mirror to complete. */
+void keepPositiveSide(geo::Mesh& m, std::vector<FeatureKind>& feature, std::vector<uint8_t>& boundary, const geo::SymmetryPlane& plane)
+{
+    LILA_ZONE();
+
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+        if (m.faceValid(f) && plane.distance(m.faceCentroid(f)) < 0.0)
+            m.removeFace(f);
+    std::vector<Index> edges, points;
+    for (Index e = 0; e < m.edgeCapacity(); ++e)
+        if (m.edgeValid(e) && m.edgeFaceCount(e) == 0)
+            edges.push_back(e);
+    m.removeLoose(edges, {});
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+        if (m.pointValid(p) && m.pointFaces(p).empty())
+            points.push_back(p);
+    m.removeLoose({}, points);
+    feature.resize(m.pointCapacity(), FeatureKind::None);
+    boundary.resize(m.pointCapacity(), 0);
+    compactTagged(m, feature, boundary);
+}
+
 /**
  * On the half of a symmetric remesh, folds each quad with three corners in a row on the seam (the middle one with no
  * other edge) into its fourth corner's row: the outer two seam corners merge at their midpoint. Left in, the middle
@@ -1409,10 +1433,32 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         FeatureLines lines;
         lines.build(s, fo.scale * 0.5);
         geo::Mesh& m = ex.mesh;
+        auto seamDebug = [&](const char* stage) {
+            if (!symmetric || !std::getenv("LILA_SEAM_DEBUG"))
+                return;
+            for (Index p = 0; p < m.pointCapacity(); ++p)
+            {
+                if (!m.pointValid(p) || !m.isBoundaryPoint(p) || std::abs(plane.distance(m.position(p))) > 0.35 * h)
+                    continue;
+                int inner = 0;
+                m.forEachPointEdge(p, [&](Index e) { inner += !m.isBoundaryEdge(e); });
+                if (inner != 1)
+                    std::fprintf(stderr, "seam %s %s inner %d at %.3f %.3f %.3f\n", layout, stage, inner, m.position(p).x, m.position(p).y, m.position(p).z);
+            }
+        };
+        seamDebug("extracted");
         std::vector<FeatureKind>& feature = ex.feature;
         std::vector<uint8_t>& boundary = ex.boundary;
         feature.resize(m.pointCapacity(), FeatureKind::None);
         boundary.resize(m.pointCapacity(), 0);
+        // The joined extraction is symmetric face for face; cut back to the half while it still is, so the seam row it
+        // traced is kept as the half's border.
+        if (ex.mirrored)
+        {
+            keepPositiveSide(m, feature, boundary, plane);
+            ex.mirrored = false;
+            seamDebug("cut");
+        }
         removeValence2(m, feature);
         geo::conformNormals(m);
         fillHoles(m, boundary, &bvh);
@@ -1440,7 +1486,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         border.build(s, fo.scale * 0.5, true);
         snapCorners(m, feature, s, 1.25 * coarseH);
         boundary.resize(m.pointCapacity(), 0);
+        seamDebug("presnap");
         snapBorder(m, feature, border, 1.5 * coarseH);
+        seamDebug("snapped");
         projectPoints(m, feature, bvh, lines, 0.6 * coarseH);
         relaxAlongFeatures(m, feature, bvh, lines, coarseH, std::max(1, opts.relaxIterations / 2), symmetric ? opts.symmetryAxis : -1);
         clock.lap("cleanup");
@@ -1449,7 +1497,9 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         if (opts.pureQuads && std::string_view(layout) != "patches")
         {
             m = splitToQuads(m, feature, boundary, lines, coarseH);
+            seamDebug("split");
             snapBorder(m, feature, border, coarseH);
+            seamDebug("snapped2");
             projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
         }
         int relaxIterations = opts.relaxIterations;
@@ -1462,6 +1512,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
 
         if (symmetric)
         {
+            if (ex.mirrored)
+                keepPositiveSide(m, feature, boundary, plane);
             // Seam points sit exactly on the plane so the mirror welds them and the halves match bit for bit.
             const int axis = opts.symmetryAxis;
             for (Index p = 0; p < m.pointCapacity(); ++p)
@@ -1471,8 +1523,10 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
                     at[axis] = 0.0;
                     m.setPosition(p, at);
                 }
+            seamDebug("premerge");
             collapseSeamWedges(m, feature, bvh, axis, 1e-9 * h);
             straightenSeamRows(m, feature, bvh, axis, 1e-9 * h);
+            seamDebug("premirror");
             geo::MirrorOptions mo;
             mo.plane = plane;
             mo.weld = true;
@@ -1595,7 +1649,10 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         std::vector<std::array<int, 2>> steps;
         Extracted grid;
         Index folds = 0;
-        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, seamScale, nullptr, &steps, &grid, foldRetries, &folds);
+        // LILA_MIRROR_EXTRACT traces the seam row inside the half joined to its reflection instead of rebuilding it along
+        // an open border. With LILA_POLES_OFF_SEAM the seam row comes out clean, but the moved poles tangle the chest.
+        const geo::SymmetryPlane* mirror = symmetric && std::getenv("LILA_MIRROR_EXTRACT") ? &plane : nullptr;
+        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, seamScale, nullptr, &steps, &grid, foldRetries, &folds, mirror);
         if (o.empty())
             return folds;
         auto consider = [&](QuadRemeshResult r) {
@@ -1610,7 +1667,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         };
         // The grid traces folds left in the layout as holes; rounding to the nearest lattice point covers them.
         if (grid.mesh.numFaces() == 0 || consider(record(buildFrom(std::move(grid), "seamless"))) > 0)
-            consider(record(buildFrom(extractMesh(s, qSeam, o, scale, &steps), "seamless")));
+            consider(record(buildFrom(mirror ? extractMirrored(s, qSeam, o, scale, steps, *mirror) : extractMesh(s, qSeam, o, scale, &steps), "seamless")));
         return folds;
     };
     // Steering the rounding away from folds untangles some layouts and costs others poles, so a folded one tries both,

@@ -269,4 +269,60 @@ Extracted extractMesh(const Surface& s, const std::vector<glm::dvec3>& q, const 
     }
     return ex;
 }
+
+
+Extracted extractMirrored(const Surface& s, const std::vector<glm::dvec3>& q, const std::vector<glm::dvec3>& o,
+                          const std::vector<double>& scale, const std::vector<std::array<int, 2>>& edgeSteps, const geo::SymmetryPlane& plane)
+{
+    LILA_ZONE();
+
+    // Only what extractMesh reads with edge steps given: positions, normals, areas, features, borders, edges.
+    const Index n = s.vertexCount();
+    double meanScale = 0.0;
+    for (double sc : scale)
+        meanScale += sc;
+    const double tol = 1e-9 * std::max(1e-12, meanScale / std::max<double>(1.0, double(scale.size())));
+    auto reflect = [&](const glm::dvec3& p) { return p - 2.0 * plane.distance(p) * plane.normal; };
+    auto reflectDir = [&](const glm::dvec3& d) { return d - 2.0 * glm::dot(d, plane.normal) * plane.normal; };
+    Surface both;
+    both.pos = s.pos;
+    both.normal = s.normal;
+    both.area = s.area;
+    both.feature = s.feature;
+    both.onBoundary = s.onBoundary;
+    std::vector<glm::dvec3> q2 = q, o2 = o;
+    std::vector<double> scale2 = scale;
+    std::vector<Index> mirrorOf(n);
+    for (Index v = 0; v < n; ++v)
+    {
+        if (s.onBoundary[v] && std::abs(plane.distance(s.pos[v])) <= tol)
+        {
+            mirrorOf[v] = v;
+            continue;
+        }
+        mirrorOf[v] = Index(both.pos.size());
+        both.pos.push_back(reflect(s.pos[v]));
+        both.normal.push_back(reflectDir(s.normal[v]));
+        both.area.push_back(s.area[v]);
+        both.feature.push_back(s.feature[v]);
+        both.onBoundary.push_back(s.onBoundary[v]);
+        q2.push_back(reflectDir(q[v]));
+        o2.push_back(reflect(o[v]));
+        scale2.push_back(scale[v]);
+    }
+    // extractMesh only tells a step from none, so the copy's edges keep their steps as they are.
+    both.edges = s.edges;
+    std::vector<std::array<int, 2>> steps2 = edgeSteps;
+    for (size_t e = 0; e < s.edges.size(); ++e)
+    {
+        const Index a = mirrorOf[s.edges[e][0]], b = mirrorOf[s.edges[e][1]];
+        if (a == s.edges[e][0] && b == s.edges[e][1])
+            continue;
+        both.edges.push_back({std::min(a, b), std::max(a, b)});
+        steps2.push_back(edgeSteps[e]);
+    }
+    Extracted ex = extractMesh(both, q2, o2, scale2, &steps2);
+    ex.mirrored = true;
+    return ex;
+}
 } // namespace lila::retopo::detail
