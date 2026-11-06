@@ -558,6 +558,51 @@ gn::NodeDecl volumeDecl()
 
 // ---------------------------------------------------------------------------------------------------- commands
 
+/** terrainTunnel fromRoad=: one bore per tunnel span the road reported, along its floor, at its radius. */
+json tunnelsFromRoad(const Args& a)
+{
+    const std::vector<std::string> names = a.objects();
+    if (names.size() != 1)
+        throw CommandError("terrainTunnel: give one terrain");
+    const std::string ref = a.get<std::string>("fromRoad", "");
+    const size_t slash = ref.find('/');
+    const std::string layer = slash == std::string::npos ? std::string() : ref.substr(0, slash);
+    const std::string id = slash == std::string::npos ? ref : ref.substr(slash + 1);
+    const json roads = ops::execute("terrainRoads", {{"args", {names[0]}}});
+    std::string prefix = a.get<std::string>("id", "");
+    if (prefix.empty())
+        prefix = id + "_tunnel";
+    json made = json::array();
+    bool found = false;
+    for (const auto& [name, list] : roads["layers"].items())
+    {
+        if (!layer.empty() && name != layer)
+            continue;
+        for (const json& road : list)
+        {
+            if (road.value("id", std::string()) != id)
+                continue;
+            found = true;
+            int k = 0;
+            for (const json& tunnel : road.value("tunnels", json::array()))
+            {
+                json call = {{"args", {names[0]}},
+                             {"path", tunnel["floor"]},
+                             {"radius", tunnel.value("radius", a.get<double>("radius", 400.0))},
+                             {"id", prefix + std::to_string(++k)}};
+                made.push_back(ops::execute("terrainTunnel", call));
+            }
+        }
+    }
+    if (!found)
+        throw CommandError("terrainTunnel: no road " + ref + " (terrainRoads lists them)");
+    if (made.empty())
+        throw CommandError("terrainTunnel: road " + ref + " has no tunnel spans");
+    json out = made.back();
+    out["tunnels"] = made;
+    return out;
+}
+
 void registerVolumeCommands(ext::Context& ctx)
 {
     ctx.registerCommand({
@@ -608,13 +653,15 @@ void registerVolumeCommands(ext::Context& ctx)
         .doc = "Bore a road tunnel along a path at road level: a flat floor on the path and a round roof radius cm high at "
                "the middle, opened a radius past each end so the portals are clear. Ground points sit on the ground; world "
                "points are the road surface. fromStamp='layer/id' takes the tunnel spans of a street or tunnel stamp (see "
-               "terrainAddFeature) with a radius from its width. Returns as terrainCave does.",
+               "terrainAddFeature) with a radius from its width; fromRoad='id' (or 'layer/id') bores every tunnel span of a road "
+               "laid with terrainAddRoad, at its radius. Returns as terrainCave does.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = commonFlags(
             [] {
                 std::vector<FlagDef> f = pathFlags("The road's line");
                 f.push_back({"radius", "r", VT::Float, 400.0, "Half the tunnel's width at the springline, cm.", {}, {}, 1.0});
                 f.push_back({"fromStamp", "fs", VT::String, nullptr, "A line stamp as layer/id, such as Stamps/street1, whose tunnel spans to bore."});
+                f.push_back({"fromRoad", "fr", VT::String, nullptr, "A road's id, or layer/id, whose tunnel spans to bore."});
                 return f;
             }(),
             "tunnel", 0.0),
@@ -623,6 +670,8 @@ void registerVolumeCommands(ext::Context& ctx)
             VolumeOp op = baseOp(a, t, "tunnel", "tunnel", true);
             const double r = std::max(1.0, a.get<double>("radius", 400.0));
             op.radius = r / t.across();
+            if (a.has("fromRoad"))
+                return tunnelsFromRoad(a);
             if (a.has("fromStamp"))
             {
                 const std::string ref = a.get<std::string>("fromStamp", "");
@@ -658,7 +707,7 @@ void registerVolumeCommands(ext::Context& ctx)
             }
             op.path = localPath(a, t, "terrainTunnel", 0.0, -1.0);
             if (op.path.size() < 2)
-                throw CommandError("terrainTunnel: give path=, curve= or fromStamp=");
+                throw CommandError("terrainTunnel: give path=, curve=, fromStamp= or fromRoad=");
             return writeOp(a, op, "terrainTunnel");
         },
         .examples = {"terrainTunnel('Terrain', path=[[-4000, 0], [4000, 0]], radius=450)", "terrainTunnel('Terrain', fromStamp='Stamps/street1')"},

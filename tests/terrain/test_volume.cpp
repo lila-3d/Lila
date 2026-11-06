@@ -350,3 +350,21 @@ TEST_CASE("volume commands: caves split, check clean, export their pieces and un
     CHECK(v["ops"].empty());
     fs::remove_all(dir);
 }
+
+TEST_CASE("volume commands: a road's tunnel spans bore through the ridge they cross")
+{
+    loadTerrain();
+    run("newScene");
+    run("terrainCreate", {{"size", {100000.0, 30000.0}}, {"resolution", 257}, {"flat", true}, {"name", "Tunnelled"}});
+    run("terrainStroke", {{"args", {"Tunnelled"}}, {"brush", "raise"}, {"path", {{0.0, -15000.0}, {0.0, 15000.0}}}, {"radius", 9000.0}, {"strength", 6000.0}});
+    const json road = run("terrainAddRoad", {{"args", {"Tunnelled"}}, {"id", "pass"}, {"path", {{-45000.0, 0.0}, {45000.0, 0.0}}}, {"maxGrade", 2.0}});
+    INFO(road["spans"].dump());
+    REQUIRE(road["tunnels"].size() >= 1);
+    const json bored = run("terrainTunnel", {{"args", {"Tunnelled"}}, {"fromRoad", "pass"}});
+    CHECK(bored["tunnels"].size() == road["tunnels"].size());
+    const json v = run("terrainVolume", {{"args", {"Tunnelled"}}});
+    INFO(v.dump().substr(0, 800));
+    CHECK(v.dump().find("pass_tunnel1") != std::string::npos);
+    CHECK(bored["volume"]["unmeshedColumns"] == 0);
+    CHECK_THROWS(run("terrainTunnel", {{"args", {"Tunnelled"}}, {"fromRoad", "nope"}}));
+}

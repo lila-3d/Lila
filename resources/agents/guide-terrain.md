@@ -81,7 +81,7 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 The heightfield is the ground; a volume adds to it and carves from it. Edits go in a Terrain Volume node last in the terrain's group, and save, undo and replay like stamps.
 
 - `terrainCave(t, path=[[x, z], ...] | curve=, radius=300, branches=, chambers=, noise=)`: ground points sit `below` cm under the ground (three radii), the ends `endBelow` (a third of a radius) so the cave opens there; `[x, y, z]` points are used as they are.
-- `terrainTunnel(t, path= | curve= | fromStamp='Stamps/street1', radius=400)`: a road tunnel with a flat floor at road level; `fromStamp` bores a street stamp's tunnel spans.
+- `terrainTunnel(t, path= | curve= | fromStamp='Stamps/street1', radius=400)`: a road tunnel with a flat floor at road level; `fromStamp` bores a street stamp's tunnel spans. `fromRoad='pass'` bores a terrainAddRoad road's tunnel spans at their radius.
 - `terrainOverhang(t, path=, depth=400, height=600, strata=150, hardness=0.35, lip=)`: undercuts the side of the line the hill rises on, deeper in soft bands.
 - `terrainArch(t, **{'from': [x, z], 'to': [x, z]}, height=1500, thickness=250, width=400)`: `carve=True` opens rock under it.
 - `terrainVolumeStamp(t, object='Boulder' | shape='sphere'|'box'|'capsule', mode='add'|'subtract')`. `terrainVolumeRemove(t, ids=[])`, `terrainVolume(t)` lists edits and the split.
