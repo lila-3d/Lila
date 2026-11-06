@@ -49,6 +49,17 @@ build.bat
 
 Do this before reporting a bug: it may already be fixed.
 
+## Report a bug
+
+Include the version you're on. Get it with:
+
+```bash
+cd C:\Lila
+git log -1 --format=%h
+```
+
+It prints a short code like `235046cd`. Paste it into your report.
+
 ## If something goes wrong
 
 - **`'git' is not recognized` or `'winget' is not recognized`:** close Command Prompt and open a new one. If `winget` still isn't found, install **App Installer** from the Microsoft Store.
