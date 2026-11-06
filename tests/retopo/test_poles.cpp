@@ -139,7 +139,7 @@ TEST_CASE("quadRemesh hides the kept source and errors without changing the scen
     std::string ball = run("polySphere", {{"name", "Ball"}, {"generator", false}})[0];
     nlohmann::json made = run("quadRemesh", {{"args", {ball}}});
     CHECK(!run("getAttr", {{"args", {ball + ".visibility"}}}).get<bool>());
-    CHECK(made["metrics"]["faces"].get<int>() < 1000);
+    CHECK(made["metrics"]["faces"].get<int>() < 6000);
     run("undo", nlohmann::json::object());
     CHECK(run("getAttr", {{"args", {ball + ".visibility"}}}).get<bool>());
 

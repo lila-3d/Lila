@@ -234,7 +234,7 @@ std::vector<FlagDef> remeshFlags()
 {
     using T = ArgType;
     return {{"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
-            {"targetFaces", "", T::Int, 500, "Approximate face count.", {}, {}, 8.0},
+            {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
             {"timeout", "", T::Float, 60.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
             {"targetEdgeLength", "", T::Float, 0.0, "Edge length, cm; overrides targetFaces when positive.", {}, {}, 0.0},
@@ -249,7 +249,7 @@ std::vector<FlagDef> remeshFlags()
             {"densityHandles", "", T::List, nullptr,
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
             {"pureQuads", "", T::Bool, true, "All quads; false allows a few triangles and pentagons."},
-            {"jointPoles", "", T::Float, 30.0, "Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off.", {}, {}, 0.0, 100.0},
+            {"jointPoleAvoidance", "", T::Float, 30.0, "Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off.", {}, {}, 0.0, 100.0},
             {"edgesAround", "", T::Int, 8, "Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off.", {}, {}, 0.0, 64.0},
             {"resolveGaps", "", T::Bool, true, "Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces."},
             {"seamless", "", T::Bool, true, "Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower."},
@@ -265,7 +265,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     if (method != "field" && method != "grid")
         throw CommandError(std::string(cmd) + ": method must be field or grid");
     o.method = method == "grid" ? RemeshMethod::Grid : RemeshMethod::Field;
-    o.targetFaces = std::max(8, a.get<int>("targetFaces", 500));
+    o.targetFaces = std::max(8, a.get<int>("targetFaces", 3000));
     o.countTolerance = std::clamp(a.get<double>("countTolerance", 0.1), 0.0, 1.0);
     o.timeout = std::max(0.0, a.get<double>("timeout", 60.0));
     o.targetEdgeLength = a.get<double>("targetEdgeLength", 0.0);
@@ -284,7 +284,7 @@ QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
     o.seamless = a.get<bool>("seamless", true);
     o.resolveGaps = a.get<bool>("resolveGaps", true);
     o.edgesAround = std::clamp(a.get<int>("edgesAround", 8), 0, 64);
-    o.jointPoles = std::clamp(a.get<double>("jointPoles", 30.0), 0.0, 100.0);
+    o.jointPoleAvoidance = std::clamp(a.get<double>("jointPoleAvoidance", 30.0), 0.0, 100.0);
     if (a.has("poles") && !a.flags["poles"].is_null())
         o.poles = polesFor(a.flags["poles"], src, cmd);
     return o;

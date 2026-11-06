@@ -146,7 +146,7 @@ enum class RemeshMethod
 struct QuadRemeshOptions
 {
     RemeshMethod method = RemeshMethod::Field;
-    int targetFaces = 500;
+    int targetFaces = 3000;
     /** Retries at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first. */
     double countTolerance = 0.1;
     /** Positive overrides targetFaces. */
@@ -160,7 +160,7 @@ struct QuadRemeshOptions
     /** Edges bending at least this many degrees (gentler than sharpAngle, like a bevel's segments) steer the edge flow; 0 off. */
     double softCreaseAngle = 0.0;
     /** How hard poles are kept out of joints (crotch, armpits, finger webs) onto flatter parts nearby; 0 off. */
-    double jointPoles = 30.0;
+    double jointPoleAvoidance = 30.0;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */

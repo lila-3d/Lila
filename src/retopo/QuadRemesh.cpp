@@ -1193,7 +1193,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
     }
     w.fo.guides = opts.guides;
     w.fo.softCreaseAngle = opts.softCreaseAngle;
-    w.fo.jointStiffness = opts.jointPoles;
+    w.fo.jointStiffness = opts.jointPoleAvoidance;
     s.thinCorners(scale);
     Budget::note(std::to_string(s.tris.size()) + " working triangles for about " + std::to_string(int(faces)) + " faces");
 }

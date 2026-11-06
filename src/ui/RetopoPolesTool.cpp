@@ -43,7 +43,7 @@ RetopoPolesTool::~RetopoPolesTool()
         mJob.wait();
 }
 
-int RetopoPolesTool::targetFaces() { return std::clamp(PrefStore::get().value<int>("general", kFacesPref, 500), 50, 200000); }
+int RetopoPolesTool::targetFaces() { return std::clamp(PrefStore::get().value<int>("general", kFacesPref, 3000), 50, 200000); }
 
 void RetopoPolesTool::setTargetFaces(int faces) { PrefStore::get().set("general", kFacesPref, std::clamp(faces, 50, 200000)); }
 
