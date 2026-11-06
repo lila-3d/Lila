@@ -382,6 +382,13 @@ void splitHighValence(geo::Mesh& m, std::vector<FeatureKind>& feature)
         for (const auto& fp : rebuilt)
             m.addFace(fp);
         m.addFace({p, n0, q, nm});
+        // Removing a face leaves its edges: p's spokes to the faces that moved to q are loose now.
+        std::vector<Index> loose;
+        m.forEachPointEdge(p, [&](Index e) {
+            if (m.edgeFaceCount(e) == 0)
+                loose.push_back(e);
+        });
+        m.removeLoose(loose, {});
         m.setPosition(p, glm::mix(at, sideA / double(half), 0.25));
         m.setPosition(q, glm::mix(at, sideB / double(k - half), 0.25));
     }
