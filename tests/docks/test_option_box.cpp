@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStyleFactory>
+#include <QToolTip>
 
 #include <cstdlib>
 
@@ -170,6 +171,32 @@ TEST_CASE("choice fields give each option its own tip, and the closed combo the 
     CHECK(combo->toolTip() == "Cubic.");
     w.set("slerp");
     CHECK(combo->toolTip() == "Constant speed.");
+}
+
+TEST_CASE("a number's scrub label shows the flag's doc, with the scrub and reset hints set apart under it")
+{
+    if (!ops::find("scrubTipProbe"))
+        ops::registerCommand({.name = "scrubTipProbe",
+                               .doc = "Probe.",
+                               .flags = {{"jointPoles", "", ArgType::Float, 30.0, "Keeps poles out of joints."}},
+                               .undoable = false,
+                               .run = [](const Args&) -> json { return nullptr; }});
+    std::vector<ops::options::Field> fields = ops::options::fields("scrubTipProbe");
+    REQUIRE(fields.size() == 1);
+    QWidget parent;
+    parent.show();
+    ui::FlagFieldWidgets w = ui::makeFlagField(fields[0], 30.0, [](const json&) {}, &parent);
+    REQUIRE(w.label);
+    CHECK(w.label->toolTip() == "jointPoles: Keeps poles out of joints.");
+    QHelpEvent help(QEvent::ToolTip, QPoint(1, 1), w.label->mapToGlobal(QPoint(1, 1)));
+    QApplication::sendEvent(w.label, &help);
+    QString shown = QToolTip::text();
+    CHECK(shown.indexOf("jointPoles: Keeps poles out of joints.") >= 0);
+    int italic = shown.indexOf("font-style:italic");
+    CHECK(italic > shown.indexOf("jointPoles"));
+    CHECK(shown.indexOf("Drag sideways to scrub") > italic);
+    CHECK(shown.indexOf("Middle-click to reset to default (30") > shown.indexOf("Drag sideways to scrub"));
+    QToolTip::hideText();
 }
 
 TEST_CASE("an enum attr's choice docs: its own per-name docs first, else what its doc says")

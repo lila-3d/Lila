@@ -41,11 +41,14 @@ int64_t steadyNowMs()
     return clock.elapsed();
 }
 
-/** Shows a widget's own tooltip with the reset hint under it. */
+constexpr const char* kUsageHintProperty = "lilaUsageHint";
+
+/** Shows a widget's own tooltip, then its usage hint and the reset hint set apart. */
 void showTipWithHint(QEvent* e, QWidget* w, const QString& own, const QString& defaultText)
 {
-    QString hint = resetHint(defaultText);
-    QToolTip::showText(static_cast<QHelpEvent*>(e)->globalPos(), own.isEmpty() ? hint : own + "\n" + hint, w);
+    QString hints = w->property(kUsageHintProperty).toString();
+    hints = hints.isEmpty() ? resetHint(defaultText) : hints + "\n" + resetHint(defaultText);
+    QToolTip::showText(static_cast<QHelpEvent*>(e)->globalPos(), hintedTip(own, hints), w);
 }
 
 QString spinText(QAbstractSpinBox* box, double v)
@@ -386,6 +389,23 @@ void setComboDefault(QComboBox* box, int index)
 QString resetHint(const QString& defaultText)
 {
     return QString("Middle-click to reset to default (%1)").arg(defaultText);
+}
+
+QString hintedTip(const QString& own, const QString& hints)
+{
+    auto html = [](const QString& plain) { return plain.toHtmlEscaped().replace('\n', "<br>"); };
+    QPalette pal = QToolTip::palette();
+    QColor text = pal.color(QPalette::ToolTipText), base = pal.color(QPalette::ToolTipBase);
+    auto mix = [](float a, float b) { return a + (b - a) * 0.6f; };
+    QColor dim = QColor::fromRgbF(mix(base.redF(), text.redF()), mix(base.greenF(), text.greenF()), mix(base.blueF(), text.blueF()));
+    QString tail = QString("<span style=\"color:%1; font-style:italic\">%2</span>").arg(dim.name(), html(hints));
+    // No raw newline anywhere: Qt only reads a tooltip as rich text when a tag sits on its first line.
+    return own.isEmpty() ? tail : html(own) + "<br>" + tail;
+}
+
+void setUsageHint(QWidget* w, const QString& hint)
+{
+    w->setProperty(kUsageHintProperty, hint);
 }
 
 void flashReset(QWidget* w, QRect rect)

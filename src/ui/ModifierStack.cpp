@@ -256,6 +256,8 @@ void addKeyActions(QMenu* menu, const PlugRef& ref)
  * to scrub (Ctrl slow, Shift fast), with the left or middle button. A middle click restores the default. Its row label
  * does all of this too.
  */
+constexpr const char* kScrubHint = "Drag to scrub (Ctrl slow, Shift fast)";
+
 class ScrubEdit : public QLineEdit
 {
 public:
@@ -286,8 +288,10 @@ public:
     {
         label->setCursor(Qt::SizeHorCursor);
         label->installEventFilter(this);
+        QString hints = kScrubHint;
         if (defaultOf(mPlug))
-            label->setToolTip(label->toolTip() + (label->toolTip().isEmpty() ? "" : "\n") + resetHint(plugDefaultText(mPlug)));
+            hints += "\n" + resetHint(plugDefaultText(mPlug));
+        label->setToolTip(hintedTip(label->toolTip(), hints));
     }
 
     bool busy() const { return hasFocus() || mScrubbing; }
@@ -298,10 +302,10 @@ public:
         QString tip = doc;
         if (!note.isEmpty())
             tip += (tip.isEmpty() ? "" : "\n") + note;
-        tip += (tip.isEmpty() ? "" : "\n") + QString("Drag to scrub (Ctrl slow, Shift fast); click to type, +=5 works");
+        QString hints = QString(kScrubHint) + "; click to type, +=5 works";
         if (defaultOf(mPlug))
-            tip += "\n" + resetHint(plugDefaultText(mPlug));
-        setToolTip(tip);
+            hints += "\n" + resetHint(plugDefaultText(mPlug));
+        setToolTip(hintedTip(tip, hints));
     }
 
     void refresh(Graph& g)

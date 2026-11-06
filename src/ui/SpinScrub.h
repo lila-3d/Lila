@@ -38,6 +38,12 @@ LILA_UI_API void setComboDefault(QComboBox* box, int index);
 /** "Middle-click to reset to default (X)", the line added to the tooltip of every field that resets. */
 LILA_UI_API QString resetHint(const QString& defaultText);
 
+/** Rich tooltip text: own as written, then hints (plain, one per line) dim and italic under it. */
+LILA_UI_API QString hintedTip(const QString& own, const QString& hints);
+
+/** A how-to line (like how a label scrubs) shown dim and italic under w's tooltip, above the reset hint. */
+LILA_UI_API void setUsageHint(QWidget* w, const QString& hint);
+
 /** Briefly lights up a field (or a rect of it, in its own coordinates) to acknowledge a reset. */
 LILA_UI_API void flashReset(QWidget* w, QRect rect = {});
 

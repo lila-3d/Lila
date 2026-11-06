@@ -96,6 +96,9 @@ TEST_CASE("Channel Box: filter text and chips, state stripes, edits all selected
     CHECK((CB::stateOf(Graph::current().plug("B.tz")) & CB::kLocked));
     CHECK_FALSE(table->item(rowOf(table, "Translate X"), 0)->icon().isNull());
     CHECK(table->item(rowOf(table, "Translate Y"), 0)->toolTip().startsWith("Connected from Src"));
+    const QString txTip = table->item(rowOf(table, "Translate X"), 0)->toolTip();
+    CHECK(txTip.indexOf("Middle-click to reset") > txTip.indexOf("font-style:italic"));
+    CHECK(txTip.indexOf("font-style:italic") > txTip.indexOf("tx"));
     CHECK(table->item(rowOf(table, "Rotate X"), 0)->icon().isNull());
 
     // Filter text, then chips: once for only, twice for all but.

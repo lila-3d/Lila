@@ -67,6 +67,10 @@ namespace
 {
 using scene::Graph;
 
+/** A name cell's tooltip parts: the attr and its doc, and the dim hints under them. */
+constexpr int kTipBodyRole = Qt::UserRole + 1;
+constexpr int kTipHintRole = Qt::UserRole + 2;
+
 /** The selection's names, wrapped onto as many rows as the width needs and exactly that tall: never a scroll bar. */
 class SelectionStrip : public QListWidget
 {
@@ -1416,10 +1420,10 @@ void ChannelBox::refresh()
             auto* name = new QTableWidgetItem(shown);
             name->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             name->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-            QString tip = QString::fromStdString(row.attr + (def.doc.empty() ? "" : "\n" + def.doc));
+            name->setData(kTipBodyRole, QString::fromStdString(row.attr + (def.doc.empty() ? "" : "\n" + def.doc)));
             if (QString text = defaultText(def, row.component); !text.isEmpty())
-                tip += "\n" + resetHint(text);
-            name->setToolTip(tip);
+                name->setData(kTipHintRole, resetHint(text));
+            name->setToolTip(hintedTip(name->data(kTipBodyRole).toString(), name->data(kTipHintRole).toString()));
             mTable->setItem(r, 0, name);
             auto* value = new QTableWidgetItem();
             value->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
@@ -1471,15 +1475,10 @@ void ChannelBox::refresh()
         QTableWidgetItem* nameItem = mTable->item(r, 0);
         nameItem->setData(Qt::UserRole, int(state));
         nameItem->setIcon(cbStateIcon(state));
-        QString tip = nameItem->data(Qt::UserRole + 1).toString();
-        if (tip.isEmpty())
-        {
-            tip = nameItem->toolTip();
-            nameItem->setData(Qt::UserRole + 1, tip);
-        }
+        QString tip = nameItem->data(kTipBodyRole).toString();
         if (const QString what = cbStateText(state, source); !what.isEmpty())
             tip = what + "\n" + tip;
-        nameItem->setToolTip(tip);
+        nameItem->setToolTip(hintedTip(tip, nameItem->data(kTipHintRole).toString()));
     }
     mUpdating = false;
 }

@@ -470,7 +470,7 @@ void MorphTargetsPanel::refresh()
         slider->setRange(int(std::lround(lo * kWeightSliderSteps)), int(std::lround(hi * kWeightSliderSteps)));
         slider->setValue(int(std::lround(std::clamp(weight, lo, hi) * kWeightSliderSteps)));
         slider->setEnabled(!driven);
-        slider->setToolTip(QString("%1 to %2").arg(lo).arg(hi) + "\n" + resetHint("0"));
+        slider->setToolTip(hintedTip(QString("%1 to %2").arg(lo).arg(hi), resetHint("0")));
         slider->installEventFilter(new MiddleClickReset(slider, [node] { runUi("setAttr", {{"args", {node + ".weight", 0.0}}}); }));
         auto* value = new QDoubleSpinBox(mTree);
         value->setRange(std::min(-10.0, lo), std::max(10.0, hi));

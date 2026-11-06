@@ -34,7 +34,7 @@ public:
     ScrubLabel(const QString& text, std::function<void(double)> step, QWidget* parent) : QLabel(text, parent), mStep(std::move(step))
     {
         setCursor(Qt::SizeHorCursor);
-        setToolTip("Drag sideways to scrub; Ctrl for fine steps, Shift for coarse");
+        setUsageHint(this, "Drag sideways to scrub; Ctrl for fine steps, Shift for coarse");
     }
 
 protected:
