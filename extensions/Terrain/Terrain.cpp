@@ -9,6 +9,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
     if (!terrain::registerNodes(ctx))
         return 1;
     terrain::registerCommands(ctx);
+    terrain::registerWater(ctx);
     terrain::registerUi(ctx);
     return 0;
 }

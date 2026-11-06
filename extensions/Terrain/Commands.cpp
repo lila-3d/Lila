@@ -9,6 +9,7 @@
 #include "Inputs.h"
 #include "Stamps.h"
 #include "Terrain.h"
+#include "Water.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -2263,6 +2264,7 @@ void registerCommands(ext::Context& ctx)
                 folder = bakeDir() / "export";
             try
             {
+                json out;
                 if (a.get<std::string>("target", "unreal") == "files")
                 {
                     // Files carry the grid in world space when it lines up with it, else in its own space with the placement.
@@ -2270,16 +2272,22 @@ void registerCommands(ext::Context& ctx)
                     geom.heightfield = f.local;
                     const gn::Geometry w = gn::transformed(geom, f.frame.m);
                     if (w.heightfield && !zUp())
-                        return exportFiles(*w.heightfield, folder, name);
-                    json out = exportFiles(*f.local, folder, name);
-                    json m = json::array();
-                    for (int c = 0; c < 4; ++c)
-                        for (int r = 0; r < 4; ++r)
-                            m.push_back(f.frame.m[c][r]);
-                    out["matrix"] = m;
-                    return out;
+                        out = exportFiles(*w.heightfield, folder, name);
+                    else
+                    {
+                        out = exportFiles(*f.local, folder, name);
+                        json m = json::array();
+                        for (int c = 0; c < 4; ++c)
+                            for (int r = 0; r < 4; ++r)
+                                m.push_back(f.frame.m[c][r]);
+                        out["matrix"] = m;
+                    }
                 }
-                return exportUnreal(*f.local, f.frame.m, folder, name, unrealOptions(a));
+                else
+                    out = exportUnreal(*f.local, f.frame.m, folder, name, unrealOptions(a));
+                if (json water = exportTerrainWater(names[0], folder, name); !water.is_null())
+                    out["water"] = water;
+                return out;
             }
             catch (const std::exception& e)
             {
@@ -2307,6 +2315,7 @@ void registerCommands(ext::Context& ctx)
                   {"layers", "ly", T::Any, nullptr, "Masks to send as paint layers, a list, or {mask: layer name}; default every mask."},
                   {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
+                  {"water", "wa", T::Bool, true, "Send the terrain's rivers, lakes and sea as spline and locator actors too (terrainSendWaterToUnreal)."},
                   {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -2352,6 +2361,18 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: " + r.error);
             json out = r.result;
             out["settings"] = settings;
+            if (a.get<bool>("water", true))
+            {
+                try
+                {
+                    if (json water = sendTerrainWater(names[0], a.get<double>("timeout", 300.0)); !water.is_null())
+                        out["water"] = water;
+                }
+                catch (const std::exception& e)
+                {
+                    throw CommandError(std::string("terrainSendToUnreal: the landscape went, its water didn't: ") + e.what());
+                }
+            }
             return out;
         },
         .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
