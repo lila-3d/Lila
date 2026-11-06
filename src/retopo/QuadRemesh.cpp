@@ -11,6 +11,7 @@
 #include <tbb/parallel_for.h>
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -1877,6 +1878,9 @@ QuadRemeshResult cleanest(const geo::Mesh& source, const QuadRemeshOptions& opts
         if (take)
             asked = finer.targetFaces;
         keepOrMerge(result, std::move(again), take);
+        if (take)
+            result.notes = {"at " + std::to_string(opts.targetFaces) + " faces the layout folded at thin parts or tight spots, so it was made finer (" +
+                            std::to_string(finer.targetFaces) + " asked)"};
         if (result.ok() && result.defects == 0)
             break;
     }
@@ -1895,6 +1899,7 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
     const auto off = [&](const QuadRemeshResult& r) { return std::abs(double(r.mesh.numFaces()) / target - 1.0); };
     QuadRemeshOptions again = opts;
     double lastTook = 0.0;
+    bool noted = false;
     for (int attempt = 0; attempt < 3 && off(result) > opts.countTolerance; ++attempt)
     {
         if (lastTook > 0.0 && Budget::remaining() < 2.0 * lastTook)
@@ -1917,13 +1922,41 @@ void fitCount(const geo::Mesh& source, const QuadRemeshOptions& opts, QuadRemesh
         const std::string lostTo = r.ok() && !keepsLayout && r.defects <= result.defects ? r.layout : std::string();
         keepOrMerge(result, std::move(r), take);
         if (!lostTo.empty())
+        {
             result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: at the count asked only a " + lostTo +
                                    " layout came out clean, with worse flow, so the " + result.layout + " layout is kept");
+            noted = true;
+        }
         if (!take)
             break;
     }
-    if (off(result) > opts.countTolerance && result.notes.empty())
+    if (off(result) > opts.countTolerance && !noted)
         result.notes.push_back(std::to_string(result.mesh.numFaces()) + " faces, outside the count tolerance: no closer count came out as clean");
+}
+
+/** Says so when Seamless was asked for and another layout came out, and why: a fallback is never silent. */
+void noteLayoutFallback(const QuadRemeshOptions& opts, QuadRemeshResult& result)
+{
+    if (!result.ok() || !opts.seamless || opts.method != RemeshMethod::Field || result.layout == "seamless")
+        return;
+    int fewest = -1;
+    for (const RemeshAttempt& a : result.attempts)
+        if (a.layout == "seamless" && (fewest < 0 || a.defects < fewest))
+            fewest = a.defects;
+    static const std::map<std::string, std::string, std::less<>> what = {
+        {"patches", "patches cut along the lines from the poles, whose flow can turn at patch corners"},
+        {"field", "the local field, with more poles"},
+        {"shifted", "the local field on a shifted lattice, with more poles"},
+    };
+    const auto it = what.find(result.layout);
+    const std::string layout = it != what.end() ? it->second : result.layout;
+    if (fewest < 0)
+        result.notes.push_back("Seamless found no layout for this shape; this is " + layout);
+    else if (fewest == 0)
+        result.notes.push_back("Seamless came out clean but with more poles than this layout: " + layout);
+    else
+        result.notes.push_back("Seamless didn't come out clean (best try " + std::to_string(fewest) + (fewest == 1 ? " flaw" : " flaws") + "); this is " +
+                               layout);
 }
 
 /** For each requested pole, the nearest irregular inner point within a few faces of it. */
@@ -1988,6 +2021,7 @@ static QuadRemeshResult quadRemeshWithin(const geo::Mesh& source, const QuadReme
     int asked = opts.targetFaces;
     keepOrMerge(result, cleanest(source, opts, asked), true);
     fitCount(source, opts, result, asked);
+    noteLayoutFallback(opts, result);
     matchPoles(opts, result);
     return result;
 }
