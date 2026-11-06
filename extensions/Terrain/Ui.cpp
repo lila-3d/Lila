@@ -41,6 +41,9 @@ void registerUi(ext::Context& ctx)
         {"terrain.export", "Export Terrain", "terrainExport", "Write the selected terrain to files for an engine or another tool.", "terrainExport('Terrain', target='files')"},
         {"terrain.sendToUnreal", "Send Terrain to Unreal", "terrainSendToUnreal", "Send the selected terrain to the connected Unreal editor as a Landscape.",
          "terrainSendToUnreal('Terrain')"},
+        {"terrain.cave", "Cave", "terrainCave", "Carve a cave along a curve into the selected terrain.", "terrainCave('Terrain', curve='CaveLine', radius=300)"},
+        {"terrain.split", "Split Volume", "terrainSplit", "Split the selected terrain's caves and overhangs into mesh pieces over holes.",
+         "terrainSplit('Terrain', lods=3)"},
     };
     for (const auto& c : commands)
         actions::add(ctx, {.id = c.id, .label = c.label, .category = "Terrain", .doc = c.doc, .python = c.python, .command = c.command, .call = nlohmann::json::object()});
@@ -69,7 +72,7 @@ void registerUi(ext::Context& ctx)
     menus::addItem(ctx, {.id = "terrain.menu",.menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
                          .after = levelToolkit::kBuildSection});
     int separators = 0;
-    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "", "terrain.addRiver", "terrain.addLake", "terrain.seaLevel", "", "terrain.toMesh", "terrain.tiles", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
+    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "terrain.cave", "terrain.split", "", "terrain.addRiver", "terrain.addLake", "terrain.seaLevel", "", "terrain.toMesh", "terrain.tiles", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("terrain.menu.") + a, .menu = "Level/Terrain", .action = a});

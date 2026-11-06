@@ -2,6 +2,7 @@
 
 #include "core/Profile.h"
 #include "geo/Bvh.h"
+#include "geo/SurfaceNets.h"
 
 #include <tbb/parallel_for.h>
 
@@ -14,91 +15,6 @@ namespace lila::gn
 namespace volume_detail
 {
 constexpr size_t kMaxVoxels = size_t(64) << 20;
-
-/** Index-space crossings and quads of surface nets, before they are moved to world space. */
-struct Nets
-{
-    std::vector<glm::dvec3> points;
-    std::vector<geo::Index> quads;
-};
-
-Nets surfaceNets(const Volume& v, double threshold)
-{
-    const int nx = v.dims.x, ny = v.dims.y, nz = v.dims.z;
-    const bool sdf = v.isSdf();
-    // Positive where solid.
-    auto s = [&](int i, int j, int k) {
-        double val = v.at(i, j, k);
-        return sdf ? threshold - val : val - threshold;
-    };
-    // Cells run from -1 to n - 1 on each axis, so the grid's border closes against the background.
-    const size_t cx = size_t(nx) + 1, cy = size_t(ny) + 1, cz = size_t(nz) + 1;
-    auto cellIndex = [&](int i, int j, int k) { return size_t(i + 1) + cx * (size_t(j + 1) + cy * size_t(k + 1)); };
-
-    std::vector<std::vector<std::pair<size_t, glm::dvec3>>> slices(cz);
-    tbb::parallel_for(size_t(0), cz, [&](size_t sk) {
-        int k = int(sk) - 1;
-        auto& out = slices[sk];
-        for (int j = -1; j < ny; ++j)
-            for (int i = -1; i < nx; ++i)
-            {
-                double c[8];
-                int solid = 0;
-                for (int n = 0; n < 8; ++n)
-                {
-                    c[n] = s(i + (n & 1), j + ((n >> 1) & 1), k + ((n >> 2) & 1));
-                    solid += c[n] > 0.0 ? 1 : 0;
-                }
-                if (solid == 0 || solid == 8)
-                    continue;
-                glm::dvec3 sum(0.0);
-                int count = 0;
-                for (int a = 0; a < 8; ++a)
-                    for (int axis = 0; axis < 3; ++axis)
-                    {
-                        int b = a | (1 << axis);
-                        if (b == a || (c[a] > 0.0) == (c[b] > 0.0))
-                            continue;
-                        double t = c[a] / (c[a] - c[b]);
-                        glm::dvec3 p(i + (a & 1), j + ((a >> 1) & 1), k + ((a >> 2) & 1));
-                        p[axis] += t;
-                        sum += p;
-                        ++count;
-                    }
-                out.emplace_back(cellIndex(i, j, k), sum / double(count));
-            }
-    });
-
-    Nets nets;
-    std::vector<geo::Index> cellVert(cx * cy * cz, geo::kInvalid);
-    for (const auto& slice : slices)
-        for (const auto& [cell, p] : slice)
-        {
-            cellVert[cell] = geo::Index(nets.points.size());
-            nets.points.push_back(p);
-        }
-
-    auto quad = [&](bool lowSolid, size_t a, size_t b, size_t c, size_t d) {
-        geo::Index q[4] = {cellVert[a], cellVert[b], cellVert[c], cellVert[d]};
-        if (!lowSolid)
-            std::swap(q[1], q[3]);
-        nets.quads.insert(nets.quads.end(), q, q + 4);
-    };
-    // Each edge crossing the surface gets the quad joining the four cells around it, facing from solid to empty.
-    for (int k = -1; k < nz; ++k)
-        for (int j = -1; j < ny; ++j)
-            for (int i = -1; i < nx; ++i)
-            {
-                bool here = s(i, j, k) > 0.0;
-                if (j >= 0 && k >= 0 && j < ny && k < nz && here != (s(i + 1, j, k) > 0.0))
-                    quad(here, cellIndex(i, j - 1, k - 1), cellIndex(i, j, k - 1), cellIndex(i, j, k), cellIndex(i, j - 1, k));
-                if (i >= 0 && k >= 0 && i < nx && k < nz && here != (s(i, j + 1, k) > 0.0))
-                    quad(here, cellIndex(i - 1, j, k - 1), cellIndex(i - 1, j, k), cellIndex(i, j, k), cellIndex(i, j, k - 1));
-                if (i >= 0 && j >= 0 && i < nx && j < ny && here != (s(i, j, k + 1) > 0.0))
-                    quad(here, cellIndex(i - 1, j - 1, k), cellIndex(i, j - 1, k), cellIndex(i, j, k), cellIndex(i - 1, j, k));
-            }
-    return nets;
-}
 } // namespace volume_detail
 
 Volume Volume::grid(const geo::Bounds& box, double voxelSize, Kind kind, float background)
@@ -268,13 +184,27 @@ geo::Mesh volumeToMesh(const Volume& v, double threshold)
 
     if (v.empty())
         return {};
-    volume_detail::Nets nets = volume_detail::surfaceNets(v, threshold);
-    for (glm::dvec3& p : nets.points)
-        p = v.worldOf(p);
+    // Solid is negative for surface nets; a one-voxel border of background closes the surface at the grid's edge.
+    const bool sdf = v.isSdf();
+    const glm::ivec3 n = v.dims + 2;
+    std::vector<float> padded(size_t(n.x) * size_t(n.y) * size_t(n.z));
+    tbb::parallel_for(0, n.z, [&](int k) {
+        for (int j = 0; j < n.y; ++j)
+            for (int i = 0; i < n.x; ++i)
+            {
+                const double val = v.at(i - 1, j - 1, k - 1);
+                padded[size_t(i) + size_t(n.x) * (size_t(j) + size_t(n.y) * size_t(k))] = float(sdf ? val - threshold : threshold - val);
+            }
+    });
+    const geo::SurfaceNets nets = geo::surfaceNets({n, padded});
+    std::vector<glm::dvec3> pts(nets.cells.size());
+    for (size_t p = 0; p < pts.size(); ++p)
+        pts[p] = v.worldOf(nets.point(p) - 1.0);
+    std::vector<geo::Index> quads = nets.quads;
     if (glm::determinant(glm::dmat3(v.indexToWorld)) < 0.0)
-        for (size_t q = 0; q + 3 < nets.quads.size(); q += 4)
-            std::swap(nets.quads[q + 1], nets.quads[q + 3]);
-    std::vector<geo::Index> sizes(nets.quads.size() / 4, 4);
-    return geo::Mesh::fromPolygons(nets.points, sizes, nets.quads);
+        for (size_t q = 0; q + 3 < quads.size(); q += 4)
+            std::swap(quads[q + 1], quads[q + 3]);
+    std::vector<geo::Index> sizes(quads.size() / 4, 4);
+    return geo::Mesh::fromPolygons(pts, sizes, quads);
 }
 } // namespace lila::gn

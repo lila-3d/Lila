@@ -11,6 +11,7 @@
 #include "LilaLinkImposter.h"
 #include "LilaLinkLandscape.h"
 #include "LilaLinkLandscapeRegions.h"
+#include "LilaLinkTerrainVolume.h"
 #include "LilaLinkMethodRegistry.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTerrainWater.h"
@@ -116,7 +117,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 	// "progress": long methods send progress notifications, so Lila can tell a slow call from a hung editor.
 	Out->SetArrayField(TEXT("features"), {Str(TEXT("progress")), Str(TEXT("materials")), Str(TEXT("meshSequence")), Str(TEXT("geometryCache")),
 		Str(TEXT("vertexAnimation")), Str(TEXT("textures")), Str(TEXT("materialInstances")),
-		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")), Str(TEXT("landscapeRegions")), Str(TEXT("terrainWater")),
+		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")), Str(TEXT("landscapeRegions")), Str(TEXT("terrainWater")), Str(TEXT("landscapeVolume")),
 		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters")), Str(TEXT("components")), Str(TEXT("lights")), Str(TEXT("lightingChannels")),
 		Str(TEXT("geometryCollection")), Str(TEXT("trimDecals")), Str(TEXT("physics")), Str(TEXT("levelInstances")),
 		Str(TEXT("collision")), Str(TEXT("instanceData")), Str(TEXT("expressionRig")), Str(TEXT("terrainRoads"))});
@@ -428,6 +429,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddLandscapeRegionMethods(Methods);
 	LilaLink::AddTerrainWaterMethods(Methods);
 	LilaLink::AddTerrainRoadMethods(Methods);
+	LilaLink::AddTerrainVolumeMethods(Methods);
 	LilaLink::AddPlacementMethods(Methods);
 	LilaLink::AddMasonryMethods(Methods);
 	LilaLink::AddTrimMethods(Methods);

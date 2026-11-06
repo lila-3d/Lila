@@ -3,12 +3,13 @@
 #include "ExportEngines.h"
 #include "Roads.h"
 #include "Terrain.h"
+#include "Volume.h"
 
 #include <lila/Extension.h>
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
-    if (!terrain::registerNodes(ctx))
+    if (!terrain::registerNodes(ctx) || !terrain::registerVolume(ctx))
         return 1;
     terrain::registerCommands(ctx);
     terrain::registerExportEngines(ctx);
