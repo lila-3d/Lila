@@ -14,6 +14,7 @@ lila_module(lila_render UI
     GpuImage.cpp
     GpuProfile.cpp
     HdrImage.cpp
+    HeightfieldRenderer.cpp
     MeshMaps.cpp
     PaintCommands.cpp
     PaintGpu.cpp
@@ -49,6 +50,7 @@ lila_add_shaders(lila_render FILES
     shaders/external.slang
     shaders/grid.slang
     shaders/heightfield.slang
+    shaders/heightfield_bindless.slang
     shaders/imageplane.slang
     shaders/lines.slang
     shaders/overlay.slang
@@ -75,6 +77,7 @@ lila_add_shaders(lila_render FILES
     shaders/vt.slang
     shaders/wire.slang
     INCLUDES
+    shaders/heightfield.slang
     shaders/mesh.slang
     shaders/scene_color.slang
     shaders/stylised.slang

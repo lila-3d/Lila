@@ -1,8 +1,8 @@
 #include "ui/ViewportWidgetDetail.h"
 
-#include "gn/Gn.h"
 #include "scene/LightingChannels.h"
 #include "scene/SceneIndex.h"
+#include "ui/HeightfieldDisplay.h"
 
 namespace lila::ui
 {
@@ -14,7 +14,7 @@ namespace
 struct MeshSettings
 {
     bool render = false; // a render view: shaded, no wire, highlight, isolation or preselection
-    bool heightfieldDraw = false; // terrains drawn from their heights (the "/viewport/heightfieldDraw" pref)
+    heightfieldDisplay::Settings terrain; // terrains drawn from their heights, and how
     bool wireframe = false, wireOnShaded = false, showMaterials = false, smoothSubdivisions = false, inherit = false, maskShown = true;
     render::VertexColorMode vertexColors = render::VertexColorMode::Off;
     render::ColorChannel colorChannel = render::ColorChannel::Rgb;
@@ -37,20 +37,10 @@ struct MeshEntry
     scene::MeshPtr shown;
     glm::dmat4 world{1.0};
     scene::NodeId arrayed = scene::kNoNode;
-    /** Set instead of draws when the node is a terrain on the heightfield draw path. */
+    /** Set instead of draws when the node is a terrain on the heightfield draw path, with the paint layers it was built from. */
     std::optional<render::HeightfieldDraw> heightfield;
+    std::string layers;
 };
-
-/** The heightfield the node's last geometry-nodes modifier made, or null. */
-std::shared_ptr<const geo::Heightfield> heightfieldOf(scene::Graph& g, scene::NodeId id)
-{
-    const std::vector<scene::NodeId> stack = scene::modifiers::stack(g, id);
-    for (auto it = stack.rbegin(); it != stack.rend(); ++it)
-        if (const scene::Node* m = g.node(*it); m && gn::isGnModifier(*m))
-            if (auto h = gn::modifierHeightfield(m->id()); h && !h->empty())
-                return h;
-    return nullptr;
-}
 
 /** The node's draws under these settings, or none when it is hidden. */
 void buildEntry(MeshEntry& e, scene::Graph& g, const MeshSettings& set, const scene::sceneIndex::Hierarchy& hierarchy,
@@ -65,18 +55,17 @@ void buildEntry(MeshEntry& e, scene::Graph& g, const MeshSettings& set, const sc
     e.heightfield.reset();
     if (!hierarchy.visible(id) || (iso && !iso->shows(id)) || !set.maskShown)
         return;
-    if (set.heightfieldDraw && !set.wireframe && !hilite)
-        if (std::shared_ptr<const geo::Heightfield> h = heightfieldOf(g, id))
+    // Component editing works on the mesh, so a terrain being edited draws as one.
+    if (set.terrain.drawsHeightfields() && !hilite)
+        if (std::optional<render::HeightfieldDraw> d = heightfieldDisplay::drawFor(g, id, set.terrain, set.showMaterials))
         {
-            render::HeightfieldDraw d;
-            d.heights = std::shared_ptr<const std::vector<float>>(h, &h->heights);
-            d.nx = h->nx;
-            d.nz = h->nz;
-            d.cell = float(h->cell);
-            d.origin = glm::vec2(h->origin);
             e.world = shownWorld(n);
-            d.world = glm::mat4(e.world);
-            d.node = uint64_t(id);
+            d->world = glm::mat4(e.world);
+            d->lightingChannels = scene::lightingChannels::mask(n);
+            d->flags = set.wireframe ? render::DrawWire : render::DrawShaded | (set.wireOnShaded ? render::DrawWire : 0u);
+            if (const scene::displayLayers::Display layer = scene::displayLayers::display(g, id); layer.color)
+                d->wireColor = glm::vec4(viewportDisplay::layerTint(glm::vec3(*layer.color)), 1.0f);
+            e.layers = heightfieldDisplay::layersSource(n);
             e.heightfield = std::move(d);
             return;
         }
@@ -161,7 +150,7 @@ MeshSettings meshSettings(scene::Graph& g, const ViewportWidget::RenderView* rv,
     MeshSettings set;
     const PrefStore& p = PrefStore::get();
     set.render = rv != nullptr;
-    set.heightfieldDraw = p.value<bool>("general", "/viewport/heightfieldDraw", false);
+    set.terrain = heightfieldDisplay::settings();
     set.wireframe = !rv && p.value<std::string>("general", "/viewport/displayMode", "shaded") == "wireframe";
     set.wireOnShaded = !rv && p.value<bool>("general", "/viewport/wireOnShaded", false);
     set.showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
@@ -277,22 +266,17 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
         if (over->second || lodHidden.contains(id) || viewportHooks::hiddenInView(id))
             continue;
         const bool hot = hilite.contains(id);
-        if (e.pass != n.evaluatedPass() || e.settings != cache.settingsId || e.hilite != hot || rv)
+        if (e.pass != n.evaluatedPass() || e.settings != cache.settingsId || e.hilite != hot || rv ||
+            (e.heightfield && e.layers != heightfieldDisplay::layersSource(n)))
         {
             LILA_ZONE_N("buildFrame rebuild mesh node");
             buildEntry(e, g, set, hierarchy, iso, hot);
             e.settings = cache.settingsId;
             rebuilt = true;
         }
-        if (e.heightfield)
-        {
-            render::HeightfieldDraw& d = s.heightfields.emplace_back(*e.heightfield);
-            d.selected = selected.contains(id);
+        if (e.draws.empty() && !e.heightfield)
             continue;
-        }
-        if (e.draws.empty())
-            continue;
-        if (aids)
+        if (aids && !e.heightfield)
             aids->push_back({e.shown, e.world, {}});
         uint32_t flags = 0;
         if (id == pickHover)
@@ -303,6 +287,11 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
             flags = render::DrawPreselect;
         else if (!componentMode && underSelection.contains(id))
             flags = render::DrawUnderSelected;
+        if (e.heightfield)
+        {
+            s.heightfields.emplace_back(*e.heightfield).flags |= flags;
+            continue;
+        }
         const bool snap = !snaps.empty() && std::ranges::find(snaps, id) != snaps.end();
         for (uint32_t k = 0; k < e.draws.size(); ++k)
             from.push_back({uint32_t(i), k, flags, snap});

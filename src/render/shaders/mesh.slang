@@ -983,6 +983,9 @@ float4 shadeMesh(VSOut i, bool front, Centers center)
         discard;
     if ((flags & kVertexColorShaded) != 0)
         baseColor *= vertexColor(i.color, flags);
+#ifdef LILA_HEIGHTFIELD
+    baseColor = lerp(baseColor, gTerrainBase.rgb, gTerrainBase.a);
+#endif
 
     float3 ng = normalize(i.normal);
     {
@@ -1008,6 +1011,10 @@ float4 shadeMesh(VSOut i, bool front, Centers center)
         float3 b = cross(ng, t) * (i.tangent.w < 0.0 ? -1.0 : 1.0);
         n = normalize(t * tn.x + b * tn.y + ng * max(tn.z, 1e-3));
     }
+#ifdef LILA_HEIGHTFIELD
+    if (gTerrainNormal.w > 0.0)
+        n = normalize(lerp(n, gTerrainNormal.xyz, gTerrainNormal.w));
+#endif
     Stroke stroke = { float3(0, 0, 1), 0.5, 0.5 };
     if (model == kPainterly && styleVec(0).z * styleVec(0).w > 0.0)
     {
@@ -1044,6 +1051,9 @@ float4 shadeMesh(VSOut i, bool front, Centers center)
         if ((flags & kMetallicMap) != 0)
             metallic = orm.b;
     }
+#ifdef LILA_HEIGHTFIELD
+    s.rough = lerp(s.rough, gTerrainRough, gTerrainBase.a);
+#endif
     s.rough = specularAntialias(n, clamp(s.rough, 0.04, 1.0));
     metallic = saturate(metallic);
     s.diffuse = baseColor * (1.0 - metallic);
