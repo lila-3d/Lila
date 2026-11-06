@@ -2,8 +2,10 @@
 lila_add_extension(lila_terrain_extension ID Terrain MANIFEST extension.json UI RESOURCES resources
     SOURCES Terrain.cpp Core.cpp Nodes.cpp Commands.cpp Export.cpp Erosion.cpp ErosionGpu.cpp Inputs.cpp Stamps.cpp Analysis.cpp SculptTool.cpp Ui.cpp ExportEngines.cpp ExportEnginesCommands.cpp
             Water.cpp WaterCommands.cpp Roads.cpp RoadCommands.cpp Volume.cpp VolumeCommands.cpp
-            Terrain.h Export.h ExportEngines.h Erosion.h ErosionGpu.h Inputs.h Stamps.h Analysis.h Water.h Roads.h Volume.h)
-lila_add_shaders(lila_terrain_extension FILES shaders/terrain_erosion.slang)
+            Landform.cpp LandformGpu.cpp LandformNodes.cpp LandformCommands.cpp ErosionFilter.cpp Shaping.cpp Brushes.cpp
+            Terrain.h Export.h ExportEngines.h Erosion.h ErosionGpu.h Inputs.h Stamps.h Analysis.h Water.h Roads.h Volume.h
+            Landform.h LandformGpu.h LandformCommands.h ErosionFilter.h Shaping.h Brushes.h)
+lila_add_shaders(lila_terrain_extension FILES shaders/terrain_erosion.slang shaders/terrain_landform.slang)
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_terrain_extension PRIVATE miniz::miniz)
 foreach(_host lila lilabatch)

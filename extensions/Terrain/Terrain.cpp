@@ -2,6 +2,7 @@
 
 #include "ExportEngines.h"
 #include "Roads.h"
+#include "LandformCommands.h"
 #include "Terrain.h"
 #include "Volume.h"
 
@@ -9,7 +10,7 @@
 
 LILA_EXTENSION_EXPORT int lilaExtensionInit(lila::ext::Context& ctx)
 {
-    if (!terrain::registerNodes(ctx) || !terrain::registerVolume(ctx))
+    if (!terrain::registerNodes(ctx) || !terrain::registerVolume(ctx) || !terrain::registerLandformNodes(ctx))
         return 1;
     terrain::registerCommands(ctx);
     terrain::registerExportEngines(ctx);

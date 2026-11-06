@@ -1,22 +1,49 @@
-// The Sculpt Terrain viewport tool: brush strokes on a terrain, kept as terrainSculpt strokes. A stroke in the final stage
-// (after erosion) re-runs only what follows it, since the modifier keeps the steps an edit leaves alone. A base-stage
-// stroke previews in the final stage while it is drawn and moves to the base stage, eroded with the rest, when released.
+// The Sculpt Terrain viewport tool: brush strokes on a terrain through Lila's brush core (spacing, pen pressure, falloff,
+// mirroring), each kept as one terrainStroke call. A stroke in the final stage (after erosion) re-runs only what follows
+// it, since the modifier keeps the steps an edit leaves alone. A base-stage stroke previews in the final stage while it
+// is drawn and moves to the base stage, eroded with the rest, when released. Brushes and settings sit in a palette panel;
+// Region picks a patch to sculpt with the mesh sculpt brushes (terrainSculptRegion), baked back when sculpting ends.
 
 #include "Analysis.h"
+#include "Brushes.h"
 #include "Terrain.h"
 
+#include <lila/Actions.h>
+#include <lila/Brush.h>
+#include <lila/BrushUi.h>
 #include <lila/Command.h>
 #include <lila/Deformer.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
+#include <lila/Icons.h>
+#include <lila/Log.h>
+#include <lila/Math.h>
 #include <lila/Node.h>
+#include <lila/Panels.h>
+#include <lila/Prefs.h>
+#include <lila/Sculpt.h>
 #include <lila/Transform.h>
 #include <lila/Undo.h>
 #include <lila/ViewportTool.h>
 
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QFormLayout>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPointer>
+#include <QSpinBox>
+#include <QTimer>
+#include <QToolButton>
+#include <QVBoxLayout>
 
+#include <array>
 #include <cmath>
 
 using namespace lila;
@@ -26,8 +53,122 @@ namespace terrain
 {
 using json = nlohmann::json;
 
-namespace
+namespace sculpttool_
 {
+constexpr const char* kPrefix = "/terrainSculpt";
+constexpr const char* kPaletteId = "terrain.sculptPalette";
+
+struct BrushButton
+{
+    SculptOp op;
+    const char* icon;
+    const char* label;
+    const char* tip;
+};
+
+constexpr std::array<BrushButton, 12> kBrushes = {{
+    {SculptOp::Raise, "arrow-big-up", "Raise", "Raise the ground. Ctrl lowers."},
+    {SculptOp::Lower, "arrow-big-down", "Lower", "Lower the ground. Ctrl raises."},
+    {SculptOp::Smooth, "blur", "Smooth", "Smooth bumps away. Shift smooths with any brush."},
+    {SculptOp::Flatten, "minus", "Flatten", "Level to the height under the press, or to the plane under the stroke."},
+    {SculptOp::Noise, "wave-sine", "Noise", "Add rough noise."},
+    {SculptOp::Ramp, "trending-up", "Ramp", "Drag from one height to another: a graded ramp between press and release."},
+    {SculptOp::Terrace, "stairs", "Terrace", "Step the ground into treads."},
+    {SculptOp::Stamp, "circle-dot", "Stamp", "Lay a library shape: peak, crater, dune, rocks, mesa, ridge, volcano."},
+    {SculptOp::Erode, "droplet", "Erode", "Erode under the brush."},
+    {SculptOp::Uplift, "mountain", "Uplift", "Paint where the ground rises; erosion carves it as it lifts (before erosion)."},
+    {SculptOp::Relax, "feather", "Relax", "Even out small bumps, keeping the big shapes."},
+    {SculptOp::Mask, "brush", "Mask", "Paint a mask. Ctrl erases."},
+}};
+
+struct Settings
+{
+    SculptOp op = SculptOp::Raise;
+    brush::BrushSettings stroke;
+    /** Raise, lower, noise and stamp: cm at full strength. */
+    double height = 600.0;
+    bool afterErosion = true;
+    std::string mirror = "off";
+    std::string stamp = "peak";
+    double angle = 0.0;
+    double step = 1000.0;
+    double sharpness = 0.8;
+    bool plane = false;
+    std::string mask = "paint";
+    int iterations = 10;
+    bool showKeys = true;
+};
+
+Settings& settings()
+{
+    static Settings s = [] {
+        Settings c;
+        c.stroke.radiusUnit = brush::RadiusUnit::World;
+        c.stroke.worldRadius = 3000.0;
+        c.stroke.strength = 0.5;
+        c.stroke.loadPrefs(kPrefix);
+        const PrefStore& p = PrefStore::get();
+        auto key = [](const char* k) { return std::string(kPrefix) + "/" + k; };
+        const std::string op = p.value<std::string>("general", key("brush"), "raise");
+        for (size_t i = 0; i < sculptOpNames().size(); ++i)
+            if (sculptOpNames()[i] == op)
+                c.op = SculptOp(i);
+        c.height = std::max(1.0, p.value<double>("general", key("height"), c.height));
+        c.afterErosion = p.value<bool>("general", key("afterErosion"), c.afterErosion);
+        c.mirror = p.value<std::string>("general", key("mirror"), c.mirror);
+        c.stamp = p.value<std::string>("general", key("stamp"), c.stamp);
+        c.angle = p.value<double>("general", key("angle"), c.angle);
+        c.step = std::max(1.0, p.value<double>("general", key("step"), c.step));
+        c.sharpness = std::clamp(p.value<double>("general", key("sharpness"), c.sharpness), 0.0, 1.0);
+        c.plane = p.value<bool>("general", key("plane"), c.plane);
+        c.mask = p.value<std::string>("general", key("mask"), c.mask);
+        c.iterations = std::clamp(p.value<int>("general", key("iterations"), c.iterations), 1, 200);
+        c.showKeys = p.value<bool>("general", key("showKeys"), c.showKeys);
+        return c;
+    }();
+    return s;
+}
+
+void syncPalette();
+
+void save()
+{
+    const Settings& c = settings();
+    PrefStore& p = PrefStore::get();
+    auto key = [](const char* k) { return std::string(kPrefix) + "/" + k; };
+    c.stroke.savePrefs(kPrefix);
+    p.set("general", key("brush"), sculptOpNames()[size_t(c.op)]);
+    p.set("general", key("height"), c.height);
+    p.set("general", key("afterErosion"), c.afterErosion);
+    p.set("general", key("mirror"), c.mirror);
+    p.set("general", key("stamp"), c.stamp);
+    p.set("general", key("angle"), c.angle);
+    p.set("general", key("step"), c.step);
+    p.set("general", key("sharpness"), c.sharpness);
+    p.set("general", key("plane"), c.plane);
+    p.set("general", key("mask"), c.mask);
+    p.set("general", key("iterations"), c.iterations);
+    p.set("general", key("showKeys"), c.showKeys);
+    syncPalette();
+    viewportTools::requestRedraw();
+}
+
+bool inCm(SculptOp op) { return op == SculptOp::Raise || op == SculptOp::Lower || op == SculptOp::Noise || op == SculptOp::Stamp; }
+
+const BrushButton& buttonOf(SculptOp op)
+{
+    for (const BrushButton& b : kBrushes)
+        if (b.op == op)
+            return b;
+    return kBrushes[0];
+}
+
+std::vector<KeyHint> keyHints()
+{
+    return {{"Drag", buttonOf(settings().op).label}, {"Shift+drag", "Smooth"}, {"Ctrl+drag", "Invert"}, {"B+drag", "Radius"},
+            {"M+drag", "Strength"}, {"[  ]", "Smaller, larger"}, {"Esc", "Exit"}};
+}
+
 struct Target
 {
     std::string mesh;
@@ -58,12 +199,241 @@ std::optional<Target> selectedTerrain()
     return std::nullopt;
 }
 
-class SculptTool final : public ViewportTool
+/** Arms the next click to pick a Sculpt Region patch. */
+bool& regionArmed()
+{
+    static bool armed = false;
+    return armed;
+}
+
+class Palette final : public QWidget
+{
+public:
+    explicit Palette(QWidget* parent) : QWidget(parent)
+    {
+        auto* v = new QVBoxLayout(this);
+        v->setContentsMargins(8, 8, 8, 8);
+        v->setSpacing(8);
+
+        auto* grid = new QGridLayout;
+        grid->setSpacing(2);
+        for (size_t i = 0; i < kBrushes.size(); ++i)
+        {
+            const BrushButton& def = kBrushes[i];
+            auto* b = new QToolButton;
+            b->setIcon(icon(def.icon));
+            b->setIconSize(QSize(22, 22));
+            b->setFixedSize(36, 36);
+            b->setCheckable(true);
+            b->setAutoRaise(true);
+            b->setToolTip(QString("%1: %2").arg(def.label, def.tip));
+            connect(b, &QToolButton::clicked, this, [op = def.op] {
+                settings().op = op;
+                save();
+            });
+            grid->addWidget(b, int(i / 4), int(i % 4));
+            mButtons[i] = b;
+        }
+        v->addLayout(grid);
+        mName = new QLabel;
+        mName->setAlignment(Qt::AlignHCenter);
+        v->addWidget(mName);
+
+        auto* form = new QFormLayout;
+        auto spin = [&](const char* label, double lo, double hi, int decimals, const char* suffix, const char* tip, auto&& apply) {
+            auto* s = new QDoubleSpinBox;
+            s->setRange(lo, hi);
+            s->setDecimals(decimals);
+            s->setSuffix(suffix);
+            s->setToolTip(tip);
+            s->setKeyboardTracking(false);
+            connect(s, &QDoubleSpinBox::valueChanged, this, [apply](double value) {
+                apply(value);
+                save();
+            });
+            form->addRow(label, s);
+            return s;
+        };
+        mRadius = spin("Radius", 10.0, 1e7, 0, " cm", "Brush radius  (B+drag, [ ])", [](double v) { settings().stroke.worldRadius = v; });
+        mStrength = spin("Strength", 0.0, 1.0, 2, "", "How much one stroke does  (M+drag)", [](double v) { settings().stroke.strength = v; });
+        mHeight = spin("Height", 1.0, 1e6, 0, " cm", "Raise, lower, noise and stamp: change at full strength", [](double v) { settings().height = v; });
+        mStep = spin("Step", 1.0, 1e6, 0, " cm", "Terrace step height", [](double v) { settings().step = v; });
+        mSharpness = spin("Sharpness", 0.0, 1.0, 2, "", "Terrace: soft to sheer risers", [](double v) { settings().sharpness = v; });
+        mAngle = spin("Angle", -360.0, 360.0, 0, "\xc2\xb0", "Stamp turn", [](double v) { settings().angle = v; });
+
+        mStamp = new QComboBox;
+        for (const std::string& s : stampNames())
+            mStamp->addItem(QString::fromStdString(s));
+        mStamp->setToolTip("Library stamp");
+        connect(mStamp, &QComboBox::currentTextChanged, this, [](const QString& t) {
+            settings().stamp = t.toStdString();
+            save();
+        });
+        form->addRow("Stamp", mStamp);
+
+        mMask = new QComboBox;
+        mMask->setEditable(true);
+        mMask->setToolTip("Mask to paint; type a new name to make one");
+        connect(mMask, &QComboBox::currentTextChanged, this, [](const QString& t) {
+            if (!t.isEmpty())
+            {
+                settings().mask = t.toStdString();
+                save();
+            }
+        });
+        form->addRow("Mask", mMask);
+
+        mIterations = new QSpinBox;
+        mIterations->setRange(1, 200);
+        mIterations->setToolTip("Erode and relax steps");
+        mIterations->setKeyboardTracking(false);
+        connect(mIterations, &QSpinBox::valueChanged, this, [](int value) {
+            settings().iterations = value;
+            save();
+        });
+        form->addRow("Steps", mIterations);
+
+        mFalloff = new QComboBox;
+        for (int i = 0; i < int(brush::Shape::Count); ++i)
+            mFalloff->addItem(QString::fromUtf8(brush::shapeName(brush::Shape(i)).data(), qsizetype(brush::shapeName(brush::Shape(i)).size())));
+        mFalloff->setToolTip("Brush falloff");
+        connect(mFalloff, &QComboBox::currentTextChanged, this, [](const QString& t) {
+            settings().stroke.falloff = t.toStdString();
+            save();
+        });
+        form->addRow("Falloff", mFalloff);
+
+        mMirror = new QComboBox;
+        mMirror->addItems({"off", "x", "z", "xz"});
+        mMirror->setToolTip("Mirror strokes across the terrain's centre");
+        connect(mMirror, &QComboBox::currentTextChanged, this, [](const QString& t) {
+            settings().mirror = t.toStdString();
+            save();
+        });
+        form->addRow("Mirror", mMirror);
+        v->addLayout(form);
+
+        auto check = [&](const char* label, const char* tip, auto&& apply) {
+            auto* c = new QCheckBox(label);
+            c->setToolTip(tip);
+            connect(c, &QCheckBox::clicked, this, [apply](bool on) {
+                apply(on);
+                save();
+            });
+            v->addWidget(c);
+            return c;
+        };
+        mPlane = check("Plane", "Flatten to the plane under the stroke instead of one height", [](bool on) { settings().plane = on; });
+        mAfter = check("After erosion", "Strokes stay as drawn; off, erosion shapes them", [](bool on) { settings().afterErosion = on; });
+        mKeys = check("Show keys", "List the tool's keys in the corner of the view", [](bool on) { settings().showKeys = on; });
+
+        mRegion = new QToolButton;
+        mRegion->setIcon(icon("brush"));
+        mRegion->setText("Sculpt Region");
+        mRegion->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        mRegion->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        mRegion->setCheckable(true);
+        mRegion->setToolTip("Click the terrain to sculpt a patch twice the brush wide with the mesh sculpt brushes; Exit Sculpt bakes it back");
+        connect(mRegion, &QToolButton::clicked, this, [](bool on) {
+            regionArmed() = on;
+            viewportTools::requestRedraw();
+        });
+        v->addWidget(mRegion);
+        v->addStretch();
+        sync();
+    }
+
+    void sync()
+    {
+        const Settings& s = settings();
+        for (size_t i = 0; i < kBrushes.size(); ++i)
+            mButtons[i]->setChecked(kBrushes[i].op == s.op);
+        mName->setText(buttonOf(s.op).label);
+        for (auto [box, value] : {std::pair{mRadius, s.stroke.worldRadius}, std::pair{mStrength, s.stroke.strength}, std::pair{mHeight, s.height},
+                                  std::pair{mStep, s.step}, std::pair{mSharpness, s.sharpness}, std::pair{mAngle, s.angle}})
+        {
+            const QSignalBlocker block(box);
+            box->setValue(value);
+        }
+        mHeight->setEnabled(inCm(s.op));
+        mStep->setEnabled(s.op == SculptOp::Terrace);
+        mSharpness->setEnabled(s.op == SculptOp::Terrace);
+        mAngle->setEnabled(s.op == SculptOp::Stamp);
+        mStamp->setEnabled(s.op == SculptOp::Stamp);
+        mMask->setEnabled(s.op == SculptOp::Mask);
+        mIterations->setEnabled(s.op == SculptOp::Erode || s.op == SculptOp::Relax);
+        mPlane->setEnabled(s.op == SculptOp::Flatten);
+        mAfter->setEnabled(s.op != SculptOp::Uplift);
+        {
+            const QSignalBlocker b1(mStamp), b2(mMask), b3(mFalloff), b4(mMirror), b5(mIterations);
+            mStamp->setCurrentText(QString::fromStdString(s.stamp));
+            mMask->clear();
+            if (auto t = selectedTerrain())
+                for (const auto& [name, values] : t->h->masks)
+                    mMask->addItem(QString::fromStdString(name));
+            if (mMask->findText(QString::fromStdString(s.mask)) < 0)
+                mMask->addItem(QString::fromStdString(s.mask));
+            mMask->setCurrentText(QString::fromStdString(s.mask));
+            mFalloff->setCurrentText(QString::fromStdString(s.stroke.falloff));
+            mMirror->setCurrentText(QString::fromStdString(s.mirror));
+            mIterations->setValue(s.iterations);
+        }
+        mPlane->setChecked(s.plane);
+        mAfter->setChecked(s.afterErosion || s.op == SculptOp::Uplift);
+        mKeys->setChecked(s.showKeys);
+        mRegion->setChecked(regionArmed());
+    }
+
+private:
+    std::array<QToolButton*, kBrushes.size()> mButtons{};
+    QLabel* mName = nullptr;
+    QDoubleSpinBox *mRadius = nullptr, *mStrength = nullptr, *mHeight = nullptr, *mStep = nullptr, *mSharpness = nullptr, *mAngle = nullptr;
+    QComboBox *mStamp = nullptr, *mMask = nullptr, *mFalloff = nullptr, *mMirror = nullptr;
+    QSpinBox* mIterations = nullptr;
+    QCheckBox *mPlane = nullptr, *mAfter = nullptr, *mKeys = nullptr;
+    QToolButton* mRegion = nullptr;
+};
+
+QPointer<Palette> gPalette;
+
+void syncPalette()
+{
+    if (gPalette)
+        gPalette->sync();
+}
+
+QDockWidget* paletteDock()
+{
+    for (QWidget* w = gPalette; w; w = w->parentWidget())
+        if (auto* d = qobject_cast<QDockWidget*>(w))
+            return d;
+    return nullptr;
+}
+
+class SculptTool final : public ViewportTool, public brush::DabSink
 {
 public:
     const char* name() const override { return "Sculpt Terrain"; }
 
-    void activate() override { refresh(); }
+    void activate() override
+    {
+        refresh();
+        mControls.activate({}, {});
+        panels::show(kPaletteId);
+        panels::placeToolPalette(paletteDock());
+        syncPalette();
+    }
+
+    void deactivate() override
+    {
+        if (mStroke.active())
+            finishStroke();
+        mControls.deactivate();
+        regionArmed() = false;
+        if (QDockWidget* d = paletteDock())
+            d->hide();
+        viewportTools::requestRedraw();
+    }
 
     bool ownsBrushRadius() const override { return true; }
 
@@ -71,34 +441,65 @@ public:
 
     bool mousePress(QMouseEvent* e, const ViewInfo& view) override
     {
+        mHover = e->position();
+        if (mControls.mousePress(e))
+            return true;
         if (e->button() != Qt::LeftButton)
             return false;
         refresh();
-        auto at = hit(view, e->position());
-        if (!at)
-            return false;
-        mOp = currentOp(e->modifiers());
-        mStroke = {*at};
-        mDown = true;
+        if (!mTarget)
+        {
+            log::warn("Sculpt Terrain: select a terrain");
+            return true;
+        }
+        if (regionArmed())
+        {
+            pickRegion(e->position(), view);
+            return true;
+        }
+        Settings& st = settings();
+        mOp = st.op;
+        mInvert = e->modifiers() & Qt::ControlModifier;
+        if (e->modifiers() & Qt::ShiftModifier)
+            mOp = SculptOp::Smooth;
+        if (mInvert && (mOp == SculptOp::Raise || mOp == SculptOp::Lower))
+            mOp = mOp == SculptOp::Raise ? SculptOp::Lower : SculptOp::Raise;
+        mPoints = json::array();
+        mPressure = json::array();
+        mRadiusUsed = 0.0;
         mPreviewed = false;
+        mFlatHeight.reset();
+        brush::BrushSettings stroke = st.stroke;
+        if (mOp == SculptOp::Ramp)
+            stroke.mode = brush::StrokeMode::Line;
+        if (mOp == SculptOp::Stamp)
+            stroke.spacing = std::max(stroke.spacing, 1.0);
+        const ViewInfo v = view;
         UndoStack::get().openChunk("Sculpt Terrain");
-        send(false);
+        if (!mStroke.begin(stroke, mControls.input(e), [this, v](glm::dvec2 px, brush::SurfaceHit& out) { return query(QPointF(px.x, px.y), v, out); }, *this,
+                           mOp != SculptOp::Ramp))
+        {
+            UndoStack::get().closeChunk();
+            return true;
+        }
         mTimer.start();
         return true;
     }
 
     bool mouseMove(QMouseEvent* e, const ViewInfo& view) override
     {
-        mHover = hit(view, e->position());
-        if (!mDown)
+        mHover = e->position();
+        mHoverView = view.camera;
+        if (mControls.mouseMove(e))
+            return true;
+        if (!mStroke.active())
         {
             viewportTools::requestRedraw();
             return false;
         }
-        if (mHover && glm::length(*mHover - mStroke.back()) > mRadius * 0.2)
-            mStroke.push_back(*mHover);
+        mStroke.move(mControls.input(e));
         // Re-evaluating on every mouse event would queue up behind itself; a few times a second keeps up.
-        if (mTimer.elapsed() > 60)
+        if (mTimer.elapsed() > 60 && mOp != SculptOp::Ramp)
         {
             send(false);
             mTimer.restart();
@@ -106,176 +507,290 @@ public:
         return true;
     }
 
-    bool mouseRelease(QMouseEvent* e, const ViewInfo& view) override
+    bool mouseRelease(QMouseEvent* e, const ViewInfo&) override
     {
-        (void)view;
-        if (e->button() != Qt::LeftButton || !mDown)
+        if (mControls.mouseRelease(e))
+            return true;
+        if (e->button() != Qt::LeftButton || !mStroke.active())
             return false;
-        mDown = false;
-        try
-        {
-            send(true);
-        }
-        catch (...)
-        {
-            UndoStack::get().closeChunk();
-            throw;
-        }
-        UndoStack::get().closeChunk();
-        refresh();
+        finishStroke();
         return true;
     }
 
-    bool hotkey(const QKeyEvent& e, std::string_view action) override
+    bool hotkey(const QKeyEvent& e, std::string_view) override { return key(e); }
+
+    bool keyPress(QKeyEvent* e, const ViewInfo&) override
     {
-        (void)action;
-        return key(e);
+        if (mControls.keyPress(e))
+            return true;
+        return key(*e);
     }
 
-    bool keyPress(QKeyEvent* e, const ViewInfo& view) override
+    void dab(const brush::Dab& d) override
     {
-        (void)view;
-        if (e->key() == Qt::Key_Escape)
-        {
-            viewportTools::set(nullptr);
-            return true;
-        }
-        return key(*e);
+        if (!mTarget)
+            return;
+        if (mPoints.empty() && mOp == SculptOp::Flatten && !settings().plane)
+            mFlatHeight = d.center;
+        mPoints.push_back({d.center.x, d.center.y, d.center.z});
+        mPressure.push_back(std::clamp(d.opacity * d.flow, 0.0, 1.0));
+        mRadiusUsed = std::max(mRadiusUsed, d.radius);
     }
 
     void draw(render::FrameState& s, OverlayPainter& p, const ViewInfo& view) override
     {
+        (void)s;
+        const Settings& st = settings();
         if (!mTarget)
         {
             drawToolStatus(p, view, {.tool = name(), .prompt = "select a terrain"});
             return;
         }
-        static const char* kOps[] = {"Raise", "Lower", "Smooth", "Flatten", "Noise"};
+        const bool cm = inCm(st.op);
         drawToolStatus(p, view,
                        {.tool = name(),
-                        .mode = kOps[mBaseOp],
-                        .fields = {{"radius", QString("%1 cm").arg(mRadius, 0, 'f', 0)}},
-                        .flags = {{"after erosion", mFinal}}});
-        drawKeyList(p, QPointF(12.0, view.height - 12.0),
-                    {{"1-5", "Raise, lower, smooth, flatten, noise"}, {"Ctrl", "Invert"}, {"Shift", "Smooth"}, {"[ ]", "Radius"},
-                     {"- =", "Strength"}, {"F", "Before or after erosion"}, {"B drag", "Radius"}});
-        if (!mHover)
-            return;
-        // The brush ring, lying on the ground.
-        const glm::dmat4 inv = glm::inverse(mTarget->world);
-        const glm::dvec3 c(inv * glm::dvec4(*mHover, 1.0));
-        const double across = glm::length(glm::dvec3(mTarget->world[0]));
-        const double r = mRadius / std::max(across, 1e-9);
-        const glm::vec4 colour(1.0f, 0.75f, 0.2f, 1.0f);
-        glm::vec3 prev(0.0f);
-        for (int k = 0; k <= 48; ++k)
-        {
-            const double a = double(k) / 48.0 * 6.283185307179586;
-            const double x = c.x + std::cos(a) * r, z = c.z + std::sin(a) * r;
-            const glm::vec3 w(mTarget->world * glm::dvec4(x, mTarget->h->heightAt(x, z), z, 1.0));
-            if (k > 0)
-            {
-                s.linesOnTop.push_back({prev, colour});
-                s.linesOnTop.push_back({w, colour});
-            }
-            prev = w;
-        }
+                        .subject = QString::fromStdString(mTarget->mesh).section('|', -1),
+                        .mode = buttonOf(st.op).label,
+                        .fields = {{"radius", QString("%1 cm").arg(st.stroke.worldRadius, 0, 'f', 0)},
+                                   {"strength", cm ? QString("%1 cm").arg(st.stroke.strength * st.height, 0, 'f', 0) : QString::number(st.stroke.strength, 'f', 2)}},
+                        .flags = {{"after erosion", st.afterErosion && st.op != SculptOp::Uplift}},
+                        .prompt = regionArmed() ? QString("click the patch to sculpt") : QString(),
+                        .symmetry = st.mirror != "off" ? std::optional<ToolSymmetry>(ToolSymmetry{true, QString::fromStdString(st.mirror).toUpper()}) : std::nullopt});
+        if (st.showKeys)
+            drawKeyList(p, QPointF(16.0, view.height - 84.0), keyHints());
+        const QPointF at = mControls.anchor(brush::ui::ringPosition(mStroke, mHover));
+        std::optional<brush::ui::CursorSurface> cs;
+        brush::SurfaceHit hit;
+        if (mHoverView == view.camera && query(at, view, hit))
+            cs = brush::ui::CursorSurface{hit.center, hit.normal};
+        brush::BrushSettings shown = st.stroke;
+        if (regionArmed())
+            shown.worldRadius *= 2.0;
+        brush::ui::drawCursor(p, view, shown, at, cs, {.strengthRing = mControls.adjusting() == brush::ui::BrushControls::Adjust::Strength, .stroke = &mStroke});
     }
 
 private:
     void refresh() { mTarget = selectedTerrain(); }
 
-    std::optional<glm::dvec3> hit(const ViewInfo& view, QPointF px) const
+    bool query(QPointF px, const ViewInfo& view, brush::SurfaceHit& out) const
     {
         if (!mTarget)
-            return std::nullopt;
+            return false;
         glm::dvec3 o, d;
         view.ray(px, o, d);
         const glm::dmat4 inv = glm::inverse(mTarget->world);
         glm::dvec3 at;
         if (!raycast(*mTarget->h, glm::dvec3(inv * glm::dvec4(o, 1.0)), glm::dvec3(inv * glm::dvec4(d, 0.0)), &at))
-            return std::nullopt;
-        return glm::dvec3(mTarget->world * glm::dvec4(at, 1.0));
-    }
-
-    int currentOp(Qt::KeyboardModifiers m) const
-    {
-        if (m & Qt::ShiftModifier)
-            return 2;
-        if (m & Qt::ControlModifier)
-            return mBaseOp == 0 ? 1 : mBaseOp == 1 ? 0 : mBaseOp;
-        return mBaseOp;
+            return false;
+        out.center = glm::dvec3(mTarget->world * glm::dvec4(at, 1.0));
+        out.normal = glm::normalize(glm::transpose(glm::inverse(glm::dmat3(mTarget->world))) * mTarget->h->normalAt(at.x, at.z));
+        out.viewDir = glm::normalize(d);
+        out.eye = view.eye;
+        out.right = brush::ui::screenRight(view, glm::dmat4(1.0));
+        out.pixelSize = view.unitsPerPixel(out.center);
+        out.worldToLocal = 1.0;
+        return true;
     }
 
     bool key(const QKeyEvent& e)
     {
-        const int k = e.key();
-        if (k >= Qt::Key_1 && k <= Qt::Key_5)
-            mBaseOp = k - Qt::Key_1;
-        else if (k == Qt::Key_BracketLeft)
-            mRadius = std::max(10.0, mRadius / 1.25);
-        else if (k == Qt::Key_BracketRight)
-            mRadius *= 1.25;
-        else if (k == Qt::Key_Minus)
-            mStrength /= 1.25;
-        else if (k == Qt::Key_Equal)
-            mStrength *= 1.25;
-        else if (k == Qt::Key_F)
-            mFinal = !mFinal;
-        else
-            return false;
-        viewportTools::requestRedraw();
-        return true;
+        if (e.key() == Qt::Key_Escape)
+        {
+            if (regionArmed())
+            {
+                regionArmed() = false;
+                syncPalette();
+                viewportTools::requestRedraw();
+                return true;
+            }
+            QTimer::singleShot(0, [] { viewportTools::set(nullptr); });
+            return true;
+        }
+        return false;
     }
 
-    /** The stroke so far as terrainSculpt: replacing its own earlier preview, and on release moving it where it belongs. */
+    void pickRegion(QPointF px, const ViewInfo& view)
+    {
+        brush::SurfaceHit hit;
+        if (!query(px, view, hit))
+            return;
+        regionArmed() = false;
+        syncPalette();
+        const std::string mesh = mTarget->mesh;
+        const double size = settings().stroke.worldRadius * 4.0;
+        const json call = {{"args", {mesh}}, {"center", {hit.center.x, hit.center.y, hit.center.z}}, {"size", size},
+                           {"stage", settings().afterErosion ? "final" : "base"}};
+        QTimer::singleShot(0, [call] {
+            try
+            {
+                ops::execute("terrainSculptRegion", call, CallSource::UI);
+                actions::run(json("sculpt.tool"));
+            }
+            catch (const CommandError& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+    }
+
+    void finishStroke()
+    {
+        mStroke.end();
+        try
+        {
+            send(true);
+        }
+        catch (const CommandError& e)
+        {
+            log::error("{}", e.what());
+        }
+        UndoStack::get().closeChunk();
+        mPoints = json::array();
+        mPressure = json::array();
+        refresh();
+        viewportTools::requestRedraw();
+    }
+
+    /** The stroke so far as terrainStroke: replacing its own preview, and on release moving it where it belongs. */
     void send(bool done)
     {
-        if (!mTarget || mStroke.empty())
+        if (!mTarget || mPoints.empty())
             return;
-        static const char* kOps[] = {"raise", "lower", "smooth", "flatten", "noise"};
-        json pts = json::array();
-        for (const glm::dvec3& p : mStroke)
-            pts.push_back({p.x, p.y, p.z});
-        const bool smoothing = mOp == 2 || mOp == 3;
+        const Settings& st = settings();
         json call = {{"args", {mTarget->mesh}},
-                     {"op", kOps[mOp]},
-                     {mStroke.size() > 1 ? "path" : "points", pts},
-                     {"radius", mRadius},
-                     {"strength", smoothing ? std::clamp(mStrength / 1000.0, 0.05, 1.0) : mStrength},
+                     {"brush", sculptOpNames()[size_t(mOp)]},
+                     {"radius", mRadiusUsed > 0.0 ? mRadiusUsed : st.stroke.worldRadius},
+                     {"falloff", st.stroke.falloff},
+                     {"mirror", st.mirror},
                      {"stage", "final"}};
+        const double strength = std::clamp(st.stroke.strength, 0.0, 1.0);
+        call["strength"] = inCm(mOp) ? strength * st.height * (mInvert && mOp == SculptOp::Stamp ? -1.0 : 1.0) : strength;
+        if (mOp == SculptOp::Ramp)
+        {
+            call["points"] = json::array({mPoints.front(), mPoints.back()});
+        }
+        else
+        {
+            call["points"] = mPoints;
+            call["pressure"] = mPressure;
+        }
+        switch (mOp)
+        {
+        case SculptOp::Flatten:
+            if (st.plane)
+                call["plane"] = true;
+            else if (mFlatHeight)
+                call["height"] = math::upAxis() == math::UpAxis::Z ? mFlatHeight->z : mFlatHeight->y;
+            break;
+        case SculptOp::Terrace:
+            call["step"] = st.step;
+            call["sharpness"] = st.sharpness;
+            break;
+        case SculptOp::Stamp:
+            call["stamp"] = st.stamp;
+            call["angle"] = st.angle;
+            break;
+        case SculptOp::Erode:
+        case SculptOp::Relax:
+            call["iterations"] = st.iterations;
+            break;
+        case SculptOp::Mask:
+            call["mask"] = st.mask;
+            call["value"] = mInvert ? 0.0 : 1.0;
+            break;
+        case SculptOp::Uplift:
+            call["value"] = mInvert ? 0.0 : 1.0;
+            break;
+        default:
+            break;
+        }
+        const bool base = !st.afterErosion || mOp == SculptOp::Uplift;
         // Final strokes and the preview of base ones live in the final stage; the preview replaces itself as it grows.
         if (mPreviewed)
             call["replaceLast"] = true;
-        if (done && !mFinal)
+        if (done && base)
         {
             if (mPreviewed)
                 ops::execute("terrainSculpt", {{"args", {mTarget->mesh}}, {"stage", "final"}, {"removeLast", true}}, CallSource::UI);
             call["stage"] = "base";
             call.erase("replaceLast");
-            ops::execute("terrainSculpt", call, CallSource::UI);
+            ops::execute("terrainStroke", call, CallSource::UI);
             return;
         }
-        ops::execute("terrainSculpt", call, CallSource::UI);
+        // Uplift only means something before erosion, so it doesn't preview in the final stage.
+        if (mOp == SculptOp::Uplift && !done)
+            return;
+        ops::execute("terrainStroke", call, CallSource::UI);
         mPreviewed = true;
     }
 
+    brush::ui::BrushControls mControls{[]() -> brush::BrushSettings& { return settings().stroke; }, [] { save(); }, {}};
+    brush::Stroke mStroke;
     std::optional<Target> mTarget;
-    std::optional<glm::dvec3> mHover;
-    std::vector<glm::dvec3> mStroke;
+    QPointF mHover;
+    std::string mHoverView;
+    json mPoints = json::array(), mPressure = json::array();
+    double mRadiusUsed = 0.0;
+    std::optional<glm::dvec3> mFlatHeight;
     QElapsedTimer mTimer;
-    bool mDown = false;
+    SculptOp mOp = SculptOp::Raise;
+    bool mInvert = false;
     bool mPreviewed = false;
-    bool mFinal = true;
-    int mBaseOp = 0;
-    int mOp = 0;
-    double mRadius = 3000.0;
-    double mStrength = 300.0;
 };
-} // namespace
+
+/** A Sculpt Region proxy whose sculpt session is open: baked back into its terrain when the session closes. */
+scene::NodeId gRegionSession = scene::kNoNode;
+
+void watchRegionSessions(ext::Context& ctx)
+{
+    const int id = sculpt::addListener([] {
+        auto s = sculpt::active();
+        scene::Graph& g = scene::Graph::current();
+        if (s)
+        {
+            scene::Node* n = g.node(s->node);
+            gRegionSession = n && n->type().attrIndex("terrainRegion") >= 0 ? s->node : scene::kNoNode;
+            return;
+        }
+        if (gRegionSession == scene::kNoNode)
+            return;
+        const scene::NodeId id = gRegionSession;
+        gRegionSession = scene::kNoNode;
+        // After the exit command finishes, so the bake is its own undo step with the sculpt already in the mesh.
+        QTimer::singleShot(0, [id] {
+            scene::Node* n = scene::Graph::current().node(id);
+            if (!n || n->type().attrIndex("terrainRegion") < 0)
+                return;
+            const json info = json::parse(ops::execute("getAttr", {{"args", {n->path() + ".terrainRegion"}}}).get<std::string>(), nullptr, false);
+            if (!info.is_object() || info.value("done", false))
+                return;
+            try
+            {
+                ops::execute("terrainSculptRegion", {{"args", {n->path()}}, {"finish", true}}, CallSource::UI);
+            }
+            catch (const CommandError& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+    });
+    ctx.track("sculpt listener", [id] { sculpt::removeListener(id); });
+}
+} // namespace sculpttool_
 
 void registerSculptTool(ext::Context& ctx)
 {
-    viewportTools::add(ctx, {.id = "terrain.sculptTool", .label = "Sculpt Terrain", .icon = "brush", .create = [] { return std::make_unique<SculptTool>(); }});
+    namespace st = sculpttool_;
+    panels::add(ctx, {.id = st::kPaletteId,
+                      .title = "Sculpt Terrain",
+                      .create = [](QWidget* parent) -> QWidget* { return st::gPalette = new st::Palette(parent); },
+                      .area = Qt::LeftDockWidgetArea,
+                      .icon = "brush",
+                      .open = false,
+                      .place = [](QDockWidget* d) { d->setProperty(panels::kOwnSizeProperty, true); },
+                      .floatFirst = true,
+                      .toolPalette = true});
+    viewportTools::add(ctx, {.id = "terrain.sculptTool", .label = "Sculpt Terrain", .icon = "brush", .create = [] { return std::make_unique<st::SculptTool>(); }});
+    st::watchRegionSessions(ctx);
 }
 } // namespace terrain

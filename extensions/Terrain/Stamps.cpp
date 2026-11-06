@@ -3,6 +3,8 @@
 
 #include "Stamps.h"
 
+#include "Brushes.h"
+
 #include <lila/Profile.h>
 
 #include <tbb/parallel_for.h>
@@ -1029,7 +1031,7 @@ std::map<std::string, StampResult> stampResults(uint64_t modifier, const std::st
 
 const std::vector<std::string>& sculptOpNames()
 {
-    static const std::vector<std::string> n = {"raise", "lower", "smooth", "flatten", "noise"};
+    static const std::vector<std::string> n = {"raise", "lower", "smooth", "flatten", "noise", "ramp", "terrace", "stamp", "erode", "uplift", "relax", "mask", "patch"};
     return n;
 }
 
@@ -1041,6 +1043,14 @@ json SculptStroke::toJson() const
               {"strength", strength},             {"spacing", spacing},         {"noiseSize", noiseSize}, {"seed", seed}};
     if (!std::isnan(height))
         j["height"] = height;
+    if (!pressure.empty())
+        j["pressure"] = pressure;
+    if (!falloff.empty())
+        j["falloff"] = falloff;
+    if (!mirror.empty())
+        j["mirror"] = mirror;
+    if (!settings.is_null() && !settings.empty())
+        j["settings"] = settings;
     return j;
 }
 
@@ -1056,6 +1066,12 @@ SculptStroke SculptStroke::fromJson(const json& j)
     s.height = j.contains("height") && j["height"].is_number() ? j["height"].get<double>() : kNaN;
     s.noiseSize = std::max(1e-3, j.value("noiseSize", 1000.0));
     s.seed = j.value("seed", 0u);
+    if (j.contains("pressure") && j["pressure"].is_array())
+        s.pressure = j["pressure"].get<std::vector<float>>();
+    s.falloff = j.value("falloff", std::string());
+    s.mirror = j.value("mirror", std::string());
+    if (j.contains("settings") && j["settings"].is_object())
+        s.settings = j["settings"];
     return s;
 }
 
@@ -1065,6 +1081,8 @@ void applyStroke(Heightfield& h, const SculptStroke& s)
 
     if (h.empty() || s.points.empty())
         return;
+    if (usesBrushPath(s))
+        return applyBrushStroke(h, s);
     std::vector<glm::dvec2> dabs;
     if (s.path && s.points.size() >= 2)
     {

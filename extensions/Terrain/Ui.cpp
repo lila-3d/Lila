@@ -35,6 +35,8 @@ void registerUi(ext::Context& ctx)
         {"terrain.addLake", "Add Lake", "terrainAddLake", "Fill a basin of the selected terrain to its spill level, or dig a lake inside an outline.",
          "terrainAddLake('Terrain', auto=True)"},
         {"terrain.seaLevel", "Sea Level", "terrainSeaLevel", "Set the selected terrain's sea level, shore and beaches.", "terrainSeaLevel('Terrain', level=0)"},
+        {"terrain.landform", "Landform Step", "terrainLandform", "Add an erosion or shaping step (debris, scree, rills, deposition, snow, filter, terrace, strata, ...) to the selected terrain.",
+         "terrainLandform('Terrain', process='debris')"},
         {"terrain.toMesh", "Terrain to Mesh", "terrainToMesh", "A plain mesh copy of the selected terrain as it is now.", "terrainToMesh('Terrain', step=2)"},
         {"terrain.tiles", "Terrain Tiles", "terrainTiles", "Cut the selected terrain into LOD mesh tiles with collision.", "terrainTiles('Terrain', tileSize=257)"},
         {"terrain.bake", "Bake Terrain", "terrainBake", "Collapse the selected terrain's node graph into a .lilahf file.", "terrainBake('Terrain')"},
@@ -66,13 +68,14 @@ void registerUi(ext::Context& ctx)
                        .label = "Sculpt Terrain",
                        .category = "Terrain",
                        .run = [] { viewportTools::activate("terrain.sculptTool"); },
-                       .doc = "Brush the selected terrain: raise, lower, smooth, flatten and noise, before or after erosion.",
+                       .doc = "Brush the selected terrain: raise, lower, smooth, flatten, noise, ramp, terrace, stamp, erode, uplift, relax and mask, "
+                              "before or after erosion, or sculpt a region with the mesh sculpt brushes.",
                        .python = "terrainSculpt('Terrain', op='raise', points=[[0, 0]], radius=3000, strength=300)"});
 
     menus::addItem(ctx, {.id = "terrain.menu",.menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
                          .after = levelToolkit::kBuildSection});
     int separators = 0;
-    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "terrain.cave", "terrain.split", "", "terrain.addRiver", "terrain.addLake", "terrain.seaLevel", "", "terrain.toMesh", "terrain.tiles", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
+    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.landform", "terrain.sculpt", "terrain.cave", "terrain.split", "", "terrain.addRiver", "terrain.addLake", "terrain.seaLevel", "", "terrain.toMesh", "terrain.tiles", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("terrain.menu.") + a, .menu = "Level/Terrain", .action = a});
