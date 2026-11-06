@@ -459,6 +459,7 @@ void registerCommands()
         namespace opt = ops::options;
         opt::Override o = opt::findOverride("quadRemesh") ? *opt::findOverride("quadRemesh") : opt::Override{};
         o.hidden.push_back("preset");
+        o.docs = "quad-remesh";
         for (const RemeshPreset& p : remeshPresets())
             o.fills.push_back({p.label, p.tip, [values = p.values] { return values; }});
         opt::setOverride("quadRemesh", o);
