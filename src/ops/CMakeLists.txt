@@ -1,6 +1,7 @@
 lila_module(lila_ops Foundation
     Command.cpp
     CommandOptions.cpp
+    OptionPresets.cpp
     StudioRestrictions.cpp
     Undo.cpp)
 

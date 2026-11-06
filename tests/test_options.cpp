@@ -2,12 +2,15 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "ops/OptionPresets.h"
 #include "core/PrefStore.h"
 #include "geo/Mesh.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 using namespace lila;
 namespace opt = lila::ops::options;
@@ -176,4 +179,51 @@ TEST_CASE("a string flag with choices rejects a value outside them")
     CHECK_THROWS_AS(ops::execute("optionsProbe", {{"axis", "w"}}), CommandError);
     // Free-text and doc-listed flags take anything.
     CHECK_NOTHROW(ops::execute("optionsProbe", {{"mode", "other"}, {"label", "anything"}}));
+}
+
+TEST_CASE("option presets: saved per command, renamed in place, studio ones read only and overridden by the user's")
+{
+    namespace pr = ops::options::presets;
+    namespace fs = std::filesystem;
+    for (const pr::Preset& p : pr::list("presetStore"))
+        pr::remove(p);
+    const fs::path studio = fs::temp_directory_path() / "lila_preset_studio";
+    fs::remove_all(studio);
+    fs::create_directories(studio / "optionPresets" / "presetStore");
+    {
+        std::ofstream(studio / "optionPresets" / "presetStore" / "house.json")
+            << R"({"format": "lilaOptions", "version": 1, "command": "presetStore", "name": "House", "values": {"count": 7}})";
+        std::ofstream(studio / "optionPresets" / "presetStore" / "shared.json")
+            << R"({"format": "lilaOptions", "version": 1, "command": "presetStore", "name": "Shared", "values": {"count": 1}})";
+        std::ofstream(studio / "optionPresets" / "presetStore" / "junk.json") << "{}";
+    }
+    const std::vector<fs::path> before = PrefStore::get().studioDirs();
+    PrefStore::get().setStudioDirs({studio});
+
+    REQUIRE(pr::save("presetStore", "Shared", {{"count", 2}}));
+    REQUIRE(pr::save("presetStore", "Mine: v2?", {{"count", 3}}));
+    std::vector<pr::Preset> all = pr::list("presetStore");
+    REQUIRE(all.size() == 3);
+    CHECK(all[0].name == "House");
+    CHECK(all[0].source == "studio");
+    CHECK_FALSE(all[0].writable);
+    CHECK_FALSE(pr::remove(all[0]));
+    std::optional<pr::Preset> shared = pr::find("presetStore", "Shared");
+    REQUIRE(shared);
+    CHECK(shared->source == "user");
+    CHECK(shared->values["count"] == 2);
+    CHECK(pr::find("presetStore", "Mine: v2?")->file.filename() == "Mine v2.json");
+    REQUIRE(pr::save("presetStore", "Mine: v2?", {{"count", 4}}));
+    CHECK(pr::find("presetStore", "Mine: v2?")->values["count"] == 4);
+    CHECK(pr::list("presetStore").size() == 3);
+    CHECK_FALSE(pr::save("presetStore", "Nowhere", {}, "project"));
+
+    // A file from someone else installs under the command it names.
+    REQUIRE(pr::install(studio / "optionPresets" / "presetStore" / "house.json"));
+    CHECK(pr::find("presetStore", "House")->source == "user");
+
+    for (const pr::Preset& p : pr::list("presetStore"))
+        pr::remove(p);
+    PrefStore::get().setStudioDirs(before);
+    fs::remove_all(studio);
 }

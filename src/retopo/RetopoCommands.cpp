@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "ops/OptionPresets.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -268,13 +269,17 @@ Args withPreset(const Args& a, const char* cmd)
     if (name == "none")
         return a;
     const auto& presets = remeshPresets();
-    auto it = std::find_if(presets.begin(), presets.end(), [&](const RemeshPreset& p) { return name == p.name; });
-    if (it == presets.end())
+    json values;
+    if (auto it = std::find_if(presets.begin(), presets.end(), [&](const RemeshPreset& p) { return name == p.name; }); it != presets.end())
+        values = it->values;
+    else if (auto saved = ops::options::presets::find("quadRemesh", name))
+        values = saved->values;
+    else
         throw CommandError(std::string(cmd) + ": unknown preset " + name);
     Args out = a;
     for (const FlagDef& f : remeshFlags())
-        if (it->values.contains(f.name) && (!a.flags.contains(f.name) || a.flags[f.name] == f.defaultValue))
-            out.flags[f.name] = it->values[f.name];
+        if (f.name != "preset" && values.contains(f.name) && (!a.flags.contains(f.name) || a.flags[f.name] == f.defaultValue))
+            out.flags[f.name] = values[f.name];
     return out;
 }
 
@@ -282,8 +287,8 @@ std::vector<FlagDef> remeshFlags()
 {
     using T = ArgType;
     return {{"preset", "", T::String, "none",
-             "Starting settings for what the mesh is for; flags set to other than their default win.",
-             {"none", "gameCharacter", "midPoly", "hero", "stylized", "hardSurface", "prop"}},
+             "Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset "
+             "saved from the option box. Flags set to other than their default win."},
             {"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
             {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
@@ -470,7 +475,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "quadRemesh",
         .doc = "Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about "
-               "the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp "
+               "the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp "
                "creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size "
                "(a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source "
                "is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with "
@@ -478,7 +483,7 @@ void registerCommands()
                "pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.",
         .positionalDoc = "source",
         .flags = flagsWith(remeshFlags(), {{"relaxIterations", "", T::Int, 6, "Tangential relax passes on the surface.", {}, {}, 0.0, 100.0},
-                  {"transferUvs", "", T::Bool, true, "Copy UV sets from the source."},
+                  {"transferUvs", "", T::Bool, false, "Copy UV sets from the source."},
                   {"transferNormals", "", T::Bool, false, "Copy the source's normals as custom normals."},
                   {"keepSource", "", T::Bool, true, "Keep the source mesh; false deletes it."},
                   {"hideSource", "", T::Bool, true, "Hide the kept source mesh."},

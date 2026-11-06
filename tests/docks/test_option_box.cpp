@@ -2,6 +2,7 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "ops/OptionPresets.h"
 #include "scene/Plug.h"
 #include "ui/Actions.h"
 #include "ui/ChoiceTips.h"
@@ -11,6 +12,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
+#include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
@@ -206,13 +208,13 @@ TEST_CASE("an enum attr's choice docs: its own per-name docs first, else what it
     CHECK(ui::choiceTips::forAttr(def) == std::vector<std::string>{"Three curves.", "Arc.", "Cubic."});
 }
 
-TEST_CASE("more than three fills are a Preset menu that fills the fields and goes back to its title")
+TEST_CASE("presets head the box in one menu with the saved ones, and the menu shows the pick until a field changes")
 {
     static json lastCall;
     if (!ops::find("presetProbe"))
         ops::registerCommand({.name = "presetProbe",
                                .doc = "Probe.",
-                               .flags = {{"count", "", ArgType::Int, 1, "How many."}},
+                               .flags = {{"count", "", ArgType::Int, 1, "How many."}, {"scale", "", ArgType::Float, 1.0, "How big."}},
                                .undoable = false,
                                .run = [](const Args& a) -> json {
                                    lastCall = a.flags;
@@ -223,6 +225,11 @@ TEST_CASE("more than three fills are a Preset menu that fills the fields and goe
         o.fills.push_back({"Fill " + std::to_string(i), "Sets count to " + std::to_string(10 + i) + ".", [i] { return json{{"count", 10 + i}}; }});
     ops::options::setOverride("presetProbe", o);
     ops::options::reset("presetProbe");
+    namespace pr = ops::options::presets;
+    for (const pr::Preset& p : pr::list("presetProbe"))
+        pr::remove(p);
+    REQUIRE(pr::save("presetProbe", "Mine", {{"count", 42}, {"scale", 3.0}}));
+
     REQUIRE(ui::optionBox::openCommand("Preset Probe", "presetProbe", json::object()));
     QApplication::processEvents();
     QDialog* d = nullptr;
@@ -230,21 +237,38 @@ TEST_CASE("more than three fills are a Preset menu that fills the fields and goe
         if (auto* dlg = qobject_cast<QDialog*>(w); dlg && dlg->isVisible() && dlg->windowTitle() == "Preset Probe Options")
             d = dlg;
     REQUIRE(d);
-    QComboBox* menu = nullptr;
-    for (QComboBox* c : d->findChildren<QComboBox*>())
-        if (c->itemText(0) == "Preset")
-            menu = c;
+    auto* menu = d->findChild<QComboBox*>("optionPresets");
     REQUIRE(menu);
-    CHECK(menu->count() == 5);
-    CHECK(menu->itemData(3, Qt::ToolTipRole).toString() == "Sets count to 12.");
-    Q_EMIT menu->activated(3);
+    // Above every field.
+    for (QLabel* l : d->findChildren<QLabel*>())
+        if (l->text() == "Count")
+            CHECK(l->mapTo(d, QPoint()).y() > menu->mapTo(d, QPoint()).y());
+    CHECK(menu->currentIndex() == -1);
+    CHECK(menu->count() == 6); // 4 fills, a separator, Mine
+    CHECK(menu->itemData(2, Qt::ToolTipRole).toString() == "Sets count to 12.");
+    CHECK(menu->itemText(5) == "Mine");
+    CHECK(menu->itemData(5, Qt::ToolTipRole).toString() == "Your preset");
+    menu->setCurrentIndex(2);
+    Q_EMIT menu->activated(2);
     QApplication::processEvents();
-    CHECK(menu->currentIndex() == 0);
-    for (QPushButton* b : d->findChildren<QPushButton*>())
-        if (b->text() == "Apply")
-            b->click();
+    CHECK(menu->currentIndex() == 2);
+    auto apply = [&] {
+        for (QPushButton* b : d->findChildren<QPushButton*>())
+            if (b->text() == "Apply")
+                b->click();
+    };
+    apply();
     CHECK(lastCall.value("count", 0) == 12);
+    menu->setCurrentIndex(5);
+    Q_EMIT menu->activated(5);
+    QApplication::processEvents();
+    apply();
+    CHECK(lastCall.value("count", 0) == 42);
+    CHECK(lastCall.value("scale", 0.0) == doctest::Approx(3.0));
+    CHECK(menu->currentText() == "Mine");
     d->close();
     QApplication::processEvents();
+    for (const pr::Preset& p : pr::list("presetProbe"))
+        pr::remove(p);
     ops::options::reset("presetProbe");
 }

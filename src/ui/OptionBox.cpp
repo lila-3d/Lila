@@ -2,11 +2,15 @@
 
 #include "ops/Command.h"
 #include "ops/CommandOptions.h"
+#include "ops/OptionPresets.h"
 #include "core/ExtensionContext.h"
 #include "core/Log.h"
+#include "core/Paths.h"
+#include "core/Workspace.h"
 #include "ui/Actions.h"
 #include "ui/LocateFlash.h"
 #include "ui/DocsUi.h"
+#include "ui/FileDialog.h"
 #include "ui/FlagFields.h"
 #include "ui/Icons.h"
 #include "ui/Shelf.h"
@@ -16,9 +20,11 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QCursor>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -29,6 +35,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QTimer>
+#include <QUrl>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -84,6 +91,23 @@ public:
         edit->addAction("Save Settings", this, [this] { saveSettings(); })
             ->setToolTip("Remembers these values for the menu item, hotkeys and shelf buttons without running the command.");
         edit->addAction("Reset Settings", this, [this] { resetSettings(); });
+        edit->addSeparator();
+        edit->addAction("Save Preset...", this, [this] { savePreset("user"); })
+            ->setToolTip("Keeps these values under a name in the Preset menu, for you in every project.");
+        QAction* saveProject = edit->addAction("Save Project Preset...", this, [this] { savePreset("project"); });
+        saveProject->setToolTip("Keeps these values in the project's .lila folder, so everyone working in it gets them.");
+        QAction* remove = edit->addAction("Delete Preset", this, [this] { deletePreset(); });
+        edit->addAction("Import Preset...", this, [this] { importPreset(); });
+        edit->addAction("Show Presets Folder", this, [this] {
+            const std::filesystem::path dir = opt::presets::dir(mCommand, "user");
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(paths::toUtf8(dir))));
+        });
+        connect(edit, &QMenu::aboutToShow, this, [this, saveProject, remove] {
+            saveProject->setEnabled(Workspace::get().isOpen());
+            remove->setEnabled(chosenPreset() && chosenPreset()->writable);
+        });
         edit->setToolTipsVisible(true);
         QMenu* help = bar->addMenu("Help");
         help->addAction("Copy Python", this, [this] {
@@ -119,39 +143,6 @@ public:
         scroll->setWidget(body);
         root->addWidget(scroll, 1);
 
-        if (const opt::Override* o = opt::findOverride(mCommand); o && !o->fills.empty())
-        {
-            auto* fillRow = new QHBoxLayout();
-            fillRow->setContentsMargins(10, 4, 10, 0);
-            // A few fills are buttons; more are a menu, so the row doesn't widen the box.
-            if (o->fills.size() > 3)
-            {
-                auto* menu = new QComboBox(this);
-                menu->addItem(tr("Preset"));
-                for (const opt::Override::Fill& fill : o->fills)
-                {
-                    menu->addItem(QString::fromStdString(fill.label));
-                    menu->setItemData(menu->count() - 1, QString::fromStdString(fill.tip), Qt::ToolTipRole);
-                }
-                connect(menu, &QComboBox::activated, this, [this, menu, fills = o->fills](int index) {
-                    if (index > 0)
-                        fillFrom(fills[size_t(index - 1)].values);
-                    menu->setCurrentIndex(0);
-                });
-                fillRow->addWidget(menu);
-            }
-            else
-                for (const opt::Override::Fill& fill : o->fills)
-                {
-                    auto* b = new QPushButton(QString::fromStdString(fill.label), this);
-                    b->setToolTip(QString::fromStdString(fill.tip));
-                    connect(b, &QPushButton::clicked, this, [this, values = fill.values] { fillFrom(values); });
-                    fillRow->addWidget(b);
-                }
-            fillRow->addStretch(1);
-            root->addLayout(fillRow);
-        }
-
         mValues = opt::values(mCommand, mCall);
         const json& values = mValues;
         std::vector<opt::Field> fields = opt::fields(mCommand, mCall);
@@ -160,7 +151,16 @@ public:
         for (const opt::Field& f : fields)
             if (std::find(sections.begin(), sections.end(), f.section) == sections.end())
                 sections.push_back(f.section);
-        int row = 0;
+        // Presets head the box: picking one is the first decision, the fields refine it.
+        mPresetLabel = new QLabel("Preset", body);
+        mPresetHost = new QWidget(body);
+        auto* presetRow = new QHBoxLayout(mPresetHost);
+        presetRow->setContentsMargins(0, 0, 0, 6);
+        presetRow->setSpacing(6);
+        mPresetLabel->setContentsMargins(0, 3, 0, 0);
+        grid->addWidget(mPresetLabel, 0, 0, Qt::AlignRight | Qt::AlignTop);
+        grid->addWidget(mPresetHost, 0, 1);
+        int row = 1;
         for (const std::string& section : sections)
         {
             bool any = std::any_of(fields.begin(), fields.end(), [&](const opt::Field& f) { return f.section == section; });
@@ -182,6 +182,8 @@ public:
                 std::string flag = f.flag;
                 FlagFieldWidgets w = makeFlagField(f, values.value(flag, f.defaultValue), [this, flag](const json& v) {
                     mValues[flag] = v;
+                    if (!mFilling && mPresetMenu)
+                        mPresetMenu->setCurrentIndex(-1);
                 }, body);
                 mSetters[flag] = w.set;
                 if (w.label)
@@ -197,6 +199,7 @@ public:
             }
         }
         grid->setRowStretch(row, 1);
+        rebuildPresets();
 
         auto* buttons = new QHBoxLayout();
         buttons->setContentsMargins(10, 0, 10, 0);
@@ -287,21 +290,166 @@ private:
         }
         if (!given.is_object())
             return;
+        mFilling = true;
         for (auto& [flag, v] : given.items())
         {
+            auto it = mSetters.find(flag);
+            if (it == mSetters.end())
+                continue;
             mValues[flag] = v;
-            if (auto it = mSetters.find(flag); it != mSetters.end() && it->second)
+            if (it->second)
                 it->second(v);
         }
+        mFilling = false;
     }
 
     void resetSettings()
     {
         opt::reset(mCommand);
         mValues = opt::values(mCommand, mCall);
+        mFilling = true;
         for (auto& [flag, set] : mSetters)
             if (set && mValues.contains(flag))
                 set(mValues[flag]);
+        mFilling = false;
+        if (mPresetMenu)
+            mPresetMenu->setCurrentIndex(-1);
+    }
+
+    /**
+     * The Preset row: a few fills and no saved presets stay buttons; otherwise one menu of the command's own presets,
+     * then the studio's, the user's and the project's. The menu keeps showing the pick until a field changes.
+     */
+    void rebuildPresets()
+    {
+        const QString keep = mPresetMenu && mPresetMenu->currentIndex() >= 0 ? mPresetMenu->currentText() : QString();
+        while (QLayoutItem* item = mPresetHost->layout()->takeAt(0))
+        {
+            delete item->widget();
+            delete item;
+        }
+        mPresetMenu = nullptr;
+        const opt::Override* o = opt::findOverride(mCommand);
+        const std::vector<opt::Override::Fill> fills = o ? o->fills : std::vector<opt::Override::Fill>();
+        mSaved = opt::presets::list(mCommand);
+        auto* row = static_cast<QHBoxLayout*>(mPresetHost->layout());
+        mPresetLabel->setVisible(!mSaved.empty() || fills.size() > 3);
+        mPresetHost->setVisible(!fills.empty() || !mSaved.empty());
+        if (mSaved.empty() && fills.size() <= 3)
+        {
+            for (const opt::Override::Fill& fill : fills)
+            {
+                auto* b = new QPushButton(QString::fromStdString(fill.label), mPresetHost);
+                b->setToolTip(QString::fromStdString(fill.tip));
+                connect(b, &QPushButton::clicked, this, [this, values = fill.values] { fillFrom(values); });
+                row->addWidget(b);
+            }
+            row->addStretch(1);
+            return;
+        }
+        auto* menu = new QComboBox(mPresetHost);
+        menu->setObjectName("optionPresets");
+        menu->setPlaceholderText("Custom");
+        for (size_t i = 0; i < fills.size(); ++i)
+        {
+            menu->addItem(QString::fromStdString(fills[i].label), int(i));
+            menu->setItemData(menu->count() - 1, QString::fromStdString(fills[i].tip), Qt::ToolTipRole);
+        }
+        static const std::map<std::string, QString> from = {{"studio", "Studio preset"}, {"user", "Your preset"}, {"project", "Project preset"}};
+        for (size_t i = 0; i < mSaved.size(); ++i)
+        {
+            if (i == 0 && !fills.empty())
+                menu->insertSeparator(menu->count());
+            menu->addItem(QString::fromStdString(mSaved[i].name), -1 - int(i));
+            menu->setItemData(menu->count() - 1, from.at(mSaved[i].source), Qt::ToolTipRole);
+        }
+        menu->setCurrentIndex(keep.isEmpty() ? -1 : menu->findText(keep));
+        connect(menu, &QComboBox::activated, this, [this, menu, fills](int index) {
+            const int at = menu->itemData(index).toInt();
+            if (at >= 0)
+                fillFrom(fills[size_t(at)].values);
+            else
+                fillFrom([values = mSaved[size_t(-1 - at)].values] { return values; });
+        });
+        row->addWidget(menu, 1);
+        mPresetMenu = menu;
+    }
+
+    /** The saved preset the menu shows, or null for a built-in one or edited values. */
+    const opt::presets::Preset* chosenPreset() const
+    {
+        if (!mPresetMenu || mPresetMenu->currentIndex() < 0)
+            return nullptr;
+        const int at = mPresetMenu->currentData().toInt();
+        return at < 0 && size_t(-1 - at) < mSaved.size() ? &mSaved[size_t(-1 - at)] : nullptr;
+    }
+
+    /** The fields worth sharing: node pickers and lists name things in one scene, so they stay out. */
+    json presetValues() const
+    {
+        json out = json::object();
+        for (const opt::Field& f : opt::fields(mCommand, mCall))
+            if (f.kind != opt::FieldKind::List && f.nodeType.empty() && mValues.contains(f.flag))
+                out[f.flag] = mValues[f.flag];
+        return out;
+    }
+
+    void savePreset(const std::string& source)
+    {
+        if (QWidget* f = focusWidget())
+            f->clearFocus();
+        const opt::presets::Preset* chosen = chosenPreset();
+        bool ok = false;
+        const QString name = QInputDialog::getText(this, source == "project" ? "Save Project Preset" : "Save Preset", "Name", QLineEdit::Normal,
+                                                   chosen ? QString::fromStdString(chosen->name) : QString(), &ok)
+                                 .trimmed();
+        if (ok && !name.isEmpty())
+            savePresetAs(name.toStdString(), source);
+    }
+
+    /** Saves the fields as a preset and shows it picked. */
+    bool savePresetAs(const std::string& name, const std::string& source)
+    {
+        std::string error;
+        if (!opt::presets::save(mCommand, name, presetValues(), source, &error))
+        {
+            log::error("Save preset: {}", error);
+            return false;
+        }
+        rebuildPresets();
+        mPresetMenu->setCurrentIndex(mPresetMenu->findText(QString::fromStdString(name)));
+        return true;
+    }
+
+    void deletePreset()
+    {
+        const opt::presets::Preset* chosen = chosenPreset();
+        std::string error;
+        if (!chosen || !opt::presets::remove(*chosen, &error))
+        {
+            if (!error.empty())
+                log::error("Delete preset: {}", error);
+            return;
+        }
+        mPresetMenu->setCurrentIndex(-1);
+        rebuildPresets();
+    }
+
+    void importPreset()
+    {
+        const QString file = fileDialog::getOpenFileName(this, "Import Preset", {}, "Option presets (*.json)");
+        if (file.isEmpty())
+            return;
+        std::string error;
+        std::optional<opt::presets::Preset> p = opt::presets::install(paths::fromUtf8(file.toStdString()), &error);
+        if (!p)
+        {
+            log::error("Import preset: {}", error);
+            return;
+        }
+        rebuildPresets();
+        if (mPresetMenu)
+            mPresetMenu->setCurrentIndex(mPresetMenu->findText(QString::fromStdString(p->name)));
     }
 
     /** The call Apply would make with the fields as they stand. */
@@ -320,6 +468,12 @@ private:
     /** The fields' values, stored only by Apply or Save Settings so Close leaves the remembered ones alone. */
     json mValues;
     std::map<std::string, std::function<void(const json&)>> mSetters;
+    QLabel* mPresetLabel = nullptr;
+    QWidget* mPresetHost = nullptr;
+    QPointer<QComboBox> mPresetMenu;
+    std::vector<opt::presets::Preset> mSaved;
+    /** Set while a preset or reset writes the fields, so their change doesn't read as an edit. */
+    bool mFilling = false;
 };
 
 std::map<std::string, QPointer<OptionsDialog>>& dialogs()
