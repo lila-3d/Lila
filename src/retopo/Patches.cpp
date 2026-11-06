@@ -199,6 +199,7 @@ struct Traces
     int why[5] = {};                    // ends: on a trace, killed by a trace, wall, source, lost
     std::vector<int> endWhy;            // per tracer
     int loops = 0;                      // lines closed onto themselves
+    bool runaway = false;               // lines kept stopping and freeing each other; the layout is no use
 };
 
 /**
@@ -462,7 +463,8 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {}, cons
                 }
             }
     };
-    constexpr int kMaxSteps = 500000;
+    // A line can cross every triangle about twice (a turn round a tube and back); more is one circling a point.
+    const int kMaxSteps = int(std::min<size_t>(500000, 2 * size_t(nt) + 1000));
     out.endWhy.assign(tracers.size(), -1);
     auto stop = [&](Index ai, double at, int why) {
         out.endWhy[ai] = why;
@@ -475,6 +477,12 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {}, cons
     {
         if (++events % 4096 == 0)
             Budget::checkpoint();
+        // A line freed by a shortened one starts over from where it stopped, so a ring of them can go on for ever.
+        if (events > 200 * size_t(nt) + 1000 * tracers.size())
+        {
+            out.runaway = true;
+            break;
+        }
         const Index ai = queue.top().second;
         queue.pop();
         queued[ai] = 0;
@@ -2471,6 +2479,8 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     {
         st = {};
         tr = trace(lay, extras, dropped);
+        if (tr.runaway)
+            return fail("patch lines kept stopping each other");
         st.tracers = int(tr.end.size());
         st.segments = int(tr.segments.size());
         blocked = lay.wall;
