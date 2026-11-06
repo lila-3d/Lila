@@ -2869,6 +2869,33 @@ def exportAlembic(*objects: Any, start: float | None = None, end: float | None =
         rigidPieces: Write each rigid piece (the piece point attribute, or each connected part) as its own object: its shape once and a transform per frame. Far smaller for a broken-apart mesh. Short form rp. Default False.
     """
 
+def exportCollada(*objects: Any, kind: str | None = None, bakeTransforms: bool | None = None, triangles: bool | None = None, maxInfluences: int | None = None, animation: bool | None = None, deformOnly: bool | None = None, start: float | None = None, end: float | None = None, take: str | None = None, takes: Any | None = None, normals: bool | None = None, vertexColors: bool | None = None, textures: bool | None = None, copyTextures: bool | None = None, lights: bool | None = None, worldSpace: bool | None = None, atOrigin: bool | None = None, children: bool | None = None, units: str | None = None, selectionOnly: bool | None = None, k: str | None = None, mi: int | None = None, anim: bool | None = None, do: bool | None = None, st: float | None = None, et: float | None = None, ws: bool | None = None, u: str | None = None, sl: bool | None = None) -> Any:
+    """Export objects to a COLLADA 1.4.1 file (.dae) laid out the way Maya's COLLADA exporter writes it, so pipelines built on Maya's files read it: Y up, each node's transform as translate, jointOrient, rotate and scale elements with every animated channel sampled per frame (or one matrix per node with bakeTransforms), meshes as polylists (or triangles) with normals and UV sets, skins as controllers with bind shape and inverse bind matrices, joints as JOINT nodes, several takes as animation clips, lights, cameras, and materials as lambert effects with diffuse, emission, transparency and bump maps. kind=animation writes the skeleton and its animation alone, like the animation files game engines take. Returns the path.
+
+    Args:
+        objects: path objects...
+        kind: static | skeletal | animation. skeletal writes meshes, skins and animation (Maya's Rigged and Animation exports), static meshes and transforms only, animation the skeleton and its animation without meshes. Short form k. Default 'skeletal'.
+        bakeTransforms: Write each node's transform as one matrix animated as sampled matrices; off writes Maya's translate, jointOrient, rotate and scale elements, each animated channel its own curve, as Maya's exporter does by default. Default False.
+        triangles: Write triangles instead of polylists. Default False.
+        maxInfluences: Skin influences per vertex, heaviest kept and renormalised. Short form mi. Default 8.
+        animation: Write animation. Short form anim. Default True.
+        deformOnly: Skip non-deform joints (IK helpers and rig-only joints). Short form do. Default True.
+        start: First frame; the playback start by default. Short form st.
+        end: Last frame; the playback end by default. Short form et.
+        take: Clip name; the active take's, else Take 001.
+        takes: Scene takes to write, one clip each, one after another: 'all' or a list of names.
+        normals: Write normals. Default True.
+        vertexColors: Write vertex color sets. Default False.
+        textures: Write texture maps; off writes material colors only. Default True.
+        copyTextures: Copy textures next to the file; off references them where they are. Default False.
+        lights: Write point, spot and directional lights. Default True.
+        worldSpace: Bake world transforms into the meshes and flatten the hierarchy (static exports). Short form ws. Default False.
+        atOrigin: Drop the exported roots' own transforms, keeping their children relative. Default False.
+        children: Include the descendants of the given objects. Default True.
+        units: File units: cm (Maya's), m, mm, in or ft. Lengths are scaled to them. Short form u. One of 'cm', 'm', 'mm', 'in', 'ft'. Default 'cm'.
+        selectionOnly: Without objects: the selection, or every root when False. Short form sl. Default True.
+    """
+
 def exportDeformerWeights(*objects: Any, file: str | None = None, layer: int | None = None, mesh: str | None = None, f: str | None = None) -> Any:
     """Write a deformer's weight map (or a field's painted layer) to a JSON file, with the mesh's world positions and triangles so it can be imported onto other topology.
 
@@ -4325,6 +4352,25 @@ def importBvh(*objects: Any, scale: float | None = None, parent: str | None = No
         parent: Parent the skeleton under this node. Short form p.
         setPlayback: Set the scene fps and range from the file. Short form sp. Default True.
         endSites: Make end sites as non-deform joints. Short form es. Default True.
+    """
+
+def importCollada(*objects: Any, parent: str | None = None, skins: bool | None = None, animation: bool | None = None, fps: float | None = None, setPlayback: bool | None = None, materials: bool | None = None, report: bool | None = None, select: bool | None = None, p: str | None = None, anim: bool | None = None) -> Any:
+    """Import a COLLADA 1.4.1 file (.dae): the visual scene's nodes as transforms, joints and meshes, converted from the file's up axis and unit to the scene's axes and cm.
+
+    Transform stacks (matrix, translate, rotate, scale, lookat, skew) are read in order. Polylists, triangles and polygons become meshes with normals (hard edges where they split), every UV set and every color set; material symbols become slots named after the materials they bind to. Skin controllers become skinClusters with their bind shape, inverse bind matrices and weights; a joint's rest rotation goes into its jointOrient. Animations of whole matrices or single transform elements and their components (LINEAR, STEP and BEZIER) are sampled once per frame onto translate, rotate and scale; with several animation clips each becomes a take over its range, the first active. Materials become material nodes with diffuse, emission, transparency and bump.
+
+    Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, materials, clips, fps, start, end, curves, upAxis, unitMeters, authoringTool, skipped and warnings.
+
+    Args:
+        objects: path.
+        parent: Parent the imported roots under this node. Short form p.
+        skins: Rebuild skin controllers as joints and skinClusters with their weights and bind matrices. Default True.
+        animation: Import the animation, one key per frame. Short form anim. Default True.
+        fps: Frames per second to sample at; 0 guesses from the key spacing. Default 0.0.
+        setPlayback: Set the scene fps and playback range from the animation. Default True.
+        materials: Create material nodes; off keeps only the slot names on the faces. Default True.
+        report: Return the import report instead of just the names. Default False.
+        select: Select the imported roots. Default True.
     """
 
 def importDeformerWeights(*objects: Any, file: str | None = None, byId: bool | None = None, layer: int | None = None, mesh: str | None = None, f: str | None = None) -> Any:

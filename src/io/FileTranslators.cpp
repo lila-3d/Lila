@@ -280,6 +280,13 @@ void registerBuiltins()
          .extensions = {".gltf", ".glb"},
          .import = {.command = "importGltf"},
          .exportSelection = {.command = "exportGltf"}});
+    add({.id = "collada",
+         .label = "COLLADA",
+         .doc = "COLLADA 1.4.1 .dae: meshes, skeletons, skin weights, animation and materials. Exports match Maya's COLLADA exporter "
+                "and its jointOrients, so pipelines built on Maya's files read it.",
+         .extensions = {".dae"},
+         .import = {.command = "importCollada"},
+         .exportSelection = {.command = "exportCollada"}});
     add({.id = "obj",
          .label = "OBJ",
          .doc = "Wavefront OBJ meshes.",

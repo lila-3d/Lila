@@ -18,6 +18,7 @@
 #include "core/Workspace.h"
 #include "extensions/ExtensionManager.h"
 #include "fbx/Fbx.h"
+#include "collada/Collada.h"
 #include "gltf/Gltf.h"
 #include "gn/Gn.h"
 #include "io/FileTranslators.h"
@@ -201,6 +202,7 @@ void startCore()
     stream::registerCommands();
     fbx::registerCommands();
     gltf::registerCommands();
+    collada::registerCommands();
     maya::registerCommands();
     blend::registerCommands();
     batch::registerCommands();
