@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 /**
  * Lila's event bus (Maya's MMessage callbacks). Subscriptions are tagged with an owner (an extension id, or empty for
@@ -40,6 +41,7 @@ enum class Event : uint16_t
     LayoutChanged,   // name
     ExtensionLoaded, // name is the extension id
     ExtensionUnloaded,
+    ExtensionChanged, // a watched package's files changed and settled; name, path (the package), paths
     AppIdle,         // the UI event loop is about to wait; only sent while someone listens
     Shutdown,        // before extensions unload and services stop
     Count,
@@ -52,6 +54,7 @@ struct EventData
     std::string name;
     uint64_t node = 0; // scene::NodeId
     double time = 0.0;
+    std::vector<std::filesystem::path> paths;
 };
 
 using Handler = std::function<void(const EventData&)>;

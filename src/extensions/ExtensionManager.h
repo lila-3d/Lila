@@ -6,13 +6,16 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <condition_variable>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace lila::ext
@@ -52,6 +55,15 @@ struct LILA_SCENE_API ExtensionInfo
     json toJson() const;
 };
 
+/** How Lila follows edits to a watched extension's package. */
+struct WatchOptions
+{
+    /** Reload it after the event; false only sends the event. */
+    bool reload = true;
+    /** How long the package must be quiet before one event covers everything written. */
+    int settleMs = 500;
+};
+
 /**
  * Finds, loads and unloads extensions. Main thread only.
  *
@@ -61,6 +73,9 @@ struct LILA_SCENE_API ExtensionInfo
  *
  * Lila checks a package's SDK version (its manifest, then what its library was built against) before running any of
  * its code, and loads its dependencies first.
+ *
+ * A package outside Lila's install loads its native libraries from a copy in the temp folder, so a build can write
+ * into the package while it is loaded.
  */
 class LILA_SCENE_API ExtensionManager
 {
@@ -101,8 +116,21 @@ public:
     /** Loads every extension that autoloads, dependencies first, logging failures. */
     void loadAutoload();
 
+    /**
+     * Follow edits to an extension's package: once writes settle, send extensionChanged with the changed files, then
+     * reload it when the options say so. Kept in general.json /extensions/watch.
+     */
+    void watch(const std::string& name, WatchOptions options);
+    void unwatch(const std::string& name);
+    std::map<std::string, WatchOptions> watched() const;
+    /** Resumes the watches kept in prefs. */
+    void loadWatches();
+    /** Stops the watcher thread; watches resume on the next watch() or loadWatches(). */
+    void stopWatching();
+
 private:
     struct Loaded;
+    struct Watch;
 
     std::optional<ExtensionInfo> find(const std::string& nameOrPath) const;
     std::vector<std::string> disabledList() const;
@@ -111,11 +139,24 @@ private:
     void loadPython(Loaded& rec, const fs::path& module);
     void removeOwned(Loaded& rec);
     void checkUnloadable(const std::string& name) const;
+    void addWatch(const std::string& name, WatchOptions options);
+    void startWatcher();
+    void watchLoop();
+    void packageChanged(const std::string& name, std::vector<fs::path> paths);
+    void saveWatches() const;
 
     std::map<std::string, std::unique_ptr<Loaded>> mLoaded;
     std::vector<std::string> mOrder; // load order
     std::map<std::string, std::string> mErrors;
     std::vector<fs::path> mExtraPaths;
+
+    mutable std::mutex mWatchMutex;
+    std::map<std::string, std::unique_ptr<Watch>> mWatches;
+    std::condition_variable mWatchWake;
+    std::thread mWatcher;
+    bool mStopWatcher = false;
+    /** The extension whose extensionChanged handlers are running; reloading it from one of them is deferred. */
+    std::string mDispatching;
 };
 
 /** The context of an extension that is loaded or loading, for registrations made on its behalf (from its Python code). */

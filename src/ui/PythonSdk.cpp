@@ -363,9 +363,16 @@ json dispatch(const std::string& op, const json& a, const std::vector<PyCall>& f
         return events::subscribe(
             *e,
             [handler](const events::EventData& d) {
-                std::u8string path = d.path.generic_u8string();
+                auto utf8 = [](const std::filesystem::path& p) {
+                    std::u8string s = p.generic_u8string();
+                    return std::string(s.begin(), s.end());
+                };
+                json paths = json::array();
+                for (const std::filesystem::path& p : d.paths)
+                    paths.push_back(utf8(p));
                 handler(json::array({json{{"event", events::name(d.type)},
-                                          {"path", std::string(path.begin(), path.end())},
+                                          {"path", utf8(d.path)},
+                                          {"paths", paths},
                                           {"name", d.name},
                                           {"node", d.node},
                                           {"time", d.time}}}));

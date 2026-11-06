@@ -56,6 +56,7 @@ constexpr const char* kNames[] = {
     "layoutChanged",
     "extensionLoaded",
     "extensionUnloaded",
+    "extensionChanged",
     "appIdle",
     "shutdown",
 };

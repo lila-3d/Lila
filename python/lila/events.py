@@ -8,7 +8,7 @@
     sub = events.subscribe("sceneSaved", saved)
     events.unsubscribe(sub)
 
-The handler gets a dict {"event", "path", "name", "node", "time"}; which fields mean something depends on the event.
+The handler gets a dict {"event", "path", "paths", "name", "node", "time"}; which fields mean something depends on the event.
 Subscriptions made while an extension loads belong to it and go when it unloads.
 """
 

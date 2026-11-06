@@ -10580,6 +10580,16 @@ def warp(*objects: Any, position: Sequence[float] | None = None, radius: float |
         name: Name for the deformer.
     """
 
+def watchExtension(*objects: Any, reload: bool | None = None, settle: int | None = None, off: bool | None = None) -> Any:
+    """Follow edits to an extension's package: once writes settle, send the extensionChanged event with the changed files, then reload the extension. Kept across sessions. Returns the watched extensions.
+
+    Args:
+        objects: id.
+        reload: Reload it after the event. False only sends the event, for handlers that decide. Default True.
+        settle: Milliseconds the package must be quiet before the event, so one build gives one event. Default 500.
+        off: Stop watching it. Default False.
+    """
+
 def wrap(*objects: Any, drivers: Sequence[Any] | None = None, maxDrivers: int | None = None, falloff: float | None = None, smoothInfluences: int | None = None, wrapMode: str | None = None, scaleCompensation: float | None = None, name: str | None = None) -> Any:
     """Make meshes follow one or more driver meshes (proximity wrap): each point binds to its nearest driver triangles. Give the meshes to deform first and the driver last; more drivers with drivers=. Returns the deformers.
 

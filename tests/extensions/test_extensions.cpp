@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "core/Events.h"
 #include "extensions/ExtensionManager.h"
+#include "extensions/Library.h"
 #include "python/Python.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
@@ -11,6 +12,10 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <fstream>
+#include <random>
+#include <thread>
 
 using namespace lila;
 using lila::extensions::ExtensionManager;
@@ -79,6 +84,85 @@ TEST_CASE("native extension: load, use, unload, reload")
 
     CHECK_THROWS_WITH_AS(run("loadExtension", {{"args", {"noSuchExtension"}}}), doctest::Contains("no extension named"), CommandError);
     CHECK_THROWS_AS(run("unloadExtension", {{"args", {"hello"}}}), CommandError);
+}
+
+TEST_CASE("dev packages: libraries load from a copy, and the watcher sends extensionChanged and reloads")
+{
+    namespace fs = std::filesystem;
+    using namespace std::chrono;
+    isolate();
+    extensions::registerCommands();
+    ExtensionManager& pm = ExtensionManager::get();
+
+    const fs::path root = fs::temp_directory_path() / ("lila_dev_package_" + std::to_string(std::random_device{}()));
+    const fs::path pkg = root / "hello.lilaext";
+    fs::create_directories(root);
+    fs::copy(LILA_TEST_HELLO_PACKAGE, pkg, fs::copy_options::recursive);
+    struct Cleanup
+    {
+        fs::path dir;
+        ~Cleanup()
+        {
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+        }
+    } cleanup{root};
+
+    CHECK(pm.load(pkg.string()) == "hello");
+    fs::path lib;
+    for (const fs::directory_entry& e : fs::recursive_directory_iterator(pkg))
+        if (e.path().extension() == extensions::Library::extension())
+            lib = e.path();
+    REQUIRE_FALSE(lib.empty());
+    CHECK(std::ofstream(lib, std::ios::binary | std::ios::app).is_open());
+
+    auto pump = [](auto done, milliseconds limit) {
+        const auto end = steady_clock::now() + limit;
+        while (!done() && steady_clock::now() < end)
+        {
+            mainq::drain();
+            std::this_thread::sleep_for(milliseconds(20));
+        }
+    };
+    auto touch = [&](const fs::path& p) {
+        fs::create_directories(p.parent_path());
+        std::ofstream(p, std::ios::app) << "x";
+    };
+
+    std::vector<events::EventData> changed;
+    int loads = 0;
+    events::SubscriptionId onChange = events::subscribe(events::Event::ExtensionChanged, [&](const events::EventData& e) { changed.push_back(e); });
+    events::SubscriptionId onLoad = events::subscribe(events::Event::ExtensionLoaded, [&](const events::EventData&) { ++loads; });
+
+    // Event only: several writes settle into one event naming them; caches are ignored.
+    json watched = run("watchExtension", {{"args", {"hello"}}, {"reload", false}, {"settle", 150}});
+    CHECK(watched["hello"]["reload"] == false);
+    pump([] { return false; }, milliseconds(300));
+    touch(pkg / "notes.txt");
+    touch(pkg / "python" / "a.py");
+    touch(pkg / "__pycache__" / "a.cpython.pyc");
+    pump([&] { return !changed.empty(); }, seconds(5));
+    pump([] { return false; }, milliseconds(300));
+    REQUIRE(changed.size() == 1);
+    CHECK(changed[0].name == "hello");
+    CHECK(changed[0].paths.size() == 2);
+    CHECK(loads == 0);
+    CHECK(pm.isLoaded("hello"));
+
+    // Reload: the change reloads it after the event.
+    run("watchExtension", {{"args", {"hello"}}, {"settle", 50}});
+    CHECK(run("extensionInfo", {{"args", {"hello"}}})["watch"]["reload"] == true);
+    pump([] { return false; }, milliseconds(300));
+    touch(pkg / "notes.txt");
+    pump([&] { return loads == 1; }, seconds(5));
+    CHECK(changed.size() == 2);
+    CHECK(loads == 1);
+    CHECK(pm.isLoaded("hello"));
+
+    CHECK(run("watchExtension", {{"args", {"hello"}}, {"off", true}}).empty());
+    events::unsubscribe(onChange);
+    events::unsubscribe(onLoad);
+    pm.unload("hello");
 }
 
 TEST_CASE("packages: SDK version checks and broken manifests")

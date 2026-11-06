@@ -4,6 +4,7 @@
 #include "ops/Undo.h"
 #include "core/Events.h"
 #include "core/Log.h"
+#include "core/MainQueue.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
 #include "core/Profile.h"
@@ -15,7 +16,10 @@
 #include "scene/Graph.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <format>
 
 namespace lila::extensions
 {
@@ -117,6 +121,114 @@ bool contains(const std::vector<std::string>& v, const std::string& s)
 {
     return std::find(v.begin(), v.end(), s) != v.end();
 }
+
+std::string lowerExtension(const fs::path& p)
+{
+    std::string e = p.extension().string();
+    std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return e;
+}
+
+fs::path shadowRoot()
+{
+    std::error_code ec;
+    return fs::temp_directory_path(ec) / "lila-extension-shadow";
+}
+
+/** Copies left by earlier sessions. Ones another running Lila has loaded are locked and stay. */
+void clearOldShadows()
+{
+    static bool done = false;
+    if (std::exchange(done, true))
+        return;
+    std::error_code ec;
+    for (const fs::directory_entry& e : fs::directory_iterator(shadowRoot(), ec))
+    {
+        std::error_code rm;
+        fs::remove_all(e.path(), rm);
+    }
+}
+
+/** Lila's own extensions load in place; anything else may be rebuilt while loaded. */
+bool shouldShadow(const fs::path& library)
+{
+    return !pathKey(library).starts_with(pathKey(paths::executableDir()) + "/");
+}
+
+/** Copies the libraries (and their .pdb files) in library's folder to a fresh folder. Empty on failure. */
+fs::path shadowCopy(const std::string& id, const fs::path& library)
+{
+    clearOldShadows();
+    static std::atomic<unsigned> counter{0};
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path dir = shadowRoot() / std::format("{}-{}-{}", id, stamp, ++counter);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec)
+        return {};
+    std::set<std::string> stems;
+    std::vector<fs::path> pdbs;
+    for (const fs::directory_entry& e : fs::directory_iterator(library.parent_path(), ec))
+    {
+        if (!e.is_regular_file(ec))
+            continue;
+        const std::string ext = lowerExtension(e.path());
+        if (ext == ".pdb")
+            pdbs.push_back(e.path());
+        else if (ext == Library::extension())
+        {
+            if (!fs::copy_file(e.path(), dir / e.path().filename(), fs::copy_options::overwrite_existing, ec))
+                break;
+            stems.insert(e.path().stem().string());
+        }
+    }
+    for (const fs::path& pdb : pdbs)
+        if (!ec && stems.contains(pdb.stem().string()))
+            fs::copy_file(pdb, dir / pdb.filename(), fs::copy_options::overwrite_existing, ec);
+    if (ec)
+    {
+        std::error_code rm;
+        fs::remove_all(dir, rm);
+        return {};
+    }
+    return dir;
+}
+
+using FileStamps = std::map<fs::path, std::pair<fs::file_time_type, uintmax_t>>;
+
+/** Every file of a package with its write time and size; skips __pycache__, .pyc files and hidden folders. */
+FileStamps stampPackage(const fs::path& package)
+{
+    FileStamps out;
+    std::error_code ec;
+    auto add = [&](const fs::path& p) {
+        std::error_code fe;
+        const fs::file_time_type t = fs::last_write_time(p, fe);
+        const uintmax_t size = fs::file_size(p, fe);
+        if (!fe)
+            out[p] = {t, size};
+    };
+    if (fs::is_regular_file(package, ec))
+    {
+        add(package);
+        return out;
+    }
+    auto it = fs::recursive_directory_iterator(package, fs::directory_options::skip_permission_denied, ec);
+    for (; !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+    {
+        const std::string name = it->path().filename().string();
+        std::error_code te;
+        if (it->is_directory(te))
+        {
+            if (name == "__pycache__" || name.starts_with('.'))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (it->is_regular_file(te) && lowerExtension(it->path()) != ".pyc")
+            add(it->path());
+    }
+    return out;
+}
 } // namespace
 
 json ExtensionInfo::toJson() const
@@ -146,6 +258,27 @@ struct ExtensionManager::Loaded
     std::unique_ptr<Library> lib;
     std::unique_ptr<ext::Context> ctx;
     bool python = false;
+    /** The copy the native libraries loaded from; removed once they unload. */
+    fs::path shadow;
+
+    void dropLibrary()
+    {
+        lib.reset();
+        std::error_code ec;
+        if (!shadow.empty())
+            fs::remove_all(shadow, ec);
+        shadow.clear();
+    }
+};
+
+struct ExtensionManager::Watch
+{
+    WatchOptions options;
+    fs::path package;
+    FileStamps files;
+    bool scanned = false;
+    std::set<fs::path> pending;
+    std::chrono::steady_clock::time_point lastChange;
 };
 
 namespace
@@ -174,6 +307,7 @@ ExtensionManager::ExtensionManager() = default;
 
 ExtensionManager::~ExtensionManager()
 {
+    stopWatching();
     // Static teardown: registries may still hold code from these libraries, so they stay mapped.
     for (auto& [n, l] : mLoaded)
         if (l->lib)
@@ -360,6 +494,7 @@ void ExtensionManager::loadInfo(const ExtensionInfo& found, std::set<std::string
     catch (const ExtensionError& e)
     {
         removeOwned(*rec);
+        rec->dropLibrary();
         fail(e.what());
     }
 
@@ -380,8 +515,17 @@ void ExtensionManager::loadNative(Loaded& rec)
     std::error_code ec;
     if (!fs::is_regular_file(path, ec))
         throw ExtensionError(m.id + ": its library " + path.string() + " is missing (nothing built for " + ext::platformName() + "?)");
+    fs::path from = path;
+    if (shouldShadow(path))
+    {
+        rec.shadow = shadowCopy(m.id, path);
+        if (rec.shadow.empty())
+            log::warn("{}: could not copy its libraries to the temp folder, so they load in place and stay locked", m.id);
+        else
+            from = rec.shadow / path.filename();
+    }
     std::string err;
-    rec.lib = Library::open(path, &err);
+    rec.lib = Library::open(from, &err);
     if (!rec.lib)
         throw ExtensionError("could not load " + path.string() + ": " + err);
 
@@ -499,6 +643,7 @@ void ExtensionManager::unload(const std::string& name)
     checkUnloadable(name);
     Loaded& rec = *it->second;
     removeOwned(rec);
+    rec.dropLibrary();
 
     const ExtensionKind kind = rec.info.kind;
     const fs::path path = rec.info.path;
@@ -512,6 +657,21 @@ void ExtensionManager::unload(const std::string& name)
 
 std::string ExtensionManager::reload(const std::string& name)
 {
+    // Its own extensionChanged handler is running code that unloading would free.
+    if (name == mDispatching)
+    {
+        mainq::post([this, name] {
+            try
+            {
+                reload(name);
+            }
+            catch (const ExtensionError& e)
+            {
+                log::error("{}", e.what());
+            }
+        });
+        return name;
+    }
     auto it = mLoaded.find(name);
     if (it == mLoaded.end())
         return load(name);
@@ -581,6 +741,9 @@ json ExtensionManager::describe(const std::string& name) const
     j["commands"] = commands;
     j["types"] = types;
     j["registrations"] = rec && rec->ctx ? json(rec->ctx->registrations()) : json::array();
+    const std::map<std::string, WatchOptions> watches = watched();
+    if (auto w = watches.find(info->name); w != watches.end())
+        j["watch"] = {{"reload", w->second.reload}, {"settleMs", w->second.settleMs}};
     return j;
 }
 
@@ -645,6 +808,195 @@ void ExtensionManager::loadAutoload()
         {
             log::error("autoload: {}", e.what());
         }
+    }
+}
+
+void ExtensionManager::addWatch(const std::string& name, WatchOptions options)
+{
+    std::optional<ExtensionInfo> info;
+    if (auto it = mLoaded.find(name); it != mLoaded.end())
+        info = it->second->info;
+    else
+        info = find(name);
+    if (!info)
+        throw ExtensionError("no extension named '" + name + "' on the search paths");
+    auto w = std::make_unique<Watch>();
+    w->options = options;
+    w->options.settleMs = std::max(options.settleMs, 0);
+    w->package = info->path;
+    {
+        std::lock_guard lock(mWatchMutex);
+        mWatches[info->name] = std::move(w);
+    }
+    startWatcher();
+}
+
+void ExtensionManager::watch(const std::string& name, WatchOptions options)
+{
+    addWatch(name, options);
+    saveWatches();
+}
+
+void ExtensionManager::unwatch(const std::string& name)
+{
+    bool empty = false;
+    {
+        std::lock_guard lock(mWatchMutex);
+        mWatches.erase(name);
+        empty = mWatches.empty();
+    }
+    saveWatches();
+    if (empty)
+        stopWatching();
+}
+
+std::map<std::string, WatchOptions> ExtensionManager::watched() const
+{
+    std::lock_guard lock(mWatchMutex);
+    std::map<std::string, WatchOptions> out;
+    for (const auto& [n, w] : mWatches)
+        out[n] = w->options;
+    return out;
+}
+
+void ExtensionManager::saveWatches() const
+{
+    json out = json::object();
+    for (const auto& [n, o] : watched())
+        out[n] = {{"reload", o.reload}, {"settleMs", o.settleMs}};
+    PrefStore::get().set("general", "/extensions/watch", out);
+}
+
+void ExtensionManager::loadWatches()
+{
+    json list = PrefStore::get().value("general", "/extensions/watch", json::object());
+    if (!list.is_object())
+        return;
+    for (const auto& [n, o] : list.items())
+    {
+        WatchOptions options;
+        if (o.is_object())
+        {
+            options.reload = o.value("reload", options.reload);
+            options.settleMs = o.value("settleMs", options.settleMs);
+        }
+        try
+        {
+            addWatch(n, options);
+        }
+        catch (const ExtensionError& e)
+        {
+            log::warn("not watching {}: {}", n, e.what());
+        }
+    }
+}
+
+void ExtensionManager::startWatcher()
+{
+    if (mWatcher.joinable())
+        return;
+    static bool hooked = false;
+    if (!std::exchange(hooked, true))
+        events::subscribe(events::Event::Shutdown, [this](const events::EventData&) { stopWatching(); });
+    {
+        std::lock_guard lock(mWatchMutex);
+        mStopWatcher = false;
+    }
+    mWatcher = std::thread([this] { watchLoop(); });
+}
+
+void ExtensionManager::stopWatching()
+{
+    {
+        std::lock_guard lock(mWatchMutex);
+        mStopWatcher = true;
+    }
+    mWatchWake.notify_all();
+    if (mWatcher.joinable())
+        mWatcher.join();
+}
+
+void ExtensionManager::watchLoop()
+{
+    using namespace std::chrono;
+    std::unique_lock lock(mWatchMutex);
+    while (!mStopWatcher)
+    {
+        std::vector<std::pair<std::string, fs::path>> targets;
+        for (const auto& [n, w] : mWatches)
+            targets.emplace_back(n, w->package);
+        lock.unlock();
+        std::vector<FileStamps> scans;
+        for (const auto& t : targets)
+            scans.push_back(stampPackage(t.second));
+        lock.lock();
+
+        const steady_clock::time_point now = steady_clock::now();
+        for (size_t i = 0; i < targets.size(); ++i)
+        {
+            auto it = mWatches.find(targets[i].first);
+            if (it == mWatches.end() || it->second->package != targets[i].second)
+                continue;
+            Watch& w = *it->second;
+            FileStamps& files = scans[i];
+            if (w.scanned)
+            {
+                const size_t before = w.pending.size();
+                for (const auto& [p, stamp] : files)
+                    if (auto old = w.files.find(p); old == w.files.end() || old->second != stamp)
+                        w.pending.insert(p);
+                for (const auto& [p, stamp] : w.files)
+                    if (!files.contains(p))
+                        w.pending.insert(p);
+                if (w.pending.size() != before)
+                    w.lastChange = now;
+            }
+            w.files = std::move(files);
+            w.scanned = true;
+            if (!w.pending.empty() && now - w.lastChange >= milliseconds(w.options.settleMs))
+            {
+                std::vector<fs::path> changed(w.pending.begin(), w.pending.end());
+                w.pending.clear();
+                mainq::post([this, name = targets[i].first, changed = std::move(changed)]() mutable {
+                    packageChanged(name, std::move(changed));
+                });
+            }
+        }
+        mWatchWake.wait_for(lock, milliseconds(100), [this] { return mStopWatcher; });
+    }
+}
+
+void ExtensionManager::packageChanged(const std::string& name, std::vector<fs::path> paths)
+{
+    LILA_ZONE();
+
+    WatchOptions options;
+    fs::path package;
+    {
+        std::lock_guard lock(mWatchMutex);
+        auto it = mWatches.find(name);
+        if (it == mWatches.end())
+            return;
+        options = it->second->options;
+        package = it->second->package;
+    }
+    const size_t count = paths.size();
+    mDispatching = name;
+    events::send({.type = events::Event::ExtensionChanged, .path = package, .name = name, .paths = std::move(paths)});
+    mDispatching.clear();
+
+    // A package whose last load failed loads again once it changes; one never loaded stays unloaded.
+    const bool loaded = isLoaded(name);
+    if (!options.reload || (!loaded && lastError(name).empty()))
+        return;
+    try
+    {
+        loaded ? reload(name) : load(package.string());
+        log::info("reloaded extension {} after {} file(s) changed", name, count);
+    }
+    catch (const ExtensionError& e)
+    {
+        log::error("reloading {} after its files changed: {}", name, e.what());
     }
 }
 
@@ -720,6 +1072,35 @@ void registerCommands()
     });
 
     ops::registerCommand({
+        .name = "watchExtension",
+        .doc = "Follow edits to an extension's package: once writes settle, send the extensionChanged event with the changed "
+               "files, then reload the extension. Kept across sessions. Returns the watched extensions.",
+        .positionalDoc = "id",
+        .flags = {
+            {"reload", "", T::Bool, true, "Reload it after the event. False only sends the event, for handlers that decide."},
+            {"settle", "", T::Int, 500, "Milliseconds the package must be quiet before the event, so one build gives one event."},
+            {"off", "", T::Bool, false, "Stop watching it."},
+        },
+        .undoable = false,
+        .run = [&pm](const Args& a) -> json {
+            return guarded([&] {
+                if (std::any_of(a.positional.begin(), a.positional.end(), [](const json& v) { return v.is_string(); }))
+                {
+                    std::string name = nameArg(a, "watchExtension");
+                    if (a.get<bool>("off", false))
+                        pm.unwatch(name);
+                    else
+                        pm.watch(name, {.reload = a.get<bool>("reload", true), .settleMs = a.get<int>("settle", 500)});
+                }
+                json out = json::object();
+                for (const auto& [n, o] : pm.watched())
+                    out[n] = {{"reload", o.reload}, {"settleMs", o.settleMs}};
+                return out;
+            });
+        },
+    });
+
+    ops::registerCommand({
         .name = "listExtensions",
         .doc = "Extensions on the search paths: [{name, path, kind, loaded, autoload, version, vendor, sdk, error, ...}].",
         .flags = {
@@ -763,5 +1144,6 @@ void registerCommands()
 void autoload()
 {
     ExtensionManager::get().loadAutoload();
+    ExtensionManager::get().loadWatches();
 }
 } // namespace lila::extensions
