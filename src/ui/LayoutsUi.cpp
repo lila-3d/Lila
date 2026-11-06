@@ -44,7 +44,10 @@
 
 namespace lila::ui
 {
+namespace
+{
 using json = nlohmann::json;
+}
 
 namespace
 {

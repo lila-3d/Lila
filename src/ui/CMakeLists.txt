@@ -67,6 +67,7 @@ lila_module(lila_ui UI
     HotkeyCheatSheet.cpp HotkeyCheatSheet.h
     HotkeyEditor.cpp HotkeyEditor.h
     Hotkeys.cpp Hotkeys.h
+    Keymaps.cpp Keymaps.h
     MayaHotkeys.cpp MayaHotkeys.h
     Hotbox.cpp Hotbox.h HotboxZone.h HotkeyChord.h
     Icons.cpp Icons.h

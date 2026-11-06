@@ -65,13 +65,15 @@ struct Result
 {
     int imported = 0;
     std::vector<Skipped> skipped;
+    /** The keymap the keys went into. */
+    std::string keymap;
 };
 
 /**
- * Imports a Maya hotkey set over the current hotkeys. Reads userNamedCommands.mel and userRunTimeCommands.mel from the
+ * Imports a Maya hotkey set into a new keymap named keymap (made unique) on Lila's defaults, and switches to it. Reads userNamedCommands.mel and userRunTimeCommands.mel from the
  * file's folder and the folder above it, so custom commands that wrap built-in ones still map.
  */
-LILA_UI_API Result importFile(const std::filesystem::path& file);
+LILA_UI_API Result importFile(const std::filesystem::path& file, const std::string& keymap = "Maya");
 
 /** The importMayaHotkeys command. */
 LILA_UI_API void registerCommands();

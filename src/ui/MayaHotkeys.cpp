@@ -3,6 +3,7 @@
 #include "ops/Command.h"
 #include "ui/Actions.h"
 #include "ui/HotkeyChord.h"
+#include "ui/Keymaps.h"
 
 #include <QStandardPaths>
 
@@ -751,7 +752,7 @@ Plan plan(const Parsed& parsed)
     return out;
 }
 
-Result importFile(const std::filesystem::path& file)
+Result importFile(const std::filesystem::path& file, const std::string& keymap)
 {
     Parsed parsed;
     std::filesystem::path dir = file.parent_path();
@@ -768,6 +769,8 @@ Result importFile(const std::filesystem::path& file)
 
     Result result;
     result.skipped = std::move(p.skipped);
+    result.keymap = keymaps::uniqueName(keymap);
+    keymaps::create(result.keymap, true);
     hotkeys::Snapshot snap = hotkeys::snapshot();
     std::vector<hotkeys::Assignment> apply;
     for (hotkeys::Assignment a : p.assignments)
@@ -811,10 +814,13 @@ void registerCommands()
 {
     ops::registerCommand({
         .name = "importMayaHotkeys",
-        .doc = "Binds the keys of a Maya hotkey set (.mhk) or userHotkeys.mel over the current hotkeys. Returns "
-               "{imported, skipped: [{key, command, reason}]}.",
+        .doc = "Imports a Maya hotkey set (.mhk) or userHotkeys.mel into a new keymap on Lila's defaults and switches to it. "
+               "Returns {keymap, imported, skipped: [{key, command, reason}]}.",
         .positionalDoc = "file",
-        .flags = {{"file", "f", ArgType::String, nullptr, "Maya hotkey file"}},
+        .flags = {
+            {"file", "f", ArgType::String, nullptr, "Maya hotkey file"},
+            {"keymap", "k", ArgType::String, "Maya", "Name for the new keymap; a number is added when it's taken."},
+        },
         .undoable = false,
         .run = [](const Args& a) -> json {
             std::string file = a.get<std::string>("file", "");
@@ -824,11 +830,19 @@ void registerCommands()
             std::error_code ec;
             if (file.empty() || !std::filesystem::is_regular_file(path, ec))
                 throw CommandError("importMayaHotkeys: no file \"" + file + "\"");
-            Result r = importFile(path);
+            Result r;
+            try
+            {
+                r = importFile(path, a.get<std::string>("keymap", "Maya"));
+            }
+            catch (const std::invalid_argument& e)
+            {
+                throw CommandError(std::string("importMayaHotkeys: ") + e.what());
+            }
             json skipped = json::array();
             for (const Skipped& s : r.skipped)
                 skipped.push_back({{"key", s.key}, {"command", s.command}, {"reason", s.reason}});
-            return {{"imported", r.imported}, {"skipped", skipped}};
+            return {{"keymap", r.keymap}, {"imported", r.imported}, {"skipped", skipped}};
         },
     });
 }

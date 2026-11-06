@@ -135,6 +135,9 @@ private:
     std::string selectedContext() const;
     const hotkeys::Binding* selectedBinding() const;
     void assignSelected();
+    void refreshKeymaps();
+    /** Runs a keymap change, showing why it failed. */
+    void keymapChange(const std::function<void()>& fn);
 
     hotkeys::Snapshot mSnap;
     std::optional<KeyFilter> mKeyFilter;
@@ -142,6 +145,7 @@ private:
     QToolButton* mKeySearch = nullptr;
     QToolButton* mClearKey = nullptr;
     QComboBox* mContextFilter = nullptr;
+    QComboBox* mKeymap = nullptr;
     QTreeWidget* mTree = nullptr;
     KeyboardHeatMap* mMap = nullptr;
     QLabel* mDetail = nullptr;
@@ -155,7 +159,7 @@ private:
 /** Capture dialog that binds a chord to actionId; usable from menus, shelves and marking menus. */
 LILA_UI_API void assignHotkeyDialog(const std::string& actionId, QWidget* parent);
 
-/** Picks a Maya hotkey set and imports it over the current hotkeys, then lists what didn't map. */
+/** Picks a Maya hotkey set and imports it into a new keymap, then lists what didn't map. */
 LILA_UI_API void importMayaHotkeysDialog(QWidget* parent);
 
 /** Adds "Assign Hotkey..." to the right-click of any QMenu entry whose QAction data or objectName is an action id. */

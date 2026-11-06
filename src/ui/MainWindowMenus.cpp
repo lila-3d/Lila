@@ -100,7 +100,7 @@ void MainWindow::buildMenus()
     addSubmenu("Edit", "Quick Select Sets", [](QMenu* m) { sets::attachQuickSelectMenu(m); });
     menus::addActions("Edit", {"#Hierarchy", "edit.duplicate", "edit.duplicateWithTransform", "edit.instance", "edit.instanceReference", "edit.array", "edit.bakeArray",
                         "edit.makeUnique", "edit.convertToInstance", "select.instances", "select.instanceSource", "edit.group", "edit.lodGroup", "edit.generateLods", "edit.parent", "edit.parentChain", "edit.unparent", "#Naming", "edit.rename", "edit.batchRename", "edit.conformNames", "#Settings",
-                        "window.preferences", "window.hotkeyEditor", "window.importMayaHotkeys", "window.extensionManager"});
+                        "window.preferences", "window.hotkeyEditor", "window.extensionManager"});
 
     menu("Modify", "Modify");
     menus::addActions("Modify", {"#Transforms", "modify.freezeTransforms", "modify.findUnfrozenTransforms", "modify.resetTransforms", "modify.centerPivot", "modify.resetPivot", "modify.zeroPivot", "modify.zeroPivotRotation", "modify.bakePivot", "modify.matchPivot", "modify.matchPivotPosition", "modify.matchPivotOrient", "modify.orientPivot", "modify.pinComponentPivot", "modify.resetComponentPivot",

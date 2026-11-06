@@ -69,6 +69,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Manipulator.h"
 #include "ui/MaterialEditor.h"
+#include "ui/Keymaps.h"
 #include "ui/MayaHotkeys.h"
 #include "ui/MeasureTool.h"
 #include "ui/PlacePrimitive.h"
@@ -139,6 +140,7 @@ void registerUi()
     surfaceSnap::registerCommands();
     viewportRenderers::registerCommands();
     mayaHotkeys::registerCommands();
+    keymaps::registerCommands();
     registerShelfActions();
     levelToolkit::registerShelf();
     registerEditorActions();

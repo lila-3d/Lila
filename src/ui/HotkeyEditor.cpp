@@ -5,6 +5,7 @@
 #include "ui/Deletion.h"
 #include "ui/FileDialog.h"
 #include "ui/Hotkeys.h"
+#include "ui/Keymaps.h"
 #include "ui/MayaHotkeys.h"
 #include "ui/Theme.h"
 
@@ -15,6 +16,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -286,11 +288,20 @@ void importMayaHotkeysDialog(QWidget* parent)
     }
     if (path.isEmpty())
         return;
-    mayaHotkeys::Result r = mayaHotkeys::importFile(path.toStdWString());
+    mayaHotkeys::Result r;
+    try
+    {
+        r = mayaHotkeys::importFile(path.toStdWString());
+    }
+    catch (const std::exception& e)
+    {
+        QMessageBox::warning(parent, "Import Maya Hotkeys", QString::fromStdString(e.what()));
+        return;
+    }
 
     QMessageBox box(parent);
     box.setWindowTitle("Import Maya Hotkeys");
-    box.setText(QString("%1 hotkeys imported").arg(r.imported));
+    box.setText(QString("%1 hotkeys imported into the keymap %2").arg(r.imported).arg(QString::fromStdString(r.keymap)));
     if (!r.skipped.empty())
     {
         box.setInformativeText(QString("%1 skipped").arg(r.skipped.size()));
@@ -513,6 +524,77 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
 
+    auto* keymapBar = new QHBoxLayout;
+    keymapBar->addWidget(new QLabel("Keymap"));
+    mKeymap = new QComboBox;
+    mKeymap->setMinimumContentsLength(16);
+    mKeymap->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    keymapBar->addWidget(mKeymap);
+    auto* keymapMenuButton = new QToolButton;
+    keymapMenuButton->setText("...");
+    keymapMenuButton->setToolTip("New, rename, delete, import and export keymaps");
+    keymapMenuButton->setPopupMode(QToolButton::InstantPopup);
+    auto* keymapMenu = new QMenu(keymapMenuButton);
+    keymapMenuButton->setMenu(keymapMenu);
+    keymapBar->addWidget(keymapMenuButton);
+    keymapBar->addStretch(1);
+    layout->addLayout(keymapBar);
+
+    auto askName = [this](const QString& title, const QString& current) {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, title, "Name", QLineEdit::Normal, current, &ok).trimmed();
+        return ok ? name.toStdString() : std::string();
+    };
+    keymapMenu->addAction("New...", this, [this, askName] {
+        if (std::string name = askName("New Keymap", {}); !name.empty())
+            keymapChange([&] { keymaps::create(name); });
+    })->setToolTip("A copy of the current keymap");
+    keymapMenu->addAction("New Empty...", this, [this, askName] {
+        if (std::string name = askName("New Keymap", {}); !name.empty())
+            keymapChange([&] { keymaps::create(name, true); });
+    })->setToolTip("Lila's default hotkeys");
+    keymapMenu->addAction("Rename...", this, [this, askName] {
+        const std::string from = keymaps::active();
+        if (std::string to = askName("Rename Keymap", QString::fromStdString(from)); !to.empty() && to != from)
+            keymapChange([&] { keymaps::rename(from, to); });
+    });
+    keymapMenu->addAction("Reset to Lila Defaults", this, [this] {
+        const std::string name = keymaps::active();
+        if (QMessageBox::question(this, "Reset Keymap", QString("Drop every change in %1?").arg(QString::fromStdString(name))) ==
+            QMessageBox::Yes)
+            keymapChange([&] { keymaps::reset(name); });
+    });
+    keymapMenu->addAction("Delete", this, [this] {
+        const std::string name = keymaps::active();
+        if (QMessageBox::question(this, "Delete Keymap", QString("Delete %1?").arg(QString::fromStdString(name))) == QMessageBox::Yes)
+            keymapChange([&] { keymaps::remove(name); });
+    });
+    keymapMenu->addSeparator();
+    keymapMenu->addAction("Import...", this, [this] {
+        QString path;
+        {
+            const fileDialog::ContextScope scope("keymaps", "Keymaps");
+            path = fileDialog::getOpenFileName(this, "Import Keymap", {}, "Lila keymaps (*.lilakeys *.json);;All files (*)");
+        }
+        if (!path.isEmpty())
+            keymapChange([&] { keymaps::use(keymaps::importFrom(path.toStdWString())); });
+    });
+    keymapMenu->addAction("Export...", this, [this] {
+        const std::string name = keymaps::active();
+        QString path;
+        {
+            const fileDialog::ContextScope scope("keymaps", "Keymaps");
+            path = fileDialog::getSaveFileName(this, "Export Keymap", QString::fromStdString(name) + keymaps::kFileSuffix,
+                                               "Lila keymaps (*.lilakeys)");
+        }
+        if (!path.isEmpty())
+            keymapChange([&] { keymaps::exportTo(name, path.toStdWString()); });
+    });
+    connect(mKeymap, &QComboBox::activated, this, [this](int index) {
+        const std::string name = mKeymap->itemData(index).toString().toStdString();
+        keymapChange([&] { keymaps::use(name); });
+    });
+
     auto* bar = new QHBoxLayout;
     mSearch = new QLineEdit;
     mSearch->setPlaceholderText("Search actions, ids, categories, keys");
@@ -569,7 +651,7 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
     buttons->addWidget(mReset);
     buttons->addStretch(1);
     auto* importMaya = new QPushButton("Import from Maya...");
-    importMaya->setToolTip("Bind keys from a Maya hotkey set (.mhk) or userHotkeys.mel over the current ones");
+    importMaya->setToolTip("A new keymap from a Maya hotkey set (.mhk) or userHotkeys.mel");
     connect(importMaya, &QPushButton::clicked, this, [this] { importMayaHotkeysDialog(window()); });
     buttons->addWidget(importMaya);
     layout->addLayout(buttons);
@@ -620,7 +702,10 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
     mPrefListener = PrefStore::get().onChanged([this](const std::string& file) {
         if (file == "hotkeys")
             rebuild();
+        else if (file == "general" || file.starts_with("keymaps/"))
+            refreshKeymaps();
     });
+    refreshKeymaps();
     rebuild();
     resize(860, 720);
 }
@@ -628,6 +713,33 @@ HotkeyEditor::HotkeyEditor(QWidget* parent) : QWidget(parent)
 HotkeyEditor::~HotkeyEditor()
 {
     PrefStore::get().removeOnChanged(mPrefListener);
+}
+
+void HotkeyEditor::refreshKeymaps()
+{
+    const QSignalBlocker block(mKeymap);
+    mKeymap->clear();
+    const std::string current = keymaps::active();
+    for (const keymaps::Info& k : keymaps::list())
+    {
+        const QString name = QString::fromStdString(k.name);
+        mKeymap->addItem(k.studio ? name + " (studio)" : name, name);
+        if (k.name == current)
+            mKeymap->setCurrentIndex(mKeymap->count() - 1);
+    }
+}
+
+void HotkeyEditor::keymapChange(const std::function<void()>& fn)
+{
+    try
+    {
+        fn();
+    }
+    catch (const std::exception& e)
+    {
+        QMessageBox::warning(this, "Keymap", QString::fromStdString(e.what()));
+    }
+    refreshKeymaps();
 }
 
 void HotkeyEditor::setKeyFilter(std::optional<KeyFilter> f)
