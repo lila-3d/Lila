@@ -15,6 +15,7 @@
 #include "scene/Transform.h"
 #include "ui/Camera.h"
 #include "ui/DebugDrawUi.h"
+#include "ui/HeightfieldDisplay.h"
 #include "ui/Environments.h"
 #include "ui/ImagePlaneUi.h"
 #include "ui/ViewInfo.h"
@@ -332,9 +333,30 @@ QImage render(const Options& o, Timing* timing, int repeat)
     bool showMaterials = materialsShown() && !viewportDisplay::defaultMaterial();
     if (showMaterials)
         waitForMaterialMaps(g, nodes);
+    const heightfieldDisplay::Settings terrain = heightfieldDisplay::settings();
+    if (terrain.drawsHeightfields() && showMaterials)
+    {
+        // The paint layers' maps load like material maps: ask for them all, then wait.
+        int pending = 0;
+        for (scene::NodeId id : nodes)
+            heightfieldDisplay::drawFor(g, id, terrain, true, &pending);
+        if (pending > 0 && !textures::waitForLoads(30.0))
+            log::warn("capture: terrain layer maps still loading after 30 s; captured without them");
+    }
+    const std::unordered_set<scene::NodeId> selected(g.selection().begin(), g.selection().end());
     for (scene::NodeId id : nodes)
     {
         scene::Node* n = g.node(id);
+        if (terrain.drawsHeightfields())
+            if (std::optional<render::HeightfieldDraw> hd = heightfieldDisplay::drawFor(g, id, terrain, showMaterials))
+            {
+                hd->world = glm::mat4(n->as<glm::dmat4>(scene::Transform::kWorldMatrix));
+                hd->flags = (o.display != "wireframe" ? render::DrawShaded : 0u) | (o.display != "shaded" ? render::DrawWire : 0u);
+                if (o.showSelection && selected.contains(id))
+                    hd->flags |= render::DrawSelected;
+                s.heightfields.push_back(std::move(*hd));
+                continue;
+            }
         int smooth = int(n->as<int64_t>(scene::MeshNode::kSmoothPreview));
         scene::MeshPtr shown = smoothedFor(n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh), smooth);
         bool textured = showMaterials && shown;
@@ -492,7 +514,7 @@ std::vector<FlagDef> optionFlags()
         {"isolate", "", T::Bool, false, "Only the selected objects."},
         {"frameSelection", "fs", T::Bool, false, "Frame the selected objects or components instead of everything shown."},
         {"grid", "", T::Bool, true, "Ground grid in perspective views."},
-        {"showSelection", "", T::Bool, true, "Tint selected components."},
+        {"showSelection", "", T::Bool, true, "Tint selected components, and outline selected terrains drawn from their heights."},
         {"samples", "", T::Int, 1, "Jittered frames averaged into the image: 16 or more gives a supersampled still.", {}, {}, 1.0, 1024.0},
         {"label", "", T::Bool, true, "Write the view's name in the top-left corner."},
     };

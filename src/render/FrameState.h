@@ -111,10 +111,28 @@ struct ImagePlaneDraw
     Depth depth = Depth::Behind;
 };
 
+/** Values on a heightfield's grid (a named mask), one per sample, kept on the GPU while the same pointer comes back. */
+using GridValues = std::shared_ptr<const std::vector<float>>;
+
+/**
+ * A paint layer of a heightfield: where its weights (0 to 1) lie, its colour, roughness and maps replace the material's.
+ * The maps repeat every tiling cm across the terrain, seen from above.
+ */
+struct HeightfieldLayer
+{
+    GridValues weights;
+    glm::vec3 color{0.5f}; // linear; multiplies the base colour map
+    float roughness = 0.8f;
+    TexturePtr baseColorMap; // sRGB
+    TexturePtr normalMap;    // linear, DirectX green
+    float tiling = 400.0f;
+};
+
 /**
  * A heightfield drawn from its heights alone (the viewport's heightfield draw path, an option): nx by nz samples cell
  * apart from origin over X and Z, heights up local Y, placed by world. The renderer keeps one GPU copy per heights
- * buffer, so pass the same pointer while they don't change.
+ * buffer, so pass the same pointer while they don't change. Only the visible detail is drawn: the grid's level of
+ * detail falls with distance from the camera.
  */
 struct HeightfieldDraw
 {
@@ -124,8 +142,31 @@ struct HeightfieldDraw
     float cell = 100.0f;
     glm::vec2 origin{0.0f};
     glm::mat4 world{1.0f};
+    /** Used when materials is empty. */
     glm::vec3 color{0.5f};
-    bool selected = false;
+    float roughness = 0.55f;
+    /** The terrain's material (slot 0 shades it); uv 0 to 1 over the grid, as its mesh has. */
+    MaterialList materials;
+    /** Painted over the material in order, by their weights. */
+    std::vector<HeightfieldLayer> layers;
+    /** MeshDrawFlags: shaded, wire, and the selection highlights, which draw as a wire over the surface. */
+    uint32_t flags = DrawShaded;
+    glm::vec4 wireColor{0.0f}; // linear; alpha 0 keeps the default
+    float wireWidth = 1.0f;    // device pixels
+    uint32_t lightingChannels = 1;
+    /** A mask shown over the surface in a colour ramp (0 grey, 1 turbo), its range stretched to fill the ramp. */
+    GridValues overlay;
+    int overlayRamp = 1;
+    float overlayOpacity = 0.65f;
+    /** Height contour lines every contourInterval cm (0 none), every contourMajor-th bolder. */
+    float contourInterval = 0.0f;
+    int contourMajor = 5;
+    /** Arrows down the slope every arrowSpacing device pixels or so; weighted by flow (a 0 to 1 mask) when set. */
+    bool flowArrows = false;
+    GridValues flow;
+    float arrowSpacing = 48.0f;
+    /** How many device pixels the finest quads near the camera span: fewer draws more detail and costs more. */
+    float quadPixels = 4.0f;
     uint64_t node = 0;
 };
 

@@ -32,6 +32,7 @@
 #include "ui/Actions.h"
 #include "ui/AdjustLastOp.h"
 #include "ui/CommandPreview.h"
+#include "ui/HeightfieldDisplay.h"
 #include "ui/AgentCapture.h"
 #include "ui/RenderOutput.h"
 #include "ui/ArrayTool.h"
@@ -156,6 +157,7 @@ void registerUi()
     commandPreview::install();
     Manipulator::installOrientPivotSink();
     registerRetopoActions();
+    heightfieldDisplay::registerActions();
     registerTopologyActions();
     registerTopologyToolkitActions();
     registerCurveToolkitActions();
@@ -218,6 +220,7 @@ void registerBatchCommands()
         return;
     done = true;
     capture::registerCommands();
+    heightfieldDisplay::registerCommands();
     renderOutput::registerCommands();
     materialThumbs::registerCommands();
     // The gpu bake backend starts the renderer headless on first use.
