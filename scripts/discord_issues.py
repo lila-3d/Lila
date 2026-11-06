@@ -7,11 +7,15 @@
     python scripts/discord_issues.py --hold POST_ID [--note "..."]
     python scripts/discord_issues.py --retag POST_ID Bug
     python scripts/discord_issues.py --reply POST_ID "Which menu was open?"
+    python scripts/discord_issues.py --ack POST_ID
 
 Reads the bot token from LILA_DISCORD_TOKEN and the channel from --channel or LILA_DISCORD_ISSUES_CHANNEL.
 The bot needs View Channels and Read Message History, plus the Message Content intent.
 Solving needs Manage Threads, a "Solved" tag on the forum, and Send Messages in Threads for --note.
 Each dump tags open posts that carry neither tag with "Pending" (--no-pending to skip); --solve swaps Pending for Solved, --unsolve swaps back.
+A post whose last message isn't from the bot or a maintainer (user ids in LILA_DISCORD_MAINTAINERS, comma separated) needs a reply:
+it is listed at the end and marked in issues.md, whatever its tags, even with --unsolved. --ack marks the last message seen
+(the bot reacts to it) when it needs no answer, such as a thank-you.
 Writes issues.md, issues.json and attachments/<post id>/ to build/discord by default.
 """
 
@@ -61,7 +65,8 @@ class Discord:
         while True:
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
-                    return json.load(resp)
+                    raw = resp.read()
+                    return json.loads(raw) if raw else None
             except urllib.error.HTTPError as e:
                 if e.code == 429:
                     time.sleep(float(json.load(e).get("retry_after", 1.0)) + 0.1)
@@ -106,6 +111,27 @@ def thread_messages(api, thread_id):
 
 
 HOLD_TAG = "On Hold"
+
+
+def maintainers(api):
+    """The bot plus the user ids in LILA_DISCORD_MAINTAINERS: their messages count as answers."""
+    ids = {api.get("/users/@me")["id"]}
+    ids |= {i.strip() for i in (user_env("LILA_DISCORD_MAINTAINERS") or "").split(",") if i.strip()}
+    return ids
+
+
+ACK = "%F0%9F%91%80"  # eyes emoji, URL-encoded for the reactions endpoint
+
+
+def acked(message):
+    return any(r.get("me") and r["emoji"].get("name") == "👀" for r in message.get("reactions", []))
+
+
+def ack(api, post_id):
+    """Reacts to the post's last message so the dump stops listing it as needing a reply."""
+    last = thread_messages(api, post_id)[-1]
+    api.request("PUT", f"/channels/{post_id}/messages/{last['id']}/reactions/{ACK}/@me")
+    print(f"acked: {last['author']['username']}: {last.get('content', '')[:60]}")
 
 
 def find_tag(forum, name):
@@ -173,7 +199,7 @@ def to_markdown(channel_name, records):
     lines = [f"# #{channel_name}: {len(records)} posts", ""]
     for r in records:
         tags = ", ".join(r["tags"]) or "untagged"
-        state = "archived" if r["archived"] else "open"
+        state = ("archived" if r["archived"] else "open") + (", needs reply" if r["needs_reply"] else "")
         lines += [f"## {r['title']}", "", f"[{tags}] {state}, {r['created']}, id {r['id']}", ""]
         for m in r["messages"]:
             lines.append(f"**{m['author']}** ({m['time']}): {m['content']}")
@@ -195,6 +221,7 @@ def main():
     parser.add_argument("--hold", metavar="POST_ID", help="tag a post On Hold: open but waiting (no repro, waiting on the reporter); --unsolve returns it to Pending")
     parser.add_argument("--unsolve", metavar="POST_ID", help="remove the solved tag from a post")
     parser.add_argument("--reply", nargs=2, metavar=("POST_ID", "TEXT"), help="reply in a post, mentioning its author, without changing its tags")
+    parser.add_argument("--ack", metavar="POST_ID", help="mark the post's last message seen (needs no reply)")
     parser.add_argument("--note", help="with --solve/--unsolve, also reply in the post with this text, mentioning its author")
     parser.add_argument("--solved-tag", default="Solved", help="name of the forum tag that marks a post solved")
     parser.add_argument("--pending-tag", default="Pending", help="tag given to open posts that are neither pending nor solved")
@@ -210,6 +237,9 @@ def main():
         return
     if args.reply:
         reply(api, args.reply[0], args.reply[1])
+        return
+    if args.ack:
+        ack(api, args.ack)
         return
     if (args.solve or args.dismiss) and not args.note:
         sys.exit("--solve and --dismiss need --note: tell the reporter the outcome")
@@ -241,16 +271,19 @@ def main():
             print(f"pending: {post['name']}")
     since = datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc) if args.since else None
 
+    staff = maintainers(api)
     records = []
     for post in sorted(posts, key=lambda p: int(p["id"]), reverse=True):
         created = created_at(post["id"])
         if since and created < since:
             continue
+        raw = thread_messages(api, post["id"])
+        needs_reply = bool(raw) and raw[-1]["author"]["id"] not in staff and not acked(raw[-1])
         tags = [tag_names.get(t, t) for t in post.get("applied_tags", [])]
-        if args.unsolved and {args.solved_tag.lower(), "dismissed"} & {t.lower() for t in tags}:
+        if args.unsolved and not needs_reply and {args.solved_tag.lower(), "dismissed"} & {t.lower() for t in tags}:
             continue
         messages = []
-        for m in thread_messages(api, post["id"]):
+        for m in raw:
             attachments = []
             for a in m.get("attachments", []):
                 local = None
@@ -272,6 +305,7 @@ def main():
             "tags": tags,
             "archived": post.get("thread_metadata", {}).get("archived", False),
             "created": created.strftime("%Y-%m-%d %H:%M"),
+            "needs_reply": needs_reply,
             "messages": messages,
         })
 
@@ -279,6 +313,9 @@ def main():
     (args.out / "issues.json").write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
     (args.out / "issues.md").write_text(to_markdown(info.get("name", "issues"), records), encoding="utf-8")
     print(f"{len(records)} posts -> {args.out / 'issues.md'}")
+    for r in records:
+        if r["needs_reply"]:
+            print(f"needs reply: {r['title']} ({r['id']})")
 
 
 if __name__ == "__main__":
