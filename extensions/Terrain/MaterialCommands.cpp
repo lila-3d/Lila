@@ -18,7 +18,6 @@
 #include <lila/Paths.h>
 #include <lila/Profile.h>
 #include <lila/SceneFile.h>
-#include <lila/TextureGraph.h>
 #include <lila/Transform.h>
 #include <lila/UnrealLink.h>
 #include <lila/Workspace.h>
@@ -273,7 +272,6 @@ struct LibraryIndex
     std::mutex mutex;
     bool read = false;
     json entries = json::array();
-    std::map<std::string, glm::dvec3> means;
 };
 
 LibraryIndex& libraryIndex()
@@ -323,59 +321,6 @@ json findLibraryMaterial(const std::string& want)
     return json();
 }
 
-/** A library material's mean base colour, its graph run on the CPU at 32 x 32; nullopt when it can't be. */
-std::optional<glm::dvec3> meanBaseColor(const std::string& id, std::string* why)
-{
-    LibraryIndex& l = libraryIndex();
-    {
-        std::lock_guard lock(l.mutex);
-        if (auto it = l.means.find(id); it != l.means.end())
-            return it->second;
-    }
-    try
-    {
-        const json doc = ops::execute("materialLibrary", {{"id", id}}).value("document", json::object());
-        tex::Graph graph = tex::Graph::fromJson(doc.contains("graph") ? doc["graph"] : doc);
-        tex::PlanRequest req;
-        req.width = req.height = 32;
-        req.bufferFormat = "rgba32f";
-        for (tex::OutputRequest& r : tex::materialRequests(graph, tex::standardChannels()))
-            if (r.name == "baseColor")
-                req.outputs.push_back(std::move(r));
-        if (req.outputs.empty())
-        {
-            *why = "it has no baseColor";
-            return std::nullopt;
-        }
-        const tex::Plan plan = tex::buildPlan(graph, req);
-        if (!plan.error.empty())
-        {
-            *why = plan.error;
-            return std::nullopt;
-        }
-        const tex::EvalResult res = tex::evaluate(plan, {}, "cpu");
-        auto it = res.outputs.find("baseColor");
-        if (it == res.outputs.end() || it->second.rgba.empty())
-        {
-            *why = "its graph gave no baseColor";
-            return std::nullopt;
-        }
-        glm::dvec3 sum(0.0);
-        const size_t n = it->second.rgba.size() / 4;
-        for (size_t k = 0; k < n; ++k)
-            sum += glm::dvec3(it->second.rgba[k * 4], it->second.rgba[k * 4 + 1], it->second.rgba[k * 4 + 2]);
-        const glm::dvec3 mean = sum / double(std::max<size_t>(1, n));
-        std::lock_guard lock(l.mutex);
-        l.means[id] = mean;
-        return mean;
-    }
-    catch (const std::exception& e)
-    {
-        *why = e.what();
-        return std::nullopt;
-    }
-}
-
 /** How a layer looks: its library material (resolved id), colour and where that came from, tile size, roughness. */
 struct SurfLook
 {
@@ -409,20 +354,16 @@ SurfLook surfLookOf(const LayerRule& l, std::vector<std::string>& warnings)
         look.color = l.color;
         look.colorFrom = "rule";
     }
+    else if (std::optional<glm::dvec3> c = knownMaterialColor(look.material))
+    {
+        look.color = *c;
+        look.colorFrom = "material";
+    }
     else if (!look.material.empty())
     {
-        std::string why;
-        if (std::optional<glm::dvec3> c = meanBaseColor(look.material, &why))
-        {
-            look.color = *c;
-            look.colorFrom = "material";
-        }
-        else
-        {
-            look.color = l.color;
-            look.colorFrom = "default";
-            warnings.push_back("layer " + l.name + ": " + look.material + "'s colour can't be worked out (" + why + "); it takes the default for " + l.name);
-        }
+        look.color = l.color;
+        look.colorFrom = "default";
+        warnings.push_back("layer " + l.name + ": " + look.material + "'s colour isn't known; it takes the default for " + l.name + " (give color= to set it)");
     }
     else
     {
@@ -932,7 +873,18 @@ void registerImageCommands(ext::Context& ctx)
                 ops::execute("delete", {{"args", {setName}}});
             if (!g.find(material))
                 ops::execute("createMaterial", {{"args", {material}}});
-            ops::execute("assignMaterial", {{"args", {material, f.mesh->path()}}});
+            // The mesh comes out of the terrain's geometry nodes, so its Terrain Layers node carries the material slot.
+            {
+                SurfGroup t = surfGroup(f, cmd);
+                gn::GNode* layers = surfNodeOfType(t.group, "TerrainLayers");
+                if (!layers)
+                    throw CommandError("terrainMaterialPreview: the terrain has no Terrain Layers node; run terrainMaterialRules");
+                if (layers->values.value("material", json()) != json(material))
+                {
+                    layers->values["material"] = material;
+                    surfCommit(t, cmd);
+                }
+            }
             ops::execute("texCreateSet", {{"args", {setName}}, {"resolution", res}, {"settings", {{"material", material}}}});
 
             // Stack masks: each layer covers its share of everything up to it, so normal blending reproduces the weights.

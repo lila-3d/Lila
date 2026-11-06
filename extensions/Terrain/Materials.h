@@ -198,6 +198,8 @@ MaterialRules defaultMaterialRules(const Heightfield& h, std::optional<double> s
 /** The Meadowlight material and colour a layer of this name gets when its rule names none. */
 std::string defaultMaterialFor(const std::string& layer);
 glm::dvec3 defaultColorFor(const std::string& layer);
+/** The mean base colour (linear) of a shipped library material, measured once from its graph; nullopt for others. */
+std::optional<glm::dvec3> knownMaterialColor(const std::string& id);
 
 /**
  * The masks packed four to an RGBA image, in the order given, as 8-bit values whose four channels in every image sum to

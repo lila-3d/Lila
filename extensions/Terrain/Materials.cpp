@@ -353,14 +353,31 @@ std::string defaultMaterialFor(const std::string& layer)
 
 glm::dvec3 defaultColorFor(const std::string& layer)
 {
+    // The table is in display (sRGB) values; layer colours are linear.
     for (const MatNamedColor& c : kLayerColors)
         if (layer == c.name)
-            return c.color;
+            return glm::pow(c.color, glm::dvec3(2.2));
     // Any other layer: a muted colour of its own.
     const double hue = double(matNameSeed(layer) % 360u) / 60.0;
     const double x = 1.0 - std::abs(std::fmod(hue, 2.0) - 1.0);
     glm::dvec3 rgb = hue < 1 ? glm::dvec3(1, x, 0) : hue < 2 ? glm::dvec3(x, 1, 0) : hue < 3 ? glm::dvec3(0, 1, x) : hue < 4 ? glm::dvec3(0, x, 1) : hue < 5 ? glm::dvec3(x, 0, 1) : glm::dvec3(1, 0, x);
-    return 0.25 + rgb * 0.3;
+    return glm::pow(0.25 + rgb * 0.3, glm::dvec3(2.2));
+}
+
+std::optional<glm::dvec3> knownMaterialColor(const std::string& id)
+{
+    // Measured from each Meadowlight graph's baseColor; running a graph inside a command would compile it first.
+    static const std::pair<const char*, glm::dvec3> known[] = {
+        {"meadowGrass", {0.087, 0.246, 0.069}},
+        {"dirtPath", {0.394, 0.198, 0.084}},
+        {"riverRock", {0.138, 0.157, 0.169}},
+        {"sunlitStone", {0.516, 0.415, 0.299}},
+    };
+    const std::string tail = id.substr(id.find_last_of('/') == std::string::npos ? 0 : id.find_last_of('/') + 1);
+    for (const auto& [name, c] : known)
+        if (tail == name)
+            return c;
+    return std::nullopt;
 }
 
 // ---------------------------------------------------------------------------------------------------- fields

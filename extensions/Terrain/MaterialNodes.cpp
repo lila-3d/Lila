@@ -8,6 +8,7 @@
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Math.h>
+#include <lila/Mesh.h>
 #include <lila/Profile.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -143,7 +144,9 @@ gn::NodeDecl layersDecl()
                "up its edges. Writes layer_<name> per layer; the first layer is the base and the weights sum to 1 everywhere. "
                "Put it last, after erosion and stamps. terrainMaterialRules writes the rules.",
         .props = {surfaceProp("rules", "", "The rules, JSON: {seed, layers: [{name, material, color, when, noise, ...}]}, bottom first; empty uses the defaults.")},
-        .sockets = {.inputs = {surfaceGeo("heightfield"), surfaceIn("seed", Socket::Int, 0, "Moves the edge noise.")}, .outputs = {surfaceGeo("heightfield")}},
+        .sockets = {.inputs = {surfaceGeo("heightfield"), surfaceIn("seed", Socket::Int, 0, "Moves the edge noise."),
+                               surfaceIn("material", Socket::String, "", "Material the terrain's mesh is drawn with; terrainMaterialPreview sets it.")},
+                    .outputs = {surfaceGeo("heightfield")}},
         .exec =
             [](ExecContext& c) {
                 LILA_ZONE();
@@ -162,7 +165,21 @@ gn::NodeDecl layersDecl()
                 }
                 rules.seed += uint32_t(c.i("seed"));
                 publishSurface(c.env.owner, c.node.name, rulesJson(applyMaterialRules(h, rules)));
-                c.out("heightfield", replaceHeightfield(g, std::move(h)));
+                GeometryPtr out = replaceHeightfield(g, std::move(h));
+                if (const std::string material = c.s("material"); !material.empty())
+                {
+                    // An empty mesh carrying the slot: the heightfield's faces join it as the output mesh and take slot 0.
+                    geo::Mesh slot = out->mesh ? *out->mesh : geo::Mesh();
+                    if (slot.materialNames().empty())
+                    {
+                        slot.materialNames() = {material};
+                        slot.faceAttrs().getOrAdd<int32_t>(geo::attr::kMaterial);
+                    }
+                    gn::Geometry withSlot = *out;
+                    withSlot.mesh = std::make_shared<const geo::Mesh>(std::move(slot));
+                    out = gn::makeGeometry(std::move(withSlot));
+                }
+                c.out("heightfield", out);
             },
     };
 }
