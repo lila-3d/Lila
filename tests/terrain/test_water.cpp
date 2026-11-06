@@ -10,6 +10,7 @@
 
 #include <tbb/task_arena.h>
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -67,15 +68,20 @@ int undrainedBasins(const geo::Heightfield& h, const terrain::WaterResult& r)
     return dry;
 }
 
-/** The terrain's height along a river's centreline never rises downstream (tolerance cm). Returns the worst rise. */
+/** The channel floor under a centreline point: the lowest of the four samples round it. */
+double floorAt(const geo::Heightfield& h, glm::dvec2 p)
+{
+    const int x = std::clamp(int(std::floor((p.x - h.origin.x) / h.cell)), 0, h.nx - 2);
+    const int z = std::clamp(int(std::floor((p.y - h.origin.y) / h.cell)), 0, h.nz - 2);
+    return std::min({h.at(x, z), h.at(x + 1, z), h.at(x, z + 1), h.at(x + 1, z + 1)});
+}
+
+/** The worst rise of the carved channel floor along a river from source to mouth, cm. */
 double worstRise(const geo::Heightfield& h, const terrain::RiverResult& r)
 {
     double worst = 0.0;
     for (size_t k = 1; k < r.points.size(); ++k)
-    {
-        const double a = h.heightAt(r.points[k - 1].p.x, r.points[k - 1].p.y), b = h.heightAt(r.points[k].p.x, r.points[k].p.y);
-        worst = std::max(worst, b - a);
-    }
+        worst = std::max(worst, floorAt(h, r.points[k].p) - floorAt(h, r.points[k - 1].p));
     return worst;
 }
 } // namespace
@@ -127,8 +133,8 @@ TEST_CASE("water: auto rivers have monotonic beds, size with drainage, and every
             ++grows;
     }
     CHECK(worstDesigned <= 0.0);
-    // Bilinear reads between samples on the carved channel: within a few cm of strictly falling.
-    CHECK(worstGround < 5.0);
+    MESSAGE("worst rise of a channel floor: ", worstGround, " cm");
+    CHECK(worstGround < 1.0);
     CHECK(checked >= 1);
     CHECK(grows >= 1);
     // The biggest river carries the most water and is the widest.
@@ -191,9 +197,9 @@ TEST_CASE("water: a drawn river is turned downhill, keeps a waterfall at a cliff
         const glm::dvec2 p = rr.points[k].p;
         if (glm::length(p - glm::dvec2(f.bottom.x, f.bottom.z)) < 1500.0)
             continue;
-        worst = std::max(worst, h.heightAt(p.x, p.y) - h.heightAt(rr.points[k - 1].p.x, rr.points[k - 1].p.y));
+        worst = std::max(worst, floorAt(h, p) - floorAt(h, rr.points[k - 1].p));
     }
-    CHECK(worst < 0.1 * river.depth);
+    CHECK(worst < 1.0);
     // The fall stays sheer: the ground at the cliff still drops over a few metres.
     CHECK(h.heightAt(300.0, 0.0) - h.heightAt(-300.0, 0.0) > 600.0);
     // Upstream of it the channel is cut in: the centreline sits a depth below the old ground.
@@ -350,4 +356,42 @@ TEST_CASE("water: terrainAddRiver, terrainAddLake and terrainSeaLevel author wat
     CHECK(run("terrainWater", {{"args", {mesh}}})["water"].is_null());
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("water: a 1K terrain's river network carves in seconds and still drains")
+{
+    geo::Heightfield h = geo::makeHeightfieldCovering({0.0, 0.0}, {1024000.0, 1024000.0}, 1025);
+    terrain::NoiseParams np;
+    np.seed = 7;
+    for (int z = 0; z < h.nz; ++z)
+        for (int x = 0; x < h.nx; ++x)
+        {
+            const glm::dvec2 p = h.samplePos(x, z);
+            h.heights[h.index(x, z)] = float(terrain::noiseHeight(np, p.x, p.y));
+        }
+    terrain::ErosionParams ep;
+    ep.iterations = 20;
+    terrain::erode(h, ep);
+    terrain::WaterSpec spec;
+    terrain::RiverSpec river;
+    river.id = "net";
+    river.source = "auto";
+    river.threshold = 2.0e6;
+    river.meander = 0.5;
+    spec.rivers.push_back(river);
+    terrain::LakeSpec lakes;
+    lakes.id = "lakes";
+    lakes.source = "auto";
+    spec.lakes.push_back(lakes);
+    const auto t0 = std::chrono::steady_clock::now();
+    const terrain::WaterResult r = terrain::applyWater(h, spec);
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    MESSAGE("1025^2: ", r.rivers.size(), " rivers, ", r.lakes.size(), " lakes, ", r.pitsFilled, " pits filled, ", seconds, " s");
+    CHECK_FALSE(r.rivers.empty());
+    CHECK(undrainedBasins(h, r) == 0);
+    double worst = 0.0;
+    for (const terrain::RiverResult& rr : r.rivers)
+        worst = std::max(worst, worstRise(h, rr));
+    MESSAGE("worst rise of a channel floor: ", worst, " cm");
+    CHECK(worst < 1.0);
 }

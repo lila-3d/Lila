@@ -428,7 +428,9 @@ void carveRiver(const Heightfield& h, const RiverSpec& sp, const Profile& pr, in
             double y;
             if (d <= halfW)
             {
-                y = bed + dp * (d / halfW) * (d / halfW);
+                // A flat floor about a cell wide carries the bed exactly; the sides curve up to the water's edge.
+                const double floor = std::min(0.75 * h.cell, halfW), across = std::max(0.0, d - floor) / std::max(1e-9, halfW - floor);
+                y = bed + dp * across * across;
                 if (sp.gravelBars)
                 {
                     // Bars build on the inside of bends, where the flow slows; never on the centreline.
