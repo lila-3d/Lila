@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -74,6 +75,16 @@ Heightfield readHeightfield(const std::filesystem::path& path);
  * width wide along X, centred on center, with square cells; its top row is the -Z edge, as seen from above.
  */
 Heightfield loadHeightfield(const std::filesystem::path& path, glm::dvec2 center, double width, double low, double high, bool raw);
+
+/** A terrain for code outside Commands.cpp: its heightfield in its own space, its placement and its mesh's name. */
+struct TerrainRef
+{
+    std::shared_ptr<const Heightfield> local;
+    glm::dmat4 world{1.0};
+    std::string name;
+};
+/** The terrain a mesh or its modifier makes; throws CommandError naming cmd. */
+TerrainRef findTerrainRef(const std::string& node, const std::string& cmd);
 
 bool registerNodes(lila::ext::Context& ctx);
 void registerCommands(lila::ext::Context& ctx);

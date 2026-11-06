@@ -6,6 +6,7 @@
 #include "Erosion.h"
 #include "ErosionGpu.h"
 #include "Export.h"
+#include "ExportEngines.h"
 #include "Inputs.h"
 #include "Stamps.h"
 #include "Terrain.h"
@@ -2239,14 +2240,18 @@ void registerCommands(ext::Context& ctx)
                "section size, sections per component, component counts, actor location, rotation and scale (Unreal axes, cm) to "
                "import it with, and the layers (mask, layer name, file). target='files' writes <name>.exr (heights in cm), "
                "<name>.png and <name>.r16 (16-bit over the height range), a PNG per mask and <name>.json; a rotated terrain (or "
-               "any on a Z-up scene) is written in its own space with its world matrix. Returns the settings and files.",
+               "any on a Z-up scene) is written in its own space with its world matrix; tileSize= tiles it (_x<N>_y<M>, one height range "
+               "shared by all) and splats=True packs the masks into RGBA PNGs. target='unity' writes edge-matched 2^n+1 RAW tiles, "
+               "splatmaps and LilaTerrainImporter.cs; target='godot' writes Terrain3D regions (EXR heights, layer weights) and a "
+               "GDScript importer, or glTF tiles with mode='mesh'; target='mesh' writes LOD'd, seam-safe mesh tiles with collision "
+               "as FBX, glTF or USD. Returns the settings and files.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"target", "t", T::String, "unreal", "unreal or files.", {"unreal", "files"}},
+        .flags = engineExportFlags({{"target", "t", T::String, "unreal", "unreal or files.", {"unreal", "files"}},
                   {"folder", "f", T::String, "", "Output folder; defaults to the bake folder's export/."},
                   {"name", "n", T::String, "", "File name stem; defaults to the terrain's name."},
                   {"pad", "p", T::Bool, false, "unreal: keep the cell size and grow the landscape past the terrain, instead of resampling."},
                   {"minScaleZ", "sz", T::Float, 1.0, "unreal: smallest Z scale (100 is Unreal's default).", {}, {}, 0.01},
-                  {"layers", "ly", T::Any, nullptr, "unreal: masks to send as paint layers, a list, or {mask: layer name}; default every mask."}},
+                  {"layers", "ly", T::Any, nullptr, "unreal: masks to send as paint layers, a list, or {mask: layer name}; default every mask."}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -2263,6 +2268,8 @@ void registerCommands(ext::Context& ctx)
                 folder = bakeDir() / "export";
             try
             {
+                if (json engine = exportEngineTarget(a, *f.local, f.frame.m, folder, name); !engine.is_null())
+                    return engine;
                 if (a.get<std::string>("target", "unreal") == "files")
                 {
                     // Files carry the grid in world space when it lines up with it, else in its own space with the placement.
@@ -2299,15 +2306,16 @@ void registerCommands(ext::Context& ctx)
                "Masks go as paint layers (weightmaps on the Lila edit layer), each with a layer info asset next to the landscape's "
                "material. Without material=, LilaLink generates one on MF_LilaLandscapeLayer (a function to drop into your own "
                "landscape materials, one call per layer) sampling each layer; with material=, that material is used and needs the "
-               "same layer names. gridSize sets the World Partition grid in a partitioned level. Returns the landscape, its layers "
-               "and the export settings.",
+               "same layer names. gridSize sets the World Partition grid in a partitioned level. Landscapes over 8193 x 8193 vertices "
+               "(or regions='on') are written region by region. kind='meshTerrain' sends it as UE 5.8's experimental Mesh Terrain "
+               "instead (LilaLinkMeshTerrain plugin). Returns the landscape, its layers and the export settings.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape; empty uses the generated one."},
+        .flags = engineSendFlags({{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape; empty uses the generated one."},
                   {"makeMaterial", "mm", T::Bool, true, "Without material=, generate a landscape material for the layers."},
                   {"layers", "ly", T::Any, nullptr, "Masks to send as paint layers, a list, or {mask: layer name}; default every mask."},
                   {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
-                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}},
+                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -2316,6 +2324,10 @@ void registerCommands(ext::Context& ctx)
             if (names.size() != 1)
                 throw CommandError("terrainSendToUnreal: give one terrain");
             const Found f = findTerrain(Graph::current(), names[0], "terrainSendToUnreal");
+            if (json sent = sendEngineVariant(a, *f.local, f.frame.m, f.mesh ? f.mesh->path() : names[0],
+                                              identifier(f.mesh ? f.mesh->name() : std::string("Terrain")), link::cacheDir());
+                !sent.is_null())
+                return sent;
             try
             {
                 link::Link::get().ensureConnected();
@@ -2503,5 +2515,11 @@ void registerCommands(ext::Context& ctx)
 
     registerStampCommands(ctx);
     registerContractCommands(ctx);
+}
+
+TerrainRef findTerrainRef(const std::string& node, const std::string& cmd)
+{
+    const Found f = findTerrain(Graph::current(), node, cmd);
+    return {f.local, f.frame.m, identifier(f.mesh ? f.mesh->name() : std::string("Terrain"))};
 }
 } // namespace terrain
