@@ -43,7 +43,7 @@ void registerCommands()
                "Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, materials, clips, "
                "fps, start, end, curves, upAxis, unitMeters, authoringTool, skipped and warnings.",
         .positionalDoc = "path",
-        .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
+        .flags = {nodeFlag({"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}, "transform"),
                   {"skins", "", T::Bool, true, "Rebuild skin controllers as joints and skinClusters with their weights and bind matrices."},
                   {"animation", "anim", T::Bool, true, "Import the animation, one key per frame."},
                   {"fps", "", T::Float, 0.0, "Frames per second to sample at; 0 guesses from the key spacing.", {}, {}, 0.0},

@@ -91,6 +91,8 @@ NB_MODULE(_lila, m)
                 fd["doc"] = f.doc;
                 fd["choices"] = toPy(json(f.choices));
                 fd["example"] = f.example;
+                if (!f.nodeType.empty())
+                    fd["nodeType"] = f.nodeType;
                 if (f.min)
                     fd["min"] = *f.min;
                 if (f.max)

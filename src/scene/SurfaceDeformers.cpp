@@ -1346,7 +1346,7 @@ void registerSurfaceCommands()
         .doc = "Make meshes follow one or more driver meshes (proximity wrap): each point binds to its nearest driver triangles. Give "
                "the meshes to deform first and the driver last; more drivers with drivers=. Returns the deformers.",
         .positionalDoc = "meshes..., driver",
-        .flags = {{"drivers", "", T::List, nullptr, "More driver meshes, up to 8 in all."},
+        .flags = {nodeFlag({"drivers", "", T::List, nullptr, "More driver meshes, up to 8 in all."}, "mesh"),
                   {"maxDrivers", "", T::Int, 4, "Driver triangles each point follows, 1 to 32.", {}, {}, 1.0, 32.0},
                   {"falloff", "", T::Float, 2.0, "Triangles within this many times the nearest distance count; higher is smoother.", {}, {}, 1.0},
                   {"smoothInfluences", "", T::Int, 0, "Passes spreading influences to neighbouring points.", {}, {}, 0.0, 100.0},

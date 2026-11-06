@@ -872,8 +872,8 @@ void registerIkCommandsImpl()
                "layout of the given handles' chains after joints were edited. Returns the handle.",
         .positionalDoc = "handles (refresh only)",
         .flags = {
-            {"startJoint", "sj", T::String, nullptr, "First joint of the chain."},
-            {"endEffector", "ee", T::String, nullptr, "Last joint of the chain; the one placed on the handle."},
+            nodeFlag({"startJoint", "sj", T::String, nullptr, "First joint of the chain."}, "joint"),
+            nodeFlag({"endEffector", "ee", T::String, nullptr, "Last joint of the chain; the one placed on the handle."}, "joint"),
             {"solver", "sol", T::String, "", "IK solver id; empty picks ik2BoneSolver for three joints, else ikFabrikSolver.",
              {"", kTwoBone, kFabrik}},
             {"name", "n", T::String, nullptr, "Handle name."},

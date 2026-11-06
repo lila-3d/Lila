@@ -1033,7 +1033,7 @@ bool registerCommands(ext::Context& ctx)
                            "positions. With meshes, the instance is bound to them so its markers centre in them. Returns the root.",
                     .positionalDoc = "template id",
                     .flags = {{"name", "n", T::String, "", "Name for the instance root."},
-                              {"meshes", "m", T::List, nullptr, "Meshes to bind to."}},
+                              nodeFlag({"meshes", "m", T::List, nullptr, "Meshes to bind to."}, "mesh")},
                     .run = [](const Args& a) -> json {
                         if (a.positional.size() != 1)
                             throw CommandError("placeRigTemplate: give one template id");
@@ -1166,7 +1166,7 @@ bool registerCommands(ext::Context& ctx)
                            "skinClusters and the rig elements.",
                     .positionalDoc = "instance or template id",
                     .flags = {{"bindSkin", "bs", T::Bool, false, "Bind the meshes to the new skeleton."},
-                              {"meshes", "m", T::List, nullptr, "Meshes to bind instead of the instance's."},
+                              nodeFlag({"meshes", "m", T::List, nullptr, "Meshes to bind instead of the instance's."}, "mesh"),
                               {"includeIk", "ik", T::Bool, true, "Build the template's ik helper joints too."},
                               {"prefix", "p", T::String, "", "Prefix for the joint names."},
                               {"spaces", "sp", T::Bool, true, "Give the joints the template's default spaces (hands in world, chest, head ...)."},
@@ -1245,7 +1245,7 @@ bool registerCommands(ext::Context& ctx)
                               {"description", "d", T::String, "", "Description."},
                               {"file", "f", T::String, nullptr, "Save it here as .lilarig."},
                               {"includeIk", "ik", T::Bool, true, "Keep ik_ joints (flagged ik)."},
-                              {"free", "", T::List, nullptr, "Joints to keep as placeable markers even if they look like helpers."},
+                              nodeFlag({"free", "", T::List, nullptr, "Joints to keep as placeable markers even if they look like helpers."}, "joint"),
                               {"source", "", T::Any, nullptr, "Provenance to record in the template (an object)."}},
                     .undoable = false,
                     .run = [](const Args& a) -> json {

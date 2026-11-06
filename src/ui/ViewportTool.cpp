@@ -413,6 +413,21 @@ void set(std::unique_ptr<ViewportTool> tool) { install(std::move(tool), {}); }
 
 ViewportTool* active() { return gTool.get(); }
 
+namespace
+{
+scene::NodeId gHoverHighlight = scene::kNoNode;
+}
+
+void setHoverHighlight(scene::NodeId id)
+{
+    if (id == gHoverHighlight)
+        return;
+    gHoverHighlight = id;
+    requestRedraw();
+}
+
+scene::NodeId hoverHighlight() { return gHoverHighlight; }
+
 void requestRedraw()
 {
     auto copy = gListeners;

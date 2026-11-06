@@ -700,7 +700,7 @@ void registerPipelineCommands()
                "the file's name (T_Rock_N.png, M_Outfit_ao.png, ..._BaseColor.png). A slot with no material gets one. Returns "
                "{assigned, created, skipped}.",
         .positionalDoc = "file",
-        .flags = {{"mesh", "m", T::String, nullptr, "The mesh."},
+        .flags = {nodeFlag({"mesh", "m", T::String, nullptr, "The mesh."}, "mesh"),
                   {"face", "f", T::Int, -1, "A face of the mesh (outMesh id) whose material takes it; -1 for the mesh's first."},
                   {"map", "mp", T::String, nullptr, "A bake map id (normal, ao, orm, ...) or material channel, instead of the name's."},
                   {"normalFormat", "nf", T::String, "directx", "For a normal map: directx or opengl.", {"directx", "opengl"}}},

@@ -660,7 +660,7 @@ void registerCommands()
         .doc = "Every object set's name in creation order. quickSelect=True lists only quick select sets, False only plain "
                "ones; object= lists the sets that hold that object. info=True returns {name, quickSelect, members} each.",
         .flags = {{"quickSelect", "qs", T::Bool, nullptr, "Only quick select sets (True) or only plain sets (False)."},
-                  {"object", "o", T::String, nullptr, "Only sets holding this object, whole or by its components."},
+                  nodeFlag({"object", "o", T::String, nullptr, "Only sets holding this object, whole or by its components."}, "transform"),
                   {"info", "i", T::Bool, false, "Return each set as a dict instead of its name."}},
         .undoable = false,
         .run = [](const Args& a) -> json {

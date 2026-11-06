@@ -114,6 +114,7 @@ void bindExtensions(nb::module_& m)
                 fd.type = argType(str(f, "type"));
                 fd.doc = str(f, "doc");
                 fd.example = str(f, "example");
+                fd.nodeType = str(f, "nodeType");
                 nb::dict d = nb::borrow<nb::dict>(f);
                 if (d.contains("default"))
                     fd.defaultValue = toJson(d["default"]);

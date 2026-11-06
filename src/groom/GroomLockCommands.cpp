@@ -229,7 +229,7 @@ void registerLockCommands()
                "scalp), the groom node and its locks mesh. Draw locks with groomDraw or the Draw Lock tool, style them with "
                "groomAddStyle. Returns {groom, guides, locks}.",
         .positionalDoc = "scalp",
-        .flags = withFlags({{"guides", "", T::String, nullptr, "An existing curve to use as the guides."},
+        .flags = withFlags({nodeFlag({"guides", "", T::String, nullptr, "An existing curve to use as the guides."}, "curve"),
                             {"count", "c", T::Int, 0, "Guides to grow straight out of the scalp; 0 starts empty.", {}, {}, 0.0, 100000.0},
                             {"length", "l", T::Float, 10.0, "Length of grown guides, cm.", {}, {}, 0.0},
                             {"symmetry", "sym", T::String, "x", "Mirror the guides across the world plane: off, x, y or z.", {"off", "x", "y", "z"}},

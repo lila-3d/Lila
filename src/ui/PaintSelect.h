@@ -38,7 +38,7 @@ LILA_UI_API bool backfaceCulling();
 
 /** Components of the current mode on the hilited meshes under a screen circle: front facing and unoccluded. */
 LILA_UI_API std::map<scene::NodeId, scene::components::Ids> componentsUnder(const ViewInfo& view, QPointF at, double radiusPx);
-/** Pickable meshes whose front-facing surface shows within the circle. */
+/** Pickable meshes whose front-facing surface shows within the circle; radius 0 is the one mesh under `at`, if any. */
 LILA_UI_API std::vector<scene::NodeId> objectsUnder(const ViewInfo& view, QPointF at, double radiusPx);
 
 /**

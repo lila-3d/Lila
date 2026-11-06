@@ -263,7 +263,8 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
     std::vector<EmittedDraw> from;
     from.reserve(meshes.size());
     bool rebuilt = false;
-    const bool preselecting = !rv && mPreselect.mode == scene::ComponentMode::Object && !componentMode && mPreselect.node != scene::kNoNode;
+    const scene::NodeId pickHover = rv ? scene::kNoNode : viewportTools::hoverHighlight();
+    const bool preselecting = !rv &&mPreselect.mode == scene::ComponentMode::Object && !componentMode && mPreselect.node != scene::kNoNode;
 
     for (size_t i = 0; i < meshes.size(); ++i)
     {
@@ -294,7 +295,9 @@ void ViewportWidget::drawMeshNodes(render::FrameState& s, const RenderView* rv, 
         if (aids)
             aids->push_back({e.shown, e.world, {}});
         uint32_t flags = 0;
-        if (selected.contains(id) && (!tool || tool->showsSelection(id)))
+        if (id == pickHover)
+            flags = render::DrawPreselect;
+        else if (selected.contains(id) && (!tool || tool->showsSelection(id)))
             flags = order.other(id) ? render::DrawSelected | render::DrawSelectedOther : render::DrawSelected;
         else if (preselecting && (mPreselect.node == id || (e.arrayed != scene::kNoNode && preselectedArray(g, id, mPreselect.node))))
             flags = render::DrawPreselect;

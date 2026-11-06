@@ -671,7 +671,7 @@ void registerCommands(ext::Context& ctx)
         {"points", "p", T::List, nullptr, "Footprint, [[x, y, z], ...] in cm; each point's y is the ground there, Y up."},
         {"closed", "c", T::Bool, false, "Join the last point back to the first."},
         {"heights", "", T::List, nullptr, "Wall height above each point, cm (one per point): sloping tops, gables, broken walls."},
-        {"ground", "", T::String, nullptr, "A mesh to stand the wall on: the footprint is resampled and dropped onto it."},
+        nodeFlag({"ground", "", T::String, nullptr, "A mesh to stand the wall on: the footprint is resampled and dropped onto it."}, "mesh"),
         {"groundStep", "", T::Float, 0.0, "Resampling step along the footprint for ground, cm; 0 is two stone lengths.", {}, {}, 0.0},
         {"name", "n", T::String, "MasonryWall", "Name of the mesh made to hold the wall."},
     };
@@ -772,7 +772,7 @@ void registerCommands(ext::Context& ctx)
     std::vector<FlagDef> buildingFlags = {
         {"spec", "", T::Any, nullptr, "The building: a JSON object (or its text). See the lila://masonry/spec-schema resource; masonrySpec reads one back."},
         {"name", "n", T::String, "MasonryBuilding", "Name of the mesh made to hold a new building."},
-        {"node", "", T::String, nullptr, "An existing building (its mesh or modifier) to rebuild with this spec and these flags instead of making one."},
+        nodeFlag({"node", "", T::String, nullptr, "An existing building (its mesh or modifier) to rebuild with this spec and these flags instead of making one."}, "mesh"),
     };
     for (FlagDef& f : flagsOf(InputSet::Building, true))
         if (f.name != "spec")

@@ -668,7 +668,7 @@ void registerCommands()
             {"mute", "m", T::Bool, nullptr, "Mute the offset."},
             rangeFlag,
             easeFlag,
-            {"joint", "j", T::String, nullptr, "Joint whose control rotate/translate set."},
+            nodeFlag({"joint", "j", T::String, nullptr, "Joint whose control rotate/translate set."}, "joint"),
             {"rotate", "ro", T::Vec3, nullptr, "Rotation control, degrees in the offset's space."},
             {"translate", "tr", T::Vec3, nullptr, "Translation control, cm in the offset's space."},
         },

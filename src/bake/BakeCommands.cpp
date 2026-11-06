@@ -262,7 +262,7 @@ void registerCommands()
         .positionalDoc = "[group]",
         .flags = {kProjectFlag,
                   {"lows", "lo", T::List, nullptr, "Replace the lows."},
-                  {"highs", "hi", T::List, nullptr, "Replace the highs (mesh names)."},
+                  nodeFlag({"highs", "hi", T::List, nullptr, "Replace the highs (mesh names)."}, "mesh"),
                   {"addLow", "al", T::List, nullptr, "Add lows."},
                   {"removeLow", "rl", T::List, nullptr, "Remove lows."},
                   {"addHigh", "ah", T::List, nullptr, "Add highs."},
@@ -272,7 +272,7 @@ void registerCommands()
                    "Bake-only modifier stack, [{\"kind\": \"subdivision\", \"params\": {\"levels\": 2}}] or a preset name, for the "
                    "highs given in this call (else every high). Kinds are modifierKinds()."},
                   {"preset", "ps", T::String, nullptr, "A bake modifier preset instead of modifiers=: Smooth x2, Smooth x1-x4, Auto Bevel + Smooth, none."},
-                  {"cage", "cg", T::String, nullptr, "A cage mesh with the low's topology (one low); empty uses the auto cage."},
+                  nodeFlag({"cage", "cg", T::String, nullptr, "A cage mesh with the low's topology (one low); empty uses the auto cage."}, "mesh"),
                   {"cageOffset", "co", T::Float, nullptr, "Scales the auto cage's push (frontal distance).", {}, {}, 0.0},
                   {"frontal", "fd", T::Float, nullptr, "How far outside the low rays start, cm; 0 is auto (measured against the highs).", {}, {}, 0.0},
                   {"rear", "rd", T::Float, nullptr, "How far inside the low rays reach, cm; 0 is auto (measured against the highs).", {}, {}, 0.0},

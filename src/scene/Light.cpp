@@ -232,7 +232,7 @@ void registerLightCommands()
         .flags = {
             {"type", "t", T::String, "point", "point, spot, directional, area, disc or dome."},
             {"name", "n", T::String, nullptr, "Name; made unique among its siblings. Defaults to <type>Light."},
-            {"parent", "p", T::String, nullptr, "Parent transform."},
+            nodeFlag({"parent", "p", T::String, nullptr, "Parent transform."}, "transform"),
             {"position", "pos", T::Vec3, nullptr, "World position, cm."},
             {"color", "c", T::Vec3, nullptr, "Linear colour."},
             {"intensity", "i", T::Float, nullptr, "Brightness, in units.", {}, {}, 0.0},

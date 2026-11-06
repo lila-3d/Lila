@@ -368,6 +368,8 @@ Field fieldFor(const FlagDef& flag)
     for (const std::string& c : f.choices)
         f.choiceLabels.push_back(prettyLabel(c));
     f.choiceDocs = choiceDocs(flag.doc, f.choices);
+    if (f.kind == FieldKind::Text || f.kind == FieldKind::List)
+        f.nodeType = flag.nodeType;
     f.min = flag.min.value_or(f.min);
     f.max = flag.max.value_or(f.max);
     json def = flag.defaultValue.is_null() ? json(nullptr) : normalize(f, flag.defaultValue);
@@ -390,7 +392,7 @@ std::vector<Field> fields(std::string_view command, const json& fixed)
         bool overriddenChoices = o && o->choices.contains(flag.name);
         if (o && contains(o->hidden, flag.name))
             continue;
-        if (!forced && (flag.name == "name" || flag.type == ArgType::List))
+        if (!forced && (flag.name == "name" || (flag.type == ArgType::List && flag.nodeType.empty())))
             continue;
         if (!forced && flag.type == ArgType::Any && !overriddenChoices && choicesFromDoc(flag.doc, flag.defaultValue).empty())
             continue;

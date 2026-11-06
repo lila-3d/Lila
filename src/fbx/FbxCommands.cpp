@@ -184,7 +184,7 @@ void registerCommands()
                "clipping curves keyed per frame); lights are reported, not imported. Returns the new node names, or with report=True a dict of nodes, roots, "
                "joints, skinClusters, take, fps, skipped and warnings.",
         .positionalDoc = "path",
-        .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
+        .flags = {nodeFlag({"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}, "transform"),
                   {"skins", "", T::Bool, true, "Rebuild skins as joints and skinClusters with their weights and bind pose."},
                   {"animation", "anim", T::Bool, true, "Bake the take onto translate/rotate/scale, one key per frame."},
                   {"take", "", T::String, "", "AnimStack to import; the file's active one (or first) by default."},

@@ -31,7 +31,7 @@ lila_module(lila_ui UI
     ComponentSheet.cpp ComponentSheet.h
     RelationshipsPanel.cpp RelationshipsPanel.h
     FileDialog.cpp FileDialog.h FilePreview.cpp FilePreview.h FileDrop.cpp FileDrop.h
-    CodeEdit.cpp CodeEdit.h FontPicker.cpp FontPicker.h MultilineEdit.cpp MultilineEdit.h
+    CodeEdit.cpp CodeEdit.h FontPicker.cpp FontPicker.h NodePicker.cpp NodePicker.h MultilineEdit.cpp MultilineEdit.h
     AutoBevelUi.cpp AutoBevelUi.h
     SplitRingsUi.cpp SplitRingsUi.h
     SmartJoinUi.cpp SmartJoinUi.h

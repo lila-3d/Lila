@@ -150,7 +150,7 @@ void registerDominantInfluenceCommands()
         .positionalDoc = "mesh",
         .flags = {
             {"face", "f", T::Int, nullptr, "Face id.", {}, {}, 0.0},
-            {"joint", "j", T::String, nullptr, "Joint name."},
+            nodeFlag({"joint", "j", T::String, nullptr, "Joint name."}, "joint"),
         },
         .undoable = false,
         .run = [](const Args& a) -> json {

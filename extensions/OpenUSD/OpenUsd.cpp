@@ -313,7 +313,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "or with report=True a dict of nodes, roots, joints, skinClusters, cameras, curves, materials, take, takes, fps, "
                    "start, end, keyedCurves, instances, upAxis, metersPerUnit, lightingChannels, skipped and warnings.",
             .positionalDoc = "path",
-            .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
+            .flags = {nodeFlag({"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}, "transform"),
                       {"prim", "", T::String, "", "Import only this prim and what is under it, by its path in the stage (\"/World/Hero\")."},
                       {"skins", "", T::Bool, true, "Rebuild skeleton bindings as skinClusters; False imports skinned meshes in their bind shape."},
                       {"animation", "anim", T::Bool, true, "Turn time samples (transforms, joints, blend shape weights, camera lens) into keys."},
@@ -468,7 +468,7 @@ LILA_EXTENSION_EXPORT int lilaExtensionInit(ext::Context& ctx)
                    "loading. What can't be written is listed as a warning when saving. Returns the stage node, or with "
                    "report=True a dict of stage, prims, nodes, materials, skipped and warnings.",
             .positionalDoc = "path",
-            .flags = {{"parent", "p", T::String, nullptr, "Parent the stage node under this node."},
+            .flags = {nodeFlag({"parent", "p", T::String, nullptr, "Parent the stage node under this node."}, "transform"),
                       {"name", "n", T::String, nullptr, "The stage node's name; the file's name by default."},
                       {"editLayer", "el", T::String, "",
                        "Where edits go: empty keeps them inside the .lila, a .usda path writes them to that file, one of the "

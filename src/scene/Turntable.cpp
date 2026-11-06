@@ -847,8 +847,8 @@ void registerCommands()
     flags.push_back({"name", "n", T::String, nullptr, "Name of a new turntable; made unique."});
     flags.push_back({"edit", "e", T::String, nullptr, "Change this turntable instead of making one."});
     flags.push_back({"query", "q", T::String, nullptr, "Return this turntable's members, live state and settings."});
-    flags.push_back({"add", "a", T::List, nullptr, "With edit: objects to put on it."});
-    flags.push_back({"remove", "rm", T::List, nullptr, "With edit: objects to take off it."});
+    flags.push_back(nodeFlag({"add", "a", T::List, nullptr, "With edit: objects to put on it."}, "transform"));
+    flags.push_back(nodeFlag({"remove", "rm", T::List, nullptr, "With edit: objects to take off it."}, "transform"));
     ops::registerCommand({
         .name = "turntable",
         .doc = "Make a turntable for objects (the selection by default), or change or query one. Members turn about the pivot "

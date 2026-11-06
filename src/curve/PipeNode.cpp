@@ -458,12 +458,12 @@ void registerPipeCommands()
              {"symmetry", "", T::String, "off", "Mirror the new path curve (points or splines) live across the world plane facing this axis.",
               {"off", "x", "y", "z"}},
              {"fromLoop", "", T::Bool, false, "Start on the selected face (its border) or closed edge loop: it becomes the first ring."},
-             {"loopMesh", "", T::String, nullptr, "Mesh holding the start loop (instead of the selection)."},
+             nodeFlag({"loopMesh", "", T::String, nullptr, "Mesh holding the start loop (instead of the selection)."}, "mesh"),
              {"loopFaces", "", T::List, nullptr, "Faces whose border is the start loop."},
              {"loopEdges", "", T::List, nullptr, "Edges of the start loop."},
              {"attach", "", T::Bool, false, "Build the pipe into the start loop's mesh: its faces go and the first ring welds on (no history)."},
-             {"couplingMeshNode", "", T::String, nullptr, "Mesh to use as the coupling (sets coupling = mesh)."},
-             {"boltMeshNode", "", T::String, nullptr, "Mesh to use as the bolts (sets fasteners = mesh)."},
+             nodeFlag({"couplingMeshNode", "", T::String, nullptr, "Mesh to use as the coupling (sets coupling = mesh)."}, "mesh"),
+             nodeFlag({"boltMeshNode", "", T::String, nullptr, "Mesh to use as the bolts (sets fasteners = mesh)."}, "mesh"),
              {"constructionHistory", "ch", T::Bool, true, "Keep the pipe node so its settings stay live."},
              {"name", "n", T::String, nullptr, "Mesh name; made unique."}})
         flags.push_back(std::move(fd));

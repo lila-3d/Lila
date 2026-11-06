@@ -564,7 +564,7 @@ std::vector<FlagDef> stampFlags(bool region)
 {
     std::vector<FlagDef> flags = {
         {"footprint", "fp", T::List, nullptr, "Polygon [[x, z] or [x, y, z], ...] in world space (x, y on a Z-up scene)."},
-        {"object", "obj", T::String, nullptr, "A mesh (its faces seen from above) or closed curve the stamp follows live."},
+        nodeFlag({"object", "obj", T::String, nullptr, "A mesh (its faces seen from above) or closed curve the stamp follows live."}, "mesh|curve"),
         {"id", "id", T::String, "", "Stable id; stamping an id again replaces that stamp. Empty makes one."},
         {"layer", "ly", T::String, "Stamps", "Stamp layer (a Terrain Stamps node after erosion); the city uses City."},
         {"mode", "m", T::String, "flatten", region ? "flatten, carve, raise, blend, or dredge (lowered by depth)." : "flatten, carve, raise, blend, plinth (no grading, a raised base), terraced (steps along the slope) or stilts (no grading, piles).",
@@ -916,7 +916,7 @@ void registerStampCommands(ext::Context& ctx)
         .flags = {{"op", "o", T::String, "raise", "raise, lower, smooth, flatten or noise.", sculptOpNames()},
                   {"points", "p", T::List, nullptr, "Dab centres [[x, z] or [x, y, z], ...]."},
                   {"path", "pa", T::List, nullptr, "A polyline the stroke runs along."},
-                  {"curve", "cv", T::String, nullptr, "A curve object the stroke runs along."},
+                  nodeFlag({"curve", "cv", T::String, nullptr, "A curve object the stroke runs along."}, "curve"),
                   {"radius", "r", T::Float, 2000.0, "Dab radius, cm.", {}, {}, 1.0},
                   {"strength", "s", T::Float, 100.0, "cm for raise, lower and noise; 0 to 1 for smooth and flatten."},
                   {"spacing", "sp", T::Float, 0.0, "Between dabs along a path, cm; 0 is a quarter of the radius.", {}, {}, 0.0},
@@ -1131,7 +1131,7 @@ std::vector<FlagDef> lineFlags(bool waterfront)
 {
     std::vector<FlagDef> flags = {
         {"path", "pa", T::List, nullptr, "The line [[x, z] or [x, y, z], ...] in world space (x, y on a Z-up scene)."},
-        {"object", "obj", T::String, nullptr, "A curve the feature follows live."},
+        nodeFlag({"object", "obj", T::String, nullptr, "A curve the feature follows live."}, "curve"),
         {"id", "id", T::String, "", "Stable id; the same id again replaces it. Empty makes one."},
         {"layer", "ly", T::String, "Stamps", "Stamp layer; the city uses City."},
         {"width", "w", T::Float, 600.0, "Width across the line, cm.", {}, {}, 1.0},
@@ -1767,7 +1767,7 @@ void registerContractCommands(ext::Context& ctx)
                "than floatTolerance cm anywhere), stamps and streets across a river with no bridge or culvert, and canals that "
                "reach no water. Returns ok and the issues, each with its type, what it is about, where and a message.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = withAnalysisFlags({{"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."},
+        .flags = withAnalysisFlags({nodeFlag({"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."}, "mesh"),
                                     {"cutFillLimit", "cf", T::Float, 500.0, "Largest cut plus fill per pad, m3.", {}, {}, 0.0},
                                     {"maxGrade", "mg", T::Float, 12.0, "Steepest street, percent.", {}, {}, 0.0},
                                     {"floodTolerance", "ft", T::Float, 0.5, "Flood risk counted as flooding.", {}, {}, 0.0, 1.0},

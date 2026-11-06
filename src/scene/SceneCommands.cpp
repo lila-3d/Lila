@@ -370,7 +370,7 @@ void registerCommands()
         .positionalDoc = "type",
         .flags = {
             {"name", "n", T::String, nullptr, "Name; made unique among its siblings."},
-            {"parent", "p", T::String, nullptr, "Parent transform."},
+            nodeFlag({"parent", "p", T::String, nullptr, "Parent transform."}, "transform"),
             {"skipSelect", "ss", T::Bool, false, "Don't select the new node."},
         },
         .run = [](const Args& a) -> json {
@@ -406,7 +406,7 @@ void registerCommands()
         .flags = {
             {"name", "n", T::String, nullptr, "Group name."},
             {"empty", "em", T::Bool, false, "Create an empty group."},
-            {"parent", "p", T::String, nullptr, "Parent for the new group."},
+            nodeFlag({"parent", "p", T::String, nullptr, "Parent for the new group."}, "transform"),
         },
         .run = [](const Args& a) -> json {
             std::vector<NodeId> members = a.get<bool>("empty") ? std::vector<NodeId>{} : idsOf(a.objects());

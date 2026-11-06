@@ -362,7 +362,7 @@ void registerConstraintCommandsImpl()
             {"upVector", "u", T::Vec3, json::array({0.0, 1.0, 0.0}), "Local axis that leans toward the world up."},
             {"worldUpType", "wut", T::String, "vector", "scene | object | objectRotation | vector | none"},
             {"worldUpVector", "wu", T::Vec3, json::array({0.0, 1.0, 0.0}), "World up (or up in worldUpObject's space)."},
-            {"worldUpObject", "wuo", T::String, nullptr, "Object for worldUpType object / objectRotation."},
+            nodeFlag({"worldUpObject", "wuo", T::String, nullptr, "Object for worldUpType object / objectRotation."}, "transform"),
             {"offset", "o", T::Vec3, nullptr, "Rotation offset, degrees xyz."},
             {"skip", "sk", T::List, nullptr, "Axes left alone."},
         }),

@@ -85,7 +85,7 @@ void registerMeshEditKnifeCommands()
                "eye= or along direction=; without either, along the points' average normal). With loopEdge= it inserts an edge "
                "loop across that edge's quad ring instead, and with deleteEdge= it dissolves that edge. Follows the mesh's "
                "symmetry. A single point on an edge inserts a vertex there. Returns the new edges.",
-        .flags = {{"mesh", "", T::String, nullptr, "Mesh to cut; default: the selected or hilited mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Mesh to cut; default: the selected or hilited mesh."}, "mesh"),
                   {"points", "", T::List, nullptr,
                    "Path points: {\"vertex\": id}, {\"edge\": id, \"t\": 0..1 from its first point}, or {\"face\": id, \"position\": "
                    "[x, y, z] world}."},

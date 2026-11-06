@@ -416,8 +416,8 @@ int constructOfFace(const geo::Mesh& mesh, Index face)
 void registerTopologyCommands()
 {
     using T = ArgType;
-    const FlagDef meshFlag{"mesh", "", T::String, nullptr, "Retopo mesh."};
-    const FlagDef referenceFlag{"reference", "", T::String, nullptr, "Reference mesh, connected so the topology tools resume on this pair later."};
+    const FlagDef meshFlag = nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh");
+    const FlagDef referenceFlag = nodeFlag({"reference", "", T::String, nullptr, "Reference mesh, connected so the topology tools resume on this pair later."}, "mesh");
     const FlagDef createFlag{"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."};
 
     ops::registerCommand({

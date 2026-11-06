@@ -236,7 +236,7 @@ void registerCommands()
     if (ops::find("ikChain"))
         return;
     using T = ArgType;
-    const FlagDef parentFlag{"parent", "p", T::String, nullptr, "Node to put the element under, such as a character."};
+    const FlagDef parentFlag = nodeFlag({"parent", "p", T::String, nullptr, "Node to put the element under, such as a character."}, "transform");
 
     ops::registerCommand({
         .name = "ikChain",
@@ -245,8 +245,8 @@ void registerCommands()
                "controller until the chain's next key. Returns the chain.",
         .positionalDoc = "startJoint endJoint",
         .flags = {
-            {"startJoint", "sj", T::String, nullptr, "First joint."},
-            {"endJoint", "ej", T::String, nullptr, "End effector."},
+            nodeFlag({"startJoint", "sj", T::String, nullptr, "First joint."}, "joint"),
+            nodeFlag({"endJoint", "ej", T::String, nullptr, "End effector."}, "joint"),
             {"solver", "sol", T::String, nullptr, "IK solver; default ik2BoneSolver for three joints, else FABRIK."},
             {"name", "n", T::String, nullptr, "Chain name; default <effector>_ik."},
             {"poleVector", "pv", T::Vec3, nullptr, "Bend direction from the start joint; default the chain's current bend."},
@@ -263,8 +263,8 @@ void registerCommands()
         .positionalDoc = "ankle or its IK chain",
         .flags = {
             {"ankle", "an", T::String, nullptr, "The ankle."},
-            {"ball", "b", T::String, nullptr, "Ball joint; default the ankle's first child joint."},
-            {"toe", "to", T::String, nullptr, "Toe joint; default the ball's first child joint."},
+            nodeFlag({"ball", "b", T::String, nullptr, "Ball joint; default the ankle's first child joint."}, "joint"),
+            nodeFlag({"toe", "to", T::String, nullptr, "Toe joint; default the ball's first child joint."}, "joint"),
             {"name", "n", T::String, nullptr, "Name; default <ankle>_reverseFoot."},
             {"pivots", "pvs", T::Any, nullptr, "World positions {heel, ball, toe, inner, outer}, dropped onto the sole."},
             parentFlag,
@@ -435,7 +435,7 @@ void registerCommands()
                "(source = that joint). The default weight is how far along the bone the twist joint sits. Returns the drivers.",
         .positionalDoc = "twist joints",
         .flags = {
-            {"source", "src", T::String, nullptr, "Joint whose twist is read; default the twist joint's parent."},
+            nodeFlag({"source", "src", T::String, nullptr, "Joint whose twist is read; default the twist joint's parent."}, "joint"),
             {"weight", "w", T::Float, nullptr, "Share of the twist; negative counters it."},
         },
         .run = [](const Args& a) -> json {

@@ -1182,7 +1182,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "Start a garment from a parametric block (tee, tunic, cloak, ...) and drape it onto a collider mesh.\n\n"
                "Makes a tailorGarment node feeding a new mesh. With no collider, the first selected mesh is used. Returns [mesh, garment].",
         .flags = {{"block", "b", T::String, "tee", "The block to start from.", blockNames()},
-                  {"collider", "c", T::String, json(), "The body mesh to drape onto; empty for none."},
+                  nodeFlag({"collider", "c", T::String, json(), "The body mesh to drape onto; empty for none."}, "mesh"),
                   {"name", "n", T::String, "Garment", "Name of the new mesh."},
                   {"fabric", "fab", T::String, json(), "Fabric preset; the block's own when left out.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Target cloth edge length, cm.", {}, {}, 0.1, 50.0},
@@ -1225,7 +1225,7 @@ void registerCommands(ext::Context& ctx)
         .doc = "Import a GarmentCode / ChatGarment sewing pattern (pygarment JSON) as a garment and drape it onto a collider mesh.\n\n"
                "Makes a tailorGarment node feeding a new mesh. With no collider, the first selected mesh is used. Returns [mesh, garment].",
         .flags = {{"file", "f", T::String, json(), "The pattern specification JSON."},
-                  {"collider", "c", T::String, json(), "The body mesh to drape onto; empty for none."},
+                  nodeFlag({"collider", "c", T::String, json(), "The body mesh to drape onto; empty for none."}, "mesh"),
                   {"name", "n", T::String, "Garment", "Name of the new mesh."},
                   {"fabric", "fab", T::String, "Cotton", "Fabric preset.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Target cloth edge length, cm.", {}, {}, 0.1, 50.0},
@@ -2172,7 +2172,7 @@ void registerCommands(ext::Context& ctx)
                "built-in shape (button, grommet, rivet, toggle, buckle, zipTooth, slider). Along edges, each copy's +Y "
                "follows the edge. The copies make one new mesh. Returns [mesh, binding].",
         .positionalDoc = "garment",
-        .flags = {{"mesh", "m", T::String, json(), "Your trim, modelled at the origin with +Z facing out of the cloth, cm."},
+        .flags = {nodeFlag({"mesh", "m", T::String, json(), "Your trim, modelled at the origin with +Z facing out of the cloth, cm."}, "mesh"),
                   {"shape", "sh", T::String, "button", "A built-in trim, when mesh is left out.", trimShapes()},
                   {"points", "pts", T::List, json(), "Where, [[x, y, z], ...] world cm, on or near the cloth."},
                   {"along", "al", T::String, json(), "Edges to space copies along instead of points, as tailorSew sides, e.g. \"Hood L:0:1\"."},
@@ -2632,7 +2632,7 @@ void registerCommands(ext::Context& ctx)
                "panel's name.",
         .positionalDoc = "garment",
         .flags = {{"points", "pts", T::List, json(), "The path, [[x, y, z], ...] world cm."},
-                  {"curve", "cv", T::String, json(), "A curve to follow instead of points (its points, world space)."},
+                  nodeFlag({"curve", "cv", T::String, json(), "A curve to follow instead of points (its points, world space)."}, "curve"),
                   {"width", "w", T::Float, 4.0, "Strap width, cm.", {}, {}, 0.5, 100.0},
                   {"name", "n", T::String, "Strap", "Panel name; made unique."},
                   {"fabric", "fab", T::String, "Leather", "Fabric preset of the strap.", presetChoices()},
@@ -2816,7 +2816,7 @@ void registerCommands(ext::Context& ctx)
                   {"mirror", "m", T::Bool, false, "Also add the mirror image across the body's centre."},
                   {"clearance", "cl", T::Float, 1.5, "How far the panel starts outside the body, cm.", {}, {}, 0.0, 50.0},
                   {"layer", "l", T::Int, int64_t(0), "Layer: higher layers sit outside lower ones."},
-                  {"collider", "c", T::String, json(), "The body, when a new garment is started; the selected mesh otherwise."},
+                  nodeFlag({"collider", "c", T::String, json(), "The body, when a new garment is started; the selected mesh otherwise."}, "mesh"),
                   {"fabric", "fab", T::String, "Cotton", "Fabric preset of a new garment.", presetChoices()},
                   {"particleDistance", "pd", T::Float, 2.0, "Cloth edge length of a new garment, cm.", {}, {}, 0.1, 50.0},
                   {"simulate", "sim", T::Bool, true, "Drape a new garment."},
@@ -3021,7 +3021,7 @@ void registerCommands(ext::Context& ctx)
                "live drapes included. Both meshes are taken as they are now; keep their transforms the same (freeze them). "
                "Returns the tailorBinding node.",
         .positionalDoc = "garment",
-        .flags = {{"mesh", "m", T::String, json(), "The render mesh to latch."}},
+        .flags = {nodeFlag({"mesh", "m", T::String, json(), "The render mesh to latch."}, "mesh")},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             Node& op = garmentArg(g, a, "tailorBindRenderMesh");
@@ -3100,7 +3100,7 @@ void registerCommands(ext::Context& ctx)
                "height), keeps each set-in sleeve cap's ease to its armhole, stands it where the new body stands and drapes it "
                "there. Returns the scale factors used.",
         .positionalDoc = "garment",
-        .flags = {{"collider", "c", T::String, json(), "The new body mesh."},
+        .flags = {nodeFlag({"collider", "c", T::String, json(), "The new body mesh."}, "mesh"),
                   {"grade", "gr", T::Bool, true, "Scale the pattern to the new body; off only moves it."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();

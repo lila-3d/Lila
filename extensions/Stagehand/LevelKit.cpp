@@ -299,7 +299,7 @@ void registerKitCommands(ext::Context& ctx)
         .doc = "Join a piece onto another by their snap points: the nearest compatible pair, or the ones named. The target stays put. "
                "Returns the points joined.",
         .positionalDoc = "piece to move",
-        .flags = {{"target", "tg", T::String, nullptr, "The piece to join onto."},
+        .flags = {nodeFlag({"target", "tg", T::String, nullptr, "The piece to join onto."}, "transform"),
                   {"point", "pt", T::String, nullptr, "The moving piece's snap point to use."},
                   {"targetPoint", "tp", T::String, nullptr, "The target's snap point to use."}},
         .run = [](const Args& a) -> json {

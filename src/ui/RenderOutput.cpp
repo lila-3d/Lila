@@ -479,7 +479,7 @@ void registerCommands()
     using T = ArgType;
     auto renderFlags = [] {
         return std::vector<FlagDef>{
-            {"camera", "c", T::String, nullptr, "Camera to render through; the active view's camera when left out."},
+            nodeFlag({"camera", "c", T::String, nullptr, "Camera to render through; the active view's camera when left out."}, "camera"),
             {"width", "w", T::Int, nullptr, "Pixels; the scene's render resolution when left out.", {}, {}, 16.0, 16384.0},
             {"height", "h", T::Int, nullptr, "Pixels; the scene's render resolution when left out.", {}, {}, 16.0, 16384.0},
             {"scale", "", T::Float, nullptr, "Percent of the resolution (screen percentage); 100 by default.", {}, {}, 5.0, 800.0},

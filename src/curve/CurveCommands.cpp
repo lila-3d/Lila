@@ -425,7 +425,7 @@ void registerCommands()
         .doc = "Sweep a profile along path curves into a quad mesh with live history: a circle or rectangle, or the profile "
                "curve given second (or with profile=). Returns [mesh, curveSweep].",
         .positionalDoc = "path [profile]",
-        .flags = withFlags(attrFlags("curveSweep"), {{"profileCurve", "pc", T::String, nullptr, "Profile curve (instead of the second positional)."},
+        .flags = withFlags(attrFlags("curveSweep"), {nodeFlag({"profileCurve", "pc", T::String, nullptr, "Profile curve (instead of the second positional)."}, "curve"),
                                                      chFlag(),
                                                      {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {
@@ -466,7 +466,7 @@ void registerCommands()
         .doc = "Loft a quad mesh through section curves, in order, with live history; rails= steers it with one or two rail curves. "
                "Returns [mesh, curveLoft].",
         .positionalDoc = "sections",
-        .flags = withFlags(attrFlags("curveLoft"), {{"rails", "", T::List, nullptr, "One or two rail curves."},
+        .flags = withFlags(attrFlags("curveLoft"), {nodeFlag({"rails", "", T::List, nullptr, "One or two rail curves."}, "curve"),
                                                     chFlag(),
                                                     {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {
@@ -543,7 +543,7 @@ void registerCommands()
         .doc = "Project curves onto a mesh along direction (the view, say) or to the closest point, as new curves that follow the "
                "mesh while history is on. Returns them.",
         .positionalDoc = "curves",
-        .flags = withFlags(opFlags("projectCurve", false), {{"mesh", "m", T::String, nullptr, "The mesh to project onto."}}),
+        .flags = withFlags(opFlags("projectCurve", false), {nodeFlag({"mesh", "m", T::String, nullptr, "The mesh to project onto."}, "mesh")}),
         .run = [](const Args& a) -> json {
             if (!a.has("mesh"))
                 throw CommandError("projectCurve: give mesh=");

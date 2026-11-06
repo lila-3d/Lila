@@ -385,7 +385,7 @@ void registerConformCommands()
                "spread along it when the counts differ; face interiors follow. surface: every point to the nearest surface point. "
                "vertex: every point to the nearest target vertex. A curve target works through its line: loop spreads a loop along a "
                "closed curve, surface puts each point on the nearest point of the curve.",
-        .flags = {{"target", "", T::String, nullptr, "Mesh or curve to conform to; default: the selected mesh or curve that has no components selected."},
+        .flags = {nodeFlag({"target", "", T::String, nullptr, "Mesh or curve to conform to; default: the selected mesh or curve that has no components selected."}, "mesh|curve"),
                   {"mode", "", T::String, "loop", "loop, surface or vertex.", {"loop", "surface", "vertex"}},
                   {"spacing", "", T::String, "even", "Loop mode with unequal counts: even, keep or project.", spacings},
                   strength},

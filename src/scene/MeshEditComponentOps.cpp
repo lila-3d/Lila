@@ -370,7 +370,7 @@ void registerMeshEditComponentCommands()
         .doc = "Target weld: merge one vertex into another, which keeps its place (or both meet halfway with center=), or an "
                "edge into another, end to nearest end. Follows the mesh's symmetry; a weld across the symmetry plane meets on it. "
                "Returns the welded vertices.",
-        .flags = {{"mesh", "", T::String, nullptr, "Mesh to weld; default: the selected or hilited mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Mesh to weld; default: the selected or hilited mesh."}, "mesh"),
                   {"source", "", T::Int, -1, "Vertex (or edge) that moves.", {}, {}, -1.0},
                   {"target", "", T::Int, -1, "Vertex (or edge) it merges into.", {}, {}, -1.0},
                   {"edge", "", T::Bool, false, "source and target are edges."},
@@ -486,7 +486,7 @@ void registerMeshEditComponentCommands()
                   {"profileFactor", "", T::Float, 0.0, "Bulge (positive) or pinch (negative) of the middle rows, as a fraction of the gap.", {}, {}, -2.0, 2.0},
                   {"profileShape", "", T::String, "smooth", "Falloff of the profile across the bridge.",
                    {"smooth", "sphere", "root", "sharp", "linear", "inverseSquare", "constant"}},
-                  {"curve", "", T::String, "", "The curve Path follows."},
+                  nodeFlag({"curve", "", T::String, "", "The curve Path follows."}, "curve"),
                   {"transition", "", T::String, "quads", "How borders of different lengths make up the difference.", {"quads", "triangles"}},
                   {"weldEnds", "", T::Bool, true, "Open bridges land their end rows on the border between the two sides' ends."},
                   {"weldTolerance", "", T::Float, 0.35, "How far a row may be from an end border point and still weld, as a fraction of a row.", {}, {}, 0.0, 1.0},

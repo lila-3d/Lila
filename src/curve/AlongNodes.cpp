@@ -509,8 +509,8 @@ void registerAlongCommands()
                "or moving the curve updates the meshes. Returns the modifiers.",
         .positionalDoc = "meshes",
         .flags = withFlags(modifierAttrFlags("curveDeformModifier"),
-                           {{"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."},
-                            {"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."}}),
+                           {nodeFlag({"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."}, "curve"),
+                            nodeFlag({"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."}, "curve")}),
         .run = [](const Args& a) -> json {
             Graph& g = graph();
             g.evaluate();
@@ -536,10 +536,10 @@ void registerAlongCommands()
                "instances; not live). Select the piece meshes and the curve. Returns the modifiers, or the groups.",
         .positionalDoc = "meshes",
         .flags = withFlags(modifierAttrFlags("curveArrayModifier"),
-                           {{"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."},
-                            {"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."},
-                            {"startMesh", "", T::String, nullptr, "A mesh to use for the first copy."},
-                            {"endMesh", "", T::String, nullptr, "A mesh to use for the last copy."},
+                           {nodeFlag({"curve", "c", T::String, nullptr, "The curve to follow; else the selected curve."}, "curve"),
+                            nodeFlag({"aimCurve", "", T::String, nullptr, "The curve up aims at (upMode aimCurve); else the second selected curve."}, "curve"),
+                            nodeFlag({"startMesh", "", T::String, nullptr, "A mesh to use for the first copy."}, "mesh"),
+                            nodeFlag({"endMesh", "", T::String, nullptr, "A mesh to use for the last copy."}, "mesh"),
                             {"output", "o", T::String, "merged", "merged: one mesh with a live modifier; instances: an instance per copy under a group.",
                              {"merged", "instances"}},
                             {"name", "n", T::String, nullptr, "Name of the instance group; made unique."}}),
@@ -610,7 +610,7 @@ void registerAlongCommands()
                "(Y) follows the surface normal. Select the meshes, then the surface last. Returns the modifiers.",
         .positionalDoc = "meshes",
         .flags = withFlags(modifierAttrFlags("surfaceFlowModifier"),
-                           {{"target", "t", T::String, nullptr, "The surface mesh; else the last selected mesh."},
+                           {nodeFlag({"target", "t", T::String, nullptr, "The surface mesh; else the last selected mesh."}, "mesh"),
                             {"faces", "", T::List, nullptr, "Surface faces to flow onto; else its selected faces, else all of it."}}),
         .run = [](const Args& a) -> json {
             Graph& g = graph();

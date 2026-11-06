@@ -866,7 +866,7 @@ void registerLibraryCommands(ext::Context& ctx)
                "with physics after. Returns each placed root with its meshes.",
         .positionalDoc = "asset id (or a name only one asset has)",
         .flags = {{"at", "", T::List, nullptr, "World point [x, y, z], cm."},
-                  {"on", "", T::String, nullptr, "Mesh to place on: its top centre, or below at=."},
+                  nodeFlag({"on", "", T::String, nullptr, "Mesh to place on: its top centre, or below at=."}, "mesh"),
                   {"snap", "sn", T::Bool, true, "Land at= on the surface below it."},
                   {"normal", "nr", T::List, nullptr, "Up direction to stand along (default the surface's, or +Y)."},
                   {"align", "al", T::Bool, false, "Stand along the surface normal instead of upright."},

@@ -1005,7 +1005,7 @@ void registerCommands()
         .doc = "Make meshes pieces of a proxy set: each bound to a joint (the nearest bone by default) and moved under the set. A "
                "proxy piece is parent constrained to its joint; a true piece is skinned with the real mesh's weights.",
         .positionalDoc = "set, meshes...",
-        .flags = {{"joint", "j", T::String, nullptr, "The joint the pieces follow; the nearest bone when not given."},
+        .flags = {nodeFlag({"joint", "j", T::String, nullptr, "The joint the pieces follow; the nearest bone when not given."}, "joint"),
                   {"kind", "k", T::String, "proxy", "proxy (rigid stand-in) or true (the real surface, skinned).", {"proxy", "true"}},
                   {"bind", "b", T::Bool, true, "Bind the pieces to their joint; off leaves them as they are."},
                   {"parent", "p", T::Bool, true, "Move the pieces under the set."}},
@@ -1158,7 +1158,7 @@ void registerCommands()
             {"pieceFaces", "pf", T::String, "", "Face count per piece, as index:count pairs (0:150 3:80)."},
             {"exactPieces", "ep", T::String, "", "Pieces kept exact (true pieces, skinned like the mesh), by index (1 4)."},
             {"replace", "rp", T::Bool, true, "Replace the mesh's set at the same LOD level instead of adding another."},
-            {"trueJoints", "tj", T::List, nullptr, "Joints whose pieces also get a true piece, shown by setProxyDisplay piece=."},
+            nodeFlag({"trueJoints", "tj", T::List, nullptr, "Joints whose pieces also get a true piece, shown by setProxyDisplay piece=."}, "joint"),
             {"name", "n", T::String, nullptr, "Name of the new set; <mesh>_animProxy by default."},
             {"set", "s", T::String, nullptr, "Add the pieces to this set instead of making one."},
             {"lodLevel", "lod", T::Int, -1, "The new set's LOD level; -1 for any.", {}, {}, -1.0, double(lod::kMaxLevels - 1)},

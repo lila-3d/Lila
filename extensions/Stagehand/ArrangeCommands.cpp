@@ -584,7 +584,7 @@ void registerArrangeCommands(ext::Context& ctx)
     const std::vector<FlagDef> pileFlagsExtra = {{"at", "", T::List, json::array({0.0, 0.0, 0.0}), "Centre of the pile's footprint, at its floor."},
                                                     {"count", "c", T::Int, int64_t(30), "How many.", {}, {}, 0.0},
                                                     {"radius", "r", T::Float, 40.0, "Footprint radius, cm.", {}, {}, 0.0},
-                                                    {"onto", "on", T::List, nullptr, "Meshes it lands on (a crate, the floor); default a floor plane at at's height."}};
+                                                    nodeFlag({"onto", "on", T::List, nullptr, "Meshes it lands on (a crate, the floor); default a floor plane at at's height."}, "mesh")};
     pileFlags.insert(pileFlags.end(), pileFlagsExtra.begin(), pileFlagsExtra.end());
     ctx.registerCommand({
         .name = "pileProps",
@@ -634,7 +634,7 @@ void registerArrangeCommands(ext::Context& ctx)
                                                     {"count", "c", T::Int, int64_t(6), "How many.", {}, {}, 0.0},
                                                     {"offset", "of", T::Float, 1.0, "Sideways wander per level, cm.", {}, {}, 0.0},
                                                     {"turn", "tu", T::Float, 6.0, "Turn per level, degrees either way.", {}, {}, 0.0, 180.0},
-                                                    {"onto", "on", T::List, nullptr, "Meshes it stands on; default a floor plane at at's height."}};
+                                                    nodeFlag({"onto", "on", T::List, nullptr, "Meshes it stands on; default a floor plane at at's height."}, "mesh")};
     stackFlags.insert(stackFlags.end(), stackFlagsExtra.begin(), stackFlagsExtra.end());
     ctx.registerCommand({
         .name = "stackProps",

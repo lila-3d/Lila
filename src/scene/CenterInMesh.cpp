@@ -301,7 +301,7 @@ void registerCenterCommands()
         .flags = {
             {"keepChildren", "kc", T::Bool, false, "Leave the children where they are."},
             {"direction", "d", T::Vec3, nullptr, "World cutting direction instead of the bone's."},
-            {"meshes", "m", T::List, nullptr, "Meshes to centre in instead of the node's own."},
+            nodeFlag({"meshes", "m", T::List, nullptr, "Meshes to centre in instead of the node's own."}, "mesh"),
         },
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -353,7 +353,7 @@ void registerCenterCommands()
                "With no meshes flag, returns the meshes each node centres in now.",
         .positionalDoc = "joints",
         .flags = {
-            {"meshes", "m", T::List, nullptr, "Mesh names; [] clears the binding."},
+            nodeFlag({"meshes", "m", T::List, nullptr, "Mesh names; [] clears the binding."}, "mesh"),
             {"centerInMesh", "cim", T::Bool, nullptr, "Also turn live centring on or off."},
         },
         .run = [](const Args& a) -> json {

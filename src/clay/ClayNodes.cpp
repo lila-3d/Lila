@@ -812,7 +812,7 @@ void registerCommands()
                "Given a mesh (the converted clay), binds it and starts its weights from the clay: each point leans on the "
                "joints of the shapes it lies nearest. Returns [root, skinCluster or None].",
         .positionalDoc = "clay object",
-        .flags = {{"mesh", "m", T::String, nullptr, "Mesh to bind, usually the clay converted with convertClayToMesh."},
+        .flags = {nodeFlag({"mesh", "m", T::String, nullptr, "Mesh to bind, usually the clay converted with convertClayToMesh."}, "mesh"),
                   {"maxInfluences", "mi", T::Int, 4, "Influences per point.", {}, {}, 1.0}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();

@@ -517,7 +517,7 @@ void registerCommands()
              "Add a chain or change one by name: {'name', 'role' (spine, neck, head, jaw, clavicle, arm, leg, toe, finger, tail, wing, "
              "antenna, root, other), 'side' (center, left, right), 'index', 'start', 'end', 'goal'}."},
             {"removeChain", "rc", T::String, nullptr, "Chain to remove."},
-            {"pelvis", "p", T::String, nullptr, "The retarget root joint."},
+            nodeFlag({"pelvis", "p", T::String, nullptr, "The retarget root joint."}, "joint"),
             {"ground", "g", T::Float, nullptr, "Height of the floor along up, cm."},
             {"capturePose", "cp", T::Bool, false, "The skeleton's current pose becomes the retarget pose."},
         },
@@ -529,8 +529,8 @@ void registerCommands()
         .doc = "Make a retargeter from one skeleton to another: characterises either when it has no rig yet, maps chains by name, "
                "else role, side and number, and aligns the target's retarget pose to the source's.",
         .flags = {
-            {"source", "s", T::String, nullptr, "A joint of the source skeleton."},
-            {"target", "t", T::String, nullptr, "A joint of the target skeleton."},
+            nodeFlag({"source", "s", T::String, nullptr, "A joint of the source skeleton."}, "joint"),
+            nodeFlag({"target", "t", T::String, nullptr, "A joint of the target skeleton."}, "joint"),
             {"name", "n", T::String, nullptr, "Name of the retargeter node."},
             {"align", "a", T::Bool, true, "Align the target's retarget pose to the source's."},
         },
@@ -589,8 +589,8 @@ void registerCommands()
                "(each imported, retargeted into a take named after the file, then removed). Without a retargeter, one is made with "
                "everything automatic: rigs, chain mapping, pose alignment, planted feet. Returns a report per run.",
         .flags = {
-            {"source", "s", T::String, nullptr, "A joint of the source skeleton."},
-            {"target", "t", T::String, nullptr, "A joint of the target skeleton."},
+            nodeFlag({"source", "s", T::String, nullptr, "A joint of the source skeleton."}, "joint"),
+            nodeFlag({"target", "t", T::String, nullptr, "A joint of the target skeleton."}, "joint"),
             {"retargeter", "r", T::String, nullptr, "Use this retargeter's settings (for files: as the template every file gets)."},
             {"files", "f", T::List, nullptr, "Animation files (.bvh, .fbx) to retarget, one take each."},
             {"folder", "fo", T::String, nullptr, "Retarget every .bvh and .fbx in the folder."},
@@ -621,7 +621,7 @@ void registerCommands()
                "spine and tail bends and foot contacts. applyRetargetClip plays it on any body, whatever its limbs.",
         .positionalDoc = "the file to write",
         .flags = {
-            {"source", "s", T::String, nullptr, "A joint of the source skeleton."},
+            nodeFlag({"source", "s", T::String, nullptr, "A joint of the source skeleton."}, "joint"),
             {"start", "st", T::Float, nullptr, "Start, seconds; default the first key."},
             {"end", "e", T::Float, nullptr, "End, seconds; default the last key."},
             {"fps", "fps", T::Float, nullptr, "Samples per second; default the scene's."},
@@ -635,7 +635,7 @@ void registerCommands()
                "Keys a take named after the file.",
         .positionalDoc = "the .lilaclip file",
         .flags = {
-            {"target", "t", T::String, nullptr, "A joint of the target skeleton."},
+            nodeFlag({"target", "t", T::String, nullptr, "A joint of the target skeleton."}, "joint"),
             {"gait", "g", T::String, "auto", "The gait the target's legs keep.",
              {"auto", "walk", "trot", "pace", "canter", "gallop", "tripod", "tetrapod", "wave"}},
             {"take", "tk", T::String, nullptr, "Take to key into; default the file's name."},
@@ -658,7 +658,7 @@ void registerCommands()
         .positionalDoc = "the .bvh file",
         .flags = {
             {"scale", "sc", T::Float, 1.0, "Multiplies offsets and positions (BVH has no units)."},
-            {"parent", "p", T::String, nullptr, "Parent the skeleton under this node."},
+            nodeFlag({"parent", "p", T::String, nullptr, "Parent the skeleton under this node."}, "transform"),
             {"setPlayback", "sp", T::Bool, true, "Set the scene fps and range from the file."},
             {"endSites", "es", T::Bool, true, "Make end sites as non-deform joints."},
         },

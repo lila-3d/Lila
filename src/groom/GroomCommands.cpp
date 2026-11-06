@@ -322,7 +322,7 @@ void registerCommands()
                   {"density", "", T::Float, 1.0, "Density: target curves per square cm, times the density map.", {}, {}, 0.0},
                   {"densitySet", "", T::String, nullptr, "Vertex color set of the surface used as the density map."},
                   {"seed", "", T::Int, 0, "Random seed for add, delete and density."},
-                  {"surface", "", T::String, nullptr, "Mesh the roots grow from; default the curve's groomSurface."},
+                  nodeFlag({"surface", "", T::String, nullptr, "Mesh the roots grow from; default the curve's groomSurface."}, "mesh"),
                   {"selectedOnly", "", T::Bool, true, "With points of the curve selected, only the curves holding them change."},
                   {"settleWhileGrabbing", "", T::Bool, false, "Grab: the locks near the grabbed ones settle as it moves, making room."}},
         .run = [](const Args& a) -> json {
@@ -402,7 +402,7 @@ void registerCommands()
         .doc = "Set the mesh curves grow from (their groom surface): sculpting keeps roots on it, add and density plant on it. "
                "attach moves each curve so its root sits on the surface. An empty mesh clears it. Returns the curves moved.",
         .positionalDoc = "curves",
-        .flags = {{"mesh", "m", T::String, nullptr, "The surface mesh; empty clears it."},
+        .flags = {nodeFlag({"mesh", "m", T::String, nullptr, "The surface mesh; empty clears it."}, "mesh"),
                   {"attach", "", T::Bool, true, "Move roots onto the surface."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -484,8 +484,8 @@ void registerCommands()
     });
 
     std::vector<FlagDef> flags = nodeFlags();
-    for (FlagDef fd : std::vector<FlagDef>{{"guides", "", T::List, nullptr, "Guide curves (sets source = guides)."},
-                                           {"mesh", "m", T::String, nullptr, "The scalp mesh; default the first curve's groomSurface."},
+    for (FlagDef fd : std::vector<FlagDef>{nodeFlag({"guides", "", T::List, nullptr, "Guide curves (sets source = guides)."}, "curve"),
+                                           nodeFlag({"mesh", "m", T::String, nullptr, "The scalp mesh; default the first curve's groomSurface."}, "mesh"),
                                            {"constructionHistory", "ch", T::Bool, true, "Keep the hairCards node so its settings stay live."},
                                            {"name", "n", T::String, nullptr, "Mesh name; made unique."}})
         flags.push_back(std::move(fd));

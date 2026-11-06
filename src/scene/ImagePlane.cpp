@@ -375,7 +375,7 @@ void registerImagePlaneCommands()
     registerImagePlaneCutCommand();
     std::vector<FlagDef> flags = {
         {"fileName", "f", T::String, nullptr, "Image file; stored relative to the workspace root (or the scene folder without one)."},
-        {"camera", "c", T::String, nullptr, "View to follow: persp, front, side (right), top, ..., or a camera node; empty for a free plane."},
+        nodeFlag({"camera", "c", T::String, nullptr, "View to follow: persp, front, side (right), top, ..., or a camera node; empty for a free plane."}, "camera"),
         {"name", "n", T::String, nullptr, "Name; made unique."},
         {"showInAllViews", "sia", T::Bool, nullptr, "Show an attached plane in every view, not only through its camera."},
         {"skipSelect", "ss", T::Bool, false, "Don't select the new plane."},

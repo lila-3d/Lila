@@ -207,7 +207,7 @@ void registerEzCurveCommand()
                   {"end", "e", T::Vec3, nullptr, "[x, y, z] end, world space, cm."},
                   {"startNormal", "sn", T::Vec3, nullptr, "Surface normal at the start, which way the bow faces."},
                   {"endNormal", "en", T::Vec3, nullptr, "Surface normal at the end."},
-                  {"mesh", "m", T::List, nullptr, "Meshes to adapt to (names)."},
+                  nodeFlag({"mesh", "m", T::List, nullptr, "Meshes to adapt to (names)."}, "mesh"),
                   {"bend", "b", T::Float, 0.0, "Bow out from the straight line, fraction of its length."},
                   {"twist", "tw", T::Float, 0.0, "Turns the bow about the line, degrees."},
                   {"sag", "sg", T::Float, 0.0, "Droop down under gravity, fraction of the length."},

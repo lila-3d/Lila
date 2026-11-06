@@ -716,7 +716,7 @@ void registerBankCommands(ext::Context& ctx)
                "take it was active for stays active unless activate. Returns the new take's name.",
         .positionalDoc = "file",
         .flags = {{"name", "n", T::String, nullptr, "Take name. Default: the file's."},
-                  {"root", "r", T::String, nullptr, "Character root to put it on. Default: the file's."},
+                  nodeFlag({"root", "r", T::String, nullptr, "Character root to put it on. Default: the file's."}, "transform"),
                   {"activate", "a", T::Bool, false, "Switch to the new take."}},
         .run = [](const Args& a) -> json {
             Graph& g = graph();

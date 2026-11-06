@@ -720,7 +720,7 @@ void registerCommands()
                   {"params", "", T::Any, nullptr, "Other layer settings as {key: value} (see fieldLayers for the keys)."},
                   {"points", "", T::List, nullptr, "Components layers: point ids."},
                   {"set", "", T::String, nullptr, "Components layers: take the points of this set's components."},
-                  {"mesh", "", T::String, nullptr, "Proximity layers: the mesh to measure to (connected to the field)."},
+                  nodeFlag({"mesh", "", T::String, nullptr, "Proximity layers: the mesh to measure to (connected to the field)."}, "mesh"),
                   {"index", "", T::Int, nullptr, "Insert at this position, 0 the bottom.", {}, {}, 0.0}},
         .run = [](const Args& a) -> json {
             Graph& graph = g();

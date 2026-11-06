@@ -205,7 +205,7 @@ void registerCommands()
 
     {
         std::vector<FlagDef> flags = {{"path", "", T::String, nullptr, "The .ma or .mb file (or pass it first)."},
-                                      {"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}};
+                                      nodeFlag({"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}, "transform")};
         flags.insert(flags.end(), importFlags().begin(), importFlags().end());
         flags.push_back({"report", "", T::Bool, false, "Return the import report instead of just the names."});
         flags.push_back({"select", "", T::Bool, true, "Select the imported roots."});

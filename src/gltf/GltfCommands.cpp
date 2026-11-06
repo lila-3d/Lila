@@ -87,7 +87,7 @@ void registerCommands()
                "Returns the new node names, or with report=True a dict of nodes, roots, joints, skinClusters, cameras, lights, morphs, "
                "materials, images, takes, take, fps, start, end, curves, skipped, warnings and errors.",
         .positionalDoc = "path",
-        .flags = {{"parent", "p", T::String, nullptr, "Parent the imported roots under this node."},
+        .flags = {nodeFlag({"parent", "p", T::String, nullptr, "Parent the imported roots under this node."}, "transform"),
                   {"skins", "", T::Bool, true, "Rebuild skins as joints and skinClusters with their weights and bind matrices."},
                   {"animation", "anim", T::Bool, true, "Import the animations as curves."},
                   {"take", "", T::String, "", "Import only this animation, by name or index; every animation by default."},

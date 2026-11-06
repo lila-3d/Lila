@@ -483,7 +483,7 @@ std::vector<FlagDef> optionFlags()
     return {
         {"view", "v", T::String, "active", "active, persp, three-quarter, front, back, left, right, side, top, bottom.",
          {"active", "persp", "three-quarter", "front", "back", "left", "right", "side", "top", "bottom"}},
-        {"lookThrough", "lt", T::String, "", "A scene camera to look through, framed as it is, instead of view."},
+        nodeFlag({"lookThrough", "lt", T::String, "", "A scene camera to look through, framed as it is, instead of view."}, "camera"),
         {"yaw", "", T::Float, nullptr, "Perspective angle around the up axis, degrees (0 front, 90 right)."},
         {"pitch", "", T::Float, nullptr, "Perspective elevation, degrees (negative looks down)."},
         {"width", "w", T::Int, nullptr, "Pixels (512 for one view, 320 per tile).", {}, {}, 16.0, 4096.0},

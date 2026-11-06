@@ -445,7 +445,7 @@ void registerPipeToolCommands()
         std::vector<FlagDef> flags = attrFlags("channelModifier");
         std::erase_if(flags, [](const FlagDef& fd) { return fd.name == "enabled" || fd.name == "exportEnabled"; });
         for (FlagDef fd : std::vector<FlagDef>{
-                 {"surface", "", T::String, nullptr, "Mesh to carve (default: the selected mesh)."},
+                 nodeFlag({"surface", "", T::String, nullptr, "Mesh to carve (default: the selected mesh)."}, "mesh"),
                  {"points", "p", T::List, nullptr, "[[x, y, z], ...] world points of a new path curve, instead of path curves."},
                  {"constructionHistory", "ch", T::Bool, true, "Keep the channel live; off applies it."}})
             flags.push_back(std::move(fd));
@@ -509,7 +509,7 @@ void registerPipeToolCommands()
     {
         std::vector<FlagDef> flags = attrFlags("curvePipeRoute");
         for (FlagDef fd : std::vector<FlagDef>{
-                 {"obstacles", "", T::List, nullptr, "Meshes to keep clear of (default: the selected meshes)."},
+                 nodeFlag({"obstacles", "", T::List, nullptr, "Meshes to keep clear of (default: the selected meshes)."}, "mesh"),
                  {"pipe", "", T::Bool, false, "Also build a live pipe along the run."},
                  {"pipeOptions", "", T::Any, nullptr, "{flag: value} for the pipe command (radius, preset, uvLayout ...)."},
                  {"name", "n", T::String, nullptr, "Route curve name; made unique."}})
@@ -555,8 +555,8 @@ void registerPipeToolCommands()
     {
         std::vector<FlagDef> flags = attrFlags("curvePipeSupports");
         for (FlagDef fd : std::vector<FlagDef>{
-                 {"surfaces", "", T::List, nullptr, "Meshes supports reach to (default: the selected meshes that aren't the pipe)."},
-                 {"supportMeshNode", "", T::String, nullptr, "Mesh to place as each support (sets style = mesh)."},
+                 nodeFlag({"surfaces", "", T::List, nullptr, "Meshes supports reach to (default: the selected meshes that aren't the pipe)."}, "mesh"),
+                 nodeFlag({"supportMeshNode", "", T::String, nullptr, "Mesh to place as each support (sets style = mesh)."}, "mesh"),
                  {"name", "n", T::String, nullptr, "Supports mesh name; made unique."}})
             flags.push_back(std::move(fd));
         ops::registerCommand({

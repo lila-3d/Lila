@@ -1430,7 +1430,7 @@ void registerLiveMapCommands()
         .flags = {kProject,
                   {"map", "m", T::String, nullptr, "Only this map id."},
                   {"udim", "ud", T::Int, nullptr, "Only this UDIM tile.", {}, {}, 1001.0},
-                  {"low", "lo", T::String, nullptr, "Only this low (node path)."},
+                  nodeFlag({"low", "lo", T::String, nullptr, "Only this low (node path)."}, "mesh"),
                   kSet},
         .undoable = false,
         .run = [projectOf](const Args& a) -> json {

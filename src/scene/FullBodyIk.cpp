@@ -668,8 +668,8 @@ void registerCommands()
             {"pins", "p", T::List, nullptr,
              "[{'joint': name, 'position': [x, y, z], 'rotation': [x, y, z], 'weight': 1.0}], world space; rotation is "
              "XYZ Euler degrees. position and rotation are each optional."},
-            {"hold", "h", T::List, nullptr, "Joints pinned where they are now (position and rotation)."},
-            {"root", "r", T::String, nullptr, "Top joint of the skeleton to solve; default the first pin's top joint."},
+            nodeFlag({"hold", "h", T::List, nullptr, "Joints pinned where they are now (position and rotation)."}, "joint"),
+            nodeFlag({"root", "r", T::String, nullptr, "Top joint of the skeleton to solve; default the first pin's top joint."}, "joint"),
             {"stiffness", "st", T::Any, nullptr, "{joint: 0..1}: how much each joint resists turning, so its neighbours take the motion."},
             {"moveRoot", "mr", T::Bool, true, "Let the hips move when turning joints is not enough."},
             {"stretch", "str", T::Bool, false,

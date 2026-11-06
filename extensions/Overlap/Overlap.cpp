@@ -933,7 +933,7 @@ void registerCommands(ext::Context& ctx)
         .positionalDoc = "chain root joints (default the selection)",
         .flags = {
             {"name", "n", T::String, nullptr, "Name of a new Overlap node. Default: <root joint>_overlap."},
-            {"end", "e", T::String, nullptr, "Last joint of the chain (one root joint only)."},
+            nodeFlag({"end", "e", T::String, nullptr, "Last joint of the chain (one root joint only)."}, "joint"),
             {"space", "sp", T::String, nullptr, "Simulation space of a new Overlap node.", {"world", "characterRoot", "parent"}},
         },
         .run = [](const Args& a) -> json {

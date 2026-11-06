@@ -192,7 +192,7 @@ void registerCharacterCommands(ext::Context& ctx)
         .positionalDoc = "root joint (default the selection's top joint)",
         .flags = {
             {"name", "n", T::String, nullptr, "Character name; defaults to the root's name plus _character."},
-            {"meshes", "m", T::List, nullptr, "Meshes, instead of those skinned to the skeleton."},
+            nodeFlag({"meshes", "m", T::List, nullptr, "Meshes, instead of those skinned to the skeleton."}, "mesh"),
             {"template", "tp", T::String, nullptr, "Rig template id, instead of the one the skeleton came from."},
             {"poseLibrary", "pl", T::String, nullptr, "Pose library group instead of the template or root name."},
         },

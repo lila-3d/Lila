@@ -313,7 +313,7 @@ void registerJointCommands()
         .flags = {
             {"position", "p", T::Vec3, nullptr, "World position, cm."},
             {"name", "n", T::String, nullptr, "Name; made unique (joints follow the snake_case convention)."},
-            {"parent", "", T::String, nullptr, "Parent; \"\" for a new root even when a joint is selected."},
+            nodeFlag({"parent", "", T::String, nullptr, "Parent; \"\" for a new root even when a joint is selected."}, "transform"),
             {"orientation", "o", T::Vec3, nullptr, "jointOrient, degrees."},
             {"radius", "rad", T::Float, nullptr, "Display radius, cm; defaults to the parent joint's.", {}, {}, 0.0},
             {"segmentScaleCompensate", "ssc", T::Bool, false, "Undo the parent's scale (connects parent.scale)."},
@@ -538,7 +538,7 @@ void registerJointCommands()
         .positionalDoc = "joint",
         .flags = {
             {"count", "c", T::Int, 1, "Joints to insert.", {}, {}, 1.0},
-            {"child", "ch", T::String, nullptr, "Which child bone to split; defaults to the first child joint."},
+            nodeFlag({"child", "ch", T::String, nullptr, "Which child bone to split; defaults to the first child joint."}, "joint"),
         },
         .run = [](const Args& a) -> json {
             Graph& g = graph();

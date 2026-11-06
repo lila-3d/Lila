@@ -293,9 +293,9 @@ std::vector<FlagDef> remeshFlags()
             {"useHardEdges", "", T::Bool, true, "Follow edges marked hard."},
             {"sharpAngle", "", T::Float, 40.0, "Also follow creases sharper than this, degrees; negative disables.", {}, {}, {}, 180.0},
             {"symmetry", "", T::String, "off", "off, x, y or z: remesh half and mirror, exactly symmetric."},
-            {"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."},
+            nodeFlag({"guides", "", T::List, nullptr, "Mesh nodes whose edges are guide curves."}, "mesh"),
             {"guidePoints", "", T::List, nullptr, "Guide polylines as lists of world [x, y, z]."},
-            {"featureGuides", "", T::List, nullptr, "Mesh nodes whose edges get an edge loop laid on them, like a hard edge."},
+            nodeFlag({"featureGuides", "", T::List, nullptr, "Mesh nodes whose edges get an edge loop laid on them, like a hard edge."}, "mesh"),
             {"featureGuidePoints", "", T::List, nullptr, "Feature guide polylines as lists of world [x, y, z]."},
             {"densityHandles", "", T::List, nullptr,
              "Local face size as {position: world [x, y, z], radius, scale}: scale times the edge length at the centre (0.35 to 2.8), easing out to the radius."},
@@ -689,7 +689,7 @@ void registerCommands()
         .positionalDoc = "objects",
         .flags = {{"iterations", "", T::Int, 10, "Smoothing passes, 1 to 1000.", {}, {}, 1.0, 1000.0},
                   {"strength", "", T::Float, 0.5, "Step toward the neighbour average per pass, 0 to 1.", {}, {}, 0.0, 1.0},
-                  {"target", "", T::String, nullptr, "Mesh to stay on; default is the mesh itself."},
+                  nodeFlag({"target", "", T::String, nullptr, "Mesh to stay on; default is the mesh itself."}, "mesh"),
                   {"project", "", T::Bool, true, "Keep points on the surface. Off is plain smoothing, which shrinks and rounds the shape."},
                   {"pinBoundary", "", T::Bool, true, "Keep border points fixed; off lets them slide along the border, keeping its outline."},
                   {"sharpAngle", "", T::Float, 12.0, "Edges whose faces meet sharper than this are creases that keep their line, degrees; negative turns it off.", {}, {}, {}, 180.0},
@@ -752,7 +752,7 @@ void registerCommands()
                "direction, optionally held off the surface by an offset; then relax them on it. Moves only the selected "
                "components when there is a component selection.",
         .positionalDoc = "objects",
-        .flags = {{"target", "", T::String, nullptr, "Mesh to wrap onto."},
+        .flags = {nodeFlag({"target", "", T::String, nullptr, "Mesh to wrap onto."}, "mesh"),
                   {"iterations", "", T::Int, 3, "Relax passes after projecting.", {}, {}, 0.0, 1000.0},
                   {"method", "", T::String, "closest", "closest, normal or direction.", {"closest", "normal", "direction"}},
                   {"direction", "", T::Vec3, json::array({0.0, 0.0, -1.0}), "World direction for method='direction'."},
@@ -814,11 +814,11 @@ void registerCommands()
         .doc = "Retopo Draw: add a face through world points, reusing existing points within weld distance (and its mirror when "
                "the mesh has symmetry). faces= adds several in one step, skipping any that already exist or would make a "
                "non-manifold edge. Creates the mesh when create=True. Returns the mesh name.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
                   {"points", "", T::List, nullptr, "3 or 4 world [x, y, z], in order around the face."},
                   {"faces", "", T::List, nullptr, "Several faces, each a list of 3 or 4 world [x, y, z]."},
                   {"weld", "", T::Float, 0.01, "Reuse points closer than this, cm.", {}, {}, 0.0},
-                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
+                  nodeFlag({"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."}, "mesh"),
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -883,9 +883,9 @@ void registerCommands()
         .name = "retopoDrawSetDots",
         .doc = "Retopo Draw: replace the retopo mesh's dots (the loose points a fill turns into a face) with world points. "
                "Creates the mesh when create=True. Returns the mesh name.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
                   {"dots", "", T::List, json::array(), "World [x, y, z] per dot."},
-                  {"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."},
+                  nodeFlag({"reference", "", T::String, nullptr, "Reference mesh, connected so Retopo Draw resumes on this pair later."}, "mesh"),
                   {"create", "", T::Bool, false, "Create the mesh if it doesn't exist (taking the reference's symmetry)."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
@@ -910,8 +910,8 @@ void registerCommands()
         .name = "retopoDrawSetReference",
         .doc = "Retopo Draw: connect a different reference mesh to the retopo mesh, so drawing continues on that surface and "
                "resumes on it later. Returns the mesh name.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
-                  {"reference", "", T::String, nullptr, "The new reference mesh."}},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
+                  nodeFlag({"reference", "", T::String, nullptr, "The new reference mesh."}, "mesh")},
         .run = [](const Args& a) -> json {
             if (!a.has("reference"))
                 throw CommandError("retopoDrawSetReference: give reference=");
@@ -922,7 +922,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "retopoDrawDelete",
         .doc = "Retopo Draw: delete faces and points (base mesh ids) of the retopo mesh, mirrored with symmetry.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
                   {"faces", "", T::List, json::array(), "Face ids."},
                   {"points", "", T::List, json::array(), "Point ids."}},
         .run = [](const Args& a) -> json {
@@ -947,7 +947,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "retopoDrawMove",
         .doc = "Retopo Draw: move points (base mesh ids) to world positions; mirror partners follow with symmetry.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
                   {"points", "", T::List, json::array(), "Point ids."},
                   {"positions", "", T::List, json::array(), "World [x, y, z] per point."},
                   {"weld", "", T::Float, 0.0, "Merge a moved point into another point closer than this, cm.", {}, {}, 0.0}},
@@ -1008,7 +1008,7 @@ void registerCommands()
     ops::registerCommand({
         .name = "retopoDrawInsertLoop",
         .doc = "Retopo Draw: insert an edge loop across the ring through an edge (base mesh id), mirrored with symmetry.",
-        .flags = {{"mesh", "", T::String, nullptr, "Retopo mesh."},
+        .flags = {nodeFlag({"mesh", "", T::String, nullptr, "Retopo mesh."}, "mesh"),
                   {"edge", "", T::Int, nullptr, "An edge the loop crosses.", {}, {}, 0.0},
                   {"fraction", "", T::Float, 0.5, "Where along the ring edges, 0 to 1.", {}, {}, 0.01, 0.99}},
         .run = [](const Args& a) -> json {

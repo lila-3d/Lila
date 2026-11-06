@@ -553,7 +553,7 @@ void registerTakeCommands()
     };
 
     std::vector<FlagDef> createFlags = {{"name", "n", T::String, nullptr, "Take name."},
-                                        {"root", "r", T::String, nullptr, "Character root; default the whole scene."},
+                                        nodeFlag({"root", "r", T::String, nullptr, "Character root; default the whole scene."}, "transform"),
                                         {"activate", "a", T::Bool, false, "Switch to the new take."}};
     createFlags.insert(createFlags.end(), settings.begin(), settings.end());
     ops::registerCommand({

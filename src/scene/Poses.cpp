@@ -978,7 +978,7 @@ void registerCommands()
         .flags = {
             {"tier", "ti", T::String, "scene", "scene (saved in the scene file), workspace (.lila/poses) or user.", {"scene", "workspace", "user"}},
             {"character", "ch", T::String, nullptr, "The library group; defaults to the selection's character."},
-            {"nodes", "n", T::List, nullptr, "Nodes to save instead of the selection."},
+            nodeFlag({"nodes", "n", T::List, nullptr, "Nodes to save instead of the selection."}, "transform"),
             {"hierarchy", "hi", T::Bool, true, "Include everything under the nodes."},
             {"channels", "c", T::List, nullptr, "Only these channels: translate, rotate, scale or attr names."},
             {"tags", "tg", T::List, nullptr, "Search tags."},
@@ -1032,7 +1032,7 @@ void registerCommands()
         .flags = {
             {"character", "ch", T::String, nullptr, "The library group; defaults to the selection's character."},
             {"tier", "ti", T::String, nullptr, "Only look in this tier.", tierChoices},
-            {"nodes", "n", T::List, nullptr, "Nodes picking the character instead of the selection."},
+            nodeFlag({"nodes", "n", T::List, nullptr, "Nodes picking the character instead of the selection."}, "transform"),
             {"weight", "w", T::Float, 1.0, "0 keeps the current pose, 1 applies the stored one.", {}, {}, 0.0, 1.0},
             {"mirror", "m", T::Bool, false, "Apply to the opposite side (arm_l values onto arm_r)."},
             {"mirrorAxis", "ma", T::String, "x", "Axis the mirror plane faces.", {"x", "y", "z"}},
@@ -1069,7 +1069,7 @@ void registerCommands()
             {"newName", "nn", T::String, nullptr, "Name of the mirrored copy."},
             {"character", "ch", T::String, nullptr, "The library group; defaults to the selection's character."},
             {"tier", "ti", T::String, nullptr, "Where the source is looked up and the copy saved (template copies go to scene).", tierChoices},
-            {"nodes", "n", T::List, nullptr, "Nodes picking the character instead of the selection."},
+            nodeFlag({"nodes", "n", T::List, nullptr, "Nodes picking the character instead of the selection."}, "transform"),
             {"mirrorAxis", "ma", T::String, "x", "Axis the mirror plane faces.", {"x", "y", "z"}},
         },
         .run = [](const Args& a) -> json {

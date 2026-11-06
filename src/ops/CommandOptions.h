@@ -48,6 +48,8 @@ struct Field
     std::string suffix; // " cm", " deg"
     /** A Text field's editor: "multiline" (a box of several lines), "code" (monospace, applied on Ctrl+Enter) or "font" (font pickers); empty is one line. */
     std::string editor;
+    /** A Text or List field naming scene nodes: their type (FlagDef::nodeType), drawn as a node picker. */
+    std::string nodeType;
 };
 
 /** Per-command layout tweaks on top of the generated fields; every member is optional. */

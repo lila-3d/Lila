@@ -387,7 +387,7 @@ void registerSelectAsCommands()
                "With neither target nor clear, returns {joint: target or None} for the joints.",
         .positionalDoc = "joints",
         .flags = {
-            {"target", "t", T::String, nullptr, "Joint (or any node) a click on these selects."},
+            nodeFlag({"target", "t", T::String, nullptr, "Joint (or any node) a click on these selects."}, "transform"),
             {"clear", "c", T::Bool, false, "Remove the redirect."},
         },
         .run = [](const Args& a) -> json {

@@ -87,7 +87,7 @@ void registerAlembicImport()
         .flags = {{"profile", "ax", T::String, "ue5",
                    "Axis profile the file was written in, as exportAlembic's: ue5, ue6 or generic (the scene's axes).", {"ue5", "ue6", "generic"}},
                   {"scale", "sc", T::Float, 1.0, "Multiplies every length (10 undoes an export at 0.1)."},
-                  {"parent", "p", T::String, nullptr, "Parent the new meshes under this node."},
+                  nodeFlag({"parent", "p", T::String, nullptr, "Parent the new meshes under this node."}, "transform"),
                   {"setPlayback", "", T::Bool, true, "Set the playback range to the caches' samples."},
                   {"report", "", T::Bool, false, "Return the import report instead of just the names."},
                   {"select", "", T::Bool, true, "Select the new meshes."}},

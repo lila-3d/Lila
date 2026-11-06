@@ -70,8 +70,8 @@ std::vector<NodeId> listArg(Graph& g, const Args& a, const char* flag, const cha
 std::vector<FlagDef> worldFlags()
 {
     return {
-        {"movable", "mv", T::List, nullptr, "Meshes that may move as well (default: those touching the targets, chained, smaller than the biggest of them x8)."},
-        {"colliders", "co", T::List, nullptr, "Meshes things hit but that never move (default: every visible mesh nearby)."},
+        nodeFlag({"movable", "mv", T::List, nullptr, "Meshes that may move as well (default: those touching the targets, chained, smaller than the biggest of them x8)."}, "mesh"),
+        nodeFlag({"colliders", "co", T::List, nullptr, "Meshes things hit but that never move (default: every visible mesh nearby)."}, "mesh"),
         {"ground", "gr", T::Bool, true, "A floor plane at groundHeight, under everything."},
         {"groundHeight", "gh", T::Float, 0.0, "Height of the floor plane, cm."},
         {"gravity", "g", T::List, json::array({0.0, -981.0, 0.0}), "Gravity, cm/s2."},
@@ -430,7 +430,7 @@ void registerCommands(ext::Context& ctx)
 
     std::vector<FlagDef> dropFlags = worldFlags();
     dropFlags.insert(dropFlags.begin(), {{"height", "h", T::Float, 0.0, "Lift this far first, cm."},
-                                         {"onto", "on", T::String, nullptr, "Drop onto this mesh: moved above its top first (at= picks where)."},
+                                         nodeFlag({"onto", "on", T::String, nullptr, "Drop onto this mesh: moved above its top first (at= picks where)."}, "mesh"),
                                          {"at", "", T::List, nullptr, "With onto=, the world [x, y, z] to drop over; y is ignored."},
                                          {"spin", "sn", T::Float, 0.0, "Random turn given before the drop, degrees, so a row of drops lands varied.", {}, {}, 0.0},
                                          {"seed", "s", T::Int, int64_t(1), "Seed for spin."}});

@@ -628,7 +628,7 @@ void registerGroupCommands()
         .flags = {{"kind", "k", T::String, "auto", "groundTile, tree or auto.", {"auto", "groundTile", "tree"}},
                   {"target", "t", T::String, "substancePainter", "Target profile (bakeTargets)."},
                   {"name", "n", T::String, nullptr, "Project name; <source>_bakeProject by default (reused when it exists)."},
-                  {"lows", "lo", T::List, nullptr, "Tree: scene meshes to bake onto instead of importing the exported low."}},
+                  nodeFlag({"lows", "lo", T::List, nullptr, "Tree: scene meshes to bake onto instead of importing the exported low."}, "mesh")},
         .run = [](const Args& a) -> json { return fromGenerator(a); },
     });
 }

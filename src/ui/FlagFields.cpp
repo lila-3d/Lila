@@ -4,6 +4,7 @@
 #include "ui/FontPicker.h"
 #include "ui/CodeEdit.h"
 #include "ui/MultilineEdit.h"
+#include "ui/NodePicker.h"
 #include "ui/SpinScrub.h"
 #include "ui/ValueReset.h"
 
@@ -100,6 +101,15 @@ json parseList(const QString& text)
         if (QString t = p.trimmed(); !t.isEmpty())
             out.push_back(t.toStdString());
     return out;
+}
+
+/** What an empty node field stands for: the selection when the flag's doc falls back to it, else nothing. */
+QString emptyNodeText(const opt::Field& f, const NodePicker& picker, bool list)
+{
+    const QString doc = QString::fromStdString(f.doc);
+    if (doc.contains("selected", Qt::CaseInsensitive) || doc.contains("selection", Qt::CaseInsensitive))
+        return "Selected " + (list ? picker.pluralText() : picker.typeText());
+    return "None";
 }
 
 QDoubleSpinBox* floatSpin(const opt::Field& f, QWidget* parent)
@@ -215,6 +225,18 @@ FlagFieldWidgets makeFlagField(const opt::Field& f, const json& value, std::func
     {
         bool list = f.kind == opt::FieldKind::List;
         auto str = [](const json& v) { return v.is_string() ? v.get<std::string>() : std::string(); };
+        if (!f.nodeType.empty())
+        {
+            auto* picker = new NodePicker(f.nodeType, list, parent);
+            picker->setValue(value);
+            picker->setSubject(label);
+            picker->setPlaceholder(emptyNodeText(f, *picker, list));
+            QObject::connect(picker, &NodePicker::edited, picker, [changed](const json& v) { changed(v); });
+            out.label = new QLabel(label, parent);
+            out.field = picker;
+            out.set = [picker](const json& v) { picker->setValue(v); };
+            break;
+        }
         if (!list && f.editor == "font")
         {
             auto* picker = new FontPicker(parent);

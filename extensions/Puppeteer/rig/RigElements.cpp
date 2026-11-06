@@ -632,7 +632,7 @@ bool registerRigElements(ext::Context& ctx)
     if (!registerLegacyTypes(ctx))
         return false;
     using T = ArgType;
-    const FlagDef parent{"parent", "p", T::String, nullptr, "Node to put it under; default the joint's character."};
+    const FlagDef parent = nodeFlag({"parent", "p", T::String, nullptr, "Node to put it under; default the joint's character."}, "transform");
 
     ctx.registerCommand({
         .name = "puppeteerIkChain",
@@ -640,8 +640,8 @@ bool registerRigElements(ext::Context& ctx)
                "controller poses the joints' rotations; there is no IK/FK switch. Returns the chain.",
         .positionalDoc = "startJoint endJoint (default the selection)",
         .flags = {
-            {"startJoint", "sj", T::String, nullptr, "First joint."},
-            {"endJoint", "ej", T::String, nullptr, "End effector."},
+            nodeFlag({"startJoint", "sj", T::String, nullptr, "First joint."}, "joint"),
+            nodeFlag({"endJoint", "ej", T::String, nullptr, "End effector."}, "joint"),
             {"solver", "sol", T::String, nullptr, "IK solver; default ik2BoneSolver for three joints, else FABRIK."},
             {"name", "n", T::String, nullptr, "Chain name; default <effector>_ik."},
             parent,
@@ -656,8 +656,8 @@ bool registerRigElements(ext::Context& ctx)
         .positionalDoc = "ankle or its IK chain (default the selection)",
         .flags = {
             {"ankle", "an", T::String, nullptr, "The ankle."},
-            {"ball", "b", T::String, nullptr, "Ball joint; default the ankle's first child joint."},
-            {"toe", "to", T::String, nullptr, "Toe joint; default the ball's first child joint."},
+            nodeFlag({"ball", "b", T::String, nullptr, "Ball joint; default the ankle's first child joint."}, "joint"),
+            nodeFlag({"toe", "to", T::String, nullptr, "Toe joint; default the ball's first child joint."}, "joint"),
             {"name", "n", T::String, nullptr, "Name; default <ankle>_reverseFoot."},
             parent,
         },

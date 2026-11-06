@@ -851,7 +851,7 @@ void registerCommandsHere()
                "straight skeleton, meeting in a ridge where the shape is thinner than the bevel. Quad caps, hard edges by angle, "
                "UVs (caps planar, sides along the outline). Returns [mesh, bevelPlus].",
         .positionalDoc = "curves",
-        .flags = withFlags(attrFlagsWithDefaults("bevelPlus"), {{"profileCurve", "pc", T::String, nullptr, "Curve to use as the custom profile (sets both profiles to custom)."},
+        .flags = withFlags(attrFlagsWithDefaults("bevelPlus"), {nodeFlag({"profileCurve", "pc", T::String, nullptr, "Curve to use as the custom profile (sets both profiles to custom)."}, "curve"),
                                                    chFlag(),
                                                    {"name", "n", T::String, nullptr, "Mesh name; made unique."}}),
         .run = [](const Args& a) -> json {

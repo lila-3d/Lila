@@ -21,7 +21,7 @@ void registerLiveSurfaceCommands()
                "changes, so moving points slides them along it (Maya's Make Live for curves). release=True lets them go again, "
                "back to where they were last moved. Returns the curves.",
         .positionalDoc = "curves (default: the selected curves)",
-        .flags = {{"mesh", "m", T::String, nullptr, "The surface (default: the selected mesh)."},
+        .flags = {nodeFlag({"mesh", "m", T::String, nullptr, "The surface (default: the selected mesh)."}, "mesh"),
                   {"offset", "o", T::Float, nullptr, "Lift off the surface along its normal, cm (default: keep the curve's own, 0 at first)."},
                   {"release", "r", T::Bool, false, "Stop conforming instead."}},
         .run = [](const Args& a) -> json {

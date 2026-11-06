@@ -57,7 +57,19 @@ struct FlagDef
     /** Bounds of an Int or Float flag: calls are clamped to them and option boxes use them as the field's range. */
     std::optional<double> min;
     std::optional<double> max;
+    /**
+     * The node type a String or List flag names ("mesh", "curve", "joint"; "node" for any), so option boxes give it a
+     * node picker. Set it with nodeFlag().
+     */
+    std::string nodeType;
 };
+
+/** `flag` as one naming a scene node of `type` (see FlagDef::nodeType). */
+inline FlagDef nodeFlag(FlagDef flag, std::string type)
+{
+    flag.nodeType = std::move(type);
+    return flag;
+}
 
 /** Normalized call: positional args plus long-name flags, defaults filled in. */
 struct LILA_FOUNDATION_API Args

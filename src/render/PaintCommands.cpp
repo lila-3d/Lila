@@ -802,7 +802,7 @@ void registerCommands()
         .positionalDoc = "set [layer]",
         .flags = {{"stroke", "", T::Any, nullptr, "The stroke record (an object, or its JSON text)."},
                   {"layer", "", T::String, nullptr, "The paint layer (its id)."},
-                  {"mesh", "", T::String, nullptr, "The painted mesh; default the first using the set's material."},
+                  nodeFlag({"mesh", "", T::String, nullptr, "The painted mesh; default the first using the set's material."}, "mesh"),
                   {"payload", "", T::Any, nullptr, "What the stroke writes, when stroke has none."},
                   {"brush", "", T::Any, nullptr, "Brush settings, when stroke has none."},
                   {"points", "", T::List, nullptr, "Screen points [[x, y, pressure]], when stroke has none."},

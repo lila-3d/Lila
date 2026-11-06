@@ -436,7 +436,7 @@ void registerCommands()
 {
     using T = ArgType;
     const FlagDef layerFlag{"layer", "", T::Int, nullptr, "Work on this painted layer of the field the deformer reads (or of the field named).", {}, {}, 0.0};
-    const FlagDef meshFlag{"mesh", "", T::String, nullptr, "For a field's painted layer: the mesh it is painted on."};
+    const FlagDef meshFlag = nodeFlag({"mesh", "", T::String, nullptr, "For a field's painted layer: the mesh it is painted on."}, "mesh");
 
     ops::registerCommand({
         .name = "connectField",

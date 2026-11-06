@@ -200,7 +200,7 @@ void registerCableCommands()
     for (FlagDef fd : std::vector<FlagDef>{
              {"points", "p", T::List, nullptr, "[[x, y, z], ...] world anchor points, made into an anchor curve, instead of anchor curves."},
              {"closed", "c", T::Bool, false, "With points: a cable from the last point back to the first too."},
-             {"colliders", "col", T::List, nullptr, "Meshes to drape over (default: the selected meshes), at most 4."},
+             nodeFlag({"colliders", "col", T::List, nullptr, "Meshes to drape over (default: the selected meshes), at most 4."}, "mesh"),
              {"pipe", "", T::Bool, false, "Also build pipe geometry along the cables (the cable pipe preset, live)."},
              {"pipeRadius", "pr", T::Float, 0.6, "Pipe radius, cm.", {}, {}, 0.0},
              {"pipeSides", "ps", T::Int, 6, "Pipe sides.", {}, {}, 3.0},

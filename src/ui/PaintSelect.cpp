@@ -216,7 +216,7 @@ std::vector<NodeId> objectsUnder(const ViewInfo& view, QPointF at, double radius
     // Rays through the centre and two rings of the brush; each takes the nearest surface it meets if that faces the camera.
     std::vector<QPointF> samples{at};
     for (double ring : {0.5, 1.0})
-        for (int k = 0; k < 8; ++k)
+        for (int k = 0; k < (radiusPx > 0.0 ? 8 : 0); ++k)
         {
             double a = 2.0 * kPi * (k + ring) / 8.0;
             samples.push_back(at + QPointF(std::cos(a), std::sin(a)) * radiusPx * ring);

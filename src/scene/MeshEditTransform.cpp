@@ -922,7 +922,7 @@ void registerMeshEditTransformCommands()
         .flags = {{"by", "", T::Vec3, nullptr, "Offset, cm."},
                   {"normal", "", T::Float, nullptr, "Distance along the vertex normals, cm."},
                   {"uvn", "", T::Vec3, nullptr, "Distances along each point's own U tangent, V tangent and normal, cm."},
-                  {"onto", "", T::List, nullptr, "Meshes whose surface each moved point then lands on, at its closest point."}},
+                  nodeFlag({"onto", "", T::List, nullptr, "Meshes whose surface each moved point then lands on, at its closest point."}, "mesh")},
         .run = [](const Args& a) -> json {
             if (int(a.has("by")) + int(a.has("normal")) + int(a.has("uvn")) != 1)
                 throw CommandError("moveComponents: give one of by=, normal= or uvn=");

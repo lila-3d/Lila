@@ -558,8 +558,8 @@ void registerCommands(ext::Context& ctx)
         {"water", "wa", T::List, nullptr, "Rivers and canals as centrelines: a list of polylines. Only arterials bridge them."},
         {"waterWidth", "ww", T::Float, 2000.0, "Width of the water lines, cm.", {}, {}, 0.0},
         {"attractors", "at", T::List, nullptr, "Points: the first is the centre, the rest are places main roads run to (bridge, harbour, gate)."},
-        {"ground", "gd", T::String, "", "Mesh the settlement stands on (world space). Empty for flat ground."},
-        {"walkable", "wk", T::String, "", "Mesh routes may walk on: a structure's ramps, terraces and floors (world space)."},
+        nodeFlag({"ground", "gd", T::String, "", "Mesh the settlement stands on (world space). Empty for flat ground."}, "mesh"),
+        nodeFlag({"walkable", "wk", T::String, "", "Mesh routes may walk on: a structure's ramps, terraces and floors (world space)."}, "mesh"),
         {"exclusions", "ex", T::List, nullptr, "Regions kept clear: a list of closed polygons [[x, z], ...]."},
         {"exclude", "xo", T::List, nullptr, "Objects kept clear: meshes by their footprint seen from above, curves (closed: their "
                                             "inside; open: a corridor along them)."},
@@ -774,7 +774,7 @@ void registerCommands(ext::Context& ctx)
                "than spacing. Changes nothing.",
         .flags = {{"outline", "o", T::List, nullptr, "Region outline, [[x, z], ...] in cm. Omit for the ground's extent, else a square of size."},
                   {"size", "sz", T::Float, 400000.0, "Side of the square used without an outline or ground, cm.", {}, {}, 0.0},
-                  {"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."},
+                  nodeFlag({"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."}, "mesh"),
                   {"water", "wa", T::List, nullptr, "Rivers as centrelines: a list of polylines."},
                   {"waterWidth", "ww", T::Float, 2000.0, "Width of the rivers, cm.", {}, {}, 0.0},
                   {"count", "c", T::Int, int64_t(5), "How many sites.", {}, {}, 1.0},
@@ -811,7 +811,7 @@ void registerCommands(ext::Context& ctx)
                "the road count and the bridges.",
         .flags = {{"outline", "o", T::List, nullptr, "Region outline, [[x, z], ...] in cm. Omit for the ground's extent, else a square of size."},
                   {"size", "sz", T::Float, 400000.0, "Side of the square used without an outline or ground, cm.", {}, {}, 0.0},
-                  {"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."},
+                  nodeFlag({"ground", "gd", T::String, "", "Ground mesh (world space). Empty for flat ground."}, "mesh"),
                   {"water", "wa", T::List, nullptr, "Rivers as centrelines: a list of polylines."},
                   {"waterWidth", "ww", T::Float, 2000.0, "Width of the rivers, cm.", {}, {}, 0.0},
                   {"cities", "ci", T::Int, int64_t(1), "How many cities.", {}, {}, 0.0},
@@ -1086,7 +1086,7 @@ void registerCommands(ext::Context& ctx)
                "the edit ids, the checks and the counts. Undo removes them; they save with the scene.",
         .positionalDoc = "settlement mesh or its modifier",
         .flags = {{"polygon", "pg", T::List, nullptr, "A closed polygon, [[x, z], ...] in cm."},
-                  {"objects", "ob", T::List, nullptr, "Meshes or curves to keep clear, by name."},
+                  nodeFlag({"objects", "ob", T::List, nullptr, "Meshes or curves to keep clear, by name."}, "mesh|curve"),
                   {"margin", "m", T::Float, 0.0, "Clearance around it, cm.", {}, {}, 0.0},
                   {"name", "n", T::String, nullptr, "A name to find it by."}},
         .run = [](const Args& a) -> json {
@@ -1226,8 +1226,8 @@ void registerCommands(ext::Context& ctx)
                "ground) and walkable (the mesh routes may walk on: a structure's ramps, terraces and floors). Both are live: "
                "editing the meshes re-runs the layout.",
         .positionalDoc = "settlement mesh or its modifier",
-        .flags = {{"ground", "gd", T::String, nullptr, "Ground mesh, or empty for flat ground."},
-                  {"walkable", "wk", T::String, nullptr, "Walkable mesh, or empty for none."}},
+        .flags = {nodeFlag({"ground", "gd", T::String, nullptr, "Ground mesh, or empty for flat ground."}, "mesh"),
+                  nodeFlag({"walkable", "wk", T::String, nullptr, "Walkable mesh, or empty for none."}, "mesh")},
         .run = [](const Args& a) -> json {
             const char* cmd = "settlementSurfaces";
             Graph& g = Graph::current();

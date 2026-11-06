@@ -351,8 +351,8 @@ void registerCreateCommands()
         .flags = {
             {"start", "sp", T::Any, nullptr, "Start: object name or [x, y, z]."},
             {"end", "ep", T::Any, nullptr, "End: object name or [x, y, z]."},
-            {"startParent", "spp", T::String, nullptr, "Parent for the start locator, so it follows that object."},
-            {"endParent", "epp", T::String, nullptr, "Parent for the end locator."},
+            nodeFlag({"startParent", "spp", T::String, nullptr, "Parent for the start locator, so it follows that object."}, "transform"),
+            nodeFlag({"endParent", "epp", T::String, nullptr, "Parent for the end locator."}, "transform"),
             {"attach", "at", T::Bool, true, "From selected vertices: parent the locators to their meshes."},
             {"name", "n", T::String, nullptr, "Name for the measure node."},
             {"skipSelect", "ss", T::Bool, false, "Don't select the new node."},
@@ -439,7 +439,7 @@ void registerCreateCommands()
                "or with neither, the selected components of one mesh (an edge loop or ring of vertices). Returns the node.",
         .flags = {
             {"points", "pts", T::List, nullptr, "Fixed world points, [[x, y, z], ...], at least 3."},
-            {"mesh", "m", T::String, nullptr, "Mesh whose vertices are fitted."},
+            nodeFlag({"mesh", "m", T::String, nullptr, "Mesh whose vertices are fitted."}, "mesh"),
             {"vertices", "vtx", T::List, nullptr, "Vertex ids on mesh."},
             {"display", "d", T::String, "both", "Label shows radius, diameter or both."},
             {"name", "n", T::String, nullptr, "Name for the measure node."},

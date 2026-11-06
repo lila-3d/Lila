@@ -160,6 +160,13 @@ LILA_UI_API ViewportTool* active();
 /** Asks every viewport to redraw, e.g. after a brush stroke. */
 LILA_UI_API void requestRedraw();
 
+/**
+ * A mesh drawn with the preselection highlight whatever the preselection pref, for tools that pick objects (the node
+ * picker's eyedropper). kNoNode for none.
+ */
+LILA_UI_API void setHoverHighlight(scene::NodeId id);
+LILA_UI_API scene::NodeId hoverHighlight();
+
 LILA_UI_API int addListener(std::function<void()> fn);
 LILA_UI_API void removeListener(int id);
 
