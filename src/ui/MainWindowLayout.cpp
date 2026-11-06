@@ -27,6 +27,9 @@ void MainWindow::restoreLayout()
             if (name.is_string())
                 tearOffs.push_back(name.get<std::string>());
         tearoff::recreate(this, tearOffs);
+        // The saved state already has every own-column dock where it was; arranged on first show, they would be placed
+        // from geometry the restored layout hasn't applied yet.
+        holdOwnColumns(this);
         restoreState(QByteArray::fromBase64(QByteArray::fromStdString(state)));
         panels::hideToolPalettes(this);
         toolBox::place(this);
