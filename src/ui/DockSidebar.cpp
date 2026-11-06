@@ -311,6 +311,10 @@ void arrangeOwnColumn(QDockWidget* dock)
     column.rect.setWidth(std::max(areaRight - areaLeft + 1 - othersWidth - handles, dock->property(kDefaultTabExtent).toInt()));
     columns.insert(right ? columns.begin() : columns.end(), std::vector<DockGroup>{column});
 
+    // Qt applies a layout restored for a maximized window lazily, keeping a copy of it that shares the layout's items;
+    // splits and tabs apply it first, removals don't, so a removal would leave the copy pointing at deleted items. A
+    // split of the dock against itself applies it and takes the dock out (it isn't found to split against).
+    window->splitDockWidget(dock, dock, Qt::Horizontal);
     // Shown again straight away: Qt places hidden docks unreliably, and the moves below carry shown ones. The layout
     // stays off until every dock is back: showing one runs it, and half rebuilt it still holds the removed docks' items.
     QLayout* layout = window->layout();

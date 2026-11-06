@@ -996,6 +996,7 @@ void registerPatternEditor(ext::Context& ctx)
                       .create = makePatternEditor,
                       .icon = "shirt",
                       .open = false,
-                      .docs = "tailor"});
+                      .docs = "tailor",
+                      .ownColumn = true});
 }
 } // namespace tailor

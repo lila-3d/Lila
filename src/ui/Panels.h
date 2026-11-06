@@ -62,6 +62,8 @@ struct Panel
     int floatHeight = 750;
     /** A docs page ("topology", "essentials?id=filter-the-outliner") for a help button in the dock's title bar; empty for none. */
     std::string docs;
+    /** A wide editor: docked at the side, it takes a full-height column of its own beside the channel box, like the UV Editor. */
+    bool ownColumn = false;
 };
 
 LILA_UI_API Registry<Panel>& registry();

@@ -306,6 +306,8 @@ void MainWindow::createPanelDock(const panels::Panel& p)
         d->setWindowIcon(icon(QString::fromStdString(p.icon)));
     if (!p.docs.empty())
         setDockDocs(d, p.docs);
+    if (p.ownColumn)
+        keepOwnColumn(d);
     if (p.place)
         p.place(d);
     if (!p.open)
