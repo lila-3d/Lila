@@ -55,7 +55,7 @@ std::vector<double> rowOffsets(const StitchOptions& o)
     return out;
 }
 
-std::vector<StitchDef> layout(double len, bool closed, const StitchOptions& o)
+std::vector<StitchDef> stitchLayout(double len, bool closed, const StitchOptions& o)
 {
     std::vector<StitchDef> out;
     double L = std::max(0.01, o.length);
@@ -147,7 +147,7 @@ StitchResult buildStitches(double pathLength, bool closed, const StitchSurface& 
     StitchResult res;
     if (!surface)
         return res;
-    const std::vector<StitchDef> defs = layout(pathLength, closed, o);
+    const std::vector<StitchDef> defs = stitchLayout(pathLength, closed, o);
     const int segs = std::clamp(o.segments, 2, 64), sides = std::clamp(o.sides, 3, 32), plies = std::clamp(o.plies, 1, 3);
     const double r = std::max(1e-4, o.diameter * 0.5), flat = 1.0 - std::clamp(o.flatten, 0.0, 0.95);
     const double rp = r * plyFraction(plies), plyOff = r - rp;
