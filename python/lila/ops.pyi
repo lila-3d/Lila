@@ -6504,11 +6504,11 @@ def putOnTurntable(*objects: Any) -> Any:
     """
 
 def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = None, targetFaces: int | None = None, countTolerance: float | None = None, timeout: float | None = None, targetEdgeLength: float | None = None, adaptivity: float | None = None, useHardEdges: bool | None = None, sharpAngle: float | None = None, symmetry: str | None = None, guides: Sequence[Any] | None = None, guidePoints: Sequence[Any] | None = None, featureGuides: Sequence[Any] | None = None, featureGuidePoints: Sequence[Any] | None = None, densityHandles: Sequence[Any] | None = None, pureQuads: bool | None = None, jointDensity: float | None = None, jointDensityReach: float | None = None, jointPoleAvoidance: float | None = None, edgesAround: int | None = None, resolveGaps: bool | None = None, seamless: bool | None = None, poles: Sequence[Any] | None = None, relaxIterations: int | None = None, transferUvs: bool | None = None, transferNormals: bool | None = None, keepSource: bool | None = None, hideSource: bool | None = None, name: str | None = None) -> Any:
-    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, with UVs (and optionally normals) transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
+    """Auto quad remesh: a new all-quad mesh whose edge flow follows curvature, hard edges and guide curves, at about the target face count, optionally with UVs and normals transferred from the source. Open borders, sharp creases, crease corners and cone tips are kept. Where the shape is too thin or tight for the requested size (a strip narrower than the edge length) it retries finer, so the face count can come out higher. The kept source is hidden. Runs off the UI thread with a cancellable progress bar, and gives up after timeout= seconds with an error saying how far it got, changing nothing. Returns {name, metrics, layout, attempts: [{layout, faces, defects, irregular}] for every layout tried, notes: where the result departs from what was asked}, and with poles= where each pole landed: {point, position, valence, valenceMatched}, or null where none came out near it.
 
     Args:
         objects: source.
-        preset: Starting settings for what the mesh is for; flags set to other than their default win. One of 'none', 'gameCharacter', 'midPoly', 'hero', 'stylized', 'hardSurface', 'prop'. Default 'none'.
+        preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
@@ -6532,7 +6532,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         seamless: Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower. Default True.
         poles: The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports.
         relaxIterations: Tangential relax passes on the surface. Default 6.
-        transferUvs: Copy UV sets from the source. Default True.
+        transferUvs: Copy UV sets from the source. Default False.
         transferNormals: Copy the source's normals as custom normals. Default False.
         keepSource: Keep the source mesh; false deletes it. Default True.
         hideSource: Hide the kept source mesh. Default True.
@@ -7155,7 +7155,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
 
     Args:
         objects: source.
-        preset: Starting settings for what the mesh is for; flags set to other than their default win. One of 'none', 'gameCharacter', 'midPoly', 'hero', 'stylized', 'hardSurface', 'prop'. Default 'none'.
+        preset: Starting settings for what the mesh is for: gameCharacter, midPoly, hero, stylized, hardSurface, prop, or the name of a preset saved from the option box. Flags set to other than their default win. Default 'none'.
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
