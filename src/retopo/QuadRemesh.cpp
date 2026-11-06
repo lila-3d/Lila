@@ -1059,6 +1059,8 @@ struct Work
     geo::SymmetryPlane plane;
     double h = 0.0, cf = 1.0;
     std::vector<double> scale;
+    /** The spacing before gaps and thin parts capped it. */
+    std::vector<double> uncapped;
     FieldOptions fo;
     std::string error;
 
@@ -1188,6 +1190,7 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
         scale.resize(n);
         for (Index v = 0; v < n; ++v)
             scale[v] = cf * h / std::sqrt(rho[v]);
+        w.uncapped = scale;
         if (opts.resolveGaps && closedSource)
             fitGaps(s, w.src, bvh, scale);
         if (opts.edgesAround > 0 && closedSource)
@@ -1430,23 +1433,29 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     // The seamless solve evens its spacing out over the whole surface, softening local changes (handles, joints, thin
     // parts); asking for half again the contrast brings back about what was asked.
     std::vector<double> seamScale = scale;
+    if (w.uncapped.size() == scale.size())
     {
         constexpr double kGain = 1.5;
-        std::vector<double> sorted = scale;
+        const std::vector<double>& u = w.uncapped;
+        std::vector<double> sorted = u;
         std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
-        const double mid = sorted[sorted.size() / 2], gain = kGain;
-        for (double& x : seamScale)
-            x = mid * std::pow(x / mid, gain);
-        // Same number of cells overall: only the contrast changes.
+        const double mid = sorted[sorted.size() / 2];
+        std::vector<double> gained(u.size());
         double before = 0.0, after = 0.0;
-        for (Index v = 0; v < Index(scale.size()); ++v)
+        for (Index v = 0; v < Index(u.size()); ++v)
         {
-            before += s.area[v] / (scale[v] * scale[v]);
-            after += s.area[v] / (seamScale[v] * seamScale[v]);
+            gained[v] = mid * std::pow(u[v] / mid, kGain);
+            before += s.area[v] / (u[v] * u[v]);
+            after += s.area[v] / (gained[v] * gained[v]);
         }
-        if (before > 0.0 && after > 0.0)
-            for (double& x : seamScale)
-                x *= std::sqrt(after / before);
+        // Same number of cells overall: only the contrast changes. Gap and thin-part caps are hard limits, so they
+        // hold as they were rather than getting the extra contrast.
+        const double k = before > 0.0 && after > 0.0 ? std::sqrt(after / before) : 1.0;
+        for (Index v = 0; v < Index(u.size()); ++v)
+        {
+            const double g = gained[v] * k;
+            seamScale[v] = scale[v] < 0.999 * u[v] ? std::min(scale[v], g) : g;
+        }
     }
     auto trySeamless = [&](int foldRetries) {
         std::vector<std::array<int, 2>> steps;
