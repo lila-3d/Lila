@@ -116,11 +116,17 @@ void relaxAlongFeatures(geo::Mesh& m, const std::vector<FeatureKind>& feature, c
                 return;
             if (seamAxis >= 0 && std::abs(at[seamAxis]) < 0.35 * h && m.isBoundaryPoint(p))
             {
-                // The mirror of a neighbour off the plane averages with it onto the plane, so only its other coordinates count.
+                // A neighbour off the plane has a mirror twin, so it counts twice; the pair averages onto the plane, so only
+                // its other coordinates count.
                 glm::dvec3 sum(0.0);
+                double weight = 0.0;
                 for (Index o : nb[p])
-                    sum += m.position(o);
-                glm::dvec3 target = glm::mix(at, sum / double(nb[p].size()), 0.5);
+                {
+                    const double w = std::abs(m.position(o)[seamAxis]) < 0.35 * h && m.isBoundaryPoint(o) ? 1.0 : 2.0;
+                    sum += w * m.position(o);
+                    weight += w;
+                }
+                glm::dvec3 target = glm::mix(at, sum / weight, 0.5);
                 target[seamAxis] = 0.0;
                 geo::BvhClosest c;
                 if (bvh.closestPoint(target, c))
@@ -316,12 +322,14 @@ void removeValence2(geo::Mesh& m, std::vector<FeatureKind>& feature)
 /**
  * On the half of a symmetric remesh, folds each quad with three corners in a row on the seam (the middle one with no
  * other edge) into its fourth corner's row: the outer two seam corners merge at their midpoint. Left in, the middle
- * corner mirrors into a valence 2 point and the fourth into a valence 6 pair, a diamond on the seam.
+ * corner mirrors into a valence 2 point and the fourth into a valence 6 pair, a diamond on the seam. The rows round each
+ * merge relax again, so they don't pinch in to it.
  */
-void collapseSeamWedges(geo::Mesh& m, int axis, double tolerance)
+void collapseSeamWedges(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, int axis, double tolerance)
 {
     LILA_ZONE();
 
+    std::vector<Index> merged;
     auto onSeam = [&](Index p) { return m.isBoundaryPoint(p) && std::abs(m.position(p)[axis]) <= tolerance; };
     for (bool changed = true; changed;)
     {
@@ -364,9 +372,112 @@ void collapseSeamWedges(geo::Mesh& m, int axis, double tolerance)
             for (const auto& fp : rebuilt)
                 m.addFace(fp);
             m.setPosition(a, mid);
+            merged.push_back(a);
             changed = true;
         }
     }
+    if (merged.empty())
+        return;
+    std::vector<Index> region;
+    std::vector<uint8_t> in(m.pointCapacity(), 0);
+    for (Index p : merged)
+        if (m.pointValid(p) && !in[p])
+        {
+            in[p] = 1;
+            region.push_back(p);
+        }
+    for (int ring = 0; ring < 8; ++ring)
+        for (size_t i = 0, n = region.size(); i < n; ++i)
+            m.forEachPointEdge(region[i], [&](Index e) {
+                const Index q = m.edgeOtherPoint(e, region[i]);
+                if (!in[q])
+                {
+                    in[q] = 1;
+                    region.push_back(q);
+                }
+            });
+    const std::vector<glm::vec3> normals = geo::pointNormals(m);
+    for (int it = 0; it < 20; ++it)
+        for (Index p : region)
+        {
+            if (p < feature.size() && feature[p] != FeatureKind::None)
+                continue;
+            const bool seam = onSeam(p);
+            glm::dvec3 avg(0.0);
+            double weight = 0.0;
+            m.forEachPointEdge(p, [&](Index e) {
+                const Index q = m.edgeOtherPoint(e, p);
+                const double w = seam && !onSeam(q) ? 2.0 : 1.0;
+                avg += w * m.position(q);
+                weight += w;
+            });
+            if (weight == 0.0)
+                continue;
+            glm::dvec3 target = glm::mix(m.position(p), avg / weight, 0.5);
+            if (!seam)
+            {
+                const glm::dvec3 n(normals[p]);
+                target -= n * glm::dot(n, target - m.position(p));
+            }
+            geo::BvhClosest c;
+            if (bvh.closestPoint(target, c))
+                target = c.point;
+            if (seam)
+                target[axis] = 0.0;
+            m.setPosition(p, target);
+        }
+}
+
+/**
+ * On the half of a symmetric remesh, each seam point with one edge off the seam moves to the point of its two seam edges
+ * nearest that edge's other end, back on the surface, so the row meets the seam square and crosses it straight instead
+ * of in a V. Staying on its own seam edges keeps the seam's order.
+ */
+void straightenSeamRows(geo::Mesh& m, const std::vector<FeatureKind>& feature, const geo::MeshBvh& bvh, int axis, double tolerance)
+{
+    LILA_ZONE();
+
+    auto onSeam = [&](Index p) { return m.isBoundaryPoint(p) && std::abs(m.position(p)[axis]) <= tolerance; };
+    std::vector<std::pair<Index, glm::dvec3>> moves;
+    for (Index p = 0; p < m.pointCapacity(); ++p)
+    {
+        if (!m.pointValid(p) || !onSeam(p))
+            continue;
+        Index across = geo::kInvalid;
+        std::vector<Index> along;
+        m.forEachPointEdge(p, [&](Index e) {
+            const Index q = m.edgeOtherPoint(e, p);
+            if (onSeam(q))
+                along.push_back(q);
+            else
+                across = across == geo::kInvalid ? q : geo::kInvalid - 1;
+        });
+        // The seam's own bends read as corners; a crease leaving across the seam is a real one and stays.
+        if (along.size() != 2 || across >= geo::kInvalid - 1 || (across < feature.size() && feature[across] != FeatureKind::None))
+            continue;
+        const glm::dvec3 at = m.position(p), q = m.position(across);
+        glm::dvec3 best = at;
+        double bestDist = glm::length(q - at);
+        for (Index s : along)
+        {
+            // Only the half of each seam edge nearest p, so neighbours moving the same way can't cross.
+            const glm::dvec3 d = 0.5 * (m.position(s) - at);
+            const double t = std::clamp(glm::dot(q - at, d) / std::max(glm::dot(d, d), 1e-30), 0.0, 0.8);
+            const glm::dvec3 c = at + t * d;
+            if (glm::length(q - c) < bestDist)
+            {
+                bestDist = glm::length(q - c);
+                best = c;
+            }
+        }
+        geo::BvhClosest c;
+        if (bvh.closestPoint(best, c))
+            best = c.point;
+        best[axis] = 0.0;
+        moves.push_back({p, best});
+    }
+    for (const auto& [p, at] : moves)
+        m.setPosition(p, at);
 }
 
 /**
@@ -1233,7 +1344,8 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
                     at[axis] = 0.0;
                     m.setPosition(p, at);
                 }
-            collapseSeamWedges(m, axis, 1e-9 * h);
+            collapseSeamWedges(m, feature, bvh, axis, 1e-9 * h);
+            straightenSeamRows(m, feature, bvh, axis, 1e-9 * h);
             geo::MirrorOptions mo;
             mo.plane = plane;
             mo.weld = true;
