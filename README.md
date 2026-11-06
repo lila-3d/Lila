@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > **Under construction: pre-alpha.** Expect crashes, missing features, lost work, and an excessive and rapid quantity of commits. Testers welcome: report issues on the [Lila Dev Discord](https://discord.gg/kx3jxkksmf) (open until release).
-> <br>Access is currently only available via `git clone` until ready for alpha-testing at earliest (TBD).
+> <br>**Use `git clone`, not Download ZIP.** Pre-alpha has no version numbers, so the commit is the only way to tell whether a bug you report is already fixed. A zip has no commit. Run `git pull` before reporting.
 
 3D app for game assets: Maya-style workflow, modern multithreaded core, Unreal-first pipeline.
 
