@@ -2661,6 +2661,16 @@ struct Renderer::Impl
     }
 
     /** Copies the vertices edited since the last frame into the GPU copies of dynamic meshes. Runs before rendering begins. */
+    /** The mesh holding the live vertices d draws from: its own, or the one it shares vertices with. Null when static. */
+    static const std::shared_ptr<const RenderMesh>* liveSource(const MeshDraw& d)
+    {
+        if (!d.mesh)
+            return nullptr;
+        if (d.mesh->dynamic)
+            return &d.mesh;
+        return d.mesh->shareVertices && d.mesh->shareVertices->dynamic ? &d.mesh->shareVertices : nullptr;
+    }
+
     /** dynamic, when given, lists the indices of the draws with dynamic meshes, so the rest needn't be looked at. */
     void prepareDynamicMeshes(VkCommandBuffer cmd, Frame& f, const FrameState& s, const std::vector<uint32_t>* dynamic = nullptr)
     {
@@ -2672,17 +2682,18 @@ struct Renderer::Impl
         const size_t count = dynamic ? dynamic->size() : s.meshes.size();
         for (size_t k = 0; k < count; ++k)
         {
-            const MeshDraw& d = s.meshes[dynamic ? (*dynamic)[k] : k];
-            if (!d.mesh || !d.mesh->dynamic)
+            const std::shared_ptr<const RenderMesh>* live = liveSource(s.meshes[dynamic ? (*dynamic)[k] : k]);
+            if (!live)
                 continue;
-            auto it = meshCache.find(d.mesh->key);
+            const std::shared_ptr<const RenderMesh>& mesh = *live;
+            auto it = meshCache.find(mesh->key);
             if (it == meshCache.end())
             {
-                gpuMesh(d.mesh);
+                gpuMesh(mesh);
                 continue;
             }
-            DynamicVertices& dv = *d.mesh->dynamic;
-            if (!dv.pending.exchange(false, std::memory_order_acquire) && it->second.keep == d.mesh)
+            DynamicVertices& dv = *mesh->dynamic;
+            if (!dv.pending.exchange(false, std::memory_order_acquire) && it->second.keep == mesh)
                 continue;
             regions.clear();
             data.clear();
@@ -2717,9 +2728,9 @@ struct Renderer::Impl
             }
             // Every snapshot of a live mesh shares one key, so the wire's points come from whichever copy was uploaded first.
             GpuMesh& g = it->second;
-            const bool edgesStale = g.keep != d.mesh && !d.mesh->edgePoints.empty() && d.mesh->edgePoints.size() == g.edgePointCount;
-            if (g.keep != d.mesh)
-                g.keep = d.mesh;
+            const bool edgesStale = g.keep != mesh && !mesh->edgePoints.empty() && mesh->edgePoints.size() == g.edgePointCount;
+            if (g.keep != mesh)
+                g.keep = mesh;
             if (regions.empty() && !edgesStale)
                 continue;
             if (first)
@@ -2738,8 +2749,8 @@ struct Renderer::Impl
             }
             if (edgesStale)
             {
-                const size_t bytes = d.mesh->edgePoints.size() * sizeof(glm::vec3);
-                AllocatedBuffer staging = createBuffer(d.mesh->edgePoints.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                const size_t bytes = mesh->edgePoints.size() * sizeof(glm::vec3);
+                AllocatedBuffer staging = createBuffer(mesh->edgePoints.data(), bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                 f.staging.push_back(staging);
                 const VkBufferCopy region{0, 0, bytes};
                 vkCmdCopyBuffer(cmd, staging.buffer, g.edges.buffer, 1, &region);
@@ -3460,7 +3471,7 @@ struct Renderer::Impl
                     memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                            VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                                            VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
-                if (!buildBlas(cmd, f, *g, uint32_t(source.vertices.size()), d.mesh->dynamic != nullptr, g->blas != VK_NULL_HANDLE))
+                if (!buildBlas(cmd, f, *g, uint32_t(source.vertices.size()), liveSource(d) != nullptr, g->blas != VK_NULL_HANDLE))
                     continue;
                 built = true;
             }
@@ -4451,7 +4462,7 @@ struct Renderer::Impl
             v.keptContactsValid = false;
             v.keptDynamic.clear();
             for (size_t i = 0; i < s.meshes.size(); ++i)
-                if (s.meshes[i].mesh && s.meshes[i].mesh->dynamic)
+                if (liveSource(s.meshes[i]))
                     v.keptDynamic.push_back(uint32_t(i));
         }
         prepareTextures(cmd, f, s, v.offscreen ? nullptr : &v);
