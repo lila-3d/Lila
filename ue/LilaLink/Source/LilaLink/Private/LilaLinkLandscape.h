@@ -17,3 +17,27 @@ namespace LilaLink
  */
 void AddLandscapeMethods(TMap<FString, FLilaLinkMethod>& Methods);
 } // namespace LilaLink
+
+class ALandscape;
+class UMaterial;
+class ULandscapeLayerInfoObject;
+
+/** The landscape send's building blocks, shared with the region import (LilaLinkLandscapeRegions.cpp). */
+namespace LilaLink::Landscape
+{
+UWorld* EditorWorld();
+/** The landscape Lila's terrain id sent, or null. */
+ALandscape* FindLandscape(UWorld* World, const FString& Id);
+FName LandscapeTag(const FString& Id);
+/** Same vertex count and section layout. */
+bool HasLayout(ALandscape* Landscape, int32 SizeX, int32 SizeY, int32 QuadsPerSection, int32 SectionsPerComponent);
+/** A flat landscape at the encoding's zero, ready for heights on the Lila edit layer. */
+ALandscape* CreateFlatLandscape(UWorld* World, const FString& Label, const FVector& Location, const FRotator& Rotation, const FVector& Scale, int32 SizeX,
+	int32 SizeY, int32 QuadsPerSection, int32 SectionsPerComponent);
+/** The "Lila" edit layer's guid, made when missing. */
+FGuid LilaEditLayer(ALandscape* Landscape);
+/** M_<Label> on MF_LilaLandscapeLayer sampling these layers. */
+UMaterial* GeneratedMaterial(const FString& Label, const TArray<FName>& Layers, TArray<FString>& OutCreated, TArray<FString>& OutWarnings);
+/** LI_<Layer> next to the landscape's material, made when missing. */
+ULandscapeLayerInfoObject* LayerInfoFor(const FString& Label, FName Layer, TArray<FString>& OutCreated);
+} // namespace LilaLink::Landscape

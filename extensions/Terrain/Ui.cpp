@@ -31,6 +31,7 @@ void registerUi(ext::Context& ctx)
         {"terrain.create", "Terrain", "terrainCreate", "Make a fractal noise terrain as a geometry-nodes heightfield.", "terrainCreate(size=[100000, 100000])"},
         {"terrain.erode", "Erode Terrain", "terrainErode", "Carve rivers and shed steep slopes on the selected terrain.", "terrainErode('Terrain', iterations=80)"},
         {"terrain.toMesh", "Terrain to Mesh", "terrainToMesh", "A plain mesh copy of the selected terrain as it is now.", "terrainToMesh('Terrain', step=2)"},
+        {"terrain.tiles", "Terrain Tiles", "terrainTiles", "Cut the selected terrain into LOD mesh tiles with collision.", "terrainTiles('Terrain', tileSize=257)"},
         {"terrain.bake", "Bake Terrain", "terrainBake", "Collapse the selected terrain's node graph into a .lilahf file.", "terrainBake('Terrain')"},
         {"terrain.export", "Export Terrain", "terrainExport", "Write the selected terrain to files for an engine or another tool.", "terrainExport('Terrain', target='files')"},
         {"terrain.sendToUnreal", "Send Terrain to Unreal", "terrainSendToUnreal", "Send the selected terrain to the connected Unreal editor as a Landscape.",
@@ -63,7 +64,7 @@ void registerUi(ext::Context& ctx)
     menus::addItem(ctx, {.id = "terrain.menu",.menu = levelToolkit::kMenu, .kind = menus::Kind::Submenu, .label = "Terrain",
                          .after = levelToolkit::kBuildSection});
     int separators = 0;
-    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "", "terrain.toMesh", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
+    for (const char* a : {"terrain.create", "terrain.import", "terrain.erode", "terrain.sculpt", "", "terrain.toMesh", "terrain.tiles", "terrain.bake", "terrain.export", "terrain.sendToUnreal"})
     {
         if (*a)
             menus::addItem(ctx, {.id = std::string("terrain.menu.") + a, .menu = "Level/Terrain", .action = a});

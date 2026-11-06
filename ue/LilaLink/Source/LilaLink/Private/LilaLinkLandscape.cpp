@@ -651,3 +651,52 @@ void LilaLink::AddLandscapeMethods(TMap<FString, FLilaLinkMethod>& Methods)
 	Methods.Add(TEXT("setLandscape"), LilaLink::Sync(&SetLandscape));
 	Methods.Add(TEXT("removeLandscape"), LilaLink::Sync(&RemoveLandscape));
 }
+
+namespace LilaLink::Landscape
+{
+UWorld* EditorWorld()
+{
+	return ::EditorWorld();
+}
+
+ALandscape* FindLandscape(UWorld* World, const FString& Id)
+{
+	return FindTaggedLandscape(World, TagFor(Id));
+}
+
+FName LandscapeTag(const FString& Id)
+{
+	return TagFor(Id);
+}
+
+bool HasLayout(ALandscape* Landscape, int32 SizeX, int32 SizeY, int32 QuadsPerSection, int32 SectionsPerComponent)
+{
+	return SameLayout(Landscape, SizeX, SizeY, QuadsPerSection, SectionsPerComponent);
+}
+
+ALandscape* CreateFlatLandscape(UWorld* World, const FString& Label, const FVector& Location, const FRotator& Rotation, const FVector& Scale, int32 SizeX,
+	int32 SizeY, int32 QuadsPerSection, int32 SectionsPerComponent)
+{
+	return CreateLandscape(World, Label, Location, Rotation, Scale, SizeX, SizeY, QuadsPerSection, SectionsPerComponent);
+}
+
+FGuid LilaEditLayer(ALandscape* Landscape)
+{
+	return LilaLayer(Landscape);
+}
+
+UMaterial* GeneratedMaterial(const FString& Label, const TArray<FName>& Layers, TArray<FString>& OutCreated, TArray<FString>& OutWarnings)
+{
+	TArray<FLayerSend> Sends;
+	for (const FName& Name : Layers)
+	{
+		Sends.AddDefaulted_GetRef().Name = Name;
+	}
+	return LandscapeMaterial(Label, Sends, OutCreated, OutWarnings);
+}
+
+ULandscapeLayerInfoObject* LayerInfoFor(const FString& Label, FName Layer, TArray<FString>& OutCreated)
+{
+	return LayerInfo(Label, Layer, OutCreated);
+}
+} // namespace LilaLink::Landscape
