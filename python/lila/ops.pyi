@@ -6525,7 +6525,7 @@ def quadRemesh(*objects: Any, method: str | None = None, targetFaces: int | None
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.5.
         jointPoleAvoidance: Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off. Default 30.0.
-        edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 8.
+        edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 12.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
         seamless: Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower. Default True.
         poles: The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports.
@@ -7170,7 +7170,7 @@ def retopoPoles(*objects: Any, method: str | None = None, targetFaces: int | Non
         pureQuads: All quads; false allows a few triangles and pentagons. Default True.
         jointDensity: Extra faces at joints, armpits and finger webs, where the mesh bends: 0 none, 1 about three times as dense there. Default 0.5.
         jointPoleAvoidance: Keeps poles out of joints, armpits and finger webs; higher pushes them further onto flatter parts. 0 off. Default 30.0.
-        edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 8.
+        edgesAround: Thin round parts of a closed shape, like fingers, get at least this many edges round them, at the cost of faces elsewhere; 0 off. Default 12.
         resolveGaps: Finer where the surface comes close to itself across a gap (a ball in a pocket), so the gap isn't bridged; costs faces. Default True.
         seamless: Also try a global layout that only turns at the poles, with close poles merged or spread apart; kept when it is as clean with fewer irregular points. Slower. Default True.
         poles: The poles the edge flow turns at, as {position: world [x, y, z], valence: 3 or 5}, and nowhere else. Start from retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports.
