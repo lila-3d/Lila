@@ -260,6 +260,7 @@ const std::unordered_map<std::string_view, std::string_view>& defaultIcons()
     {"curve.pipePresetConduit", "pipeline"},
     {"curve.cableTool", "plug"},
     {"curve.cable", "plug"},
+    {"curve.stitch", "needle"},
     {"curve.pipeRouteTool", "route-alt-left"},
     {"curve.pipeSupports", "building-bridge"},
     {"curve.carveChannel", "shovel"},

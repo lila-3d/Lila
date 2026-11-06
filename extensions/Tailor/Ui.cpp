@@ -130,6 +130,10 @@ void registerUi(ext::Context& ctx)
     actions::add(ctx, {.id = "tailor.mannequin", .label = "Mannequin", .category = "Tailor",
                        .doc = "Make a stand-in body to drape garments onto; blocks fit whatever body they drape onto.",
                        .python = "tailorMannequin(height=180, chest=96)", .command = "tailorMannequin", .call = nlohmann::json::object()});
+    actions::add(ctx, {.id = "tailor.addStitching", .label = "Add Stitching", .category = "Tailor",
+                       .doc = "Sew thread along the selected garment's seams, laid out on the pattern and bending with the cloth.",
+                       .python = "tailorAddStitching('Garment', preset='topstitch')", .command = "tailorAddStitching",
+                       .call = nlohmann::json::object(), .icon = "needle"});
     actions::add(ctx, {.id = "tailor.bake", .label = "Bake to Game Mesh", .category = "Tailor",
                        .doc = "Make a plain mesh from the selected garment's drape, skinned like its collider when that is skinned.",
                        .python = "tailorBake('Garment')", .command = "tailorBake", .call = nlohmann::json::object()});
@@ -177,7 +181,7 @@ void registerUi(ext::Context& ctx)
     int sep = 0;
     for (const char* a : {"tailor.mannequin", "tailor.createBlock", "tailor.drawPanel", "tailor.importGarmentCode", "", "tailor.simulate", "tailor.setFabric",
                           "tailor.sew", "tailor.autoSew", "tailor.check", "window.tailorPatternEditor", "", "tailor.live", "tailor.stopLive", "tailor.grab",
-                          "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "",
+                          "tailor.pin", "tailor.fold", "tailor.shrink", "tailor.steam", "tailor.clearBrush", "", "tailor.freeze", "tailor.unfreeze", "", "tailor.addStitching",
                           "tailor.bake", "layout.apply.Tailor"})
     {
         if (*a)

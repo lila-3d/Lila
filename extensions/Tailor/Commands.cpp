@@ -650,6 +650,122 @@ std::optional<TrimFrame> frameAtPattern(const geo::Mesh& d, int panel, const Vec
     return out;
 }
 
+/** frameAtPattern for many lookups: each panel's outer triangles bucketed in a grid over the flat pattern. */
+class PatternLocator
+{
+public:
+    explicit PatternLocator(const geo::Mesh& d) : mMesh(d)
+    {
+        const std::span<const int32_t> owner = d.faceAttrs().get<int32_t>("panel");
+        const std::span<const int32_t> side = d.faceAttrs().get<int32_t>("side");
+        const std::span<const glm::vec2> fabric = d.cornerAttrs().get<glm::vec2>(geo::attr::uvName(1));
+        if (owner.empty() || fabric.empty())
+            return;
+        for (geo::Index f = 0; f < d.faceCapacity(); ++f)
+        {
+            if (!d.faceValid(f) || (!side.empty() && side[f] != int32_t(GarmentSurface::Outer)))
+                continue;
+            const std::vector<geo::Index> c = d.faceCorners(f);
+            if (c.size() != 3)
+                continue;
+            mPanels[owner[f]].tris.push_back({{glm::dvec2(fabric[c[0]]), glm::dvec2(fabric[c[1]]), glm::dvec2(fabric[c[2]])},
+                                              {d.cornerPoint(c[0]), d.cornerPoint(c[1]), d.cornerPoint(c[2])}});
+        }
+        for (auto& [panel, grid] : mPanels)
+            grid.build();
+    }
+
+    std::optional<TrimFrame> at(int panel, const Vec2& p) const
+    {
+        const auto it = mPanels.find(panel);
+        if (it == mPanels.end())
+            return std::nullopt;
+        const Grid& g = it->second;
+        const glm::dvec2 q(p[0], p[1]);
+        const int cx = std::clamp(int((q.x - g.lo.x) / g.cell), 0, g.nx - 1), cy = std::clamp(int((q.y - g.lo.y) / g.cell), 0, g.ny - 1);
+        Hit best;
+        for (int y = std::max(0, cy - 1); y <= std::min(g.ny - 1, cy + 1); ++y)
+            for (int x = std::max(0, cx - 1); x <= std::min(g.nx - 1, cx + 1); ++x)
+                for (int t : g.cells[size_t(y * g.nx + x)])
+                    test(g.tris[size_t(t)], q, best);
+        // Off the panel or in a sparse corner: every triangle of it.
+        if (best.off > 0.0)
+            for (const Tri& t : g.tris)
+                test(t, q, best);
+        if (!best.tri)
+            return std::nullopt;
+        const glm::dvec3 p0 = mMesh.position(best.tri->pt[0]), p1 = mMesh.position(best.tri->pt[1]), p2 = mMesh.position(best.tri->pt[2]);
+        return TrimFrame{p0 + (p1 - p0) * best.v + (p2 - p0) * best.w, glm::normalize(glm::cross(p1 - p0, p2 - p0))};
+    }
+
+private:
+    struct Tri
+    {
+        std::array<glm::dvec2, 3> uv;
+        std::array<geo::Index, 3> pt;
+    };
+    struct Hit
+    {
+        const Tri* tri = nullptr;
+        double off = 1e30, v = 0.0, w = 0.0;
+    };
+    struct Grid
+    {
+        std::vector<Tri> tris;
+        glm::dvec2 lo{0.0};
+        double cell = 1.0;
+        int nx = 1, ny = 1;
+        std::vector<std::vector<int>> cells;
+
+        void build()
+        {
+            glm::dvec2 hi(-1e30);
+            lo = glm::dvec2(1e30);
+            double area = 0.0;
+            for (const Tri& t : tris)
+            {
+                for (const glm::dvec2& u : t.uv)
+                {
+                    lo = glm::min(lo, u);
+                    hi = glm::max(hi, u);
+                }
+                const glm::dvec2 e1 = t.uv[1] - t.uv[0], e2 = t.uv[2] - t.uv[0];
+                area += std::abs(e1.x * e2.y - e2.x * e1.y) * 0.5;
+            }
+            cell = std::max(1e-5, 2.0 * std::sqrt(area / std::max<size_t>(1, tris.size())));
+            nx = std::clamp(int((hi.x - lo.x) / cell) + 1, 1, 1024);
+            ny = std::clamp(int((hi.y - lo.y) / cell) + 1, 1, 1024);
+            cells.assign(size_t(nx * ny), {});
+            for (size_t k = 0; k < tris.size(); ++k)
+            {
+                glm::dvec2 a = glm::min(glm::min(tris[k].uv[0], tris[k].uv[1]), tris[k].uv[2]);
+                glm::dvec2 b = glm::max(glm::max(tris[k].uv[0], tris[k].uv[1]), tris[k].uv[2]);
+                for (int y = std::clamp(int((a.y - lo.y) / cell), 0, ny - 1); y <= std::clamp(int((b.y - lo.y) / cell), 0, ny - 1); ++y)
+                    for (int x = std::clamp(int((a.x - lo.x) / cell), 0, nx - 1); x <= std::clamp(int((b.x - lo.x) / cell), 0, nx - 1); ++x)
+                        cells[size_t(y * nx + x)].push_back(int(k));
+            }
+        }
+    };
+
+    static void test(const Tri& t, const glm::dvec2& q, Hit& best)
+    {
+        const glm::dvec2 e1 = t.uv[1] - t.uv[0], e2 = t.uv[2] - t.uv[0], rel = q - t.uv[0];
+        const double den = e1.x * e2.y - e2.x * e1.y;
+        if (std::abs(den) < 1e-14)
+            return;
+        double v = (rel.x * e2.y - e2.x * rel.y) / den, w = (e1.x * rel.y - rel.x * e1.y) / den;
+        const double off = std::max({0.0, -v, -w, v + w - 1.0});
+        if (off >= best.off)
+            return;
+        v = std::clamp(v, 0.0, 1.0);
+        w = std::clamp(w, 0.0, 1.0 - v);
+        best = {&t, off, v, w};
+    }
+
+    const geo::Mesh& mMesh;
+    std::map<int, Grid> mPanels;
+};
+
 /** Builds a mesh from quads and triangles given as point lists, cm. */
 geo::Mesh polyMesh(const std::vector<glm::dvec3>& pts, const std::vector<std::vector<geo::Index>>& faces)
 {
@@ -788,6 +904,20 @@ std::pair<int, Vec2> pointAlongSides(const Garment& gm, const std::vector<SeamSi
     return {last.panel, gm.panels[size_t(last.panel)].outline[size_t(last.to)]};
 }
 
+/** A new mesh node holding made (drape space, cm), latched to the garment's cloth (rigidly per piece, or bending with it). Returns [mesh, binding]. */
+json latchMesh(Graph& g, Node& op, const MeshPtr& made, const MeshPtr& drape, const std::string& name, bool rigid)
+{
+    Node* out = g.createNode(*types::find("mesh"), name, kNoNode, true);
+    g.setValue({out->id(), MeshNode::kInMesh, -1}, made);
+    Node* bind = g.createNode(*types::find(kBindingType), {}, kNoNode, true);
+    g.setValue({bind->id(), plugIndex(*bind, "restMesh")}, made);
+    g.setValue({bind->id(), plugIndex(*bind, "bindSim")}, drape);
+    g.setValue({bind->id(), plugIndex(*bind, "rigid")}, rigid);
+    g.connect({op.id(), plugIndex(op, "outMesh")}, {bind->id(), plugIndex(*bind, "simMesh")});
+    g.connect({bind->id(), plugIndex(*bind, "outMesh")}, {out->id(), MeshNode::kInMesh});
+    return json::array({out->path(), bind->path()});
+}
+
 /**
  * Copies of a trim, each standing on the cloth at a frame with its +Z out of the cloth and +Y upright, latched rigidly to
  * the cloth. along (when set) turns each copy's +Y to that direction instead. Returns [mesh, binding].
@@ -825,18 +955,40 @@ json placeTrims(Graph& g, Node& op, const geo::Mesh& trim, const std::vector<Tri
                 idx.push_back(remap[v]);
         }
     }
-    auto made = std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(all, sizes, idx));
-    if (!Graph::validName(name))
-        name = "Trims";
-    Node* out = g.createNode(*types::find("mesh"), name, kNoNode, true);
-    g.setValue({out->id(), MeshNode::kInMesh, -1}, MeshPtr(made));
-    Node* bind = g.createNode(*types::find(kBindingType), {}, kNoNode, true);
-    g.setValue({bind->id(), plugIndex(*bind, "restMesh")}, MeshPtr(made));
-    g.setValue({bind->id(), plugIndex(*bind, "bindSim")}, drape);
-    g.setValue({bind->id(), plugIndex(*bind, "rigid")}, true);
-    g.connect({op.id(), plugIndex(op, "outMesh")}, {bind->id(), plugIndex(*bind, "simMesh")});
-    g.connect({bind->id(), plugIndex(*bind, "outMesh")}, {out->id(), MeshNode::kInMesh});
-    return json::array({out->path(), bind->path()});
+    return latchMesh(g, op, std::make_shared<geo::Mesh>(geo::Mesh::fromPolygons(all, sizes, idx)), drape, Graph::validName(name) ? name : "Trims", true);
+}
+
+/**
+ * Thread along chains of outline runs, laid out on the flat pattern (rows going inward from insetCm) and lifted onto the
+ * drape, latched to the cloth so it bends with it. Returns [mesh, binding, stitches].
+ */
+json stitchAlong(Graph& g, Node& op, const Garment& gm, const std::vector<std::vector<SeamSide>>& chains, const MeshPtr& drape,
+                 curve::StitchOptions o, double insetCm, const std::string& name)
+{
+    const PatternLocator locate(*drape);
+    o.align = curve::StitchAlign::Left;
+    o.offset += insetCm;
+    geo::Mesh all;
+    int count = 0;
+    for (const std::vector<SeamSide>& sides : chains)
+    {
+        const double len = double(seamSideLength(gm, sides)) * kCmPerM;
+        const auto surface = [&](double s, double x) -> std::optional<curve::SurfacePoint> {
+            const auto [panel, at] = pointAlongSides(gm, sides, float(std::min(s, len) / kCmPerM), float(x / kCmPerM));
+            const std::optional<TrimFrame> f = locate.at(panel, at);
+            if (!f)
+                return std::nullopt;
+            return curve::SurfacePoint{f->at, f->normal};
+        };
+        curve::StitchResult r = curve::buildStitches(len, false, surface, o);
+        count += r.stitches;
+        all.append(r.mesh);
+    }
+    if (count == 0)
+        throw CommandError("tailorAddStitching: no stitches fit on those edges");
+    json out = latchMesh(g, op, std::make_shared<geo::Mesh>(std::move(all)), drape, Graph::validName(name) ? name : "Stitching", false);
+    out.push_back(count);
+    return out;
 }
 
 /** Trims at pattern points, placed where the drape has them now. */
@@ -2087,6 +2239,109 @@ void registerCommands(ext::Context& ctx)
         .examples = {"tailorAddTrim('Coat', shape='button', points=[[0, 130, 16], [0, 118, 17], [0, 106, 17]])",
                      "tailorAddTrim('Coat', mesh='SM_Buckle', points=[[0, 100, 16]])",
                      "tailorAddTrim('Onesie', mesh='Tooth', along='Hood L:0:1', count=2, spin=180)"},
+    });
+
+    ctx.registerCommand({
+        .name = "tailorAddStitching",
+        .doc = "Topstitch a garment: thread sewn along its seams (every seam, or the ones given) or along any edges, laid out on "
+               "the flat pattern so rows keep their spacing however the cloth drapes, and latched to the cloth so it bends with "
+               "it. Real geometry with plies and UVs along the thread, as the stitch command makes along curves. Returns "
+               "[mesh, binding, stitches].",
+        .positionalDoc = "garment",
+        .flags = {{"preset", "p", T::String, json(), "Starting settings (flags given as well win).", curve::stitchPresetNames()},
+                  {"seams", "s", T::List, json(), "Seam indices to stitch; default every seam."},
+                  {"seamSide", "ss", T::String, "both", "Which side of each seam: both, a or b.", {"both", "a", "b"}},
+                  {"along", "al", T::String, json(), "Edges to stitch instead of seams, as tailorSew sides, e.g. \"Hood L:0:1\" (hems, pockets)."},
+                  {"inset", "in", T::Float, 0.4, "First row in from the edge, cm.", {}, {}, -5.0, 20.0},
+                  {"pattern", "pt", T::String, json(), "running, zigzag, cross or blanket.", {"running", "zigzag", "cross", "blanket"}},
+                  {"stitchLength", "sl", T::Float, json(), "Each stitch's length, cm.", {}, {}, 0.01, 10.0},
+                  {"stitchGap", "sg", T::Float, json(), "Between stitches, cm.", {}, {}, 0.0, 10.0},
+                  {"rotation", "ro", T::Float, json(), "Running: each stitch's slant, degrees.", {}, {}, -90.0, 90.0},
+                  {"stitchWidth", "sw", T::Float, json(), "Zigzag, cross and blanket: reach across the line, cm.", {}, {}, 0.0, 10.0},
+                  {"rows", "r", T::Int, json(), "Parallel rows, going inward.", {}, {}, 1.0, 16.0},
+                  {"rowSpacing", "rs", T::Float, json(), "Between rows, cm.", {}, {}, 0.0, 10.0},
+                  {"diameter", "d", T::Float, json(), "Thread thickness, cm.", {}, {}, 0.001, 2.0},
+                  {"flatten", "fl", T::Float, json(), "0 round, toward 1 pressed flat.", {}, {}, 0.0, 0.95},
+                  {"plies", "pl", T::Int, json(), "Strands twisted into the thread.", {}, {}, 1.0, 3.0},
+                  {"twist", "tw", T::Float, json(), "Ply turns per cm.", {}, {}, 0.0, 20.0},
+                  {"restHeight", "rh", T::Float, json(), "Thread's underside off the cloth, cm; negative sinks it in.", {}, {}, -1.0, 1.0},
+                  {"insetDepth", "id", T::Float, json(), "How deep the thread dives into its holes, cm.", {}, {}, 0.0, 2.0},
+                  {"jitter", "j", T::Float, json(), "Hand-sewn wobble; 0 is machine-even.", {}, {}, 0.0, 1.0},
+                  {"seed", "sd", T::Int, json(), "The wobble's seed."},
+                  {"name", "n", T::String, "Stitching", "Name of the new mesh."}},
+        .run = [](const Args& a) -> json {
+            Graph& g = Graph::current();
+            Node& op = garmentArg(g, a, "tailorAddStitching");
+            curve::StitchOptions o;
+            if (a.has("preset"))
+            {
+                const std::optional<curve::StitchOptions> p = curve::stitchPreset(a.get<std::string>("preset"));
+                if (!p)
+                    throw CommandError("tailorAddStitching: unknown preset " + a.get<std::string>("preset"));
+                o = *p;
+            }
+            if (a.has("pattern"))
+            {
+                const std::string p = a.get<std::string>("pattern");
+                o.pattern = p == "zigzag" ? curve::StitchPattern::Zigzag
+                            : p == "cross" ? curve::StitchPattern::Cross
+                            : p == "blanket" ? curve::StitchPattern::Blanket
+                                             : curve::StitchPattern::Running;
+            }
+            const auto num = [&](const char* flag, double& to) {
+                if (a.has(flag))
+                    to = a.get<double>(flag);
+            };
+            const auto whole = [&](const char* flag, int& to) {
+                if (a.has(flag))
+                    to = int(a.get<int64_t>(flag));
+            };
+            num("stitchLength", o.length);
+            num("stitchGap", o.gap);
+            num("rotation", o.rotation);
+            num("stitchWidth", o.width);
+            whole("rows", o.rows);
+            num("rowSpacing", o.rowSpacing);
+            num("diameter", o.diameter);
+            num("flatten", o.flatten);
+            whole("plies", o.plies);
+            num("twist", o.twist);
+            num("restHeight", o.restHeight);
+            num("insetDepth", o.inset);
+            num("jitter", o.jitter);
+            if (a.has("seed"))
+                o.seed = uint32_t(a.get<int64_t>("seed"));
+
+            const Garment gm = readGarment(op);
+            std::vector<std::vector<SeamSide>> chains;
+            if (a.has("along"))
+                chains.push_back(parseSides(gm, a.get<std::string>("along"), "tailorAddStitching"));
+            else
+            {
+                std::vector<int> which;
+                if (a.has("seams"))
+                    for (const json& s : a.flags["seams"])
+                        which.push_back(s.get<int>());
+                else
+                    for (int k = 0; k < int(gm.seams.size()); ++k)
+                        which.push_back(k);
+                const std::string side = a.get<std::string>("seamSide");
+                for (int k : which)
+                {
+                    if (k < 0 || k >= int(gm.seams.size()))
+                        throw CommandError("tailorAddStitching: no seam " + std::to_string(k) + " (the garment has " + std::to_string(gm.seams.size()) + ")");
+                    if (side != "b" && !gm.seams[size_t(k)].a.empty())
+                        chains.push_back(gm.seams[size_t(k)].a);
+                    if (side != "a" && !gm.seams[size_t(k)].b.empty())
+                        chains.push_back(gm.seams[size_t(k)].b);
+                }
+            }
+            if (chains.empty())
+                throw CommandError("tailorAddStitching: the garment has no seams; sew some or give along");
+            return stitchAlong(g, op, gm, chains, drapedMesh(g, op, "tailorAddStitching"), o, a.get<double>("inset"), a.get<std::string>("name"));
+        },
+        .examples = {"tailorAddStitching('Jacket', preset='denim')", "tailorAddStitching('Onesie', seams=[0, 3], seamSide='a', rows=2)",
+                     "tailorAddStitching('Onesie', along='Hood L:2:5', pattern='blanket', inset=0)"},
     });
 
     ctx.registerCommand({

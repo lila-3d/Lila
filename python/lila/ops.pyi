@@ -8768,6 +8768,45 @@ def splitRingsEditSelection(*objects: Any) -> Any:
         objects: modifier or mesh.
     """
 
+def stitch(*objects: Any, pattern: str | None = None, stitchLength: float | None = None, stitchGap: float | None = None, rotation: float | None = None, stitchWidth: float | None = None, rows: int | None = None, rowSpacing: float | None = None, rowAlign: str | None = None, offset: float | None = None, diameter: float | None = None, flatten: float | None = None, plies: int | None = None, twist: float | None = None, restHeight: float | None = None, insetDepth: float | None = None, jitter: float | None = None, seed: int | None = None, continuousUv: bool | None = None, uvScale: float | None = None, uvRandom: float | None = None, sides: int | None = None, segments: int | None = None, up: Sequence[float] | None = None, preset: str | None = None, surface: str | None = None, constructionHistory: bool | None = None, name: str | None = None, srf: str | None = None, ch: bool | None = None, n: str | None = None) -> Any:
+    """Sew thread along curves: running (saddle with rotation), zigzag, cross or blanket stitches, in rows, as real geometry arching in and out of the surface with twisted plies and UVs along the thread. Sits on a mesh when one is given. Live: editing the curve, the mesh or the settings updates the stitches. Returns [mesh, curveStitch] per curve.
+
+    Args:
+        objects: curves (default: the selected curves).
+        pattern: How the thread runs: dashes, side-to-side diagonals, an X per stitch, or legs across joined along the line. One of 'running', 'zigzag', 'cross', 'blanket'.
+        stitchLength: Each stitch's length along the line, cm.
+        stitchGap: Between stitches, cm.
+        rotation: Running: each stitch turned in the surface, degrees (a saddle stitch's slant).
+        stitchWidth: Zigzag, cross and blanket: how far across the line a stitch reaches, cm.
+        rows: Parallel rows of stitches.
+        rowSpacing: Between rows, cm.
+        rowAlign: Where extra rows go: centred on the line or to one side. One of 'center', 'left', 'right'.
+        offset: The stitching moved across the line, cm.
+        diameter: Thread thickness, cm.
+        flatten: 0 round, toward 1 a flat ribbon pressed into the surface.
+        plies: Strands twisted into the thread.
+        twist: Turns of the plies per cm of thread.
+        restHeight: How far the thread's underside sits off the surface, cm; negative sinks it in.
+        insetDepth: How deep the thread dives into its holes, cm.
+        jitter: Hand-sewn wobble in spacing, angle and length; 0 is machine-even.
+        seed: The wobble's seed.
+        continuousUv: V runs on along the line from stitch to stitch; off, each stitch starts at 0.
+        uvScale: Texture repeats per thread circumference along V.
+        uvRandom: Each stitch's V shifted by up to this much at random.
+        sides: Sides round each ply.
+        segments: Rings along each stitch.
+        up: With no surface mesh: which way is out of the surface along the curve.
+        preset: Starting settings (flags given as well win). One of 'running', 'topstitch', 'saddle', 'denim', 'heavyLeather', 'zigzag', 'cross', 'blanket'.
+        surface: The mesh the stitches sit on (default: the selected mesh). Leave out for none. Short form srf.
+        constructionHistory: Keep the stitch node so editing the curve or settings updates the stitches. Short form ch. Default True.
+        name: Mesh name; made unique. Short form n.
+
+    Examples:
+        stitch('SeamCurve', surface='Shoe', preset='heavyLeather')
+
+        stitch('Hem', pattern='zigzag', stitchWidth=0.6, rows=2)
+    """
+
 def stop() -> Any:
     """Stop playback."""
 

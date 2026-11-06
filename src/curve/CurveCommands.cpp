@@ -906,6 +906,7 @@ void registerCommands()
     registerAlongCommands();
     registerContourCommands();
     registerCableCommands();
+    registerStitchCommands();
     registerStrapCommands();
     registerLiveSurfaceCommands();
     registerEzCurveCommand();

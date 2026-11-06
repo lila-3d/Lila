@@ -962,6 +962,7 @@ void registerTypes()
     registerAlongTypes();
     registerContourType();
     registerCableType();
+    registerStitchType();
     registerStrapTypes();
     registerVehicleTypes();
     registerProvider();

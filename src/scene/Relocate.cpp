@@ -1836,6 +1836,7 @@ void registerBuiltins()
     registerWorldAttrs("projectCurve", {.directions = {"direction"}, .worldData = {"inCurve"}, .worldOutput = true});
     registerWorldAttrs("curveBlend", {.worldData = {"curveA", "curveB"}, .worldOutput = true});
     registerWorldAttrs("curveCable", {.directions = {"gravity"}, .worldOutput = true});
+    registerWorldAttrs("curveStitch", {.matrices = {"surfaceMatrix"}, .directions = {"up"}, .worldOutput = true});
     registerWorldAttrs("curveContour", {.points = {"origin"}, .directions = {"axis"}, .worldOutput = true});
     registerWorldAttrs("curvePipe", {.pointLists = {"startLoop"}, .worldData = {"path"}, .worldOutput = true});
     registerWorldAttrs("curveRevolve", {.points = {"axisOrigin"}, .directions = {"axis"}, .worldData = {"profile"}, .worldOutput = true});

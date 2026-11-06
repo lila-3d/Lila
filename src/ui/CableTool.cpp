@@ -375,5 +375,12 @@ void registerCableTool()
                   .python = ops::toPython("cable", json::object()),
                   .command = "cable",
                   .call = json::object()});
+    actions::add({.id = "curve.stitch",
+                  .label = "Stitch",
+                  .category = "Curves",
+                  .doc = "Sews live thread along the selected curves: running, saddle, zigzag, cross or blanket stitches; a selected mesh is what they sit on.",
+                  .python = ops::toPython("stitch", json::object()),
+                  .command = "stitch",
+                  .call = json::object()});
 }
 } // namespace lila::ui
