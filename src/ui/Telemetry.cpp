@@ -1,6 +1,7 @@
 #include "ui/Telemetry.h"
 
 #include "core/CrashUpload.h"
+#include "core/FileBytes.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/PrefStore.h"
@@ -90,7 +91,7 @@ void writeJson(const fs::path& file, const json& j)
             return;
         out << j.dump();
     }
-    fs::rename(tmp, file, ec);
+    renameRetrying(tmp, file);
 }
 } // namespace
 

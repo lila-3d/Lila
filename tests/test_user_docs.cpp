@@ -130,7 +130,7 @@ TEST_CASE("docs: an archive installs atomically and a bad one keeps the last goo
     fs::path zip = t.path / "a.zip";
     writeZip(zip, siteEntries("# First\n"));
     std::string error;
-    REQUIRE(docs::installArchive(zip, cache, "main", kShaA, &error));
+    REQUIRE_MESSAGE(docs::installArchive(zip, cache, "main", kShaA, &error), error);
     fs::path dir = docs::cacheDirFor(cache, "main");
     CHECK(readFile(dir / "docs" / "README.md") == "# First\n");
     CHECK(fs::exists(dir / "assets" / "vendor" / "docsify" / "docsify.min.js"));
@@ -139,7 +139,7 @@ TEST_CASE("docs: an archive installs atomically and a bad one keeps the last goo
     SUBCASE("a newer archive replaces it")
     {
         writeZip(zip, siteEntries("# Second\n"));
-        REQUIRE(docs::installArchive(zip, cache, "main", kShaB, &error));
+        REQUIRE_MESSAGE(docs::installArchive(zip, cache, "main", kShaB, &error), error);
         CHECK(readFile(dir / "docs" / "README.md") == "# Second\n");
         CHECK(docs::stampSha(dir) == kShaB);
     }

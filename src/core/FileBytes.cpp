@@ -2,9 +2,12 @@
 
 #include <tbb/parallel_for.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <fstream>
 #include <stdexcept>
+#include <thread>
 
 namespace lila
 {
@@ -46,5 +49,27 @@ void writeFileBytes(const std::filesystem::path& path, std::string_view bytes)
     });
     if (failed)
         throw std::runtime_error("can't write " + path.string());
+}
+
+std::error_code renameRetrying(const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    using namespace std::chrono;
+    const auto giveUp = steady_clock::now() + seconds(2);
+    auto wait = milliseconds(5);
+    std::error_code ec;
+    for (;;)
+    {
+        std::filesystem::rename(from, to, ec);
+#ifdef _WIN32
+        // ERROR_ACCESS_DENIED and ERROR_SHARING_VIOLATION: someone else has a handle open.
+        const bool held = ec.value() == 5 || ec.value() == 32;
+#else
+        const bool held = false;
+#endif
+        if (!ec || !held || steady_clock::now() >= giveUp)
+            return ec;
+        std::this_thread::sleep_for(wait);
+        wait = std::min(wait * 2, milliseconds(100));
+    }
 }
 } // namespace lila

@@ -1,5 +1,6 @@
 #include "ui/Docs.h"
 
+#include "core/FileBytes.h"
 #include "core/Paths.h"
 #include "core/Profile.h"
 #include "core/Version.h"
@@ -325,19 +326,17 @@ bool installArchive(const fs::path& zip, const fs::path& cacheRoot, std::string_
     bool hadOld = fs::exists(finalDir, ec);
     if (hadOld)
     {
-        fs::rename(finalDir, old, ec);
-        if (ec)
+        if (renameRetrying(finalDir, old))
         {
             fs::remove_all(tmp, ec);
             return fail("the current copy is in use: " + paths::toUtf8(finalDir));
         }
     }
-    fs::rename(tmp, finalDir, ec);
-    if (ec)
+    if (std::error_code moved = renameRetrying(tmp, finalDir))
     {
-        std::string msg = ec.message();
+        std::string msg = moved.message();
         if (hadOld)
-            fs::rename(old, finalDir, ec);
+            renameRetrying(old, finalDir);
         fs::remove_all(tmp, ec);
         return fail("cannot move the new copy in place: " + msg);
     }

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <random>
 
 #include <miniz.h>
 
@@ -19,9 +20,26 @@ namespace fs = std::filesystem;
 
 namespace
 {
+/** A per-process root, so concurrent runs of lila_tests (build and build-night) never share a queue file. */
+struct TelemetryRoot
+{
+    fs::path path;
+    TelemetryRoot()
+    {
+        std::random_device rd;
+        path = fs::temp_directory_path() / ("lila_test_telemetry_" + std::to_string(rd()));
+    }
+    ~TelemetryRoot()
+    {
+        std::error_code ec;
+        fs::remove_all(path, ec);
+    }
+};
+
 fs::path telemetryDir(const char* name)
 {
-    fs::path dir = fs::temp_directory_path() / "lila_test_telemetry" / name;
+    static TelemetryRoot root;
+    fs::path dir = root.path / name;
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir);
