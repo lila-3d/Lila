@@ -6512,7 +6512,7 @@ def quadRemesh(*objects: Any, preset: str | None = None, method: str | None = No
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
-        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 60.0.
+        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
         useHardEdges: Follow edges marked hard. Default True.
@@ -7158,7 +7158,7 @@ def retopoPoles(*objects: Any, preset: str | None = None, method: str | None = N
         method: field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise. Default 'field'.
         targetFaces: Approximate face count. Default 3000.
         countTolerance: Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try. Default 0.1.
-        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever. Default 60.0.
+        timeout: Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits until done or aborted. Default 0.0.
         targetEdgeLength: Edge length, cm; overrides targetFaces when positive. Default 0.0.
         adaptivity: 0 uniform, 1 much denser where curved; painted point 'density' multiplies. Default 0.25.
         useHardEdges: Follow edges marked hard. Default True.
