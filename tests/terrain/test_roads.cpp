@@ -1,11 +1,15 @@
 #include "TestUtil.h"
 #include "Roads.h"
+#include "Stamps.h"
 #include "Terrain.h"
 
 #include "geo/Heightfield.h"
+#include "math/MathCore.h"
 
 #include <doctest/doctest.h>
+#include <tbb/task_arena.h>
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -402,8 +406,87 @@ TEST_CASE("roads: commands lay, list, route, build, export and protect roads on 
     CHECK(worstKept < 0.01);
     CHECK(run("terrainInfo", {{"args", {t2["mesh"]}}})["masks"].contains("wear"));
 
-    json removed = run("terrainRoadRemove", {{"args", {mesh}}, {"ids", {"farm"}}});
-    CHECK(removed.size() == 1);
+    // A road following a curve.
+    const std::string trail = run("curve", {{"points", {{-30000.0, 0.0, -60000.0}, {-10000.0, 0.0, -50000.0}, {20000.0, 0.0, -65000.0}}}, {"type", "poly"}, {"name", "Trail"}});
+    json follows = run("terrainAddRoad", {{"args", {mesh, trail}}, {"kind", "path"}, {"id", "trail"}});
+    CHECK(follows["applied"].get<bool>());
+    CHECK(follows["maxGrade"].get<double>() <= 15.0 + 1e-6);
+    CHECK(follows["length"].get<double>() > 40000.0);
+
+    json removed = run("terrainRoadRemove", {{"args", {mesh}}, {"ids", {"farm", "trail"}}});
+    CHECK(removed.size() == 2);
     CHECK(run("terrainRoads", {{"args", {mesh}}})["layers"]["Roads"].size() == 1);
     fs::remove_all(dir);
+}
+
+TEST_CASE("roads: on a Z-up scene a road lies on XY with its surface up Z, and its mesh banks the same way")
+{
+    loadTerrain();
+    math::setUpAxis(math::UpAxis::Z);
+    run("newScene");
+    json t = run("terrainCreate", {{"size", {100000.0, 100000.0}}, {"resolution", 513}, {"amplitude", 2000.0}, {"seed", 3}, {"name", "ZRoads"}});
+    json r = run("terrainAddRoad", {{"args", {t["mesh"]}}, {"id", "z"}, {"path", {{-40000.0, -30000.0}, {0.0, 25000.0}, {40000.0, -20000.0}}}, {"detail", true}});
+    CHECK(r["applied"].get<bool>());
+    CHECK(r["maxGrade"].get<double>() <= 8.0 + 1e-6);
+    const json& line = r["centreline"];
+    double worst = 0.0;
+    for (size_t i = line.size() / 10; i < line.size() * 9 / 10; i += line.size() / 20)
+    {
+        const json s = run("terrainSample", {{"args", {t["mesh"]}}, {"points", {{line[i][0], line[i][1]}}}})[0];
+        worst = std::max(worst, std::abs(s["height"].get<double>() - line[i][2].get<double>()));
+    }
+    CHECK(worst < 2.0);
+    json built = run("terrainRoadBuild", {{"args", {t["mesh"]}}});
+    REQUIRE(built.size() == 1);
+    json data = run("meshData", {{"args", {built[0]["surface"]}}, {"worldSpace", true}});
+    REQUIRE(data["points"].size() > 50);
+    // The swept surface sits on the road: every vertex within the paved width is near the centreline's height there.
+    const double half = r["pavedWidth"].get<double>() * 0.5;
+    size_t near = 0;
+    double off = 0.0;
+    for (size_t i = 0; i < line.size(); i += 40)
+    {
+        const glm::dvec2 c(line[i][0].get<double>(), line[i][1].get<double>());
+        for (const json& p : data["points"])
+            if (glm::length(glm::dvec2(p[0].get<double>(), p[1].get<double>()) - c) < half * 1.05)
+            {
+                ++near;
+                off = std::max(off, std::abs(p[2].get<double>() - line[i][2].get<double>()));
+            }
+    }
+    CHECK(near > 0);
+    CHECK(off < half * 0.1 + 30.0);
+    math::setUpAxis(math::UpAxis::Y);
+    run("newScene");
+}
+
+TEST_CASE("roads: the same roads give the same bytes at any thread count, and settings round trip")
+{
+    auto land = [](double x, double z) { return 2500.0 * std::sin(x / 17000.0) * std::cos(z / 23000.0) + 0.02 * x; };
+    const terrain::RoadInput a = roadAlong("a", "road", {{-70000.0, -50000.0}, {0.0, 30000.0}, {60000.0, -20000.0}});
+    const terrain::RoadInput b = roadAlong("b", "track", {{-60000.0, 50000.0}, {0.0, 0.0}});
+    geo::Heightfield h1 = grid(160000.0, 401, land), h2 = h1;
+    terrain::applyRoads(h1, {a, b});
+    tbb::task_arena single(1);
+    single.execute([&] { terrain::applyRoads(h2, {a, b}); });
+    CHECK(terrain::revision(h1) == terrain::revision(h2));
+
+    terrain::Road r = terrain::Road::fromJson({{"id", "x"}, {"kind", "rail"}, {"profileName", "rail"}, {"design", {{"maxGrade", 1.5}}}, {"keys", {{1.0, 2.0, 3.0}}}});
+    CHECK(r.design.maxGrade == 1.5);
+    CHECK(r.design.minVerticalRadius == terrain::roadDesignPreset("rail").minVerticalRadius);
+    CHECK(r.profile.poleSpacing > 0.0);
+    const terrain::Road back = terrain::Road::fromJson(r.toJson());
+    CHECK(back.toJson() == r.toJson());
+    CHECK_THROWS_AS(terrain::Road::fromJson({{"kind", "canal"}}), std::invalid_argument);
+    CHECK_THROWS_AS(terrain::Road::fromJson({{"profileName", "boulevard"}}), std::invalid_argument);
+}
+
+TEST_CASE("roads: timing of a 10 km road on a 4097 terrain" * doctest::skip())
+{
+    geo::Heightfield h = grid(1000000.0, 4097, [](double x, double z) { return 6000.0 * std::sin(x / 60000.0) * std::cos(z / 45000.0) + 400.0 * std::sin(x / 3000.0); });
+    const terrain::RoadInput a = roadAlong("long", "road", {{-450000.0, -300000.0}, {-100000.0, 200000.0}, {200000.0, -100000.0}, {450000.0, 300000.0}});
+    const auto t0 = std::chrono::steady_clock::now();
+    const terrain::RoadResult r = terrain::applyRoads(h, {a}).at("long");
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    MESSAGE("length ", r.length / 100000.0, " km in ", ms, " ms, cell ", h.cell, ", spans ", r.spans.size(), ", walls ", r.walls.size());
 }
