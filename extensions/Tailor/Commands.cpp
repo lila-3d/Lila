@@ -1436,6 +1436,7 @@ void registerCommands(ext::Context& ctx)
                                                            {"targetFaces", faces},
                                                            {"guidePoints", guides},
                                                            {"timeout", 120.0},
+                                                           {"transferUvs", true},
                                                            {"keepSource", bakeMaps},
                                                            {"name", name}});
                 baked = g.find(r.value("name", drape));

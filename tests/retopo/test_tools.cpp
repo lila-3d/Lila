@@ -167,7 +167,7 @@ TEST_CASE("commands: quadRemesh, relaxMesh, shrinkwrap, meshRepair undo cleanly"
     scene::Graph::current().clear();
     UndoStack::get().clear();
     makeMeshNode("src", sphere(64));
-    json r = ops::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 600}, {"symmetry", "x"}});
+    json r = ops::execute("quadRemesh", {{"args", {"src"}}, {"targetFaces", 600}, {"symmetry", "x"}, {"transferUvs", true}});
     std::string name = r["name"].get<std::string>();
     CHECK(r["metrics"]["quadPercent"].get<double>() > 95.0);
     REQUIRE(scene::Graph::current().find(name));
