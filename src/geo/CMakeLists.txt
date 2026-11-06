@@ -29,6 +29,7 @@ lila_module(lila_geo Scene
     Reduce.cpp
     SmartJoin.cpp
     SplitNgons.cpp
+    SurfaceNets.cpp
     StlIO.cpp
     RenderMesh.cpp
     Subdivide.cpp

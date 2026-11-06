@@ -9,6 +9,7 @@
 #include "Inputs.h"
 #include "Stamps.h"
 #include "Terrain.h"
+#include "Volume.h"
 
 #include <lila/Command.h>
 #include <lila/Curves.h>
@@ -401,7 +402,8 @@ gn::GNode& ensureLayer(gn::Group& grp, const std::string& type, const std::strin
     for (gn::GLink* l = linkInto(grp, to, socket); l; l = linkInto(grp, to, socket))
     {
         const gn::GNode* from = nodeNamed(grp, l->fromNode);
-        if (!from || !skip.count(from->type))
+        // The volume always stays last: it splits whatever the layers before it made.
+        if (!from || !(skip.count(from->type) || from->type == "TerrainVolume"))
             break;
         to = from->name;
         socket = "heightfield";
@@ -1765,13 +1767,15 @@ void registerContractCommands(ext::Context& ctx)
                "maxGrade, pads, regions and buildings in flood (risk over floodTolerance) with no levee, embankment or seawall "
                "near, buildings over water, buildings floating (the ground under their footprint lower than their base by more "
                "than floatTolerance cm anywhere), stamps and streets across a river with no bridge or culvert, and canals that "
-               "reach no water. Returns ok and the issues, each with its type, what it is about, where and a message.",
+               "reach no water, and volume splits whose seams crack (seamTolerance cm), whose holes no mesh fills, or with places no "
+               "mesh covers. Returns ok and the issues, each with its type, what it is about, where and a message.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = withAnalysisFlags({nodeFlag({"buildings", "b", T::List, json::array(), "Meshes standing on the terrain to check."}, "mesh"),
                                     {"cutFillLimit", "cf", T::Float, 500.0, "Largest cut plus fill per pad, m3.", {}, {}, 0.0},
                                     {"maxGrade", "mg", T::Float, 12.0, "Steepest street, percent.", {}, {}, 0.0},
                                     {"floodTolerance", "ft", T::Float, 0.5, "Flood risk counted as flooding.", {}, {}, 0.0, 1.0},
-                                    {"floatTolerance", "flt", T::Float, 10.0, "Gap under a building counted as floating, cm.", {}, {}, 0.0}}),
+                                    {"floatTolerance", "flt", T::Float, 10.0, "Gap under a building counted as floating, cm.", {}, {}, 0.0},
+                                    {"seamTolerance", "stl", T::Float, 1.0, "Gap between a volume piece and the ground at a seam counted as a crack, cm.", {}, {}, 0.0}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -1912,6 +1916,8 @@ void registerContractCommands(ext::Context& ctx)
                 else if (floodAt(c) > tol && !protectedAt(c))
                     issue("flood", name, at, std::format("flood risk {:.2f} with no levee near", floodAt(c)));
             }
+            for (const json& i : volumeIssues(f.modifier ? f.modifier->id() : 0, f.frame.m, a.get<double>("seamTolerance", 1.0)))
+                issues.push_back(i);
             return {{"ok", issues.empty()}, {"issues", issues}, {"revision", revision(h)}};
         },
         .examples = {"c = terrainCheck('Terrain', buildings=['House1', 'House2'])\nc['ok'], c['issues']"},
@@ -2237,9 +2243,12 @@ void registerCommands(ext::Context& ctx)
                "target='unreal' resamples to a landscape size Unreal accepts and writes <name>.r16 (16-bit heights laid out for "
                "Landscape import), <name>.png, one 8-bit <name>_<layer>.raw weightmap per paint layer and <name>.json with the "
                "section size, sections per component, component counts, actor location, rotation and scale (Unreal axes, cm) to "
-               "import it with, and the layers (mask, layer name, file). target='files' writes <name>.exr (heights in cm), "
+               "import it with, and the layers (mask, layer name, file); the holes mask goes to <name>_visibility.raw instead. "
+               "target='files' writes <name>.exr (heights in cm), "
                "<name>.png and <name>.r16 (16-bit over the height range), a PNG per mask and <name>.json; a rotated terrain (or "
-               "any on a Z-up scene) is written in its own space with its world matrix. Returns the settings and files.",
+               "any on a Z-up scene) is written in its own space with its world matrix. Volume pieces (see terrainSplit) are written "
+               "as <name>_<piece>.fbx with their LODs, in world space about each piece's centre, listed under volume. Returns "
+               "the settings and files.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"target", "t", T::String, "unreal", "unreal or files.", {"unreal", "files"}},
                   {"folder", "f", T::String, "", "Output folder; defaults to the bake folder's export/."},
@@ -2269,17 +2278,28 @@ void registerCommands(ext::Context& ctx)
                     gn::Geometry geom;
                     geom.heightfield = f.local;
                     const gn::Geometry w = gn::transformed(geom, f.frame.m);
+                    const uint64_t modifier = f.modifier ? f.modifier->id() : 0;
                     if (w.heightfield && !zUp())
-                        return exportFiles(*w.heightfield, folder, name);
+                    {
+                        json out = exportFiles(*w.heightfield, folder, name);
+                        if (json v = exportVolume(modifier, f.frame.m, folder, name); !v.is_null())
+                            out["volume"] = v;
+                        return out;
+                    }
                     json out = exportFiles(*f.local, folder, name);
                     json m = json::array();
                     for (int c = 0; c < 4; ++c)
                         for (int r = 0; r < 4; ++r)
                             m.push_back(f.frame.m[c][r]);
                     out["matrix"] = m;
+                    if (json v = exportVolume(modifier, f.frame.m, folder, name); !v.is_null())
+                        out["volume"] = v;
                     return out;
                 }
-                return exportUnreal(*f.local, f.frame.m, folder, name, unrealOptions(a));
+                json out = exportUnreal(*f.local, f.frame.m, folder, name, unrealOptions(a));
+                if (json v = exportVolume(f.modifier ? f.modifier->id() : 0, f.frame.m, folder, name); !v.is_null())
+                    out["volume"] = v;
+                return out;
             }
             catch (const std::exception& e)
             {
@@ -2299,15 +2319,18 @@ void registerCommands(ext::Context& ctx)
                "Masks go as paint layers (weightmaps on the Lila edit layer), each with a layer info asset next to the landscape's "
                "material. Without material=, LilaLink generates one on MF_LilaLandscapeLayer (a function to drop into your own "
                "landscape materials, one call per layer) sampling each layer; with material=, that material is used and needs the "
-               "same layer names. gridSize sets the World Partition grid in a partitioned level. Returns the landscape, its layers "
-               "and the export settings.",
+               "same layer names. gridSize sets the World Partition grid in a partitioned level.\n\n"
+               "A terrain with a volume split (caves, overhangs, arches) sends its pieces as static meshes placed where they "
+               "belong, and its holes onto the landscape's visibility layer. Returns the landscape, its layers, the volume "
+               "pieces and the export settings.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape; empty uses the generated one."},
                   {"makeMaterial", "mm", T::Bool, true, "Without material=, generate a landscape material for the layers."},
                   {"layers", "ly", T::Any, nullptr, "Masks to send as paint layers, a list, or {mask: layer name}; default every mask."},
                   {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
-                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}},
+                  {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0},
+                  {"volumeMaterial", "vm", T::String, "", "Material for the volume pieces; empty generates one on MF_LilaTerrainVolume."}},
         .undoable = false,
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -2352,6 +2375,17 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: " + r.error);
             json out = r.result;
             out["settings"] = settings;
+            try
+            {
+                if (json v = sendVolumeToUnreal(f.modifier ? f.modifier->id() : 0, f.frame.m, settings, f.mesh ? f.mesh->path() : names[0], name,
+                                                a.get<std::string>("volumeMaterial", ""));
+                    !v.is_null())
+                    out["volume"] = v;
+            }
+            catch (const std::exception& e)
+            {
+                throw CommandError(std::string("terrainSendToUnreal: volume: ") + e.what());
+            }
             return out;
         },
         .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},

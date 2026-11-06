@@ -66,6 +66,8 @@ struct HeightfieldMeshOptions
     bool uvs = true;
     /** Masks as point float attributes of the same name. */
     bool masks = true;
+    /** Quads with a sample of this mask above 0.5 at a corner (or inside, when stepping) are left out; empty keeps all. */
+    std::string holes = "holes";
 };
 
 /** Quads facing +Y. */

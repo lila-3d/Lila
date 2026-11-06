@@ -158,9 +158,24 @@ Mesh heightfieldToMesh(const Heightfield& h, const HeightfieldMeshOptions& o)
     std::vector<Index> idx;
     idx.reserve(sizes.size() * 4);
     auto id = [&](size_t i, size_t j) { return Index(j * cx + i); };
+    const std::vector<float>* holes = o.holes.empty() ? nullptr : h.findMask(o.holes);
+    if (holes && holes->size() != h.size())
+        holes = nullptr;
+    auto hole = [&](size_t i, size_t j) {
+        for (int z = zs[j]; z <= zs[j + 1]; ++z)
+            for (int x = xs[i]; x <= xs[i + 1]; ++x)
+                if ((*holes)[h.index(x, z)] > 0.5f)
+                    return true;
+        return false;
+    };
     for (size_t j = 0; j + 1 < cz; ++j)
         for (size_t i = 0; i + 1 < cx; ++i)
         {
+            if (holes && hole(i, j))
+            {
+                sizes.pop_back();
+                continue;
+            }
             // Rows advance toward +Z, so this order faces +Y.
             idx.push_back(id(i, j));
             idx.push_back(id(i, j + 1));

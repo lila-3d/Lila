@@ -47,3 +47,17 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 ## To Unreal
 
 `terrainSendToUnreal(t)` builds or updates a Landscape: heights on a `Lila` edit layer, rotation and Z-up handled, every mask as a paint layer (weightmap, layer info asset) and a generated material on `MF_LilaLandscapeLayer`. `layers=['cityFootprint', 'flow']` or `{'mask': 'LayerName'}` limits and renames them; `material='/Game/...'` uses your own landscape material (it needs those layer names). `terrainExport(t, target='unreal'|'files')` writes the same files without a live editor.
+
+## Caves, overhangs and arches
+
+The heightfield is the ground; a volume adds to it and carves from it. Edits go in a Terrain Volume node last in the terrain's group, and save, undo and replay like stamps.
+
+- `terrainCave(t, path=[[x, z], ...] | curve=, radius=300, branches=, chambers=, noise=)`: ground points sit `below` cm under the ground (three radii), the ends `endBelow` (a third of a radius) so the cave opens there; `[x, y, z]` points are used as they are.
+- `terrainTunnel(t, path= | curve= | fromStamp='Stamps/street1', radius=400)`: a road tunnel with a flat floor at road level; `fromStamp` bores a street stamp's tunnel spans.
+- `terrainOverhang(t, path=, depth=400, height=600, strata=150, hardness=0.35, lip=)`: undercuts the side of the line the hill rises on, deeper in soft bands.
+- `terrainArch(t, **{'from': [x, z], 'to': [x, z]}, height=1500, thickness=250, width=400)`: `carve=True` opens rock under it.
+- `terrainVolumeStamp(t, object='Boulder' | shape='sphere'|'box'|'capsule', mode='add'|'subtract')`. `terrainVolumeRemove(t, ids=[])`, `terrainVolume(t)` lists edits and the split.
+- Every edit returns `volume`: `pieces` (name, faces, LOD faces, bounds, holeCells, buriedCells, materials), `holeCells`, `buriedCells`, `heightError`, `unmeshedColumns`, `seamUncovered`, `seamGap`, `warnings`. Healthy: `unmeshedColumns == 0`, `seamUncovered == 0`, `seamGap` near 0.
+- Split (`terrainSplit(t, split=True, lods=3, minRoof=200, margin=1, skirt=200, maxHeightError=0)`): what the heightfield can hold goes into its heights; each connected place it can't becomes a mesh piece. Caves with at least `minRoof` of rock above keep the landscape on top; openings get a `holes` mask and a piece that fills them exactly, its edge on the ground and a skirt below. `split=False` keeps the heights and meshes every change. `maxHeightError=100` also meshes sheer detail the cells are too coarse for.
+- `terrainCheck(t)` adds `volumeSeam`, `volumeHoles`, `volumeUnmeshed` and `volumeEdit` issues.
+- Export: `terrainExport` writes `<name>_<piece>.fbx` (LOD group, world space about each piece's centre) and, for Unreal, `<name>_visibility.raw` instead of a holes paint layer. `terrainSendToUnreal` places the pieces as static meshes, writes the holes to the landscape's visibility layer, adds a Landscape Visibility Mask to Lila's generated landscape material, and gives the pieces `MI_<Label>_Volume` on `MF_LilaTerrainVolume` (triplanar, matching GroundColor); `volumeMaterial=` uses yours. Your own landscape material needs a Landscape Visibility Mask on Opacity Mask for the holes to show.

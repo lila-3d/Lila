@@ -150,6 +150,18 @@ json exportUnreal(const Heightfield& src, const glm::dmat4& world, const fs::pat
     {
         if (values.size() != h.size())
             continue;
+        if (mask == "holes")
+        {
+            // Holes go to the visibility layer, never a paint layer; any trace of a hole after resampling keeps the hole.
+            const std::vector<float> m = unrealOrder(h, [&](size_t k) { return values[k]; });
+            std::vector<uint8_t> bytes(m.size());
+            for (size_t k = 0; k < m.size(); ++k)
+                bytes[k] = m[k] > 1e-4f ? 255 : 0;
+            const fs::path raw8 = folder / (name + "_visibility.raw");
+            writeRaw(raw8, bytes.data(), bytes.size());
+            files["visibility"] = raw8.generic_string();
+            continue;
+        }
         if (!o.masks.empty() && std::find(o.masks.begin(), o.masks.end(), mask) == o.masks.end())
             continue;
         auto named = o.layerNames.find(mask);
