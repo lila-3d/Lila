@@ -7,6 +7,7 @@
 #include "ErosionGpu.h"
 #include "Export.h"
 #include "Inputs.h"
+#include "MaterialNodes.h"
 #include "Stamps.h"
 #include "Terrain.h"
 
@@ -401,7 +402,8 @@ gn::GNode& ensureLayer(gn::Group& grp, const std::string& type, const std::strin
     for (gn::GLink* l = linkInto(grp, to, socket); l; l = linkInto(grp, to, socket))
     {
         const gn::GNode* from = nodeNamed(grp, l->fromNode);
-        if (!from || !skip.count(from->type))
+        // Biomes and material layers stay last: they read the finished heights.
+        if (!from || (!skip.count(from->type) && from->type != "TerrainBiomes" && from->type != "TerrainLayers"))
             break;
         to = from->name;
         socket = "heightfield";
@@ -2270,8 +2272,15 @@ void registerCommands(ext::Context& ctx)
                     geom.heightfield = f.local;
                     const gn::Geometry w = gn::transformed(geom, f.frame.m);
                     if (w.heightfield && !zUp())
-                        return exportFiles(*w.heightfield, folder, name);
+                    {
+                        json out = exportFiles(*w.heightfield, folder, name);
+                        if (json splats = surfaceSplats(*w.heightfield, f.modifier, folder, name); !splats.is_null())
+                            out["files"]["splats"] = splats;
+                        return out;
+                    }
                     json out = exportFiles(*f.local, folder, name);
+                    if (json splats = surfaceSplats(*f.local, f.modifier, folder, name); !splats.is_null())
+                        out["files"]["splats"] = splats;
                     json m = json::array();
                     for (int c = 0; c < 4; ++c)
                         for (int r = 0; r < 4; ++r)
@@ -2299,14 +2308,18 @@ void registerCommands(ext::Context& ctx)
                "Masks go as paint layers (weightmaps on the Lila edit layer), each with a layer info asset next to the landscape's "
                "material. Without material=, LilaLink generates one on MF_LilaLandscapeLayer (a function to drop into your own "
                "landscape materials, one call per layer) sampling each layer; with material=, that material is used and needs the "
-               "same layer names. gridSize sets the World Partition grid in a partitioned level. Returns the landscape, its layers "
-               "and the export settings.",
+               "same layer names. Material layers (terrainMaterialRules) go as weight-blended paint layers named after the layer "
+               "(Grass, Rock) and, without material=, get a generated material built on MF_LilaTerrainLayer (one call per layer, "
+               "with the layer's colour, tile size and roughness); rvt=True adds a runtime virtual texture and its volume so "
+               "meshes can blend into the ground. gridSize sets the World Partition grid in a partitioned level. Returns the "
+               "landscape, its layers, the export settings and terrainMaterial (what was made for the material layers).",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape; empty uses the generated one."},
                   {"makeMaterial", "mm", T::Bool, true, "Without material=, generate a landscape material for the layers."},
                   {"layers", "ly", T::Any, nullptr, "Masks to send as paint layers, a list, or {mask: layer name}; default every mask."},
                   {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
+                  {"rvt", "rvt", T::Bool, false, "Material layers: also write a runtime virtual texture, so meshes can blend into the ground."},
                   {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}},
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -2330,7 +2343,7 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: the LilaLink plugin in Unreal predates landscapes; rebuild it from Lila's ue/LilaLink");
 
             const std::string name = identifier(f.mesh ? f.mesh->name() : std::string("Terrain"));
-            json settings, params;
+            json settings, params, surface;
             try
             {
                 settings = exportUnreal(*f.local, f.frame.m, link::cacheDir() / "terrain", name, unrealOptions(a));
@@ -2341,6 +2354,7 @@ void registerCommands(ext::Context& ctx)
                 send.makeMaterial = a.get<bool>("makeMaterial", true);
                 send.gridSize = int(a.get<int64_t>("gridSize", 0));
                 params = landscapeParams(settings, send);
+                surface = surfaceLandscapeParams(params, f.modifier, a.get<bool>("rvt", false));
             }
             catch (const std::exception& e)
             {
@@ -2352,6 +2366,8 @@ void registerCommands(ext::Context& ctx)
                 throw CommandError("terrainSendToUnreal: " + r.error);
             json out = r.result;
             out["settings"] = settings;
+            if (!surface.is_null())
+                out["terrainMaterial"] = sendSurfaceMaterial(client, surface, timeoutMs);
             return out;
         },
         .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
