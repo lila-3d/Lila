@@ -506,6 +506,9 @@ json runAddRoad(const Args& a, const std::string& cmd)
     if (names.empty() || names.size() > 2)
         throw CommandError(cmd + ": give a terrain (and optionally the curve to follow)");
     Graph& g = Graph::current();
+    if (names.size() == 2)
+        if (Node* first = g.find(names[0]); first && first->type().isA("curve"))
+            std::swap(names[0], names[1]);
     const Terrain f = findTerrain(g, names[0], cmd);
     const Placement& fr = f.place;
     const std::string layer = layerName(a.get<std::string>("layer", "Roads"));
@@ -1318,6 +1321,7 @@ void registerRoadNode(ext::Context& ctx)
                         throw gn::ExecError(c.node.name + ": roads is not a JSON list");
                 }
                 std::vector<RoadInput> inputs;
+                std::map<std::string, RoadResult> lost;
                 for (const json& j : list)
                 {
                     RoadInput in;
@@ -1332,18 +1336,23 @@ void registerRoadNode(ext::Context& ctx)
                     if (!in.road.object.empty())
                     {
                         auto it = c.env.objects.find(in.road.object);
-                        if (it == c.env.objects.end() || !it->second.curves)
-                            continue;
-                        const Footprint fp = footprintFromCurves(*it->second.curves, glm::inverse(c.env.ownerMatrix) * it->second.matrix);
+                        const Footprint fp = it != c.env.objects.end() && it->second.curves
+                                                 ? footprintFromCurves(*it->second.curves, glm::inverse(c.env.ownerMatrix) * it->second.matrix)
+                                                 : Footprint{};
                         if (fp.lines.empty())
+                        {
+                            lost[in.road.id].warnings.push_back("its curve is gone or empty: the road was not laid");
                             continue;
+                        }
                         in.line = fp.lines.front();
                     }
                     else
                         in.line = in.road.path;
                     inputs.push_back(std::move(in));
                 }
-                publishRoadResults(c.env.owner, c.node.name, applyRoads(h, inputs));
+                std::map<std::string, RoadResult> results = applyRoads(h, inputs);
+                results.merge(lost);
+                publishRoadResults(c.env.owner, c.node.name, std::move(results));
                 gn::Geometry out = *g;
                 out.heightfield = std::make_shared<const Heightfield>(std::move(h));
                 c.out("heightfield", gn::makeGeometry(std::move(out)));

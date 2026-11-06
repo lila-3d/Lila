@@ -998,11 +998,16 @@ RoadResult layRoad(Heightfield& h, const Road& rd, std::vector<glm::dvec2> line,
     if (de.bridgeHeight > 0.0 || de.tunnelDepth > 0.0)
     {
         std::vector<uint8_t> bridge(n, 0), tunnel(n, 0);
+        const std::vector<float>* flow = h.findMask("flow");
+        const std::vector<float>* lakes = h.findMask("lakes");
         for (size_t i = 0; i < n; ++i)
         {
             if (res.span[i] == 3)
                 continue;
-            bridge[i] = de.bridgeHeight > 0.0 && y[i] - g[i] > de.bridgeHeight;
+            // Rivers and lakes are bridged however low the deck: a road never dams water.
+            const bool water = (flow && flow->size() == h.size() && h.maskAt("flow", st[i].p.x, st[i].p.y) >= 0.75) ||
+                               (lakes && lakes->size() == h.size() && h.maskAt("lakes", st[i].p.x, st[i].p.y) > 0.0);
+            bridge[i] = de.bridgeHeight > 0.0 && (y[i] - g[i] > de.bridgeHeight || water);
             tunnel[i] = de.tunnelDepth > 0.0 && g[i] - y[i] > de.tunnelDepth;
         }
         cleanRuns(bridge, s, std::max(2000.0, 4.0 * fh), std::max(fh, 2.0 * ds));

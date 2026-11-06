@@ -265,6 +265,18 @@ TEST_CASE("roads: a deep valley becomes a bridge with pillars and a ridge a tunn
     CHECK(h.heightAt(-40000.0, 0.0) == doctest::Approx(before.heightAt(-40000.0, 0.0)));
     CHECK(h.heightAt(30000.0, 0.0) <= before.heightAt(30000.0, 0.0) + 1e-3);
     CHECK(r.maxGrade <= 2.0 + 1e-6);
+
+    // A river across flat ground is bridged too, so the road never dams it.
+    geo::Heightfield flat = grid(60000.0, 241, [](double, double) { return 0.0; });
+    std::vector<float>& flow = flat.mask("flow");
+    for (int z = 0; z < flat.nz; ++z)
+        for (int x = 0; x < flat.nx; ++x)
+            flow[flat.index(x, z)] = std::abs(flat.samplePos(x, z).x) < 1500.0 ? 1.0f : 0.1f;
+    const terrain::RoadResult crossing = terrain::applyRoads(flat, {roadAlong("ford", "road", {{-25000.0, 0.0}, {25000.0, 0.0}})}).at("ford");
+    REQUIRE(crossing.spans.size() == 1);
+    CHECK(crossing.spans[0].kind == "bridge");
+    CHECK(crossing.centreline[crossing.spans[0].from].x < -1000.0);
+    CHECK(crossing.centreline[crossing.spans[0].to].x > 1000.0);
 }
 
 TEST_CASE("roads: a side road joins an earlier one at grade, with its cross fall and kerb returns, leaving the main road alone")

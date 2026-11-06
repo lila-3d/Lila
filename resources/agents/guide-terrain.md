@@ -47,3 +47,15 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 ## To Unreal
 
 `terrainSendToUnreal(t)` builds or updates a Landscape: heights on a `Lila` edit layer, rotation and Z-up handled, every mask as a paint layer (weightmap, layer info asset) and a generated material on `MF_LilaLandscapeLayer`. `layers=['cityFootprint', 'flow']` or `{'mask': 'LayerName'}` limits and renames them; `material='/Game/...'` uses your own landscape material (it needs those layer names). `terrainExport(t, target='unreal'|'files')` writes the same files without a live editor.
+
+## Roads
+
+- `terrainAddRoad(t, id='pass', path=[[x, z], ...] | 'Curve', kind='road'|'path'|'track'|'rail'|'runway')`: lays a road into the terrain. Corners round into curves of the design radius; the profile is grades no steeper than `maxGrade` (%) joined by vertical curves of at least `minVerticalRadius` (cm), smooth over bumps; curves bank up to `maxBank` (%). The surface is one banked plane across the width; cuttings and embankments slope at `cutAngle`/`fillAngle`; slopes taller than `wallHeight` become retaining walls.
+- Read back: `maxGrade`, `maxBank`, `minVerticalRadius`, `minCurveRadius`, `cutM3`/`fillM3`, `spans` (bridge, tunnel), `bridges` (deck, pillars), `tunnels` (axis, radius, portals: what a cave pass carves), `walls`, `guardrails`, `props`, `junctions`, `kerbReturns`, `warnings`. Every warning means a limit was not met; fix the path or settings.
+- `keys=[[x, y, z], ...]` pins heights (a pass, a bridge deck). `profile=`: rural, highway, urban, lane, path, track, rail, runway; any field by flag (`width=`, `lanes=`, `designSpeed=`, `bridgeHeight=`, ...) or `settings={...}`.
+- One call from A to B: `terrainRoute(t, start=, end=, maxGrade=8, road='road', roadId='pass')`.
+- Roads in one layer meet at grade: a later road ending on or crossing an earlier one takes its height and cross fall, with kerb returns at the corners. Lay main roads first.
+- Masks for materials: `roadSurface`, `roadVerge`, `roadDirtEdge`, `roadWear`, `erosionProtect` (plus `paved` on roads and runways). `stage='base'` lays the road before erosion, which then leaves it alone.
+- Meshes: `terrainRoadBuild(t)` makes `<id>_Road` groups (swept surface, bridge decks and pillars, portals, walls, junction patches, guardrails, markers, poles). Build again after changes.
+- Out: `terrainExport` writes `<name>_roads.json` (curves with grade, bank, width, span per point, world and Unreal positions); `terrainSendToUnreal` sends roads as landscape splines (`terrainSendRoadsToUnreal(t, segmentMesh='/Game/...', paintLayer='Road', raise=False)`).
+- `terrainRoads(t)` lists them; `terrainRoadRemove(t, ids=[...])` removes them. Everything undoes.
