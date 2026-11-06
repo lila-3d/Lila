@@ -64,6 +64,7 @@ Q_SIGNALS:
 
 protected:
     bool eventFilter(QObject* obj, QEvent* e) override;
+    void changeEvent(QEvent* e) override;
 
 private:
     std::vector<std::string> names() const;
