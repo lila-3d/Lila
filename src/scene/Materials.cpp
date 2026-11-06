@@ -726,15 +726,19 @@ void registerCommands()
     ops::registerCommand({
         .name = "selectByMaterial",
         .doc = "Select what a material is assigned to: whole objects when it covers every face of each, otherwise just the "
-               "faces it is assigned to. faces=true always selects faces, faces=false always whole objects. Returns the "
-               "objects.",
+               "faces it is assigned to. Default also takes faces on slots with no material. faces=true always selects faces, "
+               "faces=false always whole objects. Returns the objects.",
         .positionalDoc = "material",
         .flags = {{"faces", "f", T::Bool, nullptr, "Force faces (true) or whole objects (false); unset picks by coverage."}},
         .run = [](const Args& a) -> json {
             Graph& g = Graph::current();
             if (a.positional.empty() || !a.positional[0].is_string())
                 throw CommandError("selectByMaterial: give a material name");
-            const std::string mat = materialArg(g, a.positional[0].get<std::string>(), "selectByMaterial").name();
+            const std::string arg = a.positional[0].get<std::string>();
+            // The default without a node of its name also takes faces whose slot has no material, since they draw with it.
+            const bool builtinDefault = arg == materials::kDefaultSlot && !materials::find(g, arg);
+            const std::string mat = builtinDefault ? arg : materialArg(g, arg, "selectByMaterial").name();
+            auto matches = [&](const std::string& slot) { return slot == mat || (builtinDefault && !materials::find(g, slot)); };
             g.evaluate();
             json objects = json::array();
             std::vector<std::pair<std::string, json>> faces;
@@ -746,10 +750,20 @@ void registerCommands()
                 if (!mesh)
                     continue;
                 std::span<const int32_t> ids = mesh->faceAttrs().get<int32_t>(geo::attr::kMaterial);
+                std::map<int32_t, bool> slotHit;
                 json hit = json::array();
-                for (size_t f = 0; f < ids.size(); ++f)
-                    if (mesh->faceValid(geo::Index(f)) && materials::slotName(*mesh, ids[f]) == mat)
+                // A mesh never assigned anything has no material ids: every face is on slot 0.
+                for (size_t f = 0; f < mesh->faceCapacity(); ++f)
+                {
+                    if (!mesh->faceValid(geo::Index(f)))
+                        continue;
+                    const int32_t slot = ids.empty() ? 0 : ids[f];
+                    auto [it, added] = slotHit.try_emplace(slot);
+                    if (added)
+                        it->second = matches(materials::slotName(*mesh, slot));
+                    if (it->second)
                         hit.push_back(f);
+                }
                 if (hit.empty())
                     continue;
                 partial |= hit.size() < mesh->numFaces();

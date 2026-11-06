@@ -3,6 +3,7 @@
 #include "TestUtil.h"
 
 #include "core/MainQueue.h"
+#include "core/PrefStore.h"
 #include "ops/Command.h"
 #include "scene/Graph.h"
 #include "scene/Node.h"
@@ -11,6 +12,7 @@
 #include "ui/MaterialEditor.h"
 #include "ui/SceneDialogs.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QLineEdit>
 #include <QListWidget>
@@ -114,6 +116,10 @@ TEST_CASE("material editor filters by name and shows icon-only buttons in order"
     ops::execute("createMaterial", {{"args", {"M_Stone"}}});
     pump();
     CHECK(shown() == QStringList{"M_Brick", "M_RedBRICK"});
+    filter->setText("m_*brick");
+    CHECK(shown() == QStringList{"M_Brick", "M_RedBRICK"});
+    filter->setText("*_b?ick wood");
+    CHECK(shown() == QStringList{"M_Brick", "M_Wood"});
     filter->clear();
     CHECK(shown().size() == all + 1);
 
@@ -122,6 +128,86 @@ TEST_CASE("material editor filters by name and shows icon-only buttons in order"
         if (b->text().isEmpty() && !b->icon().isNull())
             tips << b->toolTip().section(' ', 0, 0).remove(':');
     CHECK(tips == QStringList{"Assign", "New", "Delete", "Show", "Select"});
+}
+
+TEST_CASE("material editor lists the read-only Default and filters unused and selection")
+{
+    registerWelcomeUi();
+    ops::execute("newScene", json::object());
+    PrefStore& prefs = PrefStore::get();
+    for (const char* key : {"/materialEditor/hideReferenced", "/materialEditor/hideUnused", "/materialEditor/selectionOnly"})
+        prefs.set("general", key, false);
+    const std::string a = ops::execute("polyCube", json::object())[0], b = ops::execute("polyCube", json::object())[0];
+    for (const char* name : {"M_Used", "M_Spare"})
+        ops::execute("createMaterial", {{"args", {name}}});
+    ops::execute("assignMaterial", {{"args", {"M_Used", a}}});
+    ui::MaterialEditor editor;
+    editor.show();
+    pump();
+    auto* list = editor.findChild<QListWidget*>();
+    REQUIRE(list);
+    auto shown = [&] {
+        QStringList out;
+        for (int i = 0; i < list->count(); ++i)
+            if (!list->item(i)->isHidden())
+                out << list->item(i)->text();
+        return out;
+    };
+    CHECK(shown() == QStringList{"Default", "M_Spare", "M_Used"});
+    CHECK(!(list->item(0)->flags() & Qt::ItemIsEditable));
+    CHECK(list->currentItem()->text() == "M_Spare");
+
+    QPushButton *assign = nullptr, *del = nullptr, *select = nullptr;
+    for (QPushButton* p : editor.findChildren<QPushButton*>(Qt::FindDirectChildrenOnly))
+    {
+        const QString word = p->toolTip().section(' ', 0, 0).remove(':');
+        (word == "Assign" ? assign : word == "Delete" ? del : word == "Select" ? select : p) = p;
+    }
+    REQUIRE((assign && del && select));
+    list->setCurrentRow(0);
+    pump();
+    CHECK(assign->isEnabled());
+    CHECK(select->isEnabled());
+    CHECK(!del->isEnabled());
+    select->click();
+    pump();
+    CHECK(ops::execute("ls", {{"selection", true}}) == json::array({b}));
+    ops::execute("select", {{"args", {a}}});
+    pump();
+    CHECK(list->currentItem()->text() == "M_Used");
+    list->setCurrentRow(0);
+    assign->click();
+    pump();
+    CHECK(ops::execute("selectByMaterial", {{"args", {"M_Used"}}}).empty());
+
+    ops::execute("assignMaterial", {{"args", {"M_Used", a}}});
+    QAction *unused = nullptr, *selectionOnly = nullptr;
+    for (QAction* act : editor.findChildren<QAction*>())
+        (act->text() == "Hide Unused" ? unused : act->text() == "Selection Only" ? selectionOnly : act) = act;
+    REQUIRE((unused && selectionOnly));
+    unused->setChecked(true);
+    CHECK(shown() == QStringList{"Default", "M_Used"});
+    unused->setChecked(false);
+    ops::execute("select", {{"args", {a}}});
+    selectionOnly->setChecked(true);
+    pump();
+    CHECK(shown() == QStringList{"M_Used"});
+    selectionOnly->setChecked(false);
+    CHECK(shown().size() == 3);
+
+    ops::execute("createMaterial", {{"args", {"M_Toon"}}, {"shadingModel", "toon"}, {"blendMode", "masked"}});
+    pump();
+    QAction *toon = nullptr, *opaque = nullptr;
+    for (QAction* act : editor.findChildren<QAction*>())
+        (act->text() == "Toon" ? toon : act->text() == "Opaque" ? opaque : act) = act;
+    REQUIRE((toon && opaque));
+    toon->setChecked(true);
+    CHECK(shown() == QStringList{"M_Toon"});
+    toon->setChecked(false);
+    opaque->setChecked(true);
+    CHECK(shown() == QStringList{"Default", "M_Spare", "M_Used"});
+    opaque->setChecked(false);
+    CHECK(shown().size() == 4);
 }
 
 TEST_CASE("display layers panel marks empty layers")

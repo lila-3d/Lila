@@ -291,6 +291,13 @@ TEST_CASE("selectByMaterial selects the objects or faces a material is assigned 
     CHECK(comps::selected(g.find(b)->id(), scene::ComponentMode::Face) == comps::Ids{1, 3});
     CHECK(comps::selected(g.find(c)->id(), scene::ComponentMode::Face).empty());
 
+    run("createMaterial", {{"args", {"M_Gone"}}});
+    run("assignMaterial", {{"args", {"M_Gone", c}}, {"faces", {0}}});
+    run("delete", {{"args", {"M_Gone"}}});
+    CHECK(run("selectByMaterial", {{"args", {scene::materials::kDefaultSlot}}}) == json::array({b, c}));
+    CHECK(comps::selected(g.find(b)->id(), scene::ComponentMode::Face).size() == 4);
+    CHECK(comps::selected(g.find(c)->id(), scene::ComponentMode::Face).size() == 6);
+
     run("assignMaterial", {{"args", {"M_Blue", b}}});
     run("selectByMaterial", {{"args", {"M_Blue"}}});
     CHECK(comps::mode() == scene::ComponentMode::Object);

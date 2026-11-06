@@ -21,6 +21,7 @@
 #include "ui/Icons.h"
 #include "ui/ImagePicker.h"
 #include "ui/MaterialDraw.h"
+#include "ui/OutlinerFilter.h"
 #include "ui/SpinScrub.h"
 #include "ui/TextureCache.h"
 #include "ui/TexturePicker.h"
@@ -43,9 +44,11 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPainter>
 #include <QPointer>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSlider>
@@ -55,6 +58,7 @@
 #include <QVBoxLayout>
 
 #include <cmath>
+#include <optional>
 #include <set>
 
 namespace lila::ui
@@ -197,14 +201,11 @@ QIcon swatchIcon(const QColor& c)
 }
 
 /** A lit ball, shaded on the CPU like the viewport's key light plus ambient; the base color map wraps it. */
-QPixmap previewBall(const scene::Node& n)
+QPixmap previewBall(glm::vec3 base, float metal, float rough, glm::vec3 emissive, const QImage& map)
 {
     LILA_ZONE();
 
-    glm::vec3 base(n.as<glm::dvec3>(kBaseColor));
-    float metal = float(n.as<double>(kMetallic)), rough = std::clamp(float(n.as<double>(kRoughness)), 0.04f, 1.0f);
-    glm::vec3 emissive = glm::vec3(n.as<glm::dvec3>(kEmissiveColor)) * float(n.as<double>(kEmissiveIntensity));
-    QImage map = textures::thumbnail(scene::materials::resolvePath(n.as<std::string>(kBaseColorMap)), 128);
+    rough = std::clamp(rough, 0.04f, 1.0f);
     QImage img(kPreviewSize, kPreviewSize, QImage::Format_ARGB32_Premultiplied);
     img.fill(Qt::transparent);
     const glm::vec3 l = glm::normalize(glm::vec3(-0.5f, 0.7f, 0.6f)), v(0, 0, 1);
@@ -237,6 +238,59 @@ QPixmap previewBall(const scene::Node& n)
             img.setPixel(x, y, qPremultiply(qRgba(int(linearToSrgb(c.r) * 255), int(linearToSrgb(c.g) * 255), int(linearToSrgb(c.b) * 255), int(edge * 255))));
         }
     return QPixmap::fromImage(img);
+}
+
+QPixmap previewBall(const scene::Node& n)
+{
+    return previewBall(glm::vec3(n.as<glm::dvec3>(kBaseColor)), float(n.as<double>(kMetallic)), float(n.as<double>(kRoughness)),
+                       glm::vec3(n.as<glm::dvec3>(kEmissiveColor)) * float(n.as<double>(kEmissiveIntensity)),
+                       textures::thumbnail(scene::materials::resolvePath(n.as<std::string>(kBaseColorMap)), 128));
+}
+
+QPixmap defaultPreviewBall()
+{
+    const render::Material m;
+    return previewBall(m.baseColor, m.metallic, m.roughness, m.emissive, QImage());
+}
+
+constexpr const char* kHideReferenced = "/materialEditor/hideReferenced";
+constexpr const char* kHideUnused = "/materialEditor/hideUnused";
+constexpr const char* kSelectionOnly = "/materialEditor/selectionOnly";
+// Bit masks of the shading models and blend modes shown; 0 shows all.
+constexpr const char* kModelFilter = "/materialEditor/shadingModels";
+constexpr const char* kBlendFilter = "/materialEditor/blendModes";
+
+const QStringList& shadingModelLabels()
+{
+    static const QStringList labels{"Default Lit", "Painterly", "Toon", "Foliage", "Unlit", "Skin", "Cloth", "Clearcoat", "Hair", "Eye"};
+    return labels;
+}
+
+const QStringList& blendModeLabels()
+{
+    static const QStringList labels{"Opaque", "Masked", "Translucent"};
+    return labels;
+}
+
+bool isDefaultRow(const QListWidgetItem* item)
+{
+    return item && item->data(Qt::UserRole).toBool();
+}
+
+/** The materials the meshes use, faces on a slot with no material counted under the default slot. */
+std::set<std::string> usedMaterials(scene::Graph& g, const std::vector<scene::NodeId>& meshes)
+{
+    std::set<std::string> out;
+    for (scene::NodeId id : meshes)
+    {
+        scene::Node* n = g.node(id);
+        if (!n || !n->type().isA("mesh"))
+            continue;
+        if (const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh))
+            for (const auto& [slot, faces] : scene::materials::slotUsage(*mesh))
+                out.insert(scene::materials::find(g, slot) ? slot : std::string(scene::materials::kDefaultSlot));
+    }
+    return out;
 }
 
 QPointer<MaterialEditor>& floatingEditor()
@@ -278,7 +332,60 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     mFilter = new QLineEdit(this);
     mFilter->setPlaceholderText("Filter");
     mFilter->setClearButtonEnabled(true);
-    listColumn->addWidget(mFilter);
+    mFilter->setToolTip("Space or comma separated names; any may match. * ? [a-z] match the whole name, other terms any part of it.");
+    auto* filterRow = new QHBoxLayout;
+    filterRow->addWidget(mFilter, 1);
+    mFilterMenu = new QToolButton(this);
+    mFilterMenu->setIcon(icon("filter"));
+    mFilterMenu->setAutoRaise(true);
+    mFilterMenu->setCheckable(true);
+    mFilterMenu->setPopupMode(QToolButton::InstantPopup);
+    mFilterMenu->setToolTip("Filters: shading model, blend mode, referenced, unused, or only those on the selected objects.");
+    auto* filterMenu = new QMenu(mFilterMenu);
+    auto syncFilterButton = [this] {
+        PrefStore& p = PrefStore::get();
+        mFilterMenu->setChecked(p.value<bool>("general", kHideReferenced, false) || p.value<bool>("general", kHideUnused, false) ||
+                                p.value<bool>("general", kSelectionOnly, false) || p.value<int64_t>("general", kModelFilter, 0) ||
+                                p.value<int64_t>("general", kBlendFilter, 0));
+    };
+    // Each entry toggles one bit; with none checked every type shows.
+    auto maskMenu = [&](const char* title, const char* key, const QStringList& labels) {
+        QMenu* sub = filterMenu->addMenu(title);
+        const int64_t mask = PrefStore::get().value<int64_t>("general", key, 0);
+        for (int i = 0; i < labels.size(); ++i)
+        {
+            QAction* a = sub->addAction(labels[i]);
+            a->setCheckable(true);
+            a->setChecked(mask & (int64_t(1) << i));
+            connect(a, &QAction::toggled, this, [this, key, i, syncFilterButton](bool on) {
+                PrefStore& p = PrefStore::get();
+                const int64_t bit = int64_t(1) << i, m = p.value<int64_t>("general", key, 0);
+                p.set("general", key, on ? m | bit : m & ~bit);
+                syncFilterButton();
+                applyFilter();
+            });
+        }
+    };
+    maskMenu("Shading Model", kModelFilter, shadingModelLabels());
+    maskMenu("Blend Mode", kBlendFilter, blendModeLabels());
+    filterMenu->addSeparator();
+    for (auto [label, key] : {std::pair{"Hide Referenced", kHideReferenced}, {"Hide Unused", kHideUnused}, {"Selection Only", kSelectionOnly}})
+    {
+        QAction* a = filterMenu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(PrefStore::get().value<bool>("general", key, false));
+        connect(a, &QAction::toggled, this, [this, key, syncFilterButton](bool on) {
+            PrefStore::get().set("general", key, on);
+            syncFilterButton();
+            applyFilter();
+        });
+    }
+    mFilterMenu->setMenu(filterMenu);
+    // A click opens the menu; the checked look only says whether any filter is on.
+    connect(filterMenu, &QMenu::aboutToHide, this, syncFilterButton);
+    syncFilterButton();
+    filterRow->addWidget(mFilterMenu);
+    listColumn->addLayout(filterRow);
     mList = new QListWidget(this);
     mList->setMaximumHeight(140);
     mList->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
@@ -293,9 +400,9 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     };
     mAssign = iconButton("brush", "Assign: to the selected objects, or the selected faces in face mode.");
     auto* add = iconButton("plus", "New: create a material; with objects or faces selected, also assign it to them.");
-    auto* del = iconButton("trash", "Delete the material.");
+    auto* del = mDelete = iconButton("trash", "Delete the material.");
     auto* showAssigned = iconButton("target", "Show the material assigned to the selected object.");
-    auto* selectUsers =
+    auto* selectUsers = mSelectUsers =
         iconButton("pointer", "Select what this material is assigned to: whole objects, or just the faces where it covers part of a mesh.");
     for (QPushButton* b : {mAssign, add, del, showAssigned, selectUsers})
         buttons->addWidget(b);
@@ -337,24 +444,18 @@ MaterialEditor::MaterialEditor(QWidget* parent) : QWidget(parent)
     connect(del, &QPushButton::clicked, this, deleteMaterial);
     deletion::claim(mList, deleteMaterial);
     connect(mAssign, &QPushButton::clicked, this, [this] {
-        if (scene::Node* n = current())
-            runUi("assignMaterial", {{"args", json::array({n->path()})}});
+        if (std::string name = currentName(); !name.empty())
+            runUi("assignMaterial", {{"args", json::array({name})}});
     });
     connect(showAssigned, &QPushButton::clicked, this, [this] { followSelection(); });
     connect(selectUsers, &QPushButton::clicked, this, [this] {
-        if (scene::Node* n = current())
-            runUi("selectByMaterial", {{"args", json::array({n->path()})}});
+        if (std::string name = currentName(); !name.empty())
+            runUi("selectByMaterial", {{"args", json::array({name})}});
     });
-    connect(mList, &QListWidget::currentTextChanged, this, [this](const QString& name) {
-        scene::Node* n = scene::materials::find(scene::Graph::current(), name.toStdString());
-        scene::NodeId id = n ? n->id() : scene::kNoNode;
-        if (id != mNode)
-        {
-            mNode = id;
-            rebuild();
-        }
-    });
+    connect(mList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) { pickRow(item); });
     connect(mList, &QListWidget::itemChanged, this, [this](QListWidgetItem* item) {
+        if (isDefaultRow(item))
+            return;
         scene::Node* n = current();
         std::string wanted = item->text().toStdString();
         if (n && wanted != n->name())
@@ -384,6 +485,26 @@ scene::Node* MaterialEditor::current() const
     return n && n->type().isA("material") ? n : nullptr;
 }
 
+std::string MaterialEditor::currentName() const
+{
+    if (scene::Node* n = current())
+        return n->path();
+    return mDefaultShown ? std::string(scene::materials::kDefaultSlot) : std::string();
+}
+
+void MaterialEditor::pickRow(QListWidgetItem* item)
+{
+    const bool def = isDefaultRow(item);
+    scene::Node* n = item && !def ? scene::materials::find(scene::Graph::current(), item->text().toStdString()) : nullptr;
+    scene::NodeId id = n ? n->id() : scene::kNoNode;
+    if (id != mNode || def != mDefaultShown)
+    {
+        mNode = id;
+        mDefaultShown = def;
+        rebuild();
+    }
+}
+
 void MaterialEditor::showMaterial(const std::string& name)
 {
     refreshList();
@@ -404,12 +525,18 @@ void MaterialEditor::followSelection()
     const scene::MeshPtr& mesh = n->as<scene::MeshPtr>(scene::MeshNode::kOutMesh);
     if (!mesh)
         return;
+    bool unmapped = false;
     for (const auto& [slot, faces] : scene::materials::slotUsage(*mesh))
+    {
         if (scene::materials::find(g, slot))
         {
             showMaterial(slot);
             return;
         }
+        unmapped = true;
+    }
+    if (unmapped)
+        showMaterial(scene::materials::kDefaultSlot);
 }
 
 void MaterialEditor::scheduleRefresh()
@@ -432,40 +559,90 @@ void MaterialEditor::scheduleRefresh()
 
 void MaterialEditor::refreshList()
 {
+    scene::Graph& g = scene::Graph::current();
     std::vector<std::string> names;
-    for (scene::Node* n : scene::materials::all(scene::Graph::current()))
+    for (scene::Node* n : scene::materials::all(g))
         names.push_back(n->name());
     std::sort(names.begin(), names.end());
-    bool same = int(names.size()) == mList->count();
+    // The built-in default heads the list, unless a material of that name has taken its slot.
+    const bool defaultRow = !scene::materials::find(g, scene::materials::kDefaultSlot);
+    if (defaultRow)
+        names.insert(names.begin(), scene::materials::kDefaultSlot);
+    bool same = int(names.size()) == mList->count() && (!defaultRow || isDefaultRow(mList->item(0)));
     for (int i = 0; same && i < mList->count(); ++i)
         same = mList->item(i)->text().toStdString() == names[size_t(i)];
     if (same)
+    {
+        applyFilter();
         return;
-    std::string keep = current() ? current()->name() : std::string();
-    QSignalBlocker block(mList);
-    mList->clear();
-    for (const std::string& n : names)
-    {
-        auto* item = new QListWidgetItem(QString::fromStdString(n), mList);
-        item->setFlags(item->flags() | Qt::ItemIsEditable);
-        if (n == keep)
-            mList->setCurrentItem(item);
     }
-    if (keep.empty() && mList->count() && mNode == scene::kNoNode)
+    const bool keepDefault = mDefaultShown && defaultRow;
+    const std::string keep = current() ? current()->name() : std::string();
     {
-        mList->setCurrentRow(0);
-        scene::Node* n = scene::materials::find(scene::Graph::current(), names[0]);
-        mNode = n ? n->id() : scene::kNoNode;
-        rebuild();
+        QSignalBlocker block(mList);
+        mList->clear();
+        for (size_t i = 0; i < names.size(); ++i)
+        {
+            auto* item = new QListWidgetItem(QString::fromStdString(names[i]), mList);
+            const bool def = defaultRow && i == 0;
+            if (def)
+            {
+                item->setData(Qt::UserRole, true);
+                item->setToolTip("Built-in neutral material, on faces with no other. Read-only.");
+                item->setForeground(mList->palette().color(QPalette::Disabled, QPalette::Text));
+            }
+            else
+                item->setFlags(item->flags() | Qt::ItemIsEditable);
+            if (def ? keepDefault : !keep.empty() && names[i] == keep)
+                mList->setCurrentItem(item);
+        }
+        if (!mList->currentItem() && keep.empty() && !keepDefault && mList->count())
+            mList->setCurrentRow(defaultRow && mList->count() > 1 ? 1 : 0);
     }
+    pickRow(mList->currentItem());
     applyFilter();
 }
 
 void MaterialEditor::applyFilter()
 {
-    const QString text = mFilter->text().trimmed();
+    LILA_ZONE();
+
+    scene::Graph& g = scene::Graph::current();
+    PrefStore& p = PrefStore::get();
+    const bool hideReferenced = p.value<bool>("general", kHideReferenced, false);
+    const int64_t models = p.value<int64_t>("general", kModelFilter, 0), blends = p.value<int64_t>("general", kBlendFilter, 0);
+    std::optional<std::set<std::string>> used, onSelection;
+    const bool usage = p.value<bool>("general", kHideUnused, false) || p.value<bool>("general", kSelectionOnly, false);
+    if (usage)
+        g.evaluate();
+    if (p.value<bool>("general", kHideUnused, false))
+        used = usedMaterials(g, g.nodes());
+    if (p.value<bool>("general", kSelectionOnly, false))
+        onSelection = usedMaterials(g, {g.selection().begin(), g.selection().end()});
+    static const QRegularExpression separators(R"([\s,]+)");
+    const QStringList terms = mFilter->text().split(separators, Qt::SkipEmptyParts);
+    auto nameMatches = [&](const QListWidgetItem* item) {
+        for (const QString& term : terms)
+        {
+            const bool glob = term.contains('*') || term.contains('?') || term.contains('[');
+            if (glob ? outliner::globMatch(term.toStdString(), item->text().toStdString()) : item->text().contains(term, Qt::CaseInsensitive))
+                return true;
+        }
+        return terms.isEmpty();
+    };
     for (int i = 0; i < mList->count(); ++i)
-        mList->item(i)->setHidden(!text.isEmpty() && !mList->item(i)->text().contains(text, Qt::CaseInsensitive));
+    {
+        QListWidgetItem* item = mList->item(i);
+        const std::string name = item->text().toStdString();
+        bool hide = !nameMatches(item);
+        // The built-in default is Default Lit and opaque.
+        scene::Node* n = isDefaultRow(item) ? nullptr : scene::materials::find(g, name);
+        const int64_t model = n ? n->as<int64_t>(kShadingModel) : 0, blend = n ? n->as<int64_t>(kBlendMode) : 0;
+        hide = hide || (hideReferenced && n && n->referenceId() != 0);
+        hide = hide || (models && !(models & (int64_t(1) << model))) || (blends && !(blends & (int64_t(1) << blend)));
+        hide = hide || (used && !used->count(name)) || (onSelection && !onSelection->count(name));
+        item->setHidden(hide);
+    }
 }
 
 void MaterialEditor::setAttr(int attr, const json& value)
@@ -488,7 +665,17 @@ void MaterialEditor::rebuild()
         delete item;
     }
     scene::Node* n = current();
-    mAssign->setEnabled(n != nullptr);
+    mAssign->setEnabled(n || mDefaultShown);
+    mSelectUsers->setEnabled(n || mDefaultShown);
+    mDelete->setEnabled(n != nullptr);
+    if (!n && mDefaultShown)
+    {
+        mPreview->setPixmap(defaultPreviewBall());
+        auto* hint = new QLabel("Built-in neutral material. Read-only.", mBody);
+        mBodyLayout->addWidget(hint);
+        mBodyLayout->addStretch();
+        return;
+    }
     if (!n)
     {
         mPreview->clear();
@@ -744,7 +931,7 @@ void MaterialEditor::rebuild()
     };
 
     section("Shading");
-    combo("Shading Model", kShadingModel, {"Default Lit", "Painterly", "Toon", "Foliage", "Unlit", "Skin", "Cloth", "Clearcoat", "Hair", "Eye"},
+    combo("Shading Model", kShadingModel, shadingModelLabels(),
           "Default Lit: Unreal's default lit.\nPainterly: brush strokes bend the normal and a palette recolours light and shadow.\n"
           "Toon: stepped light and shadow with a rim.\nFoliage: soft gradient shading lit through from behind.\n"
           "Unlit: the base colour as it is, plus emissive, with no lighting.\nSkin: light scattering under the surface.\n"

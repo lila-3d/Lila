@@ -11,9 +11,11 @@
 
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QLabel;
 class QPushButton;
 class QScrollArea;
+class QToolButton;
 class QVBoxLayout;
 
 namespace lila::scene
@@ -47,8 +49,13 @@ private:
     /** Shows the first material of the last selected mesh. */
     void followSelection();
     void scheduleRefresh();
+    /** Shows the row's material, or the read-only Default for the Default row. */
+    void pickRow(QListWidgetItem* item);
     void refreshList();
-    /** Hides the materials whose names don't contain the filter text, ignoring case. */
+    /**
+     * Hides the materials no filter term matches (a glob over the whole name, else a part of it, ignoring case), and
+     * those the filter menu's options leave out: type, referenced, unused, or not on the selected objects.
+     */
     void applyFilter();
     void rebuild();
     void updateValues();
@@ -56,6 +63,8 @@ private:
     void fitWidth();
     void setAttr(int attr, const scene::json& value);
     scene::Node* current() const;
+    /** The shown material's path, or the default slot while the Default row is current; empty with neither. */
+    std::string currentName() const;
 
     QLineEdit* mFilter = nullptr;
     QListWidget* mList = nullptr;
@@ -64,12 +73,16 @@ private:
     QWidget* mBody = nullptr;
     QVBoxLayout* mBodyLayout = nullptr;
     QPushButton* mAssign = nullptr;
+    QPushButton* mDelete = nullptr;
+    QPushButton* mSelectUsers = nullptr;
+    QToolButton* mFilterMenu = nullptr;
     scene::NodeId mNode = scene::kNoNode;
     std::vector<std::function<void()>> mUpdaters;
     int mListener = 0;
     int mTextureListener = 0;
     bool mQueued = false;
     bool mDragging = false;
+    bool mDefaultShown = false; // the read-only Default row is current
     int mShownModel = -1; // shading model whose inputs the panel shows
 };
 
