@@ -145,7 +145,7 @@ LILA_SCENE_API std::vector<const MapDef*> allMaps();
 /**
  * Registers the built-in maps: normal, objectNormal, position, height, id, alpha, uvIslands, ao, curvature,
  * normalToCurvature, convexity, cavity, thickness, bentNormal, roundedNormal, vertexColor, baseColor, roughness,
- * metallic, emissive, materialOpacity, wireframe, islandBorder, error, gradient, normalToHeight, edgeWear, pack, orm.
+ * metallic, emissive, materialOpacity, wireframe, islandBorder, error, gradient, normalToHeight, detailNormal, edgeWear, pack, orm.
  * Idempotent.
  */
 LILA_SCENE_API void registerBuiltinMaps();

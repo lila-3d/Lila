@@ -3,6 +3,7 @@
 #include "bake/Bake.h"
 #include "bake/BakeNodes.h"
 #include "bake/BakePipeline.h"
+#include "bake/HeightNormal.h"
 #include "bake/MapMath.h"
 #include "bake/Maps.h"
 #include "bake/MapsInternal.h"
@@ -372,11 +373,25 @@ json exportSet(scene::Node& set, const ExportOptions& options)
     fs::create_directories(folder, ec);
 
     json warnings = json::array();
+    // Normals from height: the normal goes out as detail over the height, which goes out with it at 16 bits.
+    bool fromHeight = options.normalFromHeight.value_or(s.normalFromHeight);
+    if (fromHeight && !s.channel("height"))
+    {
+        warnings.push_back("normalFromHeight: the set has no height channel, so the normal is written whole");
+        fromHeight = false;
+    }
+    std::vector<bake::TargetMap> targetMaps = target->maps;
+    if (fromHeight && std::ranges::none_of(targetMaps, [](const bake::TargetMap& tm) { return tm.settings.map == "height"; }))
+    {
+        bake::TargetMap tm;
+        tm.settings.map = "height";
+        targetMaps.push_back(tm);
+    }
     std::vector<MapJob> jobs;
-    for (const bake::TargetMap& tm : target->maps)
+    for (const bake::TargetMap& tm : targetMaps)
     {
         const bake::MapSettings& ms = tm.settings;
-        if (!ms.enabled || (tm.optional && !options.includeOptional))
+        if (!ms.enabled || (tm.optional && !options.includeOptional && !(fromHeight && ms.map == "height")))
             continue;
         const bake::MapDef* def = bake::findMap(ms.map);
         MapJob job;
@@ -407,12 +422,28 @@ json exportSet(scene::Node& set, const ExportOptions& options)
         for (const bake::PackChannel& pc : job.layout)
             if (const Channel* ch = pc.map.empty() ? nullptr : s.channel(pc.map); ch && ms.bits <= 0)
                 bits = std::max(bits, std::min(ch->bits, 16));
+        if (fromHeight && ms.map == "height")
+            bits = std::max(bits, 16);
         job.bits = bitsFor(job.format, bits);
         jobs.push_back(std::move(job));
     }
-
     // Only a normal map has a green convention; a reader flips the green of any map marked opengl.
     const auto normalFormatOf = [](const MapJob& j) { return j.map == "normal" ? (j.flipGreen ? "directx" : "opengl") : ""; };
+    const auto splits = [&](const MapJob& j) {
+        return fromHeight && j.map == "normal" && std::ranges::any_of(j.layout, [](const bake::PackChannel& pc) { return pc.map == "normal"; });
+    };
+    // What a reader needs to rebuild the normal: the height's depth (as a bake's heightRange) and the UV square's size.
+    const json heightMeta = fromHeight ? json{{"heightRange", s.heightDepth * 0.5}, {"uvSize", {s.uvWidth, s.uvHeight}}, {"fade", s.normalFade}}
+                                       : json::object();
+    const auto metaOf = [&](const MapJob& j) {
+        if (!fromHeight || (j.map != "normal" && j.map != "height"))
+            return json::object();
+        json m = heightMeta;
+        if (j.map == "normal")
+            m["normalFromHeight"] = true;
+        return m;
+    };
+
     const fs::path manifestPath = exportManifestPath(folder, set.name(), target->name);
     const json previous = readJsonFile(manifestPath).value("files", json::object());
     json next = json::object();
@@ -470,6 +501,8 @@ json exportSet(scene::Node& set, const ExportOptions& options)
             const fs::path path = folder / bake::expandName(tmpl, tokens, s.tiles.size() > 1);
             const std::string file = paths::toUtf8(path);
             uint64_t key = mix(mix(mix(0, file), uint64_t(j.bits)), uint64_t(j.flipGreen));
+            if (splits(j))
+                key = mix(mix(key, channelKeys["height"]), heightMeta.dump());
             for (const bake::PackChannel& pc : j.layout)
             {
                 key = pc.map.empty() ? mix(key, uint64_t(std::bit_cast<uint32_t>(pc.constant))) : mix(key, channelKeys[pc.map]);
@@ -483,7 +516,7 @@ json exportSet(scene::Node& set, const ExportOptions& options)
                 unchanged.push_back(file);
                 outputs.push_back({{"file", file}, {"map", j.map}, {"udim", t.udim}, {"width", all.width}, {"height", all.height},
                                    {"format", j.format}, {"bits", j.bits}, {"colorSpace", j.linear ? "linear" : "srgb"},
-                                   {"normalFormat", normalFormatOf(j)}, {"changed", false}});
+                                   {"normalFormat", normalFormatOf(j)}, {"changed", false}, {"meta", metaOf(j)}});
                 continue;
             }
             dirty.push_back({&j, path, hex(key)});
@@ -493,8 +526,9 @@ json exportSet(scene::Node& set, const ExportOptions& options)
 
         PlanRequest req = all;
         req.outputs.clear();
+        const bool splitting = std::ranges::any_of(dirty, [&](const Pending& d) { return splits(*d.job); });
         for (const OutputRequest& r : all.outputs)
-            if (std::ranges::any_of(dirty, [&](const Pending& d) {
+            if ((splitting && r.name == "height") || std::ranges::any_of(dirty, [&](const Pending& d) {
                     return std::ranges::any_of(d.job->layout, [&](const bake::PackChannel& pc) { return pc.map == r.name; });
                 }))
                 req.outputs.push_back(r);
@@ -506,6 +540,9 @@ json exportSet(scene::Node& set, const ExportOptions& options)
             warnings.push_back(w);
         for (const std::string& w : er.warnings)
             warnings.push_back(w);
+        // The graph works in OpenGL normals; the job flips green afterwards.
+        const image::Image detail = splitting ? bake::detailNormals(er.outputs.at("normal"), er.outputs.at("height"), s.heightSlope(), s.normalFade, true)
+                                              : image::Image{};
 
         for (const Pending& d : dirty)
         {
@@ -519,7 +556,7 @@ json exportSet(scene::Node& set, const ExportOptions& options)
             for (size_t c = 0; c < 4 && c < j.layout.size(); ++c)
             {
                 const bake::PackChannel& pc = j.layout[c];
-                const image::Image* src = pc.map.empty() ? nullptr : &er.outputs.at(pc.map);
+                const image::Image* src = pc.map.empty() ? nullptr : splits(j) && pc.map == "normal" ? &detail : &er.outputs.at(pc.map);
                 for (size_t i = 0; i < size_t(w) * size_t(h); ++i)
                 {
                     float v = src ? src->rgba[i * 4 + size_t(pc.channel)] : pc.constant;
@@ -552,7 +589,8 @@ json exportSet(scene::Node& set, const ExportOptions& options)
                 unchanged.push_back(file);
             next[file] = {{"key", d.key}, {"content", content}};
             outputs.push_back({{"file", file}, {"map", j.map}, {"udim", t.udim}, {"width", w}, {"height", h}, {"format", j.format}, {"bits", j.bits},
-                               {"colorSpace", j.linear ? "linear" : "srgb"}, {"normalFormat", normalFormatOf(j)}, {"changed", !same}});
+                               {"colorSpace", j.linear ? "linear" : "srgb"}, {"normalFormat", normalFormatOf(j)}, {"changed", !same},
+                               {"meta", metaOf(j)}});
         }
     }
 

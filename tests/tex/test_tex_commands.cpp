@@ -157,3 +157,57 @@ TEST_CASE("tex: texExport packs channels through the Unreal preset")
         worst = std::max(worst, std::abs(double(gl.rgba[i + 1]) - (1.0 - double(dx.rgba[i + 1]))));
     CHECK(worst < 0.01);
 }
+
+TEST_CASE("tex: normalFromHeight exports the normal as detail over a 16-bit height")
+{
+    buildRock();
+    fs::path dir = tempDir("exportHeightNormal");
+    run("texSetSettings", {{"args", {"Rock", {{"normalFade", 0.0}}}}});
+    json r = run("texExport", {{"args", {"Rock"}}, {"preset", "unreal"}, {"folder", dir.string()}, {"optional", false}, {"normalFromHeight", true}});
+    CAPTURE(r.dump());
+    // The height goes out even with optional maps off, at 16 bits, and both carry what rebuilds the normal.
+    bool sawHeight = false;
+    for (const json& o : r["outputs"])
+    {
+        if (o["map"] == "height")
+        {
+            sawHeight = true;
+            CHECK(o["bits"] == 16);
+            CHECK(o["meta"]["heightRange"].get<double>() == doctest::Approx(2.5));
+        }
+        if (o["map"] == "normal")
+            CHECK(o["meta"]["normalFromHeight"] == true);
+    }
+    CHECK(sawHeight);
+    // The Rock's normal is all its height's, so the detail left is flat.
+    image::Image n = image::read(dir / "T_Rock_N.png");
+    REQUIRE(n.width == 64);
+    double worst = 0.0;
+    for (size_t i = 0; i < n.rgba.size(); i += 4)
+        worst = std::max({worst, std::abs(n.rgba[i] - 0.5), std::abs(n.rgba[i + 1] - 0.5)});
+    CHECK(worst < 0.02);
+}
+
+TEST_CASE("tex: the stack's height normal follows the set's depth and UV size")
+{
+    run("newScene");
+    run("texCreateSet", {{"args", {"Wall"}}, {"resolution", 32}});
+    run("texAddLayer", {{"args", {"Wall", "fill"}}, {"material", {{"height", 0.7}}}});
+    run("texSetSettings", {{"args", {"Wall", {{"heightDepth", 2.0}, {"uvWidth", 400.0}, {"uvHeight", 200.0}}}}});
+    bool found = false;
+    const json info = run("texGraphInfo", {{"args", {"Wall"}}});
+    CAPTURE(info["definition"].dump());
+    for (const json& node : info["nodes"])
+        if (node["type"] == "heightToNormal")
+            for (const json& p : node["params"])
+            {
+                found = true;
+                if (p["id"] == "depth")
+                    CHECK(p["value"] == 2.0);
+                if (p["id"] == "sizeU")
+                    CHECK(p["value"] == 400.0);
+                if (p["id"] == "sizeV")
+                    CHECK(p["value"] == 200.0);
+            }
+    CHECK(found);
+}

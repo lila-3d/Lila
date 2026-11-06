@@ -1,5 +1,6 @@
 #include "LilaLinkMaterials.h"
 
+#include "LilaLinkHeightNormal.h"
 #include "LilaLinkLog.h"
 #include "LilaLinkMaterialFunction.h"
 
@@ -26,6 +27,7 @@
 #include "Materials/MaterialExpressionScalarParameter.h"
 #include "Materials/MaterialExpressionSkyAtmosphereLightDirection.h"
 #include "Materials/MaterialExpressionTextureObjectParameter.h"
+#include "Materials/MaterialExpressionTextureCoordinate.h"
 #include "Materials/MaterialExpressionTextureSampleParameter2D.h"
 #include "Materials/MaterialExpressionTime.h"
 #include "Materials/MaterialExpressionTransform.h"
@@ -50,6 +52,8 @@ enum class ETextureUse : uint8
 	Color,
 	Linear,
 	Normal,
+	/** Single channel, kept at 16 bits: heights. */
+	Height,
 };
 
 double Number(const TSharedPtr<FJsonObject>& In, const TCHAR* Field, double Default)
@@ -166,7 +170,8 @@ UTexture* ImportTexture(const FString& File, const FString& Folder, ETextureUse 
 	}
 	Texture->Modify();
 	Texture->SRGB = Use == ETextureUse::Color;
-	Texture->CompressionSettings = Use == ETextureUse::Normal ? TC_Normalmap : TC_Default;
+	Texture->CompressionSettings = Use == ETextureUse::Normal ? TC_Normalmap : Use == ETextureUse::Height ? TC_Grayscale : TC_Default;
+	LilaLink::KeepGrayscale16(Texture);
 	Texture->bFlipGreenChannel = bFlipGreen;
 	Texture->PostEditChange();
 	OutCreated.AddUnique(Texture->GetPathName());
@@ -339,7 +344,43 @@ UMaterial* CreateMaterial(const FString& Name, const FMaterialRequest& R, const 
 	}
 	UMaterialEditingLibrary::ConnectMaterialProperty(Scalar(TEXT("Specular"), float(Number(In, TEXT("specular"), 0.5))), TEXT(""), MP_Specular);
 
-	if (UMaterialExpression* Normal = Map(TEXT("normalMap"), TEXT("NormalMap"), ETextureUse::Normal, String(In, TEXT("normalFormat")) == TEXT("opengl")))
+	UMaterialExpression* Normal = Map(TEXT("normalMap"), TEXT("NormalMap"), ETextureUse::Normal, String(In, TEXT("normalFormat")) == TEXT("opengl"));
+	const bool bFromHeight = In.IsValid() && In->HasTypedField<EJson::Boolean>(TEXT("normalFromHeight")) && In->GetBoolField(TEXT("normalFromHeight"));
+	UTexture* Height = nullptr;
+	if (bFromHeight && R.bImportTextures && !String(In, TEXT("heightMap")).IsEmpty())
+	{
+		Height = ImportTexture(String(In, TEXT("heightMap")), R.MaterialFolder, ETextureUse::Height, false, OutCreated, OutWarnings);
+	}
+	UMaterialFunction* Rebuild = Height ? LilaLink::HeightNormalFunction(false, OutCreated) : nullptr;
+	if (Rebuild)
+	{
+		// Normals From Height: MF_LilaHeightNormal rebuilds the shape from the height and lays the normal map on it as detail.
+		ApplySampling(Height, In, TEXT("heightMap"));
+		auto* Call = Cast<UMaterialExpressionMaterialFunctionCall>(
+			UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionMaterialFunctionCall::StaticClass(), -200, NextY()));
+		Call->SetMaterialFunction(Rebuild);
+		auto* HeightParam = Cast<UMaterialExpressionTextureObjectParameter>(
+			UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionTextureObjectParameter::StaticClass(), -400, NextY()));
+		HeightParam->ParameterName = TEXT("HeightMap");
+		HeightParam->Texture = Height;
+		HeightParam->SamplerType = SAMPLERTYPE_LinearGrayscale;
+		auto* Uv = Cast<UMaterialExpressionTextureCoordinate>(
+			UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionTextureCoordinate::StaticClass(), -400, NextY()));
+		Uv->CoordinateIndex = UvSet;
+		UMaterialEditingLibrary::ConnectMaterialExpressions(HeightParam, TEXT(""), Call, TEXT("HeightMap"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Uv, TEXT(""), Call, TEXT("UVs"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Scalar(TEXT("HeightDepth"), float(Number(In, TEXT("heightDepth"), 5.0))), TEXT(""), Call, TEXT("HeightDepth"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Scalar(TEXT("HeightUVWidth"), float(Number(In, TEXT("heightUvWidth"), 100.0))), TEXT(""), Call,
+			TEXT("HeightUVWidth"));
+		UMaterialEditingLibrary::ConnectMaterialExpressions(Scalar(TEXT("HeightUVHeight"), float(Number(In, TEXT("heightUvHeight"), 100.0))), TEXT(""), Call,
+			TEXT("HeightUVHeight"));
+		if (Normal)
+		{
+			UMaterialEditingLibrary::ConnectMaterialExpressions(Normal, TEXT("RGB"), Call, TEXT("DetailNormal"));
+		}
+		UMaterialEditingLibrary::ConnectMaterialProperty(Call, TEXT("Normal"), MP_Normal);
+	}
+	else if (Normal)
 	{
 		UMaterialEditingLibrary::ConnectMaterialProperty(Normal, TEXT("RGB"), MP_Normal);
 	}
@@ -991,6 +1032,31 @@ UMaterialInterface* LilaLink::StylisedParent(const FString& Model, bool bRebuild
 }
 
 const TCHAR* LilaLink::MastersFolderPath() { return MastersFolder; }
+
+void LilaLink::KeepGrayscale16(UTexture* Texture)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(LilaLinkMaterials::KeepGrayscale16);
+
+	if (!Texture || Texture->CompressionSettings != TC_Grayscale || Texture->Source.GetFormat() != TSF_RGBA16 || Texture->Source.GetNumBlocks() != 1 ||
+		Texture->Source.GetNumLayers() != 1)
+	{
+		return;
+	}
+	const int32 Width = Texture->Source.GetSizeX(), Height = Texture->Source.GetSizeY();
+	TArray64<uint8> Rgba;
+	if (!Texture->Source.GetMipData(Rgba, 0) || Rgba.Num() < int64(Width) * Height * 8)
+	{
+		return;
+	}
+	TArray<uint16> Red;
+	Red.SetNumUninitialized(Width * Height);
+	const uint16* Src = reinterpret_cast<const uint16*>(Rgba.GetData());
+	for (int64 I = 0; I < Red.Num(); ++I)
+	{
+		Red[I] = Src[I * 4];
+	}
+	Texture->Source.Init(Width, Height, 1, 1, TSF_G16, reinterpret_cast<const uint8*>(Red.GetData()));
+}
 
 UTexture* LilaLink::ImportTextureFile(const FString& File, const FString& Folder, bool bColor, bool bNormal, bool bFlipGreen,
 	TArray<FString>& OutCreated, TArray<FString>& OutWarnings)

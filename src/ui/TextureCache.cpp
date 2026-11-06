@@ -1,5 +1,6 @@
 #include "ui/TextureCache.h"
 
+#include "bake/HeightNormal.h"
 #include "core/Dds.h"
 #include "core/ImageIO.h"
 #include "core/MainQueue.h"
@@ -854,6 +855,47 @@ render::TexturePtr packed(const std::string& orm, const std::string& occlusion, 
                    }
                }
                return loadPacked(files, channels);
+           }).image;
+}
+
+render::TexturePtr heightNormal(const std::string& normal, const std::string& height, double slopeU, double slopeV, bool greenUp)
+{
+    if (height.empty())
+        return nullptr;
+    const std::string key = std::format("h{}|{}|{}|", slopeU, slopeV, greenUp ? 1 : 0) + normal + "|" + height;
+    std::vector<std::string> files = {normal, height};
+    return entry(key, files, [normal, height, slopeU, slopeV, greenUp] {
+               LILA_ZONE_N("textures::heightNormal");
+               Result r;
+               r.times = stamps({normal, height});
+               try
+               {
+                   const image::Image h = image::read(toPath(height));
+                   image::Image detail = normal.empty() ? image::Image{} : image::read(toPath(normal));
+                   if (detail.width <= 0)
+                   {
+                       if (!normal.empty())
+                           r.error = normal + ": unreadable";
+                       detail = {h.width, h.height, std::vector<float>(h.rgba.size())};
+                       for (size_t i = 0; i < detail.rgba.size(); i += 4)
+                           detail.rgba[i] = detail.rgba[i + 1] = 0.5f, detail.rgba[i + 2] = detail.rgba[i + 3] = 1.0f;
+                   }
+                   const image::Image n = bake::combineNormals(detail, h, {slopeU, slopeV}, greenUp);
+                   QImage img(n.width, n.height, QImage::Format_RGBA8888);
+                   for (int y = 0; y < n.height; ++y)
+                   {
+                       uchar* d = img.scanLine(y);
+                       const float* src = &n.rgba[size_t(y) * size_t(n.width) * 4];
+                       for (int x = 0; x < n.width * 4; ++x)
+                           d[x] = uchar(std::clamp(std::lround(src[x] * 255.0f), 0L, 255L));
+                   }
+                   r.image = toTexture(img, false);
+               }
+               catch (const std::exception& e)
+               {
+                   r.error = height + ": " + e.what();
+               }
+               return r;
            }).image;
 }
 

@@ -98,6 +98,13 @@ public:
                 GNode hn = topNode("StackHeightNormal", "heightToNormal", {right, 600.0});
                 link(heads["height"], hn.name, "height");
                 hn.values["intensity"] = mStack.heightNormal;
+                // Only values off the node's defaults are written, so a graph without them still reads back as this stack.
+                if (mSet.heightDepth != 5.0)
+                    hn.values["depth"] = mSet.heightDepth;
+                if (mSet.uvWidth != 100.0)
+                    hn.values["sizeU"] = mSet.uvWidth;
+                if (mSet.uvHeight != 100.0)
+                    hn.values["sizeV"] = mSet.uvHeight;
                 bind({}, hn.name, "intensity", "/heightNormal");
                 GNode sn = topNode("StackNormal", "layerBlendNormal", {right + 130.0, 600.0});
                 feed(sn, "below", src, c);

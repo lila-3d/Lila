@@ -250,6 +250,7 @@ std::string materialChannel(std::string_view map)
         {"normal", "normal"},       {"ao", "ambientOcclusion"},  {"occlusion", "ambientOcclusion"}, {"orm", "orm"},
         {"mro", "orm"},             {"baseColor", "baseColor"},  {"albedo", "baseColor"},           {"diffuse", "baseColor"},
         {"roughness", "roughness"}, {"metallic", "metallic"},    {"metalness", "metallic"},         {"emissive", "emissive"},
+        {"height", "height"},       {"detailNormal", "normal"},
     };
     auto it = table.find(map);
     return it == table.end() ? std::string() : it->second;
@@ -273,6 +274,33 @@ std::string mapFromFileName(std::string_view fileName)
     return scene::materials::guessTextureChannel(std::string(fileName));
 }
 
+namespace
+{
+/** Turns on a material's Normals From Height with the depth and UV size the bake measured. */
+void useHeightNormals(Graph& g, Node& m, const json& height, const json& detail)
+{
+    namespace mat = scene::material;
+    auto set = [&](int attr, double v) {
+        if (m.as<double>(attr) != v)
+            g.setValue({m.id(), attr, -1}, v);
+    };
+    if (!m.as<bool>(mat::kNormalFromHeight))
+        g.setValue({m.id(), mat::kNormalFromHeight, -1}, true);
+    json hm = height.value("meta", json()), dm = detail.value("meta", json());
+    if (!hm.is_object())
+        hm = json::object();
+    if (!dm.is_object())
+        dm = json::object();
+    if (const double range = hm.value("heightRange", 0.0); range > 0.0)
+        set(mat::kHeightDepth, 2.0 * range);
+    if (const json size = dm.value("uvSize", json()); size.is_array() && size.size() == 2)
+    {
+        set(mat::kHeightUvWidth, size[0].get<double>());
+        set(mat::kHeightUvHeight, size[1].get<double>());
+    }
+}
+} // namespace
+
 json assignOutputs(Graph& g, const json& result, bool create, const json& channels)
 {
     LILA_ZONE();
@@ -287,9 +315,25 @@ json assignOutputs(Graph& g, const json& result, bool create, const json& channe
     };
     std::map<std::string, Pick> picks;
     std::vector<std::string> order;
+    // A detail normal takes the normal input: the material rebuilds the rest from the height.
+    const json* detail = nullptr;
+    const json* height = nullptr;
+    for (const json& o : result.value("outputs", json::array()))
+    {
+        const std::string map = o.value("map", std::string());
+        if (map == "detailNormal" && o.value("layer", std::string()).empty() && !detail)
+            detail = &o;
+        if (map == "height" && o.value("layer", std::string()).empty() && !height)
+            height = &o;
+    }
     for (const json& o : result.value("outputs", json::array()))
     {
         const std::string map = o.value("map", std::string()), file = o.value("file", std::string());
+        if (map == "normal" && detail && !(channels.is_object() && channels.contains(map)))
+        {
+            skipped.push_back({{"file", file}, {"map", map}, {"reason", "the detail normal takes the normal input"}});
+            continue;
+        }
         if (!o.value("layer", std::string()).empty())
         {
             skipped.push_back({{"file", file}, {"map", map}, {"reason", "a layer of a PSD"}});
@@ -382,6 +426,8 @@ json assignOutputs(Graph& g, const json& result, bool create, const json& channe
             if (m->as<int64_t>(scene::material::kPackedLayout) != int64_t(layout))
                 g.setValue({m->id(), scene::material::kPackedLayout, -1}, int64_t(layout));
         }
+        if (map == "detailNormal" && height)
+            useHeightNormals(g, *m, *height, *detail);
         assigned.push_back({{"material", m->name()}, {"channel", pk.channel}, {"file", file}, {"map", map}});
     }
     return {{"assigned", assigned}, {"created", created}, {"skipped", skipped}};

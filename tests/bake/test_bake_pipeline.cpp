@@ -379,9 +379,10 @@ TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 
     UndoStack::get().clear();
     const json a = ops::execute("bakeAssign", {{"project", p}});
-    REQUIRE(a["assigned"].size() == 1);
+    REQUIRE(a["assigned"].size() == 2);
     CHECK(a["assigned"][0]["channel"] == "normal");
-    CHECK(a["skipped"].size() == 1);
+    CHECK(a["assigned"][1]["channel"] == "height");
+    CHECK(a["skipped"].empty());
     scene::Graph& g = graph();
     scene::Node* mat = scene::materials::find(g, "M_Crate");
     REQUIRE(mat);
@@ -406,7 +407,8 @@ TEST_CASE("bakeAssign wires outputs into the lows' materials and undoes")
 
     CHECK(bake::materialChannel("orm") == "orm");
     CHECK(bake::materialChannel("ao") == "ambientOcclusion");
-    CHECK(bake::materialChannel("height").empty());
+    CHECK(bake::materialChannel("height") == "height");
+    CHECK(bake::materialChannel("curvature").empty());
 }
 
 TEST_CASE("relative output folders resolve under the workspace, else the saved scene's folder, else the current folder")

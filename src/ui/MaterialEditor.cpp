@@ -1041,6 +1041,11 @@ void MaterialEditor::rebuild()
             flip->setChecked(NormalFormat(m->as<int64_t>(kNormalFormat)) == NormalFormat::OpenGL);
         }
     });
+    texture("Height Map", "height", kHeightMap);
+    check("Normals From Height", kNormalFromHeight);
+    slider("Height Depth (cm)", kHeightDepth, 0.0, 20.0);
+    slider("UV Width (cm)", kHeightUvWidth, 10.0, 1000.0);
+    slider("UV Height (cm)", kHeightUvHeight, 10.0, 1000.0);
     section("Emissive");
     color("Emissive Color", kEmissiveColor);
     texture("Emissive Map", "emissive", kEmissiveMap);

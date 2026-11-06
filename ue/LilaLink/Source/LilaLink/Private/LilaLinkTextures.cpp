@@ -299,6 +299,7 @@ UTexture2D* ImportTexture(const FTextureRequest& R, const FString& Folder, TArra
 	}
 	Texture->SRGB = R.bSRGB;
 	Texture->CompressionSettings = ParseCompression(R.Compression);
+	LilaLink::KeepGrayscale16(Texture);
 	Texture->bFlipGreenChannel = R.bFlipGreen;
 	Texture->LODGroup = ParseLodGroup(R.LodGroup);
 	Texture->VirtualTextureStreaming = R.bVirtual || R.Files.Num() > 1;

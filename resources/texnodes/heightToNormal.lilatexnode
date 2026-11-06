@@ -4,7 +4,7 @@
   "type": "heightToNormal",
   "label": "Height to Normal",
   "category": "Normal",
-  "doc": "A tangent-space normal (OpenGL, green up) from the slope of a height. Exports convert to the preset's convention.",
+  "doc": "A tangent-space normal (OpenGL, green up) from the slope of a height. depth is the cm from height 0 to 1 and sizeU, sizeV the world size of the UV square, cm, so the slopes are real ones; intensity scales them. Exports convert to the preset's convention.",
   "inputs": [
     {
       "id": "height",
@@ -26,6 +26,27 @@
       "default": 1.0,
       "softMin": 0,
       "softMax": 8
+    },
+    {
+      "id": "depth",
+      "type": "float",
+      "default": 5.0,
+      "softMin": 0,
+      "softMax": 20
+    },
+    {
+      "id": "sizeU",
+      "type": "float",
+      "default": 100.0,
+      "softMin": 10,
+      "softMax": 1000
+    },
+    {
+      "id": "sizeV",
+      "type": "float",
+      "default": 100.0,
+      "softMin": 10,
+      "softMax": 1000
     }
   ],
   "cost": 8,
@@ -33,6 +54,6 @@
     "normals"
   ],
   "body": {
-    "normal": "float2 e = texel();\nfloat l = height.sample(uv - float2(e.x, 0.0));\nfloat r = height.sample(uv + float2(e.x, 0.0));\nfloat d = height.sample(uv - float2(0.0, e.y));\nfloat t = height.sample(uv + float2(0.0, e.y));\nfloat2 g = float2(r - l, t - d) / (2.0 * e);\nreturn normalEncode(float3(-g * p.intensity * 0.05, 1.0));"
+    "normal": "float2 e = texel();\nfloat l = height.sample(uv - float2(e.x, 0.0));\nfloat r = height.sample(uv + float2(e.x, 0.0));\nfloat d = height.sample(uv - float2(0.0, e.y));\nfloat t = height.sample(uv + float2(0.0, e.y));\nfloat2 g = float2(r - l, t - d) / (2.0 * e);\nfloat2 k = p.depth / max(float2(p.sizeU, p.sizeV), 1e-3);\nreturn normalEncode(float3(-g * p.intensity * k, 1.0));"
   }
 }

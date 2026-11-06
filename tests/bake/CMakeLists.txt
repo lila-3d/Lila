@@ -4,6 +4,7 @@ add_executable(lila_bake_tests
     test_cage.cpp
     test_bake_groups.cpp
     test_bake_maps.cpp
+    test_height_normal.cpp
     test_bake_pipeline.cpp)
 target_link_libraries(lila_bake_tests PRIVATE LilaScene doctest::doctest)
 add_test(NAME lila_bake_tests COMMAND lila_bake_tests)

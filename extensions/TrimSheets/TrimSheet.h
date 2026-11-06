@@ -146,7 +146,7 @@ struct Sheet
     /** Smart material or Lila material applied to the sheet's texture set. */
     std::string material;
     /** Maps the bake writes. */
-    std::vector<std::string> maps = {"normal", "ao", "curvature", "height", "cavity"};
+    std::vector<std::string> maps = {"normal", "ao", "curvature", "height", "cavity", "detailNormal"};
     /** Bake folder, absolute or relative to the .lilatrim; empty is <file stem>_Textures beside it. */
     std::string folder;
     int supersampling = 16;
