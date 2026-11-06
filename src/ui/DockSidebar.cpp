@@ -311,7 +311,10 @@ void arrangeOwnColumn(QDockWidget* dock)
     column.rect.setWidth(std::max(areaRight - areaLeft + 1 - othersWidth - handles, dock->property(kDefaultTabExtent).toInt()));
     columns.insert(right ? columns.begin() : columns.end(), std::vector<DockGroup>{column});
 
-    // Shown again straight away: Qt places hidden docks unreliably, and the moves below carry shown ones.
+    // Shown again straight away: Qt places hidden docks unreliably, and the moves below carry shown ones. The layout
+    // stays off until every dock is back: showing one runs it, and half rebuilt it still holds the removed docks' items.
+    QLayout* layout = window->layout();
+    layout->setEnabled(false);
     std::map<QDockWidget*, bool> shown;
     for (const auto& c : columns)
         for (const DockGroup& g : c)
@@ -347,6 +350,8 @@ void arrangeOwnColumn(QDockWidget* dock)
                 window->tabifyDockWidget(g.docks.front(), t);
     for (auto& [d, on] : shown)
         d->setVisible(on);
+    layout->setEnabled(true);
+    layout->activate();
 
     struct Sizes
     {
