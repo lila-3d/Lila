@@ -159,6 +159,8 @@ struct QuadRemeshOptions
     int edgesAround = 8;
     /** Edges bending at least this many degrees (gentler than sharpAngle, like a bevel's segments) steer the edge flow; 0 off. */
     double softCreaseAngle = 0.0;
+    /** How hard poles are kept out of joints (crotch, armpits, finger webs) onto flatter parts nearby; 0 off. */
+    double jointPoles = 30.0;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */

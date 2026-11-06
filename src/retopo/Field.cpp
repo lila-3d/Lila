@@ -172,6 +172,65 @@ std::vector<double> coherence(const Surface& s, double radius)
     return out;
 }
 
+/**
+ * How much each vertex sits in a saddle at the scale of a cell (a crotch, an armpit, the web between fingers): the
+ * negative Gaussian curvature of the curvature tensor averaged over that radius, times the radius squared, 0 to 1.
+ */
+std::vector<double> saddleAmount(const Surface& s, double radius)
+{
+    const Index n = s.vertexCount();
+    std::vector<glm::dmat3> t(n, glm::dmat3(0.0));
+    double edgeSum = 0.0;
+    for (size_t e = 0; e < s.edges.size(); ++e)
+    {
+        const Index a = s.edges[e][0], b = s.edges[e][1];
+        glm::dvec3 d = s.pos[b] - s.pos[a];
+        const double len = glm::length(d);
+        edgeSum += len;
+        if (s.edgeTriCount[e] != 2 || len <= 0.0)
+            continue;
+        d /= len;
+        const Index t0 = s.edgeTris[e][0];
+        const auto& f = s.tris[t0];
+        const bool forward = (f[0] == a && f[1] == b) || (f[1] == a && f[2] == b) || (f[2] == a && f[0] == b);
+        const glm::dvec3 &n0 = s.triNormal[t0], &n1 = s.triNormal[s.edgeTris[e][1]];
+        const double beta = std::atan2(glm::dot(glm::cross(n0, n1), forward ? d : -d), glm::dot(n0, n1));
+        const glm::dmat3 m = glm::outerProduct(d, d) * (0.5 * beta * len);
+        t[a] += m;
+        t[b] += m;
+    }
+    std::vector<double> ar = s.area;
+    const int rings = int(std::clamp(std::round(radius * double(s.edges.size()) / std::max(edgeSum, 1e-300)), 1.0, 12.0));
+    for (int it = 0; it < rings; ++it)
+    {
+        std::vector<glm::dmat3> nt(n);
+        std::vector<double> nar(n);
+        tbb::parallel_for(Index(0), n, [&](Index v) {
+            glm::dmat3 st = t[v];
+            double sr = ar[v];
+            for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+            {
+                st += t[s.adj[k]];
+                sr += ar[s.adj[k]];
+            }
+            nt[v] = st;
+            nar[v] = sr;
+        });
+        t.swap(nt);
+        ar.swap(nar);
+    }
+    std::vector<double> out(n, 0.0);
+    tbb::parallel_for(Index(0), n, [&](Index v) {
+        if (ar[v] <= 0.0)
+            return;
+        const glm::dvec3 e1 = anyTangent(s.normal[v]), e2 = glm::cross(s.normal[v], e1);
+        const double inv = 1.0 / ar[v];
+        const double a = glm::dot(e1, t[v] * e1) * inv, b = glm::dot(e1, t[v] * e2) * inv, c = glm::dot(e2, t[v] * e2) * inv;
+        out[v] = std::clamp(-(a * c - b * b) * radius * radius, 0.0, 1.0);
+    });
+    return out;
+}
+
 } // namespace
 
 Curvature estimateCurvature(const Surface& s, double coherenceRadius)
@@ -364,6 +423,13 @@ std::vector<glm::dvec3> solveCrossField(const Surface& s, const FieldOptions& op
 
     // Transport per edge: a direction at a reads as rotated by r[e] at b.
     std::vector<double> w = edgeWeights(s);
+    // Stiffer in saddles, so the field's poles, which settle where turning is cheap, keep out of joints.
+    if (opts.jointStiffness > 0.0)
+    {
+        const std::vector<double> saddle = saddleAmount(s, scale);
+        for (size_t e = 0; e < s.edges.size(); ++e)
+            w[e] *= 1.0 + opts.jointStiffness * 0.5 * (saddle[s.edges[e][0]] + saddle[s.edges[e][1]]);
+    }
     std::vector<double> theta = transportAngles(s);
     std::vector<std::complex<double>> r(s.edges.size());
     for (size_t e = 0; e < s.edges.size(); ++e)

@@ -181,6 +181,7 @@ struct FieldOptions
     double scale = 1.0;           // target lattice spacing, for the smoothing length
     double curvatureWeight = 1.0; // alignment to principal directions
     double softCreaseAngle = 0.0; // edges bending at least this many degrees (short of features) pull the field along them; <= 0 off
+    double jointStiffness = 30.0; // smoothness gain in saddles (crotch, armpit, finger webs), which keeps poles out of joints; 0 off
     std::vector<std::vector<glm::dvec3>> guides;
     /** Per surface edge, an angle (in the field's fourth power) added to its transport; from prescribeSingularities. */
     std::vector<double> twist;
