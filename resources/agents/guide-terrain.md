@@ -47,3 +47,13 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 ## To Unreal
 
 `terrainSendToUnreal(t)` builds or updates a Landscape: heights on a `Lila` edit layer, rotation and Z-up handled, every mask as a paint layer (weightmap, layer info asset) and a generated material on `MF_LilaLandscapeLayer`. `layers=['cityFootprint', 'flow']` or `{'mask': 'LayerName'}` limits and renames them; `material='/Game/...'` uses your own landscape material (it needs those layer names). `terrainExport(t, target='unreal'|'files')` writes the same files without a live editor.
+
+## From a real place, a painting or drawn lines
+
+- Real place: `terrainImportDem(place='Matterhorn', size=[1200000, 1200000])` or `bbox=[west, south, east, north]` in degrees. `source='copernicus'` (GLO-30, default), `'terrarium'` (AWS Terrain Tiles, `spacing=` cm picks the detail) or `'opentopography'` (`dataset='SRTMGL1'`, `apiKey=`, `saveKey=True` once). A local DEM works too: `terrainImportDem('dem/N46E007.hgt')`. `projection='utm'` (default), `'enu'` or `'local'`. Copernicus includes trees and roofs: `bareEarth=True`. Coarse 30 m data: `amplify=4` adds eroded detail at 7.5 m and keeps the place.
+- The result's `georef` and `terrainGeoref(t, latLon=[[lat, lon]])` give world points for real coordinates; `points=[[x, z]]` gives latitude and longitude back.
+- Attribution for every source goes to the workspace's `terrain/ATTRIBUTION.txt`; ship it with the game. Read `attribution` and `notes` in the result (open-sea tiles at sea level, tile zoom used).
+- OSM: `terrainImportOsm('area.osm', terrain=t)` (or `.json` from Overpass, `.osm.pbf`, or `fetch=True`). Roads, paths, rivers, streams, lakes and coastline come in as curves draped on the ground, one curve per kind under `<terrain>_OSM` (`perFeature=True` for one per feature); `osmFeatures` on each curve lists id, name, class and width (cm) per spline. Land cover becomes masks `landcover_forest`, `landcover_urban`, `landcover_water` ... Terrains not from real data need `origin=[lat, lon]` of their centre.
+- Painted sketch: `terrainImport('sketch.png', mode='sketch', size=400000, high=60000)`. Grey is the base height; red strokes ridges, green valleys, blue rivers, yellow flat ground. Erosion keeps them. 8-bit paintings are de-stepped in every mode.
+- Drawn constraints: `terrainConstrain(t, kind='ridge'|'valley'|'cliff'|'river'|'flat', curve='Line' or path=[[x, z], ...], height=, width=)`. They are held while erosion runs. Draw rivers downstream: the bed only falls along the curve. Same `id` replaces; `remove=id`, `clear=True`.
+- Live link: `terrainLiveLink(t)` re-runs the terrain whenever its file is saved (in the app). Headless, call `terrainReload(t)` after writing the file.

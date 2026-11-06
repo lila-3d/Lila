@@ -14,6 +14,7 @@
 
 #include <lila/Command.h>
 #include <lila/Deformer.h>
+#include <lila/Events.h>
 #include <lila/Extension.h>
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
@@ -318,6 +319,20 @@ std::string terrainArg(const Args& a, const std::string& cmd, const char* flag =
     if (names.size() != 1)
         throw CommandError(cmd + ": give one terrain");
     return names[0];
+}
+
+/** Files passed positionally; never the selection, which objects() falls back to. */
+std::vector<std::string> givenFiles(const Args& a)
+{
+    std::vector<std::string> out;
+    for (const json& v : a.positional)
+        if (v.is_string())
+            out.push_back(v.get<std::string>());
+        else if (v.is_array())
+            for (const json& x : v)
+                if (x.is_string())
+                    out.push_back(x.get<std::string>());
+    return out;
 }
 
 /** Where terrain data that belongs with the work goes: the workspace's terrain folder, else beside the scene, else temp. */
@@ -694,7 +709,7 @@ json runImportDem(const Args& a)
     std::string attribution;
     fs::path attributionFile;
 
-    const std::vector<std::string> pos = a.objects();
+    const std::vector<std::string> pos = givenFiles(a);
     if (!pos.empty())
     {
         file = resolvedFile(pos[0]);
@@ -855,7 +870,7 @@ json runImportOsm(const Args& a)
 
     fs::path file;
     json fetched = nullptr;
-    const std::vector<std::string> pos = a.objects();
+    const std::vector<std::string> pos = givenFiles(a);
     if (!pos.empty())
     {
         file = resolvedFile(pos[0]);
@@ -1339,14 +1354,17 @@ bool registerInputs(ext::Context& ctx)
         .examples = {"terrainGeoref('Terrain', latLon=[[45.9763, 7.6586]])['points']"},
     });
 
-    if (QCoreApplication* app = QCoreApplication::instance(); app && qobject_cast<QApplication*>(app))
-    {
-        auto* timer = new QTimer(app);
-        timer->setInterval(1000);
-        QObject::connect(timer, &QTimer::timeout, timer, [] { pollLiveLinks(); });
-        timer->start();
-        ctx.track("timer:terrainLiveLink", [timer] { delete timer; });
-    }
+    // Extensions load before the application object exists, so the poll timer starts on the first idle of the UI loop.
+    auto timer = std::make_shared<QTimer*>(nullptr);
+    ctx.subscribe(events::Event::AppIdle, [timer](const events::EventData&) {
+        if (*timer || !qobject_cast<QApplication*>(QCoreApplication::instance()))
+            return;
+        *timer = new QTimer(QCoreApplication::instance());
+        (*timer)->setInterval(1000);
+        QObject::connect(*timer, &QTimer::timeout, *timer, [] { pollLiveLinks(); });
+        (*timer)->start();
+    });
+    ctx.track("timer:terrainLiveLink", [timer] { delete *timer; });
     return true;
 }
 } // namespace terrain
