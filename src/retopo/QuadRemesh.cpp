@@ -1401,8 +1401,7 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     };
     std::optional<QuadRemeshResult> seamless;
     int seamlessFlaws = 0;
-    // Its lattice spacing evens out over the whole surface, so local density handles barely show in it.
-    const bool trySeamlessLayout = opts.seamless && opts.densityHandles.empty();
+    const bool trySeamlessLayout = opts.seamless;
     // The seamless layout puts every pole on a lattice point, so poles closer than a step or so fold it; a close pair of
     // opposite poles is only a kink in the flow, and the field without it is the one to lay out.
     std::vector<glm::dvec3> qSeam = q;
@@ -1428,11 +1427,32 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
         }
         Budget::note(std::to_string(fieldSingularities(s, qSeam).size()) + " poles for the seamless layout");
     }
+    // The seamless solve evens its spacing out over the whole surface, softening local changes (handles, joints, thin
+    // parts); asking for half again the contrast brings back about what was asked.
+    std::vector<double> seamScale = scale;
+    {
+        constexpr double kGain = 1.5;
+        std::vector<double> sorted = scale;
+        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+        const double mid = sorted[sorted.size() / 2], gain = kGain;
+        for (double& x : seamScale)
+            x = mid * std::pow(x / mid, gain);
+        // Same number of cells overall: only the contrast changes.
+        double before = 0.0, after = 0.0;
+        for (Index v = 0; v < Index(scale.size()); ++v)
+        {
+            before += s.area[v] / (scale[v] * scale[v]);
+            after += s.area[v] / (seamScale[v] * seamScale[v]);
+        }
+        if (before > 0.0 && after > 0.0)
+            for (double& x : seamScale)
+                x *= std::sqrt(after / before);
+    }
     auto trySeamless = [&](int foldRetries) {
         std::vector<std::array<int, 2>> steps;
         Extracted grid;
         Index folds = 0;
-        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, scale, nullptr, &steps, &grid, foldRetries, &folds);
+        std::vector<glm::dvec3> o = solveSeamlessPositions(s, qSeam, seamScale, nullptr, &steps, &grid, foldRetries, &folds);
         if (o.empty())
             return folds;
         auto consider = [&](QuadRemeshResult r) {
