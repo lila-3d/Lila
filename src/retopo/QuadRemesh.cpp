@@ -236,10 +236,21 @@ void untangle(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::Mesh& 
             }
         if (folded.empty())
             return;
+        // A corner with no crease through it (a cone tip, a saddle) only marks the shape; after enough tries a fold it
+        // pins may move it rather than stay.
+        auto pinned = [&](Index p) {
+            if (feature[p] != FeatureKind::Corner)
+                return false;
+            if (it < 10)
+                return true;
+            bool onCrease = false;
+            m.forEachPointEdge(p, [&](Index e) { onCrease = onCrease || feature[m.edgeOtherPoint(e, p)] != FeatureKind::None; });
+            return onCrease;
+        };
         std::vector<Index> pts;
         for (Index f : folded)
             for (Index p : m.facePoints(f))
-                if (feature[p] != FeatureKind::Corner)
+                if (!pinned(p))
                     pts.push_back(p);
         std::sort(pts.begin(), pts.end());
         pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
@@ -265,7 +276,7 @@ void untangle(geo::Mesh& m, std::vector<FeatureKind>& feature, const geo::Mesh& 
             m.forEachPointEdge(p, [&](Index e) {
                 const Index q = m.edgeOtherPoint(e, p);
                 // Along a crease only its own points pull.
-                if (feature[p] == FeatureKind::None || feature[q] != FeatureKind::None)
+                if (feature[p] == FeatureKind::None || feature[p] == FeatureKind::Corner || feature[q] != FeatureKind::None)
                 {
                     avg += m.position(q);
                     ++count;
