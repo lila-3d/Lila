@@ -476,8 +476,21 @@ void straightenSeamRows(geo::Mesh& m, const std::vector<FeatureKind>& feature, c
         best[axis] = 0.0;
         moves.push_back({p, best});
     }
+    // A move that turns a face round the point over (a quad bent across its diagonal) stays undone.
     for (const auto& [p, at] : moves)
+    {
+        const glm::dvec3 was = m.position(p);
+        std::vector<std::pair<Index, glm::dvec3>> before;
+        for (Index f : m.pointFaces(p))
+            before.push_back({f, m.faceAreaVector(f)});
         m.setPosition(p, at);
+        for (const auto& [f, n] : before)
+            if (glm::dot(m.faceAreaVector(f), n) < 0.25 * glm::dot(n, n))
+            {
+                m.setPosition(p, was);
+                break;
+            }
+    }
 }
 
 /**
@@ -1393,6 +1406,29 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
     auto record = [&](QuadRemeshResult r) {
         if (r.ok())
             result.attempts.push_back({r.layout, r.mesh.numFaces(), int(defects(r.mesh, src, bvh, closed)), r.metrics.irregular});
+        // LILA_DUMP_ATTEMPTS=<dir>: every attempt as attempt<n>_<layout>.obj, in the source's space.
+        if (const char* dir = std::getenv("LILA_DUMP_ATTEMPTS"); dir && r.ok())
+            if (FILE* f = std::fopen((std::string(dir) + "/attempt" + std::to_string(result.attempts.size()) + "_" + r.layout + ".obj").c_str(), "w"))
+            {
+                std::vector<Index> id(r.mesh.pointCapacity(), 0);
+                Index next = 1;
+                for (Index p = 0; p < r.mesh.pointCapacity(); ++p)
+                    if (r.mesh.pointValid(p))
+                    {
+                        const glm::dvec3 x = r.mesh.position(p);
+                        std::fprintf(f, "v %.9g %.9g %.9g\n", x.x, x.y, x.z);
+                        id[p] = next++;
+                    }
+                for (Index fc = 0; fc < r.mesh.faceCapacity(); ++fc)
+                    if (r.mesh.faceValid(fc))
+                    {
+                        std::fprintf(f, "f");
+                        for (Index p : r.mesh.facePoints(fc))
+                            std::fprintf(f, " %d", int(id[p]));
+                        std::fprintf(f, "\n");
+                    }
+                std::fclose(f);
+            }
         return r;
     };
     auto build = [&](const char* layout, const std::vector<glm::dvec3>& o, const std::vector<std::array<int, 2>>* steps = nullptr) {
