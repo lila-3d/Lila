@@ -190,6 +190,14 @@ enum class SculptOp : uint8_t
     Smooth,
     Flatten,
     Noise,
+    Ramp,
+    Terrace,
+    Stamp,
+    Erode,
+    Uplift,
+    Relax,
+    Mask,
+    Patch,
 };
 
 const std::vector<std::string>& sculptOpNames();
@@ -209,6 +217,14 @@ struct SculptStroke
     double height;
     double noiseSize = 1000.0;
     uint32_t seed = 0;
+    /** Weight per point, from pen pressure (empty: 1 everywhere). */
+    std::vector<float> pressure;
+    /** A brush falloff shape name (smooth, bell, linear, ...); empty is the terrain falloff. */
+    std::string falloff;
+    /** Mirror the dabs across the heightfield's centre: x, z or xz; empty is off. */
+    std::string mirror;
+    /** The brushes past noise (ramp, terrace, stamp, erode, uplift, relax, mask): their settings, see Brushes.h. */
+    nlohmann::json settings;
 
     SculptStroke();
     nlohmann::json toJson() const;

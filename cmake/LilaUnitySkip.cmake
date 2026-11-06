@@ -1,5 +1,10 @@
 set(LILA_UNITY_SKIP
     extensions/OpenUSD/UsdHydraInterop.cpp
+    extensions/Terrain/Brushes.cpp
+    extensions/Terrain/ErosionFilter.cpp
+    extensions/Terrain/Landform.cpp
+    extensions/Terrain/LandformCommands.cpp
+    extensions/Terrain/LandformGpu.cpp
     src/core/ImageIO.cpp
     src/core/PrefStore.cpp
     src/fbx/FbxImport.cpp

@@ -1,8 +1,11 @@
 # The Terrain extension: its core compiled in directly, and the package driven through its commands.
-add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
+add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_landform.cpp test_brushes.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Export.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Erosion.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionGpu.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Inputs.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Stamps.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Analysis.cpp)
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Stamps.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Analysis.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Landform.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/LandformGpu.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionFilter.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Shaping.cpp
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Brushes.cpp)
 target_include_directories(lila_terrain_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Terrain)
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_terrain_tests PRIVATE LilaUI doctest::doctest miniz::miniz)

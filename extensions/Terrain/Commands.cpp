@@ -7,6 +7,7 @@
 #include "ErosionGpu.h"
 #include "Export.h"
 #include "Inputs.h"
+#include "LandformCommands.h"
 #include "Stamps.h"
 #include "Terrain.h"
 
@@ -307,6 +308,8 @@ constexpr Exposed kInputs[] = {
     {"erosionStrength", "float", "Erosion", 0, 0.005, "Erode", "strength", "How fast rivers cut."},
     {"uplift", "float", "Erosion", 0, 100, "Erode", "uplift", "Rise per step, cm, building ranges as they wear."},
     {"talusAngle", "float", "Erosion", 5, 60, "Erode", "talusAngle", "Slopes steeper than this shed scree, degrees."},
+    {"age", "float", "Erosion", 0, 1, "Preset", "age", "Erode preset age: 0 is off, 1 is very old."},
+    {"erosionPreset", "string", "Erosion", 0, 0, "Preset", "preset", "Erode preset: natural, alpine, desert or hills."},
 };
 
 /** A new terrain mesh stood on the scene's ground: on a Z-up scene the heightfield's Y turns to world Z and its Z to world X. */
@@ -905,15 +908,19 @@ void registerStampCommands(ext::Context& ctx)
 
     ctx.registerCommand({
         .name = "terrainSculpt",
-        .doc = "Sculpt a terrain by command: raise, lower, smooth, flatten or noise, in dabs at points=, along a path= polyline or "
-               "along a curve object, each dab radius cm wide with a smooth falloff.\n\n"
-               "Raise, lower and noise move the ground by strength cm at the centre; smooth and flatten go strength (0 to 1) of the "
-               "way. Flatten levels to height (along the up axis) or the mean under the stroke. stage='base' sculpts before "
+        .doc = "Sculpt a terrain by command: raise, lower, smooth, flatten, noise, ramp, terrace, stamp, erode, uplift, relax or "
+               "mask, in dabs at points=, along a path= polyline or along a curve object, each dab radius cm wide with a smooth "
+               "falloff (or falloff=, alpha=), weighted per point by pressure= and mirrored by mirror=.\n\n"
+               "Raise, lower, noise and stamp move the ground by strength cm at the centre; the rest go strength (0 to 1) of the "
+               "way. Flatten levels to height (along the up axis), the plane under the stroke (plane=True) or the mean under it. "
+               "Ramp runs from the first point to the last. Terrace steps every step cm. Stamp lays a library shape or image. "
+               "Erode runs erosion under the brush; uplift paints the uplift mask Erode Terrain lifts by (base stage); relax "
+               "evens out bumps; mask paints any mask toward value. stage='base' sculpts before "
                "erosion, which then shapes it; stage='final' after erosion, before the stamps. Strokes are kept in a Terrain "
                "Sculpt node and replay on every evaluation, so they save with the scene and undo like any edit. clear=True drops "
                "the stage's strokes. Returns the stroke count, height range and revision.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"op", "o", T::String, "raise", "raise, lower, smooth, flatten or noise.", sculptOpNames()},
+        .flags = {{"op", "o", T::String, "raise", "The brush.", sculptOpNames()},
                   {"points", "p", T::List, nullptr, "Dab centres [[x, z] or [x, y, z], ...]."},
                   {"path", "pa", T::List, nullptr, "A polyline the stroke runs along."},
                   nodeFlag({"curve", "cv", T::String, nullptr, "A curve object the stroke runs along."}, "curve"),
@@ -923,6 +930,21 @@ void registerStampCommands(ext::Context& ctx)
                   {"height", "h", T::Float, nullptr, "Flatten: target height along the up axis, cm; default the mean under the stroke."},
                   {"noiseSize", "ns", T::Float, 1000.0, "Noise: feature size, cm.", {}, {}, 1.0},
                   {"seed", "sd", T::Int, int64_t(0), "Noise: seed."},
+                  {"pressure", "pr", T::List, nullptr, "Weight per point, 0 to 1 (pen pressure)."},
+                  {"falloff", "fo", T::String, nullptr, "Brush falloff shape: smooth, sphere, root, sharp, linear, constant, bell, or a soft select preset."},
+                  {"mirror", "mi", T::String, nullptr, "Mirror across the terrain's centre along its own x, z or both.", {"off", "x", "z", "xz"}},
+                  {"plane", "pl", T::Bool, nullptr, "Flatten: level to the plane fitted under the stroke."},
+                  {"endHeight", "eh", T::Float, nullptr, "Ramp: height at the last point along the up axis, cm; default the ground there (height= sets the first)."},
+                  {"step", "stp", T::Float, nullptr, "Terrace: step height, cm (default 1000).", {}, {}, 1.0},
+                  {"sharpness", "sh", T::Float, nullptr, "Terrace: 0 soft to 1 sheer risers (default 0.8).", {}, {}, 0.0, 1.0},
+                  {"stamp", "stm", T::String, nullptr, "Stamp: a library stamp (peak, crater, dune, rocks, mesa, ridge, volcano) or an image file."},
+                  {"angle", "an", T::Float, nullptr, "Stamp and alpha: turn, degrees."},
+                  {"blend", "bl", T::String, nullptr, "Stamp: add (default), raise (never below the stamp) or lower.", {"add", "raise", "lower"}},
+                  {"alpha", "al", T::String, nullptr, "A stamp or image (alpha:// or a file) shaping the brush tip."},
+                  {"mask", "mk", T::String, nullptr, "Mask and uplift brushes: the mask to paint (default paint, uplift)."},
+                  {"value", "va", T::Float, nullptr, "Mask and uplift brushes: value painted toward, 0 to 1 (default 1).", {}, {}, 0.0, 1.0},
+                  {"iterations", "it", T::Int, nullptr, "Erode and relax: steps (default 10 and 4).", {}, {}, 1.0, 200.0},
+                  {"patch", "pt", T::Any, nullptr, "Patch: the block of height changes terrainSculptRegion bakes."},
                   {"stage", "sg", T::String, "base", "base (before erosion) or final (after it).", {"base", "final"}},
                   {"clear", "cl", T::Bool, false, "Remove every stroke of this stage instead of adding one."},
                   {"replaceLast", "rl", T::Bool, false, "Replace the stage's last stroke instead of adding one (a stroke growing as it is drawn)."},
@@ -939,7 +961,7 @@ void registerStampCommands(ext::Context& ctx)
             const bool base = a.get<std::string>("stage", "base") == "base";
             const std::string nodeName = base ? "Sculpt" : "SculptFinal";
             TerrainGroup t = terrainGroup(g, f, "terrainSculpt");
-            const std::set<std::string> skip = base ? std::set<std::string>{"ErodeTerrain", "TerrainStamps", "TerrainSculpt"} : std::set<std::string>{"TerrainStamps"};
+            const std::set<std::string> skip = base ? withLandformTypes({"ErodeTerrain", "TerrainStamps", "TerrainSculpt"}) : std::set<std::string>{"TerrainStamps"};
             if (base && !nodeNamed(t.group, nodeName))
             {
                 // Before erosion means before the Erode node; with none (a baked terrain), before the trailing layers.
@@ -988,12 +1010,21 @@ void registerStampCommands(ext::Context& ctx)
                 }
                 s.radius = std::max(1.0, a.get<double>("radius", 2000.0)) / fr.across();
                 const double strength = a.get<double>("strength", 100.0);
-                s.strength = s.op == SculptOp::Smooth || s.op == SculptOp::Flatten ? std::clamp(strength, 0.0, 1.0) : strength / fr.vertical();
+                const bool inCm = s.op == SculptOp::Raise || s.op == SculptOp::Lower || s.op == SculptOp::Noise || s.op == SculptOp::Stamp;
+                s.strength = inCm ? strength / fr.vertical() : std::clamp(strength, 0.0, 1.0);
                 s.spacing = std::max(0.0, a.get<double>("spacing", 0.0)) / fr.across();
                 if (a.has("height"))
                     s.height = fr.localHeight(a.get<double>("height", 0.0), centroid);
                 s.noiseSize = std::max(1.0, a.get<double>("noiseSize", 1000.0)) / fr.across();
                 s.seed = uint32_t(a.get<int64_t>("seed", 0));
+                if (a.has("pressure"))
+                    for (const json& v : a.flags["pressure"])
+                        s.pressure.push_back(v.get<float>());
+                s.falloff = a.get<std::string>("falloff", "");
+                s.mirror = a.get<std::string>("mirror", "");
+                if (s.mirror == "off")
+                    s.mirror.clear();
+                s.settings = brushSettings(a, [&](double up) { return fr.localHeight(up, centroid); }, fr.vertical());
                 list.push_back(s.toJson());
             }
             setList(*nodeNamed(t.group, nodeName), "strokes", list);
@@ -1004,7 +1035,8 @@ void registerStampCommands(ext::Context& ctx)
             return out;
         },
         .examples = {"terrainSculpt('Terrain', op='raise', points=[[0, 0]], radius=30000, strength=8000)",
-                     "terrainSculpt('Terrain', op='flatten', curve='RoadLine', radius=1200, strength=1, stage='final')"},
+                     "terrainSculpt('Terrain', op='flatten', curve='RoadLine', radius=1200, strength=1, stage='final')",
+                     "terrainSculpt('Terrain', op='stamp', stamp='crater', points=[[0, 0]], radius=8000, strength=3000, stage='final')"},
     });
 
     ctx.registerCommand({
@@ -1999,6 +2031,8 @@ void registerCommands(ext::Context& ctx)
                   {"erosionStrength", "es", T::Float, ErosionParams().strength, "How fast rivers cut.", {}, {}, 0.0},
                   {"uplift", "u", T::Float, 0.0, "Rise per erosion step, cm."},
                   {"talusAngle", "ta", T::Float, ErosionParams().talusAngle, "Slopes steeper than this shed scree, degrees.", {}, {}, 1.0, 89.0},
+                  {"age", "ag", T::Float, 0.0, "Erode preset age, 0 to 1: macro form, debris, scree, rills and deposition; 0 is off.", {}, {}, 0.0, 2.0},
+                  {"erosionPreset", "ep", T::String, "natural", "Erode preset for age.", erodePresetNames()},
                   {"name", "n", T::String, "Terrain", "Name of the mesh."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
@@ -2021,7 +2055,9 @@ void registerCommands(ext::Context& ctx)
                            {"erosion", a.flags["erosion"]},
                            {"erosionStrength", a.flags["erosionStrength"]},
                            {"uplift", a.flags["uplift"]},
-                           {"talusAngle", a.flags["talusAngle"]}};
+                           {"talusAngle", a.flags["talusAngle"]},
+                           {"age", a.get<double>("age", 0.0)},
+                           {"erosionPreset", a.get<std::string>("erosionPreset", "natural")}};
             const bool flat = a.get<bool>("flat", false);
             if (flat)
                 values["amplitude"] = 0.0;
@@ -2031,7 +2067,7 @@ void registerCommands(ext::Context& ctx)
 
             json inputs = json::array();
             json links = json::array({"Grid.heightfield -> Noise.heightfield", "Noise.heightfield -> Erode.heightfield",
-                                      "Erode.heightfield -> GroupOutput.geometry"});
+                                      "Erode.heightfield -> Preset.heightfield", "Preset.heightfield -> GroupOutput.geometry"});
             for (const Exposed& e : kInputs)
             {
                 json in = {{"name", e.name}, {"type", e.type}, {"default", values[e.name]}, {"panel", e.panel}, {"description", e.description}, {"min", e.min}};
@@ -2045,7 +2081,8 @@ void registerCommands(ext::Context& ctx)
                          {"inputs", inputs},
                          {"nodes", json::array({{{"name", "Grid"}, {"type", "HeightfieldGrid"}, {"values", {{"center", localCenter(a.flags["center"])}}}},
                                                 {{"name", "Noise"}, {"type", "TerrainNoise"}},
-                                                {{"name", "Erode"}, {"type", "ErodeTerrain"}}})},
+                                                {{"name", "Erode"}, {"type", "ErodeTerrain"}},
+                                                {{"name", "Preset"}, {"type", "TerrainErodePreset"}}})},
                          {"links", links}};
             ops::execute("gnBuildGroup", {{"args", {spec}}, {"replace", false}});
             json mod = ops::execute("gnApply", {{"args", {host, group}}});
@@ -2362,11 +2399,15 @@ void registerCommands(ext::Context& ctx)
                "scree, and the masks flow, wear, deposit and lakes appear for materials and scatter. Sets the terrain's erosion "
                "inputs (iterations is age: 50 to 150 looks natural) and returns terrainInfo's stats.",
         .positionalDoc = "terrain mesh or its modifier",
-        .flags = {{"iterations", "i", T::Int, int64_t(80), "Erosion steps; 0 turns it off.", {}, {}, 0.0, 10000.0},
+        .flags = {{"iterations", "i", T::Int, nullptr, "Erosion steps; 0 turns it off. Default 80; with preset= or age= only the preset changes.", {}, {}, 0.0, 10000.0},
                   {"strength", "s", T::Float, nullptr, "How fast rivers cut.", {}, {}, 0.0},
                   {"uplift", "u", T::Float, nullptr, "Rise per step, cm."},
                   {"talusAngle", "ta", T::Float, nullptr, "Slopes steeper than this shed scree, degrees.", {}, {}, 1.0, 89.0},
-                  {"device", "d", T::String, nullptr, "cpu (exact, the same bytes everywhere), gpu, or auto (gpu when there is one).", {"cpu", "gpu", "auto"}}},
+                  {"device", "d", T::String, nullptr, "cpu (exact, the same bytes everywhere), gpu, or auto (gpu when there is one).", {"cpu", "gpu", "auto"}},
+                  {"preset", "p", T::String, nullptr, "Erode preset (natural, alpine, desert, hills): macro form, amplify, debris and scree, rills, deposition.", erodePresetNames()},
+                  {"age", "ag", T::Float, nullptr, "Preset age, 0 to 1: 0 turns the preset off, 1 is very old.", {}, {}, 0.0, 2.0},
+                  {"seed", "sd", T::Int, nullptr, "Preset seed."},
+                  {"hardnessMask", "hm", T::String, nullptr, "Preset: mask of hard rock (1), eroding slower with steeper scree."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -2374,6 +2415,8 @@ void registerCommands(ext::Context& ctx)
             if (names.size() != 1)
                 throw CommandError("terrainErode: give one terrain");
             Graph& g = Graph::current();
+            if (a.has("preset") || a.has("age"))
+                return erodePresetCommand(names[0], a);
             const Found f = findTerrain(g, names[0], "terrainErode");
             if (f.modifier->type().attrIndex("erosion") < 0)
                 throw CommandError("terrainErode: " + f.modifier->path() + " has no erosion inputs; add an Erode Terrain node to its group");
@@ -2403,7 +2446,7 @@ void registerCommands(ext::Context& ctx)
                 ops::execute("setAttr", {{"args", {mod + ".talusAngle", a.get<double>("talusAngle", 0.0)}}});
             return describe(findTerrain(g, names[0], "terrainErode"));
         },
-        .examples = {"terrainErode('Terrain', iterations=120)['masks']['flow']"},
+        .examples = {"terrainErode('Terrain', iterations=120)['masks']['flow']", "terrainErode('Terrain', preset='alpine', age=0.6)['preset']['stepsMs']"},
     });
 
     ctx.registerCommand({
@@ -2503,5 +2546,6 @@ void registerCommands(ext::Context& ctx)
 
     registerStampCommands(ctx);
     registerContractCommands(ctx);
+    registerLandformCommands(ctx);
 }
 } // namespace terrain

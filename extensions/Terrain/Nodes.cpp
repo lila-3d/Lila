@@ -5,6 +5,7 @@
 #include "Analysis.h"
 #include "ErosionGpu.h"
 #include "Inputs.h"
+#include "LandformCommands.h"
 #include "Stamps.h"
 #include "Terrain.h"
 
@@ -670,9 +671,13 @@ gn::NodeDecl thermalDecl()
         .label = "Thermal Erosion",
         .category = kCategory,
         .doc = "Slopes steeper than the talus angle shed material downhill until they settle: scree below cliffs, softened "
-               "crests.",
+               "crests. Where Material Mask is set, its angle takes over (hard rock stands steeper, sand slumps lower). Writes "
+               "talus (where scree landed).",
+        .props = {prop("device", {"cpu", "gpu", "auto"}, "cpu", "Where it runs: cpu is exact and the same everywhere.")},
         .sockets = {.inputs = {geoIn("heightfield"), in("talusAngle", Socket::Float, 38.0, "Steepest stable slope, degrees.", 1.0, 89.0),
-                               in("iterations", Socket::Int, 20, "Steps.", 0, 10000)},
+                               in("iterations", Socket::Int, 20, "Steps.", 0, 10000),
+                               in("materialMask", Socket::String, "", "Mask of a material with its own talus angle (such as a hardness mask)."),
+                               in("materialAngle", Socket::Float, 60.0, "The material's talus angle, degrees.", 1.0, 89.0)},
                     .outputs = {geoOut("heightfield")}},
         .exec =
             [](ExecContext& c) {
@@ -680,7 +685,7 @@ gn::NodeDecl thermalDecl()
 
                 GeometryPtr g = c.geometry("heightfield");
                 Heightfield h = requireHeightfield(c, g);
-                thermal(h, c.f("talusAngle"), int(std::clamp<int64_t>(c.i("iterations"), 0, 10000)));
+                runThermalNode(c, h);
                 c.out("heightfield", withHeightfield(g, std::move(h)));
             },
     };
