@@ -1,0 +1,2312 @@
+{
+ "attribute": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "d46d075eca540d22"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "cards": {
+  "cards": [
+   414,
+   1296,
+   "e682ece57be67715"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "cardsTextured": {
+  "cards": [
+   414,
+   1296,
+   "5073bb2170c407bc"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "clump": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "ba947ec0872709b1"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "colorSet": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "a0241988883d6a0c"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "density": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "4c5b3755a7988af6"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "flat": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "5d4ac7057d8e8c4c"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "guideGroups": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   16,
+   "cb76acb47ba1710b"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   200,
+   384,
+   "fae4aa2612c4c215"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   25,
+   48,
+   "f4d8a40e684ed744"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "guideLayer": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "423d79f51dd9a16d"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   224,
+   384,
+   "17ae44917be458ed"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   14,
+   24,
+   "3f685514050770af"
+  ],
+  "softSelectedGuides": [
+   7,
+   12,
+   "d86053b8cec22755"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "guideLevels": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "221a351fddd4c4dc"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "07adc9c91ee4993f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   12832,
+   75264,
+   "2010710de2918107"
+  ]
+ },
+ "images": {
+  "cardMap": [
+   3404,
+   "7d9c062f767f78bc"
+  ],
+  "cardMapNoAo": [
+   3404,
+   "1d9a657abd7d6823"
+  ],
+  "lookColors": [
+   9,
+   "c6dd0a6024992b6a"
+  ],
+  "map1aCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map1aFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "map1bCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map1bFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "map1gCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map1gFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "map1rCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map1rFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "map1rgbCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map1rgbFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "map4aCached": [
+   3404,
+   "db2dac51b731046b"
+  ],
+  "map4aFile": [
+   3404,
+   "b4d412cd93043950"
+  ],
+  "map4bCached": [
+   3404,
+   "b01c241c99c30827"
+  ],
+  "map4bFile": [
+   3404,
+   "fb63682489cef0e2"
+  ],
+  "map4gCached": [
+   3404,
+   "96463da3ef832ed8"
+  ],
+  "map4gFile": [
+   3404,
+   "c919637bad69b730"
+  ],
+  "map4rCached": [
+   3404,
+   "4927570224a9d80b"
+  ],
+  "map4rFile": [
+   3404,
+   "a5c865e3b46f1c57"
+  ],
+  "map4rgbCached": [
+   3404,
+   "d1763c3cee392d6e"
+  ],
+  "map4rgbFile": [
+   3404,
+   "3bfd5e421e79e236"
+  ],
+  "overlayColors": [
+   3200,
+   "9a5478cc94e7c977"
+  ],
+  "rootToTip": [
+   128,
+   "4b5382ce2ca002b4"
+  ]
+ },
+ "instanceMarkers": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   2406,
+   9624,
+   "9b45d83dddf49738"
+  ],
+  "instanceMeshes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "lit": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "litRibbons": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   36108,
+   96288,
+   "08582b1244797324"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "mapColor": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   561,
+   3072,
+   "8570ee68d327403f"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "mapColorG": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   561,
+   3072,
+   "769825fcc3f1800f"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "mapGray": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   561,
+   3072,
+   "ec46edd2fb2b4b9c"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "mapTexture": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   3072,
+   3072,
+   "d50a75f6d53cde53"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "noOverlays": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   0,
+   "1bc3918f92cfca5c"
+  ],
+  "flowArrows": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "flowField": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "guides": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "softSelectedGuides": [
+   0,
+   0,
+   "0dd2f5d6ccceefff"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   18054,
+   32096,
+   "dda973fb1c81e177"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "random": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "2587852f35e97121"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "ribbons": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   36108,
+   96288,
+   "b0bbde953a7bffb0"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "roots": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   2070,
+   "80972340a0974834"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "strokeDim": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   18054,
+   32096,
+   "5d4ac7057d8e8c4c"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "strokeDimColored": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   18054,
+   32096,
+   "2587852f35e97121"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   9624,
+   14436,
+   "e1d482f39520cb09"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   0,
+   0,
+   "8d2c14c0859a1102"
+  ]
+ },
+ "strokeHidden": {
+  "cards": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "coloredStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dimStrands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "dots": [
+   64,
+   "0ef47a1a2f8e3c3e"
+  ],
+  "flowArrows": [
+   249,
+   460,
+   "94638f357aa5cd52"
+  ],
+  "flowField": [
+   2805,
+   3366,
+   "662ff06bcb4a482a"
+  ],
+  "guides": [
+   800,
+   1536,
+   "8af3a490f5a1349f"
+  ],
+  "instanceMarkers": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "instanceMeshes": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "overlayPull": 1.0556248426437378,
+  "parts": [
+   5,
+   6,
+   "312ac122710ba4dd"
+  ],
+  "ribbons": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scales": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "scalpMap": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "selectedGuides": [
+   50,
+   96,
+   "f84b242f39bca291"
+  ],
+  "softSelectedGuides": [
+   25,
+   48,
+   "cff53e1b25a70753"
+  ],
+  "strandMesh": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "strands": [
+   0,
+   0,
+   "dcd89924b76baf79"
+  ],
+  "tubes": [
+   12832,
+   75264,
+   "2010710de2918107"
+  ]
+ }
+}

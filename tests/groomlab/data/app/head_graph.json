@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "about": {"title": "Head lookdev", "description": "A groom for the app's lookdev checks on head_scalp.obj: no guides, so the strands grow along the scalp, are combed along it and then down, kept out of the head, clumped, broken up with noise, colored brown and tapered. Scatter's density sets the count (175 per cm2 is about 100k strands, 875 about 500k); Resample's segments the points (15: 16 points)."},
+  "nodes": [
+    {"name": "scalp", "type": "Scalp"},
+    {"name": "guides", "type": "Guides"},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 175.0, "length": 12.0}},
+    {"name": "interpolate", "type": "Interpolate"},
+    {"name": "combAlong", "type": "Bend", "params": {"angle": 56.0, "along": "direction", "direction": [0.0, -1.0, 0.0]}},
+    {"name": "combDown", "type": "Gravity", "params": {"strength": 0.85}},
+    {"name": "collide", "type": "Collide", "params": {"offset": 0.08, "maxDepth": 30.0, "iterations": 3}},
+    {"name": "clump", "type": "Clump", "params": {"count": 500, "strength": 0.6, "profile": [[0, 0], [0.4, 0.5], [1, 1]]}},
+    {"name": "noise", "type": "Noise", "params": {"amplitude": 0.25, "frequency": 2.5}},
+    {"name": "color", "type": "HairColor", "params": {"melanin": 0.35, "redness": 0.2, "melaninRandom": 0.1}},
+    {"name": "width", "type": "Width", "params": {"width": 0.007, "profile": [[0, 1], [1, 0.3]]}},
+    {"name": "resample", "type": "Resample", "params": {"segments": 15, "mode": "even"}},
+    {"name": "output", "type": "Output"}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "combAlong", "input": "strands"},
+    {"from": "combAlong", "to": "combDown", "input": "strands"},
+    {"from": "combDown", "to": "collide", "input": "strands"},
+    {"from": "scalp", "to": "collide", "input": "scalp"},
+    {"from": "collide", "to": "clump", "input": "strands"},
+    {"from": "clump", "to": "noise", "input": "strands"},
+    {"from": "noise", "to": "color", "input": "strands"},
+    {"from": "color", "to": "width", "input": "strands"},
+    {"from": "width", "to": "resample", "input": "strands"},
+    {"from": "resample", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

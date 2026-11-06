@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Wet hair", "description": "Hair just out of the water: dark, heavy and stuck together in strands.", "category": "Hair"},
+  "exposed": [
+    {"node": "bigClump", "param": "strength", "name": "bigClumpStrength"},
+    {"node": "clump", "param": "strength", "name": "clumpStrength"},
+    {"node": "tangle", "param": "fraction", "name": "tangleFraction"},
+    {"node": "tangle", "param": "strength", "name": "tangleStrength"},
+    {"node": "flyaway", "param": "fraction", "name": "flyaways"},
+    {"node": "color", "param": "melanin", "name": "melanin"},
+    {"node": "width", "param": "width", "name": "width"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 180.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "bigClump", "type": "Clump", "params": {"count": 60, "seed": 1, "strength": 0.9, "profile": [[0, 0], [0.15, 0.6], [1, 1]]}, "ui": {"x": 960, "y": 0}},
+    {"name": "clump", "type": "Clump", "params": {"count": 400, "seed": 2, "strength": 0.97, "profile": [[0, 0], [0.1, 0.8], [1, 1]]}, "ui": {"x": 1440, "y": 0}},
+    {"name": "tangle", "type": "Tangle", "params": {"fraction": 0.6, "radius": 0.4, "strength": 0.9, "start": 0.2, "span": 0.5}, "ui": {"x": 1680, "y": 0}},
+    {"name": "flyaway", "type": "Flyaway", "params": {"fraction": 0.01, "stray": 0.5, "standOut": 0.2, "lengthen": 0.05}, "ui": {"x": 1920, "y": 0}},
+    {"name": "color", "type": "HairColor", "params": {"melanin": 0.55, "melaninRandom": 0.08}, "ui": {"x": 2160, "y": 0}},
+    {"name": "width", "type": "Width", "params": {"width": 0.008, "profile": [[0, 1], [1, 0.3]]}, "ui": {"x": 2400, "y": 0}},
+    {"name": "resample", "type": "Resample", "params": {"segments": 16}, "ui": {"x": 2640, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 2880, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "bigClump", "input": "strands"},
+    {"from": "bigClump", "to": "clump", "input": "strands"},
+    {"from": "clump", "to": "tangle", "input": "strands"},
+    {"from": "tangle", "to": "flyaway", "input": "strands"},
+    {"from": "flyaway", "to": "color", "input": "strands"},
+    {"from": "color", "to": "width", "input": "strands"},
+    {"from": "width", "to": "resample", "input": "strands"},
+    {"from": "resample", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

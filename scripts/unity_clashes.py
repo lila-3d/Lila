@@ -135,11 +135,17 @@ def target_of(rel):
     return TARGETS.get(rel) or rel.rsplit("/", 1)[0]
 
 
+# Built without unity (the LILA_NO_UNITY target property), so their file-local names never share a translation unit.
+NO_UNITY = ("src/groom/groomlab", "tests/groomlab")
+
+
 def collect(roots):
     defs = collections.defaultdict(lambda: collections.defaultdict(list))
     for r in roots:
         for d, ds, fs in os.walk(os.path.join(ROOT, r)):
             ds[:] = [x for x in ds if not x.startswith((".", "build"))]
+            if os.path.relpath(d, ROOT).replace("\\", "/").startswith(NO_UNITY):
+                continue
             for f in sorted(fs):
                 if f.endswith(".cpp"):
                     p = os.path.join(d, f)

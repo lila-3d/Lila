@@ -1,0 +1,1319 @@
+// SPDX-License-Identifier: Apache-2.0
+// Modified for Lila (2026).
+// Groom to cards: clusters become ribbon cards with atlas UVs; baking renders
+// the strands into the atlas.
+
+#include <algorithm>
+#include <array>
+#include <map>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <tuple>
+
+#include <gtest/gtest.h>
+
+#include "groomlab/cards.h"
+#include "groomlab/operators.h"
+#include "groomlab/curve.h"
+#include "groomlab/display.h"
+#include "groomlab/export_view.h"
+#include "groomlab/graph_io.h"
+#include "groomlab/hair_color.h"
+#include "groomlab/groom.h"
+#include "groomlab/strand_geometry.h"
+#include "test_helpers.h"
+
+namespace groomlab {
+namespace {
+
+TEST(Cards, ATipNeverFlaresBackOutToItsRootsWidth) {
+    // One clump gathering from a wide spread on the scalp into a narrow lock whose ends splay out
+    // over the last stretch (frizzed ends, a few strands running on): the card keeps to the lock,
+    // its last quarter no wider than its body, not flared back out toward the root's width (the
+    // splayed ends bake along its edge).
+    const auto scalp = test::makePlane(16);
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 30; ++i) {
+        const float a = 0.2094f * static_cast<float>(i), r = 0.05f * static_cast<float>(1 + i % 3);
+        const Vec3f root{r * std::cos(a), 0.0f, r * std::sin(a)};
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 16; ++k) {
+            const float h = static_cast<float>(k) / 16.0f;
+            const float gather = std::max(0.2f, 1.0f - h / 0.4f);  // to a fifth of the spread by 0.4
+            Vec3f p{root.x * gather, h, root.z * gather};
+            if (h > 0.85f) p += Vec3f{std::cos(a), 0.0f, std::sin(a)} * (1.5f * (h - 0.85f));  // splaying out
+            pts.push_back(p);
+        }
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.004f), scalp->closestPoint(root).root);
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;  // (a round tuft standing up: crossed by default)
+    const CardMesh mesh = buildCards(*s, scalp.get(), settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    const CardMesh::Card& card = mesh.cards.front();
+    const std::size_t n = card.refWidth.size();
+    const float body = card.refWidth[3 * n / 4];
+    for (std::size_t k = 3 * n / 4 + 1; k < n; ++k) EXPECT_LE(card.refWidth[k], body + 1e-6f) << "station " << k;
+    // A hair card is a rectangular grid: only its width profile tapers it (constant by default),
+    // so the tip is as wide as the root and never wider.
+    EXPECT_LE(card.refWidth.back(), card.refWidth.front() + 1e-6f) << "the tip wider than the root";
+}
+
+TEST(Cards, AFlyawayNodesStraysGetCardsOfTheirOwn) {
+    // Two clumps standing off the plane, three of their strands flagged by a Flyaway node: each
+    // of those gets a thin card of its own (one strand), within the flyaway cards' budget, and
+    // none is part of a clump's card; with no budget they make no card.
+    const auto scalp = test::makePlane(16);
+    auto s = std::make_shared<StrandSet>();
+    std::vector<float> clump, flag;
+    for (int c = 0; c < 2; ++c) {
+        for (int i = 0; i < 20; ++i) {
+            const float a = 0.314f * static_cast<float>(i);
+            const Vec3f root{1.0f * c + 0.04f * std::cos(a), 0.0f, 0.04f * std::sin(a)};
+            const bool stray = c == 0 ? (i == 3 || i == 11) : i == 7;
+            const Vec3f tip = stray ? Vec3f{0.4f * std::cos(a), 0.8f, 0.4f * std::sin(a)} : Vec3f{0.0f, 1.0f, 0.0f};
+            s->addStrand(static_cast<StrandId>(c * 100 + i + 1), test::straightCurve(root, tip, 8), {}, scalp->closestPoint(root).root);
+            clump.push_back(static_cast<float>(c));
+            flag.push_back(stray ? 1.0f : 0.0f);
+        }
+    }
+    s->addStrandChannel("clumpId", 0.0f) = clump;
+    s->addStrandChannel("flyaway", 0.0f) = flag;
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.flyawayCards = 5;
+    const CardMesh mesh = buildCards(*s, scalp.get(), settings);
+    std::size_t flyaways = 0;
+    for (const CardMesh::Card& card : mesh.cards) {
+        if (card.flyaway) {
+            ++flyaways;
+            ASSERT_EQ(card.strands.size(), 1u);
+            EXPECT_EQ(flag[card.strands.front()], 1.0f);
+        } else {
+            for (const std::size_t i : card.strands) EXPECT_EQ(flag[i], 0.0f) << "a flagged stray in a clump's card";
+        }
+    }
+    EXPECT_EQ(flyaways, 3u);
+    settings.flyawayCards = 0;
+    for (const CardMesh::Card& card : buildCards(*s, scalp.get(), settings).cards) {
+        EXPECT_FALSE(card.flyaway);
+        for (const std::size_t i : card.strands) EXPECT_EQ(flag[i], 0.0f);
+    }
+}
+
+TEST(Cards, TheCardsNodeBuildsCardsFromTheStrandsBeforeIt) {
+    GroomData d;
+    d.scalp = test::makePlane(16);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 12, "strength": 0.8}},
+        {"name": "cards", "type": "Cards", "params": {"segments": 4, "widthSegments": 2, "curvature": 0.5}},
+        {"name": "frizz", "type": "Noise", "params": {"amplitude": 0.2, "frequency": 8.0, "octaves": 1}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 10}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "cards", "input": "strands"},
+        {"from": "cards", "to": "frizz", "input": "strands"}, {"from": "frizz", "to": "out", "input": "strands"}]})j";
+    GraphDocument doc = loadGraphJson(d.graphJson);
+    ExternalInputs externals;
+    setGroomExternals(externals, d.scalp, nullptr, nullptr);
+    EvalContext ctx;
+    ctx.externals = &externals;
+    // Normal evaluation: the node passes strands through and builds nothing.
+    const StrandsPtr plain = doc.graph.evaluateStrands(doc.output, ctx);
+    ASSERT_TRUE(plain);
+    EXPECT_TRUE(plain->cardLayers().empty());
+    // Card evaluation: the cards ride along to the output, made from the unfrizzed strands.
+    ctx.buildCards = true;
+    const StrandsPtr withCards = doc.graph.evaluateStrands(doc.output, ctx);
+    ASSERT_EQ(withCards->cardLayers().size(), 1u);
+    const CardMesh& layer = *withCards->cardLayers().front();
+    ASSERT_GE(layer.cards.size(), 8u);
+    ASSERT_TRUE(layer.cards.front().source);
+    EXPECT_NE(layer.cards.front().source.get(), withCards.get());
+    EXPECT_EQ(layer.cards.front().across, 2);
+    CardMesh laid = layer;
+    layoutCards(laid, 0.02f);
+    EXPECT_EQ(laid.vertexCount(), laid.cards.size() * 3 * 5);
+    // Baking reads each card's own strands (before the frizz), not the output.
+    CardBakeSettings bake;
+    bake.size = 128;
+    const CardTextures t = bakeCardTextures(*withCards, laid, bake);
+    std::size_t covered = 0;
+    for (const auto a : t.coverage) covered += a > 0 ? 1 : 0;
+    EXPECT_GT(covered, 128u * 128u / 20u);
+}
+
+TEST(Cards, ToMeshMakesTheCardsQuads) {
+    // A ToMesh node after a Cards node: with the cards built, auto makes their quads (one atlas);
+    // without them, the strands' tubes.
+    GroomData d;
+    d.scalp = test::makePlane(16);
+    d.graphJson = R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 12, "strength": 0.8}},
+        {"name": "cards", "type": "Cards", "params": {"segments": 4, "widthSegments": 2}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "cards", "input": "strands"}, {"from": "cards", "to": "out", "input": "strands"}]})j";
+    GraphDocument doc = loadGraphJson(d.graphJson);
+    ExternalInputs externals;
+    setGroomExternals(externals, d.scalp, nullptr, nullptr);
+    EvalContext ctx;
+    ctx.externals = &externals;
+    StrandMeshOptions o;
+    EXPECT_EQ(resolveMeshMake(*doc.graph.evaluateStrands(doc.output, ctx), o), StrandMeshOptions::Make::Strands);
+    ctx.buildCards = true;
+    const StrandsPtr strands = doc.graph.evaluateStrands(doc.output, ctx);
+    EXPECT_EQ(resolveMeshMake(*strands, o), StrandMeshOptions::Make::Cards);
+    CardMesh laid = combineCardLayers(strands->cardLayers());
+    layoutCards(laid, laid.padding);
+    const StrandMesh mesh = buildStrandMesh(*strands, d.scalp.get(), o);
+    EXPECT_EQ(mesh.mesh.points.size(), laid.positions.size());
+    EXPECT_EQ(mesh.mesh.faceCount(), laid.quads.size() / 4);
+    EXPECT_TRUE(std::all_of(mesh.mesh.faceCounts.begin(), mesh.mesh.faceCounts.end(), [](int n) { return n == 4; }));
+    EXPECT_EQ(mesh.mesh.featherCount, laid.cards.size());
+    EXPECT_EQ(mesh.faceParts.front(), static_cast<int>(MeshPart::Cards));
+    for (std::size_t i = 0; i < laid.u.size(); i += 7) EXPECT_FLOAT_EQ(mesh.mesh.u[i], laid.u[i]) << "the atlas uvs";
+}
+
+TEST(Cards, CardsFromGuidesLieAlongEachGuideFromWhereItGrows) {
+    // Issue 25: cards follow the strands, grouped by clump or root, so they start between the
+    // guides and blend their shapes. cardsFrom guides lays a card along each guide itself, from its
+    // root, as wide as the strands nearest it (baked from them); hair cards from the strands as
+    // ever without the guides input.
+    const auto plane = test::makePlane(16, 4.0f);
+    auto guides = std::make_shared<GuideSet>();
+    const std::array<Vec3f, 4> roots = {Vec3f(1.0f, 0, 1.0f), Vec3f(3.0f, 0, 1.0f), Vec3f(1.0f, 0, 3.0f), Vec3f(3.0f, 0, 3.0f)};
+    const std::array<Vec3f, 4> leans = {Vec3f(1.2f, 0, 0), Vec3f(0, 0, 1.2f), Vec3f(-1.2f, 0, 0), Vec3f(0, 0, -1.2f)};
+    for (std::size_t g = 0; g < roots.size(); ++g) {
+        std::vector<Vec3f> pts;
+        for (int i = 0; i <= 8; ++i) {
+            const float t = static_cast<float>(i) / 8.0f;
+            pts.push_back(roots[g] + Vec3f(0, 1.2f * t, 0) + leans[g] * (t * t));
+        }
+        guides->add(g + 1, pts);
+    }
+    guides->rootOnMesh(*plane);
+    GraphDocument doc = loadGraphJson(R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "guides", "type": "Guides"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 150.0}},
+        {"name": "interpolate", "type": "Interpolate"},
+        {"name": "cards", "type": "Cards", "params": {"cardsFrom": "guides", "segments": 8, "crossStyle": "single"}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "interpolate", "input": "strands"},
+        {"from": "guides", "to": "interpolate", "input": "guides"},
+        {"from": "scalp", "to": "interpolate", "input": "scalp"},
+        {"from": "interpolate", "to": "cards", "input": "strands"},
+        {"from": "guides", "to": "cards", "input": "guides"},
+        {"from": "cards", "to": "out", "input": "strands"}]})j");
+    ExternalInputs externals;
+    setGroomExternals(externals, plane, guides, nullptr);
+    EvalContext ctx;
+    ctx.externals = &externals;
+    ctx.buildCards = true;
+    const StrandsPtr out = doc.graph.evaluateStrands(doc.output, ctx);
+    ASSERT_TRUE(out);
+    ASSERT_EQ(out->cardLayers().size(), 1u);
+    const CardMesh& mesh = *out->cardLayers().front();
+    ASSERT_EQ(mesh.cards.size(), roots.size()) << "a card per guide";
+    std::set<std::size_t> taken;
+    std::size_t strands = 0;
+    for (const CardMesh::Card& card : mesh.cards) {
+        std::size_t g = 0;
+        for (std::size_t k = 1; k < roots.size(); ++k) {
+            if ((card.center.front() - roots[k]).length() < (card.center.front() - roots[g]).length()) g = k;
+        }
+        EXPECT_TRUE(taken.insert(g).second);
+        SCOPED_TRACE("guide " + std::to_string(g + 1));
+        EXPECT_LT((card.center.front() - guides->guides()[g].points.front()).length(), 0.05f) << "from where the guide grows";
+        // Along the guide: every station on its curve, as long as it.
+        const Guide& guide = guides->guides()[g];
+        for (const Vec3f& c : card.center) {
+            float nearest = 1e30f;
+            for (std::size_t i = 0; i + 1 < guide.points.size(); ++i) {
+                const Vec3f a = guide.points[i], ab = guide.points[i + 1] - a;
+                const float t = std::clamp((c - a).dot(ab) / ab.dot(ab), 0.0f, 1.0f);
+                nearest = std::min(nearest, (c - (a + ab * t)).length());
+            }
+            EXPECT_LT(nearest, 0.03f);
+        }
+        EXPECT_NEAR(arcLength(card.center), arcLength(guide.points), 0.05f * arcLength(guide.points));
+        strands += card.strands.size();
+        EXPECT_GT(card.width.front(), 0.5f) << "as wide as the strands nearest it";
+    }
+    EXPECT_EQ(strands, out->strandCount()) << "every strand on its guide's card";
+    // Without the guides input: the strands' cards, and a note saying why.
+    doc.graph.disconnect(doc.nodesByName.at("cards"), 1);
+    const StrandsPtr loose = doc.graph.evaluateStrands(doc.output, ctx);
+    ASSERT_TRUE(loose && loose->cardLayers().size() == 1u);
+    EXPECT_FALSE(loose->cardLayers().front()->cards.empty());
+}
+
+// One clump along x = 0..0.2 standing up +y: strands alternately 1 and 0.5
+// long, with melanin 0.5.
+StrandsPtr shortAndLong() {
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 40; ++i) {
+        const float x = 0.2f * static_cast<float>(i) / 39.0f, top = i % 2 ? 0.5f : 1.0f;
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 10; ++k) pts.push_back({x, top * static_cast<float>(k) / 10.0f, 0.0f});
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.004f));
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    s->addStrandChannel("melanin", 0.5f);
+    return s;
+}
+
+TEST(Cards, StrandsKeepTheirLengthOnTheCardAndTheirColor) {
+    const StrandsPtr s = shortAndLong();
+    CardSettings settings;
+    settings.minStrands = 1;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    CardBakeSettings bake;
+    bake.size = 128;
+    bake.occlusion = 0.0f;
+    bake.minStrandTexels = 0.0f;  // to scale: coverage counts the strands (a texel wide, they would fill it)
+    const CardTextures t = bakeCardTextures(*s, mesh, bake);
+    const CardMesh::Card& card = mesh.cards.front();
+    // Mean coverage between v0 and v1 of the card's texture (0 root, 1 tip).
+    auto band = [&](float v0, float v1) {
+        double sum = 0.0;
+        std::size_t n = 0;
+        const int x0 = static_cast<int>(card.cell[0] * 128), x1 = static_cast<int>(card.cell[2] * 128);
+        const int ya = static_cast<int>((1.0f - (card.cell[1] + (card.cell[3] - card.cell[1]) * v1)) * 128);
+        const int yb = static_cast<int>((1.0f - (card.cell[1] + (card.cell[3] - card.cell[1]) * v0)) * 128);
+        for (int y = ya; y < yb; ++y) {
+            for (int x = x0; x < x1; ++x) sum += t.coverage[static_cast<std::size_t>(y) * 128 + static_cast<std::size_t>(x)], ++n;
+        }
+        return sum / static_cast<double>(std::max<std::size_t>(n, 1));
+    };
+    EXPECT_LT(band(0.8f, 0.95f), 0.75 * band(0.05f, 0.2f));  // the short ones stop half way
+    // Color: the strands' base color (their melanin), sRGB.
+    const std::array<float, 3> linear = melaninColor(0.5f, 0.2f);
+    const std::size_t p = static_cast<std::size_t>(std::max_element(t.coverage.begin(), t.coverage.end()) - t.coverage.begin());
+    ASSERT_GT(t.coverage[p], 60);  // thinner than a pixel here: partly covered, as a real strand would be
+    for (std::size_t k = 0; k < 3; ++k) {
+        const float c = linear[k];
+        const float srgb = c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+        EXPECT_NEAR(t.color[p * 3 + k], srgb * 255.0f, 2.0f);
+    }
+    // A rendering space's colors (Maya under ACES: ACEScg) written as Rec.709: here red and blue
+    // swapped.
+    CardBakeSettings swapped = bake;
+    swapped.colorToRec709 = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    const CardTextures ts = bakeCardTextures(*s, mesh, swapped);
+    EXPECT_EQ(ts.color[p * 3], t.color[p * 3 + 2]);
+    EXPECT_EQ(ts.color[p * 3 + 1], t.color[p * 3 + 1]);
+    EXPECT_EQ(ts.color[p * 3 + 2], t.color[p * 3]);
+}
+
+TEST(Cards, CardsStayClearOfTheScalp) {
+    // Hair combed flat along the plane: its card lies on the skin, just above it.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 30; ++i) {
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 10; ++k) pts.push_back({0.2f + 0.06f * static_cast<float>(k), 0.0f, 0.4f + 0.2f * static_cast<float>(i) / 29.0f});
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.004f));
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    const auto plane = test::makePlane(16);
+    CardSettings settings;
+    settings.minStrands = 1;
+    settings.widthSegments = 2;
+    const CardMesh mesh = buildCards(*s, plane.get(), settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    float lowest = 1e9f;
+    for (const Vec3f& p : mesh.positions) lowest = std::min(lowest, p.y);
+    EXPECT_GT(lowest, 0.001f);  // never in the skin
+    EXPECT_LT(lowest, 0.05f);   // but on it
+}
+
+// The old look: one flat card per clump, facing out of the scalp, no fit, no ruffle.
+CardSettings singleCardSettings() {
+    CardSettings s;
+    s.crossStyle = CardSettings::CrossStyle::Single;
+    s.cardsPerClump = 1;
+    s.layers = 1;
+    s.fitTwist = 0.0f;
+    s.ruffle = 0.0f;
+    s.margin = 0.0f;
+    return s;
+}
+
+float quantile(const std::vector<float>& sorted, float q) {
+    return sorted[std::min(sorted.size() - 1, static_cast<std::size_t>(q * static_cast<float>(sorted.size())))];
+}
+
+TEST(Cards, TheCardReachesTheLongestStrandAndTipsAreDrawn) {
+    const StrandsPtr s = shortAndLong();  // strands 1.0 and 0.5 long, the mean curve 0.75
+    CardSettings settings;
+    settings.minStrands = 1;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    const CardMesh::Card& card = mesh.cards.front();
+    EXPECT_GT(card.refCenter.back().y, 1.0f);   // to the long strands' tips
+    EXPECT_LT(card.refCenter.back().y, 1.05f);  // and hardly further
+    const std::vector<float> fit = cardFitDistances(*s, mesh);
+    EXPECT_LT(fit.back(), 1e-3f);  // every sample of every strand lies on the card
+    // The long strands' last stretch is baked, not cut off.
+    CardBakeSettings bake;
+    bake.size = 128;
+    bake.occlusion = 0.0f;
+    const CardTextures t = bakeCardTextures(*s, mesh, bake);
+    const int x0 = static_cast<int>(card.cell[0] * 128), x1 = static_cast<int>(card.cell[2] * 128);
+    const int yTip = static_cast<int>((1.0f - (card.cell[1] + (card.cell[3] - card.cell[1]) * 0.97f)) * 128);
+    std::size_t tip = 0;
+    for (int y = yTip; y < yTip + 3; ++y) {
+        for (int x = x0; x < x1; ++x) tip += t.coverage[static_cast<std::size_t>(y) * 128 + static_cast<std::size_t>(x)] > 0 ? 1 : 0;
+    }
+    EXPECT_GT(tip, 10u);
+}
+
+TEST(Cards, AMinorityOfLongStrandsStillExtendTheCardToTheirTips) {
+    // Clump's past-tip Extend can leave only a few strands running beyond the clump axis. A
+    // card must still contain those tips; fitting length to the 90th percentile cut them off.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 20; ++i) {
+        const float x = 0.1f * static_cast<float>(i) / 19.0f;
+        const float top = i < 18 ? 1.0f : 2.0f;
+        s->addStrand(static_cast<StrandId>(i + 1), test::straightCurve({x, 0.0f, 0.0f}, {0.0f, top, 0.0f}, 12));
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    CardSettings settings;
+    settings.minStrands = 1;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    EXPECT_GT(mesh.cards.front().refCenter.back().y, 2.0f);
+    const std::vector<float> fit = cardFitDistances(*s, mesh);
+    EXPECT_LT(fit.back(), 1e-3f);
+}
+
+TEST(Cards, GuideCardsExtendToTheStrandsTrueLength) {
+    // Cards from guides keep the guide's shape, but past-tip Extend can leave its strands longer
+    // than that guide. The card continues along the guide's final direction to contain them.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 20; ++i) {
+        const float x = 0.1f * static_cast<float>(i) / 19.0f;
+        std::vector<Vec3f> points;
+        for (int k = 0; k <= 12; ++k) points.push_back({x, 2.0f * static_cast<float>(k) / 12.0f, 0.0f});
+        s->addStrand(static_cast<StrandId>(i + 1), points);
+    }
+    CardSettings settings;
+    settings.minStrands = 1;
+    settings.guideSpines.push_back(test::straightCurve({0.05f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 6));
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    EXPECT_GT(arcLength(mesh.cards.front().refCenter), 2.0f);
+}
+
+TEST(Cards, ThinStrandsBakeAtLeastATexelWideAtFullCoverage) {
+    // A strand a fraction of a texel wide bakes a texel wide and opaque (the viewport draws every
+    // strand a pixel wide and opaque), so the coverage holds it where the strands' drawing does;
+    // to scale (minStrandTexels 0) it bakes faint, under the cards' cutoff.
+    const StrandsPtr s = shortAndLong();  // 0.004 wide on a card about 0.25 across: a third of a texel
+    CardSettings settings;
+    settings.minStrands = 1;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    CardBakeSettings bake;
+    bake.size = 128;
+    bake.occlusion = 0.0f;
+    bake.dilate = 0;
+    bake.minStrandTexels = 1.0f;
+    const CardTextures solid = bakeCardTextures(*s, mesh, bake);
+    bake.minStrandTexels = 0.0f;
+    const CardTextures faint = bakeCardTextures(*s, mesh, bake);
+    auto opaque = [](const CardTextures& t) {
+        return std::count_if(t.coverage.begin(), t.coverage.end(), [](std::uint8_t a) { return a >= 128; });
+    };
+    EXPECT_GT(opaque(solid), 3 * opaque(faint) / 2);  // recorded: 3085 against 1515
+    EXPECT_GE(*std::max_element(solid.coverage.begin(), solid.coverage.end()), 250);
+}
+
+// A clump lying along +x on the plane y = 0, its strands at heights 0.01 to 0.09 and across z
+// 0.4 to 0.6, plus `strays` strands across farther out at z 0.64 (not so far that they leave it as strays).
+StrandsPtr layeredClump(const ScalpMesh& plane, int strays) {
+    auto s = std::make_shared<StrandSet>();
+    StrandId id = 1;
+    auto add = [&](float z, float height) {
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 10; ++k) {
+            const float x = 0.1f + 0.06f * static_cast<float>(k);
+            pts.push_back({x, k == 0 ? 0.0f : height, z});
+        }
+        s->addStrand(id++, pts, std::vector<float>(pts.size(), 0.004f), plane.closestPoint(pts.front()).root);
+    };
+    for (int i = 0; i < 9; ++i) {
+        for (int j = 0; j < 5; ++j) add(0.4f + 0.05f * static_cast<float>(j), 0.01f + 0.01f * static_cast<float>(i));
+    }
+    for (int k = 0; k < strays; ++k) add(0.64f, 0.05f);
+    s->addStrandChannel("clumpId", 0.0f);
+    return s;
+}
+
+TEST(Cards, RetainedFarStrandsWidenTheCardAndItLiesOnItsStrandsOuterSide) {
+    // Every strand retained by an ordinary card widens it instead of baking along an edge where
+    // the polygon cuts it off. The card still lies where a quarter of the strands are farther out
+    // (the silhouette is the outermost strands), never past the outermost.
+    const auto plane = test::makePlane(8);
+    CardSettings settings;
+    settings.fitTwist = 0.0f;  // facing out of the plane
+    settings.ruffle = 0.0f;
+    settings.margin = 0.0f;
+    const CardMesh clean = buildCards(*layeredClump(*plane, 0), plane.get(), settings);
+    const CardMesh strayed = buildCards(*layeredClump(*plane, 3), plane.get(), settings);
+    ASSERT_EQ(clean.cards.size(), 1u);
+    ASSERT_EQ(strayed.cards.size(), 1u);
+    const CardMesh::Card& a = clean.cards.front();
+    const CardMesh::Card& b = strayed.cards.front();
+    EXPECT_NEAR(a.textureWidth, 0.2f, 0.03f);
+    EXPECT_GT(b.textureWidth, 1.3f * a.textureWidth);
+    EXPECT_NEAR(b.textureWidth, 0.288f, 0.03f);
+    const std::size_t mid = a.refCenter.size() / 2;
+    EXPECT_GT(a.refCenter[mid].y, 0.055f);  // past the middle of the strands' heights (0.05)
+    EXPECT_LT(a.refCenter[mid].y, 0.09f);   // and inside them
+    EXPECT_EQ(b.strands.size(), 48u);       // the far strands are retained and covered
+}
+
+TEST(Cards, CardsShadeLikeTheirStrandsLitDrawing) {
+    // The strands' lit drawing leans each strand's normal out of the scalp at its root, half its
+    // part along the strand taken out; a card of strands rising at 45 degrees shades the same.
+    const auto plane = test::makePlane(8);
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 12; ++i) {
+        const float z = 0.4f + 0.02f * static_cast<float>(i);
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 8; ++k) pts.push_back({0.2f + 0.05f * static_cast<float>(k), 0.05f * static_cast<float>(k), z});
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.004f), plane->closestPoint(pts.front()).root);
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    const CardMesh mesh = buildCards(*s, plane.get(), CardSettings{});
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    const Vec3f t = Vec3f{1.0f, 1.0f, 0.0f}.normalized(), up{0.0f, 1.0f, 0.0f};
+    const Vec3f expected = (up - t * (0.5f * up.dot(t))).normalized();
+    const CardMesh::Card& card = mesh.cards.front();
+    for (std::size_t k = 1; k + 1 < card.shading.size(); ++k) EXPECT_GT(card.shading[k].dot(expected), 0.99f) << k;
+    // The viewport carries that normal in the bitangent stream too, which two-sided lighting
+    // leaves alone (the card effect reads it there).
+    const DisplayGeometry g = cardGeometry(mesh, true);
+    ASSERT_EQ(g.bitangents.size(), g.normals.size());
+    for (std::size_t i = 0; i < g.normals.size(); ++i) EXPECT_FLOAT_EQ(g.bitangents[i], g.normals[i]);
+}
+
+// Two clumps alike in shape side by side, standing up: clump 0 dark, clump 1 light, both
+// blending toward a light tip per point (HairColor's colorR/G/B, per strand and per point).
+StrandsPtr twoColoredClumps() {
+    auto s = std::make_shared<StrandSet>();
+    std::vector<float> rgb[3];
+    for (int clump = 0; clump < 2; ++clump) {
+        for (int i = 0; i < 20; ++i) {
+            const float x = 0.5f * static_cast<float>(clump) + 0.1f * static_cast<float>(i) / 19.0f;
+            std::vector<Vec3f> pts;
+            for (int k = 0; k <= 10; ++k) pts.push_back({x, 0.1f * static_cast<float>(k), 0.0f});
+            s->addStrand(static_cast<StrandId>(clump * 100 + i + 1), pts, std::vector<float>(pts.size(), 0.004f));
+        }
+    }
+    std::vector<float>& clumpId = s->addStrandChannel("clumpId", 0.0f);
+    for (std::size_t i = 20; i < 40; ++i) clumpId[i] = 1.0f;
+    const std::array<float, 3> base[2] = {{0.1f, 0.05f, 0.02f}, {0.4f, 0.3f, 0.2f}}, tip = {0.6f, 0.5f, 0.4f};
+    for (int k = 0; k < 3; ++k) {
+        std::vector<float>& strand = s->addStrandChannel(kColorChannels[k], 0.0f);
+        std::vector<float>& point = s->addPointChannel(kColorChannels[k], 0.0f);
+        for (std::size_t i = 0; i < s->strandCount(); ++i) {
+            const std::array<float, 3>& b = base[i < 20 ? 0 : 1];
+            strand[i] = b[static_cast<std::size_t>(k)];
+            for (std::size_t p = 0; p < s->strandPointCount(i); ++p) {
+                const float t = static_cast<float>(p) / static_cast<float>(s->strandPointCount(i) - 1);
+                point[s->strandBegin(i) + p] = b[static_cast<std::size_t>(k)] + (tip[static_cast<std::size_t>(k)] - b[static_cast<std::size_t>(k)]) * t;
+            }
+        }
+    }
+    return s;
+}
+
+TEST(Cards, ACardSharingATextureIsTintedToItsOwnStrandsColor) {
+    // Textures are shared by shape; a card showing another card's texture (baked from strands of
+    // another color) is tinted by its own strands' color over theirs, root to tip, so it shows
+    // its own color; the owner shows its texture as baked (no tint).
+    const StrandsPtr s = twoColoredClumps();
+    CardSettings settings;
+    settings.variations = 1;
+    settings.mirror = false;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 2u);
+    ASSERT_EQ(mesh.tints.size(), mesh.positions.size());
+    const std::size_t owner = mesh.cards[0].variationOf < 0 ? 0 : 1, sharer = 1 - owner;
+    ASSERT_EQ(mesh.cards[sharer].variationOf, static_cast<int>(owner));
+    const auto tintAt = [&](std::size_t c, int station) {
+        const CardMesh::Card& card = mesh.cards[c];
+        return mesh.tints[card.firstVertex + static_cast<std::size_t>(station) * static_cast<std::size_t>(card.across + 1)];
+    };
+    const int last = mesh.cards[sharer].stations - 1;
+    for (const int station : {0, last}) {
+        const std::array<float, 3> own = tintAt(owner, station), other = tintAt(sharer, station);
+        for (std::size_t k = 0; k < 3; ++k) EXPECT_NEAR(own[k], 1.0f, 1e-4f);
+        // Root: the strands' own color over the owner's (clamped to kCardTintMax); at the tip
+        // both blend to the same color, so the tint fades to none.
+        const std::array<float, 3> rootDark = {0.1f, 0.05f, 0.02f}, rootLight = {0.4f, 0.3f, 0.2f};
+        const bool sharerDark = sharer == 0;
+        for (std::size_t k = 0; k < 3; ++k) {
+            const float want = station == 0 ? std::min((sharerDark ? rootDark : rootLight)[k] / (sharerDark ? rootLight : rootDark)[k], kCardTintMax)
+                                            : 1.0f;
+            EXPECT_NEAR(other[k], want, 0.03f) << "station " << station << " channel " << k;
+        }
+    }
+    // The baked atlas keeps what each cell was baked from: a card rebuilt onto it tints the same.
+    const CardAtlas atlas = CardAtlas::fromJson(captureCardAtlas(mesh, s.get()).toJson());
+    ASSERT_EQ(atlas.entries[sharer].colors.size(), static_cast<std::size_t>(kCardColorStations));
+    CardMesh rebuilt = buildCards(*s, nullptr, settings);
+    applyCardAtlas(rebuilt, atlas, s.get());
+    ASSERT_EQ(rebuilt.tints.size(), mesh.tints.size());
+    for (std::size_t v = 0; v < mesh.tints.size(); ++v) {
+        for (std::size_t k = 0; k < 3; ++k) EXPECT_NEAR(rebuilt.tints[v][k], mesh.tints[v][k], 1e-4f);
+    }
+}
+
+TEST(Cards, ACardSharingATextureUsesTheBakedCardsWidthProfile) {
+    // Shared textures are baked only from their owner. If another card has a different taper,
+    // its UV edges must still cover the owner's baked taper; using its own width profile here
+    // leaves the owner's outer strands outside the receiving geometry near the tip.
+    const StrandsPtr s = twoColoredClumps();
+    CardSettings settings;
+    settings.variations = 1;
+    settings.mirror = false;
+    CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 2u);
+    const std::size_t ownerIndex = mesh.cards[0].variationOf < 0 ? 0 : 1;
+    const std::size_t sharerIndex = 1 - ownerIndex;
+    CardMesh::Card& owner = mesh.cards[ownerIndex];
+    CardMesh::Card& sharer = mesh.cards[sharerIndex];
+    ASSERT_EQ(sharer.variationOf, static_cast<int>(ownerIndex));
+    std::fill(owner.refWidth.begin(), owner.refWidth.end(), 1.0f);
+    owner.textureWidth = 1.0f;
+    for (std::size_t i = 0; i < sharer.refWidth.size(); ++i) {
+        sharer.refWidth[i] = 1.0f - 0.8f * static_cast<float>(i) / static_cast<float>(sharer.refWidth.size() - 1);
+    }
+    for (std::size_t i = 0; i < sharer.width.size(); ++i) {
+        sharer.width[i] = 1.0f - 0.8f * static_cast<float>(i) / static_cast<float>(sharer.width.size() - 1);
+    }
+    layoutCards(mesh, mesh.padding);
+
+    const auto tipRange = [&](const CardMesh& m, const CardMesh::Card& card) {
+        const std::size_t columns = static_cast<std::size_t>(card.across + 1);
+        const std::size_t left = card.firstVertex + static_cast<std::size_t>(card.stations - 1) * columns;
+        return std::abs(m.u[left + columns - 1] - m.u[left]);
+    };
+    // The sharer keeps its own shape; its UVs span the owner's texture by its own width there (the
+    // owner's baked frame), so its taper takes the middle of the owner's texture at the tip.
+    const float cellWidth = sharer.cell[2] - sharer.cell[0];
+    EXPECT_NEAR(tipRange(mesh, sharer), cellWidth * sharer.width.back() / owner.textureWidth, 1e-4f);
+    EXPECT_EQ(sharer.textureRefWidth, owner.refWidth);
+
+    // The same profile survives saving the bake and applying it to rebuilt geometry.
+    const CardAtlas atlas = CardAtlas::fromJson(captureCardAtlas(mesh, s.get()).toJson());
+    CardMesh rebuilt = buildCards(*s, nullptr, settings);
+    applyCardAtlas(rebuilt, atlas, s.get());
+    const CardMesh::Card& reapplied = rebuilt.cards[sharerIndex];
+    EXPECT_EQ(reapplied.textureRefWidth, owner.refWidth);
+    EXPECT_NEAR(tipRange(rebuilt, reapplied), reapplied.cell[2] - reapplied.cell[0], 1e-5f);
+}
+
+TEST(Cards, TheColorMapCarriesTheStrandsRootToTipColor) {
+    // HairColor's tip blend (per point colors) bakes into the color map along the card, as the
+    // strands' lit drawing shows it: the root band the root color, the tip band the tip's.
+    const StrandsPtr s = twoColoredClumps();
+    CardSettings settings;
+    settings.variations = 0;
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 2u);
+    CardBakeSettings bake;
+    bake.size = 256;
+    bake.occlusion = 0.0f;
+    const CardTextures t = bakeCardTextures(*s, mesh, bake);
+    const CardMesh::Card& dark = mesh.cards[0].strands.front() < 20 ? mesh.cards[0] : mesh.cards[1];
+    // The mean red (sRGB bytes) of the covered pixels in a band along the dark card's texture.
+    auto red = [&](float v0, float v1) {
+        double sum = 0.0, n = 0.0;
+        const int x0 = static_cast<int>(dark.cell[0] * 256), x1 = static_cast<int>(dark.cell[2] * 256);
+        const int ya = static_cast<int>((1.0f - (dark.cell[1] + (dark.cell[3] - dark.cell[1]) * v1)) * 256);
+        const int yb = static_cast<int>((1.0f - (dark.cell[1] + (dark.cell[3] - dark.cell[1]) * v0)) * 256);
+        for (int y = ya; y < yb; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const std::size_t p = static_cast<std::size_t>(y) * 256 + static_cast<std::size_t>(x);
+                if (t.coverage[p] < 128) continue;
+                sum += t.color[p * 3], n += 1.0;
+            }
+        }
+        return n > 0.0 ? sum / n : 0.0;
+    };
+    const auto srgb = [](float c) { return 255.0 * (c <= 0.0031308f ? 12.92 * c : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055); };
+    // (The base color itself.)
+    const auto shown = [](float c) { return c; };
+    EXPECT_NEAR(red(0.1f, 0.2f), srgb(shown(0.1f + 0.5f * 0.15f)), 25.0);   // near the root: dark
+    EXPECT_NEAR(red(0.85f, 0.95f), srgb(shown(0.1f + 0.5f * 0.9f)), 25.0);  // near the tip: the tip color
+}
+
+TEST(Cards, FitTwistRotatesTheWholeCardTheWayTheStrandsLie) {
+    // A sheet of strands standing up from the plane, spread along z at the root and
+    // turning to lie along x by the tip (a helicoid): Fit Twist chooses one best orientation
+    // for the entire card instead of twisting it from root to tip.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 30; ++i) {
+        const float r = 0.15f * (static_cast<float>(i) / 29.0f - 0.5f);
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 16; ++k) {
+            const float t = static_cast<float>(k) / 16.0f;
+            const float a = 1.5707963f * t;
+            pts.push_back({0.5f + r * std::sin(a), 0.6f * t, 0.5f + r * std::cos(a)});
+        }
+        s->addStrand(static_cast<StrandId>(i + 1), pts, std::vector<float>(pts.size(), 0.004f));
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    const auto plane = test::makePlane(16);
+    CardSettings settings;
+    settings.minStrands = 1;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.ruffle = 0.0f;
+    settings.flatten = 0.0f;
+    const CardMesh fitted = buildCards(*s, plane.get(), settings);
+    ASSERT_EQ(fitted.cards.size(), 1u);
+    const CardMesh::Card& card = fitted.cards.front();
+    const std::size_t rootLast = card.firstVertex + static_cast<std::size_t>(card.across);
+    const Vec3f seatedRootSide = (fitted.positions[rootLast] - fitted.positions[card.firstVertex]).normalized();
+    EXPECT_GT(seatedRootSide.dot(card.side.front()), 0.99f);  // the seated root row turns with the whole card
+    settings.fitTwist = 0.0f;
+    const CardMesh untwisted = buildCards(*s, plane.get(), settings);
+    ASSERT_EQ(untwisted.cards.size(), 1u);
+    const CardMesh::Card& base = untwisted.cards.front();
+    const float wholeRotation = card.refSide.front().dot(base.refSide.front());
+    EXPECT_LT(std::abs(wholeRotation), 0.95f);  // it did rotate toward the sheet
+    for (std::size_t k = 0; k < card.refSide.size(); ++k) {
+        EXPECT_NEAR(card.refSide[k].dot(base.refSide[k]), wholeRotation, 1e-4f) << k;
+    }
+    // Flatten keeps the overall rotation but removes the helicoid: every quad lies in one plane,
+    // instead of showing its renderer/export triangulation as alternating waves.
+    settings.fitTwist = 1.0f;
+    settings.flatten = 1.0f;
+    const CardMesh flattened = buildCards(*s, plane.get(), settings);
+    ASSERT_EQ(flattened.cards.size(), 1u);
+    float worst = 0.0f;
+    for (std::size_t q = 0; q + 3 < flattened.quads.size(); q += 4) {
+        const Vec3f& a = flattened.positions[flattened.quads[q]];
+        const Vec3f& b = flattened.positions[flattened.quads[q + 1]];
+        const Vec3f& c = flattened.positions[flattened.quads[q + 2]];
+        const Vec3f& d = flattened.positions[flattened.quads[q + 3]];
+        const Vec3f normal = (b - a).cross(c - a).normalized();
+        worst = std::max(worst, std::abs((d - a).dot(normal)));
+    }
+    EXPECT_LT(worst, 1e-4f);
+}
+
+TEST(Cards, TipsTaperAndNeverFlare) {
+    // Six strands up, five ending at 0.7 and one going on to 1.0 with its tip flaring
+    // sideways: the card runs on to that tip, but its last quarter is never wider than the
+    // card before it, and it narrows no faster than a quarter of its width per station, so
+    // no spearhead (a widest station right before one a strand width wide).
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 5; ++i) {
+        const float x = 0.45f + 0.1f * static_cast<float>(i) / 4.0f;
+        s->addStrand(static_cast<StrandId>(i + 1), test::straightCurve({x, 0.0f, 0.5f}, {0.0f, 0.7f, 0.0f}, 12),
+                     std::vector<float>(13, 0.003f));
+    }
+    std::vector<Vec3f> flare;
+    for (int k = 0; k <= 12; ++k) {
+        const float t = static_cast<float>(k) / 12.0f;
+        flare.push_back({0.5f + (t > 0.7f ? 0.6f * (t - 0.7f) / 0.3f : 0.0f), t, 0.5f});
+    }
+    s->addStrand(6, flare, std::vector<float>(13, 0.003f));
+    s->addStrandChannel("clumpId", 0.0f);
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.ruffle = 0.0f;
+    settings.segments = 16;
+    settings.minStrands = 6;  // no stray removal: the flare stays a member
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    const CardMesh::Card& card = mesh.cards.front();
+    const std::vector<float>& w = card.refWidth;
+    float widest = 0.0f;
+    for (std::size_t k = 0; k <= 3 * w.size() / 4; ++k) widest = std::max(widest, w[k]);
+    for (std::size_t k = 3 * w.size() / 4 + 1; k < w.size(); ++k) EXPECT_LE(w[k], widest * 1.001f) << k;
+    for (std::size_t k = 1; k < w.size(); ++k) EXPECT_GE(w[k], w[k - 1] - 0.26f * widest) << k;
+    EXPECT_GT(w.back(), 0.3f * widest);  // the end is a taper, not a point
+}
+
+TEST(Cards, WidthProfileShapesTheMeshAndBakeInTheFinalGrid) {
+    // Straight parallel strands on a card whose authored profile tapers to a fifth: every
+    // mesh row keeps a regular grid, with its U span compensated by the final physical width.
+    auto s = std::make_shared<StrandSet>();
+    constexpr int kStrands = 7;
+    for (int i = 0; i < kStrands; ++i) {
+        const float x = 0.45f + 0.1f * static_cast<float>(i) / static_cast<float>(kStrands - 1);
+        s->addStrand(static_cast<StrandId>(i + 1), test::straightCurve({x, 0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}, 12),
+                     std::vector<float>(13, 0.003f));
+    }
+    s->addStrandChannel("clumpId", 0.0f);
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.ruffle = 0.0f;
+    settings.segments = 8;
+    settings.widthProfile = Ramp::linear(1.0f, 0.2f);
+    const CardMesh mesh = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(mesh.cards.size(), 1u);
+    const CardMesh::Card& card = mesh.cards.front();
+    ASSERT_EQ(card.strands.size(), static_cast<std::size_t>(kStrands));
+    // The card itself tapers; its texture frame is the widest station.
+    EXPECT_LT(card.refWidth.back(), 0.3f * card.refWidth.front());
+    EXPECT_FLOAT_EQ(card.textureWidth, *std::max_element(card.refWidth.begin(), card.refWidth.end()));
+    // Mesh UVs: each station's U span follows its physical width in the fixed bake frame.
+    const float cellW = card.cell[2] - card.cell[0];
+    const auto columns = static_cast<std::uint32_t>(card.across + 1);
+    const float gridWidth = *std::max_element(card.width.begin(), card.width.end());
+    float rootRange = 0.0f, tipRange = 0.0f;
+    for (int k = 0; k < card.stations; ++k) {
+        const std::uint32_t left = card.firstVertex + static_cast<std::uint32_t>(k) * columns, right = left + columns - 1;
+        const float range = mesh.u[right] - mesh.u[left];
+        EXPECT_NEAR(range / card.width[static_cast<std::size_t>(k)], cellW / gridWidth, 1e-4f) << k;
+        EXPECT_NEAR(0.5f * (mesh.u[left] + mesh.u[right]), card.cell[0] + 0.5f * cellW, 1e-5f) << k;
+        if (k == 0) rootRange = range;
+        if (k == card.stations - 1) tipRange = range;
+    }
+    EXPECT_NEAR(rootRange, cellW, 1e-5f);
+    EXPECT_LT(tipRange, 0.3f * rootRange);
+    // Bake: strand positions keep one smooth frame, while the tapered final silhouette clips
+    // the top differently from the root.
+    CardBakeSettings bake;
+    bake.size = 256;
+    bake.dilate = 0;
+    bake.occlusion = 0.0f;
+    bake.rootFade = 0.0f;
+    const CardTextures t = bakeCardTextures(*s, mesh, bake);
+    const int x0 = static_cast<int>(std::lround(card.cell[0] * bake.size)), x1 = static_cast<int>(std::lround(card.cell[2] * bake.size)) - 1;
+    const int y0 = static_cast<int>(std::lround((1.0f - card.cell[3]) * bake.size)), y1 = static_cast<int>(std::lround((1.0f - card.cell[1]) * bake.size)) - 1;
+    ASSERT_GT(x1 - x0, 20);
+    const auto row = [&](int y) {
+        std::vector<int> cols;
+        for (int x = x0; x < x1; ++x) {
+            if (t.coverage[static_cast<std::size_t>(y) * bake.size + static_cast<std::size_t>(x)] > 0) cols.push_back(x);
+        }
+        return cols;
+    };
+    const int yTop = y0 + static_cast<int>(0.15f * static_cast<float>(y1 - y0)), yBottom = y0 + static_cast<int>(0.85f * static_cast<float>(y1 - y0));
+    const std::vector<int> top = row(yTop), bottom = row(yBottom);
+    // (The narrow end clips the outer strands: fewer show there.)
+    ASSERT_FALSE(top.empty());
+    ASSERT_GE(bottom.size(), static_cast<std::size_t>(kStrands));
+    EXPECT_NE(top, bottom);
+}
+
+TEST(Cards, AStrayStrandLeavesItsCardForAFlyawayCard) {
+    // A bundle of straight strands and one that bends far out of it (a flyaway): the
+    // card stays as wide as the bundle, and the stray gets a thin card of its own.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 24; ++i) {
+        const float x = 0.45f + 0.1f * static_cast<float>(i) / 23.0f;
+        s->addStrand(static_cast<StrandId>(i + 1), test::straightCurve({x, 0.0f, 0.5f}, {0.0f, 1.0f, 0.0f}, 12),
+                     std::vector<float>(13, 0.004f));
+    }
+    std::vector<Vec3f> stray;
+    for (int k = 0; k <= 12; ++k) {
+        const float t = static_cast<float>(k) / 12.0f;
+        stray.push_back({0.5f + 0.9f * t * t, t, 0.5f});
+    }
+    s->addStrand(99, stray, std::vector<float>(13, 0.004f));
+    s->addStrandChannel("clumpId", 0.0f);
+    const auto plane = test::makePlane(16);
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.ruffle = 0.0f;
+    settings.margin = 0.0f;
+    settings.flyawayCards = 4;
+    const CardMesh cards = buildCards(*s, plane.get(), settings);
+    ASSERT_GE(cards.cards.size(), 2u);
+    const CardMesh::Card* bundle = nullptr;
+    const CardMesh::Card* flyaway = nullptr;
+    for (const CardMesh::Card& c : cards.cards) {
+        if (c.flyaway) flyaway = &c;
+        else bundle = &c;
+    }
+    ASSERT_TRUE(bundle);
+    ASSERT_TRUE(flyaway);
+    EXPECT_EQ(bundle->strands.size(), 24u);
+    EXPECT_EQ(std::count(bundle->strands.begin(), bundle->strands.end(), 24u), 0);  // the stray (index 24) left
+    for (const float w : bundle->refWidth) EXPECT_LT(w, 0.2f);  // the bundle's 0.1 plus strand widths, not the stray's 0.9
+    EXPECT_EQ(flyaway->strands, std::vector<std::size_t>{24});
+    // Without a flyaway budget the stray is still left out rather than widening the card.
+    settings.flyawayCards = 0;
+    const CardMesh tight = buildCards(*s, plane.get(), settings);
+    for (const CardMesh::Card& c : tight.cards) {
+        for (const float w : c.refWidth) EXPECT_LT(w, 0.2f);
+    }
+}
+
+TEST(Cards, LooseStrandsJoinTheNearestCardOrGetFlyawayCards) {
+    // One clump standing up along x = 0..0.2, three loose strands beside it (within its
+    // width) and two far off, with no clump.
+    auto s = std::make_shared<StrandSet>();
+    auto add = [&](int id, float x, float z, float top) {
+        std::vector<Vec3f> pts;
+        for (int k = 0; k <= 10; ++k) pts.push_back({x, top * static_cast<float>(k) / 10.0f, z});
+        s->addStrand(static_cast<StrandId>(id), pts, std::vector<float>(pts.size(), 0.004f));
+    };
+    for (int i = 0; i < 20; ++i) add(i + 1, 0.2f * static_cast<float>(i) / 19.0f, 0.0f, 1.0f);
+    for (int i = 0; i < 3; ++i) add(100 + i, 0.25f + 0.01f * static_cast<float>(i), 0.0f, 0.8f);  // beside it
+    add(200, 2.0f, 2.0f, 0.6f);  // far
+    add(201, 2.02f, 2.0f, 0.6f);
+    std::vector<float>& clump = s->addStrandChannel("clumpId", -1.0f);
+    for (std::size_t i = 0; i < 20; ++i) clump[i] = 0.0f;
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Single;
+    settings.ruffle = 0.0f;
+    const CardMesh joined = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(joined.cards.size(), 1u);  // no flyaway budget: the near ones join, the far are dropped
+    EXPECT_EQ(joined.cards.front().strands.size(), 23u);
+    EXPECT_GT(joined.cards.front().refWidth.front(), 0.27f / 0.8f);  // widened to hold them
+    EXPECT_LT(cardFitDistances(*s, joined).back(), 1e-3f);
+    settings.flyawayCards = 4;
+    const CardMesh withFlyaways = buildCards(*s, nullptr, settings);
+    ASSERT_EQ(withFlyaways.cards.size(), 2u);  // the far pair share one thin card; the near ones still join
+    const CardMesh::Card& fly = withFlyaways.cards.back();
+    EXPECT_TRUE(fly.flyaway);
+    EXPECT_EQ(fly.clump, -1);
+    EXPECT_EQ(fly.strands, (std::vector<std::size_t>{23, 24}));
+    EXPECT_LT(fly.refWidth.front(), 0.1f);
+    EXPECT_GT(fly.refWidth.front(), 0.016f);  // a few strand widths
+    EXPECT_EQ(withFlyaways.cards.front().strands.size(), 23u);
+    settings.maxCards = 1;  // flyaway cards count against the budget
+    EXPECT_EQ(buildCards(*s, nullptr, settings).cards.size(), 1u);
+}
+
+// Strands wound around an axis (a braid's weave): `count` of them, `points` each,
+// `turns` turns around `axis(t)` at `radius`, t root to tip.
+template <class Axis>
+void addWoundStrands(StrandSet& s, int firstId, int count, const Axis& axis, float radius, float turns, int points = 13) {
+    for (int i = 0; i < count; ++i) {
+        const float a = 6.2831853f * static_cast<float>(i) / static_cast<float>(count);
+        std::vector<Vec3f> pts;
+        for (int k = 0; k < points; ++k) {
+            const float t = static_cast<float>(k) / static_cast<float>(points - 1);
+            const float phase = a + 6.2831853f * turns * t;
+            const auto [c, u, v] = axis(t);  // the axis point and two unit vectors across it
+            pts.push_back(c + u * (radius * std::cos(phase)) + v * (radius * std::sin(phase)));
+        }
+        s.addStrand(static_cast<StrandId>(firstId + i), pts, std::vector<float>(pts.size(), 0.004f));
+    }
+}
+
+TEST(Cards, BraidsGetTheirOwnCrossedCardsAlongTheBraid) {
+    // Two braids standing up off the scalp (60 and 40 strands wound around vertical axes),
+    // each split across several clumps by the Clump before them, and a plain clump beside.
+    auto s = std::make_shared<StrandSet>();
+    const auto axisAt = [](float x, float z) {
+        return [x, z](float t) { return std::make_tuple(Vec3f{x, t, z}, Vec3f{1, 0, 0}, Vec3f{0, 0, 1}); };
+    };
+    addWoundStrands(*s, 1, 60, axisAt(0.5f, 0.5f), 0.06f, 1.0f);
+    addWoundStrands(*s, 101, 40, axisAt(0.2f, 0.2f), 0.05f, 1.0f);
+    for (int i = 0; i < 12; ++i) {
+        const float x = 0.8f + 0.1f * static_cast<float>(i) / 11.0f;
+        s->addStrand(static_cast<StrandId>(201 + i), test::straightCurve({x, 0.0f, 0.8f}, {0.0f, 1.0f, 0.0f}, 12),
+                     std::vector<float>(13, 0.004f));
+    }
+    std::vector<float>& braidId = s->addStrandChannel("braidId", -1.0f);
+    std::vector<float>& clumpId = s->addStrandChannel("clumpId", -1.0f);
+    s->addStrandChannel("braidFlat", 0.0f);
+    for (std::size_t i = 0; i < 60; ++i) braidId[i] = 0.0f, clumpId[i] = static_cast<float>(i % 3);
+    for (std::size_t i = 60; i < 100; ++i) braidId[i] = 1.0f, clumpId[i] = static_cast<float>(3 + i % 2);
+    for (std::size_t i = 100; i < 112; ++i) clumpId[i] = 5.0f;
+    const auto plane = test::makePlane(16);
+    CardSettings settings;
+    settings.crossStyle = CardSettings::CrossStyle::Cross;
+    settings.crossCount = 2;
+    settings.ruffle = 0.0f;
+    settings.cardsPerClump = 2;  // no sub-cards for braids
+
+    const CardMesh mesh = buildCards(*s, plane.get(), settings);
+    std::map<int, std::vector<const CardMesh::Card*>> byBraid;
+    std::vector<const CardMesh::Card*> plain;
+    for (const CardMesh::Card& c : mesh.cards) (c.braid >= 0 ? byBraid[c.braid] : plain).push_back(&c);
+    ASSERT_EQ(byBraid.size(), 2u);
+    for (const auto& [braid, cards] : byBraid) {
+        EXPECT_EQ(cards.size(), 2u) << "braid " << braid;  // an X along the braid, whatever the clumps
+        std::vector<std::size_t> expected;
+        for (std::size_t i = braid == 0 ? 0 : 60; i < (braid == 0 ? 60u : 100u); ++i) expected.push_back(i);
+        const Vec3f axis = braid == 0 ? Vec3f{0.5f, 0.5f, 0.5f} : Vec3f{0.2f, 0.5f, 0.2f};
+        for (const CardMesh::Card* c : cards) {
+            EXPECT_EQ(c->strands, expected);  // exactly the braid's strands
+            EXPECT_EQ(c->clump, -1);
+            EXPECT_FALSE(c->flyaway);
+            const std::size_t mid = c->refCenter.size() / 2;
+            EXPECT_LT((c->refCenter[mid] - axis).length(), 0.03f);  // runs down the braid's axis
+            EXPECT_GT(c->refWidth[mid], 0.1f);   // as wide as the braid
+            EXPECT_LT(c->refWidth[mid], 0.25f);
+        }
+        // The two cards cross: their normals at the middle are at right angles.
+        EXPECT_LT(std::abs(cards[0]->refNormal[16].dot(cards[1]->refNormal[16])), 0.1f);
+    }
+    // The plain clump gets its usual cards (two sub-cards, each an X), with only its own strands.
+    EXPECT_GE(plain.size(), 2u);
+    EXPECT_LE(plain.size(), 4u);
+    for (const CardMesh::Card* c : plain) {
+        EXPECT_EQ(c->clump, 0);
+        EXPECT_EQ(c->braid, -1);
+        for (const std::size_t i : c->strands) EXPECT_GE(i, 100u);
+    }
+    // Braid cards count against the budget, and are taken first: 4 for the braids, the
+    // plain clump keeps one of its X.
+    settings.maxCards = 5;
+    const CardMesh tight = buildCards(*s, plane.get(), settings);
+    EXPECT_EQ(tight.cards.size(), 5u);
+    std::size_t braidCards = 0;
+    for (const CardMesh::Card& c : tight.cards) braidCards += c.braid >= 0 ? 1 : 0;
+    EXPECT_EQ(braidCards, 4u);
+
+    // Off: the braided strands are carded by their clumps like any others (more cards,
+    // none holding a whole braid).
+    settings.maxCards = 0;
+    settings.braids = false;
+    const CardMesh off = buildCards(*s, plane.get(), settings);
+    std::size_t holdingBraid0 = 0;
+    for (const CardMesh::Card& c : off.cards) {
+        EXPECT_EQ(c.braid, -1);
+        std::size_t inBraid0 = 0;
+        for (const std::size_t i : c.strands) inBraid0 += i < 60 ? 1 : 0;
+        if (inBraid0 > 0) ++holdingBraid0;
+        EXPECT_LT(inBraid0, 60u);
+    }
+    EXPECT_GT(holdingBraid0, 2u);
+    EXPECT_GT(off.cards.size(), mesh.cards.size());
+}
+
+TEST(Cards, ACornrowGetsOneCardLyingOnTheScalp) {
+    // A braid wound around a path lying just above a plane scalp (braidFlat 1): one ribbon
+    // along it, facing out of the skin, however the cross style is set.
+    auto s = std::make_shared<StrandSet>();
+    const auto axis = [](float t) {
+        return std::make_tuple(Vec3f{0.2f + 0.6f * t, 0.03f, 0.5f}, Vec3f{0, 1, 0}, Vec3f{0, 0, 1});
+    };
+    addWoundStrands(*s, 1, 50, axis, 0.02f, 3.0f, 25);
+    std::vector<float>& braidId = s->addStrandChannel("braidId", -1.0f);
+    std::vector<float>& flat = s->addStrandChannel("braidFlat", 0.0f);
+    std::vector<float>& clumpId = s->addStrandChannel("clumpId", -1.0f);
+    for (std::size_t i = 0; i < 50; ++i) braidId[i] = 0.0f, flat[i] = 1.0f, clumpId[i] = static_cast<float>(i % 4);
+    const auto plane = test::makePlane(16);
+    for (const CardSettings::CrossStyle style : {CardSettings::CrossStyle::Auto, CardSettings::CrossStyle::Cross}) {
+        CardSettings settings;
+        settings.crossStyle = style;
+        settings.cardsPerClump = 3;
+        const CardMesh mesh = buildCards(*s, plane.get(), settings);
+        ASSERT_EQ(mesh.cards.size(), 1u);
+        const CardMesh::Card& c = mesh.cards.front();
+        EXPECT_EQ(c.braid, 0);
+        EXPECT_EQ(c.strands.size(), 50u);
+        const std::size_t mid = c.refCenter.size() / 2;
+        EXPECT_GT(c.refNormal[mid].dot(Vec3f{0, 1, 0}), 0.866f);  // faces out of the scalp, within 30 degrees
+        EXPECT_GT(c.refNormal.front().dot(Vec3f{0, 1, 0}), 0.866f);
+        EXPECT_LT(std::abs(c.refCenter[mid].y - 0.03f), 0.02f);   // lies along the path
+        EXPECT_NEAR(c.refCenter[mid].z, 0.5f, 0.01f);
+        EXPECT_GT(c.refWidth[mid], 0.04f);  // the braid's width
+        EXPECT_LT(c.refWidth[mid], 0.1f);
+    }
+}
+
+// clump -> outer (Cards, one card per clump) -> frizz -> inner (Cards, 3 per clump) -> look -> out:
+// two Cards nodes layering cards over the same clumps.
+GraphDocument layeredCards() {
+    return loadGraphJson(R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 800.0}},
+        {"name": "clump", "type": "Clump", "params": {"count": 12, "strength": 0.8}},
+        {"name": "outer", "type": "Cards", "params": {"segments": 4, "crossStyle": "single"}},
+        {"name": "frizz", "type": "Noise", "params": {"amplitude": 0.02, "frequency": 4.0, "octaves": 1}},
+        {"name": "inner", "type": "Cards", "params": {"segments": 4, "crossStyle": "single", "cardsPerClump": 3}},
+        {"name": "look", "type": "Noise", "params": {"amplitude": 0.05, "frequency": 8.0, "octaves": 1}},
+        {"name": "out", "type": "Output"}, {"name": "resolution", "type": "Resample", "params": {"segments": 10}}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "clump", "input": "strands"},
+        {"from": "clump", "to": "outer", "input": "strands"},
+        {"from": "outer", "to": "frizz", "input": "strands"}, {"from": "frizz", "to": "inner", "input": "strands"},
+        {"from": "inner", "to": "look", "input": "strands"}, {"from": "look", "to": "out", "input": "strands"}]})j");
+}
+
+// The groom's cards as the host lays them out: every layer in one atlas.
+CardMesh laidOutCards(GraphDocument& doc, const MeshPtr& scalp, StrandsPtr* strands = nullptr) {
+    ExternalInputs externals;
+    setGroomExternals(externals, scalp, nullptr, nullptr);
+    EvalContext ctx;
+    ctx.externals = &externals;
+    ctx.buildCards = true;
+    const StrandsPtr out = doc.graph.evaluateStrands(doc.output, ctx);
+    CardMesh cards = combineCardLayers(out->cardLayers());
+    layoutCards(cards, cards.padding);
+    if (strands) *strands = out;
+    return cards;
+}
+
+TEST(Cards, EachCardsNodeKeepsItsOwnBakedCells) {
+    // Two Cards nodes card the same clumps: the inner node's cards hold subsets of the strands
+    // the outer node's cards hold, so across the whole atlas an inner card shares as many
+    // strands with its clump's outer card as with its own. The atlas records each card's node
+    // and a rebuild matches within it: every card keeps its own baked cell.
+    const auto plane = test::makePlane(16);
+    GraphDocument doc = layeredCards();
+    StrandsPtr strands;
+    const CardMesh baked = laidOutCards(doc, plane, &strands);
+    ASSERT_EQ(baked.nodes, (std::vector<std::string>{"outer", "inner"}));
+    std::size_t inner = 0;
+    for (const CardMesh::Card& card : baked.cards) inner += cardNodeOf(baked, card) == "inner" ? 1 : 0;
+    ASSERT_GE(inner, 16u);
+    ASSERT_GE(baked.cards.size() - inner, 8u);
+    const CardAtlas atlas = CardAtlas::fromJson(captureCardAtlas(baked, strands.get()).toJson());  // round trip
+    ASSERT_EQ(atlas.entries.size(), baked.cards.size());
+    for (std::size_t c = 0; c < baked.cards.size(); ++c) EXPECT_EQ(atlas.entries[c].node, cardNodeOf(baked, baked.cards[c]));
+
+    CardMesh rebuilt = laidOutCards(doc, plane);
+    ASSERT_EQ(rebuilt.cards.size(), baked.cards.size());
+    EXPECT_EQ(applyCardAtlas(rebuilt, atlas, nullptr), rebuilt.cards.size());
+    for (std::size_t c = 0; c < baked.cards.size(); ++c) {
+        SCOPED_TRACE(cardNodeOf(baked, baked.cards[c]) + " card " + std::to_string(c));
+        for (int k = 0; k < 4; ++k) EXPECT_FLOAT_EQ(rebuilt.cards[c].cell[k], baked.cards[c].cell[k]);
+        EXPECT_EQ(rebuilt.cards[c].mirrored, baked.cards[c].mirrored);
+    }
+
+    // A node the bake never saw (renamed since) still borrows baked cells from any node.
+    CardAtlas renamed = atlas;
+    for (CardAtlas::Entry& entry : renamed.entries) {
+        if (entry.node == "inner") entry.node = "old";
+    }
+    CardMesh again = laidOutCards(doc, plane);
+    EXPECT_EQ(applyCardAtlas(again, renamed, nullptr), again.cards.size());
+}
+
+TEST(Cards, EachCardsNodeHasItsOwnBakeStamp) {
+    // What a bake is made from, per Cards node: the strands its cards are made of and their
+    // shapes. A look after the cards changes neither node's; a change between the nodes only
+    // the inner one's; a change under both, both.
+    const auto plane = test::makePlane(16);
+    GraphDocument doc = layeredCards();
+    auto stamps = [&]() {
+        StrandsPtr strands;
+        const CardMesh cards = laidOutCards(doc, plane, &strands);
+        std::map<std::string, CardNodeSummary> out;
+        for (const CardNodeSummary& n : summarizeCardNodes(cards, strands.get())) out[n.node] = n;
+        return out;
+    };
+    auto set = [&](const std::string& node, const std::string& param, double value) {
+        doc.graph.node(doc.node(node)).params().set(param, value);
+    };
+    const auto baked = stamps();
+    ASSERT_EQ(baked.size(), 2u);
+    EXPECT_GE(baked.at("outer").cards, 8u);
+    EXPECT_GT(baked.at("inner").cards, baked.at("outer").cards);
+    EXPECT_GT(baked.at("inner").triangles, 0u);
+    EXPECT_NE(baked.at("outer").bakeHash, baked.at("inner").bakeHash);
+
+    set("look", "amplitude", 0.2);  // a look with no Cards node after it
+    auto now = stamps();
+    EXPECT_EQ(now.at("outer").bakeHash, baked.at("outer").bakeHash);
+    EXPECT_EQ(now.at("inner").bakeHash, baked.at("inner").bakeHash);
+
+    set("frizz", "amplitude", 0.06);  // the inner node's strands only
+    now = stamps();
+    EXPECT_EQ(now.at("outer").bakeHash, baked.at("outer").bakeHash);
+    EXPECT_NE(now.at("inner").bakeHash, baked.at("inner").bakeHash);
+
+    set("frizz", "amplitude", 0.02);
+    now = stamps();
+    EXPECT_EQ(now.at("inner").bakeHash, baked.at("inner").bakeHash);  // back as baked
+
+    set("clump", "strength", 0.5);  // under both
+    now = stamps();
+    EXPECT_NE(now.at("outer").bakeHash, baked.at("outer").bakeHash);
+    EXPECT_NE(now.at("inner").bakeHash, baked.at("inner").bakeHash);
+
+    set("clump", "strength", 0.8);
+    set("inner", "widthScale", 1.4);  // the inner node's card params
+    now = stamps();
+    EXPECT_EQ(now.at("outer").bakeHash, baked.at("outer").bakeHash);
+    EXPECT_NE(now.at("inner").bakeHash, baked.at("inner").bakeHash);
+}
+
+TEST(Resample, ByCurvature) {
+    // A straight strand, and one straight for its first half and curling in its second (both 40 points).
+    auto s = std::make_shared<StrandSet>();
+    std::vector<Vec3f> straight, curl;
+    for (int k = 0; k < 40; ++k) {
+        const float t = static_cast<float>(k) / 39.0f;
+        straight.push_back({0.0f, t, 0.0f});
+        if (t <= 0.5f) {
+            curl.push_back({1.0f, t, 0.0f});
+        } else {
+            const float a = (t - 0.5f) * 6.0f * 3.14159265f;  // one and a half turns
+            curl.push_back({1.0f + 0.05f * std::sin(a), 0.5f + 0.1f * (t - 0.5f), 0.05f * (1.0f - std::cos(a))});
+        }
+    }
+    s->addStrand(1, straight, std::vector<float>(40, 0.01f));
+    s->addStrand(2, curl, std::vector<float>(40, 0.01f));
+    auto op = OperatorRegistry::instance().create(op::kResample);
+    op->params().set("segments", std::int64_t{12});
+    op->params().set("mode", std::string("curvature"));
+    op->params().set("minSegments", std::int64_t{2});
+    EvalContext ctx;
+    const StrandsPtr out = valueAs<StrandsPtr>(op->evaluate(ctx, {StrandsPtr(s)}));
+    ASSERT_TRUE(out->validate());
+    EXPECT_EQ(out->strandPointCount(0), 3u);   // straight: the fewest
+    EXPECT_EQ(out->strandPointCount(1), 13u);  // the curliest: all of them
+    // The curl's points gather where it bends: most of them in its curling half.
+    std::size_t inCurl = 0;
+    for (std::size_t k = 0; k < out->strandPointCount(1); ++k) inCurl += out->strandPoints(1)[k].y > 0.5f ? 1 : 0;
+    EXPECT_GE(inCurl, 9u);
+    EXPECT_NEAR(out->strandPoints(1)[0].y, 0.0f, 1e-6f);  // the ends stay
+    EXPECT_NEAR((out->strandPoints(1)[12] - curl.back()).length(), 0.0f, 1e-5f);
+    // Evenly, the same count would put about half of them there.
+    op->params().set("mode", std::string("even"));
+    const StrandsPtr even = valueAs<StrandsPtr>(op->evaluate(ctx, {StrandsPtr(s)}));
+    std::size_t evenCurl = 0;
+    for (std::size_t k = 0; k < even->strandPointCount(1); ++k) evenCurl += even->strandPoints(1)[k].y > 0.5f ? 1 : 0;
+    EXPECT_LT(evenCurl, inCurl);
+    op->params().set("mode", std::string("spiral"));
+    EXPECT_THROW(op->evaluate(ctx, {StrandsPtr(s)}), GraphError);
+}
+
+TEST(Subdivide, SmoothStrandsThroughTheirPointsAtTheRendersLevels) {
+    // A quarter circle of 5 points (radius 1, about the origin), its widths and a point channel going
+    // down to the tip, and a strand of 2 points.
+    auto s = std::make_shared<StrandSet>();
+    std::vector<Vec3f> arc;
+    std::vector<float> widths;
+    for (int k = 0; k < 5; ++k) {
+        const float a = 0.5f * 3.14159265f * static_cast<float>(k) / 4.0f;
+        arc.push_back({std::cos(a), std::sin(a), 0.0f});
+        widths.push_back(0.02f - 0.004f * static_cast<float>(k));
+    }
+    s->addStrand(7, arc, widths);
+    s->addStrand(9, {{0, 0, 0}, {0, 1, 0}}, {0.01f, 0.01f});
+    std::vector<float>& opacity = s->addPointChannel("opacity", 1.0f);
+    for (std::size_t k = 0; k < 5; ++k) opacity[k] = 1.0f - 0.25f * static_cast<float>(k);
+    s->addStrandChannel("melanin", 0.0f)[0] = 0.4f;
+    auto op = OperatorRegistry::instance().create(op::kSubdivide);
+    EvalContext render;
+    const StrandsPtr out = valueAs<StrandsPtr>(op->evaluate(render, {StrandsPtr(s)}));
+    ASSERT_TRUE(out->validate());
+    ASSERT_EQ(out->strandPointCount(0), 17u);  // 2 levels: 4 pieces a segment
+    EXPECT_EQ(out->strandPointCount(1), 2u);   // too short to bend: as it came
+    EXPECT_EQ(out->ids(), s->ids());
+    EXPECT_FLOAT_EQ(out->strandChannel("melanin")->at(0), 0.4f);
+    float worstNew = 0.0f, chordMid = 0.0f;
+    for (std::size_t j = 0; j < 17; ++j) {
+        const Vec3f p = out->strandPoints(0)[j];
+        if (j % 4 == 0) {
+            EXPECT_LT((p - arc[j / 4]).length(), 1e-6f) << j;  // through the strand's own points
+            EXPECT_NEAR(out->widths()[j], widths[j / 4], 1e-6f);
+        } else {
+            worstNew = std::max(worstNew, std::abs(p.length() - 1.0f));
+        }
+    }
+    chordMid = 1.0f - ((arc[0] + arc[1]) * 0.5f).length();
+    EXPECT_LT(worstNew, 0.1f * chordMid) << "the new points lie on the circle, not on its chords";
+    EXPECT_NEAR(out->widths()[2], 0.5f * (widths[0] + widths[1]), 1e-6f);  // widths follow, linearly
+    EXPECT_NEAR(out->pointChannel("opacity")->at(6), 0.625f, 1e-6f);  // halfway from 0.75 to 0.5
+    // The viewport's levels: 1 by default; none hands the strands on as they came.
+    EvalContext viewport;
+    viewport.viewport = true;
+    EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(viewport, {StrandsPtr(s)}))->strandPointCount(0), 9u);
+    // A host's live drag in the viewport: handed on as they came (the GPU runs the nodes before),
+    // keyed apart from the refined result; a render refines all the same.
+    EvalContext dragging = viewport;
+    dragging.liveDrag = true;
+    EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(dragging, {StrandsPtr(s)})), StrandsPtr(s));
+    EXPECT_NE(op->contextSalt(dragging), op->contextSalt(viewport));
+    render.liveDrag = true;
+    EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(render, {StrandsPtr(s)}))->strandPointCount(0), 17u);
+    op->params().set("viewportLevels", std::int64_t{0});
+    EXPECT_EQ(valueAs<StrandsPtr>(op->evaluate(viewport, {StrandsPtr(s)})), StrandsPtr(s));
+}
+
+TEST(Resample, OnlyEnabledOnesOnStrandsSetTheResolution) {
+    // A bypassed Resample, or one fed guides, doesn't resample the strands: its segments don't grow them.
+    GraphDocument doc = loadGraphJson(R"j({"version": 1, "output": "out", "nodes": [
+        {"name": "scalp", "type": "Scalp"}, {"name": "guides", "type": "Guides"},
+        {"name": "scatter", "type": "Scatter", "params": {"density": 50.0}},
+        {"name": "resample", "type": "Resample", "params": {"segments": 6, "mode": "even"}},
+        {"name": "off", "type": "Resample", "params": {"segments": 40}, "bypass": true},
+        {"name": "guideRes", "type": "Resample", "params": {"segments": 30}},
+        {"name": "out", "type": "Output"}],
+      "connections": [{"from": "scalp", "to": "scatter", "input": "scalp"},
+        {"from": "scatter", "to": "off", "input": "strands"}, {"from": "off", "to": "resample", "input": "strands"},
+        {"from": "guides", "to": "guideRes", "input": "strands"}, {"from": "resample", "to": "out", "input": "strands"}]})j");
+    ExternalInputs ext;
+    ext.set("scalp", test::makePlane(4), 1);
+    auto guides = std::make_shared<GuideSet>();
+    guides->add(1, test::straightCurve({0.5f, 0, 0.5f}, {0, 1, 0}, 4));
+    ext.set("guides", GuidesPtr(guides), guides->contentHash());
+    EvalContext ctx;
+    ctx.externals = &ext;
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.node("scatter"), ctx)->uniformPointCount(), 7u);
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.output, ctx)->uniformPointCount(), 7u);
+    doc.graph.setBypass(doc.node("off"), false);  // enabled, it counts
+    EXPECT_EQ(doc.graph.evaluateStrands(doc.node("scatter"), ctx)->uniformPointCount(), 41u);
+}
+
+TEST(Resample, SegmentsByLength) {
+    // A long strand (1.0) and a short one (0.25), 10 segments each, with widths and channels.
+    auto s = std::make_shared<StrandSet>();
+    for (int i = 0; i < 2; ++i) {
+        const float top = i ? 0.25f : 1.0f;
+        std::vector<Vec3f> pts;
+        std::vector<float> widths;
+        for (int k = 0; k <= 10; ++k) {
+            pts.push_back({static_cast<float>(i), top * static_cast<float>(k) / 10.0f, 0.0f});
+            widths.push_back(0.02f - 0.0015f * static_cast<float>(k));
+        }
+        s->addStrand(static_cast<StrandId>(i + 7), pts, widths);
+    }
+    s->addStrandChannel("melanin", 0.0f)[1] = 0.6f;
+    s->addPointChannel("rootTip", 0.0f);
+    Graph g;
+    ExternalInputs ext;
+    ext.set("strands", StrandsPtr(s), 1);
+    auto op = OperatorRegistry::instance().create(op::kResample);
+    op->params().set("segments", std::int64_t{0});  // the longest keep theirs
+    op->params().set("mode", std::string("length"));
+    op->params().set("minSegments", std::int64_t{2});
+    EvalContext ctx;
+    const StrandsPtr out = valueAs<StrandsPtr>(op->evaluate(ctx, {StrandsPtr(s)}));
+    ASSERT_EQ(out->strandCount(), 2u);
+    EXPECT_EQ(out->strandPointCount(0), 11u);  // the longest keeps its 10 segments
+    EXPECT_LE(out->strandPointCount(1), 5u);   // a quarter as long
+    EXPECT_GE(out->strandPointCount(1), 3u);
+    EXPECT_TRUE(out->validate());
+    EXPECT_EQ(out->ids()[1], 8u);
+    EXPECT_FLOAT_EQ((*out->strandChannel("melanin"))[1], 0.6f);
+    ASSERT_TRUE(out->pointChannel("rootTip"));
+    EXPECT_NEAR(out->widths()[out->strandBegin(1)], 0.02f, 1e-6f);  // widths follow, root to tip
+    EXPECT_NEAR(out->widths()[out->strandBegin(1) + out->strandPointCount(1) - 1], 0.005f, 1e-6f);
+    EXPECT_NEAR(out->strandPoints(1)[out->strandPointCount(1) - 1].y, 0.25f, 1e-5f);  // same shape
+    // Segments set: those for the longest.
+    op->params().set("segments", std::int64_t{6});
+    const StrandsPtr six = valueAs<StrandsPtr>(op->evaluate(ctx, {StrandsPtr(s)}));
+    EXPECT_EQ(six->strandPointCount(0), 7u);
+    EXPECT_EQ(six->strandPointCount(1), 3u);  // a quarter: 1.5, at least 2
+    // Off: each keeps its own.
+    auto off = OperatorRegistry::instance().create(op::kResample);
+    off->params().set("segments", std::int64_t{0});
+    off->params().set("mode", std::string("even"));
+    const StrandsPtr kept = valueAs<StrandsPtr>(off->evaluate(ctx, {StrandsPtr(s)}));
+    EXPECT_EQ(kept->strandPointCount(0), 11u);
+    EXPECT_EQ(kept->strandPointCount(1), 11u);
+}
+
+}  // namespace
+}  // namespace groomlab

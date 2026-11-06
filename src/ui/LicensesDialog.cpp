@@ -57,7 +57,8 @@ QString fileId(const QString& name)
         {"cpp-httplib", "cpp-httplib"}, {"Brotli", "brotli"}, {"cgltf", "cgltf"}, {"libwebp", "libwebp"}, {"Zstandard", "zstd"},
         {"Tracy", "tracy"}, {"Capstone", "capstone"}, {"doctest", "doctest"}, {"Dem Bones", "dem-bones"}, {"FFmpeg", "ffmpeg"},
         {"miniaudio", "miniaudio"}, {"Archivo", "archivo"}, {"Inter", "inter"}, {"JetBrains Mono", "jetbrains-mono"},
-        {"Tabler Icons", "tabler-icons"}, {"OpenVDB", "openvdb"}, {"MaterialX", "materialx"},
+        {"Tabler Icons", "tabler-icons"}, {"OpenVDB", "openvdb"}, {"MaterialX", "materialx"}, {"GroomLab", "groomlab"},
+        {"GoogleTest", "gtest"},
     };
     for (const auto& [prefix, id] : kIds)
         if (name.startsWith(QLatin1String(prefix)))

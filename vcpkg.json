@@ -40,6 +40,7 @@
     "vulkan-memory-allocator",
     "cpp-httplib",
     "doctest",
+    "gtest",
     "shader-slang",
     "eigen3",
     "zstd",

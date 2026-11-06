@@ -1,0 +1,356 @@
+// SPDX-License-Identifier: Apache-2.0
+// Sculpt nodes' edits (sculpt.h).
+
+#include "groomlab/portable_math.h"
+#include "groomlab/sculpt.h"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+#include <nlohmann/json.hpp>
+
+#include "groomlab/curve.h"
+#include "groomlab/frames.h"
+#include "groomlab/random.h"
+#include "groomlab/scalp_mesh.h"
+
+namespace groomlab {
+
+using json = nlohmann::json;
+
+namespace {
+
+constexpr float kMoved = 1e-4f;      // a move that counts as sculpted, as a share of the guide's length
+constexpr float kIdentity = 1e-6f;   // a turn (radians) or length factor this close to none is none
+constexpr float kMinStrength = 1e-3f;
+
+// The segment frames of a polyline (tangent along each segment), rotation-minimizing from the
+// root's surface frame (sculpt.h). Zero-length segments keep the frame before them.
+std::vector<Frame> segmentFrames(const std::vector<Vec3f>& pts, const StrandRoot& root, const ScalpMesh* scalp) {
+    const std::size_t segments = pts.size() < 2 ? 0 : pts.size() - 1;
+    std::vector<Frame> frames(segments);
+    if (segments == 0) return frames;
+    Vec3f normal(0.0f, 1.0f, 0.0f), edge(1.0f, 0.0f, 0.0f);
+    if (scalp && scalp->contains(root)) {
+        normal = scalp->normal(root);
+        const auto& tri = scalp->triangles()[static_cast<std::size_t>(root.face)];
+        Vec3f e = scalp->points()[tri[1]] - scalp->points()[tri[0]];
+        e = e - normal * e.dot(normal);
+        edge = e.length() > 1e-12f ? e.normalized() : anyPerpendicular(normal);
+    }
+    Vec3f tangent = normal;  // the direction before the first segment: the normal
+    Vec3f n = edge;
+    for (std::size_t j = 0; j < segments; ++j) {
+        const Vec3f d = pts[j + 1] - pts[j];
+        const float len = d.length();
+        const Vec3f t = len > 0.0f ? d / len : tangent;
+        n = Rotation(tangent, t)(n);
+        n = n - t * n.dot(t);
+        const float nl = n.length();
+        n = nl > 1e-12f ? n / nl : anyPerpendicular(t);
+        frames[j].tangent = t;
+        frames[j].normal = n;
+        frames[j].binormal = t.cross(n);
+        tangent = t;
+    }
+    return frames;
+}
+
+// The normalized arc length of each segment's middle; false for a guide of no length.
+bool segmentMiddles(const std::vector<Vec3f>& pts, std::vector<float>& t, std::vector<float>& lengths) {
+    const std::size_t segments = pts.size() < 2 ? 0 : pts.size() - 1;
+    t.assign(segments, 0.0f);
+    lengths.assign(segments, 0.0f);
+    double total = 0.0;
+    for (std::size_t j = 0; j < segments; ++j) {
+        lengths[j] = (pts[j + 1] - pts[j]).length();
+        total += lengths[j];
+    }
+    if (!(total > 0.0)) return false;
+    double along = 0.0;
+    for (std::size_t j = 0; j < segments; ++j) {
+        t[j] = static_cast<float>((along + 0.5 * lengths[j]) / total);
+        along += lengths[j];
+    }
+    return true;
+}
+
+// z turned by the axis-angle (ax, ay, 0).
+Vec3f turnedZ(float ax, float ay) {
+    const float angle = std::sqrt(ax * ax + ay * ay);
+    if (angle < 1e-12f) return {0.0f, 0.0f, 1.0f};
+    const float s = pm::sin(angle) / angle;
+    return {ay * s, -ax * s, pm::cos(angle)};
+}
+
+json guideJson(const GuideSculpt& g) {
+    json flat = json::array();
+    for (const SculptSample& s : g.samples) flat.insert(flat.end(), {s.t, s.ax, s.ay, s.scale});
+    return flat;
+}
+
+}  // namespace
+
+bool GuideSculpt::identity() const {
+    return std::all_of(samples.begin(), samples.end(), [](const SculptSample& s) {
+        return std::abs(s.ax) <= kIdentity && std::abs(s.ay) <= kIdentity && std::abs(s.scale - 1.0f) <= kIdentity;
+    });
+}
+
+SculptSample GuideSculpt::at(float t) const {
+    if (samples.empty()) return {t, 0.0f, 0.0f, 1.0f};
+    if (t <= samples.front().t) return samples.front();
+    if (t >= samples.back().t) return samples.back();
+    const auto next = std::upper_bound(samples.begin(), samples.end(), t,
+                                       [](float x, const SculptSample& s) { return x < s.t; });
+    const SculptSample& b = *next;
+    const SculptSample& a = *(next - 1);
+    const float span = b.t - a.t;
+    const float w = span > 0.0f ? (t - a.t) / span : 0.0f;
+    if (w == 0.0f) return a;
+    return {t, a.ax + (b.ax - a.ax) * w, a.ay + (b.ay - a.ay) * w, a.scale + (b.scale - a.scale) * w};
+}
+
+std::uint64_t SculptEdits::contentHash() const {
+    std::uint64_t h = hash64(0x5C0197);
+    for (const auto& [id, g] : guides) {
+        h = hashCombine(h, id);
+        h = hashCombine(h, g.samples.size());
+        for (const SculptSample& s : g.samples) h = hashFloat(hashFloat(hashFloat(hashFloat(h, s.t), s.ax), s.ay), s.scale);
+    }
+    return h;
+}
+
+bool SculptSet::empty() const {
+    return std::all_of(nodes.begin(), nodes.end(), [](const auto& n) { return n.second.empty(); });
+}
+
+const SculptEdits* SculptSet::node(const std::string& name) const {
+    const auto it = nodes.find(name);
+    return it == nodes.end() ? nullptr : &it->second;
+}
+
+std::string SculptSet::toJson() const {
+    json out = json::object();
+    for (const auto& [name, edits] : nodes) {
+        if (edits.empty()) continue;
+        json guides = json::object();
+        for (const auto& [id, g] : edits.guides) guides[std::to_string(id)] = guideJson(g);
+        out[name] = {{"guides", std::move(guides)}};
+    }
+    return out.dump();
+}
+
+SculptSet SculptSet::fromJson(const std::string& text) {
+    SculptSet set;
+    if (text.find_first_not_of(" \t\r\n") == std::string::npos) return set;
+    try {
+        const json root = json::parse(text);
+        if (!root.is_object()) throw std::invalid_argument("not an object");
+        for (auto node = root.begin(); node != root.end(); ++node) {
+            SculptEdits edits;
+            const json guides = node.value().value("guides", json::object());
+            for (auto it = guides.begin(); it != guides.end(); ++it) {
+                const json& flat = it.value();
+                GuideSculpt g;
+                for (std::size_t i = 0; i + 3 < flat.size(); i += 4) {
+                    g.samples.push_back({flat[i].get<float>(), flat[i + 1].get<float>(), flat[i + 2].get<float>(),
+                                         flat[i + 3].get<float>()});
+                }
+                std::sort(g.samples.begin(), g.samples.end(),
+                          [](const SculptSample& a, const SculptSample& b) { return a.t < b.t; });
+                if (!g.samples.empty()) edits.guides[std::stoull(it.key())] = std::move(g);
+            }
+            if (!edits.empty()) set.nodes[node.key()] = std::move(edits);
+        }
+    } catch (const std::exception& e) {
+        throw std::invalid_argument(std::string("sculptData: ") + e.what());
+    }
+    return set;
+}
+
+namespace {
+
+// The node path `path` takes when node `from` becomes `to`: `to` for `from` itself, "to/x" for
+// "from/x" (a node inside it); "" for any other.
+std::string movedPath(const std::string& path, const std::string& from, const std::string& to) {
+    if (path == from) return to;
+    if (path.size() > from.size() && path.compare(0, from.size(), from) == 0 && path[from.size()] == '/') {
+        return to + path.substr(from.size());
+    }
+    return {};
+}
+
+// The edits of `from` and the nodes inside it copied (`keep`) or moved to `to`; false when none.
+bool carry(SculptSet& set, const std::string& from, const std::string& to, bool keep) {
+    if (from.empty() || from == to) return false;
+    std::vector<std::pair<std::string, SculptEdits>> carried;
+    for (auto it = set.nodes.begin(); it != set.nodes.end();) {
+        const std::string path = movedPath(it->first, from, to);
+        if (path.empty()) {
+            ++it;
+            continue;
+        }
+        if (keep) {
+            carried.emplace_back(path, it->second);
+            ++it;
+        } else {
+            carried.emplace_back(path, std::move(it->second));
+            it = set.nodes.erase(it);
+        }
+    }
+    for (auto& [path, edits] : carried) set.nodes[path] = std::move(edits);
+    return !carried.empty();
+}
+
+}  // namespace
+
+std::string renameSculptNode(const std::string& text, const std::string& from, const std::string& to) {
+    SculptSet set = SculptSet::fromJson(text);
+    return carry(set, from, to, false) ? set.toJson() : text;
+}
+
+std::string copySculptNode(const std::string& text, const std::string& from, const std::string& to) {
+    SculptSet set = SculptSet::fromJson(text);
+    return carry(set, from, to, true) ? set.toJson() : text;
+}
+
+std::string moveSculptNodes(const std::string& text, const std::vector<std::pair<std::string, std::string>>& moves) {
+    SculptSet set = SculptSet::fromJson(text);
+    bool changed = false;
+    for (const auto& [from, to] : moves) changed = carry(set, from, to, false) || changed;
+    return changed ? set.toJson() : text;
+}
+
+std::string clearSculptNode(const std::string& text, const std::string& name) {
+    SculptSet set = SculptSet::fromJson(text);
+    if (!set.nodes.erase(name)) return text;
+    return set.toJson();
+}
+
+std::vector<std::string> sculptedNodes(const std::string& text) {
+    std::vector<std::string> names;
+    for (const auto& [name, edits] : SculptSet::fromJson(text).nodes) {
+        if (!edits.empty()) names.push_back(name);
+    }
+    return names;
+}
+
+std::string sculptExternal(const std::string& nodePath) { return "sculpt:" + nodePath; }
+
+std::vector<Vec3f> applySculpt(const Guide& input, const GuideSculpt& edit, float strength, const ScalpMesh* scalp) {
+    const std::vector<Vec3f>& pts = input.points;
+    std::vector<float> t, lengths;
+    if (pts.size() < 2 || edit.samples.empty() || strength == 0.0f || !segmentMiddles(pts, t, lengths)) return pts;
+    const std::vector<Frame> frames = segmentFrames(pts, input.root, scalp);
+    std::vector<Vec3f> out(pts.size());
+    out[0] = pts[0];
+    for (std::size_t j = 0; j + 1 < pts.size(); ++j) {
+        if (lengths[j] <= 0.0f) {
+            out[j + 1] = out[j];
+            continue;
+        }
+        const SculptSample s = edit.at(t[j]);
+        const Vec3f local = turnedZ(s.ax * strength, s.ay * strength);
+        const float scale = std::max(0.0f, 1.0f + (s.scale - 1.0f) * strength);
+        out[j + 1] = out[j] + frames[j].toWorld(local) * (lengths[j] * scale);
+    }
+    return out;
+}
+
+GuideSculpt recordSculpt(const Guide& input, const std::vector<Vec3f>& sculpted, float strength, const ScalpMesh* scalp) {
+    if (std::abs(strength) < kMinStrength) {
+        throw std::invalid_argument("the Sculpt node's strength is 0: raise it to sculpt");
+    }
+    const std::vector<Vec3f>& pts = input.points;
+    if (sculpted.size() != pts.size()) throw std::invalid_argument("a sculpted guide has another point count than its input");
+    GuideSculpt edit;
+    std::vector<float> t, lengths;
+    if (pts.size() < 2 || !segmentMiddles(pts, t, lengths)) return edit;
+    const std::vector<Frame> frames = segmentFrames(pts, input.root, scalp);
+    edit.samples.reserve(pts.size() - 1);
+    for (std::size_t j = 0; j + 1 < pts.size(); ++j) {
+        SculptSample s;
+        s.t = t[j];
+        const Vec3f e = sculpted[j + 1] - sculpted[j];
+        const float len = e.length();
+        if (lengths[j] > 0.0f && len > 0.0f) {
+            const Vec3f l = frames[j].toLocal(e / len);
+            const float across = std::sqrt(l.x * l.x + l.y * l.y);
+            const float angle = pm::atan2(across, l.z);
+            // The axis z x l = (-l.y, l.x, 0), its length `across`: the angle along it.
+            if (across > 1e-12f) {
+                s.ax = -l.y / across * angle;
+                s.ay = l.x / across * angle;
+            }
+            s.scale = len / lengths[j];
+        } else if (lengths[j] > 0.0f) {
+            s.scale = 0.0f;
+        }
+        s.ax /= strength;
+        s.ay /= strength;
+        s.scale = 1.0f + (s.scale - 1.0f) / strength;
+        edit.samples.push_back(s);
+    }
+    // Two samples at the same t (zero-length segments): only the first is read.
+    return edit;
+}
+
+std::shared_ptr<const GuideSet> applySculpts(const std::shared_ptr<const GuideSet>& input, const SculptEdits& edits,
+                                             float strength, const ScalpMesh* scalp) {
+    if (!input || edits.empty() || strength == 0.0f) return input;
+    std::shared_ptr<GuideSet> out;
+    for (std::size_t i = 0; i < input->size(); ++i) {
+        const Guide& g = input->guides()[i];
+        const auto it = edits.guides.find(g.id);
+        if (it == edits.guides.end()) continue;
+        if (!out) out = std::make_shared<GuideSet>(*input);
+        out->guides()[i].points = applySculpt(g, it->second, strength, scalp);
+    }
+    return out ? std::shared_ptr<const GuideSet>(out) : input;
+}
+
+std::vector<GuideId> recordSculptStroke(SculptEdits& edits, const GuideSet& input, const GuideHierarchy& sculpted,
+                                        float strength, const ScalpMesh* scalp) {
+    if (std::abs(strength) < kMinStrength) {
+        throw std::invalid_argument("the Sculpt node's strength is 0: raise it to sculpt");
+    }
+    std::vector<GuideId> recorded;
+    for (const Guide& g : input.guides()) {
+        const HierarchyGuide* s = sculpted.guide(g.id);
+        if (!s || s->points.size() != g.points.size() || g.points.size() < 2) continue;
+        const auto it = edits.guides.find(g.id);
+        const std::vector<Vec3f> now = it == edits.guides.end() ? g.points : applySculpt(g, it->second, strength, scalp);
+        // Compared segment by segment (the root is the input's: a stroke never moves it).
+        const float moved = kMoved * arcLength(now);
+        bool changed = false;
+        for (std::size_t k = 1; k < now.size() && !changed; ++k) {
+            const Vec3f d = (s->points[k] - s->points[0]) - (now[k] - now[0]);
+            changed = d.dot(d) > moved * moved;
+        }
+        if (!changed) continue;
+        GuideSculpt edit = recordSculpt(g, s->points, strength, scalp);
+        if (edit.identity()) {
+            edits.guides.erase(g.id);
+        } else {
+            edits.guides[g.id] = std::move(edit);
+        }
+        recorded.push_back(g.id);
+    }
+    return recorded;
+}
+
+std::shared_ptr<GuideHierarchy> sculptHierarchy(const GuideSet& guides, const std::string& group, const ScalpMesh* scalp) {
+    auto h = std::make_shared<GuideHierarchy>();
+    const GroupId root = h->addGroup(group.empty() ? std::string("sculpt") : group);
+    if (guides.hasDisplayColor()) {
+        const Vec3f& c = guides.displayColor();
+        h->setGroupColor(root, {c.x, c.y, c.z});
+    }
+    h->addGuides(root, guides);
+    if (scalp && scalp->triangleCount() > 0) h->evaluate(scalp);
+    return h;
+}
+
+}  // namespace groomlab

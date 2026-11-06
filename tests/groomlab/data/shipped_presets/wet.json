@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Wet", "description": "Makes any hair look wet, dark and stuck together: small clumps near the root merging into bigger ones toward the tip.", "category": "Add-ons"},
+  "exposed": [
+    {"node": "wetClump", "param": "wetness", "name": "wetness"},
+    {"node": "wetClump", "param": "clumpSize", "name": "clumpSize"},
+    {"node": "wetColor", "param": "melanin", "name": "melanin"},
+    {"node": "wetColor", "param": "dye", "name": "dye"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 80.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "wetClump", "type": "Wet", "params": {"wetness": 0.8, "seed": 7}, "ui": {"x": 960, "y": 0}},
+    {"name": "wetColor", "type": "HairColor", "params": {"melanin": 0.6, "dye": [0.7, 0.7, 0.7], "melaninRandom": 0.05}, "ui": {"x": 1200, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 1440, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "wetClump", "input": "strands"},
+    {"from": "wetClump", "to": "wetColor", "input": "strands"},
+    {"from": "wetColor", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

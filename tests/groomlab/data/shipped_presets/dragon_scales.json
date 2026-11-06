@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Dragon scales", "description": "Overlapping green dragon scales, bigger along the back and broad shields on the belly.", "category": "Scales"},
+  "exposed": [
+    {"node": "combDown", "param": "angle", "name": "combAngle"},
+    {"node": "biggerOnTheBack", "param": "scaleRandom", "name": "sizeRandomness"},
+    {"node": "color", "param": "color", "name": "color"},
+    {"node": "color", "param": "tipColor", "name": "tipColor"},
+    {"node": "color", "param": "tipStrength", "name": "tipStrength"},
+    {"node": "scales", "param": "lift", "name": "scaleLift"},
+    {"node": "scales", "param": "scaleRandom", "name": "scaleRandom"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 4.0, "length": 1.5, "previewAll": true}, "ui": {"x": 240, "y": 0}},
+    {"name": "combDown", "type": "Bend", "params": {"angle": 180.0, "start": 0.0, "end": 0.0, "along": "direction", "direction": [0.0, -1.0, 0.0]}, "ui": {"x": 480, "y": 0}},
+    {"name": "biggerOnTheBack", "type": "Transform", "params": {"scale": {"expression": "smoothstep($ny, -0.6, 0.8)", "min": 0.55, "max": 1.0}, "scaleRandom": 0.1}, "ui": {"x": 720, "y": 0}},
+    {"name": "breadth", "type": "Width", "params": {"width": {"expression": "smoothstep($ny, -0.6, 0.8)", "min": 0.7, "max": 1.0}, "profile": [[0, 1], [1, 1]]}, "ui": {"x": 960, "y": 0}},
+    {"name": "color", "type": "HairColor", "params": {"mode": "color", "color": [0.143, 0.154, 0.08], "tipColor": [0.02, 0.04, 0.02], "tipProfile": [[0, 0], [0.55, 0.1], [1, 1]], "hueRandom": 0.03, "valueRandom": 0.28, "tipStrength": 0.6}, "ui": {"x": 1200, "y": 0}},
+    {"name": "scales", "type": "Scales", "params": {"prototype": "groomlab:scale groomlab:scaleShield", "variantBy": "map", "variant": {"expression": "1 - smoothstep($ny, -0.55, -0.35)", "min": 0.0, "max": 1.0}, "size": 1.0, "scaleRandom": 0.1, "spinRandom": 0.03, "offset": 0.01, "lift": 3.0, "tile": 1.0, "stack": 0.02, "conform": true, "preview": "auto"}, "ui": {"x": 1440, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 1680, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "combDown", "input": "strands"},
+    {"from": "combDown", "to": "biggerOnTheBack", "input": "strands"},
+    {"from": "biggerOnTheBack", "to": "breadth", "input": "strands"},
+    {"from": "breadth", "to": "color", "input": "strands"},
+    {"from": "color", "to": "scales", "input": "strands"},
+    {"from": "scales", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

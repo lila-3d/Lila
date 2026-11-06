@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Flyaways", "description": "Adds a few stray hairs that catch the light to whatever look it is added to.", "category": "Add-ons"},
+  "exposed": [
+    {"node": "flyaways", "param": "fraction", "name": "fraction"},
+    {"node": "flyaways", "param": "stray", "name": "stray"},
+    {"node": "flyaways", "param": "frequency", "name": "frequency"},
+    {"node": "flyaways", "param": "standOut", "name": "standOut"},
+    {"node": "flyaways", "param": "lengthen", "name": "lengthen"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 80.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "flyaways", "type": "Flyaway", "params": {"fraction": 0.012, "stray": 1.2, "standOut": 0.35, "seed": 11}, "ui": {"x": 720, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 960, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "flyaways", "input": "strands"},
+    {"from": "flyaways", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

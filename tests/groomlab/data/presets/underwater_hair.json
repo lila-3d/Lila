@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Underwater hair", "description": "Hair floating and drifting gently underwater.", "category": "Motion"},
+  "exposed": [
+    {"node": "collide", "param": "offset", "name": "collideOffset"},
+    {"node": "clump", "param": "count", "name": "clumpCount"},
+    {"node": "color", "param": "melanin", "name": "melanin"},
+    {"node": "width", "param": "width", "name": "width"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guideRoots", "type": "Scatter", "params": {"density": 0.6, "length": 14.0, "seed": 7}, "ui": {"x": 240, "y": 360}},
+    {"name": "guideComb", "type": "Gravity", "params": {"strength": 0.9}, "ui": {"x": 480, "y": 360}},
+    {"name": "guideCollide", "type": "Collide", "params": {"offset": 0.15, "maxDepth": 30.0, "iterations": 3}, "ui": {"x": 720, "y": 360}},
+    {"name": "toGuides", "type": "ToGuides", "ui": {"x": 960, "y": 360}},
+    {"name": "simulate", "type": "Simulate", "params": {"bend": 0.4, "damping": 0.1, "collisionOffset": 0.2, "friction": 0.3, "water": true, "waterLevel": 2.0, "buoyancy": 1.15, "waterDrag": 0.5, "currentSpeed": 6.0, "currentDirection": [0.3, 0.0, -1.0], "windFrequency": 0.08, "dryTime": 10.0, "wetWeight": 0.5}, "ui": {"x": 1200, "y": 360}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 140.0, "length": 14.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 1440, "y": 0}},
+    {"name": "collide", "type": "Collide", "params": {"offset": 0.08, "maxDepth": 30.0, "iterations": 2}, "ui": {"x": 1680, "y": 0}},
+    {"name": "bigClump", "type": "Clump", "params": {"count": 60, "seed": 1, "strength": {"attribute": "wetness", "min": 0.2, "max": 0.8}, "profile": [[0, 0], [0.2, 0.6], [1, 1]]}, "ui": {"x": 2160, "y": 0}},
+    {"name": "clump", "type": "Clump", "params": {"count": 300, "seed": 2, "strength": {"attribute": "wetness", "min": 0.35, "max": 0.95}, "profile": [[0, 0], [0.1, 0.8], [1, 1]]}, "ui": {"x": 2640, "y": 0}},
+    {"name": "color", "type": "HairColor", "params": {"melanin": 0.45, "redness": 0.25, "tipColor": [0.035, 0.022, 0.014], "tipProfile": [[0, 1], [1, 1]], "melaninRandom": 0.08, "tipStrength": {"attribute": "wetness", "min": 0.0, "max": 0.55}}, "ui": {"x": 2880, "y": 0}},
+    {"name": "width", "type": "Width", "params": {"width": 0.007, "profile": [[0, 1], [1, 0.3]]}, "ui": {"x": 3120, "y": 0}},
+    {"name": "resample", "type": "Resample", "params": {"segments": 15}, "ui": {"x": 3360, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 3600, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "guideRoots", "input": "scalp"},
+    {"from": "guideRoots", "to": "guideComb", "input": "strands"},
+    {"from": "guideComb", "to": "guideCollide", "input": "strands"},
+    {"from": "scalp", "to": "guideCollide", "input": "scalp"},
+    {"from": "guideCollide", "to": "toGuides", "input": "strands"},
+    {"from": "toGuides", "to": "simulate", "input": "guides"},
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "simulate", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "collide", "input": "strands"},
+    {"from": "scalp", "to": "collide", "input": "scalp"},
+    {"from": "collide", "to": "bigClump", "input": "strands"},
+    {"from": "bigClump", "to": "clump", "input": "strands"},
+    {"from": "clump", "to": "color", "input": "strands"},
+    {"from": "color", "to": "width", "input": "strands"},
+    {"from": "width", "to": "resample", "input": "strands"},
+    {"from": "resample", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

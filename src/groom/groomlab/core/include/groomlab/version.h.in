@@ -1,0 +1,10 @@
+#pragma once
+
+namespace groomlab {
+
+constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
+constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
+constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
+constexpr const char* kVersionString = "@PROJECT_VERSION@";
+
+}  // namespace groomlab

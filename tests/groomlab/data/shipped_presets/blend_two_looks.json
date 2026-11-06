@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Blend two looks", "description": "Sleek hair that turns into curls as you animate one slider on the groom (a Control drives a Blend between two branches).", "category": "Techniques"},
+  "exposed": [
+    {"node": "width", "param": "width", "name": "width"},
+    {"node": "resample", "param": "segments", "name": "segments"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 80.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "sleek", "type": "Clump", "params": {"clumpBy": "size", "size": 0.9, "strength": 0.7, "profile": [[0, 0], [0.4, 0.3], [1, 0.9]]}, "ui": {"x": 960, "y": 0}},
+    {"name": "curls", "type": "Curl", "params": {"radius": 0.45, "frequency": 0.35, "randomness": 0.3}, "ui": {"x": 960, "y": 360}},
+    {"name": "curlsControl", "type": "Control", "params": {"name": "curls", "default": 0.0, "min": 0.0, "max": 1.0}, "ui": {"x": 960, "y": 540}},
+    {"name": "blendLooks", "type": "Blend", "params": {"mix": 1.0}, "paramInputs": ["mix"], "ui": {"x": 1200, "y": 0}},
+    {"name": "width", "type": "Width", "params": {"width": 0.007, "profile": [[0, 1], [0.75, 0.75], [1, 0.25]]}, "ui": {"x": 1680, "y": 0}},
+    {"name": "color", "type": "HairColor", "params": {"melanin": 0.6, "redness": 0.2, "melaninRandom": 0.08}, "ui": {"x": 1440, "y": 0}},
+    {"name": "resample", "type": "Resample", "params": {"segments": 40}, "ui": {"x": 1920, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 2160, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "sleek", "input": "strands"},
+    {"from": "interpolate", "to": "curls", "input": "strands"},
+    {"from": "sleek", "to": "blendLooks", "input": "a"},
+    {"from": "curls", "to": "blendLooks", "input": "b"},
+    {"from": "curlsControl", "to": "blendLooks", "input": "mix"},
+    {"from": "blendLooks", "to": "color", "input": "strands"},
+    {"from": "width", "to": "resample", "input": "strands"},
+    {"from": "resample", "to": "output", "input": "strands"},
+    {"from": "color", "to": "width", "input": "strands"}
+  ],
+  "output": "output",
+  "backdrops": [
+    {"title": "a: sleek", "x": 944, "y": -40, "w": 240, "h": 168, "color": [70, 90, 120]},
+    {"title": "b: curly, and its slider", "x": 944, "y": 320, "w": 240, "h": 326, "color": [110, 80, 130]}
+  ]
+}

@@ -1,0 +1,20 @@
+GroomLab
+Copyright 2026 Nick Rutlinh
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE), except for the
+Blender add-on in hosts/blender/addon/, which is licensed under the GNU General Public License,
+version 3 or (at your option) any later version (see hosts/blender/addon/LICENSE). Sample assets
+published as such (for example the wolf sample groom) carry their own license, stated beside them
+(CC BY 4.0 for the wolf).
+
+GroomLab includes or builds against third-party software, each under its own license. See
+THIRD_PARTY_NOTICES.md (the source tree) and THIRD_PARTY_NOTICES.txt (the notices shipped with
+GroomLab's binaries).
+
+Trademarks: GroomLab and the GroomLab logo are trademarks of Nick Rutlinh; the Apache License does
+not grant permission to use them (see its section 6 and https://getgroomlab.com/press). Autodesk, Maya and Arnold are trademarks of Autodesk, Inc. RenderMan is a trademark
+of Pixar. Unreal Engine is a trademark of Epic Games, Inc. Blender is a trademark of the Blender
+Foundation. Unity is a trademark of Unity Technologies. The Arnold and RenderMan logos on
+GroomLab's website belong to their owners and are used only to say that GroomLab works with those
+renderers; they are not covered by GroomLab's license. GroomLab is not affiliated with or endorsed
+by any of these companies.

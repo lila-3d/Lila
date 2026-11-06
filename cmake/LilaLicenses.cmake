@@ -26,3 +26,7 @@ foreach(_pair
         file(COPY_FILE "${SOURCE_DIR}/${_file}" "${OUT_DIR}/licenses/${_id}.txt" ONLY_IF_DIFFERENT)
     endif()
 endforeach()
+# GroomLab's Apache-2.0 text with its NOTICE after it, as the license's section 4(d) asks.
+file(READ "${SOURCE_DIR}/src/groom/groomlab/LICENSE" _groomlab)
+file(READ "${SOURCE_DIR}/src/groom/groomlab/NOTICE" _groomlab_notice)
+file(WRITE "${OUT_DIR}/licenses/groomlab.txt" "${_groomlab}\n\nNOTICE\n\n${_groomlab_notice}")

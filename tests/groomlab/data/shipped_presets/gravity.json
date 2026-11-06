@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Gravity", "description": "Makes hair hang naturally under its own weight.", "category": "Add-ons"},
+  "exposed": [
+    {"node": "gravity", "param": "strength", "name": "strength"},
+    {"node": "gravity", "param": "stiffness", "name": "stiffness"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 80.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "gravity", "type": "Gravity", "params": {"strength": 0.6, "stiffness": 0.8}, "ui": {"x": 720, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 960, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "gravity", "input": "strands"},
+    {"from": "gravity", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

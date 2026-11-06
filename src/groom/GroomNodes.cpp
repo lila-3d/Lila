@@ -5,6 +5,7 @@
 #include "curve/NodeHelpers.h"
 #include "curve/Pipe.h"
 #include "groom/Attrs.h"
+#include "groom/GroomLab.h"
 #include "scene/Graph.h"
 #include "scene/MeshNodes.h"
 #include "scene/Transform.h"
@@ -504,6 +505,7 @@ void registerTypes()
     if (types::find("groom"))
         return;
     registerHairCardsType();
+    registerGroomLabType();
     const std::string lock = "Lock", mesh = "Mesh", uv = "Atlas";
     NodeType t;
     t.name = "groom";

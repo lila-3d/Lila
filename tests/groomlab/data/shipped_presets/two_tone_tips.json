@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "size": 20.0,
+  "about": {"title": "Two-tone tips", "description": "Recolors any hair with a picked root color (here a skin tone) that blends to white tips, each strand a little lighter or darker and its tip starting at its own place. Set color and tipColor to any two colors.", "category": "Add-ons"},
+  "exposed": [
+    {"node": "twoTone", "param": "color", "name": "rootColor"},
+    {"node": "twoTone", "param": "tipColor", "name": "tipColor"},
+    {"node": "twoTone", "param": "tipStrength", "name": "tipStrength"},
+    {"node": "twoTone", "param": "valueRandom", "name": "brightnessRandom"}
+  ],
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 0, "y": 180}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 80.0, "length": 15.0}, "ui": {"x": 240, "y": 0}},
+    {"name": "interpolate", "type": "Interpolate", "ui": {"x": 480, "y": 0}},
+    {"name": "twoTone", "type": "HairColor", "params": {"mode": "color", "color": [0.72, 0.5, 0.42], "tipColor": [1.0, 1.0, 1.0], "tipStrength": 1.0, "tipProfile": [[0, 0], [0.3, 0], [1, 1]], "tipOffsetRandom": 0.15, "valueRandom": 0.1, "hueRandom": 0.02}, "ui": {"x": 720, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 960, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "twoTone", "input": "strands"},
+    {"from": "twoTone", "to": "output", "input": "strands"}
+  ],
+  "output": "output"
+}

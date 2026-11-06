@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "size": 100.0,
+  "about": {"title": "Flow with guide tufts", "description": "Short coat that follows painted direction arrows everywhere, and your guides (clumped) where you paint the guideAreas map white, for longer hair or tufts (a ruff, a mane, ear tufts). The map starts black, all fur: paint it white in Groom Tools > Paint where the guides should take over.", "category": "Fur"},
+  "exposed": [
+    {"node": "frizzNoise", "param": "fraction", "name": "frizzFraction"},
+    {"node": "frizzNoise", "param": "amplitude", "name": "frizzAmount"},
+    {"node": "width", "param": "width", "name": "width"},
+    {"node": "color", "param": "melanin", "name": "melanin"}
+  ],
+  "requires": {"maps": [{"name": "guideAreas", "kind": "vertices", "value": 0.0}]},
+  "nodes": [
+    {"name": "scalp", "type": "Scalp", "ui": {"x": 0, "y": 0}},
+    {"name": "scatter", "type": "Scatter", "params": {"density": 25.0, "length": 2.5}, "ui": {"x": 240, "y": 0}},
+    {"name": "length", "type": "Length", "params": {"fraction": 1.0, "randomness": 0.3}, "ui": {"x": 480, "y": 0}},
+    {"name": "flow", "type": "Flow", "params": {"lift": 14.0, "bend": 0.55, "rollRandom": 8.0}, "ui": {"x": 720, "y": 0}},
+    {"name": "guides", "type": "Guides", "ui": {"x": 240, "y": 180}},
+    {"name": "interpolate", "type": "Interpolate", "params": {"take": "shape", "preserveLength": true}, "ui": {"x": 480, "y": 180}},
+    {"name": "clump", "type": "Clump", "params": {"clumpBy": "size", "size": 1.2, "strength": 0.7, "profile": [[0, 0], [0.4, 0.8], [1, 1]]}, "ui": {"x": 720, "y": 180}},
+    {"name": "guideAreas", "type": "Map", "params": {"name": "guideAreas", "min": 0.0, "max": 1.0}, "ui": {"x": 720, "y": 360}},
+    {"name": "blend", "type": "Blend", "params": {"mix": 1.0, "include": "shapeAndLook"}, "paramInputs": ["mix"], "ui": {"x": 960, "y": 0}},
+    {"name": "frizzNoise", "type": "Noise", "params": {"fraction": 0.1, "amplitude": 0.08, "frequency": 5.0, "octaves": 1}, "ui": {"x": 1200, "y": 0}},
+    {"name": "width", "type": "Width", "params": {"width": 0.008, "profile": [[0, 1], [1, 0.17]], "randomness": 0.3}, "ui": {"x": 1440, "y": 0}},
+    {"name": "color", "type": "HairColor", "params": {"melanin": 0.4, "redness": 0.4, "melaninRandom": 0.08}, "ui": {"x": 1680, "y": 0}},
+    {"name": "resample", "type": "Resample", "params": {"segments": 10}, "ui": {"x": 1920, "y": 0}},
+    {"name": "output", "type": "Output", "ui": {"x": 2160, "y": 0}}
+  ],
+  "connections": [
+    {"from": "scalp", "to": "scatter", "input": "scalp"},
+    {"from": "scatter", "to": "length", "input": "strands"},
+    {"from": "length", "to": "flow", "input": "strands"},
+    {"from": "flow", "to": "blend", "input": "a"},
+    {"from": "scatter", "to": "interpolate", "input": "strands"},
+    {"from": "guides", "to": "interpolate", "input": "guides"},
+    {"from": "scalp", "to": "interpolate", "input": "scalp"},
+    {"from": "interpolate", "to": "clump", "input": "strands"},
+    {"from": "clump", "to": "blend", "input": "b"},
+    {"from": "guideAreas", "to": "blend", "input": "mix"},
+    {"from": "blend", "to": "frizzNoise", "input": "strands"},
+    {"from": "frizzNoise", "to": "width", "input": "strands"},
+    {"from": "width", "to": "color", "input": "strands"},
+    {"from": "color", "to": "resample", "input": "strands"},
+    {"from": "resample", "to": "output", "input": "strands"}
+  ],
+  "output": "output",
+  "backdrops": [
+    {"title": "a: fur along the flow (map black)", "x": 464, "y": -40, "w": 480, "h": 168, "color": [70, 110, 90]},
+    {"title": "b: the guides, clumped (map white)", "x": 464, "y": 140, "w": 480, "h": 190, "color": [110, 90, 70]},
+    {"title": "guideAreas: paint white where the guides take over", "x": 704, "y": 340, "w": 240, "h": 240, "color": [90, 90, 120]}
+  ]
+}

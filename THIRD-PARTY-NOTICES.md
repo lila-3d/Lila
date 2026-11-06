@@ -53,6 +53,8 @@ FFmpeg 9.0.2 is dynamically linked (avcodec, avformat, avutil, swscale and swres
 | Tracy Profiler | BSD-3-Clause | Bartosz Taudul | https://github.com/wolfpld/tracy |
 | Capstone (tracy-capture) | BSD-3-Clause | Nguyen Anh Quynh | https://github.com/capstone-engine/capstone |
 | doctest (tests only, not distributed) | MIT | Viktor Kirilov | https://github.com/doctest/doctest |
+| GoogleTest (tests only, not distributed) | BSD-3-Clause | Google Inc. | https://github.com/google/googletest |
+| GroomLab engine (core and io, modified) | Apache-2.0 | Nick Rutlinh | `src/groom/groomlab` (licence and NOTICE there), from https://github.com/thekesslereffect/groomlab at 3e7ffec |
 | MikkTSpace | Zlib | Morten S. Mikkelsen | `src/geo/third_party/mikktspace` |
 | Dem Bones | BSD-3-Clause | Electronic Arts Inc. | `third_party/dem-bones` (licence in `third_party/dem-bones/LICENSE.md`), from https://github.com/electronicarts/dem-bones at 09b899b |
 | stb_truetype | MIT OR Unlicense | Sean Barrett | `src/curve/third_party/stb` |
