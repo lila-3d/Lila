@@ -172,6 +172,8 @@ std::vector<double> coherence(const Surface& s, double radius)
     return out;
 }
 
+} // namespace
+
 /**
  * How much each vertex sits in a saddle at the scale of a cell (a crotch, an armpit, the web between fingers): the
  * negative Gaussian curvature of the curvature tensor averaged over that radius, times the radius squared, 0 to 1.
@@ -230,8 +232,6 @@ std::vector<double> saddleAmount(const Surface& s, double radius)
     });
     return out;
 }
-
-} // namespace
 
 Curvature estimateCurvature(const Surface& s, double coherenceRadius)
 {

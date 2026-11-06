@@ -161,6 +161,8 @@ struct QuadRemeshOptions
     double softCreaseAngle = 0.0;
     /** How hard poles are kept out of joints (crotch, armpits, finger webs) onto flatter parts nearby; 0 off. */
     double jointPoleAvoidance = 30.0;
+    /** Extra faces at joints (crotch, armpits, finger webs), where the mesh bends: 0 none, 1 about three times as dense there. */
+    double jointDensity = 0.5;
     /** Align to edges flagged "hard". */
     bool useHardEdges = true;
     /** Also align to edges whose faces meet sharper than this many degrees; negative disables. */

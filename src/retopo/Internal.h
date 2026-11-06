@@ -253,6 +253,8 @@ struct Curvature
     std::vector<double> coherence;  // 0 to 1: the share of the anisotropy left after averaging over coherenceRadius
 };
 LILA_SCENE_API Curvature estimateCurvature(const Surface& s, double coherenceRadius = 0.0);
+/** 0 to 1 per vertex: how much it sits in a saddle (crotch, armpit, finger web) at the scale of radius. */
+std::vector<double> saddleAmount(const Surface& s, double radius);
 
 /**
  * Lattice origin per vertex, the lattice point nearest the vertex. shift starts the lattice that fraction of a cell

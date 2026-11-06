@@ -1155,6 +1155,25 @@ void prepareWork(Work& w, const geo::Mesh& source, const QuadRemeshOptions& opts
             }
             rho = std::move(next);
         }
+        // Joints get theirs after the spread, which would flatten a fold's narrow peak. A fold reads as a saddle only along
+        // its crease, so the band widens from there, halving every two cells.
+        if (opts.jointDensity > 0.0)
+        {
+            std::vector<double> joint = saddleAmount(s, cf * h0);
+            const double perCell = std::max(1.0, cf * h0 / std::max(s.meanEdgeLength(), 1e-12));
+            const double decay = std::pow(0.5, 1.0 / (2.0 * perCell));
+            const int rings = int(std::min(80.0, 6.0 * perCell));
+            for (int it = 0; it < rings; ++it)
+            {
+                std::vector<double> next = joint;
+                for (Index v = 0; v < n; ++v)
+                    for (Index k = s.adjStart[v]; k < s.adjStart[v + 1]; ++k)
+                        next[v] = std::max(next[v], joint[s.adj[k]] * decay);
+                joint.swap(next);
+            }
+            for (Index v = 0; v < n; ++v)
+                rho[v] = std::clamp(rho[v] * (1.0 + 2.0 * opts.jointDensity * joint[v]), 1.0 / 8.0, 8.0);
+        }
         // Handles ease out over their own radius already; spreading them as well would flatten their peak.
         if (!opts.densityHandles.empty())
             for (Index v = 0; v < n; ++v)
@@ -1548,6 +1567,29 @@ Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh,
             count += m.edgeValid(e) && m.isBoundaryEdge(e);
     for (Index p = 0; p < m.pointCapacity(); ++p)
         count += m.pointValid(p) && m.pointValence(p) > 8;
+    // A hole filled in one piece: a face of many sides, or one far bigger than the faces round it.
+    for (Index f = 0; f < m.faceCapacity(); ++f)
+    {
+        if (!m.faceValid(f))
+            continue;
+        if (m.faceSize(f) > 5)
+        {
+            ++count;
+            continue;
+        }
+        double around = 0.0;
+        int n = 0;
+        m.forEachFaceCorner(f, [&](Index c) {
+            m.forEachEdgeCorner(m.cornerEdge(c), [&](Index d) {
+                if (const Index g = m.cornerFace(d); g != f)
+                {
+                    around += m.faceArea(g);
+                    ++n;
+                }
+            });
+        });
+        count += n > 0 && m.faceArea(f) > 6.0 * around / double(n);
+    }
     return count;
 }
 
