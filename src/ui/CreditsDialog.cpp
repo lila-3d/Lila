@@ -1,7 +1,9 @@
 #include "ui/CreditsDialog.h"
 
+#include "core/Paths.h"
 #include "ui/Credits.h"
 #include "ui/Icons.h"
+#include "ui/Telemetry.h"
 #include "ui/Theme.h"
 
 #include <QApplication>
@@ -763,6 +765,14 @@ private:
     void addFooter(QWidget* column)
     {
         mColumn->addSpacing(44);
+        // Valve allows no off-Steam donation links in the Steam build.
+        if (telemetry::installChannel(paths::executableDir()) != "steam")
+            addDonateRow(column);
+        addLicences(column);
+    }
+
+    void addDonateRow(QWidget* column)
+    {
         auto* row = new QHBoxLayout;
         row->setSpacing(8);
         row->addStretch(1);
@@ -780,10 +790,13 @@ private:
         link("brand-github", "Sponsors", "https://github.com/sponsors/Vaei/");
         row->addStretch(1);
         mColumn->addLayout(row);
+        mColumn->addSpacing(16);
+    }
 
+    void addLicences(QWidget* column)
+    {
         if (const std::filesystem::path notices = credits::licenceNotices(); !notices.empty())
         {
-            mColumn->addSpacing(16);
             auto* licences = new QPushButton("Open-Source Licences", column);
             licences->setFlat(true);
             licences->setCursor(Qt::PointingHandCursor);

@@ -601,9 +601,11 @@ QWidget* makeWelcomeHeader(QWidget* parent, QPushButton*& essentials)
     row->addWidget(title);
     row->addStretch(1);
     essentials = new EssentialsButton(header);
-    QFrame* support = makeSupportCard(header);
-    support->setFixedHeight(essentials->minimumHeight());
-    row->addWidget(support);
+    if (QFrame* support = makeSupportCard(header))
+    {
+        support->setFixedHeight(essentials->minimumHeight());
+        row->addWidget(support);
+    }
     row->addWidget(essentials);
     return header;
 }
@@ -807,9 +809,11 @@ QPixmap tintedIcon(const QString& name, const QColor& color, int size, qreal dpr
     return pm;
 }
 
-/** The donation card in the welcome header, beside Essentials. The Steam build leaves out the Steam button, since Lila is already owned there. */
+/** The donation card in the welcome header, beside Essentials. Null in the Steam build: Valve allows no off-Steam donation links there. */
 QFrame* makeSupportCard(QWidget* parent)
 {
+    if (telemetry::installChannel(paths::executableDir()) == "steam")
+        return nullptr;
     auto* card = new QFrame(parent);
     card->setObjectName("supportCard");
     auto* layout = new QHBoxLayout(card);
@@ -834,9 +838,8 @@ QFrame* makeSupportCard(QWidget* parent)
     std::vector<Link> links = {
         {"coffee", "Ko-fi", "https://ko-fi.com/jaredtaylor", "One-off or monthly donation on Ko-fi"},
         {"brand-github", "Sponsors", "https://github.com/sponsors/Vaei/", "One-off or monthly sponsorship on GitHub Sponsors"},
+        {"brand-steam", "Steam", "https://store.steampowered.com/app/5520720/", "Buy Lila on Steam: adds achievements that teach you what's new"},
     };
-    if (telemetry::installChannel(paths::executableDir()) != "steam")
-        links.push_back({"brand-steam", "Steam", "https://store.steampowered.com/app/5520720/", "Buy Lila on Steam: adds achievements that teach you what's new"});
 
     auto* buttons = new QHBoxLayout;
     buttons->setSpacing(6);
