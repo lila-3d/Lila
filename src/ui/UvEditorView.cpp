@@ -100,6 +100,16 @@ void UvView::frameShown()
     frame(lo, hi);
 }
 
+bool UvView::anyShownInView() const
+{
+    const glm::dvec2 a = toUv(QPointF(0.0, height())), b = toUv(QPointF(width(), 0.0));
+    for (const MeshUv& m : mMeshes)
+        for (const glm::dvec2& p : m.uv)
+            if (p.x >= a.x && p.x <= b.x && p.y >= a.y && p.y <= b.y)
+                return true;
+    return false;
+}
+
 void UvView::frameSelection()
 {
     sync();
@@ -112,11 +122,15 @@ void UvView::frameSelection()
 
 void UvView::resizeEvent(QResizeEvent*)
 {
-    if (!mFramed && width() > 10)
+    if (width() <= 10)
+        return;
+    if (!mFramed)
     {
         mFramed = true;
-        frame(glm::dvec2(0.0), glm::dvec2(1.0));
+        frameAll();
     }
+    else if (mFit)
+        frame(mFit->first, mFit->second);
 }
 
 void UvView::paintEvent(QPaintEvent*)
@@ -236,6 +250,7 @@ void UvView::mouseMoveEvent(QMouseEvent* e)
     if (mNav == Nav::Pan)
     {
         mPan += glm::dvec2(d.x(), d.y());
+        mFit.reset();
         update();
         return;
     }
@@ -467,6 +482,7 @@ UvTexturePaint::ToUv UvView::uvOf() const
 
 void UvView::frame(glm::dvec2 lo, glm::dvec2 hi)
 {
+    mFit = {lo, hi};
     glm::dvec2 ext = glm::max(hi - lo, glm::dvec2(1e-6));
     double z = std::min((width() - 40.0) / ext.x, (height() - 60.0) / ext.y);
     mZoom = std::clamp(z, 1.0, 1e7);
@@ -477,6 +493,7 @@ void UvView::frame(glm::dvec2 lo, glm::dvec2 hi)
 
 void UvView::zoomAbout(QPointF at, double f)
 {
+    mFit.reset();
     glm::dvec2 before = toUv(at);
     mZoom = std::clamp(mZoom * f, 1.0, 1e7);
     QPointF after = toScreen(before);
@@ -499,7 +516,7 @@ void UvView::sync()
     std::vector<scene::NodeId> ids = shownMeshes();
     std::vector<std::vector<Index>> only = shownFaces(ids);
     std::vector<MeshUv> next;
-    bool added = false;
+    bool added = false, changed = false;
     for (size_t i = 0; i < ids.size(); ++i)
     {
         const scene::NodeId id = ids[i];
@@ -518,12 +535,14 @@ void UvView::sync()
             continue;
         }
         added |= old == mMeshes.end();
+        changed = true;
         next.push_back(build(id, n->path(), mesh, set, std::move(faces)));
     }
     mMeshes = std::move(next);
     applyLive();
-    // A mesh newly shown (a new selection) is framed, so its uvs never open off screen.
-    if (added && mFramed)
+    // A mesh newly shown (a new selection) is framed, so its uvs never open off screen; so is an edit, such as a pack, that
+    // leaves none of them in view.
+    if (mFramed && (added || (changed && !mMeshes.empty() && !anyShownInView())))
         frameShown();
 }
 

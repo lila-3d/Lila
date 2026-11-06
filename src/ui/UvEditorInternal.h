@@ -199,6 +199,8 @@ private:
     void frame(glm::dvec2 lo, glm::dvec2 hi);
     /** Frames every shown mesh's uvs and the 0-1 square, from what is already synced. */
     void frameShown();
+    /** Whether any shown uv lies inside the view. */
+    bool anyShownInView() const;
 
     void zoomAbout(QPointF at, double f);
 
@@ -423,6 +425,8 @@ private:
 
     std::vector<MeshUv> mMeshes;
     bool mFramed = false;
+    /** The bounds last framed, kept framed through resizes until the view is panned or zoomed. */
+    std::optional<std::pair<glm::dvec2, glm::dvec2>> mFit;
     glm::dvec2 mPan{0.0};
     double mZoom = 300.0;
     UvTexturePaint mTexPaint;
