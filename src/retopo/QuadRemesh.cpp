@@ -1330,7 +1330,10 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
             snapBorder(m, feature, border, coarseH);
             projectPoints(m, feature, bvh, lines, 0.4 * coarseH);
         }
-        relaxAlongFeatures(m, feature, bvh, lines, h, opts.relaxIterations, symmetric ? opts.symmetryAxis : -1);
+        int relaxIterations = opts.relaxIterations;
+        if (const char* e = std::getenv("LILA_PATCH_RELAX"); e && std::string_view(layout) == "patches")
+            relaxIterations = std::atoi(e);
+        relaxAlongFeatures(m, feature, bvh, lines, h, relaxIterations, symmetric ? opts.symmetryAxis : -1);
         untangle(m, feature, src, bvh, lines, h);
         clock.lap("refine");
 
@@ -1521,7 +1524,22 @@ QuadRemeshResult quadRemeshOnce(const geo::Mesh& source, const QuadRemeshOptions
  */
 Index defects(const geo::Mesh& m, const geo::Mesh& src, const geo::MeshBvh& bvh, bool sourceClosed)
 {
-    Index count = Index(foldedFaces(m, src, bvh).size() + m.validate(geo::kValidateManifold).size());
+    const std::vector<Index> folded = foldedFaces(m, src, bvh);
+    Index count = Index(folded.size() + m.validate(geo::kValidateManifold).size());
+    if (std::getenv("LILA_DEFECT_LIST"))
+    {
+        for (Index f : folded)
+        {
+            const glm::dvec3 c = m.faceCentroid(f);
+            std::fprintf(stderr, "defect fold %.3f %.3f %.3f\n", c.x, c.y, c.z);
+        }
+        for (Index e = 0; e < m.edgeCapacity(); ++e)
+            if (sourceClosed && m.edgeValid(e) && m.isBoundaryEdge(e))
+            {
+                const glm::dvec3 c = m.position(m.edgePoint(e, 0));
+                std::fprintf(stderr, "defect open %.3f %.3f %.3f\n", c.x, c.y, c.z);
+            }
+    }
     const double size = glm::length(src.bounds().size());
     for (Index f = 0; f < m.faceCapacity(); ++f)
         count += m.faceValid(f) && m.faceArea(f) <= 1e-9 * size * size;

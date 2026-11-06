@@ -198,6 +198,7 @@ struct Traces
     std::vector<std::vector<Index>> in; // per triangle, its segments
     int why[5] = {};                    // ends: on a trace, killed by a trace, wall, source, lost
     std::vector<int> endWhy;            // per tracer
+    int loops = 0;                      // lines closed onto themselves
 };
 
 /**
@@ -330,7 +331,7 @@ struct ExtraStart
     double time;
 };
 
-Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {})
+Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {}, const std::vector<uint8_t>& dropped = {})
 {
     LILA_ZONE();
     const Surface& s = lay.s;
@@ -409,7 +410,14 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {})
     std::priority_queue<Event, std::vector<Event>, std::greater<>> queue;
     std::vector<uint8_t> queued(tracers.size(), 1);
     for (Index i = 0; i < Index(tracers.size()); ++i)
-        queue.push({tracers[i].time, i});
+        if (i < Index(dropped.size()) && dropped[i])
+        {
+            tracers[i].alive = false;
+            out.end[i] = tracers[i].time;
+            queued[i] = 0;
+        }
+        else
+            queue.push({tracers[i].time, i});
     // Who each line stopped, so a line cut short later lets go of those it stopped past its new end.
     struct Kill
     {
@@ -520,6 +528,43 @@ Traces trace(const Layout& lay, const std::vector<ExtraStart>& extras = {})
         exitS = glm::length(b - A.at);
         Index endsOn = kInvalid;
         bool stopped = false;
+
+        // A line round a tube comes back beside itself after a turn; closer than half a row, it closes onto itself with
+        // a short step across, or it would wind on as a helix with the same patch both sides.
+        if (d == axis(A.dirK))
+        {
+            constexpr double kLoopAfter = 3.0;
+            const glm::dvec2 perp = axis(A.dirK + 1);
+            Index self = kInvalid;
+            double bestOff = 0.5, bestRun = 0.0;
+            for (Index si : out.in[t])
+            {
+                const Segment& B = out.segments[si];
+                const double len = glm::length(B.b - B.a);
+                if (B.tracer != ai || B.dirK != A.dirK || B.t0 + len > A.time - kLoopAfter)
+                    continue;
+                // It runs on until level with the earlier stretch, then steps across.
+                const double off = glm::dot(B.a - A.at, perp), along = glm::dot(A.at - B.a, d);
+                const double run = std::max(0.0, -along) + 1e-6;
+                if (std::abs(off) < std::abs(bestOff) && run < exitS && along + run <= len)
+                {
+                    bestOff = off;
+                    bestRun = run;
+                    self = si;
+                }
+            }
+            if (self != kInvalid)
+            {
+                const glm::dvec2 turn = A.at + bestRun * d;
+                out.segments.push_back({ai, t, A.at, turn, A.time, A.dirK, kInvalid});
+                out.in[t].push_back(Index(out.segments.size() - 1));
+                out.segments.push_back({ai, t, turn, turn + bestOff * perp, A.time + bestRun, mod4(A.dirK + (bestOff > 0.0 ? 1 : 3)), self});
+                out.in[t].push_back(Index(out.segments.size() - 1));
+                stop(ai, A.time + bestRun + std::abs(bestOff), 0);
+                ++out.loops;
+                continue;
+            }
+        }
 
         // Crossings with lines already through this triangle, nearest first.
         struct Hit
@@ -1128,22 +1173,75 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
         }
         return failed ? "a patch isn't a disk" : "";
     };
+    // Turns closer together than half a row (a step across onto a line) count as one: their angles add up, and a step
+    // that turns back to straight is no corner at all.
     auto cornersOf = [&](Index p) {
         std::vector<size_t> out; // positions in the loop whose start point is a corner
-        for (size_t i = 0; i < loopOf[p].size(); ++i)
+        const std::vector<Index>& loop = loopOf[p];
+        struct Turn
         {
-            const Index v = edges[loopOf[p][i]].from;
-            if (dropped.count({p, v}))
-                continue;
-            if (virtualCorner.count({p, v}))
-                out.push_back(i);
-            else if (auto it = angleAt.find({p, v}); it != angleAt.end())
+            size_t at;
+            double deg, along;
+        };
+        std::vector<Turn> turns;
+        double along = 0.0;
+        for (size_t i = 0; i < loop.size(); ++i)
+        {
+            const Index v = edges[loop[i]].from;
+            if (!dropped.count({p, v}))
             {
-                const double deg = glm::degrees(it->second);
-                if (deg > 45.0 && deg < 135.0)
-                    out.push_back(i);
+                if (virtualCorner.count({p, v}))
+                    turns.push_back({i, 90.0, along});
+                else if (auto it = angleAt.find({p, v}); it != angleAt.end() && std::abs(glm::degrees(it->second) - 180.0) > 30.0)
+                    turns.push_back({i, glm::degrees(it->second), along});
+            }
+            along += edges[loop[i]].length;
+        }
+        const double total = along;
+        constexpr double kNear = 0.5;
+        // Start the clusters after a gap, so none wraps round the loop's start.
+        size_t first = 0;
+        for (size_t k = 0; k < turns.size(); ++k)
+        {
+            const double gap = k == 0 ? turns[0].along + total - turns.back().along : turns[k].along - turns[k - 1].along;
+            if (gap >= kNear)
+            {
+                first = k;
+                break;
             }
         }
+        for (size_t n = 0; n < turns.size();)
+        {
+            const size_t k0 = (first + n) % turns.size();
+            double sum = turns[k0].deg - 180.0;
+            size_t best = k0;
+            size_t len = 1;
+            for (; n + len < turns.size(); ++len)
+            {
+                const size_t k = (first + n + len) % turns.size(), prev = (first + n + len - 1) % turns.size();
+                const double gap = std::fmod(turns[k].along - turns[prev].along + total, total);
+                if (gap >= kNear)
+                    break;
+                sum += turns[k].deg - 180.0;
+                if (std::abs(turns[k].deg - 90.0) < std::abs(turns[best].deg - 90.0))
+                    best = k;
+            }
+            bool step = false;
+            for (size_t j = 0; j < len; ++j)
+                step = step || turns[(first + n + j) % turns.size()].deg > 225.0;
+            if (step && std::getenv("LILA_CORNER_CLUSTER"))
+            {
+                const double deg = 180.0 + sum;
+                if (deg > 45.0 && deg < 135.0)
+                    out.push_back(turns[best].at);
+            }
+            else
+                for (size_t j = 0; j < len; ++j)
+                    if (const Turn& tn = turns[(first + n + j) % turns.size()]; tn.deg > 45.0 && tn.deg < 135.0)
+                        out.push_back(tn.at);
+            n += len;
+        }
+        std::sort(out.begin(), out.end());
         return out;
     };
 
@@ -1491,7 +1589,7 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
     // An arc may only vanish where the patch really is thin: if the 3D distance across a patch is well over what its
     // short sides' lattice length says (its corners sit wrong), those sides keep at least a step, or the collapse would
     // weld points from opposite sides of a tube together.
-    std::vector<int> lower(na, 0);
+    std::vector<int> lower(na, std::getenv("LILA_PATCH_MIN1") ? 1 : 0);
     {
         auto midpoint = [&](const Side& side) {
             double total = 0.0;
@@ -2217,6 +2315,87 @@ Extracted buildPatchMesh(const Layout& lay, const std::vector<uint8_t>& blocked,
     return ex;
 }
 
+/**
+ * Slivers: patches thinner than half a row along most of their length, between two lines that run side by side. Of
+ * each pair the line whose length is mostly in slivers is left out (marked in `dropped`), so the lines it stopped run
+ * on and the other carries the row. Returns how many lines it left out.
+ */
+size_t dropSlivers(const Layout& lay, const Traces& tr, const std::vector<Piece>& pieces, const std::vector<Index>& patchOf, Index np, std::vector<uint8_t>& dropped)
+{
+    constexpr double kThin = 0.4;
+    std::vector<double> area(np, 0.0);
+    std::vector<std::map<Index, double>> along(np);
+    for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+    {
+        const Piece& P = pieces[pi];
+        const size_t n = P.poly.size();
+        double a = 0.0;
+        for (size_t k = 0; k < n; ++k)
+        {
+            const glm::dvec2 &u = P.poly[k], &v = P.poly[(k + 1) % n];
+            a += cross2(u, v);
+            if (P.side[k] >= kSegSide)
+                along[patchOf[pi]][tr.segments[P.side[k] - kSegSide].tracer] += glm::length(v - u);
+        }
+        area[patchOf[pi]] += 0.5 * std::abs(a);
+    }
+    std::vector<double> length(tr.end.size(), 0.0), inSlivers(tr.end.size(), 0.0);
+    for (const Segment& g : tr.segments)
+        length[g.tracer] += glm::length(g.b - g.a);
+    std::vector<std::pair<Index, Index>> pairs;
+    for (Index p = 0; p < np; ++p)
+    {
+        std::pair<Index, double> first{kInvalid, 0.0}, second{kInvalid, 0.0};
+        for (const auto& [t, l] : along[p])
+            if (l > first.second)
+            {
+                second = first;
+                first = {t, l};
+            }
+            else if (l > second.second)
+                second = {t, l};
+        if (second.first == kInvalid || second.second < 1.0 || area[p] > kThin * 0.5 * (first.second + second.second))
+            continue;
+        inSlivers[first.first] += second.second;
+        inSlivers[second.first] += second.second;
+        pairs.push_back({first.first, second.first});
+    }
+    dropped.resize(tr.end.size(), 0);
+    // A source's lines in order round it (a pole's are consecutive tracers). Two neighbours gone would leave a corner
+    // over 180 degrees or a loose end, so a line only goes while both its neighbours stay.
+    std::map<Index, std::vector<Index>> linesOf;
+    for (Index t = 0; t < Index(tr.sourceOf.size()); ++t)
+        if (tr.sourceOf[t] != kInvalid)
+            linesOf[tr.sourceOf[t]].push_back(t);
+    auto blockedDrop = [&](Index t) {
+        const std::vector<Index>& lines = linesOf[tr.sourceOf[t]];
+        const size_t n = lines.size(), i = size_t(std::find(lines.begin(), lines.end(), t) - lines.begin());
+        if (n < 3)
+            return true;
+        if (!lay.singular[tr.sourceOf[t]])
+            return std::any_of(lines.begin(), lines.end(), [&](Index l) { return dropped[l] != 0; });
+        return bool(dropped[lines[(i + 1) % n]] || dropped[lines[(i + n - 1) % n]]);
+    };
+    std::sort(pairs.begin(), pairs.end(), [&](const auto& x, const auto& y) { return inSlivers[x.first] + inSlivers[x.second] > inSlivers[y.first] + inSlivers[y.second]; });
+    size_t count = 0;
+    for (auto [a, b] : pairs)
+    {
+        if (dropped[a] || dropped[b])
+            continue;
+        auto weight = [&](Index t) { return tr.sourceOf[t] == kInvalid || blockedDrop(t) ? -1.0 : inSlivers[t] / std::max(length[t], 1e-9); };
+        Index drop = weight(a) >= weight(b) ? a : b;
+        if (weight(drop) < 0.0)
+        {
+            if (std::getenv("LILA_PATCH_LIST"))
+                std::fprintf(stderr, "sliver kept: lines %d (source %d) and %d (source %d)\n", int(a), int(tr.sourceOf[a]), int(b), int(tr.sourceOf[b]));
+            continue;
+        }
+        dropped[drop] = 1;
+        ++count;
+    }
+    return count;
+}
+
 struct PatchStats
 {
     int tracers = 0, segments = 0, mismatched = 0, pieces = 0, patches = 0, rectangles = 0, reflex = 0, corners[9] = {};
@@ -2242,6 +2421,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     const double unit = s.meanEdgeLength() * 1e-6;
     std::vector<ExtraStart> extras;
     Traces tr;
+    std::vector<uint8_t> slitTracer; // per tracer: a line with the same patch on both sides
     PatchStats st;
     std::vector<Piece> pieces;
     std::vector<Index> patchOf;
@@ -2264,7 +2444,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
                 centroid += p / double(P.poly.size());
             for (size_t k = 0; k < P.poly.size(); ++k)
             {
-                if (P.side[k] < kSegSide)
+                if (P.side[k] < kSegSide || slitTracer[tr.segments[P.side[k] - kSegSide].tracer])
                     continue;
                 const glm::dvec2 a = P.poly[k], b = P.poly[(k + 1) % P.poly.size()];
                 const double len = glm::length(b - a);
@@ -2285,10 +2465,12 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
     };
     Extracted ex;
     std::string why;
+    std::vector<uint8_t> dropped; // per tracer: a line left out, running alongside another too close for a row between
+    int dropRounds = 0;
     for (int round = 0;; ++round)
     {
         st = {};
-        tr = trace(lay, extras);
+        tr = trace(lay, extras, dropped);
         st.tracers = int(tr.end.size());
         st.segments = int(tr.segments.size());
         blocked = lay.wall;
@@ -2354,6 +2536,19 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
             patchOf[pi] = patchIndex.try_emplace(find(pi), Index(patchIndex.size())).first->second;
         np = Index(patchIndex.size());
         st.patches = int(np);
+        if (extras.empty() && dropRounds < 6 && std::getenv("LILA_PATCH_DROP"))
+        {
+            const size_t more = dropSlivers(lay, tr, pieces, patchOf, np, dropped);
+            if (debug)
+                std::fprintf(stderr, "patch slivers round %d: %zu lines dropped\n", dropRounds, more);
+            if (more > 0)
+            {
+                ++dropRounds;
+                --round;
+                continue;
+            }
+            dropRounds = 6;
+        }
 
         // Corners: at each point on a patch's border, the angle its pieces fill there, measured against the field, so the
         // field's own smooth turning across triangle edges doesn't count and a corner reads as a quarter turn.
@@ -2400,9 +2595,37 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
         // longest side, and the layout is traced again.
         if (round >= 3)
             break;
+        // A line with the same patch both sides is the only cut through a tube, which leaves the patch no disk: a
+        // second cut from the far side splits it in two.
+        std::vector<Index> sideA(tr.segments.size(), kInvalid);
+        std::vector<uint8_t> slit(tr.segments.size(), 1), slitPatch(np, 0);
+        slitTracer.assign(tr.end.size(), 0);
+        for (Index pi = 0; pi < Index(pieces.size()); ++pi)
+            for (Index side : pieces[pi].side)
+                if (side >= kSegSide)
+                {
+                    Index& a = sideA[side - kSegSide];
+                    if (a == kInvalid)
+                        a = patchOf[pi];
+                    else if (a != patchOf[pi])
+                        slit[side - kSegSide] = 0;
+                }
+        std::vector<int> slitCount(tr.end.size(), 0), segCount(tr.end.size(), 0);
+        for (size_t g = 0; g < tr.segments.size(); ++g)
+            if (sideA[g] != kInvalid)
+            {
+                ++segCount[tr.segments[g].tracer];
+                slitCount[tr.segments[g].tracer] += slit[g];
+            }
+        for (size_t g = 0; g < tr.segments.size(); ++g)
+            if (sideA[g] != kInvalid && slit[g] && 2 * slitCount[tr.segments[g].tracer] > segCount[tr.segments[g].tracer])
+            {
+                slitTracer[tr.segments[g].tracer] = 1;
+                slitPatch[sideA[g]] = 1;
+            }
         std::vector<uint8_t> want(np, 0);
         for (Index p = 0; p < np; ++p)
-            want[p] = corners[p] < 4 && !reflex[p];
+            want[p] = (corners[p] < 4 && !reflex[p]) || slitPatch[p];
         const std::vector<ExtraStart> more = cutsFor(want);
         if (more.empty())
             break;
@@ -2476,7 +2699,7 @@ Extracted layoutPatches(const Surface& s, const std::vector<glm::dvec3>& q, cons
                      sing, st.tracers, st.segments, st.mismatched, st.pieces, st.patches, st.rectangles, st.reflex);
         for (int c = 0; c < 9; ++c)
             std::fprintf(stderr, " %d:%d", c, st.corners[c]);
-        std::fprintf(stderr, "; ends: on a line %d, killed %d, wall %d, source %d, lost %d\n", tr.why[0], tr.why[1], tr.why[2], tr.why[3], tr.why[4]);
+        std::fprintf(stderr, "; ends: on a line %d, killed %d, wall %d, source %d, lost %d, %d loops\n", tr.why[0], tr.why[1], tr.why[2], tr.why[3], tr.why[4], tr.loops);
         if (const char* dump = std::getenv("LILA_PATCH_DUMP"))
             if (FILE* f = std::fopen(dump, "w"))
             {
