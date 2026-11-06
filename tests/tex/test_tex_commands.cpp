@@ -137,6 +137,9 @@ TEST_CASE("tex: texExport packs channels through the Unreal preset")
     CHECK(fs::exists(dir / "T_Rock_N.png"));
     CHECK(fs::exists(dir / "T_Rock_BC.png"));
     CHECK(fs::exists(dir / "T_Rock_H.png"));
+    // Only the normal map carries a green convention: a reader flips the green of any map marked opengl.
+    for (const json& o : r["outputs"])
+        CHECK(o["normalFormat"] == (o["map"] == "normal" ? "directx" : ""));
     image::Image orm = image::read(dir / "T_Rock_ORM.png");
     REQUIRE(orm.width == 64);
     CHECK(orm.rgba[0] == doctest::Approx(0.9).epsilon(0.01));

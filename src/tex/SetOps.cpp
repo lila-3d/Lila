@@ -411,6 +411,8 @@ json exportSet(scene::Node& set, const ExportOptions& options)
         jobs.push_back(std::move(job));
     }
 
+    // Only a normal map has a green convention; a reader flips the green of any map marked opengl.
+    const auto normalFormatOf = [](const MapJob& j) { return j.map == "normal" ? (j.flipGreen ? "directx" : "opengl") : ""; };
     const fs::path manifestPath = exportManifestPath(folder, set.name(), target->name);
     const json previous = readJsonFile(manifestPath).value("files", json::object());
     json next = json::object();
@@ -481,7 +483,7 @@ json exportSet(scene::Node& set, const ExportOptions& options)
                 unchanged.push_back(file);
                 outputs.push_back({{"file", file}, {"map", j.map}, {"udim", t.udim}, {"width", all.width}, {"height", all.height},
                                    {"format", j.format}, {"bits", j.bits}, {"colorSpace", j.linear ? "linear" : "srgb"},
-                                   {"normalFormat", j.flipGreen ? "directx" : "opengl"}, {"changed", false}});
+                                   {"normalFormat", normalFormatOf(j)}, {"changed", false}});
                 continue;
             }
             dirty.push_back({&j, path, hex(key)});
@@ -550,7 +552,7 @@ json exportSet(scene::Node& set, const ExportOptions& options)
                 unchanged.push_back(file);
             next[file] = {{"key", d.key}, {"content", content}};
             outputs.push_back({{"file", file}, {"map", j.map}, {"udim", t.udim}, {"width", w}, {"height", h}, {"format", j.format}, {"bits", j.bits},
-                               {"colorSpace", j.linear ? "linear" : "srgb"}, {"normalFormat", j.flipGreen ? "directx" : "opengl"}, {"changed", !same}});
+                               {"colorSpace", j.linear ? "linear" : "srgb"}, {"normalFormat", normalFormatOf(j)}, {"changed", !same}});
         }
     }
 
