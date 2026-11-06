@@ -205,3 +205,46 @@ TEST_CASE("an enum attr's choice docs: its own per-name docs first, else what it
                        .enumDocs = {"", "Arc."}, .doc = "euler (three curves), slerp or smooth (cubic)."};
     CHECK(ui::choiceTips::forAttr(def) == std::vector<std::string>{"Three curves.", "Arc.", "Cubic."});
 }
+
+TEST_CASE("more than three fills are a Preset menu that fills the fields and goes back to its title")
+{
+    static json lastCall;
+    if (!ops::find("presetProbe"))
+        ops::registerCommand({.name = "presetProbe",
+                               .doc = "Probe.",
+                               .flags = {{"count", "", ArgType::Int, 1, "How many."}},
+                               .undoable = false,
+                               .run = [](const Args& a) -> json {
+                                   lastCall = a.flags;
+                                   return nullptr;
+                               }});
+    ops::options::Override o;
+    for (int i = 0; i < 4; ++i)
+        o.fills.push_back({"Fill " + std::to_string(i), "Sets count to " + std::to_string(10 + i) + ".", [i] { return json{{"count", 10 + i}}; }});
+    ops::options::setOverride("presetProbe", o);
+    ops::options::reset("presetProbe");
+    REQUIRE(ui::optionBox::openCommand("Preset Probe", "presetProbe", json::object()));
+    QApplication::processEvents();
+    QDialog* d = nullptr;
+    for (QWidget* w : QApplication::topLevelWidgets())
+        if (auto* dlg = qobject_cast<QDialog*>(w); dlg && dlg->isVisible() && dlg->windowTitle() == "Preset Probe Options")
+            d = dlg;
+    REQUIRE(d);
+    QComboBox* menu = nullptr;
+    for (QComboBox* c : d->findChildren<QComboBox*>())
+        if (c->itemText(0) == "Preset")
+            menu = c;
+    REQUIRE(menu);
+    CHECK(menu->count() == 5);
+    CHECK(menu->itemData(3, Qt::ToolTipRole).toString() == "Sets count to 12.");
+    Q_EMIT menu->activated(3);
+    QApplication::processEvents();
+    CHECK(menu->currentIndex() == 0);
+    for (QPushButton* b : d->findChildren<QPushButton*>())
+        if (b->text() == "Apply")
+            b->click();
+    CHECK(lastCall.value("count", 0) == 12);
+    d->close();
+    QApplication::processEvents();
+    ops::options::reset("presetProbe");
+}

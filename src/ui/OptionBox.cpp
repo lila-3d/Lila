@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QCursor>
 #include <QDialog>
 #include <QGridLayout>
@@ -122,13 +123,31 @@ public:
         {
             auto* fillRow = new QHBoxLayout();
             fillRow->setContentsMargins(10, 4, 10, 0);
-            for (const opt::Override::Fill& fill : o->fills)
+            // A few fills are buttons; more are a menu, so the row doesn't widen the box.
+            if (o->fills.size() > 3)
             {
-                auto* b = new QPushButton(QString::fromStdString(fill.label), this);
-                b->setToolTip(QString::fromStdString(fill.tip));
-                connect(b, &QPushButton::clicked, this, [this, values = fill.values] { fillFrom(values); });
-                fillRow->addWidget(b);
+                auto* menu = new QComboBox(this);
+                menu->addItem(tr("Preset"));
+                for (const opt::Override::Fill& fill : o->fills)
+                {
+                    menu->addItem(QString::fromStdString(fill.label));
+                    menu->setItemData(menu->count() - 1, QString::fromStdString(fill.tip), Qt::ToolTipRole);
+                }
+                connect(menu, &QComboBox::activated, this, [this, menu, fills = o->fills](int index) {
+                    if (index > 0)
+                        fillFrom(fills[size_t(index - 1)].values);
+                    menu->setCurrentIndex(0);
+                });
+                fillRow->addWidget(menu);
             }
+            else
+                for (const opt::Override::Fill& fill : o->fills)
+                {
+                    auto* b = new QPushButton(QString::fromStdString(fill.label), this);
+                    b->setToolTip(QString::fromStdString(fill.tip));
+                    connect(b, &QPushButton::clicked, this, [this, values = fill.values] { fillFrom(values); });
+                    fillRow->addWidget(b);
+                }
             fillRow->addStretch(1);
             root->addLayout(fillRow);
         }

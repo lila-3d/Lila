@@ -1,6 +1,7 @@
 #include "retopo/RetopoCommands.h"
 
 #include "ops/Command.h"
+#include "ops/CommandOptions.h"
 #include "ops/Undo.h"
 #include "core/Log.h"
 #include "core/Profile.h"
@@ -230,10 +231,60 @@ json polesJson(const std::vector<Pole>& poles, const Node& src)
     return out;
 }
 
+/** Starting settings for what the mesh is for; a preset only sets flags the call leaves at their default. */
+struct RemeshPreset
+{
+    const char* name;
+    const char* label;
+    const char* tip;
+    json values;
+};
+
+const std::vector<RemeshPreset>& remeshPresets()
+{
+    static const std::vector<RemeshPreset> presets = {
+        {"gameCharacter", "Game Character", "8K faces, extra faces and no poles at joints, 12 edges round fingers.",
+         {{"targetFaces", 8000}, {"adaptivity", 0.25}, {"jointDensity", 0.5}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 12}, {"sharpAngle", 40.0}}},
+        {"midPoly", "Mid-Poly", "20K faces, joints as Game Character, 16 edges round fingers.",
+         {{"targetFaces", 20000}, {"adaptivity", 0.3}, {"jointDensity", 0.5}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 16}, {"sharpAngle", 40.0}}},
+        {"hero", "Hero", "40K faces, twice the extra faces at joints, 24 edges round fingers.",
+         {{"targetFaces", 40000}, {"adaptivity", 0.35}, {"jointDensity", 1.0}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 24}, {"sharpAngle", 40.0}}},
+        {"stylized", "Stylized", "5K faces, even spacing for broad shapes, joints as Game Character.",
+         {{"targetFaces", 5000}, {"adaptivity", 0.15}, {"jointDensity", 0.5}, {"jointPoleAvoidance", 30.0}, {"edgesAround", 10}, {"sharpAngle", 40.0}}},
+        {"hardSurface", "Hard Surface", "6K faces, dense at curves, loops on hard edges and creases over 30 degrees, no joint handling.",
+         {{"targetFaces", 6000}, {"adaptivity", 0.5}, {"jointDensity", 0.0}, {"jointPoleAvoidance", 0.0}, {"edgesAround", 8}, {"sharpAngle", 30.0}, {"useHardEdges", true}}},
+        {"prop", "Prop", "3K faces, dense at curves, no joint handling.",
+         {{"targetFaces", 3000}, {"adaptivity", 0.4}, {"jointDensity", 0.0}, {"jointPoleAvoidance", 0.0}, {"edgesAround", 8}, {"sharpAngle", 40.0}}},
+    };
+    return presets;
+}
+
+std::vector<FlagDef> remeshFlags();
+
+/** The call with its preset's settings in place of the flags it left at their defaults. */
+Args withPreset(const Args& a, const char* cmd)
+{
+    const std::string name = a.get<std::string>("preset", "none");
+    if (name == "none")
+        return a;
+    const auto& presets = remeshPresets();
+    auto it = std::find_if(presets.begin(), presets.end(), [&](const RemeshPreset& p) { return name == p.name; });
+    if (it == presets.end())
+        throw CommandError(std::string(cmd) + ": unknown preset " + name);
+    Args out = a;
+    for (const FlagDef& f : remeshFlags())
+        if (it->values.contains(f.name) && (!a.flags.contains(f.name) || a.flags[f.name] == f.defaultValue))
+            out.flags[f.name] = it->values[f.name];
+    return out;
+}
+
 std::vector<FlagDef> remeshFlags()
 {
     using T = ArgType;
-    return {{"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
+    return {{"preset", "", T::String, "none",
+             "Starting settings for what the mesh is for; flags set to other than their default win.",
+             {"none", "gameCharacter", "midPoly", "hero", "stylized", "hardSurface", "prop"}},
+            {"method", "", T::String, "field", "field: quads follow curvature, creases and guides; grid: a straight grid over an open sheet seen from one side (terrain tiles, panels), field otherwise."},
             {"targetFaces", "", T::Int, 3000, "Approximate face count.", {}, {}, 8.0},
             {"countTolerance", "", T::Float, 0.1, "Retry at a corrected size until the face count is within this fraction of targetFaces; 0 takes the first try.", {}, {}, 0.0, 1.0},
             {"timeout", "", T::Float, 60.0, "Seconds before giving up with an error saying how far it got, leaving the scene as it was; 0 waits forever.", {}, {}, 0.0},
@@ -259,8 +310,9 @@ std::vector<FlagDef> remeshFlags()
              "retopoPoles; on a closed shell (4 - valence) must sum to what retopoPoles reports."}};
 }
 
-QuadRemeshOptions remeshOptions(const Args& a, const Node& src, const char* cmd)
+QuadRemeshOptions remeshOptions(const Args& given, const Node& src, const char* cmd)
 {
+    const Args a = withPreset(given, cmd);
     QuadRemeshOptions o;
     const std::string method = a.get<std::string>("method", "field");
     if (method != "field" && method != "grid")
@@ -401,6 +453,16 @@ scene::Node& retopoTargetNode(const Args& a, const char* cmd, bool create) { ret
 void registerCommands()
 {
     using T = ArgType;
+
+    // The option box offers the presets as a menu that fills in their settings, so they show and can be edited.
+    {
+        namespace opt = ops::options;
+        opt::Override o = opt::findOverride("quadRemesh") ? *opt::findOverride("quadRemesh") : opt::Override{};
+        o.hidden.push_back("preset");
+        for (const RemeshPreset& p : remeshPresets())
+            o.fills.push_back({p.label, p.tip, [values = p.values] { return values; }});
+        opt::setOverride("quadRemesh", o);
+    }
 
     ops::registerCommand({
         .name = "quadRemesh",
