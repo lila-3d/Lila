@@ -7802,7 +7802,7 @@ def selectByAngle(angle: float | None = None) -> Any:
     """
 
 def selectByMaterial(*objects: Any, faces: bool | None = None, f: bool | None = None) -> Any:
-    """Select what a material is assigned to: whole objects when it covers every face of each, otherwise just the faces it is assigned to. faces=true always selects faces, faces=false always whole objects. Returns the objects.
+    """Select what a material is assigned to: whole objects when it covers every face of each, otherwise just the faces it is assigned to. Default also takes faces on slots with no material. faces=true always selects faces, faces=false always whole objects. Returns the objects.
 
     Args:
         objects: material.
