@@ -14,6 +14,7 @@
 #include "LilaLinkMethodRegistry.h"
 #include "LilaLinkSplines.h"
 #include "LilaLinkTerrainWater.h"
+#include "LilaLinkTerrainRoads.h"
 #include "LilaLinkTextures.h"
 #include "LilaLinkTrim.h"
 #include "LilaLinkVat.h"
@@ -118,7 +119,7 @@ TSharedPtr<FJsonValue> Hello(const TSharedPtr<FJsonObject>&, FString&)
 		Str(TEXT("stylisedInstances")), Str(TEXT("mlDeformer")), Str(TEXT("splines")), Str(TEXT("placements")), Str(TEXT("landscape")), Str(TEXT("landscapeRegions")), Str(TEXT("terrainWater")),
 		Str(TEXT("masonryMaterials")), Str(TEXT("trimMaterials")), Str(TEXT("imposters")), Str(TEXT("components")), Str(TEXT("lights")), Str(TEXT("lightingChannels")),
 		Str(TEXT("geometryCollection")), Str(TEXT("trimDecals")), Str(TEXT("physics")), Str(TEXT("levelInstances")),
-		Str(TEXT("collision")), Str(TEXT("instanceData")), Str(TEXT("expressionRig"))});
+		Str(TEXT("collision")), Str(TEXT("instanceData")), Str(TEXT("expressionRig")), Str(TEXT("terrainRoads"))});
 	// Features of the optional plugins that registered methods, such as LilaLinkSettlement's "settlement".
 	TArray<TSharedPtr<FJsonValue>> Features = Out->GetArrayField(TEXT("features"));
 	for (const FString& Feature : LilaLink::ExternalFeatures())
@@ -426,6 +427,7 @@ TMap<FString, FLilaLinkMethod> LilaLink::MakeMethods()
 	LilaLink::AddLandscapeMethods(Methods);
 	LilaLink::AddLandscapeRegionMethods(Methods);
 	LilaLink::AddTerrainWaterMethods(Methods);
+	LilaLink::AddTerrainRoadMethods(Methods);
 	LilaLink::AddPlacementMethods(Methods);
 	LilaLink::AddMasonryMethods(Methods);
 	LilaLink::AddTrimMethods(Methods);

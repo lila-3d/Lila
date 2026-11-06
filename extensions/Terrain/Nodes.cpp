@@ -628,10 +628,15 @@ gn::NodeDecl erodeDecl()
                 {
                     std::string err;
                     const bool gpu = device == "gpu" || (device == "auto" && gpuErosionAvailable());
+                    const std::vector<float> uneroded = h.findMask("erosionProtect") ? h.heights : std::vector<float>{};
                     if (!gpu)
                         erode(h, p);
                     else if (!erodeGpu(h, p, &err))
                         throw gn::ExecError(c.node.name + ": " + err);
+                    // Roads laid before erosion keep their shape where erosionProtect is 1.
+                    if (const std::vector<float>* keep = h.findMask("erosionProtect"); keep && keep->size() == h.size() && uneroded.size() == h.size())
+                        for (size_t i = 0; i < h.size(); ++i)
+                            h.heights[i] += (*keep)[i] * (uneroded[i] - h.heights[i]);
                 }
                 c.out("heightfield", withHeightfield(g, std::move(h)));
             },

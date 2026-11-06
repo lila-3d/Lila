@@ -1,9 +1,9 @@
 # The Terrain extension: its core compiled in directly, and the package driven through its commands.
-add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
+add_executable(lila_terrain_tests main.cpp test_terrain.cpp test_stamps.cpp test_contract.cpp test_export_engines.cpp test_water.cpp test_roads.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Core.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Export.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/ExportEngines.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Erosion.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/ErosionGpu.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Inputs.cpp
     ${CMAKE_SOURCE_DIR}/extensions/Terrain/Stamps.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Analysis.cpp
-    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Water.cpp)
+    ${CMAKE_SOURCE_DIR}/extensions/Terrain/Water.cpp ${CMAKE_SOURCE_DIR}/extensions/Terrain/Roads.cpp)
 target_include_directories(lila_terrain_tests PRIVATE ${CMAKE_SOURCE_DIR}/extensions/Terrain)
 find_package(miniz CONFIG REQUIRED)
 target_link_libraries(lila_terrain_tests PRIVATE LilaUI doctest::doctest miniz::miniz)

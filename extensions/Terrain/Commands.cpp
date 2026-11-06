@@ -19,6 +19,7 @@
 #include <lila/GeometryNodes.h>
 #include <lila/Graph.h>
 #include <lila/ImageIO.h>
+#include <lila/Log.h>
 #include <lila/Math.h>
 #include <lila/Mesh.h>
 #include <lila/Node.h>
@@ -1075,7 +1076,8 @@ void registerStampCommands(ext::Context& ctx)
         .doc = "The cheapest way from start to end over the terrain's cost field (see terrainCostField), never steeper than "
                "maxGrade percent where any way allows: switchbacks appear by themselves on steep ground. Returns the points on "
                "the surface (world space), length, cost, the steepest grade along it, withinGrade (false when nothing kept "
-               "within maxGrade and the gentlest way was taken) and the revision; curve=True also makes a poly curve along it.",
+               "within maxGrade and the gentlest way was taken) and the revision; curve=True also makes a poly curve along it, and "
+               "road='road' (or path, track, rail, runway) lays a road along it in one call, returned as road.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = {{"start", "s", T::List, nullptr, "[x, z] or [x, y, z]."},
                   {"end", "e", T::List, nullptr, "[x, z] or [x, y, z]."},
@@ -1083,7 +1085,11 @@ void registerStampCommands(ext::Context& ctx)
                   {"maxGrade", "mg", T::Float, 10.0, "Steepest grade allowed, percent; 0 for no limit.", {}, {}, 0.0},
                   {"resolution", "r", T::Int, int64_t(1024), "Search grid samples along the longer side.", {}, {}, 16.0, 4097.0},
                   {"curve", "cv", T::Bool, false, "Also make a curve along the route."},
-                  {"name", "n", T::String, "Route", "Name of that curve."}},
+                  {"name", "n", T::String, "Route", "Name of that curve."},
+                  {"road", "rd", T::String, "", "Also lay a road of this kind along it (road, path, track, rail, runway), as terrainAddRoad does.",
+                   {"", "road", "path", "track", "rail", "runway"}},
+                  {"roadId", "rid", T::String, "", "That road's id."},
+                  {"roadSettings", "rs", T::Any, nullptr, "More terrainAddRoad flags for that road: {profile: 'lane', width: 600, build: True}."}},
         .run = [](const Args& a) -> json {
             LILA_ZONE();
 
@@ -1123,6 +1129,17 @@ void registerStampCommands(ext::Context& ctx)
                         {"revision", revision(*f.local)}};
             if (a.get<bool>("curve", false))
                 out["curve"] = ops::execute("curve", {{"points", pts}, {"type", "poly"}, {"name", a.get<std::string>("name", "Route")}});
+            if (const std::string kind = a.get<std::string>("road", ""); !kind.empty())
+            {
+                json call = a.has("roadSettings") && a.flags["roadSettings"].is_object() ? a.flags["roadSettings"] : json::object();
+                call["args"] = {names[0]};
+                call["path"] = pts;
+                call["kind"] = kind;
+                call["id"] = a.get<std::string>("roadId", "");
+                if (!call.contains("maxGrade") && a.get<double>("maxGrade", 10.0) > 0.0)
+                    call["maxGrade"] = a.get<double>("maxGrade", 10.0);
+                out["road"] = ops::execute("terrainAddRoad", call);
+            }
             return out;
         },
         .examples = {"r = terrainRoute('Terrain', start=[-40000, 0], end=[40000, 5000], maxGrade=8, weights={'water': 100})\nr['length'], r['maxGrade']"},
@@ -2267,12 +2284,12 @@ void registerCommands(ext::Context& ctx)
             fs::path folder = a.get<std::string>("folder", "");
             if (folder.empty())
                 folder = bakeDir() / "export";
+            json out;
             try
             {
                 if (json engine = exportEngineTarget(a, *f.local, f.frame.m, folder, name); !engine.is_null())
-                    return engine;
-                json out;
-                if (a.get<std::string>("target", "unreal") == "files")
+                    out = std::move(engine);
+                else if (a.get<std::string>("target", "unreal") == "files")
                 {
                     // Files carry the grid in world space when it lines up with it, else in its own space with the placement.
                     gn::Geometry geom;
@@ -2294,12 +2311,15 @@ void registerCommands(ext::Context& ctx)
                     out = exportUnreal(*f.local, f.frame.m, folder, name, unrealOptions(a));
                 if (json water = exportTerrainWater(names[0], folder, name); !water.is_null())
                     out["water"] = water;
-                return out;
             }
             catch (const std::exception& e)
             {
                 throw CommandError(std::string("terrainExport: ") + e.what());
             }
+            const json roads = ops::execute("terrainRoadExport", {{"args", {names[0]}}, {"folder", folder.string()}, {"name", name}, {"ifAny", true}});
+            if (roads.contains("file"))
+                (out.contains("files") && out["files"].is_object() ? out["files"]["roads"] : out["roadsFile"]) = roads["file"];
+            return out;
         },
         .examples = {"s = terrainExport('Terrain', target='unreal')\ns['resolution'], s['scale'], s['files']['height']"},
     });
@@ -2316,7 +2336,8 @@ void registerCommands(ext::Context& ctx)
                "landscape materials, one call per layer) sampling each layer; with material=, that material is used and needs the "
                "same layer names. gridSize sets the World Partition grid in a partitioned level. Landscapes over 8193 x 8193 vertices "
                "(or regions='on') are written region by region. kind='meshTerrain' sends it as UE 5.8's experimental Mesh Terrain "
-               "instead (LilaLinkMeshTerrain plugin). Returns the landscape, its layers and the export settings.",
+               "instead (LilaLinkMeshTerrain plugin). Roads laid with terrainAddRoad go along as landscape splines "
+               "(terrainSendRoadsToUnreal) unless roads=False. Returns the landscape, its layers and the export settings.",
         .positionalDoc = "terrain mesh or its modifier",
         .flags = engineSendFlags({{"material", "m", T::String, "", "Landscape material asset path, such as /Game/Terrain/M_Landscape; empty uses the generated one."},
                   {"makeMaterial", "mm", T::Bool, true, "Without material=, generate a landscape material for the layers."},
@@ -2324,6 +2345,7 @@ void registerCommands(ext::Context& ctx)
                   {"gridSize", "g", T::Int, int64_t(0), "World Partition grid size in components; 0 leaves it.", {}, {}, 0.0},
                   {"pad", "p", T::Bool, false, "Keep the cell size and grow the landscape past the terrain, instead of resampling."},
                   {"water", "wa", T::Bool, true, "Send the terrain's rivers, lakes and sea as spline and locator actors too (terrainSendWaterToUnreal)."},
+                  {"roads", "rd", T::Bool, true, "Also send the terrain's roads as landscape splines."},
                   {"timeout", "to", T::Float, 300.0, "Seconds to wait for Unreal.", {}, {}, 0.0}}),
         .undoable = false,
         .run = [](const Args& a) -> json {
@@ -2385,6 +2407,16 @@ void registerCommands(ext::Context& ctx)
                     throw CommandError(std::string("terrainSendToUnreal: the landscape went, its water didn't: ") + e.what());
                 }
             }
+            if (a.get<bool>("roads", true))
+                try
+                {
+                    out["roads"] = ops::execute("terrainSendRoadsToUnreal", {{"args", {names[0]}}, {"landscape", name}, {"ifAny", true}});
+                }
+                catch (const std::exception& e)
+                {
+                    log::warn("terrainSendToUnreal: the landscape went, its roads did not: {}", e.what());
+                    out["roadsError"] = e.what();
+                }
             return out;
         },
         .examples = {"terrainSendToUnreal('Terrain', material='/Game/Terrain/M_Landscape')"},
