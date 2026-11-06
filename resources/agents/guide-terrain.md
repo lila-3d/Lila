@@ -47,3 +47,10 @@ All take `riverArea=` (m2 of drainage that makes a river), `seaLevel=` and `floo
 ## To Unreal
 
 `terrainSendToUnreal(t)` builds or updates a Landscape: heights on a `Lila` edit layer, rotation and Z-up handled, every mask as a paint layer (weightmap, layer info asset) and a generated material on `MF_LilaLandscapeLayer`. `layers=['cityFootprint', 'flow']` or `{'mask': 'LayerName'}` limits and renames them; `material='/Game/...'` uses your own landscape material (it needs those layer names). `terrainExport(t, target='unreal'|'files')` writes the same files without a live editor.
+
+## See it in the viewport
+
+- `terrainDisplay(draw='heightfield')` draws terrains from their heights: level of detail for 8K to 16K grids, paint layers and the overlays below. `draw='mesh'` draws the meshed terrain. `quadPixels=` sets the detail (4 by default; lower is finer and slower).
+- Overlays, any of which switches terrains to the heightfield draw while on: `overlay='flow'` (any mask; `overlayRamp='grey'|'turbo'`, `overlayOpacity=`), `contours=1000` (cm between lines, `contourMajor=5`), `flowArrows=True`. `overlay=''`, `contours=0` and `flowArrows=False` turn them off. The result lists each terrain's masks and warns when no terrain has the overlay's mask.
+- `terrainDisplayLayers(t, layers=[{'name': 'rock', 'mask': 'wear', 'color': '#7a7068', 'roughness': 0.9, 'baseColor': 'rock.png', 'normal': 'rock_n.png', 'tiling': 400}])` paints layers over the terrain's material by their masks' weights (0 to 1), in order. It returns each layer's mask coverage and whether the mask exists. Layer rules can write the same JSON list to the mesh's `terrainLayers` attribute. Undoable.
+- Check the result with `captureView(display='shaded')`; selected terrains show their wire.

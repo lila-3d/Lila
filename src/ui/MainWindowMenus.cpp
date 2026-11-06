@@ -3,6 +3,7 @@
 #include "ui/CreditsDialog.h"
 #include "ui/DocsUi.h"
 #include "ui/FileDialog.h"
+#include "ui/HeightfieldDisplay.h"
 #include "ui/LicensesDialog.h"
 #include "ui/MenuSets.h"
 #include "ui/Shelf.h"
@@ -319,6 +320,8 @@ void MainWindow::buildMenus()
         addItem({.menu = "Display/Mesh Display", .kind = Kind::Action, .action = std::string("viewport.aid.") + i.id});
     addItem({.id = "Display/Mesh Display/normalLength", .menu = "Display/Mesh Display", .kind = Kind::Custom,
              .setup = [](QMenu* m) { m->addAction(displayAids::normalLengthRow(m)); }});
+    addSubmenu("Display", "Terrain", syncChecks);
+    heightfieldDisplay::addMenuItems("Display/Terrain");
     addSubmenu("Display", "Measure", syncChecks);
     menus::addActions("Display/Measure", {"measure.selection", "measure.copyDistance", "measure.copyDiameter", "measure.copyLength", "",
                                    "measure.distanceTool", "measure.angleTool", "measure.radiusTool", "", "measure.distanceFromSelection",

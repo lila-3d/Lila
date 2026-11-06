@@ -157,6 +157,7 @@ void registerUi()
     commandPreview::install();
     Manipulator::installOrientPivotSink();
     registerRetopoActions();
+    heightfieldDisplay::registerActions();
     registerTopologyActions();
     registerTopologyToolkitActions();
     registerCurveToolkitActions();

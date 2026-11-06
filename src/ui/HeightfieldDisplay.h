@@ -62,7 +62,9 @@ LILA_UI_API std::string layersSource(const scene::Node& n);
 LILA_UI_API std::optional<render::HeightfieldDraw> drawFor(scene::Graph& g, scene::NodeId id, const Settings& set, bool textured,
                                                            int* pendingMaps = nullptr);
 
-/** terrainDisplay and terrainDisplayLayers; the Display menu's terrain entries. */
+/** terrainDisplay and terrainDisplayLayers. */
 LILA_UI_API void registerCommands();
+/** The display options as actions (viewport.terrain.*), and as rows of a menu (with an Overlay submenu of the masks). */
 LILA_UI_API void registerActions();
+LILA_UI_API void addMenuItems(const std::string& menu);
 } // namespace lila::ui::heightfieldDisplay

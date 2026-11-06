@@ -10,8 +10,13 @@
 #include "scene/MeshNodes.h"
 #include "scene/Modifiers.h"
 #include "scene/SceneIndex.h"
+#include "ui/Actions.h"
 #include "ui/MaterialDraw.h"
+#include "ui/Menus.h"
 #include "ui/TextureCache.h"
+
+#include <QActionGroup>
+#include <QMenu>
 
 #include <algorithm>
 #include <cmath>
@@ -355,5 +360,63 @@ void registerCommands()
     });
 }
 
-void registerActions() {}
+void registerActions()
+{
+    actions::add({.id = "viewport.terrain.heightfieldDraw",
+                  .label = "Heightfield Draw",
+                  .category = "Display",
+                  .run = [] { ops::execute("terrainDisplay", {{"draw", settings().heightfieldDraw ? "mesh" : "heightfield"}}); },
+                  .doc = "Terrains draw from their heights: level of detail for huge grids, paint layers and terrain overlays.",
+                  .checked = [] { return settings().heightfieldDraw; }});
+    actions::add({.id = "viewport.terrain.contours",
+                  .label = "Contours",
+                  .category = "Display",
+                  .run =
+                      [] {
+                          // Off keeps the last interval, so turning it back on restores it.
+                          PrefStore& p = PrefStore::get();
+                          const double interval = settings().contourInterval;
+                          if (interval > 0.0)
+                              p.set(kPrefFile, "/viewport/terrainContoursLast", interval);
+                          const double back = p.value<double>(kPrefFile, "/viewport/terrainContoursLast", 1000.0);
+                          ops::execute("terrainDisplay", {{"contours", interval > 0.0 ? 0.0 : back}});
+                      },
+                  .doc = "Height contour lines over terrains; set the interval with terrainDisplay(contours=...).",
+                  .checked = [] { return settings().contourInterval > 0.0f; }});
+    actions::add({.id = "viewport.terrain.flowArrows",
+                  .label = "Flow Arrows",
+                  .category = "Display",
+                  .run = [] { ops::execute("terrainDisplay", {{"flowArrows", !settings().flowArrows}}); },
+                  .doc = "Arrows down the slopes of terrains, stronger along the flow mask's channels.",
+                  .checked = [] { return settings().flowArrows; }});
+}
+
+void addMenuItems(const std::string& menu)
+{
+    menus::addActions(menu, {"viewport.terrain.heightfieldDraw", "viewport.terrain.contours", "viewport.terrain.flowArrows"});
+    menus::addSubmenu(menu, "Overlay", [](QMenu* m) {
+        QObject::connect(m, &QMenu::aboutToShow, m, [m] {
+            m->clear();
+            std::vector<std::string> masks;
+            scene::Graph& g = scene::Graph::current();
+            for (scene::Node* n : scene::sceneIndex::ofType(g, "mesh"))
+                if (auto h = heightfieldOf(g, n->id()))
+                    for (const auto& entry : h->masks)
+                        if (std::ranges::find(masks, entry.first) == masks.end())
+                            masks.push_back(entry.first);
+            const std::string current = settings().overlay;
+            auto* group = new QActionGroup(m);
+            auto row = [&](const QString& label, const std::string& mask) {
+                QAction* a = m->addAction(label);
+                a->setCheckable(true);
+                a->setChecked(current == mask);
+                group->addAction(a);
+                QObject::connect(a, &QAction::triggered, a, [mask] { ops::execute("terrainDisplay", {{"overlay", mask}}); });
+            };
+            row("None", "");
+            for (const std::string& mask : masks)
+                row(QString::fromStdString(mask), mask);
+        });
+    });
+}
 } // namespace lila::ui::heightfieldDisplay
